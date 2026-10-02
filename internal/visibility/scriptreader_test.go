@@ -218,3 +218,50 @@ func TestDenyTracer_RefusesEverything(t *testing.T) {
 	// It must satisfy the interface it substitutes for.
 	var _ tracer.Tracer = dt
 }
+
+// publishedOnlyGate reads every policy at its published face only.
+type publishedOnlyGate struct{}
+
+func (publishedOnlyGate) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
+
+func (publishedOnlyGate) ReadableFacesMany(context.Context, string, []string) (acl.FaceVerdicts, error) {
+	return acl.UniformVerdicts(acl.FacesVerdict("published")), nil
+}
+
+// TestScriptReader_UntypedListGatesBeforeRanking pins that a list with no type
+// trims the faces the caller may not read BEFORE the world picks one. Ranked
+// first, POL-1's draft would be picked and then dropped, and POL-1 would be
+// missing although its published face is readable.
+func TestScriptReader_UntypedListGatesBeforeRanking(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	for _, f := range []entity.Face{"draft", "published"} {
+		if err := st.CreateEntity(ctx, &entity.Entity{
+			ID: "POL-1", Type: "policy", Face: f, Properties: map[string]any{"title": string(f)},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader, err := visibility.NewPolicyReader(publishedOnlyGate{}, visibility.NopRedactor{}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sr, err := visibility.NewScriptReader(reader, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	world := store.NewWorldScope(map[string]store.TypeResolution{
+		"policy": {Chain: []entity.Face{"draft", "published"}, Fallback: store.FallbackExclude},
+	})
+
+	var got []entity.Ref
+	for e, err := range sr.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(world)}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, e.Ref())
+	}
+	if len(got) != 1 || got[0] != (entity.Ref{ID: "POL-1", Face: "published"}) {
+		t.Errorf("want POL-1@published, got %v", got)
+	}
+}

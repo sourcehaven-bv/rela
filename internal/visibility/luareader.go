@@ -169,13 +169,10 @@ func (s *ScriptReader) ListEntities(
 		}
 	}
 	return func(yield func(*entity.Entity, error) bool) {
-		var batch []*entity.Entity
-		for e, err := range s.raw.ListEntities(bound, q) {
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			batch = append(batch, e)
+		batch, err := s.listGatedThenRanked(bound, q)
+		if err != nil {
+			yield(nil, err)
+			return
 		}
 		for _, e := range s.reader.Filter(bound, batch) {
 			if !yield(e, nil) {
@@ -183,6 +180,46 @@ func (s *ScriptReader) ListEntities(
 			}
 		}
 	}
+}
+
+// listGatedThenRanked loads the rows of q for the load-then-Filter fallback.
+//
+// Under a world the gate must run BEFORE the rank. Handing the world to the
+// store would rank every stored face, and Filter would then drop an entity
+// whose first-ranked face the caller may not read, even when a lower-ranked
+// face is readable. So the rows are read at every face, and the resolver
+// picks each id's face among the faces the caller may read, as a single read
+// does. The pushdown path gets the same order from FaceIn.
+func (s *ScriptReader) listGatedThenRanked(ctx context.Context, q store.EntityQuery) ([]*entity.Entity, error) {
+	world, inWorld := q.Faces.World()
+	if inWorld {
+		q.Faces = store.AllFaces()
+	}
+	var rows []*entity.Entity
+	for e, err := range s.raw.ListEntities(ctx, q) {
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, e)
+	}
+	if !inWorld {
+		return rows, nil
+	}
+	ids := make([]string, 0, len(rows))
+	for _, e := range rows {
+		ids = append(ids, e.ID)
+	}
+	served, err := s.res.ResolveIDsErr(ctx, WorldOf(world), ids)
+	if err != nil {
+		return nil, err
+	}
+	kept := rows[:0]
+	for _, e := range rows {
+		if h, ok := served[e.ID]; ok && h.Face == e.Face {
+			kept = append(kept, e)
+		}
+	}
+	return kept, nil
 }
 
 // headerGateChunk is how many headers ListEntityHeaders gates at once.
