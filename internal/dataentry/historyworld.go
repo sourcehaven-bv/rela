@@ -76,13 +76,21 @@ func resolveHistorySubject(
 	if err != nil {
 		return historySubject{}, false, err
 	}
+	if len(stored) > 0 && bareInWorld {
+		_, readable, ferr := vr.family(ctx, typeName, ref.ID)
+		if ferr != nil {
+			return historySubject{}, false, ferr
+		}
+		if readable {
+			return historySubject{ref: ref, worldAbsent: true}, true, nil
+		}
+		// A live entity the caller cannot read takes the same path as an
+		// id that was never stored. Answering it 404 while a never-stored
+		// id gets the empty world answer would tell a probe which ids exist.
+		stored = nil
+	}
 	if len(stored) > 0 {
 		switch {
-		case bareInWorld:
-			if _, readable, ferr := vr.family(ctx, typeName, ref.ID); ferr != nil || !readable {
-				return historySubject{}, false, ferr
-			}
-			return historySubject{ref: ref, worldAbsent: true}, true, nil
 		case ref.Face.IsImplicit(), storedType != typeName, slices.Contains(stored, ref.Face):
 			return historySubject{}, false, nil
 		}

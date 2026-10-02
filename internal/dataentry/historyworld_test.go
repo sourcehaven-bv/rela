@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -285,5 +286,46 @@ func TestHistoryTimeline_LabelsHowTheFaceWasChosen(t *testing.T) {
 					"used; got %d", *body.ChainPosition)
 			}
 		})
+	}
+}
+
+// hiddenRowGate is permGate with a row gate that refuses every id.
+type hiddenRowGate struct{ permGate }
+
+func (hiddenRowGate) PermitsRead(context.Context, string, string) (bool, error) { return false, nil }
+
+func (hiddenRowGate) ReadableFacesMany(context.Context, string, []string) (acl.FaceVerdicts, error) {
+	return acl.FaceVerdicts{}, nil
+}
+
+// TestHistoryFace_HiddenLiveIsIndistinguishableFromAbsent pins that a bare id
+// in a world answers the same for a live entity the caller cannot read as for
+// an id that was never stored. A 404 for one and the empty world answer for
+// the other would let a `history:read` holder probe which ids exist.
+func TestHistoryFace_HiddenLiveIsIndistinguishableFromAbsent(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entityPkg.Entity{
+		ID: "TKT-SECRET", Type: "ticket", Properties: map[string]any{"title": "hidden"},
+	})
+	pubScope := store.NewWorldScope(map[string]store.TypeResolution{
+		"ticket": {Chain: []entityPkg.Face{entityPkg.Face("published")}, Fallback: store.FallbackExclude},
+	})
+
+	for _, perms := range []map[string]bool{{acl.PermHistoryRead: true}, {}} {
+		ctx := withReadGate(worldCtx(pubScope), hiddenRowGate{permGate{perms: perms}})
+		hidden, hiddenOK, err := resolveHistorySubject(ctx, app.visibleReader, "ticket",
+			entityPkg.Ref{ID: "TKT-SECRET"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		absent, absentOK, err := resolveHistorySubject(ctx, app.visibleReader, "ticket",
+			entityPkg.Ref{ID: "TKT-NEVER"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hiddenOK != absentOK || hidden.worldAbsent != absent.worldAbsent {
+			t.Errorf("perms %v: hidden live (%v, absent=%v) differs from never stored (%v, absent=%v)",
+				perms, hiddenOK, hidden.worldAbsent, absentOK, absent.worldAbsent)
+		}
 	}
 }

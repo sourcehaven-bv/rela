@@ -1124,6 +1124,7 @@ func NewApp(
 		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
 		store:              st,
 		meta:               func() *metamodel.Metamodel { return app.State().Meta },
+		family:             app.visibleReader.family,
 		sourceRow:          app.reader.writePrepRow,
 		sourceFamily:       app.reader.writePrepFamily,
 		currentEdgesByPeer: app.currentEdgesByPeer,

@@ -9,7 +9,6 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
-	"slices"
 	"sort"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // translateVerb maps a wire-format verb to the [acl.WriteRequest] that
@@ -114,6 +114,9 @@ type affordanceService struct {
 	resolver func() FieldVerdictResolver
 	store    store.Store
 	meta     func() *metamodel.Metamodel
+	// family reads the faces of one entity the principal may read
+	// ([visibility.Resolver.Family]). `_faces` is built from it.
+	family func(ctx context.Context, entityType, id string) (visibility.Family, bool, error)
 	// sourceRow reads the raw row of a relation's source, at the edge's
 	// tail, for relation-source attribution. It is never served.
 	sourceRow func(ctx context.Context, ref entityPkg.Ref) (*entityPkg.Entity, bool)
@@ -1421,37 +1424,23 @@ func (svc affordanceService) computeAttachments(
 // computeFaces lists the entity's OTHER content states — the input to a
 // "view the published face" / "go to draft" link.
 //
-// # Why this asks the store per declared face
-//
 // A face NAME is config (declared in schema.yaml, public). Whether THIS
-// entity has that face is data, and the store is the only thing that knows.
-// There is no bulk face-enumeration API on purpose: the answer rides the
-// entity response, which the caller was already cleared to read, so it
-// inherits that gate rather than needing one of its own.
+// entity has that face, and whether this principal may read it, is data. Both
+// come from [visibility.Resolver.Family], which runs the row gate and the
+// per-face verdict a GET of each face runs, so a listed face always opens.
+// Gating on the `type@face` grant alone is not enough: a face can be
+// readable by one entity's owner edge and not another's.
 //
-// Cost is bounded by the type's declared face count — two or three in
-// practice, and a miss is a map lookup in fs/mem. It runs on per-entity
-// responses only, never on list rows, so it cannot become an N+1 over a page.
-//
-// # Face readability IS checked; world readability is not
-//
-// These are two different grants and only one of them belongs here. A
-// `type@face` read grant is per-type and per-face, so whether the caller may
-// read the OTHER face is a real question with a per-entity answer — and
-// naming a face they may not read discloses that it exists, which is what
-// such a grant withholds. So each candidate face is gated below, before the
-// store is probed for it.
-//
-// World-read is the one deliberately absent. It is a GLOBAL, role-level grant
+// World-read is deliberately not checked. It is a GLOBAL, role-level grant
 // (acl.Request.PermitsWorld takes a world name and nothing else) that the
-// client already has from `/_schema`.worlds. Re-answering it per face would
-// be a per-instance check for a question with a per-principal answer.
+// client already has from `/_schema`.worlds.
 //
-// Returns an empty (non-nil) slice when the type declares no other faces,
-// which is a real answer: "this entity has no other faces". That differs from
-// the `_copies` convention, where nil means "capability not wired" — here
-// there is no capability to be unwired, since store and meta are always
-// present on this service.
+// It runs on per-entity responses only, never on list rows, so the one
+// family read cannot become an N+1 over a page.
+//
+// Returns an empty (non-nil) slice when the entity has no other readable
+// face, which is a real answer. That differs from the `_copies` convention,
+// where nil means "capability not wired".
 func (svc affordanceService) computeFaces(
 	ctx context.Context, e *entityPkg.Entity,
 ) []v1.Face {
@@ -1467,28 +1456,28 @@ func (svc affordanceService) computeFaces(
 	if !ok {
 		return out
 	}
-	current := e.Face.String()
-	// The entity's stored faces, read once and only when some other face is
-	// readable: one header query instead of a probe per declared face.
-	var present []entityPkg.Face
-	probed := false
-	for name := range def.Faces {
-		stored := name
-		if stored == current {
+	if svc.family == nil || !otherFaceGranted(ctx, def, e) {
+		return out
+	}
+	// The faces of e the principal may read: the resolver applies the row
+	// gate and the per-face verdict, the same gates a GET of each face
+	// runs. A face it withholds is not listed, so the menu never offers an
+	// address that answers 404.
+	fam, ok, err := svc.family(ctx, e.Type, e.ID)
+	if err != nil {
+		slog.Warn("dataentry: reading an entity's faces failed", "id", e.ID, "err", err)
+		return out
+	}
+	if !ok {
+		return out
+	}
+	for _, f := range fam.Faces {
+		stored := f.String()
+		if f == e.Face {
 			continue // the face being served is not somewhere else to go
 		}
-		// A face the principal may not read is not somewhere they can go
-		// either — and probing it would disclose its existence, which a
-		// `type@face` grant withholds. Checked BEFORE the store probe.
-		if !faceReadable(ctx, e.Type, entityPkg.Face(stored)) {
+		if _, declared := def.Faces[stored]; !declared {
 			continue
-		}
-		if !probed {
-			_, present = storedFacesOf(ctx, svc.store, e.ID)
-			probed = true
-		}
-		if !slices.Contains(present, entityPkg.Face(stored)) {
-			continue // no such face on this entity — the common case
 		}
 		// The operator's `label:` when declared, else the coordinate name.
 		// Both are operator-authored config, so neither discloses anything
@@ -1511,6 +1500,19 @@ func (svc affordanceService) computeFaces(
 		return out[i].Face < out[j].Face
 	})
 	return out
+}
+
+// otherFaceGranted reports whether the principal's `type@face` grant admits
+// any declared face of e's type other than the one served. Without one there
+// is nothing to list, so computeFaces skips the family read: a faceless type,
+// or a principal confined to one face, costs no store read.
+func otherFaceGranted(ctx context.Context, def *metamodel.EntityDef, e *entityPkg.Entity) bool {
+	for name := range def.Faces {
+		if name != e.Face.String() && faceReadable(ctx, e.Type, entityPkg.Face(name)) {
+			return true
+		}
+	}
+	return false
 }
 
 // faceRef spells the explicit address of e's face at the stored coordinate:
