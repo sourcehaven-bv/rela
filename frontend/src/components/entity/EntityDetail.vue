@@ -2196,7 +2196,18 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             :on-error="handleSectionEditError"
             :on-verdict-flip="handleVerdictFlip"
             :on-attachment-changed="loadView"
-          />
+          >
+            <template v-if="commentsEnabled" #label-affordance="{ property, index }">
+              <CommentIndicator
+                :entity-type="entityType"
+                :entity-id="servedRef"
+                :anchor="{ kind: 'property', ref: property }"
+                :comments="commentsForProperty(property)"
+                :flip="shouldFlipPopover(memoBuildSectionEditFields(section, entry), index)"
+                @changed="loadComments"
+              />
+            </template>
+          </SectionEditForm>
           <PropertyDisplay
             v-else-if="section.display === 'properties'"
             :properties="mapFieldsToProperties(section.fields)"

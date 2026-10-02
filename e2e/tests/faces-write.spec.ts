@@ -87,13 +87,10 @@ test.describe('Faces: write', () => {
     const draft = `${POL1.id}@${FACE.draft}`;
     await comments.openEntity('policy', draft);
 
-    // A selection comment: field comments are offered only on read-only
-    // rows, and the editor may edit this face's fields.
-    await comments.selectBodyText('Draft wording');
-    await comments.commentOnSelection('Who owns the draft?');
+    await comments.openField('owner');
+    await comments.postFieldComment('Who owns the draft?');
 
-    await comments.openHighlight('Draft wording');
-    await expect(comments.highlightCommentBodies()).toHaveText(['Who owns the draft?']);
+    await expect(comments.fieldCommentBodies()).toHaveText(['Who owns the draft?']);
     expect((await facedApi.listComments('policy', draft)).map((c) => c.body)).toEqual([
       'Who owns the draft?',
     ]);

@@ -187,16 +187,17 @@ the name in `schema.yaml` is the name in a URL, in an `acl.yaml` grant, and in
 a `copies:` address. A type declaring faces stores nothing under the bare
 `POL-1`, so that address names no row of a policy at all.
 
-**The default world is what you get with no `?world=`.** It is not a declared
-world and applies no projection: it serves each entity's single unnamed state,
-which is what a type declaring no faces has. A control is fully visible there.
-A policy is not, because every policy row sits under a face name — reaching one
-in the default world means addressing it as `POL-1@draft`.
-`?world=default` is accepted as an explicit way to ask for the same thing.
+**The default world is what you get with no `?world=`.** This project declares
+worlds, so the default is the one `default_world:` names, `published`. A
+project that declares no worlds gets a generated world named `default`
+instead; beside declared worlds that name means nothing, and `?world=default`
+is refused as an unknown world. A control has no faces of its own, so every
+world serves it.
 
-This is why an unpublished policy is still reachable at all. It is absent from
-`world=published`, and present in `world=editorial`, whose chain names the
-draft.
+An address that names a face, such as `POL-1@draft`, reaches that face in any
+world. This is why an unpublished policy is still reachable at all. It is
+absent from `world=published`, and present in `world=editorial`, whose chain
+names the draft.
 
 ## Writing
 
@@ -355,13 +356,13 @@ face's content. A reader who cannot fetch the draft cannot read its timeline
 either:
 
 ```rela
-api{ path = "/api/v1/_history/policy/POL-1?world=default", as = "reader", status = 404 }
+api{ path = "/api/v1/_history/policy/POL-1@draft", as = "reader", status = 404 }
 ```
 
-That request names the default world explicitly, because this project sets
-`default_world: published`: without the parameter the reader is asking for the
-published face's history, which they may read. The world is what selects the
-face, so the assertion has to name it to be about the draft at all.
+That request names the draft face in the address. The bare `POL-1` would be
+resolved in the default world, `published`, and the reader may read the
+published face's history, so the assertion has to name the face to be about
+the draft at all.
 
 ## Relations belong to a face, or to the entity
 
@@ -1008,12 +1009,12 @@ un-publish anything.
 
 ### Analyze
 
-Analysis deliberately stands outside the projection. It refuses a world rather
-than answering one:
+Analysis deliberately stands outside the projection. It refuses any world but
+the default rather than answering one:
 
 ```rela
 api{
-  path = "/api/v1/_analyze?world=published", as = "editor",
+  path = "/api/v1/_analyze?world=editorial", as = "editor",
   status = 422, error = "https://rela.dev/errors/world_unsupported",
 }
 ```
