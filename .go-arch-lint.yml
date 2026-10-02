@@ -79,6 +79,7 @@ components:
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   calfeed:          { in: internal/calfeed }
+  classification:   { in: internal/classification }
   mailrender:       { in: internal/mailrender }
   mailtemplate:     { in: internal/mailtemplate }
   caldavalias:      { in: internal/caldavalias }
@@ -366,7 +367,12 @@ deps:
       - acl
       - aclaudit
       - aclmap
+      # `rela acl audit` evaluates field visibility per role for the
+      # classification findings (TKT-8UCV32) through the resolver a request
+      # uses. Cycle-free: affordances is a near-leaf importing no wiring.
+      - affordances
       - ai
+      - classification
       - analysis
       - app
       - appbuild
@@ -834,6 +840,13 @@ deps:
     canUse:
       - ximage
       - semaphore
+  # Data classification overlay (classification.yaml, TKT-8UCV32). A leaf with
+  # no internal deps: the CLI hands it a Shape built from the metamodel. Only
+  # cli may depend on it, because classification is descriptive metadata that
+  # changes no runtime behaviour; a server-side import would be the first step
+  # toward it driving behaviour, which belongs in core config instead.
+  # It needs no entry here: yaml is in commonVendors.
+
   # Message model -> branded HTML + text/plain. A leaf in the calfeed sense: no
   # internal deps at all, so it takes a plain map of colour tokens rather than
   # dataentryconfig.ResolvedPalette (which would drag in filter/git/metamodel

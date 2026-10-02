@@ -2,6 +2,7 @@ package aclaudit
 
 import (
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -584,7 +585,7 @@ func TestAudit_DeterministicOrder(t *testing.T) {
 	first := Audit(p, nil, allPerms{})
 	for range 20 {
 		got := Audit(p, nil, allPerms{})
-		if !slices.EqualFunc(got, first, func(a, b Finding) bool { return a == b }) {
+		if !reflect.DeepEqual(got, first) {
 			t.Fatalf("non-deterministic order:\n first=%+v\n got  =%+v", first, got)
 		}
 	}

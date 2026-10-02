@@ -296,7 +296,9 @@ rela acl audit --exit-code        # alias for --fail-on=high
 A finding **below** the threshold never changes the exit code — so
 `--fail-on=high` lets a medium "wildcard write" nudge through without
 breaking the build, while `--fail-on=any` is the strictest gate.
-Findings are always printed regardless of the threshold.
+Findings are always printed regardless of the threshold. The findings
+about labeled data (`C*` rules, from `classification.yaml`) never count
+toward it; see [Data Classification](classification.md#rela-acl-audit).
 
 **For a production deployment, gate CI on `--fail-on=any`** and keep
 the policy clean — the medium/low findings (wildcard sprawl, dead

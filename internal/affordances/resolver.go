@@ -854,7 +854,7 @@ func (r *PolicyResolver) resolveViaDeclarative(
 func (r *PolicyResolver) passes(
 	ctx context.Context, bc *bindingContext, prog *predicate.Program, role string,
 ) bool {
-	if prog == nil {
+	if prog == nil || isStaticGrants(ctx) {
 		return true
 	}
 	// A clause that reads the current user cannot be honored for a caller

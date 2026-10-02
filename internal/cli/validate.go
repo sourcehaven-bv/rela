@@ -95,6 +95,7 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 			fmt.Printf("  ✓ %s are valid\n", item.name)
 		}
 	}
+	hasErrors = reportClassificationValidation(result, hasErrors)
 	if result.MailTemplatesPresent && !hasErrors {
 		//nolint:contextcheck // appbuild.Discover does not take ctx; matches the entity-check path below
 		mailSvc, discoverErr := appbuild.Discover(result.ProjectRoot, script.NewEngine())

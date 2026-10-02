@@ -1981,6 +1981,33 @@ Note that `--check cardinality` on its own only scans the entity types that
 declare a cardinality bound, so it reports an unreadable file only for those
 types. `--check properties` and `--check validations` scan all types.
 
+`rela validate` also lints `classification.yaml` when the file exists. See
+[Data Classification](classification.md).
+
+---
+
+### rela classification
+
+Maintain `classification.yaml`, which records what kind of data each field
+holds. See [Data Classification](classification.md).
+
+```bash
+rela classification sync [--dry-run]
+rela classification lint
+rela classification report
+```
+
+`sync` creates the file or adds new fields as `needs-review`, follows
+renames recorded in `migrations/`, and reports stale entries without
+deleting them. `lint` exits 1 when a field has no entry, is still
+`needs-review`, or no longer exists in the schema. `report` shows inferred
+subjects, the types each subject reaches, and derived labels with the
+fields behind them. None of the commands opens the store.
+
+`rela acl audit` also lists what each role can read of the labeled data
+(`C*` rules, low severity). These findings never change its exit code;
+`--no-classification` leaves them out.
+
 ---
 
 ### rela version
