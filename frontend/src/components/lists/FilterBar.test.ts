@@ -260,7 +260,7 @@ describe('FilterBar — property filters still render as before', () => {
     stubCandidates([])
   })
 
-  it('an enum property renders a native <select> (no regression)', async () => {
+  it('a single-value enum property filters by a multi-select (OR)', async () => {
     const config: ListConfig = {
       entity: 'taak',
       columns: [],
@@ -274,8 +274,16 @@ describe('FilterBar — property filters still render as before', () => {
     const wrapper = mount(FilterBar, { props: { config, entityType, filters: {} } })
     await flushPromises()
 
-    // Native select from the property path, not the relation component.
-    expect(wrapper.find('select').exists()).toBe(true)
+    const select = wrapper.findComponent({ name: 'RlMultiSelect' })
+    expect((select.props('options') as { value: string }[]).map((o) => o.value)).toEqual([
+      'todo',
+      'doing',
+      'done',
+    ])
+    select.vm.$emit('update:modelValue', ['todo', 'doing'])
+    await flushPromises()
+    const emitted = wrapper.emitted('filter')!
+    expect(emitted[emitted.length - 1][0]).toEqual({ status: { value: 'todo,doing', op: 'in' } })
     expect(wrapper.findComponent(EntityTargetSelect).exists()).toBe(false)
   })
 

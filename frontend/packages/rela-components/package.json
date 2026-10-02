@@ -1,0 +1,75 @@
+{
+  "name": "rela-components",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "files": [
+    "dist/lib",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/lib/index.d.ts",
+      "import": "./dist/lib/index.js"
+    },
+    "./styles": "./dist/lib/index.css",
+    "./types": "./src/types/index.ts",
+    "./*.vue": "./src/*.vue",
+    "./*.css": "./src/*.css",
+    "./*": "./src/*.ts"
+  },
+  "module": "./dist/lib/index.js",
+  "types": "./dist/lib/index.d.ts",
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "build:lib": "rm -rf dist/lib && npm run build:types && vite build --config vite.config.lib.ts",
+    "build:types": "vue-tsc -p tsconfig.lib.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:theme": "node scripts/check-theme.mjs",
+    "check:contrast": "node scripts/check-contrast.mjs",
+    "check": "npm run check:theme && npm run check:contrast && npm run check:safe-area && npm run check:forwarding && npm run check:purity && npm run check:motion",
+    "preview": "vite preview",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "generate-icons": "node scripts/generate-icons.mjs",
+    "check:safe-area": "node scripts/check-safe-area.mjs",
+    "check:forwarding": "node scripts/check-forwarding.mjs",
+    "check:purity": "node scripts/check-purity.mjs",
+    "check:motion": "node scripts/check-motion.mjs"
+  },
+  "dependencies": {
+    "@atlaskit/pragmatic-drag-and-drop": "^4.0.0",
+    "@atlaskit/pragmatic-drag-and-drop-auto-scroll": "^3.2.1",
+    "@floating-ui/vue": "^2.0.1",
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "@chromatic-com/storybook": "*",
+    "@milkdown/kit": "^7.22.1",
+    "@storybook/addon-a11y": "^10.6.0",
+    "@storybook/addon-docs": "^10.6.0",
+    "@storybook/addon-onboarding": "^10.6.0",
+    "@storybook/addon-vitest": "^10.6.0",
+    "@storybook/vue3-vite": "^10.6.0",
+    "@types/node": "^24.13.3",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vitest/browser-playwright": "*",
+    "@vitest/coverage-v8": "*",
+    "@vue/tsconfig": "^0.9.1",
+    "lucide-vue-next": "^1.0.0",
+    "playwright": "*",
+    "storybook": "^10.6.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.2",
+    "vue-tsc": "^3.3.11"
+  },
+  "peerDependencies": {
+    "@milkdown/kit": "^7.22.1"
+  }
+}

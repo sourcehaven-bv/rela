@@ -74,8 +74,12 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 // fold with one function, and a prefix holding % or _ needs no escaping.
 //
 // The exclusive upper bound is prefix + ".", "." being the byte after "-".
+//
+// marked_entities is read too: a soft-deleted id may yet come back, so it
+// must not be minted again.
 func buildHighestIDSQL(prefix string) (sqlText string, args []any) {
-	return `SELECT DISTINCT id FROM entities WHERE lower(id) >= lower(?) AND lower(id) < lower(?)`,
+	return `SELECT id FROM entities WHERE lower(id) >= lower(?1) AND lower(id) < lower(?2)
+		UNION SELECT id FROM marked_entities WHERE lower(id) >= lower(?1) AND lower(id) < lower(?2)`,
 		[]any{prefix + "-", prefix + "."}
 }
 
@@ -134,6 +138,15 @@ func (s *Store) renameLocked(
 		newID, oldID).Scan(&taken); err != nil {
 		return fmt.Errorf("sqlitestore: rename %s: %w", oldID, err)
 	}
+	if taken == 0 {
+		held, err := markedIDTaken(ctx, s, newID, oldID)
+		if err != nil {
+			return fmt.Errorf("sqlitestore: rename %s: %w", oldID, err)
+		}
+		if held {
+			taken = 1
+		}
+	}
 	if taken > 0 {
 		return fmt.Errorf("sqlitestore: rename %s to %s: %w", oldID, newID, store.ErrConflict)
 	}
@@ -151,6 +164,9 @@ func (s *Store) renameLocked(
 	toRes, terr := s.write(ctx, `UPDATE relations SET to_id = ? WHERE to_id = ?`, newID, oldID)
 	if terr != nil {
 		return fmt.Errorf("sqlitestore: rename %s relations (to): %w", oldID, terr)
+	}
+	if _, err := s.write(ctx, dropMarkedEdgesSQL, oldID, oldID); err != nil {
+		return fmt.Errorf("sqlitestore: rename %s hidden relations: %w", oldID, err)
 	}
 	if _, err := s.write(ctx,
 		`UPDATE attachments SET entity_id = ? WHERE entity_id = ?`, newID, oldID); err != nil {

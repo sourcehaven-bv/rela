@@ -21,8 +21,7 @@
 // and the world then ranks what is left. A reader granted only
 // `policy@published` under `select: [review, published]` is served the
 // published face — the world is a view onto the part of the graph that is
-// visible to them, not onto the whole graph. The single-entity path and the
-// list path both run that one query, so they cannot disagree.
+// visible to them, not onto the whole graph.
 //
 // The resolver itself still never consults a gate: it cannot, and that is
 // what keeps "same candidates, same prime" true.

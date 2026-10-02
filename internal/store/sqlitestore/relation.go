@@ -12,6 +12,7 @@ import (
 	"modernc.org/sqlite"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -26,6 +27,9 @@ func (s *Store) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.
 		 FROM relations WHERE from_id = ? AND from_face = ? AND rel_type = ? AND to_id = ?`,
 		k.From, string(k.FromFace), k.Type, k.To)
 	r, err := scanRelation(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		r, err = revealedRelation(ctx, s, k)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("sqlitestore: get relation %s: %w", k, store.ErrNotFound)
 	}
@@ -50,6 +54,19 @@ func (s *Store) ListRelations(ctx context.Context, q store.RelationQuery) iter.S
 		}
 		if err := rows.Err(); err != nil {
 			yield(nil, fmt.Errorf("sqlitestore: list relations: %w", err))
+			return
+		}
+		// Closed before the next query: inside a Tx both share one connection.
+		_ = rows.Close()
+		revealed, revealErr := revealedRelations(ctx, s, q)
+		if revealErr != nil {
+			yield(nil, revealErr)
+			return
+		}
+		for _, r := range revealed {
+			if !yield(r, nil) {
+				return
+			}
 		}
 	}
 }
@@ -203,7 +220,7 @@ func (s *Store) CreateRelation(
 		(from_id, from_face, rel_type, to_id, properties, content, updated_at,
 		 last_edited_by_user, last_edited_by_tool, rel_record_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT next FROM rel_record_seq WHERE id = 1))`,
-		k.From, string(k.FromFace), k.Type, k.To, props, content, now.Format(timeFmt),
+		k.From, string(k.FromFace), k.Type, k.To, props, content, sqlitedb.FormatTime(now),
 		editorUser, editorTool); err != nil {
 		if isUniqueViolation(err) {
 			return nil, fmt.Errorf("sqlitestore: create relation: %w", store.ErrConflict)
@@ -239,7 +256,7 @@ func (s *Store) UpdateRelation(
 	res, err := s.write(ctx, `UPDATE relations SET properties = ?, content = ?, updated_at = ?,
 		    last_edited_by_user = ?, last_edited_by_tool = ?
 		WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`,
-		props, data.Content, time.Now().UTC().Format(timeFmt), editorUser, editorTool,
+		props, data.Content, sqlitedb.FormatTime(time.Now()), editorUser, editorTool,
 		k.From, k.Type, k.To, string(k.FromFace))
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: update relation: %w", err)
@@ -303,7 +320,7 @@ func scanRelation(sc scanner) (*entity.Relation, error) {
 	if r.Properties, err = unmarshalProps(props); err != nil {
 		return nil, fmt.Errorf("sqlitestore: relation %s--%s->%s: %w", r.From, r.Type, r.To, err)
 	}
-	t, err := time.Parse(timeFmt, updated)
+	t, err := parseTime(updated)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: parse relation updated_at: %w", err)
 	}

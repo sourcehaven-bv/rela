@@ -32,7 +32,7 @@ test.describe('Duplicate entity', () => {
     // both outgoing, so both are listed and both default to checked.
     await expect(entity.duplicateChoiceCheckbox('tagged')).toBeChecked();
     await expect(entity.duplicateChoiceCheckbox('blocks')).toBeChecked();
-    await expect(entity.duplicateChoiceCount('tagged')).toHaveText('1');
+    await entity.expectDuplicateChoiceCount('tagged', 1);
 
     // AC7: uncheck one type; none of its edges may reach the copy.
     await entity.duplicateChoiceCheckbox('blocks').uncheck();

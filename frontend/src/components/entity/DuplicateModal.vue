@@ -22,7 +22,7 @@
  * 3. `DynamicForm` mounts under `v-if`, never `v-show` — unmounting aborts its
  *    in-flight dry-run rather than leaving it POSTing behind a closed dialog.
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import DynamicForm from '../forms/DynamicForm.vue'
 import { useModalStack } from '@/composables/modalStack'
 import { provideInlineCreateDepth } from '@/composables/useInlineCreate'
@@ -38,6 +38,11 @@ import {
   type RelationChoice,
 } from './duplicatePrefill'
 import type { Entity, RelationEntry } from '@/types'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlButtonGroup from 'rela-components/components/common/RlButtonGroup.vue'
+import RlModal from 'rela-components/components/overlay/RlModal.vue'
+import RlCheckbox from 'rela-components/components/form/RlCheckbox.vue'
+import RlText from 'rela-components/components/common/RlText.vue'
 
 const props = defineProps<{
   /**
@@ -80,15 +85,12 @@ const selected = ref<string[]>([])
 const prefill = ref<DuplicatePrefill | null>(null)
 const loadError = ref('')
 
-const dialogRef = ref<HTMLElement | null>(null)
-const previouslyFocused = ref<HTMLElement | null>(null)
 const formRef = ref<{
   isDirty: () => boolean
   isSaving: () => boolean
   submit: () => void
 } | null>(null)
 
-const titleId = `duplicate-title-${Math.random().toString(36).slice(2, 10)}`
 
 // The address of the source row: its face, not the bare id, which a world
 // would re-resolve to a different face (BUG-FYEEVX).
@@ -194,25 +196,9 @@ function confirmChoices() {
 }
 
 // The host mounts this under `v-if`, so the component exists only while the
-// dialog is open: mount IS open and unmount IS close. A `watch` on `show` was
-// the wrong seam — the v-if tears the component down before the watcher can
-// observe the transition, so the close branch never ran and focus was never
-// returned to the triggering control.
-onMounted(async () => {
-  previouslyFocused.value = document.activeElement as HTMLElement | null
-  // Focus BEFORE the fetch, not after. Escape is bound to the dialog element
-  // (deliberately, so it cannot reach past this dialog), which means it only
-  // works once focus is inside — and the loading phase is exactly when a user
-  // wants out of a slow or hung read.
-  await nextTick()
-  dialogRef.value?.focus()
-  await loadRelations()
-})
-
-onBeforeUnmount(() => {
-  previouslyFocused.value?.focus?.()
-  previouslyFocused.value = null
-})
+// dialog is open: mount IS open. A `watch` on `show` was the wrong seam — the
+// v-if tears the component down before the watcher can observe the transition.
+onMounted(loadRelations)
 
 async function requestClose() {
   if (formRef.value?.isSaving()) return
@@ -234,12 +220,13 @@ function handleCreated(entity: Entity) {
 
 // Bound to the dialog rather than `document`, so the host page's handlers stay
 // untouched and these cannot reach past this dialog.
+/*
+ * Only the submit accelerator is ours. Escape, the focus trap, the scroll
+ * lock and the overlay stack are RlModal's — it registers with the shared
+ * stack, which is what stops this dialog and a confirm raised from inside it
+ * both reacting to one Escape press.
+ */
 function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    e.stopPropagation()
-    void requestClose()
-    return
-  }
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && phase.value === 'form') {
     e.preventDefault()
     e.stopPropagation()
@@ -249,200 +236,120 @@ function handleKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div class="modal-overlay" @click.self="requestClose">
-      <div
-        ref="dialogRef"
-        class="modal duplicate-modal"
-        role="dialog"
-        aria-modal="true"
-        :aria-labelledby="titleId"
-        tabindex="-1"
-        @keydown="handleKeydown"
-      >
-        <header class="duplicate-header">
-          <h2 :id="titleId">Duplicate {{ typeLabel }}</h2>
-          <button type="button" class="close-btn" aria-label="Close" @click="requestClose">
-            &times;
-          </button>
-        </header>
+  <!--
+    RlModal owns the scrim, panel, header, close button, focus trap, Escape
+    and the scrolling body. `layer` puts this under a discard-confirm raised
+    from inside it; both teleport to body, so equal z-index would hide the
+    confirm behind this dialog.
+  -->
+  <RlModal
+    :open="true"
+    :title="`Duplicate ${typeLabel}`"
+    size="lg"
+    :layer="900"
+    panel-class="duplicate-modal"
+    @close="requestClose"
+    @keydown="handleKeydown"
+  >
+    <template v-if="phase === 'loading'">
+      <RlText as="p" tone="muted">Loading relations…</RlText>
+    </template>
 
-        <div class="duplicate-body">
-          <template v-if="phase === 'loading'">
-            <p class="duplicate-status">Loading relations…</p>
-            <div class="duplicate-actions">
-              <button type="button" class="btn" @click="requestClose">Cancel</button>
-            </div>
-          </template>
+    <template v-else-if="phase === 'failed'">
+      <RlText as="p" tone="muted">
+        Could not load this entity's relations, so a copy would be missing them.
+      </RlText>
+      <RlText as="p" size="sm" tone="muted">{{ loadError }}</RlText>
+    </template>
 
-          <div v-else-if="phase === 'failed'" class="duplicate-status duplicate-error">
-            <p>Could not load this entity's relations, so a copy would be missing them.</p>
-            <p class="duplicate-error-detail">{{ loadError }}</p>
-            <div class="duplicate-actions">
-              <button type="button" class="btn" @click="requestClose">Cancel</button>
-              <button type="button" class="btn btn-primary" @click="loadRelations">
-                Try again
-              </button>
-            </div>
-          </div>
+    <template v-else-if="phase === 'choosing'">
+      <RlText v-if="choices.length === 0" as="p" tone="muted">
+        This {{ typeLabel.toLowerCase() }} has no relations to carry over.
+      </RlText>
 
-          <template v-else-if="phase === 'choosing'">
-            <p v-if="choices.length === 0" class="duplicate-status">
-              This {{ typeLabel.toLowerCase() }} has no relations to carry over.
-            </p>
+      <template v-else>
+        <RlText as="p" tone="muted">Choose which relations the copy should keep.</RlText>
 
-            <template v-else>
-              <p class="duplicate-intro">Choose which relations the copy should keep.</p>
+        <fieldset v-if="outgoingChoices.length" class="duplicate-group">
+          <legend>Outgoing</legend>
+          <RlCheckbox
+            v-for="c in outgoingChoices"
+            :key="c.key"
+            :model-value="selected.includes(c.key)"
+            :label="`${relationLabel(c.key)} (${c.count})`"
+            @update:model-value="toggle(c.key)"
+          />
+        </fieldset>
 
-              <fieldset v-if="outgoingChoices.length" class="duplicate-group">
-                <legend>Outgoing</legend>
-                <label v-for="c in outgoingChoices" :key="c.key" class="duplicate-choice">
-                  <input
-                    type="checkbox"
-                    :checked="selected.includes(c.key)"
-                    @change="toggle(c.key)"
-                  />
-                  <span class="duplicate-choice-label">{{ relationLabel(c.key) }}</span>
-                  <span class="duplicate-count">{{ c.count }}</span>
-                </label>
-              </fieldset>
+        <fieldset v-if="incomingChoices.length" class="duplicate-group">
+          <legend>Incoming</legend>
+          <RlCheckbox
+            v-for="c in incomingChoices"
+            :key="c.key"
+            :model-value="selected.includes(c.key)"
+            :label="`${relationLabel(c.key)} (${c.count})`"
+            @update:model-value="toggle(c.key)"
+          />
+        </fieldset>
+      </template>
+    </template>
 
-              <fieldset v-if="incomingChoices.length" class="duplicate-group">
-                <legend>Incoming</legend>
-                <label v-for="c in incomingChoices" :key="c.key" class="duplicate-choice">
-                  <input
-                    type="checkbox"
-                    :checked="selected.includes(c.key)"
-                    @change="toggle(c.key)"
-                  />
-                  <span class="duplicate-choice-label">{{ relationLabel(c.key) }}</span>
-                  <span class="duplicate-count">{{ c.count }}</span>
-                </label>
-              </fieldset>
-            </template>
+    <template v-else>
+      <ul v-if="omittedNotices.length" class="duplicate-omitted">
+        <li v-for="o in omittedNotices" :key="o.property">
+          <strong>{{ o.property }}</strong> was not copied ({{ omittedReasonLabel(o.reason) }})
+        </li>
+      </ul>
 
-            <div class="duplicate-actions">
-              <button type="button" class="btn" @click="requestClose">Cancel</button>
-              <button type="button" class="btn btn-primary" @click="confirmChoices">
-                Continue
-              </button>
-            </div>
-          </template>
+      <!-- v-if, not v-show: see the component doc. -->
+      <DynamicForm
+        v-if="prefill"
+        ref="formRef"
+        :form-id="formId"
+        embedded
+        :embedded-world="copyFace ? undefined : world"
+        :embedded-face="copyFace || undefined"
+        :embedded-prefill="prefill"
+        @inline-created="handleCreated"
+        @inline-cancelled="requestClose"
+      />
+    </template>
 
-          <template v-else>
-            <ul v-if="omittedNotices.length" class="duplicate-omitted">
-              <li v-for="o in omittedNotices" :key="o.property">
-                <strong>{{ o.property }}</strong> was not copied ({{
-                  omittedReasonLabel(o.reason)
-                }})
-              </li>
-            </ul>
-
-            <!-- v-if, not v-show: see the component doc. -->
-            <DynamicForm
-              v-if="prefill"
-              ref="formRef"
-              :form-id="formId"
-              embedded
-              :embedded-world="copyFace ? undefined : world"
-              :embedded-face="copyFace || undefined"
-              :embedded-prefill="prefill"
-              @inline-created="handleCreated"
-              @inline-cancelled="requestClose"
-            />
-          </template>
-        </div>
-      </div>
-    </div>
-  </Teleport>
+    <!-- The form phase carries DynamicForm's own buttons. -->
+    <template v-if="phase !== 'form'" #actions>
+      <RlButtonGroup>
+        <RlButton variant="secondary" @click="requestClose">Cancel</RlButton>
+        <RlButton v-if="phase === 'failed'" variant="primary" @click="loadRelations">
+          Try again
+        </RlButton>
+        <RlButton v-else-if="phase === 'choosing'" variant="primary" @click="confirmChoices">
+          Continue
+        </RlButton>
+      </RlButtonGroup>
+    </template>
+  </RlModal>
 </template>
 
 <style scoped>
-/* Below ConfirmModal's overlay (1000 in App.vue): both Teleport to body, so at
-   equal z-index the later-mounted one wins on DOM order, which would hide the
-   discard-confirm behind this dialog. */
-.modal-overlay {
-  z-index: 900;
-}
-
-.duplicate-modal {
-  width: min(760px, 92vw);
-  max-width: none;
-  max-height: 88vh;
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-}
-
-.duplicate-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  padding: var(--space-lg) var(--space-lg) 0;
-}
-
-.duplicate-body {
-  padding: var(--space-lg);
-  overflow-y: auto;
-}
-
-.duplicate-intro {
-  margin: 0 0 var(--space-md);
-  color: var(--text-secondary);
-}
-
-.duplicate-status {
-  color: var(--text-secondary);
-  margin: 0;
-}
-
-.duplicate-error-detail {
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-}
-
+/* Only the relation groupings are rela's; the panel, header, body scroll and
+   footer are RlModal's. */
 .duplicate-group {
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: var(--space-md);
-  margin: 0 0 var(--space-md);
+  border: 1px solid var(--rl-color-border);
+  border-radius: var(--rl-radius-md);
+  padding: var(--rl-space-3);
+  margin: 0 0 var(--rl-space-3);
 }
 
 .duplicate-group legend {
-  padding: 0 var(--space-xs);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-}
-
-.duplicate-choice {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-xs) 0;
-  cursor: pointer;
-}
-
-.duplicate-choice-label {
-  flex: 1;
-}
-
-.duplicate-count {
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  padding: 0 var(--rl-space-1);
+  font-size: var(--rl-font-size-sm);
+  color: var(--rl-color-text-muted);
 }
 
 .duplicate-omitted {
-  margin: 0 0 var(--space-md);
-  padding-left: var(--space-lg);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-}
-
-.duplicate-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-sm);
-  margin-top: var(--space-lg);
+  margin: 0 0 var(--rl-space-3);
+  padding-left: var(--rl-space-5);
+  color: var(--rl-color-text-muted);
+  font-size: var(--rl-font-size-sm);
 }
 </style>

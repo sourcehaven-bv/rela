@@ -89,13 +89,13 @@ func (r *UnrestrictedReader) WithWorld(w World) *UnrestrictedReader {
 // address the grammar refuses misses. Only the gate and the redaction are
 // absent.
 func (r *UnrestrictedReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
-	return r.res.addressAny(ctx, r.world, addr)
+	return r.res.addressAny(ctx, worldIn(ctx, r.world), addr)
 }
 
 // WriteTarget resolves addr to the face a write edits, through the allow-all
 // resolver in the reader's world. See [ScriptReader.WriteTarget].
 func (r *UnrestrictedReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
-	return r.res.writeTargetAny(ctx, r.world, addr)
+	return r.res.writeTargetAny(ctx, worldIn(ctx, r.world), addr)
 }
 
 // Family reports every stored face of the entity id, reading headers only.
@@ -107,7 +107,7 @@ func (r *UnrestrictedReader) Family(ctx context.Context, id string) (Family, boo
 // ResolveHeaders answers a batch of addresses from headers only. See
 // [ScriptReader.ResolveHeaders].
 func (r *UnrestrictedReader) ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]ResolvedHeader {
-	return r.res.ResolveHeaders(ctx, r.world, refs)
+	return r.res.ResolveHeaders(ctx, worldIn(ctx, r.world), refs)
 }
 
 // ListEntities implements the script read surface: straight pass-through.

@@ -26,6 +26,13 @@ describe('transforms api', () => {
     expect(url).toBe('/api/v1/tickets/TKT-001/_export?transform=pdf')
   })
 
+  it('entityExportUrl carries the world when one is given', () => {
+    registerEntityPlurals(new Map([['policy', 'policys']]))
+    expect(entityExportUrl('policy', 'POL-1@published', 'pdf', 'published')).toBe(
+      '/api/v1/policys/POL-1%40published/_export?transform=pdf&world=published'
+    )
+  })
+
   it('entityExportUrl encodes special characters', () => {
     registerEntityPlurals(new Map([['ticket', 'tickets']]))
     const url = entityExportUrl('ticket', 'TKT 1&x', 'pdf')

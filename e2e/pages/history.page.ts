@@ -102,7 +102,7 @@ export class HistoryPage extends BasePage {
   /** Assert no error state is rendered (malformed params must degrade
    *  silently to defaults rather than surface an error). */
   async expectNoError() {
-    await expect(this.page.locator(".error-state")).toHaveCount(0);
+    await expect(this.page.locator(".rl-status-region--error")).toHaveCount(0);
   }
 
   /** Reload the page and wait for the view to come back. */
@@ -153,7 +153,7 @@ export class HistoryPage extends BasePage {
   /** The "version history is not available for this deployment" state (fsstore). */
   async expectUnsupported() {
     await expect(
-      this.page.locator(".loading-state", { hasText: /not available/i }),
+      this.page.locator(".rl-status-region--info", { hasText: /not available/i }),
     ).toBeVisible();
   }
 }

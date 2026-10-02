@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import CopyMenu from './CopyMenu.vue'
 import type { CopyOffer } from '@/types'
 
@@ -24,6 +24,17 @@ function offer(over: Partial<CopyOffer> = {}): CopyOffer {
 }
 
 describe('CopyMenu', () => {
+  // The menu runs on RlMenu, which teleports its panel to `<body>` so a
+  // scrolling ancestor cannot clip it. The trigger is in the wrapper; the
+  // items are not.
+  beforeEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  function menuItems() {
+    return Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+  }
+
   it('renders ONE allowed offer as a single button carrying its label', () => {
     const w = mount(CopyMenu, { props: { offers: [offer()] } })
     const btn = w.get('button')
@@ -44,16 +55,17 @@ describe('CopyMenu', () => {
       offer({ name: 'translate-nl', label: 'Vertaal naar Nederlands' }),
       offer({ name: 'translate-fr', label: 'Traduire en français' }),
     ]
-    const w = mount(CopyMenu, { props: { offers } })
+    const w = mount(CopyMenu, { props: { offers }, attachTo: document.body })
 
     // Closed: exactly one control, the disclosure.
     expect(w.findAll('button')).toHaveLength(1)
     const toggle = w.get('button')
+    // ARIA defines `true` as a synonym for `menu`; RlMenu names the role it
+    // actually opens.
     expect(toggle.attributes('aria-haspopup')).toBe('menu')
 
     await toggle.trigger('click')
-    const items = w.findAll('[role="menuitem"]')
-    expect(items.map((i) => i.text())).toEqual([
+    expect(menuItems().map((i) => i.textContent?.trim())).toEqual([
       'Vertaal naar Nederlands',
       'Traduire en français',
     ])
@@ -115,10 +127,11 @@ describe('CopyMenu', () => {
       offer({ name: 'a', label: 'A' }),
       offer({ name: 'b', label: 'B' }),
     ]
-    const w = mount(CopyMenu, { props: { offers } })
+    const w = mount(CopyMenu, { props: { offers }, attachTo: document.body })
     await w.get('button').trigger('click')
-    expect(w.findAll('[role="menuitem"]')).toHaveLength(2)
-    await w.get('[role="menuitem"]').trigger('click')
-    expect(w.findAll('[role="menuitem"]')).toHaveLength(0)
+    expect(menuItems()).toHaveLength(2)
+    menuItems()[0].click()
+    await flushPromises()
+    expect(menuItems()).toHaveLength(0)
   })
 })

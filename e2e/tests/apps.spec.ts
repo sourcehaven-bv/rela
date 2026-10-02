@@ -190,7 +190,7 @@ test.describe('Custom apps: the embedded markdown editor', () => {
     // The body opens on its heading, so the toolbar should say so before
     // anything is pressed.
     await app.clickEditorLine('Title');
-    expect(await app.editorCommandActive('h1')).toBe(true);
+    await app.expectEditorCommandActive('h1', true);
     // Pressing an active block command runs its inverse, so the button toggles
     // rather than no-opping on a block that is already that type.
     await app.clickEditorCommand('h1');
@@ -207,8 +207,8 @@ test.describe('Custom apps: the embedded markdown editor', () => {
     await app.open('e2e-demo');
     await app.waitForEditor();
     await app.clickEditorLine('one');
-    expect(await app.editorCommandActive('bulletList')).toBe(true);
-    expect(await app.editorCommandUnavailable('h1')).toBe(true);
+    await app.expectEditorCommandActive('bulletList', true);
+    await app.expectEditorCommandUnavailable('h1', true);
     expect(await app.editorCommandHasNativeDisabled('h1')).toBe(false);
   });
 

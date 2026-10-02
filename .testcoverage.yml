@@ -90,6 +90,8 @@ override:
 exclude:
   paths:
     - ^cmd/rela                # main entry point
+    - ^tools/seqtrace/[^/]+\.go$         # tracing runtime; only runs inside rewrite's TestDemo subprocess
+    - ^tools/seqtrace/cmd      # diagnostic CLI entry point
     - ^internal/testutil       # test helpers
     - ^internal/tracer/tracertest # test helper (tracer.New for fixtures)
     - ^internal/store/storetest # shared conformance test kit (exercised via backends)

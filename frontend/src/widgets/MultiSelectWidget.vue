@@ -82,10 +82,10 @@ function onUpdate(value: string[]) {
 }
 
 .empty-placeholder {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .long-fallback {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 </style>

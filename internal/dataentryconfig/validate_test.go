@@ -2288,6 +2288,58 @@ func TestValidateNavigation_Permission(t *testing.T) {
 	}
 }
 
+func TestValidateNavigation_Open(t *testing.T) {
+	meta := testMetamodel()
+
+	cases := []struct {
+		name    string
+		nav     []NavigationEntry
+		wantErr string // substring; "" means expect success
+	}{
+		{"page", []NavigationEntry{{Label: "All", List: "tickets", Open: "page"}}, ""},
+		{"flyout on a list", []NavigationEntry{{Label: "Mine", List: "tickets", Open: "flyout"}}, ""},
+		{
+			"flyout inside a group",
+			[]NavigationEntry{{Group: "Work", Items: []NavigationEntry{
+				{Label: "Mine", List: "tickets", Open: "flyout"},
+			}}},
+			"",
+		},
+		{
+			"flyout on a non-list entry",
+			[]NavigationEntry{{Label: "Settings", Settings: true, Open: "flyout"}},
+			`navigation "Settings": open: flyout is only supported on a list entry`,
+		},
+		{
+			"unknown value",
+			[]NavigationEntry{{Label: "All", List: "tickets", Open: "modal"}},
+			`navigation "All": unknown open "modal"`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Lists:      map[string]List{"tickets": {EntityType: "ticket"}},
+				Navigation: tc.nav,
+			}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("expected success, got error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected error to contain %q, got: %s", tc.wantErr, err.Error())
+			}
+		})
+	}
+}
+
 // TestValidateNavigation_DocumentInGroup pins that the document check recurses
 // into groups like the list/kanban/action checks do.
 func TestValidateNavigation_DocumentInGroup(t *testing.T) {
@@ -3563,6 +3615,143 @@ func TestValidateDocuments_NameContainingExportAllowed(t *testing.T) {
 			}
 			if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
 				t.Errorf("document %q should be allowed, got: %v", name, err)
+			}
+		})
+	}
+}
+
+func TestValidateNavigation_Status(t *testing.T) {
+	meta := testMetamodel()
+	rule := func(tone, label string) NavStatusRule { return NavStatusRule{Tone: tone, Label: label} }
+
+	cases := []struct {
+		name    string
+		nav     []NavigationEntry
+		wantErr string // substring; "" means expect success
+	}{
+		{"on a list", []NavigationEntry{{Label: "Mine", List: "tickets",
+			Status: []NavStatusRule{rule("error", "{count} late"), rule("new", "{count} open")}}}, ""},
+		{
+			"inside a group",
+			[]NavigationEntry{{Group: "Work", Items: []NavigationEntry{
+				{Label: "Mine", List: "tickets", Status: []NavStatusRule{rule("warning", "{count} soon")}},
+			}}},
+			"",
+		},
+		{
+			"on a non-list entry",
+			[]NavigationEntry{{Label: "Settings", Settings: true, Status: []NavStatusRule{rule("info", "x")}}},
+			`navigation "Settings": status is only supported on a list or page entry`,
+		},
+		{
+			"unknown tone",
+			[]NavigationEntry{{Label: "Mine", List: "tickets", Status: []NavStatusRule{rule("danger", "x")}}},
+			`navigation "Mine": status[0]: unknown tone "danger"`,
+		},
+		{
+			"missing label",
+			[]NavigationEntry{{Label: "Mine", List: "tickets", Status: []NavStatusRule{rule("error", " ")}}},
+			`navigation "Mine": status[0]: label is required`,
+		},
+		{
+			"too many rules",
+			[]NavigationEntry{{Label: "Mine", List: "tickets", Status: []NavStatusRule{
+				rule("error", "a"), rule("warning", "b"), rule("info", "c"), rule("new", "d"),
+			}}},
+			`navigation "Mine": status has 4 rules (at most 3)`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				Lists:      map[string]List{"tickets": {EntityType: "ticket"}},
+				Navigation: tc.nav,
+			}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("expected success, got error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("error %q does not contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestNavStatusEntries_KeysFollowTheTree(t *testing.T) {
+	status := []NavStatusRule{{Tone: "new", Label: "x"}}
+	cfg := &Config{Navigation: []NavigationEntry{
+		{Label: "Home", Dashboard: true},
+		{Label: "Top", List: "a", Status: status},
+		{Group: "Work", Items: []NavigationEntry{
+			{Label: "Plain", List: "b"},
+			{Label: "Mine", List: "c", Status: status},
+		}},
+	}}
+
+	got := NavStatusEntries(cfg)
+	var keys []string
+	for _, e := range got {
+		keys = append(keys, e.Key+"="+e.Entry.Label)
+	}
+	want := []string{"1=Top", "2.1=Mine"}
+	if strings.Join(keys, ",") != strings.Join(want, ",") {
+		t.Errorf("keys = %v, want %v", keys, want)
+	}
+	if id := NavStatusConditionID("2.1", 0); id != "2.1#0" {
+		t.Errorf("condition id = %q", id)
+	}
+}
+
+func TestValidateConfig_ListFaceColumn(t *testing.T) {
+	tests := []struct {
+		name    string
+		faces   map[string]metamodel.FaceDef
+		column  ListColumn
+		wantErr string
+	}{
+		{
+			name:   "faced type accepts a face column",
+			faces:  map[string]metamodel.FaceDef{"concept": {}, "vastgesteld": {}},
+			column: ListColumn{Face: true, Label: "Status"},
+		},
+		{
+			name:    "type without faces refuses it",
+			column:  ListColumn{Face: true},
+			wantErr: `column[0] is a face column, but entity "ticket" declares no faces`,
+		},
+		{
+			name:    "face with a property is refused",
+			faces:   map[string]metamodel.FaceDef{"concept": {}},
+			column:  ListColumn{Face: true, Property: "title"},
+			wantErr: "column[0] sets face together with property or relation",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := testMetamodel()
+			ticket := meta.Entities["ticket"]
+			ticket.Faces = tc.faces
+			meta.Entities["ticket"] = ticket
+			cfg := &Config{Lists: map[string]List{
+				"test": {EntityType: "ticket", Columns: []ListColumn{tc.column}},
+			}}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
 			}
 		})
 	}

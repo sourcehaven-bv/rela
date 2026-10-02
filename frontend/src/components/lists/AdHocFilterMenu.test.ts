@@ -124,7 +124,11 @@ describe('AdHocFilterMenu', () => {
     valueInput.element.value = 'foo'
     await valueInput.trigger('input')
 
-    await wrapper.find('.btn-primary').trigger('click')
+    // Found by its label rather than a variant class, so restyling the button
+    // cannot make this reach the wrong control (or nothing).
+    const apply = wrapper.findAll('button').find((b) => b.text().trim() === 'Apply')
+    expect(apply).toBeDefined()
+    await apply!.trigger('click')
 
     const emitted = wrapper.emitted('apply')
     expect(emitted).toHaveLength(1)

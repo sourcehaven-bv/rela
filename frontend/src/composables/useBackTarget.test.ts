@@ -49,6 +49,32 @@ describe('useBackTarget', () => {
       })
     })
 
+    it('returns to the page tab named by from_page, ahead of from', () => {
+      mockRouteQuery.value = { from_page: 'tickets/table', from: 'all_tasks' }
+      const target = useBackTarget()
+      expect(target.value).toEqual({
+        to: '/p/tickets/table',
+        labelHint: { kind: 'page', id: 'tickets' },
+      })
+    })
+
+    it('returns to an entity page tab named by from_page', () => {
+      mockRouteQuery.value = { from_page: 'topic/TOP-1/board', from: 'all_tasks' }
+      expect(useBackTarget().value).toEqual({
+        to: '/p/topic/TOP-1/board',
+        labelHint: { kind: 'page', id: 'topic' },
+      })
+    })
+
+    it.each(['//evil.com', 'tickets', 'tickets/table/x/y', '../x/y', 'Tickets/table', 'topic/../x/board'])(
+      'ignores a malformed from_page %s',
+      (value) => {
+        mockRouteQuery.value = { from_page: value, from: 'all_tasks' }
+        const target = useBackTarget()
+        expect(target.value?.to).toBe('/list/all_tasks')
+      },
+    )
+
     it('falls through to from when return_to is unsafe (open-redirect guard)', () => {
       mockRouteQuery.value = { return_to: '//evil.com', from: 'all_tasks' }
       const target = useBackTarget()

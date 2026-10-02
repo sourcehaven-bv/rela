@@ -45,6 +45,21 @@ export class EntityPage extends BasePage {
   }
 
   /** Assert the document body contains the given text. */
+  /**
+   * The Edit control still reads as "Edit" to assistive tech.
+   *
+   * The shortcut hint sits INSIDE the button, so it contributes to the
+   * accessible name. Were it to lead rather than trail, every `name: /^Edit/`
+   * locator in this suite would start matching "E Edit" instead.
+   */
+  async expectEditNameStartsWithEdit() {
+    const byRole = this.page
+      .getByRole('button', { name: /^Edit/ })
+      .or(this.page.getByRole('link', { name: /^Edit/ }))
+      .first();
+    await expect(byRole).toBeVisible();
+  }
+
   async expectDocumentBodyContains(text: string) {
     await expect(this.documentBody).toContainText(text);
   }
@@ -132,17 +147,77 @@ export class EntityPage extends BasePage {
       .first();
   }
 
-  /** The edit control SectionEditForm renders for a property. Its id is
-   *  assigned by the form (`section-edit-<property>`), so this addresses the
-   *  widget's own element rather than a wrapper. */
-  private sectionFieldControl(heading: string, property: string) {
-    return this.sectionByHeading(heading).locator(`#section-edit-${property}`);
+  /** A property's row in a section, marked by SectionEditForm. */
+  private sectionFieldRow(heading: string, property: string) {
+    return this.sectionByHeading(heading).locator(`.property-row[data-property="${property}"]`);
   }
 
-  /** Assert a property renders as a TEXTAREA — the load-bearing widget-override
+  /** The edit control for a property. Its id (`inline-<property>`) is set on
+   *  the widget's own element rather than a wrapper. A toggle is live all the
+   *  time; any other value shows its control only once opened. */
+  private sectionFieldControl(heading: string, property: string) {
+    return this.sectionFieldRow(heading, property).locator(`#inline-${property}`);
+  }
+
+  /** Assert every field in a section keeps its label and value inside its
+   *  own grid cell: the value column has width, and neither runs past the
+   *  cell edge into the neighbouring field (BUG-S67G88). Polled, so a layout
+   *  that settles after the first paint is measured once it has settled.
+   *  Geometry, so e2e-only. */
+  async expectSectionFieldsFitTheirCells(heading: string) {
+    const rows = this.sectionByHeading(heading).locator('.property-row');
+    await expect(rows.first()).toBeVisible();
+    await expect(async () => {
+      const offenders = await rows.evaluateAll((els) =>
+        els.flatMap((row) => {
+          const name = row.getAttribute('data-property');
+          const label = row.querySelector('.rl-detail-field__label');
+          const value = row.querySelector('.rl-detail-field__value');
+          if (!label || !value) return [`${name}: missing label or value`];
+          const cell = row.getBoundingClientRect();
+          const problems: string[] = [];
+          if (value.getBoundingClientRect().width < 1) problems.push('value has no width');
+          if (value.getBoundingClientRect().right > cell.right + 0.5) problems.push('value runs past its cell');
+          if (value.scrollWidth > value.clientWidth + 1) problems.push('value content overflows');
+          if (label.getBoundingClientRect().right > cell.right + 0.5) problems.push('label runs past its cell');
+          return problems.map((p) => `${name}: ${p}`);
+        })
+      );
+      expect(offenders).toEqual([]);
+    }).toPass();
+  }
+
+  /** Width in px of a field's grid cell. Lets a layout test prove it is
+   *  measuring the narrow case it means to, rather than passing because the
+   *  cells happen to be wide. */
+  async sectionFieldCellWidth(heading: string, property: string): Promise<number> {
+    const box = await this.sectionFieldRow(heading, property).boundingBox();
+    if (!box) throw new Error(`no row for ${property} in ${heading}`);
+    return box.width;
+  }
+
+  /** Open a text field's inline editor and return the editor's box and its
+   *  cell's, so a test can check the editor keeps its minimum width where
+   *  there is room and stays inside a narrow cell (BUG-S67G88). Closes the
+   *  editor again with Escape, which drops the edit. */
+  async measureSectionFieldEditor(heading: string, property: string) {
+    const row = this.sectionFieldRow(heading, property);
+    await row.locator('.rl-inline-edit__trigger').click();
+    const editor = row.locator('.inline-property-control');
+    await expect(editor).toBeVisible();
+    const [editorBox, cellBox] = await Promise.all([editor.boundingBox(), row.boundingBox()]);
+    await this.page.keyboard.press('Escape');
+    await expect(editor).toBeHidden();
+    if (!editorBox || !cellBox) throw new Error(`no box for ${property} editor`);
+    return { editorWidth: editorBox.width, editorRight: editorBox.x + editorBox.width, cellRight: cellBox.x + cellBox.width };
+  }
+
+  /** Assert a property edits as a TEXTAREA — the load-bearing widget-override
    *  case (TKT-3R7RF3). A string property's type default is TextWidget's
-   *  `<input>`, so a textarea here can only come from `widget: textarea`. */
+   *  `<input>`, so a textarea here can only come from `widget: textarea`. The
+   *  value reads as text until clicked, so this opens it first. */
   async expectSectionFieldIsTextarea(heading: string, property: string) {
+    await this.sectionFieldRow(heading, property).locator('.rl-inline-edit__trigger').click();
     const control = this.sectionFieldControl(heading, property);
     await expect(control).toBeVisible();
     await expect(control).toHaveJSProperty('tagName', 'TEXTAREA');
@@ -230,11 +305,12 @@ export class EntityPage extends BasePage {
   }
 
   /** Assert the first inline-edit list row exposes an ENABLED control, proving
-   *  `render: input` reaches the edit arm rather than a disabled widget. */
+   *  `render: input` reaches the edit arm rather than a disabled widget. The
+   *  row's fields are enums, which are live pickers. */
   async expectListSectionRowControlEnabled() {
     const row = this.page.locator('.entity-list .list-item .section-edit-form').first();
     await expect(row).toBeVisible();
-    const control = row.locator('select, input').first();
+    const control = row.locator('.rl-option-select__trigger').first();
     await expect(control).toBeVisible();
     await expect(control).toBeEnabled();
   }
@@ -471,11 +547,15 @@ export class EntityPage extends BasePage {
     return this.page.locator('.duplicate-modal');
   }
 
-  /** One relation-type row in the picker, addressed by its visible label. */
+  /**
+   * One relation-type row in the picker, addressed by its visible label.
+   * RlCheckbox puts the label and its count in one string, so the match is a
+   * prefix rather than an exact one.
+   */
   duplicateChoice(label: string): Locator {
     return this.duplicateModal
-      .locator('.duplicate-choice')
-      .filter({ has: this.page.locator(`.duplicate-choice-label:text-is("${label}")`) });
+      .locator('label')
+      .filter({ hasText: new RegExp(`^\\s*${label} \\(\\d+\\)`) });
   }
 
   /** The checkbox for a relation-type row. */
@@ -483,9 +563,14 @@ export class EntityPage extends BasePage {
     return this.duplicateChoice(label).locator('input[type="checkbox"]');
   }
 
-  /** Edge count shown beside a relation-type row. */
-  duplicateChoiceCount(label: string): Locator {
-    return this.duplicateChoice(label).locator('.duplicate-count');
+  /**
+   * Edge count shown for a relation-type row. RlCheckbox renders the label
+   * and count as one string, so the assertion reads the row's own text.
+   */
+  async expectDuplicateChoiceCount(label: string, count: number) {
+    await expect(this.duplicateChoice(label)).toHaveText(
+      new RegExp(`^\\s*${label} \\(${count}\\)`)
+    );
   }
 
   async openDuplicate() {

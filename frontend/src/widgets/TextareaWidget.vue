@@ -1,4 +1,19 @@
 <script setup lang="ts">
+// The input box comes from the library's global `.rl-control`
+// (rl/styles/control.css, imported by styles/rl.css): border, radius, focus
+// ring, and the invalid and disabled visuals. It is declared globally rather
+// than per component precisely so a host rendering a native element can reach
+// it, which is what this widget is -- so this widget carries no styles of its
+// own apart from the auto-grow rule.
+//
+// The invalid visual is driven by `aria-invalid` there, so the old error class
+// is gone: the attribute now carries both the appearance and the announcement,
+// where the class did the first and nothing for the second.
+//
+// The box grows with its text, as RlTextarea's `autoGrow` does, rather than
+// reserving empty rows and showing a drag grip. RlTextarea itself cannot be
+// used here: it renders its own field shell (see FieldShell.vue).
+import { nextTick, onMounted, ref, watch } from 'vue'
 import type { WidgetProps } from './types'
 import { useStringValue } from './useStringValue'
 
@@ -9,10 +24,24 @@ const emit = defineEmits<{
 }>()
 
 const stringValue = useStringValue(() => props.modelValue)
+const field = ref<HTMLTextAreaElement | null>(null)
+
+// Reset before measuring, or the box could grow but never shrink back.
+function resize() {
+  const el = field.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
+}
 
 function onInput(event: Event) {
   emit('update:modelValue', (event.target as HTMLTextAreaElement).value)
+  resize()
 }
+
+// A value set from outside, such as a form reset or a loaded entity.
+watch(stringValue, () => nextTick(resize))
+onMounted(resize)
 </script>
 
 <template>
@@ -20,44 +49,21 @@ function onInput(event: Event) {
   <textarea
     v-else
     :id="id"
-    :class="{ 'is-error': !!error }"
+    ref="field"
+    class="rl-control rl-control--multiline textarea-widget"
+    :aria-describedby="describedBy"
+    :aria-invalid="invalid || undefined"
     :value="stringValue"
     :placeholder="placeholder"
     :disabled="disabled"
-    rows="4"
+    rows="3"
     @input="onInput"
   />
 </template>
 
 <style scoped>
-textarea {
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
-  transition: all 0.15s;
-}
-
-textarea:focus {
-  outline: none;
-  border-color: var(--accent-color, #6366f1);
-  box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
-}
-
-textarea:disabled {
-  background: var(--hover-bg);
-  cursor: not-allowed;
-}
-
-textarea.is-error {
-  border-color: var(--error-color, #ef4444);
-}
-
-textarea.is-error:focus {
-  box-shadow: 0 0 0 2px var(--error-ring);
+.textarea-widget {
+  resize: none;
+  overflow: hidden;
 }
 </style>

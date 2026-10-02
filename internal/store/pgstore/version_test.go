@@ -130,8 +130,8 @@ func TestSweepCapturesSettledEntities(t *testing.T) {
 
 	// Two entities; backdate one's updated_at so it counts as settled, leave the
 	// other fresh so it is excluded by the idle filter.
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("SET-1", "ticket", "settled")))
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("FRESH-1", "ticket", "fresh")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("SET-1", "settled")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("FRESH-1", "fresh")))
 	_, err = pool.Exec(ctx, `UPDATE entities SET updated_at = now() - interval '1 hour' WHERE id = 'SET-1'`)
 	require.NoError(t, err)
 
@@ -226,7 +226,7 @@ func TestDeleteThenRecreateIdenticalContent(t *testing.T) {
 	require.NoError(t, s.VersionStore().WriteVersion(ctx, del))
 
 	// Re-create the live entity with IDENTICAL content, then sweep it.
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "ticket", "same-content")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "same-content")))
 	_, err = pool.Exec(ctx, `UPDATE entities SET updated_at = now() - interval '1 hour' WHERE id = 'X'`)
 	require.NoError(t, err)
 	s.StartVersionSweep(stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
@@ -243,8 +243,8 @@ func TestDeleteThenRecreateIdenticalContent(t *testing.T) {
 		"re-creating with identical content must record a create, not dedup away leaving the timeline at delete")
 }
 
-func mkEntity(id, typ, content string) *entity.Entity {
-	e := entity.New(id, typ)
+func mkEntity(id, content string) *entity.Entity {
+	e := entity.New(id, "ticket")
 	e.Content = content
 	return e
 }

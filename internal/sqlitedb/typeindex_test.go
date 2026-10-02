@@ -27,11 +27,11 @@ func entityIndexes(t *testing.T, raw *sql.DB) map[string]bool {
 	return out
 }
 
-// TestMigrateToTypeIDFaceIndex pins the v7→v8 rung (TKT-KQXVF7): a v7
+// TestMigrateToTypeIDFaceIndex pins the v10→v11 rung (TKT-KQXVF7): a v10
 // database, which has the (type) index and not the (type, id, face) one,
 // ends with only the latter, and a second open is harmless.
 func TestMigrateToTypeIDFaceIndex(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v7.db")
+	path := filepath.Join(t.TempDir(), "v10.db")
 	db, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
@@ -42,7 +42,7 @@ func TestMigrateToTypeIDFaceIndex(t *testing.T) {
 	for _, q := range []string{
 		`DROP INDEX entities_type_id_face_idx`,
 		`CREATE INDEX entities_type_idx ON entities(type)`,
-		`PRAGMA user_version = 7`,
+		`PRAGMA user_version = 10`,
 	} {
 		_, err = raw.Exec(q)
 		require.NoErrorf(t, err, "seed statement: %s", q)

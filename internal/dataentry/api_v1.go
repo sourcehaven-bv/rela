@@ -126,6 +126,7 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_schema", a.handleV1Schema)
 	mux.HandleFunc("/api/v1/_schema/", a.handleV1SchemaRoutes)
 	mux.HandleFunc("/api/v1/_config", a.handleV1Config)
+	mux.HandleFunc("/api/v1/_me", func(w http.ResponseWriter, r *http.Request) { handleV1Me(a, w, r) })
 	mux.HandleFunc("/api/v1/_feeds/", a.handleV1Feed)
 	if routes := newCalDAVRoutes(a); routes != nil {
 		routes.register(mux)
@@ -143,6 +144,8 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_theme/import", a.appearance.handleAPIThemeImport)
 	mux.HandleFunc("/api/v1/_sidepanel/", a.views.handleV1SidePanel)
 	mux.HandleFunc("/api/v1/_sidebar", a.views.handleV1Sidebar)
+	mux.HandleFunc("/api/v1/_nav_status", func(w http.ResponseWriter, r *http.Request) { handleV1NavStatus(a, w, r) })
+	mux.HandleFunc("/api/v1/_nav_items", func(w http.ResponseWriter, r *http.Request) { handleV1NavItems(a, w, r) })
 	mux.HandleFunc("/api/v1/_dashboard", a.views.handleV1Dashboard)
 	mux.HandleFunc("/api/v1/_conflicts", a.handleV1Conflicts)
 	mux.HandleFunc("/api/v1/_conflicts/", a.handleV1ConflictRoutes)
@@ -194,15 +197,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 
 	plural := parts[0]
 
-	// Find entity type by plural
-	var typeName string
-	for name, def := range a.State().Meta.Entities {
-		if def.GetPlural(name) == plural {
-			typeName = name
-			break
-		}
-	}
-
+	typeName := entityTypeForPlural(a.State().Meta, plural)
 	if typeName == "" {
 		writeV1Error(w, r, http.StatusNotFound, "unknown_type", "Unknown entity type", "")
 		return
@@ -222,12 +217,14 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 			a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
 		}
 	case 3:
-		// /{plural}/{id}/relations or /{plural}/{id}/_export
+		// /{plural}/{id}/relations, /{plural}/{id}/_export or /{plural}/{id}/restore
 		switch parts[2] {
 		case "relations":
 			a.handleV1EntityRelations(w, r, typeName, parts[1])
 		case "_export":
 			a.export.handleV1ExportEntity(w, r, typeName, parts[1])
+		case "restore":
+			a.write.handleV1RestoreEntity(w, r, typeName, parts[1])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
@@ -404,6 +401,12 @@ func scopedSortedEntitiesScoped(
 	if err != nil {
 		return nil, err
 	}
+	// The page scope resolves BEFORE the load, so an anchor the principal
+	// cannot see answers the uniform 404 whatever the type's verdict is.
+	pageIDs, pageScoped, err := resolvePageScope(ctx, a, query, typeName)
+	if err != nil {
+		return nil, err
+	}
 	// The verdict switch, the world scope, the face allowlist and the query
 	// scope all live in scopedHeaders (scopedread.go) — see its doc for why
 	// they must not be re-implemented per handler.
@@ -423,6 +426,17 @@ func scopedSortedEntitiesScoped(
 		// nothing must not be able to probe the search backend's latency or
 		// induce load through ?q= (RR-X56H).
 		return []*entityPkg.Entity{}, nil
+	}
+	// An intersection with the ACL-scoped set: the page scope only removes
+	// rows, so it cannot surface one the load above did not admit.
+	if pageScoped {
+		kept := entities[:0]
+		for _, e := range entities {
+			if pageIDs[e.ID] {
+				kept = append(kept, e)
+			}
+		}
+		entities = kept
 	}
 
 	// Free-text search: intersect with hits from the searcher when ?q=... is
@@ -1029,6 +1043,9 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 			"err", err, "path", r.URL.Path, "method", r.Method)
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_query_scope",
 			"Invalid query_scope parameter", err.Error())
+	case errors.Is(err, errPageAnchorNotFound):
+		// The same response an entity GET gives for a hidden or missing id.
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 	case errors.Is(err, errACLListQuery):
 		writeGateError(w, r, err)
 	case errors.Is(err, acl.ErrTraversalUnsupported):
@@ -1731,6 +1748,8 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Dashboard:        s.Cfg.Dashboard,
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,
+		Spaces:           s.Cfg.Spaces,
+		Pages:            s.Cfg.Pages,
 		Documents:        s.Cfg.Documents,
 		Apps:             appsToV1(a.scanAppsOrLog()),
 		Palette:          a.palette.Resolved(),
@@ -2879,4 +2898,15 @@ func sectionEntityToV1(e SectionEntityData) v1.ViewEntity {
 	v1Ent.World = e.World
 	v1Ent.Self = e.Self
 	return v1Ent
+}
+
+// entityTypeForPlural returns the entity type whose plural is plural, or ""
+// when none matches.
+func entityTypeForPlural(meta *metamodel.Metamodel, plural string) string {
+	for name, def := range meta.Entities {
+		if def.GetPlural(name) == plural {
+			return name
+		}
+	}
+	return ""
 }

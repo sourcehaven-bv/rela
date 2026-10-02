@@ -64,6 +64,42 @@ navigation:
 `,
 		},
 		{
+			name: "space",
+			yaml: `
+spaces:
+  - id: sales
+    label: Sales
+    permission: report:sales
+`,
+		},
+		{
+			name: "navigation entry inside a space",
+			yaml: `
+spaces:
+  - id: sales
+    label: Sales
+    navigation:
+      - group: Reports
+        items:
+          - label: Sales
+            list: orders
+            permission: report:sales
+`,
+		},
+		{
+			name: "page tab",
+			yaml: `
+pages:
+  orders:
+    label: Orders
+    tabs:
+      - id: sales
+        label: Sales
+        list: orders
+        permission: report:sales
+`,
+		},
+		{
 			name: "command",
 			yaml: `
 commands:

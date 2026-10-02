@@ -271,12 +271,15 @@ export function useAutoSave(opts: AutoSaveOptions) {
     timers[property] = setTimeout(() => fireDue(property), fieldDebounceMs)
   }
 
-  function scheduleContentSave(content: string) {
+  // `debounceMs` overrides the channel's debounce for this call. One instance
+  // can then serve both a discrete edit that should land at once (a checkbox
+  // toggle) and typing, where a save per pause is enough.
+  function scheduleContentSave(content: string, debounceMs = contentDebounceMs) {
     if (!contentChannelEnabled) throw new AutoSaveChannelDisabledError('content')
     if (pendingContent === null) pendingCount.value++
     pendingContent = { value: content, enqueuedAt: Date.now() }
     if (contentTimer) clearTimeout(contentTimer)
-    contentTimer = setTimeout(() => fireContent(), contentDebounceMs)
+    contentTimer = setTimeout(() => fireContent(), debounceMs)
   }
 
   function scheduleRelationsChange() {
@@ -378,13 +381,20 @@ export function useAutoSave(opts: AutoSaveOptions) {
         // Bundle relations if dirty (C2: relations bundling table).
         attachRelations(patch)
         const response = await entitiesStore.update(
-          opts.getEntityType(), opts.getEntityId(), patch, undefined, ac.signal,
+          opts.getEntityType(),
+          opts.getEntityId(),
+          patch,
+          undefined,
+          ac.signal
         )
         mergeServerResponse(response)
         categorizeWarnings(response.warnings)
         if (relationsDirty) {
           relationsDirty = false
-          if (relationsTimer) { clearTimeout(relationsTimer); relationsTimer = null }
+          if (relationsTimer) {
+            clearTimeout(relationsTimer)
+            relationsTimer = null
+          }
         }
         const now = Date.now()
         let nextErrors: Record<string, string> | null = null
@@ -447,13 +457,20 @@ export function useAutoSave(opts: AutoSaveOptions) {
         const patch: EntityPatch = { content: value }
         attachRelations(patch)
         const response = await entitiesStore.update(
-          opts.getEntityType(), opts.getEntityId(), patch, undefined, ac.signal,
+          opts.getEntityType(),
+          opts.getEntityId(),
+          patch,
+          undefined,
+          ac.signal
         )
         mergeServerResponse(response)
         categorizeWarnings(response.warnings)
         if (relationsDirty) {
           relationsDirty = false
-          if (relationsTimer) { clearTimeout(relationsTimer); relationsTimer = null }
+          if (relationsTimer) {
+            clearTimeout(relationsTimer)
+            relationsTimer = null
+          }
         }
         lastCommitAt['__content__'] = Date.now()
         contentError.value = null
@@ -474,7 +491,10 @@ export function useAutoSave(opts: AutoSaveOptions) {
 
   function fireRelations() {
     if (!relationsDirty) return
-    if (relationsTimer) { clearTimeout(relationsTimer); relationsTimer = null }
+    if (relationsTimer) {
+      clearTimeout(relationsTimer)
+      relationsTimer = null
+    }
     const body = opts.buildRelationsBody()
     if (!body || Object.keys(body).length === 0) {
       // Pristine — nothing to send. Clear the dirty bit; the form may
@@ -493,7 +513,11 @@ export function useAutoSave(opts: AutoSaveOptions) {
       try {
         const patch: EntityPatch = { relations: body as unknown as EntityPatch['relations'] }
         const response = await entitiesStore.update(
-          opts.getEntityType(), opts.getEntityId(), patch, undefined, ac.signal,
+          opts.getEntityType(),
+          opts.getEntityId(),
+          patch,
+          undefined,
+          ac.signal
         )
         mergeServerResponse(response)
         categorizeWarnings(response.warnings)
@@ -521,11 +545,17 @@ export function useAutoSave(opts: AutoSaveOptions) {
     if (!body || Object.keys(body).length === 0) {
       // Pristine — drop the dirty flag without emitting a key.
       relationsDirty = false
-      if (relationsTimer) { clearTimeout(relationsTimer); relationsTimer = null }
+      if (relationsTimer) {
+        clearTimeout(relationsTimer)
+        relationsTimer = null
+      }
       return
     }
     patch.relations = body as unknown as EntityPatch['relations']
-    if (relationsTimer) { clearTimeout(relationsTimer); relationsTimer = null }
+    if (relationsTimer) {
+      clearTimeout(relationsTimer)
+      relationsTimer = null
+    }
   }
 
   // categorizeWarnings consumes the server response's warnings and
@@ -554,9 +584,8 @@ export function useAutoSave(opts: AutoSaveOptions) {
       if (relMatch) {
         const bodyKey = relMatch[1]
         const direction = w.direction === 'incoming' ? 'incoming' : 'outgoing'
-        const canonical = direction === 'incoming'
-          ? opts.inverseToCanonical.get(bodyKey) ?? bodyKey
-          : bodyKey
+        const canonical =
+          direction === 'incoming' ? (opts.inverseToCanonical.get(bodyKey) ?? bodyKey) : bodyKey
         const widgetId = `${canonical}-${direction}` as WidgetId
         relationWarnings.value = { ...relationWarnings.value, [widgetId]: w }
         continue
@@ -571,7 +600,10 @@ export function useAutoSave(opts: AutoSaveOptions) {
     // previous call mutated this instance directly. Either way, fail
     // loud — the disabled-channel invariant is load-bearing for the
     // EntityDetail content-only instance.
-    if (!propertyChannelEnabled && (Object.keys(pending).length > 0 || Object.keys(timers).length > 0)) {
+    if (
+      !propertyChannelEnabled &&
+      (Object.keys(pending).length > 0 || Object.keys(timers).length > 0)
+    ) {
       throw new Error('useAutoSave: property channel disabled but pending state observed')
     }
     if (!contentChannelEnabled && (pendingContent !== null || contentTimer !== null)) {
@@ -696,7 +728,10 @@ export function useAutoSave(opts: AutoSaveOptions) {
       fireContent()
     }
     if (relationsTimer || relationsDirty) {
-      if (relationsTimer) { clearTimeout(relationsTimer); relationsTimer = null }
+      if (relationsTimer) {
+        clearTimeout(relationsTimer)
+        relationsTimer = null
+      }
       fireRelations()
     }
     return new Promise<CommitResult>((resolve) => {

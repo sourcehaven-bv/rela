@@ -62,7 +62,11 @@ Entity views, list views and rendered documents carry an **"Export ▾"** menu
 populated from the registered transforms. Choosing a format downloads the
 converted file.
 
-- **Entity export:** `GET /api/v1/{plural}/{id}/_export?transform=<name>`
+- **Entity export:** `GET /api/v1/{plural}/{id}/_export?transform=<name>`. For
+  a type with faces, `{id}` may be an address such as `POL-1@published`, and the
+  export renders that face. The export takes `?world=` like the entity read: a
+  bare id resolves to the face the world selects, and linked entities are listed
+  as that world shows them.
 - **List export:** `GET /api/v1/{plural}/_export?transform=<name>&list=<listId>` —
   exports the whole filtered set (not just the current page) as a table of the list
   view's columns, capped for very large lists (a visible "showing N of M
@@ -147,6 +151,9 @@ print("# " .. book.properties.title)
 print()
 print("**Year:** " .. (book.properties.year or "—"))
 ```
+
+When the exported address names a face, `rela.document.entry_id` is that
+address (`POL-1@published`), and `rela.get_entity` on it returns that face.
 
 A type with no `export_render` keeps the built-in renderer. The override runs
 only for an entity the caller is allowed to read — export resolves the entity

@@ -3,12 +3,13 @@ import { ref, watch, computed, onBeforeUnmount } from 'vue'
 import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import EntityTargetSelect from '@/components/common/EntityTargetSelect.vue'
-import TagSelect from '@/components/ui/TagSelect.vue'
+import Badge from '@/components/common/Badge.vue'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlMultiSelect from 'rela-components/components/form/RlMultiSelect.vue'
 import type {
   ListConfig,
   EntityType,
   FilterControl,
-  PropertyDef,
   FilterState,
   Entity,
 } from '@/types'
@@ -48,7 +49,7 @@ const CANDIDATE_FETCH_LIMIT = 100
 interface ResolvedFilter {
   key: string
   label: string
-  widget: 'select' | 'multi-select' | 'text' | 'relation'
+  widget: 'multi-select' | 'text' | 'relation'
   options: string[]
   // Display labels keyed by option value (display-only; filter value stays raw).
   optionLabels: Record<string, string>
@@ -61,9 +62,13 @@ interface ResolvedFilter {
   relationMode?: 'select' | 'typeahead'
 }
 
-// Resolve the display text for an option value in a filter dropdown.
-function optionText(filter: ResolvedFilter, option: string): string {
-  return filter.optionLabels[option] ?? option
+function multiOptions(filter: ResolvedFilter) {
+  return filter.options.map((value) => ({ value, label: filter.optionLabels[value] ?? value }))
+}
+
+// Only the text and relation widgets render an element with the filter's id.
+function labelTarget(filter: ResolvedFilter): string | undefined {
+  return filter.widget === 'text' || filter.widget === 'relation' ? `filter-${filter.key}` : undefined
 }
 
 // Candidate entities per relation-filter key, fetched on mount. Keyed by the
@@ -103,7 +108,7 @@ function resolveFilter(fc: FilterControl): ResolvedFilter {
   }
 
   const options = propDef.values || []
-  const widget = resolveWidgetType(propDef, options)
+  const widget = resolveWidgetType(options)
   const optionLabels = schemaStore.resolveOptionLabels(propDef, fc.property || '', props.entityType)
 
   const substring = widget === 'text' && propDef.type === 'string'
@@ -150,20 +155,10 @@ async function loadRelationCandidates() {
   }
 }
 
-function resolveWidgetType(
-  propDef: PropertyDef,
-  options: string[]
-): 'select' | 'multi-select' | 'text' {
-  // Multi-select for list properties with enum values
-  if (propDef.list && options.length > 0) {
-    return 'multi-select'
-  }
-  // Select for properties with defined values (enums)
-  if (options.length > 0) {
-    return 'select'
-  }
-  // Text for everything else
-  return 'text'
+// Any property with fixed values filters by a multi-select, list or not:
+// picking several values keeps rows matching any of them (OR).
+function resolveWidgetType(options: string[]): 'multi-select' | 'text' {
+  return options.length > 0 ? 'multi-select' : 'text'
 }
 
 // Which control keys are text widgets (vs select / multi-select). Text
@@ -338,33 +333,24 @@ onBeforeUnmount(() => {
   <div class="filter-bar">
     <div class="filters">
       <div v-for="filter in resolvedFilters" :key="filter.key" class="filter-item">
-        <label :for="`filter-${filter.key}`">
+        <label :for="labelTarget(filter)">
           {{ filter.label }}
         </label>
 
-        <!-- Select widget -->
-        <select
-          v-if="filter.widget === 'select'"
-          :id="`filter-${filter.key}`"
-          v-model="localFilters[filter.key]"
-          @change="handleFilterChange"
-        >
-          <option value="">All</option>
-          <option v-for="option in filter.options" :key="option" :value="option">
-            {{ optionText(filter, option) }}
-          </option>
-        </select>
-
-        <!-- Multi-select widget — chip/tag picker with search, the same
-             TagSelect edit forms use via MultiSelectWidget. -->
-        <TagSelect
-          v-else-if="filter.widget === 'multi-select'"
+        <!-- Enum widgets draw each value as its badge, open and closed. -->
+        <RlMultiSelect
+          v-if="filter.widget === 'multi-select'"
           :model-value="getMultiSelectValues(filter.key)"
-          :options="filter.options"
-          :option-labels="filter.optionLabels"
-          :placeholder="`Filter by ${filter.label}`"
+          :options="multiOptions(filter)"
+          :label="filter.label"
+          label-hidden
+          placeholder="All"
           @update:model-value="(v: string[]) => handleMultiSelectChange(filter.key, v)"
-        />
+        >
+          <template #option="{ value: option }">
+            <Badge :value="option" :property="filter.key" :entity-type="entityType" />
+          </template>
+        </RlMultiSelect>
 
         <!-- Relation widget — select (small) or typeahead (large) target
              picker. Commits the target's bare display title as the value,
@@ -391,9 +377,9 @@ onBeforeUnmount(() => {
         />
       </div>
     </div>
-    <button v-if="hasActiveFilters()" class="clear-filters" @click="clearFilters">
+    <RlButton v-if="hasActiveFilters()" variant="secondary" size="sm" @click="clearFilters">
       Clear filters
-    </button>
+    </RlButton>
   </div>
 </template>
 
@@ -403,14 +389,13 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
 }
 
 .filters {
   display: flex;
   gap: var(--space-lg);
   flex-wrap: wrap;
-  /* Top-align: the tag picker grows downward as chips wrap onto a second row,
+  /* Top-align: the multi-select grows downward as chips wrap onto a second row,
      and the default `stretch` would drag its neighbours' controls out of line
      with it. Aligning at the top keeps every label and control on one line
      regardless of how many chips are selected. */
@@ -428,58 +413,30 @@ onBeforeUnmount(() => {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
-/* The multi-enum tag picker (TagSelect → SlimSelect) sits in the same row as
-   scalar selects and text inputs, so the three have to agree on height, radius,
-   font size and min-width or the filter bar looks ragged.
-
-   TagSelect's `<style>` is GLOBAL (no `scoped`), and its DOM therefore carries
-   no `data-v` of this component — `:deep()` cannot reach it from here. Height,
-   radius and font-size live on `.ss-main` in TagSelect itself; only the
-   filter-bar-specific min-width is set here, via a global rule nested under
-   `.filter-bar` so it cannot leak to other TagSelect consumers. */
-.filter-item select,
 .filter-item input {
   padding: 6px 10px;
   min-height: 38px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
   font-size: var(--font-size-base);
   min-width: 150px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
-.filter-item select:focus,
 .filter-item input:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
-}
-
-.clear-filters {
-  padding: 6px 12px;
-  background: none;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-dense);
-  color: var(--muted-text);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.clear-filters:hover {
-  background: var(--hover-bg);
-  color: var(--text-color);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 @media (max-width: 768px) {
   .filter-bar {
-    border: none;
     padding: 0 0 12px 0;
     margin-bottom: 4px;
     /* Stack filters above the clear button so the button doesn't get
@@ -511,48 +468,9 @@ onBeforeUnmount(() => {
     flex: 1 1 100%;
   }
 
-  .filter-item select,
   .filter-item input {
     width: 100%;
     min-width: 0;
-  }
-}
-</style>
-
-<!-- TagSelect's styles are global and live in ITS OWN route chunk, which the
-     list page does not load — so on this page `.ss-main` would otherwise fall
-     back to browser defaults (notably a 16px font next to the 14px <select>
-     beside it). These rules put the filter-bar's copy in the list chunk.
-
-     Nested under `.filter-bar` so they apply to the list filter row only and
-     cannot reach the same widget in edit forms or Settings, and global rather
-     than `scoped` because TagSelect renders no `data-v` of this component. -->
-<style>
-.filter-bar .filter-item .ss-main {
-  min-width: 150px;
-  min-height: 38px;
-  font-size: var(--font-size-base);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--input-bg);
-  color: var(--text-color);
-}
-
-.filter-bar .filter-item .ss-main .ss-placeholder {
-  color: var(--muted-text);
-}
-
-.filter-bar .filter-item .ss-main:focus-within {
-  border-color: var(--accent-color);
-  box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
-}
-
-@media (max-width: 768px) {
-  .filter-bar .filter-item .ss-main {
-    min-width: 0;
-    width: 100%;
   }
 }
 </style>

@@ -63,17 +63,18 @@ var regions = []Region{
 	},
 	{
 		Name:     "list",
-		Selector: `table[aria-labelledby="entity-list-heading"]`,
-		Why:      "The list table is named by the view's <h1>, so this is role+name, not a class.",
+		Selector: `.rl-table`,
+		Why: "CLASS FALLBACK. A list renders one role=grid per section, so a grouped " +
+			"list has several and no single role names the whole table. `.rl-table` is " +
+			"the component library's root for it.",
 	},
 	{
 		Name:     "table-row",
-		Selector: `tr.entity-row`,
+		Selector: `[role="row"][data-entity-id]`,
 		Multiple: true,
-		Why: "CLASS FALLBACK. A data row has no role of its own that distinguishes it " +
-			"from the header row, and rows are named only by their cells. `.entity-row` " +
-			"is the row marker the SPA already keys `data-entity-id` off, so it is the " +
-			"same contract the app itself relies on rather than a new one.",
+		Why: "A data row is role=row; `data-entity-id` tells it from the header row. " +
+			"The SPA sets that attribute on every entity row and keys its own row " +
+			"handling off it, so this is a contract the app already relies on.",
 	},
 	{
 		Name:     "kanban",
@@ -82,9 +83,9 @@ var regions = []Region{
 	},
 	{
 		Name:     "kanban-column",
-		Selector: `section.kanban-column`,
+		Selector: `section.rl-board-column`,
 		Multiple: true,
-		Why: "CLASS FALLBACK. Columns are <section aria-labelledby=kanban-col-*>, but an " +
+		Why: "CLASS FALLBACK. Columns are labeled <section> elements, but an " +
 			"accessible-name match would need a per-column value the author does not " +
 			"know. The class is scoped inside the board region above.",
 	},

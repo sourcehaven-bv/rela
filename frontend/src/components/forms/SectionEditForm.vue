@@ -14,16 +14,23 @@
 
 import { computed, onBeforeUnmount, reactive, ref, watch, type Ref } from 'vue'
 import type { Component } from 'vue'
-import type { FieldAffordance, PropertyDef, Entity, AttachmentInfo, TransitionOption } from '@/types'
+import type {
+  FieldAffordance,
+  PropertyDef,
+  Entity,
+  AttachmentInfo,
+  TransitionOption,
+} from '@/types'
 import type { WidgetRoutingHint } from '@/widgets/types'
 import { defaultRegistry } from '@/widgets/registry'
 import { useAutoSave, type AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { isFieldWritable, optionVerdictsFor } from '@/utils/affordances'
 import { isClearedForType } from '@/utils/formValue'
 import { fieldSpanStyle } from '@/utils/fieldSpan'
-import FieldShell from './FieldShell.vue'
-import StatusControl from './StatusControl.vue'
+import RlDetailField from 'rela-components/components/task/RlDetailField.vue'
+import TextareaWidget from '@/widgets/TextareaWidget.vue'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
+import InlinePropertyValue from './InlinePropertyValue.vue'
 
 // Discriminated union: each field resolves its widget via either the
 // real schema entry (form-side) or a routing hint (view-side). Exactly
@@ -52,8 +59,7 @@ export type SectionEditField = {
   // the ARM decides whether it is honoured, not the presence of the field.
   widget?: string
 } & (
-  | { kind: 'schema'; propertyDef: PropertyDef }
-  | { kind: 'hint'; routingHint: WidgetRoutingHint }
+  { kind: 'schema'; propertyDef: PropertyDef } | { kind: 'hint'; routingHint: WidgetRoutingHint }
 )
 
 const props = defineProps<{
@@ -147,6 +153,8 @@ interface WidgetRow {
   // PropertyDisplay's behaviour (TKT-HOIX1). Only meaningful on the display
   // arm — an edit widget sizes itself.
   isLong: boolean
+  // Prose edits across the row, so it sits under its label.
+  isBlock: boolean
 }
 
 const widgetRows = computed<WidgetRow[]>(() =>
@@ -176,8 +184,9 @@ const widgetRows = computed<WidgetRow[]>(() =>
       writable: field.render === 'input' && isFieldWritable(field.verdict),
       optionVerdicts: optionVerdictsFor(field.verdict),
       isLong: isLongValue(field),
+      isBlock: widget === TextareaWidget,
     }
-  }),
+  })
 )
 
 // Shares PropertyDisplay.vue `isLong`'s 60-char threshold, so a value doesn't
@@ -195,11 +204,15 @@ function isLongValue(field: SectionEditField): boolean {
   return String(formData[field.property] ?? '').length > 60
 }
 
+// The value shows at once. A field reads as its value between edits, so
+// waiting for the save to answer would flash the old one back first.
 function onFieldUpdate(field: SectionEditField, value: unknown) {
   const def = field.kind === 'schema' ? field.propertyDef : undefined
   if (isClearedForType(value, def)) {
+    delete formData[field.property]
     autoSave.scheduleUnset(field.property)
   } else {
+    formData[field.property] = value
     autoSave.scheduleFieldSave(field.property, value)
   }
 }
@@ -226,7 +239,28 @@ watch(
         props.onVerdictFlip?.(nextField.property, nextField.label)
       }
     }
-  },
+  }
+)
+
+// The values can change under the form: the title edited in the heading, a
+// live update from another session, a reload after an error. Take them the
+// way a save response is taken, so a field with an edit still pending keeps
+// it. The host mirrors every applied value back into `initialValues`, so only
+// a real difference may start a merge, or the two would feed each other.
+watch(
+  () => props.initialValues,
+  (next) => {
+    const differs = props.fields.some(
+      (f) =>
+        JSON.stringify(next[f.property] ?? null) !== JSON.stringify(formData[f.property] ?? null)
+    )
+    if (!differs) return
+    autoSave.mergeServerResponse({
+      id: props.entityId,
+      type: props.entityType,
+      properties: next,
+    } as Entity)
+  }
 )
 
 onBeforeUnmount(() => {
@@ -272,63 +306,39 @@ defineExpose({
     >
       <AutoSaveIndicator :status="autoSave.status.value" :error="autoSave.lastError.value" />
     </slot>
-    <dl class="properties-list">
-      <div
+    <!--
+      Label/value rows from the library, each value changeable where it sits
+      (InlinePropertyValue). The grid keeps authored `span:` widths.
+    -->
+    <dl class="properties-list properties-list--rows">
+      <RlDetailField
         v-for="row in widgetRows"
         :key="row.field.property"
-        class="property-item"
+        class="property-row"
+        :data-property="row.field.property"
         :style="fieldSpanStyle(row.field.span)"
-        :class="{ 'property-long': !row.writable && row.isLong }"
+        :field="{ id: row.field.property, label: row.field.label, type: 'text' }"
+        :stacked="row.isLong || row.isBlock"
       >
-        <dt>{{ row.field.label }}</dt>
-        <dd>
-          <!-- A machine field flagged `render: display` falls through to the
-               display arm below rather than rendering a DISABLED StatusControl
-               (TKT-HOIX1) — status fields are the ones most likely to be
-               flagged display, and a greyed-out control is exactly the
-               disabled-input outcome this ticket exists to avoid. -->
-          <StatusControl
-            v-if="row.field.transitions !== undefined && row.field.render === 'input'"
-            :model-value="formData[row.field.property] == null ? '' : String(formData[row.field.property])"
+        <template #value>
+          <InlinePropertyValue
             :property="row.field.property"
-            :entity-type="entityType"
-            :transitions="row.field.transitions"
-            :disabled="!row.writable"
-            @update:model-value="(v: string) => onFieldUpdate(row.field, v)"
-          />
-          <FieldShell
-            v-else-if="row.writable"
-            :field-id="`section-edit-${row.field.property}`"
-            :error="autoSave.fieldErrors.value[row.field.property]"
-          >
-            <component
-              :is="row.widget"
-              :id="`section-edit-${row.field.property}`"
-              mode="edit"
-              :model-value="formData[row.field.property]"
-              :property-name="row.field.property"
-              :property-def="row.field.kind === 'schema' ? row.field.propertyDef : undefined"
-              :option-verdicts="row.optionVerdicts"
-              :attachments="props.attachments?.[row.field.property]"
-              :max="row.field.kind === 'schema' ? row.field.propertyDef?.max : undefined"
-              :entity-type="entityType"
-              :entity-id="entityId"
-              @update:model-value="(v: unknown) => onFieldUpdate(row.field, v)"
-              @attachment-changed="onAttachmentChanged?.()"
-            />
-          </FieldShell>
-          <component
-            :is="row.widget"
-            v-else
-            mode="display"
-            :model-value="formData[row.field.property]"
-            :property-name="row.field.property"
+            :label="row.field.label"
+            :widget="row.widget"
+            :value="formData[row.field.property]"
+            :writable="row.writable"
             :property-def="row.field.kind === 'schema' ? row.field.propertyDef : undefined"
+            :transitions="row.field.render === 'input' ? row.field.transitions : undefined"
+            :option-verdicts="row.optionVerdicts"
             :attachments="props.attachments?.[row.field.property]"
-            :max="row.field.kind === 'schema' ? row.field.propertyDef?.max : undefined"
+            :entity-type="entityType"
+            :entity-id="entityId"
+            :error="autoSave.fieldErrors.value[row.field.property]"
+            @update="(v: unknown) => onFieldUpdate(row.field, v)"
+            @attachment-changed="onAttachmentChanged?.()"
           />
-        </dd>
-      </div>
+        </template>
+      </RlDetailField>
     </dl>
   </div>
 </template>
@@ -344,7 +354,7 @@ defineExpose({
   gap: var(--space-sm);
   margin: 0 0 16px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 /* KEEP IN SYNC with EntityDetail.vue `.section-heading` (RR-ZE29PY). Scoped
@@ -355,18 +365,10 @@ defineExpose({
   font-size: var(--font-size-lg);
   font-weight: 600;
   margin: 0;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 /* .properties-list / .property-item now live in styles/properties-list.css,
  * shared with PropertyDisplay and SidePanel. Do not redefine them here — the
  * three scoped copies drifting apart is what this ticket removed. */
-
-/* Long display-rendered values wrap rather than overflow. The full-row
- * behaviour (`grid-column: span 12`) is owned by styles/properties-list.css;
- * only these text rules are component-local, mirroring PropertyDisplay.vue. */
-.property-item.property-long dd {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 </style>

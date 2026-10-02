@@ -272,10 +272,15 @@ describe('DocumentView re-render (BUG-DJZTRF)', () => {
     stale.resolve(response('<p>original</p>'))
     await flushPromises()
 
-    // PendingButton keeps both labels in the DOM and marks the button
-    // aria-disabled while pending (native `disabled` would drop focus).
-    const refresh = wrapper.find('.header-right .btn-secondary')
-    expect(refresh.attributes('aria-disabled')).toBe('true')
+    // RlButton keeps both labels in the DOM and marks the button aria-disabled
+    // while pending (native `disabled` would drop focus). Found by its text
+    // rather than a class, so restyling the button cannot silently make this
+    // assertion vacuous -- an empty wrapper would.
+    const refresh = wrapper
+      .findAll('.header-right button')
+      .find((b) => b.text().includes('Refresh'))
+    expect(refresh).toBeDefined()
+    expect(refresh?.attributes('aria-disabled')).toBe('true')
 
     fresh.resolve(response('<p>other doc</p>'))
     await flushPromises()

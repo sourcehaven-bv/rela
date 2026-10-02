@@ -62,6 +62,34 @@ func (p *Program) Functions() []string {
 	return out
 }
 
+// ResultLiterals returns the constants that can become the program's
+// result: the root when it is a literal, and the value branches of a
+// selection (the right of `and`, both sides of `or`), recursively. A
+// result computed any other way contributes nothing (`'a' .. 'b'` is not
+// folded), so the list is complete only for the literals, not for the
+// result's value set. It over-approximates reachability: the dead branch
+// of `'a' or 'b'` is listed too.
+func (p *Program) ResultLiterals() []Value {
+	var out []Value
+	var visit func(node)
+	visit = func(n node) {
+		switch x := n.(type) {
+		case *constNode:
+			out = append(out, x.v)
+		case *logicalNode:
+			if !x.selects() {
+				return
+			}
+			if x.op == "or" {
+				visit(x.lhs)
+			}
+			visit(x.rhs)
+		}
+	}
+	visit(p.root)
+	return out
+}
+
 // SQLPortable reports whether every node and host function in the program has
 // declared target-neutral semantics suitable for a future SQL lowering.
 func (p *Program) SQLPortable() bool { return p.sqlPortable }

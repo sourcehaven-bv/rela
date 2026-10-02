@@ -63,7 +63,9 @@ function mountModal(props: Record<string, unknown> = {}) {
 
 // Clicks Continue so the embedded form mounts.
 async function continueToForm(w: ReturnType<typeof mountModal>) {
-  await w.findAll('.duplicate-actions button')[1].trigger('click')
+  const proceed = w.findAll('button').find((b) => b.text() === 'Continue')
+  if (!proceed) throw new Error('no Continue button')
+  await proceed.trigger('click')
   await flushPromises()
 }
 
@@ -117,11 +119,13 @@ describe('DuplicateModal', () => {
     const w = mountModal()
     await flushPromises()
 
-    const rows = w.findAll('.duplicate-choice')
+    // RlCheckbox renders the label text and the native input together, so the
+    // pair is read off the rendered control rather than off rela classes.
+    const rows = w.findAll('.rl-checkbox')
     expect(rows).toHaveLength(2)
     const byLabel = Object.fromEntries(
       rows.map((r) => [
-        r.find('.duplicate-choice-label').text(),
+        (r.element.closest('label') ?? r.element).textContent?.trim().split(' (')[0],
         (r.find('input').element as HTMLInputElement).checked,
       ])
     )
@@ -136,11 +140,11 @@ describe('DuplicateModal', () => {
     const w = mountModal()
     await flushPromises()
 
-    expect(w.find('.duplicate-error').exists()).toBe(true)
     expect(w.text()).toContain('would be missing them')
+    expect(w.text()).toContain('boom')
     // Crucially NOT the "no relations" wording, and no live Confirm.
     expect(w.text()).not.toContain('no relations to carry over')
-    expect(w.findAll('.duplicate-choice')).toHaveLength(0)
+    expect(w.findAll('.rl-checkbox')).toHaveLength(0)
   })
 
   // AC4: the empty state is explicit, and distinct from the failure above.
@@ -150,7 +154,7 @@ describe('DuplicateModal', () => {
     await flushPromises()
 
     expect(w.text()).toContain('no relations to carry over')
-    expect(w.find('.duplicate-error').exists()).toBe(false)
+    expect(w.text()).not.toContain('would be missing them')
   })
 
   // AC10a / AC19b. A copy missing fields is acceptable; a copy missing fields
@@ -158,7 +162,8 @@ describe('DuplicateModal', () => {
   it('names properties that could not be carried', async () => {
     const w = mountModal()
     await flushPromises()
-    await w.findAll('.duplicate-actions button')[1].trigger('click')
+    const proceed = w.findAll('button').find((b) => b.text() === 'Continue')
+    await proceed!.trigger('click')
     await flushPromises()
 
     const notices = w.find('.duplicate-omitted').text()

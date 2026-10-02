@@ -338,8 +338,8 @@ func TestListRelationLifetimes_RenamedAwayNotListedUnderOldKey(t *testing.T) {
 	ctx := context.Background()
 	vs := s.VersionStore()
 
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("RA", "ticket", "")))
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("RX", "ticket", "")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("RA", "")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("RX", "")))
 	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "RA", Type: "links", To: "RX"}, &store.RelationData{Content: "v1"})
 	require.NoError(t, err)
 	rid := relRecordID(ctx, t, pool, "RA", "links", "RX")

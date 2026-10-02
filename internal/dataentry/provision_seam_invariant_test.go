@@ -26,6 +26,7 @@ import (
 func TestProvisionSeam_EveryWriteHandlerUsesWithProvision(t *testing.T) {
 	files := []string{
 		"write_handler.go",
+		"softdelete_handler.go",
 		"actions.go",
 		"attachment_handler.go",
 		"handlers_attachment.go",

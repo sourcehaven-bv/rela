@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
+import RlKbd from 'rela-components/components/data/RlKbd.vue'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
@@ -32,9 +35,9 @@ import {
 } from '@/utils/markdown'
 import { makeRefResolver } from '@/utils/entityRefResolver'
 import BackButton from '@/components/common/BackButton.vue'
-import Badge from '@/components/common/Badge.vue'
 import InaccessibleField from '@/components/common/InaccessibleField.vue'
 import PropertyDisplay from '@/components/common/PropertyDisplay.vue'
+import ViewTableCell from '@/components/entity/ViewTableCell.vue'
 import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
 import { ChevronRight } from 'lucide-vue-next'
 import { defaultRegistry } from '@/widgets/registry'
@@ -57,9 +60,11 @@ import SectionCreateButton from '@/components/entity/SectionCreateButton.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { buildCreateLinkQuery } from '@/utils/createLink'
 import type { ViewSectionCreate, ViewSectionCreateTarget } from '@/api/views'
-import { entityExportUrl } from '@/api/transforms'
+import { entityExportUrl, getTransforms, type TransformInfo } from '@/api/transforms'
 import CopyMenu from '@/components/entity/CopyMenu.vue'
 import FaceMenu from '@/components/entity/FaceMenu.vue'
+import EntityActionsMenu from '@/components/entity/EntityActionsMenu.vue'
+import type { EntityAction } from '@/components/entity/entityActions'
 import DuplicateModal from '@/components/entity/DuplicateModal.vue'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
 import WorldBanner from '@/components/common/WorldBanner.vue'
@@ -67,6 +72,9 @@ import { invokeCopy } from '@/api/copies'
 import type { CopyOffer, Face } from '@/types'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
+import EntityTitle from './EntityTitle.vue'
+import EntityBody from './EntityBody.vue'
+import { isFieldWritable, isPropertyRedacted } from '@/utils/affordances'
 import {
   buildSectionEditFields as buildSectionEditFieldsPure,
   sectionShouldRouteToInlineEdit as sectionShouldRouteToInlineEditPure,
@@ -80,6 +88,7 @@ import { useDelayedPending } from '@/composables/useDelayedPending'
 import { beginRouteLoad } from '@/composables/useNavigationPending'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 import { recordRecentEntity } from '@/utils/recentEntities'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -101,6 +110,14 @@ const props = withDefaults(
   }>(),
   { hideActions: false }
 )
+
+const emit = defineEmits<{
+  /**
+   * The entity's actions, whenever they change. A host that hides the header
+   * buttons (the detail panel) draws them in its own menu instead.
+   */
+  actions: [actions: EntityAction[]]
+}>()
 
 const router = useRouter()
 const route = useRoute()
@@ -209,7 +226,6 @@ const showBlockLoader = useDelayedPending(() => loading.value && !viewData.value
   delay: PENDING_TIMINGS.navDelayMs,
   minDuration: PENDING_TIMINGS.navMinDurationMs,
 })
-const showOverflowMenu = ref(false)
 
 const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
 
@@ -469,7 +485,16 @@ const contentAutoSave = useAutoSave({
   contentRef: entryContent as unknown as import('vue').Ref<string>,
   inverseToCanonical: new Map(),
   buildRelationsBody: () => null,
-  applyServerProperty: () => {},
+  applyServerProperty: (prop, value) => {
+    const view = viewData.value
+    if (!view?.entry) return
+    const pinned = pinEntityForFlush.value
+    if (pinned && (view.entry.id !== pinned.id || view.entry.type !== pinned.type)) return
+    const properties = { ...view.entry.properties }
+    if (value === undefined) delete properties[prop]
+    else properties[prop] = value
+    viewData.value = { ...view, entry: { ...view.entry, properties } }
+  },
   applyServerContent: (next) => {
     const view = viewData.value
     if (!view || !view.entry) return
@@ -484,8 +509,12 @@ const contentAutoSave = useAutoSave({
     )
     viewData.value = { ...view, entry: { ...view.entry, content: next }, sections: nextSections }
   },
-  onError: (msg) => uiStore.error(msg),
-  disablePropertyChannel: true,
+  onError: (msg, info) => {
+    uiStore.error(msg)
+    // A refused title leaves the optimistic heading on screen; reload so the
+    // page shows what the server holds.
+    if (info?.channel === 'property') void loadView()
+  },
   disableRelationsChannel: true,
 })
 
@@ -529,6 +558,60 @@ async function acceptSuggestion(c: Comment) {
   } finally {
     accepting.value = false
   }
+}
+
+// The title edits in place when it is one writable property. A redacted
+// title has no `_fields` verdict, which would read as writable, so it is
+// excluded explicitly.
+const titleProperty = computed(() => {
+  const prop = typeDef.value?.primary
+  const ent = entry.value
+  if (!prop || !ent || isInaccessible.value || !canUpdate.value) return undefined
+  if (isPropertyRedacted(prop, ent._redacted)) return undefined
+  return isFieldWritable(ent._fields?.[prop]) ? prop : undefined
+})
+const titleValue = computed(() => {
+  const prop = typeDef.value?.primary
+  const raw = prop ? entry.value?.properties?.[prop] : undefined
+  return raw == null ? '' : String(raw)
+})
+
+// The body edits in place under the same gate as a checkbox toggle, which is
+// already a write to it.
+const canEditBody = computed(() => canUpdate.value && !isInaccessible.value)
+
+// A pause in typing, not a keystroke, is worth a save.
+const BODY_SAVE_DEBOUNCE_MS = 800
+
+function onBodyInput(next: string) {
+  const view = viewData.value
+  if (!view?.entry) return
+  // Mirrored into the view at once so the read view is current on leaving.
+  const sections = view.sections.map((s) =>
+    isEntryContentSection(s) ? { ...s, content: next } : s
+  )
+  viewData.value = { ...view, entry: { ...view.entry, content: next }, sections }
+  contentAutoSave.scheduleContentSave(next, BODY_SAVE_DEBOUNCE_MS)
+}
+
+function onBodyDone() {
+  void contentAutoSave.commitImmediately()
+}
+
+function saveTitle(value: string) {
+  const prop = titleProperty.value
+  const view = viewData.value
+  if (!prop || !view?.entry) return
+  // Optimistic: the heading changes as the control closes. `_title` falls
+  // back to the ID when empty, as the server derives it.
+  const properties = { ...view.entry.properties, [prop]: value }
+  viewData.value = {
+    ...view,
+    entry: { ...view.entry, properties, _title: value || view.entry.id },
+  }
+  if (value === '') contentAutoSave.scheduleUnset(prop)
+  else contentAutoSave.scheduleFieldSave(prop, value)
+  void contentAutoSave.commitImmediately()
 }
 
 function contentClick(event: MouseEvent) {
@@ -701,13 +784,6 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-function closeOverflow() {
-  showOverflowMenu.value = false
-}
-watch(showOverflowMenu, (open) => {
-  if (open) document.addEventListener('click', closeOverflow)
-  else document.removeEventListener('click', closeOverflow)
-})
 
 // Commands — separate fetch, abortable to survive rapid navigation
 // (BUG-6C3V: a stale fetch resolving against an unmounted component).
@@ -1153,24 +1229,97 @@ watch([viewData, worldInfo], ([, info]) => {
 // advertise a feature this deployment cannot provide.
 const showHistory = computed(() => schemaStore.historyEnabled)
 
-// The same filters the menu components apply to their own props, so the
-// mobile rows and the desktop menus offer an identical set. Duplicating the
-// PREDICATE would let the two drift; duplicating the call does not.
-const overflowFaces = computed<Face[]>(() => faceOptions.value ?? [])
-const overflowCopies = computed<CopyOffer[]>(() => copyOffers.value.filter((o) => o.allowed))
+// The export formats, for the action list. ExportMenu fetches the same cached
+// registry for the desktop button.
+const exportFormats = ref<TransformInfo[]>([])
+onMounted(() => {
+  getTransforms()
+    .then((formats) => (exportFormats.value = formats))
+    .catch(() => (exportFormats.value = []))
+})
 
-// Whether the overflow button renders at all. One expression, read by both
-// the button and its contents: a fourth affordance is added here and cannot
-// then be reachable on desktop only.
-const hasOverflow = computed(
-  () =>
-    commands.value.length > 0 ||
-    detailActions.value.length > 0 ||
-    overflowFaces.value.length > 0 ||
-    overflowCopies.value.length > 0 ||
-    canDuplicate.value ||
-    showHistory.value
-)
+/*
+ * Every action the header offers, as one list (see entityActions.ts). The
+ * desktop row keeps its own buttons and dropdowns; the phone overflow and the
+ * detail panel draw this list. Each entry is gated by the SAME computed the
+ * matching desktop button reads, so the two cannot disagree.
+ */
+const actions = computed<EntityAction[]>(() => {
+  const out: EntityAction[] = commands.value.map((cmd) => ({
+    id: `command:${cmd.id}`,
+    label: cmd.label,
+    group: 'command',
+    icon: 'play',
+    run: () => runCommand(cmd),
+  }))
+  for (const a of detailActions.value) {
+    out.push({
+      id: `action:${a.id}`,
+      label: a.label,
+      group: 'command',
+      icon: 'play',
+      disabled: detailActionBusy.value,
+      run: () => void runDetailAction(a),
+    })
+  }
+  // A denied copy is ABSENT, not disabled, as in CopyMenu.
+  for (const offer of copyOffers.value.filter((o) => o.allowed)) {
+    out.push({
+      id: `copy:${offer.name}`,
+      label: offer.label || offer.name,
+      group: 'command',
+      icon: 'play',
+      disabled: copyBusy.value,
+      run: () => void runCopy(offer),
+    })
+  }
+  if (editTarget.value) {
+    const to = editTarget.value
+    out.push({ id: 'edit', label: 'Edit', group: 'edit', icon: 'edit', shortcut: 'E', run: () => void router.push(to) })
+  }
+  for (const f of faceOptions.value ?? []) {
+    out.push({
+      id: `face:${f.face}`,
+      label: `View ${f.label || f.face || 'default'}`,
+      group: 'view',
+      icon: 'layers',
+      run: () => goToFace(f),
+    })
+  }
+  if (showHistory.value) {
+    out.push({ id: 'history', label: 'History', group: 'view', icon: 'history', run: () => void router.push(historyTarget.value) })
+  }
+  for (const t of exportFormats.value) {
+    out.push({
+      id: `export:${t.name}`,
+      label: `Export as ${t.name}`,
+      group: 'export',
+      icon: 'download',
+      // What is on screen (BUG-PLZDPR): the served face, in the page's world.
+      href: entityExportUrl(props.entityType, servedRef.value, t.name, worldParam.value),
+    })
+  }
+  if (canDuplicate.value) {
+    out.push({ id: 'duplicate', label: 'Duplicate', group: 'manage', icon: 'copy', run: () => (showDuplicateModal.value = true) })
+  }
+  if (canDelete.value) {
+    out.push({
+      id: 'delete',
+      label: 'Delete',
+      group: 'danger',
+      icon: 'delete',
+      tone: 'danger',
+      shortcut: 'Del',
+      run: () => void requestDelete(),
+    })
+  }
+  return out
+})
+
+// On a phone, Edit and Delete keep their own buttons; the rest is overflow.
+const overflowActions = computed(() => actions.value.filter((a) => a.id !== 'edit' && a.id !== 'delete'))
+
+watch(actions, (list) => emit('actions', list), { immediate: true })
 
 function backTargetAfterDelete(): string {
   if (backTarget.value) return backTarget.value.to
@@ -1546,10 +1695,6 @@ function handleRowPropertyApplied(
   viewData.value = { ...view, sections: nextSections }
 }
 
-function shouldUseBadge(value: string, propType?: string): boolean {
-  return !!propType && !!value
-}
-
 function scrollToSection(sectionId: string) {
   const el = document.getElementById(sectionId)
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -1571,7 +1716,6 @@ onBeforeUnmount(() => {
   void contentAutoSave.commitImmediately()
 })
 
-onUnmounted(() => document.removeEventListener('click', closeOverflow))
 
 // Switching WORLD reloads the view, but is deliberately NOT folded into the
 // entity watcher below.
@@ -1713,17 +1857,15 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
     <!-- Deliberately empty while loading below the threshold: no spinner,
          no reserved block, no layout spring. The ActivityBar carries the
          navigation case; this only paints for a slow cold load. -->
-    <div v-if="showBlockLoader" class="loading-state">
-      <div class="spinner" />
-      <span>Loading…</span>
-    </div>
+    <RlStatusRegion v-if="showBlockLoader">Loading…</RlStatusRegion>
     <div v-else-if="loading && !entry" class="entity-detail-placeholder" />
 
-    <div v-else-if="error" class="error-state">
-      <h2>Error</h2>
-      <p>{{ error }}</p>
-      <button class="btn btn-primary" @click="loadView">Retry</button>
-    </div>
+    <RlStatusRegion v-else-if="error" tone="error">
+      {{ error }}
+      <template #actions>
+        <RlButton variant="primary" @click="loadView">Retry</RlButton>
+      </template>
+    </RlStatusRegion>
 
     <template v-else-if="entry">
       <!-- Back affordance + optional scope (prev/next) navigation. The bar
@@ -1733,16 +1875,35 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
       <div v-if="backTarget || scopeNav" class="scope-nav mobile-topbar">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
-          <RouterLink v-if="scopeTarget('prev')" class="scope-nav-btn" :to="scopeTarget('prev')!">
-            ← Prev <kbd>P</kbd>
-          </RouterLink>
-          <span v-else class="scope-nav-btn disabled">← Prev</span>
+          <!--
+            A step to another entity is navigation, so these are links when
+            there is somewhere to go and disabled buttons at the ends of the
+            scope. `as` takes RouterLink itself — the library does not depend
+            on a router.
+          -->
+          <RlButton
+            v-if="scopeTarget('prev')"
+            :as="RouterLink"
+            :to="scopeTarget('prev')!"
+            variant="secondary"
+            size="sm"
+            icon="arrow-left"
+          >
+            Prev <RlKbd keys="P" />
+          </RlButton>
+          <RlButton v-else variant="secondary" size="sm" icon="arrow-left" disabled>Prev</RlButton>
           <span class="scope-nav-progress">[{{ scopeNav.current }}/{{ scopeNav.total }}]</span>
           <span class="scope-nav-label">{{ scopeNav.label }}</span>
-          <RouterLink v-if="scopeTarget('next')" class="scope-nav-btn" :to="scopeTarget('next')!">
-            Next → <kbd>N</kbd>
-          </RouterLink>
-          <span v-else class="scope-nav-btn disabled">Next →</span>
+          <RlButton
+            v-if="scopeTarget('next')"
+            :as="RouterLink"
+            :to="scopeTarget('next')!"
+            variant="secondary"
+            size="sm"
+          >
+            Next <RlKbd keys="N" />
+          </RlButton>
+          <RlButton v-else variant="secondary" size="sm" disabled>Next</RlButton>
         </template>
       </div>
 
@@ -1806,27 +1967,33 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
       <header class="detail-header">
         <div class="header-info">
           <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
-          <h1 class="text-wrap-anywhere">{{ entryTitle }}</h1>
+          <EntityTitle
+            :title="entryTitle"
+            :value="titleValue"
+            :editable="!!titleProperty"
+            :required="!!(titleProperty && typeDef?.properties[titleProperty]?.required)"
+            @commit="saveTitle"
+          />
         </div>
         <!-- Desktop actions -->
         <div v-if="!props.hideActions" class="header-actions desktop-actions">
-          <button
+          <RlButton
             v-for="cmd in commands"
             :key="cmd.id"
-            class="btn btn-command"
+            variant="primary"
             @click="runCommand(cmd)"
           >
             {{ cmd.label }}
-          </button>
-          <button
+          </RlButton>
+          <RlButton
             v-for="a in detailActions"
             :key="`action-${a.id}`"
-            class="btn btn-command"
+            variant="secondary"
             :disabled="detailActionBusy"
             @click="runDetailAction(a, $event)"
           >
             {{ a.label }}
-          </button>
+          </RlButton>
           <FaceMenu :faces="faceOptions" @select="goToFace" />
           <!--
             Copy affordances (RULING 9). Renders nothing when no offer is
@@ -1847,9 +2014,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             :menu-label="hc.heading || 'New'"
             @select="startCreate"
           />
-          <RouterLink v-if="editTarget" class="btn btn-secondary" :to="editTarget">
-            Edit <kbd>E</kbd>
-          </RouterLink>
+          <RlButton v-if="editTarget" :as="RouterLink" :to="editTarget" variant="secondary">
+            Edit
+            <template #trailing><RlKbd keys="E" /></template>
+          </RlButton>
           <!--
             Gated on a DEPLOYMENT capability, not a permission: version history
             is postgres-only, and on fs/mem `/_history` answers a named 501. An
@@ -1858,125 +2026,48 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             not have. The mobile block below gates on the SAME flag; both sites
             must, which is the trap this header just walked into three times.
           -->
-          <RouterLink v-if="showHistory" class="btn btn-secondary" :to="historyTarget"
-            >History</RouterLink
-          >
-          <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, servedRef, t)" />
+          <RlButton v-if="showHistory" :as="RouterLink" :to="historyTarget" variant="secondary">
+            History
+          </RlButton>
+          <!--
+            Exports what is on screen (BUG-PLZDPR): the served face's address,
+            and the page's world, in which the export resolves the entry's links.
+          -->
+          <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, servedRef, t, worldParam)" />
           <!--
             Duplicate. Gated on `inline_create` rather than `_actions` (there is
-            no `create` key on an entity response); the mobile block below gates
-            on the SAME computed via hasOverflow.
+            no `create` key on an entity response); the action list gates on the
+            SAME computed.
           -->
-          <button v-if="canDuplicate" class="btn btn-secondary" @click="showDuplicateModal = true">
+          <RlButton v-if="canDuplicate" variant="secondary" @click="showDuplicateModal = true">
             Duplicate
-          </button>
-          <button v-if="canDelete" class="btn btn-danger" @click="requestDelete">
-            Delete <kbd>Del</kbd>
-          </button>
+          </RlButton>
+          <RlButton v-if="canDelete" variant="secondary" tone="danger" @click="requestDelete">
+            Delete
+            <template #trailing><RlKbd keys="Del" /></template>
+          </RlButton>
         </div>
 
         <!-- Mobile actions: Edit primary, delete icon, overflow menu for commands -->
         <div v-if="!props.hideActions" class="header-actions mobile-actions">
-          <RouterLink v-if="editTarget" class="btn btn-secondary" :to="editTarget">
+          <RlButton v-if="editTarget" :as="RouterLink" :to="editTarget" variant="secondary">
             Edit
-          </RouterLink>
-          <button
+          </RlButton>
+          <RlIconButton
             v-if="canDelete"
-            class="btn btn-danger mobile-delete-btn"
-            aria-label="Delete"
+            class="mobile-delete-btn"
+            icon="delete"
+            label="Delete"
+            tone="danger"
             @click="requestDelete"
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <polyline points="3 6 5 6 21 6" />
-              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-            </svg>
-          </button>
+          />
           <!--
-            The overflow menu is the mobile home for EVERY header affordance
-            that is not Edit or Delete. It used to hold commands only, so the
-            world-era additions — FaceMenu, CopyMenu, History — were reachable
-            on desktop and simply GONE on a phone: you could not publish a
-            policy or switch language at all, with nothing on screen saying
-            those actions exist.
-
-            `hasOverflow` is one computed rather than a chain of `||` inline,
-            so adding a fourth affordance means extending one expression that
-            both the button and its contents read. The three-times-repeated
-            omission was each author adding a control where they were already
-            working; a single list is what makes "does this have a mobile
-            home?" answerable in one place.
+            Everything else the header offers, from the same action list the
+            detail panel draws (see entityActions.ts). Before that list, three
+            features shipped to the desktop row alone and were simply gone on
+            a phone.
           -->
-          <div v-if="hasOverflow" class="overflow-menu-wrapper">
-            <button
-              class="btn btn-secondary mobile-overflow-btn"
-              aria-label="More actions"
-              @click.stop="showOverflowMenu = !showOverflowMenu"
-            >
-              ⋯
-            </button>
-            <div v-if="showOverflowMenu" class="overflow-menu" @click="showOverflowMenu = false">
-              <button
-                v-for="cmd in commands"
-                :key="cmd.id"
-                class="overflow-menu-item"
-                @click="runCommand(cmd)"
-              >
-                {{ cmd.label }}
-              </button>
-              <button
-                v-for="a in detailActions"
-                :key="`action-${a.id}`"
-                class="overflow-menu-item"
-                :disabled="detailActionBusy"
-                @click="runDetailAction(a, $event)"
-              >
-                {{ a.label }}
-              </button>
-              <!--
-                Faces and copies are rendered as flat rows here rather than as
-                the FaceMenu/CopyMenu components: those open a nested dropdown,
-                and a dropdown inside a dropdown on a phone is unusable. The
-                affordance is the same and the handlers are shared, so a copy
-                invoked from here goes through the identical guard.
-              -->
-              <button
-                v-for="f in overflowFaces"
-                :key="`face-${f.face}`"
-                class="overflow-menu-item"
-                @click="goToFace(f)"
-              >
-                View {{ f.label || f.face || 'default' }}
-              </button>
-              <button
-                v-for="o in overflowCopies"
-                :key="`copy-${o.name}`"
-                class="overflow-menu-item"
-                :disabled="copyBusy"
-                @click="runCopy(o)"
-              >
-                {{ o.label || o.name }}
-              </button>
-              <button
-                v-if="canDuplicate"
-                class="overflow-menu-item"
-                @click="showDuplicateModal = true"
-              >
-                Duplicate
-              </button>
-              <RouterLink v-if="showHistory" class="overflow-menu-item" :to="historyTarget">
-                History
-              </RouterLink>
-            </div>
-          </div>
+          <EntityActionsMenu :actions="overflowActions" class="mobile-overflow" />
         </div>
       </header>
 
@@ -2129,56 +2220,71 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                Function ref instead of string ref because this template lives
                inside a v-for: Vue would otherwise collect template-refs of
                the same name into an array per iteration. -->
-          <div v-else-if="section === entryContentSection" class="entry-content-host">
-            <div
-              :ref="
-                (el) => {
-                  contentRef = el as HTMLElement | null
-                }
-              "
-              class="content-body md-body"
-              :data-comment-source="entryContentSection.content || ''"
-              @click="contentClick"
-              v-html="renderedEntryContent"
-            />
-            <!-- Select-to-comment over the body (TKT-FIO205 stage 2). Absolute
-                 within .entry-content-host, so its offsets are relative to the
-                 body rather than the viewport. -->
-            <TextSelectionComment
-              v-if="commentsEnabled"
-              :entity-type="entityType"
-              :entity-id="servedRef"
-              :container="contentRef"
-              @added="loadComments"
-            />
+          <!--
+            The body edits in place (EntityBody). Its read view is this host,
+            unchanged: links, checkboxes and comment marks keep their clicks.
+          -->
+          <EntityBody
+            v-else-if="section === entryContentSection"
+            :content="entryContentSection.content || ''"
+            :editable="canEditBody"
+            :ref-resolver="refResolver"
+            @input="onBodyInput"
+            @done="onBodyDone"
+          >
+            <template #read>
+              <div class="entry-content-host">
+                <div
+                  :ref="
+                    (el) => {
+                      contentRef = el as HTMLElement | null
+                    }
+                  "
+                  class="content-body md-body"
+                  :data-comment-source="entryContentSection.content || ''"
+                  @click="contentClick"
+                  v-html="renderedEntryContent"
+                />
+                <!-- Select-to-comment over the body (TKT-FIO205 stage 2). Absolute
+                     within .entry-content-host, so its offsets are relative to the
+                     body rather than the viewport. -->
+                <TextSelectionComment
+                  v-if="commentsEnabled"
+                  :entity-type="entityType"
+                  :entity-id="servedRef"
+                  :container="contentRef"
+                  @added="loadComments"
+                />
 
-            <!-- Comment affordances for blocks that cannot be text-selected:
-                 images and mermaid/PlantUML diagrams. They anchor to the
-                 block's SOURCE markdown, so they ride the same `text` kind. -->
-            <BlockCommentOverlay
-              v-if="commentsEnabled"
-              :entity-type="entityType"
-              :entity-id="servedRef"
-              :container="contentRef"
-              :render-key="renderedEntryContent"
-              :comments="comments"
-              @added="loadComments"
-            />
+                <!-- Comment affordances for blocks that cannot be text-selected:
+                     images and mermaid/PlantUML diagrams. They anchor to the
+                     block's SOURCE markdown, so they ride the same `text` kind. -->
+                <BlockCommentOverlay
+                  v-if="commentsEnabled"
+                  :entity-type="entityType"
+                  :entity-id="servedRef"
+                  :container="contentRef"
+                  :render-key="renderedEntryContent"
+                  :comments="comments"
+                  @added="loadComments"
+                />
 
-            <!-- The thread for a clicked highlight. Anchored to the mark, which
-                 lives in v-html output and so has no component of its own. -->
-            <TextCommentPopover
-              v-if="commentsEnabled && textCommentPos && openTextComments.length > 0"
-              :entity-type="entityType"
-              :entity-id="servedRef"
-              :comments="openTextComments"
-              :position="textCommentPos"
-              :can-accept="canAccept"
-              @changed="loadComments"
-              @accept="acceptSuggestion"
-              @close="closeTextComment"
-            />
-          </div>
+                <!-- The thread for a clicked highlight. Anchored to the mark, which
+                     lives in v-html output and so has no component of its own. -->
+                <TextCommentPopover
+                  v-if="commentsEnabled && textCommentPos && openTextComments.length > 0"
+                  :entity-type="entityType"
+                  :entity-id="servedRef"
+                  :comments="openTextComments"
+                  :position="textCommentPos"
+                  :can-accept="canAccept"
+                  @changed="loadComments"
+                  @accept="acceptSuggestion"
+                  @close="closeTextComment"
+                />
+              </div>
+            </template>
+          </EntityBody>
 
           <!-- Other content sections (e.g. content cards from a configured view). -->
           <div
@@ -2399,26 +2505,18 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                             )
                           "
                         >
-                          <template v-for="(val, vidx) in cell.values" :key="vidx">
-                            <Badge
-                              v-if="shouldUseBadge(val, cell.propType)"
-                              :value="val"
-                              :property="cell.propType"
-                            />
-                            <span v-else>{{ val }}</span>
-                            <span v-if="vidx < cell.values.length - 1">, </span>
-                          </template>
+                          <ViewTableCell
+                            :values="cell.values"
+                            :property="section.columns?.[idx]?.property"
+                            :entity-type="row.entityType"
+                          />
                         </a>
                         <template v-else>
-                          <template v-for="(val, vidx) in cell.values" :key="vidx">
-                            <Badge
-                              v-if="shouldUseBadge(val, cell.propType)"
-                              :value="val"
-                              :property="cell.propType"
-                            />
-                            <span v-else>{{ val }}</span>
-                            <span v-if="vidx < cell.values.length - 1">, </span>
-                          </template>
+                          <ViewTableCell
+                            :values="cell.values"
+                            :property="section.columns?.[idx]?.property"
+                            :entity-type="row.entityType"
+                          />
                         </template>
                       </td>
                       <td class="actions-cell">
@@ -2465,26 +2563,18 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         )
                       "
                     >
-                      <template v-for="(val, vidx) in cell.values" :key="vidx">
-                        <Badge
-                          v-if="shouldUseBadge(val, cell.propType)"
-                          :value="val"
-                          :property="cell.propType"
-                        />
-                        <span v-else>{{ val }}</span>
-                        <span v-if="vidx < cell.values.length - 1">, </span>
-                      </template>
+                      <ViewTableCell
+                        :values="cell.values"
+                        :property="section.columns?.[idx]?.property"
+                        :entity-type="row.entityType"
+                      />
                     </a>
                     <template v-else>
-                      <template v-for="(val, vidx) in cell.values" :key="vidx">
-                        <Badge
-                          v-if="shouldUseBadge(val, cell.propType)"
-                          :value="val"
-                          :property="cell.propType"
-                        />
-                        <span v-else>{{ val }}</span>
-                        <span v-if="vidx < cell.values.length - 1">, </span>
-                      </template>
+                      <ViewTableCell
+                        :values="cell.values"
+                        :property="section.columns?.[idx]?.property"
+                        :entity-type="row.entityType"
+                      />
                     </template>
                   </td>
                   <td class="actions-cell">
@@ -2641,13 +2731,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
       />
     </template>
 
-    <div v-else class="error-state">
-      <h2>Entity not found</h2>
-      <p>{{ entityType }} "{{ entityId }}" could not be found.</p>
-      <RouterLink :to="backTargetAfterDelete()" class="btn btn-secondary">
-        Back to list
-      </RouterLink>
-    </div>
+    <RlStatusRegion v-else tone="error">
+      {{ entityType }} "{{ entityId }}" could not be found.
+      <template #actions>
+        <RlButton :as="RouterLink" :to="backTargetAfterDelete()" variant="secondary">
+          Back to list
+        </RlButton>
+      </template>
+    </RlStatusRegion>
   </div>
 </template>
 
@@ -2688,7 +2779,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   border: 0;
   border-radius: 8px;
   background: var(--comment-highlight);
-  color: var(--text-color);
+  color: var(--rl-color-text);
   font-size: 10px;
   line-height: 1.5;
   cursor: pointer;
@@ -2697,9 +2788,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 /* An uncertain anchor resolved below the exact band: the text may have moved,
  * so it reads as provisional rather than as a confirmed location. */
 .content-body :deep(mark[data-comment-uncertain]) {
-  background: color-mix(in srgb, var(--warning-color) 34%, transparent);
+  background: color-mix(in srgb, var(--rl-color-status-amber) 34%, transparent);
   border-bottom-style: dashed;
-  border-bottom-color: var(--warning-color);
+  border-bottom-color: var(--rl-color-status-amber);
 }
 
 .entity-detail {
@@ -2737,8 +2828,6 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   font-family: var(--font-mono, monospace);
 }
 
-/* Uses global .loading-state, .error-state, .spinner from App.vue */
-
 /* The world banner's notes. Two may render at once (`notice` about the
    document, `read_only` about the reader), and they are separate sentences
    from separate config keys — so they stack rather than reflowing into one
@@ -2774,6 +2863,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  /* Takes the row, so the title keeps its width when it swaps to a control. */
+  flex: 1;
+  min-width: 0;
 }
 
 .entity-type-badge {
@@ -2782,37 +2874,19 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .header-info h1 {
   margin: 0;
   font-size: 24px;
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .header-actions {
   display: flex;
   gap: var(--space-sm);
-}
-
-.header-actions kbd {
-  padding: 2px 5px;
-  font-size: 10px;
-  background: var(--border-color);
-  border-radius: 3px;
-  font-family: monospace;
-  margin-left: 4px;
-}
-
-.btn-command {
-  background: var(--accent-color, #3b82f6);
-  color: white;
-}
-
-.btn-command:hover:not(:disabled) {
-  filter: brightness(1.1);
 }
 
 /* Mobile-responsive header. .desktop-actions and .mobile-actions are
@@ -2838,46 +2912,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   padding: 6px 10px;
 }
 
-.overflow-menu-wrapper {
-  position: relative;
-}
-
-.mobile-overflow-btn {
-  font-size: var(--font-size-lg);
-  line-height: 1;
-  padding: 6px 12px;
-}
-
-.overflow-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-  min-width: 160px;
-  z-index: 50;
-}
-
-.overflow-menu-item {
-  display: block;
-  width: 100%;
-  padding: 8px 12px;
-  background: none;
-  border: none;
-  text-align: left;
-  font-size: var(--font-size-base);
-  color: var(--text-color);
-  cursor: pointer;
-}
-
-.overflow-menu-item:hover {
-  background: var(--hover-bg);
-}
-
-/* Scope Navigation Bar
- * .scope-nav-btn styles live in src/styles/back-button.css — see TKT-JIEKC. */
+/* Scope Navigation Bar. The buttons themselves are RlButton and RlBackButton;
+ * only the bar's own layout is here. */
 .scope-nav {
   display: flex;
   align-items: center;
@@ -2888,14 +2924,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 .scope-nav-progress {
   font-size: var(--font-size-dense);
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   font-family: monospace;
 }
 
 .scope-nav-label {
   flex: 1;
   font-size: var(--font-size-dense);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 /* Jump bar */
@@ -2904,24 +2940,24 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   flex-wrap: wrap;
   gap: var(--space-sm);
   padding: 12px 0;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
   margin-bottom: 24px;
 }
 
 .jump-link {
   padding: 6px 12px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-hover);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-dense);
-  color: var(--text-color);
+  color: var(--rl-color-text);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .jump-link:hover {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
+  background: var(--rl-color-accent);
+  border-color: var(--rl-color-accent);
   color: white;
 }
 
@@ -2957,22 +2993,22 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   font-weight: 600;
   margin: 0 0 16px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-color);
-  color: var(--text-color);
+  border-bottom: 1px solid var(--rl-color-border);
+  color: var(--rl-color-text);
 }
 
 .cb-stats {
   font-size: var(--font-size-base);
   font-weight: 500;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin-left: 8px;
 }
 
 .section-empty {
   padding: 24px;
   text-align: center;
-  color: var(--muted-text);
-  background: var(--hover-bg);
+  color: var(--rl-color-text-muted);
+  background: var(--rl-color-bg-hover);
   border-radius: var(--radius-md);
   font-style: italic;
 }
@@ -2987,8 +3023,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 /* Generic content (collected entities, configured-view content sections). */
 .content-block {
   padding: 16px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
 }
 
@@ -3000,8 +3036,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
 .content-card {
   padding: 16px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
 }
 
@@ -3016,7 +3052,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 }
 
 .content-card .card-header:hover .entity-title {
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
 }
 
 /* Cards grid (relation sections etc.) */
@@ -3032,15 +3068,15 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
 .entity-card {
   padding: 16px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: border-color 0.15s;
 }
 
 .entity-card:hover {
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
 }
 
 .card-header {
@@ -3053,28 +3089,28 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 .entity-type {
   font-size: 10px;
   text-transform: uppercase;
-  color: var(--muted-text);
-  background: var(--border-color);
+  color: var(--rl-color-text-muted);
+  background: var(--rl-color-border);
   padding: 2px 4px;
   border-radius: 2px;
 }
 
 .entity-title {
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   flex: 1;
 }
 
 .entity-id {
   font-size: var(--font-size-xs);
   font-family: monospace;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .edit-btn {
   background: none;
   border: none;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 16px;
   cursor: pointer;
   padding: 2px 6px;
@@ -3082,8 +3118,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 }
 
 .edit-btn:hover {
-  background: var(--hover-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-hover);
+  color: var(--rl-color-text);
 }
 
 .card-fields {
@@ -3100,11 +3136,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 }
 
 .field-label {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .field-value {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 /* Entity list */
@@ -3123,8 +3159,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   justify-content: space-between;
   gap: var(--space-md);
   padding: 8px 12px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-sm);
 }
 
@@ -3155,7 +3191,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 }
 
 .list-link:hover .entity-title {
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
 }
 
 .list-fields {
@@ -3185,21 +3221,21 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 .nested-truncated {
   margin: 0 0 8px;
   font-size: var(--font-size-sm);
-  color: var(--text-color);
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
+  color: var(--rl-color-text);
+  background: var(--rl-color-bg-hover);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-sm);
   padding: 6px 10px;
 }
 
 .nested-tree {
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
 
 .nested-node:not(:last-child) {
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .nested-row {
@@ -3207,7 +3243,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   align-items: center;
   gap: var(--space-md);
   padding: 8px 12px;
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   cursor: pointer;
   /* The default triangle would sit beside our own twisty. */
   list-style: none;
@@ -3218,12 +3254,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 }
 
 .nested-row:hover {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .nested-twisty {
   flex: none;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   transition: transform 0.15s ease;
 }
 
@@ -3254,13 +3290,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   gap: var(--space-md);
   flex: none;
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   white-space: nowrap;
 }
 
 .nested-children {
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-color);
+  border-top: 1px solid var(--rl-color-border);
+  background: var(--rl-color-bg);
 }
 
 .nested-child {
@@ -3272,22 +3308,22 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 }
 
 .nested-child:not(:last-child) {
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .nested-child:hover {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .nested-empty,
 .nested-more {
   padding: 6px 12px 6px 32px;
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .nested-more {
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--rl-color-border);
 }
 
 .table-group {
@@ -3297,10 +3333,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 .group-heading {
   font-size: var(--font-size-base);
   font-weight: 600;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin: 0 0 8px;
   padding: 4px 0;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .data-table {
@@ -3313,25 +3349,25 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 .data-table td {
   padding: 10px 12px;
   text-align: left;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 
 .data-table th {
   font-weight: 500;
-  color: var(--muted-text);
-  background: var(--hover-bg);
+  color: var(--rl-color-text-muted);
+  background: var(--rl-color-bg-hover);
 }
 
 .data-table td {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .data-table tbody tr:hover {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .data-table a {
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
   text-decoration: none;
 }
 
@@ -3350,7 +3386,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 .icon-btn {
   background: none;
   border: none;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   cursor: pointer;
   padding: 4px 8px;
   font-size: var(--font-size-base);
@@ -3358,8 +3394,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 }
 
 .icon-btn:hover {
-  background: var(--hover-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-hover);
+  color: var(--rl-color-text);
 }
 
 @media (max-width: 768px) {
@@ -3388,11 +3424,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
     align-items: center;
   }
 
-  .mobile-actions .btn {
+  /* 44px is the touch-target floor; `:deep` reaches the library's button. */
+  .mobile-actions :deep(.rl-button) {
     min-height: 44px;
   }
 
-  .mobile-actions .btn-secondary {
+  .mobile-actions :deep(.rl-button--secondary) {
     flex: 1;
   }
 
@@ -3407,7 +3444,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
     border-radius: 0;
     padding: 0;
     margin-bottom: 20px;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--rl-color-border);
     padding-bottom: 16px;
   }
 }

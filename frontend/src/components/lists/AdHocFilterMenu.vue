@@ -19,6 +19,8 @@
 import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useSchemaStore } from '@/stores'
 import type { EntityType, PropertyDef } from '@/types'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlKbd from 'rela-components/components/data/RlKbd.vue'
 
 interface FilterOption {
   category: 'type' | 'property'
@@ -258,10 +260,10 @@ defineExpose({ open: openMenu, close })
 
 <template>
   <div ref="containerRef" class="adhoc-filter-menu">
-    <button class="btn btn-secondary filter-btn" type="button" @click.stop="toggle">
+    <RlButton variant="secondary" class="filter-btn" @click.stop="toggle">
       {{ buttonLabel }}
-      <kbd v-if="buttonHotkey">{{ buttonHotkey }}</kbd>
-    </button>
+      <template v-if="buttonHotkey" #trailing><RlKbd :keys="buttonHotkey" /></template>
+    </RlButton>
 
     <div v-if="open" class="filter-menu" @click.stop @keydown="handleKeydown">
       <template v-if="!selected">
@@ -316,14 +318,14 @@ defineExpose({ open: openMenu, close })
             class="filter-search"
             @keydown.enter="commit(valueInput)"
           />
-          <button
-            class="btn btn-primary btn-sm"
-            type="button"
+          <RlButton
+            variant="primary"
+            size="sm"
             :disabled="!valueInput"
             @click="commit(valueInput)"
           >
             Apply
-          </button>
+          </RlButton>
         </div>
       </template>
     </div>
@@ -341,24 +343,6 @@ defineExpose({ open: openMenu, close })
   align-self: stretch;
 }
 
-.filter-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 100%;
-}
-
-.filter-btn kbd {
-  display: inline-block;
-  padding: 0.05rem 0.3rem;
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  background: var(--hover-bg);
-  font-family: monospace;
-  font-size: 11px;
-  line-height: 1;
-}
-
 .filter-menu {
   position: absolute;
   top: 100%;
@@ -369,8 +353,8 @@ defineExpose({ open: openMenu, close })
   right: 0;
   margin-top: 4px;
   min-width: 280px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 100;
@@ -381,15 +365,15 @@ defineExpose({ open: openMenu, close })
   width: 100%;
   padding: 10px 12px;
   border: none;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
   font-size: 14px;
   outline: none;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .filter-search:focus {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .filter-header {
@@ -397,8 +381,8 @@ defineExpose({ open: openMenu, close })
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--hover-bg);
+  border-bottom: 1px solid var(--rl-color-border);
+  background: var(--rl-color-bg-hover);
   font-weight: 500;
   font-size: 14px;
 }
@@ -410,11 +394,11 @@ defineExpose({ open: openMenu, close })
   font-size: 16px;
   padding: 2px 6px;
   border-radius: 4px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .back-btn:hover {
-  background: var(--border-color);
+  background: var(--rl-color-border);
 }
 
 .filter-options {
@@ -434,14 +418,14 @@ defineExpose({ open: openMenu, close })
 
 .filter-option:hover,
 .filter-option.highlighted {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .option-category {
   font-size: 10px;
   text-transform: uppercase;
-  color: var(--muted-text);
-  background: var(--border-color);
+  color: var(--rl-color-text-muted);
+  background: var(--rl-color-border);
   padding: 2px 6px;
   border-radius: 3px;
   font-weight: 500;
@@ -454,7 +438,7 @@ defineExpose({ open: openMenu, close })
 .filter-empty {
   padding: 16px;
   text-align: center;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 14px;
 }
 
@@ -466,13 +450,8 @@ defineExpose({ open: openMenu, close })
 
 .filter-text-input .filter-search {
   flex: 1;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
-}
-
-.btn-sm {
-  padding: 6px 12px;
-  font-size: 13px;
 }
 
 @media (max-width: 768px) {

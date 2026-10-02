@@ -51,13 +51,19 @@ test.describe('Open in a new tab', () => {
     expect(href).toMatch(/scope=list(:|%3A)features/);
   });
 
-  test('a plain click still navigates in the same tab', async ({ appPage }) => {
+  test('a plain click stays in the same tab', async ({ appPage }) => {
     const listPage = new ListPage(appPage);
     await listPage.navigateToList('features');
 
     await listPage.clickRow(0);
 
-    await expect(appPage).toHaveURL(/\/entity\//);
+    // A plain click opens the detail PANEL beside the list rather than
+    // following the row's href. The point this test guards is unchanged:
+    // it must not open a tab, and it must not be swallowed. The modifier
+    // and middle-click cases above still get the entity's own page, which
+    // is why the row stays a real link with a real href.
+    await expect(listPage.detailPanel).toBeVisible();
+    await expect(appPage).toHaveURL(/\/list\/features\?.*selected=/);
   });
 
   test('cmd/ctrl-click on an entity-detail section table cell opens a background tab', async ({
@@ -97,7 +103,7 @@ test.describe('Open in a new tab', () => {
     // TestConfigHistoryEnabled_AgreesWithTheHandler.
     const listPage = new ListPage(appPage);
     await listPage.navigateToList('features');
-    await listPage.clickRow(0);
+    await listPage.openEntityPage(0);
     await expect(appPage).toHaveURL(/\/entity\//);
 
     const detail = new EntityPage(appPage);

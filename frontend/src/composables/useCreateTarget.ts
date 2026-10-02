@@ -36,6 +36,8 @@ export function useCreateTarget(
   createForm: Ref<string | undefined>,
   createWorld: Ref<string | undefined>,
   ambientWorld: Ref<string | undefined>,
+  /** Query the form carries back, such as the page tab it was opened from. */
+  context?: Ref<Record<string, string>>,
 ) {
   /** The world the form opens in: the list's `create_world`, else the ambient one. */
   const targetWorld = computed(() => createWorld.value || ambientWorld.value)
@@ -45,7 +47,10 @@ export function useCreateTarget(
     if (!createForm.value) return null
     return {
       path: `/form/${createForm.value}`,
-      query: targetWorld.value ? { world: targetWorld.value } : {},
+      query: {
+        ...(context?.value ?? {}),
+        ...(targetWorld.value ? { world: targetWorld.value } : {}),
+      },
     }
   })
 

@@ -1,7 +1,7 @@
 /* Forced-colors (Windows High Contrast) focus-ring fallback — TKT-FRING7.
  *
  * THE PROBLEM. The SPA's convention for a focus indicator is
- * `outline: none` + `box-shadow: 0 0 0 2px var(--focus-ring)`, used on ~18
+ * `outline: none` + `box-shadow: 0 0 0 2px var(--rl-color-focus)`, used on ~18
  * controls. Under `forced-colors: active` the OS discards `box-shadow`
  * entirely and overrides author colours — so those controls keep the
  * `outline: none` (which IS honoured) and lose the box-shadow that replaced

@@ -1,0 +1,64 @@
+@import "./tokens.css";
+@import "./focus-ring.css";
+@import "./control.css";
+@import "./panel.css";
+/*
+ * Last, so the dark palette's overrides win over any colour declared by the
+ * imports above. `@import` must precede all other rules, so this stays at the
+ * top of the file rather than moving to the bottom.
+ */
+@import "./dark.css";
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--rl-font-family);
+  font-size: var(--rl-font-size-md);
+  line-height: var(--rl-line-height-normal);
+  color: var(--rl-color-text);
+  background: var(--rl-color-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * Visible to screen readers only. Used to give icon-only counts and
+ * ambiguous values an explicit textual meaning.
+ */
+.rl-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Utility for controls passed into a component slot that should only appear
+ * where the sidebar is a drawer or the detail pane is an overlay. Declared
+ * globally because slot content carries the parent's scope, not the child's.
+ */
+.rl-compact-only,
+.rl-phone-only { display: none !important; }
+
+/* Drawer trigger: wherever the sidebar is off-canvas. */
+@media (max-width: 1079px) {
+  .rl-compact-only { display: flex !important; }
+}
+
+/* Back arrow: only where the detail pane fully covers the list. */
+@media (max-width: 767px) {
+  .rl-phone-only { display: flex !important; }
+}
+
+/*
+ * Reveals an empty comment badge from anywhere in the row rather than from the
+ * badge alone, which is a 20px target to find. Put this on the row; the badge
+ * is `RlCommentIndicator`'s, and a scoped rule inside it could not match an
+ * ancestor the caller owns.
+ */
+.rl-comment-hover-group:hover .rl-comment-indicator__badge--empty { opacity: 1; }

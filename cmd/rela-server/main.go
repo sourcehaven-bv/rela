@@ -417,6 +417,7 @@ func (a assertionVerifierAdapter) VerifyAssertion(
 		Subject:       c.Subject,
 		OrgID:         c.OrgID,
 		OrgSlug:       c.OrgSlug,
+		OrgName:       c.OrgName,
 		Roles:         c.Roles,
 		PrincipalType: c.PrincipalType,
 		Scopes:        c.Scopes,

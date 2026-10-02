@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -14,7 +15,15 @@ import (
 // propertyToStrings normalises a property value into a slice of non-empty
 // strings. Handles scalars, []string, and []any (the three shapes markdown
 // frontmatter can produce). nil or empty input returns an empty slice.
-func propertyToStrings(v any) []string {
+//
+// A time.Time is written as ISO 8601: an unquoted YAML date decodes to one on
+// the fs backend, and its default format ("2026-09-26 00:00:00 +0000 UTC") is
+// not something the SPA's date widgets parse reliably. propType decides
+// between a date and a timestamp. A date property stored as an RFC 3339
+// string ("2026-09-26T00:00:00Z") keeps only its date part, which a date
+// widget would otherwise read as a UTC instant and show a day early west of
+// UTC.
+func propertyToStrings(v any, propType string) []string {
 	if v == nil {
 		return nil
 	}
@@ -30,18 +39,36 @@ func propertyToStrings(v any) []string {
 	case []any:
 		out := make([]string, 0, len(t))
 		for _, item := range t {
-			s := fmt.Sprintf("%v", item)
-			if s != "" {
+			if s := scalarToString(item, propType); s != "" {
 				out = append(out, s)
 			}
 		}
 		return out
 	default:
-		s := fmt.Sprintf("%v", t)
-		if s == "" {
-			return nil
+		if s := scalarToString(t, propType); s != "" {
+			return []string{s}
 		}
-		return []string{s}
+		return nil
+	}
+}
+
+func scalarToString(v any, propType string) string {
+	isDate := propType == metamodel.PropertyTypeDate
+	switch t := v.(type) {
+	case time.Time:
+		if isDate {
+			return t.Format(time.DateOnly)
+		}
+		return t.Format(time.RFC3339)
+	case string:
+		if isDate && len(t) > len(time.DateOnly) && t[len(time.DateOnly)] == 'T' {
+			if _, err := time.Parse(time.DateOnly, t[:len(time.DateOnly)]); err == nil {
+				return t[:len(time.DateOnly)]
+			}
+		}
+		return t
+	default:
+		return fmt.Sprintf("%v", t)
 	}
 }
 
@@ -105,7 +132,7 @@ func buildSectionFieldData(
 	return SectionFieldData{
 		Property:     f.Property,
 		Label:        label,
-		Values:       propertyToStrings(e.Properties[f.Property]),
+		Values:       propertyToStrings(e.Properties[f.Property], propType),
 		PropType:     propType,
 		Inaccessible: e.IsInaccessible(f.Property),
 		// int, not dataentryconfig.Span: the named type exists to enforce
@@ -279,7 +306,7 @@ func (h *viewsHandler) buildSectionEntityData(
 		ID:            e.ID,
 		Title:         s.Meta.DisplayTitle(e.ID, e.Type, e.Properties),
 		Type:          e.Type,
-		EditFormID:    h.editFormForType(e.Type),
+		EditFormID:    editFormForType(h.schema().Cfg, e.Type),
 		Props:         h.affordances.copyVisibleProperties(ctx, e),
 		FieldVerdicts: h.affordances.computeFieldAffordances(ctx, e),
 		World:         w.provenanceFor(e),

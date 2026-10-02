@@ -986,17 +986,30 @@ func NewApp(
 	// fs and paths can also be nil in tests that take a different code path
 	// (newAppFromParts wires them post-construction), so they're checked
 	// only when they participate in the construction below.
-	if meta == nil {
-		return nil, errors.New("dataentry.NewApp: meta is required")
-	}
-	if worlds == nil {
-		return nil, errors.New("dataentry.NewApp: worlds are required")
-	}
-	if st == nil {
-		return nil, errors.New("dataentry.NewApp: store is required")
-	}
-	if em == nil {
-		return nil, errors.New("dataentry.NewApp: entityManager is required")
+	for _, req := range []struct {
+		missing bool
+		msg     string
+	}{
+		{meta == nil, "meta is required"},
+		{worlds == nil, "worlds are required"},
+		{st == nil, "store is required"},
+		{em == nil, "entityManager is required"},
+		{searcher == nil, "searcher is required"},
+		{visibleSearcher == nil, "visibleSearcher is required (wire appbuild's Services.VisibleSearcher)"},
+		{aclImpl == nil, "acl is required (use acl.NopACL{} to opt out)"},
+		{fieldResolver == nil, "fieldResolver is required (pass NopFieldVerdictResolver{} for permissive default)"},
+		{auditSink == nil, "auditSink is required (pass audit.Nop{} to opt out)"},
+		{stateKV == nil, "stateKV is required (wire appbuild's Services.State())"},
+		// Fail closed on a wiring omission: a missing command authorizer must
+		// not default to "allow shell exec". Callers pass an explicit impl:
+		// SelectCommandAuthorizer(...) in cmd/rela-server, or
+		// UngatedCommandAuthorizer() for the in-process desktop/docscapture servers.
+		{commandAuthz == nil, "commandAuthz is required " +
+			"(use SelectCommandAuthorizer, or UngatedCommandAuthorizer() for a loopback/in-process server)"},
+	} {
+		if req.missing {
+			return nil, errors.New("dataentry.NewApp: " + req.msg)
+		}
 	}
 	// The manager owns the attachment lock, so every writer shares one
 	// instance. A manager built for a metamodel without file properties
@@ -1004,32 +1017,6 @@ func NewApp(
 	attachmentOwner, ownerErr := entitymanager.AttachmentsOf(em)
 	if ownerErr != nil && metamodel.HasFileProperties(meta) {
 		return nil, fmt.Errorf("dataentry.NewApp: %w", ownerErr)
-	}
-	if searcher == nil {
-		return nil, errors.New("dataentry.NewApp: searcher is required")
-	}
-	if visibleSearcher == nil {
-		return nil, errors.New("dataentry.NewApp: visibleSearcher is required (wire appbuild's Services.VisibleSearcher)")
-	}
-	if aclImpl == nil {
-		return nil, errors.New("dataentry.NewApp: acl is required (use acl.NopACL{} to opt out)")
-	}
-	if fieldResolver == nil {
-		return nil, errors.New("dataentry.NewApp: fieldResolver is required (pass NopFieldVerdictResolver{} for permissive default)")
-	}
-	if auditSink == nil {
-		return nil, errors.New("dataentry.NewApp: auditSink is required (pass audit.Nop{} to opt out)")
-	}
-	if stateKV == nil {
-		return nil, errors.New("dataentry.NewApp: stateKV is required (wire appbuild's Services.State())")
-	}
-	if commandAuthz == nil {
-		// Fail closed on a wiring omission: a missing command authorizer must
-		// not default to "allow shell exec". Callers pass an explicit impl —
-		// SelectCommandAuthorizer(...) in cmd/rela-server, or
-		// UngatedCommandAuthorizer() for the in-process desktop/docscapture servers.
-		return nil, errors.New("dataentry.NewApp: commandAuthz is required " +
-			"(use SelectCommandAuthorizer, or UngatedCommandAuthorizer() for a loopback/in-process server)")
 	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
@@ -1058,6 +1045,9 @@ func NewApp(
 	cfg, err := loadConfig(cfgData, meta, paths.Root)
 	if err != nil {
 		return nil, err
+	}
+	if avatarErr := checkAvatarUserType(cfg.Account, aclImpl, meta); avatarErr != nil {
+		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, avatarErr)
 	}
 
 	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{Faces: store.AllFaces()})
@@ -1328,9 +1318,10 @@ func NewApp(
 	// shared read/write helpers (visible/denyAfford/computeETag) as closures
 	// so both paths stay behaviorally identical.
 	app.write = &writeHandler{
-		schema:  app.State,
-		store:   st,
-		manager: em, // concrete; writeHandler narrows to entityMutator
+		schema:      app.State,
+		store:       st,
+		manager:     em, // concrete; writeHandler narrows to entityMutator
+		softDeletes: softDeletesFor(em),
 
 		reader:      app.reader,
 		serializer:  app.serializer,
@@ -1397,6 +1388,7 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config
 	// report nothing, turning a typo into silently different behavior.
 	dataentryconfig.NormalizeCalendars(&cfg)
 	dataentryconfig.NormalizeGantts(&cfg)
+	dataentryconfig.NormalizeListGroupBy(&cfg)
 
 	// Verify action scripts exist on disk (catches typos at startup).
 	// Skip set-only actions which have no script.

@@ -3,6 +3,7 @@ import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useSchemaStore } from '@/stores'
 import { toApiOperator, parseFilterQueryParams, filterStateToApiParams } from '@/utils/filters'
 import { getEntityPosition, type ScopeDescriptor, type PositionRef } from '@/api/entities'
+import { readFromPage } from '@/utils/pageContext'
 
 export interface ScopeNav {
   // Neighbours carry their type, not just id, so navigation builds the correct
@@ -111,9 +112,18 @@ export function useScopeNavigation(entityId: () => string) {
     // implementation ignored q (known limitation, now resolved).
     const q = route.query.q as string | undefined
 
+    // A list opened from an entity-page tab showed only the anchor's rows.
+    // The list pipeline applies `q` as well, so such a scope stays a list
+    // scope: the search pipeline cannot narrow to the tab.
+    const tab = readFromPage(route.query)
     const scope: ScopeDescriptor = {
-      source: q ? 'search' : 'list',
+      source: q && !tab?.entity ? 'search' : 'list',
       type: listConfig.entity,
+    }
+    if (tab?.entity) {
+      scope.scope_page = tab.page
+      scope.scope_tab = tab.tab
+      scope.anchor = tab.entity
     }
     if (Object.keys(filters).length) scope.filters = filters
     if (sort) scope.sort = sort

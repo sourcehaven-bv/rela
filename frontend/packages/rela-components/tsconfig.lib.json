@@ -1,0 +1,43 @@
+/*
+ * Declaration emit for the library build.
+ *
+ * Separate from `tsconfig.app.json` because that one is a project reference in
+ * a composite build with `noEmit` behaviour suited to typechecking, and because
+ * the published surface is narrower than the source tree: stories, the example
+ * app and the fixtures are not part of it.
+ *
+ * The same compiler that typechecks the source emits the declarations, so the
+ * two cannot disagree — which is what a separate dts plugin risks.
+ */
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "compilerOptions": {
+    "types": ["vite/client"],
+    "allowArbitraryExtensions": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    /*
+     * Explicitly off: the base `@vue/tsconfig` config sets `noEmit: true` for
+     * typechecking, and inheriting it here silently produces no declarations at
+     * all while still exiting 0.
+     */
+    "noEmit": false,
+    "outDir": "dist/lib",
+    "rootDir": "src",
+    /*
+     * The library is consumed as source-adjacent types, so a consumer's own
+     * strictness should not be undermined by ours being looser.
+     */
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue"],
+  "exclude": [
+    "src/**/*.stories.ts",
+    "src/pages/**",
+    "src/fixtures/**",
+    "src/App.vue",
+    "src/main.ts",
+    "src/components/overlay/triggerAttrs.types.vue"
+  ]
+}

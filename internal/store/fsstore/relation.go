@@ -17,9 +17,16 @@ func keyOf(k entity.RelationKey) string {
 	return relKey(k.From, k.FromFace, k.Type, k.To)
 }
 
-func (s *FSStore) GetRelation(_ context.Context, k entity.RelationKey) (*entity.Relation, error) {
+func (s *FSStore) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error) {
 	s.mu.RLock()
 	rm, ok := s.relations[keyOf(k)]
+	if !ok {
+		if id, revealed := store.RevealedFor(ctx, k.From, k.To); revealed {
+			if fam, marked := markedFamilyOf(s, id); marked {
+				rm, ok = fam.relations[keyOf(k)]
+			}
+		}
+	}
 	s.mu.RUnlock()
 
 	if !ok {
@@ -28,7 +35,7 @@ func (s *FSStore) GetRelation(_ context.Context, k entity.RelationKey) (*entity.
 	return s.loadRelationMeta(rm)
 }
 
-func (s *FSStore) ListRelations(_ context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
+func (s *FSStore) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	s.mu.RLock()
 
 	match := storeutil.NewRelationMatcher(q)
@@ -38,6 +45,9 @@ func (s *FSStore) ListRelations(_ context.Context, q store.RelationQuery) iter.S
 			continue
 		}
 		matches = append(matches, s.relations[key])
+	}
+	if q.EntityID != "" && q.EntityID == store.RevealedID(ctx) {
+		matches = append(matches, revealedRelations(ctx, s, match)...)
 	}
 	s.mu.RUnlock()
 

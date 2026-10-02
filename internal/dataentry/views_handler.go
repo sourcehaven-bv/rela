@@ -217,65 +217,244 @@ func (h *viewsHandler) handleV1SidePanel(w http.ResponseWriter, r *http.Request)
 }
 
 // handleV1Sidebar returns denormalized sidebar data.
+//
+// With `spaces:` configured, `?space=<id>` picks the space whose navigation
+// and Create menu are served (resolveSpace). Without it the response is the
+// top-level navigation and carries no space fields.
 func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
 	s := h.schema()
+	ctx := r.Context()
 
-	// Build navigation. Entries the principal cannot use are
-	// omitted (permitsNavEntry) — a UX filter, not a boundary; see its doc.
 	// The ACL is resolved ONCE here rather than per entry, matching
 	// resolveCommands.
-	navigation := make([]v1.SidebarGroup, 0)
 	aclImpl := h.currentACL()
-
-	for _, entry := range s.Cfg.Navigation {
-		if entry.IsGroup() {
-			group := v1.SidebarGroup{
-				Group:     entry.Group,
-				Collapsed: entry.Collapsed,
-				Items:     make([]v1.SidebarItem, 0),
-			}
-			for _, item := range entry.Items {
-				if !permitsNavEntry(r.Context(), aclImpl, item) {
-					continue
-				}
-				sidebarItem := navEntryToSidebarItem(item, s.Meta)
-				group.Items = append(group.Items, sidebarItem)
-			}
-			// A group whose every item was filtered out is dropped rather than
-			// rendered as a bare heading: an empty labeled group reads as a
-			// rendering bug, and it outlines what the principal cannot reach
-			// without being useful to them.
-			if len(group.Items) == 0 {
-				continue
-			}
-			navigation = append(navigation, group)
-		} else {
-			// Top-level item without group
-			if !permitsNavEntry(r.Context(), aclImpl, entry) {
-				continue
-			}
-			item := navEntryToSidebarItem(entry, s.Meta)
-			navigation = append(navigation, v1.SidebarGroup{
-				Items: []v1.SidebarItem{item},
-			})
-		}
-	}
 
 	resp := v1.SidebarResponse{
 		App: v1.AppConfig{
 			Name:        s.Cfg.App.Name,
 			Description: s.Cfg.App.Description,
 		},
-		Navigation: navigation,
 	}
+	if s.Cfg.HasSpaces() {
+		permitted := permittedSpaces(ctx, aclImpl, s.Cfg)
+		resp.Spaces = make([]v1.SidebarSpace, 0, len(permitted))
+		for _, sp := range permitted {
+			resp.Spaces = append(resp.Spaces, v1.SidebarSpace{
+				ID:    sp.ID,
+				Label: sp.Label,
+				Icon:  sp.Icon,
+				Home:  spaceHome(sp, sidebarNavigation(ctx, aclImpl, s.Cfg, s.Meta, sp.Navigation, sp.ID)),
+			})
+		}
+		resp.Navigation = make([]v1.SidebarGroup, 0)
+		if sp := resolveSpace(permitted, r.URL.Query().Get("space")); sp != nil {
+			resp.Space = sp.ID
+			resp.Navigation = sidebarNavigation(ctx, aclImpl, s.Cfg, s.Meta, sp.Navigation, sp.ID)
+			resp.Create = h.spaceCreate(ctx, sp)
+		}
+	} else {
+		resp.Navigation = sidebarNavigation(ctx, aclImpl, s.Cfg, s.Meta, s.Cfg.Navigation, "")
+	}
+	h.setItemsCreate(ctx, resp.Navigation)
+	resp.Pages = sidebarPages(ctx, aclImpl, s.Cfg, s.Meta)
 	resp.LogoURL = h.logo.URL()
-	resp.InlineCreate = h.inlineCreateForms(r.Context())
+	resp.InlineCreate = h.inlineCreateForms(ctx)
 
 	writeV1JSON(w, http.StatusOK, resp)
+}
+
+// sidebarNavigation builds the sidebar groups of one navigation tree. space
+// is the tree's space id ("" for the top-level navigation); it prefixes the
+// status keys (dataentryconfig.NavStatusRootKey).
+//
+// Entries the principal cannot use are omitted (showsNavEntry): a UX
+// filter, not a boundary; see permitsNavEntry.
+func sidebarNavigation(
+	ctx context.Context, aclImpl acl.ACL, cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
+	entries []dataentryconfig.NavigationEntry, space string,
+) []v1.SidebarGroup {
+	navigation := make([]v1.SidebarGroup, 0)
+	// Adjacent top-level items share one unlabelled group, so they sit
+	// together like a group's items instead of each taking a group's gap.
+	lastLoose := false
+	for i, entry := range entries {
+		key := dataentryconfig.NavStatusRootKey(space, i)
+		if entry.IsGroup() {
+			group := v1.SidebarGroup{
+				Group:     entry.Group,
+				Collapsed: entry.Collapsed,
+				Items:     make([]v1.SidebarItem, 0),
+			}
+			setNavItemsFrom(ctx, aclImpl, cfg, &group, entry, key)
+			for j, item := range entry.Items {
+				if !showsNavEntry(ctx, aclImpl, cfg, item) {
+					continue
+				}
+				sidebarItem := sidebarItemFor(cfg, meta, item)
+				setNavStatusKey(&sidebarItem, item, dataentryconfig.NavStatusKey(key, j))
+				group.Items = append(group.Items, sidebarItem)
+			}
+			// A group whose every item was filtered out is dropped rather than
+			// rendered as a bare heading: an empty labeled group reads as a
+			// rendering bug, and it outlines what the principal cannot reach
+			// without being useful to them.
+			// A generated group has no static items; its entries arrive from
+			// /api/v1/_nav_items, so it stays.
+			if len(group.Items) == 0 && group.ItemsKey == "" {
+				continue
+			}
+			navigation = append(navigation, group)
+			lastLoose = false
+		} else {
+			// Top-level item without group
+			if !showsNavEntry(ctx, aclImpl, cfg, entry) {
+				continue
+			}
+			item := sidebarItemFor(cfg, meta, entry)
+			setNavStatusKey(&item, entry, key)
+			if lastLoose {
+				last := &navigation[len(navigation)-1]
+				last.Items = append(last.Items, item)
+				continue
+			}
+			navigation = append(navigation, v1.SidebarGroup{
+				Items: []v1.SidebarItem{item},
+			})
+			lastLoose = true
+		}
+	}
+	return navigation
+}
+
+// permittedSpaces returns the spaces the principal may enter, in config
+// order. The space `permission:` is the same UX filter as a navigation
+// entry's (permitsGatedUIElement): it keeps a space out of the switcher and
+// gates nothing behind it.
+func permittedSpaces(ctx context.Context, aclImpl acl.ACL, cfg *dataentryconfig.Config) []dataentryconfig.Space {
+	out := make([]dataentryconfig.Space, 0, len(cfg.Spaces))
+	for _, sp := range cfg.Spaces {
+		if permitsGatedUIElement(ctx, aclImpl, sp.Permission) {
+			out = append(out, sp)
+		}
+	}
+	return out
+}
+
+// resolveSpace picks the current space from the permitted ones: the
+// requested id when it is among them, else the first. Nil when none is
+// permitted. An unknown or filtered id falls back rather than failing, since
+// a stale bookmark should land somewhere useful.
+func resolveSpace(permitted []dataentryconfig.Space, requested string) *dataentryconfig.Space {
+	for i := range permitted {
+		if permitted[i].ID == requested {
+			return &permitted[i]
+		}
+	}
+	if len(permitted) == 0 {
+		return nil
+	}
+	return &permitted[0]
+}
+
+// spaceHomeFallback is where a space opens when it has no `home:` and no
+// navigation destination the principal can see.
+const spaceHomeFallback = "/dashboard"
+
+// spaceHome returns the unprefixed SPA href a space opens on: its `home:`
+// entry, else the first destination in its (already filtered) navigation,
+// else spaceHomeFallback.
+func spaceHome(sp dataentryconfig.Space, navigation []v1.SidebarGroup) string {
+	if sp.Home != nil {
+		if href := navEntryToSidebarItem(*sp.Home, nil).Href; href != "" {
+			return homeHref(href)
+		}
+	}
+	for _, g := range navigation {
+		for _, it := range g.Items {
+			if it.Href != "" {
+				return homeHref(it.Href)
+			}
+		}
+	}
+	return spaceHomeFallback
+}
+
+// homeHref names the dashboard by its own path. A dashboard entry's href is
+// "/", and a space whose home is "/" would open on its own bare root, which
+// the SPA redirects to the home again, forever.
+func homeHref(href string) string {
+	if href == "/" {
+		return spaceHomeFallback
+	}
+	return href
+}
+
+// spaceCreate returns the space's `create:` types the principal may create
+// and for which a create form resolves, in config order: the same two
+// conditions as inlineCreateForms. A UI hint; the create endpoint
+// re-authorizes.
+func (h *viewsHandler) spaceCreate(ctx context.Context, sp *dataentryconfig.Space) []v1.SidebarCreate {
+	s := h.schema()
+	mayCreate := h.createAuthorizer(ctx)
+	var out []v1.SidebarCreate
+	for _, typ := range sp.Create {
+		if s.Meta != nil {
+			typ = s.Meta.ResolveAlias(typ)
+		}
+		if offer := h.createOffer(mayCreate, typ, ""); offer != nil {
+			out = append(out, *offer)
+		}
+	}
+	return out
+}
+
+// createOffer is the create offer for one type: the named form, else the
+// type's create form. Nil when no form resolves or the principal may not
+// create the type.
+func (h *viewsHandler) createOffer(mayCreate func(string) bool, typ, formID string) *v1.SidebarCreate {
+	if formID == "" {
+		formID = createFormForType(h.schema().Cfg, typ)
+	}
+	if formID == "" || !mayCreate(typ) {
+		return nil
+	}
+	label := typ
+	if meta := h.schema().Meta; meta != nil {
+		if def, ok := meta.GetEntityDef(typ); ok && def.Label != "" {
+			label = def.Label
+		}
+	}
+	return &v1.SidebarCreate{Type: typ, Label: label, Form: formID}
+}
+
+// setItemsCreate sets ItemsCreate on each generated group whose config asks
+// for it (`items_from.create`), matched to its config by ItemsKey.
+func (h *viewsHandler) setItemsCreate(ctx context.Context, navigation []v1.SidebarGroup) {
+	cfg := h.schema().Cfg
+	byKey := map[string]*dataentryconfig.NavItemsFrom{}
+	for _, e := range dataentryconfig.NavItemsFromEntries(cfg) {
+		byKey[e.Key] = e.Entry.ItemsFrom
+	}
+	var mayCreate func(string) bool
+	for i := range navigation {
+		group := &navigation[i]
+		from := byKey[group.ItemsKey]
+		if group.ItemsKey == "" || from == nil || !from.Create {
+			continue
+		}
+		list, ok := cfg.Lists[from.List]
+		if !ok {
+			continue
+		}
+		if mayCreate == nil {
+			mayCreate = h.createAuthorizer(ctx)
+		}
+		group.ItemsCreate = h.createOffer(mayCreate, list.EntityType, list.CreateForm)
+	}
 }
 
 // permitsNavEntry reports whether a navigation entry should appear in this
@@ -283,6 +462,119 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 // [permitsGatedUIElement]; the policy and its reasoning live there.
 func permitsNavEntry(ctx context.Context, aclImpl acl.ACL, entry dataentryconfig.NavigationEntry) bool {
 	return permitsGatedUIElement(ctx, aclImpl, entry.Permission)
+}
+
+// showsNavEntry reports whether the sidebar shows a navigation entry to this
+// principal: its own `permission:` allows it, and a `page:` entry has at
+// least one tab the principal may see. A page with no visible tab is left
+// out like an empty group.
+func showsNavEntry(
+	ctx context.Context, aclImpl acl.ACL, cfg *dataentryconfig.Config, entry dataentryconfig.NavigationEntry,
+) bool {
+	if !permitsNavEntry(ctx, aclImpl, entry) {
+		return false
+	}
+	if entry.Page == "" {
+		return true
+	}
+	page, ok := cfg.Pages[entry.Page]
+	return ok && len(visiblePageTabs(ctx, aclImpl, page)) > 0
+}
+
+// visiblePageTabs returns the tabs of a page this principal may see, in
+// config order. A tab's `permission:` is the same UX filter as a navigation
+// entry's (permitsNavEntry).
+func visiblePageTabs(ctx context.Context, aclImpl acl.ACL, page dataentryconfig.Page) []dataentryconfig.PageTab {
+	out := make([]dataentryconfig.PageTab, 0, len(page.Tabs))
+	for _, tab := range page.Tabs {
+		if permitsNavEntry(ctx, aclImpl, tab.Destination()) {
+			out = append(out, tab)
+		}
+	}
+	return out
+}
+
+// sidebarPages returns every page with the tabs this principal may see. All
+// pages are served, not only those in the current navigation, because a
+// bookmarked page URL is reachable from any space. Nil without `pages:`.
+func sidebarPages(
+	ctx context.Context, aclImpl acl.ACL, cfg *dataentryconfig.Config, meta *metamodel.Metamodel,
+) map[string]v1.SidebarPage {
+	if len(cfg.Pages) == 0 {
+		return nil
+	}
+	out := make(map[string]v1.SidebarPage, len(cfg.Pages))
+	for id, page := range cfg.Pages {
+		visible := visiblePageTabs(ctx, aclImpl, page)
+		tabs := make([]v1.SidebarPageTab, 0, len(visible))
+		for _, tab := range visible {
+			kind, target := pageTabView(tab)
+			wire := v1.SidebarPageTab{ID: tab.ID, Label: tab.Label, Icon: tab.Icon, View: kind, Target: target}
+			switch sc := tab.Scope; {
+			case sc == nil:
+			case sc.Root:
+				wire.Scope = "root"
+			default:
+				wire.Scope = "relation"
+				wire.Relation = sc.Relation
+				wire.Direction = string(sc.ResolvedDirection(page.EntityType, meta))
+			}
+			tabs = append(tabs, wire)
+		}
+		out[id] = v1.SidebarPage{
+			Label: page.Label, Icon: page.Icon, EntityType: page.EntityType, Badge: page.Badge, Tabs: tabs,
+		}
+	}
+	return out
+}
+
+// pageTabView returns the kind of view a tab shows and the id of that view
+// ("" for the dashboard). The kinds are the SPA's route names for the
+// standalone views.
+func pageTabView(tab dataentryconfig.PageTab) (kind, target string) {
+	switch {
+	case tab.List != "":
+		return "list", tab.List
+	case tab.Kanban != "":
+		return "kanban", tab.Kanban
+	case tab.Calendar != "":
+		return "calendar", tab.Calendar
+	case tab.Gantt != "":
+		return "gantt", tab.Gantt
+	case tab.Document != "":
+		return "document", tab.Document
+	default:
+		return "dashboard", ""
+	}
+}
+
+// sidebarItemFor converts a navigation entry to a sidebar item. A `page:`
+// entry without its own label or icon takes the page's; a page with no icon
+// takes the icon its first tab's view kind derives.
+func sidebarItemFor(
+	cfg *dataentryconfig.Config, meta *metamodel.Metamodel, entry dataentryconfig.NavigationEntry,
+) v1.SidebarItem {
+	page, ok := cfg.Pages[entry.Page]
+	if entry.Page == "" || !ok {
+		return navEntryToSidebarItem(entry, meta)
+	}
+	if entry.Label == "" {
+		entry.Label = page.Label
+	}
+	item := navEntryToSidebarItem(entry, meta)
+	fallback := page.Icon
+	if fallback == "" && len(page.Tabs) > 0 {
+		first := page.Tabs[0].Destination()
+		first.Icon = ""
+		fallback = navEntryToSidebarItem(first, meta).Icon
+	}
+	switch entry.Icon {
+	case "":
+		item.Icon = fallback
+	case dataentryconfig.NoIcon:
+		item.DerivedIcon = fallback
+	}
+	return item
 }
 
 // permitsGatedUIElement reports whether a `permission:`-gated UI element should
@@ -371,6 +663,87 @@ func permitsGatedUIElement(ctx context.Context, aclImpl acl.ACL, permission stri
 	}
 }
 
+// setNavStatusKey names an entry that declares `status:` rules, so the SPA
+// can match it to its entry in /api/v1/_nav_status. Only the key: the counts
+// are per principal and stay off the sidebar.
+func setNavStatusKey(item *v1.SidebarItem, entry dataentryconfig.NavigationEntry, key string) {
+	if len(entry.Status) > 0 {
+		item.StatusKey = key
+	}
+}
+
+// sidebarNavStatusEntries returns the entries with `status:` rules that the
+// sidebar shows this principal. With `spaces:` configured, only the entries
+// of the space resolveSpace picks for requestedSpace, since the sidebar shows
+// no other. It lives here so the sidebar filter keeps its one caller file: a
+// status for an entry the sidebar hides would mark nothing, so omitting it is
+// presentation, like the filter itself.
+func sidebarNavStatusEntries(
+	ctx context.Context, aclImpl acl.ACL, cfg *dataentryconfig.Config, requestedSpace string,
+) []dataentryconfig.NavStatusEntry {
+	space := ""
+	if cfg.HasSpaces() {
+		sp := resolveSpace(permittedSpaces(ctx, aclImpl, cfg), requestedSpace)
+		if sp == nil {
+			return nil
+		}
+		space = sp.ID
+	}
+	var out []dataentryconfig.NavStatusEntry
+	for _, ns := range dataentryconfig.NavStatusEntries(cfg) {
+		if ns.Space == space && showsNavEntry(ctx, aclImpl, cfg, ns.Entry) {
+			out = append(out, ns)
+		}
+	}
+	return out
+}
+
+// setNavItemsFrom names a group that declares `items_from:`, so the SPA can
+// fill it from /api/v1/_nav_items. Only the key and config names: the entries
+// are per principal and stay off the sidebar.
+//
+// The entity page is named only when this principal may see one of its tabs,
+// the rule showsNavEntry applies to a `page:` entry. Otherwise an entry opens
+// the entity itself rather than a page with no tabs.
+func setNavItemsFrom(
+	ctx context.Context, aclImpl acl.ACL, cfg *dataentryconfig.Config,
+	group *v1.SidebarGroup, entry dataentryconfig.NavigationEntry, key string,
+) {
+	from := entry.ItemsFrom
+	if from == nil {
+		return
+	}
+	group.ItemsKey = key
+	group.ItemsList = from.List
+	if from.Page != "" && showsNavEntry(ctx, aclImpl, cfg, dataentryconfig.NavigationEntry{Page: from.Page}) {
+		group.ItemsPage = from.Page
+	}
+}
+
+// sidebarNavItemsEntries returns the groups with `items_from:` that the
+// sidebar shows this principal, selected like sidebarNavStatusEntries: with
+// `spaces:` configured, only those of the space resolveSpace picks for
+// requestedSpace.
+func sidebarNavItemsEntries(
+	ctx context.Context, aclImpl acl.ACL, cfg *dataentryconfig.Config, requestedSpace string,
+) []dataentryconfig.NavItemsFromEntry {
+	space := ""
+	if cfg.HasSpaces() {
+		sp := resolveSpace(permittedSpaces(ctx, aclImpl, cfg), requestedSpace)
+		if sp == nil {
+			return nil
+		}
+		space = sp.ID
+	}
+	var out []dataentryconfig.NavItemsFromEntry
+	for _, ni := range dataentryconfig.NavItemsFromEntries(cfg) {
+		if ni.Space == space && permitsNavEntry(ctx, aclImpl, ni.Entry) {
+			out = append(out, ni)
+		}
+	}
+	return out
+}
+
 // navEntryToSidebarItem converts a navigation entry to a sidebar item.
 //
 // Nil: meta accepted — only an `entities:` entry reads it, to resolve the
@@ -391,6 +764,9 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 	case entry.List != "":
 		item.Href = "/list/" + entry.List
 		item.Icon = derived.List
+		if entry.Open == dataentryconfig.NavOpenFlyout {
+			item.Flyout = &v1.SidebarFlyout{List: entry.List}
+		}
 	case entry.Kanban != "":
 		item.Href = "/kanban/" + entry.Kanban
 		item.Icon = derived.Kanban
@@ -409,6 +785,9 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 	case entry.Settings:
 		item.Href = "/settings"
 		item.Icon = derived.Settings
+	case entry.Page != "":
+		// The SPA opens the page on the first tab the principal may see.
+		item.Href = "/p/" + entry.Page
 	case entry.Document != "":
 		// Standalone documents only — validateNavEntry rejects an
 		// entity-anchored document here, since this href has no entity id
@@ -715,23 +1094,22 @@ func viewContentBlobs(entry *entityPkg.Entity, sections []SectionData) []string 
 
 // editFormForType returns the first edit form ID configured for the given entity type,
 // or "" if no edit form is found. Forms with explicit mode="edit" are preferred.
-func (h *viewsHandler) editFormForType(entityType string) string {
-	s := h.schema()
-	ids := make([]string, 0, len(s.Cfg.Forms))
-	for id := range s.Cfg.Forms {
+func editFormForType(cfg *dataentryconfig.Config, entityType string) string {
+	ids := make([]string, 0, len(cfg.Forms))
+	for id := range cfg.Forms {
 		ids = append(ids, id)
 	}
 	natsort.Strings(ids)
 	// First pass: look for explicit edit mode
 	for _, id := range ids {
-		f := s.Cfg.Forms[id]
+		f := cfg.Forms[id]
 		if f.EntityType == entityType && f.Mode == "edit" {
 			return id
 		}
 	}
 	// Second pass: fall back to forms with no mode specified
 	for _, id := range ids {
-		f := s.Cfg.Forms[id]
+		f := cfg.Forms[id]
 		if f.EntityType == entityType && f.Mode == "" {
 			return id
 		}
@@ -761,24 +1139,13 @@ func (h *viewsHandler) editFormForType(entityType string) string {
 // load. Reusing the scope is exactly what it exists for.
 func (h *viewsHandler) inlineCreateForms(ctx context.Context) map[string]string {
 	s := h.schema()
-
-	// The middleware attaches a per-request scope; fall back to the unscoped
-	// path when one is absent (tests and any non-HTTP caller), which is
-	// correct-but-slower rather than a different answer.
-	scope := acl.FromContext(ctx)
-	mayCreate := func(entityType string) bool {
-		req := translateVerb("create", entityType, "", "")
-		if scope != nil {
-			return scope.AuthorizeWrite(ctx, req).Allow
-		}
-		return h.currentACL().AuthorizeWrite(ctx, req).Allow
-	}
+	mayCreate := h.createAuthorizer(ctx)
 
 	var out map[string]string
 	for name := range s.Meta.Entities {
 		// Form lookup first: it is a pure config read, so a type nothing can
 		// create never costs an authorization.
-		formID := h.createFormForType(name)
+		formID := createFormForType(h.schema().Cfg, name)
 		if formID == "" {
 			continue
 		}
@@ -793,19 +1160,35 @@ func (h *viewsHandler) inlineCreateForms(ctx context.Context) map[string]string 
 	return out
 }
 
+// createAuthorizer returns whether the principal may create an entity of a
+// type.
+//
+// The middleware attaches a per-request scope; fall back to the unscoped
+// path when one is absent (tests and any non-HTTP caller), which is
+// correct-but-slower rather than a different answer.
+func (h *viewsHandler) createAuthorizer(ctx context.Context) func(entityType string) bool {
+	scope := acl.FromContext(ctx)
+	return func(entityType string) bool {
+		req := translateVerb("create", entityType, "", "")
+		if scope != nil {
+			return scope.AuthorizeWrite(ctx, req).Allow
+		}
+		return h.currentACL().AuthorizeWrite(ctx, req).Allow
+	}
+}
+
 // createFormForType returns the first form ID that can be used to create an entity
 // of the given type. It prefers forms with mode "create" or unset, but falls back
 // to edit-mode forms (which work for creation when no entity ID is provided).
-func (h *viewsHandler) createFormForType(entityType string) string {
-	s := h.schema()
-	ids := make([]string, 0, len(s.Cfg.Forms))
-	for id := range s.Cfg.Forms {
+func createFormForType(cfg *dataentryconfig.Config, entityType string) string {
+	ids := make([]string, 0, len(cfg.Forms))
+	for id := range cfg.Forms {
 		ids = append(ids, id)
 	}
 	natsort.Strings(ids)
 	fallback := ""
 	for _, id := range ids {
-		f := s.Cfg.Forms[id]
+		f := cfg.Forms[id]
 		if f.EntityType != entityType {
 			continue
 		}

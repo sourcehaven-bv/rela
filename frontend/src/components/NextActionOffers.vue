@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * The affordance row for a suggestion. Extracted so the page-level banner and
- * the status-bar popover render identical controls — a snooze that behaved
+ * the sidebar-footer popover render identical controls — a snooze that behaved
  * differently depending on where it was clicked would be a bug nobody thinks
  * to test for.
  *
@@ -12,7 +12,8 @@
  * sibling buttons cannot express.
  */
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
+import RlButton from 'rela-components/components/common/RlButton.vue'
 import { useNextAction } from '@/composables/useNextAction'
 import { runAction } from '@/api/actions'
 import { useConfirm } from '@/composables/useConfirm'
@@ -138,45 +139,52 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 <template>
   <div class="na-offers rela-na-offers">
     <template v-for="{ offer, index } in actEntries" :key="index">
-      <router-link
+      <RlButton
         v-if="offer.navigate"
-        class="btn btn-sm btn-primary"
+        :as="RouterLink"
+        variant="primary"
+        size="sm"
         :to="offer.navigate.replace('{id}', entityId || '')"
       >
         {{ offerLabel(offer, 'Open') }}
-      </router-link>
+      </RlButton>
 
-      <button
+      <RlButton
         v-if="offer.acknowledge"
-        class="btn btn-sm btn-secondary"
+        variant="secondary"
+        size="sm"
         :disabled="busy"
         @click="acknowledge()"
       >
         {{ offerLabel(offer, 'Nice') }}
-      </button>
+      </RlButton>
 
       <!-- action: run a configured Lua action against the suggested entity.
            Primary, like navigate — it is the thing being recommended. -->
-      <button
+      <RlButton
         v-if="offer.action && entityId"
-        class="btn btn-sm btn-primary"
+        variant="primary"
+        size="sm"
         :disabled="busy || acting"
         @click="act(offer, $event.currentTarget as HTMLElement)"
       >
         {{ offerLabel(offer, 'Do it') }}
-      </button>
+      </RlButton>
 
       <!-- pick_one: one button per live option. Rendered only when the server
            resolved some — an empty list means the query matched nothing, and
            an empty option row would be worse than no affordance. -->
-      <router-link
+      <RlButton
         v-for="opt in offer.pick_one ? optionsFor(index) : []"
         :key="opt.entity_id"
-        class="btn btn-sm btn-secondary rela-na-pick"
+        :as="RouterLink"
+        variant="secondary"
+        size="sm"
+        class="rela-na-pick"
         :to="`/entity/${opt.entity_id}`"
       >
         {{ opt.label }}
-      </router-link>
+      </RlButton>
     </template>
 
     <!--
@@ -262,15 +270,15 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: none;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-dense);
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .na-defer__trigger:hover:not(:disabled) {
-  border-color: var(--border-color);
-  color: var(--text-color);
+  border-color: var(--rl-color-border);
+  color: var(--rl-color-text);
 }
 
 .na-defer__trigger:disabled {
@@ -293,8 +301,8 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
   padding: 4px;
   list-style: none;
   min-width: 190px;
-  background: var(--input-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
@@ -307,7 +315,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   cursor: pointer;
   font-size: var(--font-size-base);
   text-align: left;
@@ -315,15 +323,15 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 }
 
 .na-defer__item:hover {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 /* Mute is a different kind of act — it governs the source, not this
    suggestion — so it is separated and muted rather than listed as a peer. */
 .na-defer__item--sep {
   margin-top: 4px;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--rl-color-border);
   padding-top: 8px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 </style>

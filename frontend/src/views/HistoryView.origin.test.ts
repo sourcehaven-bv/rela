@@ -175,7 +175,8 @@ describe('HistoryView restore follows the face on screen', () => {
     const w = await mountWith([meta({ op: 'update' })], {
       _actions: { update: true }, _self: '/api/v1/policys/POL-1@published',
     })
-    const button = w.findAll('button').find((b) => b.text() === 'Restore')
+    // RlButton also renders its pending label, hidden, after the label.
+    const button = w.findAll('button').find((b) => b.text().startsWith('Restore'))
     expect(button).toBeDefined()
     await button!.trigger('click')
     await vi.waitFor(() => expect(mockRestore).toHaveBeenCalled())

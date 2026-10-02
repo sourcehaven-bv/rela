@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // typeResolver maps user-supplied type names onto metamodel entity types —
@@ -51,6 +53,30 @@ func (r typeResolver) resolveType(typeName string) string {
 // trimID trims whitespace from an entity ID
 func trimID(id string) string {
 	return strings.TrimSpace(id)
+}
+
+// entityReadFailed answers a failed entity read. A miss, which is also the
+// answer for a hidden entity, reads "<label> not found". Any other error, such
+// as a world that no longer resolves, is logged and answered generically so
+// an outage is not mistaken for a missing entity.
+func entityReadFailed(label, id string, err error) *mcpgo.CallToolResult {
+	if errors.Is(err, store.ErrNotFound) {
+		return errorResult(label + " not found: " + id)
+	}
+	slog.Warn("mcp: entity read failed", "entity", id, "err", err)
+	return errorResult("reading " + id + " failed")
+}
+
+// wholeEntityRef refuses an `ID@face` address for a tool that acts on the
+// whole entity (rename, trace, find_path). The entity store resolves
+// such an address to one face, so without this the existence check would
+// pass and the tool would then use the fused string as an id.
+func wholeEntityRef(ref string) *mcpgo.CallToolResult {
+	id, face, err := entity.ParseStateRef(ref)
+	if err != nil || face.IsImplicit() {
+		return nil
+	}
+	return errorResult(fmt.Sprintf("%s names one face; this tool acts on the whole entity, so pass %s", ref, id))
 }
 
 func (r typeResolver) resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {

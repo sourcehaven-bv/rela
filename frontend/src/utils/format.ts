@@ -114,7 +114,7 @@ export function localInputToUtcISO(local: string | null | undefined, tz: string)
 // same zone the edit widget uses via utcISOToLocalInput — so viewing and
 // editing agree (RR-P9NKU7). A value WITH a zone marker is an absolute
 // instant and resolves identically however it is parsed.
-const NAIVE_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/
+export const NAIVE_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/
 
 export function formatDatetime(value: string, tz: string, locale?: string): string | null {
   // Parse a naive value as wall-clock in `tz`; parse a zoned/absolute value
@@ -200,7 +200,10 @@ export function formatCellValue(
       return formatDatetime(value, tz) ?? String(value)
     }
     if (propDef?.type === 'boolean') {
-      return value ? 'Yes' : 'No'
+      // A view table cell carries the server's string form, where "false" is
+      // truthy; read it as the boolean it spells.
+      const b = typeof value === 'string' ? value === 'true' : Boolean(value)
+      return b ? 'Yes' : 'No'
     }
     if (propDef?.type === 'rrule') {
       const single = Array.isArray(value) ? value[0] : value

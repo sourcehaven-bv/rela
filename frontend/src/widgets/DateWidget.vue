@@ -1,4 +1,14 @@
 <script setup lang="ts">
+// The input box comes from the library's global `.rl-control`
+// (rl/styles/control.css, imported by styles/rl.css): border, radius, focus
+// ring, and the invalid and disabled visuals. It is declared globally rather
+// than per component precisely so a host rendering a native element can reach
+// it, which is what this widget is -- so this widget carries no styles of its
+// own.
+//
+// The invalid visual is driven by `aria-invalid` there, so the old error class
+// is gone: the attribute now carries both the appearance and the announcement,
+// where the class did the first and nothing for the second.
 import { computed } from 'vue'
 import type { WidgetProps } from './types'
 import { useStringValue } from './useStringValue'
@@ -51,43 +61,12 @@ function onInput(event: Event) {
     v-else
     :id="id"
     type="date"
-    :class="{ 'is-error': !!error }"
+    class="rl-control"
+    :aria-describedby="describedBy"
+    :aria-invalid="invalid || undefined"
     :value="inputValue"
     :placeholder="placeholder"
     :disabled="disabled"
     @input="onInput"
   />
 </template>
-
-<style scoped>
-input {
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
-  transition: all 0.15s;
-}
-
-input:focus {
-  outline: none;
-  border-color: var(--accent-color, #6366f1);
-  box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
-}
-
-input:disabled {
-  background: var(--hover-bg);
-  cursor: not-allowed;
-}
-
-input.is-error {
-  border-color: var(--error-color, #ef4444);
-}
-
-input.is-error:focus {
-  box-shadow: 0 0 0 2px var(--error-ring);
-}
-</style>

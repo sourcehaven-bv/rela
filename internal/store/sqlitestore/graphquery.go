@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"iter"
 	"strings"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -179,7 +178,7 @@ func scanEntityHeader(sc scanner) (store.EntityHeader, error) {
 	if h.Properties, err = unmarshalProps(props); err != nil {
 		return store.EntityHeader{}, fmt.Errorf("sqlitestore: entity %s: %w", h.ID, err)
 	}
-	if h.UpdatedAt, err = time.Parse(timeFmt, updated); err != nil {
+	if h.UpdatedAt, err = parseTime(updated); err != nil {
 		return store.EntityHeader{}, fmt.Errorf("sqlitestore: parse updated_at for %s: %w", h.ID, err)
 	}
 	return h, nil

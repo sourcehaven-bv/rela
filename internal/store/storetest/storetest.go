@@ -68,6 +68,11 @@ type Capabilities struct {
 	// update is attributed to is contract, not mechanism, and a backend whose
 	// sweep cannot be driven cannot show it keeps that contract (BUG-07DNNY).
 	SweepNow func(t *testing.T, s store.Store)
+
+	// SoftDelete declares that the backend implements
+	// [store.SoftDeleteProvider]. Setting it runs [RunSoftDeleteTests], which
+	// fails rather than skips when the capability is missing.
+	SoftDelete bool
 }
 
 func ctx() context.Context { return context.Background() }
@@ -222,6 +227,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	t.Run("Validation", func(t *testing.T) { RunValidationTests(t, f) })
 	t.Run("Freshness", func(t *testing.T) { RunFreshnessTests(t, f) })
 	t.Run("Tx", func(t *testing.T) { RunTxTests(t, f) })
+	t.Run("IteratorNesting", func(t *testing.T) { RunIteratorNestingTests(t, f, vsf) })
 
 	// The transaction tier is declared, not inferred. RunTxRollbackTests used
 	// to be reachable only by calling it separately, so a backend with genuine
@@ -240,5 +246,13 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 				"store declared Capabilities.Versioning but no Capabilities.SweepNow driver")
 			RunSweepAttributionTests(t, f, caps.SweepNow)
 		})
+		t.Run("SweepOrigin", func(t *testing.T) {
+			require.NotNil(t, caps.SweepNow,
+				"store declared Capabilities.Versioning but no Capabilities.SweepNow driver")
+			RunSweepOriginTests(t, f, caps.SweepNow)
+		})
+	}
+	if caps.SoftDelete {
+		t.Run("SoftDelete", func(t *testing.T) { RunSoftDeleteTests(t, f, sf, caps.Attachments) })
 	}
 }

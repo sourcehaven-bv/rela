@@ -321,6 +321,9 @@ func ResolveTypeScope(scope map[string]TypeScope, entityType string) (TypeScope,
 // Service plus this package's generic wrapper (NewVisible) serve the
 // simple backends; smart backends (pgstore) implement it natively by
 // composing visibility into the search query itself.
+//
+// Its iterators follow [store.EntityReader]'s rule: no backend resource is
+// held while yielding or while a [HiddenFieldsFunc] runs.
 type VisibleSearcher interface {
 	SearchVisible(ctx context.Context, q Query, scope map[string]TypeScope) iter.Seq2[Hit, error]
 }

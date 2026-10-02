@@ -16,8 +16,9 @@
  *                                 are taller than the viewport.
  *
  * Page-padding contract:
- *   The negative horizontal margins assume `.main-content` uses 16px
- *   horizontal padding at <=768px and 12px at <=480px (see App.vue).
+ *   The negative horizontal margins assume the shell's main pane
+ *   (`.rl-app-shell__main`) uses 16px horizontal padding at <=768px and
+ *   12px at <=480px (see App.vue).
  *   If those change, update both places.
  */
 
@@ -26,14 +27,14 @@
     position: sticky;
     top: 0;
     z-index: 102;
-    background: var(--bg-color);
-    /* Pull up under the .main-content padding-top (60px) plus the safe
+    background: var(--rl-color-bg);
+    /* Pull up under the main pane padding-top (60px) plus the safe
        area, so the bar's background fills the status-bar area. Negative
-       horizontal margin matches .main-content's 16px padding so the bar
+       horizontal margin matches the main pane's 16px padding so the bar
        bleeds to the viewport edges. */
     margin: calc(-60px - env(safe-area-inset-top, 0px)) -16px 16px -16px;
     padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid var(--rl-color-border);
     /* iOS WebKit anchors sticky to the layout viewport. When the keyboard
        opens, the visual viewport shifts up — translate the bar to follow
        it so it doesn't slide under the status bar. App.vue keeps
@@ -54,13 +55,13 @@
     position: sticky;
     bottom: 0;
     z-index: 10;
-    background: var(--bg-color);
-    /* Pull out under the .main-content padding (12px at this breakpoint
+    background: var(--rl-color-bg);
+    /* Pull out under the main pane padding (12px at this breakpoint
        for the form footer; entity-detail uses --fixed below). */
     margin: 0 -12px -12px -12px;
     padding: 12px;
     padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-    border-top: 1px solid var(--border-color);
+    border-top: 1px solid var(--rl-color-border);
     box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
     display: flex;
     gap: 8px;
@@ -80,7 +81,7 @@
 }
 
 @media (max-width: 480px) {
-  /* .main-content drops to 12px horizontal padding at this breakpoint
+  /* The shell's main pane drops to 12px horizontal padding at this breakpoint
      (see App.vue), so the negative margins must shrink to match —
      otherwise the bars overflow the viewport and create a tiny
      horizontal scroll on iPhone. */

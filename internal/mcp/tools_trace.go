@@ -40,6 +40,9 @@ func (h traceHandler) handleTrace(
 		return errorResult(err.Error()), nil
 	}
 	id = trimID(id)
+	if refused := wholeEntityRef(id); refused != nil {
+		return refused, nil
+	}
 	maxDepth := args.GetInt("max_depth", 0)
 
 	traceFn, emptyMsg := h.tracer.TraceFrom, "No dependencies found"
@@ -90,6 +93,11 @@ func (h traceHandler) handleFindPath(
 		return errorResult(err.Error()), nil
 	}
 	to = trimID(to)
+	for _, ref := range []string{from, to} {
+		if refused := wholeEntityRef(ref); refused != nil {
+			return refused, nil
+		}
+	}
 
 	st := h.store
 	if !readable(ctx, st, from) {

@@ -3,6 +3,12 @@ import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import App from './App.vue'
 import router from './router'
+// rela-components tokens and shared classes FIRST: it declares the --rl-*
+// palette that everything below resolves against, tokens.css included — that
+// file is now a set of aliases onto it, not a palette of its own.
+// See styles/rl.css for why this is imported instead of the library's own
+// base.css (which would restyle <body>).
+import './styles/rl.css'
 import './styles/tokens.css'
 import './styles/scales.css'
 import '@fontsource/open-sans/400.css'
@@ -10,13 +16,11 @@ import '@fontsource/open-sans/500.css'
 import '@fontsource/open-sans/600.css'
 import '@fontsource/open-sans/700.css'
 import './styles/focus-ring.css'
-import './styles/back-button.css'
 import './styles/properties-list.css'
 import './styles/mobile-bars.css'
 import './styles/text-utilities.css'
 import './styles/markdown-content.css'
 import './styles/view-info.css'
-import './styles/pending.css'
 
 const app = createApp(App)
 

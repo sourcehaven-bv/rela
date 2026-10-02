@@ -7,12 +7,19 @@ import CommandModal from './CommandModal.vue'
 import CommentsPanel from './CommentsPanel.vue'
 import DocumentsPanel from './DocumentsPanel.vue'
 import ExportMenu from './ExportMenu.vue'
+
+import EntityActionsMenu from './EntityActionsMenu.vue'
+import type { EntityAction } from './entityActions'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import type { Entity, CopyOffer, EntityWorld } from '@/types'
 import type { ViewEntity, ViewResponse, ViewSection } from '@/api'
 import type { CopyInvokeResult } from '@/api/copies'
-import { _setEntityPluralForTest, _resetEntityPluralsForTest } from '@/api/entities'
+import {
+  _setEntityPluralForTest,
+  _resetEntityPluralsForTest,
+  registerEntityPlurals,
+} from '@/api/entities'
 
 // The world-bound DETAIL surface (TKT-F2D5U5).
 //
@@ -668,6 +675,25 @@ describe('EntityDetail world binding', () => {
       expect(w.findComponent(CommandModal).props('entityId')).toBe('POL-1')
     })
 
+    // BUG-PLZDPR: the export renders what is on screen, so it names the
+    // served face and resolves the entry's links in the page's world.
+    it('exports the served ADDRESS in the page world, not the route id', async () => {
+      registerEntityPlurals(new Map([[entityType, 'policys']]))
+      mockRoute.query = { world: 'published' }
+      const w = await mountDetail(viewResponse(standIn()))
+      rendersProof(w)
+      const urlFor: (t: string) => string = w.findComponent({ name: 'ExportMenu' }).props('urlFor')
+      expect(urlFor('pdf')).toBe('/api/v1/policys/POL-1%40published/_export?transform=pdf&world=published')
+    })
+
+    it('exports the BARE id when no face is served', async () => {
+      registerEntityPlurals(new Map([[entityType, 'policys']]))
+      const w = await mountDetail(viewResponse())
+      rendersProof(w)
+      const urlFor: (t: string) => string = w.findComponent({ name: 'ExportMenu' }).props('urlFor')
+      expect(urlFor('pdf')).toBe('/api/v1/policys/POL-1/_export?transform=pdf')
+    })
+
     it('deletes by the served ADDRESS and names the face', async () => {
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail(viewResponse(writableFace()))
@@ -980,7 +1006,7 @@ describe('EntityDetail world binding', () => {
       mockRoute.query = { world: 'published' }
       const w = await mountDetail(absentResponse())
       rendersProof(w)
-      expect(w.find('.error-state').exists()).toBe(false)
+      expect(w.find('.rl-status-region--error').exists()).toBe(false)
     })
 
     it('says nothing about the absence unless the operator declared text', async () => {
@@ -1134,18 +1160,23 @@ describe('EntityDetail world binding', () => {
   // the DOM (CSS picks one per breakpoint), so these assertions scope to
   // `.mobile-actions` rather than to the whole render, which would pass on the
   // desktop copy alone.
+  /** The actions the phone overflow menu offers, from the list it draws. */
+  function overflowActions(w: VueWrapper): EntityAction[] {
+    return w.find('.mobile-actions').findComponent(EntityActionsMenu).props('actions') as EntityAction[]
+  }
+
+  function overflowText(w: VueWrapper): string {
+    return overflowActions(w)
+      .map((a) => a.label)
+      .join('\n')
+  }
+
   describe('the mobile overflow menu is a home for every header affordance', () => {
     async function openOverflow(view: ViewResponse) {
       const w = await mountDetail(view)
       rendersProof(w)
-      const toggle = w.find('.mobile-actions .mobile-overflow-btn')
-      expect(toggle.exists()).toBe(true)
-      await toggle.trigger('click')
+      expect(w.find('.mobile-actions [data-testid="entity-actions-menu"]').exists()).toBe(true)
       return w
-    }
-
-    function overflowText(w: VueWrapper) {
-      return w.find('.mobile-actions .overflow-menu').text()
     }
 
     it('offers COPIES, which used to be desktop-only', async () => {
@@ -1158,11 +1189,9 @@ describe('EntityDetail world binding', () => {
         definition: 'promote-policy', entityId, face: 'published', created: true,
       })
       const w = await openOverflow(viewResponse({ _copies: [promoteOffer()] }))
-      const btn = w
-        .findAll('.mobile-actions .overflow-menu-item')
-        .find((b) => b.text().includes('Publish this policy'))
-      expect(btn).toBeDefined()
-      await btn!.trigger('click')
+      const action = overflowActions(w).find((a) => a.label === 'Publish this policy')
+      expect(action).toBeDefined()
+      action!.run!()
       await flushPromises()
       // Same handler, so a copy invoked from a phone goes through the
       // identical guard rather than a parallel path.
@@ -1198,7 +1227,34 @@ describe('EntityDetail world binding', () => {
       // an overflow that never rendered would satisfy the denied-copy test.
       const w = await mountDetail(viewResponse())
       rendersProof(w)
-      expect(w.find('.mobile-actions .mobile-overflow-btn').exists()).toBe(false)
+      expect(w.find('.mobile-actions [data-testid="entity-actions-menu"]').exists()).toBe(false)
+    })
+  })
+
+  // The detail panel hides the header buttons and draws the emitted list in
+  // its "⋯" menu. Delete must follow `_actions` there as it does on the page.
+  describe('the emitted action list', () => {
+    function emitted(w: VueWrapper): EntityAction[] {
+      const events = w.emitted('actions') as EntityAction[][][]
+      return events[events.length - 1][0]
+    }
+
+    it('offers Delete only when the server allows it, last and in red', async () => {
+      const allowed = await mountDetail(viewResponse({ _actions: { update: true, delete: true } }))
+      rendersProof(allowed)
+      const list = emitted(allowed)
+      expect(list[list.length - 1]).toMatchObject({ id: 'delete', tone: 'danger' })
+      allowed.unmount()
+
+      const denied = await mountDetail(viewResponse({ _actions: { update: true, delete: false } }))
+      rendersProof(denied)
+      expect(emitted(denied).map((a) => a.id)).not.toContain('delete')
+    })
+
+    it('carries the same copies as the phone overflow', async () => {
+      const w = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
+      rendersProof(w)
+      expect(emitted(w).map((a) => a.label)).toContain('Publish this policy')
     })
   })
 
@@ -1217,10 +1273,10 @@ describe('EntityDetail world binding', () => {
       const w = await mountDetail(viewResponse({ _copies: [promoteOffer()] }))
       rendersProof(w)
       expect(w.find('.desktop-actions').text()).not.toContain('History')
-      // The overflow is open-able here (the copy offer keeps it rendered), so
-      // this is a real absence rather than a menu that never existed.
-      await w.find('.mobile-actions .mobile-overflow-btn').trigger('click')
-      expect(w.find('.mobile-actions .overflow-menu').text()).not.toContain('History')
+      // The overflow exists here (the copy offer keeps it rendered), so this
+      // is a real absence rather than a menu that never existed.
+      expect(overflowText(w)).toContain('Publish this policy')
+      expect(overflowText(w)).not.toContain('History')
     })
 
     it('renders in BOTH blocks when the deployment has history', async () => {
@@ -1228,8 +1284,7 @@ describe('EntityDetail world binding', () => {
       const w = await mountDetail(viewResponse())
       rendersProof(w)
       expect(w.find('.desktop-actions').text()).toContain('History')
-      await w.find('.mobile-actions .mobile-overflow-btn').trigger('click')
-      expect(w.find('.mobile-actions .overflow-menu').text()).toContain('History')
+      expect(overflowText(w)).toContain('History')
     })
   })
 

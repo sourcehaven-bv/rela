@@ -5,6 +5,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { addComment, updateComment, deleteComment, type Comment } from '@/api/comments'
 import { getErrorMessage } from '@/api/errors'
 import SuggestionDiff from './SuggestionDiff.vue'
+import RlButton from 'rela-components/components/common/RlButton.vue'
 
 /**
  * The thread for a text-anchored comment, opened by clicking its highlight
@@ -193,28 +194,24 @@ function formatDate(iso: string): string {
         <template v-if="editingId === c.id">
           <textarea v-model="editBody" class="tcp-input" rows="3" />
           <div class="tcp-acts">
-            <button class="tcp-mini tcp-mini--primary" @click="saveEdit(c)">Save</button>
-            <button class="tcp-mini" @click="editingId = null">Cancel</button>
+            <RlButton variant="primary" size="sm" @click="saveEdit(c)">Save</RlButton>
+            <RlButton variant="secondary" size="sm" @click="editingId = null">Cancel</RlButton>
           </div>
         </template>
 
         <template v-else>
           <p class="tcp-body">{{ c.body }}</p>
           <div class="tcp-acts">
-            <button
-              v-if="c.acceptable && canAccept"
-              class="tcp-mini tcp-mini--primary"
-              @click="emit('accept', c)"
-            >
+            <RlButton v-if="c.acceptable && canAccept" variant="primary" size="sm" @click="emit('accept', c)">
               Accept
-            </button>
-            <button v-if="c.editable" class="tcp-mini" @click="toggleResolved(c)">
+            </RlButton>
+            <RlButton v-if="c.editable" variant="secondary" size="sm" @click="toggleResolved(c)">
               {{ c.resolved ? 'Reopen' : 'Resolve' }}
-            </button>
-            <button v-if="c.editable" class="tcp-mini" @click="startEdit(c)">Edit</button>
-            <button v-if="c.deletable" class="tcp-mini tcp-mini--danger" @click="remove(c)">
+            </RlButton>
+            <RlButton v-if="c.editable" variant="secondary" size="sm" @click="startEdit(c)">Edit</RlButton>
+            <RlButton v-if="c.deletable" variant="secondary" size="sm" tone="danger" @click="remove(c)">
               Delete
-            </button>
+            </RlButton>
           </div>
         </template>
       </li>
@@ -234,13 +231,14 @@ function formatDate(iso: string): string {
       />
       <div class="tcp-reply-row">
         <span class="tcp-hint">⌘↵ to post</span>
-        <button
+        <RlButton
           type="submit"
-          class="tcp-mini tcp-mini--primary"
+          variant="primary"
+          size="sm"
           :disabled="replying || !replyBody.trim()"
         >
           {{ replying ? 'Posting…' : 'Reply' }}
-        </button>
+        </RlButton>
       </div>
     </form>
   </div>
@@ -251,8 +249,8 @@ function formatDate(iso: string): string {
   position: absolute;
   z-index: 26;
   width: 340px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg, 8px);
   box-shadow: var(--shadow-lg, 0 10px 30px rgb(0 0 0 / 16%));
   text-align: left;
@@ -263,17 +261,17 @@ function formatDate(iso: string): string {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 .tcp-title {
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 .tcp-x {
   border: 0;
   background: none;
   cursor: pointer;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-sm);
 }
 
@@ -286,7 +284,7 @@ function formatDate(iso: string): string {
 }
 .tcp-cmt {
   padding: 10px 12px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 .tcp-cmt:last-child {
   border-bottom: 0;
@@ -300,9 +298,9 @@ function formatDate(iso: string): string {
 .tcp-quote {
   margin: 0 0 6px;
   padding: 3px 8px;
-  border-left: 3px solid var(--accent-color);
-  background: var(--bg-color);
-  color: var(--muted-text);
+  border-left: 3px solid var(--rl-color-accent);
+  background: var(--rl-color-bg);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-sm);
   font-style: italic;
   max-height: 3.4em;
@@ -315,20 +313,20 @@ function formatDate(iso: string): string {
   align-items: center;
   gap: 6px;
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin-bottom: 3px;
 }
 .tcp-meta b {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 .tcp-flag {
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--warning-color);
-  color: var(--text-color);
+  background: var(--rl-color-status-amber);
+  color: var(--rl-color-text);
 }
 .tcp-flag--detached {
-  background: var(--error-color);
+  background: var(--rl-color-danger);
   color: #fff;
 }
 
@@ -343,34 +341,11 @@ function formatDate(iso: string): string {
   display: flex;
   gap: 5px;
 }
-.tcp-mini {
-  font: var(--font-size-sm) / 1.4 inherit;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm, 4px);
-  border: 1px solid var(--border-color);
-  background: var(--bg-color);
-  color: var(--text-color);
-  cursor: pointer;
-}
-.tcp-mini--primary {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
-  color: #fff;
-}
-.tcp-mini--danger {
-  color: var(--error-color);
-}
-.tcp-mini:focus-visible {
-  outline: none;
-  box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
-}
 
 .tcp-reply {
   padding: 10px 12px;
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-color);
+  border-top: 1px solid var(--rl-color-border);
+  background: var(--rl-color-bg);
 }
 .tcp-reply-row {
   display: flex;
@@ -380,30 +355,26 @@ function formatDate(iso: string): string {
 }
 .tcp-hint {
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
-}
-.tcp-mini:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  color: var(--rl-color-text-muted);
 }
 
 .tcp-input {
   width: 100%;
   padding: 6px 8px;
   resize: vertical;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-sm, 5px);
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
   font: inherit;
   font-size: var(--font-size-base);
 }
 .tcp-input:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 @media (max-width: 640px) {

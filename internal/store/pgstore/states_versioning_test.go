@@ -33,8 +33,8 @@ func TestSweep_CapturesEachFaceInItsOwnLineage(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("PAGE-1", "ticket", "default face")))
-	draft := mkEntity("PAGE-1", "ticket", "draft face")
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("PAGE-1", "default face")))
+	draft := mkEntity("PAGE-1", "draft face")
 	p, err := entity.ParseFace("draft")
 	require.NoError(t, err)
 	draft.Face = p
@@ -99,13 +99,13 @@ func TestSweep_CapturesStateTailedRelations(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("PAGE-2", "ticket", "default")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("PAGE-2", "default")))
 	p, err := entity.ParseFace("draft")
 	require.NoError(t, err)
-	draft := mkEntity("PAGE-2", "ticket", "draft")
+	draft := mkEntity("PAGE-2", "draft")
 	draft.Face = p
 	require.NoError(t, s.CreateEntity(ctx, draft))
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("SPEC-1", "ticket", "target")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("SPEC-1", "target")))
 
 	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "PAGE-2", Type: "references", To: "SPEC-1"}, nil)
 	require.NoError(t, err)
@@ -215,8 +215,8 @@ func TestFacesWithIdenticalContentDoNotDedupAgainstEachOther(t *testing.T) {
 
 	// Byte-identical faces — exactly what a promote leaves behind.
 	const shared = "identical on both faces"
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("PAGE-9", "ticket", shared)))
-	published := mkEntity("PAGE-9", "ticket", shared)
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("PAGE-9", shared)))
+	published := mkEntity("PAGE-9", shared)
 	p, err := entity.ParseFace("published")
 	require.NoError(t, err)
 	published.Face = p

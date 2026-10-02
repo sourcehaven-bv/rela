@@ -2,6 +2,7 @@ import { vi } from 'vitest'
 import { config } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import axios from 'axios'
+import { useToasts } from 'rela-components/components/feedback/useToasts'
 
 // Mock localStorage before any imports that might use it
 const localStorageMock = (() => {
@@ -25,9 +26,12 @@ const localStorageMock = (() => {
 })()
 Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock })
 
-// Reset Pinia before each test
+// Reset Pinia before each test. The toast queue is module-level state in the
+// library (uiStore forwards to it), so it is emptied here too; otherwise one
+// test's toasts would leak into the next.
 beforeEach(() => {
   setActivePinia(createPinia())
+  useToasts().clear()
 })
 
 // Mock crypto.randomUUID for toast IDs

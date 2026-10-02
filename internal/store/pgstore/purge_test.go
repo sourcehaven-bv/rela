@@ -17,7 +17,7 @@ import (
 func seedEntityHistory(t *testing.T, s *pgstore.Store, id string, contents ...string) {
 	t.Helper()
 	ctx := context.Background()
-	require.NoError(t, s.CreateEntity(ctx, mkEntity(id, "ticket", contents[len(contents)-1])))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity(id, contents[len(contents)-1])))
 	for i, c := range contents {
 		in := newVersionInput(id, c, map[string]any{"n": i})
 		if i == 0 {
@@ -138,7 +138,7 @@ func TestPurgeByContentHash(t *testing.T) {
 	ctx := context.Background()
 	// Write three versions directly so two share EXACTLY the same content AND
 	// properties (hence the same content_hash), and one differs.
-	require.NoError(t, s.CreateEntity(ctx, mkEntity("TKT-1", "ticket", "dup")))
+	require.NoError(t, s.CreateEntity(ctx, mkEntity("TKT-1", "dup")))
 	for i, c := range []struct {
 		content string
 		props   map[string]any

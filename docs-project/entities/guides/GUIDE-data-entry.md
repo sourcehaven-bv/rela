@@ -79,6 +79,44 @@ one in a new tab would mean nothing.
 Note that a list row is a link across its whole width, which means dragging to
 select text inside a row is not possible; use the entity page for that.
 
+### Undoing a delete
+
+Deleting an entity in the web app can be undone for a short while. The
+delete takes effect at once: the entity and its relations disappear from
+lists, search, views and the API for everyone. The server keeps the rows
+aside, and the Undo button in the confirmation message puts them back
+exactly as they were.
+
+After the undo window the server removes the rows for good. The window is
+60 seconds by default. Two environment variables tune it:
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `RELA_SOFT_DELETE_DELAY` | `60s` | How long a deleted entity can still be restored |
+| `RELA_SOFT_DELETE_GC_INTERVAL` | `15s` | How often the server looks for deletes past the window |
+
+Both take Go durations such as `90s` or `2m`. An invalid value falls back to
+the default. An entity is removed between the delay and the delay plus one
+interval after its delete.
+
+While a deleted entity waits, it keeps its ID and its `unique:` values. A new
+entity cannot take either, so an undo never fails because something else
+took its place.
+
+Undo covers only a delete of a whole entity from the web app. Deleting one
+content state (`ID@face`), and deletes from the CLI, MCP or Lua, are
+immediate and final. If one of those deletes or renames an entity at the
+other end of a relation, that relation is dropped, and an undo brings the
+entity back without it. On the filesystem backend the list of waiting deletes is
+kept in `.rela/pending-deletes.json`, so it survives a restart.
+
+The API behind Undo is `POST /api/v1/{plural}/{id}/restore`. It answers
+`204 No Content` on success and `404` when there is nothing to restore. A
+restore needs the same delete permissions the delete needed, on the entity
+and on each of its relations. The caller must
+also be able to read the entity, or be the user who deleted it; anyone else
+gets the same `404` as for an ID that was never deleted.
+
 ## Quick Start
 
 ### 1. Create data-entry.yaml
@@ -1180,17 +1218,31 @@ Notes:
 
 ### Column Options
 
-A column shows either a property value or the comma-separated titles of an entity's related
-entities — set exactly one of `property` or `relation`.
+A column shows a property value, the comma-separated titles of an entity's related entities,
+or the face each row was served in. Set exactly one of `property`, `relation` or `face`.
 
 | Field       | Type   | Description                                                                 |
 | ----------- | ------ | --------------------------------------------------------------------------- |
 | `property`  | string | Property name to display                                                    |
 | `relation`  | string | Relation type whose targets are shown comma-separated                       |
 | `direction` | string | Relation columns only: `"outgoing"` or `"incoming"`; inferred when omitted   |
-| `label`     | string | Column header (defaults to property / relation name)                        |
+| `face`      | bool   | Shows the label of the face each row was served in; faced types only        |
+| `label`     | string | Column header (defaults to property / relation name, or `Face`)             |
 | `sortable`  | bool   | Column can be sorted by clicking the header                                 |
 | `link`      | bool   | Cell value links to the entity's detail page                                |
+
+**Face column example** — on a list of a type with `concept` and `vastgesteld` faces, show
+which one the world serves for each row:
+
+```yaml
+columns:
+  - property: titel
+  - face: true
+    label: Status
+```
+
+The cell holds the face's `label:` from `schema.yaml`, or its name when it has none. Under the
+default world a row has no face, so the cell is empty.
 
 **Reverse relation column example** — on a feature list, show which tasks implement each row:
 
@@ -1388,6 +1440,14 @@ unassigned", which is likewise a disjunction:
 
 ```yaml
 condition: "is_current_user(entity.assignee) or entity.assignee == nil"
+```
+
+When the owner is a relation rather than a property, use `related()` with the
+relation's inverse id, as described under
+[Scoping by a relation](metamodel.md#scoping-by-a-relation-related):
+
+```yaml
+condition: "related(entity, 'heeft_verantwoordelijke', { id = current_user.id })"
 ```
 
 A condition never widens a view: it is applied on top of the ACL, so it can
@@ -1591,6 +1651,120 @@ The search bar also supports `sort:` clauses (see [Query Syntax](#query-syntax) 
 
 > **Migration**: If your config uses the old single-object format (`sort: {property: ..., direction: ...}`),
 > run `rela migrate` to convert it to the list format.
+
+### Grouping (`group_by`)
+
+`group_by` splits a list into sections by one property. The short form names
+the property:
+
+```yaml
+lists:
+  tasks:
+    entity: task
+    group_by: status
+```
+
+The long form can rename and colour the sections and change how many rows the
+list loads:
+
+```yaml
+lists:
+  tasks:
+    entity: task
+    group_by:
+      property: status
+      groups:
+        - value: in-progress
+          label: "In progress"
+          color: green
+        - value: blocked
+          color: red
+      max_rows: 1000
+```
+
+| Key        | Type   | Description |
+|------------|--------|-------------|
+| `property` | string | The property to group by. Required. It must be a single value, not a `list: true` property. |
+| `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (`green`, `amber`, `red`, `grey` or `blue`). Needs an enum property. |
+| `buckets`  | string | `relative` groups a date by how far away it is. See [Date buckets](#date-buckets). |
+| `labels`   | map    | Section titles for the date buckets. Only with `buckets`. |
+| `max_rows` | int    | How many rows the list loads, from 1 to 2000. Default 500. |
+
+The sections depend on the property:
+
+- **An enum** gets one section per declared value, in the schema's order. A
+  value with no rows still gets a section, so you can add a row to it,
+  unless the list's filters rule the value out: under `status != done` there
+  is no "done" section. `groups:` only renames and colours sections; it does not choose or reorder
+  them. A section title falls back to the enum's own label, then to the value.
+- **Any other property** gets one section per distinct value, in sort order.
+- Rows without a value go in a last section, **(none)**, shown only when there
+  are such rows.
+
+The column for the grouped property is hidden, since each section heading
+already names its value. A list grouped by date buckets keeps its date column,
+because a bucket spans several days.
+
+A grouped list is not paged. It loads all its rows, up to `max_rows`, sorted
+by the group property first and then by the list's own sort. If the list holds
+more rows than that, a notice above the table says how many it shows. Narrow
+the list with a filter or a `condition:` to see the rest; the section counts
+then count only the loaded rows.
+
+Each section has an **Add** button. A row created from it starts with the
+section's value, so it lands in that section. **Create & add another** is not
+offered from a section, because the form clears itself for the next record and
+would lose the value.
+
+You can close a section with its arrow. The browser remembers which sections
+you closed, per list.
+
+### Date buckets
+
+With `buckets: relative`, a `date` or `datetime` property groups rows by how
+far away the date is:
+
+```yaml
+lists:
+  my_tasks:
+    entity: task
+    group_by:
+      property: due
+      buckets: relative
+      labels:
+        overdue: "Te laat"
+        today: "Vandaag"
+```
+
+The buckets, in order, and their default titles:
+
+| Bucket        | Default title | Holds |
+|---------------|---------------|-------|
+| `overdue`     | Overdue       | Before today |
+| `today`       | Today         | Today |
+| `tomorrow`    | Tomorrow      | Tomorrow |
+| `next_7_days` | Next 7 days   | 2 to 7 days from today |
+| `later`       | Later         | More than 7 days from today |
+| `no_date`     | No date       | No value, or a value that is not a date |
+
+`labels` may rename any of these; another key is a config error. So is setting
+both `groups` and `buckets`. Only buckets with rows are shown.
+
+Buckets count calendar days, not hours: a task due at 09:00 tomorrow is in
+**Tomorrow** at 23:00 today. A `date` value is a calendar day and is the same
+day everywhere. A `datetime` falls on a day in the reader's display time zone
+(see [Datetime fields and time zones](#datetime-fields-and-time-zones)). The
+buckets move on at midnight without a reload.
+
+The **Add** button of **Today** and **Tomorrow** fills in that date on a `date`
+property. The other buckets span more than one day, and a `datetime` needs a
+time as well, so they fill in nothing.
+
+> **Note**: The buckets are worked out in the browser, in the reader's time
+> zone. A `condition:` that uses `days_between(entity.due, today())` is worked
+> out on the server, in the server's time zone. Near midnight, a reader in
+> another time zone can therefore see a row under **Today** that the condition
+> counts as tomorrow, or the other way round.
 
 ## Views
 
@@ -1916,6 +2090,11 @@ sections:
 Resolution is field-first: a field's own `render:` wins, else the section's,
 else `display`. It is resolved server-side, so the value the SPA receives is
 already effective.
+
+The exception is an entity type with no `views:` entry. Its detail screen uses a
+generated view whose properties section is `render: input`, so every field the
+caller may write edits in place. To show such a type read-only, author a view
+for it.
 
 > **Breaking change.** Before this, inline editing was implied by write
 > permission. Sections that want it must now say so with `render: input`.
@@ -3023,12 +3202,98 @@ navigation:
 | `dashboard` | bool   | Link to the dashboard page                                     |
 | `graph`     | bool   | Link to the graph explorer                                     |
 | `document`  | string | Standalone document to open (see [Standalone documents](#standalone-documents)) |
+| `page`      | string | Page to open, with its views as tabs (see [Pages](#pages)) |
 | `search`    | bool   | Link to the search page                                        |
 | `settings`  | bool   | Link to the settings page                                      |
 | `action`    | string | Action ID to trigger when clicked (renders as a sidebar button)|
 | `entities`  | string | Entity type whose entities are listed as links; only inside a group (see [Entity lists in a group](#entity-lists-in-a-group)) |
 | `icon`      | string | Icon name; overrides the icon derived from the entry type (see below) |
 | `permission`| string | Hide this entry from users who lack the named ACL permission (see below) |
+| `open`      | string | `page` (default) navigates; `flyout` slides the list out of the sidebar (see below) |
+| `status`    | list   | Up to three rules that mark the entry with a count (see below) |
+
+#### Opening a list as a flyout
+
+`open: flyout` shows a list in a panel that slides out of the sidebar over the
+current page, for a quick look without leaving it:
+
+```yaml
+navigation:
+  - label: "My Tickets"
+    list: my_tickets
+    open: flyout
+```
+
+The panel lists the rows by title. Clicking a row opens its detail in a second
+panel beside the first. The panels close on Escape, on their close button, on
+a second click on the sidebar entry, and whenever you navigate to another
+page. The entry is still a link to the list's page, so a Cmd-click or a middle
+click opens the full list in a new tab.
+
+A detail panel, here or beside a list, has no action buttons in its header.
+Its "⋯" menu offers what the entity's full page offers the same user: its
+commands and copies, Edit, its other faces, History, the export formats,
+Duplicate and Delete.
+
+Only `list:` entries can open as a flyout. On any other entry, or with a value
+other than `page` or `flyout`, `open:` is a config error.
+
+A list with [`group_by`](#grouping-group_by) shows its rows under section
+headings in the flyout too. Only sections with rows are shown. The flyout
+still loads only the first 50 rows and says how many it left out. In a
+[date-bucketed](#date-buckets) list, each row shows when it is due within its
+bucket: the time under **Today**, the weekday under **Tomorrow** and **Next 7
+days**, and a short date otherwise.
+
+#### Status indicators
+
+`status:` marks a list entry with a count of its rows, so a user can see where
+work waits without opening the list:
+
+```yaml
+navigation:
+  - label: "My Tasks"
+    list: my_tasks
+    status:
+      - tone: error
+        label: "{count} overdue"
+        condition: "days_between(entity.due, today()) < 0"
+      - tone: new
+        label: "{count} open"
+```
+
+Each rule has three keys:
+
+| Key         | Required | Description |
+|-------------|----------|-------------|
+| `tone`      | yes      | `new`, `info`, `warning`, `error` or `success` |
+| `label`     | yes      | The marker text. `{count}` is replaced by the count; no other value is interpolated |
+| `condition` | no       | A predicate expression, as in a list `condition:`. Without one, the rule counts every row |
+
+The rules are tried in order and the first with a count above zero is shown.
+When every rule counts zero, the entry has no marker. An entry takes at most
+three rules.
+
+The count is taken over exactly the rows the list itself shows the user: the
+same read access, query scope, static `filters:` and list `condition:`. A rule
+condition may name `current_user`, so `is_current_user(entity.assignee)` counts
+the user's own rows.
+
+Only `list:` entries accept `status:`. An unknown tone, a missing label, more
+than three rules or a condition that does not compile is a config error, which
+names the entry and the rule.
+
+The counts are served per user by `GET /api/v1/_nav_status`, apart from the
+sidebar:
+
+```json
+{"items": {"2.1": {"tone": "error", "label": "3 overdue", "count": 3}}}
+```
+
+The key is the entry's position in the navigation tree, counted from zero: `2`
+for the third top-level entry, `2.1` for the second item of that group. The
+sidebar response carries it on each entry that has rules, as `status_key`. An
+entry hidden by `permission:` gets no count.
 
 #### Item icons
 
@@ -3419,6 +3684,7 @@ draws nothing.
 | `group`     | string | Group header text (displayed as uppercase label)         |
 | `collapsed` | bool   | Default collapsed state (accepted and sent on the wire; the current SPA renders groups always expanded) |
 | `items`     | list   | List of direct navigation items within the group         |
+| `items_from`| map    | Fill the group with the rows of a list (see [Generated items](#generated-items-items_from)) |
 
 Groups appear as titled sections in the sidebar. The `collapsed` flag is kept in the config
 schema and the sidebar API response for compatibility, but the current SPA does not render a
@@ -3468,13 +3734,11 @@ The rules:
   not declare is a config error.
 - **Order.** Without `sort:`, the type's `default_sort` applies, and without that
   the links are in id order.
-- **Up to 100 links are shown.** When more entities match, a line such as
-  "and 12 more" follows the links. It is not a link. If a set is often that
-  large, point a `list:` entry at it instead.
-- **A group with no matching entities is hidden**, provided every item in it is
-  an `entities:` item. It reappears when an entity starts to match.
-- **Entity links are hidden while the sidebar is collapsed.** Each link would
-  otherwise shrink to the same icon, and one icon cannot tell entities apart.
+- **Up to 100 links are shown.** If a set is often larger, point a `list:`
+  entry at it instead.
+- **A group left without links is hidden.** This happens when no entity
+  matches, while the links load, and when they fail to load. The group
+  reappears when an entity starts to match.
 
 The links are **per user**. The sidebar only carries the definition. The
 browser then asks the ordinary list API for the rows, so each user sees only
@@ -3485,6 +3749,65 @@ entity of that type changes, without a page reload.
 One limit: if a user loses access to an entity, a link they already have on
 screen stays until the next update of that entity type or a page reload.
 Following the link then shows the ordinary "not found" page.
+
+### Generated items (`items_from`)
+
+`items_from:` fills a group with entities instead of fixed entries. Each row of
+a list becomes one sidebar entry, labelled with the row's title:
+
+```yaml
+navigation:
+  - group: "Topics"
+    items_from:
+      list: actieve_topics
+      page: topic
+      limit: 20
+      initial: { relation: is_topic_eigenaar_van, direction: incoming }
+      create: true
+```
+
+| Field       | Description |
+| ----------- | ----------- |
+| `list`      | The list whose rows become entries. Required. The entries are the list's own rows, in the list's order: its filters, `condition:`, sort and query scope all apply. |
+| `page`      | An [entity page](#entity-pages) for the list's entity type. An entry opens that page for its entity. Without `page`, an entry opens the entity's detail view. |
+| `limit`     | The most entries to show, from 1 to 50. The default is 20. |
+| `initial`   | A letter badge in front of each entry. Set `property` for the first letter of one of the row's properties, or `relation` for the first letter of a related entity's title, such as the owner. `direction` picks the side of the relation, and is needed only when the relation connects the type to itself. |
+| `create`    | Show a "+" on the group heading that creates a row of the list. It opens the list's `create_form:`, or else the type's create form, and then the new entity's page. It is shown only to a user who may create the type. A group that offers it stays in the sidebar when it has no entries, so the first one can be made. |
+
+A group with `items_from` cannot also have `items`, and cannot have `status:`.
+`items_from` is only allowed on a group.
+
+The entries follow the same access rules as the list. A user sees only the rows
+the list shows them, and a title they may not read shows as the entity id. An
+initial from a related entity appears only when the user may read that entity
+and its title. When a row has several related entities, the one with the lowest
+id gives the initial.
+
+When the list has more rows than `limit`, the group ends with a **Show all**
+entry that opens the list. A group with no rows for this user is not shown. An
+entry is highlighted while its page is open, on any tab.
+
+The entries are not in the sidebar response. The SPA fetches them from
+`GET /api/v1/_nav_items`, which answers per user:
+
+```json
+{
+  "items": {
+    "1": {
+      "entries": [
+        { "id": "TOPIC-1", "type": "topic", "label": "Gezondheid", "initial": "J" }
+      ],
+      "truncated": true
+    }
+  }
+}
+```
+
+The key is the group's `items_key` from the sidebar response. It is positional,
+like a [status key](#status-indicators). With spaces, pass `?space=<id>` the
+same way as for status. The SPA refetches the entries when the user navigates
+and shortly after an entity changes. Linking or unlinking an owner sends no
+live update, so a changed initial shows on the next navigation.
 
 ### Hiding entries a user cannot act on (`permission:`)
 
@@ -3535,6 +3858,475 @@ menu item has vanished, check the spelling against the `permissions:` list on
 your roles first.
 
 Direct items and groups can be freely mixed in any order.
+
+## Spaces
+
+A space is a named entry point onto the same graph. Each space has its own
+sidebar navigation, an optional home page and its own Create menu. A user
+switches between spaces in the sidebar. All spaces share one schema and one set
+of entities, so an entity opened from one space is the same entity in another.
+
+```yaml
+spaces:
+  - id: projects
+    label: "Atlas Projects"
+    icon: folder
+    home: { list: tasks }
+    create: [task, project]
+    navigation:
+      - label: "Tasks"
+        list: tasks
+      - group: "Planning"
+        items:
+          - label: "Projects"
+            list: projects
+  - id: isms
+    label: "ISO 27001"
+    permission: isms:use
+    create: [risk, control]
+    navigation:
+      - label: "Risks"
+        list: risks
+```
+
+| Field        | Required | Description |
+| ------------ | -------- | ----------- |
+| `id`         | yes      | Lowercase name used in URLs. It starts with a letter and has at most 32 letters, digits, `-` or `_`. Unique across spaces |
+| `label`      | yes      | The name the switcher shows |
+| `icon`       | no       | An [icon name](#icon-names), as on a navigation entry |
+| `permission` | no       | Hide the space from the switcher for users who lack this ACL permission |
+| `home`       | no       | The page the space opens on: one navigation destination |
+| `create`     | no       | Entity types the Create menu offers in this space, in order |
+| `navigation` | no       | The space's sidebar, in the same shape as [Navigation](#navigation) |
+
+`spaces:` is a list, and its order is the order of the switcher.
+
+**`spaces:` replaces the top-level `navigation:`.** A config with a non-empty
+`navigation:` and `spaces:` fails to load. Move the navigation into a space. A
+config without `spaces:` works exactly as before.
+
+**Navigation inside a space** takes every key a top-level entry takes, with the
+same rules: groups, icons, `permission:`, `open: flyout` and `status:`. A config
+error in a space names it, for example
+`spaces[crm]: navigation: references unknown list "contacts"`.
+
+**`home:`** names one destination, written like a navigation entry:
+`{ list: tasks }`, `{ kanban: board }`, `{ page: tickets }`, `{ dashboard: true }`,
+`{ search: true }` and so on. It cannot be a group or an action, and it does not take `status:`,
+`open:` or `permission:`. Without `home:`, the space opens on the first entry
+in its navigation that the user can see and that opens a page, so actions are
+skipped. With no such entry, it opens on the dashboard.
+
+**`create:`** lists entity types that must exist in the schema. The Create menu
+offers a type only when the user may create it and a create form exists for
+it, the same rule as inline creation from a relation field.
+
+**`permission:`** keeps a space out of the switcher of a user who does not hold
+the permission. It works like `permission:` on a navigation entry. It is a
+convenience, not a security control: the lists and entities of a hidden space
+stay reachable by URL, under the normal ACL.
+
+### The current space
+
+The sidebar endpoint takes the space as a parameter:
+`GET /api/v1/_sidebar?space=projects`. The server picks the current space in
+this order:
+
+1. The requested space, when it exists and the user may see it.
+2. Otherwise the first space in config order that the user may see.
+3. When the user may see no space, there is no current space and the
+   navigation is empty.
+
+With spaces configured, the response has three more fields:
+
+```json
+{
+  "spaces": [
+    { "id": "projects", "label": "Atlas Projects", "icon": "folder", "home": "/list/tasks" },
+    { "id": "isms", "label": "ISO 27001", "home": "/list/risks" }
+  ],
+  "space": "projects",
+  "create": [
+    { "type": "task", "label": "Task", "form": "task_form" }
+  ],
+  "navigation": [ ... ]
+}
+```
+
+- `spaces` lists the spaces the user may see, in config order. `home` is the
+  page the space opens on, as a path without the space prefix.
+- `space` is the id of the current space.
+- `create` is the current space's Create menu. It is left out when empty.
+- `navigation` is the current space's navigation, filtered as usual.
+
+Without `spaces:` none of these fields appear.
+
+### Status keys in a space
+
+A [status indicator](#status-indicators) inside a space has a key that starts
+with the space id and a colon: `crm:2.1` is the second item of the third entry
+in the `crm` space. Top-level keys keep their form (`2.1`).
+`GET /api/v1/_nav_status?space=crm` counts only the entries of the space the
+sidebar would pick for the same parameter.
+
+The keys of [generated items](#generated-items-items_from) follow the same
+scheme, and `GET /api/v1/_nav_items?space=crm` takes the same parameter.
+
+## Pages
+
+A page shows several views of one subject as tabs. A board, a table and a
+timeline of the same tickets can sit on one page, and the user switches between
+them in the header.
+
+```yaml
+pages:
+  tickets:
+    label: "Tickets"
+    icon: flag
+    tabs:
+      - id: board
+        label: "Board"
+        kanban: ticket-board
+      - id: table
+        label: "Table"
+        list: tickets
+      - id: timeline
+        label: "Timeline"
+        gantt: roadmap
+      - id: triage
+        label: "Triage"
+        list: untriaged
+        permission: tickets:triage
+
+navigation:
+  - page: tickets
+```
+
+`pages:` is a map from page id to page. The id is used in URLs. It starts with a
+lowercase letter and has at most 32 lowercase letters, digits, `-` or `_`.
+
+| Field   | Required | Description |
+| ------- | -------- | ----------- |
+| `label` | yes      | The page title in the header, and the sidebar label of a `page:` entry that sets none |
+| `icon`  | no       | An [icon name](#icon-names), used by a `page:` entry that sets none |
+| `tabs`  | yes      | The views of the page, in tab order. At least one |
+| `entity_type` | no | Makes the page an [entity page](#entity-pages) for entities of this type |
+| `badge` | no       | On an entity page, a property of the entity shown beside the title |
+
+Each tab names exactly one view:
+
+| Field        | Required | Description |
+| ------------ | -------- | ----------- |
+| `id`         | yes      | The tab's name in the URL, in the same shape as a page id. Unique within the page |
+| `label`      | yes      | The tab's text |
+| `icon`       | no       | An [icon name](#icon-names) shown before the label |
+| `permission` | no       | Hide the tab from users who lack this ACL permission |
+| `list`, `kanban`, `calendar`, `gantt`, `document` | one of | The view the tab shows, by name |
+| `dashboard`  | one of   | `true` shows the dashboard |
+| `scope`      | on an entity page | How the tab narrows its view to the page's entity. See [Entity pages](#entity-pages) |
+
+### Entity pages
+
+An entity page shows one entity, for example one topic with a board, a table
+and a timeline of its work. Set `entity_type:` to the type of that entity. Each
+tab then shows only what belongs to it.
+
+```yaml
+pages:
+  topic:
+    entity_type: topic
+    label: Topic
+    badge: gezondheid
+    tabs:
+      - { id: board, label: Board, kanban: taken_bord, scope: { relation: bestaat_uit, direction: outgoing } }
+      - { id: tabel, label: Tabel, list: openstaande_taken, scope: { relation: bestaat_uit, direction: outgoing } }
+      - { id: tijdlijn, label: Tijdlijn, gantt: portfolio, scope: root }
+```
+
+The header shows the entity's title. `label:` is the page's name in error
+messages, and the title while the entity loads. `badge:` names a property of
+the entity. Its value is shown beside the title, drawn the way a form shows
+that property.
+
+A user who may update the entity can change the badge from the header: it is a
+picker, like the same property on the detail page, and a change saves only
+that property. A "⋯" menu beside the title offers Details, which opens the
+entity in the side panel for editing, and Open full page.
+It offers Delete to a user who may delete the entity; after a delete the space's
+home opens. A user who may not write sees the same header, read-only.
+
+Every tab of an entity page needs a `scope:`:
+
+- A `list:` or `kanban:` tab takes `{ relation, direction }`. The tab shows the
+  rows the entity reaches over that relation. `direction` is seen from the
+  page's entity, as in view sections: `outgoing` shows the targets of the
+  entity's `relation` edges, `incoming` shows their sources. It may be left out
+  when the relation connects the two types one way only. The list's own
+  filters, `query_scope:` and the user's filters still apply, and so does
+  `group_by:`. The rows are always a subset of what the user may read.
+- A `gantt:` tab takes `scope: root`. The timeline starts at the entity. The
+  entity's type must be one of the timeline's `sources:`, and one of its
+  `hierarchy:` relations must start from that type.
+- An entity page cannot show a calendar, a document or the dashboard.
+
+A row created from a list or board tab, with New or a section's Add, is linked
+to the page's entity over the tab's relation, so it appears in the tab. When
+that link fails, a message names the new row so it can be linked by hand.
+
+An entity page is not a navigation destination: a `page:` entry or a space's
+`home:` that names one is a config error. It opens from an entity, by URL.
+
+### Linking to a page
+
+`page: <id>` is a navigation destination like `list:` or `kanban:`. It works in
+the top-level `navigation:`, in a space's `navigation:` and in a space's
+`home:`. The entry takes `label:`, `icon:`, `permission:` and `status:` as
+usual. Without its own `label:` or `icon:`, the entry uses the page's.
+
+A `status:` rule on a page entry counts the rows of the page's first tab, so
+that tab must be a list. The sidebar highlights the page entry on every tab of
+the page.
+
+### URLs
+
+A tab has its own URL: `/p/<page>/<tab>`, or `/s/<space>/p/<page>/<tab>` inside
+a space. A bookmark or a reload opens the same tab. `/p/<page>` and a tab id
+that does not exist open the first tab the user can see. A page id that does not
+exist shows a "Page not found" message.
+
+Switching tabs adds a step to the browser history, so Back returns to the
+previous tab. The new tab opens without the old tab's sort, filters or
+selection. Opening an entity or a form from a tab and pressing Back or Cancel
+returns to the tab.
+
+Every view on a page keeps its own URL as well. `/list/tickets` still opens the
+list on its own, without the tab bar.
+
+An entity page has the entity's id between the page and the tab:
+`/p/<page>/<entity>/<tab>`, or `/s/<space>/p/<page>/<entity>/<tab>` inside a
+space. `/p/<page>/<entity>` opens the first tab. When the entity does not exist,
+or the user may not read it, the page shows "Not found" and no tab.
+
+A tab of an entity page reads its rows with three extra parameters on the list
+endpoint: `scope_page`, `scope_tab` and `anchor` (the entity's id). The
+relation and direction come from the config, never from the request. An unknown
+page or tab, or a tab that shows another type, is a `400`. An anchor that does
+not exist, that the user may not read, or that is of another type gets the same
+`404` as an entity that does not exist. Export and the entity view's
+previous/next buttons carry the same parameters, so they walk the tab's rows.
+
+### Tabs a user cannot see
+
+A tab with `permission:` is left out for users who lack the permission. When
+one tab is left, the tab bar is hidden and the page shows that view alone. A
+page with no tab left is hidden from the sidebar. Like `permission:` on a
+navigation entry, this is a convenience, not a security control: the view stays
+reachable by its own URL, under the normal ACL.
+
+`rela acl audit` counts a tab's `permission:` as used.
+
+### Errors
+
+A config error on a page names the page, the tab and the key, for example
+`pages[tickets].tabs[board]: references unknown kanban "ticket-boards"` or
+`pages[tickets].tabs[triage]: names more than one view (set one of list, kanban,
+calendar, gantt, dashboard or document)`.
+
+### The sidebar response
+
+`GET /api/v1/_sidebar` has a `pages` field when `pages:` is configured. It
+holds every page, keyed by id, with the tabs this user can see in config order:
+
+```json
+{
+  "pages": {
+    "tickets": {
+      "label": "Tickets",
+      "icon": "flag",
+      "tabs": [
+        { "id": "board", "label": "Board", "view": "kanban", "target": "ticket-board" },
+        { "id": "table", "label": "Table", "view": "list", "target": "tickets" }
+      ]
+    }
+  }
+}
+```
+
+An entity page also has `entity_type` and, when set, `badge`. Each of its tabs
+has `scope`: `"relation"` with the `relation` and the resolved `direction`, or
+`"root"`:
+
+```json
+{
+  "pages": {
+    "topic": {
+      "label": "Topic",
+      "entity_type": "topic",
+      "badge": "gezondheid",
+      "tabs": [
+        {
+          "id": "board", "label": "Board", "view": "kanban", "target": "taken_bord",
+          "scope": "relation", "relation": "bestaat_uit", "direction": "outgoing"
+        },
+        { "id": "tijdlijn", "label": "Tijdlijn", "view": "gantt", "target": "portfolio", "scope": "root" }
+      ]
+    }
+  }
+}
+```
+
+`GET /api/v1/_config` serves `pages:` as configured, with every tab.
+
+A group with [`items_from`](#generated-items-items_from) has three more fields
+and no `items`: `items_key` names its entries in `/api/v1/_nav_items`,
+`items_list` is the list behind it, and `items_page` is the page an entry
+opens. `items_page` is left out when the user can see no tab of that page; the
+entries then open the entity's detail view. A group with `create: true` has
+`items_create` (`type`, `label`, `form`) when the user may create the type and a
+form resolves for it. The create endpoint checks access again.
+
+## Account menu
+
+The account menu shows who is signed in and links to the pages of the login
+proxy in front of rela. rela does not own login. The proxy owns the session,
+so rela only shows what it knows and links to the proxy's pages.
+
+The menu takes its data from three places:
+
+| What | Source |
+| ---- | ------ |
+| User id, email, org, roles | The verified identity assertion. See GUIDE-server-security, "Verified JWT identity". |
+| Display name and avatar | The user's own entity in the graph. |
+| Sign out, account, switch org, admin | The `account:` block below. |
+
+### The `account:` block
+
+```yaml
+account:
+  sign_out: /pratique/auth/logout
+  account: /pratique/admin/account
+  switch_org: /pratique/auth/select-tenant
+  admin: { url: /pratique/admin/, role: org-admin }
+  avatar_property: photo
+```
+
+| Key | Description |
+| --- | ----------- |
+| `sign_out` | The proxy's sign-out page. |
+| `account` | The proxy's page where users manage their own account. |
+| `switch_org` | The proxy's org picker. |
+| `admin.url` | The proxy's administration page. Required when `admin` is set. |
+| `admin.role` | Show the admin link only to users whose asserted `roles` claim contains this role. Leave it out to show the link to everyone. |
+| `avatar_property` | The property on the user's entity that holds a photo. |
+
+Every key is optional. A link you leave out is not shown. An unknown key is a
+load error, so a typo such as `signout:` cannot silently drop a link.
+
+### Every link must be a page
+
+Each link opens a page the proxy owns. It must never point at a proxy API
+endpoint. rela renders the links as plain links and never calls the proxy
+itself. If signing out needs a CSRF token or a confirmation step, the proxy's
+page handles that. rela never sees the proxy's CSRF token.
+
+Each link must be one of these:
+
+- a path on the same host that starts with a single `/`, such as
+  `/oauth2/sign_out`;
+- an absolute `https://` URL.
+
+rela rejects anything else when it loads the config, and names the key in the
+error. That covers `javascript:`, `data:` and `http:` URLs, a
+protocol-relative `//host/...`, and a relative path without a leading slash.
+
+`admin.role` is a display filter, not access control. It hides the link from
+users who cannot use the page. The proxy's admin page must check permissions
+itself. The link targets are not secret: `data-entry.yaml` is config, and a user
+who types the URL gets whatever the proxy allows.
+
+### Examples
+
+Pratique, mounted under a prefix such as `/pratique`:
+
+```yaml
+account:
+  sign_out: /pratique/auth/logout          # a GET confirmation page
+  account: /pratique/admin/account
+  switch_org: /pratique/auth/select-tenant
+  admin: { url: /pratique/admin/, role: org-admin }
+```
+
+oauth2-proxy has a sign-out page and no account or org pages:
+
+```yaml
+account:
+  sign_out: /oauth2/sign_out
+```
+
+Pomerium:
+
+```yaml
+account:
+  sign_out: /.pomerium/sign_out
+```
+
+### Display name and avatar
+
+rela reads the user's own entity for the display name and the avatar. That is
+the entity the principal resolves to: the entity found through acl.yaml's
+`principal_property`, or an entity whose id is the user id itself (for
+example `RELA_DATAENTRY_USER=PERS-JV`). When acl.yaml sets `user_entity_type`,
+only an entity of that type counts.
+
+rela reads this entity through the same access rules as every other read. If
+the user may not read their own entity, rela sends no name or avatar, and the
+menu falls back to the user id.
+
+`avatar_property` names a property of type `file` or `string`:
+
+- A `file` property is served through the attachment endpoint, with the same
+  access rules as the entity. If the property holds several files, the first
+  is used.
+- A `string` property holds an image URL. rela uses it only when it is a path
+  starting with a single `/` or an `https://` URL. Any other value is ignored.
+
+rela checks `avatar_property` when it loads the config. The property must be a
+`file` or `string` property of some entity type. When acl.yaml sets
+`user_entity_type`, it must be a property of that type.
+
+### `GET /api/v1/_me`
+
+The SPA reads the menu's data from this endpoint. The response describes the
+user making the request:
+
+```json
+{
+  "user": "PERS-ABC123",
+  "email": "a@example.com",
+  "org": {"id": "o1", "slug": "acme", "name": "Acme"},
+  "roles": ["editor"],
+  "person": {"type": "person", "id": "PERS-ABC123", "title": "Ada Lovelace",
+             "avatar": "/api/v1/persons/PERS-ABC123/_attachments/photo/ada.png"},
+  "links": {"sign_out": "/pratique/auth/logout", "account": "/pratique/admin/account",
+            "switch_org": "/pratique/auth/select-tenant", "admin": "/pratique/admin/"}
+}
+```
+
+- `user` is always present.
+- `email`, `org` and `roles` come from the verified assertion. Each is left out
+  when the assertion does not carry it. `org` needs an `org_id`; `org.name`
+  needs an `org_name`. `roles` are the role names in the token, not rela's
+  acl.yaml roles.
+- `person` is left out when the user has no entity or may not read it.
+  `avatar` is left out when there is no usable value.
+- `links` holds the configured links that apply to this user, and is left out
+  when none do.
+
+With no proxy, or a proxy that sends only `sub`, the response is just
+`{"user": "..."}` plus whatever the person entity supplies.
+
+This data is for display only. Authorization keeps using the verified
+identity on every request.
 
 ## Actions
 
@@ -4261,6 +5053,12 @@ rather than a silent default:
   honest. `error` refuses the request instead, for projects that intend a
   strict tree. There is deliberately no `duplicate`: rendering one entity
   under two ancestors double-counts every roll-up above it.
+
+  The root view checks every entity. A drilled view checks only the entity
+  you drilled into and its descendants. Each of them fails the check when it
+  has more than one visible parent, even if a parent sits outside the drilled
+  subtree. An entity with two parents elsewhere in the graph makes the root
+  view fail, but not a drilled view that does not contain it.
 - `on_cycle` says what happens when containment loops (A contains B contains
   A). `error` (the default) refuses the request; `prune` drops the looping
   component and renders the rest; `mark` renders it in place and flags it.

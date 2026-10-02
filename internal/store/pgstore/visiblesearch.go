@@ -6,8 +6,7 @@ import (
 	"iter"
 	"slices"
 	"strings"
-
-	"github.com/jackc/pgx/v5"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -41,10 +40,10 @@ var _ search.VisibleSearcher = (*Store)(nil)
 // (cancel-silent / deadline-504 mapping included — ctx is threaded
 // into the query, unlike the legacy ctx-less Backend.Search).
 //
-// Go-side residue: q.Filters cannot be pushed down, so when filters
-// are present the SQL LIMIT is omitted and the limit is enforced after
-// filtering — a SQL LIMIT before Go-side filters would re-open the
-// starvation gap the post-visibility contract closes.
+// Go-side residue: q.Filters cannot be pushed down, so the limit is
+// enforced after filtering. The result is read in keyset pages (see
+// visiblePages) until that many rows passed, so a page LIMIT never
+// starves the filtered result the way a single SQL LIMIT would.
 func (s *Store) SearchVisible(
 	ctx context.Context, q search.Query, scope map[string]search.TypeScope,
 ) iter.Seq2[search.Hit, error] {
@@ -58,40 +57,104 @@ func (s *Store) SearchVisible(
 			return
 		}
 
-		sqlText, args, anyVisible := buildVisibleSearchSQL(q, scope, s.searchTitles)
-		if !anyVisible {
-			return // empty effective scope: deny everything, skip the query
-		}
-
-		rows, err := s.db.Query(ctx, sqlText, args...)
-		if err != nil {
-			yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
-			return
-		}
-		defer rows.Close()
-
 		emitted := 0
-		for rows.Next() {
-			e, scanErr := scanEntity(rows)
-			if scanErr != nil {
-				yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search scan: %w", search.ErrScope, scanErr))
+		for page, err := range visiblePages(ctx, s.db, s.searchTitles, q, scope) {
+			if err != nil {
+				yield(search.Hit{}, err)
 				return
 			}
-			if !search.MatchFilters(e, q.Filters) {
-				continue
+			for _, e := range page {
+				if q.Limit > 0 && emitted >= q.Limit {
+					return
+				}
+				if !yield(search.Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face}, nil) {
+					return
+				}
+				emitted++
 			}
-			if q.Limit > 0 && emitted >= q.Limit {
-				return
-			}
-			if !yield(search.Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face}, nil) {
-				return
-			}
-			emitted++
-		}
-		if err := rows.Err(); err != nil {
-			yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
 		}
 	}
+}
+
+// visibleKey is a visible-search row's keyset key: the rank the result is
+// ordered by (descending; zero when the query has no text) and the id.
+type visibleKey struct {
+	rank float32
+	id   string
+}
+
+// visiblePages reads a visible search in keyset pages and yields each page's
+// rows that pass q.Filters, with the page's rows already closed, so no
+// connection is held while the caller yields or runs a hidden-fields callback
+// (see defaultIteratorPageSize). The rows carry no bodies. Nothing is yielded
+// when the scope admits nothing. A page is at most q.Limit rows when no
+// Go-side filter can drop any, so a limited search usually costs one
+// statement.
+func visiblePages(
+	ctx context.Context, db DBTX, titles SearchTitles, q search.Query, scope map[string]search.TypeScope,
+) iter.Seq2[[]*entity.Entity, error] {
+	return func(yield func([]*entity.Entity, error) bool) {
+		size := int(iteratorPageSize.Load())
+		if q.Limit > 0 && q.Limit < size && len(q.Filters) == 0 {
+			size = q.Limit
+		}
+		var after *visibleKey
+		for {
+			sqlText, args, anyVisible := buildVisibleSearchSQL(q, scope, titles, after, size)
+			if !anyVisible {
+				return // empty effective scope: deny everything, skip the query
+			}
+			rows, err := queryAll(ctx, db, sqlText, args, scanVisibleRow)
+			if err != nil {
+				yield(nil, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
+				return
+			}
+			page := make([]*entity.Entity, 0, len(rows))
+			for _, r := range rows {
+				if search.MatchFilters(r.e, q.Filters) {
+					page = append(page, r.e)
+				}
+			}
+			if len(page) > 0 && !yield(page, nil) {
+				return
+			}
+			if len(rows) < size {
+				return
+			}
+			last := rows[len(rows)-1].key
+			if after != nil && last == *after {
+				yield(nil, fmt.Errorf("%w: pgstore visible search: keyset paging made no progress", search.ErrScope))
+				return
+			}
+			after = &last
+		}
+	}
+}
+
+// visibleRow is one visible-search row and its keyset key.
+type visibleRow struct {
+	e   *entity.Entity
+	key visibleKey
+}
+
+func scanVisibleRow(row scanner) (visibleRow, error) {
+	var (
+		id, typ, content, ptr string
+		props                 []byte
+		updatedAt             time.Time
+		rank                  float32
+	)
+	if err := row.Scan(&id, &typ, &ptr, &props, &content, &updatedAt, &rank); err != nil {
+		return visibleRow{}, err
+	}
+	e := entity.New(id, typ)
+	e.Face = entity.Face(ptr)
+	e.UpdatedAt = updatedAt
+	var err error
+	if e.Properties, err = unmarshalProps(props); err != nil {
+		return visibleRow{}, err
+	}
+	return visibleRow{e: e, key: visibleKey{rank: rank, id: id}}, nil
 }
 
 // compile-time check: the postgres store also filters at the property level.
@@ -130,31 +193,35 @@ func (s *Store) SearchVisibleFields(
 			return
 		}
 
-		sqlText, args, anyVisible := buildVisibleSearchSQL(q, scope, s.searchTitles)
-		if !anyVisible {
-			return
+		emitted := 0
+		for page, err := range visiblePages(ctx, s.db, s.searchTitles, q, scope) {
+			if err != nil {
+				yield(search.Hit{}, err)
+				return
+			}
+			remaining := 0
+			if q.Limit > 0 {
+				remaining = q.Limit - emitted
+			}
+			n, more := emitFieldVisibleRows(ctx, s.db, page, q, hidden, remaining, yield)
+			emitted += n
+			if !more || (q.Limit > 0 && emitted >= q.Limit) {
+				return
+			}
 		}
-
-		rows, err := s.db.Query(ctx, sqlText, args...)
-		if err != nil {
-			yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
-			return
-		}
-		defer rows.Close()
-
-		emitFieldVisibleRows(ctx, s.db, rows, q, hidden, yield)
 	}
 }
 
-// emitFieldVisibleRows scans the visible-search rows, applies the Go-side
-// property filter and the property-level (hidden-field) drop, and yields the
-// survivors up to q.Limit. Any scan/row/hidden-func error is yielded and stops
-// iteration. Extracted from SearchVisibleFields to keep that closure's
-// branching within the complexity budget.
+// emitFieldVisibleRows applies the property-level (hidden-field) drop to one
+// page of filtered visible-search rows and yields the survivors, at most
+// limit of them when limit > 0. It reports how many it yielded, and more is
+// false once iteration must stop: the consumer broke off, or a hidden-func
+// or body-read error was yielded. Extracted from SearchVisibleFields to keep
+// that closure's branching within the complexity budget.
 func emitFieldVisibleRows(
-	ctx context.Context, db DBTX, rows pgx.Rows, q search.Query, hidden search.HiddenFieldsFunc,
-	yield func(search.Hit, error) bool,
-) {
+	ctx context.Context, db DBTX, ents []*entity.Entity, q search.Query, hidden search.HiddenFieldsFunc,
+	limit int, yield func(search.Hit, error) bool,
+) (emitted int, more bool) {
 	// Pass 1 decides every row it can from id and properties alone, and
 	// remembers the rows whose verdict depends on the body.
 	var (
@@ -162,19 +229,11 @@ func emitFieldVisibleRows(
 		bodyless []entity.Ref
 		decided  int
 	)
-	for rows.Next() {
-		e, scanErr := scanEntity(rows)
-		if scanErr != nil {
-			yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search scan: %w", search.ErrScope, scanErr))
-			return
-		}
-		if !search.MatchFilters(e, q.Filters) {
-			continue
-		}
+	for _, e := range ents {
 		c, err := judgeWithoutBody(ctx, q, e, hidden)
 		if err != nil {
 			yield(search.Hit{}, err)
-			return
+			return 0, false
 		}
 		if c.needBody {
 			bodyless = append(bodyless, e.Ref())
@@ -183,28 +242,20 @@ func emitFieldVisibleRows(
 		if !c.needBody {
 			decided++
 		}
-		// Rows are emitted in order, up to q.Limit. Once that many rows are
+		// Rows are emitted in order, up to limit. Once that many rows are
 		// already KEPT, nothing further can be emitted — the undecided rows
-		// ahead of them can only add to the kept set — so stop buffering.
-		// This is what bounds memory when Go-side filters moved the LIMIT
-		// out of the SQL.
-		if q.Limit > 0 && decided >= q.Limit {
+		// ahead of them can only add to the kept set — so stop judging.
+		if limit > 0 && decided >= limit {
 			break
 		}
 	}
-	if err := rows.Err(); err != nil {
-		yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
-		return
-	}
-	rows.Close()
 
 	bodies, err := searchBodies(ctx, db, bodyless)
 	if err != nil {
 		yield(search.Hit{}, fmt.Errorf("%w: pgstore visible search bodies: %w", search.ErrScope, err))
-		return
+		return 0, false
 	}
 
-	emitted := 0
 	for _, c := range cands {
 		if c.needBody {
 			c.e.Content = bodies[c.e.Ref()]
@@ -212,14 +263,15 @@ func emitFieldVisibleRows(
 				continue
 			}
 		}
-		if q.Limit > 0 && emitted >= q.Limit {
-			return
+		if limit > 0 && emitted >= limit {
+			return emitted, true
 		}
 		if !yield(c.hit, nil) {
-			return
+			return emitted, false
 		}
 		emitted++
 	}
+	return emitted, true
 }
 
 // searchCandidate is one gated search row between the two passes.
@@ -300,8 +352,12 @@ const visibleSearchColumns = "e.id, e.type, e.face, e.properties, ''::text AS co
 // interpolated strings are placeholder names and the compile-time CTE
 // prefixes ("v<i>_in"/"v<i>_out") — same injection-safety property as
 // buildGraphQuerySQL.
+//
+// It reads one keyset page of at most pageLimit rows after the key after (nil
+// for the first page). Each row carries its rank as a seventh column, which
+// is the key's first part; see visiblePages.
 func buildVisibleSearchSQL(
-	q search.Query, scope map[string]search.TypeScope, titles SearchTitles,
+	q search.Query, scope map[string]search.TypeScope, titles SearchTitles, after *visibleKey, pageLimit int,
 ) (sqlText string, args []any, anyVisible bool) {
 	b := &sqlBuilder{}
 
@@ -353,33 +409,44 @@ func buildVisibleSearchSQL(
 	if !wildcardAllow {
 		visCond = " AND (" + strings.Join(visParts, " OR ") + ")"
 	}
-	if q.World.IsTrivial() {
-		sb.WriteString("SELECT " + visibleSearchColumns + " FROM entities e WHERE e.face = ''" + visCond)
-	} else {
-		rank, candidate := worldSQL(q.World, "e", &b.args)
-		sb.WriteString("SELECT " + visibleSearchColumns + " FROM (" +
-			"SELECT DISTINCT ON (id) * FROM entities e WHERE " + candidate + visCond +
-			" ORDER BY id ASC, (" + rank + ") ASC, face ASC) e WHERE true")
-	}
-
 	// Text match + ordering mirror SearchBackend.Search exactly:
 	// escaped needle for LIKE, raw lowercased needle for similarity,
 	// id ASC ties — the parity baseline orders by the same expressions.
-	orderBy := " ORDER BY e.id ASC"
+	// The rank is rendered twice, as a column and in the keyset condition,
+	// because WHERE cannot name a SELECT alias.
+	rankCol, orderBy := "0::real", " ORDER BY e.id ASC"
+	var needle string
 	if q.Text != "" {
-		needle := strings.ToLower(q.Text)
+		needle = strings.ToLower(q.Text)
+		rankCol = titles.rankSQL("e", func(v any) string { return b.arg(v) }, needle)
+		orderBy = " ORDER BY search_rank DESC, e.id ASC"
+	}
+	columns := visibleSearchColumns + ", " + rankCol + " AS search_rank"
+	if q.World.IsTrivial() {
+		sb.WriteString("SELECT " + columns + " FROM entities e WHERE e.face = ''" + visCond)
+	} else {
+		rank, candidate := worldSQL(q.World, "e", &b.args)
+		sb.WriteString("SELECT " + columns + " FROM (" +
+			"SELECT DISTINCT ON (id) * FROM entities e WHERE " + candidate + visCond +
+			" ORDER BY id ASC, (" + rank + ") ASC, face ASC) e WHERE true")
+	}
+	if q.Text != "" {
 		sb.WriteString(" AND e.search_text LIKE '%' || " + b.arg(escapeLike(needle)) + ` || '%' ESCAPE '\'`)
-		orderBy = " ORDER BY " + titles.rankSQL("e", func(v any) string { return b.arg(v) }, needle) + " DESC, e.id ASC"
+	}
+	if after != nil {
+		if q.Text == "" {
+			sb.WriteString(" AND e.id > " + b.arg(after.id))
+		} else {
+			rank := titles.rankSQL("e", func(v any) string { return b.arg(v) }, needle)
+			r, id := b.arg(after.rank), b.arg(after.id)
+			sb.WriteString(" AND (" + rank + " < " + r + " OR (" + rank + " = " + r + " AND e.id > " + id + "))")
+		}
 	}
 	if len(q.Types) > 0 {
 		sb.WriteString(" AND e.type = ANY(" + b.arg(q.Types) + ")")
 	}
 	sb.WriteString(orderBy)
-	if q.Limit > 0 && len(q.Filters) == 0 {
-		// With Go-side filters pending, the limit moves above them —
-		// see the method godoc.
-		sb.WriteString(" LIMIT " + b.arg(q.Limit))
-	}
+	sb.WriteString(" LIMIT " + b.arg(pageLimit))
 	return sb.String(), b.args, true
 }
 

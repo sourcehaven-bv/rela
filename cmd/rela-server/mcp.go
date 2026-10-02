@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -117,7 +118,11 @@ func remoteAttachmentDeps(svc *appbuild.Services, host dataentry.MCPHost) relamc
 // newRemoteMCPServer builds the remote MCP server. It does not pass
 // [relamcp.WithLuaTools]; see [wireRemoteMCP].
 func newRemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost) (*relamcp.Server, error) {
-	return relamcp.NewServer(remoteMCPDeps(svc, host), mcpServerVersion,
+	deps, err := remoteMCPDeps(svc, host)
+	if err != nil {
+		return nil, err
+	}
+	return relamcp.NewServer(deps, mcpServerVersion,
 		relamcp.WithPrincipal(principal.Principal{
 			User: principal.SystemUser(),
 			Tool: principal.ToolMCP,
@@ -128,7 +133,17 @@ func newRemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost) (*relamc
 // read handle, including search, comes from [appbuild.Services.GatedReads].
 // LuaWriteDeps and LuaCache stay zero because the remote server has no Lua
 // tools.
-func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.Deps {
+//
+// A bare id resolves in the compiled default world, as on the data-entry API
+// (BUG-6XTX0G), and a read tool's `world` argument selects another through
+// the host, which applies the world grant.
+//
+// Nil: the host's world functions are rejected, because without them a
+// `world` argument could not be authorized.
+func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps, error) {
+	if host.SelectWorld == nil || host.WorldReadable == nil || host.DefaultWorld == nil {
+		return relamcp.Deps{}, errors.New("remote MCP: the host's world functions are required")
+	}
 	reads := svc.GatedReads()
 	deps := relamcp.Deps{
 		Store:         reads.Reader,
@@ -143,11 +158,12 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.Deps 
 		Attachments:   remoteAttachmentDeps(svc, host),
 		World:         reads.LuaReads.World,
 		Families:      appbuild.CompiledWorlds(svc).Families(),
+		Worlds:        host.Worlds(),
 	}
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals
 	}
-	return deps
+	return deps, nil
 }
 
 // noopWatcher satisfies [relamcp.Watcher] for the HTTP transport, which has

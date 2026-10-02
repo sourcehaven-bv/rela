@@ -90,18 +90,18 @@ defineEmits<{
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 1px;
-  background: var(--border-color);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-border);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
 
 .calendar-weekday {
   padding: var(--space-xs) var(--space-sm);
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   font-size: var(--font-size-sm);
   font-weight: 600;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   text-align: center;
 }
 
@@ -114,7 +114,7 @@ defineEmits<{
      screen, which is the accepted cost of chips people can actually read. */
   min-height: 128px;
   padding: var(--space-xs);
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   /* min-width:0 lets a long chip truncate instead of stretching the column. */
   min-width: 0;
 }
@@ -128,15 +128,15 @@ defineEmits<{
 }
 
 .calendar-day--outside {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .calendar-day--outside .calendar-day-number {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .calendar-day--today .calendar-day-number {
-  background: var(--accent-color);
+  background: var(--rl-color-accent);
   color: #fff;
   border-radius: 50%;
 }
@@ -160,7 +160,7 @@ defineEmits<{
   padding: 1px var(--space-xs);
   border: none;
   background: none;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;

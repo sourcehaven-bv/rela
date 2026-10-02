@@ -15,11 +15,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 const depsMetamodel = `version: "1.0"
@@ -71,10 +69,9 @@ func TestRemoteMCPDeps_UsesGatedHandles(t *testing.T) {
 	}
 	defer svc.Close()
 
-	deps := remoteMCPDeps(svc, dataentry.MCPHost{})
-
-	if _, ok := deps.Searcher.(*visibility.Searcher); !ok {
-		t.Errorf("Searcher = %T, want *visibility.Searcher", deps.Searcher)
+	deps, err := remoteMCPDeps(svc, testHost(t, svc))
+	if err != nil {
+		t.Fatalf("remoteMCPDeps: %v", err)
 	}
 	if deps.Tracer == svc.Tracer() {
 		t.Error("Tracer is the raw tracer")
@@ -96,9 +93,9 @@ func assertNoLuaTools(t *testing.T, svc *appbuild.Services) {
 	t.Helper()
 	ctx := context.Background()
 
-	srv, err := newRemoteMCPServer(svc, dataentry.MCPHost{
-		AttachmentUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
-	})
+	host := testHost(t, svc)
+	host.AttachmentUploads = attachment.NewLimiter(attachment.DefaultMaxUploads)
+	srv, err := newRemoteMCPServer(svc, host)
 	if err != nil {
 		t.Fatalf("newRemoteMCPServer: %v", err)
 	}

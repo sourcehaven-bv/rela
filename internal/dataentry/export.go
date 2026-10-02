@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -147,7 +148,12 @@ func newExportHandler(app *App) (*exportHandler, error) {
 		redactForCondition: app.redactedForSuggestion,
 		findListForType: func(entityType string) string {
 			s := app.State()
-			return findListByEntityType(s, s.Cfg.Navigation, entityType)
+			for _, tree := range dataentryconfig.NavigationTrees(s.Cfg) {
+				if list := findListByEntityType(s, tree.Entries, entityType); list != "" {
+					return list
+				}
+			}
+			return ""
 		},
 		engine: transform.NewEngine(),
 	}, nil
@@ -310,11 +316,14 @@ func (h *exportHandler) exportRenderer(
 ) (transform.Renderer, bool) {
 	script := h.exportRenderScriptFor(typeName)
 	if script == "" {
-		return transform.EntityRenderer{
-			Entity:    entity,
-			Meta:      h.meta(),
-			Relations: h.entityRelationGroups(r.Context(), entity),
-		}, true
+		groups, err := h.entityRelationGroups(r.Context(), entity)
+		if err != nil {
+			// A neighbor read fault is an outage, not an entity with no
+			// links; exporting it as one would hide it (RR-4TFZNL).
+			writeGateError(w, r, err)
+			return nil, false
+		}
+		return transform.EntityRenderer{Entity: entity, Meta: h.meta(), Relations: groups}, true
 	}
 
 	// Defense-in-depth: the address reaches the document cache filename and
@@ -373,39 +382,37 @@ func exportFilename(entityID, produces string) string {
 
 // entityRelationGroups resolves an entity's outgoing and incoming relations into
 // display groups (relation label + VISIBLE neighbor titles) for the entity
-// renderer. Neighbor visibility is gated through visibleRelationIDs so a hidden
-// neighbor's title never leaks into the export (the same gate the list/serializer
-// paths apply). Grouped by relation display label, in label order.
-func (h *exportHandler) entityRelationGroups(ctx context.Context, e *entityPkg.Entity) []transform.RelationGroup {
+// renderer. Each neighbor is read once, in the request's world, through the
+// row and face gates, so its title is the face the page would show and a
+// neighbor the caller may not read, or the world excludes, is not listed. The
+// title is derived after redaction. Grouped by relation display label, in
+// label order.
+func (h *exportHandler) entityRelationGroups(
+	ctx context.Context, e *entityPkg.Entity,
+) ([]transform.RelationGroup, error) {
 	meta := h.meta()
 	// Only the edges the exported face owns (BUG-ISJHML).
 	outgoing := edgesOwnedBy(meta, h.reader.outgoingRelations(ctx, e.ID), e.Face)
 	incoming := incomingOwnedAtZero(meta, h.reader.incomingRelations(ctx, e.ID), e)
 
-	neighborIDs := neighborIDsOf(outgoing, incoming)
-	visible := visibleRelationIDs(ctx, h.visibleReader, neighborIDs)
-
-	visibleIDs := make([]string, 0, len(visible))
-	for id, ok := range visible {
-		if ok {
-			visibleIDs = append(visibleIDs, id)
-		}
+	rows, err := h.visibleReader.resolver.ResolveIDsErr(ctx, worldFromContext(ctx).visibility(),
+		neighborIDsOf(outgoing, incoming))
+	if err != nil {
+		return nil, err
 	}
-	rows := h.reader.defaultWorldHeaders(ctx, visibleIDs)
 
 	// label -> ordered neighbor titles.
 	byLabel := map[string][]string{}
 	addNeighbor := func(label, neighborID string) {
-		if !visible[neighborID] {
+		row, ok := rows[neighborID]
+		if !ok {
 			return
 		}
-		title := neighborID
-		if node, ok := rows[neighborID]; ok {
-			// Redact BEFORE deriving the title: a visible neighbor whose
-			// display property is hidden must render as its ID, never the
-			// hidden value (the RR-5N4K35 title-leak class).
-			title = transform.DisplayTitle(meta, visibility.Redact(ctx, h.redactor, node))
-		}
+		// Redact BEFORE deriving the title: a visible neighbor whose display
+		// property is hidden must render as its ID, never the hidden value
+		// (the RR-5N4K35 title-leak class).
+		red := visibility.RedactHeader(ctx, h.redactor, row)
+		title := transform.DisplayTitle(meta, &entityPkg.Entity{ID: red.ID, Type: red.Type, Properties: red.Properties})
 		byLabel[label] = append(byLabel[label], title)
 	}
 
@@ -426,7 +433,7 @@ func (h *exportHandler) entityRelationGroups(ctx context.Context, e *entityPkg.E
 	for _, l := range labels {
 		groups = append(groups, transform.RelationGroup{Label: l, Neighbors: byLabel[l]})
 	}
-	return groups
+	return groups, nil
 }
 
 // relationDisplayLabel returns a human label for a relation type in the given

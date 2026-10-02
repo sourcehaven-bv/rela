@@ -660,7 +660,7 @@ onBeforeUnmount(() => {
 .form-field label {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .selected-entities {
@@ -675,7 +675,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   padding: 4px 8px 4px 10px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   border-radius: 4px;
   font-size: 13px;
 }
@@ -683,20 +683,20 @@ onBeforeUnmount(() => {
 .selected-entity .entity-type {
   font-size: 10px;
   text-transform: uppercase;
-  color: var(--muted-text);
-  background: var(--border-color);
+  color: var(--rl-color-text-muted);
+  background: var(--rl-color-border);
   padding: 2px 4px;
   border-radius: 2px;
 }
 
 .selected-entity .entity-label {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .remove-btn {
   background: none;
   border: none;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 18px;
   cursor: pointer;
   padding: 0 2px;
@@ -704,7 +704,7 @@ onBeforeUnmount(() => {
 }
 
 .remove-btn:hover {
-  color: var(--error-color, #ef4444);
+  color: var(--rl-color-danger, #ef4444);
 }
 
 .face-hint {
@@ -720,19 +720,19 @@ onBeforeUnmount(() => {
 .search-wrapper input {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .search-wrapper input:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 .dropdown {
@@ -740,8 +740,8 @@ onBeforeUnmount(() => {
   top: 100%;
   left: 0;
   right: 0;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   margin-top: 4px;
@@ -760,14 +760,14 @@ onBeforeUnmount(() => {
 }
 
 .dropdown-item:hover {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 .dropdown-item .entity-type {
   font-size: 10px;
   text-transform: uppercase;
-  color: var(--muted-text);
-  background: var(--border-color);
+  color: var(--rl-color-text-muted);
+  background: var(--rl-color-border);
   padding: 2px 4px;
   border-radius: 2px;
 }
@@ -775,19 +775,19 @@ onBeforeUnmount(() => {
 .dropdown-item .entity-label {
   flex: 1;
   font-size: 14px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .dropdown-empty,
 .dropdown-more {
   padding: 12px;
   text-align: center;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 13px;
 }
 
 .dropdown-actions {
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--rl-color-border);
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -799,10 +799,10 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 8px 12px;
-  background: var(--hover-bg);
-  border: 1px dashed var(--border-color);
+  background: var(--rl-color-bg-hover);
+  border: 1px dashed var(--rl-color-border);
   border-radius: 4px;
-  color: var(--accent-color, #6366f1);
+  color: var(--rl-color-accent, #6366f1);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -810,20 +810,20 @@ onBeforeUnmount(() => {
 }
 
 .add-new-btn:hover {
-  background: var(--accent-color, #6366f1);
-  border-color: var(--accent-color, #6366f1);
+  background: var(--rl-color-accent, #6366f1);
+  border-color: var(--rl-color-accent, #6366f1);
   color: white;
 }
 
 .loading-indicator {
   padding: 8px 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 13px;
 }
 
 .field-help {
   font-size: 13px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin: 0;
 }
 </style>

@@ -322,7 +322,7 @@ func (h *viewsHandler) buildSectionRow(
 ) SectionRowData {
 	eDef, _ := s.Meta.GetEntityDef(e.Type)
 	row := SectionRowData{
-		EntityID: e.ID, EntityType: e.Type, EditFormID: h.editFormForType(e.Type),
+		EntityID: e.ID, EntityType: e.Type, EditFormID: editFormForType(h.schema().Cfg, e.Type),
 		Self: rowSelfHref(s.Meta, e),
 	}
 	for ci, col := range columns {
@@ -356,11 +356,7 @@ func fillPropertyCell(
 		}
 	}
 	cell.Widget = resolveWidget(pd, s.Meta)
-	if vs := e.GetAttributeStrings(property); vs != nil {
-		cell.Values = vs
-	} else if val := e.GetAttributeString(property); val != "" {
-		cell.Values = []string{val}
-	}
+	cell.Values = propertyToStrings(e.GetAttribute(property), pd.Type)
 }
 
 // entitySorter returns a possibly-reordered view of rows. It never mutates the

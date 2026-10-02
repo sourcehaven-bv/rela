@@ -112,7 +112,7 @@ describe('KanbanView pagination (BUG-5OAQUG)', () => {
     expect(cardIds).toEqual(['T-1', 'T-2', 'T-3'])
 
     // T-3 landed in its column, not just in the data set.
-    const columns = wrapper.findAll('.kanban-column')
+    const columns = wrapper.findAll('.rl-board-column')
     expect(columns[1].text()).toContain('T-3')
 
     // Two page requests, second one asked for page 2.

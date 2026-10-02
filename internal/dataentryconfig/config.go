@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -90,10 +91,11 @@ func (d Direction) IsIncoming() bool {
 // sections (a new view kind legitimately adds one) rather than god-object
 // accretion. Splitting it would churn the YAML shape for no design gain —
 // a breaking change to every project's config file, made to satisfy a lint.
-// A genuinely new top-level key therefore raises the pin by one; `webhooks`
-// (TKT-1EM4KL) is the most recent.
+// A genuinely new top-level key therefore raises the pin by one; `spaces`
+// (TKT-GNKR5H), `account` (TKT-MJTD12) and `pages` (TKT-ITQ0HL) are the most
+// recent.
 //
-//plimsoll:max-fields=22
+//plimsoll:max-fields=25
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -116,6 +118,15 @@ type Config struct {
 	Webhooks    map[string]Webhook           `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
 	Navigation  []NavigationEntry            `yaml:"navigation"`
 
+	// Spaces are named entry points, each with its own navigation, home and
+	// Create menu; list order is switcher order. Mutually exclusive with a
+	// non-empty Navigation. See [Space].
+	Spaces []Space `yaml:"spaces,omitempty" json:"spaces,omitempty"`
+
+	// Pages are tabbed screens, keyed by page id, that a `page:` navigation
+	// entry links to. See [Page].
+	Pages map[string]Page `yaml:"pages,omitempty" json:"pages,omitempty"`
+
 	// NextActionBands is the operator's ordered priority vocabulary; list
 	// order IS priority order, highest first. See nextaction.go.
 	NextActionBands []NextActionBand `yaml:"next_action_bands,omitempty" json:"next_action_bands,omitempty"`
@@ -123,6 +134,10 @@ type Config struct {
 	// half the suggestion key and the unit of muting, so it is stable
 	// operator-facing vocabulary, not an implementation detail.
 	NextActions map[string]NextActionSource `yaml:"next_actions,omitempty" json:"next_actions,omitempty"`
+
+	// Account configures the SPA's account menu. Nil: accepted, means no
+	// account links and no avatar. See [AccountConfig].
+	Account *AccountConfig `yaml:"account,omitempty" json:"account,omitempty"`
 }
 
 // EntityViewConfig declares UX bindings for a metamodel entity type.
@@ -890,6 +905,10 @@ type List struct {
 	// the user is looking at, and re-querying would both diverge from that
 	// view and escape the row cap. Empty → built-in column table.
 	ExportRender string `yaml:"export_render,omitempty" json:"export_render,omitempty"`
+
+	// GroupBy splits the list into sections by one property. Nil means the
+	// list is flat and paged. See [ListGroupBy].
+	GroupBy *ListGroupBy `yaml:"group_by,omitempty" json:"group_by,omitempty"`
 }
 
 // ListColumn defines a column in a list view.
@@ -904,6 +923,10 @@ type ListColumn struct {
 	Label     string    `yaml:"label" json:"label,omitempty"`
 	Sortable  bool      `yaml:"sortable" json:"sortable,omitempty"`
 	Link      string    `yaml:"link" json:"link,omitempty"`
+	// Face shows the face each row was served in, by its label (such as
+	// "Vastgesteld" or "Concept"), for a type that declares faces. It takes
+	// neither Property nor Relation.
+	Face bool `yaml:"face" json:"face,omitempty"`
 }
 
 // SortSpec defines a single sort criterion for a list or dashboard card.
@@ -1275,9 +1298,13 @@ type Gantt struct {
 	// MultiParent says what to do when an entity is contained by more than
 	// one parent: "first" (default) renders it once, under the parent whose
 	// edge sorts first; "error" refuses the request, for projects that intend
-	// a strict tree. There is deliberately no "duplicate": rendering the same
-	// node under two ancestors double-counts every roll-up above it, and the
-	// prototype showed the repeated bar reads as two pieces of work.
+	// a strict tree. The root view checks every entity; a drilled view
+	// (?root=) checks only the drilled entity and its descendants, counting
+	// all of their visible parents, including parents outside the subtree.
+	// An offender elsewhere does not fail the drill. There is deliberately no
+	// "duplicate": rendering the same node under two ancestors double-counts
+	// every roll-up above it, and the prototype showed the repeated bar reads
+	// as two pieces of work.
 	MultiParent string `yaml:"multi_parent,omitempty" json:"multi_parent"`
 	// OnCycle says what to do when the containment graph loops: "error"
 	// (default) refuses the request; "prune" drops the looping component and
@@ -1418,6 +1445,12 @@ func (f KanbanCardField) DisplayLabel() string {
 // NavigationEntry defines a sidebar navigation item or a group of items.
 // It is a union type: either a direct item (Label + List/Dashboard/Kanban)
 // or a group (Group + Items). Nested groups are not supported.
+//
+// The plimsoll directive is the format-mirror exception documented on
+// [Config]: each exported field is one key of a navigation entry in
+// data-entry.yaml, so a new entry kind raises the pin by one.
+//
+//plimsoll:max-fields=22
 type NavigationEntry struct {
 	// Direct item fields
 	Label     string `yaml:"label,omitempty" json:"label,omitempty"`
@@ -1434,6 +1467,9 @@ type NavigationEntry struct {
 	// an entry id the sidebar has no way to supply. Enforced by
 	// validateNavEntry.
 	Document string `yaml:"document,omitempty" json:"document,omitempty"`
+	// Page names a page under pages:. The entry opens the page on the first
+	// tab the principal may see.
+	Page string `yaml:"page,omitempty" json:"page,omitempty"`
 
 	// Entities names an entity type whose members the sidebar lists, one link
 	// per entity (TKT-PEKL8L). Only valid inside a group, and without a
@@ -1486,10 +1522,237 @@ type NavigationEntry struct {
 	// groups disappear on their own when every child is filtered out.
 	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
 
+	// Open says where the entry's view appears: "page" (the default, also
+	// the empty value) navigates to it, and "flyout" slides it out of the
+	// sidebar over the current page for a quick look, without navigating.
+	// The flyout closes on the next navigation.
+	//
+	// Only a list entry can open as a flyout: the panel is too narrow for a
+	// board or a timeline. Enforced by validateNavEntry.
+	Open string `yaml:"open,omitempty" json:"open,omitempty"`
+
+	// Status flags a state of the entry's list on its sidebar row, such as
+	// "3 overdue". The rules are tried in order and the first whose count is
+	// above zero is shown; see [NavStatusRule].
+	//
+	// Only a list entry can carry one, because the count is taken over the
+	// rows that list shows. A `page:` entry counts over its page's first
+	// tab, which must then be a list; see [Config.NavEntryList]. At most [NavStatusMaxRules] rules, since every
+	// rule tried is a count over the list on each sidebar refresh. Enforced by
+	// validateNavStatus.
+	Status []NavStatusRule `yaml:"status,omitempty" json:"status,omitempty"`
+
 	// Group fields
 	Group     string            `yaml:"group,omitempty" json:"group,omitempty"`
 	Collapsed bool              `yaml:"collapsed,omitempty" json:"collapsed,omitempty"`
 	Items     []NavigationEntry `yaml:"items,omitempty" json:"items,omitempty"`
+
+	// ItemsFrom fills a group with one entry per row of a list, such as one
+	// entry per active topic. Only on a group, and never together with Items.
+	// Enforced by validateNavItemsFrom.
+	//
+	// The entries are entity titles, so they are data: `/api/v1/_sidebar`
+	// carries only the group's key, and the rows come per principal from
+	// `/api/v1/_nav_items`.
+	//
+	// Nil: accepted, means a group with static items.
+	ItemsFrom *NavItemsFrom `yaml:"items_from,omitempty" json:"items_from,omitempty"`
+}
+
+// NavItemsFrom says which rows fill a generated navigation group. See
+// [NavigationEntry.ItemsFrom].
+type NavItemsFrom struct {
+	// List names the list whose rows become the entries: the rows that list
+	// shows the principal, in its order. Required.
+	List string `yaml:"list" json:"list"`
+	// Page names an entity page for the list's entity type. Each entry opens
+	// that page for its row. Without it an entry opens the entity itself.
+	Page string `yaml:"page,omitempty" json:"page,omitempty"`
+	// Limit caps the number of entries, from 1 to [NavItemsMaxLimit]. Zero
+	// means [NavItemsDefaultLimit].
+	Limit int `yaml:"limit,omitempty" json:"limit,omitempty"`
+	// Initial puts a letter badge before each entry.
+	//
+	// Nil: accepted, means no badge.
+	Initial *NavItemsInitial `yaml:"initial,omitempty" json:"initial,omitempty"`
+	// Create puts an add control on the group's heading. It opens the list's
+	// create_form, else the type's create form, and is offered only to a
+	// principal who may create the list's type.
+	Create bool `yaml:"create,omitempty" json:"create,omitempty"`
+}
+
+// NavItemsInitial says where an entry's letter badge comes from: the first
+// letter of one of the row's properties, or the first letter of the title of
+// an entity related to the row, such as its owner. Exactly one of Property
+// and Relation is set.
+type NavItemsInitial struct {
+	Property string `yaml:"property,omitempty" json:"property,omitempty"`
+	Relation string `yaml:"relation,omitempty" json:"relation,omitempty"`
+	// Direction is from the row's point of view: incoming means the related
+	// entity points at the row. Left out, it is inferred from the metamodel.
+	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"`
+}
+
+// ResolvedDirection returns the direction of a relation initial, inferred
+// from the metamodel when the config leaves it out. rowType is the list's
+// entity type. An ambiguous relation is a load error, so on a validated
+// config the inferred answer is the only one.
+func (i NavItemsInitial) ResolvedDirection(rowType string, meta *metamodel.Metamodel) Direction {
+	if i.Direction != "" {
+		return i.Direction
+	}
+	dir, _ := InferDirection(rowType, i.Relation, meta)
+	return dir
+}
+
+// Bounds of [NavItemsFrom.Limit]. Every entry is a sidebar row, so the cap
+// keeps a generated group short enough to scan.
+const (
+	NavItemsDefaultLimit = 20
+	NavItemsMaxLimit     = 50
+)
+
+// EffectiveLimit returns Limit, or [NavItemsDefaultLimit] when it is zero.
+func (f NavItemsFrom) EffectiveLimit() int {
+	if f.Limit == 0 {
+		return NavItemsDefaultLimit
+	}
+	return f.Limit
+}
+
+// Values of [NavigationEntry.Open].
+const (
+	NavOpenPage   = "page"
+	NavOpenFlyout = "flyout"
+)
+
+// NavStatusRule is one rule of a navigation entry's `status:`.
+//
+// The count is the number of rows the entry's list shows (its ACL row gate,
+// query scope, static filters and `condition:`) that also satisfy
+// Condition. An empty Condition counts every row the list shows.
+//
+// Counts are per principal and served by `/api/v1/_nav_status`, never in the
+// sidebar config, which stays the same for every principal.
+type NavStatusRule struct {
+	// Tone is one of the NavStatusTone* values. The client decides the glyph
+	// and color, so every entry flagged the same way looks the same.
+	Tone string `yaml:"tone" json:"tone"`
+	// Label is what the indicator says, for a screen reader and a tooltip.
+	// `{count}` is replaced by the count; no other value is interpolated, so
+	// a label can never carry entity content.
+	Label string `yaml:"label" json:"label"`
+	// Condition is a predicate expression over the list's entity type, the
+	// same language as a list `condition:`, compiled at config load.
+	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
+}
+
+// Values of [NavStatusRule.Tone], matching the component library's
+// NavItemTone.
+const (
+	NavStatusToneNew     = "new"
+	NavStatusToneInfo    = "info"
+	NavStatusToneWarning = "warning"
+	NavStatusToneError   = "error"
+	NavStatusToneSuccess = "success"
+)
+
+// NavStatusMaxRules bounds [NavigationEntry.Status]: each rule tried is one
+// count over the entry's list on every sidebar refresh.
+const NavStatusMaxRules = 3
+
+// NavStatusEntry is a navigation entry that declares `status:`, with the key
+// the sidebar and `/api/v1/_nav_status` use to name it and the id of the
+// space whose navigation holds it ("" for the top-level navigation).
+type NavStatusEntry struct {
+	Key   string
+	Space string
+	// List is the list the rules count over: [Config.NavEntryList] of Entry.
+	List  string
+	Entry NavigationEntry
+}
+
+// NavStatusEntries returns every navigation entry that declares `status:`, in
+// config order, across the top-level navigation and every space.
+//
+// The key is the entry's position in its navigation tree: "2" for the third
+// top-level entry, "2.0" for the first item of that group. Inside a space the
+// key starts with the space id and a colon: "crm:2.0". It is derived from the
+// config alone, so the sidebar and the status endpoint agree on it for a
+// given config without either telling the other, and it names no data.
+func NavStatusEntries(cfg *Config) []NavStatusEntry {
+	var out []NavStatusEntry
+	for _, tree := range NavigationTrees(cfg) {
+		var walk func(entries []NavigationEntry, parent string)
+		walk = func(entries []NavigationEntry, parent string) {
+			for i, e := range entries {
+				var key string
+				if parent == "" {
+					key = NavStatusRootKey(tree.Space, i)
+				} else {
+					key = NavStatusKey(parent, i)
+				}
+				if len(e.Status) > 0 {
+					out = append(out, NavStatusEntry{Key: key, Space: tree.Space, List: cfg.NavEntryList(e), Entry: e})
+				}
+				if e.IsGroup() {
+					walk(e.Items, key)
+				}
+			}
+		}
+		walk(tree.Entries, "")
+	}
+	return out
+}
+
+// NavItemsFromEntry is a navigation group that declares `items_from:`, with
+// its key and the id of the space whose navigation holds it ("" for the
+// top-level navigation). The key has the shape of a status key (see
+// [NavStatusEntries]).
+type NavItemsFromEntry struct {
+	Key   string
+	Space string
+	Entry NavigationEntry
+}
+
+// NavItemsFromEntries returns every navigation group that declares
+// `items_from:`, in config order, across the top-level navigation and every
+// space. A group sits at the top level of its tree, since groups do not nest.
+func NavItemsFromEntries(cfg *Config) []NavItemsFromEntry {
+	var out []NavItemsFromEntry
+	for _, tree := range NavigationTrees(cfg) {
+		for i, e := range tree.Entries {
+			if e.IsGroup() && e.ItemsFrom != nil {
+				out = append(out, NavItemsFromEntry{Key: NavStatusRootKey(tree.Space, i), Space: tree.Space, Entry: e})
+			}
+		}
+	}
+	return out
+}
+
+// NavStatusRootKey returns the key of the index'th top-level entry of a
+// navigation tree: the space id ("" for the top-level navigation), a colon
+// when there is one, and the index. See [NavStatusEntries].
+func NavStatusRootKey(space string, index int) string {
+	if space == "" {
+		return strconv.Itoa(index)
+	}
+	return space + ":" + strconv.Itoa(index)
+}
+
+// NavStatusKey returns the key of the index'th entry under parent. See
+// [NavStatusEntries].
+func NavStatusKey(parent string, index int) string {
+	if parent == "" {
+		return strconv.Itoa(index)
+	}
+	return parent + "." + strconv.Itoa(index)
+}
+
+// NavStatusConditionID names one rule's compiled condition in the view
+// condition lookup: the entry key and the rule's index.
+func NavStatusConditionID(key string, rule int) string {
+	return key + "#" + strconv.Itoa(rule)
 }
 
 // IsGroup returns true if this entry is a navigation group.

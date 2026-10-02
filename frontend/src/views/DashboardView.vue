@@ -5,6 +5,7 @@ import NextActionCard from '@/components/NextActionCard.vue'
 import { searchEntities, analyze } from '@/api'
 
 import type { Entity, DashboardCard, AnalyzeResult } from '@/types'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
 const schemaStore = useSchemaStore()
 
@@ -201,10 +202,7 @@ onMounted(async () => {
       <p v-if="description" class="description">{{ description }}</p>
     </header>
 
-    <div v-if="loading" class="loading-state">
-      <div class="spinner"/>
-      <span>Loading dashboard...</span>
-    </div>
+    <RlStatusRegion v-if="loading">Loading dashboard...</RlStatusRegion>
 
     <template v-else>
       <!-- Above the cards, and independent of them: a suggestion is worth
@@ -343,26 +341,10 @@ onMounted(async () => {
 }
 
 .description {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin: 0;
 }
 
-.loading-state {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  padding: 48px;
-  color: var(--muted-text);
-}
-
-.spinner {
-  width: 24px;
-  height: 24px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: var(--radius-circle);
-  animation: spin 1s linear infinite;
-}
 
 .dashboard-grid {
   display: grid;
@@ -372,8 +354,8 @@ onMounted(async () => {
 }
 
 .dashboard-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg);
   padding: 16px;
 }
@@ -389,17 +371,17 @@ onMounted(async () => {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .card-link {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   text-decoration: none;
   font-size: var(--font-size-base);
 }
 
 .card-link:hover {
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
 }
 
 /* Count display */
@@ -410,7 +392,7 @@ onMounted(async () => {
 .count-number {
   font-size: 48px;
   font-weight: 700;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 /* Breakdown display */
@@ -429,20 +411,20 @@ onMounted(async () => {
 .breakdown-label {
   min-width: 80px;
   font-size: var(--font-size-dense);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .breakdown-bar-track {
   flex: 1;
   height: 8px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .breakdown-bar-fill {
   height: 100%;
-  background: var(--accent-color, #6366f1);
+  background: var(--rl-color-accent, #6366f1);
   border-radius: var(--radius-sm);
   transition: width 0.3s ease;
 }
@@ -452,7 +434,7 @@ onMounted(async () => {
   text-align: right;
   font-size: var(--font-size-dense);
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 /* Table display */
@@ -469,19 +451,19 @@ onMounted(async () => {
 .card-table th {
   text-align: left;
   padding: 8px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
   font-weight: 600;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .card-table td {
   padding: 8px;
-  border-bottom: 1px solid var(--border-color);
-  color: var(--text-color);
+  border-bottom: 1px solid var(--rl-color-border);
+  color: var(--rl-color-text);
 }
 
 .cell-link {
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
   text-decoration: none;
 }
 
@@ -490,15 +472,15 @@ onMounted(async () => {
 }
 
 .no-data {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-dense);
   padding: 8px 0;
 }
 
 /* Validation card */
 .validation-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg);
   padding: 16px;
 }
@@ -510,7 +492,7 @@ onMounted(async () => {
 }
 
 .validation-success {
-  color: var(--success-color);
+  color: var(--rl-color-status-green);
   font-weight: 600;
   font-size: var(--font-size-base);
 }
@@ -523,19 +505,19 @@ onMounted(async () => {
 }
 
 .badge-error {
-  background: color-mix(in srgb, var(--error-color) 15%, transparent);
-  color: var(--error-color);
+  background: color-mix(in srgb, var(--rl-color-danger) 15%, transparent);
+  color: var(--rl-color-danger);
 }
 
 .badge-warning {
-  background: color-mix(in srgb, var(--warning-color) 15%, transparent);
-  color: var(--warning-color);
+  background: color-mix(in srgb, var(--rl-color-status-amber) 15%, transparent);
+  color: var(--rl-color-status-amber);
 }
 
 .view-details {
   margin-left: auto;
   font-size: var(--font-size-dense);
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
   text-decoration: none;
   font-weight: 500;
 }

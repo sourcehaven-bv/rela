@@ -40,9 +40,9 @@ export class CommentsPage extends BasePage {
 
   /** Delete the first comment in the open field popover, confirming the modal. */
   async deleteFirstFieldComment() {
-    await this.page.locator(".ci-pop .ci-mini--danger").first().click();
+    await this.page.locator(".ci-pop").getByRole("button", { name: "Delete" }).first().click();
     await this.page
-      .locator(".modal button, [role=dialog] button")
+      .locator("[role=dialog] button, [role=alertdialog] button")
       .filter({ hasText: /^Delete$/ })
       .last()
       .click();
@@ -107,7 +107,7 @@ export class CommentsPage extends BasePage {
   async commentOnSelection(body: string) {
     await this.selectionButton().click();
     await this.page.locator(".tsc-input").fill(body);
-    await this.page.locator(".tsc-submit").click();
+    await this.page.locator(".tsc-form button[type=submit]").click();
     // The composer unmounts on success.
     await expect(this.page.locator(".tsc-form")).toHaveCount(0);
   }

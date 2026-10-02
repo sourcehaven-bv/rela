@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -119,7 +121,39 @@ func compileProperty(
 			"entity %q property %q computed: %s(...) is not supported in computed properties",
 			entityType, name, predicate.FuncRelated)
 	}
+	if problem := checkEnumLiterals(meta, pd, prog); problem != "" {
+		return compiledProperty{}, fmt.Sprintf("entity %q property %q computed: %s", entityType, name, problem)
+	}
 	return compiledProperty{name: name, def: pd, program: prog, dependencies: prog.Attributes("entity")}, ""
+}
+
+// checkEnumLiterals rejects a literal result outside the property's enum
+// values, which would otherwise fail only on a write that takes its branch.
+// Values are resolved as write validation resolves them: inline values on
+// an enum property, or the values of a custom type.
+func checkEnumLiterals(meta *metamodel.Metamodel, pd metamodel.PropertyDef, prog *predicate.Program) string {
+	values := pd.Values
+	if pd.Type != metamodel.PropertyTypeEnum && meta != nil {
+		values = meta.Types[pd.Type].Values
+	}
+	if len(values) == 0 {
+		return ""
+	}
+	var bad []string
+	for _, lit := range prog.ResultLiterals() {
+		s, ok := lit.(predicate.String)
+		if ok && !slices.Contains(values, s.String()) {
+			bad = append(bad, strconv.Quote(s.String()))
+		}
+	}
+	if len(bad) == 0 {
+		return ""
+	}
+	verb := "is"
+	if len(bad) > 1 {
+		verb = "are"
+	}
+	return fmt.Sprintf("%s %s not one of the enum values %v", strings.Join(bad, ", "), verb, values)
 }
 
 // Evaluate recomputes every computed property of e in dependency order. Nil

@@ -62,4 +62,57 @@ describe('FieldShell', () => {
     expect(label.exists()).toBe(true)
     expect(label.attributes('for')).toBeUndefined()
   })
+
+  /**
+   * The help and error text used to render with no association to the input at
+   * all: a screen-reader user heard the label and then nothing. The shell owns
+   * the ids because it renders the text, but it cannot reach across the slot
+   * boundary to set `aria-describedby` -- so it hands them to the control
+   * instead, and these pin that handoff.
+   */
+  describe('accessibility wiring', () => {
+    function described(props: Record<string, unknown>) {
+      const w = mount(FieldShell, {
+        props,
+        slots: {
+          default: `<template #default="c"><input class="widget" :aria-describedby="c.describedBy" :aria-invalid="c.invalid || undefined" /></template>`,
+        },
+      })
+      return w
+    }
+
+    it('points the control at the help text', () => {
+      const w = described({ label: 'X', help: 'do this' })
+      const id = w.find('.field-help').attributes('id')
+      expect(id).toBeTruthy()
+      expect(w.find('.widget').attributes('aria-describedby')).toBe(id)
+    })
+
+    /** Error first: what just went wrong before the original guidance. */
+    it('announces the error before the help when both are present', () => {
+      const w = described({ label: 'X', help: 'do this', error: 'bad' })
+      const helpId = w.find('.field-help').attributes('id')
+      const errorId = w.find('.field-error').attributes('id')
+      expect(w.find('.widget').attributes('aria-describedby')).toBe(`${errorId} ${helpId}`)
+    })
+
+    it('describes nothing when there is neither help nor error', () => {
+      const w = described({ label: 'X' })
+      expect(w.find('.widget').attributes('aria-describedby')).toBeUndefined()
+    })
+
+    it('marks the control invalid only while in error', () => {
+      expect(described({ label: 'X', error: 'bad' }).find('.widget').attributes('aria-invalid')).toBe('true')
+      expect(described({ label: 'X' }).find('.widget').attributes('aria-invalid')).toBeUndefined()
+    })
+
+    /**
+     * A message that appears after the user has left the field has to announce
+     * itself; otherwise they have to go back and look for it.
+     */
+    it('gives the error message an alert role', () => {
+      const w = described({ label: 'X', error: 'bad' })
+      expect(w.find('.field-error').attributes('role')).toBe('alert')
+    })
+  })
 })

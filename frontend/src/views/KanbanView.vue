@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, type Component } from 'vue'
-import { RouterLink, useRouter, type RouteLocationRaw } from 'vue-router'
+import { ref, computed, watch, type Component } from 'vue'
+import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useEntitiesStore, useSchemaStore, useUIStore } from '@/stores'
 import { listAllEntities, getErrorMessage } from '@/api'
@@ -13,17 +13,25 @@ import type {
   KanbanColumn,
   KanbanSwimlane,
   ListParams,
+  PageScope,
 } from '@/types'
 import { viewHeaderMarkdown, viewFooterMarkdown } from '@/types'
 import type { FilterState } from '@/types/filters'
 import FilterBar from '@/components/lists/FilterBar.vue'
 import BackButton from '@/components/common/BackButton.vue'
+import PageHeaderContent from '@/components/common/PageHeaderContent'
+import EntityDetailPanel from '@/components/entity/EntityDetailPanel.vue'
+import { useDetailPanel } from '@/composables/useDetailPanel'
+import { useCreateModal } from '@/composables/useCreateModal'
+import { usePageTabScope } from '@/composables/usePageTabScope'
+import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { filterStateToApiParams } from '@/utils/filters'
 import { entityRef } from '@/utils/entityRef'
+import { fromPageQuery } from '@/utils/pageContext'
 import { worldText } from '@/utils/worldText'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
@@ -34,12 +42,20 @@ import CardFieldList, { type ResolvedCardField } from '@/components/common/CardF
 import WorldBadge from '@/components/entity/WorldBadge.vue'
 import { defaultRegistry } from '@/widgets/registry'
 import type { DenseRoutingHint } from '@/widgets/viewRouting'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlBoard from 'rela-components/components/board/RlBoard.vue'
+import RlSwimlaneBoard from 'rela-components/components/board/RlSwimlaneBoard.vue'
+import type { Section, Swimlane } from 'rela-components/types'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
 const props = defineProps<{
   id: string
+  /** Set when the board is a tab of an entity page: cards are those the anchor reaches. */
+  pageScope?: PageScope
 }>()
 
 const router = useRouter()
+const route = useRoute()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const queryCache = useQueryCache()
@@ -48,7 +64,6 @@ const queryCache = useQueryCache()
 const backTarget = useBackTarget()
 
 // State
-const draggedCard = ref<Entity | null>(null)
 
 // The selected world (`?world=`). A board is a projection through a world
 // exactly as a list is: it decides which face each card shows AND which
@@ -125,6 +140,9 @@ const hasRelationFields = computed(
   () => kanbanConfig.value?.card.fields?.some((f) => !!f.relation) ?? false
 )
 
+// A tab of an entity page narrows the board to the anchor's cards.
+const tabScope = usePageTabScope(() => props.pageScope)
+
 // The board's list query (FEAT-XY2D1L). The key derives from the
 // configured entity type, so switching boards (props.id) switches cache
 // entries automatically, and useEvents' targeted SSE invalidation on
@@ -146,6 +164,7 @@ const boardParams = computed<ListParams | undefined>(() => {
   // The user's filter controls, serialized exactly as EntityList does. They
   // are part of the params, so each filter state is its own cache entry.
   Object.assign(params, filterStateToApiParams(filters.value))
+  Object.assign(params, tabScope.params.value)
   return Object.keys(params).length ? params : undefined
 })
 
@@ -378,13 +397,52 @@ const entitiesByCell = computed(() => {
   return cells
 })
 
-// CSS grid style for swimlane board
-const swimlaneGridStyle = computed(() => {
-  const colCount = columns.value.length
-  return {
-    gridTemplateColumns: `auto repeat(${colCount}, minmax(240px, 1fr))`,
-  }
-})
+// A card as the library board holds it: the id and title it reads, and the
+// entity our card slot renders.
+interface BoardCard {
+  id: string
+  title: string
+  entity: Entity
+}
+
+function toCard(entity: Entity): BoardCard {
+  return { id: entity.id, title: getCardTitle(entity), entity }
+}
+
+function iconFor(name?: string) {
+  return hasIcon(name) ? resolveIcon(name) : undefined
+}
+
+const boardSections = computed((): Section<BoardCard>[] =>
+  columns.value.map((column) => ({
+    id: column.value,
+    title: columnTitle(column),
+    icon: iconFor(column.icon),
+    items: (entitiesByColumn.value[column.value] ?? []).map(toCard),
+  }))
+)
+
+// Lanes the user folded away. View state only, so it resets with the page.
+const collapsedLanes = ref(new Set<string>())
+
+const boardLanes = computed((): Swimlane<BoardCard>[] =>
+  swimlanes.value.map((lane) => ({
+    id: lane.value,
+    title: lane.label || lane.value,
+    icon: iconFor(lane.icon),
+    collapsed: collapsedLanes.value.has(lane.value),
+    sections: boardSections.value.map((column) => ({
+      ...column,
+      items: (entitiesByCell.value[column.id]?.[lane.value] ?? []).map(toCard),
+    })),
+  }))
+)
+
+function toggleLane(lane: Swimlane<BoardCard>) {
+  const next = new Set(collapsedLanes.value)
+  if (!next.delete(lane.id)) next.add(lane.id)
+  collapsedLanes.value = next
+}
 
 // Drag-drop write path: optimistic copy-on-write against the query
 // cache, rollback + toast on failure, reconcile with server truth via
@@ -494,8 +552,6 @@ function getCardFieldStoredValue(entity: Entity, field: KanbanCardField): unknow
   return entity.properties[field.property]
 }
 
-
-
 // Widget resolution for property card-fields, computed once per configured
 // field rather than per card (RR-UD2A). Relation fields are absent on
 // purpose: they have no PropertyDef and no relation widget, so they keep the
@@ -560,56 +616,31 @@ function resolvedCardFields(entity: Entity): ResolvedCardField[] {
   return out
 }
 
-function onDragStart(event: DragEvent, entity: Entity) {
-  draggedCard.value = entity
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', entity.id)
-  }
+function canMoveCard(card: BoardCard): boolean {
+  return canUpdate(card.entity)
 }
 
-function onDragOver(event: DragEvent) {
-  event.preventDefault()
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = 'move'
-  }
-}
+// The board reports a drop on another column (and lane); the move writes the
+// values the card now sits under.
+function onMove({ item, to, lane }: { item: BoardCard; to: Section<BoardCard>; lane?: Swimlane<BoardCard> }) {
+  const config = kanbanConfig.value
+  const entity = item.entity
+  if (!config || !canUpdate(entity)) return
 
-function onDrop(event: DragEvent, columnValue: string, swimlaneValue?: string) {
-  event.preventDefault()
-
-  if (!draggedCard.value || !kanbanConfig.value) return
-
-  const entity = draggedCard.value
-  draggedCard.value = null
-
-  // Defence in depth: `:draggable="false"` prevents drag-from-Kanban
-  // starting, but external drag sources (text drag from another tab,
-  // file drag) can still trigger this handler. Early-return on a
-  // denied entity so we don't fire an update the server will 403.
-  if (!canUpdate(entity)) return
-
-  const colProp = kanbanConfig.value.column_property
-  const swimProp = kanbanConfig.value.swimlane_property
-
-  const currentCol = String(entity.properties[colProp] || '')
-  const currentSwim = swimProp ? String(entity.properties[swimProp] || '') : undefined
+  const colProp = config.column_property
+  const swimProp = config.swimlane_property
 
   // Build update payload; skip the write when nothing moved.
   const updates: Record<string, string> = {}
-  if (currentCol !== columnValue) {
-    updates[colProp] = columnValue
+  if (String(entity.properties[colProp] || '') !== to.id) {
+    updates[colProp] = to.id
   }
-  if (swimProp && swimlaneValue !== undefined && currentSwim !== swimlaneValue) {
-    updates[swimProp] = swimlaneValue
+  if (swimProp && lane && String(entity.properties[swimProp] || '') !== lane.id) {
+    updates[swimProp] = lane.id
   }
   if (Object.keys(updates).length === 0) return
 
   moveCard({ entity, updates })
-}
-
-function onDragEnd() {
-  draggedCard.value = null
 }
 
 // cardTarget is the single source of truth for where a card goes, bound to each
@@ -622,21 +653,98 @@ function onDragEnd() {
 // Enter-activatable, so the keyboard half of the contract comes for free and
 // cmd/middle-click open a tab, which the shim could never do.
 function cardTarget(entity: Entity): RouteLocationRaw {
+  // Inside a page tab, Back and Cancel on the destination return to the tab.
+  const fromPage = fromPageQuery(route)
   // The form opens on the card's ADDRESS, face included, so an edit from a
   // world-bound board edits the face the card showed and not its bare id.
   if (kanbanConfig.value?.edit_form) {
-    return `/form/${kanbanConfig.value.edit_form}/${entityRef(entity)}`
+    const path = `/form/${kanbanConfig.value.edit_form}/${entityRef(entity)}`
+    return Object.keys(fromPage).length ? { path, query: fromPage } : path
   }
   // The world rides along so the detail resolves the face the card showed.
   const path = `/entity/${entity.type}/${entity.id}`
-  return worldParam.value ? { path, query: { world: worldParam.value } } : path
+  const query = { ...fromPage, ...(worldParam.value ? { world: worldParam.value } : {}) }
+  return Object.keys(query).length ? { path, query } : path
 }
 
-function createNew() {
-  if (kanbanConfig.value?.create_form) {
-    router.push(`/form/${kanbanConfig.value.create_form}`)
-  }
+/*
+ * A plain click on a card opens the entity in the shell's overlay panel, over
+ * the board, with its id in `?selected=` so a reload or a shared link reopens
+ * it. Same contract as a list row (see EntityList): a modified or middle
+ * click stays the link's own, so cmd-click still opens the card's page in a
+ * new tab.
+ */
+const panel = useDetailPanel()
+
+const selectedEntityId = computed(() => {
+  const raw = route.query.selected
+  const value = Array.isArray(raw) ? raw[raw.length - 1] : raw
+  return typeof value === 'string' && value !== '' ? value : null
+})
+
+const selectedEntity = computed(() => {
+  const id = selectedEntityId.value
+  return id ? (entities.value.find((e) => e.id === id) ?? null) : null
+})
+
+function onCardClick(entity: Entity, event: MouseEvent) {
+  if (event.defaultPrevented) return
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  if (event.button !== 0) return
+  // Capture phase, so RouterLink's own handler does not navigate as well.
+  event.preventDefault()
+  event.stopPropagation()
+  if (entity.id === selectedEntityId.value) return
+  void router.replace({ query: { ...route.query, selected: entity.id } })
 }
+
+function closePanel() {
+  const query = { ...route.query }
+  delete query.selected
+  void router.replace({ query })
+}
+
+function expandPanel() {
+  if (selectedEntity.value) void router.push(cardTarget(selectedEntity.value))
+}
+
+watch(
+  [selectedEntity, () => kanbanConfig.value?.entity],
+  ([entity, entityType]) => {
+    if (!entity || !entityType) {
+      panel.clear()
+      return
+    }
+    panel.show({
+      component: EntityDetailPanel,
+      props: {
+        entityType: entity.type || entityType,
+        entityId: entityRef(entity),
+        onClose: closePanel,
+        onExpand: expandPanel,
+      },
+      // Over the board rather than beside it: a board needs its full width.
+      mode: 'overlay',
+    })
+  },
+  { immediate: true }
+)
+
+// New opens the create form in a dialog over the board; the new card then
+// opens in the detail panel, as if it had been clicked.
+function refreshAfterCreate() {
+  void queryCache.invalidateQueries({ key: entityKeys.list(kanbanConfig.value?.entity ?? '') })
+}
+// In an entity-page tab a new card is linked to the anchor first, so the
+// refresh already shows it on the board.
+const createModal = useCreateModal(async (entity) => {
+  await tabScope.linkCreated(entity)
+  refreshAfterCreate()
+  void router.replace({ query: { ...route.query, selected: entity.id } })
+}, async (entity) => {
+  await tabScope.linkCreated(entity)
+  refreshAfterCreate()
+})
 
 // No lifecycle plumbing: the query fetches on mount, re-keys when
 // props.id switches boards, and refetches in the background when
@@ -645,17 +753,20 @@ function createNew() {
 
 <template>
   <div class="kanban-view" :data-testid="`page-state-${pageState}`">
-    <header class="page-header">
-      <div class="header-left">
+    <!-- Painted by the app shell in its fixed header band; see PageHeaderContent. -->
+    <PageHeaderContent :title="kanbanConfig?.title || props.id">
+      <template #actions>
         <BackButton v-if="backTarget" :target="backTarget" />
-        <h1>{{ kanbanConfig?.title || props.id }}</h1>
-      </div>
-      <div class="header-actions">
-        <button v-if="kanbanConfig?.create_form && canCreate()" class="btn btn-primary" @click="createNew">
-          + New
-        </button>
-      </div>
-    </header>
+        <RlButton
+          v-if="kanbanConfig?.create_form && canCreate()"
+          variant="primary"
+          icon="plus"
+          @click="createModal.show"
+        >
+          New
+        </RlButton>
+      </template>
+    </PageHeaderContent>
 
     <!--
       A board under a world is a PROJECTION: each card is one entity at the
@@ -693,176 +804,103 @@ function createNew() {
       Showing {{ entities.length }} of {{ totalCount }} items — the board is incomplete.
     </div>
 
-    <div v-if="loading" class="loading-state">
-      <div class="spinner"/>
-      <span>Loading board...</span>
-    </div>
+    <RlStatusRegion v-if="loading">Loading board...</RlStatusRegion>
 
-    <div v-else-if="loadError" class="error-state">
-      {{ loadError }}
-    </div>
+    <RlStatusRegion v-else-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
 
-    <!-- Simple board (columns only) -->
-    <div v-else-if="!hasSwimmlanes" class="kanban-board" role="group" :aria-label="boardLabel">
-      <section
-        v-for="column in columns"
-        :key="column.value"
-        class="kanban-column"
-        :aria-labelledby="`kanban-col-${column.value}`"
-        @dragover="onDragOver"
-        @drop="onDrop($event, column.value)"
-      >
-        <h2 :id="`kanban-col-${column.value}`" class="column-header">
-          <component
-            :is="resolveIcon(column.icon)"
-            v-if="hasIcon(column.icon)"
-            class="column-icon"
-            :size="16"
-            aria-hidden="true"
-          />
-          <span class="column-title">{{ columnTitle(column) }}</span>
-          <span class="column-count">{{ entitiesByColumn[column.value]?.length || 0 }}</span>
-        </h2>
-
-        <ul class="column-cards">
-          <!-- The card is BOTH the link and the drag source. Deliberately no
-               draggable="false" here (unlike RelationCards, RR-NPDW9A): that
-               attribute is for an anchor nested INSIDE a drag source, and
-               setting it on the drag source itself would disable reordering.
-               onDragStart sets dataTransfer unconditionally, so the native
-               link-drag is overridden in both the draggable and non-draggable
-               branches.
-
-               The <li> wrapper is `display: contents`, so the column is a real
-               list for assistive tech while the anchor stays the flex item the
-               layout and drag handlers were written against. RouterLink cannot
-               itself render an <li>. -->
-          <li v-for="entity in entitiesByColumn[column.value]" :key="entity.id" class="kanban-card-item">
-            <RouterLink
-              class="kanban-card"
-              :to="cardTarget(entity)"
-              :aria-label="getCardTitle(entity)"
-              :draggable="canUpdate(entity) ? 'true' : 'false'"
-              @dragstart="onDragStart($event, entity)"
-              @dragend="onDragEnd"
-            >
-              <div class="card-id">{{ entity.id }}</div>
-              <!--
-                Per-CARD face provenance (TKT-ILT1WD), beside the title, the same
-                place and the same component the list uses. A board is a
-                projection through a world exactly as a table is, and a card that
-                resolved to a stand-in is otherwise byte-identical to one that
-                got the face the world asked for.
-
-                WorldBadge renders only for a substitute, so an ordinary board
-                — and every board under the default world, where `_world` is
-                absent entirely — shows nothing at all.
-              -->
-              <div class="card-title text-wrap-anywhere">
-                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" :entity-type="entity.type" />
-              </div>
-              <CardFieldList
-                :fields="resolvedCardFields(entity)"
-                :entity-type="kanbanConfig?.entity"
-              />
-            </RouterLink>
-          </li>
-
-          <li v-if="!entitiesByColumn[column.value]?.length" class="empty-column">
-            No items
-          </li>
-        </ul>
-      </section>
-    </div>
-
-    <!-- Swimlane board (2D grid layout) -->
-    <div
-      v-else
-      class="kanban-swimlane-board"
+    <!-- The card is a real link, so cmd/middle-click opens a tab. The board
+         wraps it in the drag source. -->
+    <RlSwimlaneBoard
+      v-else-if="boardLanes.length"
+      class="kanban-board"
       role="group"
       :aria-label="boardLabel"
-      :style="swimlaneGridStyle"
+      :lanes="boardLanes"
+      :columns="boardSections"
+      :show-add="false"
+      :show-add-section="false"
+      :can-move="canMoveCard"
+      :selected-id="selectedEntityId ?? undefined"
+      @move="onMove"
+      @toggle-lane="toggleLane"
     >
-      <!-- Column headers -->
-      <div class="swimlane-header-row">
-        <div class="swimlane-label-cell" />
-        <div
-          v-for="column in columns"
-          :key="column.value"
-          class="swimlane-column-header"
-        >
-          <component
-            :is="resolveIcon(column.icon)"
-            v-if="hasIcon(column.icon)"
-            class="column-icon"
-            :size="16"
-            aria-hidden="true"
-          />
-          <span class="column-title">{{ columnTitle(column) }}</span>
-        </div>
-      </div>
-
-      <!-- Swimlane rows -->
-      <div
-        v-for="swimlane in swimlanes"
-        :key="swimlane.value"
-        class="swimlane-row"
-      >
-        <div class="swimlane-label-cell">
-          <component
-            :is="resolveIcon(swimlane.icon)"
-            v-if="hasIcon(swimlane.icon)"
-            class="column-icon"
-            :size="16"
-            aria-hidden="true"
-          />
-          <span class="swimlane-label">{{ swimlane.label || swimlane.value }}</span>
-        </div>
-        <ul
-          v-for="column in columns"
-          :key="column.value"
-          class="swimlane-cell"
-          :aria-label="`${columnTitle(column)} — ${swimlane.label || swimlane.value}`"
-          @dragover="onDragOver"
-          @drop="onDrop($event, column.value, swimlane.value)"
-        >
-          <!-- Same list-item wrapper as the simple board; see there. -->
-          <li
-            v-for="entity in entitiesByCell[column.value]?.[swimlane.value] || []"
-            :key="entity.id"
-            class="kanban-card-item"
-          >
+          <template #card="{ item }">
             <RouterLink
               class="kanban-card"
-              :to="cardTarget(entity)"
-              :aria-label="getCardTitle(entity)"
-              :draggable="canUpdate(entity) ? 'true' : 'false'"
-              @dragstart="onDragStart($event, entity)"
-              @dragend="onDragEnd"
+              :to="cardTarget(item.entity)"
+              :aria-label="item.title"
+              @click.capture="onCardClick(item.entity, $event)"
             >
-              <div class="card-id">{{ entity.id }}</div>
-              <!-- Face provenance; see the simple board above. -->
+              <div class="card-id">{{ item.id }}</div>
+              <!--
+                Per-CARD face provenance (TKT-ILT1WD), beside the title, the same
+                place and the same component the list uses. WorldBadge renders
+                only for a substitute, so an ordinary board shows nothing.
+              -->
               <div class="card-title text-wrap-anywhere">
-                {{ getCardTitle(entity) }}<WorldBadge :world="entity._world" :entity-type="entity.type" />
+                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" />
               </div>
               <CardFieldList
-                :fields="resolvedCardFields(entity)"
+                :fields="resolvedCardFields(item.entity)"
                 :entity-type="kanbanConfig?.entity"
               />
             </RouterLink>
-          </li>
-          <li v-if="!(entitiesByCell[column.value]?.[swimlane.value]?.length)" class="empty-cell">
-            —
-          </li>
-        </ul>
-      </div>
-    </div>
+          </template>
+    </RlSwimlaneBoard>
+
+    <RlBoard
+      v-else
+      class="kanban-board"
+      role="group"
+      :aria-label="boardLabel"
+      :sections="boardSections"
+      :show-add="false"
+      :show-add-section="false"
+      :can-move="canMoveCard"
+      :selected-id="selectedEntityId ?? undefined"
+      @move="onMove"
+    >
+          <template #card="{ item }">
+            <RouterLink
+              class="kanban-card"
+              :to="cardTarget(item.entity)"
+              :aria-label="item.title"
+              @click.capture="onCardClick(item.entity, $event)"
+            >
+              <div class="card-id">{{ item.id }}</div>
+              <!--
+                Per-CARD face provenance (TKT-ILT1WD), beside the title, the same
+                place and the same component the list uses. WorldBadge renders
+                only for a substitute, so an ordinary board shows nothing.
+              -->
+              <div class="card-title text-wrap-anywhere">
+                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" />
+              </div>
+              <CardFieldList
+                :fields="resolvedCardFields(item.entity)"
+                :entity-type="kanbanConfig?.entity"
+              />
+            </RouterLink>
+          </template>
+    </RlBoard>
 
     <!-- Sits after every board branch (loading/error/simple/swimlane) so it
          renders once regardless of state, and outside the board's horizontal
          scroll container so it stays visible on a wide board. -->
     <!-- eslint-disable-next-line vue/no-v-html -- sanitized by renderMarkdown -->
     <div v-if="footerHtml" class="view-info view-info--bottom" v-html="footerHtml"/>
+
+    <InlineCreateFormModal
+      v-if="createModal.open.value && kanbanConfig?.create_form"
+      :show="true"
+      :form-id="kanbanConfig.create_form"
+      :entity-type="kanbanConfig.entity"
+      :world="worldParam"
+      add-another
+      @close="createModal.close"
+      @created="createModal.created"
+      @created-another="createModal.createdAnother"
+    />
   </div>
 </template>
 
@@ -873,47 +911,12 @@ function createNew() {
    columns. Scoping it to the boards keeps page furniture fixed. */
 .kanban-view {
   max-width: 100%;
-}
-
-.page-header {
+  /* Fill the pane so the board scrolls inside it and the filters and column
+     headings stay put. */
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-}
-
-.page-header h1 {
-  margin: 0;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-}
-
-.header-actions {
-  display: flex;
-  gap: var(--space-md);
-}
-
-.btn {
-  padding: 8px 16px;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-base);
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s;
-}
-
-.btn-primary {
-  background: var(--accent-color, #6366f1);
-  color: white;
-}
-
-.btn-primary:hover {
-  background: #4f46e5;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 /* The board renders the list's FilterBar, whose bottom border separates the
@@ -928,121 +931,12 @@ function createNew() {
   border: 1px solid #f59e0b;
   border-radius: var(--radius-lg);
   background: rgba(245, 158, 11, 0.12);
-  color: var(--text-color);
+  color: var(--rl-color-text);
   font-size: var(--font-size-base);
 }
 
-.loading-state {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  padding: 48px;
-  color: var(--muted-text);
-}
 
-.spinner {
-  width: 24px;
-  height: 24px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: var(--radius-circle);
-  animation: spin 1s linear infinite;
-}
 
-.kanban-board {
-  display: flex;
-  gap: var(--space-lg);
-  padding-bottom: 20px;
-  /* Columns size to their own content instead of stretching to the tallest
-     one (the flex default, `align-self: stretch`). Combined with dropping the
-     board's old `min-height: 500px`, a board of short cards is now as tall as
-     its cards rather than a fixed slab of empty panel — the defect that made
-     a 3-card board ~85% whitespace in a documentation figure. Each column
-     keeps its own `min-height` (see .kanban-column) so it stays a credible
-     drop target when empty. */
-  align-items: flex-start;
-  /* Per CSS spec a non-visible overflow on one axis coerces the other from
-     `visible` to `auto`, so this box now ALSO clips vertically — `overflow-y:
-     visible` cannot opt out. Safe today: the card hover box-shadow (8px blur)
-     is inset by .column-cards' 12px padding, and padding-bottom cushions the
-     last card. Anything that must escape a card's box vertically (drag ghost,
-     tooltip, popover, sticky column header) will be clipped here — that is the
-     accepted cost of scoping the horizontal scroll to the board. */
-  overflow-x: auto;
-}
-
-.kanban-column {
-  flex: 1;
-  min-width: 280px;
-  max-width: 350px;
-  /* Fits content, with a floor that keeps a short or empty column an obvious
-     panel and a comfortable drop target rather than a bare header strip.
-     `min-height` (not `height`) is the point: a column with many cards grows
-     past this, a column with none still reads as a panel. Deliberately well
-     below the old 500px, which was a de-facto fixed height.
-
-     The floor is proportional to the viewport with an absolute lower bound, so
-     the board neither leaves a short window mostly empty nor squeezes the
-     columns to a strip on a small one. min() takes whichever is smaller, and
-     max() keeps 180px as the hard floor. */
-  min-height: max(180px, min(340px, 38vh));
-  background: var(--hover-bg);
-  border-radius: var(--radius-lg);
-  display: flex;
-  flex-direction: column;
-}
-
-/* Now an <h2> (it names the column section via aria-labelledby), so the UA
-   heading margin and font-size are reset back to the original div rendering. */
-.column-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
-  margin: 0;
-  font-size: var(--font-size-base);
-  font-weight: 600;
-}
-
-/* Config-authored icon beside a column or swimlane label. Inherits
- * currentColor, so it follows the theme — the emoji it replaces could not. */
-.column-icon {
-  flex-shrink: 0;
-  margin-right: var(--space-xs);
-  vertical-align: text-bottom;
-}
-
-.column-title {
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  color: var(--text-color);
-}
-
-.column-count {
-  background: var(--border-color);
-  color: var(--muted-text);
-  padding: 2px 8px;
-  border-radius: var(--radius-xl);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-}
-
-/* Now a <ul> of <li> cards — the cards genuinely are a list. Reset the UA
-   list styling so the flex column renders exactly as it did as a div. */
-.column-cards {
-  flex: 1;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  overflow-y: auto;
-  margin: 0;
-  list-style: none;
-}
-
-/* Mirrors the list and detail pages' banner so the three surfaces read as one
-   affordance rather than three inventions. */
 .world-banner {
   display: flex;
   flex-direction: column;
@@ -1050,222 +944,68 @@ function createNew() {
   gap: var(--space-xs);
   margin-bottom: var(--space-md);
   padding: var(--space-sm) var(--space-md);
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
+  background: color-mix(in srgb, var(--rl-color-accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rl-color-accent) 30%, transparent);
   border-radius: var(--radius-md);
 }
 
 .world-banner__label {
   font-size: var(--font-size-base);
-  color: var(--text-color);
+  color: var(--rl-color-text);
   font-weight: 500;
 }
 
 .world-banner__note {
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 /* The list item exists purely for <ul>/<li> semantics; `display: contents`
    removes its box so the .kanban-card anchor inside remains the flex item of
    .column-cards / .swimlane-cell, exactly as it was before the card became a
    link. RouterLink cannot render an <li> itself. */
-.kanban-card-item {
-  display: contents;
+/* The library boards set their own gutters; the page already has one. */
+.kanban-board {
+  flex: 1;
+  min-height: 0;
+  padding-left: 0;
+  padding-right: 0;
 }
 
+/* Matches the library's task card, so the board reads as one component. */
 .kanban-card {
   display: block;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 12px;
-  cursor: grab;
-  transition: all 0.15s;
-  /* The card is a real link so cmd/middle-click opens a tab; it must not pick
-     up link colour or underline. */
+  padding: var(--rl-space-3) var(--rl-space-4);
+  border: 1px solid var(--rl-color-border);
+  border-radius: var(--rl-radius-lg);
+  background: var(--rl-color-bg);
+  transition: box-shadow 120ms ease, border-color 120ms ease;
+  /* A real link, so it must not pick up link colour or underline. */
   color: inherit;
   text-decoration: none;
 }
 
 .kanban-card:hover {
-  border-color: var(--accent-color, #6366f1);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border-color: var(--rl-color-border-strong);
+  box-shadow: var(--rl-shadow-sm);
 }
 
-.kanban-card:active {
-  cursor: grabbing;
-}
-
-/* The card is keyboard-reachable (tabindex="0"), so it needs a visible focus
-   indicator. Two-shadow token pattern per the project focus-ring convention. */
 .kanban-card:focus-visible {
-  outline: none;
-  box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+  outline: 2px solid var(--rl-color-focus);
+  outline-offset: 1px;
 }
 
 .card-id {
   font-family: monospace;
   font-size: var(--font-size-xs);
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin-bottom: 4px;
 }
 
 .card-title {
   font-size: var(--font-size-base);
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   margin-bottom: 8px;
-}
-
-.card-fields {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2xs);
-}
-
-.card-field {
-  display: flex;
-  gap: var(--space-2xs);
-  font-size: var(--font-size-sm);
-}
-
-.field-label {
-  color: var(--muted-text);
-}
-
-.field-value {
-  color: var(--text-color);
-}
-
-/* An empty workflow state must stay visible and droppable (TKT-R7H6G1) — it is
-   never removed. What is adjusted here is only its visual WEIGHT: an empty
-   column previously rendered as a full-height filled panel, so on a board where
-   most states are unoccupied the empty columns out-weighed the ones carrying
-   cards. The placeholder is centred in whatever height the column has, and the
-   column itself is de-emphasised below. */
-.empty-column {
-  color: var(--muted-text);
-  font-size: var(--font-size-dense);
-  text-align: center;
-  padding: var(--space-xl) var(--space-md);
-  margin: auto 0;
-}
-
-/* :has() lets the COLUMN respond to being empty without a JS-computed class,
-   keeping the emptiness a fact about the rendered cards rather than a second
-   source of truth. Where :has() is unsupported the column simply keeps the
-   normal filled treatment — a graceful degradation to the previous look, not a
-   broken one. The dashed outline is what keeps it legible as a drop target. */
-.kanban-column:has(.empty-column) {
-  background: transparent;
-  border: 1px dashed var(--border-color);
-}
-
-/* Swimlane board styles (2D grid layout) */
-.kanban-swimlane-board {
-  display: grid;
-  /* grid-template-columns set via inline style */
-  gap: 1px;
-  background: var(--border-color);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  /* Two-value form: scroll horizontally when the grid is wider than the
-     viewport, while keeping the vertical `hidden` that clips cells to the
-     rounded border. A bare `overflow-x: auto` would drop that clipping. */
-  overflow: auto hidden;
-  /* Was 400px. The grid's rows already size to their cards and each cell keeps
-     its own floor, so a fixed board minimum only padded a short board with
-     empty grid — the same defect the simple board had. Kept low enough to hold
-     the header row plus one lane. */
-  min-height: 160px;
-}
-
-.swimlane-header-row {
-  display: contents;
-}
-
-.swimlane-label-cell {
-  background: var(--hover-bg);
-  padding: 12px 16px;
-  display: flex;
-  align-items: center;
-  min-width: 120px;
-  max-width: 180px;
-}
-
-.swimlane-column-header {
-  background: var(--hover-bg);
-  padding: 12px 16px;
-  text-align: center;
-  font-weight: 600;
-  font-size: var(--font-size-base);
-}
-
-.swimlane-row {
-  display: contents;
-}
-
-.swimlane-label {
-  font-weight: 600;
-  font-size: var(--font-size-dense);
-  color: var(--text-color);
-  writing-mode: horizontal-tb;
-}
-
-/* Now a <ul> of <li> cards, like .column-cards. Same UA reset. */
-.swimlane-cell {
-  background: var(--card-bg);
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  min-height: 100px;
-  overflow-y: auto;
-  margin: 0;
-  list-style: none;
-}
-
-.swimlane-cell:hover {
-  background: var(--hover-bg);
-}
-
-.empty-cell {
-  color: var(--muted-text);
-  font-size: var(--font-size-sm);
-  text-align: center;
-  padding: 8px;
-  opacity: 0.5;
-}
-
-@media (max-width: 768px) {
-  .kanban-board {
-    gap: var(--space-md);
-  }
-
-  .kanban-column {
-    min-width: 220px;
-    max-width: 300px;
-    min-height: 140px;
-  }
-
-  .column-header {
-    padding: 10px 12px;
-  }
-
-  .column-cards {
-    padding: 8px;
-  }
-
-  .kanban-card {
-    padding: 10px;
-  }
-
-  .swimlane-label-cell {
-    min-width: 100px;
-    max-width: 140px;
-  }
 }
 </style>

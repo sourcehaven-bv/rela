@@ -79,9 +79,12 @@ import (
 // -2 exported (TKT-KQXVF7): UpdateRelationState and
 // DeleteRelationState folded into UpdateRelation and DeleteRelation, which
 // now take an entity.RelationKey that carries the tail.
+// +1 exported (soft delete): SoftDelete is the one-line accessor for the
+// optional store.SoftDeleteProvider capability, found by type assertion. The
+// capability's methods live on softDeleter, not here.
 //
-//plimsoll:max-methods=48
-//plimsoll:max-exported-methods=30
+//plimsoll:max-methods=49
+//plimsoll:max-exported-methods=31
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -97,6 +100,10 @@ type MemStore struct {
 	subscribers   map[int]chan store.Event
 	nextSubID     int
 	observers     []store.EntityObserver // notified synchronously on entity writes
+
+	// marked holds the families taken out of the live maps by a soft
+	// delete, keyed by bare id (see softdelete.go).
+	marked map[string]*markedFamily
 }
 
 type attachment struct {
@@ -491,12 +498,20 @@ func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {
 
 	highest := 0
 	pfx := prefix + "-"
+	// A soft-deleted id still holds its number, so the generator does not
+	// hand out an id that CreateEntity would refuse.
+	ids := make([]string, 0, len(m.entities)+len(m.marked))
 	for _, e := range m.entities {
+		ids = append(ids, e.ID)
+	}
+	for id := range m.marked {
+		ids = append(ids, id)
+	}
+	for _, id := range ids {
 		// Every face is scanned. States share their family's number, so
 		// seeing a family more than once is harmless — max is idempotent —
 		// while skipping non-default faces made a faced type invisible to
 		// the generator entirely (BUG-HC6I2T).
-		id := e.ID
 		if !strings.HasPrefix(id, pfx) {
 			continue
 		}
@@ -523,6 +538,10 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	defer m.mu.Unlock()
 
 	key := entity.FormatStateRef(e.ID, e.Face)
+	// A soft-deleted family keeps its id until it is purged, for every face.
+	if markedTaken(m.marked, e.ID, "") {
+		return store.ErrConflict
+	}
 	if e.Face.IsImplicit() {
 		// Case-folded so "ABC" conflicts with an existing "abc" — on fsstore
 		// they are one file, and the backends must agree on identity
@@ -670,6 +689,7 @@ func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*st
 		delete(m.relations, key)
 		m.relationOrder = sortedRemove(m.relationOrder, key)
 	}
+	dropMarkedEdges(m.marked, id)
 
 	for _, fe := range family {
 		// Per-state type: the load path tolerates a mistyped state, so
@@ -834,7 +854,7 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 	// except=oldID: renaming an entity to a different casing of its own ID
 	// (abc -> ABC) is legitimate and must not self-collide. idTaken folds
 	// on the bare id, so any state of another entity conflicts.
-	if idTaken(m.entities, newID, oldID) {
+	if idTaken(m.entities, newID, oldID) || markedTaken(m.marked, newID, oldID) {
 		return nil, store.ErrConflict
 	}
 
@@ -858,6 +878,8 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 		}
 		m.notifyRenamed(oldID, r)
 	}
+
+	dropMarkedEdges(m.marked, oldID)
 
 	// Update relations — clone each affected relation
 	relationsUpdated := 0
@@ -914,19 +936,26 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 
 // --- RelationReader ---
 
-func (m *MemStore) GetRelation(_ context.Context, k entity.RelationKey) (*entity.Relation, error) {
+func (m *MemStore) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	key := k.String()
 	r, ok := m.relations[key]
 	if !ok {
+		if _, revealed := store.RevealedFor(ctx, k.From, k.To); revealed {
+			if hidden := revealedRelations(ctx, m, func(h *entity.Relation) bool {
+				return h.Key() == key
+			}); len(hidden) > 0 {
+				return hidden[0], nil
+			}
+		}
 		return nil, store.ErrNotFound
 	}
 	return r.Clone(), nil
 }
 
-func (m *MemStore) ListRelations(_ context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
+func (m *MemStore) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
 	m.mu.RLock()
 	match := storeutil.NewRelationMatcher(q)
 	snapshot := make([]*entity.Relation, 0)
@@ -936,6 +965,9 @@ func (m *MemStore) ListRelations(_ context.Context, q store.RelationQuery) iter.
 			continue
 		}
 		snapshot = append(snapshot, r.Clone())
+	}
+	if q.EntityID != "" && q.EntityID == store.RevealedID(ctx) {
+		snapshot = append(snapshot, revealedRelations(ctx, m, match)...)
 	}
 	m.mu.RUnlock()
 

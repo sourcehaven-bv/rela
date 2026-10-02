@@ -30,8 +30,12 @@
  * the multilingual case has no privileged direction at all. Suppressing it
  * under a world would make the English post a dead end.
  */
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { computed } from 'vue'
 import type { Face } from '@/types'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlIcon from 'rela-components/components/common/RlIcon.vue'
+import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
+import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 
 const props = defineProps<{
   faces?: Face[]
@@ -39,8 +43,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{ select: [face: Face] }>()
 
-const open = ref(false)
-const rootRef = ref<HTMLElement | null>(null)
 
 // The server computes `_faces` on the record it SERVED — under
 // `?world=published` that is the published face — and excludes it, so the
@@ -57,77 +59,36 @@ function labelOf(f: Face): string {
   return f.label || f.face || 'default'
 }
 
-onMounted(() => document.addEventListener('click', onDocClick))
-onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
 
-function onDocClick(e: MouseEvent) {
-  if (rootRef.value && !rootRef.value.contains(e.target as Node)) open.value = false
-}
 
 function choose(f: Face) {
-  open.value = false
   emit('select', f)
 }
 </script>
 
 <template>
-  <button
-    v-if="single"
-    class="btn btn-secondary face-single"
-    @click="choose(single)"
-  >
+  <RlButton v-if="single" variant="secondary" class="face-single" @click="choose(single)">
     View {{ labelOf(single) }}
-  </button>
+  </RlButton>
 
-  <div v-else-if="others.length > 1" ref="rootRef" class="face-menu">
-    <button
-      class="btn btn-secondary"
-      :aria-expanded="open"
-      aria-haspopup="menu"
-      @click="open = !open"
-    >
-      View ▾
-    </button>
-    <ul v-if="open" class="face-menu-list" role="menu">
-      <li v-for="f in others" :key="f.face" role="none">
-        <button role="menuitem" class="face-menu-item" @click="choose(f)">
-          {{ labelOf(f) }}
-        </button>
-      </li>
-    </ul>
-  </div>
+  <!--
+    RlMenu owns the open state, the click-outside listener, arrow-key
+    navigation and the panel's position (teleported, so a scrolling ancestor
+    cannot clip it). It closes itself on a click inside the panel.
+  -->
+  <RlMenu v-else-if="others.length > 1" class="face-menu">
+    <template #trigger="{ toggle, attrs }">
+      <RlButton variant="secondary" v-bind="attrs" @click="toggle">
+        View
+        <template #trailing>
+          <RlIcon name="chevron-down" :size="14" aria-hidden="true" />
+        </template>
+      </RlButton>
+    </template>
+
+    <RlMenuItem v-for="f in others" :key="f.face" @click="choose(f)">
+      {{ labelOf(f) }}
+    </RlMenuItem>
+  </RlMenu>
 </template>
 
-<style scoped>
-.face-menu {
-  position: relative;
-  display: inline-block;
-}
-.face-menu-list {
-  position: absolute;
-  right: 0;
-  z-index: 20;
-  min-width: 12rem;
-  margin: 0.25rem 0 0;
-  padding: 0.25rem 0;
-  list-style: none;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: 0 6px 18px rgb(0 0 0 / 18%);
-}
-.face-menu-item {
-  display: block;
-  width: 100%;
-  padding: 0.4rem 0.85rem;
-  border: 0;
-  background: none;
-  text-align: left;
-  cursor: pointer;
-  color: var(--text-color);
-  font: inherit;
-}
-.face-menu-item:hover {
-  background: var(--hover-bg);
-}
-</style>

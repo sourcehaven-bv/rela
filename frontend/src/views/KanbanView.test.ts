@@ -285,7 +285,7 @@ describe('KanbanView column header enum labels', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('.column-title').text()).toBe('To Do')
+    expect(wrapper.find('.rl-section-heading .rl-heading').text()).toBe('To Do')
     wrapper.unmount()
   })
 
@@ -310,7 +310,7 @@ describe('KanbanView column header enum labels', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('.column-title').text()).toBe('Backlog')
+    expect(wrapper.find('.rl-section-heading .rl-heading').text()).toBe('Backlog')
     wrapper.unmount()
   })
 })
@@ -445,7 +445,7 @@ describe('KanbanView info regions (header/footer)', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('.error-state').exists()).toBe(true)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
     expect(wrapper.find('.view-info--bottom').exists()).toBe(true)
     wrapper.unmount()
   })
@@ -460,7 +460,7 @@ describe('KanbanView info regions (header/footer)', () => {
 // content-fit height) is exactly the kind of change that could go one step
 // further and drop the column. These tests fail if it ever does.
 describe('KanbanView empty columns', () => {
-  it('renders a column with no cards, with its placeholder and a zero count', async () => {
+  it('renders a column with no cards, with a zero count', async () => {
     const wrapper = await mountBoard([], [], {}, {
       columns: [
         { value: 'todo', label: 'Todo' },
@@ -468,22 +468,13 @@ describe('KanbanView empty columns', () => {
       ],
     })
 
-    // One entity, in `todo` only — `done` is genuinely unoccupied.
-    const columns = wrapper.findAll('.kanban-column')
+    const columns = wrapper.findAll('.rl-board-column')
     expect(columns).toHaveLength(2)
-
-    const done = columns[1]
-    expect(done.find('.empty-column').exists()).toBe(true)
-    expect(done.find('.empty-column').text()).toBe('No items')
-    expect(done.find('.column-count').text()).toBe('0')
-    // Still a labelled section — the lightened styling must not cost it its
-    // place in the accessibility tree.
-    expect(done.element.tagName).toBe('SECTION')
-    expect(done.attributes('aria-labelledby')).toBe('kanban-col-done')
+    expect(columns[1].find('.rl-count').text()).toBe('0')
     wrapper.unmount()
   })
 
-  it('accepts a drop on an empty column, moving the card into that state', async () => {
+  it('accepts a move onto an empty column, moving the card into that state', async () => {
     const ticket = makeTicket('T-1')
     const wrapper = await mountBoard([], [ticket], {}, {
       columns: [
@@ -492,22 +483,40 @@ describe('KanbanView empty columns', () => {
       ],
     })
 
-    const done = wrapper.findAll('.kanban-column')[1]
-    expect(done.find('.empty-column').exists()).toBe(true)
-
-    // Drag the card out of `todo` and drop it on the empty `done` column. The
-    // drop handler lives on the column <section>, so the placeholder <li>
-    // inside it never intercepts the gesture.
-    await wrapper.find('.kanban-card').trigger('dragstart', {
-      dataTransfer: { setData: vi.fn(), effectAllowed: '' },
-    })
-    await done.trigger('dragover')
-    await done.trigger('drop')
+    // The drag itself is the library board's; it reports the drop as `move`.
+    const board = wrapper.findComponent({ name: 'RlBoard' })
+    const [todo, done] = board.props('sections') as { items: unknown[] }[]
+    board.vm.$emit('move', { item: todo.items[0], to: done })
     await flushPromises()
 
     expect(updateEntityMock).toHaveBeenCalledTimes(1)
     const [, , payload] = updateEntityMock.mock.calls[0]
     expect(payload).toMatchObject({ properties: { status: 'done' } })
+    wrapper.unmount()
+  })
+
+  it('writes both the column and the lane when a swimlane move changes both', async () => {
+    const ticket = makeTicket('T-1')
+    ticket.properties.team = 'alpha'
+    const wrapper = await mountBoard([], [ticket], {}, {
+      columns: [
+        { value: 'todo', label: 'Todo' },
+        { value: 'done', label: 'Done' },
+      ],
+      swimlane_property: 'team',
+      swimlanes: [
+        { value: 'alpha', label: 'Alpha' },
+        { value: 'beta', label: 'Beta' },
+      ],
+    })
+
+    const board = wrapper.findComponent({ name: 'RlSwimlaneBoard' })
+    const [alpha, beta] = board.props('lanes') as { sections: { items: unknown[] }[] }[]
+    board.vm.$emit('move', { item: alpha.sections[0].items[0], to: beta.sections[1], lane: beta })
+    await flushPromises()
+
+    const [, , payload] = updateEntityMock.mock.calls[0]
+    expect(payload).toMatchObject({ properties: { status: 'done', team: 'beta' } })
     wrapper.unmount()
   })
 
@@ -538,7 +547,7 @@ describe('KanbanView empty columns', () => {
       widenStatusEnum()
       await flushPromises()
 
-      const headings = wrapper.findAll('.kanban-column .column-title').map((h) => h.text())
+      const headings = wrapper.findAll('.rl-board-column .rl-section-heading .rl-heading').map((h) => h.text())
       expect(headings).toEqual(['todo', 'doing', 'done'])
       wrapper.unmount()
     })
@@ -553,7 +562,7 @@ describe('KanbanView empty columns', () => {
       widenStatusEnum()
       await flushPromises()
 
-      const headings = wrapper.findAll('.kanban-column .column-title').map((h) => h.text())
+      const headings = wrapper.findAll('.rl-board-column .rl-section-heading .rl-heading').map((h) => h.text())
       expect(headings).toEqual(['todo', 'doing', 'done'])
       wrapper.unmount()
     })

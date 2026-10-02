@@ -92,7 +92,9 @@ function onChange(event: Event) {
   <div v-else class="select-widget">
     <select
       :id="id"
-      :class="{ 'is-error': !!error }"
+      class="rl-control"
+    :aria-describedby="describedBy"
+    :aria-invalid="invalid || undefined"
       :value="stringValue"
       :disabled="disabled"
       @change="onChange"
@@ -127,36 +129,17 @@ function onChange(event: Event) {
   gap: 8px;
 }
 
-select {
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
-  transition: all 0.15s;
-}
-
-select:focus {
-  outline: none;
-  border-color: var(--accent-color, #6366f1);
-  box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
-}
-
-select:disabled {
-  background: var(--hover-bg);
-  cursor: not-allowed;
-}
-
-select.is-error {
-  border-color: var(--error-color, #ef4444);
-}
-
-select.is-error:focus {
-  box-shadow: 0 0 0 2px var(--error-ring);
-}
+/*
+ * The input box comes from the library's global `.rl-control`
+ * (rl/styles/control.css, imported by styles/rl.css): border, radius, focus
+ * ring, and the invalid and disabled visuals. It is declared globally rather
+ * than per component precisely so a host rendering a native element can reach
+ * it, which is what this widget is.
+ *
+ * The invalid visual is driven by `aria-invalid` there, so the old error class
+ * is gone: the attribute now carries both the appearance and the announcement,
+ * where the class did the first and nothing for the second.
+ */
 
 /* Restores the pre-refactor 14px stack: old layout had .form-field
    gap:6px plus .transitions-info margin-top:8px = 14px. The new
@@ -165,8 +148,8 @@ select.is-error:focus {
 .transitions-info {
   margin-top: 6px;
   padding: 12px;
-  background: var(--hover-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-hover);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
 }
 
@@ -175,7 +158,7 @@ select.is-error:focus {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin: 0 0 8px;
 }
 
@@ -189,19 +172,19 @@ select.is-error:focus {
 
 .transitions-from {
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .transitions-arrow {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .transitions-to {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .disabled-transition {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-style: italic;
 }
 </style>

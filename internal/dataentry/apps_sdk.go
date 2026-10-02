@@ -71,7 +71,7 @@ func appSDKSource() string {
   // Accept the port only from our parent (the host), one time, first wins —
   // so a nested frame the app creates cannot race the handshake and MITM us.
   // Apply the host theme by toggling .dark on <html> — matches the selector
-  // _rela.css uses (:root.dark), so an app that links _rela.css follows the
+  // _rela.css uses (.dark), so an app that links _rela.css follows the
   // host's light/dark setting automatically.
   function applyTheme(dark) {
     try { document.documentElement.classList.toggle('dark', !!dark); } catch (e) {}

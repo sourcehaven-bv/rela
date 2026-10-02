@@ -1,0 +1,175 @@
+/*
+ * The rela-components entry point.
+ *
+ * ## Why this file exists instead of the library's own `base.css`
+ *
+ * The library ships `src/styles/base.css`, which imports the five stylesheets
+ * below AND applies a global reset: `box-sizing` on every element, plus a
+ * `body` rule setting font-family, font-size, line-height, colour and
+ * background from `--rl-*` tokens.
+ *
+ * That `body` rule is the problem. `App.vue` already declares one, setting
+ * the same font, background and colour from the same `--rl-*` tokens. Both rules end
+ * up inside `@layer rela`, at equal specificity, so the winner is decided by
+ * source order alone — i.e. by import order in `main.ts`, which is exactly
+ * the kind of accident `relaCssLayer.ts` exists to remove elsewhere.
+ * Importing `base.css` would restyle every page in the SPA on day one, and
+ * would do it fragilely.
+ *
+ * So this file imports the parts that are genuinely scoped to `.rl-*`
+ * selectors and leaves the reset behind. Everything below is inert until a
+ * component carrying one of those classes renders, which is what makes the
+ * migration incremental: a view that has not been converted yet is untouched.
+ *
+ * ## What is deliberately NOT imported
+ *
+ * - The `body` rule and `box-sizing` reset (see above). `App.vue` owns both.
+ * - `.rl-visually-hidden`, `.rl-compact-only`, `.rl-phone-only` and
+ *   `.rl-comment-hover-group` — global utilities declared in `base.css`
+ *   because slot content and teleported nodes cannot be reached by a child's
+ *   scoped styles. They are re-declared at the bottom of this file, so the
+ *   components that depend on them keep working without pulling in the reset.
+ *
+ * Re-check this file whenever the library's `base.css` changes: a new global
+ * utility added there needs adding here too, and a new `body`/element rule
+ * needs a decision rather than a copy.
+ *
+ * ## One token vocabulary
+ *
+ * `--rl-*` is the only palette. rela used to declare its own alongside it, and
+ * the two could not be kept in step: the library's dark values moved, rela's
+ * did not, and the shell painted light on a dark page. Every rule in the SPA
+ * reads `--rl-*` directly now, and `src/styles/tokens.css` — the colour
+ * contract served to custom apps as `_rela.css` — is GENERATED from the
+ * library's palette by `scripts/gen-app-tokens.mjs` rather than written.
+ *
+ * Palette rules stay OUT of `@layer rela` via the carve-out in
+ * `relaCssLayer.ts`, so an operator's unlayered `custom.css` still overrides a
+ * token. That carve-out recognises a palette by what it DECLARES, not by its
+ * selector — `.dark` and `:root:not(.light)` are palettes too, and matching
+ * `:root` by name left them layered, which is the bug described above.
+ */
+
+/* Tokens first: everything below reads from them. */
+@import 'rela-components/styles/tokens.css';
+
+/* Dark palette. Must follow tokens.css so its overrides win. */
+@import 'rela-components/styles/dark.css';
+
+/* `.rl-focus-ring` — the shared two-box-shadow ring. */
+@import 'rela-components/styles/focus-ring.css';
+
+/* `.rl-control` — the shared input box. */
+@import 'rela-components/styles/control.css';
+
+/* Teleported menu/tooltip/select panels, which scoped CSS cannot reach. */
+@import 'rela-components/styles/panel.css';
+
+/*
+ * ## Stacking: the library's z-scale rebased onto rela's
+ *
+ * The two projects picked incompatible ranges. The library stacks its
+ * overlays at 60-400 (`--rl-z-drawer` 60 … `--rl-z-toast` 400); rela's
+ * overlays sit far higher, in three deliberate tiers:
+ *
+ *   900    a dialog that must stay BELOW a confirm raised from inside it
+ *          (DuplicateModal, InlineCreateFormModal) — both Teleport to body,
+ *          so at equal z-index DOM order would hide the discard-confirm
+ *          behind the dialog that opened it
+ *   1000   the standard overlay tier: ConfirmModal, CommandPalette, Help,
+ *          KeyboardShortcuts, StatusBar's own overlay, HelpButton
+ *   10000  editor fullscreen (Milkdown/EasyMDE, which uses 9999 internally)
+ *
+ * Left alone, an `RlModal` at 100 renders UNDERNEATH every one of those. The
+ * app is migrating one component at a time, so library and rela overlays
+ * coexist for the whole of it and a half-migrated stack must still be right.
+ *
+ * Rebasing here rather than in the library keeps this rela's problem: the
+ * library's internal ORDER is preserved exactly (drawer < modal < menu <
+ * tooltip < toast), just shifted into rela's range. The sticky tokens keep
+ * their small values — they order table headers within a scroll container,
+ * not overlays against the page.
+ *
+ * Remove this block once every rela overlay is an Rl component and the
+ * hand-written 900/1000 rules are gone; until then it is what makes the two
+ * halves stack in one coherent order.
+ */
+:root {
+  /*
+   * The shell's floating regions: the overlay detail panel and, above it,
+   * the sidebar flyout. Above rela's own page layers (sticky bars 10-50, the
+   * hamburger at 101, the activity bar at 200), which they cover, and below
+   * every overlay, which may be raised from inside them.
+   */
+  --rl-z-shell-panel: 300;
+  --rl-z-shell-panel-full: 310;
+  --rl-z-shell-flyout: 320;
+  /*
+   * The off-canvas sidebar drawer and its scrim, shown when the detail panel
+   * or a narrow window pushes the sidebar off screen. Above the panels it
+   * covers, below the drawer proper, as in the library's own ladder.
+   */
+  --rl-z-shell-nav-scrim: 330;
+  --rl-z-shell-nav: 340;
+  /* Below the 900 tier, so a rela dialog still wins where it must. */
+  --rl-z-drawer: 880;
+  /* The standard overlay tier, alongside ConfirmModal et al. */
+  --rl-z-modal: 1000;
+  /*
+   * Above 1000: a menu or tooltip opened from inside a dialog has to clear
+   * it, and both teleport to body so they cannot rely on DOM order.
+   */
+  --rl-z-menu: 1100;
+  --rl-z-tooltip: 1200;
+  /* Toasts outrank every overlay but stay under editor fullscreen. */
+  --rl-z-toast: 1300;
+}
+
+/*
+ * Global utilities lifted from the library's `base.css`.
+ *
+ * Kept byte-identical to their source. They are global for a reason: slot
+ * content carries the PARENT's scope, not the child's, so a component cannot
+ * style a control that a caller passed into it.
+ */
+
+/* Visible to screen readers only. */
+.rl-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Controls that appear only where the sidebar is a drawer / the pane covers. */
+.rl-compact-only,
+.rl-phone-only {
+  display: none !important;
+}
+
+/* Drawer trigger: wherever the sidebar is off-canvas. */
+@media (max-width: 1079px) {
+  .rl-compact-only {
+    display: flex !important;
+  }
+}
+
+/* Back arrow: only where the detail pane fully covers the list. */
+@media (max-width: 767px) {
+  .rl-phone-only {
+    display: flex !important;
+  }
+}
+
+/*
+ * Reveals an empty comment badge from anywhere in the row rather than from the
+ * badge alone, which is a 20px target to find.
+ */
+.rl-comment-hover-group:hover .rl-comment-indicator__badge--empty {
+  opacity: 1;
+}

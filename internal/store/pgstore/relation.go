@@ -24,6 +24,9 @@ func (s *Store) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.
 	           FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = $4`
 	r, err := scanRelation(s.db.QueryRow(ctx, q, k.From, k.Type, k.To, string(k.FromFace)))
 	if errors.Is(err, pgx.ErrNoRows) {
+		r, err = revealedRelation(ctx, s, k)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
@@ -32,29 +35,30 @@ func (s *Store) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.
 	return r, nil
 }
 
-// ListRelations streams relations matching q in stable key order. Cursor and
-// Limit are ignored (per the RelationReader contract).
+// ListRelations iterates relations matching q in stable key order, one
+// keyset page at a time (see defaultIteratorPageSize), then the revealed
+// soft-deleted ones. Cursor and Limit are ignored (per the RelationReader
+// contract).
 func (s *Store) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
-	sql, args := buildRelationListSQL(q, "")
+	live := pagedSeq(func(after *relationKey) ([]*entity.Relation, *relationKey, error) {
+		sql, args := buildRelationListSQL(q, after)
+		return queryPage(ctx, s.db, sql, args, scanRelation, keyOfRelation)
+	})
 	return func(yield func(*entity.Relation, error) bool) {
-		rows, err := s.db.Query(ctx, sql, args...)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			r, err := scanRelation(rows)
-			if err != nil {
-				yield(nil, err)
+		for r, err := range live {
+			if !yield(r, err) || err != nil {
 				return
 			}
+		}
+		revealed, revealErr := revealedRelations(ctx, s, q)
+		if revealErr != nil {
+			yield(nil, revealErr)
+			return
+		}
+		for _, r := range revealed {
 			if !yield(r, nil) {
 				return
 			}
-		}
-		if err := rows.Err(); err != nil {
-			yield(nil, err)
 		}
 	}
 }
@@ -71,7 +75,7 @@ func (s *Store) ListRelationsPage(ctx context.Context, q store.RelationQuery) (s
 	if fetch > 0 {
 		fetch++
 	}
-	sql, args := buildRelationListSQL(q, cursorKey)
+	sql, args := buildRelationListSQL(q, parseRelationCursor(cursorKey))
 	if fetch > 0 {
 		sql += fmt.Sprintf(" LIMIT %d", fetch)
 	}
@@ -105,7 +109,7 @@ func (s *Store) ListRelationsPage(ctx context.Context, q store.RelationQuery) (s
 
 // CountRelations counts relations matching q.
 func (s *Store) CountRelations(ctx context.Context, q store.RelationQuery) (int, error) {
-	where, args := relationWhere(q, "")
+	where, args := relationWhere(q, nil)
 	sql := "SELECT count(*) FROM relations" + where
 	var n int
 	if err := s.db.QueryRow(ctx, sql, args...).Scan(&n); err != nil {
@@ -295,16 +299,16 @@ func scanRelations(ctx context.Context, db DBTX, sql string, args ...any) ([]*en
 
 // buildRelationListSQL builds SELECT + WHERE + ORDER BY for relation listings.
 // Order is by the composite key (from_id, rel_type, to_id), which equals the
-// "from--type--to" Key() ordering used for cursors. keysetAfter resumes after
-// a decoded cursor key.
-func buildRelationListSQL(q store.RelationQuery, keysetAfter string) (sql string, args []any) {
-	where, args := relationWhere(q, keysetAfter)
+// "from--type--to" Key() ordering used for cursors. after, when non-nil,
+// resumes after that key.
+func buildRelationListSQL(q store.RelationQuery, after *relationKey) (sql string, args []any) {
+	where, args := relationWhere(q, after)
 	sql = `SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at FROM relations` +
 		where + ` ORDER BY from_id ASC, from_face ASC, rel_type ASC, to_id ASC`
 	return sql, args
 }
 
-func relationWhere(q store.RelationQuery, keysetAfter string) (where string, args []any) {
+func relationWhere(q store.RelationQuery, after *relationKey) (where string, args []any) {
 	var conds []string
 	add := func(cond string, val any) {
 		args = append(args, val)
@@ -353,22 +357,42 @@ func relationWhere(q store.RelationQuery, keysetAfter string) (where string, arg
 				len(args), len(args)))
 		}
 	}
-	if keysetAfter != "" {
-		// An unparseable cursor genuinely RESTARTS (condition omitted):
-		// comparing against garbage would silently skip rows — see the
-		// matching note in entityWhere.
-		if from, fp, relType, to, ok := splitRelationKey(keysetAfter); ok {
-			args = append(args, from, string(fp), relType, to)
-			n := len(args)
-			// Row-value comparison gives a correct keyset over the composite key.
-			conds = append(conds, fmt.Sprintf("(from_id, from_face, rel_type, to_id) > ($%d, $%d, $%d, $%d)",
-				n-3, n-2, n-1, n))
-		}
+	if after != nil {
+		args = append(args, after.from, string(after.fromFace), after.relType, after.to)
+		n := len(args)
+		// Row-value comparison gives a correct keyset over the composite key.
+		conds = append(conds, fmt.Sprintf("(from_id, from_face, rel_type, to_id) > ($%d, $%d, $%d, $%d)",
+			n-3, n-2, n-1, n))
 	}
 	if len(conds) == 0 {
 		return "", args
 	}
 	return " WHERE " + strings.Join(conds, " AND "), args
+}
+
+// relationKey is a relation's keyset key, in ORDER BY column order.
+type relationKey struct {
+	from     string
+	fromFace entity.Face
+	relType  string
+	to       string
+}
+
+func keyOfRelation(r *entity.Relation) relationKey {
+	return relationKey{from: r.From, fromFace: r.FromFace, relType: r.Type, to: r.To}
+}
+
+// parseRelationCursor reads an external page cursor. An unparseable cursor
+// genuinely RESTARTS (nil); see parseStateCursor.
+func parseRelationCursor(cursor string) *relationKey {
+	if cursor == "" {
+		return nil
+	}
+	from, fp, relType, to, ok := splitRelationKey(cursor)
+	if !ok {
+		return nil
+	}
+	return &relationKey{from: from, fromFace: fp, relType: relType, to: to}
 }
 
 // splitRelationKey reverses entity.Relation.Key()

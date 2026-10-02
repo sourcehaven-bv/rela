@@ -280,9 +280,18 @@ CREATE TABLE IF NOT EXISTS entities (
 	updated_at  TEXT NOT NULL,
 	-- last_edited_by_* record who made the most recent write, so the version
 	-- sweep can attribute a create/update to its real author. NULL means the
-	-- write carried no attribution. Added to older databases by addEditorColumns.
+	-- write carried no attribution. Added to older databases by the v7 rung.
 	last_edited_by_user TEXT,
 	last_edited_by_tool TEXT,
+	-- origin_* record how the most recent write was produced (store.Origin),
+	-- so the sweep can mark a copied entity's version as a copy. All NULL
+	-- means a direct edit; see pgstore migration 0013. Added to older
+	-- databases by the v9 rung.
+	origin_kind        TEXT,
+	origin_source      TEXT,
+	origin_source_face TEXT,
+	origin_source_type TEXT,
+	origin_definition  TEXT,
 	PRIMARY KEY (id, face)
 ) STRICT;
 ` + entitiesTypeIDFaceIndexDDL + `
@@ -350,7 +359,59 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + commentsDDL + `
 ` + migrationStateDDL + `
 ` + versionSchemaSQL + `
+` + softDeleteDDL + `
 `
+
+// softDeleteDDL holds soft-deleted entities and their hidden relations until
+// the undo window closes (sqlitestore/softdelete.go). A marked row is MOVED
+// here from entities/relations rather than flagged in place, so every read of
+// the live tables stays correct without a predicate.
+//
+// The column lists repeat the live tables' columns in the same order, plus the
+// mark itself; TestSoftDeleteTablesMatchLiveTables pins that, because a column
+// added to entities but not here would be lost on restore.
+//
+// Shared between schemaSQL and the v9→v10 migration, like the other DDL
+// constants, so a fresh database and a migrated one cannot differ.
+const softDeleteDDL = `
+CREATE TABLE IF NOT EXISTS marked_entities (
+	id          TEXT NOT NULL,
+	face        TEXT NOT NULL DEFAULT '',
+	type        TEXT NOT NULL,
+	properties  TEXT NOT NULL DEFAULT '{}',
+	content     TEXT NOT NULL DEFAULT '',
+	updated_at  TEXT NOT NULL,
+	last_edited_by_user TEXT,
+	last_edited_by_tool TEXT,
+	origin_kind        TEXT,
+	origin_source      TEXT,
+	origin_source_face TEXT,
+	origin_source_type TEXT,
+	origin_definition  TEXT,
+	deleted_at  TEXT NOT NULL,
+	deleted_by  TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (id, face)
+) STRICT;
+-- The id stays held while marked, case-folded like entities_id_lower_key.
+CREATE INDEX IF NOT EXISTS marked_entities_id_lower_idx ON marked_entities(lower(id));
+
+CREATE TABLE IF NOT EXISTS marked_relations (
+	-- owner_id is the marked entity this edge comes back with. An edge between
+	-- two marked entities belongs to one of them at a time.
+	owner_id   TEXT NOT NULL,
+	from_id    TEXT NOT NULL,
+	from_face  TEXT NOT NULL DEFAULT '',
+	rel_type   TEXT NOT NULL,
+	to_id      TEXT NOT NULL,
+	properties TEXT NOT NULL DEFAULT '{}',
+	content    TEXT NOT NULL DEFAULT '',
+	updated_at TEXT NOT NULL,
+	rel_record_id INTEGER NOT NULL DEFAULT 0,
+	last_edited_by_user TEXT,
+	last_edited_by_tool TEXT,
+	PRIMARY KEY (from_id, from_face, rel_type, to_id)
+) STRICT;
+CREATE INDEX IF NOT EXISTS marked_relations_owner_idx ON marked_relations(owner_id);`
 
 // entitiesTypeIDFaceIndexDDL serves a type page in every face selection
 // (TKT-KQXVF7). Each list shape orders by (id, face), and a world picks one
@@ -359,7 +420,7 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 // and world pages read it as is. It replaced entities_type_idx (type), which
 // made every type page sort the whole type.
 //
-// Shared between schemaSQL (fresh databases) and the v7→v8 migration
+// Shared between schemaSQL (fresh databases) and the v10→v11 migration
 // (existing ones), for the same reason projectFilesDDL is.
 const entitiesTypeIDFaceIndexDDL = `
 CREATE INDEX IF NOT EXISTS entities_type_id_face_idx ON entities(type, id, face);`

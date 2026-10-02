@@ -89,8 +89,10 @@ test.describe('Faces backlog: comments panel in a world (BUG-FYEEVX)', () => {
     await faces.openEntity('policy', POL1.id, WORLD.editorial);
     await expect(faces.commentsPanelSummary()).toHaveText('0 total');
 
-    await comments.openField('owner');
-    await comments.postFieldComment('Draft owner?');
+    // A selection comment: field comments are offered only on read-only
+    // rows, and the editor may edit this face's fields.
+    await comments.selectBodyText('Draft wording');
+    await comments.commentOnSelection('Draft owner?');
 
     const onDraft = await facedApi.listComments('policy', POL1_DRAFT);
     expect(onDraft.map((c) => c.body)).toEqual(['Draft owner?']);

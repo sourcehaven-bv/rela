@@ -60,8 +60,8 @@ const emit = defineEmits<{
   align-items: center;
   gap: var(--space-xs, 4px);
   padding: 4px 6px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.15));
   font-size: var(--font-size-sm);
@@ -74,8 +74,8 @@ const emit = defineEmits<{
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-muted);
-  font-family: var(--font-mono, monospace);
+  color: var(--rl-color-text-muted);
+  font-family: var(--rl-font-family-mono, monospace);
   max-width: 220px;
 }
 
@@ -85,19 +85,19 @@ const emit = defineEmits<{
   border: none;
   border-radius: var(--radius-sm, 4px);
   background: transparent;
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
   font-size: var(--font-size-sm);
   cursor: pointer;
 }
 
 .link-tooltip-button:hover {
-  background: var(--hover-bg, rgba(127, 127, 127, 0.12));
+  background: var(--rl-color-bg-hover, rgba(127, 127, 127, 0.12));
 }
 
 .link-tooltip-button:focus-visible {
   outline: none;
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 </style>

@@ -76,7 +76,7 @@ const visible = useDelayedPending(
 .activity-bar__fill {
   height: 100%;
   width: 100%;
-  background: var(--accent-color, #4772fb);
+  background: var(--rl-color-accent, #4772fb);
   transform-origin: 0 50%;
   animation: activity-bar-slide 1.4s ease-in-out infinite;
 }

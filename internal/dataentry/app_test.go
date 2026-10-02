@@ -312,14 +312,14 @@ func TestEditFormForType(t *testing.T) {
 	app, _ := testAppInstance()
 
 	t.Run("returns edit form", func(t *testing.T) {
-		got := app.views.editFormForType("ticket")
+		got := editFormForType(app.views.schema().Cfg, "ticket")
 		if got != "edit-ticket" {
 			t.Errorf("expected edit-ticket, got %s", got)
 		}
 	})
 
 	t.Run("returns empty for unknown type", func(t *testing.T) {
-		got := app.views.editFormForType("nonexistent")
+		got := editFormForType(app.views.schema().Cfg, "nonexistent")
 		if got != "" {
 			t.Errorf("expected empty, got %s", got)
 		}
@@ -330,7 +330,7 @@ func TestEditFormForType(t *testing.T) {
 		app2.Cfg().Forms = map[string]Form{
 			"default-form": {EntityType: "ticket", Mode: ""},
 		}
-		got := app2.views.editFormForType("ticket")
+		got := editFormForType(app2.views.schema().Cfg, "ticket")
 		if got != "default-form" {
 			t.Errorf("expected default-form, got %s", got)
 		}
@@ -341,7 +341,7 @@ func TestCreateFormForType(t *testing.T) {
 	app, _ := testAppInstance()
 
 	t.Run("returns create form", func(t *testing.T) {
-		got := app.views.createFormForType("ticket")
+		got := createFormForType(app.views.schema().Cfg, "ticket")
 		if got != "create-ticket" {
 			t.Errorf("expected create-ticket, got %s", got)
 		}
@@ -357,7 +357,7 @@ func TestCreateFormForType(t *testing.T) {
 		app2.Cfg().Forms = map[string]Form{
 			"edit-ticket": {EntityType: "ticket", Mode: "edit"},
 		}
-		got := app2.views.createFormForType("ticket")
+		got := createFormForType(app2.views.schema().Cfg, "ticket")
 		if got != "edit-ticket" {
 			t.Errorf("expected edit-ticket as fallback, got %s", got)
 		}
@@ -371,13 +371,13 @@ func TestCreateFormForType(t *testing.T) {
 			"a-edit":   {EntityType: "ticket", Mode: "edit"},
 			"z-create": {EntityType: "ticket"},
 		}
-		if got := app2.views.createFormForType("ticket"); got != "z-create" {
+		if got := createFormForType(app2.views.schema().Cfg, "ticket"); got != "z-create" {
 			t.Errorf("expected z-create (non-edit preferred), got %s", got)
 		}
 	})
 
 	t.Run("returns empty for unknown type", func(t *testing.T) {
-		got := app.views.createFormForType("nonexistent")
+		got := createFormForType(app.views.schema().Cfg, "nonexistent")
 		if got != "" {
 			t.Errorf("expected empty, got %s", got)
 		}

@@ -3,6 +3,7 @@ import { ref, onMounted, onBeforeUnmount, nextTick, useTemplateRef } from 'vue'
 import { useUIStore } from '@/stores'
 import { addComment, checkAnchorable } from '@/api/comments'
 import { getErrorMessage } from '@/api/errors'
+import RlButton from 'rela-components/components/common/RlButton.vue'
 
 /**
  * Select-to-comment for an entity's markdown body (TKT-FIO205 stage 2).
@@ -296,20 +297,22 @@ onBeforeUnmount(() => {
         @keydown.ctrl.enter="submit"
       />
       <div class="tsc-actions">
-        <button
+        <RlButton
           v-if="sourceQuote !== null"
           type="button"
           class="tsc-suggest"
+          variant="subtle"
+          size="sm"
           :aria-pressed="suggesting"
           @click="toggleSuggesting"
         >
           {{ suggesting ? 'Comment only' : 'Suggest a change' }}
-        </button>
+        </RlButton>
         <span class="tsc-hint">⌘↵ to post</span>
-        <button type="button" class="tsc-cancel" @click="reset">Cancel</button>
-        <button type="submit" class="tsc-submit" :disabled="submitting || !canSubmit()">
+        <RlButton type="button" variant="secondary" size="sm" @click="reset">Cancel</RlButton>
+        <RlButton type="submit" class="tsc-submit" variant="primary" size="sm" :disabled="submitting || !canSubmit()">
           {{ submitting ? 'Adding…' : suggesting ? 'Suggest' : 'Comment' }}
-        </button>
+        </RlButton>
       </div>
     </form>
   </div>
@@ -326,10 +329,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 5px;
   padding: 5px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md, 6px);
-  background: var(--card-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
   box-shadow: var(--shadow-lg, 0 4px 12px rgb(0 0 0 / 12%));
   cursor: pointer;
   font: 600 var(--font-size-sm) / 1 inherit;
@@ -337,10 +340,10 @@ onBeforeUnmount(() => {
 .tsc-btn svg {
   width: 12px;
   height: 12px;
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
 }
 .tsc-btn:hover:not(:disabled) {
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
 }
 .tsc-btn:disabled {
   opacity: 0.7;
@@ -354,10 +357,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 5px;
   padding: 5px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md, 6px);
-  background: var(--card-bg);
-  color: var(--muted-text);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text-muted);
   box-shadow: var(--shadow-lg, 0 4px 12px rgb(0 0 0 / 12%));
   font: 600 var(--font-size-sm) / 1 inherit;
   cursor: help;
@@ -365,15 +368,15 @@ onBeforeUnmount(() => {
 .tsc-blocked svg {
   width: 12px;
   height: 12px;
-  color: var(--warning-color);
+  color: var(--rl-color-status-amber);
 }
 
 .tsc-form {
   width: 320px;
   padding: 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-lg, 8px);
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   box-shadow: var(--shadow-lg, 0 10px 30px rgb(0 0 0 / 16%));
 }
 
@@ -382,9 +385,9 @@ onBeforeUnmount(() => {
 .tsc-quote {
   margin: 0 0 8px;
   padding: 4px 8px;
-  border-left: 3px solid var(--accent-color);
-  background: var(--bg-color);
-  color: var(--muted-text);
+  border-left: 3px solid var(--rl-color-accent);
+  background: var(--rl-color-bg);
+  color: var(--rl-color-text-muted);
   font-size: var(--font-size-sm);
   font-style: italic;
   max-height: 3.6em;
@@ -395,19 +398,19 @@ onBeforeUnmount(() => {
   width: 100%;
   padding: 6px 8px;
   resize: vertical;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-sm, 5px);
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
   font: inherit;
   font-size: var(--font-size-base);
 }
 .tsc-input:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 .tsc-actions {
@@ -421,45 +424,15 @@ onBeforeUnmount(() => {
   margin-bottom: 3px;
   font-size: var(--font-size-sm);
   font-weight: 600;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 .tsc-replacement {
   margin-bottom: 6px;
-  font-family: var(--font-mono, monospace);
-}
-.tsc-suggest {
-  padding: 4px 8px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm, 5px);
-  background: var(--bg-color);
-  color: var(--accent-color);
-  font: 600 var(--font-size-sm) / 1.4 inherit;
-  cursor: pointer;
+  font-family: var(--rl-font-family-mono);
 }
 .tsc-hint {
   margin-right: auto;
   font-size: var(--font-size-sm);
-  color: var(--muted-text);
-}
-.tsc-cancel,
-.tsc-submit {
-  padding: 4px 11px;
-  border-radius: var(--radius-sm, 5px);
-  font: 600 var(--font-size-sm) / 1.4 inherit;
-  cursor: pointer;
-}
-.tsc-cancel {
-  border: 1px solid var(--border-color);
-  background: var(--bg-color);
-  color: var(--text-color);
-}
-.tsc-submit {
-  border: 1px solid var(--accent-color);
-  background: var(--accent-color);
-  color: #fff;
-}
-.tsc-submit:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  color: var(--rl-color-text-muted);
 }
 </style>

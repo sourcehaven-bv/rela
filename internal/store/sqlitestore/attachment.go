@@ -9,6 +9,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -60,7 +61,7 @@ func (s *Store) AttachFamilyFile(ctx context.Context, entityID, property, fileNa
 		              size = excluded.size,
 		              updated_at = excluded.updated_at`
 	res, err := s.q().ExecContext(ctx, q,
-		property, fileName, data, int64(len(data)), time.Now().UTC().Format(timeFmt), entityID)
+		property, fileName, data, int64(len(data)), sqlitedb.FormatTime(time.Now()), entityID)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: attach %q to %s: %w", fileName, entityID, err)
 	}

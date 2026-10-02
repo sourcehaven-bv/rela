@@ -84,9 +84,8 @@ relations:
 	return app
 }
 
-// The handler cannot reach this case yet: a faced source type loads no rows
-// until the gantt reads in a world (TKT-KQXVF7), so the check is pinned at the
-// edge filter, which is where the fold gets its edges.
+// The check is pinned at the edge filter, which is where the fold gets its
+// edges: a content-scoped edge counts only under the face that owns it.
 func TestGanttEdges_ContentEdgeOnlyWithItsFace(t *testing.T) {
 	app := facedGanttApp(t)
 	meta := app.schema.Current().Meta
@@ -99,22 +98,13 @@ func TestGanttEdges_ContentEdgeOnlyWithItsFace(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	edges, external, gerr := app.gantt.ganttEdgesForType(ctx, meta, "has-epic", nodes(), "")
+	g := dataentryconfig.Gantt{Hierarchy: []string{"has-epic"}}
+	edges, gerr := app.gantt.ganttEdges(ctx, meta, g, nodes())
 	if gerr != nil {
-		t.Fatalf("full build: %+v", gerr)
+		t.Fatalf("ganttEdges: %+v", gerr)
 	}
-	if external || len(edges) != 1 || edges[0] != [2]string{"PRJ-A", "EPIC-P"} {
-		t.Errorf("full build edges = %v (external %v), want only PRJ-A -> EPIC-P", edges, external)
-	}
-
-	// The subtree closure found EPIC-D over the draft edge; the drill must
-	// decline to the full build rather than render EPIC-D beside PRJ-A.
-	_, external, gerr = app.gantt.ganttEdgesForType(ctx, meta, "has-epic", nodes(), "PRJ-A")
-	if gerr != nil {
-		t.Fatalf("subtree: %+v", gerr)
-	}
-	if !external {
-		t.Error("subtree drill with a disowned edge in its set must decline (external)")
+	if got := edges["has-epic"]; len(got) != 1 || got[0] != [2]string{"PRJ-A", "EPIC-P"} {
+		t.Errorf("edges = %v, want only PRJ-A -> EPIC-P", got)
 	}
 }
 

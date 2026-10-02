@@ -759,7 +759,7 @@ onBeforeUnmount(() => {
              `aria-hidden` because ProseMirror's own textbox role already names
              the field; a screen reader announcing both would read it twice. -->
         <div v-if="showPlaceholder" class="milkdown-placeholder" aria-hidden="true">
-          {{ props.placeholder || 'Markdown content...' }}
+          {{ props.placeholder || 'Write, or type @ to link an entity' }}
         </div>
       </div>
     </div>

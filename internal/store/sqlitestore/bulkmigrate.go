@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -45,7 +46,7 @@ func (s *Store) SwapRelationEndpoints(ctx context.Context, relType string) (int,
 		`UPDATE relations SET from_id = to_id, to_id = from_id, updated_at = ?,
 		        last_edited_by_user = ?, last_edited_by_tool = ?
 		  WHERE rel_type = ? AND from_id <> to_id`,
-		time.Now().UTC().Format(timeFmt), editorUser, editorTool, relType)
+		sqlitedb.FormatTime(time.Now()), editorUser, editorTool, relType)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, fmt.Errorf(

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -40,10 +41,10 @@ func (s *Store) VersionStore() store.VersionService {
 //
 // Version rows carry their own created_at rather than defaulting in SQL,
 // because SQLite's CURRENT_TIMESTAMP has second granularity and renders in a
-// format that is not timeFmt. Two versions captured in the same second must
+// format that is not sqlitedb.TimeFormat. Two versions captured in the same second must
 // still be distinguishable and parseable by the same code that reads
 // entities.updated_at.
-func timestampNow() string { return time.Now().UTC().Format(timeFmt) }
+func timestampNow() string { return sqlitedb.FormatTime(time.Now()) }
 
 // --- Write ----------------------------------------------------------------
 
@@ -403,7 +404,7 @@ func (v *VersionStore) GetVersion(
 	if prev != nil {
 		snap.PrevID = *prev
 	}
-	if snap.CreatedAt, err = time.Parse(timeFmt, created); err != nil {
+	if snap.CreatedAt, err = parseTime(created); err != nil {
 		return nil, fmt.Errorf("sqlitestore: parse version created_at for %s: %w", id, err)
 	}
 	if snap.Properties, err = unmarshalProps(props); err != nil {
@@ -439,7 +440,7 @@ func scanVersionMeta(row scanner) (store.VersionMeta, error) {
 		m.PrevID = *prev
 	}
 	var err error
-	if m.CreatedAt, err = time.Parse(timeFmt, created); err != nil {
+	if m.CreatedAt, err = parseTime(created); err != nil {
 		return store.VersionMeta{}, fmt.Errorf("sqlitestore: parse version created_at: %w", err)
 	}
 	return m, nil

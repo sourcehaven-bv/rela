@@ -380,7 +380,7 @@ class RelaEditorElement extends HTMLElement {
     // `??`, not `||`: an app that sets `placeholder=""` is asking for NO
     // placeholder, exactly as on a native <textarea>, and must not be given the
     // default instead. The default applies only when the attribute is absent.
-    placeholder.textContent = this.getAttribute('placeholder') ?? 'Markdown content...'
+    placeholder.textContent = this.getAttribute('placeholder') ?? 'Write, or type @ to link an entity'
     editorRoot.appendChild(placeholder)
     this._placeholderEl = placeholder
 

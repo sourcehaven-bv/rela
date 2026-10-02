@@ -38,30 +38,8 @@ func (s *Store) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*e
 	if err := checkGraphQueryScope(q); err != nil {
 		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
 	}
-	sqlText, args := buildGraphQuerySQL(q, false)
-	return func(yield func(*entity.Entity, error) bool) {
-		rows, err := s.db.Query(ctx, sqlText, args...)
-		if err != nil {
-			yield(nil, fmt.Errorf("pgstore: graph query: %w", err))
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			e, scanErr := scanEntity(rows)
-			if scanErr != nil {
-				if !yield(nil, scanErr) {
-					return
-				}
-				continue
-			}
-			if !yield(e, nil) {
-				return
-			}
-		}
-		if err := rows.Err(); err != nil {
-			yield(nil, err)
-		}
-	}
+	return graphPages(ctx, s.db, q, graphSelectRows, scanEntity,
+		(*entity.Entity).Ref, "pgstore: graph query")
 }
 
 // CountMatched implements store.MatchedCounter: GraphCount's first statement
@@ -87,30 +65,43 @@ func (s *Store) GraphQueryHeaders(ctx context.Context, q store.GraphQuery) iter.
 	if err := checkGraphQueryScope(q); err != nil {
 		return func(yield func(store.EntityHeader, error) bool) { yield(store.EntityHeader{}, err) }
 	}
-	sqlText, args := buildGraphQuerySQLSelect(q, graphSelectHeaders)
-	return func(yield func(store.EntityHeader, error) bool) {
-		rows, err := s.db.Query(ctx, sqlText, args...)
-		if err != nil {
-			yield(store.EntityHeader{}, fmt.Errorf("pgstore: graph query headers: %w", err))
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			h, scanErr := scanEntityHeader(rows)
-			if scanErr != nil {
-				if !yield(store.EntityHeader{}, scanErr) {
-					return
-				}
-				continue
+	return graphPages(ctx, s.db, q, graphSelectHeaders, scanEntityHeader,
+		func(h store.EntityHeader) entity.Ref { return entity.Ref{ID: h.ID, Face: h.Face} },
+		"pgstore: graph query headers")
+}
+
+// graphPages reads a row query's result with no connection held across a
+// yield (see defaultIteratorPageSize).
+//
+// A query that leaves the order to the store is read in keyset pages on id.
+// One that sets its own Limit, Offset or OrderBy is read whole in one
+// statement: the caller's Limit already bounds it, and data-entry, the one
+// caller that sorts, always pages. Keyset paging over a caller's sort keys
+// would have to reproduce their null placement and declared-value ranks. A
+// caller that sorts or offsets WITHOUT a Limit is therefore unbounded in
+// memory; none does today.
+func graphPages[T any](
+	ctx context.Context, db DBTX, q store.GraphQuery, sel graphSelect,
+	scan func(scanner) (T, error), key func(T) entity.Ref, errPrefix string,
+) iter.Seq2[T, error] {
+	if q.Limit > 0 || q.Offset > 0 || len(q.OrderBy) > 0 {
+		return yieldAll(func() ([]T, error) {
+			sqlText, args := buildGraphQuerySQLSelect(q, sel)
+			items, err := queryAll(ctx, db, sqlText, args, scan)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", errPrefix, err)
 			}
-			if !yield(h, nil) {
-				return
-			}
-		}
-		if err := rows.Err(); err != nil {
-			yield(store.EntityHeader{}, err)
-		}
+			return items, nil
+		})
 	}
+	return pagedSeq(func(after *entity.Ref) ([]T, *entity.Ref, error) {
+		sqlText, args := buildGraphQueryPageSQL(q, sel, after)
+		items, next, err := queryPage(ctx, db, sqlText, args, scan, key)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", errPrefix, err)
+		}
+		return items, next, nil
+	})
 }
 
 // GraphCount runs the predicate query as `SELECT count(*)` and a
@@ -509,14 +500,41 @@ var graphSelectLists = map[graphSelect]string{
 }
 
 func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText string, args []any) {
+	return buildGraphQueryPageSQL(q, sel, nil)
+}
+
+// buildGraphQueryPageSQL is [buildGraphQuerySQLSelect] resuming after the row
+// after when it is non-nil. The condition joins the candidate WHERE. In a
+// world it compares the id alone, inside the DISTINCT ON: it removes whole id
+// families, so it can never leave a family partly visible to the rank. Under
+// AllFaces and AtFaces an id has several rows and a page can end inside its
+// family, so the condition compares (id, face), the result order. It also
+// narrows the seed of each candidate-rooted closure (see sqlBuilder.pageAfter).
+// The caller appends the page LIMIT, so q must set no Limit or Offset of its
+// own.
+func buildGraphQueryPageSQL(q store.GraphQuery, sel graphSelect, after *entity.Ref) (sqlText string, args []any) {
 	b := &sqlBuilder{}
 	// $1 is always q.EntityType.
 	typeArg := b.arg(q.EntityType)
 
+	var idAfter string
+	if after != nil {
+		b.pageAfter = b.arg(after.ID)
+		if _, inWorld := q.Faces.World(); inWorld {
+			b.pageSeedOp = ">"
+			idAfter = "e.id > " + b.pageAfter
+		} else {
+			// The resumed family may still have faces to serve, so its
+			// closure seed stays.
+			b.pageSeedOp = ">="
+			idAfter = "(e.id, e.face) > (" + b.pageAfter + ", " + b.arg(after.Face.String()) + ")"
+		}
+	}
+
 	// World-scoped RESULT rows (TKT-WAV8XP PR-C). Relation predicates
 	// and their recursive CTEs stay un-worlded on purpose (Q5): identity
 	// structure must not depend on the reader's world.
-	with, source := graphSource(b, q, typeArg, "")
+	with, source := graphSource(b, q, typeArg, idAfter)
 	if sel == graphSelectCount {
 		// graphSource yields one row per id in every world, so count(*)
 		// counts entities, never faces.
@@ -733,6 +751,10 @@ func entityClosureSQL(b *sqlBuilder, prefix string, p store.RelationPredicate, t
 		entityThroughArg := b.arg(p.EntityInheritThrough)
 		entityDepthArg := b.arg(cappedDepth(p.EntityDepth))
 		cteName := prefix + "_entity_closure"
+		var seedAfter string
+		if b.pageAfter != "" {
+			seedAfter = " AND e0.id " + b.pageSeedOp + " " + b.pageAfter
+		}
 		cte = fmt.Sprintf(`%s(id, root, depth) AS (
     -- IDENTITY ANCHOR (TKT-WAV8XP Q5). The seed is ENTITY-level: one row
     -- per id of the type, whatever faces it has, so a faced candidate
@@ -741,14 +763,14 @@ func entityClosureSQL(b *sqlBuilder, prefix string, p store.RelationPredicate, t
     -- entity inherits from must not change with the reader's world.
     -- Shared between the graph-query and visible-search paths via
     -- buildPredicateSQL, so a world arm here would leak into search too.
-    SELECT DISTINCT e0.id, e0.id, 0 FROM entities e0 WHERE e0.type = %s
+    SELECT DISTINCT e0.id, e0.id, 0 FROM entities e0 WHERE e0.type = %s%s
     UNION
     SELECT r.to_id, c.root, c.depth + 1
     FROM relations r
     JOIN %s c ON r.from_id = c.id
     WHERE r.from_face = '' AND r.rel_type = ANY(%s)
       AND c.depth < %s
-)`, cteName, typeArg, cteName, entityThroughArg, entityDepthArg)
+)`, cteName, typeArg, seedAfter, cteName, entityThroughArg, entityDepthArg)
 		join = fmt.Sprintf("(SELECT id FROM %s WHERE root = e.id)", cteName)
 	}
 	return cte, join
@@ -928,6 +950,15 @@ func graphWorldScope(b *sqlBuilder, q store.GraphQuery) (where, distinctOn, rank
 
 type sqlBuilder struct {
 	args []any
+	// pageAfter is the placeholder of a keyset page's resume id, or "". A
+	// candidate-rooted closure seeds only from ids pageSeedOp it: its rows
+	// are joined on root = e.id, and no e on the page sorts before it, so the
+	// skipped seeds could never match. Without this each page would re-walk
+	// the closure of every entity of the type.
+	pageAfter string
+	// pageSeedOp is ">" when the page resumes after a whole family and ">="
+	// when it may resume inside one.
+	pageSeedOp string
 }
 
 func (b *sqlBuilder) arg(v any) string {

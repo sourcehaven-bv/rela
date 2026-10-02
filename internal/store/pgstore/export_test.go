@@ -139,3 +139,13 @@ func (s *Store) SweepNow(ctx context.Context, p store.ProjectionProvider, cfg st
 	}
 	return nil
 }
+
+// SetIteratorPageSizeForTest shrinks the page store iterators read per
+// statement, restoring it on cleanup, so small fixtures cross page
+// boundaries. Test-only.
+func SetIteratorPageSizeForTest(t *testing.T, n int) {
+	t.Helper()
+	prev := iteratorPageSize.Load()
+	iteratorPageSize.Store(int64(n))
+	t.Cleanup(func() { iteratorPageSize.Store(prev) })
+}

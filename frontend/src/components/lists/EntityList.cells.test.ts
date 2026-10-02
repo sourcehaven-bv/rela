@@ -11,7 +11,7 @@ import type { Entity, ListResponse } from '@/types'
 // Cell rendering moved from a string-only path (formatCellValue interpolated
 // as text) onto the widget registry in mode:'display' -- TKT-S9C14S. These
 // tests pin the resulting behaviour at the two EntityList render sites
-// (desktop <td> and mobile card), including the routings that are
+// (table cell and stacked card, now one render site), including the routings that are
 // deliberately NOT the matching widget.
 
 const listEntitiesMock = vi.fn()
@@ -111,12 +111,12 @@ describe('EntityList cell rendering via widgets', () => {
       { id: 'T-2', type: entityType, properties: { done: false } },
     ])
     const wrapper = await mountList()
-    const rows = wrapper.findAll('tbody tr')
+    const rows = wrapper.findAll('.rl-table-row')
     expect(rows[0].text()).toContain('Yes')
     expect(rows[1].text()).toContain('No')
-    // No rendered checkbox in the data cells (the select-all/row checkboxes
-    // only exist when the list has actions, which this config does not).
-    expect(wrapper.find('tbody input[type="checkbox"]').exists()).toBe(false)
+    // No rendered checkbox in the data cells. The row's selection checkbox
+    // sits in the name cell, outside `.rl-table-row__cell`.
+    expect(wrapper.find('.rl-table-row__cell input[type="checkbox"]').exists()).toBe(false)
   })
 
   it('renders a date cell formatted, not as the raw stored string', async () => {
@@ -217,15 +217,23 @@ describe('EntityList cell rendering via widgets', () => {
   })
 
   // --- Regressions caught in review: list-ness must not erase the type's
-  // formatter, and cells must stay quiet when empty. ---
+  // formatter, and cells must stay quiet when empty.
+  //
+  // Each seeds a leading `title` column so the property under test lands in a
+  // real CELL. The table renders the first column as the row's name, through
+  // a different slot — a single-column list would put these values there and
+  // test the wrong render site. ---
 
   it('renders a list-valued date as joined text, not as enum badges', async () => {
-    seedSchema({ d: { type: 'date', list: true } }, [{ property: 'd' }])
+    seedSchema({ title: { type: 'string' }, d: { type: 'date', list: true } }, [
+      { property: 'title', label: 'Title' },
+      { property: 'd' },
+    ])
     seedEntities([
-      { id: 'T-1', type: entityType, properties: { d: ['2026-01-01', '2026-02-02'] } },
+      { id: 'T-1', type: entityType, properties: { title: 'A', d: ['2026-01-01', '2026-02-02'] } },
     ])
     const wrapper = await mountList()
-    const cell = wrapper.find('tbody td')
+    const cell = wrapper.find('.rl-table-row__cell')
     expect(cell.find('.badge').exists()).toBe(false)
     expect(cell.text()).toContain('2026-01-01, 2026-02-02')
   })
@@ -233,10 +241,13 @@ describe('EntityList cell rendering via widgets', () => {
   it('renders a list-valued rrule as its text form, not an em-dash', async () => {
     // Routing list-ness ahead of the type sent this to MultiSelectWidget,
     // which em-dashed it -- the value vanished entirely.
-    seedSchema({ r: { type: 'rrule', list: true } }, [{ property: 'r' }])
-    seedEntities([{ id: 'T-1', type: entityType, properties: { r: ['FREQ=DAILY'] } }])
+    seedSchema({ title: { type: 'string' }, r: { type: 'rrule', list: true } }, [
+      { property: 'title', label: 'Title' },
+      { property: 'r' },
+    ])
+    seedEntities([{ id: 'T-1', type: entityType, properties: { title: 'A', r: ['FREQ=DAILY'] } }])
     const wrapper = await mountList()
-    const cell = wrapper.find('tbody td')
+    const cell = wrapper.find('.rl-table-row__cell')
     expect(cell.text()).not.toContain('—')
     expect(cell.text()).toContain('every day')
   })
@@ -245,10 +256,13 @@ describe('EntityList cell rendering via widgets', () => {
     // MultiSelectWidget renders '—' for an empty array (RR-UD2C), which is a
     // detail-view contract. formatCellValue documents the opposite for cells:
     // "blank table cells stay visually quiet".
-    seedSchema({ tags: { type: 'enum', values: ['a'], list: true } }, [{ property: 'tags' }])
-    seedEntities([{ id: 'T-1', type: entityType, properties: { tags: [] } }])
+    seedSchema({ title: { type: 'string' }, tags: { type: 'enum', values: ['a'], list: true } }, [
+      { property: 'title', label: 'Title' },
+      { property: 'tags' },
+    ])
+    seedEntities([{ id: 'T-1', type: entityType, properties: { title: 'A', tags: [] } }])
     const wrapper = await mountList()
-    expect(wrapper.find('tbody td').text()).not.toContain('—')
+    expect(wrapper.find('.rl-table-row__cell').text()).not.toContain('—')
   })
 
   it('still badges a non-empty list-valued enum', async () => {
@@ -256,7 +270,7 @@ describe('EntityList cell rendering via widgets', () => {
     seedSchema({ tags: { type: 'enum', values: ['a', 'b'], list: true } }, [{ property: 'tags' }])
     seedEntities([{ id: 'T-1', type: entityType, properties: { tags: ['a', 'b'] } }])
     const wrapper = await mountList()
-    expect(wrapper.findAll('tbody .badge').length).toBe(2)
+    expect(wrapper.findAll('.rl-table-row .badge').length).toBe(2)
   })
 
   it('resolves each widget once per COLUMN, not once per cell (RR-UD2A)', async () => {
@@ -277,13 +291,17 @@ describe('EntityList cell rendering via widgets', () => {
     )
     const spy = vi.spyOn(defaultRegistry, 'resolveFromHint')
     const wrapper = await mountList()
-    expect(wrapper.findAll('tbody tr').length).toBe(50)
+    expect(wrapper.findAll('.rl-table-row').length).toBe(50)
     expect(spy).toHaveBeenCalledTimes(3)
     spy.mockRestore()
   })
 
-  // --- The mobile card render site. Structurally a duplicate of the desktop
-  // <td>, so it can silently drift; nothing covered it before. ---
+  // --- The stacked (narrow-width) render site.
+  //
+  // No longer a separate branch: RlTable stacks each row into a card itself,
+  // so one set of cell slots serves both layouts and the drift these tests
+  // were written to catch is gone by construction. They still run, because
+  // "the same widget renders in both" is the guarantee, however it is met. ---
 
   describe('mobile card render site', () => {
     let originalMatchMedia: typeof window.matchMedia
@@ -313,10 +331,10 @@ describe('EntityList cell rendering via widgets', () => {
         { id: 'T-1', type: entityType, properties: { title: 'Hello', status: 'open' } },
       ])
       const wrapper = await mountList()
-      expect(wrapper.find('.mobile-card').exists()).toBe(true)
+      expect(wrapper.find('.rl-table-row').exists()).toBe(true)
       // Column 0 is the card title; the enum is a badge in the field list.
-      expect(wrapper.find('.mobile-card').text()).toContain('Hello')
-      expect(wrapper.find('.mobile-card .badge').exists()).toBe(true)
+      expect(wrapper.find('.rl-table-row').text()).toContain('Hello')
+      expect(wrapper.find('.rl-table-row .badge').exists()).toBe(true)
     })
 
     it('keeps boolean card fields as Yes/No, matching desktop', async () => {
@@ -328,17 +346,67 @@ describe('EntityList cell rendering via widgets', () => {
         { id: 'T-1', type: entityType, properties: { title: 'A', done: false } },
       ])
       const wrapper = await mountList()
-      expect(wrapper.find('.mobile-card').text()).toContain('No')
+      expect(wrapper.find('.rl-table-row').text()).toContain('No')
     })
 
-    it('still hides a column whose value is empty (the emptiness predicate)', async () => {
+    /*
+     * A stacked row drops an empty cell so a bare label is never left beside
+     * a blank value.
+     *
+     * Asserted through the `--empty` CLASS rather than through visible text,
+     * because the hiding itself is `display: none` in the library's
+     * stylesheet and happens only under a narrow-width media query — neither
+     * of which happyDOM applies. A text assertion here would pass whatever
+     * the class said, which is how the earlier version of this test managed
+     * to describe the behaviour backwards.
+     *
+     * A LOCKED cell is deliberately not empty: the 🔒 is information, so it
+     * keeps its label.
+     */
+    it('marks an empty cell empty so the stacked row can drop it', async () => {
       seedSchema({ title: { type: 'string' }, note: { type: 'string' } }, [
         { property: 'title', label: 'Title' },
         { property: 'note', label: 'Note' },
       ])
       seedEntities([{ id: 'T-1', type: entityType, properties: { title: 'A', note: '' } }])
       const wrapper = await mountList()
-      expect(wrapper.find('.mobile-card').text()).not.toContain('Note')
+      expect(wrapper.find('.rl-table-row__cell').classes()).toContain(
+        'rl-table-row__cell--empty',
+      )
+    })
+
+    it('never treats a locked cell as empty', async () => {
+      // The 🔒 is information, not absence. Dropping the cell when stacked
+      // would hide the fact that a value exists and is withheld, which is the
+      // opposite of what the indicator is for.
+      seedSchema({ title: { type: 'string' }, secret: { type: 'string' } }, [
+        { property: 'title', label: 'Title' },
+        { property: 'secret', label: 'Secret' },
+      ])
+      seedEntities([
+        {
+          id: 'T-1',
+          type: entityType,
+          properties: { title: 'A', secret: '' },
+          inaccessible: [{ name: 'secret', reason: 'encrypted' }],
+        } as never,
+      ])
+      const wrapper = await mountList()
+      expect(wrapper.find('.rl-table-row__cell').classes()).not.toContain(
+        'rl-table-row__cell--empty',
+      )
+    })
+
+    it('keeps a cell with a value out of the empty set', async () => {
+      seedSchema({ title: { type: 'string' }, note: { type: 'string' } }, [
+        { property: 'title', label: 'Title' },
+        { property: 'note', label: 'Note' },
+      ])
+      seedEntities([{ id: 'T-1', type: entityType, properties: { title: 'A', note: 'x' } }])
+      const wrapper = await mountList()
+      expect(wrapper.find('.rl-table-row__cell').classes()).not.toContain(
+        'rl-table-row__cell--empty',
+      )
     })
 
     it('keeps a false boolean visible rather than treating it as empty', async () => {
@@ -348,7 +416,7 @@ describe('EntityList cell rendering via widgets', () => {
       ])
       seedEntities([{ id: 'T-1', type: entityType, properties: { title: 'A', done: false } }])
       const wrapper = await mountList()
-      expect(wrapper.find('.mobile-card').text()).toContain('Done')
+      expect(wrapper.find('.rl-table-row').text()).toContain('Done')
     })
   })
 
@@ -358,7 +426,7 @@ describe('EntityList cell rendering via widgets', () => {
     const wrapper = await mountList()
     // FileWidget's display branch renders <img> previews; routing file->text
     // keeps a table from issuing one image request per row.
-    expect(wrapper.find('tbody img').exists()).toBe(false)
+    expect(wrapper.find('.rl-table-row img').exists()).toBe(false)
     expect(wrapper.text()).toContain('picture.png')
   })
 })

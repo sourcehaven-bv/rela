@@ -16,8 +16,9 @@ vi.mock('@/api', async (orig) => ({
 }))
 
 const routerPush = vi.fn()
+const routerReplace = vi.fn()
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: routerPush }),
+  useRouter: () => ({ push: routerPush, replace: routerReplace }),
   useRoute: () => ({ query: {}, path: '/kanban/board' }),
   // Cards are real links since TKT-3CSZRG, so the component renders a
   // RouterLink; this mock replaces the whole module, so it must supply one.
@@ -79,6 +80,7 @@ beforeEach(() => {
   listAllEntitiesMock.mockReset()
   updateEntityMock.mockReset().mockResolvedValue(undefined)
   routerPush.mockClear()
+  routerReplace.mockClear()
 })
 
 afterEach(() => {
@@ -124,17 +126,23 @@ describe('KanbanView card keyboard operability', () => {
     expect(card.attributes('to') ?? card.attributes('href')).toBe('/form/ticket-form/T-1')
   })
 
-  it('click and Enter reach the same destination', async () => {
+  // A plain click opens the card in the overlay panel; the link's own
+  // navigation is left to Enter and to modified clicks (new tab).
+  it('opens the detail panel on a plain click', async () => {
     const wrapper = await mountBoard([makeTicket('T-1')])
 
-    await wrapper.find('.kanban-card').trigger('click')
-    const viaClick = routerPush.mock.calls[0]
-    routerPush.mockClear()
+    await wrapper.find('.kanban-card').trigger('click', { button: 0 })
 
-    await wrapper.find('.kanban-card').trigger('keydown', { key: 'Enter' })
-    const viaKeyboard = routerPush.mock.calls[0]
+    expect(routerReplace).toHaveBeenCalledWith({ query: { selected: 'T-1' } })
+    expect(routerPush).not.toHaveBeenCalled()
+  })
 
-    expect(viaKeyboard).toEqual(viaClick)
+  it('leaves a modified click to the link', async () => {
+    const wrapper = await mountBoard([makeTicket('T-1')])
+
+    await wrapper.find('.kanban-card').trigger('click', { button: 0, metaKey: true })
+
+    expect(routerReplace).not.toHaveBeenCalled()
   })
 
   it('ignores keys that are not Enter or Space', async () => {
@@ -175,36 +183,25 @@ describe('KanbanView accessible structure', () => {
     expect(card.attributes('aria-label')).toBe('Fix the widget')
   })
 
-  it('names the board region and labels each column by its heading', async () => {
+  it('names the board region and heads each column with its label', async () => {
     const wrapper = await mountBoard([makeTicket('T-1')])
 
     const board = wrapper.find('.kanban-board')
     expect(board.attributes('role')).toBe('group')
     expect(board.attributes('aria-label')).toBe('Board board')
 
-    const column = wrapper.find('.kanban-column')
-    expect(column.element.tagName).toBe('SECTION')
-    const labelledBy = column.attributes('aria-labelledby')
-    expect(labelledBy).toBe('kanban-col-todo')
-
-    const heading = wrapper.find(`#${labelledBy}`)
-    expect(heading.exists()).toBe(true)
-    expect(heading.element.tagName).toBe('H2')
-    expect(heading.text()).toContain('Todo')
+    // Column structure and list semantics are the library board's; what is
+    // ours is the heading text.
+    expect(wrapper.find('.rl-board-column .rl-section-heading').text()).toContain('Todo')
   })
 
-  it('renders the column cards as a list of list items', async () => {
+  it('renders each card as a link inside the board card wrapper', async () => {
     const wrapper = await mountBoard([makeTicket('T-1'), makeTicket('T-2')])
 
-    const list = wrapper.find('.column-cards')
-    expect(list.element.tagName).toBe('UL')
-    // The <li> is the list item; the card link lives inside it, because a
-    // RouterLink cannot itself render an <li>.
-    expect(list.findAll('li.kanban-card-item')).toHaveLength(2)
-    expect(list.findAll('li.kanban-card-item a.kanban-card')).toHaveLength(2)
+    expect(wrapper.findAll('.rl-board-card a.kanban-card')).toHaveLength(2)
   })
 
-  it('labels each swimlane cell with its column and swimlane', async () => {
+  it('renders swimlane cards as links too', async () => {
     const tickets = [makeTicket('T-1')]
     tickets[0].properties.team = 'alpha'
     const wrapper = await mountBoard(tickets, {
@@ -212,31 +209,17 @@ describe('KanbanView accessible structure', () => {
       swimlanes: [{ value: 'alpha', label: 'Alpha' }],
     })
 
-    const cell = wrapper.find('.swimlane-cell')
-    expect(cell.exists()).toBe(true)
-    expect(cell.element.tagName).toBe('UL')
-    expect(cell.attributes('aria-label')).toBe('Todo — Alpha')
-  })
-
-  it('keeps swimlane cards keyboard-operable too', async () => {
-    const tickets = [makeTicket('T-1')]
-    tickets[0].properties.team = 'alpha'
-    const wrapper = await mountBoard(tickets, {
-      swimlane_property: 'team',
-      swimlanes: [{ value: 'alpha', label: 'Alpha' }],
-    })
-
-    // Swimlane cards are links too — the same native focus/activation as the
-    // column cards, pinned here because the swimlane branch is a separate
-    // template block that has drifted from the column one before.
-    const card = wrapper.find('.swimlane-cell .kanban-card')
+    // The swimlane board is a separate branch that has drifted from the
+    // column one before, so its cards are pinned separately.
+    expect(wrapper.find('.rl-swimlane').text()).toContain('Alpha')
+    const card = wrapper.find('.rl-swimlane .kanban-card')
     expect(card.element.tagName).toBe('A')
     expect(card.attributes('to') ?? card.attributes('href')).toBe('/entity/ticket/T-1')
   })
 
-  it('keeps the card draggable so drag-and-drop is not regressed', async () => {
+  it('makes the board card wrapper the drag source', async () => {
     const wrapper = await mountBoard([makeTicket('T-1')])
 
-    expect(wrapper.find('.kanban-card').attributes('draggable')).toBe('true')
+    expect(wrapper.find('.rl-board-card').classes()).toContain('rl-board-card--draggable')
   })
 })

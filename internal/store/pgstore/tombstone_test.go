@@ -68,7 +68,9 @@ func (s tombstoneStore) changesSince(ctx context.Context, cursor int64) ([]chang
 	return out, rows.Err()
 }
 
-func mustCreateEntity(t *testing.T, st tombstoneStore, id, typ string) {
+func mustCreateEntity(t *testing.T, st interface {
+	CreateEntity(context.Context, *entity.Entity) error
+}, id, typ string) {
 	t.Helper()
 	e := entity.New(id, typ)
 	e.SetString("title", "t")

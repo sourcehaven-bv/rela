@@ -293,10 +293,24 @@ attribution and any `acl.yaml` assignments survive an email change.
 The verification rejects non-ES256 algorithms (including `alg:none`),
 a wrong issuer or audience, and expired or unsigned tokens.
 
-**Other claims.** Beyond `sub`, rela projects `org_id`, `org_slug`, and
-`roles` from the verified assertion onto the principal. All are optional
+**Other claims.** Beyond `sub`, rela projects `email`, `org_id`,
+`org_slug`, `org_name` and `roles` from the verified assertion onto the
+principal. All are optional
 — an assertion carrying only a subject is perfectly valid, so a proxy
 that models neither orgs nor roles works unchanged.
+
+| Claim | Type | Used for |
+| ----- | ---- | -------- |
+| `sub` | string, required | The user id. |
+| `email` | string | Lazy provisioning and the account menu. |
+| `org_id` | string | Audit attribution and the account menu. |
+| `org_slug` | string | Audit attribution and the account menu. |
+| `org_name` | string | The org's display name in the account menu. Leave it out when the org has no name; the menu then shows the slug. |
+| `roles` | array of strings | `asserted_role_assignments`, and the account menu's `admin.role` filter. |
+
+The account menu (`GET /api/v1/_me`, and the `account:` block in
+`data-entry.yaml`) only displays these claims. See GUIDE-data-entry, "Account
+menu".
 
 - **`roles`** (array of strings) can grant `acl.yaml` roles via
   `asserted_role_assignments`, letting you maintain group membership in

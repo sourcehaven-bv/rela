@@ -33,8 +33,12 @@ func (s *Server) handleListEntities(
 	offset := args.GetInt("offset", 0)
 
 	d := snap.deps
+	ctx, world, refused := selectWorld(ctx, d, args)
+	if refused != nil {
+		return refused, nil
+	}
 	types := snap.handlers.types
-	q := store.EntityQuery{Faces: store.InWorld(d.World)}
+	q := store.EntityQuery{Faces: store.InWorld(world)}
 	if typeArg != "" {
 		resolved, _, err := types.resolveEntityType(typeArg)
 		if err != nil {
@@ -155,13 +159,19 @@ func (s *Server) handleShowEntity(
 	id = trimID(id)
 
 	d := snap.deps
+	ctx, _, refused := selectWorld(ctx, d, args)
+	if refused != nil {
+		return refused, nil
+	}
 	e, getErr := d.Store.Resolve(ctx, id)
 	if getErr != nil {
-		return errorResult("entity not found: " + id), nil
+		return entityReadFailed("entity", id, getErr), nil
 	}
 
 	view := entityView{relations: true, content: args.GetBool("content", true)}
-	text, err := convertStoreEntity(ctx, e, d.Store, d.Meta, view)
+	ej := buildEntityJSON(ctx, e, d.Store, d.Meta, view)
+	ej.OtherFaces = otherFaces(ctx, d.Store, d.Meta, e)
+	text, err := marshalJSON(ej)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
@@ -180,7 +190,12 @@ func (s *Server) handleSearchEntities(
 	entityType := args.GetString("type", "")
 	limit := limitArg(args, defaultSearchLimit)
 
-	q := search.Query{Text: query, Limit: limit, World: snap.deps.World}
+	d := snap.deps
+	ctx, world, refused := selectWorld(ctx, d, args)
+	if refused != nil {
+		return refused, nil
+	}
+	q := search.Query{Text: query, Limit: limit, World: world}
 	if entityType != "" {
 		resolved, _, resolveErr := snap.handlers.types.resolveEntityType(entityType)
 		if resolveErr != nil {
@@ -189,7 +204,6 @@ func (s *Server) handleSearchEntities(
 		q.Types = []string{resolved}
 	}
 
-	d := snap.deps
 	var hits []search.Hit
 	for hit, searchErr := range d.Searcher.Search(ctx, q) {
 		if searchErr != nil {
@@ -322,7 +336,7 @@ func (s *Server) handleUpdateEntity(
 	}
 	e, getErr := st.Resolve(ctx, target.String())
 	if getErr != nil {
-		return errorResult("entity not found: " + id), nil
+		return entityReadFailed("entity", id, getErr), nil
 	}
 
 	properties := extractPropertiesAllowNil(request)
@@ -474,6 +488,9 @@ func (s *Server) handleRenameEntity(
 		return errorResult(err.Error()), nil
 	}
 	oldID = trimID(oldID)
+	if refused := wholeEntityRef(oldID); refused != nil {
+		return refused, nil
+	}
 
 	newID, err := args.RequireString("new_id")
 	if err != nil {

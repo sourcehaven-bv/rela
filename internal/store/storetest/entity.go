@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,28 @@ func RunEntityTests(t *testing.T, f Factory) {
 		assert.Equal(t, e.ID, got.ID)
 		assert.Equal(t, e.Type, got.Type)
 		assert.Equal(t, "Login", got.GetString("title"))
+	})
+
+	// The store owns UpdatedAt. An update usually carries the stored value
+	// back (read, clone, modify, write), and a backend that kept it would
+	// never move the timestamp the sqlite and postgres version sweeps settle on.
+	t.Run("UpdateAdvancesUpdatedAt", func(t *testing.T) {
+		s := f(t)
+		e := entity.New("FEAT-001", "feature")
+		e.SetString("title", "first")
+		require.NoError(t, s.CreateEntity(ctx(), e))
+		before, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
+		require.NoError(t, err)
+
+		time.Sleep(20 * time.Millisecond)
+		next := before.Clone()
+		next.SetString("title", "second")
+		require.NoError(t, s.UpdateEntity(ctx(), next))
+
+		after, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
+		require.NoError(t, err)
+		require.True(t, after.UpdatedAt.After(before.UpdatedAt),
+			"UpdatedAt did not move: before=%s after=%s", before.UpdatedAt, after.UpdatedAt)
 	})
 
 	t.Run("GetNotFound", func(t *testing.T) {

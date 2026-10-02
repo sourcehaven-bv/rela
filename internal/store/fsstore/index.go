@@ -74,6 +74,14 @@ func (s *FSStore) savePersistedIndex() error {
 	for key, meta := range s.relations {
 		idx.Relations[key] = indexedRelation(meta)
 	}
+	// Marked families are still on disk, so the index keeps them; the next
+	// open hides them again from pending-deletes.json.
+	for _, meta := range markedEntityMetas(s) {
+		idx.Entities[stateKey(meta.ID, meta.Face)] = indexedEntity(meta)
+	}
+	for _, meta := range markedRelationMetas(s) {
+		idx.Relations[meta.key()] = indexedRelation(meta)
+	}
 
 	data, err := json.Marshal(idx)
 	// coverage-ignore-start: defensive: persistedIndex holds only time.Time and map[string]... of strings/ints;

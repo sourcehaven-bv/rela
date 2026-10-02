@@ -1,107 +1,283 @@
-/* rela design tokens — the single source of truth for theme colors.
+/*
+ * GENERATED FILE — do not edit.
  *
- * Consumed in two places, which is why it lives in its own file:
- *   1. The SPA — imported from main.ts; the app shell toggles `.dark` on
- *      <html> to switch theme.
- *   2. Custom apps — the same blocks are embedded in the Go binary and served
- *      verbatim as part of /api/v1/_apps/<id>/_rela.css, so an app that opts in
- *      gets identical colors and the same `.dark`-toggle theming. Keeping ONE
- *      source avoids drift between the SPA and the app stylesheet.
+ * Run `npm run gen:tokens` to regenerate. The source is rela-components'
+ * palette (`packages/rela-components/src/styles/tokens.css` +
+ * `dark.css`); see `frontend/scripts/gen-app-tokens.mjs` for what is
+ * copied and why.
  *
- * Only theme *tokens* belong here (a stable, near-unbreakable contract). Layout,
- * components, and behavior do not.
- *
- * Light: cream paper bg, deep harbor-navy sidebar, blue accent, warm peach
- * highlights. Dark: same harbor-navy as the dominant surface, cream-tinted
- * text, lifted accent. */
+ * This is the COLOUR contract served to custom-app iframes as `_rela.css`,
+ * and embedded in the Go binary as `internal/dataentry/apps_tokens.css`
+ * (pinned byte-for-byte by `TestAppTokensCSSInSyncWithFrontend`). Spacing,
+ * radius and typography are deliberately not here.
+ */
+
 :root {
-  --sidebar-bg: #164155;
-  --sidebar-text: #f3f2ef;
-  --accent-color: #4772fb;
-
-  /* Focus-ring fill. Used as the OUTER of two shadows:
-   *
-   *   box-shadow: 0 0 0 2px var(--focus-ring-gap), 0 0 0 4px var(--focus-ring);
-   *
-   * TWO fixes over the hand-written `rgba(99, 102, 241, 0.1)` rings this
-   * replaced (TKT-FRING7). It is an alias of --accent-color, not a literal,
-   * so it follows the dark theme AND an operator's custom.css accent, which a
-   * literal could do neither of. And it is FULLY OPAQUE, which is what makes
-   * the ring actually visible: measured against the composited surfaces, the
-   * old 10%-alpha ring scored 1.13:1 — WCAG 2.2 §1.4.11 requires 3:1 for
-   * non-text UI. Every translucent option failed (30% only reaches 1.46);
-   * full opacity clears it at 4.14 light / 5.85 dark.
-   *
-   * Declared in :root ONLY, deliberately: var() resolves at use time, so the
-   * .dark block below re-derives this from its own --accent-color. A second
-   * declaration there would be a copy to keep in sync, not a fix.
-   *
-   * Kept as its own name rather than using --accent-color at the call sites:
-   * the ring is a distinct ROLE, so its contrast can be revisited (or given a
-   * dedicated hue) without repainting every accent-coloured surface. */
-  --focus-ring: var(--accent-color);
-
-  /* The separator band that goes BETWEEN a control and its ring, as the inner
-   * of two shadows:
-   *
-   *   box-shadow: 0 0 0 2px var(--focus-ring-gap), 0 0 0 4px var(--focus-ring);
-   *
-   * Needed because most focus rules also set `border-color: var(--accent-color)`,
-   * and --focus-ring is that same colour — so a single ring abuts its own
-   * border at 1:1 contrast and reads as one thick accent band with no shape.
-   * WCAG 1.4.11 wants 3:1 against ADJACENT colours, and the inner adjacency is
-   * the one a page-background measurement misses. The checked checkbox is the
-   * extreme case: accent ring on an accent FILL, i.e. invisible. */
-  --focus-ring-gap: var(--bg-color);
-
-  /* The error-state counterpart, for a field that failed validation. Same
-   * story as --focus-ring: the six widgets that draw one were writing
-   * `rgba(239, 68, 68, …)`, a red that is not this app's --error-color
-   * (#e5484d light / #f87171 dark) and does not follow the theme. Also opaque,
-   * for the same WCAG 1.4.11 reason — an invalid field is precisely where the
-   * indicator must not be a faint tint. */
-  --error-ring: var(--error-color);
-
-  --bg-color: #f3f2ef;
-  --text-color: #191919;
-  --border-color: #e0ddd5;
-  --success-color: #06ce90;
-  --error-color: #e5484d;
-  --warning-color: #f4aa83;
-  --info-color: #4772fb;
-  --card-bg: #ffffff;
-  --input-bg: #ffffff;
-  --hover-bg: #ebe9e4;
-  --muted-text: #6b7280;
-  --badge-blue: #4772fb;
-  --badge-purple: #8b5cf6;
-  --badge-green: #06ce90;
-  --badge-gray: #6b7280;
-  --badge-red: #e5484d;
-  --badge-orange: #f4aa83;
-  --badge-yellow: #f9d975;
+  color-scheme: light;
+  --rl-color-bg: #ffffff;
+  --rl-color-bg-sunken: #fbfbfa;
+  --rl-color-bg-hover: #f4f4f3;
+  --rl-color-bg-active: #ececeb;
+  --rl-color-border: #e8e8e6;
+  --rl-color-border-strong: #d8d8d5;
+  --rl-color-bg-raised: #ffffff;
+  --rl-color-border-raised: #e8e8e6;
+  --rl-color-border-scrimmed: transparent;
+  --rl-color-knob: #ffffff;
+  --rl-color-chip-raised: #ffffff;
+  --rl-color-text: #23241f;
+  --rl-color-text-muted: #6b6f76;
+  --rl-color-text-subtle: #696d74;
+  --rl-color-text-inverse: #ffffff;
+  --rl-color-accent: #2563eb;
+  --rl-color-accent-hover: #1d4ed8;
+  --rl-color-bg-selected: #eff4fe;
+  --rl-color-danger: #b91c1c;
+  --rl-color-danger-hover: #991b1b;
+  --rl-color-danger-bg: #fde4e4;
+  --rl-color-danger-bg-hover: #fbd0d0;
+  --rl-color-info-bg: #e8f0fe;
+  --rl-color-info-fg: #1c4bb0;
+  --rl-color-success-bg: #dcf5e4;
+  --rl-color-success-fg: #146c32;
+  --rl-color-warning-bg: #fdeed3;
+  --rl-color-warning-fg: #8a4708;
+  --rl-color-status-green: #16a34a;
+  --rl-color-status-amber: #b45309;
+  --rl-color-status-red: #ef4444;
+  --rl-color-status-grey: #6b7280;
+  --rl-color-status-blue: #2563eb;
+  --rl-tag-grey-bg: #f0f0ef;
+  --rl-tag-grey-fg: #5c6066;
+  --rl-tag-blue-bg: #e3edfd;
+  --rl-tag-blue-fg: #1d4ed8;
+  --rl-tag-green-bg: #dcf5e4;
+  --rl-tag-green-fg: #146c32;
+  --rl-tag-amber-bg: #fdeed3;
+  --rl-tag-amber-fg: #94480a;
+  --rl-tag-red-bg: #fde4e4;
+  --rl-tag-red-fg: #b91c1c;
+  --rl-tag-purple-bg: #ece6fb;
+  --rl-tag-purple-fg: #6d28d9;
+  --rl-space-1: 4px;
+  --rl-space-2: 8px;
+  --rl-space-3: 12px;
+  --rl-space-4: 16px;
+  --rl-space-5: 20px;
+  --rl-space-6: 24px;
+  --rl-space-8: 32px;
+  --rl-radius-sm: 4px;
+  --rl-radius-md: 6px;
+  --rl-radius-lg: 8px;
+  --rl-radius-pill: 999px;
+  --rl-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  --rl-font-family-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --rl-font-size-xs: 11px;
+  --rl-font-size-sm: 13px;
+  --rl-font-size-md: 14px;
+  --rl-font-size-lg: 16px;
+  --rl-font-size-xl: 20px;
+  --rl-font-size-2xl: 28px;
+  --rl-line-height-tight: 1.3;
+  --rl-line-height-normal: 1.5;
+  --rl-line-height-relaxed: 1.65;
+  --rl-font-weight-normal: 400;
+  --rl-font-weight-medium: 500;
+  --rl-font-weight-semibold: 600;
+  --rl-color-starred: #a67908;
+  --rl-color-focus: #1d4ed8;
+  --rl-focus-ring-width: 2px;
+  --rl-focus-ring-gap: 2px;
+  --rl-color-error-ring: #b91c1c;
+  --rl-color-file-pdf: #c81e24;
+  --rl-color-file-doc: #1d4ed8;
+  --rl-color-file-sheet: #127049;
+  --rl-color-file-image: #6d28d9;
+  --rl-color-file-other: #5c6066;
+  --rl-color-scrim: rgba(16, 24, 40, 0.4);
+  --rl-duration-fast: 120ms;
+  --rl-duration-base: 150ms;
+  --rl-duration-slow: 200ms;
+  --rl-ease: ease;
+  --rl-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --rl-shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
+  --rl-shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12);
+  --rl-sidebar-width: 260px;
+  --rl-row-height: 41px;
+  --rl-table-header-offset: 38px;
+  --rl-sidebar-subheading-offset: 24px;
+  --rl-detail-panel-width: 720px;
+  --rl-slide-panel-width-sm: 280px;
+  --rl-slide-panel-width-md: 428px;
+  --rl-slide-panel-width-lg: 560px;
+  --rl-control-height: 34px;
+  --rl-control-height-sm: 28px;
+  --rl-control-height-lg: 40px;
+  --rl-z-sticky: 1;
+  --rl-z-sticky-raised: 2;
+  --rl-z-shell-panel: 15;
+  --rl-z-shell-panel-full: 25;
+  --rl-z-shell-flyout: 30;
+  --rl-z-shell-nav-scrim: 20;
+  --rl-z-shell-nav: 30;
+  --rl-z-drawer: 60;
+  --rl-z-modal: 100;
+  --rl-z-menu: 200;
+  --rl-z-tooltip: 300;
+  --rl-z-toast: 400;
+  --rl-tap-target: 40px;
+  --rl-safe-inset-top: env(safe-area-inset-top, 0px);
+  --rl-safe-inset-right: env(safe-area-inset-right, 0px);
+  --rl-safe-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --rl-safe-inset-left: env(safe-area-inset-left, 0px);
+  --rl-sidebar-safe-top: var(--rl-safe-inset-top);
+  --rl-sidebar-safe-bottom: var(--rl-safe-inset-bottom);
+  --rl-sidebar-safe-left: var(--rl-safe-inset-left);
 }
 
-:root.dark {
-  --sidebar-bg: #091821;
-  --sidebar-text: #ece9e0;
-  --accent-color: #6f93ff;
-  --bg-color: #0f1f28;
-  --text-color: #ece9e0;
-  --border-color: #264454;
-  --success-color: #34d39c;
-  --error-color: #f87171;
-  --warning-color: #f9d975;
-  --info-color: #6f93ff;
-  --card-bg: #162a35;
-  --input-bg: #1b3140;
-  --hover-bg: #1f3848;
-  --muted-text: #8fa4b0;
-  --badge-blue: #6f93ff;
-  --badge-purple: #c4b5fd;
-  --badge-green: #34d39c;
-  --badge-gray: #8fa4b0;
-  --badge-red: #f87171;
-  --badge-orange: #f4aa83;
-  --badge-yellow: #f9d975;
+@media (max-width: 767px) {
+  :root {
+    --rl-page-gutter: var(--rl-space-4);
+  }
+}
+
+@media (min-width: 768px) {
+  :root {
+    --rl-page-gutter: var(--rl-space-8);
+  }
+}
+
+:root {
+  --rl-overlay-inset: 0px;
+}
+
+:root {
+  --rl-page-gutter-left: calc(var(--rl-page-gutter) + var(--rl-safe-inset-left));
+  --rl-page-gutter-right: calc(
+    var(--rl-page-gutter) + var(--rl-safe-inset-right) + var(--rl-overlay-inset)
+  );
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    color-scheme: dark;
+    --rl-color-bg: #0d0d0f;
+    --rl-color-bg-sunken: #000000;
+    --rl-color-bg-hover: #1c1c20;
+    --rl-color-bg-active: #26262c;
+    --rl-color-bg-raised: #161619;
+    --rl-color-border-raised: #4e4e58;
+    --rl-color-border-scrimmed: #4e4e58;
+    --rl-color-knob: #e8e8ea;
+    --rl-color-chip-raised: #33333b;
+    --rl-color-border: #2a2a30;
+    --rl-color-border-strong: #3d3d45;
+    --rl-color-text: #f2f2f0;
+    --rl-color-text-muted: #9ca0a7;
+    --rl-color-text-subtle: #9ca0a7;
+    --rl-color-text-inverse: #0d0d0f;
+    --rl-color-accent: #7ba7f8;
+    --rl-color-accent-hover: #a2c2fb;
+    --rl-color-bg-selected: #16233c;
+    --rl-color-danger: #f98d8d;
+    --rl-color-danger-hover: #fcb4b4;
+    --rl-color-danger-bg: #3a1618;
+    --rl-color-danger-bg-hover: #4d1d20;
+    --rl-color-info-bg: #14233d;
+    --rl-color-info-fg: #9dc0fb;
+    --rl-color-success-bg: #102a1a;
+    --rl-color-success-fg: #7cd79a;
+    --rl-color-warning-bg: #2e1f0a;
+    --rl-color-warning-fg: #f0b871;
+    --rl-color-status-green: #4ade80;
+    --rl-color-status-amber: #fbbf24;
+    --rl-color-status-red: #f87171;
+    --rl-color-status-grey: #9ca3af;
+    --rl-color-status-blue: #7ba7f8;
+    --rl-tag-grey-bg: #26262c;
+    --rl-tag-grey-fg: #b8bcc3;
+    --rl-tag-blue-bg: #16253f;
+    --rl-tag-blue-fg: #9dc0fb;
+    --rl-tag-green-bg: #102a1a;
+    --rl-tag-green-fg: #7cd79a;
+    --rl-tag-amber-bg: #2e1f0a;
+    --rl-tag-amber-fg: #f0b871;
+    --rl-tag-red-bg: #3a1618;
+    --rl-tag-red-fg: #f98d8d;
+    --rl-tag-purple-bg: #251a3d;
+    --rl-tag-purple-fg: #c4a9f7;
+    --rl-color-starred: #e2b13c;
+    --rl-color-focus: #7ba7f8;
+    --rl-color-error-ring: #f98d8d;
+    --rl-color-file-pdf: #e0484e;
+    --rl-color-file-doc: #5b8def;
+    --rl-color-file-sheet: #2a9d6f;
+    --rl-color-file-image: #9b7bef;
+    --rl-color-file-other: #8b8f96;
+    --rl-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --rl-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6);
+    --rl-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.7);
+    --rl-color-scrim: rgba(0, 0, 0, 0.65);
+  }
+}
+
+.dark {
+  color-scheme: dark;
+  --rl-color-bg: #0d0d0f;
+  --rl-color-bg-sunken: #000000;
+  --rl-color-bg-hover: #1c1c20;
+  --rl-color-bg-active: #26262c;
+  --rl-color-bg-raised: #161619;
+  --rl-color-border-raised: #4e4e58;
+  --rl-color-border-scrimmed: #4e4e58;
+  --rl-color-knob: #e8e8ea;
+  --rl-color-chip-raised: #33333b;
+  --rl-color-border: #2a2a30;
+  --rl-color-border-strong: #3d3d45;
+  --rl-color-text: #f2f2f0;
+  --rl-color-text-muted: #9ca0a7;
+  --rl-color-text-subtle: #9ca0a7;
+  --rl-color-text-inverse: #0d0d0f;
+  --rl-color-accent: #7ba7f8;
+  --rl-color-accent-hover: #a2c2fb;
+  --rl-color-bg-selected: #16233c;
+  --rl-color-danger: #f98d8d;
+  --rl-color-danger-hover: #fcb4b4;
+  --rl-color-danger-bg: #3a1618;
+  --rl-color-danger-bg-hover: #4d1d20;
+  --rl-color-info-bg: #14233d;
+  --rl-color-info-fg: #9dc0fb;
+  --rl-color-success-bg: #102a1a;
+  --rl-color-success-fg: #7cd79a;
+  --rl-color-warning-bg: #2e1f0a;
+  --rl-color-warning-fg: #f0b871;
+  --rl-color-status-green: #4ade80;
+  --rl-color-status-amber: #fbbf24;
+  --rl-color-status-red: #f87171;
+  --rl-color-status-grey: #9ca3af;
+  --rl-color-status-blue: #7ba7f8;
+  --rl-tag-grey-bg: #26262c;
+  --rl-tag-grey-fg: #b8bcc3;
+  --rl-tag-blue-bg: #16253f;
+  --rl-tag-blue-fg: #9dc0fb;
+  --rl-tag-green-bg: #102a1a;
+  --rl-tag-green-fg: #7cd79a;
+  --rl-tag-amber-bg: #2e1f0a;
+  --rl-tag-amber-fg: #f0b871;
+  --rl-tag-red-bg: #3a1618;
+  --rl-tag-red-fg: #f98d8d;
+  --rl-tag-purple-bg: #251a3d;
+  --rl-tag-purple-fg: #c4a9f7;
+  --rl-color-starred: #e2b13c;
+  --rl-color-focus: #7ba7f8;
+  --rl-color-error-ring: #f98d8d;
+  --rl-color-file-pdf: #e0484e;
+  --rl-color-file-doc: #5b8def;
+  --rl-color-file-sheet: #2a9d6f;
+  --rl-color-file-image: #9b7bef;
+  --rl-color-file-other: #8b8f96;
+  --rl-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --rl-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6);
+  --rl-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.7);
+  --rl-color-scrim: rgba(0, 0, 0, 0.65);
 }

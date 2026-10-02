@@ -267,6 +267,21 @@ describe('useScopeNavigation', () => {
       )
     })
 
+    it('walks an entity-page tab’s rows, as a list scope even with q', async () => {
+      mockRouteQuery.value = { from: 'tasks', q: 'urgent', from_page: 'topic/TOP-1/tabel' }
+      mockSchemaStore.getList.mockReturnValue({ entity: 'task' })
+      mockPositionForList(['TASK-001'])
+
+      await useScopeNavigation(() => 'TASK-001').loadScopeNav()
+
+      expect(mockGetEntityPosition).toHaveBeenCalledWith(
+        'TASK-001',
+        expect.objectContaining({
+          source: 'list', q: 'urgent', scope_page: 'topic', scope_tab: 'tabel', anchor: 'TOP-1',
+        })
+      )
+    })
+
     it('builds a search-origin scope from from=search (no list config)', async () => {
       // from=search is the dedicated search origin: no getList lookup, q is the
       // full search query, navigation can span types. getList must NOT be

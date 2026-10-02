@@ -51,6 +51,7 @@ func visibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.Vi
 func TestConformance(t *testing.T) {
 	storetest.RunAll(t, factory, searchFactory, visibleSearchFactory, storetest.Capabilities{
 		Attachments: true,
+		SoftDelete:  true,
 		Observers: func(t *testing.T, obs ...store.EntityObserver) store.Store {
 			t.Helper()
 			cfg := newConfig(storage.NewMemFS())

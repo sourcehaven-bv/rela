@@ -16,13 +16,25 @@ import (
 
 // entityJSON represents an entity for JSON output in MCP responses.
 type entityJSON struct {
-	ID         string         `json:"id"`
-	Type       string         `json:"type"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	// Face names the face served, omitted for the implicit face.
+	// `ID@face` addresses this exact row in show_entity and update_entity.
 	Face       string         `json:"face,omitempty"`
 	Title      string         `json:"title,omitempty"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Content    string         `json:"content,omitempty"`
 	Relations  *relationsJSON `json:"relations,omitempty"`
+	// OtherFaces lists the entity's other faces the caller may read, on
+	// show_entity only. Omitted when there are none.
+	OtherFaces []faceJSON `json:"other_faces,omitempty"`
+}
+
+// faceJSON names another face of an entity and the address that reads it.
+type faceJSON struct {
+	Face  string `json:"face"`
+	Label string `json:"label,omitempty"`
+	Ref   string `json:"ref"`
 }
 
 // relationsJSON groups outgoing and incoming relations.
@@ -85,6 +97,13 @@ type entityView struct {
 func convertStoreEntity(
 	ctx context.Context, e *entity.Entity, st GraphReader, meta *metamodel.Metamodel, view entityView,
 ) (string, error) {
+	return marshalJSON(buildEntityJSON(ctx, e, st, meta, view))
+}
+
+// buildEntityJSON is [convertStoreEntity] before marshaling.
+func buildEntityJSON(
+	ctx context.Context, e *entity.Entity, st GraphReader, meta *metamodel.Metamodel, view entityView,
+) entityJSON {
 	ej := entityJSON{
 		ID:         e.ID,
 		Type:       e.Type,
@@ -98,7 +117,7 @@ func convertStoreEntity(
 	if view.relations {
 		ej.Relations = buildStoreRelations(ctx, e, st, meta)
 	}
-	return marshalJSON(ej)
+	return ej
 }
 
 // displayTitle returns the entity's display name as the metamodel defines it

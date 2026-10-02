@@ -12,8 +12,9 @@ var directReadAllowlist = map[string]allowed{
 	"internal/dataentry/document.go": {1, "loadEntry reads the entry row the document route already " +
 		"gated; the render plumbing is shared with export, which moves in PR 4"},
 	"internal/dataentry/entityreader.go": {1, "readWritePrep: write-prep, liveness and relation-source policy read, never served"},
-	"internal/dataentry/gantt_handler.go": {1, "gantt root read: raw so the roll-up can run " +
-		"gate-then-redact-then-fold; the type verdict and visibility.Redact run before any value is served"},
+	"internal/dataentry/gantt_handler.go": {2, "gantt root read and the outside-parent id batch: raw so the " +
+		"roll-up can run gate-then-redact-then-fold; the type verdict, the face gate (FaceIn) and " +
+		"visibility.Redact run before any value is served"},
 	"internal/dataentry/queryservice.go": {1, "loadHitHeaders: id-batch header load for search hits, " +
 		"gated afterwards"},
 	"internal/dataentry/rowcontent.go": {1, "loadRows: id-batch raw row load; every caller gates or redacts before serving"},

@@ -16,6 +16,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { fromPageQuery } from '@/utils/pageContext'
 import { getGantt, getErrorMessage, type GanttNode, type GanttResponse } from '@/api'
 import { useSchemaStore } from '@/stores/schema'
 import { renderMarkdown } from '@/utils/markdown'
@@ -33,7 +34,15 @@ import {
   type GanttZoom,
 } from '@/utils/ganttLayout'
 
-const props = defineProps<{ id: string }>()
+const props = defineProps<{
+  id: string
+  /**
+   * Pins the chart to one entity's subtree, for a gantt tab of an entity page
+   * (`scope: root`). The drill path in the URL then continues below it, and
+   * there is no way up to the whole forest.
+   */
+  root?: string
+}>()
 
 const route = useRoute()
 const router = useRouter()
@@ -61,12 +70,21 @@ async function fetchScope(root: string | null) {
   }
 }
 
-/** Drill path from the URL (?path=id1,id2); [] means the full forest. */
+/**
+ * Drill path from the URL (?path=id1,id2), below the pinned root when there
+ * is one; [] means the full forest.
+ */
 const drillPath = computed<string[]>(() => {
   const raw = route.query.path
-  if (typeof raw !== 'string' || raw === '') return []
-  return raw.split(',')
+  const below = typeof raw !== 'string' || raw === '' ? [] : raw.split(',')
+  return props.root ? [props.root, ...below] : below
 })
+
+/** The `?path=` for a drill path: the part below the pinned root. */
+function pathQuery(path: string[]): string | undefined {
+  const below = props.root ? path.slice(1) : path
+  return below.length ? below.join(',') : undefined
+}
 
 const zoom = ref<GanttZoom>('month')
 const expanded = ref<Set<string>>(new Set())
@@ -79,9 +97,9 @@ const expanded = ref<Set<string>>(new Set())
  * Going back up above the fetched scope refetches likewise.
  */
 watch(
-  [() => props.id, drillPath] as const,
-  ([id, path], old) => {
-    const idChanged = !old || id !== old[0]
+  [() => props.id, drillPath, () => props.root] as const,
+  ([id, path, root], old) => {
+    const idChanged = !old || id !== old[0] || root !== old[2]
     if (idChanged) {
       crumbTitles.value = new Map()
       expanded.value = new Set()
@@ -144,7 +162,7 @@ const gridStyle = computed(() => {
   if (!a || !ticks.value.length) return {}
   return {
     backgroundImage: ticks.value
-      .map(() => 'linear-gradient(to right, var(--border-color) 1px, transparent 1px)')
+      .map(() => 'linear-gradient(to right, var(--rl-color-border) 1px, transparent 1px)')
       .join(', '),
     backgroundPosition: ticks.value.map((t) => `${scale.value!(t.day)}% 0`).join(', '),
     backgroundSize: '1px 100%',
@@ -179,7 +197,10 @@ function cycleLabel(node: GanttNode): string {
 /** openEntity navigates to the node's entity page — the tree-column name's
  * click, and the fallback for chart clicks that cannot drill. */
 function openEntity(node: GanttNode) {
-  router.push(`/entity/${node.type}/${node.id}`)
+  // Inside a page tab, Back on the entity returns to the tab.
+  const path = `/entity/${node.type}/${node.id}`
+  const query = fromPageQuery(route)
+  router.push(Object.keys(query).length ? { path, query } : path)
 }
 
 function drill(node: GanttNode) {
@@ -195,12 +216,12 @@ function drill(node: GanttNode) {
   titles.set(node.id, node.title || node.id)
   crumbTitles.value = titles
   const path = [...drillPath.value, node.id]
-  router.push({ query: { ...route.query, path: path.join(',') } })
+  router.push({ query: { ...route.query, path: pathQuery(path) } })
 }
 
 function drillTo(index: number) {
   const path = drillPath.value.slice(0, index + 1)
-  router.push({ query: { ...route.query, path: path.length ? path.join(',') : undefined } })
+  router.push({ query: { ...route.query, path: pathQuery(path) } })
 }
 
 function toggleExpand(node: GanttNode) {
@@ -403,7 +424,7 @@ const footerHtml = computed(() =>
 
     <div v-else class="gantt-panel">
       <div class="crumb-bar">
-        <button class="crumb" :class="{ current: crumbs.length === 0 }" @click="drillTo(-1)">
+        <button v-if="!root" class="crumb" :class="{ current: crumbs.length === 0 }" @click="drillTo(-1)">
           All work
         </button>
         <button
@@ -608,27 +629,27 @@ const footerHtml = computed(() =>
 }
 .zoom-seg {
   display: inline-flex;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   overflow: hidden;
 }
 .zoom-seg button {
   border: 0;
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   padding: 0.35rem 0.7rem;
   font-size: 0.8125rem;
   cursor: pointer;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   text-transform: capitalize;
 }
 .zoom-seg button.on {
-  background: var(--accent-color);
+  background: var(--rl-color-accent);
   color: #fff;
   font-weight: 600;
 }
 .gantt-info {
   margin-bottom: 0.75rem;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 0.9rem;
 }
 /* The loop marker sits with the type label, not on the bar itself: the bar
@@ -642,12 +663,12 @@ const footerHtml = computed(() =>
 }
 
 .gantt-error {
-  color: var(--error-color);
+  color: var(--rl-color-danger);
   padding: 1rem;
 }
 .gantt-panel {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -657,21 +678,21 @@ const footerHtml = computed(() =>
   gap: 0.4rem;
   flex-wrap: wrap;
   padding: 0.6rem 0.9rem;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 .crumb {
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   background: transparent;
   border-radius: 999px;
   padding: 0.2rem 0.7rem;
   font-size: 0.8125rem;
   cursor: pointer;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 /* Current crumb: accent BORDER + body text, not white-on-accent — the chip
    text is small, and white on the accent blue is 4.16:1 (< AA's 4.5:1). */
 .crumb.current {
-  border: 2px solid var(--accent-color);
+  border: 2px solid var(--rl-color-accent);
   font-weight: 600;
 }
 .truncated-flag {
@@ -688,13 +709,13 @@ const footerHtml = computed(() =>
 }
 .axis-row {
   display: flex;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
   height: 36px;
 }
 .tree-gutter {
   width: 280px;
   min-width: 280px;
-  border-right: 1px solid var(--border-color);
+  border-right: 1px solid var(--rl-color-border);
 }
 .axis {
   flex: 1;
@@ -705,16 +726,16 @@ const footerHtml = computed(() =>
   position: absolute;
   bottom: 4px;
   font-size: 0.75rem;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   padding-left: 4px;
-  border-left: 1px solid var(--border-color);
+  border-left: 1px solid var(--rl-color-border);
 }
 .today-flag {
   position: absolute;
   top: 0;
   bottom: 0;
   width: 2px;
-  background: var(--error-color);
+  background: var(--rl-color-danger);
 }
 .today-flag::after {
   content: 'today';
@@ -722,7 +743,7 @@ const footerHtml = computed(() =>
   top: 0;
   left: 4px;
   font-size: 0.6875rem;
-  color: var(--error-color);
+  color: var(--rl-color-danger);
   font-weight: 700;
 }
 /* Two-tier row: a full-contrast label strip on top, the bar beneath it.
@@ -731,10 +752,10 @@ const footerHtml = computed(() =>
 .row {
   display: flex;
   height: 58px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 .row:hover {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 .cell-tree {
   width: 280px;
@@ -742,7 +763,7 @@ const footerHtml = computed(() =>
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  border-right: 1px solid var(--border-color);
+  border-right: 1px solid var(--rl-color-border);
   overflow: hidden;
   white-space: nowrap;
 }
@@ -751,7 +772,7 @@ const footerHtml = computed(() =>
   background: transparent;
   width: 20px;
   cursor: pointer;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   font-size: 0.8125rem;
   padding: 0;
 }
@@ -762,7 +783,7 @@ const footerHtml = computed(() =>
   border: 0;
   background: transparent;
   font-size: 0.875rem;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -772,15 +793,15 @@ const footerHtml = computed(() =>
   padding: 0;
 }
 .tname:hover {
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
   text-decoration: underline;
 }
 .kind {
   font-size: 0.6875rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--muted-text);
-  border: 1px solid var(--border-color);
+  color: var(--rl-color-text-muted);
+  border: 1px solid var(--rl-color-border);
   border-radius: 3px;
   padding: 0 4px;
   margin-right: 0.5rem;
@@ -802,7 +823,7 @@ const footerHtml = computed(() =>
   padding: 0;
   font-size: 0.8125rem;
   font-weight: 500;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   cursor: pointer;
   white-space: nowrap;
   max-width: 60%;
@@ -810,12 +831,12 @@ const footerHtml = computed(() =>
   text-overflow: ellipsis;
 }
 .bar-name:hover {
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
   text-decoration: underline;
 }
 .bar-count {
   font-weight: 400;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 .bar {
   position: absolute;
@@ -826,7 +847,7 @@ const footerHtml = computed(() =>
 .bar.leaf {
   top: 30px;
   height: 18px;
-  background: var(--accent-color);
+  background: var(--rl-color-accent);
 }
 /* A parent is ONE slim bar: its own planned window as the body, the
    children's spill before/after it as the dotted regions. Child detail
@@ -834,10 +855,10 @@ const footerHtml = computed(() =>
 .bar.parent {
   top: 30px;
   height: 18px;
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  background: color-mix(in srgb, var(--rl-color-accent) 10%, transparent);
   /* Solid accent border: a meaningful boundary needs ≥3:1 (WCAG 1.4.11);
      the earlier 50%-alpha border was ~1.6:1 against the card. */
-  border: 1px solid var(--accent-color);
+  border: 1px solid var(--rl-color-accent);
 }
 .bar.breached {
   border-color: #b45309; /* 4.6:1 vs white, 3.4:1 vs the dark bg */
@@ -846,9 +867,9 @@ const footerHtml = computed(() =>
   position: absolute;
   top: 0;
   bottom: 0;
-  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
-  border-left: 2px solid var(--accent-color);
-  border-right: 2px solid var(--accent-color);
+  background: color-mix(in srgb, var(--rl-color-accent) 14%, transparent);
+  border-left: 2px solid var(--rl-color-accent);
+  border-right: 2px solid var(--rl-color-accent);
   pointer-events: none;
 }
 /* Overrun: amber DOTS. Texturally distinct from the past-commit stripes so
@@ -879,7 +900,7 @@ const footerHtml = computed(() =>
   left: -1.75px;
   width: 15px;
   height: 15px;
-  color: var(--error-color);
+  color: var(--rl-color-danger);
   stroke-width: 2.4; /* renders ~1.5px at this size, matching the line */
 }
 .commit-line {
@@ -888,7 +909,7 @@ const footerHtml = computed(() =>
   bottom: 0;
   left: 0;
   width: 1.5px;
-  background: var(--error-color);
+  background: var(--rl-color-danger);
 }
 /* Past-commit: red diagonal STRIPES on their own tier under the bar. */
 .past-commit {
@@ -903,14 +924,14 @@ const footerHtml = computed(() =>
   top: 0;
   bottom: 0;
   width: 1px;
-  background: var(--error-color);
+  background: var(--rl-color-danger);
   opacity: 0.7;
   pointer-events: none;
 }
 .empty {
   padding: 2rem;
   text-align: center;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 0.875rem;
 }
 .legend {
@@ -918,9 +939,9 @@ const footerHtml = computed(() =>
   gap: 1.1rem;
   flex-wrap: wrap;
   padding: 0.6rem 0.9rem;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--rl-color-border);
   font-size: 0.8125rem;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 .legend span {
   display: inline-flex;
@@ -934,16 +955,16 @@ const footerHtml = computed(() =>
   display: inline-block;
 }
 .leaf-sw {
-  background: var(--accent-color);
+  background: var(--rl-color-accent);
 }
 .parent-sw {
-  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
-  border: 1px solid var(--accent-color);
+  background: color-mix(in srgb, var(--rl-color-accent) 8%, transparent);
+  border: 1px solid var(--rl-color-accent);
 }
 .planned-sw {
-  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
-  border-left: 2px solid var(--accent-color);
-  border-right: 2px solid var(--accent-color);
+  background: color-mix(in srgb, var(--rl-color-accent) 14%, transparent);
+  border-left: 2px solid var(--rl-color-accent);
+  border-right: 2px solid var(--rl-color-accent);
 }
 .overrun-sw {
   background-image: radial-gradient(rgba(180, 83, 9, 0.9) 1.3px, transparent 1.4px);
@@ -960,9 +981,9 @@ const footerHtml = computed(() =>
   position: fixed;
   z-index: 1000;
   max-width: 300px;
-  background: var(--card-bg);
-  color: var(--text-color);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
+  border: 1px solid var(--rl-color-border);
   border-radius: 8px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
   padding: 0.6rem 0.75rem;
@@ -982,7 +1003,7 @@ const footerHtml = computed(() =>
   font-size: 0.6875rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 .tip-grid {
   display: grid;
@@ -991,14 +1012,14 @@ const footerHtml = computed(() =>
   margin: 0;
 }
 .tip-grid dt {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 .tip-grid dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
 }
 .tip-muted {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 .tip-breach {
   margin-top: 0.35rem;

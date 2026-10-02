@@ -184,9 +184,10 @@ type attachMeta struct {
 // -2 exported (TKT-KQXVF7): UpdateRelationState and
 // DeleteRelationState folded into UpdateRelation and DeleteRelation, which
 // now take an entity.RelationKey that carries the tail.
+// +1 exported (soft delete): the SoftDelete accessor.
 //
-//plimsoll:max-methods=89
-//plimsoll:max-exported-methods=33
+//plimsoll:max-methods=90
+//plimsoll:max-exported-methods=34
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
@@ -228,6 +229,9 @@ type FSStore struct {
 	relations     map[string]relationMeta // key (from--type--to) → meta
 	relationOrder []string
 	attachments   map[string]attachMeta // "entityID/property" → meta
+	// marked holds the soft-deleted families, out of the index above (see
+	// softdelete.go). Nil until the first mark.
+	marked map[string]*fsMarked
 
 	// observers notified synchronously on entity writes
 	observers []store.EntityObserver
@@ -321,6 +325,9 @@ func New(cfg Config) (*FSStore, error) {
 	s.cleanupTempFiles()
 
 	if err := s.syncIndex(); err != nil {
+		return nil, err
+	}
+	if err := applyPendingDeletes(s); err != nil {
 		return nil, err
 	}
 	s.loadAttachmentsIndex()

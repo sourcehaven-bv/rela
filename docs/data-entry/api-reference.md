@@ -755,6 +755,29 @@ the parent `entry` (`V1Entity`).
 
 ---
 
+## Soft delete and restore
+
+`DELETE /api/v1/{plural}/{id}` of a whole entity is a soft delete: the
+entity and its relations are hidden at once and purged after
+`RELA_SOFT_DELETE_DELAY` (default 60s). Until then the entity keeps its ID
+and its `unique:` values. Deleting one face (`{id}@{face}`), and deletes from
+the CLI, MCP and Lua, stay immediate.
+
+`POST /api/v1/{plural}/{id}/restore` undoes a soft delete before the purge.
+
+| Status | Meaning |
+| ------ | ------- |
+| 204 | Restored. |
+| 403 | The caller may read the entity but lacks the delete permission. |
+| 404 | Nothing to restore, or the caller may not know it exists. |
+| 409 | A `unique:` value is now held by another entity. |
+
+Only a caller who passes the normal read gate, or who deleted the entity,
+learns that it is waiting to be purged. Everyone else gets the same 404 as
+for an ID that never existed.
+
+---
+
 ## Data-entry API: GET /api/v1/_apps/{id}/{path}
 
 Serves a custom app's files for embedding in a sandboxed iframe. See the

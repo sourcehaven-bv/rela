@@ -424,3 +424,45 @@ func TestFaceGrant_CollectionCreateIsPerFace(t *testing.T) {
 		}
 	}
 }
+
+// TestFaceGrant_AnchoredDocumentIsFaceGated is BUG-6DBV6N: the document
+// routes applied only the face-blind row gate, so a `policy@published`
+// principal could render the draft (and a `command:` renderer received it
+// raw). Both the HTML route and its export are checked, and the denial must
+// happen before the renderer runs.
+func TestFaceGrant_AnchoredDocumentIsFaceGated(t *testing.T) {
+	app, d := facedExportApp(t, func(st store.Store) *acl.Declarative {
+		return mustNewACL(t, &acl.Policy{
+			Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"policy@published"}}},
+			Assignments: map[string]string{"alice": "viewer"},
+		}, st)
+	})
+	fake := withFacedReportDoc(t, app)
+
+	get := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
+		rec := httptest.NewRecorder()
+		app.handleV1Documents(rec, req)
+		return rec
+	}
+
+	for _, suffix := range []string{"", "/_export?transform=copy"} {
+		// Positive control: the granted face renders.
+		if rec := get("/api/v1/_documents/report/POL-1@published" + suffix); rec.Code != http.StatusOK ||
+			!strings.Contains(rec.Body.String(), "report POL-1@published") {
+
+			t.Fatalf("precondition %q: alice renders the published face; got %d %s", suffix, rec.Code, rec.Body)
+		}
+
+		calls := len(fake.calls)
+		rec := get("/api/v1/_documents/report/POL-1@draft" + suffix)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("draft face %q served to a policy@published principal: got %d, want 404; body=%s",
+				suffix, rec.Code, rec.Body)
+		}
+		if len(fake.calls) != calls {
+			t.Errorf("draft face %q: the renderer ran for a face the caller may not read", suffix)
+		}
+	}
+}

@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 8
+const schemaVersion = 11
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -114,16 +114,37 @@ var migrations = []migration{
 		// TKT-ZIRMGM columns. Without them the version sweep has no author to
 		// copy and attributes every create/update to its system principal.
 		to:    7,
-		apply: addEditorColumns,
+		apply: addColumns(editorColumns),
 	},
 	{
-		// v7 → v8: the type page index serves every face (TKT-KQXVF7).
+		// v7 → v8: rewrite stored timestamps in the fixed-width TimeFormat
+		// (BUG-HEIAVS). The sweep compares them as strings, and the trimmed
+		// RFC3339Nano values did not sort in time order.
+		to:    8,
+		apply: normalizeTimestamps,
+	},
+	{
+		// v8 → v9: copy provenance on live entity rows (BUG-YC5Z07), pgstore's
+		// migration 0013. The sweep captures create/update versions from the
+		// live row, so without these columns a copied entity's version reads
+		// as a direct edit. No backfill: NULL is the "direct edit" encoding.
+		to:    9,
+		apply: addColumns(originColumns),
+	},
+	{
+		// v9 → v10: the soft-delete side tables behind the data-entry Undo.
+		// Pure CREATE IF NOT EXISTS, a no-op where schemaSQL already made them.
+		to:    10,
+		apply: sqlSteps(softDeleteDDL),
+	},
+	{
+		// v10 → v11: the type page index serves every face (TKT-KQXVF7).
 		// schemaSQL has already created entities_type_id_face_idx by the
 		// time this runs, so the rung's create is a no-op kept to state
-		// what v8 means; the rung drops the (type) index it replaces and
+		// what v11 means; the rung drops the (type) index it replaces and
 		// moves the stamp. Both statements are IF [NOT] EXISTS, so a re-run
 		// after a crash is a no-op.
-		to: 8,
+		to: 11,
 		apply: sqlSteps(
 			`DROP INDEX IF EXISTS entities_type_idx`,
 			entitiesTypeIDFaceIndexDDL,
@@ -131,39 +152,51 @@ var migrations = []migration{
 	},
 }
 
-// editorColumnTables are the tables that carry last_edited_by_user and
-// last_edited_by_tool.
-var editorColumnTables = []string{"entities", "relations"}
+// editorColumns are the attribution columns, on both tables that carry them.
+var editorColumns = []addedColumn{
+	{"entities", "last_edited_by_user"}, {"entities", "last_edited_by_tool"},
+	{"relations", "last_edited_by_user"}, {"relations", "last_edited_by_tool"},
+}
 
-// addEditorColumns adds the attribution columns to every table that lacks
-// them. Existing rows keep NULL, which the sweep reads as "no recorded editor"
-// and attributes to its system principal, as it did before.
+// originColumns record how an entity row's most recent write was produced
+// (store.Origin). Entities only: a copy writes entity faces, never relations.
+var originColumns = []addedColumn{
+	{"entities", "origin_kind"}, {"entities", "origin_source"},
+	{"entities", "origin_source_face"}, {"entities", "origin_source_type"},
+	{"entities", "origin_definition"},
+}
+
+// addedColumn is one nullable TEXT column a rung adds to an existing table.
+type addedColumn struct{ table, column string }
+
+// addColumns returns a rung that adds each missing column as nullable TEXT.
+// Existing rows keep NULL, which every such column reads as "not recorded".
 //
 // Probed per column rather than run blind: ALTER TABLE ADD COLUMN has no
-// IF NOT EXISTS form. The step commits with its version bump, so it normally
-// runs once; the probe keeps a re-run safe anyway, as the ladder asks of every
-// step, instead of failing with "duplicate column name".
-func addEditorColumns(ctx context.Context, conn *sql.Conn) error {
-	for _, table := range editorColumnTables {
-		for _, column := range []string{"last_edited_by_user", "last_edited_by_tool"} {
+// IF NOT EXISTS form, and schemaSQL, which runs before the ladder, already
+// created the columns on a fresh database. The probe also keeps a re-run
+// safe, as the ladder asks of every step.
+func addColumns(cols []addedColumn) func(context.Context, *sql.Conn) error {
+	return func(ctx context.Context, conn *sql.Conn) error {
+		for _, c := range cols {
 			var n int
-			// table and column come from the literals above, never from input;
-			// pragma_table_info takes its table name as a bind parameter.
+			// table and column come from the literals above, never from
+			// input; pragma_table_info takes its table name as a bind parameter.
 			if err := conn.QueryRowContext(ctx,
-				`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, column,
+				`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, c.table, c.column,
 			).Scan(&n); err != nil {
-				return fmt.Errorf("probe %s.%s: %w", table, column, err)
+				return fmt.Errorf("probe %s.%s: %w", c.table, c.column, err)
 			}
 			if n > 0 {
 				continue
 			}
 			if _, err := conn.ExecContext(ctx,
-				fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s TEXT", table, column)); err != nil {
-				return fmt.Errorf("add %s.%s: %w", table, column, err)
+				fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s TEXT", c.table, c.column)); err != nil {
+				return fmt.Errorf("add %s.%s: %w", c.table, c.column, err)
 			}
 		}
+		return nil
 	}
-	return nil
 }
 
 // migrateToVersion4 installs the content-versioning schema on an existing

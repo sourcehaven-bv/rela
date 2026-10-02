@@ -17,11 +17,11 @@ import { getErrorMessage, getScriptError, shouldDropHeldContent } from '@/api/er
 import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
 import { documentExportUrl } from '@/api/transforms'
-import PendingButton from '@/components/common/PendingButton.vue'
 import DOMPurify from 'dompurify'
 import { useDelayedPending } from '@/composables/useDelayedPending'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
-
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
 const props = defineProps<{
   name: string
@@ -245,27 +245,27 @@ onUnmounted(() => {
            has no id, and an unconditional colon renders as "Title:". -->
       <h1>{{ entityId ? `${docTitle}: ${entityId}` : docTitle }}</h1>
       <div class="header-right">
-        <button v-if="editConfig" class="btn btn-secondary" @click="editEntity">
+        <RlButton v-if="editConfig" variant="secondary" @click="editEntity">
           {{ editConfig.label }}
-        </button>
+        </RlButton>
         <!-- Renders nothing when no transforms are registered; the menu hides
              itself on an empty registry. Both document kinds are supported —
              entityId is undefined for a standalone document. -->
         <ExportMenu :url-for="exportUrlFor" />
-        <PendingButton
-          class="btn btn-secondary"
-          :pending="loading"
-          label="Refresh"
+        <RlButton
+          variant="secondary"
+          :loading="loading"
           pending-label="Refreshing…"
           @click="loadDocument(true)"
-        />
+        >
+          Refresh
+        </RlButton>
       </div>
     </header>
 
-    <div v-if="showBlockLoader" class="loading-state">
-      <div class="spinner" />
-      <span>Rendering document...</span>
-    </div>
+    <RlStatusRegion v-if="showBlockLoader" pending-label="Rendering">
+      Rendering document...
+    </RlStatusRegion>
 
     <div v-else-if="docContent" class="document-content">
       <div v-if="isCached" class="cached-badge">cached</div>
@@ -353,11 +353,6 @@ onUnmounted(() => {
     min-width: 0;
     justify-content: flex-end;
   }
-
-  /* Esc has no meaning on a touch device. */
-  .header-left kbd {
-    display: none;
-  }
 }
 
 @media (max-width: 768px) {
@@ -382,34 +377,6 @@ onUnmounted(() => {
   }
 }
 
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.15s;
-}
-
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-secondary {
-  background: var(--border-color, #e2e8f0);
-  color: var(--text-color, #1e293b);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  filter: brightness(0.9);
-}
-
-.loading-state,
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -417,8 +384,8 @@ onUnmounted(() => {
   justify-content: center;
   padding: 96px 48px;
   gap: 16px;
-  color: var(--muted-text);
-  background: var(--card-bg);
+  color: var(--rl-color-text-muted);
+  background: var(--rl-color-bg-raised);
   border-radius: 8px;
 }
 
@@ -427,28 +394,9 @@ onUnmounted(() => {
   opacity: 0.7;
 }
 
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-.spinner-sm {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
 .document-content {
   position: relative;
-  background: var(--card-bg);
+  background: var(--rl-color-bg-raised);
   border-radius: 8px;
   padding: 32px;
 }
@@ -458,10 +406,10 @@ onUnmounted(() => {
   top: 16px;
   right: 16px;
   padding: 2px 8px;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   border-radius: 4px;
   font-size: 11px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   text-transform: uppercase;
 }
 
@@ -470,13 +418,4 @@ onUnmounted(() => {
    markdown surface via the `.md-body` class on the `.document-body` container
    — see styles/markdown-content.css. */
 
-/* Reduced motion. This is a SCOPED style, so styles/pending.css cannot
-   reach .spinner-sm — a scoped selector carries a [data-v-*] attribute and
-   outranks an unscoped rule. The suppression has to live beside the
-   declaration. */
-@media (prefers-reduced-motion: reduce) {
-  .spinner-sm {
-    animation: none;
-  }
-}
 </style>

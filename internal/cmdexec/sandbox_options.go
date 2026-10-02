@@ -26,7 +26,9 @@ var DefaultScannerSockets = []string{
 	// tmpfs at /tmp and binds this single path on top, so only the socket inode
 	// (not sibling lock/pid files) is visible, and a clamd restart that re-creates
 	// the socket needs a fresh runner. Prefer a non-/tmp LocalSocket in production.
-	"/tmp/clamd.socket", // some source builds / RHEL
+	"/tmp/clamd.socket",                       // some source builds / RHEL
+	"/opt/homebrew/var/run/clamav/clamd.sock", // Homebrew, Apple silicon
+	"/usr/local/var/run/clamav/clamd.sock",    // Homebrew, Intel
 }
 
 // DefaultScannerConfigs are well-known scanner CONFIG FILES, bound read-only so
@@ -54,8 +56,9 @@ var DefaultScannerSockets = []string{
 // file-scoped. Export and document rendering build their OWN runners with no
 // extra binds, so pandoc/ghostscript never see them.
 var DefaultScannerConfigs = []string{
-	"/etc/clamav/clamd.conf",           // Debian/Ubuntu
-	"/usr/local/etc/clamav/clamd.conf", // source builds, BSD, Homebrew
+	"/etc/clamav/clamd.conf",              // Debian/Ubuntu
+	"/usr/local/etc/clamav/clamd.conf",    // source builds, BSD, Homebrew on Intel
+	"/opt/homebrew/etc/clamav/clamd.conf", // Homebrew, Apple silicon
 }
 
 // WithExtraReadOnly binds additional host paths read-only into every command's

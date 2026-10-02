@@ -66,6 +66,10 @@ export interface EntityType {
   label_plural?: string
   plural?: string
   description?: string
+  // The property the display title is read from, when it is a single
+  // property. Absent for a templated `display_property` or a type with no
+  // candidate, where the title is derived and so cannot be edited in place.
+  primary?: string
   id_type?: 'short' | 'sequential' | 'manual'
   id_prefix?: string
   id_prefixes?: string[]

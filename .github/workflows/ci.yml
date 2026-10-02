@@ -571,6 +571,20 @@ jobs:
       - name: Build
         run: npm run build
 
+      # The component library is an npm workspace (frontend/packages). Its
+      # guards and story tests run here; its stories run in a real browser.
+      - name: Component library checks
+        working-directory: frontend/packages/rela-components
+        run: npx vue-tsc -b && npm run check
+
+      - name: Install Playwright browser (component library)
+        working-directory: frontend/packages/rela-components
+        run: npx playwright install --with-deps chromium
+
+      - name: Component library tests
+        working-directory: frontend/packages/rela-components
+        run: npm test
+
       - name: Work tree clean after build
         # Whole-repo tripwire: fails when any step of this job modified
         # tracked files or left untracked files behind (e.g. the vue-tsc
@@ -886,6 +900,9 @@ jobs:
           # reads to EOF) and this one fails only on a cold module cache.
           go list -deps ./cmd/rela-docs                    | grep 'chromedp/chromedp' >/dev/null
           go list -deps -tags postgres ./cmd/rela-docs     | grep 'chromedp/chromedp' >/dev/null
+          echo "no release build links the seqtrace runtime (overlay builds only):"
+          ! go list -deps ./cmd/rela ./cmd/rela-server                | grep -q 'tools/seqtrace'
+          ! go list -deps -tags postgres ./cmd/rela ./cmd/rela-server | grep -q 'tools/seqtrace'
           echo "no build but the sqlite one links the sqlite driver:"
           ! go list -deps ./cmd/rela-server                | grep -q 'modernc.org/sqlite'
           ! go list -deps ./cmd/rela                       | grep -q 'modernc.org/sqlite'

@@ -46,34 +46,19 @@ func (s *Store) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, 
 	return e, nil
 }
 
-// ListEntities streams entities matching q in ascending-ID order. Cursor and
-// Limit are ignored (per the EntityReader contract).
+// ListEntities iterates entities matching q in ascending-ID order, one
+// keyset page at a time (see defaultIteratorPageSize). Cursor and Limit
+// are ignored (per the EntityReader contract).
 func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
 	if err := checkQueryScope(q); err != nil {
 		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
 	}
-	sql, args := buildEntityListSQL(q, "", 0)
-	return func(yield func(*entity.Entity, error) bool) {
-		rows, err := s.db.Query(ctx, sql, args...)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			e, err := scanEntity(rows)
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			if !yield(e, nil) {
-				return
-			}
-		}
-		if err := rows.Err(); err != nil {
-			yield(nil, err)
-		}
-	}
+	return pagedSeq(func(after *entity.Ref) ([]*entity.Entity, *entity.Ref, error) {
+		sql, args := buildEntityListSQL(q, after, 0)
+		return queryPage(ctx, s.db, sql, args, scanEntity, func(e *entity.Entity) entity.Ref {
+			return entity.Ref{ID: e.ID, Face: e.Face}
+		})
+	})
 }
 
 // ListEntityHeaders implements store.HeaderReader: the same listing as
@@ -90,28 +75,30 @@ func (s *Store) ListEntityHeaders(
 	if err := checkQueryScope(q); err != nil {
 		return func(yield func(store.EntityHeader, error) bool) { yield(store.EntityHeader{}, err) }
 	}
-	sql, args := buildEntityHeaderListSQL(q, "")
-	return func(yield func(store.EntityHeader, error) bool) {
-		rows, err := s.db.Query(ctx, sql, args...)
-		if err != nil {
-			yield(store.EntityHeader{}, err)
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			h, err := scanEntityHeader(rows)
-			if err != nil {
-				yield(store.EntityHeader{}, err)
-				return
-			}
-			if !yield(h, nil) {
-				return
-			}
-		}
-		if err := rows.Err(); err != nil {
-			yield(store.EntityHeader{}, err)
-		}
+	return pagedSeq(func(after *entity.Ref) ([]store.EntityHeader, *entity.Ref, error) {
+		sql, args := buildEntityHeaderListSQL(q, after)
+		return queryPage(ctx, s.db, sql, args, scanEntityHeader, func(h store.EntityHeader) entity.Ref {
+			return entity.Ref{ID: h.ID, Face: h.Face}
+		})
+	})
+}
+
+// parseStateCursor reads an external page cursor's state key ("id" or
+// "id@face"). A pre-upgrade cursor parses as a bare id with the zero face,
+// so it keeps resuming correctly. An unparseable cursor genuinely RESTARTS
+// (nil): comparing against the garbage string would silently skip every row
+// sorting below it, which a paging caller cannot tell from end-of-results.
+// Internal iterators never come through here; they carry the key typed
+// (see pagedSeq).
+func parseStateCursor(cursor string) *entity.Ref {
+	if cursor == "" {
+		return nil
 	}
+	id, face, err := entity.ParseStateRef(cursor)
+	if err != nil {
+		return nil
+	}
+	return &entity.Ref{ID: id, Face: face}
 }
 
 // ListEntitiesPage returns a page of entities. A keyset cursor on id keeps
@@ -184,7 +171,7 @@ func buildEntityCountSQL(q store.EntityQuery) (sql string, args []any) {
 	q.Faces = q.Faces.Lowered(q.Type)
 	w := storeutil.RankingWorld(q)
 	if w.IsTrivial() {
-		where, wargs := entityWhere(q, "")
+		where, wargs := entityWhere(q, nil)
 		return "SELECT count(*) FROM entities" + where, wargs
 	}
 	_, candidate := worldSQL(w, "", &args)
@@ -204,12 +191,12 @@ func entityPageSQL(q store.EntityQuery) (sql string, args []any, err error) {
 	if fetch > 0 {
 		fetch++
 	}
-	sql, args = buildEntityListSQL(q, cursorKey, fetch)
+	sql, args = buildEntityListSQL(q, parseStateCursor(cursorKey), fetch)
 	return sql, args, nil
 }
 
 // buildHighestIDSQL selects the ids that start with prefix + "-", as a range the
-// primary key serves (migration 0018).
+// primary key serves (migration 0019).
 //
 // A range, not `id LIKE $1`: the planner turns LIKE into an index range only
 // when it sees the pattern, and pgx prepares statements, so after five
@@ -218,8 +205,12 @@ func entityPageSQL(q store.EntityQuery) (sql string, args []any, err error) {
 // primary key (id, face) is in that order, and the rows are exactly the ids
 // with prefix + "-" as a byte prefix. The exclusive upper bound is prefix +
 // ".", "." being the byte after "-".
+//
+// marked_entities is read too: a soft-deleted id may yet come back, so it
+// must not be minted again.
 func buildHighestIDSQL(prefix string) (sql string, args []any) {
-	return `SELECT DISTINCT id FROM entities WHERE id >= $1 AND id < $2`, []any{prefix + "-", prefix + "."}
+	return `SELECT id FROM entities WHERE id >= $1 AND id < $2
+	        UNION SELECT id FROM marked_entities WHERE id >= $1 AND id < $2`, []any{prefix + "-", prefix + "."}
 }
 
 // HighestID returns the highest numeric suffix among IDs of the form
@@ -297,6 +288,13 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	// with it too.
 	if lockErr := lockFamily(ctx, tx, e.ID); lockErr != nil {
 		return lockErr
+	}
+	// A soft-deleted id stays held until it is purged. Checked under the
+	// family lock, which MarkDeleted also takes.
+	if held, heldErr := markedIDTaken(ctx, tx, e.ID, ""); heldErr != nil {
+		return heldErr
+	} else if held {
+		return store.ErrConflict
 	}
 
 	{
@@ -580,6 +578,9 @@ func (s *Store) DeleteFamily(ctx context.Context, id string, cascade bool) (*sto
 	if _, err := tx.Exec(ctx, `DELETE FROM relations WHERE from_id = $1 OR to_id = $1`, id); err != nil {
 		return nil, err
 	}
+	if _, err := tx.Exec(ctx, dropMarkedEdgesSQL, id); err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM attachments WHERE entity_id = $1`, id); err != nil {
 		return nil, err
 	}
@@ -787,6 +788,33 @@ func rekeyStateFamily(
 	return states, renamed, nil
 }
 
+// renameTargetFree returns store.ErrConflict when newID is taken by another
+// entity or held by a soft-deleted one.
+func renameTargetFree(ctx context.Context, tx pgx.Tx, newID, oldID string) error {
+	// lower(...) so a rename onto an existing entity's case-variant conflicts
+	// (BUG-3RCWNS); `id <> $2` lets an entity change its OWN casing
+	// (abc -> ABC), which is a legitimate rename and not a self-collision.
+	// Matches the entities_id_lower_key index, so this uses it.
+	var exists bool
+	err := tx.QueryRow(ctx,
+		`SELECT true FROM entities WHERE lower(id) = lower($1) AND id <> $2`,
+		newID, oldID).Scan(&exists)
+	if err == nil {
+		return store.ErrConflict
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	held, err := markedIDTaken(ctx, tx, newID, oldID)
+	if err != nil {
+		return err
+	}
+	if held {
+		return store.ErrConflict
+	}
+	return nil
+}
+
 // RenameFamily changes an entity's ID, rewriting every relation endpoint and
 // re-keying attachments atomically. Returns store.ErrNotFound if oldID is
 // absent, store.ErrConflict if newID exists.
@@ -809,17 +837,8 @@ func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.R
 	if err != nil {
 		return nil, err
 	}
-	// lower(...) so a rename onto an existing entity's case-variant conflicts
-	// (BUG-3RCWNS); `id <> $2` lets an entity change its OWN casing
-	// (abc -> ABC), which is a legitimate rename and not a self-collision.
-	// Matches the entities_id_lower_key index, so this uses it.
-	err = tx.QueryRow(ctx,
-		`SELECT true FROM entities WHERE lower(id) = lower($1) AND id <> $2`,
-		newID, oldID).Scan(&exists)
-	if err == nil {
-		return nil, store.ErrConflict
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	err = renameTargetFree(ctx, tx, newID, oldID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -860,6 +879,9 @@ func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.R
 		return nil, err
 	}
 	updated += tag.RowsAffected()
+	if _, err := tx.Exec(ctx, dropMarkedEdgesSQL, oldID); err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE attachments SET entity_id = $2, seq = nextval('rela_seq') WHERE entity_id = $1`,
@@ -1023,11 +1045,11 @@ func scanEntityHeader(row scanner) (store.EntityHeader, error) {
 }
 
 // buildEntityListSQL builds the SELECT + WHERE + ORDER BY for entity
-// listings. keysetAfter, when non-empty, resumes pagination after a
-// cursor. Ordering is ascending (id, face): for the default-only
-// zero-value query that is exactly the contract's historical
-// ascending-id order (the face column is constant ”); under
-// AllFaces the states of an id sort immediately after its default row.
+// listings. after, when non-nil, resumes after that state key. Ordering is
+// ascending (id, face): for the default-only zero-value query that is
+// exactly the contract's historical ascending-id order (the face column is
+// constant ”); under AllFaces the states of an id sort immediately after
+// its default row. limit, when positive, bounds the page in SQL.
 //
 // That contiguity is a SHARED contract, not a pgstore detail: fs/mem
 // match it via storeutil.CompareStateKeys, which orders their index by
@@ -1037,14 +1059,14 @@ func scanEntityHeader(row scanner) (store.EntityHeader, error) {
 // they key on the JOINED "id@face" string, and '@' (0x40) sorts after
 // the digits (0x30-0x39), so plain string order puts PAGE-10's family
 // inside PAGE-1's. Changing either side's ordering breaks the other.
-func buildEntityListSQL(q store.EntityQuery, keysetAfter string, limit int) (sql string, args []any) {
-	return buildEntitySelectSQL(q, keysetAfter, "id, type, face, properties, content, updated_at", limit)
+func buildEntityListSQL(q store.EntityQuery, after *entity.Ref, limit int) (sql string, args []any) {
+	return buildEntitySelectSQL(q, after, "id, type, face, properties, content, updated_at", limit)
 }
 
 // buildEntityHeaderListSQL mirrors buildEntityListSQL WITHOUT the content
 // column. Column order must stay in sync with scanEntityHeader.
-func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql string, args []any) {
-	return buildEntitySelectSQL(q, keysetAfter, "id, type, face, properties, updated_at", 0)
+func buildEntityHeaderListSQL(q store.EntityQuery, after *entity.Ref) (sql string, args []any) {
+	return buildEntitySelectSQL(q, after, "id, type, face, properties, updated_at", 0)
 }
 
 // buildEntitySelectSQL is the shared body of the two list builders: the
@@ -1060,24 +1082,24 @@ func buildEntityHeaderListSQL(q store.EntityQuery, keysetAfter string) (sql stri
 // Resolution cannot be a row predicate — see worldSQL — so the shape has
 // to change, not just the WHERE clause.
 //
-// The keyset condition stays OUTSIDE the DISTINCT ON: it must page over
-// PRIMES, not over candidate rows. Applying it inside would let a cursor
-// land mid-family and resolve a prime from a partial view, which is the
-// wrong-prime hazard storeutil.PaginateWorldPrimes exists to avoid.
+// The keyset pages over PRIMES, not over candidate rows, so under a world
+// it is a strict comparison on id alone, applied to the candidates: it
+// removes whole families and never lets a page start mid-family, which
+// would resolve a prime from a partial view (the wrong-prime hazard
+// storeutil.PaginateWorldPrimes exists to avoid). Comparing (id, face)
+// against the resolved prime instead would yield an entity twice when a
+// face it now prefers was written between two pages.
 //
 // A page also bounds the DISTINCT ON itself (TKT-KQXVF7). Without that the
 // planner costs the subquery as if every prime were read, so it sorts the
 // whole type rather than walking entities_type_id_face_idx in id order and
-// stopping. The bound is exact. `id >= cursor id` inside drops whole
-// families only, so it cannot split one. Primes come out one per id in id
-// order, and the outer keyset removes at most one of them, the cursor's own
-// family, so the first limit rows the outer query keeps are among the first
-// limit+1 primes.
-func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string, limit int) (sql string, args []any) {
+// stopping. The bound is exact: primes come out one per id in id order, and
+// the keyset already removed the families before the cursor.
+func buildEntitySelectSQL(q store.EntityQuery, after *entity.Ref, columns string, limit int) (sql string, args []any) {
 	q.Faces = q.Faces.Lowered(q.Type)
 	w := storeutil.RankingWorld(q)
 	if w.IsTrivial() {
-		where, wargs := entityWhere(q, keysetAfter)
+		where, wargs := entityWhere(q, after)
 		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id ASC, face ASC` + limitClause(limit), wargs
 	}
 
@@ -1086,26 +1108,13 @@ func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string, limi
 	// the same ones the candidate predicate uses.
 	rank, candidate := worldSQL(w, "", &args)
 	scope := entityScopeWhere(q, candidate, &args)
-
-	// Cursor semantics match the default-world path: an unparseable
-	// cursor RESTARTS rather than comparing against garbage.
-	var keyset string
-	if keysetAfter != "" {
-		if cursorID, cursorPtr, err := entity.ParseStateRef(keysetAfter); err == nil {
-			args = append(args, cursorID)
-			idArg := len(args)
-			args = append(args, string(cursorPtr))
-			keyset = fmt.Sprintf(" WHERE (p.id, p.face) > ($%d, $%d)", idArg, len(args))
-			scope += fmt.Sprintf(" AND id >= $%d", idArg)
-		}
+	if after != nil {
+		args = append(args, after.ID)
+		scope += fmt.Sprintf(" AND id > $%d", len(args))
 	}
 	inner := `SELECT DISTINCT ON (id) ` + columns + ` FROM entities` + scope +
-		` ORDER BY id ASC, (` + rank + `) ASC, face ASC`
-	if limit > 0 {
-		inner += limitClause(limit + 1)
-	}
-	return `SELECT ` + columns + ` FROM (` + inner + `) p` + keyset +
-		` ORDER BY id ASC, face ASC` + limitClause(limit), args
+		` ORDER BY id ASC, (` + rank + `) ASC, face ASC` + limitClause(limit)
+	return `SELECT ` + columns + ` FROM (` + inner + `) p ORDER BY id ASC, face ASC` + limitClause(limit), args
 }
 
 // limitClause is " LIMIT n" for a positive n and empty otherwise.
@@ -1123,9 +1132,8 @@ func limitClause(n int) string {
 // parameters are bound once and shared with the rank expression) plus
 // the query's own type/IDs filters.
 //
-// It carries no keyset condition on purpose. Paging a world-scoped query
-// must page over PRIMES, not candidate rows, so the cursor is applied
-// OUTSIDE the DISTINCT ON — see buildEntitySelectSQL.
+// It carries no keyset condition: the caller appends one that removes
+// whole families only (see buildEntitySelectSQL).
 func entityScopeWhere(q store.EntityQuery, candidate string, args *[]any) string {
 	conds := []string{candidate}
 	if q.Type != "" {
@@ -1205,7 +1213,7 @@ func appendFaceInCond(conds []string, faces []entity.Face, args *[]any) []string
 	return append(conds, fmt.Sprintf("face = ANY($%d)", len(*args)))
 }
 
-func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []any) {
+func entityWhere(q store.EntityQuery, after *entity.Ref) (where string, args []any) {
 	var conds []string
 	// A selection that ranks nothing: the default world (`face = ''`, the
 	// historical query for faceless projects), AllFaces or AtFaces.
@@ -1225,20 +1233,12 @@ func entityWhere(q store.EntityQuery, keysetAfter string) (where string, args []
 		args = append(args, q.IDs)
 		conds = append(conds, fmt.Sprintf("id = ANY($%d)", len(args)))
 	}
-	if keysetAfter != "" {
-		// The cursor encodes the state key ("id" or "id@face"); a
-		// pre-upgrade cursor parses as a bare id with the zero face,
-		// so it keeps resuming correctly. Row-wise comparison matches
-		// the (id, face) ordering. An unparseable cursor genuinely
-		// RESTARTS (the keyset condition is omitted) — comparing against
-		// the garbage string would silently skip every row sorting below
-		// it, which a paging caller cannot tell from end-of-results.
-		if cursorID, cursorPtr, err := entity.ParseStateRef(keysetAfter); err == nil {
-			args = append(args, cursorID)
-			idArg := len(args)
-			args = append(args, string(cursorPtr))
-			conds = append(conds, fmt.Sprintf("(id, face) > ($%d, $%d)", idArg, len(args)))
-		}
+	if after != nil {
+		// Row-wise comparison matches the (id, face) ordering.
+		args = append(args, after.ID)
+		idArg := len(args)
+		args = append(args, string(after.Face))
+		conds = append(conds, fmt.Sprintf("(id, face) > ($%d, $%d)", idArg, len(args)))
 	}
 	if len(conds) == 0 {
 		return "", args

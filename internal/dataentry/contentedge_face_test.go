@@ -350,7 +350,11 @@ func TestContentEdges_BareIdSurfacesServeOnlyTheOwningFace(t *testing.T) {
 
 	t.Run("export", func(t *testing.T) {
 		var names []string
-		for _, g := range app.export.entityRelationGroups(ctx, pub) {
+		groups, err := app.export.entityRelationGroups(ctx, pub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, g := range groups {
 			names = append(names, g.Neighbors...)
 		}
 		if slices.Contains(names, "FEAT-DRAFT") || !slices.Contains(names, "FEAT-PUB") {

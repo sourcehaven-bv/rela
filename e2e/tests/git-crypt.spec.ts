@@ -66,9 +66,10 @@ test.describe('git-crypt encrypted entities', () => {
     await entity.navigateToEntity('feature', 'FEAT-001');
     await entity.expectInaccessibleBanner();
 
-    // The feature schema declares title/status/description/priority —
-    // all four render as locked placeholders on a fully-encrypted file.
-    expect(await entity.lockedPropertyCount()).toBe(4);
+    // The feature schema declares title/status/description/priority. The
+    // title is the page heading, so the other three render as locked
+    // placeholders on a fully-encrypted file.
+    expect(await entity.lockedPropertyCount()).toBe(3);
   });
 
   test('encrypted entity hides the Edit button', async ({ appPage, api, testProject }) => {

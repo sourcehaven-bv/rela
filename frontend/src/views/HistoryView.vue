@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRoute, type RouteLocationRaw } from 'vue-router'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
+import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import { useUIStore, useSchemaStore } from '@/stores'
 import { useWorld } from '@/composables/useWorld'
 import { entityRef } from '@/utils/entityRef'
@@ -320,18 +323,26 @@ onMounted(load)
           <span v-if="faceLabel" class="history-face"> · {{ faceLabel }}</span>
         </p>
       </div>
-      <RouterLink class="btn btn-secondary" :to="backTarget">Back to entity</RouterLink>
+      <RlButton :as="RouterLink" :to="backTarget" variant="secondary">
+        Back to entity
+      </RlButton>
     </div>
 
-    <div v-if="loading" class="loading-state">Loading version history…</div>
-    <div v-else-if="unsupported" class="loading-state">
+    <RlStatusRegion v-if="loading">Loading version history…</RlStatusRegion>
+    <!--
+      `info`, not `error`: a build without the versioning capability is working
+      as configured, and so is an entity that simply has no face in this world.
+      Neither is a failure the user could retry.
+    -->
+    <RlStatusRegion v-else-if="unsupported" tone="info">
       Version history is not available for this deployment.
-    </div>
-    <div v-else-if="error" class="error-state">{{ error }}</div>
-    <div v-else-if="worldFaceAbsent" class="loading-state">
+    </RlStatusRegion>
+    <RlStatusRegion v-else-if="error" tone="error">{{ error }}</RlStatusRegion>
+    <RlStatusRegion v-else-if="worldFaceAbsent" tone="info">
       This entity has no {{ world }} face, so it has no history in that world.
-    </div>
-    <div v-else-if="versions.length === 0" class="loading-state">No versions recorded yet.</div>
+    </RlStatusRegion>
+    <!-- The read succeeded and the answer is that nothing has been recorded. -->
+    <RlEmptyState v-else-if="versions.length === 0" title="No versions recorded yet" icon="history" />
 
     <div v-else class="history-layout">
       <!-- Timeline -->
@@ -363,15 +374,21 @@ onMounted(load)
                 >{{ originLabel(m.origin) }}</span
               >
             </button>
-            <button
+            <!--
+              `loading` rather than `disabled`: a restore is an explicit action,
+              so the button reports it on itself, and RlButton gates the label so
+              a fast restore flashes nothing.
+            -->
+            <RlButton
               v-if="canRestore && m.op !== 'delete'"
-              type="button"
-              class="btn btn-secondary btn-sm"
-              :disabled="restoring"
+              variant="secondary"
+              size="sm"
+              :loading="restoring"
+              pending-label="Restoring…"
               @click="restore(m.version)"
             >
               Restore
-            </button>
+            </RlButton>
           </li>
         </ul>
       </aside>
@@ -386,14 +403,16 @@ onMounted(load)
               v{{ m.version }} · {{ m.op }}
             </option>
           </select>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm compare-swap"
+          <RlButton
+            variant="ghost"
+            size="sm"
+            class="compare-swap"
+            aria-label="Swap sides"
             title="Swap sides"
             @click="swapSides"
           >
             ⇄
-          </button>
+          </RlButton>
           <select v-model="targetSel" class="compare-select" @change="onTargetChange">
             <option value="current">current</option>
             <option v-for="m in versionsNewestFirst" :key="m.version" :value="m.version">
@@ -444,13 +463,13 @@ onMounted(load)
 </span></code></pre>
         </div>
 
-        <p v-if="!propDiff.length && !hasContentChanges" class="loading-state">
+        <RlStatusRegion v-if="!propDiff.length && !hasContentChanges" tone="info" size="sm">
           {{
             baseSel === targetSel
               ? 'Select two different sides to compare.'
               : 'These two are identical.'
           }}
-        </p>
+        </RlStatusRegion>
       </section>
     </div>
   </div>
@@ -460,7 +479,7 @@ onMounted(load)
 /* The face label is a quiet qualifier on the subtitle, not a badge: it names
    which record is on screen without competing with the entity id. */
 .history-face {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .history-view {
@@ -478,17 +497,8 @@ onMounted(load)
 }
 .page-header p {
   margin: 4px 0 0;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 0.9em;
-}
-
-.loading-state,
-.error-state {
-  color: var(--muted-text);
-  padding: 24px 0;
-}
-.error-state {
-  color: var(--error-color);
 }
 
 .history-layout {
@@ -506,8 +516,8 @@ onMounted(load)
 }
 
 .card {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
   border-radius: 8px;
   padding: 16px;
 }
@@ -526,7 +536,7 @@ onMounted(load)
   padding: 2px;
 }
 .timeline-item.selected {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 .timeline-select {
   display: flex;
@@ -538,29 +548,29 @@ onMounted(load)
   border: none;
   text-align: left;
   cursor: pointer;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   padding: 8px;
   border-radius: 6px;
 }
 .timeline-select:hover {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 .timeline-badge {
   text-transform: uppercase;
   font-size: 0.65em;
   font-weight: 700;
   letter-spacing: 0.03em;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   min-width: 4em;
 }
 .timeline-badge[data-op='delete'] {
-  color: var(--error-color);
+  color: var(--rl-color-danger);
 }
 .timeline-badge[data-op='rename'] {
-  color: var(--warning-color);
+  color: var(--rl-color-status-amber);
 }
 .timeline-badge[data-op='create'] {
-  color: var(--success-color);
+  color: var(--rl-color-status-green);
 }
 .timeline-ver {
   font-variant-numeric: tabular-nums;
@@ -572,7 +582,7 @@ onMounted(load)
 }
 .timeline-when,
 .timeline-note {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 0.82em;
 }
 /* Provenance reads as a quiet chip rather than plain prose, so the eye can
@@ -580,9 +590,9 @@ onMounted(load)
    an annotation on the op badge, not a second op, so it is deliberately not
    coloured like one. */
 .timeline-origin {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 0.75em;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-sm, 4px);
   padding: 1px 6px;
   white-space: nowrap;
@@ -599,9 +609,9 @@ onMounted(load)
   font-weight: 600;
 }
 .compare-select {
-  background: var(--input-bg, var(--card-bg));
-  color: var(--text-color);
-  border: 1px solid var(--border-color);
+  background: var(--rl-color-bg-raised, var(--rl-color-bg-raised));
+  color: var(--rl-color-text);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   padding: 6px 8px;
   font: inherit;
@@ -613,12 +623,12 @@ onMounted(load)
   line-height: 1;
 }
 .compare-caption {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 0.85em;
   margin: 6px 0 14px;
 }
 .diff-arrow {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-weight: 400;
 }
 .prop-diff {
@@ -630,11 +640,11 @@ onMounted(load)
   gap: 12px;
   align-items: center;
   padding: 6px 0;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--rl-color-border);
 }
 .prop-label {
   font-weight: 600;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   font-size: 0.85em;
 }
 .prop-values {
@@ -644,14 +654,14 @@ onMounted(load)
   flex-wrap: wrap;
 }
 .prop-val {
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 .prop-val--old {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   text-decoration: line-through;
 }
 .prop-arrow {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 .prop-tag {
   font-size: 0.7em;
@@ -661,12 +671,12 @@ onMounted(load)
   border-radius: 4px;
 }
 .prop-tag--add {
-  color: var(--success-color);
-  border: 1px solid var(--success-color);
+  color: var(--rl-color-status-green);
+  border: 1px solid var(--rl-color-status-green);
 }
 .prop-tag--del {
-  color: var(--error-color);
-  border: 1px solid var(--error-color);
+  color: var(--rl-color-danger);
+  border: 1px solid var(--rl-color-danger);
 }
 
 .content-diff-label {
@@ -674,8 +684,8 @@ onMounted(load)
   margin-bottom: 6px;
 }
 .content-diff {
-  background: var(--code-bg, var(--bg-color));
-  border: 1px solid var(--border-color);
+  background: var(--code-bg, var(--rl-color-bg));
+  border: 1px solid var(--rl-color-border);
   padding: 12px;
   border-radius: 6px;
   overflow-x: auto;
@@ -690,10 +700,10 @@ onMounted(load)
   display: block;
 }
 .diff-line[data-op='add'] {
-  color: var(--success-color);
+  color: var(--rl-color-status-green);
 }
 .diff-line[data-op='del'] {
-  color: var(--error-color);
+  color: var(--rl-color-danger);
   text-decoration: line-through;
 }
 </style>

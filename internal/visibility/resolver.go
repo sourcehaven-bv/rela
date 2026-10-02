@@ -42,6 +42,26 @@ type World struct {
 // WorldOf is the world that scope compiles to.
 func WorldOf(scope store.WorldScope) World { return World{scope: scope} }
 
+// readWorldKey carries a per-operation world on ctx; see [WithReadWorld].
+type readWorldKey struct{}
+
+// WithReadWorld returns ctx carrying w as the world a [ScriptReader] or an
+// [UnrestrictedReader] resolves bare ids in for this operation, in place of
+// the world the reader was built with. The readers still apply their row and
+// face gates, but not the world grant, so the caller must already have
+// authorized the principal for w. MCP's `world` argument is the caller.
+func WithReadWorld(ctx context.Context, w World) context.Context {
+	return context.WithValue(ctx, readWorldKey{}, w)
+}
+
+// worldIn is the world ctx carries ([WithReadWorld]), else fallback.
+func worldIn(ctx context.Context, fallback World) World {
+	if w, ok := ctx.Value(readWorldKey{}).(World); ok {
+		return w
+	}
+	return fallback
+}
+
 // DeniedWorld is a world that exists but that the principal holds no read
 // grant for. Every read in it misses, whatever address it names.
 func DeniedWorld() World { return World{denied: true} }

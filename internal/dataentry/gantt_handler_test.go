@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"maps"
 	"math/rand"
 	"net/http"
@@ -14,9 +15,12 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -27,6 +31,15 @@ import (
 // gantt "plan" maps each type's date roles under different property names, as
 // real schemas do.
 func newGanttTestApp(t *testing.T, mutate ...func(*dataentryconfig.Gantt)) *App {
+	t.Helper()
+	return newGanttTestAppWith(t, nil, mutate...)
+}
+
+// newGanttTestAppWith is newGanttTestApp with appbuild options, so a test can
+// inject a decorated store.
+func newGanttTestAppWith(
+	t *testing.T, opts []appbuildtest.Option, mutate ...func(*dataentryconfig.Gantt),
+) *App {
 	t.Helper()
 
 	meta := &metamodel.Metamodel{
@@ -85,7 +98,7 @@ func newGanttTestApp(t *testing.T, mutate ...func(*dataentryconfig.Gantt)) *App 
 	}
 	dataentryconfig.NormalizeGantts(cfg)
 
-	return newAppFromParts(cfg, meta, newFixture())
+	return newAppFromParts(cfg, meta, newFixture(), opts...)
 }
 
 // ganttGet performs GET /api/v1/_gantts/{id}[?query] with the given ctx.
@@ -710,8 +723,8 @@ func TestGantt_SubtreeDrillDeepChain(t *testing.T) {
 // TestGantt_SubtreeDrillExternalParentMatchesFull pins the equivalence
 // contract for the shapes that previously diverged: a node with a second
 // parent OUTSIDE the drilled subtree (under both first and prune defaults)
-// must render identically to the full build's subtree — the fast path
-// declines and the full build decides placement.
+// must render identically to the full build's subtree. The fast path reads
+// the outside parent and lets it compete in parent selection.
 func TestGantt_SubtreeDrillExternalParentMatchesFull(t *testing.T) {
 	app := newGanttTestApp(t)
 	seedProject(app, "PRJ-AAA", "WinsLexically", nil)
@@ -754,8 +767,8 @@ func TestGantt_SubtreeDrillPropertyEquivalence(t *testing.T) {
 	// under the default error policy the full build 422s, so equivalence over
 	// the BUILT tree is what this guards. "mark" is the sharper case — it
 	// renders the loop rather than discarding it, and its re-seating step
-	// reads the candidate-parent set, which in subtree mode holds only
-	// in-subtree edges.
+	// depends on ancestry the fast path does not load, so there it declines
+	// whenever a parent outside the subtree is involved.
 	for _, policy := range []string{"prune", "mark"} {
 		t.Run(policy, func(t *testing.T) { subtreeDrillEquivalence(t, policy) })
 	}
@@ -1178,5 +1191,298 @@ func TestGantt_CycleMarkNeverRevealsHiddenTopology(t *testing.T) {
 	}
 	if strings.Contains(body, "EPIC-H") {
 		t.Errorf("hidden entity id appears in the response")
+	}
+}
+
+// ganttSubtreeOf returns the subtree rooted at id cut from a full-build
+// response, re-serialized for byte comparison. Empty when id is absent.
+func ganttSubtreeOf(t *testing.T, full v1.GanttResponse, id string) string {
+	t.Helper()
+	var found *v1.GanttNode
+	var find func(ns []v1.GanttNode)
+	find = func(ns []v1.GanttNode) {
+		for i := range ns {
+			if ns[i].ID == id {
+				found = &ns[i]
+			}
+			find(ns[i].Children)
+		}
+	}
+	find(full.Roots)
+	if found == nil {
+		return ""
+	}
+	b, err := json.Marshal(*found)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// assertDrillMatchesFull asserts that drilling into PRJ-ROOT returns exactly
+// the subtree the full build renders for it, under the same ctx.
+func assertDrillMatchesFull(ctx context.Context, t *testing.T, app *App) v1.GanttNode {
+	t.Helper()
+	const id = "PRJ-ROOT"
+	want := ganttSubtreeOf(t, decodeGantt(t, ganttGet(ctx, app, "plan")), id)
+	if want == "" {
+		t.Fatalf("%s missing from the full build", id)
+	}
+	drilled := decodeGantt(t, ganttGet(ctx, app, "plan?root="+id))
+	if len(drilled.Roots) != 1 {
+		t.Fatalf("drill returned %d roots, want 1", len(drilled.Roots))
+	}
+	got, _ := json.Marshal(drilled.Roots[0])
+	if string(got) != want {
+		t.Errorf("drill(%s) diverges from the full build:\n got %s\nwant %s", id, got, want)
+	}
+	return drilled.Roots[0]
+}
+
+// TestGantt_SubtreeDrillMultiParentErrorIsSubtreeScoped pins the drilled
+// semantics of multi_parent:"error": only entities inside the drilled subtree
+// are checked, and their parents count wherever those parents sit. An
+// offender elsewhere fails the root view but not the drill.
+func TestGantt_SubtreeDrillMultiParentErrorIsSubtreeScoped(t *testing.T) {
+	strict := func(g *dataentryconfig.Gantt) { g.MultiParent = "error" }
+	seedOutsideOffender := func(app *App) {
+		seedProject(app, "PRJ-A", "P1", nil)
+		seedProject(app, "PRJ-B", "P2", nil)
+		seedEpic(app, "EPIC-S", "Shared", "2026-01-01", "2026-02-01")
+		seedRelation(app, &entity.Relation{From: "PRJ-A", Type: "has-epic", To: "EPIC-S"})
+		seedRelation(app, &entity.Relation{From: "PRJ-B", Type: "has-epic", To: "EPIC-S"})
+	}
+
+	t.Run("offender outside the subtree is ignored", func(t *testing.T) {
+		app := newGanttTestApp(t, strict)
+		seedOutsideOffender(app)
+		seedProject(app, "PRJ-T", "Topic", nil) // no children at all
+		seedProject(app, "PRJ-U", "Topic with a child", nil)
+		seedEpic(app, "EPIC-U", "Only child", "2026-03-01", "2026-04-01")
+		seedRelation(app, &entity.Relation{From: "PRJ-U", Type: "has-epic", To: "EPIC-U"})
+
+		if rec := ganttGet(context.Background(), app, "plan"); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("root view keeps the global check: got %d, want 422", rec.Code)
+		}
+		for _, id := range []string{"PRJ-T", "PRJ-U"} {
+			rec := ganttGet(context.Background(), app, "plan?root="+id)
+			if rec.Code != http.StatusOK {
+				t.Errorf("drill(%s): got %d, want 200; body=%s", id, rec.Code, rec.Body)
+			}
+		}
+		// PRJ-U still carries its child and roll-up.
+		u := decodeGantt(t, ganttGet(context.Background(), app, "plan?root=PRJ-U"))
+		if len(u.Roots[0].Children) != 1 || u.Roots[0].Rolled == nil || u.Roots[0].Rolled.End != "2026-04-01" {
+			t.Errorf("drill(PRJ-U) lost its subtree: %+v", u.Roots[0])
+		}
+	})
+
+	t.Run("offender inside the subtree still fails", func(t *testing.T) {
+		app := newGanttTestApp(t, strict)
+		seedOutsideOffender(app)
+		// EPIC-S sits inside PRJ-A's subtree, so drilling PRJ-A names it.
+		if rec := ganttGet(context.Background(), app, "plan?root=PRJ-A"); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("drill(PRJ-A): got %d, want 422", rec.Code)
+		}
+		seedProject(app, "PRJ-T", "Topic", nil)
+		seedProject(app, "PRJ-M", "Mid", nil)
+		seedProject(app, "PRJ-Z", "Elsewhere", nil)
+		seedEpic(app, "EPIC-IN", "Shared inside", "2026-01-01", "2026-02-01")
+		seedRelation(app, &entity.Relation{From: "PRJ-T", Type: "contains", To: "PRJ-M"})
+		seedRelation(app, &entity.Relation{From: "PRJ-M", Type: "has-epic", To: "EPIC-IN"})
+		// The second parent sits outside the drilled subtree; it still counts.
+		seedRelation(app, &entity.Relation{From: "PRJ-Z", Type: "has-epic", To: "EPIC-IN"})
+
+		rec := ganttGet(context.Background(), app, "plan?root=PRJ-T")
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("got %d, want 422; body=%s", rec.Code, rec.Body)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "EPIC-IN") {
+			t.Errorf("error should name the in-subtree offender: %s", body)
+		}
+		if strings.Contains(body, "EPIC-S") {
+			t.Errorf("error must not name an offender outside the subtree: %s", body)
+		}
+	})
+
+	t.Run("drilled root with two parents fails", func(t *testing.T) {
+		app := newGanttTestApp(t, strict)
+		seedProject(app, "PRJ-P1", "P1", nil)
+		seedProject(app, "PRJ-P2", "P2", nil)
+		seedProject(app, "PRJ-T", "Topic", nil)
+		seedRelation(app, &entity.Relation{From: "PRJ-P1", Type: "contains", To: "PRJ-T"})
+		seedRelation(app, &entity.Relation{From: "PRJ-P2", Type: "contains", To: "PRJ-T"})
+
+		rec := ganttGet(context.Background(), app, "plan?root=PRJ-T")
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "PRJ-T") {
+			t.Fatalf("got %d, want 422 naming PRJ-T; body=%s", rec.Code, rec.Body)
+		}
+	})
+
+	t.Run("a parent the principal cannot see does not count", func(t *testing.T) {
+		app := newGanttTestApp(t, strict)
+		seedProject(app, "PRJ-T", "Topic", nil)
+		seedProject(app, "PRJ-M", "Mid", nil)
+		seedEpic(app, "EPIC-H", "Hidden parent", "2026-01-01", "2026-02-01")
+		seedRelation(app, &entity.Relation{From: "PRJ-T", Type: "contains", To: "PRJ-M"})
+		seedRelation(app, &entity.Relation{From: "EPIC-H", Type: "contains", To: "PRJ-M"})
+
+		if rec := ganttGet(context.Background(), app, "plan?root=PRJ-T"); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("privileged drill: got %d, want 422", rec.Code)
+		}
+		d := mustNewACL(t, &acl.Policy{
+			Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"project"}}},
+			Assignments: map[string]string{"alice": "viewer"},
+		}, app.store)
+		app.acl = d
+		rec := ganttGet(gateCtxFor(aliceCtx(), t, d), app, "plan?root=PRJ-T")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("ORACLE: a hidden parent must not make the drill fail: got %d; body=%s", rec.Code, rec.Body)
+		}
+		if strings.Contains(rec.Body.String(), "EPIC-H") {
+			t.Errorf("hidden entity id appears in the response")
+		}
+	})
+}
+
+// TestGantt_SubtreeDrillOutsideParentGating pins that a parent outside the
+// drilled subtree takes part in parent selection exactly as the full build
+// lets it: a visible one can win the child away, while one the principal
+// cannot see, or one its source filter excludes, is not a candidate at all.
+func TestGantt_SubtreeDrillOutsideParentGating(t *testing.T) {
+	seed := func(app *App) {
+		seedProject(app, "PRJ-ROOT", "Drilled", map[string]any{"status": "active"})
+		seedProject(app, "PRJ-KID", "Kid", map[string]any{
+			"status": "active", "planned_start": "2027-01-01", "planned_end": "2027-06-01"})
+		// "EPIC-" sorts before "PRJ-", so when visible it wins the parent slot.
+		seedEpic(app, "EPIC-X", "Outside parent", "2026-01-01", "2026-02-01")
+		seedRelation(app, &entity.Relation{From: "PRJ-ROOT", Type: "contains", To: "PRJ-KID"})
+		seedRelation(app, &entity.Relation{From: "EPIC-X", Type: "contains", To: "PRJ-KID"})
+	}
+
+	t.Run("visible outside parent wins", func(t *testing.T) {
+		app := newGanttTestApp(t)
+		seed(app)
+		got := assertDrillMatchesFull(context.Background(), t, app)
+		if len(got.Children) != 0 {
+			t.Errorf("EPIC-X should own PRJ-KID: %+v", got.Children)
+		}
+	})
+
+	t.Run("hidden outside parent is not a candidate", func(t *testing.T) {
+		app := newGanttTestApp(t)
+		seed(app)
+		d := mustNewACL(t, &acl.Policy{
+			Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"project"}}},
+			Assignments: map[string]string{"alice": "viewer"},
+		}, app.store)
+		app.acl = d
+		got := assertDrillMatchesFull(gateCtxFor(aliceCtx(), t, d), t, app)
+		if len(got.Children) != 1 || got.Children[0].ID != "PRJ-KID" {
+			t.Errorf("with EPIC-X hidden PRJ-KID belongs to PRJ-ROOT: %+v", got.Children)
+		}
+	})
+
+	t.Run("filtered-out outside parent is not a candidate", func(t *testing.T) {
+		app := newGanttTestApp(t, func(g *dataentryconfig.Gantt) {
+			g.Sources["epic"] = dataentryconfig.GanttSource{Start: "start", End: "end", Where: []string{"title=Nothing"}}
+		})
+		seed(app)
+		got := assertDrillMatchesFull(context.Background(), t, app)
+		if len(got.Children) != 1 || got.Children[0].ID != "PRJ-KID" {
+			t.Errorf("with EPIC-X filtered out PRJ-KID belongs to PRJ-ROOT: %+v", got.Children)
+		}
+	})
+}
+
+// ganttRowCounter decorates a store and counts the ROWS its reads return.
+// storetest.Counting counts calls, which a whole-type scan keeps constant, so
+// it cannot tell a drilled read from a full build; rows can.
+type ganttRowCounter struct {
+	store.Store
+	rows int
+}
+
+func (c *ganttRowCounter) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
+	e, err := c.Store.GetEntity(ctx, ref)
+	if e != nil {
+		c.rows++
+	}
+	return e, err
+}
+
+func (c *ganttRowCounter) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	return countRows(&c.rows, c.Store.ListEntities(ctx, q))
+}
+
+func (c *ganttRowCounter) ListEntityHeaders(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	return countRows(&c.rows, store.ListEntityHeaders(ctx, c.Store, q))
+}
+
+func (c *ganttRowCounter) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
+	return countRows(&c.rows, c.Store.ListRelations(ctx, q))
+}
+
+func (c *ganttRowCounter) GraphQuery(ctx context.Context, q store.GraphQuery) iter.Seq2[*entity.Entity, error] {
+	return countRows(&c.rows, c.Store.GraphQuery(ctx, q))
+}
+
+func countRows[T any](n *int, seq iter.Seq2[T, error]) iter.Seq2[T, error] {
+	return func(yield func(T, error) bool) {
+		for v, err := range seq {
+			if err == nil {
+				*n++
+			}
+			if !yield(v, err) {
+				return
+			}
+		}
+	}
+}
+
+// TestGantt_SubtreeDrillReadBudget pins that a drill whose subtree has a
+// parent outside it reads only what that subtree needs: the rows and calls
+// are the same with 10 and with 50 unrelated projects in the graph. Before
+// the outside-parent lookup, this shape fell back to the full build and read
+// every project, epic and hierarchy edge.
+func TestGantt_SubtreeDrillReadBudget(t *testing.T) {
+	type reads struct{ rows, calls int }
+	measure := func(t *testing.T, unrelated int) reads {
+		t.Helper()
+		counting := storetest.NewCounting(memstore.New())
+		rows := &ganttRowCounter{Store: counting}
+		app := newGanttTestAppWith(t, []appbuildtest.Option{appbuildtest.WithStore(rows)})
+		seedProject(app, "PRJ-ROOT", "Drilled", nil)
+		seedProject(app, "PRJ-KID", "Kid", nil)
+		seedProject(app, "PRJ-OUT", "Outside parent", nil)
+		seedEpic(app, "EPIC-K", "Leaf", "2026-01-01", "2026-02-01")
+		seedRelation(app, &entity.Relation{From: "PRJ-ROOT", Type: "contains", To: "PRJ-KID"})
+		seedRelation(app, &entity.Relation{From: "PRJ-OUT", Type: "contains", To: "PRJ-KID"})
+		seedRelation(app, &entity.Relation{From: "PRJ-KID", Type: "has-epic", To: "EPIC-K"})
+		for i := range unrelated {
+			id := fmt.Sprintf("PRJ-U%03d", i)
+			seedProject(app, id, "Unrelated", nil)
+			seedEpic(app, fmt.Sprintf("EPIC-U%03d", i), "Unrelated", "2026-01-01", "2026-02-01")
+			seedRelation(app, &entity.Relation{From: id, Type: "has-epic", To: fmt.Sprintf("EPIC-U%03d", i)})
+		}
+		// "PRJ-OUT" sorts before "PRJ-ROOT", so it owns PRJ-KID in both builds.
+		assertDrillMatchesFull(context.Background(), t, app)
+
+		counting.Reset()
+		rows.rows = 0
+		rec := ganttGet(context.Background(), app, "plan?root=PRJ-ROOT")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d; body=%s", rec.Code, rec.Body)
+		}
+		t.Logf("unrelated=%d rows=%d calls=%s", unrelated, rows.rows, counting)
+		return reads{rows: rows.rows, calls: counting.Reads()}
+	}
+
+	small, large := measure(t, 10), measure(t, 50)
+	if small != large {
+		t.Errorf("drill reads grow with unrelated graph size: 10 -> %+v, 50 -> %+v", small, large)
 	}
 }

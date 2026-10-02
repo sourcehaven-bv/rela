@@ -103,6 +103,7 @@ func RunAll(t *testing.T, newQueue NewQueue) {
 	t.Run("PoolSurvivesExpiredDeadlines", func(t *testing.T) { testPoolSurvivesExpiredDeadlines(t, newQueue) })
 	t.Run("IdenticalPayloadsAreDistinctJobs", func(t *testing.T) { testIdenticalPayloads(t, newQueue) })
 	t.Run("HandlerSeesItsRetryPolicy", func(t *testing.T) { testHandlerSeesRetryPolicy(t, newQueue) })
+	t.Run("HandlerContextHasDeadline", func(t *testing.T) { testHandlerContextHasDeadline(t, newQueue) })
 
 	// NOTE: there is deliberately no "panicking handler" case here.
 	//
@@ -630,6 +631,38 @@ func testHandlerSeesRetryPolicy(t *testing.T, newQueue NewQueue) {
 	got, ok := rec.last()
 	require.True(t, ok)
 	require.Equal(t, jobs.RetryPersistent, got.Retry)
+}
+
+// testHandlerContextHasDeadline pins that the per-execution cap reaches the
+// handler as a context deadline. A cap that only abandons the handler frees
+// the worker slot but leaves a wedged handler running forever, holding
+// whatever it holds — a pool connection, in BUG-9TGOH1.
+func testHandlerContextHasDeadline(t *testing.T, newQueue NewQueue) {
+	t.Helper()
+
+	type seen struct {
+		deadline time.Time
+		ok       bool
+	}
+	got := make(chan seen, 1)
+	q := startQueue(t, newQueue(t), "bounded", func(ctx context.Context, _ jobs.Job) error {
+		d, ok := ctx.Deadline()
+		select {
+		case got <- seen{d, ok}:
+		default:
+		}
+		return nil
+	})
+
+	require.NoError(t, q.Enqueue(context.Background(), jobs.Job{Kind: "bounded"}))
+
+	select {
+	case s := <-got:
+		require.True(t, s.ok, "handler context carries no deadline")
+		require.True(t, s.deadline.After(time.Now()), "handler deadline already passed")
+	case <-time.After(settleTimeout):
+		t.Fatal("timed out waiting for handler to run")
+	}
 }
 
 // testIdempotencyCollapses pins the dedupe contract: a keyed job submitted

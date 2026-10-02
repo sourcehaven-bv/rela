@@ -613,6 +613,8 @@ type Config struct {
 	Dashboard        *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
 	Actions          map[string]dataentryconfig.Action           `json:"actions,omitempty"`
 	Navigation       []dataentryconfig.NavigationEntry           `json:"navigation"`
+	Spaces           []dataentryconfig.Space                     `json:"spaces,omitempty"`
+	Pages            map[string]dataentryconfig.Page             `json:"pages,omitempty"`
 	Documents        map[string]dataentryconfig.DocumentConfig   `json:"documents,omitempty"`
 	Apps             map[string]App                              `json:"apps,omitempty"`
 	Palette          *dataentryconfig.ResolvedPalette            `json:"palette,omitempty"`
@@ -786,6 +788,17 @@ type SidebarItem struct {
 	// this payload stays free of per-principal data beyond the permission
 	// filter.
 	Entities *SidebarEntities `json:"entities,omitempty"`
+
+	// Flyout is set when the entry opens its view in a panel that slides out
+	// of the sidebar instead of navigating. Href still names the full page,
+	// for a modified click and for the panel's expand control.
+	Flyout *SidebarFlyout `json:"flyout,omitempty"`
+
+	// StatusKey is set when the entry declares `status:` rules. It names the
+	// entry in the /api/v1/_nav_status response, which carries the
+	// per-principal counts; the sidebar itself carries none, so it stays the
+	// same for every principal.
+	StatusKey string `json:"status_key,omitempty"`
 }
 
 // SidebarEntities is the list query behind an `entities:` navigation entry,
@@ -801,11 +814,124 @@ type SidebarEntities struct {
 	Sort string `json:"sort,omitempty"`
 }
 
+// SidebarFlyout names the view a sidebar entry opens as a flyout.
+type SidebarFlyout struct {
+	List string `json:"list"`
+}
+
+// NavStatusResponse is the body of GET /api/v1/_nav_status: the status each
+// sidebar entry should flag for this principal, keyed by
+// [SidebarItem.StatusKey]. An entry with nothing to flag is absent.
+type NavStatusResponse struct {
+	Items map[string]NavStatus `json:"items"`
+}
+
+// NavStatus is the state one sidebar entry flags: the tone of the first of
+// its rules with a count above zero, that rule's label with `{count}`
+// filled in, and the count.
+type NavStatus struct {
+	Tone  string `json:"tone"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+// SidebarSpace is one entry of the space switcher.
+type SidebarSpace struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Icon  string `json:"icon,omitempty"`
+	// Home is the SPA href the space opens on, without the space prefix: its
+	// `home:` entry, else the first navigation destination this principal can
+	// see, else "/dashboard".
+	Home string `json:"home"`
+}
+
+// SidebarPage is one page of `pages:` with the tabs this principal may see,
+// in config order. Tabs is empty when the principal may see none.
+//
+// EntityType is set on an entity page, which shows one entity of that type
+// (the anchor) and is addressed as `/p/<page>/<entity>/<tab>`. Badge names
+// the anchor's property the header shows beside its title.
+type SidebarPage struct {
+	Label      string           `json:"label"`
+	Icon       string           `json:"icon,omitempty"`
+	EntityType string           `json:"entity_type,omitempty"`
+	Badge      string           `json:"badge,omitempty"`
+	Tabs       []SidebarPageTab `json:"tabs"`
+}
+
+// SidebarPageTab is one tab of a [SidebarPage]. View is the kind of view the
+// tab shows ("list", "kanban", "calendar", "gantt", "document" or
+// "dashboard") and Target the id of that view, empty for the dashboard.
+//
+// Scope is set on a tab of an entity page: "relation" when the view keeps the
+// rows the anchor reaches over Relation in Direction ("outgoing" or
+// "incoming", from the anchor's side), "root" when a gantt starts at the
+// anchor. The SPA uses Relation and Direction to link a new row to the
+// anchor; the server narrows the rows from its own config, never from these.
+type SidebarPageTab struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Icon      string `json:"icon,omitempty"`
+	View      string `json:"view"`
+	Target    string `json:"target,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	Relation  string `json:"relation,omitempty"`
+	Direction string `json:"direction,omitempty"`
+}
+
+// SidebarCreate is one entry of a space's Create menu.
+type SidebarCreate struct {
+	Type  string `json:"type"`
+	Label string `json:"label"`
+	Form  string `json:"form"`
+}
+
 // SidebarGroup represents a navigation group with items.
+//
+// ItemsKey is set on a group that declares `items_from:`. Its entries are
+// entity titles, so the sidebar carries none of them: Items is empty and the
+// SPA fills the group from the /api/v1/_nav_items response under this key.
+// ItemsPage names the entity page each entry opens, empty when an entry opens
+// the entity itself. ItemsList names the list the entries come from, for a
+// link to all of its rows.
 type SidebarGroup struct {
 	Group     string        `json:"group,omitempty"`
 	Collapsed bool          `json:"collapsed,omitempty"`
 	Items     []SidebarItem `json:"items"`
+	ItemsKey  string        `json:"items_key,omitempty"`
+	ItemsPage string        `json:"items_page,omitempty"`
+	ItemsList string        `json:"items_list,omitempty"`
+	// ItemsCreate is the add control on a generated group's heading
+	// (`items_from.create`), present only when this principal may create
+	// the list's type and a form resolves. A UI hint; the create endpoint
+	// re-authorizes.
+	ItemsCreate *SidebarCreate `json:"items_create,omitempty"`
+}
+
+// NavItemsResponse is the body of GET /api/v1/_nav_items: the entries of
+// each generated navigation group for this principal, keyed by
+// [SidebarGroup.ItemsKey]. A group whose list could not be read is absent.
+type NavItemsResponse struct {
+	Items map[string]NavItemList `json:"items"`
+}
+
+// NavItemList is the entries of one generated group, in the list's order.
+// Truncated is true when the list shows the principal more rows than the
+// group's limit.
+type NavItemList struct {
+	Entries   []NavItem `json:"entries"`
+	Truncated bool      `json:"truncated,omitempty"`
+}
+
+// NavItem is one entry of a generated group: a row of the list, with its
+// title as this principal may see it. Initial is the letter badge, empty
+// when there is none to show.
+type NavItem struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Label   string `json:"label"`
+	Initial string `json:"initial,omitempty"`
 }
 
 // DashboardResponse contains the dashboard page config with the cards this
@@ -828,8 +954,27 @@ type DashboardResponse struct {
 
 // SidebarResponse contains the sidebar data with app info and navigation.
 type SidebarResponse struct {
-	App        AppConfig      `json:"app"`
+	App AppConfig `json:"app"`
+	// Navigation is the top-level navigation, or with `spaces:` configured
+	// the navigation of the current space [SidebarResponse.Space].
 	Navigation []SidebarGroup `json:"navigation"`
+
+	// Spaces are the spaces this principal may enter, in config order.
+	// Absent when the config declares no `spaces:`, and when it does but the
+	// principal may enter none of them.
+	Spaces []SidebarSpace `json:"spaces,omitempty"`
+	// Space is the id of the current space: the requested one when the
+	// principal may enter it, else the first of Spaces. Empty when Spaces is.
+	Space string `json:"space,omitempty"`
+	// Create is the current space's Create menu: its `create:` types that
+	// the principal may create and for which a create form resolves. A UI
+	// hint, like InlineCreate; the create endpoint re-authorizes.
+	Create []SidebarCreate `json:"create,omitempty"`
+
+	// Pages are the config's `pages:`, keyed by page id, each with the tabs
+	// this principal may see. Absent when the config declares no pages.
+	Pages map[string]SidebarPage `json:"pages,omitempty"`
+
 	// LogoURL is the cache-busted URL of the user-uploaded sidebar logo,
 	// or nil when no logo is set. Included here (rather than in
 	// `_settings`) so the SPA can render the logo on first paint without

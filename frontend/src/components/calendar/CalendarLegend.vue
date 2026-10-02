@@ -62,53 +62,53 @@ function sourceLabel(source: CalendarSourceConfig): string {
   align-items: center;
   gap: var(--space-xs);
   padding: 2px var(--space-sm);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
   background: none;
-  color: var(--text-color);
+  color: var(--rl-color-text);
   font-size: var(--font-size-sm);
   cursor: pointer;
 }
 
 .calendar-legend-item:hover {
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
 }
 
 /* A hidden source stays legible rather than disappearing: it is the control
    for bringing itself back, so it must still read as its own name. */
 .calendar-legend-item--off {
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   text-decoration: line-through;
 }
 
 .calendar-legend-item--off .calendar-legend-swatch {
   background: none;
-  border: 1px solid var(--legend-swatch, var(--accent-color));
+  border: 1px solid var(--legend-swatch, var(--rl-color-accent));
 }
 
 .calendar-legend-swatch {
   width: 10px;
   height: 10px;
   border-radius: 2px;
-  background: var(--legend-swatch, var(--accent-color));
+  background: var(--legend-swatch, var(--rl-color-accent));
 }
 
 .calendar-legend-item--blue {
-  --legend-swatch: var(--badge-blue);
+  --legend-swatch: var(--rl-color-status-blue);
 }
 .calendar-legend-item--green {
-  --legend-swatch: var(--badge-green);
+  --legend-swatch: var(--rl-color-status-green);
 }
 .calendar-legend-item--amber {
-  --legend-swatch: var(--badge-orange);
+  --legend-swatch: var(--rl-color-status-amber);
 }
 .calendar-legend-item--red {
-  --legend-swatch: var(--badge-red);
+  --legend-swatch: var(--rl-color-status-red);
 }
 .calendar-legend-item--violet {
-  --legend-swatch: var(--badge-purple);
+  --legend-swatch: var(--rl-color-accent);
 }
 .calendar-legend-item--slate {
-  --legend-swatch: var(--badge-gray);
+  --legend-swatch: var(--rl-color-status-grey);
 }
 </style>

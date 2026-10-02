@@ -1,5 +1,5 @@
-import { type Page, type Locator, expect } from '@playwright/test';
-import { BasePage } from './base.page';
+import { type Page, type Locator, expect } from "@playwright/test";
+import { BasePage } from "./base.page";
 
 /**
  * Page object for the pending-indicator framework (TKT-TFSNBY).
@@ -19,9 +19,18 @@ export class PendingPage extends BasePage {
     this.activityBar = page.locator('[data-testid="activity-bar"]');
   }
 
-  /** A PendingButton by its resting label. */
+  /**
+   * A label-swapping button by its resting label.
+   *
+   * The mechanism now lives in the shared component library's `RlButton`,
+   * which reserves the width exactly as rela's own button did — both labels
+   * stacked in one grid cell, the inactive one hidden by `visibility`. So
+   * this object measures the same geometry through the library's class names.
+   */
   pendingButton(label: string): Locator {
-    return this.page.locator(`.pending-button:has(.pending-button__label:text-is("${label}"))`);
+    return this.page.locator(
+      `.rl-button:has(.rl-button__label:text-is("${label}"))`,
+    );
   }
 
   /** Measured width of a button's border box, in CSS pixels. */
@@ -38,8 +47,12 @@ export class PendingPage extends BasePage {
    */
   async expectBothLabelsPresent(restingLabel: string, pendingLabel: string) {
     const button = this.pendingButton(restingLabel);
-    await expect(button.locator(`.pending-button__label:text-is("${restingLabel}")`)).toHaveCount(1);
-    await expect(button.locator(`.pending-button__label:text-is("${pendingLabel}")`)).toHaveCount(1);
+    await expect(
+      button.locator(`.rl-button__label:text-is("${restingLabel}")`),
+    ).toHaveCount(1);
+    await expect(
+      button.locator(`.rl-button__label:text-is("${pendingLabel}")`),
+    ).toHaveCount(1);
   }
 
   /**
@@ -47,9 +60,12 @@ export class PendingPage extends BasePage {
    * `toBeHidden` is satisfied by `visibility: hidden`, which is precisely
    * the mechanism under test — the element still occupies its box.
    */
-  async expectPendingLabelReservedButHidden(restingLabel: string, pendingLabel: string) {
+  async expectPendingLabelReservedButHidden(
+    restingLabel: string,
+    pendingLabel: string,
+  ) {
     const label = this.pendingButton(restingLabel).locator(
-      `.pending-button__label:text-is("${pendingLabel}")`
+      `.rl-button__label:text-is("${pendingLabel}")`,
     );
     await expect(label).toBeHidden();
     // Non-zero box = still contributing to the parent's width.
@@ -67,10 +83,30 @@ export class PendingPage extends BasePage {
    */
   async labelWidth(restingLabel: string, which: string): Promise<number> {
     const box = await this.pendingButton(restingLabel)
-      .locator(`.pending-button__label:text-is("${which}")`)
+      .locator(`.rl-button__label:text-is("${which}")`)
       .boundingBox();
     if (!box) throw new Error(`label "${which}" has no bounding box`);
     return box.width;
+  }
+
+  /**
+   * The resting label is still the visible one, i.e. the pending gate never
+   * elapsed.
+   *
+   * Asserted on the LABELS rather than on a state attribute on the button.
+   * `rl-button--loading` and `aria-busy` track the raw `loading` prop, so they
+   * are set for the whole request however short it is; what the gate governs is
+   * which of the two stacked labels is hidden. That is also the thing the user
+   * would actually see swap.
+   */
+  async expectLabelNeverSwapped(restingLabel: string, pendingLabel: string) {
+    const button = this.pendingButton(restingLabel);
+    await expect(
+      button.locator(`.rl-button__label:text-is("${restingLabel}")`),
+    ).toBeVisible();
+    await expect(
+      button.locator(`.rl-button__label:text-is("${pendingLabel}")`),
+    ).toBeHidden();
   }
 
   /** Navigate a burst of routes back-to-back, without settling between. */
@@ -78,59 +114,40 @@ export class PendingPage extends BasePage {
     for (const path of paths) {
       await this.navigateTo(path);
     }
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState("networkidle");
   }
 
   /**
-   * Computed `animation-name` for a bare element carrying `className`,
-   * under whatever media emulation is currently active.
-   */
-  async animationNameFor(className: string): Promise<string> {
-    return this.page.evaluate((cls) => {
-      const el = document.createElement('div');
-      el.className = cls;
-      document.body.appendChild(el);
-      const name = getComputedStyle(el).animationName;
-      el.remove();
-      return name;
-    }, className);
-  }
-
-  /**
-   * Vertical distance between an animated, absolutely-centred spinner's
-   * centre and its offset parent's centre, measured MID-ANIMATION.
+   * Open /analyze with its response held, run `body` while the cold-load
+   * spinner is on screen, then release.
    *
-   * Built as a standalone fixture rather than driven through the real
-   * relation search, because the property under test is pure CSS geometry:
-   * does the rotation keyframe clobber the centring transform? Reproducing
-   * the exact `.search-spinner` box inside a positioned parent isolates
-   * that without depending on search timing or seed data.
+   * The spinner marks a COLD load, so it is on screen only while a request
+   * is outstanding — a few frames against a local server. Stalling the
+   * response is what makes the element measurable at all; racing the real
+   * request gives a test that passes by luck.
    */
-  async animatedCentringOffset(): Promise<number> {
-    return this.page.evaluate(() => {
-      const parent = document.createElement('div');
-      parent.style.cssText = 'position:relative;height:60px;width:200px';
-      const spinner = document.createElement('div');
-      // Mirrors .search-spinner's box and centring strategy.
-      spinner.style.cssText =
-        'position:absolute;right:12px;top:50%;margin-top:-8px;width:16px;' +
-        'height:16px;box-sizing:border-box;border:2px solid #000;border-radius:50%;' +
-        'animation:spin 0.6s linear infinite';
-      parent.appendChild(spinner);
-      document.body.appendChild(parent);
-      // Sample part-way through a rotation, where a clobbered translate
-      // shows up as a vertical displacement.
-      const anim = spinner.getAnimations()[0];
-      if (anim) {
-        anim.currentTime = 150;
-        anim.pause();
-      }
-      const p = parent.getBoundingClientRect();
-      const s = spinner.getBoundingClientRect();
-      const offset = s.top + s.height / 2 - (p.top + p.height / 2);
-      parent.remove();
-      return offset;
-    });
+  async withColdLoadSpinner(body: (spinner: Locator) => Promise<void>) {
+    const pattern = "**/api/v1/_analyze**";
+    /*
+     * The request is never answered — the spinner is what is under test, not
+     * the analysis. Deliberately NOT "hold the route, then continue on the way
+     * out": unrouting while a handler is still parked leaves it with a dead
+     * route and throws `Route is already handled!`, which fails the test after
+     * its assertions have already passed.
+     */
+    await this.page.route(pattern, () => {});
+    try {
+      // Not navigateTo: that waits for domcontentloaded, and the point is to
+      // observe the page mid-flight. The origin is derived the same way,
+      // because no baseURL is configured.
+      const origin = new URL(this.page.url()).origin;
+      await this.page.goto(`${origin}/analyze`, { waitUntil: "commit" });
+      const spinner = this.page.locator(".rl-status-region--pending .rl-spinner");
+      await expect(spinner).toBeVisible();
+      await body(spinner);
+    } finally {
+      await this.page.unroute(pattern);
+    }
   }
 
   async expectActivityBarHidden() {

@@ -146,6 +146,16 @@ func budgetConfig() *Config {
 				}},
 			},
 		},
+		// An entity page over epics whose tab lists the tickets tracked by
+		// the anchor. Every ticket is tracked by E1, so the tab's row count
+		// grows with n.
+		Pages: map[string]dataentryconfig.Page{
+			"epic": {Label: "Epic", EntityType: "epic", Tabs: []dataentryconfig.PageTab{{
+				ID: "tickets", Label: "Tickets", List: "tickets", Scope: &dataentryconfig.PageTabScope{
+					Relation: "tracked-by", Direction: dataentryconfig.DirectionIncoming,
+				},
+			}}},
+		},
 		Forms:      map[string]dataentryconfig.Form{},
 		Kanbans:    map[string]dataentryconfig.Kanban{},
 		Navigation: []dataentryconfig.NavigationEntry{},
@@ -519,6 +529,48 @@ func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
 	assertBudget(t, "edge warnings", small, large, edgeWarningsBudget, detail)
 }
 
+// A list page inside an entity page's tab (pagescope.go). The scope costs one
+// gated anchor read and one relation query, whatever the number of rows it
+// keeps; it also takes the list off the pushdown path, so the rows come from
+// the whole-type read.
+func TestQueryBudget_PageScopedListIsSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets",
+			"per_page=100&scope_page=epic&scope_tab=tickets&anchor=E1")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", rec.Code, rec.Body)
+		}
+		if len(resp.Data) < 10 {
+			t.Fatalf("list returned %d rows", len(resp.Data))
+		}
+	})
+	assertBudget(t, "page-scoped list", small, large, pageScopedListBudget, detail)
+}
+
+// The generated navigation entries (nav_items.go) of a group over the tickets
+// list, with the owner's initial. At 50 tickets the group is truncated at its
+// limit of 20, at 10 it is not, and the read count must not tell them apart:
+// the rows are one store page, and the initials one relation query and one
+// header batch over the served rows, whatever their number.
+func TestQueryBudget_NavItemsWithInitialsAreSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		installNavItemsGroup(app, app.State().Cfg.Lists["tickets"], dataentryconfig.NavItemsFrom{
+			Limit:   20,
+			Initial: &dataentryconfig.NavItemsInitial{Relation: "assigned-to"},
+		})
+		items, _ := navItemsAs(gateCtxFor(ctx, t, d), t, app)
+		if n := len(items["0"].Entries); n < 10 {
+			t.Fatalf("nav items returned %d entries", n)
+		}
+		if items["0"].Entries[0].Initial != "P" {
+			t.Fatalf("first entry has initial %q, want the assignee's", items["0"].Entries[0].Initial)
+		}
+	})
+	assertBudget(t, "nav items", small, large, navItemsBudget, detail)
+}
+
 // Pinned budgets: the measured store-call count per request shape after
 // TKT-1U8XYN. Raise one only with a reason in the commit.
 const (
@@ -536,6 +588,13 @@ const (
 	// edge warnings: the test's own listing of the peers, ONE header read for
 	// every peer, and the membership walk.
 	edgeWarningsBudget = 4
+
+	// page-scoped list: the anchor read, the scope's relation query, the
+	// whole-type read, page edges, neighbor headers, membership walk.
+	pageScopedListBudget = 7
+	// nav items: scoped count + one bounded page read (listpushdown.go), the
+	// initials' relation query and neighbor headers, membership walk.
+	navItemsBudget = 6
 	// search: whole-type read, membership walk.
 	searchBudget = 3
 	// recursive view: entry, the fixpoint's relation queries, the collection

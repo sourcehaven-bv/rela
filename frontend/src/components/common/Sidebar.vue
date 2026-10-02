@@ -1,32 +1,39 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { useSchemaStore, useUIStore, useGitStore } from '@/stores'
+import { useSchemaStore, useUIStore } from '@/stores'
 import { getSidebar, runAction } from '@/api'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { useActionFeedback } from '@/composables/useActionFeedback'
-import type { SidebarGroup, SidebarItem } from '@/types'
-import { isInputFocused } from '@/utils/dom'
-import {
-  IconApps,
-  IconMoon,
-  IconSearch,
-  IconSettings,
-  IconSun,
-  IconWarning,
-} from '@/utils/icons'
-import NavIcon from './NavIcon.vue'
-import SidebarEntityQuery from './SidebarEntityQuery.vue'
 import { useEvents } from '@/composables/useEvents'
-import { useSidebarEmptyGroups } from '@/composables/useSidebarEmptyGroups'
+import type { Entity, SidebarCreate, SidebarGroup, SidebarItem } from '@/types'
+import type { NavGroup, NavItem } from 'rela-components/types'
+import type { ThemeChoice } from 'rela-components/components/layout/RlThemeToggle.vue'
+import RlThemeToggle from 'rela-components/components/layout/RlThemeToggle.vue'
+import SidebarFooter from './SidebarFooter.vue'
+import { isInputFocused } from '@/utils/dom'
+import RlSidebar from 'rela-components/components/layout/RlSidebar.vue'
+import RlSidebarGroup from 'rela-components/components/layout/RlSidebarGroup.vue'
 import ProjectSwitcher from './ProjectSwitcher.vue'
+import SpaceSwitcher from './SpaceSwitcher.vue'
 import WorldSwitcher from './WorldSwitcher.vue'
+import AccountMenu from './AccountMenu.vue'
+import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
+import { spaceOf, stripSpace, useSpaceStore, withSpace } from '@/stores/space'
+import { usePageStore } from '@/stores/pages'
+import { activeNavId, expandEntityEntries, expandGeneratedItems, toNavGroups } from './sidebarNav'
+import { useNavStatus } from '@/composables/useNavStatus'
+import { useNavItems } from '@/composables/useNavItems'
+import { useNavEntities } from '@/composables/useNavEntities'
+import { useFlyout } from '@/composables/useFlyout'
+import { shouldDeferToBrowser } from '@/utils/openIntent'
 import { apiUrl } from '@/api/base'
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
-const gitStore = useGitStore()
 const { reportResult, reportError } = useActionFeedback()
+const spaceStore = useSpaceStore()
+const pageStore = usePageStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -39,40 +46,158 @@ const sidebarAppName = ref('')
 
 const appName = computed(() => sidebarAppName.value || schemaStore.app.name)
 
-// Custom apps surfaced as sidebar links. The label falls back to title, then
-// the id, so an app with no metadata still gets a usable entry.
-const appLinks = computed(() =>
-  Array.from(schemaStore.apps.entries()).map(([id, app]) => ({
-    id,
-    label: app.label || app.title || id,
-  })),
-)
 // Logo lives on the schema store so SettingsView can update it after
 // upload/remove without a sidebar refetch.
 const logoUrl = computed(() => schemaStore.logoUrl)
 
-const {
-  entryKey,
-  itemKey,
-  setEntryShown,
-  groupIsEmpty,
-  reset: resetEmptyGroups,
-} = useSidebarEmptyGroups()
+/*
+ * The pinned entries, the config groups and the custom apps, as one nav model.
+ *
+ * All three were separate blocks of template before, each repeating the
+ * link-or-button branch. They are the same shape, so they are built as one
+ * list and the library renders them; only their PLACEMENT differs, and the
+ * pinned pair keeps its own slot.
+ */
+const appGroups = computed<SidebarGroup[]>(() => {
+  // Custom apps (sandboxed-iframe extensions). The label falls back to title,
+  // then the id, so an app with no metadata still gets a usable entry.
+  const apps = Array.from(schemaStore.apps.entries()).map(([id, app]) => ({
+    label: app.label || app.title || id,
+    href: `/app/${id}`,
+    icon: 'apps',
+  }))
+  return apps.length ? [{ group: 'Apps', items: apps }] : []
+})
 
-// Load generation for itemKey; sidebarRequest drops a response overtaken by a
-// later load, so two quick config reloads keep the newer navigation.
-const sidebarLoad = ref(0)
+const flyout = useFlyout()
+
+/*
+ * A plain click on an `open: flyout` entry slides its list out instead of
+ * navigating, and a second one puts it away. Every other click is the link's.
+ */
+function onFlyoutClick(item: SidebarItem, id: string, event: MouseEvent) {
+  if (shouldDeferToBrowser(event) || !item.flyout || !item.href) return
+  event.preventDefault()
+  event.stopPropagation()
+  flyout.toggle({ navId: id, title: item.label, listId: item.flyout.list, href: item.href })
+}
+
+// Counts are fetched only when some entry declares `status:` rules.
+const hasStatusRules = computed(() =>
+  sidebarGroups.value.some((group) => group.items.some((item) => item.status_key))
+)
+const navStatus = useNavStatus(hasStatusRules)
+
+// Entries of generated groups are fetched only when some group declares
+// `items_from:`; they are per principal, so the sidebar carries none.
+const hasGeneratedGroups = computed(() => sidebarGroups.value.some((group) => group.items_key))
+const navItems = useNavItems(hasGeneratedGroups)
+const navEntities = useNavEntities(sidebarGroups)
+
+/*
+ * Every nav href in the current space (TKT-GNKR5H).
+ *
+ * The router would redirect an unprefixed path anyway, but a real prefixed
+ * href keeps a modified click and the active-row match in the space.
+ */
+function inSpace(groups: SidebarGroup[]): SidebarGroup[] {
+  if (!spaceStore.enabled) return groups
+  return groups.map((group) => ({
+    ...group,
+    items: group.items.map((item) =>
+      item.href ? { ...item, href: spaceStore.href(item.href) } : item
+    ),
+  }))
+}
+
+const shownGroups = computed(() =>
+  inSpace([
+    ...expandGeneratedItems(expandEntityEntries(sidebarGroups.value, navEntities.rowsFor), navItems.itemsFor),
+    ...appGroups.value,
+  ])
+)
+
+const navGroups = computed(() =>
+  toNavGroups(shownGroups.value, RouterLink, onFlyoutClick, navStatus.statusFor)
+)
+
+/*
+ * The "+" on a generated group's heading: the create dialog for the group's
+ * list, then the new entity's page. toNavGroups maps one to one, so the
+ * library's group finds its source by position.
+ */
+const creating = ref<{ offer: SidebarCreate; page?: string } | null>(null)
+
+function onGroupAdd(group: NavGroup) {
+  const source = shownGroups.value[navGroups.value.findIndex((g) => g.id === group.id)]
+  if (source?.items_create) creating.value = { offer: source.items_create, page: source.items_page }
+}
+
+function onCreated(entity: Entity) {
+  const page = creating.value?.page
+  creating.value = null
+  const id = encodeURIComponent(entity.id)
+  void router.push(spaceStore.href(page ? `/p/${page}/${id}` : `/entity/${entity.type}/${id}`))
+}
+
+const pinnedGroups = computed(() =>
+  toNavGroups(
+    inSpace([
+      {
+        items: [
+          { label: 'Search', href: '/search', icon: 'search' },
+          { label: 'Analysis', href: '/analyze', icon: 'warning' },
+        ],
+      },
+    ]),
+    RouterLink
+  )
+)
+
+/*
+ * The highlighted row, resolved across the pinned entries as well as the nav.
+ * They are rendered in separate slots but form one selection: two active rows
+ * at once would say the user is in two places.
+ */
+const activeId = computed(
+  () => activeNavId(pinnedGroups.value, route.path) ?? activeNavId(navGroups.value, route.path)
+)
+
+/*
+ * The theme choice, stored by rela rather than by the control.
+ *
+ * Left unbound the picker keeps the choice for the page and forgets it on
+ * reload. rela's store already persists the same three values under the
+ * `theme` key, so this binds straight onto it with no translation. The
+ * picker is rendered from the #footer slot rather than by RlSidebar itself,
+ * because rela replaces the whole band (see the slot).
+ */
+const theme = computed<ThemeChoice>({
+  get: () => uiStore.themeMode,
+  set: (value) => uiStore.setThemeMode(value),
+})
+
+// Load sidebar data. With spaces, the server resolves the route's space: an
+// unknown or hidden one falls back to the first the principal may enter, and
+// the route follows it.
+// Drops a response overtaken by a later load, so two quick config reloads
+// keep the newer navigation.
 let sidebarRequest = 0
 
-// Load sidebar data
 async function loadSidebar() {
   const request = ++sidebarRequest
   try {
-    const data = await getSidebar()
+    // Before the initial navigation resolves the route reads `/`, which
+    // would send a deep link to the first space.
+    await router.isReady()
+    const data = await getSidebar(spaceOf(route.path))
     if (request !== sidebarRequest) return
+    spaceStore.set(data)
+    pageStore.set(data.pages)
+    if (data.space && spaceOf(route.path) !== data.space) {
+      await router.replace(withSpace(stripSpace(route.fullPath), data.space))
+    }
     sidebarAppName.value = data.app.name
-    resetEmptyGroups()
-    sidebarLoad.value++
     sidebarGroups.value = data.navigation
     schemaStore.setLogoUrl(data.logoUrl ?? null)
     // Principal-scoped inline-create offers ride on this payload; see
@@ -88,29 +213,45 @@ async function loadSidebar() {
 
 // Keyboard shortcut for search.
 //
-// Defers to a list view's in-place search box when one is rendered — list
-// views own their own search affordance now (TKT-603FQ), and jumping to the
-// standalone /search page would surprise users mid-list. The fallback
-// behavior (push /search) still applies on routes without a search box.
+// Defers to a search box that is already on screen rather than jumping to the
+// standalone /search page: a list view owns its own search affordance
+// (TKT-603FQ), and so does the library sidebar's own filter, which appears
+// once the nav is long enough. Taking focus away from either would surprise
+// the user mid-typing. The fallback (push /search) still applies elsewhere.
 function handleKeydown(e: KeyboardEvent) {
   if (e.key !== '/') return
   if (isInputFocused()) return
   if (document.querySelector('.entity-list .search-box')) return
+  if (document.querySelector('.rl-sidebar .rl-search-box input')) return
   e.preventDefault()
   router.push('/search')
 }
 
-// Close mobile sidebar on route change
-watch(() => route.path, () => {
-  if (uiStore.sidebarMobileOpen) {
-    uiStore.closeMobileSidebar()
+// A different space has a different navigation and Create menu.
+watch(
+  () => spaceOf(route.path),
+  (next) => {
+    if (spaceStore.enabled && next !== spaceStore.current) void loadSidebar()
   }
-})
+)
+
+// Close mobile sidebar on route change
+watch(
+  () => route.path,
+  () => {
+    if (uiStore.sidebarMobileOpen) {
+      uiStore.closeMobileSidebar()
+    }
+  }
+)
 
 // Lock body scroll when mobile sidebar is open
-watch(() => uiStore.sidebarMobileOpen, (open) => {
-  document.body.style.overflow = open ? 'hidden' : ''
-})
+watch(
+  () => uiStore.sidebarMobileOpen,
+  (open) => {
+    document.body.style.overflow = open ? 'hidden' : ''
+  }
+)
 
 function handleKeydownAll(e: KeyboardEvent) {
   handleKeydown(e)
@@ -135,22 +276,29 @@ onUnmounted(() => {
   document.body.style.overflow = ''
 })
 
-function isActive(href: string): boolean {
-  return route.path === href || route.path.startsWith(href + '/')
+/*
+ * A nav row was chosen.
+ *
+ * A link navigates by itself — it is a real `RouterLink`, so the browser owns
+ * modifier-click and middle-click. Only an action needs handling here, and it
+ * is matched back by the id the mapping minted.
+ */
+function onSelect(navItem: NavItem) {
+  const action = navItem.id.startsWith('action:') ? navItem.id.slice('action:'.length) : undefined
+  if (!action) return
+  const item = allItems.value.find((candidate) => candidate.action === action)
+  if (item) handleAction(item)
 }
 
-// Icon names come from config and resolve through the shared allowlist
-// registry (utils/icons.ts); unknown names fall back to a default rather than
-// throwing, so a stale config still renders. This used to be a local switch
-// returning emoji, which could not take `currentColor`, ignored the theme, and
-// rendered differently on every OS.
+const allItems = computed<SidebarItem[]>(() =>
+  [...sidebarGroups.value, ...appGroups.value].flatMap((group) => group.items)
+)
 
 async function handleAction(item: SidebarItem, ev?: Event) {
   if (!item.action) return
   if (actionInFlight.value.has(item.action)) return
 
-  const triggerEl =
-    ev && ev.currentTarget instanceof HTMLElement ? ev.currentTarget : null
+  const triggerEl = ev && ev.currentTarget instanceof HTMLElement ? ev.currentTarget : null
 
   actionInFlight.value.add(item.action)
   try {
@@ -168,424 +316,90 @@ async function handleAction(item: SidebarItem, ev?: Event) {
 </script>
 
 <template>
-  <aside
+  <RlSidebar
     id="main-sidebar"
     class="sidebar"
-    :class="{ collapsed: uiStore.sidebarCollapsed, 'mobile-open': uiStore.sidebarMobileOpen }"
+    :class="{ collapsed: uiStore.sidebarCollapsed }"
+    :workspace-name="appName"
+    :groups="navGroups"
+    :active-id="activeId"
+    :flyout-id="flyout.openNavId.value"
+    @select="onSelect"
+    @group-add="onGroupAdd"
+    @toggle-collapse="uiStore.toggleSidebar"
+    @close="uiStore.closeMobileSidebar"
   >
-    <div class="sidebar-header">
-      <RouterLink to="/" class="logo" :aria-label="appName">
-        <img v-if="logoUrl" :src="apiUrl(logoUrl)" :alt="appName" class="logo-img" />
-        <span v-else>{{ appName }}</span>
-      </RouterLink>
-      <button class="collapse-btn" @click="uiStore.toggleSidebar">
-        {{ uiStore.sidebarCollapsed ? '→' : '←' }}
-      </button>
-    </div>
-
-    <!-- Each switcher renders only when there is more than one choice. -->
-    <div v-if="!uiStore.sidebarCollapsed" class="sidebar-switcher">
+    <!--
+      The project picker fetches its own list and renders its own menu, so it
+      replaces the control and keeps the header's layout around it. Each
+      switcher renders only when there is more than one choice.
+    -->
+    <template #switcher>
       <ProjectSwitcher />
-      <WorldSwitcher />
-    </div>
-
-    <!-- Fixed top items: Search and Analysis -->
-    <div class="sidebar-top-items">
-      <RouterLink to="/search" class="nav-item" :class="{ active: route.path === '/search' }">
-        <component :is="IconSearch" class="nav-icon" :size="18" aria-hidden="true" />
-        <span class="nav-label">Search</span>
-        <kbd v-if="!uiStore.sidebarCollapsed">/</kbd>
-      </RouterLink>
-      <RouterLink to="/analyze" class="nav-item" :class="{ active: route.path === '/analyze' }">
-        <component :is="IconWarning" class="nav-icon" :size="18" aria-hidden="true" />
-        <span class="nav-label">Analysis</span>
-      </RouterLink>
-    </div>
-
-    <nav class="sidebar-nav">
-      <!-- An ungrouped entry is a group without a title. -->
-      <div
-        v-for="(group, index) in sidebarGroups"
-        v-show="!groupIsEmpty(group, index)"
-        :key="index"
-        :class="{ 'nav-section': group.group }"
-      >
-        <div v-if="group.group" class="nav-section-title">{{ group.group }}</div>
-        <template v-for="(item, itemIndex) in group.items" :key="itemKey(item, index, itemIndex, sidebarLoad)">
-          <button
-            v-if="item.action"
-            type="button"
-            class="nav-item nav-action"
-            :aria-label="item.label"
-            :disabled="actionInFlight.has(item.action)"
-            @click="handleAction(item, $event)"
-          >
-            <NavIcon
-              :name="item.icon"
-              :fallback="item.derivedIcon"
-              :collapsed="uiStore.sidebarCollapsed"
-            />
-            <span class="nav-label">{{ item.label }}</span>
-          </button>
-          <RouterLink
-            v-else-if="item.href"
-            :to="item.href"
-            class="nav-item"
-            :class="{ active: isActive(item.href) }"
-          >
-            <NavIcon
-              :name="item.icon"
-              :fallback="item.derivedIcon"
-              :collapsed="uiStore.sidebarCollapsed"
-            />
-            <span class="nav-label">{{ item.label }}</span>
-          </RouterLink>
-          <SidebarEntityQuery
-            v-else-if="item.entities"
-            v-slot="{ rows, overflow, failed }"
-            :entities="item.entities"
-            @shown="(shown: boolean) => setEntryShown(entryKey(index, itemIndex), shown)"
-          >
-            <RouterLink
-              v-for="row in rows"
-              :key="row.key"
-              :to="row.to"
-              class="nav-item nav-entity"
-              :class="{ active: isActive(row.path) }"
-              :title="row.title"
-            >
-              <NavIcon :name="item.icon" :fallback="item.derivedIcon" :collapsed="uiStore.sidebarCollapsed" />
-              <span class="nav-label">{{ row.title }}</span>
-            </RouterLink>
-            <div v-if="overflow > 0" class="nav-note nav-label">and {{ overflow }} more</div>
-            <div v-if="failed" class="nav-note nav-label" role="status">Could not load</div>
-          </SidebarEntityQuery>
+      <SpaceSwitcher :app-name="appName">
+        <template v-if="logoUrl" #logo>
+          <img :src="apiUrl(logoUrl)" :alt="appName" class="logo-img" />
         </template>
-      </div>
+      </SpaceSwitcher>
+      <WorldSwitcher />
+    </template>
 
-      <!-- Custom apps (sandboxed-iframe extensions). Routes to /app/:id. -->
-      <div v-if="appLinks.length" class="nav-section">
-        <div class="nav-section-title">Apps</div>
-        <RouterLink
-          v-for="app in appLinks"
-          :key="app.id"
-          :to="`/app/${app.id}`"
-          class="nav-item"
-          :class="{ active: isActive(`/app/${app.id}`) }"
-        >
-          <component :is="IconApps" class="nav-icon" :size="18" aria-hidden="true" />
-          <span class="nav-label">{{ app.label }}</span>
-        </RouterLink>
-      </div>
-    </nav>
-
-    <!-- Mobile-only footer: git status, settings, theme toggle -->
-    <div class="sidebar-mobile-footer">
-      <div v-if="gitStore.isAvailable" class="mobile-git-status" :class="gitStore.statusClass">
-        <span class="mobile-git-dot"/>
-        <span class="nav-label">{{ gitStore.branch }} · {{ gitStore.statusText }}</span>
-      </div>
-      <RouterLink to="/settings" class="nav-item" :class="{ active: route.path === '/settings' }">
-        <component :is="IconSettings" class="nav-icon" :size="18" aria-hidden="true" />
-        <span class="nav-label">Settings</span>
-      </RouterLink>
-      <button
-        v-if="!schemaStore.darkDisabled"
-        class="nav-item nav-action"
-        @click="uiStore.toggleDarkMode()"
-      >
-        <component :is="uiStore.isDark ? IconSun : IconMoon" class="nav-icon" :size="18" aria-hidden="true" />
-        <span class="nav-label">{{ uiStore.isDark ? 'Light Mode' : 'Dark Mode' }}</span>
-      </button>
-    </div>
-
-    <Teleport to="body">
-      <div
-        v-if="uiStore.sidebarMobileOpen"
-        class="sidebar-backdrop"
-        @click="uiStore.closeMobileSidebar()"
+    <!--
+      Search and Analysis sit above the config-driven nav and never scroll out
+      of reach, which is why they are a slot rather than a first group.
+    -->
+    <template #pinned>
+      <RlSidebarGroup
+        v-for="group in pinnedGroups"
+        :key="group.id"
+        :group="group"
+        :active-id="activeId"
       />
-    </Teleport>
-  </aside>
+    </template>
+
+    <!--
+      The footer is rela's chrome band: git status, the next-action chip,
+      Settings, About, Shortcuts. It replaces the library's single default
+      link, so the theme picker has to be re-rendered here — the slot takes
+      the whole band, toggle included.
+    -->
+    <template #footer>
+      <SidebarFooter />
+      <AccountMenu />
+      <RlThemeToggle v-if="!schemaStore.darkDisabled" v-model="theme" class="sidebar-theme" />
+    </template>
+  </RlSidebar>
+  <InlineCreateFormModal
+    v-if="creating"
+    :show="true"
+    :form-id="creating.offer.form"
+    :entity-type="creating.offer.type"
+    @close="creating = null"
+    @created="onCreated"
+  />
 </template>
 
 <style scoped>
-.sidebar {
-  width: 240px;
-  height: calc(100vh - 24px); /* Account for status bar */
-  background: var(--sidebar-bg, #1a1a2e);
-  color: var(--sidebar-text, #e8e8e8);
-  display: flex;
-  flex-direction: column;
-  position: fixed;
-  left: 0;
-  top: 0;
-  transition: width 0.2s ease;
-  z-index: 100;
+/* Matches the library's own `.rl-sidebar__theme`: below the links, not beside
+   them — the rail is too narrow for a row. */
+.sidebar-theme {
+  margin-top: var(--rl-space-2);
 }
 
+/*
+ * The collapsed rail. The library owns the sidebar's width through
+ * `--rl-sidebar-width` and has no collapsed state of its own — it emits
+ * `toggle-collapse` and leaves the decision here — so narrowing the rail means
+ * rebinding that variable rather than setting `width` directly, which the
+ * library's own rule would otherwise win.
+ */
 .sidebar.collapsed {
-  width: 60px;
-}
-
-.sidebar.collapsed .nav-label,
-.sidebar.collapsed .nav-section-title,
-.sidebar.collapsed .logo {
-  display: none;
-}
-
-/* Collapsed, entity links would be a column of identical icons. */
-.sidebar.collapsed .nav-entity {
-  display: none;
-}
-
-.sidebar-header {
-  padding: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.logo {
-  font-weight: 600;
-  font-size: 18px;
-  color: inherit;
-  text-decoration: none;
-  display: flex;
-  align-items: center;
-  min-width: 0;
+  --rl-sidebar-width: 60px;
 }
 
 .logo-img {
   max-height: 28px;
   max-width: 100%;
   object-fit: contain;
-  display: block;
-}
-
-.collapse-btn {
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  padding: 4px 8px;
-  opacity: 0.7;
-}
-
-.collapse-btn:hover {
-  opacity: 1;
-}
-
-.sidebar-switcher {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 12px 8px;
-}
-
-.sidebar-top-items {
-  padding: 8px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.sidebar-nav {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 0;
-}
-
-.nav-section {
-  margin-bottom: 8px;
-}
-
-.nav-section-title {
-  padding: 8px 16px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  opacity: 0.6;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  padding: 10px 16px;
-  color: inherit;
-  text-decoration: none;
-  transition: background 0.15s ease;
-}
-
-.nav-item:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.nav-item.active {
-  background: rgba(255, 255, 255, 0.15);
-  border-right: 3px solid var(--accent-color, #6366f1);
-}
-
-/* SVG icons, not emoji. The icon inherits `currentColor` from .nav-item, which
- * is the whole reason for the swap — an emoji could not take the theme's
- * colour, so it stayed the same hue in light and dark mode and on hover.
- *
- * Do NOT set `width` here to make the gutter. Lucide emits width/height as
- * PRESENTATION ATTRIBUTES, and CSS beats those — so `width: 24px` overrode the
- * 18px attribute while `height` stayed at 18, rendering every icon 24x18 (a
- * 4:3 horizontal stretch, easy to miss because a squashed circle still reads
- * as a circle). Size comes from the `:size` prop; the 24px gutter the labels
- * align to comes from the box model instead. */
-.nav-icon {
-  /* Size the BOX to the icon (18px, matching the :size prop) and make up the
-   * 24px gutter with margin. flex-basis is not an option: on a row flex item
-   * it resolves to the main-size, i.e. width — the same trap as setting
-   * `width` directly. */
-  flex: 0 0 auto;
-  margin-right: 18px;
-}
-
-.sidebar.collapsed .nav-icon {
-  margin-right: 0;
-}
-
-.nav-label {
-  font-size: 14px;
-  flex: 1;
-}
-
-/* Entity titles can be long: one line per link, full title in the tooltip. */
-.nav-entity .nav-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Overflow count or load error under an `entities:` entry, label-indented. */
-.nav-note {
-  padding: 4px 16px 8px 58px;
-  font-size: 12px;
-  opacity: 0.6;
-}
-
-/* Action buttons in the sidebar — same look as RouterLink nav items */
-.nav-action {
-  width: 100%;
-  background: none;
-  border: none;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  font-family: inherit;
-  font-size: inherit;
-}
-
-.nav-action:disabled {
-  opacity: 0.5;
-  cursor: wait;
-}
-
-/* Mobile footer — hidden on desktop */
-.sidebar-mobile-footer {
-  display: none;
-}
-
-.mobile-git-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  font-size: 13px;
-  opacity: 0.7;
-}
-
-.mobile-git-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
-  flex-shrink: 0;
-}
-
-.mobile-git-status.synced .mobile-git-dot {
-  background: var(--success-color);
-}
-
-.mobile-git-status.changes .mobile-git-dot {
-  background: var(--warning-color);
-}
-
-.mobile-git-status.conflict .mobile-git-dot {
-  background: var(--error-color);
-}
-
-/* Mobile overlay */
-@media (max-width: 768px) {
-  .sidebar {
-    transform: translateX(-100%);
-    height: 100vh;
-    padding-top: env(safe-area-inset-top, 0px);
-    transition: transform 0.25s ease;
-  }
-
-  /* When the mobile sidebar is open, the hamburger button overlays the
-     sidebar header. Indent the header so the title isn't covered. */
-  .sidebar.mobile-open .sidebar-header {
-    padding-left: 60px;
-  }
-
-  .sidebar.mobile-open {
-    transform: translateX(0);
-  }
-
-  .sidebar.collapsed {
-    width: 240px;
-  }
-
-  .sidebar.collapsed .nav-label,
-  .sidebar.collapsed .nav-section-title,
-  .sidebar.collapsed .logo {
-    display: unset;
-  }
-
-  .sidebar.collapsed .nav-entity { display: flex; }
-
-  .sidebar.collapsed .nav-icon {
-    margin-right: 12px;
-  }
-
-  .collapse-btn {
-    display: none;
-  }
-
-  .nav-item {
-    padding: 12px 16px;
-    min-height: 44px;
-  }
-
-  .sidebar-mobile-footer {
-    display: block;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 8px 0;
-    margin-top: auto;
-  }
-}
-</style>
-
-<style>
-/* Backdrop must be unscoped to work with Teleport */
-.sidebar-backdrop {
-  display: none;
-}
-
-@media (max-width: 768px) {
-  .sidebar-backdrop {
-    display: block;
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 99;
-  }
 }
 </style>

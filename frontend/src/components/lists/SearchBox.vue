@@ -123,27 +123,27 @@ defineExpose({ focus })
   left: 12px;
   width: 16px;
   height: 16px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   pointer-events: none;
 }
 
 input {
   flex: 1;
-  height: 36px;
+  height: var(--rl-control-height);
   padding: 0 36px 0 36px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 input:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 input::-webkit-search-cancel-button,
@@ -160,17 +160,17 @@ input::-webkit-search-decoration {
   align-items: center;
   justify-content: center;
   padding: 0;
-  background: var(--hover-bg);
+  background: var(--rl-color-bg-hover);
   border: none;
   border-radius: 50%;
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .clear-btn:hover {
-  background: var(--border-color);
-  color: var(--text-color);
+  background: var(--rl-color-border);
+  color: var(--rl-color-text);
 }
 </style>

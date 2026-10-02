@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { getTransforms, type TransformInfo } from '@/api/transforms'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlIcon from 'rela-components/components/common/RlIcon.vue'
+import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
+import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 
 const props = defineProps<{
   /**
@@ -12,8 +16,6 @@ const props = defineProps<{
 }>()
 
 const transforms = ref<TransformInfo[]>([])
-const open = ref(false)
-const rootRef = ref<HTMLElement | null>(null)
 let abort: AbortController | null = null
 
 onMounted(async () => {
@@ -25,89 +27,52 @@ onMounted(async () => {
     console.error('Failed to load export transforms:', err)
     transforms.value = []
   }
-  document.addEventListener('click', onDocClick)
 })
 
-onBeforeUnmount(() => {
-  abort?.abort()
-  document.removeEventListener('click', onDocClick)
-})
-
-function onDocClick(e: MouseEvent) {
-  if (rootRef.value && !rootRef.value.contains(e.target as Node)) {
-    open.value = false
-  }
-}
-
-function toggle() {
-  open.value = !open.value
-}
+onBeforeUnmount(() => abort?.abort())
 
 function exportAs(t: TransformInfo) {
-  open.value = false
   // Navigate to the hardened forced-download endpoint. Using a real nav (not
   // fetch) lets the browser's download machinery handle Content-Disposition.
+  // RlMenu closes itself on a click inside the panel.
   window.location.href = props.urlFor(t.name)
 }
 </script>
 
 <template>
-  <div v-if="transforms.length" ref="rootRef" class="export-menu">
-    <button
-      class="btn btn-secondary"
-      :aria-expanded="open"
-      aria-haspopup="menu"
-      @click="toggle"
+  <!--
+    RlMenu owns what this component used to hand-roll: the open state, the
+    click-outside listener, arrow-key navigation, and the panel's position
+    (teleported, so a scrolling ancestor cannot clip it).
+  -->
+  <RlMenu v-if="transforms.length" class="export-menu">
+    <template #trigger="{ toggle, attrs }">
+      <RlButton variant="secondary" v-bind="attrs" @click="toggle">
+        Export
+        <template #trailing>
+          <RlIcon name="chevron-down" :size="14" aria-hidden="true" />
+        </template>
+      </RlButton>
+    </template>
+
+    <RlMenuItem
+      v-for="t in transforms"
+      :key="t.name"
+      class="export-menu-item"
+      @click="exportAs(t)"
     >
-      Export ▾
-    </button>
-    <ul v-if="open" class="export-menu-list" role="menu">
-      <li v-for="t in transforms" :key="t.name" role="none">
-        <button role="menuitem" class="export-menu-item" @click="exportAs(t)">
-          {{ t.name }}
-        </button>
-      </li>
-    </ul>
-  </div>
+      {{ t.name }}
+    </RlMenuItem>
+  </RlMenu>
 </template>
 
 <style scoped>
-.export-menu {
-  position: relative;
-  display: inline-block;
-}
-
-.export-menu-list {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 20;
-  min-width: 8rem;
-  margin: 0;
-  padding: 0.25rem;
-  list-style: none;
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-}
-
+/*
+ * Transform names are short format identifiers (pdf, docx), so they read as
+ * labels rather than prose. Everything else the list used to declare -- the
+ * panel box, its position, the item hover -- is RlMenu's and RlMenuItem's.
+ */
 .export-menu-item {
-  display: block;
-  width: 100%;
-  padding: 0.4rem 0.6rem;
-  text-align: left;
-  background: none;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  color: var(--text-color);
-  font-size: 0.9rem;
   text-transform: uppercase;
-}
-
-.export-menu-item:hover,
-.export-menu-item:focus {
-  background: var(--hover-bg);
 }
 </style>

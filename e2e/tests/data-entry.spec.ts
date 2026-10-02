@@ -65,7 +65,7 @@ test.describe('Data Entry App - Navigation', () => {
 
     await listPage.navigateToList('features');
     await listPage.expectRowContains(entity.id);
-    await listPage.clickRowById(entity.id);
+    await listPage.openEntityPageById(entity.id);
 
     await expect(appPage).toHaveURL(new RegExp(`/entity/feature/${entity.id}`));
   });

@@ -8,7 +8,7 @@ import { BasePage } from './base.page';
  * (`.world-banner`), `FaceMenu.vue` (`.face-single` for one other face,
  * `.face-menu` for several), `CopyMenu.vue` (`.copy-single` / `.copy-menu`),
  * `ExportMenu.vue` (`.export-menu`), the detail-page script actions
- * (`.btn-command`) and relation cards (`article.entity-card`).
+ * (header buttons named by their label) and relation cards (`article.entity-card`).
  */
 export class FacesPage extends BasePage {
   /** Open `/entity/<type>/<address>`, optionally in a world, and wait for the
@@ -25,7 +25,7 @@ export class FacesPage extends BasePage {
   }
 
   notFound(): Locator {
-    return this.page.locator('.error-state').filter({ hasText: 'Entity not found' });
+    return this.page.getByTestId('page-state-error').filter({ hasText: /not found/i });
   }
 
   async expectHeading(text: string) {
@@ -171,7 +171,7 @@ export class FacesPage extends BasePage {
    *  wait to leave the detail view. */
   async deleteShownFace(faceLabel: string) {
     await this.deleteButton().click();
-    const modal = this.page.locator('.modal');
+    const modal = this.page.getByRole('alertdialog');
     await expect(modal).toContainText(`${faceLabel} face`);
     await modal.locator('button').filter({ hasText: /^Delete$/ }).click();
     await this.page.waitForURL((url) => !url.pathname.startsWith('/entity/'));
@@ -198,7 +198,7 @@ export class FacesPage extends BasePage {
 
   /** Run a detail-page script action (an `actions:` entry with `available_on`). */
   async runAction(label: string) {
-    await this.page.locator('button.btn-command').filter({ hasText: label }).click();
+    await this.page.locator('.desktop-actions').getByRole('button', { name: label, exact: true }).click();
   }
 
   // ── Relations, documents, export, comments ─────────────────────────

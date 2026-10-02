@@ -86,12 +86,17 @@ const MAX_LIST_ALL_PAGES = 50
  *   Colada aborts it when a refetch supersedes this call (drag-drop
  *   settle, SSE echo), and without it a superseded loop would keep
  *   paging to the cap producing a result the cache discards.
+ * - maxRows stops the loop once that many rows are in hand, and trims the
+ *   last page to it. A grouped list sets it from `group_by.max_rows`. Rows
+ *   left behind report as has_more, the same signal the page cap gives.
  */
 export async function listAllEntities(
   type: string,
   params?: ListParams,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: { maxRows?: number }
 ): Promise<ListResponse<Entity>> {
+  const maxRows = options?.maxRows ?? Number.POSITIVE_INFINITY
   const byId = new Map<string, Entity>()
   const included: Record<string, Entity> = {}
   let first: ListResponse<Entity> | undefined
@@ -103,7 +108,7 @@ export async function listAllEntities(
     first ??= res
     for (const e of res.data) byId.set(e.id, e)
     Object.assign(included, res.included)
-    if (!res.meta.has_more || fetched >= MAX_LIST_ALL_PAGES) break
+    if (!res.meta.has_more || fetched >= MAX_LIST_ALL_PAGES || byId.size >= maxRows) break
     // Defensive: has_more with an empty page would otherwise spin to the
     // cap re-fetching nothing. Break and keep has_more so the anomaly is
     // visible to the consumer rather than silently reported as complete.
@@ -111,7 +116,8 @@ export async function listAllEntities(
     page = res.meta.page + 1
   }
 
-  const data = [...byId.values()]
+  const all = [...byId.values()]
+  const data = all.length > maxRows ? all.slice(0, maxRows) : all
   return {
     data,
     included,
@@ -120,7 +126,7 @@ export async function listAllEntities(
       total: res.meta.total,
       page: 1,
       per_page: data.length,
-      has_more: res.meta.has_more,
+      has_more: res.meta.has_more || data.length < all.length,
     },
   }
 }
@@ -200,6 +206,15 @@ export async function deleteEntity(type: string, id: string): Promise<void> {
 }
 
 /**
+ * Restores an entity that a DELETE marked as deleted. The server keeps a
+ * marked entity for a short grace period before removing it for real; after
+ * that, or on a server without soft delete, this rejects with a 404.
+ */
+export async function restoreEntity(type: string, id: string): Promise<void> {
+  return api.post(`/${getPlural(type)}/${id}/restore`)
+}
+
+/**
  * Searches entities by query text, optionally filtered by type.
  * Pass an AbortSignal to cancel an in-flight request — the command palette
  * uses this to abort superseded searches as the user types.
@@ -271,6 +286,11 @@ export interface ScopeDescriptor {
   // type's DEFAULT scope instead: on a list showing `archief`, the open entity
   // is then absent from its own scope and the endpoint answers 404.
   query_scope?: string
+  // The entity-page tab the list was shown in, so prev/next walks the tab's
+  // rows. All three or none, and only with source 'list'.
+  scope_page?: string
+  scope_tab?: string
+  anchor?: string
 }
 
 /** A neighbouring entity in a scope. `type` is needed to build the target's

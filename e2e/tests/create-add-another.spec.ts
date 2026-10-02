@@ -107,4 +107,26 @@ test.describe("Create & add another", () => {
 
     await expect(appPage).toHaveURL(/\/entity\/task\/TASK-\d+/);
   });
+
+  test("the list's New dialog stays open for the next record", async ({
+    appPage,
+  }) => {
+    const listPage = new ListPage(appPage);
+    const formPage = new FormPage(appPage);
+    await listPage.navigateToList("tasks");
+
+    await listPage.openCreateDialogFromNewLink();
+    const dialog = listPage.createDialog;
+
+    await formPage.fillFields({ title: "Dialog one" });
+    const first = await formPage.addAnotherAndExpectCreate("tasks");
+
+    // Still open and blank, and the list behind it already has the row.
+    await expect(dialog).toBeVisible();
+    await expect(formPage.titleInput).toHaveValue("");
+    await listPage.expectCellInRow(first.id, "Dialog one");
+
+    await appPage.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+  });
 });

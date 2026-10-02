@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // MCPPath is the mount point for the remote MCP endpoint.
@@ -86,7 +88,42 @@ type MCPHost struct {
 	// AttachmentUploads is the App's upload bound, so MCP and web uploads
 	// share one budget.
 	AttachmentUploads *attachment.Limiter
+
+	// SelectWorld returns the world name selects, for an MCP tool call that
+	// names one. It applies the same lookup and world grant as `?world=` on
+	// the data-entry API. Unlike that API it refuses a denied world with an
+	// error rather than an empty result: world names and their readability
+	// are already served by `list_worlds`, so the error discloses nothing,
+	// and an agent needs to know why a world shows nothing.
+	SelectWorld func(ctx context.Context, name string) (store.WorldScope, error)
+
+	// WorldReadable reports whether the ctx principal may select name.
+	WorldReadable func(ctx context.Context, name string) (bool, error)
+
+	// DefaultWorld names the world a read that names none runs in. Read
+	// per call because the schema hot-reloads.
+	DefaultWorld func() string
 }
+
+// MCPWorlds is the host's world functions as methods, the shape the MCP
+// server's world selector takes.
+type MCPWorlds struct{ host MCPHost }
+
+// Worlds returns h's world functions as an [MCPWorlds].
+func (h MCPHost) Worlds() MCPWorlds { return MCPWorlds{host: h} }
+
+// SelectWorld calls [MCPHost.SelectWorld].
+func (w MCPWorlds) SelectWorld(ctx context.Context, name string) (store.WorldScope, error) {
+	return w.host.SelectWorld(ctx, name)
+}
+
+// WorldReadable calls [MCPHost.WorldReadable].
+func (w MCPWorlds) WorldReadable(ctx context.Context, name string) (bool, error) {
+	return w.host.WorldReadable(ctx, name)
+}
+
+// DefaultWorld calls [MCPHost.DefaultWorld].
+func (w MCPWorlds) DefaultWorld() string { return w.host.DefaultWorld() }
 
 // mcpHost builds the [MCPHost] for this App.
 func mcpHost(a *App) MCPHost {
@@ -98,7 +135,41 @@ func mcpHost(a *App) MCPHost {
 		AttachmentRunner:  a.attachmentRunner,
 		Attachments:       a.attachmentOwner,
 		AttachmentUploads: a.attachmentUploads,
+		SelectWorld: func(ctx context.Context, name string) (store.WorldScope, error) {
+			return mcpSelectWorld(ctx, a, name)
+		},
+		WorldReadable: func(ctx context.Context, name string) (bool, error) {
+			return mcpWorldReadable(ctx, a, name)
+		},
+		DefaultWorld: func() string { return effectiveDefaultWorld(a) },
 	}
+}
+
+// mcpSelectWorld resolves name for the ctx principal.
+func mcpSelectWorld(ctx context.Context, a *App, name string) (store.WorldScope, error) {
+	handle, err := resolveNamedWorld(ctx, a.worlds, name, effectiveDefaultWorld(a))
+	switch {
+	case errors.Is(err, errWorldUnknown):
+		return store.WorldScope{}, fmt.Errorf("no such world %q; list_worlds names the worlds", name)
+	case errors.Is(err, errWorldDenied):
+		return store.WorldScope{}, fmt.Errorf("world %q is not readable by you", name)
+	case err != nil:
+		return store.WorldScope{}, fmt.Errorf("resolving world %q: %w", name, err)
+	}
+	return handle.scope, nil
+}
+
+// mcpWorldReadable reports whether the ctx principal may select name. An
+// unknown world is not readable.
+func mcpWorldReadable(ctx context.Context, a *App, name string) (bool, error) {
+	_, err := resolveNamedWorld(ctx, a.worlds, name, effectiveDefaultWorld(a))
+	switch {
+	case errors.Is(err, errWorldUnknown), errors.Is(err, errWorldDenied):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
 }
 
 // SetRemoteMCP enables the remote MCP endpoint, which is OFF by default.

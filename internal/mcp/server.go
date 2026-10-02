@@ -89,13 +89,22 @@ type Deps struct {
 	ProjectRoot  string
 	Attachments  AttachmentDeps
 	// World is the world the list and count surfaces (list_entities, the
-	// schema resource's counts, the overview prompt, search) read in. It is
-	// required; wiring passes worlds.Compiled.DefaultWorld.
+	// schema resource's counts, the overview prompt, search) read in when a
+	// call names none. It is required; wiring passes
+	// worlds.Compiled.DefaultWorld.
 	World store.WorldScope
 	// Families selects one row per entity whichever face it stores, for the
 	// schema analysis counts. It is required; wiring passes
 	// worlds.Compiled.Families. It is never a read world.
 	Families store.WorldScope
+
+	// Worlds lets a read tool name the world it reads in, and serves
+	// list_worlds.
+	//
+	// Nil: accepted. The stdio server does not resolve worlds, so a tool
+	// call naming a world other than the generated `default` is refused
+	// there.
+	Worlds WorldSelector
 }
 
 // GraphReader is the read capability MCP requires of its store — the exact

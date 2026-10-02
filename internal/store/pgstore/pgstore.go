@@ -156,9 +156,11 @@ type DBTX interface {
 // -2 exported (TKT-KQXVF7): UpdateRelationState and
 // DeleteRelationState folded into UpdateRelation and DeleteRelation, which
 // now take an entity.RelationKey that carries the tail.
+// +1 exported / +1 method: SoftDelete, the optional store.SoftDeleteProvider
+// accessor. The work lives on softDeleter and free functions in softdelete.go.
 //
-//plimsoll:max-exported-methods=45
-//plimsoll:max-methods=55
+//plimsoll:max-exported-methods=46
+//plimsoll:max-methods=56
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles

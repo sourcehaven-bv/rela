@@ -272,6 +272,14 @@ func resolveWorld(r *http.Request, lookup WorldLookup, defaultName string) (worl
 		// An absent or empty parameter names the default world.
 		name = defaultName
 	}
+	return resolveNamedWorld(r.Context(), lookup, name, defaultName)
+}
+
+// resolveNamedWorld is [resolveWorld] after the name is known: the lookup and
+// the per-world read grant. The remote MCP endpoint shares it, so an MCP read
+// and a data-entry read of the same world are resolved and authorized by one
+// function.
+func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name, defaultName string) (worldHandle, error) {
 	if lookup == nil {
 		// No worlds wired: only the generated default world exists, and it
 		// ranks nothing.
@@ -290,7 +298,7 @@ func resolveWorld(r *http.Request, lookup WorldLookup, defaultName string) (worl
 		// ceiling cannot deny it (acl.Policy.DefaultWorld).
 		return worldHandle{name: name, scope: scope}, nil
 	}
-	permitted, err := readGateFromContext(r.Context()).PermitsWorld(r.Context(), name)
+	permitted, err := readGateFromContext(ctx).PermitsWorld(ctx, name)
 	if err != nil {
 		// An infrastructure failure is NOT a denial. Rendering it as an
 		// empty result would hide an outage behind a page that looks like a
@@ -327,8 +335,9 @@ func resolveWorld(r *http.Request, lookup WorldLookup, defaultName string) (worl
 // exactly five underscore routes named one at a time below — `_views`,
 // `_history`, `_next_action`, `_search` and `_position`. Every other
 // underscore endpoint (analyze, documents, feeds) is refused, along
-// with every sub-resource of an entity (relations, attachments, export),
-// because each reaches content through a path that is still world-blind.
+// with every sub-resource of an entity except its export (relations,
+// attachments, the list export), because each reaches content through a path
+// that is still world-blind.
 //
 // Each admission carries its own justification at the call site rather than a
 // prefix rule, so widening this stays one reviewable edit per route.
@@ -407,8 +416,13 @@ func worldCapablePath(path string) bool {
 	if strings.HasPrefix(trimmed, "_") {
 		return false
 	}
+	// The one entity sub-resource admitted, named exactly: the entity
+	// export (BUG-PLZDPR). See [isWorldCapableEntityExportPath].
+	if isWorldCapableEntityExportPath(trimmed) {
+		return true
+	}
 	// `{plural}` or `{plural}/{id}` only. A third segment is a
-	// sub-resource (relations, attachments, _export) and is refused.
+	// sub-resource (relations, attachments) and is refused.
 	return strings.Count(trimmed, "/") <= 1 &&
 		!strings.Contains(trimmed, "/_")
 }
@@ -497,6 +511,24 @@ func refuseWorldIncapablePath(w http.ResponseWriter, r *http.Request, requested,
 func isWorldCapableViewPath(trimmed string) bool {
 	parts := strings.Split(trimmed, "/")
 	return len(parts) == 3 && parts[0] == "_views" && parts[1] != "" && parts[2] != ""
+}
+
+// isWorldCapableEntityExportPath matches `{plural}/{id}/_export`, the export
+// of one entity.
+//
+// It renders the page the reader is looking at, so it has to read in the same
+// world. Refused, it resolved the entry's links in the zero world, where a
+// type with faces stores nothing: every link to a faced entity vanished from
+// the export while the detail page listed it. Its whole read path takes the
+// world from ctx: the entry through getVisibleRef (world deny, row gate, face
+// gate), its edges and neighbor rows through servedFaceNeighbors.
+//
+// The LIST export (`{plural}/_export`) is not admitted. It reads through
+// scopedSortedEntities and has not been world-scoped or tested.
+func isWorldCapableEntityExportPath(trimmed string) bool {
+	parts := strings.Split(trimmed, "/")
+	return len(parts) == 3 && parts[0] != "" && parts[1] != "" &&
+		!strings.HasPrefix(parts[1], "_") && parts[2] == "_export"
 }
 
 // isWorldCapableHistoryPath matches `_history/{type}/{id}` and

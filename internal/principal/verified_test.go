@@ -182,3 +182,41 @@ func TestPrincipal_Sanitized(t *testing.T) {
 		t.Errorf("Roles = %v, want 2 entries", got.Roles())
 	}
 }
+
+// org_name rides with the other org claims (TKT-MJTD12): set only through the
+// verified constructor, carried by Sanitized/Equal and the audit wire format.
+func TestPrincipal_OrgName(t *testing.T) {
+	t.Parallel()
+	p := principal.VerifiedFrom("usr_1", principal.ToolDataEntry,
+		principal.Claims{OrgID: "org_a", OrgSlug: "acme", OrgName: "Acme Corp"})
+	if p.OrgName() != "Acme Corp" {
+		t.Fatalf("OrgName = %q, want Acme Corp", p.OrgName())
+	}
+	if got := p.Sanitized(strings.ToUpper).OrgName(); got != "ACME CORP" {
+		t.Errorf("Sanitized OrgName = %q, want it passed through clean", got)
+	}
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"org_name":"Acme Corp"`) {
+		t.Errorf("json = %s, want an org_name key", data)
+	}
+	var back principal.Principal
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !back.Equal(p) {
+		t.Errorf("round-trip lost org_name: %s", data)
+	}
+
+	other := principal.VerifiedFrom("usr_1", principal.ToolDataEntry,
+		principal.Claims{OrgID: "org_a", OrgSlug: "acme"})
+	if other.OrgName() != "" {
+		t.Errorf("absent claim: OrgName = %q, want empty", other.OrgName())
+	}
+	if other.Equal(p) {
+		t.Error("Equal ignored org_name")
+	}
+}

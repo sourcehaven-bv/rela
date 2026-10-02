@@ -267,14 +267,14 @@ function isDaySelected(day: Weekday): boolean {
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
 }
 
 .rrule-builder__label {
   font-weight: 600;
   font-size: 14px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .rrule-builder__row {
@@ -285,37 +285,37 @@ function isDaySelected(day: Weekday): boolean {
 
 .rrule-builder__field-label {
   font-size: 13px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   white-space: nowrap;
 }
 
 .rrule-builder__interval {
   width: 4rem;
   padding: 8px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .rrule-builder__freq {
   padding: 8px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .rrule-builder__interval:focus,
 .rrule-builder__freq:focus,
 .rrule-builder__date:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 .rrule-builder__weekdays {
@@ -330,10 +330,10 @@ function isDaySelected(day: Weekday): boolean {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
-  background: var(--input-bg);
-  color: var(--muted-text);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text-muted);
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
@@ -341,14 +341,14 @@ function isDaySelected(day: Weekday): boolean {
 }
 
 .rrule-builder__day:hover {
-  border-color: var(--accent-color);
-  color: var(--text-color);
+  border-color: var(--rl-color-accent);
+  color: var(--rl-color-text);
 }
 
 .rrule-builder__day--selected {
-  background: var(--accent-color);
+  background: var(--rl-color-accent);
   color: white;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
 }
 
 .rrule-builder__day--selected:hover {
@@ -363,30 +363,30 @@ function isDaySelected(day: Weekday): boolean {
 
 .rrule-builder__month {
   padding: 8px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .rrule-builder__day-input {
   width: 5rem;
   padding: 8px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .rrule-builder__month:focus,
 .rrule-builder__day-input:focus {
   outline: none;
-  border-color: var(--accent-color);
+  border-color: var(--rl-color-accent);
   box-shadow:
-    0 0 0 2px var(--focus-ring-gap),
-    0 0 0 4px var(--focus-ring);
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 
 .rrule-builder__dtstart {
@@ -404,11 +404,11 @@ function isDaySelected(day: Weekday): boolean {
 
 .rrule-builder__date {
   padding: 8px 10px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--rl-color-border);
   border-radius: 6px;
   font-size: 14px;
-  background: var(--input-bg);
-  color: var(--text-color);
+  background: var(--rl-color-bg-raised);
+  color: var(--rl-color-text);
 }
 
 .rrule-builder__warning {
@@ -422,22 +422,22 @@ function isDaySelected(day: Weekday): boolean {
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  background: var(--input-bg);
-  border: 1px solid var(--border-color);
-  border-left: 3px solid var(--accent-color);
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
+  border-left: 3px solid var(--rl-color-accent);
   border-radius: 0 6px 6px 0;
   font-size: 13px;
-  color: var(--text-color);
+  color: var(--rl-color-text);
 }
 
 .rrule-builder__preview-icon {
-  color: var(--accent-color);
+  color: var(--rl-color-accent);
   font-size: 14px;
 }
 
 .rrule-builder__help {
   font-size: 12px;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
   margin: 0;
 }
 </style>

@@ -122,7 +122,7 @@ func (s *ScriptReader) bind(ctx context.Context) context.Context {
 // so a script cannot tell hidden from absent. A gate failure is logged and
 // answered the same way, because it can only occur for an id that exists.
 func (s *ScriptReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
-	return s.res.addressAny(s.bind(ctx), s.world, addr)
+	return s.res.addressAny(s.bind(ctx), worldIn(ctx, s.world), addr)
 }
 
 // WriteTarget resolves addr to the one face a face-level write edits, in
@@ -130,7 +130,7 @@ func (s *ScriptReader) GetAddress(ctx context.Context, addr string) (*entity.Ent
 // [store.ErrNotFound]; a bare id that picks no single face is an
 // [*AmbiguousAddressError] naming the faces the caller may read.
 func (s *ScriptReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
-	return s.res.writeTargetAny(s.bind(ctx), s.world, addr)
+	return s.res.writeTargetAny(s.bind(ctx), worldIn(ctx, s.world), addr)
 }
 
 // Family reports which faces of the entity id the caller may read, reading
@@ -144,7 +144,7 @@ func (s *ScriptReader) Family(ctx context.Context, id string) (Family, bool, err
 // redacted, with the reader's world for bare ids. See
 // [Resolver.ResolveHeaders].
 func (s *ScriptReader) ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]ResolvedHeader {
-	return s.res.ResolveHeaders(s.bind(ctx), s.world, refs)
+	return s.res.ResolveHeaders(s.bind(ctx), worldIn(ctx, s.world), refs)
 }
 
 // ListEntities yields only the entities the caller may read, redacted.

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -426,7 +425,7 @@ func (v *VersionStore) GetRelationVersion(
 	if prevTo != nil {
 		snap.PrevTo = *prevTo
 	}
-	if snap.CreatedAt, err = time.Parse(timeFmt, created); err != nil {
+	if snap.CreatedAt, err = parseTime(created); err != nil {
 		return nil, fmt.Errorf("sqlitestore: parse relation version created_at: %w", err)
 	}
 	if snap.Properties, err = unmarshalProps(props); err != nil {
@@ -561,10 +560,10 @@ func (v *VersionStore) aggregateLifetime(ctx context.Context, ids []int64) (stor
 		return lt, nil
 	}
 	var err error
-	if lt.FirstSeen, err = time.Parse(timeFmt, *first); err != nil {
+	if lt.FirstSeen, err = parseTime(*first); err != nil {
 		return store.RelationLifetime{}, fmt.Errorf("sqlitestore: parse lifetime first_seen: %w", err)
 	}
-	if lt.LastSeen, err = time.Parse(timeFmt, *last); err != nil {
+	if lt.LastSeen, err = parseTime(*last); err != nil {
 		return store.RelationLifetime{}, fmt.Errorf("sqlitestore: parse lifetime last_seen: %w", err)
 	}
 	if finalOp != nil {
@@ -597,7 +596,7 @@ func scanRelationVersionMeta(row scanner) (store.RelationVersionMeta, error) {
 		m.PrevTo = *prevTo
 	}
 	var err error
-	if m.CreatedAt, err = time.Parse(timeFmt, created); err != nil {
+	if m.CreatedAt, err = parseTime(created); err != nil {
 		return store.RelationVersionMeta{}, fmt.Errorf("sqlitestore: parse relation version created_at: %w", err)
 	}
 	return m, nil

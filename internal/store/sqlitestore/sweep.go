@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -192,6 +193,9 @@ type sweepCandidate struct {
 	// the last write carried no attribution.
 	editorUser *string
 	editorTool *string
+	// origin is the row's origin_* columns; all nil means the last write was
+	// a direct edit.
+	origin originCols
 }
 
 // selectCandidates returns up to Batch entities that have SETTLED (updated_at
@@ -255,6 +259,8 @@ func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) 
 	const q = `
 		SELECT e.id, e.face, e.type, e.content, e.properties,
 		       e.last_edited_by_user, e.last_edited_by_tool,
+		       e.origin_kind, e.origin_source, e.origin_source_face,
+		       e.origin_source_type, e.origin_definition,
 		       (SELECT ev.content_hash FROM entity_versions ev
 		         WHERE ev.entity_id = e.id AND ev.face = e.face
 		           AND ev.vseq > COALESCE((SELECT max(d.vseq) FROM entity_versions d
@@ -292,9 +298,11 @@ func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) 
 			lvOp       *string
 			lvCreated  *string
 		)
-		if err := rows.Scan(&c.id, &c.face, &c.typ, &c.content, &c.props,
-			&c.editorUser, &c.editorTool,
-			&latestHash, &lvVseq, &lvOp, &lvCreated); err != nil {
+		dest := make([]any, 0, 11+originColumnCount)
+		dest = append(dest, &c.id, &c.face, &c.typ, &c.content, &c.props, &c.editorUser, &c.editorTool)
+		dest = append(dest, c.origin.scanTargets()...)
+		dest = append(dest, &latestHash, &lvVseq, &lvOp, &lvCreated)
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		if latestHash != nil {
@@ -312,14 +320,14 @@ func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) 
 // windows renders the two time thresholds as on-disk timestamps.
 //
 // The comparison happens in SQL as a STRING compare, which is correct only
-// because timeFmt is RFC3339Nano in UTC: fixed-width, zero-padded, and
-// lexicographically ordered the same as chronologically. Formatting the
+// because every row and threshold goes through sqlitedb.FormatTime: UTC and
+// fixed-width, so string order is time order (BUG-HEIAVS). Formatting the
 // thresholds in Go (rather than using SQLite's datetime()) keeps one time source
 // and avoids the format mismatch that would silently make every comparison
 // false.
 func (s *sweep) windows() (settled, stale string) {
-	now := time.Now().UTC()
-	return now.Add(-s.cfg.Idle).Format(timeFmt), now.Add(-s.cfg.MaxStaleness).Format(timeFmt)
+	now := time.Now()
+	return sqlitedb.FormatTime(now.Add(-s.cfg.Idle)), sqlitedb.FormatTime(now.Add(-s.cfg.MaxStaleness))
 }
 
 // captureOne snapshots one entity if its content actually changed.
@@ -341,6 +349,9 @@ func (s *sweep) captureOne(
 		Projection:    projJSON,
 		PrincipalUser: user,
 		PrincipalTool: tool,
+		// Copied off the live row, never guessed; not part of the content
+		// hash, as in pgstore's sweep.
+		Origin: scanOrigin(c.origin),
 	}
 	contentHash := contentHashOf(in)
 

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -433,7 +432,7 @@ func selectPurgeTargets(
 		}
 		t.Op = store.VersionOp(op)
 		t.IsRename = t.Op == store.VersionOpRename
-		if t.CreatedAt, err = time.Parse(timeFmt, created); err != nil {
+		if t.CreatedAt, err = parseTime(created); err != nil {
 			return nil, fmt.Errorf("sqlitestore: parse purge target created_at: %w", err)
 		}
 		out = append(out, t)

@@ -1,0 +1,25 @@
+/*
+ * One focus ring for every interactive control.
+ *
+ * `outline` cannot be given a rounded corner that follows the element, and a
+ * single ring disappears when the control sits on a surface close to the ring
+ * colour. So the ring is two box-shadows: an opaque gap painted in the page
+ * background, then the ring outside it. That keeps 3:1 against whatever is
+ * behind the control, which WCAG 2.2 SC 1.4.11 requires.
+ *
+ * Apply with `composes`-style class use or by extending `.rl-focus-ring` in a
+ * component's own scoped styles via the shared custom properties.
+ */
+.rl-focus-ring:focus-visible,
+.rl-focus-ring:focus-visible:not(:disabled) {
+  outline: none;
+  box-shadow:
+    0 0 0 var(--rl-focus-ring-gap) var(--rl-focus-ring-gap-color, var(--rl-color-bg)),
+    0 0 0 calc(var(--rl-focus-ring-gap) + var(--rl-focus-ring-width))
+      var(--rl-focus-ring-color, var(--rl-color-focus));
+}
+
+/* A control showing a validation error keeps the ring but recolours it. */
+.rl-focus-ring[aria-invalid='true'] {
+  --rl-focus-ring-color: var(--rl-color-error-ring);
+}
