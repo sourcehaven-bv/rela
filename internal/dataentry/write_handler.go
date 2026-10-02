@@ -22,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // entityMutator is the write surface the data-entry write handlers call. See
@@ -897,12 +898,17 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeName, _, entityID string) {
 	r = h.withProvision(r)
 
-	// The path segment is an ADDRESS. `ID` and `ID@<bare>` delete the whole
-	// entity; `ID@face` for a non-bare face deletes THAT face only, the
-	// "unpublish" the address grammar makes expressible.
+	// The path segment is an ADDRESS. On a type that declares faces, a
+	// delete names one face (`ID@face`) and removes that face; the last face
+	// takes the entity with it. A bare id is refused with `face_required`:
+	// the world's choice of face is a display preference, not the face the
+	// caller meant to delete, and deleting every face would need delete on
+	// faces the caller may not see. A faceless type has one face, so its
+	// bare id deletes the entity.
 	//
 	// The resolver read runs BEFORE AuthorizeWrite (RR-3532), so a hidden
-	// target or a denied face 404s rather than answering 403-with-rule_id.
+	// target or a denied face 404s rather than answering 403-with-rule_id,
+	// and the refusal below is only reached for an entity the caller sees.
 	entity, found := readAddressedOr404(w, r, h.visible, typeName, entityID)
 	if !found {
 		return
@@ -913,6 +919,12 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	if ref.Face.IsImplicit() {
 		err = h.deleteWholeEntity(r.Context(), ref.ID)
 	} else {
+		if addr, perr := entityPkg.ParseAddress(entityID); perr == nil {
+			if _, named := addr.Named(); !named {
+				h.refuseBareFaceDelete(w, r, entity)
+				return
+			}
+		}
 		_, err = h.manager.DeleteEntityFace(r.Context(), ref.ID, ref.Face, true)
 	}
 	if err != nil {
@@ -928,6 +940,21 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	// and a local delete isn't double-broadcast.
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// refuseBareFaceDelete answers a bare-id DELETE of a faced entity with
+// `face_required`, listing the faces the caller may read.
+func (h *writeHandler) refuseBareFaceDelete(w http.ResponseWriter, r *http.Request, e *entityPkg.Entity) {
+	fam, ok, err := h.visible.family(r.Context(), e.Type, e.ID)
+	if err != nil {
+		writeGateError(w, r, err)
+		return
+	}
+	faces := []entityPkg.Face{e.Face}
+	if ok {
+		faces = fam.Faces
+	}
+	writeFaceRequired(w, r, &visibility.AmbiguousAddressError{ID: e.ID, Faces: faces})
 }
 
 // writeRelationsValidationError maps a Phase A validation error from
