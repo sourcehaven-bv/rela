@@ -84,10 +84,10 @@ func newD4Manager(t *testing.T, b concBackend) (*entitymanager.Manager, store.St
 	return mgr, st
 }
 
-// A zero-tailed edge from a faced source belongs to the whole family, for a
-// content-scoped type as for an identity one (D4). A bare-type grant covers
-// only the zero face, which a faced type does not store, so it is not enough.
-func TestCreateRelation_ZeroTailOnFacedSourceNeedsEveryFace(t *testing.T) {
+// An identity edge from a faced source belongs to the whole family (D4). A
+// bare-type grant covers only the zero face, which a faced type does not
+// store, so it is not enough.
+func TestCreateRelation_IdentityEdgeOnFacedSourceNeedsEveryFace(t *testing.T) {
 	for _, b := range concBackends {
 		t.Run(b.name, func(t *testing.T) {
 			for _, tc := range []struct {
@@ -95,8 +95,13 @@ func TestCreateRelation_ZeroTailOnFacedSourceNeedsEveryFace(t *testing.T) {
 				allow bool
 			}{{"bare", false}, {"drafter", false}, {"editor", true}} {
 				t.Run(tc.user, func(t *testing.T) {
-					mgr, _ := newD4Manager(t, b)
-					_, err := mgr.CreateRelation(asUser(tc.user), entity.RelationKey{From: "POL-1", Type: "implements", To: "CTL-1"},
+					mgr, st := newD4Manager(t, b)
+					if err := st.CreateEntity(context.Background(), &entity.Entity{
+						ID: "CTL-2", Type: "control", Properties: map[string]any{"title": "Lock"},
+					}); err != nil {
+						t.Fatalf("seed: %v", err)
+					}
+					_, err := mgr.CreateRelation(asUser(tc.user), entity.RelationKey{From: "POL-1", Type: "owns", To: "CTL-2"},
 						entity.RelationOptions{})
 					if tc.allow && err != nil {
 						t.Fatalf("CreateRelation: %v", err)
@@ -105,6 +110,21 @@ func TestCreateRelation_ZeroTailOnFacedSourceNeedsEveryFace(t *testing.T) {
 						t.Fatalf("CreateRelation err = %v, want ErrForbidden", err)
 					}
 				})
+			}
+		})
+	}
+}
+
+// A content edge from a faced source must name its face, whatever the
+// caller's grants: a zero tail would belong to no face.
+func TestCreateRelation_ContentEdgeOnFacedSourceNeedsAFace(t *testing.T) {
+	for _, b := range concBackends {
+		t.Run(b.name, func(t *testing.T) {
+			mgr, _ := newD4Manager(t, b)
+			_, err := mgr.CreateRelation(asUser("editor"), entity.RelationKey{From: "POL-1", Type: "implements", To: "CTL-1"},
+				entity.RelationOptions{})
+			if !errors.Is(err, entitymanager.ErrRelationFaceRequired) {
+				t.Fatalf("CreateRelation err = %v, want ErrRelationFaceRequired", err)
 			}
 		})
 	}

@@ -1872,8 +1872,8 @@ type writeTargeter interface {
 
 // resolveWriteTarget resolves addr to the face a face-level write edits
 // ([visibility.Resolver.WriteTarget]), raising on failure. A miss raises
-// "entity not found"; a bare id that picks no single face raises naming the
-// faces the caller may read. A reader without WriteTarget is refused: every
+// "entity not found"; a bare id on a faced type raises naming the faces the
+// caller may read. A reader without WriteTarget is refused: every
 // gated reader provides it, so its absence is a wiring bug.
 func resolveWriteTarget(ctx context.Context, ls *lua.LState, rd EntityReader, addr string) (entity.Ref, bool) {
 	wt, ok := rd.(writeTargeter)
@@ -2058,9 +2058,11 @@ func relationQuery(s *lua.LState) (store.RelationQuery, error) {
 
 // luaDeleteEntity implements rela.delete_entity(id, cascade?) -> boolean
 //
-// A bare id deletes the whole family. `ID@face` deletes that face and the
-// edges tailed at it (BUG-J3PBFN). cascade guards every delete that removes
-// the entity, the last face included (RR-2466U1); the manager enforces it.
+// The id resolves as every write does ([resolveWriteTarget]): a bare id
+// deletes a faceless entity and names the faces of a faced one. `ID@face`
+// deletes that face and the edges tailed at it (BUG-J3PBFN); the last face
+// takes the entity. cascade guards every delete that removes the entity, the
+// last face included (RR-2466U1); the manager enforces it.
 func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 	id := ls.CheckString(1)
 	if id == "" {
@@ -2071,10 +2073,15 @@ func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 	cascade := ls.OptBool(2, false)
 
 	ctx := r.callerCtx()
-	if rd, ok := r.reader(ls, "rela.delete_entity"); !ok || !gateWriteTarget(ctx, ls, rd, id) {
+	rd, ok := r.reader(ls, "rela.delete_entity")
+	if !ok {
 		return 0
 	}
-	if err := deleteByAddress(ctx, r.deps.EntityManager, id, cascade); err != nil {
+	ref, ok := resolveWriteTarget(ctx, ls, rd, id)
+	if !ok {
+		return 0
+	}
+	if err := deleteRef(ctx, r.deps.EntityManager, ref, cascade); err != nil {
 		ls.RaiseError("delete entity error: %s", err.Error())
 		return 0
 	}
@@ -2083,18 +2090,14 @@ func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 	return 1
 }
 
-// deleteByAddress routes a delete by address: a bare id to the family delete,
-// `ID@face` to the face delete.
-func deleteByAddress(ctx context.Context, em Mutator, addr string, cascade bool) error {
-	ref, err := entity.ParseRef(addr)
-	if err != nil {
-		return err
-	}
+// deleteRef deletes a resolved write target: the entity at its implicit
+// face, else that face.
+func deleteRef(ctx context.Context, em Mutator, ref entity.Ref, cascade bool) error {
 	if ref.Face.IsImplicit() {
-		_, err = em.DeleteEntity(ctx, ref.ID, cascade)
+		_, err := em.DeleteEntity(ctx, ref.ID, cascade)
 		return err
 	}
-	_, err = em.DeleteEntityFace(ctx, ref.ID, ref.Face, cascade)
+	_, err := em.DeleteEntityFace(ctx, ref.ID, ref.Face, cascade)
 	return err
 }
 

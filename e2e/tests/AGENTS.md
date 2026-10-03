@@ -82,7 +82,8 @@ Specs for faces and worlds use a second project, because declaring worlds in
   Playwright import, so a Node that strips types can run it to write the
   project for manual probing (the command is in its header). It defines `policy` (faces `draft` and `published`, a `file`
   property), the faceless `control`, a content-scoped (`implements`) and an
-  identity-scoped (`owned-by`) relation, worlds `published` (the
+  identity-scoped (`owned-by`) relation (the control form edits incoming
+  `implements` per source face), worlds `published` (the
   `default_world`) and `editorial`, a `publish` copy, a `cat` transform, an
   anchored document, and an `acl.yaml` with two users.
 - `faced-fixtures.ts` exports `facedTest`. It is `test` with the faced

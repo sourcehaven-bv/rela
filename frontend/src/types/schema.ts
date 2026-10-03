@@ -152,6 +152,9 @@ export interface RelationType {
   max_incoming?: number
   properties?: Record<string, PropertyDef>
   orderable?: RelationOrderable
+  // 'content' when each edge belongs to one face of its source; absent for
+  // an identity-scoped relation, whose edges belong to the entity.
+  scope?: 'content'
 }
 
 export interface RelationOrderable {

@@ -1120,17 +1120,17 @@ func NewApp(
 	// App methods, so it's wired after the struct literal. It MUST share the
 	// same acl instance as the write path (contract-test invariant).
 	app.affordances = affordanceService{
-		acl:                func() acl.ACL { return app.acl },
-		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
-		store:              st,
-		meta:               func() *metamodel.Metamodel { return app.State().Meta },
-		family:             app.visibleReader.family,
-		sourceRow:          app.reader.writePrepRow,
-		sourceFamily:       app.reader.writePrepFamily,
-		currentEdgesByPeer: app.currentEdgesByPeer,
-		copies:             copyOffers,
-		schema:             app.State,
-		actionConditions:   func() ViewConditionFunc { return app.viewConditions },
+		acl:              func() acl.ACL { return app.acl },
+		resolver:         func() FieldVerdictResolver { return app.fieldResolver },
+		store:            st,
+		meta:             func() *metamodel.Metamodel { return app.State().Meta },
+		family:           app.visibleReader.family,
+		sourceRow:        app.reader.writePrepRow,
+		sourceFamily:     app.reader.writePrepFamily,
+		planEdges:        app.planEdges,
+		copies:           copyOffers,
+		schema:           app.State,
+		actionConditions: func() ViewConditionFunc { return app.viewConditions },
 	}
 
 	app.serializer = entitySerializer{affordances: app.affordances}
@@ -1335,12 +1335,12 @@ func NewApp(
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
 			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
 		},
-		currentEdgesByPeer: app.currentEdgesByPeerOnFace,
-		engine:             func() *script.Engine { return app.scriptEngine },
-		luaDeps:            app.luaWriteDeps,
-		fullScriptDetail:   app.allowFullScriptDetail,
-		paths:              paths,
-		provision:          newProvisionSeam(app),
+		planEdges:        app.planEdges,
+		engine:           func() *script.Engine { return app.scriptEngine },
+		luaDeps:          app.luaWriteDeps,
+		fullScriptDetail: app.allowFullScriptDetail,
+		paths:            paths,
+		provision:        newProvisionSeam(app),
 	}
 
 	// Nudge the operator to make a conscious virus-scan choice: if the

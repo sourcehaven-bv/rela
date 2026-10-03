@@ -647,6 +647,8 @@ func edgeTails(
 }
 
 // assertEdgeTail fails unless the triple has an edge tailed at face.
+//
+//nolint:unparam // the signature mirrors assertNoEdgeTail; see there.
 func assertEdgeTail(
 	ctx context.Context, t *testing.T, app *App, from string, face entity.Face, relType, to string,
 ) {
@@ -662,10 +664,12 @@ func assertEdgeTail(
 // assertNoEdgeTail fails if the triple has an edge tailed at face. The
 // negative matters as much as the positive: a faced write that also lands on
 // the zero coordinate is misfiled, not merely redundant.
-// read together at every call site, and narrowing one of them would make the
-// positive and negative assertions look like different operations.
 //
-//nolint:unparam // signature deliberately mirrors assertEdgeTail: the pair is
+// The pair's signatures mirror each other because they are read together at
+// every call site; narrowing one would make the positive and negative
+// assertions look like different operations.
+//
+//nolint:unparam // the signature mirrors assertEdgeTail, as described above.
 func assertNoEdgeTail(
 	ctx context.Context, t *testing.T, app *App, from string, face entity.Face, relType, to string,
 ) {
@@ -788,9 +792,9 @@ func TestFacedAddress_RelationsSubTreeReachesItsOwnTail(t *testing.T) {
 	}
 }
 
-// TestFacedAddress_SingleRelationPatchHitsItsOwnTail pins rule 1 of
-// tailOfExistingEdge: when a triple carries an edge at TWO tails, a PATCH
-// addressed to one face must modify THAT face's edge.
+// TestFacedAddress_SingleRelationPatchHitsItsOwnTail pins
+// [writeHandler.ownedSource]: when a triple carries an edge at TWO tails, a
+// PATCH addressed to one face must modify THAT face's edge.
 //
 // Discovering the tail from the triple instead returns whichever edge the
 // store yields first, so `POL-1@draft` could write the published edge's meta

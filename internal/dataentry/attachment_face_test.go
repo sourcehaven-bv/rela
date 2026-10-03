@@ -156,6 +156,22 @@ func TestFacedAttachment_UploadStaysOnItsFace(t *testing.T) {
 	}
 }
 
+// TestFacedAttachment_BareIDIsFaceRequired pins that an upload names the
+// face it changes: a bare id on a faced type writes nothing and answers
+// `face_required` naming the faces, as every content write does.
+func TestFacedAttachment_BareIDIsFaceRequired(t *testing.T) {
+	app, d := facedAttachmentApp(t, faceEditors(t, "bob"))
+	bob := principalCtx("bob")
+
+	rec := putAttachmentAs(bob, t, app, d, "TKT-1", "screenshot", "a.txt", []byte("bytes"))
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "face_required") {
+		t.Fatalf("bare upload = %d (%s), want 422 face_required", rec.Code, rec.Body)
+	}
+	if got := storedContents(t, app); len(got) != 0 {
+		t.Errorf("a refused upload stored %v", got)
+	}
+}
+
 // TestFacedAttachment_UploadRevealsNoOtherFaceName is the file-name oracle
 // fix (BUG-CTUW2N, PR 4b). A file name is a property value, so an upload on
 // published whose name matches a file on draft must behave exactly as if

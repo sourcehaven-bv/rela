@@ -51,14 +51,16 @@ func TestResolver_WriteTarget(t *testing.T) {
 	}{
 		{name: "faceless type", gate: all, world: published, typ: "ticket", addr: bare("TKT-1"),
 			want: entity.Ref{ID: "TKT-1"}},
-		{name: "one candidate", gate: all, world: published, typ: "policy", addr: bare("POL-1"),
-			want: entity.Ref{ID: "POL-1", Face: "published"}},
+		// A faced type's bare id names no face, whatever the world admits.
+		{name: "world admits one face", gate: all, world: published, typ: "policy", addr: bare("POL-1"),
+			ambiguous: []entity.Face{"draft", "published"}},
 		{name: "two candidates", gate: all, world: ranked, typ: "policy", addr: bare("POL-1"),
 			ambiguous: []entity.Face{"draft", "published"}},
 		{name: "no candidate", gate: all, world: published, typ: "policy", addr: bare("POL-2"),
 			ambiguous: []entity.Face{"draft"}},
-		{name: "unreadable faces are not counted", gate: publishedOnly, world: ranked, typ: "policy",
-			addr: bare("POL-1"), want: entity.Ref{ID: "POL-1", Face: "published"}},
+		// One readable face is not enough either; the error lists only it.
+		{name: "one readable face", gate: publishedOnly, world: ranked, typ: "policy",
+			addr: bare("POL-1"), ambiguous: []entity.Face{"published"}},
 		{name: "no readable face is a miss", gate: publishedOnly, world: ranked, typ: "policy",
 			addr: bare("POL-2"), miss: true},
 		{name: "named face", gate: all, world: published, typ: "policy", addr: named("POL-1", "draft"),

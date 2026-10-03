@@ -13,9 +13,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// A PATCH on a bare id edits the one face the default world admits and the
-// caller may read; with two candidates it is a 422 face_required naming
-// them (TKT-7IZHP0 §6). It never edits whichever face the world ranks first.
+// A PATCH on a faced type must name its face: a bare id is a 422
+// face_required naming the readable faces, whatever the world admits
+// (TKT-7IZHP0 §6), and `ID@face` edits that face.
 func TestPatch_BareIDWriteTarget(t *testing.T) {
 	ranked := store.NewWorldScope(map[string]store.TypeResolution{
 		"policy": {Chain: []entity.Face{"published", "draft"}, Fallback: store.FallbackExclude},
@@ -23,16 +23,20 @@ func TestPatch_BareIDWriteTarget(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		world     store.WorldScope
+		addr      string
 		wantCode  int
 		wantFaces []string
 	}{
-		{"one candidate", policyPublishedScope(), http.StatusOK, nil},
-		{"two candidates", ranked, http.StatusUnprocessableEntity, []string{"POL-1@draft", "POL-1@published"}},
+		{"world admits one face", policyPublishedScope(), "POL-1",
+			http.StatusUnprocessableEntity, []string{"POL-1@draft", "POL-1@published"}},
+		{"world admits two faces", ranked, "POL-1",
+			http.StatusUnprocessableEntity, []string{"POL-1@draft", "POL-1@published"}},
+		{"named face", ranked, "POL-1@published", http.StatusOK, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app, _ := facedAppWith(t, facedMeta(t), tc.world, nil)
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodPatch, "/api/v1/policys/POL-1",
+			req := httptest.NewRequest(http.MethodPatch, "/api/v1/policys/"+tc.addr,
 				strings.NewReader(`{"properties":{"title":"EDITED"}}`))
 			req.Header.Set("Content-Type", "application/json")
 			app.NewRouter().ServeHTTP(rec, req)

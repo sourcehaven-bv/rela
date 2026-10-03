@@ -1120,10 +1120,14 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	// Outgoing edges at the ADDRESSED TAIL: a content-scoped edge belongs to
 	// one face of its source, so an unfiltered read returns the union of every
 	// face's edges and presents another face's links as this one's. Incoming
-	// edges stay entity-level — heads are faceless, so an inbound edge points
-	// at the entity and is shared by its faces.
+	// edges point at the entity, since heads are faceless; one whose tail is a
+	// face is served with that face named, if the caller may read it.
 	outgoing := a.reader.outgoingRelationsOnFace(r.Context(), ref)
-	incoming := incomingOwnedAtZero(s.Meta, a.reader.incomingRelations(r.Context(), ref.ID), entity)
+	incoming, err := a.readableIncoming(r.Context(), ref.ID)
+	if err != nil {
+		writeGateError(w, r, err)
+		return
+	}
 
 	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP). Without this, a hidden
 	// peer's `type` (via the ungated entityType read) and edge `meta` leak past
@@ -1135,8 +1139,9 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	// replicated here, in handleV1GetRelationType, and in the list path — a
 	// shared chokepoint (P3) would collapse the three; deferred to avoid
 	// churning the list path in a security fix.
+	// Incoming edges are already gated, by ACL alone (readableIncoming).
 	visibleNeighbors := visibleRelationIDs(r.Context(), a.visibleReader,
-		neighborIDsOf(outgoing, incoming))
+		neighborIDsOf(outgoing, nil))
 
 	relations := make(map[string][]map[string]any)
 
@@ -1177,9 +1182,6 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	}
 
 	for _, edge := range incoming {
-		if !visibleNeighbors[edge.From] {
-			continue
-		}
 		relDef, ok := s.Meta.Relations[edge.Type]
 		if !ok {
 			continue
@@ -1190,6 +1192,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 			"type":      a.reader.entityType(r.Context(), edge.From),
 			"direction": "incoming",
 		}
+		a.markIncomingFace(r.Context(), rel, entity, edge)
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
 			// The relation grant lives on the SOURCE entity type (edge.From for an
@@ -1239,12 +1242,14 @@ type relationMetaStrip struct {
 
 // buildRelationTypeRows builds the single-relation-type wire rows (id/type[/meta])
 // for the visible edges of relType in the given direction, plus the deferred meta
-// strips. It is the shared build step for handleV1GetRelationType; the caller
+// strips. An incoming row is marked with its source face (App.markIncomingFace).
+// It is the shared build step for handleV1GetRelationType; the caller
 // sorts then applies App.redactRelationMetaStrip.
-func buildRelationTypeRows(
-	ctx context.Context, reader entityReader, edges []*entityPkg.Relation,
+func (a *App) buildRelationTypeRows(
+	ctx context.Context, pathEntity *entityPkg.Entity, edges []*entityPkg.Relation,
 	relType string, incoming bool, visibleNeighbors map[string]bool,
 ) (rows []map[string]any, strips []relationMetaStrip) {
+	reader := a.reader
 	rows = make([]map[string]any, 0, len(edges))
 	for _, edge := range edges {
 		if edge.Type != relType {
@@ -1258,6 +1263,9 @@ func buildRelationTypeRows(
 			continue
 		}
 		rel := map[string]any{"id": peerID, "type": reader.entityType(ctx, peerID)}
+		if incoming {
+			a.markIncomingFace(ctx, rel, pathEntity, edge)
+		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
 			s := relationMetaStrip{rel: rel, incoming: incoming}
@@ -1334,7 +1342,11 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 	meta := a.State().Meta
 	var edges []*entityPkg.Relation
 	if incoming {
-		edges = incomingOwnedAtZero(meta, a.reader.incomingRelations(r.Context(), ref.ID), entity)
+		var err error
+		if edges, err = a.readableIncoming(r.Context(), ref.ID); err != nil {
+			writeGateError(w, r, err)
+			return
+		}
 	} else {
 		edges = a.reader.outgoingRelationsOnFace(r.Context(), ref)
 	}
@@ -1355,9 +1367,18 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		}
 		peerIDs = append(peerIDs, peerID)
 	}
-	visibleNeighbors := visibleRelationIDs(r.Context(), a.visibleReader, peerIDs)
+	var visibleNeighbors map[string]bool
+	if incoming {
+		// Already gated, by ACL alone (readableIncoming).
+		visibleNeighbors = make(map[string]bool, len(peerIDs))
+		for _, id := range peerIDs {
+			visibleNeighbors[id] = true
+		}
+	} else {
+		visibleNeighbors = visibleRelationIDs(r.Context(), a.visibleReader, peerIDs)
+	}
 
-	relations, pendingStrips := buildRelationTypeRows(r.Context(), a.reader, edges, relType, incoming, visibleNeighbors)
+	relations, pendingStrips := a.buildRelationTypeRows(r.Context(), entity, edges, relType, incoming, visibleNeighbors)
 
 	// Apply orderable sort when the type declares the relevant side.
 	if relDef, ok := meta.Relations[relType]; ok {
@@ -1450,6 +1471,9 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		}
 		if def.Inverse != nil && def.Inverse.ID != "" {
 			rt.Inverse = &v1.InverseDef{ID: def.Inverse.ID, Label: def.Inverse.Label}
+		}
+		if def.Scope.IsContent() {
+			rt.Scope = "content"
 		}
 		if len(def.Properties) > 0 {
 			rt.Properties = make(map[string]v1.PropertyDef, len(def.Properties))

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -77,13 +78,20 @@ func facesOf(t *testing.T, st store.Store, id string) map[entity.Face]bool {
 	return faces
 }
 
-// `rela delete` finds a faced entity by its family, and `ID@face` deletes
-// only that face and its edges (BUG-J3PBFN).
+// `rela delete ID@face` deletes only that face and its edges (BUG-J3PBFN),
+// and the last face takes the entity. A bare id of a faced entity is
+// errFaceRequired and deletes nothing, as every other write is.
 func TestDeleteCmd_FacedEntity(t *testing.T) {
 	ctx := context.Background()
 	svc := facedCLIServices(t)
 	withOutput(t, output.FormatTable)
 
+	if err := (&DeleteCmd{ID: "POL-1", Force: true, Cascade: true}).Run(ctx, svc); !errors.Is(err, errFaceRequired) {
+		t.Fatalf("bare delete err = %v, want errFaceRequired", err)
+	}
+	if got := facesOf(t, svc.Store, "POL-1"); len(got) != 2 {
+		t.Fatalf("faces after a refused delete = %v, want both", got)
+	}
 	if err := (&DeleteCmd{ID: "POL-1@draft", Force: true, Cascade: true}).Run(ctx, svc); err != nil {
 		t.Fatalf("delete POL-1@draft: %v", err)
 	}
@@ -95,33 +103,34 @@ func TestDeleteCmd_FacedEntity(t *testing.T) {
 		t.Fatalf("edges after the face delete = %d (%v), want the published one", n, err)
 	}
 
-	if err := (&DeleteCmd{ID: "POL-1", Force: true, Cascade: true}).Run(ctx, svc); err != nil {
-		t.Fatalf("delete POL-1: %v", err)
+	if err := (&DeleteCmd{ID: "POL-1@published", Force: true, Cascade: true}).Run(ctx, svc); err != nil {
+		t.Fatalf("delete POL-1@published: %v", err)
 	}
 	if got := facesOf(t, svc.Store, "POL-1"); len(got) != 0 {
-		t.Fatalf("faces after the family delete = %v, want none", got)
+		t.Fatalf("faces after the last face delete = %v, want none", got)
 	}
 }
 
-// --cascade guards the family delete only: the edges tailed at a face are its
-// content, so a face delete takes them without the flag.
-func TestDeleteCmd_CascadeGuardsTheFamilyOnly(t *testing.T) {
+// --cascade guards a delete that removes the entity, which is the delete of
+// its last face. The edges tailed at any other face are that face's
+// content, so its delete takes them without the flag.
+func TestDeleteCmd_CascadeGuardsTheLastFace(t *testing.T) {
 	ctx := context.Background()
 	svc := facedCLIServices(t)
 	withOutput(t, output.FormatTable)
 
-	err := (&DeleteCmd{ID: "POL-1", Force: true}).Run(ctx, svc)
-	if err == nil || err.Error() != "entity POL-1 has 2 relation(s); use --cascade to delete them too" {
-		t.Fatalf("family delete err = %v, want the two-edge refusal", err)
-	}
-
-	if err = (&DeleteCmd{ID: "POL-1@draft", Force: true}).Run(ctx, svc); err != nil {
+	if err := (&DeleteCmd{ID: "POL-1@draft", Force: true}).Run(ctx, svc); err != nil {
 		t.Fatalf("delete POL-1@draft: %v", err)
 	}
 	draft := entity.Face("draft")
 	n, err := svc.Store.CountRelations(ctx, store.RelationQuery{From: "POL-1", FromFace: &draft})
 	if err != nil || n != 0 {
 		t.Fatalf("draft edges after the face delete = %d (%v), want none", n, err)
+	}
+
+	err = (&DeleteCmd{ID: "POL-1@published", Force: true}).Run(ctx, svc)
+	if err == nil || err.Error() != "entity POL-1@published has 1 relation(s); use --cascade to delete them too" {
+		t.Fatalf("last face delete err = %v, want the one-edge refusal", err)
 	}
 }
 

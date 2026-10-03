@@ -35,12 +35,12 @@ func (e *AmbiguousAddressError) Error() string {
 // (A14). Otherwise it is a miss, so a face the principal may write but not
 // read answers the same not-found as an absent one, never a 403.
 //
-// A bare id is resolved in w by counting: the faces of the entity that the
-// principal may read AND that w admits for the type (its chain, plus the
-// implicit face under `otherwise: default`). Exactly one is the target.
-// None or several is an [*AmbiguousAddressError] listing the readable faces;
-// a write never lands on whichever face a world happens to rank first. A
-// faceless type has one candidate, the implicit face.
+// A bare id names the implicit face, the one face of a faceless type. A type
+// that declares faces has no implicit face (DEC-NPZICR), so there it is an
+// [*AmbiguousAddressError] listing the readable faces, even when only one
+// exists: a content write must name the face it changes. Neither a world's
+// ranking nor the number of faces that happen to exist picks it, so a write
+// that works today does not start failing when a second face is published.
 //
 // ok=false is the uniform miss: no such entity, the wrong type, no readable
 // face, or a denied world.
@@ -69,30 +69,8 @@ func (r *Resolver) WriteTarget(
 		}
 		return named, true, nil
 	}
-	admitted := worldCandidates(w.scope, entityType)
-	var candidates []entity.Face
-	for _, f := range fam.Faces {
-		if slices.Contains(admitted, f) {
-			candidates = append(candidates, f)
-		}
-	}
-	if len(candidates) != 1 {
+	if !slices.ContainsFunc(fam.Faces, entity.Face.IsImplicit) {
 		return entity.Ref{}, false, &AmbiguousAddressError{ID: addr.ID(), Faces: fam.Faces}
 	}
-	return entity.Ref{ID: addr.ID(), Face: candidates[0]}, true, nil
-}
-
-// worldCandidates lists the faces scope admits for entityType before any
-// ranking: an unscoped type its implicit face, a scoped one its chain plus
-// the implicit face under `otherwise: default`.
-func worldCandidates(scope store.WorldScope, entityType string) []entity.Face {
-	res, scoped := scope.For(entityType)
-	if !scoped {
-		return []entity.Face{entity.ImplicitFace}
-	}
-	out := res.Chain
-	if res.Fallback == store.FallbackDefaultState {
-		out = append(out, entity.ImplicitFace)
-	}
-	return out
+	return entity.Ref{ID: addr.ID(), Face: entity.ImplicitFace}, true, nil
 }

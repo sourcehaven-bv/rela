@@ -93,8 +93,9 @@ func readAddress(
 
 // writeTarget resolves addr to the one face a face-level write edits, as
 // the operator, through [visibility.Resolver.WriteTarget] in world (the
-// default world). `ID@face` names that face; a bare id names the one face
-// the world admits for the entity, else [errFaceRequired] naming its faces.
+// default world). `ID@face` names that face; a bare id names the implicit
+// face of a faceless type, and on a faced type is [errFaceRequired] naming
+// its faces.
 // An absent entity or face is [store.ErrNotFound].
 func writeTarget(
 	ctx context.Context, st addressLoader, families, world store.WorldScope, addr string,

@@ -294,11 +294,19 @@ export interface ResourceIdentifier {
 }
 
 // Modern relations field shape for the unified PATCH body. Keys are
-// relation names; each value's `data` is the desired set of edges.
-// Sending `data: []` clears all edges of that type — see the
-// data-loss footgun docs in docs/data-entry/api-reference.md.
+// relation names. A value is either the full set of edges (`data`; `data: []`
+// clears every edge of that type the caller can see, see
+// docs/data-entry/api-reference.md) or a delta: `add` upserts the named edges,
+// `remove` deletes them, and every other edge is left alone. The SPA sends
+// deltas only.
+export interface RelationsDelta {
+  add?: ResourceIdentifier[]
+  // `type` is optional here: the relation type already names the peer side.
+  remove?: Array<Pick<ResourceIdentifier, 'id'> & Partial<Pick<ResourceIdentifier, 'type'>>>
+}
+
 export interface ModernRelationsField {
-  [relationName: string]: { data: ResourceIdentifier[] }
+  [relationName: string]: { data: ResourceIdentifier[] } | RelationsDelta
 }
 
 // InaccessibleField marks a property whose value is known to exist but is
@@ -336,6 +344,11 @@ export interface RelationEntry {
   // TKT-ZEKO4; older servers omit it.
   type: string
   direction?: 'outgoing' | 'incoming'
+  // An incoming content-scoped edge belongs to one face of its source: `face`
+  // names it, and `id@face` addresses the edge. `editable` is false when the
+  // principal may not remove it. Both are absent on every other edge.
+  face?: string
+  editable?: boolean
   meta?: Record<string, unknown>
   // Plumbing-only — no widget exposes per-edge body editing yet, but
   // the wire shape carries it so a future ticket can wire UI without

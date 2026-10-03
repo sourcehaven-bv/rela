@@ -127,7 +127,7 @@ func (s *ScriptReader) GetAddress(ctx context.Context, addr string) (*entity.Ent
 
 // WriteTarget resolves addr to the one face a face-level write edits, in
 // the reader's world (see [Resolver.WriteTarget]). Every miss is
-// [store.ErrNotFound]; a bare id that picks no single face is an
+// [store.ErrNotFound]; a bare id on a faced type is an
 // [*AmbiguousAddressError] naming the faces the caller may read.
 func (s *ScriptReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
 	return s.res.writeTargetAny(s.bind(ctx), worldIn(ctx, s.world), addr)

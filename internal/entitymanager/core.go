@@ -445,9 +445,8 @@ func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 }
 
 // requireRelationFaceFor rejects a source face that the relation type or the
-// source entity type cannot carry. It is the relation-side counterpart of
-// requireCreateFaceFor, but deliberately one-sided: it refuses a WRONG face
-// and never demands one (see below).
+// source entity type cannot carry, and a missing one where the edge belongs
+// to a face. It is the relation-side counterpart of requireCreateFaceFor.
 //
 // It guards the manager write path only. The cascade host writes relations
 // straight to the store (cascadehost.go WriteRelation), so it does not pass
@@ -463,19 +462,14 @@ func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 //   - `scope: content` edges belong to one face of the source, so a named tail
 //     must be one the source type declares, and a faceless source must not
 //     name one at all.
+//   - A `scope: content` edge from a faced source must name the face. A zero
+//     tail there would belong to no face, so no world would show it as any
+//     face's content. Every client resolves the face before it gets here:
+//     the HTTP API, MCP, the command line and CalDAV from the address, Lua
+//     from `opts.face`.
 //
-// **Rejects a wrong face; does NOT require one.** This is deliberately weaker
-// than its entity-side twin, and the asymmetry is the point. An entity create
-// with no face has no row to write — a faced type stores nothing at the zero
-// coordinate, so refusing is the only option. A relation create with a zero
-// tail writes a real, addressable, readable edge; it is simply attached at the
-// identity coordinate. That is a far weaker failure, and demanding a face here
-// would break every caller that cannot yet supply one — `rela link`
-// (internal/cli/link.go), the MCP create_relation tool (whose schema has no
-// face parameter), CalDAV membership writes, and the data-entry INCOMING-edge
-// path, which passes a zero tail as a considered decision because the peer's
-// face is not the request's to choose. Those surfaces gain a face with
-// TKT-2RQMV4; until then they must keep working.
+// It runs on create and update. Delete does not call it, so an edge stored
+// at the zero tail before this rule can still be removed.
 //
 // Lives HERE rather than in each binding because the ACL is not a backstop
 // for it: Manager.authorizeAndAudit returns early under `bypassACL`, so an
@@ -492,8 +486,8 @@ func (d Deps) requireCreateFaceFor(entityType string, face entity.Face) error {
 // refused. That applies to updates too: such an edge can be deleted, not
 // rewritten.
 //
-// Nil: never returns an error for a zero face on an identity-scoped type,
-// which is the overwhelmingly common case.
+// Nil: returned for a zero face on an identity-scoped type, which is the
+// overwhelmingly common case.
 func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face) error {
 	if err := validTail(face); err != nil {
 		return err
@@ -533,11 +527,9 @@ func (d Deps) requireRelationFaceFor(relType, fromType string, face entity.Face)
 		}
 		return nil
 	}
-	// A zero tail is ACCEPTED on a faced source — see the doc block. It means
-	// the identity coordinate, which is a real and readable edge, not a
-	// missing row.
 	if face.IsImplicit() {
-		return nil
+		return fmt.Errorf("%w: relation %s, source type %s declares %s", ErrRelationFaceRequired,
+			relType, fromType, strings.Join(metamodel.FaceOrderOf(d.Meta, fromType), ", "))
 	}
 	if _, declared := def.Faces[face.String()]; !declared {
 		return fmt.Errorf("%w: source type %s declares %s, not %q", ErrFaceNotDeclared,

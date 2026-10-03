@@ -530,9 +530,8 @@ func attachmentContent(entityID, property, fileName string, data []byte) mcpgo.C
 func (h attachmentHandler) writePreflight(
 	ctx context.Context, snap AttachmentSnapshot, id, property, fileName string,
 ) (*entity.Entity, metamodel.PropertyDef, *mcpgo.CallToolResult) {
-	// A write edits one face: a bare id names it only when exactly one
-	// readable face is in the default world, else the answer lists the
-	// readable faces (TKT-7IZHP0 §6).
+	// A write edits one face: a bare id on a faced type names none, so the
+	// answer lists the readable faces (TKT-7IZHP0 §6).
 	target, terr := h.store.WriteTarget(ctx, id)
 	if amb, ok := errors.AsType[*visibility.AmbiguousAddressError](terr); ok {
 		return nil, metamodel.PropertyDef{}, errorResult(amb.Error())

@@ -41,7 +41,9 @@ import type { RelationCardState } from './RelationCards.vue'
 import type { RelationPickerIncomingState } from './RelationPicker.vue'
 import {
   buildRelationsPatch,
+  confirmRelations,
   reshapeLegacyToModern,
+  type ConfirmedEdges,
   OUTGOING_SUFFIX,
   INCOMING_SUFFIX,
 } from './relationsPatch'
@@ -386,12 +388,13 @@ const createFace = useCreateFace(
   computed(() => formConfig.value?.entity),
   entityType,
   computed(() => !isEdit.value && !(props.embedded && props.embeddedFace)),
-  createWorld,
+  createWorld
 )
 // Where a create lands: a pinned face, a picked face, or the world's `create:`.
 function createTargetFields(): { face?: string; world?: string } {
   if (props.embedded && props.embeddedFace) return { face: props.embeddedFace }
-  if (createFace.needsFace.value) return createFace.face.value ? { face: createFace.face.value } : {}
+  if (createFace.needsFace.value)
+    return createFace.face.value ? { face: createFace.face.value } : {}
   return createWorld.value ? { world: createWorld.value } : {}
 }
 const { showManualIDInput, showPrefixPicker, prefixOptions, manualId, selectedPrefix } = idControls
@@ -645,6 +648,7 @@ async function loadEntity(force = false) {
     recordServerBaseline(entity)
     formData.value = { ...entity.properties }
     relations.value = entity.relations ? { ...entity.relations } : {}
+    resetConfirmedRelations(relations.value)
     content.value = entity.content || ''
     // TKT-G7N5: per-entity affordances from the server. The wire keys
     // are always present on per-entity GET (possibly empty); we
@@ -1013,7 +1017,10 @@ function scheduleStagedAffordances() {
 }
 
 // A picked face changes which face the verdicts are about.
-watch(() => createFace.face.value, () => scheduleStagedAffordances())
+watch(
+  () => createFace.face.value,
+  () => scheduleStagedAffordances()
+)
 
 /**
  * Applies a template's properties, content and relations to the form.
@@ -1176,6 +1183,7 @@ function selectTemplate(name: string) {
     // Reset to defaults first
     formData.value = {}
     relations.value = {}
+    resetConfirmedRelations({})
     content.value = ''
     initializeDefaults()
     applyTemplate(template)
@@ -1241,6 +1249,7 @@ async function resetCreateForm() {
   // no field-level key to mark it.
   formData.value = {}
   relations.value = {}
+  resetConfirmedRelations({})
   content.value = ''
   errors.value = {}
   userTouched.value = new Set()
@@ -1709,8 +1718,17 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // card edits already carry per-edge meta. Incoming-suffix entries
     // become inverse-named body keys via the inverseByRelation lookup
     // (TKT-GFQK).
-    const modernRelations = buildRelationsPatch(pendingCardChanges.value, inverseByRelation)
-    const reshapedPickers = reshapeLegacyToModern(filteredRelations, pickerTypes.value)
+    const modernRelations = buildRelationsPatch(
+      pendingCardChanges.value,
+      inverseByRelation,
+      confirmedEdges
+    )
+    const reshapedPickers = reshapeLegacyToModern(
+      filteredRelations,
+      pickerTypes.value,
+      confirmedEdges,
+      loadedRelations
+    )
     if (!reshapedPickers) {
       // A target with no resolved type. Ownership filtering above removed the
       // common cause (an unrendered relation from the entity GET), leaving two
@@ -1747,9 +1765,9 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // fix it.
     if (linkParams.value?.as === 'to') {
       const rel = linkParams.value.relation
-      const carried = (relationsPayload[rel]?.data ?? []).some(
-        (r) => r.id === linkParams.value!.peer
-      )
+      const upd = relationsPayload[rel]
+      const sent = !upd ? [] : 'data' in upd ? upd.data : (upd.add ?? [])
+      const carried = sent.some((r) => r.id === linkParams.value!.peer)
       if (!carried) {
         uiStore.error(
           `Cannot pre-link this ${formConfig.value.entity} to ${linkParams.value.peer}: ` +
@@ -2233,14 +2251,27 @@ function recordServerBaseline(entity: Entity) {
 // from the top-level onBeforeUnmount.
 let unregisterDirtyForm: (() => void) | null = null
 
+// The relations the entity was loaded with, per relation name, and the
+// edges saved since (see ConfirmedEdges): every relations body is a delta
+// against them. Reset whenever the form takes a fresh entity.
+let loadedRelations: Record<string, string[]> = {}
+let confirmedEdges: ConfirmedEdges = new Map()
+
+function resetConfirmedRelations(loaded: Record<string, string[]>) {
+  loadedRelations = Object.fromEntries(Object.entries(loaded).map(([k, ids]) => [k, [...ids]]))
+  confirmedEdges = new Map()
+}
+
 function buildAutoSaveRelationsBody(): ModernRelationsField | null {
   // Mirror handleSubmit's body assembly. Two sources of relation
   // edits flow through autosave:
   //   - card-managed widgets (`pendingCardChanges`) — modern shape
   //     via buildRelationsPatch (per-edge meta + content).
   //   - legacy IDs-only widgets (`relations`) — non-card pickers
-  //     write IDs; reshapeLegacyToModern wraps them in {data:[{type,id}]}
+  //     write IDs; reshapeLegacyToModern turns them into {add, remove}
   //     so they ride the same modern PATCH.
+  //
+  // Both are deltas against `confirmedEdges`.
   //
   // Returns null when neither source is dirty.
   const inverseByRelation = new Map<string, string>()
@@ -2267,13 +2298,19 @@ function buildAutoSaveRelationsBody(): ModernRelationsField | null {
     if (cardRelations.has(rel)) continue
     filteredRelations[rel] = ids
   }
-  const modernCards = buildRelationsPatch(pendingCardChanges.value, inverseByRelation)
+  const modernCards = buildRelationsPatch(
+    pendingCardChanges.value,
+    inverseByRelation,
+    confirmedEdges
+  )
   const hasModernCards = Object.keys(modernCards).length > 0
   const hasLegacy = Object.keys(filteredRelations).length > 0
   if (!hasModernCards && !hasLegacy) return null
   // Reshape legacy IDs to modern shape (autosave always uses modern;
   // shape_mixed 400 otherwise).
-  const reshaped = hasLegacy ? reshapeLegacyToModern(filteredRelations, pickerTypes.value) : {}
+  const reshaped = hasLegacy
+    ? reshapeLegacyToModern(filteredRelations, pickerTypes.value, confirmedEdges, loadedRelations)
+    : {}
   if (reshaped === null) {
     // A rendered picker target without a known type. Surface and skip —
     // autosave is best-effort. Ownership filtering above already removed the
@@ -2440,6 +2477,7 @@ onMounted(async () => {
       ...(_pendingServerSnapshot ? { initialServerSnapshot: _pendingServerSnapshot } : {}),
       inverseToCanonical,
       buildRelationsBody: () => buildAutoSaveRelationsBody(),
+      onRelationsSaved: (body) => confirmRelations(confirmedEdges, body),
       applyServerProperty: (property, value) => {
         if (value === undefined) {
           delete formData.value[property]

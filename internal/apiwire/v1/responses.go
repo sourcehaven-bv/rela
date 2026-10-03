@@ -565,6 +565,9 @@ type RelationType struct {
 	MinIncoming *int                   `json:"min_incoming,omitempty"`
 	MaxIncoming *int                   `json:"max_incoming,omitempty"`
 	Properties  map[string]PropertyDef `json:"properties,omitempty"`
+	// Scope is "content" for a relation type whose edges belong to one face
+	// of their source, and omitted for an identity-scoped one.
+	Scope string `json:"scope,omitempty"`
 	// Orderable, when set, declares that the frontend may offer drag-to-reorder
 	// controls on the corresponding side. The managed property names are
 	// always the reserved `_order_out` (outgoing) and `_order_in` (incoming).

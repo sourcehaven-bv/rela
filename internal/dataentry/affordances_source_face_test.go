@@ -46,9 +46,9 @@ func TestRelationSources_ReadsTheTailFace(t *testing.T) {
 		want      []string
 	}{
 		{"tail row", entity.Ref{ID: "TKT-F", Face: "draft"}, incoming, []string{"TKT-F@draft"}},
-		{"zero-face tail of a faced peer", newIncomingEdgeSource("TKT-F"), incoming,
+		{"zero-face tail of a faced peer", entity.Ref{ID: "TKT-F", Face: entity.ImplicitFace}, incoming,
 			[]string{"TKT-F@draft", "TKT-F@published"}},
-		{"missing peer", newIncomingEdgeSource("TKT-NONE"), incoming, []string{"PATH-1@"}},
+		{"missing peer", entity.Ref{ID: "TKT-NONE", Face: entity.ImplicitFace}, incoming, []string{"PATH-1@"}},
 		{"outgoing", entity.Ref{ID: "TKT-F", Face: "draft"}, "outgoing", []string{"PATH-1@"}},
 	}
 	for _, tc := range tests {
@@ -69,7 +69,7 @@ func TestRelationSources_ReadsTheTailFace(t *testing.T) {
 		faulty := svc
 		fault := errors.New("store down")
 		faulty.sourceFamily = func(context.Context, string) ([]*entity.Entity, error) { return nil, fault }
-		if _, err := faulty.relationSources(ctx, path, newIncomingEdgeSource("TKT-F"), incoming); !errors.Is(err, fault) {
+		if _, err := faulty.relationSources(ctx, path, entity.Ref{ID: "TKT-F", Face: entity.ImplicitFace}, incoming); !errors.Is(err, fault) {
 			t.Errorf("err = %v, want the read fault", err)
 		}
 	})

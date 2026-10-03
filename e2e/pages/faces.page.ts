@@ -190,10 +190,10 @@ export class FacesPage extends BasePage {
 
   /** The script-error dialog a refused script action raises, naming the
    *  refusal. A failed script action reports there, not in a toast. */
-  async expectActionRefused() {
+  async expectActionRefused(reason = 'forbidden') {
     const dialog = this.page.getByRole('alertdialog', { name: 'Script error' });
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText('forbidden');
+    await expect(dialog).toContainText(reason);
   }
 
   /** Run a detail-page script action (an `actions:` entry with `available_on`). */

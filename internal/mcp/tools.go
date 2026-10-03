@@ -122,7 +122,8 @@ func toolUpdateEntity() *mcpgo.Tool {
 func toolDeleteEntity() *mcpgo.Tool {
 	return newTool("delete_entity",
 		withDescription("Delete an entity, or one face of it"),
-		withString("id", required(), description("Entity ID; ID@face deletes that face and its edges")),
+		withString("id", required(), description("Entity ID; on a faced type name a face: ID@face deletes that face and its edges, "+
+			"and the last face deletes the entity")),
 		withBoolean("cascade", description("Also delete its relations (default false). "+
 			"An ID@face delete always removes the edges tailed at that face")),
 	)

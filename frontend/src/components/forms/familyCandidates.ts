@@ -1,5 +1,6 @@
 import { DEFAULT_WORLD } from '@/composables/useWorld'
 import type { Entity, WorldInfo } from '@/types'
+import { entityRef } from '@/utils/entityRef'
 
 /**
  * Candidates for a relation TARGET span every face the reader may read.
@@ -59,4 +60,34 @@ export function mergeFamilyCandidates(
     }
   }
   return { rows, offWorld }
+}
+
+/**
+ * Candidates for the SOURCE of an incoming content-scoped edge: one row per
+ * (entity, face), keyed by address. Such an edge belongs to one face of its
+ * source (`POL-1@draft` and `POL-1@published` citing this entity are two
+ * edges), so each face the reader can reach is a separate candidate. The
+ * first list wins a repeated address.
+ */
+export function faceCandidates(lists: Entity[][]): Entity[] {
+  const seen = new Set<string>()
+  const rows: Entity[] = []
+  for (const list of lists) {
+    for (const e of list) {
+      const key = entityRef(e)
+      if (seen.has(key)) continue
+      seen.add(key)
+      rows.push(e)
+    }
+  }
+  return rows
+}
+
+/**
+ * Whether the dropdown offers a face candidate. A face whose `update` the
+ * server denies is left out: a content edge is part of that face's content.
+ * This is a hint read off the server's `_actions`; the write re-authorizes.
+ */
+export function offersFace(e: Entity): boolean {
+  return e._actions?.update !== false
 }

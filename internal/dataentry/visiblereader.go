@@ -326,8 +326,8 @@ func readAddressedOr404(
 
 // writeTargetOr404 resolves a write's path address to the one face it
 // edits ([visibility.Resolver.WriteTarget]) in the request's world, and
-// reads that face. A miss is the uniform 404; a bare id that does not pick
-// exactly one face is a 422 `face_required` listing the readable faces.
+// reads that face. A miss is the uniform 404; a bare id on a faced type is a
+// 422 `face_required` listing the readable faces.
 func writeTargetOr404(
 	w http.ResponseWriter, r *http.Request, vr visibleReader, entityType, addr string,
 ) (*entitypkg.Entity, bool) {

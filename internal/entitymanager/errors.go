@@ -89,6 +89,12 @@ var ErrFaceImmutable = errors.New("entity face is immutable on update; body face
 // Refusing is the fail-closed direction. Surfaced as HTTP 422.
 var ErrFaceRequired = errors.New("this entity type declares content states; a create must name one")
 
+// ErrRelationFaceRequired is returned when a `scope: content` relation from a
+// faced source names no source face. Such an edge belongs to one face, and a
+// zero tail would belong to none, so no world would show it as any face's
+// content. Surfaced as HTTP 422.
+var ErrRelationFaceRequired = errors.New("a content-scoped relation from a faced entity must name the source face")
+
 // ErrFaceNotDeclared is returned when a create names a face the type does not
 // declare, or names any face for a type declaring none.
 //

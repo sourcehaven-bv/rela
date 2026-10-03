@@ -97,14 +97,66 @@ Each value of the `relations` map is one of TWO shapes:
 {"tagged": {"data": [{"type": "label", "id": "L-001", "meta": {"weight": 5}}]}}
 ```
 
-The wrapper has exactly one field, `data`, which is an array of resource
-identifiers. Three cases for `data`:
+A wrapper is either a **replace** (`data`) or a **delta** (`add` and/or
+`remove`). Sending `data` beside `add` or `remove` returns 400
+`wrapper_invalid`.
+
+Three cases for `data`:
 
 1. **Relation type absent from the map** → leave all edges of that type alone.
-2. **`data: []`** → remove all edges of that type from this entity.
+2. **`data: []`** → remove all edges of that type from this entity that the
+   caller can read.
 3. **`data: [{type, id, ...}, ...]`** → the array IS the new desired set. Edges
-   in the list are kept (or upserted with new meta/content); edges currently in
-   the graph but absent from the list are removed.
+   in the list are kept (or upserted with new meta/content); edges the caller
+   can read that are absent from the list are removed.
+
+A replace never touches an edge the caller cannot read. An incoming edge whose
+source face is hidden from the caller is left alone, so a client cannot delete
+what it was never shown.
+
+### Delta: `add` and `remove`
+
+```json
+{"tagged": {"add": [{"type": "label", "id": "L-003"}], "remove": [{"id": "L-001"}]}}
+```
+
+- `add` upserts each listed edge: it creates a missing edge and merges
+  `meta`/`content` into an existing one.
+- `remove` deletes each listed edge. Removing an edge that does not exist is a
+  no-op, so a retried request succeeds. `type` is optional on a removal.
+- Every edge not listed is left alone.
+- Naming one edge in both `add` and `remove` returns 400 `shape_conflict`.
+
+The data-entry SPA sends deltas only. A replace computed from what one user can
+see is a delete of whatever changed since, and a delta is not.
+
+### Incoming edges and faces
+
+An incoming edge of a content-scoped relation type (`scope: content`) belongs
+to one face of its source. `POL-1@draft` and `POL-1@published` citing this
+entity are two edges. In an incoming wrapper (an inverse key), `id` may name
+the source face as `ID@face`:
+
+- `ID@face` names that face's edge.
+- A bare `ID` names the edges that source already has to this entity. `data`
+  and `add` keep all of them. `remove` needs exactly one, and otherwise returns
+  422 `face_required`.
+- A bare `ID` with no edge yet resolves as a single create does: the source's
+  one writable face, or 422 `face_required` when there are several.
+
+`GET /api/v1/{plural}/{id}/relations` and `.../relations/{rel}?direction=incoming`
+list the incoming edges whose source face the caller can read. The ACL decides
+this; the world does not. Each such row of a content-scoped type carries:
+
+| Field | Meaning |
+|---|---|
+| `face` | The source face the edge belongs to. Address the edge as `ID@face`. |
+| `editable` | `false` when the caller may not remove the edge. A hint; the write re-authorizes. |
+
+The single-edge routes (`PATCH`/`DELETE .../relations/{rel}/{target}?direction=incoming`)
+accept `ID@face` as the target. A bare target that matches edges from several
+faces returns 422 `face_required`; one that matches no edge the caller can read
+returns 404 `relation_not_found`.
 
 ### ⚠️ Data-loss footgun
 
@@ -120,6 +172,7 @@ first auto-save fire silently wipes the entity's tagged edges.
   GET before issuing the first PATCH that touches `relations`.
 - **Omit unsubmitted relations.** If the user hasn't touched the relation
   type, don't send it. Absent → leave alone is the safe default.
+- **Prefer a delta.** `add`/`remove` cannot delete an edge it does not name.
 - **`data` field is required when the wrapper appears.** `{"tagged": {}}`
   returns 400, not a silent empty array. This catches the most common
   malformed-request case where a client constructed the wrapper but forgot
@@ -127,7 +180,7 @@ first auto-save fire silently wipes the entity's tagged edges.
 
 ### Per-edge fields
 
-Each entry in `data` is a resource identifier with these fields:
+Each entry in `data` or `add` is a resource identifier with these fields:
 
 | Field | Required? | Semantics |
 |---|---|---|
@@ -166,7 +219,9 @@ Detectable without consulting the metamodel.
 - Non-string element in `meta_unset` array (`meta_unset_invalid`)
 - `data` field has unexpected type (string, scalar, etc.)
 - `data: null` on a wrapper (treated same as missing)
-- Unknown sibling key in modern wrapper (only `data` allowed)
+- Unknown sibling key in modern wrapper (only `data`, `add` and `remove` allowed)
+- `data` beside `add` or `remove` (`wrapper_invalid`)
+- One edge in both `add` and `remove` (`shape_conflict`)
 
 ### Hard 422 — structural impossibilities
 
@@ -174,6 +229,7 @@ The storage layer literally cannot persist this state.
 
 - Unknown relation type (`unknown_relation_type`) — no defined storage location
 - Writing `content` on a relation type without `content: true` (`content_not_supported`) — the file format has no body slot
+- A bare source id that names several faces' incoming edges where one edge is needed (`face_required`)
 
 ### 200 + warnings — soft conditions surfaced inline
 
@@ -825,8 +881,8 @@ On an entity type with faces, `{id}` in every route below is an address,
 such as `POL-1@draft`. The bytes are stored once per entity and shared by
 its faces, but each face lists and serves only the files its own property
 value names. A file uploaded on `POL-1@draft` is therefore not visible
-through `POL-1@published` until a copy carries the reference. A bare id of
-a faced entity addresses no face and answers `404`. The ACL grant for the
+through `POL-1@published` until a copy carries the reference. A write with a
+bare id of a faced entity is refused with `422 face_required`. The ACL grant for the
 addressed face applies: `update` on `policy@draft` to upload or delete,
 `read` on it to download.
 

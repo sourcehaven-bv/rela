@@ -164,7 +164,7 @@ func newElevatedHandle(
 	// rela.* write bindings (TKT-PX5YL7), so "this handle cannot bypass the
 	// ACL to write" is the claim — not "this surface cannot mutate".
 	if em != nil {
-		registerElevatedWrites(ls, t, em, guard, ctxFn)
+		registerElevatedWrites(ls, t, em, er, guard, ctxFn)
 	}
 	registerElevatedReads(ls, t, er, readGuard, ctxFn, reads, world)
 	return t
@@ -208,7 +208,7 @@ func recordElevatedReads(ctx context.Context, rec ElevationRecorder, u *readUsag
 // entity table and were deferred with their own tests as the follow-up noted
 // in newElevatedHandle's doc.
 func registerElevatedWrites(
-	ls *lua.LState, t *lua.LTable, em Mutator, guard func(string) bool,
+	ls *lua.LState, t *lua.LTable, em Mutator, er EntityReader, guard func(string) bool,
 	ctxFn func() context.Context,
 ) {
 	// create_relation takes the same trailing options table as the gated
@@ -262,7 +262,14 @@ func registerElevatedWrites(
 		}
 		id := s.CheckString(1)
 		cascade := s.OptBool(2, false)
-		if err := deleteByAddress(ctxFn(), em, id, cascade); err != nil {
+		ctx := ctxFn()
+		// The elevated reader resolves the address: a bare id of a faced
+		// entity names its faces, as on the gated binding.
+		ref, ok := resolveWriteTarget(ctx, s, er, id)
+		if !ok {
+			return 0
+		}
+		if err := deleteRef(ctx, em, ref, cascade); err != nil {
 			s.RaiseError("bypass_acl delete_entity error: %s", err.Error())
 			return 0
 		}

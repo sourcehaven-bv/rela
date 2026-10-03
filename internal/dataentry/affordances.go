@@ -83,6 +83,14 @@ func translateRelationWrite(relType, fromType, fromID string) acl.WriteRequest {
 	}}
 }
 
+// translateRelationDelete maps the removal of a relType edge whose source is
+// fromID at face to the [acl.WriteRequest] the manager authorizes it with.
+func translateRelationDelete(relType, fromType, fromID string, face entityPkg.Face) acl.WriteRequest {
+	return acl.WriteRequest{Op: acl.OpDelete, Subject: acl.RelationSubject{
+		Type: relType, FromType: fromType, FromID: fromID, FromFace: face,
+	}}
+}
+
 // affordanceService computes the read-time affordance maps (_actions,
 // per-field/relation verdicts) and runs the write-time affordance validation
 // that gates field and relation writes. Extracted from App (TKT-N26KLB M5.2):
@@ -92,7 +100,7 @@ func translateRelationWrite(relType, fromType, fromID string) acl.WriteRequest {
 // It holds the ACL and the field-verdict resolver, plus a per-request
 // metamodel accessor (meta) — the metamodel can change on reload, so it MUST
 // be fetched per call, never captured. The two relation-graph reads it needs
-// (getEntity, currentEdgesByPeer) are injected as callbacks rather than pulling
+// (getEntity, planEdges) are injected as callbacks rather than pulling
 // the relation plumbing in.
 //
 // IMPORTANT — two invariants this type must preserve:
@@ -130,11 +138,9 @@ type affordanceService struct {
 	// `_copies` is omitted rather than sent empty — see computeCopyOffers.
 	// Wired by wireCopies, in production and in the test rebind alike.
 	copies copyOffersFunc
-	// currentEdgesByPeer returns the current edges of entityID for a relation
-	// type/direction, keyed by peer ID. Used to diff desired-vs-current edges.
-	currentEdgesByPeer func(
-		ctx context.Context, entityID, canonical string, incoming bool,
-	) map[string]*entityPkg.Relation
+	// planEdges is [App.planEdges]: the edge writes one relation wrapper
+	// asks for, which this service authorizes one by one.
+	planEdges edgePlanner
 	// schema and actionConditions back the detail-action affordance
 	// (TKT-VVS16W). Live accessors because config reloads and the condition
 	// compiler is injected after construction (SetViewConditions). Nil
@@ -710,15 +716,6 @@ func (svc affordanceService) relationMetaDenial(
 	return nil, nil
 }
 
-// newIncomingEdgeSource is the source row of an incoming edge a request is
-// about to create: the peer at the zero face. An incoming edge's tail belongs
-// to the peer, whose face the request does not choose, so a new one tails at
-// the zero face (applyRelationsModern, BUG-64MU2Q).
-func newIncomingEdgeSource(peerID string) entityPkg.Ref {
-	var tail entityPkg.Face
-	return entityPkg.Ref{ID: peerID, Face: tail}
-}
-
 // validateRelationOp reports the first AffordanceDenialError that the
 // proposed relation operation triggers. Returns nil when permitted.
 // `relType` is the canonical relation type; `op` selects between
@@ -777,73 +774,74 @@ func (svc affordanceService) validateRelationsModernAffordances(
 	}
 	meta := svc.meta()
 	for bodyKey, upd := range desired {
-		if !upd.DataPresent {
+		if !upd.DataPresent && !upd.Delta {
 			continue
 		}
 		canonical, incoming, ok := resolveDirection(meta, bodyKey)
 		if !ok {
 			continue // structural error surfaces via the existing validator
 		}
-		// For incoming-direction body keys the SOURCE of every edge is
-		// the peer entity, not the path entity. Verdicts are evaluated
-		// against the source — see [affordanceService.relationSources] for
-		// the rationale. Outgoing edges resolve to the path entity.
-		direction := ""
-		if incoming {
-			direction = string(DirectionIncoming)
+		var ops []edgeOp
+		if entityID == "" {
+			// A create has no current edges to match: every listed edge is new.
+			ops = newEdgeOps(upd, incoming)
+		} else {
+			var err error
+			ops, err = svc.planEdges(ctx, entityID, e.Face, canonical, incoming, upd,
+				"/relations/"+v1.JSONPointerEscape(bodyKey))
+			if err != nil {
+				return err
+			}
 		}
-		current := svc.currentEdgesByPeer(ctx, entityID, canonical, incoming)
-		if err := svc.validateRelationDiff(ctx, e, canonical, direction, upd.Data, current); err != nil {
+		if err := svc.validateRelationOps(ctx, e, canonical, incoming, ops); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// validateRelationDiff is [affordanceService.validateRelationsModernAffordances]
-// for one relation type: the adds, upserts and removes that turn current into
-// desired.
-func (svc affordanceService) validateRelationDiff(
-	ctx context.Context, e *entityPkg.Entity, canonical, direction string,
-	desired []v1.ResourceIdentifier, current map[string]*entityPkg.Relation,
-) error {
-	desiredByID := make(map[string]v1.ResourceIdentifier, len(desired))
-	for _, ref := range desired {
-		desiredByID[ref.ID] = ref
-	}
-
-	// Adds and upserts: every desired edge. An upsert is not a create, but
-	// the meta may change.
-	for _, ref := range desired {
-		peer := newIncomingEdgeSource(ref.ID)
-		edge, exists := current[ref.ID]
-		if exists {
-			peer.Face = edge.FromFace
+// newEdgeOps is the plan for a wrapper on an entity being created.
+func newEdgeOps(upd v1.RelationsUpdate, incoming bool) []edgeOp {
+	refs := upd.Upserts()
+	ops := make([]edgeOp, len(refs))
+	for i, ref := range refs {
+		peer := peerAddress(ref.ID, incoming)
+		s := edgeSlot{peer: peer.ID()}
+		if named, ok := peer.Named(); ok {
+			s.tail = named.Face
 		}
-		sources, err := svc.relationSources(ctx, e, peer, direction)
+		ops[i] = edgeOp{slot: s, ref: ref}
+	}
+	return ops
+}
+
+// validateRelationOps authorizes the planned writes of one relation type.
+// The source of an incoming edge is the peer at the edge's tail; see
+// [affordanceService.relationSources].
+func (svc affordanceService) validateRelationOps(
+	ctx context.Context, e *entityPkg.Entity, canonical string, incoming bool, ops []edgeOp,
+) error {
+	direction := ""
+	if incoming {
+		direction = string(DirectionIncoming)
+	}
+	for _, op := range ops {
+		sources, err := svc.relationSources(ctx, e, entityPkg.Ref{ID: op.slot.peer, Face: op.slot.tail}, direction)
 		if err != nil {
 			return err
 		}
-		if !exists {
+		switch {
+		case op.remove:
+			if _, denial := svc.relationOpDenial(ctx, sources, canonical, RelationOpRemove); denial != nil {
+				return denial
+			}
+			continue
+		case op.existing == nil:
 			if _, denial := svc.relationOpDenial(ctx, sources, canonical, RelationOpCreate); denial != nil {
 				return denial
 			}
 		}
-		if _, denial := svc.relationMetaDenial(ctx, sources, canonical, ref.Meta, ref.MetaUnset); denial != nil {
-			return denial
-		}
-	}
-
-	// Removes: any current edge not in the desired set.
-	for peerID, edge := range current {
-		if _, kept := desiredByID[peerID]; kept {
-			continue
-		}
-		sources, err := svc.relationSources(ctx, e, entityPkg.Ref{ID: peerID, Face: edge.FromFace}, direction)
-		if err != nil {
-			return err
-		}
-		if _, denial := svc.relationOpDenial(ctx, sources, canonical, RelationOpRemove); denial != nil {
+		if _, denial := svc.relationMetaDenial(ctx, sources, canonical, op.ref.Meta, op.ref.MetaUnset); denial != nil {
 			return denial
 		}
 	}

@@ -22,15 +22,19 @@ func TestCalDAV_FacedEntityIsNotGone(t *testing.T) {
 	b := &caldavBackend{app: app}
 	m := &caldavMapper{cfg: dataentryconfig.CalDAVCollection{EntityType: "task"}}
 
-	if b.entityIsGone(t.Context(), m, "TSK-F") {
-		t.Error("a faced entity with a stored face is not gone")
-	}
-	if !b.entityIsGone(t.Context(), m, "TSK-NOPE") {
-		t.Error("an entity with no stored face is gone")
+	for addr, want := range map[string]bool{
+		"TSK-F":           false, // some face is stored
+		"TSK-F@draft":     false, // the named face is stored
+		"TSK-F@published": true,  // the named face is not
+		"TSK-NOPE":        true,
+	} {
+		if got := b.entityIsGone(t.Context(), m, addr); got != want {
+			t.Errorf("entityIsGone(%s) = %v, want %v", addr, got, want)
+		}
 	}
 
-	if id, ok := b.entityIDFor(t.Context(), "tasks", "task--TSK-F@rela.ics", m); !ok || id != "TSK-F" {
-		t.Errorf("entityIDFor faced task = %q, %v; want TSK-F, true", id, ok)
+	if addr, ok := b.entityIDFor(t.Context(), "tasks", "task--TSK-F@draft@rela.ics", m); !ok || addr != "TSK-F@draft" {
+		t.Errorf("entityIDFor faced task = %q, %v; want TSK-F@draft, true", addr, ok)
 	}
 	other := &caldavMapper{cfg: dataentryconfig.CalDAVCollection{EntityType: "note"}}
 	if _, ok := b.entityIDFor(t.Context(), "tasks", "note--TSK-F@rela.ics", other); ok {
@@ -39,8 +43,9 @@ func TestCalDAV_FacedEntityIsNotGone(t *testing.T) {
 }
 
 // TestCalDAV_WriteAddress pins the face a CalDAV write edits (TKT-7IZHP0
-// A15): the one readable face the request's world admits, refused when there
-// are several, and a miss left to the write's own not-found handling.
+// A15): the face the resource's address names. A bare id on a faced type is
+// refused even when only one face exists, and a miss is left to the write's
+// own not-found handling.
 func TestCalDAV_WriteAddress(t *testing.T) {
 	app := caldavTestApp(t)
 	for _, e := range []*entity.Entity{
@@ -63,7 +68,8 @@ func TestCalDAV_WriteAddress(t *testing.T) {
 		want          string
 		wantAmbiguous bool
 	}{
-		{id: "TSK-F", want: "TSK-F@draft"},
+		{id: "TSK-F@draft", want: "TSK-F@draft"},
+		{id: "TSK-F", wantAmbiguous: true},
 		{id: "TSK-G", wantAmbiguous: true},
 		{id: "TSK-NOPE", want: "TSK-NOPE"},
 	}
@@ -72,5 +78,20 @@ func TestCalDAV_WriteAddress(t *testing.T) {
 		if err != nil || got != tc.want || ambiguous != tc.wantAmbiguous {
 			t.Errorf("writeAddress(%s) = %q, %v, %v; want %q, %v", tc.id, got, ambiguous, err, tc.want, tc.wantAmbiguous)
 		}
+	}
+}
+
+// TestFeedUID_CarriesTheFace pins that a faced row's UID names its face and
+// round-trips, so a CalDAV href or UID addresses one face.
+func TestFeedUID_CarriesTheFace(t *testing.T) {
+	for _, addr := range []string{"TSK-1", "TSK-1@draft"} {
+		uid := feedUID("task", addr)
+		typ, got, ok := splitFeedUID(uid)
+		if !ok || typ != "task" || got != addr {
+			t.Errorf("splitFeedUID(%q) = %q, %q, %v; want task, %q, true", uid, typ, got, ok, addr)
+		}
+	}
+	if got := feedUID("task", "TSK-1@draft"); got != "task--TSK-1@draft@rela" {
+		t.Errorf("feedUID = %q, want task--TSK-1@draft@rela", got)
 	}
 }

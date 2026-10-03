@@ -175,12 +175,8 @@ describe('DynamicForm foreign relations (BUG-KQSOJ2)', () => {
     expect(uiError).not.toHaveBeenCalled()
     expect(update).toHaveBeenCalledTimes(1)
     const body = update.mock.calls[0][2] as { relations: Record<string, unknown> }
-    expect(body.relations.gaat_over).toEqual({
-      data: [
-        { type: 'ncr', id: 'NCR-001' },
-        { type: 'ncr', id: 'NCR-002' },
-      ],
-    })
+    // A delta: NCR-001 was loaded, so only the new edge is sent.
+    expect(body.relations.gaat_over).toEqual({ add: [{ type: 'ncr', id: 'NCR-002' }] })
   })
 
   // The second half of the fix, independent of the abort: a form must not
@@ -300,7 +296,7 @@ describe('DynamicForm prefilled relations survive the ownership filter', () => {
 
     expect(create).toHaveBeenCalledTimes(1)
     const body = create.mock.calls[0][1] as { relations: Record<string, unknown> }
-    expect(body.relations.gaat_over).toEqual({ data: [{ type: 'ncr', id: 'NCR-001' }] })
+    expect(body.relations.gaat_over).toEqual({ add: [{ type: 'ncr', id: 'NCR-001' }] })
   })
 
   // The dangerous case: the prefill names a relation with NO field on this

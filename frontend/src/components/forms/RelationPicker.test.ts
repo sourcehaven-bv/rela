@@ -222,12 +222,15 @@ describe('RelationPicker — incoming direction on create (BUG-10IPBP)', () => {
     setActivePinia(createPinia())
   })
 
-  function seedIncomingSchema(maxIncoming = 10) {
+  // faced: ticket has faces and `blocks` is content-scoped, so each face of
+  // a source is a separate incoming edge.
+  function seedIncomingSchema(maxIncoming = 10, faced = false) {
     const schemaStore = useSchemaStore()
     schemaStore.entityTypes.set('ticket', {
       name: 'ticket',
       label: 'Ticket',
       properties: {},
+      ...(faced ? { faces: { draft: { label: 'Draft' }, published: { label: 'Published' } } } : {}),
     } as never)
     // An incoming picker selects sources from the relation's `from` set.
     // `max_incoming` drives single- vs multi-select on the picker.
@@ -238,15 +241,17 @@ describe('RelationPicker — incoming direction on create (BUG-10IPBP)', () => {
       inverse: 'blockedBy',
       max_outgoing: 10,
       max_incoming: maxIncoming,
+      ...(faced ? { scope: 'content' } : {}),
     } as never)
   }
 
   async function mountIncoming(
     entityId: string | undefined,
     candidates: Entity[],
-    maxIncoming = 10
+    maxIncoming = 10,
+    faced = false
   ) {
-    seedIncomingSchema(maxIncoming)
+    seedIncomingSchema(maxIncoming, faced)
     seedCandidates(candidates)
     const field: FormFieldOrRelation = {
       relation: 'blocks',
@@ -284,6 +289,70 @@ describe('RelationPicker — incoming direction on create (BUG-10IPBP)', () => {
     expect(payload.currentEntries.map((e) => e.id)).toEqual(['TKT-900'])
     // The chip renders so the user sees the pending selection.
     expect(wrapper.find('.selected-entity').text()).toContain('TKT-900')
+    wrapper.unmount()
+  })
+
+  it('sends a new incoming peer by the face it was picked at', async () => {
+    // An incoming content-scoped edge hangs on one face of the peer, so the
+    // row is keyed by that address.
+    const peer = { ...entity('TKT-901', 'A draft blocker'), _self: '/api/v1/tickets/TKT-901@draft' }
+    const wrapper = await mountIncoming(undefined, [peer], 10, true)
+
+    await wrapper.find('input[role="combobox"]').trigger('focus')
+    await flushPromises()
+    await wrapper.find('.dropdown-item').trigger('click')
+    await flushPromises()
+
+    const events = wrapper.emitted('incoming-changed')!
+    const payload = events[events.length - 1][0] as {
+      added: Array<{ targetId: string }>
+      currentEntries: Array<{ id: string }>
+    }
+    expect(payload.currentEntries.map((e) => e.id)).toEqual(['TKT-901@draft'])
+    expect(payload.added).toEqual([{ targetId: 'TKT-901@draft' }])
+    wrapper.unmount()
+  })
+
+  it('offers each writable face of a source as its own candidate', async () => {
+    const draft = { ...entity('TKT-901', 'Blocker'), _self: '/api/v1/tickets/TKT-901@draft' }
+    const published = {
+      ...entity('TKT-901', 'Blocker'),
+      _self: '/api/v1/tickets/TKT-901@published',
+      _actions: { update: false },
+    }
+    const other = { ...entity('TKT-902', 'Other'), _self: '/api/v1/tickets/TKT-902@published' }
+    const wrapper = await mountIncoming('TKT-1', [draft, published, other], 10, true)
+
+    await wrapper.find('input[role="combobox"]').trigger('focus')
+    await flushPromises()
+
+    // TKT-901@published is not offered: the server denies its update.
+    const items = wrapper.findAll('.dropdown-item').map((i) => i.text())
+    expect(items).toHaveLength(2)
+    expect(items[0]).toContain('TKT-901')
+    expect(items[0]).toContain('Draft')
+    expect(items[1]).toContain('TKT-902')
+    wrapper.unmount()
+  })
+
+  it('groups loaded edges per face and locks a read-only one', async () => {
+    vi.mocked(getEntityRelations).mockResolvedValue([
+      { id: 'TKT-901', type: 'ticket', face: 'draft', editable: true },
+      { id: 'TKT-901', type: 'ticket', face: 'published', editable: false },
+    ])
+    const wrapper = await mountIncoming('TKT-1', [], 10, true)
+
+    const groups = wrapper.findAll('.selected-group')
+    expect(groups.map((g) => g.find('.group-face').text())).toEqual(['Draft', 'Published'])
+    expect(groups[0].find('.remove-btn').exists()).toBe(true)
+    expect(groups[1].find('.remove-btn').exists()).toBe(false)
+    expect(groups[1].find('.lock').exists()).toBe(true)
+
+    // Removing the draft edge names that face only.
+    await groups[0].find('.remove-btn').trigger('click')
+    const events = wrapper.emitted('incoming-changed')!
+    const last = events[events.length - 1][0] as { removed: string[] }
+    expect(last.removed).toEqual(['TKT-901@draft'])
     wrapper.unmount()
   })
 

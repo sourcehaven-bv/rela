@@ -61,10 +61,12 @@ func facedDeleteServer(t *testing.T) (*Server, *memstore.MemStore) {
 	return srv, st
 }
 
-func storedFaces(t *testing.T, st store.Store, id string) map[entity.Face]bool {
+// storedFaces is the faces of POL-1, the fixture's one faced entity, stored
+// right now.
+func storedFaces(t *testing.T, st store.Store) map[entity.Face]bool {
 	t.Helper()
 	faces := map[entity.Face]bool{}
-	q := store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}
+	q := store.EntityQuery{IDs: []string{"POL-1"}, Faces: store.AllFaces()}
 	for e, err := range st.ListEntities(context.Background(), q) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)
@@ -74,16 +76,20 @@ func storedFaces(t *testing.T, st store.Store, id string) map[entity.Face]bool {
 	return faces
 }
 
-// delete_entity takes `ID@face` for one face and a bare id for the family;
-// both used to answer "not found" on a faced type (BUG-J3PBFN).
+// delete_entity takes `ID@face` for one face, and the last face takes the
+// entity. A bare id of a faced entity names its faces and deletes nothing,
+// as every other write does. `ID@face` used to answer "not found" on a faced
+// type (BUG-J3PBFN).
 func TestHandleDeleteEntity_FacedEntity(t *testing.T) {
 	s, st := facedDeleteServer(t)
 	ctx := context.Background()
 
-	// cascade guards the family delete only.
-	res, err := s.handleDeleteEntity(ctx, makeToolRequest(map[string]any{"id": "POL-1"}))
-	if err != nil || !isErrorResult(res) || !strings.Contains(getResultText(t, res), "has 2 relation(s)") {
-		t.Fatalf("family delete without cascade = %v, %v; want the two-edge refusal", res, err)
+	res, err := s.handleDeleteEntity(ctx, makeToolRequest(map[string]any{"id": "POL-1", "cascade": true}))
+	if err != nil || !isErrorResult(res) || !strings.Contains(getResultText(t, res), "POL-1@draft") {
+		t.Fatalf("bare delete = %v, %v; want an error naming the faces", res, err)
+	}
+	if got := storedFaces(t, st); len(got) != 2 {
+		t.Fatalf("faces after a refused delete = %v, want both", got)
 	}
 
 	// A face's tailed edges are its content, so they go without cascade.
@@ -94,19 +100,19 @@ func TestHandleDeleteEntity_FacedEntity(t *testing.T) {
 	if got := getResultText(t, res); got != "Deleted POL-1@draft and 1 relation(s)" {
 		t.Errorf("result = %q, want the face and its one edge", got)
 	}
-	if got := storedFaces(t, st, "POL-1"); len(got) != 1 || !got["published"] {
+	if got := storedFaces(t, st); len(got) != 1 || !got["published"] {
 		t.Fatalf("faces after the face delete = %v, want [published]", got)
 	}
 	if n, countErr := st.CountRelations(ctx, store.RelationQuery{From: "POL-1"}); countErr != nil || n != 1 {
 		t.Fatalf("edges after the face delete = %d (%v), want the published one", n, countErr)
 	}
 
-	res, err = s.handleDeleteEntity(ctx, makeToolRequest(map[string]any{"id": "POL-1", "cascade": true}))
+	res, err = s.handleDeleteEntity(ctx, makeToolRequest(map[string]any{"id": "POL-1@published", "cascade": true}))
 	if err != nil || isErrorResult(res) {
-		t.Fatalf("delete POL-1: %v %s", err, getResultText(t, res))
+		t.Fatalf("delete POL-1@published: %v %s", err, getResultText(t, res))
 	}
-	if got := storedFaces(t, st, "POL-1"); len(got) != 0 {
-		t.Fatalf("faces after the family delete = %v, want none", got)
+	if got := storedFaces(t, st); len(got) != 0 {
+		t.Fatalf("faces after the last face delete = %v, want none", got)
 	}
 }
 
@@ -150,7 +156,7 @@ func TestHandleDeleteEntity_LastFaceNeedsCascade(t *testing.T) {
 	if err != nil || !isErrorResult(res) || !strings.Contains(getResultText(t, res), "has 1 relation(s)") {
 		t.Fatalf("last-face delete without cascade = %v, %v; want the refusal", res, err)
 	}
-	if got := storedFaces(t, st, "POL-1"); !got["draft"] {
+	if got := storedFaces(t, st); !got["draft"] {
 		t.Fatalf("POL-1@draft must survive the refusal, faces = %v", got)
 	}
 

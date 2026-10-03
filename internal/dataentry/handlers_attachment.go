@@ -477,8 +477,9 @@ func (h *attachmentHandler) handleV1DeleteAttachment(
 }
 
 // attachmentWritePreflight runs the shared front matter for an attachment
-// write: resolve the addressed face through the gated resolver (uniform
-// 404), validate the property is a declared `file` type, reject a locked
+// write: resolve the face the address names, as every content write does
+// ([writeTargetOr404]: uniform 404, `face_required` for a bare id on a faced
+// type), validate the property is a declared `file` type, reject a locked
 // (inaccessible) entity, and authorize the `update` write on that face UP
 // FRONT so a deny never reaches the store. Returns the raw face and true
 // when the write may proceed.
@@ -489,7 +490,7 @@ func (h *attachmentHandler) attachmentWritePreflight(
 
 	// Read first: a hidden, denied or nonexistent face yields a uniform 404
 	// (RR-NGMI), the same as the read path.
-	entity, found := readAddressedOr404(w, r, h.visible, typeName, addr)
+	entity, found := writeTargetOr404(w, r, h.visible, typeName, addr)
 	if !found {
 		return nil, false
 	}

@@ -193,16 +193,29 @@ func TestContentEdges_WorldNeighborsServeOnlyTheOwningFace(t *testing.T) {
 				}
 			}
 
-			// The relations routes, outgoing on the published face and
-			// incoming on the draft edge's target.
+			// The relations routes, outgoing on the published face.
 			for _, tc := range []struct{ path, absent string }{
 				{"/api/v1/policys/POL-1@published/relations", "FEAT-DRAFT"},
 				{"/api/v1/policys/POL-1@published/relations/cites", "FEAT-DRAFT"},
-				{"/api/v1/features/FEAT-DRAFT/relations", "POL-1"},
-				{"/api/v1/features/FEAT-DRAFT/relations/cites?direction=incoming", "POL-1"},
 			} {
 				if body := routedJSON(t, app, tc.path); mentions(t, body, tc.absent) {
 					t.Errorf("GET %s names %s: %v", tc.path, tc.absent, body)
+				}
+			}
+			// Incoming on the draft edge's target: an edge editor, so the
+			// edge is served by ACL alone, named by its face, and read-only
+			// for a role without relation writes.
+			for _, path := range []string{
+				"/api/v1/features/FEAT-DRAFT/relations",
+				"/api/v1/features/FEAT-DRAFT/relations/cites?direction=incoming",
+			} {
+				body := routedJSON(t, app, path)
+				if got := mentions(t, body, "POL-1"); got != reader.draft {
+					t.Errorf("GET %s names POL-1 = %v, want %v: %v", path, got, reader.draft, body)
+				}
+				raw, _ := json.Marshal(body)
+				if reader.draft && (!mentions(t, body, "draft") || !strings.Contains(string(raw), `"editable":false`)) {
+					t.Errorf("GET %s: want POL-1 at face draft, not editable: %v", path, body)
 				}
 			}
 

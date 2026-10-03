@@ -469,6 +469,41 @@ export class FormPage extends BasePage {
     return picker.locator(".selected-entity");
   }
 
+  /** A relation picker, scoped by its label. */
+  relationPickerByLabel(label: string): Locator {
+    return this.page
+      .locator(".relation-picker")
+      .filter({ has: this.page.locator(`label:has-text("${label}")`) });
+  }
+
+  /** An incoming picker's group of edges from one source face, by the
+   *  face's label. */
+  pickerFaceGroup(picker: Locator, faceLabel: string): Locator {
+    return picker
+      .locator(".selected-group")
+      .filter({ has: this.page.locator(`.group-face:text-is("${faceLabel}")`) });
+  }
+
+  /** The labels of an incoming picker's face groups, in order. */
+  async pickerFaceLabels(picker: Locator): Promise<string[]> {
+    return picker.locator(".selected-group .group-face").allTextContents();
+  }
+
+  /** The lock on a row the principal may not change. */
+  pickerLocks(scope: Locator): Locator {
+    return scope.locator(".lock");
+  }
+
+  /** The remove buttons on a picker's (or group's) rows. */
+  pickerRemoveButtons(scope: Locator): Locator {
+    return scope.locator(".remove-btn");
+  }
+
+  /** The options of an open relation picker dropdown. */
+  pickerOptions(picker: Locator): Locator {
+    return picker.locator(".dropdown-item");
+  }
+
   /** A cards relation widget, scoped by its section label.
    *
    *  Scoping on the label (rather than any text in the widget) matters: a

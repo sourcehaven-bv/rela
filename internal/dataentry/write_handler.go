@@ -87,7 +87,7 @@ type entityMutator interface {
 // stable services are held by value (store/manager/reader/serializer/
 // affordances), swappable-in-test collaborators are closures over App (schema/
 // acl/audit), and the shared helpers used by BOTH the read and write paths are
-// passed as closures (denyAfford, computeETag, currentEdgesByPeer)
+// passed as closures (denyAfford, computeETag, planEdges)
 // so the two paths cannot drift (uniform-404 read gate, affordance-denial
 // audit, one ETag definition).
 //
@@ -133,13 +133,9 @@ type writeHandler struct {
 	// caller may see. The write path answers with the row it wrote, so it
 	// owes the row's own edges, not the bare id's union of every face's.
 	faceEdges func(ctx context.Context, e *entityPkg.Entity) ([]*entityPkg.Relation, map[string]bool, error)
-	// currentEdgesByPeer is face-scoped: the reconciler diffs against the
-	// edges ONE face owns, because it DELETES whatever is current but not
-	// desired. Handed the bare-id union of every face's edges, a PATCH to
-	// one face would delete another face's links (BUG-64MU2Q).
-	currentEdgesByPeer func(
-		ctx context.Context, entityID string, tail entityPkg.Face, canonical string, incoming bool,
-	) map[string]*entityPkg.Relation
+	// planEdges is [App.planEdges]: the edge writes one relation wrapper
+	// asks for, matched against the edges the caller can see.
+	planEdges edgePlanner
 
 	// paths contains caller-supplied conflict-file paths to the project
 	// root (conflict-resolve is the one file-level write in the nucleus).
@@ -316,7 +312,8 @@ func (h *writeHandler) gateCreateRelationAffordances(
 
 // relationGateOK answers the request itself for a failed
 // [affordanceService.validateRelationsModernAffordances]: a 403 for a denial,
-// with subject as its audit subject, and a 500 for a read fault. It reports
+// with subject as its audit subject, the validation answer for a body the
+// planner refused (face_required), and a 500 for a read fault. It reports
 // whether the request may continue.
 func (h *writeHandler) relationGateOK(
 	w http.ResponseWriter, r *http.Request, subject *entityPkg.Entity, err error,
@@ -327,6 +324,13 @@ func (h *writeHandler) relationGateOK(
 	var denial *AffordanceDenialError
 	if errors.As(err, &denial) {
 		h.denyAfford(r.Context(), w, subject, *denial)
+		return false
+	}
+	var structural *structuralError
+	var wire *v1.WireError
+	var fault *gateFaultError
+	if errors.As(err, &structural) || errors.As(err, &wire) || errors.As(err, &fault) {
+		h.writeRelationsValidationError(w, r, err)
 		return false
 	}
 	writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation source", err.Error())
@@ -898,18 +902,16 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Request, typeName, _, entityID string) {
 	r = h.withProvision(r)
 
-	// The path segment is an ADDRESS. On a type that declares faces, a
-	// delete names one face (`ID@face`) and removes that face; the last face
-	// takes the entity with it. A bare id is refused with `face_required`:
-	// the world's choice of face is a display preference, not the face the
-	// caller meant to delete, and deleting every face would need delete on
-	// faces the caller may not see. A faceless type has one face, so its
-	// bare id deletes the entity.
+	// The path segment is an ADDRESS, resolved as every content write is
+	// ([writeTargetOr404]). On a type that declares faces, a delete names one
+	// face (`ID@face`) and removes that face; the last face takes the entity
+	// with it. A bare id there is `face_required`: deleting every face would
+	// need delete on faces the caller may not see. A faceless type's bare id
+	// names its one face, the implicit one, and deletes the entity.
 	//
 	// The resolver read runs BEFORE AuthorizeWrite (RR-3532), so a hidden
-	// target or a denied face 404s rather than answering 403-with-rule_id,
-	// and the refusal below is only reached for an entity the caller sees.
-	entity, found := readAddressedOr404(w, r, h.visible, typeName, entityID)
+	// target or a denied face 404s rather than answering 403-with-rule_id.
+	entity, found := writeTargetOr404(w, r, h.visible, typeName, entityID)
 	if !found {
 		return
 	}
@@ -919,12 +921,6 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	if ref.Face.IsImplicit() {
 		err = h.deleteWholeEntity(r.Context(), ref.ID)
 	} else {
-		if addr, perr := entityPkg.ParseAddress(entityID); perr == nil {
-			if _, named := addr.Named(); !named {
-				h.refuseBareFaceDelete(w, r, entity)
-				return
-			}
-		}
 		_, err = h.manager.DeleteEntityFace(r.Context(), ref.ID, ref.Face, true)
 	}
 	if err != nil {
@@ -942,19 +938,118 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// refuseBareFaceDelete answers a bare-id DELETE of a faced entity with
-// `face_required`, listing the faces the caller may read.
-func (h *writeHandler) refuseBareFaceDelete(w http.ResponseWriter, r *http.Request, e *entityPkg.Entity) {
-	fam, ok, err := h.visible.family(r.Context(), e.Type, e.ID)
+// ownedSource resolves the source row and tail of an edge the path entity
+// is the source of. An identity-scoped edge belongs to the entity, so its
+// tail is the implicit face whatever the address, and served stays the
+// source. A content-scoped edge belongs to one face, which the address must
+// name on a faced type ([writeTargetOr404]); a bare id there is
+// `face_required`, never the face a world ranks first. It writes the
+// response and reports false when the request stops here.
+func (h *writeHandler) ownedSource(
+	w http.ResponseWriter, r *http.Request, typeName, addr, relType string, served *entityPkg.Entity,
+) (*entityPkg.Entity, entityPkg.Face, bool) {
+	if !metamodel.IsContentScoped(h.schema().Meta, relType) {
+		return served, entityPkg.ImplicitFace, true
+	}
+	e, ok := writeTargetOr404(w, r, h.visible, typeName, addr)
+	if !ok {
+		return nil, "", false
+	}
+	return e, e.Face, true
+}
+
+// bodyPeer resolves the entity a relation create's body names. On an
+// outgoing edge it is the target, and a target is always the whole entity,
+// so the body is a bare id. On an incoming edge it is the source: an
+// identity-scoped edge belongs to the entity, so its tail is the implicit
+// face, and a content-scoped one belongs to the face the body names
+// (`POL-1@draft`), resolved as every content write is
+// ([visibility.Resolver.WriteTarget]). A bare id of a faced source is
+// `face_required`. It writes the response and reports false when the request
+// stops here.
+func (h *writeHandler) bodyPeer(
+	w http.ResponseWriter, r *http.Request, relType, addr, direction string,
+) (entityPkg.Ref, bool) {
+	ctx := r.Context()
+	if direction != string(DirectionIncoming) || !metamodel.IsContentScoped(h.schema().Meta, relType) {
+		parsed, err := entityPkg.ParseAddress(addr)
+		if err != nil || (direction != string(DirectionIncoming) && parsed.ID() != addr) {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+			return entityPkg.Ref{}, false
+		}
+		if !familyReadableOr404(w, r, h.visible, parsed.ID()) {
+			return entityPkg.Ref{}, false
+		}
+		return entityPkg.Ref{ID: parsed.ID(), Face: entityPkg.ImplicitFace}, true
+	}
+	parsed, err := entityPkg.ParseAddress(addr)
+	if err != nil {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return entityPkg.Ref{}, false
+	}
+	typ, err := h.visible.readableType(ctx, parsed.ID())
 	if err != nil {
 		writeGateError(w, r, err)
-		return
+		return entityPkg.Ref{}, false
 	}
-	faces := []entityPkg.Face{e.Face}
-	if ok {
-		faces = fam.Faces
+	if typ == "" {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return entityPkg.Ref{}, false
 	}
-	writeFaceRequired(w, r, &visibility.AmbiguousAddressError{ID: e.ID, Faces: faces})
+	ref, ok, err := h.visible.resolver.WriteTarget(ctx, worldFromContext(ctx).visibility(), typ, parsed)
+	var amb *visibility.AmbiguousAddressError
+	switch {
+	case errors.As(err, &amb):
+		writeFaceRequired(w, r, amb)
+		return entityPkg.Ref{}, false
+	case err != nil:
+		writeGateError(w, r, err)
+		return entityPkg.Ref{}, false
+	case !ok:
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return entityPkg.Ref{}, false
+	}
+	return ref, true
+}
+
+// edgeSource is the source row and tail the single-relation PATCH and DELETE
+// routes address: [writeHandler.ownedSource] when the path entity is the
+// edge's source, else served with the stored edge's own tail
+// ([writeHandler.incomingEdgeTail]).
+func (h *writeHandler) edgeSource(
+	w http.ResponseWriter, r *http.Request, typeName, addr string, served *entityPkg.Entity,
+	peer entityPkg.Address, from, relType, to string,
+) (*entityPkg.Entity, entityPkg.Face, bool) {
+	if from == served.ID {
+		return h.ownedSource(w, r, typeName, addr, relType, served)
+	}
+	tail, err := h.incomingEdgeTail(r.Context(), peer, relType, to)
+	if err != nil {
+		var fault *gateFaultError
+		var structural *structuralError
+		switch {
+		case errors.Is(err, errEdgeNotFound):
+			writeV1Error(w, r, http.StatusNotFound, "relation_not_found", "Relation not found", "")
+			return nil, "", false
+		case errors.As(err, &fault) || errors.As(err, &structural):
+			h.writeRelationsValidationError(w, r, err)
+			return nil, "", false
+		}
+		writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation", err.Error())
+		return nil, "", false
+	}
+	return served, tail, true
+}
+
+// relationTargetID is the entity id of a single-relation route's target
+// segment, gated before the direction is known. Only an incoming target may
+// name a face: it is the edge's source, and a content-scoped edge belongs to
+// one face of it ([peerAddress]).
+func relationTargetID(targetID string) string {
+	if addr, err := entityPkg.ParseAddress(targetID); err == nil {
+		return addr.ID()
+	}
+	return targetID
 }
 
 // writeRelationsValidationError maps a Phase A validation error from
@@ -1019,7 +1114,6 @@ func (h *writeHandler) handleV1CreateRelation(
 	if !found {
 		return
 	}
-	ref := entity.Ref()
 
 	var req struct {
 		ID        string         `json:"id"`
@@ -1053,21 +1147,29 @@ func (h *writeHandler) handleV1CreateRelation(
 	//
 	// The target's type comes from the STORE, not from its id prefix: a
 	// prefix-derived type is exactly the fragile lookup that made a
-	// legitimately prefix-less id unlinkable. The body names an entity, not a
-	// face, so the check is the entity-level one: some face of it the caller
-	// may read. A faced target has no zero-face row, so a row read here would
-	// refuse every faced peer. A target that does not exist and one the caller
-	// may not read collapse to the same 404 carrying the shared
-	// entityNotFoundTitle, so the two stay indistinguishable. Whether an
-	// entity exists is a genuine secret (docs/acl-security.md).
-	if !familyReadableOr404(w, r, h.visible, req.ID) {
+	// legitimately prefix-less id unlinkable. The check is the entity-level
+	// one: some face of the peer the caller may read. A target that does not
+	// exist and one the caller may not read collapse to the same 404 carrying
+	// the shared entityNotFoundTitle, so the two stay indistinguishable.
+	// Whether an entity exists is a genuine secret (docs/acl-security.md).
+	peer, ok := h.bodyPeer(w, r, relType, req.ID, req.Direction)
+	if !ok {
 		return
+	}
+
+	// The new edge's SOURCE and TAIL: the path entity by ownedSource's rule
+	// on an outgoing edge, the peer the body names on an incoming one.
+	newTail := peer.Face
+	if req.Direction != string(DirectionIncoming) {
+		if entity, newTail, ok = h.ownedSource(w, r, typeName, addr, relType, entity); !ok {
+			return
+		}
 	}
 
 	// Affordance gates: creatable + meta-writable, evaluated against
 	// the SOURCE of the new edge (not necessarily the path entity —
 	// for incoming-direction creates the path entity is the target).
-	sources, ok := h.relationSourcesOr500(w, r, entity, newIncomingEdgeSource(req.ID), req.Direction)
+	sources, ok := h.relationSourcesOr500(w, r, entity, peer, req.Direction)
 	if !ok {
 		return
 	}
@@ -1083,19 +1185,7 @@ func (h *writeHandler) handleV1CreateRelation(
 		return
 	}
 
-	from, to := resolveRelationEndpoints(entity.ID, req.ID, req.Direction)
-
-	// The new edge's TAIL, by the same rule applyRelationsModern uses
-	// (BUG-64MU2Q): a content-scoped OUTGOING edge tails at the addressed
-	// face; an incoming edge tails at the PEER, whose face is not this
-	// request's to choose; an identity-scoped edge belongs to the entity, so
-	// its tail is the zero face by definition.
-	newTail := entityPkg.Face("")
-	if req.Direction != string(DirectionIncoming) {
-		if relDef, ok := h.schema().Meta.Relations[relType]; ok && relDef.Scope.IsContent() {
-			newTail = ref.Face
-		}
-	}
+	from, to := resolveRelationEndpoints(entity.ID, peer.ID, req.Direction)
 
 	_, err := h.manager.CreateRelation(r.Context(),
 		entityPkg.RelationKey{From: from, FromFace: newTail, Type: relType, To: to},
@@ -1124,10 +1214,9 @@ func (h *writeHandler) handleV1UpdateRelation(
 	if !found {
 		return
 	}
-	if !familyReadableOr404(w, r, h.visible, targetID) {
+	if !familyReadableOr404(w, r, h.visible, relationTargetID(targetID)) {
 		return
 	}
-	ref := entity.Ref()
 
 	var req struct {
 		Meta      map[string]any `json:"meta"`
@@ -1142,16 +1231,14 @@ func (h *writeHandler) handleV1UpdateRelation(
 	// the edge (the path entity for outgoing; the peer for incoming).
 	// The edge already exists (PATCH is meta-only), so the create /
 	// remove gates don't apply.
-	from, to := resolveRelationEndpoints(entity.ID, targetID, req.Direction)
+	peer := peerAddress(targetID, req.Direction == string(DirectionIncoming))
+	from, to := resolveRelationEndpoints(entity.ID, peer.ID(), req.Direction)
 
-	// The addressed tail when the caller named one on the edge's SOURCE,
-	// else the existing edge's own — see tailOfExistingEdge. `from == ref.ID`
-	// is the ownership test: on the incoming path the source is the peer, so
-	// the addressed face is not this edge's to take. The affordance gate
-	// reads the source at this tail too.
-	tail, err := tailOfExistingEdge(r.Context(), h.store, from, relType, to, ref.Face, from == ref.ID)
-	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation", err.Error())
+	// The edge's source row and tail: by ownedSource's rule when the path
+	// entity is the source, else the stored edge's own tail. The affordance
+	// gate reads the source at this tail.
+	entity, tail, ok := h.edgeSource(w, r, typeName, addr, entity, peer, from, relType, to)
+	if !ok {
 		return
 	}
 
@@ -1220,26 +1307,25 @@ func (h *writeHandler) handleV1DeleteRelation(
 	if !found {
 		return
 	}
-	if !familyReadableOr404(w, r, h.visible, targetID) {
+	if !familyReadableOr404(w, r, h.visible, relationTargetID(targetID)) {
 		return
 	}
-	ref := entity.Ref()
 
 	// Affordance gate: removable check, evaluated against the SOURCE
 	// of the edge (the path entity for outgoing; the peer for
 	// incoming). Per-relation-type uniform — a removable=false
 	// verdict applies to every link of this type.
 	direction := r.URL.Query().Get("direction")
-	from, to := resolveRelationEndpoints(entity.ID, targetID, direction)
+	peer := peerAddress(targetID, direction == string(DirectionIncoming))
+	from, to := resolveRelationEndpoints(entity.ID, peer.ID(), direction)
 
-	// Addressed by its OWN tail — see tailOfExistingEdge. Dropping the tail
+	// Addressed by its OWN tail — see incomingEdgeTail. Dropping the tail
 	// deletes a DIFFERENT edge (the default face's) and reports success.
 	// DeleteRelationState with the zero face IS DeleteRelation, so the
 	// faceless and identity-scoped cases are unchanged. The affordance gate
 	// reads the source at this tail too.
-	tail, err := tailOfExistingEdge(r.Context(), h.store, from, relType, to, ref.Face, from == ref.ID)
-	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation", err.Error())
+	entity, tail, ok := h.edgeSource(w, r, typeName, addr, entity, peer, from, relType, to)
+	if !ok {
 		return
 	}
 

@@ -32,7 +32,8 @@ func ownedByFace(meta *metamodel.Metamodel, rel *entityPkg.Relation, face entity
 
 // incomingOwnedAtZero keeps the incoming edges of row that may be served on a
 // surface which reads each neighbor at the ZERO coordinate (a bare-id read:
-// the relations routes, export, list export, table relation columns).
+// export, list export, table relation columns). The relations routes serve
+// an edge editor instead, and name each edge's face (App.readableIncoming).
 //
 // Such a surface serves the source at its zero face, so only an edge that
 // face owns may be served; a content edge tailed at any other face would be

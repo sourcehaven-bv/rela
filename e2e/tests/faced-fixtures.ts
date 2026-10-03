@@ -55,6 +55,13 @@ export interface FacedApi {
   invokeCopy(name: string, sourceId: string): Promise<void>;
   /** A face's comment thread. */
   listComments(type: string, address: string): Promise<Array<{ id: string; body: string }>>;
+  /** The incoming edges of `relation` on `plural/id`, as the relations route
+   *  serves them: a content-scoped edge names its source face. */
+  listIncoming(
+    plural: string,
+    id: string,
+    relation: string,
+  ): Promise<Array<{ id: string; face?: string; editable?: boolean }>>;
 }
 
 function readFacedApi(request: APIRequestContext, serverUrl: string): FacedApi {
@@ -96,6 +103,9 @@ function readFacedApi(request: APIRequestContext, serverUrl: string): FacedApi {
     async listComments(type, address) {
       const body = await (await call("GET", `_comments/${type}/${address}`)).json();
       return body.comments ?? [];
+    },
+    async listIncoming(plural, id, relation) {
+      return (await call("GET", `${plural}/${id}/relations/${relation}?direction=incoming`)).json();
     },
   };
 }

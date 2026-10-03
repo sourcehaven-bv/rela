@@ -280,9 +280,8 @@ func TestReadRelationResource_TailFace(t *testing.T) {
 }
 
 // TestUpdateEntity_FacedBareIDNamesReadableFaces pins update_entity's write
-// target (TKT-7IZHP0 §6): a bare id with several readable faces in the
-// default world is refused, naming them. With one readable face, that face
-// is the target, so the write reaches its ACL check (alice may not update).
+// target (TKT-7IZHP0 §6): a bare id on a faced type is refused, naming the
+// faces the caller may read and no other, even when only one is readable.
 func TestUpdateEntity_FacedBareIDNamesReadableFaces(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -292,7 +291,7 @@ func TestUpdateEntity_FacedBareIDNamesReadableFaces(t *testing.T) {
 		wantNot string
 	}{
 		{name: "every face readable", read: everyFace, want: "POL-1@draft, POL-1@published"},
-		{name: "published only", read: []string{"policy@published", "control"}, want: "forbidden", wantNot: "draft"},
+		{name: "published only", read: []string{"policy@published", "control"}, want: "POL-1@published", wantNot: "draft"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

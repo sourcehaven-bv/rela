@@ -183,6 +183,7 @@ forms:
       - { property: title }
     relations:
       - { relation: mitigates, direction: outgoing, widget: multi-select, label: "Mitigates" }
+      - { relation: implements, direction: incoming, widget: multi-select, label: "Implemented by" }
 
 documents:
   policy-summary:
@@ -190,8 +191,8 @@ documents:
     entity_type: policy
     command: ["cat", "{in}"]
 
-# A detail-page script action is the one web-app route to a FAMILY delete:
-# rela.delete_entity on the bare id removes every face (BUG-1YN750).
+# A detail-page script action that deletes by bare id. On a faced entity that
+# is refused: a delete names the face it removes.
 actions:
   retire:
     label: "Retire"
@@ -233,7 +234,7 @@ assignments:
   ${FACED_USERS.reader}: reader
 `;
 
-export const FACED_RETIRE_LUA = `-- Deletes the whole entity (every face) by its bare id.
+export const FACED_RETIRE_LUA = `-- Deletes by bare id, which a faced entity refuses.
 rela.delete_entity(entity.id)
 return { message = "Retired" }
 `;

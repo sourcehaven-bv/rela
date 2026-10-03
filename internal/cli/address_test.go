@@ -225,7 +225,7 @@ func TestWriteTarget(t *testing.T) {
 		wantErr error
 	}{
 		{name: "faceless", world: published, addr: "REQ-1", want: entity.Ref{ID: "REQ-1"}},
-		{name: "one candidate", world: published, addr: "PG-1", want: entity.Ref{ID: "PG-1", Face: "published"}},
+		{name: "world admits one face", world: published, addr: "PG-1", wantErr: errFaceRequired},
 		{name: "two candidates", world: ranked, addr: "PG-1", wantErr: errFaceRequired},
 		{name: "no candidate", world: store.TrivialScope(), addr: "PG-1", wantErr: errFaceRequired},
 		{name: "named face", world: published, addr: "PG-1@draft", want: entity.Ref{ID: "PG-1", Face: "draft"}},

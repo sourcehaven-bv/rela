@@ -295,8 +295,9 @@ end
 	}
 }
 
-// rela.delete_entity takes an address: `ID@face` deletes that face and a bare
-// id the family (BUG-J3PBFN).
+// rela.delete_entity takes an address: `ID@face` deletes that face
+// (BUG-J3PBFN), a bare id deletes a faceless entity, and a bare id of a faced
+// entity raises naming its faces and deletes nothing.
 func TestDeleteEntity_AddressReachesTheManager(t *testing.T) {
 	mgr, err := runScript(t, `
 rela.create_entity("ticket", {title = "T"}, "", "TICK-1", { face = "draft" })
@@ -319,6 +320,18 @@ rela.delete_entity("TICK-1")
 	}
 	if mgr.familyDeletes != 1 || mgr.faceDeleteCalls != 0 {
 		t.Errorf("family deletes = %d, face deletes = %d; want one family delete",
+			mgr.familyDeletes, mgr.faceDeleteCalls)
+	}
+
+	mgr, err = runScript(t, `
+rela.create_entity("ticket", {title = "T"}, "", "TICK-1", { face = "draft" })
+rela.delete_entity("TICK-1")
+`)
+	if err == nil || !strings.Contains(err.Error(), "TICK-1@draft") {
+		t.Fatalf("bare delete of a faced entity: err = %v, want one naming its faces", err)
+	}
+	if mgr.familyDeletes != 0 || mgr.faceDeleteCalls != 0 {
+		t.Errorf("family deletes = %d, face deletes = %d; a refused delete must reach no manager",
 			mgr.familyDeletes, mgr.faceDeleteCalls)
 	}
 }

@@ -36,15 +36,11 @@ var parseRefAllowlist = map[string]allowed{
 	"internal/mcp/tools_attachment.go": {1, "the read not-found hint asks whether a face was named. Stays"},
 	"internal/mcp/resources.go": {1, "relation resource FROM segment names the edge tail, a serialized " +
 		"coordinate. Read: PR 5b"},
-	"internal/mcp/tools_entity.go": {1, "delete_entity: bare id deletes the family, ID@face one face. " +
-		"Stays"},
 
 	// lua
-	"internal/lua/runtime.go": {2, "writeTargetReadable and deleteByAddress: the write gate and the " +
-		"family-or-face delete. Stays"},
+	"internal/lua/runtime.go": {1, "writeTargetReadable: the write gate. Stays"},
 
 	// cli
-	"internal/cli/delete.go": {1, "delete: bare id deletes the family, ID@face one face. Stays"},
 	"internal/cli/history_address.go": {1, "history, restore and purge address a stored lineage, keyed " +
 		"by (id, face), not a world read: a bare id is the zero-face lineage, and a faced id is refused " +
 		"with its faces named (BUG-4SYAA6). Choosing a face by world would purge or restore a face the " +

@@ -15,12 +15,15 @@ import { useInlineCreate } from '@/composables/useInlineCreate'
 import type { FormFieldOrRelation, RelationProperty } from '@/types/config'
 import type { RelationEntry, Entity } from '@/types/entity'
 import type { PropertyDef } from '@/types/schema'
-import type { RelationCardState } from './relationsPatch'
+import { addressedEntry, type RelationCardState } from './relationsPatch'
+import { faceCandidates, offersFace, widenWorlds } from './familyCandidates'
+import { DEFAULT_WORLD, useWorld } from '@/composables/useWorld'
 import type { RelationAffordance } from '@/types'
 import { ORDER_PROPERTY_OUT, ORDER_PROPERTY_IN } from '@/types/schema'
 import { computeNewOrder, extractFiniteNumber } from '@/composables/useRelationReorder'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
+import { entityRef, refBareId } from '@/utils/entityRef'
 
 // Re-export so existing `import type { RelationCardState } from './RelationCards.vue'`
 // callers keep working without a churn rename.
@@ -44,6 +47,7 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const schemaStore = useSchemaStore()
+const { world } = useWorld()
 
 // State
 const entries = ref<RelationEntry[]>([])
@@ -66,6 +70,26 @@ const selectedTarget = ref<Entity | null>(null)
 const newMeta = ref<Record<string, unknown>>({})
 
 const isIncoming = computed(() => props.field.direction === 'incoming')
+
+// Whether a source picks a face: an incoming content-scoped edge from a type
+// with faces belongs to one face of its source, so each face is a separate
+// card, keyed by address.
+function picksFace(sourceType: string): boolean {
+  return (
+    isIncoming.value &&
+    relationType.value?.scope === 'content' &&
+    Object.keys(schemaStore.getEntityType(sourceType)?.faces ?? {}).length > 0
+  )
+}
+
+function candidateKey(e: Entity): string {
+  return picksFace(e.type) ? entityRef(e) : e.id
+}
+
+// The face label of a card, or '' for an edge that belongs to no face.
+function entryFaceLabel(entry: RelationEntry): string {
+  return entry.face ? schemaStore.faceLabel(entry.type ?? '', entry.face) : ''
+}
 
 // TKT-G7N5: per-relation-type affordance helpers. Defaults preserve
 // today's behavior — buttons render unless explicitly denied.
@@ -139,9 +163,14 @@ async function loadRelations() {
       props.field.relation,
       direction
     )
-    entries.value = loaded
+    // Rows are keyed by address: two faces of one source are two edges.
+    // An unordered widget groups them per face; an ordered one keeps the
+    // stored order.
+    const rows = loaded.map(addressedEntry)
+    if (!isOrderable.value) rows.sort((x, y) => (x.face ?? '').localeCompare(y.face ?? ''))
+    entries.value = rows
     // Deep copy for diffing
-    originalEntries.value = JSON.parse(JSON.stringify(loaded))
+    originalEntries.value = JSON.parse(JSON.stringify(entries.value))
     // Reset change tracking
     addedIds.value.clear()
     removedIds.value.clear()
@@ -153,7 +182,7 @@ async function loadRelations() {
     // We only need the display name: `_title` is always serialized by the
     // backend (metamodel-aware), so request just id/type and let
     // entityDisplayTitle read `_title`.
-    const uncached = loaded.filter((entry) => !entityCache.value.has(entry.id))
+    const uncached = entries.value.filter((entry) => !entityCache.value.has(entry.id))
     const results = await Promise.allSettled(
       uncached.map((entry) =>
         getEntity(entry.type ?? '', entry.id, { fields: 'id,type' }).then((entity) => ({
@@ -305,15 +334,30 @@ watch(searchQuery, (q) => {
   searchTimeout = setTimeout(() => doSearch(q), 200)
 })
 
+// The search rows of one type. A source that picks a face is searched in
+// every readable world, one row per face, offering only the faces the
+// principal may write (offersFace).
+async function searchType(q: string, type: string): Promise<Entity[]> {
+  if (!picksFace(type)) return (await searchEntities(q, type)).data
+  const ambient = world.value || schemaStore.defaultWorld || DEFAULT_WORLD
+  const worlds = [ambient, ...widenWorlds(schemaStore.worlds, ambient)]
+  const lists = await Promise.all(
+    worlds.map((w) => searchEntities(q, type, undefined, w).then((r) => r.data))
+  )
+  return faceCandidates(lists).filter(offersFace)
+}
+
 async function doSearch(q: string) {
   searching.value = true
   try {
-    const responses = await Promise.all(targetTypes.value.map((type) => searchEntities(q, type)))
-    const allResults = responses.flatMap((r) => r.data)
+    const responses = await Promise.all(targetTypes.value.map((type) => searchType(q, type)))
+    const allResults = responses.flat()
     // Exclude already-linked entities (including pending adds)
     const linkedIds = new Set(entries.value.map((e) => e.id))
     linkedIds.add(props.entityId)
-    searchResults.value = allResults.filter((e) => !linkedIds.has(e.id))
+    searchResults.value = allResults.filter(
+      (e) => !linkedIds.has(candidateKey(e)) && e.id !== props.entityId
+    )
   } catch {
     searchResults.value = []
   } finally {
@@ -377,7 +421,11 @@ function addRelation() {
   if (!selectedTarget.value || !props.field.relation) return
   error.value = null
 
-  const targetId = selectedTarget.value.id
+  // A new incoming content edge from a faced peer belongs to the face the
+  // user picked, so it is keyed by that address.
+  const targetId = candidateKey(selectedTarget.value)
+  const face =
+    targetId === selectedTarget.value.id ? undefined : targetId.slice(targetId.indexOf('@') + 1)
   const meta = fieldProperties.value.length > 0 ? { ...newMeta.value } : undefined
 
   // Add to local entries
@@ -385,6 +433,7 @@ function addRelation() {
     id: targetId,
     type: selectedTarget.value.type,
     direction: isIncoming.value ? 'incoming' : 'outgoing',
+    face,
     meta,
   }
   entries.value.push(newEntry)
@@ -567,16 +616,17 @@ function onDragEnd() {
           <div class="card-identity">
             <template v-if="entityTarget(entry.id)">
               <RouterLink class="entity-id" :to="entityTarget(entry.id)!" draggable="false">
-                {{ entry.id }}
+                {{ refBareId(entry.id) }}
               </RouterLink>
               <RouterLink class="entity-title" :to="entityTarget(entry.id)!" draggable="false">
                 {{ getEntityTitle(entry.id) }}
               </RouterLink>
             </template>
             <template v-else>
-              <span class="entity-id">{{ entry.id }}</span>
+              <span class="entity-id">{{ refBareId(entry.id) }}</span>
               <span class="entity-title">{{ getEntityTitle(entry.id) }}</span>
             </template>
+            <span v-if="entry.face" class="entry-face">{{ entryFaceLabel(entry) }}</span>
           </div>
           <button
             v-if="!isIncoming"
@@ -587,8 +637,15 @@ function onDragEnd() {
           >
             History
           </button>
+          <span
+            v-if="entry.editable === false"
+            class="lock"
+            title="You cannot change this face's relations"
+            aria-label="read-only"
+            >🔒</span
+          >
           <button
-            v-if="canRemove"
+            v-else-if="canRemove"
             type="button"
             class="remove-btn"
             title="Remove relation"
@@ -610,7 +667,7 @@ function onDragEnd() {
               :model-value="String(entry.meta?.[prop.property] || '')"
               :data="slimSelectData(prop.property)"
               :settings="slimSettings"
-              :disabled="isMetaFieldDisabled(prop.property)"
+              :disabled="entry.editable === false || isMetaFieldDisabled(prop.property)"
               @update:model-value="handleSlimUpdate(entry.id, prop.property, $event)"
             />
 
@@ -620,7 +677,7 @@ function onDragEnd() {
               :model-value="!!entry.meta?.[prop.property]"
               mode="edit"
               :property-name="prop.property"
-              :disabled="isMetaFieldDisabled(prop.property)"
+              :disabled="entry.editable === false || isMetaFieldDisabled(prop.property)"
               @update:model-value="updateProperty(entry.id, prop.property, $event)"
             />
 
@@ -630,7 +687,7 @@ function onDragEnd() {
               :value="entry.meta?.[prop.property] ?? ''"
               :type="getInputType(prop.property)"
               class="inline-edit"
-              :disabled="isMetaFieldDisabled(prop.property)"
+              :disabled="entry.editable === false || isMetaFieldDisabled(prop.property)"
               @input="
                 updateProperty(entry.id, prop.property, ($event.target as HTMLInputElement).value)
               "
@@ -743,18 +800,11 @@ function onDragEnd() {
 
         <div class="new-relation-actions">
           <RlButton variant="secondary" @click="cancelAdd">Cancel</RlButton>
-          <RlButton variant="primary" :disabled="!canLink" @click="addRelation">
-            Link
-          </RlButton>
+          <RlButton variant="primary" :disabled="!canLink" @click="addRelation"> Link </RlButton>
         </div>
       </div>
 
-      <RlButton
-        v-if="!selectedTarget"
-        variant="secondary"
-        class="cancel-search"
-        @click="cancelAdd"
-      >
+      <RlButton v-if="!selectedTarget" variant="secondary" class="cancel-search" @click="cancelAdd">
         Cancel
       </RlButton>
 
@@ -818,6 +868,18 @@ function onDragEnd() {
   transition:
     border-color 0.15s,
     background 0.15s;
+}
+
+.entry-face {
+  font-size: 11px;
+  color: var(--rl-color-text-muted);
+  border: 1px solid var(--rl-color-border);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.lock {
+  font-size: 12px;
 }
 
 .relation-card.card-added {
@@ -1280,7 +1342,6 @@ function onDragEnd() {
     min-width: 0;
   }
 }
-
 </style>
 
 <style>

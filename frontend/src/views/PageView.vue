@@ -31,6 +31,7 @@ import { entityKeys } from '@/queries/entities'
 import { usePageStore } from '@/stores/pages'
 import { useSpaceStore } from '@/stores/space'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
+import { entityRef } from '@/utils/entityRef'
 import { pageTabPath } from '@/utils/pageContext'
 import type { PageTabView, SidebarPageTab } from '@/types'
 
@@ -174,7 +175,12 @@ const viewProps = computed((): Record<string, unknown> => {
   const key = tab.view === 'document' ? 'name' : 'id'
   const out: Record<string, unknown> = { [key]: tab.target }
   if (anchorId.value && tab.scope === 'relation') {
-    out.pageScope = { page: props.page, tab: tab.id, entity: anchorId.value }
+    out.pageScope = {
+      page: props.page,
+      tab: tab.id,
+      entity: anchorId.value,
+      ...(anchor.value ? { ref: entityRef(anchor.value) } : {}),
+    }
   } else if (anchorId.value && tab.scope === 'root') {
     out.root = anchorId.value
   }

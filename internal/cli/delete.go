@@ -15,26 +15,29 @@ import (
 
 // DeleteCmd deletes an entity and (optionally) its relations.
 type DeleteCmd struct {
-	ID      string `arg:"" help:"Entity ID, or ID@face to delete one face."`
+	ID      string `arg:"" help:"Entity ID. On a faced type, ID@face deletes that face; the last face deletes the entity."`
 	Force   bool   `short:"f" help:"Skip confirmation prompt."`
 	Cascade bool   `help:"Also delete related links. An ID@face delete always removes the links tailed at that face."`
 }
 
 // Run dispatches `rela delete <id>`.
 //
-// A bare id deletes the whole family: every face and every incident edge. An
-// `ID@face` deletes that face and the edges tailed at it, leaving the rest of
-// the family standing (BUG-J3PBFN). Either way the row is found by its
-// address, so a faced entity is not reported missing.
+// The id resolves as every write does ([writeTarget]): a bare id deletes a
+// faceless entity, and on a faced type is [errFaceRequired]. An `ID@face`
+// deletes that face and the edges tailed at it, leaving the rest of the
+// family standing (BUG-J3PBFN); the last face takes the entity.
 //
 // --cascade guards every delete that removes the entity: the family delete,
 // and a face delete of the family's last face, which takes every incident
 // edge (RR-2466U1). The edges tailed at a face that is not the last are that
 // face's content, as its properties are, so such a delete always takes them.
 func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
-	ref, err := entity.ParseRef(c.ID)
-	if err != nil {
+	ref, err := writeTarget(ctx, svc.Store, svc.Families, svc.World, c.ID)
+	if errors.Is(err, store.ErrNotFound) {
 		return &entityNotFoundError{ID: c.ID}
+	}
+	if err != nil {
+		return err
 	}
 	target, wholeEntity, err := deleteTarget(ctx, svc.Store, ref)
 	if err != nil {
@@ -94,8 +97,9 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 // deleteTarget reads the row a delete of ref names, for the confirmation
 // prompt, and reports whether the delete removes the whole entity. A face
 // address reads that face; it removes the entity when it is the family's
-// last face. A bare id reads the family and returns its first row: a faced
-// type stores no bare row, and the family delete removes every face anyway.
+// last face. A bare id reads the family and returns its first row. It reaches
+// here only when the family holds the implicit face ([writeTarget]), and the
+// family delete then removes every row.
 func deleteTarget(ctx context.Context, st store.Store, ref entity.Ref) (*entity.Entity, bool, error) {
 	family, err := store.Family(ctx, st, ref.ID)
 	if err != nil {

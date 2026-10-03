@@ -119,14 +119,11 @@ func TestCreateRelation_FaceMustMatchScope(t *testing.T) {
 			face: "nope", wantErr: entitymanager.ErrFaceNotDeclared,
 		},
 		{
-			// A zero tail is ACCEPTED, unlike the entity-create rule. It
-			// addresses the identity coordinate — a real, readable edge —
-			// rather than a row that cannot exist. Requiring a face here
-			// would break every caller that cannot yet supply one; see
-			// TestCreateRelation_ZeroTailStillWorksForFacelessCallers.
-			name: "content scope on faced source ACCEPTS a zero face",
+			// A zero tail would belong to no face. Every client resolves
+			// the face before it calls the manager, so none needs this.
+			name: "content scope on faced source rejects a zero face",
 			from: "POL-1", relType: "citeert", to: "SRC-1",
-			face: "", wantErr: nil,
+			face: "", wantErr: entitymanager.ErrRelationFaceRequired,
 		},
 		{
 			// The case that motivated the check. `geschreven-door` attaches
@@ -179,52 +176,6 @@ func TestCreateRelation_FaceMustMatchScope(t *testing.T) {
 				if rel.From == tc.from && rel.Type == tc.relType && rel.To == tc.to {
 					t.Fatalf("refused relation was written anyway: %+v", rel)
 				}
-			}
-		})
-	}
-}
-
-// TestCreateRelation_ZeroTailStillWorksForFacelessCallers is the regression
-// guard for RR-RELREG: an earlier draft of requireRelationFaceFor REQUIRED a
-// face on a content-scoped edge from a faced source, which silently broke
-// every caller that has no way to supply one — `rela link`
-// (internal/cli/link.go), the MCP create_relation tool (no face in its
-// schema), CalDAV membership writes, and the data-entry incoming-edge path,
-// which passes a zero tail deliberately because the peer's face is not the
-// request's to choose.
-//
-// Each subtest reproduces a real caller's exact option struct. The whole
-// suite was green while this was broken, because nothing else exercises a
-// content-scoped relation from a faced source.
-func TestCreateRelation_ZeroTailStillWorksForFacelessCallers(t *testing.T) {
-	body := "why"
-	tests := []struct {
-		name string
-		opts entity.RelationOptions
-	}{
-		{
-			// internal/cli/link.go:18 — `rela link POL-1 citeert SRC-1`
-			name: "rela link passes a bare options struct",
-			opts: entity.RelationOptions{},
-		},
-		{
-			// internal/mcp/tools_relation.go:81 — the tool schema has no
-			// face parameter at all, so this is the only shape it can send.
-			name: "MCP create_relation passes properties and content only",
-			opts: entity.RelationOptions{Content: &body},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			mgr, _ := relationFaceManager(t)
-			seedRelationFaceGraph(t, mgr)
-			rel, err := mgr.CreateRelation(context.Background(),
-				entity.RelationKey{From: "POL-1", Type: "citeert", To: "SRC-1"}, tc.opts)
-			if err != nil {
-				t.Fatalf("a caller that cannot name a face must keep working, got: %v", err)
-			}
-			if !rel.FromFace.IsImplicit() {
-				t.Errorf("FromFace = %q, want the zero face", rel.FromFace)
 			}
 		})
 	}
@@ -329,17 +280,21 @@ func TestCreateRelation_RefusesTailOnUndeclaredSourceType(t *testing.T) {
 }
 
 // TestDeleteRelation_ByKeyRemovesOnlyThatTail pins that the key's tail picks
-// the edge: deleting the concept-tailed edge leaves the identity edge.
+// the edge: deleting the concept-tailed edge leaves the zero-tailed one, and
+// a zero-tailed content edge stored before faces were required can still be
+// deleted. That edge is seeded through the store, since the manager now
+// refuses to create it.
 func TestDeleteRelation_ByKeyRemovesOnlyThatTail(t *testing.T) {
 	mgr, st := relationFaceManager(t)
 	seedRelationFaceGraph(t, mgr)
 	ctx := context.Background()
 	tailed := entity.RelationKey{From: "POL-1", FromFace: "concept", Type: "citeert", To: "SRC-1"}
-	identity := entity.RelationKey{From: "POL-1", FromFace: entity.ImplicitFace, Type: "citeert", To: "SRC-1"}
-	for _, k := range []entity.RelationKey{tailed, identity} {
-		if _, err := mgr.CreateRelation(ctx, k, entity.RelationOptions{}); err != nil {
-			t.Fatalf("seed %+v: %v", k, err)
-		}
+	legacy := entity.RelationKey{From: "POL-1", FromFace: entity.ImplicitFace, Type: "citeert", To: "SRC-1"}
+	if _, err := mgr.CreateRelation(ctx, tailed, entity.RelationOptions{}); err != nil {
+		t.Fatalf("seed tailed: %v", err)
+	}
+	if _, err := st.CreateRelation(ctx, legacy, &store.RelationData{}); err != nil {
+		t.Fatalf("seed legacy: %v", err)
 	}
 	if err := mgr.DeleteRelation(ctx, tailed); err != nil {
 		t.Fatalf("DeleteRelation: %v", err)
@@ -347,7 +302,10 @@ func TestDeleteRelation_ByKeyRemovesOnlyThatTail(t *testing.T) {
 	if _, err := st.GetRelation(ctx, tailed); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("tailed edge: err = %v, want ErrNotFound", err)
 	}
-	if _, err := st.GetRelation(ctx, identity); err != nil {
-		t.Errorf("identity edge must survive: %v", err)
+	if _, err := st.GetRelation(ctx, legacy); err != nil {
+		t.Fatalf("zero-tailed edge must survive: %v", err)
+	}
+	if err := mgr.DeleteRelation(ctx, legacy); err != nil {
+		t.Errorf("a zero-tailed content edge must stay deletable: %v", err)
 	}
 }

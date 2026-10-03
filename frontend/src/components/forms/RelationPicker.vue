@@ -15,8 +15,9 @@ import {
   indexKnownEntities,
   resolveSelected,
 } from './outOfPageLinks'
-import { mergeFamilyCandidates, widenWorlds } from './familyCandidates'
-import { entityRef, refFace } from '@/utils/entityRef'
+import { faceCandidates, mergeFamilyCandidates, offersFace, widenWorlds } from './familyCandidates'
+import { addressedEntry } from './relationsPatch'
+import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 
 // Per-edge state emitted on the incoming-changed channel after
 // TKT-GFQK unified the save path. DynamicForm wraps this into a
@@ -97,9 +98,12 @@ const isIncoming = computed(() => props.field.direction === 'incoming')
 // affordances render unless explicitly denied.
 const canCreate = computed(() => props.verdict?.creatable !== false)
 const canRemove = computed(() => props.verdict?.removable !== false)
+// Incoming rows are keyed by address (addressedEntry): an incoming
+// content-scoped edge belongs to one face of its source, so `POL-1@draft` and
+// `POL-1@published` are two rows.
 const incomingValue = ref<string[]>([])
 const incomingOriginal = ref<string[]>([])
-// Snapshot of the loaded edges keyed by ID. Used by the new
+// Snapshot of the loaded edges keyed by address. Used by the new
 // emitIncomingDiff to construct a RelationEntry-shaped payload
 // without a second GET. Empty until loadIncomingValue succeeds.
 const incomingLoadedEntries = ref<RelationEntry[]>([])
@@ -159,6 +163,54 @@ const isMulti = computed(() => {
 
 const effectiveValue = computed(() => (isIncoming.value ? incomingValue.value : props.value))
 
+// Whether a source picks a face: an incoming content-scoped edge from a type
+// with faces. Its candidates are one row per face (faceCandidates).
+function picksFace(sourceType: string): boolean {
+  return isIncoming.value && relationType.value?.scope === 'content' && hasFaces(sourceType)
+}
+
+// The key a candidate is selected under: its address when it picks a face,
+// else its id.
+function candidateKey(e: Entity): string {
+  return picksFace(e.type) ? entityRef(e) : e.id
+}
+
+const candidatesByKey = computed(() => new Map(candidates.value.map((c) => [candidateKey(c), c])))
+
+// One chip of an incoming picker. `face` names the source face the edge
+// belongs to ('' for an identity edge); `editable` is false when the server
+// reports the principal may not remove it.
+interface IncomingChip {
+  key: string
+  entity: Entity
+  face: string
+  editable: boolean
+}
+
+const incomingChips = computed<IncomingChip[]>(() => {
+  const loaded = new Map(incomingLoadedEntries.value.map((e) => [e.id, e]))
+  return incomingValue.value.map((key) => {
+    const entry = loaded.get(key)
+    const entity =
+      candidatesByKey.value.get(key) ??
+      knownById.value.get(refBareId(key)) ??
+      ({ id: refBareId(key), type: entry?.type ?? '', properties: {} } as Entity)
+    return { key, entity, face: entry?.face ?? refFace(key), editable: entry?.editable !== false }
+  })
+})
+
+// The chips grouped by face, in first-seen order. A widget with no faced row
+// has one group with face ''.
+const incomingGroups = computed(() => {
+  const groups = new Map<string, IncomingChip[]>()
+  for (const chip of incomingChips.value) {
+    const g = groups.get(chip.face) ?? []
+    g.push(chip)
+    groups.set(chip.face, g)
+  }
+  return [...groups.entries()].map(([face, chips]) => ({ face, chips }))
+})
+
 const knownById = computed(() => indexKnownEntities(resolvedLinks.value, candidates.value))
 
 const selectedEntities = computed(() => resolveSelected(effectiveValue.value, knownById.value))
@@ -168,14 +220,13 @@ const selectedEntities = computed(() => resolveSelected(effectiveValue.value, kn
 // SEE and remove cannot be re-added from here. Making search hit the search
 // endpoint instead of the cached page is the real fix, and is its own change.
 const filteredCandidates = computed(() => {
-  if (!searchQuery.value) {
-    return candidates.value.filter((c) => !effectiveValue.value.includes(c.id))
-  }
+  const offered = candidates.value.filter(
+    (c) => !effectiveValue.value.includes(candidateKey(c)) && (!picksFace(c.type) || offersFace(c))
+  )
+  if (!searchQuery.value) return offered
   const query = searchQuery.value.toLowerCase()
-  return candidates.value.filter(
-    (c) =>
-      !effectiveValue.value.includes(c.id) &&
-      (c.id.toLowerCase().includes(query) || (c._title ?? '').toLowerCase().includes(query))
+  return offered.filter(
+    (c) => c.id.toLowerCase().includes(query) || (c._title ?? '').toLowerCase().includes(query)
   )
 })
 
@@ -232,6 +283,7 @@ async function loadTypeCandidates(
   // rows the ambient world serves are still offered.
   const result = await ambient
   const others: Entity[][] = []
+  const perFace = picksFace(targetType)
   for (const [i, settled] of (await widened).entries()) {
     if (settled.status === 'fulfilled') {
       others.push(settled.value.data)
@@ -244,6 +296,15 @@ async function loadTypeCandidates(
     }
   }
   warnIfTruncated(targetType, result.meta.has_more)
+  if (perFace) {
+    // Every row names its face: the face is what the user picks.
+    const rows = faceCandidates([result.data, ...others])
+    const labels = new Map<string, string>()
+    for (const e of rows) {
+      labels.set(offWorldKey(e), schemaStore.faceLabel(e.type, refFace(entityRef(e))))
+    }
+    return { rows, offWorld: labels }
+  }
   const merged = mergeFamilyCandidates(result.data, others)
   const offWorld = new Map<string, string>()
   for (const e of merged.rows) {
@@ -339,10 +400,11 @@ async function loadIncomingValue() {
       props.field.relation,
       'incoming'
     )
-    const ids = edges.map((e) => e.id)
+    const rows = edges.map(addressedEntry)
+    const ids = rows.map((e) => e.id)
     incomingValue.value = ids
     incomingOriginal.value = [...ids]
-    incomingLoadedEntries.value = edges
+    incomingLoadedEntries.value = rows
     incomingLoaded.value = true
   } catch (err) {
     if (isCancelledFetch(err)) return
@@ -379,8 +441,9 @@ function emitIncomingDiff() {
       currentEntries.push(fromLoaded)
       continue
     }
-    // Newly-added: look up the type from candidates.
-    const cand = candidates.value.find((c) => c.id === id)
+    // Newly-added: look up the type from candidates. The key already names
+    // the face a content-scoped edge from a faced peer hangs on.
+    const cand = candidatesByKey.value.get(id)
     if (cand) {
       currentEntries.push({ id, type: cand.type, direction: 'incoming' })
     }
@@ -409,7 +472,8 @@ function buildOutgoingTypes(ids: string[]): Map<string, string> {
 
 function selectEntity(entity: Entity) {
   if (isIncoming.value) {
-    incomingValue.value = isMulti.value ? [...incomingValue.value, entity.id] : [entity.id]
+    const key = candidateKey(entity)
+    incomingValue.value = isMulti.value ? [...incomingValue.value, key] : [key]
     emitIncomingDiff()
   } else {
     const next = isMulti.value ? [...props.value, entity.id] : [entity.id]
@@ -468,7 +532,7 @@ function ambientWorld(): string {
 }
 
 function offWorldKey(entity: Entity): string {
-  return `${entity.type}/${entity.id}`
+  return `${entity.type}/${entityRef(entity)}`
 }
 
 // The face label for a candidate the ambient world does not serve, so the
@@ -559,8 +623,39 @@ onBeforeUnmount(() => {
       {{ label }}
     </label>
 
+    <!-- Incoming: grouped per source face; a row the principal may not
+         remove is locked. -->
+    <template v-if="isIncoming">
+      <div v-for="group in incomingGroups" :key="group.face" class="selected-group">
+        <span v-if="group.face" class="group-face">{{
+          schemaStore.faceLabel(group.chips[0].entity.type, group.face)
+        }}</span>
+        <div class="selected-entities">
+          <div v-for="chip in group.chips" :key="chip.key" class="selected-entity">
+            <span class="entity-type">{{ chip.entity.type }}</span>
+            <span class="entity-label">{{ formatEntityLabel(chip.entity) }}</span>
+            <span
+              v-if="!chip.editable"
+              class="lock"
+              title="You cannot change this face's relations"
+              aria-label="read-only"
+              >🔒</span
+            >
+            <button
+              v-else-if="canRemove"
+              type="button"
+              class="remove-btn"
+              @click="removeEntity(chip.key)"
+            >
+              &times;
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
+
     <!-- Selected entities -->
-    <div v-if="selectedEntities.length" class="selected-entities">
+    <div v-else-if="selectedEntities.length" class="selected-entities">
       <div v-for="entity in selectedEntities" :key="entity.id" class="selected-entity">
         <span class="entity-type">{{ entity.type }}</span>
         <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
@@ -705,6 +800,21 @@ onBeforeUnmount(() => {
 
 .remove-btn:hover {
   color: var(--rl-color-danger, #ef4444);
+}
+
+.selected-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group-face {
+  font-size: 12px;
+  color: var(--rl-color-text-muted);
+}
+
+.lock {
+  font-size: 12px;
 }
 
 .face-hint {

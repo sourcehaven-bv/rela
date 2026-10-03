@@ -434,14 +434,17 @@ func (s *Server) handleDeleteEntity(
 	id = trimID(id)
 	cascade := args.GetBool("cascade", false)
 
+	// The id resolves as every write does: a bare id deletes a faceless
+	// entity and names the faces of a faced one; `ID@face` deletes that face
+	// and the edges tailed at it (BUG-J3PBFN).
 	st := snap.deps.Store
-	if !readable(ctx, st, id) {
+	ref, targetErr := st.WriteTarget(ctx, id)
+	if amb, ok := errors.AsType[*visibility.AmbiguousAddressError](targetErr); ok {
+		return errorResult(amb.Error()), nil
+	}
+	if targetErr != nil {
 		return errorResult("entity not found: " + id), nil
 	}
-	// readable accepted the address, so it parses. A bare id deletes the
-	// family; `ID@face` deletes that face and the edges tailed at it
-	// (BUG-J3PBFN).
-	ref, _ := entity.ParseRef(id)
 
 	// Every count reported here is of the relations the caller can see. The
 	// manager's own counts include edges to hidden entities, so reporting

@@ -162,6 +162,6 @@ func (s feedEntitySource) listType(ctx context.Context, entityType string) ([]*e
 }
 
 // getEntity fetches one entity if the principal may read it (per-entity gate).
-func (s feedEntitySource) getEntity(ctx context.Context, entityType, id string) (*entitypkg.Entity, bool, error) {
-	return s.app.visibleReader.inWorld(ctx, entityType, id)
+func (s feedEntitySource) getEntity(ctx context.Context, entityType, addr string) (*entitypkg.Entity, bool, error) {
+	return s.app.visibleReader.address(ctx, entityType, addr)
 }

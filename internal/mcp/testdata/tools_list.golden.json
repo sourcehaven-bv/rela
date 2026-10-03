@@ -165,7 +165,7 @@
           "type": "boolean"
         },
         "id": {
-          "description": "Entity ID; ID@face deletes that face and its edges",
+          "description": "Entity ID; on a faced type name a face: ID@face deletes that face and its edges, and the last face deletes the entity",
           "type": "string"
         }
       },
