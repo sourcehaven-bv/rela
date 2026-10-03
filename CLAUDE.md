@@ -82,34 +82,6 @@ above rather than by a clean `analyze all`.
   collaborators returns `error` and validates them up front. Never substitute a
   no-op or sentinel implementation silently — that defers the failure to a
   downstream symptom that is much harder to diagnose.
-- **Restrictions compile at LOAD time; the evaluator has no denial primitive.**
-  Client attenuation (`client_baselines` / `scope_grants`, TKT-IAC8TX) restricts
-  a client below the user it acts as, but it does so by compiling into plain
-  allowlists when `acl.yaml` loads — `redact: {person: [salary]}` becomes
-  "person's permitted fields, minus salary". `decideFromAttrs`, `readQuery`,
-  `grantsPermission` and `FieldVerdicts` keep seeing allowlists, so DEC-RG878's
-  additive union semantics are intact. **Do not add a runtime deny.**
-  `ReadQuery` compiles to a `store.GraphQuery` pushed into SQL, so a runtime
-  denial would have to become a SQL predicate in every backend, and every
-  evaluation path plus all of `internal/aclmap` would need re-deriving.
-
-  The clamp point is `Request.roleFor` — every evaluation path resolves role
-  names through it, so reaching into `policy.Roles[...]` directly from a new
-  path silently bypasses the ceiling. A guard test (`ceilingguard_test.go`)
-  scans the package and fails on that; it uses an exemption list, so a new file
-  must be clean or explicitly exempted.
-
-  A ceiling only ever NARROWS (`effective = user_grants ∩ (baseline ∪ scopes)`),
-  so a bug fails toward less access — except in the compilation step, which is
-  why that has direct unit tests rather than only end-to-end ones.
-
-  **What this rule does NOT forbid**: adding a new allowlist DIMENSION to the
-  compiled result. The prohibition is on subtractive evaluation — a `deny` the
-  evaluator applies per row — not on the query carrying more allowlists.
-  `ReadQueryResult` already carries a type verdict and a composed `GraphQuery`;
-  a per-face allowlist (TKT-FACEREAD) is the same shape: computed from grants at
-  compile time, pushed down as an additional predicate, still additive. It costs
-  one predicate per backend, not a re-derivation of the evaluator.
 - **Read-out paths go through visibility wrappers, base readers stay ungated.**
   Read-side ACL (entity row-gating + field-level `visible:` redaction) is
   enforced by `internal/visibility` decorators (`Reader`, the tracer decorator)
@@ -160,59 +132,6 @@ above rather than by a clean `analyze all`.
   (a form save that renders every field). `ApplyEntity` is the whole-record
   replace the sync channel needs. If you are writing a _subset_, you want
   `PatchEntity`.
-- **Background jobs: the queue knows nothing about schedules, and never runs
-  before a transaction closes.** External side effects (mail, HTTP, AI) belong
-  on `jobs.Queue` rather than inline on a write path. Two rules keep the seam
-  usable:
-
-  _Retry is a flat enum_ (`RetryNever` / `RetryBounded` / `RetryPersistent`),
-  plus an optional deadline and idempotency key — nothing else. The enum names
-  INTENT; mechanism (attempt counts, backoff, the `RetryPersistent` outer bound)
-  lives in `internal/jobs/retry.go` and is meant to be retuned there for
-  everyone. Do NOT widen it into a policy struct or add per-call knobs: a call
-  site needing different mechanics is evidence for a new intent value.
-
-  _A recurring task uses `IdempotencyKey`, never a cadence-derived `Deadline`._
-  A key says "one of these pending at a time is enough", so a run that is still
-  queued suppresses the next rather than stacking a second copy — a daily report
-  delayed six hours must not then send twice. A deadline expresses something
-  different: "this is worthless after T", which makes the job VANISH when it
-  cannot start in time. Under load that drops scheduled work precisely when the
-  operator most wants it done, and (before the guard existed) hung the scheduler
-  on a completion that never arrived. Deadlines are for work whose value
-  genuinely expires; schedules are not that.
-
-  The scheduler itself keys each job by its RUN id, not by task name
-  (BUG-TKL08E). "One run per task at a time" is enforced by the run-state
-  store (`internal/schedulerstate`), which every node can query. A task-name
-  key made the queue a second, invisible source of truth: a job row the queue
-  could not complete held the key forever and blocked every later run. Do not
-  move non-overlap back into the queue key.
-
-  _A job enqueued inside `store.Store.Tx` must not become runnable until that
-  transaction commits._ Otherwise a worker reads it on another connection that
-  cannot see the uncommitted writes and acts on the pre-write world — a race
-  that passes tests and fails under load. `jobs.WithDeferral` collects enqueues;
-  the transaction seam calls `Flush` on commit or `Discard` on rollback,
-  mirroring pgstore's `txPending`. Pinned by `jobstest`.
-
-  The fs/desktop tier is EPHEMERAL on purpose — jobs vanish on exit, because an
-  unsent mail from an ended session is not worth resurrecting. Don't "fix" it to
-  persist; that is what the postgres tier is for.
-
-  _The durable queue's tables live in the TENANT's schema, like every other
-  postgres-backed table._ A schema-pinned `search_path` is how rela scopes a
-  tenant, and the queue is not exempt: rela submits every kind to one queue name
-  and neoq's insert trigger does `pg_notify(NEW.queue, ...)`, so tables shared
-  across tenants would mean tenants consuming each other's jobs. neoq v0.72.1
-  could not do this — one migration named `public.neoq_jobs_id_seq` while its
-  tables follow `search_path` — which is why `go.mod` carries a `replace` onto a
-  fork (BUG-YJEIFH, upstream acaloiaro/neoq#149). Drop the `replace` when that
-  lands, not before: `TestPostgresQueue_SchemaPinnedDSN` is what fails if it
-  goes early. **Test any new postgres-touching dependency through a
-  schema-pinned DSN**, not just the bare `RELA_TEST_DATABASE_URL` — the bare DSN
-  resolves to `public`, which is precisely the one case that worked.
-
 - **The configuration is not a secret; the data is.** `schema.yaml`,
   `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
   `templates/` are operator-authored files that live in the repo — routinely a
@@ -250,104 +169,6 @@ above rather than by a clean `analyze all`.
   to stop an unauthorized caller triggering an expensive render — just don't
   justify it as concealment, because the next person will build on a secrecy
   property that was never real. Write down which of the two you mean.
-- **Mail: the render pipeline order is a security property, and delivery is
-  best-effort.** `internal/mailrender` runs markdown → goldmark → **bluemonday
-  on the untrusted CONTENT ONLY** → trusted template → **douceur inline LAST**.
-  Both ends are load-bearing and verified: bluemonday strips `style` attributes
-  (so sanitizing the assembled document ships unstyled mail, and also strips the
-  `cellpadding`/`border`/`role` and `cid:` sources email needs), while douceur
-  does **no** CSS value validation (so nothing may sanitize after it, and every
-  value interpolated into CSS — palette tokens included — must be allowlisted).
-  Reversing either is a silent downgrade, not a build failure.
-
-  **`lua` may import `mailrender`, and that does NOT invert the `mail → lua`
-  arrow.** `mail.render` (TKT-1GA2PG) builds a `mailrender.Message` from a
-  script table so a Lua author gets the hardened template instead of
-  hand-writing HTML for `mail.send`. The arch-lint rule forbidding `lua → mail`
-  is untouched and still holds; `mailrender` is a _different_ component and a
-  true leaf (`go list -deps` shows zero internal imports), so the two arrows
-  cannot form a cycle. The binding must never grow an `html:` or `css:` field —
-  that would reintroduce the sanitizer bypass it exists to give authors an
-  alternative to.
-
-  **Email CSS is not web CSS, and the template's shape encodes that.** Section
-  headings and the empty-section note are single-cell tables, and vertical gaps
-  are spacer rows, because Outlook Windows honors `padding` only on table cells
-  and `margin` is unsupported or partial across Gmail, Outlook, Yahoo and AOL. A
-  `<div>` with padding renders fine wherever you are likely to test it and
-  collapses where you are not. `internal/mailrender/compat_test.go` scores the
-  rendered output against a **vendored, pinned** Can I Email dataset
-  (`testdata/caniemail.min.json`) and fails on a regression — treat it as a
-  floor, not proof the mail looks right.
-
-  **Dark mode is defensive, and `<meta name="color-scheme">` is deliberately
-  absent.** Clients split three ways: some leave mail alone (Apple Mail, Gmail
-  desktop, Yahoo, AOL), some partially invert and honor `prefers-color-scheme`
-  (the Outlook family), and some fully invert and rewrite the query to
-  `@media none` so they cannot be targeted at all (Gmail iOS/Android, Outlook
-  Windows). The `@media` block serves the middle group; the palette (mid-tone
-  borders, no pure white on pure black) serves the third. Adding the meta tag
-  looks like a free win and is the trap: it opts Apple Mail _into_ inverting,
-  making a currently-correct rendering worse. A test asserts its absence.
-
-  **A message's language belongs on `Message`, never on `Options`.** `Options`
-  is renderer-scoped branding and a `Renderer` is built once per deployment, so
-  an `Options.Lang` would stamp one language on every mail an instance sends —
-  and a Dutch digest and an English one cannot both be right. `Options` carries
-  only the _default_. The tag is validated in `mailrender` (shape-only BCP-47,
-  rejected not escaped) because it arrives from both operator config and
-  untrusted Lua, and validating at either call site would leave the other open.
-
-  The SMTP password lives in **`.rela/secrets.yaml`** under `smtp_password` —
-  the same store Lua scripts read, because an SMTP credential is no different in
-  kind from the API tokens already kept there. `password_env` in
-  `.rela/mail.yaml` names an environment variable as a fallback for
-  container/systemd deployments; secrets.yaml wins when both are set. Never a
-  literal `password:` in mail.yaml — that is refused at load.
-
-  Header-injection validation is **rela's**, not the SMTP library's: go-mail
-  rejects CR/LF in addresses but accepts it in a subject, where it is
-  neutralized only incidentally by encoded-word escaping. `internal/mail`
-  rejects CR/LF/NUL in every caller-supplied header value at enqueue.
-
-  The outbox is an in-process buffer, **not a durable queue** — in `rela-server`
-  there is no signal handler, so pending mail is lost on every restart with no
-  drain. Mail is notification, never a system of record. A durable queue with
-  swappable backends is IDEA-WIJ2H1.
-- **Collection reads are content-free, batched per page, and paged in the store
-  when they can be** (TKT-1U8XYN). A list, search, kanban or scope pipeline
-  reads `store.EntityHeader` rows (`ListEntityHeaders`, `GraphQueryHeaders`) and
-  never a body it will not render; a body is loaded for the served rows only, on
-  `include_content=true`. Per-row lookups are the defect this rule exists to
-  prevent: a page loads its edges with ONE `RelationQuery.EntityIDs` query, its
-  neighbours with ONE header batch, a table section its relation columns with
-  one query per (column, row type). Write authorization reuses the request's
-  `acl.Request` (the membership walk runs once per operation, not once per verb
-  per row). When the request's shape allows it, the list handler pushes paging,
-  ordering and equality filters into `store.GraphQuery` (`listpushdown.go`) and
-  takes the scoped count through `store.CountMatched`, never `GraphCount`'s
-  total. A query scope joins that pushdown only when `queryplan.LowerScope`
-  lowers it EXACTLY (TKT-XKCNCL): nothing re-checks a pushed scope, so a
-  superset pre-filter is not enough, and a scope that does not lower keeps the
-  Go path. Its traversals ride in `GraphQuery.Related`, never in
-  `HasInbound`/`HasOutbound`, which belong to the ACL read gate. New read
-  paths pin their cost with a `storetest.Counting` budget test
-  asserting the count is the same at 10 and 50 rows. Measure on the postgres
-  backend with `rela-server -verbose` (`Server-Timing`, one `request` log line
-  each) against `prototypes/perf/project` seeded by `rela dev seed`.
-- **Data classification describes; it never drives behavior** (TKT-8UCV32).
-  `classification.yaml` labels what data each field holds, and
-  `internal/classification` parses, lints and syncs it. Only `internal/cli`
-  may import that package (arch-lint enforces it), and nothing reads it at
-  runtime: no redaction, no access decision, no refusal keyed off a label.
-  Behavior a label might suggest (searchable, logged, exported) is declared
-  in core config. `rela acl audit` lists what each role can read of labeled
-  data, and those findings never count toward `--fail-on`. Classification
-  warns and never blocks, because whether labeled data may flow somewhere
-  depends on context only the operator has. A field's two
-  explicit states, `none` and `needs-review`, keep "not sensitive" apart from
-  "not looked at"; do not add an implicit default. See
-  `docs/classification.md`.
 - **Boundaries are enforced.** `just arch-lint` checks package import rules; run
   it before PR.
 
@@ -382,6 +203,26 @@ above rather than by a clean `analyze all`.
   `internal/dataentry/CLAUDE.md`.
 - **Vue SPA build/test/architecture** → `frontend/CLAUDE.md`.
 - **E2E tests** → `e2e/tests/AGENTS.md`.
+
+Rules that apply to one subsystem live in `.claude/rules/*.md`. Each file names
+the paths it covers in its `paths:` frontmatter, and Claude Code loads it when
+you read or edit a matching file. Read the file directly when you work in that
+area from another tool. `tools/agentrules` fails the build when a `paths:` glob
+matches no file, so a move or rename cannot silently unload a rule.
+
+| Rule file             | Covers                                                                 |
+| --------------------- | ---------------------------------------------------------------------- |
+| `acl-ceiling.md`      | Client attenuation compiles to allowlists at load; no runtime deny     |
+| `jobs.md`             | Retry intents, idempotency keys, deferral to commit, tenant queues     |
+| `mail.md`             | Render pipeline order, email CSS, dark mode, SMTP secrets, outbox      |
+| `collection-reads.md` | Header-only, batched, store-paged list/search/kanban reads             |
+| `classification.md`   | `classification.yaml` describes data and never drives behavior         |
+| `predicate.md`        | Condition engine, `condition:` vs `when:` keys, filter DSL             |
+| `transforms.md`       | View export, `cmdexec` confinement, shared transform engine            |
+| `storage.md`          | Build-tag backends, pgstore wiring, change feed, derived indexes, SQL  |
+| `comments.md`         | Backend-selected comment stores, kept out of the graph                 |
+| `versioning.md`       | Entity and relation versioning, version purge                          |
+| `datamigration.md`    | Data migrations, the applied-state store, perf seeding                 |
 
 ## Architecture
 
@@ -463,88 +304,16 @@ Subsystems (see each package's doc comment for details):
 
 Other packages under `internal/` are self-descriptive — ls the tree.
 
-### Condition engine: `internal/predicate` + `internal/predicatefns`
+### Condition engine
 
-`internal/predicate` is the shared **typed expression engine** — a sandboxed
-Lua-expression subset with no I/O and fixed depth/step budgets. `Compile`
-retains the boolean condition profile; `CompileValue` accepts an explicit
-context profile for scalar computations. Programs expose exact static record
-dependencies and conservative SQL-portability metadata. Context profiles may
-enable or refuse language features, but an accepted IR node must keep identical
-semantics across evaluators and future targets. `internal/predicatefns` is its
-metamodel-aware glue: the `ScalarType`/`EntityRecordType` type adapter, the
-host-fn stdlib (`match`/`regex`/`fuzzy`/`contains`/`len`/`today`), the
-`FromFilter` transpiler, and the `Evaluator` (compile-once, metamodel-scoped
-Program cache). New condition/`when:`-style code evaluates through `predicate`.
+`internal/predicate` is the typed expression engine behind every condition and
+policy surface; `internal/filter` remains the query-filter DSL. The details are
+in `.claude/rules/predicate.md`.
 
-These surfaces are on predicate: ACL affordance `when:`
-(`internal/affordances`), state-machine transition `When:`
-(`internal/statemachine`), wizard-form condition lint
-(`internal/conditionlint`), automation `on.when:`/`validate:`
-(`internal/automation`), metamodel validation `When:`/`Then:`
-(`internal/validation`), and the CLI `--filter` flag (`internal/cli/list.go`).
+### View export & transforms
 
-Automation `on.condition:` and validation `when_condition:`/`then_condition:`
-take predicate **expressions** as written, ANDed with the filter-syntax
-`when:`/`then:` keys beside them. They are separate keys because the two
-syntaxes overlap without erroring: `filter.Parse` accepts
-`days_between(entity.due, today()) <= 7` as a filter on a property named
-`days_between(entity.due, today())`, which matches nothing, silently. Don't add
-dialect sniffing — the key IS the declaration of intent. A `condition:` that
-fails to compile is a **load error** (`NewEngineFromMetamodel` returns one), as
-is an unparseable `when:` clause: dropping a constraint widens the automation,
-so failing the load is the safe direction.
-
-`internal/filter` is NOT frozen — it remains the **query-filtering** DSL (the
-`--where` string syntax and metamodel legacy filter-strings). Legacy
-`--where`/`When:`/`Then:` inputs are transpiled to predicate via
-`predicatefns.FromFilter` on load (`--where` is deprecated in favor of
-`--filter`). `filter.Match` still directly backs query-filtering in
-`internal/dataentry` (SPA view/feed `where:`), `internal/lua` (script queries),
-`internal/search/searchparser`, and `internal/cli/analyze.go` — these were
-**not** migrated (they filter result sets, they don't gate conditions). Don't
-describe filter as "removed" or "frozen"; it's the query-filter DSL, predicate
-is the condition/policy engine.
-
-### View export & transforms (`internal/transform`)
-
-The `transforms:` map in the metamodel registers named `markdown → format`
-external commands (see `docs/transforms.md`). A `transform.Renderer` produces
-markdown; the engine runs it through a transform via `internal/cmdexec` (argv
-array, no shell, temp-file `{in}`/`{out}`, timeout, output cap — the same
-security-reviewed exec pattern `internal/attachment` uses). Rules for new code:
-
-- **Export is downstream of an already-authorized view, never a new
-  capability.** Entity/list export in `internal/dataentry` routes through the
-  SAME ACL read path as the view (`visibleReader.getVisible` /
-  `scopedSortedEntities`); a request may only choose a registered transform
-  _name_, never a command/flag/path.
-- **The list-table renderer lives in `internal/dataentry`, not
-  `internal/transform`** — it needs the ACL neighbor-visibility gate
-  (`visibleRelationIDs`) so hidden neighbor titles never leak into an export.
-  `internal/transform` must NOT import `internal/dataentry`; the built-in
-  single-entity renderer lives in `transform`, and `dataentry` supplies the list
-  renderer as a `transform.Renderer`.
-- **The per-type render override (`views.<type>.export_render`) renders through
-  `documentService.RenderMarkdown`** — the same Lua document machinery, reached
-  only AFTER the export has resolved the entity through the ACL read gate. Never
-  call `script.ExecuteDocument` on a fresh unauthenticated surface, and keep the
-  entity id path-validated (`isSafePathSegment`) before it reaches a render.
-- **Export downloads are hardened** like attachment downloads (nosniff, sandbox
-  CSP, `no-store`, sanitized `Content-Disposition`) — the produced bytes embed
-  user content.
-- **External commands are CONFINED in `internal/cmdexec`, and it fails closed.**
-  Both export and attachment processing run third-party parsers over
-  attacker-influenceable bytes, so the shared runner adds: a no-network,
-  temp-dir-only sandbox (bubblewrap on Linux, `sandbox-exec` on macOS), rlimits
-  (memory/PIDs/file size/CPU, Linux), process-group kill so a converter's helper
-  cannot outlive the timeout, and a bounded pool capping concurrent runs. On a
-  host with no mechanism, commands REFUSE to run — only command execution is
-  blocked, never server startup. Do not add a "can I run?" predicate: call `Run`
-  and handle its error; `Describe()` exists solely for the startup log.
-- **The transform engine must be built ONCE and shared**, not per request — it
-  owns the bounded pool, so a per-request engine gives every request its own
-  pool and the concurrency cap bounds nothing.
+The `transforms:` registry turns view markdown into other formats through
+confined external commands. The rules are in `.claude/rules/transforms.md`.
 
 ### Storage backends & build tags
 
@@ -576,275 +345,9 @@ the builder cannot render as a literal JSON path falls back to the naive
 path. It also refuses to open on a filesystem where WAL cannot be
 enabled (iCloud/Dropbox/SMB), because SQLite is unsafe there.
 
-Rules when touching this:
-
-- **The `postgres` build must not link bleve; the default build must not link
-  pgx; no build but `sqlite` may link `modernc.org/sqlite`.** CI asserts each of
-  these via `go list -deps` (the `postgres` job in `ci.yml`). Keep
-  backend-specific imports inside the tagged recipe files.
-- **`pgstore.New(db DBTX)` takes an injected pgx pool**, not a DSN. The postgres
-  recipe builds one pool, runs `pgstore.Migrate`, and shares it between the
-  store and the in-DB search backend. appbuild owns/closes the pool;
-  `store.Close()` only tears down the watcher.
-- **Build-agnostic wiring lives in `prepare`/`assemble`, never in a recipe.** A
-  recipe may choose and order backend steps; if logic would be copy-pasted
-  between recipes, it belongs in a shared helper. This is what keeps the three
-  recipes from drifting (and where future per-backend audit/ACL variation goes).
-
-  `prepare`'s result is the exported **`appbuild.SharedBase`** (TKT-P938T7): the
-  tenant-independent half — validated config, options, parsed `acl.yaml`, loaded
-  metamodel — with nothing derived from a store. Build one with `NewSharedBase`
-  and call `base.Assemble(store, …)` once per store; `New`/ `Discover` are that
-  path with a single store. **The split is NOT along the `Services` field
-  list**: `acl.Declarative` is built FROM the store (it needs a store-backed
-  `acl.Graph`), so the ACL _policy_ is shared while the _evaluator_ is per-store
-  — same for `lua.ReadDeps`. Two invariants keep reuse safe, both pinned by
-  tests in `sharedbase_test.go`: assembly must never mutate `meta` or
-  `aclPolicy` (they are pointers handed to every assembled `Services`, so a
-  write leaks across tenants), and `Services.Close` must tear down only the
-  store and search closer it was assembled with — never anything shared, or
-  evicting one tenant breaks its siblings.
-- **The metamodel is always read from disk**, even in the postgres build —
-  `schema.yaml` and `templates/` stay on the filesystem, as does
-  operator-authored config generally; PostgreSQL backs
-  entities/relations/attachments/search. A postgres deployment still needs a
-  `--project` dir.
-
-  The exception is **runtime-written state** (TKT-VC27L3): on the postgres build
-  `state.KV` is database-backed (`pgstore.StateKV`, wired via `stateKVFor`), so
-  the document render cache, user settings, the operator logo/theme and the
-  CalDAV alias table live in the `state_kv` table rather than under `.rela/`.
-  That is deliberate — `docs/postgres-backend.md` documents several rela-server
-  processes against one database, and node-local state means an uploaded logo is
-  served by exactly one of them. Rows sit in the store's schema, so
-  schema-per-tenant scopes this state for free. **Key validation is the `state`
-  package's job** (`state.ValidatedKV` wraps the backend at the wiring site):
-  pgstore must not import `internal/state` (arch-lint forbids a store depending
-  on an application package), so it stores whatever key it is handed and the
-  wrapper enforces the same rules `storage.RootedFS` gives FSKV. Any new backend
-  must pass `internal/state/statetest.RunAll`.
-- **Comments are backend-selected, and deliberately NOT in the graph**
-  (TKT-OGTVJW). `comments.Store` has three implementations — `filecomments`
-  (fs/memory/desktop), `pgcomments`, `sqlitecomments` — chosen by the RECIPE,
-  which passes one into `buildComments` via `backendOverrides.commentStore`; nil
-  selects the file backend. Any new one must pass
-  `internal/comments/commentstest.RunAll`.
-
-  The two database backends were split along the SAME reasoning that divided
-  `state.KV` from versioning, and the split is the point. **postgres**: a
-  comment posted through one `rela-server` node was invisible to the others, the
-  defect class TKT-VC27L3 fixed for `state.KV`. **sqlite** is single-process, so
-  that argument does not apply and the decision went the other way anyway —
-  commentary is content ABOUT content, so it must travel with `rela.db` the way
-  versioning does (TKT-4NU9ZD), not stay node-local the way the render cache
-  does (TKT-L1A3PH). "Is this about the machine or about the content?" is the
-  question to ask of the next such table.
-
-  Neither backend may import `internal/store` (arch-lint enforces it): each
-  declares its own narrow `DBTX` and takes an injected handle, so comments are a
-  third and fourth consumer of the one pool, never a store concern. Comments
-  stay outside the graph entirely — no entity type, no audit log, no versioning,
-  no search indexing (TKT-FIO205, permanently decided).
-- **Multi-writer change feed** (TKT-WZYWM9). The postgres watcher delivers
-  cross-process writes via PostgreSQL `LISTEN/NOTIFY`: each committed write does
-  `pg_notify(rela_changed, '<origin>:<schema>:<kind>:<op>:<id>')` inside its
-  transaction (so the 5 single-statement writes are wrapped in a tx); a listener
-  goroutine (own connection, started in `Open`, stopped in `Close`) turns remote
-  notifications into `store.Event`s on the in-process `Subscribe()` fan-out. Two
-  payload fields do the routing, both filtered on receipt: a per-store random
-  `originID` drops self-echoes (local writes are already emitted in-process),
-  and the writing `schema` drops traffic from other schemas sharing the channel.
-  NOTIFY is best-effort, so a `seq > watermark` catch-up (overlap window +
-  idempotent re-snapshot; runs on connect/reconnect/safety-ticker, NOT per
-  notification) recovers anything missed. **The channel is ONE constant
-  (`rela_changed`), not one per schema** (TKT-9TOEBH): LISTEN is database-global
-  _and_ needs a dedicated session, so a per-schema name would cost one
-  permanently-held connection per schema — the term that does not shrink under
-  pooling. Isolation lives in the payload instead. What is **not** shared is the
-  catch-up: `rela_seq` is per-schema and the catch-up query is unqualified SQL,
-  so priming/catch-up stay bound to each store's own pool — do not "simplify"
-  them onto a shared connection. If the listener can't connect, the store
-  degrades with a warning (local events still work). Exact ordering (xid8 +
-  `pg_snapshot_xmin`) is the documented upgrade, not built. The data-entry SSE
-  feed consumes this via `App.startStoreEventBridge` (entity events only).
-  fsstore/memstore stay in-process single-writer by nature.
-- **Content versioning** (TKT-9INY0Y; pgstore below, and sqlitestore since
-  TKT-4NU9ZD — the two are held to one contract by `storetest.RunVersionTests`,
-  declared via `Capabilities{Versioning}`). Two tables (`entity_versions` = one
-  full snapshot per version; `schema_versions` = content-addressed render-schema
-  projection, deduped) plus a dedicated `version_seq` sequence. **Use
-  `version_seq`, never `rela_seq`** — `rela_seq` feeds the change-feed watermark
-  (`primeWatermark`/`catchUp` scan entities/relations/deletions), and burning it
-  on version rows that don't land in those tables would erode the overlap budget
-  and drop real events. Capture is **hybrid**: rename+delete are captured
-  synchronously at the entitymanager boundary (they carry old→new id /
-  pre-delete state the sweep can't reconstruct); create/update are captured by a
-  debounced reconciliation **sweep** goroutine (`sweep.go`, started/stopped like
-  the listener). The sweep runs its **entire tick on ONE acquired pool
-  connection** under `pg_try_advisory_lock` — the lock is session-scoped, so
-  issuing the inserts via the pool (other sessions) would silently void the
-  single-writer guarantee. Attribution comes from ctx only, via exactly two
-  boundary-populated inputs — the store never learns the Principal by another
-  route: sync captures carry it inside `store.VersionInput`, and create/update
-  writes carry a `store.Attribution` on ctx (`store.WithAttribution`, set ONLY
-  at the entitymanager boundary and ONLY for a real principal — never translate
-  a zero/unknown principal, RR-U964M0) which pgstore stamps into
-  `entities/relations.last_edited_by_user/_tool` (TKT-ZIRMGM). The sweep copies
-  those columns onto swept versions; NULL columns (legacy rows, unattributed
-  writes) fall back to the `version-sweep` system principal — never a guessed or
-  literal-"unknown" identity. Author-boundary segmentation (flush-on-author-
-  change) is TKT-0IGI4V, not built: two authors in one debounce window merge
-  into one version attributed to the last of them. Lineage across a
-  rename/id-reuse is fenced by `[lo,hi)` vseq ranges in a recursive-CTE walk (an
-  unbounded `entity_id = ANY(...)` read would merge two entities' histories —
-  see the version.go doc). `HistoryReader`/`VersionWriter` are optional store
-  capabilities (type-asserted like `store.Formatter`), NOT part of
-  `store.Store`.
-- **Relation versioning** (TKT-92JL8P; both database backends) extends the above
-  to relations, which carry their own props + body. A `relation_versions` table
-  reuses `version_seq` + `schema_versions`; identity is a surrogate
-  `rel_record_id` **column ON the `relations` row** (`DEFAULT nextval(...)`,
-  carried through writes) — NOT reconstructed per sweep-tick, which would race
-  the sync path and merge/fork lineages. Delete+recreate of the same
-  `(from,type,to)` mints a fresh id (histories don't merge). Capture:
-  create/update via the sweep's second `FROM relations` scan
-  (entities-then-relations, same tick/lock); **delete synchronously via
-  `DeleteResult.DeletedRelations`** — the single path for BOTH explicit
-  `DeleteRelation` and entity **cascade** delete (the store bulk-deletes
-  relations below the entitymanager, so cascade edges would otherwise lose
-  history). Rename **stitches** (not forks): the entitymanager captures a
-  `rename` version per incident relation on the new triple carrying
-  `prev_from`/`prev_to`, and `relationLineageIDs` walks those links so history
-  is continuous. Since #1127 the store renames **atomically** (bulk in-place
-  `UPDATE relations SET from_id=...`), so a relation KEEPS its `rel_record_id`
-  across the rename — the lineage is already continuous on one id and the
-  `rename` version merely appends a marker (the `prev_from`/`prev_to` stitch walk
-  finds no fork; it stays as belt-and-braces for any future non-atomic path).
-  Rename capture is **sync-only best-effort**: the atomic re-key does NOT bump
-  `relations.updated_at` (TKT-9TQ6I), so the sweep cannot back-fill a rename the
-  synchronous hook misses — acceptable because a miss loses only the rename
-  marker, never lineage continuity. Read/restore is gated on **both** endpoints
-  (FROM ∧ TO) — the FROM
-  entity only _owns_ the UI placement, it is not the auth boundary (a TO-side
-  oracle otherwise). Relation meta fields are redacted by a role's
-  `relations:` `visible:` grants (`RelationFieldVerdicts`, applied in
-  `internal/dataentry`), never by a client ceiling; relation history exposes
-  exactly what a live relation GET does. `RelationHistoryReader`/
-  `RelationVersionWriter` are SEPARATE optional capabilities, type-asserted
-  independently of the entity ones.
-- **Version purge** (TKT-BW6UUL; both database backends) is the audited, irreversible
-  exception to append-only history — hard-deletes version rows for compliance
-  redaction. `VersionPurger`/`RelationVersionPurger` are SEPARATE optional
-  capabilities (`purge.go`), one `PurgeVersions`/`PurgeRelationVersions` method
-  each. Load-bearing guardrails (design-review, do not relax): the whole op runs
-  under **`sweepAdvisoryLockKey`** (mutually exclusive with a sweep tick — a purge
-  racing a capture-insert loses the erasure); it **REFUSES while a live row still
-  holds the content** unless `--force-live` (else the sweep re-captures it within
-  one interval — a `VersionOpPurge` no-content tombstone whose content_hash = the
-  live hash suppresses that re-capture via the sweep's existing dedup); it
-  **REFUSES a rename row** (purging one orphans/forks the lineage walk — v1 is
-  non-rename-only); `--all` purges the **fenced lineage** (`lineageCTE` /
-  `relationLineageIDs`), never `WHERE id=$1` (id-reuse would destroy unrelated
-  history). CLI-only (`history-purge`/`relation-history-purge`), dry-run by
-  default; trust boundary is operator shell (no ACL check — like `db migrate`),
-  audited via the `audit.Audit` sink (`OpPurgeVersion`, `svc.Audit()`), never
-  echoing purged content. `schema_versions` is projection-only + FK-shared, so
-  purge never deletes it. Purge is necessary-not-sufficient for erasure (live
-  row / PITR backups survive) — see the postgres-backend guide.
-- **Data migration** (TKT-0C57FS, TKT-XCJ0Y2, `internal/datamigration`,
-  `docs/data-migration.md`). Two separate questions, deliberately not
-  conflated:
-
-  _Which migrations have run_ is answered by NAME, from a per-store
-  `datamigration.StateStore`. A migration file is therefore NOT an edge in a
-  hash graph, and a **data-only migration** (backfill, de-dup, correcting an
-  old bug's values) is an ordinary file whose two projections match. Files are
-  `<14-digit timestamp>-<lowercase-slug>.yaml`, validated through
-  `MigrationName` on both the directory listing and the applied list — the two
-  are compared by equality, so a case-folding filesystem would otherwise make
-  one file look like two entries. Don't reintroduce sequential numbering: it
-  collides silently across concurrent branches (BUG-TY2XQC is that defect in
-  rela's own pg ladder).
-
-  _What shape the data conforms to_ is the `ShapeProjection` the record also
-  stores, which the gate classifies against and `rela migrate gen` diffs.
-  **Two schema hashes coexist on purpose**: `RenderProjection` (version
-  rendering, `schema_versions` dedup — stability load-bearing, do not extend)
-  vs `ShapeProjection`.
-
-  **The projections stay embedded in every migration file.** They are what
-  step `Validate(from, to)` checks targets against (a rename step is
-  well-formed only where the old property exists in the FROM shape, which the
-  live schema no longer has once a later migration ran) and what
-  `validateDeltasResolved` recomputes to refuse a file that spans a
-  needs-migration change its steps don't answer. Computing either against the
-  live schema instead collapses the whole chain into one aggregate delta and
-  reopens BUG-TMGWIN. Removing them is not an optimization.
-
-  **The state store is backend-selected**, like `comments.Store`: a COMMITTED
-  `migrations/applied.json` on fs (the gitignored `.rela/` would be absent from
-  a clone), `migration_state` in the tenant's schema on pg (so tenants at
-  different points migrate independently — a documented guarantee), the same
-  table in `rela.db` on sqlite (a shipped file must carry it). New backends
-  pass `migstatetest.RunAll`.
-
-  **`Gate.Evaluate` classifies; `Gate.Persist` writes, and only the CLI calls
-  it.** A server writing a git-tracked file at boot would dirty a working tree
-  and need a writable project dir; it also removes the concurrent-start race
-  outright. A server may serve with an unrecorded ADDITIVE change — harmless by
-  construction. With no record AND migrations present the gate refuses
-  (`StatusUnbaselined`) rather than baselining over files that may still need
-  to run; `rela migrate baseline` is the explicit override.
-
-  Migration/GC writes are the third sanctioned raw-store exception (after
-  `db migrate` and `history-purge`): operator-shell trust, no ACL, explicit
-  audit records (`data-migration`/`data-gc`), `store.WithAttribution`, and
-  synchronous pre-delete version capture on pg (the sweep cannot reconstruct
-  deleted rows). **Steps must stay idempotent — with the applied list as the
-  only double-apply guard, re-run IS the crash recovery.** The Lua step is a
-  pure transform (patch in, patch out, engine applies); never hand it a write
-  handle.
-- **Perf seeding** (TKT-1U8XYN, `internal/perfseed`, `rela dev seed`) is the
-  fourth raw-store exception, under the same terms: operator shell, attributed
-  (`perf-seed` tool), one `perf-seed` audit record, and it refuses a non-empty
-  store. Because nothing above the store runs, the generator keeps the
-  invariants the store cannot: ids minted by construction and validated, the
-  single `unique:` property unique by construction, every edge endpoint emitted
-  by the same generator. Do not route it through entitymanager to "fix" that —
-  20k automations per seed is the cost it exists to avoid.
-- DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
-  `--database-url` flag, so the credential never lands in `ps`/shell history.
-  `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the `db`
-  commands read the env directly. Don't add a DSN flag.
-- **Derived static-query indexes are all-or-nothing desired state.** The
-  PostgreSQL and SQLite reconcilers own only `rela_derived_query__*` /
-  `rela_derived_list__*` and derive those indexes from validated static
-  dashboard/next-action/list shapes (`appbuild.staticIndexSpecs`, shared by
-  both). Never
-  reconcile a partial set after a `data-entry.yaml` read/parse/validation
-  failure: an absent desired object means DROP, so partial input is destructive.
-  Runtime/ad-hoc queries never issue DDL. Pushdown and index inference must use
-  the same `internal/queryplan` eligibility decision, and an EXPLAIN test must
-  prove each newly supported SQL shape actually uses its generated index, on
-  both backends (`EXPLAIN QUERY PLAN` on sqlite). SQLite matches an expression
-  index only when the query spells the expression identically, so its DDL is
-  built with the query builder's own helpers (`sqlitestore/derivedschema.go`). A
-  next-action `condition:` participates on both sides: its store-safe scalar
-  equalities (`entity.x == 'lit'`, `entity.x == current_user.id`,
-  `is_current_user(entity.x)`) are pushed with the query and derive columns of
-  the SAME composite index; `has_current_user(list)` is pushed as a non-scalar
-  `PropEqual` (jsonb containment) and deliberately derives no index, since the
-  btree over `->>` does not serve it — a GIN shape would need its own EXPLAIN
-  test first.
-- **Migrations** are embedded SQL (`pgstore/migrations/*.sql`), applied by
-  `pgstore.Migrate` in one transaction under a `pg_advisory_xact_lock`
-  (concurrent-start safe; forward-only). Auto-applied on first store open; also
-  runnable explicitly via the postgres-build `rela db migrate` /
-  `rela db status` commands (`pgstore.Status` is the read-only version check).
-  `rela db` errors clearly in non-postgres builds.
-- A new `store.Store` implementation must pass `internal/store/storetest`
-  (`RunAll` + the fuzz functions). pgstore's suite is DB-gated on
-  `RELA_TEST_DATABASE_URL` (skips when unset). Run it with `just test-postgres`.
+The rules for touching storage, comments, versioning and data migration are in
+`.claude/rules/` (`storage.md`, `comments.md`, `versioning.md`,
+`datamigration.md`).
 
 ## Tests
 
