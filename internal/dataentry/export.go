@@ -63,13 +63,14 @@ type exportHandler struct {
 	// visReader is the row-gating + field-redacting read seam (DEC-ZBI39P):
 	// list-export rows go through Filter, and entity export through resolver,
 	// which is built from the same gate and redactor and owns the stored-type
-	// check (RR-SRZK6X). A hidden field therefore never reaches the markdown
-	// handed to a transform. redactor is the same field-verdict source exposed
-	// directly, for redacting already-gated neighbor entities before title
-	// derivation (visibility.Redact).
+	// check (RR-SRZK6X). The entity's neighbors are resolved through it too,
+	// so each is redacted exactly once, in one primed batch. A hidden field
+	// therefore never reaches the markdown handed to a transform.
 	visReader visibility.Reader
 	resolver  addressResolver
-	redactor  visibility.FieldRedactor
+	// redactor is the same field-verdict source, exposed for the list
+	// export, which redacts raw neighbor rows itself.
+	redactor visibility.FieldRedactor
 
 	// visibleReader remains for the batched neighbor-ID gate
 	// (visibleRelationIDs) shared with the serializer paths.
@@ -101,6 +102,7 @@ type exportHandler struct {
 // addressResolver is the single-entity read the export handler needs.
 type addressResolver interface {
 	Address(ctx context.Context, w visibility.World, entityType, addr string) (visibility.Resolved, bool, error)
+	ResolveIDsErr(ctx context.Context, w visibility.World, ids []string) (map[string]store.EntityHeader, error)
 }
 
 // newExportHandler builds the export handler with closures over the App
@@ -395,7 +397,7 @@ func (h *exportHandler) entityRelationGroups(
 	outgoing := edgesOwnedBy(meta, h.reader.outgoingRelations(ctx, e.ID), e.Face)
 	incoming := incomingOwnedAtZero(meta, h.reader.incomingRelations(ctx, e.ID), e)
 
-	rows, err := h.visibleReader.resolver.ResolveIDsErr(ctx, worldFromContext(ctx).visibility(),
+	rows, err := h.resolver.ResolveIDsErr(ctx, worldFromContext(ctx).visibility(),
 		neighborIDsOf(outgoing, incoming))
 	if err != nil {
 		return nil, err
@@ -408,11 +410,10 @@ func (h *exportHandler) entityRelationGroups(
 		if !ok {
 			return
 		}
-		// Redact BEFORE deriving the title: a visible neighbor whose display
-		// property is hidden must render as its ID, never the hidden value
+		// The resolver redacted row, so a visible neighbor whose display
+		// property is hidden renders as its ID, never the hidden value
 		// (the RR-5N4K35 title-leak class).
-		red := visibility.RedactHeader(ctx, h.redactor, row)
-		title := transform.DisplayTitle(meta, &entityPkg.Entity{ID: red.ID, Type: red.Type, Properties: red.Properties})
+		title := transform.DisplayTitle(meta, &entityPkg.Entity{ID: row.ID, Type: row.Type, Properties: row.Properties})
 		byLabel[label] = append(byLabel[label], title)
 	}
 

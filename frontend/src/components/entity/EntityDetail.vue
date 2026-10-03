@@ -148,24 +148,25 @@ const worldAbsent = computed(() => viewData.value?._world_absent === true)
 //
 //     view[entity@face]  --Edit-->  form[entity@face]  --Save-->  PATCH entity@face
 //
-// Every write this page makes goes to `servedRef`: the coordinate the server
-// reports in the entry's `_self`, face included. Under a world the bare id
-// resolves to whichever face the world picks, so the bare id is not a stable
-// address for what is on screen — `_self` is, and the server accepts it on
-// GET, PATCH and DELETE alike (TKT-SLFURL). Whether a write is ALLOWED is
-// `_actions`, which the server computes for that same face. Together those
-// two replace the page-level "read-only under a world" lock this component
-// used to apply: that lock re-derived a decision the server had already made,
-// got it wrong for every type without faces and for every chain hit on the
-// bare face, and contradicted the very `_actions` it was overriding (atlas
-// worlds issues 2, 3, 4, 10).
+// Every write this page makes goes to `servedRef`. It is the address the
+// server reports in the entry's `_self`, face included. Under a world the bare
+// id resolves to whichever face the world picks, so it is not a stable address
+// for what is on screen. `_self` is, and the server accepts it on GET, PATCH
+// and DELETE alike (TKT-SLFURL). Whether a write is ALLOWED is `_actions`,
+// which the server computes for that same face. Together these replace the
+// page-level "read-only under a world" lock this component used to apply,
+// which contradicted the `_actions` it overrode (atlas worlds issues 2, 3, 4,
+// 10).
 //
-// Before the entry has loaded, the route's own id is the best address there
-// is; it may itself carry a face (`/entity/policy/POL-1@published`).
-const servedRef = computed(() => (entry.value ? entityRef(entry.value) : props.entityId))
-// The face on screen, '' for the bare face. A fact read off the response,
-// never derived from the world.
-const servedFace = computed(() => refFace(servedRef.value))
+// Nil: null until the entry loads. The page has no address before the server
+// has said which row it is showing, and the route id is not one: a bare id
+// under a world may name a different face. Script code returns early on null.
+// The template reads `entityRef(entry)` under its `entry` gate instead, which
+// is the same value and non-null by construction.
+const servedRef = computed<string | null>(() => (entry.value ? entityRef(entry.value) : null))
+// The face on screen, '' for the bare face and before the entry loads. A fact
+// read off the response, never derived from the world.
+const servedFace = computed(() => (servedRef.value === null ? '' : refFace(servedRef.value)))
 // The bare id, for surfaces addressed per ENTITY rather than per row: scope
 // navigation, same-entity copies and the delete prompt's wording. Every
 // sub-resource of the row on screen (comments, documents, export, history,
@@ -240,10 +241,16 @@ const commandModalRef = ref<InstanceType<typeof CommandModal> | null>(null)
 // face on the history page, which is a different face whenever this page shows
 // the default face in a world that has none (BUG-2, BUG-FYEEVX). The world
 // still rides along so the way back lands in the world the reader came from.
-const historyTarget = computed<RouteLocationRaw>(() => ({
-  path: `/history/${props.entityType}/${servedRef.value}`,
-  query: worldParam.value ? { world: worldParam.value } : {},
-}))
+//
+// Nil: undefined until the entry loads (no address yet).
+const historyTarget = computed<RouteLocationRaw | undefined>(() => {
+  const address = servedRef.value
+  if (address === null) return undefined
+  return {
+    path: `/history/${props.entityType}/${address}`,
+    query: worldParam.value ? { world: worldParam.value } : {},
+  }
+})
 
 const contentRef = ref<HTMLElement | null>(null)
 
@@ -312,13 +319,15 @@ function handleDuplicated(created: { id: string; type: string; _self?: string })
 // Nil: undefined when editing is unavailable (no configured form, an
 // inaccessible/git-crypt entity, or no update permission on the face on
 // screen). The template then renders nothing rather than a link to a page
-// that would refuse the write.
+// that would refuse the write, and before the entry loads.
 //
 // The form opens on the ADDRESS of the row on screen, face included, so
 // what you look at is what you edit is what you save.
 const editTarget = computed<RouteLocationRaw | undefined>(() => {
-  if (!editFormId.value || isInaccessible.value || !canUpdate.value) return undefined
-  return { name: 'form-edit', params: { id: editFormId.value, entityId: servedRef.value } }
+  const address = servedRef.value
+  if (address === null || !editFormId.value || isInaccessible.value || !canUpdate.value)
+    return undefined
+  return { name: 'form-edit', params: { id: editFormId.value, entityId: address } }
 })
 
 // The entry's content section gets a custom renderer (mermaid + interactive
@@ -373,9 +382,10 @@ function commentsForProperty(name: string): Comment[] {
 // Comments go to the face on screen, not the bare id a world would re-resolve:
 // a remark on the draft is not a remark on the published version (FEAT-9CD2MX).
 async function loadComments() {
-  if (!commentsEnabled.value) return
+  const address = servedRef.value
+  if (!commentsEnabled.value || address === null) return
   try {
-    comments.value = await listComments(props.entityType, servedRef.value)
+    comments.value = await listComments(props.entityType, address)
   } catch {
     // A failure here means "cannot read the target, or commenting is off" —
     // the server makes those indistinguishable on purpose. Either way there is
@@ -475,11 +485,19 @@ const entryProperties = computed<Record<string, unknown>>(() => entry.value?.pro
 // entity identity here so the in-flight flush PATCHes the entity the
 // user actually clicked, not the one they just navigated to.
 const pinEntityForFlush = ref<{ type: string; id: string } | null>(null)
+// A save can only be scheduled by editing a loaded entry, so a missing
+// address here is a bug. Throwing fails that save visibly; a fallback id
+// would PATCH a row the page is not showing.
+function requireServedRef(): string {
+  const address = servedRef.value
+  if (address === null) throw new Error('entity address requested before the entry loaded')
+  return address
+}
 const contentAutoSave = useAutoSave({
   getEntityType: () => pinEntityForFlush.value?.type ?? props.entityType,
   // The row's ADDRESS, face included: a checkbox toggled on the published
   // face must land on the published face. The pin holds an address too.
-  getEntityId: () => pinEntityForFlush.value?.id ?? servedRef.value,
+  getEntityId: () => pinEntityForFlush.value?.id ?? requireServedRef(),
   contentDebounceMs: 100,
   formData: entryProperties as unknown as import('vue').Ref<Record<string, unknown>>,
   contentRef: entryContent as unknown as import('vue').Ref<string>,
@@ -538,7 +556,9 @@ async function acceptSuggestion(c: Comment) {
       uiStore.error('Could not save pending changes; the suggestion was not applied')
       return
     }
-    const res = await acceptComment(props.entityType, servedRef.value, c.id)
+    const address = servedRef.value
+    if (address === null) return
+    const res = await acceptComment(props.entityType, address, c.id)
     const view = viewData.value
     if (view?.entry) {
       const nextSections = view.sections.map((s) =>
@@ -850,6 +870,7 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
   // The served face address, never the bare id: the server checks the face
   // against `available_on.faces` and hands it to the script as entity.face.
   const address = servedRef.value
+  if (address === null) return
   detailActionBusy.value = true
   try {
     const res = await runAction(id, address)
@@ -915,6 +936,13 @@ async function loadView() {
   }
 }
 
+// The ExportMenu's url-for, bound to an address. The template passes
+// entityRef(entry) here because narrowing on `entry` does not reach into an
+// inline arrow function.
+function exportUrlFor(address: string): (transform: string) => string {
+  return (transform) => entityExportUrl(props.entityType, address, transform, worldParam.value)
+}
+
 // Actions
 function editEntity() {
   // The backend refuses to write through inaccessible (git-crypt encrypted)
@@ -924,11 +952,14 @@ function editEntity() {
     uiStore.error('No edit form configured for this entity type')
     return
   }
-  router.push({ name: 'form-edit', params: { id: editFormId.value, entityId: servedRef.value } })
+  const address = servedRef.value
+  if (address === null) return
+  router.push({ name: 'form-edit', params: { id: editFormId.value, entityId: address } })
 }
 
 async function requestDelete() {
-  if (!entry.value) return
+  const address = servedRef.value
+  if (address === null) return
   // Addressed to the row on screen. On the bare face that is the entity; on
   // a non-bare face it is that face only (the server's rule for `ID@face`),
   // and the confirm says so — "delete" must not read as "unpublish" or the
@@ -948,7 +979,7 @@ async function requestDelete() {
         // canonical CRUD path; keep using it.
         const { useEntitiesStore } = await import('@/stores')
         const entitiesStore = useEntitiesStore()
-        await entitiesStore.remove(props.entityType, servedRef.value)
+        await entitiesStore.remove(props.entityType, address)
       },
       'Failed to delete entity',
       uiStore
@@ -1286,17 +1317,20 @@ const actions = computed<EntityAction[]>(() => {
       run: () => goToFace(f),
     })
   }
-  if (showHistory.value) {
-    out.push({ id: 'history', label: 'History', group: 'view', icon: 'history', run: () => void router.push(historyTarget.value) })
+  if (showHistory.value && historyTarget.value) {
+    const to = historyTarget.value
+    out.push({ id: 'history', label: 'History', group: 'view', icon: 'history', run: () => void router.push(to) })
   }
+  const exportAddress = servedRef.value
   for (const t of exportFormats.value) {
+    if (exportAddress === null) break
     out.push({
       id: `export:${t.name}`,
       label: `Export as ${t.name}`,
       group: 'export',
       icon: 'download',
       // What is on screen (BUG-PLZDPR): the served face, in the page's world.
-      href: entityExportUrl(props.entityType, servedRef.value, t.name, worldParam.value),
+      href: entityExportUrl(props.entityType, exportAddress, t.name, worldParam.value),
     })
   }
   if (canDuplicate.value) {
@@ -1745,8 +1779,16 @@ watch(
     // the new entity by the time the FIFO chain runs — so we capture
     // the previous identity for the duration of the flush via a
     // one-shot override before triggering commit.
-    const [prevType, prevId] = prev
-    const fireWith = { type: prevType, id: prevId }
+    // The pin is the previous entry's served address, face included, read
+    // before loadView replaces the entry. With no entry loaded there is
+    // nothing to flush.
+    const [prevType] = prev
+    const prevAddress = servedRef.value
+    if (prevAddress === null) {
+      loadView()
+      return
+    }
+    const fireWith = { type: prevType, id: prevAddress }
     pinEntityForFlush.value = fireWith
     void contentAutoSave.commitImmediately().finally(() => {
       if (pinEntityForFlush.value === fireWith) pinEntityForFlush.value = null
@@ -1867,6 +1909,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
       </template>
     </RlStatusRegion>
 
+    <!-- Under this gate the row's address is entityRef(entry): the value of
+         servedRef, spelled so the type is string rather than string | null. -->
     <template v-else-if="entry">
       <!-- Back affordance + optional scope (prev/next) navigation. The bar
            renders when either a back target exists (?return_to or ?from)
@@ -2026,14 +2070,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             not have. The mobile block below gates on the SAME flag; both sites
             must, which is the trap this header just walked into three times.
           -->
-          <RlButton v-if="showHistory" :as="RouterLink" :to="historyTarget" variant="secondary">
+          <RlButton v-if="showHistory && historyTarget" :as="RouterLink" :to="historyTarget" variant="secondary">
             History
           </RlButton>
           <!--
             Exports what is on screen (BUG-PLZDPR): the served face's address,
             and the page's world, in which the export resolves the entry's links.
           -->
-          <ExportMenu :url-for="(t: string) => entityExportUrl(entityType, servedRef, t, worldParam)" />
+          <ExportMenu :url-for="exportUrlFor(entityRef(entry))" />
           <!--
             Duplicate. Gated on `inline_create` rather than `_actions` (there is
             no `create` key on an entity response); the action list gates on the
@@ -2185,10 +2229,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
               entry &&
               sectionShouldRouteToInlineEdit(section, entry)
             "
-            :key="`${entry.type}/${servedRef}`"
+            :key="`${entry.type}/${entityRef(entry)}`"
             :heading="section.heading"
             :entity-type="entry.type"
-            :entity-id="servedRef"
+            :entity-id="entityRef(entry)"
             :initial-values="entry.properties"
             :attachments="entry._attachments"
             :fields="memoBuildSectionEditFields(section, entry)"
@@ -2200,7 +2244,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             <template v-if="commentsEnabled" #label-affordance="{ property, index }">
               <CommentIndicator
                 :entity-type="entityType"
-                :entity-id="servedRef"
+                :entity-id="entityRef(entry)"
                 :anchor="{ kind: 'property', ref: property }"
                 :comments="commentsForProperty(property)"
                 :flip="shouldFlipPopover(memoBuildSectionEditFields(section, entry), index)"
@@ -2218,7 +2262,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             <template v-if="commentsEnabled" #label-affordance="{ property, index }">
               <CommentIndicator
                 :entity-type="entityType"
-                :entity-id="servedRef"
+                :entity-id="entityRef(entry)"
                 :anchor="{ kind: 'property', ref: property.name }"
                 :comments="commentsForProperty(property.name)"
                 :flip="shouldFlipPopover(section.fields, index)"
@@ -2262,7 +2306,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 <TextSelectionComment
                   v-if="commentsEnabled"
                   :entity-type="entityType"
-                  :entity-id="servedRef"
+                  :entity-id="entityRef(entry)"
                   :container="contentRef"
                   @added="loadComments"
                 />
@@ -2273,7 +2317,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 <BlockCommentOverlay
                   v-if="commentsEnabled"
                   :entity-type="entityType"
-                  :entity-id="servedRef"
+                  :entity-id="entityRef(entry)"
                   :container="contentRef"
                   :render-key="renderedEntryContent"
                   :comments="comments"
@@ -2285,7 +2329,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 <TextCommentPopover
                   v-if="commentsEnabled && textCommentPos && openTextComments.length > 0"
                   :entity-type="entityType"
-                  :entity-id="servedRef"
+                  :entity-id="entityRef(entry)"
                   :comments="openTextComments"
                   :position="textCommentPos"
                   :can-accept="canAccept"
@@ -2696,14 +2740,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
              Nested here (not a sibling of .sections) so it picks up the
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
-        <DocumentsPanel :entity-type="entityType" :entity-id="servedRef" />
+        <DocumentsPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
 
         <!-- Comment thread. Self-gating: renders nothing unless the schema
              marks this type commentable, so a project with no `comments:`
              block sees the page it always saw. -->
         <CommentsPanel
           :entity-type="entityType"
-          :entity-id="servedRef"
+          :entity-id="entityRef(entry)"
           :comments="comments"
           :section-ids="commentSectionIds"
           :can-accept="canAccept"
@@ -2713,7 +2757,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
       </div>
 
       <!-- The ADDRESS, not the bare id: a command acts on the face on screen. -->
-      <CommandModal ref="commandModalRef" :entity-id="servedRef" />
+      <CommandModal ref="commandModalRef" :entity-id="entityRef(entry)" />
 
       <!--
         The modal create host. Reused verbatim from the inline-create flow

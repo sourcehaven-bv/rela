@@ -530,10 +530,12 @@ type GraphQueryer interface {
 	// the iterator yields (nil, err) and terminates.
 	GraphQuery(ctx context.Context, q GraphQuery) iter.Seq2[*entity.Entity, error]
 
-	// GraphCount returns (matched, total): the number of entities of
+	// GraphCount returns (matched, total): the number of rows of
 	// q.EntityType that satisfy q's predicates, and the total number of
-	// entities of q.EntityType ignoring those predicates. Callers use
-	// (total - matched) for "filtered by" counts.
+	// rows of q.EntityType ignoring those predicates. Callers use
+	// (total - matched) for "filtered by" counts. A row is what GraphQuery
+	// would yield: one per id under InWorld, one per selected face under
+	// AllFaces and AtFaces.
 	GraphCount(ctx context.Context, q GraphQuery) (matched, total int, err error)
 
 	// MatchingFaces answers: "of these candidate ids, which stored face

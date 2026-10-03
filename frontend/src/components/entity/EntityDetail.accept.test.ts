@@ -6,11 +6,14 @@ import EntityDetail from './EntityDetail.vue'
 import CommentsPanel from './CommentsPanel.vue'
 import TextSelectionComment from './TextSelectionComment.vue'
 import BlockCommentOverlay from './BlockCommentOverlay.vue'
+import CommandModal from './CommandModal.vue'
+import ExportMenu from './ExportMenu.vue'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import type { ViewResponse } from '@/api'
 import { listComments, type Comment } from '@/api/comments'
 import type { CommitResult } from '@/composables/useAutoSave'
+import { _setEntityPluralForTest } from '@/api/entities'
 
 // Accepting a suggestion from the detail page (TKT-S5C0K3). The server writes
 // the body, so the page must first settle its own pending body save: one that
@@ -159,5 +162,30 @@ describe('EntityDetail accepting a suggestion', () => {
     expect(w.findComponent(CommentsPanel).props('entityId')).toBe('TKT-1@draft')
     expect(w.findComponent(TextSelectionComment).props('entityId')).toBe('TKT-1@draft')
     expect(w.findComponent(BlockCommentOverlay).props('entityId')).toBe('TKT-1@draft')
+    expect(w.findComponent(CommandModal).props('entityId')).toBe('TKT-1@draft')
+    _setEntityPluralForTest('ticket', 'tickets')
+    const urlFor = w.findComponent(ExportMenu).props('urlFor') as (t: string) => string
+    expect(urlFor('pdf')).toContain('TKT-1%40draft')
+  })
+
+  // The page has no address until the server says which row it shows, so
+  // nothing addressed to the row may fire while the first load is pending.
+  it('sends nothing addressed to the row before the entry loads', async () => {
+    fetchViewMock.mockReturnValue(new Promise(() => {}))
+    vi.mocked(listComments).mockClear()
+    const w = mount(EntityDetail, {
+      props: { entityType: 'ticket', entityId: 'TKT-1' },
+      attachTo: document.body,
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+    expect(vi.mocked(listComments)).not.toHaveBeenCalled()
+    expect(w.findComponent(CommentsPanel).exists()).toBe(false)
+    expect(w.findComponent(CommandModal).exists()).toBe(false)
+    // A route change with no entry loaded has no pending save to flush.
+    await w.setProps({ entityId: 'TKT-2' })
+    await flushPromises()
+    expect(commitMock).not.toHaveBeenCalled()
+    expect(acceptMock).not.toHaveBeenCalled()
   })
 })

@@ -536,8 +536,8 @@ func buildGraphQueryPageSQL(q store.GraphQuery, sel graphSelect, after *entity.R
 	// structure must not depend on the reader's world.
 	with, source := graphSource(b, q, typeArg, idAfter)
 	if sel == graphSelectCount {
-		// graphSource yields one row per id in every world, so count(*)
-		// counts entities, never faces.
+		// count(*) counts the rows graphSource yields: one per id under
+		// InWorld, one per selected face under AllFaces and AtFaces.
 		return withClause(with) + "SELECT count(*) FROM " + source, b.args
 	}
 
