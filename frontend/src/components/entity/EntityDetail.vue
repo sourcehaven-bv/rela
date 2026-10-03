@@ -2204,6 +2204,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             :entity-type="entry.type"
             :entity-id="servedRef"
             :initial-values="entry.properties"
+            :initial-versions="entry._versions"
             :attachments="entry._attachments"
             :fields="memoBuildSectionEditFields(section, entry)"
             :on-property-applied="handlePropertyApplied"

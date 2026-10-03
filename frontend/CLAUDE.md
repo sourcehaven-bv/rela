@@ -254,6 +254,32 @@ App.vue's `<style>` and the files `main.ts` imports. A scoped component class
 compiles to a `[data-v-*]` selector the probe's element does not carry, so it
 reads as unstyled. Query the real element instead.
 
+## Autosave conflicts (`useAutoSave` + `autoSaveMerge.ts`)
+
+Autosave sends a per-field precondition (the server's `_versions` token) for
+every field it writes, and merges on a 412 (TKT-2VDVHF; API contract in
+`docs/data-entry/api-reference.md`). Rules for new code:
+
+- **A merge base moves only when the local state moves with it:** when the
+  form takes the server value, or when a save of that field succeeds. A base
+  that runs ahead of the form lets the next save overwrite a change the user
+  never saw, with no 412. That is silent data loss, and every test still
+  passes.
+- **Unsaved state includes queued and in-flight writes**, not only `pending`
+  and the debounce timers. Ask `holdsProp` / `holdsContent`; never re-derive
+  "dirty" from `pending` alone. A snapshot (`recordServerSnapshot`) and a
+  response to an EARLIER save both skip held fields.
+- **Conflict handling collects base moves; it does not make them.**
+  `resolveConflicts` records them in `SendResult.conflicts`, and
+  `mergeServerResponse` applies them once the round succeeds, so a save that
+  runs out of attempts leaves every base where the form still is.
+- **Never write conflict markers.** An unmergeable body is reported. The editor
+  then shows the other side's clean hunks with the user's lines in each
+  conflicting region, so the user's next edit overwrites only those regions.
+- **A snapshot without `_versions` saves unguarded** until its first save
+  returns tokens. List-section rows are in that state today (TKT-MK9NJB), and
+  so is every incoming relation list (TKT-E9WXPU).
+
 ## The markdown editor (Milkdown/ProseMirror)
 
 `src/components/forms/milkdown/` replaces the old EasyMDE editor. It is

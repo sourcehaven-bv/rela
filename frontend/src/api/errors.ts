@@ -14,6 +14,7 @@
 //   - field-level validation   → (err as ApiError).validationErrors
 import axios, { type AxiosError } from 'axios'
 import type { ScriptError } from '@/types/scriptError'
+import type { FieldConflicts, FieldVersions } from '@/types/entity'
 import { isScriptError } from '@/types/scriptError'
 
 export interface ProblemDetail {
@@ -23,6 +24,9 @@ export interface ProblemDetail {
   detail?: string
   instance?: string
   errors?: ValidationError[]
+  // Set on the 412 a PATCH with preconditions receives (TKT-2VDVHF).
+  conflicts?: FieldConflicts
+  versions?: FieldVersions
 }
 
 export interface ValidationError {

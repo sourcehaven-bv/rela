@@ -37,6 +37,7 @@
     "lucide-vue-next": "^1.0.0",
     "marked": "^18.0.13",
     "mermaid": "^11.16.1",
+    "node-diff3": "3.2.1",
     "pinia": "^4.0.3",
     "rela-components": "*",
     "rrule": "^2.8.1",

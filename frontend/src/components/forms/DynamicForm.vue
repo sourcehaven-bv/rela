@@ -48,7 +48,6 @@ import { ownedRelationKeys, filterOwnedRelations, untypedRelationKeys } from './
 import { useAutoSave } from '@/composables/useAutoSave'
 import { useFormWizard } from '@/composables/useFormWizard'
 import type { Bindings } from '@/utils/conditions'
-import { registerForm } from './dirtyFormRegistry'
 import { adoptLockedFieldValues } from './stagedEntity'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
 import FormFieldList from './FormFieldList.vue'
@@ -2203,9 +2202,6 @@ function recordServerBaseline(entity: Entity) {
     _pendingServerSnapshot = snap
   }
 }
-// Dirty-registry cleanup, assigned in onMounted (after awaits) and run
-// from the top-level onBeforeUnmount.
-let unregisterDirtyForm: (() => void) | null = null
 
 function buildAutoSaveRelationsBody(): ModernRelationsField | null {
   // Mirror handleSubmit's body assembly. Two sources of relation
@@ -2439,15 +2435,6 @@ onMounted(async () => {
     // Consumed by the constructor above; later loads go through
     // `recordServerSnapshot` on the live instance instead.
     _pendingServerSnapshot = null
-    // Register with the dirty registry so SSE-driven re-fetches in
-    // other forms on the same entity preserve this form's dirty state.
-    // The cleanup runs from the top-level onBeforeUnmount below —
-    // registering a lifecycle hook after an `await` has no active
-    // instance, so Vue would silently drop it and leak the registration.
-    unregisterDirtyForm = registerForm(
-      props.entityId,
-      (property) => _autoSaveInstance.value?.isDirty(property) ?? false
-    )
   }
 
   // TKT-GFQK pre-flight: a `direction: incoming` widget on a relation
@@ -2472,8 +2459,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('keydown', handleKeydown)
-  unregisterDirtyForm?.()
-  unregisterDirtyForm = null
   // TKT-3I5U: cancel any pending / in-flight staged dry-run, and mark
   // the component as gone so a response that has already arrived (but
   // is awaiting the microtask queue) doesn't write to dead refs
