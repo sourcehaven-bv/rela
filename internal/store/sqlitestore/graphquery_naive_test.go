@@ -83,7 +83,7 @@ func TestGraphSQL_MatchesNaive(t *testing.T) {
 			for e, err := range s.GraphQuery(ctx, q) {
 				require.NoError(t, err)
 				got = append(got, e.ID+"@"+string(e.Face))
-				require.Equal(t, e.Content != "" || e.Face != "" || e.Type == "note", true, "rows keep their body")
+				require.True(t, e.Content != "" || e.Face != "" || e.Type == "note", "rows keep their body")
 			}
 			for h, err := range store.GraphQueryHeaders(ctx, s, q) {
 				require.NoError(t, err)
