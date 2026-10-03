@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -367,41 +369,62 @@ func TestEntityETag_FoldsTheServedFaceNotTheWorld(t *testing.T) {
 	}
 }
 
-// TestFaceGrant_RenameAffordanceIsFamilyWide pins BUG-GJUBSA: a rename moves
-// every face, so `_actions.rename` holds only when the principal may rename
-// every face, as the manager requires. Update stays per served face.
-func TestFaceGrant_RenameAffordanceIsFamilyWide(t *testing.T) {
+// facedAppWithPolicy is facedTicketApp with TKT-1 seeded at draft and
+// published and role granted to alice, and the entity manager rebuilt over
+// the same store and ACL, so an affordance and the write it predicts are
+// decided by one policy, as in production.
+func facedAppWithPolicy(t *testing.T, role acl.RoleDef) (*App, *acl.Declarative, *appbuild.Services) {
+	t.Helper()
 	app := facedTicketApp(t)
 	seedDeclaredFaceTicket(context.Background(), t, app)
-	actions := func(update []string) map[string]bool {
-		t.Helper()
-		d := mustNewACL(t, &acl.Policy{
-			Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"*"}, Update: update}},
-			Assignments: map[string]string{"alice": "editor"},
-		}, app.store)
-		app.acl = d
-		rec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-1@published", "")
-		if rec.Code != http.StatusOK {
-			t.Fatalf("GET = %d", rec.Code)
-		}
-		var body struct {
-			Actions map[string]bool `json:"_actions"`
-		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		return body.Actions
-	}
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"r": role},
+		Assignments: map[string]string{"alice": "r"},
+	}, app.store)
+	svc := appbuildtest.New(app.State().Meta, appbuildtest.WithStore(app.store),
+		appbuildtest.WithFS(app.fs, app.paths), appbuildtest.WithACL(d))
+	rebindApp(app, app.fs, app.paths, svc)
+	app.acl = d
+	return app, d, svc
+}
 
-	if got := actions([]string{"ticket@draft", "ticket@published"}); !got["rename"] || !got["update"] {
-		t.Fatalf("precondition: update on every face offers rename and update; got %v", got)
-	}
-	got := actions([]string{"ticket@published"})
-	if got["rename"] {
-		t.Errorf("rename offered with update on the published face only; the manager refuses it")
-	}
-	if !got["update"] {
-		t.Errorf("update on the served published face must stay offered; got %v", got)
+// TestFaceGrant_RenameAffordanceMatchesTheWrite pins that `_actions.rename`
+// on a faced type asks the manager's question: the family-level `rename:`
+// grant, never a grant on the served face or on each face. Each case checks
+// the affordance against a dry-run rename by the same principal.
+func TestFaceGrant_RenameAffordanceMatchesTheWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		role   acl.RoleDef
+		rename bool
+	}{
+		{"update on every face", acl.RoleDef{Read: []string{"*"}, Update: []string{"ticket@draft", "ticket@published"}}, false},
+		{"update on the served face", acl.RoleDef{Read: []string{"*"}, Update: []string{"ticket@published"}}, false},
+		{"rename on the type", acl.RoleDef{Read: []string{"*"}, Rename: []string{"ticket"}}, true},
+		{"rename on every type", acl.RoleDef{Read: []string{"*"}, Rename: []string{"*"}}, true},
+		{"rename, reading only the served face", acl.RoleDef{Read: []string{"ticket@published"}, Rename: []string{"ticket"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, d, svc := facedAppWithPolicy(t, tc.role)
+			rec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-1@published", "")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET = %d", rec.Code)
+			}
+			var body struct {
+				Actions map[string]bool `json:"_actions"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			_, err := svc.EntityManager().RenameEntity(gateCtxFor(aliceCtx(), t, d), "TKT-1", "TKT-9",
+				entity.RenameOptions{DryRun: true})
+			if body.Actions["rename"] != tc.rename {
+				t.Errorf("_actions.rename = %v, want %v", body.Actions["rename"], tc.rename)
+			}
+			if (err == nil) != body.Actions["rename"] {
+				t.Errorf("_actions.rename = %v but the rename returned %v", body.Actions["rename"], err)
+			}
+		})
 	}
 }
 

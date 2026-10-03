@@ -3,10 +3,12 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -50,6 +52,7 @@ relations:
   implements:
     from: [policy]
     to: [feature]
+    inverse: { id: implemented-by }
   owns:
     from: [person]
     to: [policy]
@@ -294,6 +297,96 @@ func TestSearch_RelationContextIsValidated(t *testing.T) {
 					if !strings.Contains(rec.Body.String(), `"POL-1"`) {
 						t.Fatalf("read served no policy: %s", rec.Body)
 					}
+				}
+			})
+		}
+	}
+}
+
+// rowRecorder is a resolver that records the faces of the rows it judges.
+type rowRecorder struct {
+	fakeResolver
+	seen *[]entity.Face
+}
+
+func (r rowRecorder) RelationVerdicts(ctx context.Context, e *entity.Entity) RelationVerdicts {
+	*r.seen = append(*r.seen, e.Face)
+	return r.fakeResolver.RelationVerdicts(ctx, e)
+}
+
+// TestSearch_IdentityLinkableIgnoresHiddenFaces pins `linkable` and the write
+// for an identity-scoped edge from a faced source, as alice, who reads only
+// the published face. The ACL decides on every face the type DECLARES, so
+// the answer is the same whether or not a draft is stored, and the
+// affordance resolver never judges the hidden draft row. Before, both read
+// the stored family: a create grant on the published face alone linked only
+// when no draft existed, which disclosed the draft.
+func TestSearch_IdentityLinkableIgnoresHiddenFaces(t *testing.T) {
+	readPub := []string{"feature", "person", "policy@published"}
+	for _, tc := range []struct {
+		name   string
+		create []string
+		want   bool
+	}{
+		{"create on every declared face", []string{"feature", "policy@draft", "policy@published"}, true},
+		{"create on the readable face only", []string{"feature", "policy@published"}, false},
+	} {
+		for _, draft := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/draft=%v", tc.name, draft), func(t *testing.T) {
+				app, d := facedAppWith(t, linkableMeta(t), policyPublishedScope(), func(st store.Store) *acl.Declarative {
+					if !draft {
+						if _, err := st.DeleteFace(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					return mustNewACL(t, &acl.Policy{
+						Roles:       map[string]acl.RoleDef{"r": {Read: readPub, Create: tc.create}},
+						Assignments: map[string]string{"alice": "r"},
+					}, st)
+				})
+				var seen []entity.Face
+				app.fieldResolver = rowRecorder{seen: &seen, fakeResolver: fakeResolver{rv: RelationVerdicts{
+					Types: map[string]RelationVerdict{"implements": {Creatable: true, Removable: true}},
+				}}}
+
+				req := asAlice(t, d, httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+					linkableReads["search"].url+"&relation=implements&direction=incoming", http.NoBody))
+				req = req.WithContext(withWorld(req.Context(), faceWorld("published")))
+				rec := httptest.NewRecorder()
+				app.handleV1Search(rec, req)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("search = %d %s", rec.Code, rec.Body)
+				}
+				var resp v1.LinkListResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("decode: %v", err)
+				}
+				if len(resp.Data) == 0 {
+					t.Fatalf("search rows = %s, want POL-1", rec.Body)
+				}
+				for _, row := range resp.Data {
+					if row.Linkable == nil || *row.Linkable != tc.want {
+						t.Errorf("row %s linkable = %v, want %v", row.Self, row.Linkable, tc.want)
+					}
+				}
+				if slices.Contains(seen, "draft") {
+					t.Errorf("the affordance resolver judged the hidden draft row (faces seen: %v)", seen)
+				}
+
+				body := `{"relations":{"implemented-by":{"add":[{"type":"policy","id":"POL-1"}]}}}`
+				preq := httptest.NewRequest(http.MethodPatch, "/api/v1/features/FEAT-1", strings.NewReader(body))
+				preq.Header.Set("Content-Type", "application/json")
+				prec := httptest.NewRecorder()
+				app.write.handleV1UpdateEntity(prec, asAlice(t, d, preq), "feature", "features", "FEAT-1")
+				wantCode := http.StatusForbidden
+				if tc.want {
+					wantCode = http.StatusOK
+				}
+				if prec.Code != wantCode {
+					t.Errorf("PATCH = %d %s, want %d", prec.Code, prec.Body, wantCode)
+				}
+				if strings.Contains(prec.Body.String(), "draft") {
+					t.Errorf("PATCH body names the hidden face: %s", prec.Body)
 				}
 			})
 		}

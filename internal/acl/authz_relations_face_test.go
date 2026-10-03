@@ -39,8 +39,10 @@ relation_grants:
 `
 
 // TestRelationWrite_IdentityEdgeUsesFamilyRule pins ruling D4: an
-// identity-scoped edge from a faced source is authorized on every face the
-// family stores, as a family rename or delete is.
+// identity-scoped edge from a faced source is authorized on every face in
+// FamilyFaces, which the entity manager fills from the faces the type
+// declares. The denial names no face, so it reads the same whichever faces
+// the entity stores.
 func TestRelationWrite_IdentityEdgeUsesFamilyRule(t *testing.T) {
 	t.Parallel()
 	d := mustDeclarative(t, facedRelationPolicy)
@@ -71,8 +73,8 @@ func TestRelationWrite_IdentityEdgeUsesFamilyRule(t *testing.T) {
 			if got.Allow != tc.allow {
 				t.Fatalf("allow = %v, want %v (%s)", got.Allow, tc.allow, got.Reason)
 			}
-			if !tc.allow && !strings.Contains(got.Reason, `face "published"`) {
-				t.Errorf("denial %q does not name the face that refused", got.Reason)
+			if !tc.allow && (strings.Contains(got.Reason, "published") || strings.Contains(got.Reason, "draft")) {
+				t.Errorf("denial %q names a face", got.Reason)
 			}
 		})
 	}

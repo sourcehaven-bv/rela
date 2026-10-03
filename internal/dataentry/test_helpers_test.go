@@ -199,7 +199,8 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		meta:         func() *metamodel.Metamodel { return app.State().Meta },
 		family:       app.visibleReader.family,
 		sourceRow:    app.reader.writePrepRow,
-		sourceFamily: app.reader.writePrepFamily,
+		sourceFamily: readableFamilyOf(app.reader, app.visibleReader),
+		readable:     app.visibleReader.filterVisible,
 		planEdges: edgeReader{
 			meta:    func() *metamodel.Metamodel { return app.State().Meta },
 			reader:  app.reader,

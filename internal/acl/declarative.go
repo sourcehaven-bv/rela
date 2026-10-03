@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -258,6 +259,22 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 		}
 	}
 	return r.AuthorizeWrite(ctx, req)
+}
+
+// PermitsReadFace reports whether the principal on ctx may read the row of
+// entityID at face, resolving the [Request] the way [Declarative.AuthorizeWrite]
+// does. It is for a write whose response must depend only on what the caller
+// can read, such as a family rename or a face delete, and which therefore may
+// not judge by the raw stored family. An unresolvable principal is an error;
+// callers fail closed.
+func (d *Declarative) PermitsReadFace(
+	ctx context.Context, entityType, entityID string, face entity.Face,
+) (bool, error) {
+	r, err := d.requestFor(ctx)
+	if err != nil {
+		return false, err
+	}
+	return r.PermitsReadFace(ctx, entityType, entityID, face)
 }
 
 // requestFor returns the per-operation [Request] for ctx: the one the

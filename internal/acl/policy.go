@@ -427,9 +427,20 @@ type RoleDef struct {
 	// phase 1b, TKT-JO2SAD).
 	Description string `yaml:"description,omitempty"`
 
-	Create      []string `yaml:"create"`
-	Update      []string `yaml:"update"`
-	Delete      []string `yaml:"delete"`
+	Create []string `yaml:"create"`
+	Update []string `yaml:"update"`
+	Delete []string `yaml:"delete"`
+
+	// Rename lists the types whose WHOLE FAMILY this role may rename. A
+	// rename re-keys every face of an entity, including faces the caller
+	// cannot read, so a faced type is renamed only through this list and
+	// never through a face-named `update:` grant: deciding from the faces
+	// the entity happens to store would make the answer disclose the
+	// hidden ones. Entries are bare types or "*"; a `type@face` entry is a
+	// load error, because a face names less than the operation moves. A
+	// faceless type is also renamed through its `update:` grant.
+	Rename []string `yaml:"rename"`
+
 	Read        []string `yaml:"read"`
 	Permissions []string `yaml:"permissions"`
 
@@ -463,7 +474,7 @@ type RoleDef struct {
 }
 
 // IsPrivileged reports whether the role confers escalation-relevant
-// power: it grants any write verb (Create/Update/Delete, including the
+// power: it grants any write verb (Create/Update/Delete/Rename, including the
 // "*" wildcard) or holds any permission.
 //
 // Read grants are NOT privilege — a read-everything role is a
@@ -471,7 +482,8 @@ type RoleDef struct {
 // Exported so the aclaudit linter shares this definition rather than
 // keeping its own copy; its A2/A3 checks reference the same notion.
 func (r RoleDef) IsPrivileged() bool {
-	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Permissions) > 0
+	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Rename) > 0 ||
+		len(r.Permissions) > 0
 }
 
 // grantsVerb reports whether the role may perform op on entity type
@@ -1334,7 +1346,7 @@ func validateVerbReadCoverage(name string, role RoleDef) error {
 	for _, verb := range []struct {
 		name  string
 		types []string
-	}{{"update", role.Update}, {"delete", role.Delete}} {
+	}{{"update", role.Update}, {"delete", role.Delete}, {"rename", role.Rename}} {
 		for _, t := range verb.types {
 			// Compare on the TYPE half. A state-shaped grant
 			// (`update: ["policy@draft"]`) still requires read coverage of

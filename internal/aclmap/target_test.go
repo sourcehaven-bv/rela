@@ -12,6 +12,25 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
+// facedTerugkerend is a schema in which terugkerend declares draft and
+// published.
+func facedTerugkerend(entityType string) []entity.Face {
+	if entityType == "terugkerend" {
+		return []entity.Face{"draft", "published"}
+	}
+	return nil
+}
+
+// withFaces rebuilds w's engine over the schema faces describes.
+func withFaces(t *testing.T, w *world, faces aclmap.DeclaredFaces) *world {
+	t.Helper()
+	eng, err := aclmap.New(w.store, w.decl, faces)
+	if err != nil {
+		t.Fatalf("aclmap.New: %v", err)
+	}
+	return &world{store: w.store, decl: w.decl, eng: eng}
+}
+
 // addFacedEntity stores id only at the draft face, as a faced type is stored:
 // no row at the zero face (DEC-NPZICR).
 func addFacedEntity(t *testing.T, w *world, id, typ string) {
@@ -64,7 +83,7 @@ func TestCan_FacedEntity(t *testing.T) {
 // only when the principal may update that face.
 func TestCanRelation_FacedSource(t *testing.T) {
 	t.Parallel()
-	w := spawntWorld(t, spawntWorldPolicy)
+	w := withFaces(t, spawntWorld(t, spawntWorldPolicy), facedTerugkerend)
 	addFacedEntity(t, w, "TERUG-F", "terugkerend")
 	ctx := context.Background()
 
@@ -80,17 +99,35 @@ func TestCanRelation_FacedSource(t *testing.T) {
 	}
 
 	// No relation grant covers update, so the role grant decides, on every
-	// face the family stores. A bare-type grant covers only the zero face.
-	upd, err := w.eng.CanRelation(ctx, "SCHED", acl.VerbUpdate, "spawnt", "TERUG-F")
-	if err != nil {
-		t.Fatalf("CanRelation update from TERUG-F: %v", err)
-	}
-	if upd.Allowed {
-		t.Error("update: [terugkerend] must not authorize a zero-tailed edge from a family stored only at draft")
+	// face the TYPE declares. A bare-type grant covers only the zero face,
+	// and a grant on the one stored face is not enough either: the answer
+	// must not depend on which faces this entity stores.
+	for _, tc := range []struct {
+		name, grant string
+		want        bool
+	}{
+		{"bare type", "update: [taak, terugkerend]", false},
+		{"stored face only", "update: [taak, terugkerend@draft]", false},
+		{"every declared face", "update: [taak, terugkerend@draft, terugkerend@published]", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ww := withFaces(t, spawntWorld(t, strings.Replace(spawntWorldPolicy,
+				"update: [taak, terugkerend]", tc.grant, 1)), facedTerugkerend)
+			addFacedEntity(t, ww, "TERUG-F", "terugkerend")
+			upd, err := ww.eng.CanRelation(t.Context(), "SCHED", acl.VerbUpdate, "spawnt", "TERUG-F")
+			if err != nil {
+				t.Fatalf("CanRelation update from TERUG-F: %v", err)
+			}
+			if upd.Allowed != tc.want {
+				t.Errorf("%s: zero-tailed update from TERUG-F allowed = %v, want %v (%s)",
+					tc.grant, upd.Allowed, tc.want, upd.Reason)
+			}
+		})
 	}
 
-	faceGrant := spawntWorld(t, strings.Replace(spawntWorldPolicy,
-		"update: [taak, terugkerend]", "update: [taak, terugkerend, terugkerend@draft]", 1))
+	faceGrant := withFaces(t, spawntWorld(t, strings.Replace(spawntWorldPolicy,
+		"update: [taak, terugkerend]", "update: [taak, terugkerend, terugkerend@draft]", 1)), facedTerugkerend)
 	addFacedEntity(t, faceGrant, "TERUG-F", "terugkerend")
 	res, err := faceGrant.eng.CanRelation(ctx, "SCHED", acl.VerbCreate, "spawnt", "TERUG-F@draft")
 	if err != nil {

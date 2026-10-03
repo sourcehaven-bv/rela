@@ -122,14 +122,21 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	// The claim holds when every face in it is allowed, as the manager
 	// authorizes a family operation on every face it touches; the first
 	// refusal is the decision reported.
+	//
+	// A rename of a faced type is the exception: the manager decides it once,
+	// at family level, from the `rename:` grants, so the claim does too.
 	var dec acl.Decision
-	for _, face := range faces {
-		dec = d.AuthorizeWrite(ctx, acl.WriteRequest{
-			Op:      acl.Op(op),
-			Subject: acl.NewEntitySubject(typ, id, face),
-		})
-		if !dec.Allow {
-			break
+	if acl.Op(op) == acl.OpRename && len(declared) > 0 {
+		dec = d.AuthorizeWrite(ctx, acl.WriteRequest{Op: acl.OpRename, Subject: acl.NewFamilySubject(typ, id)})
+	} else {
+		for _, face := range faces {
+			dec = d.AuthorizeWrite(ctx, acl.WriteRequest{
+				Op:      acl.Op(op),
+				Subject: acl.NewEntitySubject(typ, id, face),
+			})
+			if !dec.Allow {
+				break
+			}
 		}
 	}
 
@@ -245,8 +252,8 @@ func reasonMatches(dec acl.Decision, because string) bool {
 //
 // A faceless type has the implicit face and refuses `face=`, since it has no
 // face to name. On a faced type the faces follow the manager (BUG-GJUBSA): a
-// rename moves the whole family, so it is about every declared face and
-// refuses `face=`; a delete without `face=` is the family delete, about every
+// rename moves the whole family, so it is about every declared face, is
+// decided once at family level, and refuses `face=`; a delete without `face=` is the family delete, about every
 // declared face, and with one is that face's delete; create and update write
 // one face, so they require `face=`. A claim naming no face there would ask
 // about a row that cannot exist, and a refuses{} would pass against any

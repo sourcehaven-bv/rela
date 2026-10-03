@@ -45,7 +45,9 @@ relations:
 
 // faceEdgePolicy: drafter may delete the draft face and so its edges;
 // gated-drafter holds the same grant, but writing an implements edge needs a
-// permission it lacks; admin may delete every face and every control.
+// permission it lacks; admin may delete every face and every control. The
+// blind roles read only the draft face of a policy: blind-drafter may not
+// delete a covers edge, blind-admin may.
 const faceEdgePolicy = `
 role_relations:
   implements:
@@ -64,10 +66,20 @@ roles:
     read: ["*"]
     permissions: [manage-implements, manage-covers]
     delete: ["policy@draft", "policy@published", "control"]
+  blind-drafter:
+    read: ["policy@draft", "control"]
+    permissions: [manage-implements]
+    delete: ["policy@draft"]
+  blind-admin:
+    read: ["policy@draft", "control"]
+    permissions: [manage-implements, manage-covers]
+    delete: ["policy@draft", "control"]
 assignments:
   drafter: drafter
   gated-drafter: gated-drafter
   admin: admin
+  blind-drafter: blind-drafter
+  blind-admin: blind-admin
 `
 
 type faceEdgeFixture struct {

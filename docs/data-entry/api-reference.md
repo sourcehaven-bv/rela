@@ -114,7 +114,9 @@ The server computes `linkable` with the checks the write runs: the relation
 affordance (`_relations[rel].creatable`) on the source row, and the ACL
 request that `CreateRelation` authorizes. For a `scope: content` relation the
 edge belongs to the row's face. For an identity relation from a faced type,
-every face of the source must allow it. The target is not a parameter,
+the ACL must allow it on every face the type declares, and the affordance is
+judged on each face of the source the caller can read. A face hidden from the
+caller never changes the answer. The target is not a parameter,
 because neither check reads it. This is why `linkable` can differ from the
 row's `_actions.update`: a relation create needs the source type's `create`
 grant (or a `relation_grants` create permission plus update on the face), and
@@ -443,8 +445,10 @@ them is. A faced type has no implicit face to create on, so `create` alone
 cannot say where a create may land. The SPA's create form reads these keys
 to offer a face picker when the form's world declares no `create:` face.
 
-`rename` on a faced entity is true only when the principal may update every
-stored face: a rename moves the whole family.
+`rename` on a faced entity is true only when the principal holds a `rename:`
+grant on its type, the rule the rename itself applies. A rename moves the
+whole family, so update grants on the faces do not count, and the answer does
+not depend on which faces exist.
 
 `transition:<state>` and `relation:<type>:add/remove` will follow once
 the ACL layer learns to represent them (gated on a separate ACL v0.5

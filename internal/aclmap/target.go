@@ -33,7 +33,6 @@ func (e *Engine) target(ctx context.Context, addr string) (resolvedTarget, error
 	}
 	for _, h := range headers {
 		t.typ = h.Type
-		t.faces = append(t.faces, h.Face)
 		if h.Face == ref.Face {
 			faceFound = true
 		}
@@ -44,23 +43,11 @@ func (e *Engine) target(ctx context.Context, addr string) (resolvedTarget, error
 	return t, nil
 }
 
-// resolvedTarget is the entity an address names: the parsed address, the
-// family's type, and every face the family stores.
+// resolvedTarget is the entity an address names: the parsed address and the
+// family's type.
 type resolvedTarget struct {
-	ref   entity.Ref
-	typ   string
-	faces []entity.Face
-}
-
-// familyFaces lists the stored faces of a faced family, and nil for a
-// faceless one, whose only row is the zero face.
-func (t resolvedTarget) familyFaces() []entity.Face {
-	for _, f := range t.faces {
-		if !f.IsImplicit() {
-			return t.faces
-		}
-	}
-	return nil
+	ref entity.Ref
+	typ string
 }
 
 // entityTarget is Engine.target for a report that answers per entity: an

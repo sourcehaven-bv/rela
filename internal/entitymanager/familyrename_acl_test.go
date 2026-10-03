@@ -3,8 +3,10 @@ package entitymanager_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -14,9 +16,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// familyRenamePolicy grants update, the verb a rename is checked against,
-// per face. typewide holds the bare type grant, which covers the zero face
-// only; editor holds every face.
+// familyRenamePolicy holds the roles the rename tests act as. A rename of a
+// faced type is decided once, from the family-level `rename:` grant, so
+// update on one face, on every face, or on the type does not rename.
+// renamer holds the grant; blindrenamer holds it but reads only the
+// published face; pubeditor reads and updates only the published face.
 const familyRenamePolicy = `
 roles:
   typewide:
@@ -31,11 +35,23 @@ roles:
   editor:
     read: ["*"]
     update: ["policy@draft", "policy@published"]
+  renamer:
+    read: ["*"]
+    rename: ["policy"]
+  blindrenamer:
+    read: ["policy@published"]
+    rename: ["policy"]
+  pubeditor:
+    read: ["policy@published"]
+    update: ["policy@published"]
 assignments:
   typewide: typewide
   drafter: drafter
   publisher: publisher
   editor: editor
+  renamer: renamer
+  blindrenamer: blindrenamer
+  pubeditor: pubeditor
 `
 
 // facesAt returns the faces of id that are stored.
@@ -81,28 +97,27 @@ func (f familyDeleteFixture) renameRecordFaces() map[entity.Face]int {
 	return got
 }
 
-// A rename re-keys the whole family, so it must be authorized on every face
-// it moves (BUG-Y1RGTU). Before the fix the check ran against the zero face,
-// which a faced type does not store: a bare `update: [policy]` grant renamed
-// the published face along with the rest.
-func TestFamilyRename_DeniedUnlessEveryFaceIsRenamable(t *testing.T) {
+// A rename re-keys the whole family, hidden faces included, so it is
+// authorized once from the family-level `rename:` grant (BUG-Y1RGTU, then
+// the family rule). A grant on each face does not rename: deciding per
+// stored face would consult faces the caller cannot read. The denial names
+// the type and no face.
+func TestFamilyRename_DeniedWithoutTheFamilyGrant(t *testing.T) {
 	for _, b := range concBackends {
-		for _, tc := range []struct {
-			user   string
-			denied entity.Face
-		}{
-			{"typewide", "draft"},
-			{"drafter", "published"},
-			{"publisher", "draft"},
-		} {
-			t.Run(b.name+"/"+tc.user, func(t *testing.T) {
+		for _, user := range []string{"typewide", "drafter", "publisher", "editor"} {
+			t.Run(b.name+"/"+user, func(t *testing.T) {
 				f := newFacedPolicyFixture(t, b, nil, familyRenamePolicy, bothFaces...)
 
-				_, err := f.mgr.RenameEntity(asUser(tc.user), "POL-1", "POL-2", entity.RenameOptions{})
+				_, err := f.mgr.RenameEntity(asUser(user), "POL-1", "POL-2", entity.RenameOptions{})
 
 				var forbidden *acl.ForbiddenError
 				if !errors.As(err, &forbidden) {
-					t.Fatalf("RenameEntity as %s = %v, want *acl.ForbiddenError", tc.user, err)
+					t.Fatalf("RenameEntity as %s = %v, want *acl.ForbiddenError", user, err)
+				}
+				for _, face := range bothFaces {
+					if strings.Contains(err.Error(), string(face)) {
+						t.Errorf("denial %q names the face %q", err, face)
+					}
 				}
 				if got := f.facesAt(t, "POL-1"); !slices.Equal(got, bothFaces) {
 					t.Errorf("POL-1 faces after a denied rename = %v, want both", got)
@@ -125,16 +140,78 @@ func TestFamilyRename_DeniedUnlessEveryFaceIsRenamable(t *testing.T) {
 				if denied != 1 {
 					t.Errorf("denied-write records = %d, want 1", denied)
 				}
-				if !slices.Equal(f.gate.denied, []entity.Face{tc.denied}) {
-					t.Errorf("denied faces = %v, want [%s]", f.gate.denied, tc.denied)
+			})
+		}
+	}
+}
+
+// renameOutcome is what a caller observes of a rename: the error text, or
+// the result.
+func renameOutcome(res *entity.RenameResult, err error) string {
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	return fmt.Sprintf("ok: %+v", *res)
+}
+
+// A caller who cannot read the draft face observes the same rename whether
+// or not a draft exists: the same refusal without the family grant, the
+// same success with it. With the grant the hidden draft moves too, because
+// a rename moves the whole family.
+func TestFamilyRename_HiddenFaceIsNoOracle(t *testing.T) {
+	for _, b := range concBackends {
+		for _, user := range []string{"pubeditor", "blindrenamer"} {
+			t.Run(b.name+"/"+user, func(t *testing.T) {
+				outcomes := map[string]string{}
+				for _, seeded := range [][]entity.Face{{"published"}, bothFaces} {
+					f := newFacedPolicyFixture(t, b, nil, familyRenamePolicy, seeded...)
+					res, err := f.mgr.RenameEntity(asUser(user), "POL-1", "POL-2", entity.RenameOptions{})
+					outcomes[fmt.Sprint(seeded)] = renameOutcome(res, err)
+					if err == nil {
+						if got := f.facesAt(t, "POL-2"); !slices.Equal(got, seeded) {
+							t.Errorf("POL-2 faces after the rename = %v, want %v", got, seeded)
+						}
+					}
+					if strings.Contains(outcomes[fmt.Sprint(seeded)], "draft") {
+						t.Errorf("outcome %q names the hidden face", outcomes[fmt.Sprint(seeded)])
+					}
+				}
+				if a, b := outcomes["[published]"], outcomes["[draft published]"]; a != b {
+					t.Errorf("rename without a hidden draft = %q, with one = %q; want the same", a, b)
 				}
 			})
 		}
 	}
 }
 
+// A family grant holder who can read no face of the entity gets the same
+// not-found as for an entity that does not exist, and the attempt is not
+// authorized, so no denied-write record says it was.
+func TestFamilyRename_NoReadableFaceIsNotFound(t *testing.T) {
+	for _, b := range concBackends {
+		t.Run(b.name, func(t *testing.T) {
+			f := newFacedPolicyFixture(t, b, nil, familyRenamePolicy, "draft")
+
+			_, err := f.mgr.RenameEntity(asUser("blindrenamer"), "POL-1", "POL-2", entity.RenameOptions{})
+			if !errors.Is(err, entitymanager.ErrEntityNotFound) {
+				t.Fatalf("rename of an unreadable entity = %v, want ErrEntityNotFound", err)
+			}
+			_, missing := f.mgr.RenameEntity(asUser("blindrenamer"), "POL-9", "POL-2", entity.RenameOptions{})
+			if err.Error() != strings.ReplaceAll(missing.Error(), "POL-9", "POL-1") {
+				t.Errorf("unreadable = %q, missing = %q; want the same message", err, missing)
+			}
+			if got := f.facesAt(t, "POL-1"); !slices.Equal(got, []entity.Face{"draft"}) {
+				t.Errorf("POL-1 faces = %v, want the draft untouched", got)
+			}
+			if n := len(f.aud.Records()); n != 0 {
+				t.Errorf("rename of an unreadable entity wrote %d audit records, want 0", n)
+			}
+		})
+	}
+}
+
 // A dry run is refused on the same terms as the rename it previews, and with
-// every face granted it plans the faced rename without writing.
+// the family grant it plans the faced rename without writing.
 func TestFamilyRename_DryRun(t *testing.T) {
 	for _, b := range concBackends {
 		t.Run(b.name, func(t *testing.T) {
@@ -142,12 +219,12 @@ func TestFamilyRename_DryRun(t *testing.T) {
 			dry := entity.RenameOptions{DryRun: true}
 
 			var forbidden *acl.ForbiddenError
-			if _, err := f.mgr.RenameEntity(asUser("drafter"), "POL-1", "POL-2", dry); !errors.As(err, &forbidden) {
-				t.Errorf("dry-run rename as drafter = %v, want *acl.ForbiddenError", err)
+			if _, err := f.mgr.RenameEntity(asUser("editor"), "POL-1", "POL-2", dry); !errors.As(err, &forbidden) {
+				t.Errorf("dry-run rename as editor = %v, want *acl.ForbiddenError", err)
 			}
-			res, err := f.mgr.RenameEntity(asUser("editor"), "POL-1", "POL-2", dry)
+			res, err := f.mgr.RenameEntity(asUser("renamer"), "POL-1", "POL-2", dry)
 			if err != nil {
-				t.Fatalf("dry-run rename as editor: %v", err)
+				t.Fatalf("dry-run rename as renamer: %v", err)
 			}
 			if res.OldID != "POL-1" || res.NewID != "POL-2" {
 				t.Errorf("dry-run result = %+v, want POL-1 -> POL-2", res)
@@ -164,12 +241,12 @@ func TestFamilyRename_DryRun(t *testing.T) {
 			// run must agree: another entity's id in other case conflicts, the
 			// entity's own id in other case does not.
 			for _, target := range []string{"POL-3", "pol-3"} {
-				_, err = f.mgr.RenameEntity(asUser("editor"), "POL-1", target, dry)
+				_, err = f.mgr.RenameEntity(asUser("renamer"), "POL-1", target, dry)
 				if !errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
 					t.Errorf("dry-run rename onto %s = %v, want ErrEntityAlreadyExists", target, err)
 				}
 			}
-			if _, err = f.mgr.RenameEntity(asUser("editor"), "POL-1", "Pol-1", dry); err != nil {
+			if _, err = f.mgr.RenameEntity(asUser("renamer"), "POL-1", "Pol-1", dry); err != nil {
 				t.Errorf("dry-run case-only rename: %v", err)
 			}
 		})
@@ -182,7 +259,7 @@ func TestFamilyRename_CaseOnly(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFacedPolicyFixture(t, b, nil, familyRenamePolicy, bothFaces...)
 
-			if _, err := f.mgr.RenameEntity(asUser("editor"), "POL-1", "Pol-1", entity.RenameOptions{}); err != nil {
+			if _, err := f.mgr.RenameEntity(asUser("renamer"), "POL-1", "Pol-1", entity.RenameOptions{}); err != nil {
 				t.Fatalf("case-only rename: %v", err)
 			}
 			if got := f.facesAt(t, "Pol-1"); !slices.Equal(got, bothFaces) {
@@ -210,15 +287,15 @@ func TestFamilyRename_NotFound(t *testing.T) {
 	}
 }
 
-// With update on every face, the rename moves both faces and leaves one
-// rename version and one audit record per face.
+// A family grant holder's rename moves both faces and leaves one rename
+// version and one audit record per face.
 func TestFamilyRename_EveryFaceCapturedAndAudited(t *testing.T) {
 	for _, b := range concBackends {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFacedPolicyFixture(t, b, nil, familyRenamePolicy, bothFaces...)
 
-			if _, err := f.mgr.RenameEntity(asUser("editor"), "POL-1", "POL-2", entity.RenameOptions{}); err != nil {
-				t.Fatalf("RenameEntity as editor: %v", err)
+			if _, err := f.mgr.RenameEntity(asUser("renamer"), "POL-1", "POL-2", entity.RenameOptions{}); err != nil {
+				t.Fatalf("RenameEntity as renamer: %v", err)
 			}
 			if got := f.facesAt(t, "POL-1"); len(got) != 0 {
 				t.Errorf("POL-1 faces after the rename = %v, want none", got)
@@ -248,10 +325,12 @@ func (tx *faceInjectingTx) RenameFamily(ctx context.Context, oldID, newID string
 	return tx.Store.RenameFamily(ctx, oldID, newID)
 }
 
-// A face that appears after the first authorization is still authorized
-// before the rename may stand. A backend that rolls back leaves nothing to
-// record; one that cannot records exactly the faces it moved.
-func TestFamilyRename_FaceAddedDuringRenameIsAuthorized(t *testing.T) {
+// The family decision does not depend on which faces exist, so a face that
+// appears during the rename changes nothing: without the grant the rename is
+// refused, and with it the family moves whole, never split across ids. A
+// backend that rolls back leaves nothing to record; one that cannot records
+// exactly the faces it moved.
+func TestFamilyRename_FaceAddedDuringRename(t *testing.T) {
 	for _, b := range concBackends {
 		for _, tc := range []struct {
 			name string
@@ -260,46 +339,41 @@ func TestFamilyRename_FaceAddedDuringRenameIsAuthorized(t *testing.T) {
 			{"before-tx", injectBeforeTx},
 			{"before-store-rename", injectBeforeStoreWrite},
 		} {
-			t.Run(b.name+"/"+tc.name, func(t *testing.T) {
-				wrap := func(st store.Store) store.Store {
-					return &faceInjectingStore{Store: st, at: tc.at, t: t}
-				}
-				f := newFacedPolicyFixture(t, b, wrap, familyRenamePolicy, "draft")
-
-				_, err := f.mgr.RenameEntity(asUser("drafter"), "POL-1", "POL-2", entity.RenameOptions{})
-
-				var forbidden *acl.ForbiddenError
-				if !errors.As(err, &forbidden) {
-					t.Fatalf("RenameEntity as drafter = %v, want *acl.ForbiddenError", err)
-				}
-				if !slices.Equal(f.gate.denied, []entity.Face{"published"}) {
-					t.Errorf("denied faces = %v, want [published]", f.gate.denied)
-				}
-				if tc.at == injectBeforeTx {
-					if got := f.facesAt(t, "POL-1"); !slices.Equal(got, bothFaces) {
-						t.Errorf("POL-1 faces = %v, want both: the in-Tx check must refuse before any write", got)
+			for _, user := range []string{"drafter", "renamer"} {
+				t.Run(b.name+"/"+tc.name+"/"+user, func(t *testing.T) {
+					wrap := func(st store.Store) store.Store {
+						return &faceInjectingStore{Store: st, at: tc.at, t: t}
 					}
-				}
-				// The family moves whole or not at all, never split across ids.
-				// A rollback also undoes the face injected inside the Tx.
-				oldFaces, newFaces := f.facesAt(t, "POL-1"), f.facesAt(t, "POL-2")
-				if len(newFaces) != 0 && (len(oldFaces) != 0 || !slices.Equal(newFaces, bothFaces)) {
-					t.Errorf("faces split by the rename: POL-1 %v, POL-2 %v", oldFaces, newFaces)
-				}
-				// The log must match the store: a rename that stood (fs and
-				// memstore cannot roll back) is recorded per face it moved; a
-				// rename that did not is not recorded at all.
-				want := map[entity.Face]int{}
-				for _, face := range f.facesAt(t, "POL-2") {
-					want[face] = 1
-				}
-				if got := f.renameVersionFaces(); !maps.Equal(got, want) {
-					t.Errorf("rename versions per face = %v, want %v", got, want)
-				}
-				if got := f.renameRecordFaces(); !maps.Equal(got, want) {
-					t.Errorf("rename audit records per face = %v, want %v", got, want)
-				}
-			})
+					f := newFacedPolicyFixture(t, b, wrap, familyRenamePolicy, "draft")
+
+					_, err := f.mgr.RenameEntity(asUser(user), "POL-1", "POL-2", entity.RenameOptions{})
+
+					var forbidden *acl.ForbiddenError
+					if denied := errors.As(err, &forbidden); denied != (user == "drafter") {
+						t.Fatalf("RenameEntity as %s = %v", user, err)
+					}
+					if err != nil && !errors.As(err, &forbidden) {
+						t.Fatalf("RenameEntity as %s: %v", user, err)
+					}
+					oldFaces, newFaces := f.facesAt(t, "POL-1"), f.facesAt(t, "POL-2")
+					if len(newFaces) != 0 && (len(oldFaces) != 0 || !slices.Equal(newFaces, bothFaces)) {
+						t.Errorf("faces split by the rename: POL-1 %v, POL-2 %v", oldFaces, newFaces)
+					}
+					if user == "drafter" && len(newFaces) != 0 {
+						t.Errorf("a refused rename moved faces %v", newFaces)
+					}
+					want := map[entity.Face]int{}
+					for _, face := range newFaces {
+						want[face] = 1
+					}
+					if got := f.renameVersionFaces(); !maps.Equal(got, want) {
+						t.Errorf("rename versions per face = %v, want %v", got, want)
+					}
+					if got := f.renameRecordFaces(); !maps.Equal(got, want) {
+						t.Errorf("rename audit records per face = %v, want %v", got, want)
+					}
+				})
+			}
 		}
 	}
 }

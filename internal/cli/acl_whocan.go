@@ -14,6 +14,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -185,7 +187,14 @@ func buildACLEngine(svc *readServices) (*aclmap.Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build ACL resolver: %w", err)
 	}
-	engine, err := aclmap.New(svc.Store, decl)
+	engine, err := aclmap.New(svc.Store, decl, func(entityType string) []entity.Face {
+		names := metamodel.FaceOrderOf(svc.Meta, entityType)
+		faces := make([]entity.Face, len(names))
+		for i, n := range names {
+			faces[i] = entity.Face(n)
+		}
+		return faces
+	})
 	if err != nil {
 		return nil, fmt.Errorf("build access engine: %w", err)
 	}

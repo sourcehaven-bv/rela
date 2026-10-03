@@ -72,7 +72,7 @@ func (svc affordanceService) linkablePage(
 	var families map[string]storedFamily
 	if !scope.IsContent() {
 		// An identity edge has the zero tail, so a faced source is judged on
-		// every face of its family.
+		// every face of its family the principal may read.
 		var err error
 		families, err = loadStoredFamilies(ctx, svc.store, ids)
 		if err != nil {
@@ -98,21 +98,12 @@ func (svc affordanceService) linkablePage(
 		return svc.sourceRow(ctx, ref)
 	}
 	if families != nil {
+		readable := svc.readableFamilies(ctx, families, raw)
 		page.sourceFamily = func(ctx context.Context, id string) ([]*entityPkg.Entity, error) {
-			fam, ok := families[id]
-			if !ok {
+			if _, ok := families[id]; !ok {
 				return svc.sourceFamily(ctx, id)
 			}
-			out := make([]*entityPkg.Entity, 0, len(fam.faces))
-			for _, f := range fam.faces {
-				if e, ok := raw[entityPkg.Ref{ID: id, Face: f}]; ok {
-					out = append(out, e)
-				}
-			}
-			slices.SortFunc(out, func(a, b *entityPkg.Entity) int {
-				return strings.Compare(string(a.Face), string(b.Face))
-			})
-			return out, nil
+			return readable[id], nil
 		}
 	}
 
@@ -121,6 +112,32 @@ func (svc affordanceService) linkablePage(
 		out[e.Ref()] = page.linkableFrom(ctx, e, relType, scope)
 	}
 	return out, nil
+}
+
+// readableFamilies is the batch form of [affordanceService.sourceFamily]: the
+// rows of families the principal may read, keyed by id and in face order. One
+// read-gate pass covers the page, so the cost does not grow with its size.
+func (svc affordanceService) readableFamilies(
+	ctx context.Context, families map[string]storedFamily, raw map[entityPkg.Ref]*entityPkg.Entity,
+) map[string][]*entityPkg.Entity {
+	var rows []*entityPkg.Entity
+	for id, fam := range families {
+		for _, f := range fam.faces {
+			if e, ok := raw[entityPkg.Ref{ID: id, Face: f}]; ok {
+				rows = append(rows, e)
+			}
+		}
+	}
+	out := make(map[string][]*entityPkg.Entity, len(families))
+	for _, e := range svc.readable(ctx, rows) {
+		out[e.ID] = append(out[e.ID], e)
+	}
+	for _, fam := range out {
+		slices.SortFunc(fam, func(a, b *entityPkg.Entity) int {
+			return strings.Compare(string(a.Face), string(b.Face))
+		})
+	}
+	return out
 }
 
 // servedLinkable is [affordanceService.linkablePage] for the served rows of a

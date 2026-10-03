@@ -59,6 +59,27 @@ func (p *Policy) validateFacedWriteGrants(meta MetamodelView, refused map[string
 		} {
 			errs = append(errs, facedWriteGrantErrors(meta, refused, name, verb.name, verb.list)...)
 		}
+		errs = append(errs, renameAliasErrors(meta, name, role.Rename)...)
+	}
+	return errs
+}
+
+// renameAliasErrors refuses a `rename:` entry that names a faced type through
+// an alias. Grant matching compares type names literally, so the entry would
+// load clean and grant nothing. A face-named entry was already refused by
+// Policy.Validate.
+func renameAliasErrors(meta MetamodelView, role string, list []string) []error {
+	var errs []error
+	for _, entry := range list {
+		if entry == "*" || isStateGrant(entry) {
+			continue
+		}
+		canonical, faces := meta.FaceNames(entry)
+		if len(faces) == 0 || canonical == entry {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("acl: roles.%s.rename: %q names the type through the alias %q; "+
+			"a rename grant must use the canonical type name: %q", role, entry, entry, canonical))
 	}
 	return errs
 }

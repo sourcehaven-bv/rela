@@ -49,6 +49,10 @@ type world struct {
 type ent struct{ id, typ string }
 type rel struct{ from, typ, to string }
 
+// noDeclaredFaces is the schema of the test worlds: no type declares faces.
+// A test about a faced type builds its engine with [facedTerugkerend].
+func noDeclaredFaces(string) []entity.Face { return nil }
+
 func buildWorld(t *testing.T, policyYAML string, ents []ent, rels []rel) *world {
 	t.Helper()
 	ctx := context.Background()
@@ -72,7 +76,7 @@ func buildWorld(t *testing.T, policyYAML string, ents []ent, rels []rel) *world 
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	eng, err := aclmap.New(ms, decl)
+	eng, err := aclmap.New(ms, decl, noDeclaredFaces)
 	if err != nil {
 		t.Fatalf("aclmap.New: %v", err)
 	}
@@ -133,7 +137,7 @@ func buildWorldWithMeta(t *testing.T, meta *metamodel.Metamodel, policyYAML stri
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	eng, err := aclmap.New(ms, decl)
+	eng, err := aclmap.New(ms, decl, noDeclaredFaces)
 	if err != nil {
 		t.Fatalf("aclmap.New: %v", err)
 	}

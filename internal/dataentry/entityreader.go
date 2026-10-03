@@ -93,9 +93,9 @@ func (er entityReader) readWritePrep(ctx context.Context, ref entity.Ref) (*enti
 
 // writePrepFamily reads the raw row of every face of id, in face order, with
 // no gate and no redaction; empty when id has no stored row. Like
-// [entityReader.writePrepRow] it is for policy evaluation, never a response:
-// an affordance gate whose relation source has no row at the edge's tail
-// judges the write against the whole family.
+// [entityReader.writePrepRow] it is for policy evaluation, never a response.
+// A gate that must not consult hidden faces reads it through
+// [readableFamilyOf].
 func (er entityReader) writePrepFamily(ctx context.Context, id string) ([]*entity.Entity, error) {
 	families, err := loadStoredFamilies(ctx, er.store, []string{id})
 	if err != nil {
@@ -118,6 +118,21 @@ func (er entityReader) writePrepFamily(ctx context.Context, id string) ([]*entit
 	}
 	slices.SortFunc(out, func(a, b *entity.Entity) int { return strings.Compare(string(a.Face), string(b.Face)) })
 	return out, nil
+}
+
+// readableFamilyOf returns a read of the raw rows of id's faces that the
+// principal may read: [entityReader.writePrepFamily] through
+// [visibleReader.filterVisible]. A policy gate whose decision must not depend
+// on hidden faces reads the family through it. A read-gate fault drops the
+// rows, which fails closed.
+func readableFamilyOf(er entityReader, vr visibleReader) func(context.Context, string) ([]*entity.Entity, error) {
+	return func(ctx context.Context, id string) ([]*entity.Entity, error) {
+		rows, err := er.writePrepFamily(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return vr.filterVisible(ctx, rows), nil
+	}
 }
 
 // entityType returns the type of the entity with the given ID, or empty

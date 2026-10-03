@@ -75,6 +75,14 @@ func (a *deniedFaceACL) AuthorizeWrite(ctx context.Context, req acl.WriteRequest
 	return d
 }
 
+// PermitsReadFace forwards the read gate of the real policy, so the manager
+// finds the same optional capability it finds on [acl.Declarative].
+func (a *deniedFaceACL) PermitsReadFace(
+	ctx context.Context, entityType, entityID string, face entity.Face,
+) (bool, error) {
+	return a.inner.(*acl.Declarative).PermitsReadFace(ctx, entityType, entityID, face)
+}
+
 // newFamilyDeleteFixture seeds POL-1 at the given faces on b's store. wrap,
 // when non-nil, decorates the store the manager writes through; the ACL and
 // the assertions read the undecorated store.

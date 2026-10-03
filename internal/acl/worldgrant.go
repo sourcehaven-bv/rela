@@ -197,6 +197,26 @@ func (p *Policy) validateStateGrants() error {
 				}
 			}
 		}
+		if err := validateRenameGrants(name, role.Rename); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRenameGrants refuses a `rename:` entry that names a face. A rename
+// moves every face of the entity, hidden ones included, so a grant that names
+// one face would describe less than the operation does; the only coherent
+// grant names the type.
+func validateRenameGrants(role string, list []string) error {
+	for _, entry := range list {
+		typeName, face, faced := strings.Cut(entry, entity.StateRefSeparator)
+		if !faced {
+			continue
+		}
+		return fmt.Errorf("roles.%s: rename: %q names the face %q; a rename moves every face "+
+			"of an entity, so a rename grant names the type alone: %q",
+			role, entry, face, typeName)
 	}
 	return nil
 }
@@ -257,7 +277,14 @@ func GrantsVerbOnState(role RoleDef, op Op, target string, p entity.Face) bool {
 	switch op {
 	case OpCreate:
 		list = role.Create
-	case OpUpdate, OpRename:
+	case OpUpdate:
+		list = role.Update
+	case OpRename:
+		// A faceless entity's family is its one implicit row, so a
+		// `rename:` grant covers it as it covers a faced family.
+		if p.IsImplicit() && grantsFamilyRename(role, target) {
+			return true
+		}
 		list = role.Update
 	case OpDelete:
 		list = role.Delete

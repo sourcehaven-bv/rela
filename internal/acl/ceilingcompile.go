@@ -268,6 +268,9 @@ func (c compiledCeiling) clamp(role RoleDef) RoleDef {
 	role.Read = filterTypes(role.Read, c.read)
 	role.Create = filterTypes(role.Create, c.create)
 	role.Update = filterTypes(role.Update, c.update)
+	// A rename is a modification: the ceiling's update axis bounds it, as
+	// permitsVerb does for OpRename.
+	role.Rename = filterTypes(role.Rename, c.update)
 	role.Delete = filterTypes(role.Delete, c.del)
 	role.Worlds = filterWorlds(role.Worlds, c.worlds)
 	role.Permissions = filterPermissions(role.Permissions, c.permissions)

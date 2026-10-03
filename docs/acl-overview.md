@@ -189,6 +189,12 @@ error that names the grant and its replacements. Write
 [ACL: Security Hardening guide](acl-security.md#scoping-a-grant-to-a-content-state)
 has the full table.
 
+**A rename names the type, never a face.** A rename moves every face of an
+entity, including faces the caller cannot read, so it is granted for the whole
+entity: `rename: [policy]` (or `rename: ["*"]`). Face grants do not grant it,
+and `rename: [policy@draft]` is a load error. On a faceless type `update:`
+grants a rename as well.
+
 **Reads and writes default differently, deliberately.** A bare `read: [policy]`
 covers *every* face. A bare `update: [policy]` covers only the unnamed state a
 faceless type has. A world never serves that state when its chain names a face,

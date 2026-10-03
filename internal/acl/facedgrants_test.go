@@ -61,6 +61,18 @@ func TestValidateAgainstMetamodel_FacedWriteGrants(t *testing.T) {
 			},
 		},
 		{
+			name: "a bare rename grant on a faced type loads: a rename names the type",
+			role: acl.RoleDef{Read: []string{"*"}, Rename: []string{"policy", "*"}},
+		},
+		{
+			name: "a rename grant through an alias is refused",
+			role: acl.RoleDef{Read: []string{"*"}, Rename: []string{"pol"}},
+			wantErr: []string{
+				`roles.editor.rename: "pol" names the type through the alias "pol"`,
+				`must use the canonical type name: "policy"`,
+			},
+		},
+		{
 			name: "a wildcard beside the bare grant adds a note",
 			role: acl.RoleDef{Read: []string{"*"}, Update: []string{"*", "policy"}},
 			wantErr: []string{

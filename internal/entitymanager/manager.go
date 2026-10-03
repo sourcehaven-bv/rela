@@ -1417,7 +1417,7 @@ func (m *Manager) authorizeCascadeRelations(
 			}
 			familyOf[rel.From] = fam
 		}
-		sub := relationWriteSubject(rel.Type, fam, "", rel.FromFace)
+		sub := relationWriteSubject(m.deps.Meta, rel.Type, fam, "", rel.FromFace)
 		key := subject{
 			relType: rel.Type, fromType: sub.FromType, fromFace: rel.FromFace,
 			familyFaces: fmt.Sprint(sub.FamilyFaces),
@@ -1697,6 +1697,104 @@ type familyAuthorization map[familyFace]bool
 type familyFace struct {
 	typ  string
 	face entity.Face
+	// family marks the one family-level subject a faced type is renamed
+	// under ([acl.NewFamilySubject]); face is then zero.
+	family bool
+}
+
+// authorizeRename authorizes the rename of the family id, adding each
+// allowed subject to authorized.
+//
+// A row of a faced type is authorized ONCE per type, at family level
+// ([acl.NewFamilySubject]): the rename moves every face, hidden ones
+// included, so the decision comes from the principal's `rename:` grants and
+// never from which faces are stored. Authorizing each stored face made the
+// refusal depend on faces the caller cannot read, which disclosed that a
+// hidden face exists. A faceless row keeps its per-row check, since its one
+// row is the whole family.
+func (m *Manager) authorizeRename(
+	ctx context.Context, id string, family []*entity.Entity, authorized familyAuthorization,
+) error {
+	for _, e := range family {
+		if len(declaredFaces(m.deps.Meta, e.Type)) == 0 {
+			if err := m.authorizeFamily(ctx, acl.OpRename, id, []*entity.Entity{e}, authorized); err != nil {
+				return err
+			}
+			continue
+		}
+		key := familyFace{typ: e.Type, family: true}
+		if authorized[key] {
+			continue
+		}
+		if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
+			Op:      acl.OpRename,
+			Subject: acl.NewFamilySubject(e.Type, id),
+		}); err != nil {
+			return err
+		}
+		authorized[key] = true
+	}
+	return nil
+}
+
+// faceReadGate is the read verdict a whole-family write asks so that its
+// answer depends only on rows the caller may read. [*acl.Declarative]
+// implements it; an ACL that does not (NopACL, ReadOnlyACL, test fakes)
+// expresses no read policy, so every row counts as readable. It is an
+// optional capability of [Deps.ACL], like the store's, rather than a Deps
+// field: the read policy and the write policy are the same compiled object.
+type faceReadGate interface {
+	PermitsReadFace(ctx context.Context, entityType, entityID string, face entity.Face) (bool, error)
+}
+
+// faceGateOf returns the read gate m's whole-family writes consult, or nil
+// when every row counts as readable: an ACL without a read policy, or
+// bypass_acl and automation cascades, which skip authorization altogether
+// (see Manager.authorizeAndAudit).
+func faceGateOf(m *Manager) faceReadGate {
+	gate, ok := m.deps.ACL.(faceReadGate)
+	if !ok || m.bypassACL || m.cascadeWrite {
+		return nil
+	}
+	return gate
+}
+
+// readableRows returns the rows of family gate admits, in order; all of them
+// for a nil gate. A gate error is returned: the caller must not decide on a
+// guess.
+func readableRows(ctx context.Context, gate faceReadGate, family []*entity.Entity) ([]*entity.Entity, error) {
+	if gate == nil {
+		return family, nil
+	}
+	out := make([]*entity.Entity, 0, len(family))
+	for _, e := range family {
+		readable, err := gate.PermitsReadFace(ctx, e.Type, e.ID, e.Face)
+		if err != nil {
+			return nil, fmt.Errorf("read gate for %s: %w", entity.FormatStateRef(e.ID, e.Face), err)
+		}
+		if readable {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// requireReadableRow reports [ErrEntityNotFound] when family holds rows but
+// gate admits none of them, so a hidden entity is refused exactly like an
+// absent one. An empty family passes: the caller's own not-found path
+// reports it.
+func requireReadableRow(ctx context.Context, gate faceReadGate, id string, family []*entity.Entity) error {
+	if len(family) == 0 {
+		return nil
+	}
+	readable, err := readableRows(ctx, gate, family)
+	if err != nil {
+		return err
+	}
+	if len(readable) == 0 {
+		return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
+	}
+	return nil
 }
 
 // authorizeFamily authorizes op on every row of family whose subject is not
@@ -1855,7 +1953,13 @@ func readFaceToDelete(ctx context.Context, st store.Store, id string, face entit
 // it and each is authorized like a DeleteEntity cascade (RR-2466U1). The
 // cascade flag means what it means for DeleteEntity, and applies only to the
 // last face: without it, a last face with edges is [ErrHasRelations]. A face
-// that is not the last always takes its own edges. The bare face is refused
+// that is not the last always takes its own edges.
+//
+// "Last" is judged on the faces the CALLER may read, for every check: the
+// cascade opt-in and the edges authorized. A face whose siblings are all
+// hidden is treated as last even though the store keeps the entity, so the
+// response is the same whether or not a hidden face exists (see
+// faceDeleteEdges). A face the caller cannot read is [ErrEntityNotFound]. The bare face is refused
 // here rather than delegated, because "delete the bare face" is either the
 // whole entity (when no other face exists) or undefined (when one does), and
 // neither is what a caller who spelled a face meant.
@@ -1876,11 +1980,24 @@ func (m *Manager) DeleteEntityFace(
 	if err != nil {
 		return nil, err
 	}
+	// A face the caller cannot read is refused like an absent one, before the
+	// ACL check, so a 403 never confirms it exists.
+	gate := faceGateOf(m)
+	if rErr := requireReadableRow(ctx, gate, id, []*entity.Entity{current}); rErr != nil {
+		return nil, rErr
+	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpDelete,
 		Subject: acl.NewEntitySubject(current.Type, id, current.Face),
 	}); aclErr != nil {
 		return nil, aclErr
+	}
+	// Read before the Tx: the gate may query through the outer store, which on
+	// pgstore is a second connection. A sibling that appears in between
+	// counts as unreadable, which only makes the checks stricter.
+	readableSiblings, err := readableSiblingFaces(ctx, gate, m.deps.Store, id, face)
+	if err != nil {
+		return nil, err
 	}
 
 	var (
@@ -1908,14 +2025,18 @@ func (m *Manager) DeleteEntityFace(
 		}
 		current = inTx
 
-		var cErr error
-		incoming, outgoing, lastFace, cErr = faceDeleteEdges(ctx, tx, id, face)
+		var (
+			callerLast bool
+			cErr       error
+		)
+		incoming, outgoing, callerLast, lastFace, cErr = faceDeleteEdges(ctx, tx, id, face, readableSiblings)
 		if cErr != nil {
 			return cErr
 		}
 		// The last face removes the entity, so it takes the same opt-in a
-		// family delete does before cutting edges (RR-2466U1).
-		if lastFace && !cascade && len(incoming)+len(outgoing) > 0 {
+		// family delete does before cutting edges (RR-2466U1). "Last" is the
+		// caller's view, so a hidden sibling cannot change the answer.
+		if callerLast && !cascade && len(incoming)+len(outgoing) > 0 {
 			return ErrHasRelations
 		}
 		if len(incoming)+len(outgoing) > 0 {
@@ -1976,41 +2097,97 @@ func (m *Manager) DeleteEntityFace(
 	}, nil
 }
 
-// faceDeleteEdges collects the edges a delete of id@face removes, and reports
-// whether face is the family's last. A face that is not the last takes only
-// the edges TAILED AT IT; the query's FromFace is an equality match on the
-// tail, so the other faces' edges are not collected. The last face takes
-// every incident edge, as a family delete does (RR-2466U1).
+// faceDeleteEdges collects the edges a delete of id@face is checked against.
+// storedLast reports whether face is the family's last stored face, which is
+// what the store acts on; callerLast whether it is the last face the caller
+// may read, which is what every check acts on.
+//
+// The checks must not depend on faces the caller cannot read. Judging "last"
+// from the stored family answered differently when a hidden sibling existed:
+// the cascade opt-in and the authorization of the identity and incoming edges
+// ran only without one, so a refusal confirmed there was none. So:
+//
+//   - Not the caller's last face: the edges TAILED AT IT, which is all the
+//     store removes (a readable sibling keeps the entity alive).
+//   - The caller's last face, hidden siblings or not: those edges plus the
+//     identity edges and every incoming edge, as a family delete takes
+//     (RR-2466U1). With a hidden sibling the store keeps the latter, so they
+//     are checked but not removed; edges tailed at a hidden face are neither.
+//   - The last stored face: every incident edge, which is what the store
+//     removes.
 //
 // tx is the transaction view, so the store's own last-face check, which runs
-// under the same serialization, reaches the same answer.
+// under the same serialization, reaches the same answer as storedLast.
 func faceDeleteEdges(
-	ctx context.Context, tx store.Store, id string, face entity.Face,
-) (incoming, outgoing []*entity.Relation, last bool, err error) {
+	ctx context.Context, tx store.Store, id string, face entity.Face, readableSiblings map[entity.Face]bool,
+) (incoming, outgoing []*entity.Relation, callerLast, storedLast bool, err error) {
 	siblings, err := store.FamilyHeaders(ctx, tx, id)
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("read the faces of %q: %w", id, err)
+		return nil, nil, false, false, fmt.Errorf("read the faces of %q: %w", id, err)
 	}
-	last = len(siblings) == 1
-	outQuery := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
-	if !last {
-		tail := face
-		outQuery.FromFace = &tail
+	storedLast = len(siblings) == 1
+	callerLast = true
+	for _, h := range siblings {
+		if h.Face != face && readableSiblings[h.Face] {
+			callerLast = false
+		}
 	}
-	outgoing, err = collectRelations(ctx, tx, outQuery)
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("collect outgoing relations for %q: %w",
-			entity.FormatStateRef(id, face), err)
+	var tails []*entity.Face
+	switch {
+	case storedLast:
+		tails = []*entity.Face{nil}
+	case callerLast:
+		identity, own := entity.ImplicitFace, face
+		tails = []*entity.Face{&identity, &own}
+	default:
+		own := face
+		tails = []*entity.Face{&own}
 	}
-	if last {
+	for _, tail := range tails {
+		rels, cErr := collectRelations(ctx, tx,
+			store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing, FromFace: tail})
+		if cErr != nil {
+			return nil, nil, false, false, fmt.Errorf("collect outgoing relations for %q: %w",
+				entity.FormatStateRef(id, face), cErr)
+		}
+		outgoing = append(outgoing, rels...)
+	}
+	if callerLast {
 		incoming, err = collectRelations(ctx, tx, store.RelationQuery{
 			EntityID: id, Direction: store.DirectionIncoming,
 		})
 		if err != nil {
-			return nil, nil, false, fmt.Errorf("collect incoming relations for %q: %w", id, err)
+			return nil, nil, false, false, fmt.Errorf("collect incoming relations for %q: %w", id, err)
 		}
 	}
-	return incoming, outgoing, last, nil
+	return incoming, outgoing, callerLast, storedLast, nil
+}
+
+// readableSiblingFaces returns the faces of id other than face that gate
+// admits; every one for a nil gate. A gate error is returned.
+func readableSiblingFaces(
+	ctx context.Context, gate faceReadGate, st store.Store, id string, face entity.Face,
+) (map[entity.Face]bool, error) {
+	headers, err := store.FamilyHeaders(ctx, st, id)
+	if err != nil {
+		return nil, fmt.Errorf("read the faces of %q: %w", id, err)
+	}
+	out := make(map[entity.Face]bool, len(headers))
+	for _, h := range headers {
+		if h.Face == face {
+			continue
+		}
+		if gate == nil {
+			out[h.Face] = true
+			continue
+		}
+		readable, gErr := gate.PermitsReadFace(ctx, h.Type, id, h.Face)
+		if gErr != nil {
+			return nil, fmt.Errorf("read gate for %s: %w", entity.FormatStateRef(id, h.Face), gErr)
+		}
+		out[h.Face] = readable
+	}
+	return out, nil
 }
 
 // requireAuthorizedEdges reports an error when deleted holds an edge that is
@@ -2043,11 +2220,11 @@ func requireAuthorizedEdges(deleted []*entity.Relation, authorized ...[]*entity.
 func (m *Manager) RenameEntity(
 	ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 ) (*entity.RenameResult, error) {
-	// Every face, not one: a rename re-keys the whole FAMILY (store.RenameEntity
-	// takes no face), so it is authorized on each face it moves (BUG-Y1RGTU).
-	// The faceless subject this replaced authorized the zero face, which a
-	// faced type does not store, so a bare `update: [policy]` grant renamed the
-	// published face along with the rest.
+	// A rename re-keys the whole FAMILY (store.RenameEntity takes no face),
+	// hidden faces included, so it is authorized at family level: by a
+	// `rename:` grant on a faced type, never by the faces this entity stores
+	// (see [Manager.authorizeRename]). An entity none of whose faces the
+	// caller may read is reported missing, exactly like an absent one.
 	//
 	// Fails closed on a non-not-found error: proceeding would run the rename
 	// with no authorization at all. An empty family authorizes nothing and
@@ -2057,8 +2234,11 @@ func (m *Manager) RenameEntity(
 	if err != nil {
 		return nil, fmt.Errorf("rename: load entity %q: %w", oldID, err)
 	}
+	if rErr := requireReadableRow(ctx, faceGateOf(m), oldID, family); rErr != nil {
+		return nil, rErr
+	}
 	authorized := make(familyAuthorization, len(family))
-	if aclErr := m.authorizeFamily(ctx, acl.OpRename, oldID, family, authorized); aclErr != nil {
+	if aclErr := m.authorizeRename(ctx, oldID, family, authorized); aclErr != nil {
 		return nil, aclErr
 	}
 	if opts.DryRun {
@@ -2128,7 +2308,7 @@ func (r *familyRename) inTx(
 	if err != nil {
 		return nil, nil, fmt.Errorf("rename: load entity %q: %w", r.oldID, err)
 	}
-	if aErr := r.m.authorizeFamily(ctx, acl.OpRename, r.oldID, family, r.authorized); aErr != nil {
+	if aErr := r.m.authorizeRename(ctx, r.oldID, family, r.authorized); aErr != nil {
 		return nil, nil, aErr
 	}
 	res, err := renameEntity(ctx, tx, r.oldID, r.newID, entity.RenameOptions{})
@@ -2139,7 +2319,7 @@ func (r *familyRename) inTx(
 	if err != nil {
 		return res, nil, fmt.Errorf("rename: load renamed entity %q: %w", r.newID, err)
 	}
-	if aErr := r.m.authorizeFamily(ctx, acl.OpRename, r.oldID, renamed, r.authorized); aErr != nil {
+	if aErr := r.m.authorizeRename(ctx, r.oldID, renamed, r.authorized); aErr != nil {
 		return res, renamed, aErr
 	}
 	return res, renamed, nil
@@ -2270,7 +2450,7 @@ func (m *Manager) CreateRelation(
 		return nil, fErr
 	}
 	if aclErr := m.authorizeAndAudit(ctx,
-		RelationCreateRequest(relType, source.typ, from, source.faces, key.FromFace)); aclErr != nil {
+		RelationCreateRequest(m.deps.Meta, relType, source.typ, from, key.FromFace)); aclErr != nil {
 		return nil, aclErr
 	}
 
@@ -2384,7 +2564,7 @@ func (m *Manager) UpdateRelation(
 	}
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpUpdate,
-		Subject: relationWriteSubject(relType, source, from, key.FromFace),
+		Subject: relationWriteSubject(m.deps.Meta, relType, source, from, key.FromFace),
 	}); aclErr != nil {
 		return nil, aclErr
 	}
@@ -2477,7 +2657,7 @@ func (m *Manager) DeleteRelation(ctx context.Context, key entity.RelationKey) er
 	source, _ := lookupFamily(ctx, m.deps.Store, from)
 	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpDelete,
-		Subject: relationWriteSubject(relType, source, from, face),
+		Subject: relationWriteSubject(m.deps.Meta, relType, source, from, face),
 	}); aclErr != nil {
 		return aclErr
 	}

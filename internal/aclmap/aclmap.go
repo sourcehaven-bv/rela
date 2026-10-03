@@ -55,18 +55,28 @@ type Resolver interface {
 type Engine struct {
 	src      EntitySource
 	resolver Resolver
+	faces    DeclaredFaces
 }
 
-// New constructs an Engine. Both collaborators are required; a nil
-// either is a programmer error (constructors-reject-nil).
-func New(src EntitySource, resolver Resolver) (*Engine, error) {
+// DeclaredFaces returns the faces entityType declares in the schema, and nil
+// for a faceless type. A relation report asks it, as the write path does,
+// because an identity-scoped edge from a faced entity is authorized on every
+// declared face rather than on the faces the entity happens to store.
+type DeclaredFaces func(entityType string) []entity.Face
+
+// New constructs an Engine. All three collaborators are required; a nil
+// one is a programmer error (constructors-reject-nil).
+func New(src EntitySource, resolver Resolver, faces DeclaredFaces) (*Engine, error) {
 	if src == nil {
 		return nil, errors.New("aclmap: New: EntitySource must be non-nil")
 	}
 	if resolver == nil {
 		return nil, errors.New("aclmap: New: Resolver must be non-nil")
 	}
-	return &Engine{src: src, resolver: resolver}, nil
+	if faces == nil {
+		return nil, errors.New("aclmap: New: DeclaredFaces must be non-nil")
+	}
+	return &Engine{src: src, resolver: resolver, faces: faces}, nil
 }
 
 // Route is one way a principal (or everyone) is granted the verb, at

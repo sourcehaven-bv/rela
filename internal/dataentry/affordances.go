@@ -92,15 +92,21 @@ func translateRelationDelete(relType, fromType, fromID string, face entityPkg.Fa
 }
 
 // translateRelationCreate maps the creation of a relType edge from fromID
-// (type fromType, storing familyFaces) at tail to the [acl.WriteRequest]
-// the manager authorizes it with. It delegates to
-// [entitymanager.RelationCreateRequest], which [entitymanager.Manager.CreateRelation]
-// itself calls, so a `linkable` hint and the write cannot ask different
-// questions.
+// (type fromType) at tail to the [acl.WriteRequest] the manager authorizes it
+// with. It delegates to [entitymanager.RelationCreateRequest], which
+// [entitymanager.Manager.CreateRelation] itself calls, so a `linkable` hint and
+// the write cannot ask different questions.
 func translateRelationCreate(
-	relType, fromType, fromID string, familyFaces []entityPkg.Face, tail entityPkg.Face,
+	meta *metamodel.Metamodel, relType, fromType, fromID string, tail entityPkg.Face,
 ) acl.WriteRequest {
-	return entitymanager.RelationCreateRequest(relType, fromType, fromID, familyFaces, tail)
+	return entitymanager.RelationCreateRequest(meta, relType, fromType, fromID, tail)
+}
+
+// translateFamilyRename maps the rename of an entity of a faced type to the
+// [acl.WriteRequest] [entitymanager.Manager.RenameEntity] authorizes it with:
+// one family-level subject, never one per stored face.
+func translateFamilyRename(entityType, entityID string) acl.WriteRequest {
+	return acl.WriteRequest{Op: acl.OpRename, Subject: acl.NewFamilySubject(entityType, entityID)}
 }
 
 // affordanceService computes the read-time affordance maps (_actions,
@@ -140,10 +146,16 @@ type affordanceService struct {
 	// sourceRow reads the raw row of a relation's source, at the edge's
 	// tail, for relation-source attribution. It is never served.
 	sourceRow func(ctx context.Context, ref entityPkg.Ref) (*entityPkg.Entity, bool)
-	// sourceFamily reads the raw row of every face of a relation's source,
-	// for a write gate whose source has no row at the edge's tail. It is
-	// never served either.
+	// sourceFamily reads the raw row of every face of a relation's source
+	// that the principal may READ, for a write gate whose source has no row
+	// at the edge's tail. It is never served either. A hidden face is left
+	// out so that no gate evaluates a `when:` against it: the verdict would
+	// then depend on a row the caller cannot see.
 	sourceFamily func(ctx context.Context, id string) ([]*entityPkg.Entity, error)
+	// readable keeps the rows of a batch the principal may read
+	// ([visibleReader.filterVisible]); linkablePage filters a page's source
+	// families through it in one pass.
+	readable func(ctx context.Context, rows []*entityPkg.Entity) []*entityPkg.Entity
 	// copies lists the copy affordances available from one face (RULING 9's
 	// promote / translate buttons). OPTIONAL, unlike the accessors above: nil
 	// when the entity manager does not expose the capability, in which case
@@ -188,24 +200,15 @@ func (svc affordanceService) computeActions(ctx context.Context, e *entityPkg.En
 }
 
 // renameAllowed is the rename verdict for e. A rename moves the whole
-// family, so the manager authorizes it on every stored face (BUG-GJUBSA),
-// and so does this: the served face alone would offer a rename the write
-// refuses. Delete stays per face, because a DELETE on `ID@face` removes
-// that face only. A failed family read answers false.
+// family, hidden faces included, so for a faced type the manager authorizes
+// it once at family level and so does this; the served face's own grant
+// would offer a rename the write refuses. The verdict reads no other face,
+// so it cannot disclose one. A faceless type keeps its per-row check.
 func (svc affordanceService) renameAllowed(ctx context.Context, e *entityPkg.Entity) bool {
-	if e.Face.IsImplicit() || svc.sourceFamily == nil {
+	if len(metamodel.FaceOrderOf(svc.meta(), e.Type)) == 0 {
 		return svc.acl().AuthorizeWrite(ctx, translateVerb("rename", e.Type, e.ID, e.Face)).Allow
 	}
-	family, err := svc.sourceFamily(ctx, e.ID)
-	if err != nil || len(family) == 0 {
-		return false
-	}
-	for _, f := range family {
-		if !svc.acl().AuthorizeWrite(ctx, translateVerb("rename", f.Type, f.ID, f.Face)).Allow {
-			return false
-		}
-	}
-	return true
+	return svc.acl().AuthorizeWrite(ctx, translateFamilyRename(e.Type, e.ID)).Allow
 }
 
 // computeCollectionActions returns the collection-scope verb verdict
@@ -672,14 +675,17 @@ const (
 //
 // peer is the source at the edge's tail: the tail an existing edge carries, or
 // the tail a new incoming edge will get. When the peer has no row there, the
-// gate uses every row of its family, and a write passes only if every face
-// permits it. That is the case for a new or identity-scoped edge from a faced
-// peer: its zero face holds no row (DEC-NPZICR), and falling back to the path
-// entity would judge the edge by the wrong type's policy.
+// gate uses every row of its family the principal may read, and a write
+// passes only if every one permits it. That is the case for a new or
+// identity-scoped edge from a faced peer: its zero face holds no row
+// (DEC-NPZICR), and falling back to the path entity would judge the edge by
+// the wrong type's policy. A face the principal cannot read is not consulted,
+// so the verdict is the same whether or not one exists.
 //
-// A peer with no stored row at all falls back to the path entity. No edge to
-// it can be written, because the manager refuses a missing endpoint, and the
-// fallback keeps the answer for a missing peer what it was.
+// A peer with no readable row at all falls back to the path entity. No edge
+// to it can be written, because the manager refuses a missing endpoint, and
+// the fallback keeps the answer for a hidden peer the same as for a missing
+// one.
 //
 // A read fault is returned: the caller must not write on a guess.
 func (svc affordanceService) relationSources(
@@ -710,10 +716,10 @@ func (svc affordanceService) relationSources(
 //
 // The tail is the one the write gets. A content-scoped edge belongs to the
 // row's face; an identity-scoped edge has the zero tail, and from a faced
-// source the ACL then requires every face of the family.
+// source the ACL then requires every face the type declares.
 //
-// Cost per row: the source read of relationSources (the family, for an
-// identity edge from a faced source), one RelationVerdicts call per source
+// Cost per row: the source read of relationSources (the readable family, for
+// an identity edge from a faced source), one RelationVerdicts call per source
 // and one AuthorizeWrite.
 func (svc affordanceService) linkableFrom(
 	ctx context.Context, row *entityPkg.Entity, relType string, scope metamodel.RelationScope,
@@ -726,18 +732,16 @@ func (svc affordanceService) linkableFrom(
 	if err != nil {
 		return false
 	}
-	faces := make([]entityPkg.Face, 0, len(sources))
 	for _, src := range sources {
 		if src == nil {
 			// The row's source is gone; the write would find no peer.
 			return false
 		}
-		faces = append(faces, src.Face)
 	}
 	if _, denial := svc.relationOpDenial(ctx, sources, relType, RelationOpCreate); denial != nil {
 		return false
 	}
-	req := translateRelationCreate(relType, row.Type, row.ID, faces, tail)
+	req := translateRelationCreate(svc.meta(), relType, row.Type, row.ID, tail)
 	return svc.acl().AuthorizeWrite(ctx, req).Allow
 }
 

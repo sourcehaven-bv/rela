@@ -381,6 +381,7 @@ Reads and writes default differently, and the difference is deliberate:
 | `update: [policy]` | Nothing, on a faced type — see the warning below |
 | `update: [policy@published]` | The published face only |
 | `update: ["*"]` | Every type, unnamed state only |
+| `rename: [policy]` | Renaming a policy, which moves every face |
 
 A bare read grant covers every face because a world never serves the unnamed
 state when its chain names a face. If a bare read grant covered only that
@@ -400,6 +401,21 @@ role may write:
 editor:
   update: [policy@draft, policy@published]
 ```
+
+A rename moves every face of an entity, including faces the renaming user
+cannot read. So it is granted for the whole entity, never per face:
+
+```yaml
+editor:
+  update: [policy@draft, policy@published]
+  rename: [policy]
+```
+
+Face grants do not grant a rename, even on every face. A face-qualified
+rename grant such as `rename: [policy@draft]` is a load error. `rename: ["*"]`
+covers every type. On a faceless type, `update:` still grants a rename as
+well. Global roles and local roles both count. A local role is conferred
+through an identity-scoped relation, so it belongs to the whole entity.
 
 The user type, group types and the relations the ACL walks for roles must stay
 faceless and identity-scoped. The
@@ -976,11 +992,25 @@ under its face's address (`task--TSK-1@draft@rela.ics`). When the world
 starts serving another face, the client sees one to-do removed and another
 added.
 
-Two writes act on the whole family rather than one face:
+Some writes concern the whole entity rather than one face. Their outcome
+depends only on your grants and on the faces you can read. It never depends on
+a face hidden from you, so a refusal does not reveal that one exists.
 
-- A **rename** moves every face, so it needs the update grant on every stored
-  face. The web app offers it only then.
-- A `rela-docs` `assert-acl` claim about a rename covers every face and
+- A **rename** moves every face, hidden ones included. It needs a `rename:`
+  grant on the type. A user with the grant who can read no face of the entity
+  gets the same `404` as for an entity that does not exist. The web app offers
+  the rename on the same terms.
+- An **identity-scoped relation** from a faced entity needs the write grant on
+  every face the type declares, whether or not the entity stores that face. A
+  `relation_grants:` permission is the alternative, as for any relation. The
+  web app's `linkable` flag follows the same rule.
+- Deleting a face deletes the entity when no other face you can read remains.
+  The delete is then checked as an entity delete: it needs `cascade` when the
+  entity has relations, and each identity-scoped and incoming edge must be
+  deletable. When a face you cannot read still exists, rela keeps the entity,
+  that face and those edges, and deletes only the face you named and its own
+  edges. The answer you get is the same either way.
+- A `rela-docs` `assert-acl` claim about a rename is decided the same way and
   refuses `face=`; a delete claim with no face covers the family.
 
 ## Upgrading from a Release Without Implicit Faces
@@ -1014,6 +1044,16 @@ Two writes act on the whole family rather than one face:
   the first start.
 - `rela acl audit` reports a grant on an undeclared world as finding
   `B10-undeclared-world`.
+- A rename of a faced entity needs a `rename:` grant on its type; update
+  grants on every face no longer grant it. Add `rename: [policy]` (with your
+  type) to each role that renames. `rename: [policy@draft]` is refused at
+  load.
+- An identity-scoped relation from a faced entity is checked against every
+  face its type declares, not only the faces the entity stores. A role that
+  writes such relations needs the grant on each declared face, or a
+  `relation_grants:` permission.
+- Deleting the last face you can read is checked as an entity delete, even
+  when a face you cannot read still exists.
 
 ## What Worlds Do Not Cover Yet
 

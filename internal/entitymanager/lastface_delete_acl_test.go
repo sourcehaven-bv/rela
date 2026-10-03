@@ -3,6 +3,8 @@ package entitymanager_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -145,5 +147,62 @@ func TestDeleteEntityFace_NotLastIgnoresCascade(t *testing.T) {
 				t.Fatalf("DeleteEntityFace without cascade: %v", err)
 			}
 		})
+	}
+}
+
+// A caller who cannot read the published face observes the same delete of
+// the draft whether or not a published face exists. "Last face" is judged
+// from the faces the caller may read, so the cascade opt-in and the
+// authorization of the inbound edge apply in both worlds, and a refusal does
+// not confirm a hidden sibling's absence. With a hidden sibling the store
+// keeps the entity, so the hidden face, its edge and the inbound edge
+// survive.
+func TestDeleteEntityFace_HiddenSiblingIsNoOracle(t *testing.T) {
+	for _, b := range concBackends {
+		for _, tc := range []struct {
+			name    string
+			user    string
+			cascade bool
+			want    func(error) bool
+		}{
+			{"no cascade", "blind-admin", false, func(err error) bool { return errors.Is(err, entitymanager.ErrHasRelations) }},
+			{"inbound edge denied", "blind-drafter", true, func(err error) bool {
+				var forbidden *acl.ForbiddenError
+				return errors.As(err, &forbidden)
+			}},
+			{"allowed", "blind-admin", true, func(err error) bool { return err == nil }},
+		} {
+			t.Run(b.name+"/"+tc.name, func(t *testing.T) {
+				outcomes := map[bool]string{}
+				for _, hidden := range []bool{false, true} {
+					f := lastFaceFixture(t, b)
+					if hidden {
+						if err := f.st.CreateEntity(context.Background(), policyFace("published")); err != nil {
+							t.Fatalf("seed POL-1@published: %v", err)
+						}
+					}
+					_, err := f.mgr.DeleteEntityFace(asUser(tc.user), "POL-1", "draft", tc.cascade)
+					if !tc.want(err) {
+						t.Fatalf("hidden=%v: DeleteEntityFace as %s = %v", hidden, tc.user, err)
+					}
+					outcomes[hidden] = fmt.Sprint(err)
+					if strings.Contains(outcomes[hidden], "published") {
+						t.Errorf("hidden=%v: outcome %q names the hidden face", hidden, outcomes[hidden])
+					}
+					if !hidden {
+						continue
+					}
+					if _, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "published"}); gErr != nil {
+						t.Errorf("the hidden published face must survive: %v", gErr)
+					}
+					if n := f.inboundCovers(t); n != 1 {
+						t.Errorf("inbound edges with a hidden sibling = %d, want 1: the entity survives", n)
+					}
+				}
+				if outcomes[false] != outcomes[true] {
+					t.Errorf("without a hidden sibling = %q, with one = %q; want the same", outcomes[false], outcomes[true])
+				}
+			})
+		}
 	}
 }

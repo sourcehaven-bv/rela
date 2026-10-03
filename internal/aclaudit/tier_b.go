@@ -262,7 +262,7 @@ func checkUndeclaredEntityTypes(p *acl.Policy, m MetamodelReader) []Finding {
 				Fix: fmt.Sprintf("declare entity type %q, or fix the %s grant (check for a typo)", t, verb),
 			})
 		}
-		for _, verb := range []string{"create", "update", "delete", "read"} {
+		for _, verb := range []string{"create", "update", "delete", "rename", "read"} {
 			for _, t := range verbLists(role)[verb] {
 				flag(verb, t)
 			}

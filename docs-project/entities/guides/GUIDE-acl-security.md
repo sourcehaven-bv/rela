@@ -277,26 +277,59 @@ The resource a role is conferred on may declare faces. An `owns` relation from
 face-named write grants decide which faces it may write. A relation the schema
 does not declare is not checked, since it can hold no edges.
 
-#### Deleting an entity needs delete on every face
+#### Whole-entity writes never consult a hidden face
 
-Deleting an entity by its bare id removes every face it has. The delete is
-therefore authorized on each face, and it is refused if any face is denied.
-Nothing is deleted in that case. To remove one face, address it:
-`DELETE /policy/POL-1@draft` needs delete on that face only.
+A few writes concern the whole entity rather than one face. Each is decided
+from grants and from the faces the caller can read, and never from the faces
+the entity happens to store. A decision that read the stored faces would
+answer differently when a face hidden from the caller existed, and so reveal
+it. The error text names no face for the same reason.
 
-This refusal carries one bit. A role that may delete `policy@draft` but cannot
-read `policy@published` learns from a refused bare delete that a published
-face exists. The refusal is necessary, because deleting only the readable faces
-would change what the operation does. Treat this as an accepted membership
-channel, not as a face that is fully concealed.
+**Renaming.** A rename changes the id of every face, hidden ones included. It
+is granted for the whole entity by a `rename:` grant on the type:
 
-#### Renaming an entity needs update on every face
+```yaml
+editor:
+  read: [policy]
+  rename: [policy]        # or ["*"] for every type
+```
 
-A rename changes the id of every face an entity has, so it is authorized like
-a bare-id delete: update on each face, and refused with nothing renamed if any
-face is denied. A type-wide `update: [policy]` grant covers only the unfaced
-row, so it cannot rename a faced policy. The refusal carries the same one-bit
-membership channel as the delete.
+Face grants do not grant a rename, even on every face. A face-qualified rename
+grant is refused when `acl.yaml` loads:
+
+```text
+roles.editor: rename: "policy@draft" names the face "draft"; a rename moves
+every face of an entity, so a rename grant names the type alone: "policy"
+```
+
+An alias in `rename:` is refused too, and the error names the canonical type.
+`rename:` must be covered by a read grant on the type, as `update:` is. On a
+faceless type, `update:` still grants a rename as well.
+
+Global roles count, and so do local roles. A local role is conferred through a
+`role_relations` entry, which must be identity-scoped (see below), so it
+belongs to the whole entity and may grant a rename of it. A client ceiling
+narrows `rename:` as it narrows `update:`.
+
+A caller with the grant who can read no face of the entity gets the same
+not-found response as for an entity that does not exist. Without the grant the
+answer is a `403` that names the type, whatever faces exist.
+
+**Identity-scoped relations.** An identity-scoped relation from a faced entity
+belongs to the whole entity. Writing one needs the verb on every face the type
+**declares**, whether or not this entity stores it. A `relation_grants:`
+permission is the alternative, as for any relation. The data-entry `linkable`
+flag asks the same question, and an affordance `when:` is evaluated only on
+faces the caller can read.
+
+**Deleting a face.** Deleting a face deletes the entity when no other face the
+caller can read remains. The delete is then checked as an entity delete: it
+needs `cascade` when the entity has relations, and each identity-scoped and
+incoming edge must be deletable. If a face the caller cannot read still exists,
+rela keeps the entity, that face and those edges, and deletes only the named
+face and its own edges. It never deletes a hidden face or an edge tailed at
+one, and the caller gets the same answer in both cases. A bare-id delete of a
+faced entity is refused with `face_required`.
 
 #### World grants select a lens
 

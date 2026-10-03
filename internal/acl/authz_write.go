@@ -42,7 +42,56 @@ func (r *Request) authorizeEntityWrite(ctx context.Context, op Op, s EntitySubje
 	} else {
 		attrs = r.Globals(ctx).Attributions
 	}
+	if s.family {
+		return r.decideFamily(attrs, op, s.typ)
+	}
 	return r.decideFromAttrs(attrs, op, s.typ, s.face, "no role grants %s on type %q")
+}
+
+// decideFamily decides op on every face of an entity of type target from
+// the roles in attrs. Only rename has a family-level grant; any other op is
+// denied, because no grant list could authorize it at this level.
+//
+// The local roles in attrs are conferred through identity-scoped relations
+// only (Policy.validateIdentityStructure refuses a content-scoped conferring
+// relation at load), so a role acquired here applies to the entity as a
+// whole and may authorize a family operation. Write grants carry no `when:`,
+// so nothing here reads a face row.
+//
+// The reason names the type and never a face: the decision does not depend
+// on which faces exist, and a denial must not suggest that it did.
+func (r *Request) decideFamily(attrs []RoleAttribution, op Op, target string) Decision {
+	if deny := r.ceilingDenial(attrs, op, target); deny != nil {
+		return *deny
+	}
+	if op == OpRename {
+		for _, a := range attrs {
+			role, ok := r.roleFor(a.Role)
+			if ok && grantsFamilyRename(role, target) {
+				return Decision{Allow: true, RuleKind: "role-grant", RuleID: a.Role, Attributions: attrs}
+			}
+		}
+	}
+	return Decision{
+		Allow:    false,
+		RuleKind: "role-grant",
+		RuleID:   "-",
+		Reason: fmt.Sprintf("no role grants %s on every face of type %q (a type with faces is renamed "+
+			"through a `rename:` grant)", op, target),
+		Attributions: attrs,
+	}
+}
+
+// grantsFamilyRename reports whether role's `rename:` list covers target.
+// "*" ranges over types, and a family has no face to leave out, so it covers
+// every type. A face-named entry is refused at load and never matches here.
+func grantsFamilyRename(role RoleDef, target string) bool {
+	for _, entry := range role.Rename {
+		if entry == "*" || entry == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationSubject) Decision {
@@ -116,14 +165,16 @@ func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationS
 	// is the default state, which every faceless type addresses, so existing
 	// grants keep their meaning.
 	//
-	// An identity-scoped edge from a faced source lists the family's faces in
-	// FamilyFaces, and every one must allow the verb: the edge belongs to the
-	// entity as a whole, as a family rename or delete does (D4).
+	// An identity-scoped edge from a faced source lists the type's declared
+	// faces in FamilyFaces, and every one must allow the verb: the edge
+	// belongs to the entity as a whole (D4). Such a denial names no face:
+	// the decision covers the type's faces, not this entity's.
 	//
 	// Only the source has a face; entity.Relation has no ToFace, so there is
 	// no target-side state to authorize.
 	faces := s.FamilyFaces
-	if len(faces) == 0 {
+	family := len(faces) > 0
+	if !family {
 		faces = []entity.Face{s.FromFace}
 	}
 	var d Decision
@@ -131,7 +182,10 @@ func (r *Request) authorizeRelationWrite(ctx context.Context, op Op, s RelationS
 		d = r.decideFromAttrs(attrs, op, s.FromType, face,
 			"no role grants %s on relations from type %q")
 		if !d.Allow {
-			if !face.IsImplicit() {
+			switch {
+			case family:
+				d.Reason += " on every face it declares (an identity-scoped relation belongs to the whole entity)"
+			case !face.IsImplicit():
 				d.Reason = fmt.Sprintf("%s at face %q", d.Reason, face)
 			}
 			d.Reason = r.explainRelationDenial(d.Reason, s, op, tailBlocked)

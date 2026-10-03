@@ -548,16 +548,6 @@ type entityFamily struct {
 	faces []entity.Face
 }
 
-// isFaced reports whether the family stores any named face.
-func (f entityFamily) isFaced() bool {
-	for _, face := range f.faces {
-		if !face.IsImplicit() {
-			return true
-		}
-	}
-	return false
-}
-
 // lookupFamily reads the family of the entity ref names, from headers only.
 // ref may be a bare id or the fused `ID@face` form; either way the family of
 // the id is returned, because its type and faces are what the callers need.
@@ -613,32 +603,55 @@ func validTail(face entity.Face) error {
 
 // relationWriteSubject builds the authorization subject for a relation write from
 // source, applying ruling D4 (TKT-KQXVF7). An edge with a named tail is
-// authorized at that face. A zero-tailed edge from a faced source is
-// authorized on every face the family stores, because it belongs to the
-// entity as a whole. That holds for a `scope: content` edge at the zero tail
-// too: it is the identity coordinate, so a bare-type grant, which covers only
-// the zero face, must not be enough for it either. A missing source leaves
-// the type empty, which matches no grant.
+// authorized at that face. A zero-tailed edge from a faced source belongs to
+// the entity as a whole, so it is authorized on every face the source TYPE
+// declares. That holds for a `scope: content` edge at the zero tail too: it
+// is the identity coordinate, so a bare-type grant, which covers only the
+// zero face, must not be enough for it either. A missing source leaves the
+// type empty, which matches no grant.
+//
+// The faces come from the schema, never from the faces this entity stores.
+// Deciding per stored face would consult faces the caller cannot read, and
+// the answer (and the face a denial names) would disclose that a hidden face
+// exists. The declared set is a superset of the stored one, so this asks at
+// least what the stored set did.
 func relationWriteSubject(
-	relType string, source entityFamily, from string, tail entity.Face,
+	meta *metamodel.Metamodel, relType string, source entityFamily, from string, tail entity.Face,
 ) acl.RelationSubject {
 	s := acl.RelationSubject{Type: relType, FromType: source.typ, FromID: from, FromFace: tail}
-	if tail.IsImplicit() && source.isFaced() {
-		s.FamilyFaces = source.faces
+	if tail.IsImplicit() {
+		s.FamilyFaces = declaredFaces(meta, source.typ)
 	}
 	return s
 }
 
+// declaredFaces returns the faces typ declares, in declaration order; nil for
+// a faceless or unknown type.
+func declaredFaces(meta *metamodel.Metamodel, typ string) []entity.Face {
+	if typ == "" {
+		return nil
+	}
+	names := metamodel.FaceOrderOf(meta, typ)
+	if len(names) == 0 {
+		return nil
+	}
+	faces := make([]entity.Face, len(names))
+	for i, n := range names {
+		faces[i] = entity.Face(n)
+	}
+	return faces
+}
+
 // RelationCreateRequest is the authorization request [Manager.CreateRelation]
-// runs for an edge from fromID (type fromType, storing familyFaces) with the
-// given tail. It is exported so a caller that answers "may this principal
-// create the edge?" ahead of the write asks the question the write will ask,
-// instead of a copy of it.
+// runs for an edge from fromID (type fromType) with the given tail. It is
+// exported so a caller that answers "may this principal create the edge?"
+// ahead of the write asks the question the write will ask, instead of a copy
+// of it. It reads no store: the answer depends on the schema and the grants.
 func RelationCreateRequest(
-	relType, fromType, fromID string, familyFaces []entity.Face, tail entity.Face,
+	meta *metamodel.Metamodel, relType, fromType, fromID string, tail entity.Face,
 ) acl.WriteRequest {
-	source := entityFamily{id: fromID, typ: fromType, faces: familyFaces}
-	return acl.WriteRequest{Op: acl.OpCreate, Subject: relationWriteSubject(relType, source, fromID, tail)}
+	source := entityFamily{id: fromID, typ: fromType}
+	return acl.WriteRequest{Op: acl.OpCreate, Subject: relationWriteSubject(meta, relType, source, fromID, tail)}
 }
 
 // getEntityByRef resolves an entity ADDRESS — either a bare id or the fused
