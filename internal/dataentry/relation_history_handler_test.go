@@ -466,3 +466,121 @@ func TestRelationHistory_GoneSourceServesNoMeta(t *testing.T) {
 func (g perEndpointGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
 	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids), nil)
 }
+
+// TestRelationHistory_PartlyGoneChecksEveryRemainingEnd pins "both ends, as
+// far as they still exist": when part of a relation is gone, every end that
+// still exists keeps its live read check, and the global history permission
+// is required on top. Each denial is the uniform 404, on read and restore.
+//
+// Restore shares the gate. Past it, the write fails for reasons this test
+// does not exercise (a gone end is a 409 dangling_endpoint; the test schema
+// has no `addresses` relation, a 422), so an allowed case asserts only "not
+// 404".
+func TestRelationHistory_PartlyGoneChecksEveryRemainingEnd(t *testing.T) {
+	allFaces := []entity.Face{"draft", "published"}
+	publishedOnly := []entity.Face{"published"}
+
+	tests := []struct {
+		name string
+		// from is the address in the URL; the fixture holds DEC-1@published,
+		// REQ-1, and BARE-1 (an unfaced decision).
+		from, to string
+		gate     perEndpointGate
+		want     int
+	}{
+		// Tail face deleted (DEC-1@draft), entity and head alive.
+		{"deleted tail, published-only reader", "DEC-1@draft", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"DEC-1": true, "REQ-1": true}, holdsPermission: true,
+			faces: map[string][]entity.Face{"decision": publishedOnly},
+		}, http.StatusNotFound},
+		{"deleted tail, draft reader", "DEC-1@draft", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"DEC-1": true, "REQ-1": true}, holdsPermission: true,
+			faces: map[string][]entity.Face{"decision": allFaces},
+		}, http.StatusOK},
+		{"deleted tail, head unreadable", "DEC-1@draft", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"DEC-1": true}, holdsPermission: true,
+			faces: map[string][]entity.Face{"decision": allFaces},
+		}, http.StatusNotFound},
+		{"deleted tail, entity unreadable", "DEC-1@draft", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"REQ-1": true}, holdsPermission: true,
+			faces: map[string][]entity.Face{"decision": allFaces},
+		}, http.StatusNotFound},
+		{"deleted tail, no history permission", "DEC-1@draft", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"DEC-1": true, "REQ-1": true},
+			faces: map[string][]entity.Face{"decision": allFaces},
+		}, http.StatusNotFound},
+
+		// Tail entity wholly gone, head alive.
+		{"gone tail, head unreadable", "GONE-A", "REQ-1", perEndpointGate{
+			holdsPermission: true,
+		}, http.StatusNotFound},
+		{"gone tail, head readable", "GONE-A", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"REQ-1": true}, holdsPermission: true,
+		}, http.StatusOK},
+		{"gone tail, no history permission", "GONE-A", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"REQ-1": true},
+		}, http.StatusNotFound},
+
+		// Head gone, tail alive.
+		{"gone head, tail unreadable", "BARE-1", "GONE-B", perEndpointGate{
+			holdsPermission: true,
+		}, http.StatusNotFound},
+		{"gone head, tail readable", "BARE-1", "GONE-B", perEndpointGate{
+			allow: map[string]bool{"BARE-1": true}, holdsPermission: true,
+		}, http.StatusOK},
+		{"gone head, no history permission", "BARE-1", "GONE-B", perEndpointGate{
+			allow: map[string]bool{"BARE-1": true},
+		}, http.StatusNotFound},
+	}
+
+	newApp := func(t *testing.T, from, to string) *App {
+		t.Helper()
+		f := &fixture{}
+		published := entity.New("DEC-1", "decision")
+		published.Face = "published"
+		f.AddNode(published)
+		f.AddNode(entity.New("BARE-1", "decision"))
+		f.AddNode(entity.New("REQ-1", "requirement"))
+		app := newAppFromParts(nil, testMeta(), f)
+		ref, err := entity.ParseRef(from)
+		if err != nil {
+			t.Fatalf("parse %q: %v", from, err)
+		}
+		app.versions = relHistoryStore{versions: map[string][]store.RelationVersionSnapshot{
+			relKey(ref.ID, ref.Face, "addresses", to): {{
+				RelationVersionMeta: store.RelationVersionMeta{
+					Version: 1, Op: store.VersionOpDelete, From: ref.ID, Type: "addresses", To: to,
+				},
+				Content: "hidden history body",
+			}},
+		}}
+		return app
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			base := "/api/v1/_relation_history/decision/" + tc.from + "/addresses/" + tc.to
+			app := newApp(t, tc.from, tc.to)
+			for _, path := range []string{base, base + "/1", base + "/_lifetimes"} {
+				req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+				req = req.WithContext(withReadGate(t.Context(), tc.gate))
+				rec := httptest.NewRecorder()
+				handleV1RelationHistory(app, rec, req)
+				if rec.Code != tc.want {
+					t.Errorf("GET %s = %d, want %d; body=%s", path, rec.Code, tc.want, rec.Body)
+				}
+				if tc.want == http.StatusNotFound && strings.Contains(rec.Body.String(), "hidden history body") {
+					t.Errorf("GET %s leaked the snapshot body", path)
+				}
+			}
+
+			req := httptest.NewRequest(http.MethodPost, base+"/1/restore", http.NoBody)
+			req = req.WithContext(withReadGate(t.Context(), tc.gate))
+			rec := httptest.NewRecorder()
+			handleV1RelationHistory(app, rec, req)
+			if gotNotFound := rec.Code == http.StatusNotFound; gotNotFound != (tc.want == http.StatusNotFound) {
+				t.Errorf("restore = %d, want the gate outcome of GET (%d); body=%s", rec.Code, tc.want, rec.Body)
+			}
+		})
+	}
+}

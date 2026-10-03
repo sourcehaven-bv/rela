@@ -434,8 +434,9 @@ rela relation-restore TKT-42 blocks TKT-99 2          # restore to version 2
 ```
 
 Access control: relation history is read-gated on **both** endpoints — you must
-be able to read the `from` AND the `to` entity (a deleted relation uses the same
-global `history:read`). In the web UI, a relation's history is owned by its
+be able to read the `from` AND the `to` entity. When part of the relation is
+gone, every endpoint that still exists keeps its check and the global
+`history:read` is required too (see the ACL security guide). In the web UI, a relation's history is owned by its
 **source** (`from`) entity: each outgoing relation on an entity's detail page has
 a History affordance. Restore goes through the normal write path; re-creating a
 relation whose endpoint entity no longer exists is refused (409).

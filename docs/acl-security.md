@@ -1654,8 +1654,21 @@ body too) is read-gated on **both** endpoints: a caller must be able to read the
 `from` AND the `to` entity. Gating on the `from` alone would make the `to`
 endpoint an existence/content oracle — a principal allowed to read `from` but
 denied `to` could enumerate `from`'s outgoing relation histories and learn about
-the hidden `to` endpoint. A deleted relation (endpoints gone) uses the same global
-`history:read`; a non-holder gets the same 404 as a nonexistent relation.
+the hidden `to` endpoint.
+
+When part of the relation is gone, the rule is "both endpoints, as far as they
+still exist". Every endpoint that still exists keeps its read check, and the
+caller must also hold the global `history:read`:
+
+- If the `from` entity lives on but the face the relation hung from was
+  deleted, the caller must be able to read the entity, and their read grants
+  must cover the deleted face. Entity history applies the same rule to a
+  deleted face.
+- An endpoint with no stored row at all adds no check of its own. Its type is
+  unknown, and the type segment in the URL is never trusted.
+
+Any denial is the same 404 as a nonexistent relation. Restore uses the same
+gate.
 
 Relations DO support field-level (`visible:`) redaction (TKT-B1F5Q1) — on the
 live relation GET and in history. Relation history exposes exactly what a live

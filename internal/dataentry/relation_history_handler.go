@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"slices"
@@ -28,9 +29,10 @@ import (
 // endpoints' read verdicts (FROM ∧ TO), each resolved against the endpoint's
 // LIVE type. The "FROM entity owns the history" UI decision governs placement
 // only — it must NOT become the authorization boundary, or the TO endpoint would
-// be an existence/content oracle for a principal who can read FROM but not TO. A
-// deleted relation (endpoints gone) requires the global acl.PermHistoryRead; a
-// non-holder gets the same 404 as a nonexistent relation (no existence oracle).
+// be an existence/content oracle for a principal who can read FROM but not TO.
+// When part of the relation is gone, every end that still exists keeps its
+// check and the global acl.PermHistoryRead is required on top; a denial is the
+// same 404 as a nonexistent relation (see relationHistoryReadable).
 //
 // Field redaction (TKT-B1F5Q1, IB-review #1): relation meta supports field-level
 // `visible:` redaction, on the live relation GET and here in history. History
@@ -149,73 +151,103 @@ func parseRecordID(r *http.Request) (int64, bool) {
 }
 
 // authorizeRelationHistoryRead returns true if the caller may read this
-// relation's history, writing an indistinguishable-404 otherwise.
-//
-// Dual-endpoint gating (RR-SDDYZO): BOTH endpoints must be readable. If both are
-// live, each must pass the resolver's gates. Each endpoint's type is its STORED
-// type, never the URL: rela ids are globally unique, so the stored header yields
-// the real type, and the URL `{fromType}` segment is therefore never an ACL
-// trust input (a caller could otherwise spoof a type whose verdict is more
-// favorable to them, IB-review #1).
-//
-// The tail follows design 8.2: a named face is read as that face, so a face the
-// caller may not read is a 404; a bare tail and the head are entity-level
-// checks, some readable face of the id. A tail is live when its face is stored
-// (any face, for a bare tail). If either endpoint is not live, the relation's
-// endpoints are (at least partly) gone; treat it as deleted-relation history
-// and require the global PermHistoryRead, else the same 404 as a nonexistent
-// relation.
+// relation's history, writing an indistinguishable-404 otherwise. The rule
+// is [relationHistoryReadable]; read and restore both call this.
 func authorizeRelationHistoryRead(
 	a *App, w http.ResponseWriter, r *http.Request, from entityPkg.Ref, to string,
 ) bool {
-	ctx := r.Context()
-	gate := readGateFromContext(ctx)
-	vr := a.visibleReader
-
-	// A failed read must not look like a deleted endpoint, which opens the
-	// history on the global permission.
-	fromType, fromFaces, err := loadStoredFaces(ctx, vr.store, from.ID)
+	ok, err := relationHistoryReadable(r.Context(), a.visibleReader, from, to)
 	if err != nil {
 		writeGateError(w, r, err)
 		return false
 	}
-	fromLive := fromType != "" && (from.Face.IsImplicit() || slices.Contains(fromFaces, from.Face))
-	toType, _, err := loadStoredFaces(ctx, vr.store, to)
-	if err != nil {
-		writeGateError(w, r, err)
-		return false
-	}
-
-	if fromLive && toType != "" {
-		var fromOK bool
-		if from.Face.IsImplicit() {
-			_, fromOK, err = vr.family(ctx, fromType, from.ID)
-		} else {
-			_, fromOK, err = vr.ref(ctx, fromType, from)
-		}
-		if err != nil {
-			writeGateError(w, r, err)
-			return false
-		}
-		_, toOK, err := vr.family(ctx, toType, to)
-		if err != nil {
-			writeGateError(w, r, err)
-			return false
-		}
-		if !fromOK || !toOK {
-			// Denied on EITHER endpoint → indistinguishable 404. Never reveal which.
-			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-			return false
-		}
-		return true
-	}
-
-	// One or both endpoints gone: deleted-relation history. Global permission.
-	if !gate.HoldsPermission(ctx, acl.PermHistoryRead) {
+	if !ok {
+		// Denied on any end → indistinguishable 404. Never reveal which.
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return false
 	}
 	return true
+}
+
+// relationHistoryReadable decides whether the ctx principal may read the
+// history of the relation from → to. ok=false is the uniform not-found; an
+// error is a gate failure.
+//
+// The rule is "both ends, as far as they still exist" (RR-SDDYZO). Every end
+// that still exists must pass its live read check:
+//
+//   - A live tail is read as design 8.2 says: a named face as that face, a
+//     bare tail as the entity (some readable face of the id).
+//   - A named tail face that was deleted while the entity lives on must pass
+//     the entity's row gate on its remaining faces, and the principal's read
+//     grants must cover the deleted face. This mirrors the deleted-face rule
+//     of entity history ([resolveHistorySubject]).
+//   - A live head is an entity-level check.
+//
+// When any part of the relation is gone (a deleted tail face, or an end
+// with no stored row at all), the history is deleted-relation history and
+// additionally requires the global acl.PermHistoryRead. An end with no
+// stored row has no verdict left to evaluate and no trustworthy type, so it
+// adds no check of its own: unlike entity history, which takes the type from
+// the URL, the `{fromType}` segment here is never an ACL input.
+//
+// Each end's type is its STORED type, never the URL: rela ids are globally
+// unique, so the stored header yields the real type (IB-review #1). A failed
+// stored-faces read is an error, never "deleted", because the deleted rule
+// grants on a global permission.
+func relationHistoryReadable(
+	ctx context.Context, vr visibleReader, from entityPkg.Ref, to string,
+) (bool, error) {
+	fromType, fromFaces, err := loadStoredFaces(ctx, vr.store, from.ID)
+	if err != nil {
+		return false, err
+	}
+	toType, _, err := loadStoredFaces(ctx, vr.store, to)
+	if err != nil {
+		return false, err
+	}
+
+	partlyGone := false
+	deletedTailFace := false
+	var ok bool
+	switch {
+	case fromType == "":
+		partlyGone = true
+		ok = true
+	case from.Face.IsImplicit():
+		_, ok, err = vr.family(ctx, fromType, from.ID)
+	case slices.Contains(fromFaces, from.Face):
+		_, ok, err = vr.ref(ctx, fromType, from)
+	default:
+		partlyGone, deletedTailFace = true, true
+		_, ok, err = vr.family(ctx, fromType, from.ID)
+	}
+	if err != nil || !ok {
+		return false, err
+	}
+
+	if toType == "" {
+		partlyGone = true
+	} else if _, ok, err = vr.family(ctx, toType, to); err != nil || !ok {
+		return false, err
+	}
+
+	if !partlyGone {
+		return true, nil
+	}
+	if !readGateFromContext(ctx).HoldsPermission(ctx, acl.PermHistoryRead) {
+		return false, nil
+	}
+	if deletedTailFace {
+		// A named face in a denied world is refused, as the live face is.
+		if worldFromContext(ctx).blocksAllReads() {
+			return false, nil
+		}
+		if !faceReadable(ctx, fromType, from.Face) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // serveRelationLifetimes writes the list of a key's past lifetimes (newest-first),
