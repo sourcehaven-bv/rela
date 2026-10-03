@@ -322,7 +322,7 @@ func (a *App) markIncomingFace(
 		return
 	}
 	sources, err := a.affordances.relationSources(ctx, pathEntity,
-		entity.Ref{ID: edge.From, Face: edge.FromFace}, string(DirectionIncoming))
+		entity.Ref{ID: edge.From, Face: edge.FromFace}, string(DirectionIncoming), edge.Type)
 	if err != nil {
 		return
 	}

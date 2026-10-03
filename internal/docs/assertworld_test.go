@@ -40,6 +40,7 @@ func worldFixtureMeta(t *testing.T) *metamodel.Metamodel {
 			"published": {Select: []string{"published"}, Otherwise: metamodel.OtherwiseExclude},
 			"preview":   {Select: []string{"draft", "published"}, Otherwise: metamodel.OtherwiseDefault},
 		},
+		DefaultWorld: "preview",
 	}
 	m.InitAliases()
 	return m

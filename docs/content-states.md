@@ -598,13 +598,16 @@ default_world: published
 `default_world` names the world a request lands in when it carries no
 `?world=`. For a handbook the world to land in is `published`, so readers see
 the adopted text and editors reach drafts deliberately by selecting
-`editorial`. Without the key the default world is the first world declared
-under `worlds:`. Lua scripts, the MCP server, the CLI, scheduled tasks and
-validation read in the same world.
+`editorial`. The key is required when the schema declares more than one
+world, and a schema without it fails to load. Otherwise reordering `worlds:`
+would change the default world without anyone noticing. With a single declared
+world the key may be left out, and that world is the default. Lua scripts, the
+MCP server, the CLI, scheduled tasks and validation read in the same world.
 
 `app.default_world` in `data-entry.yaml` is the older spelling. It is now a
 deprecated alias that must name the same world as the schema, and a
-contradiction fails the load. Remove it once `schema.yaml` carries the key.
+contradiction fails the load. It does not stand in for the schema key: move
+the value to `schema.yaml` and remove it from `data-entry.yaml`.
 
 `default_world` is presentation, not policy. It grants nothing: the world's
 read grant is re-checked on every request exactly as for an explicit `?world=`,
@@ -737,9 +740,9 @@ curl -s "http://localhost:8080/api/v1/policys?world=published"
 ```
 
 The list contains only policies that have a published face. Omitting the
-parameter serves the default world: `default_world`, else the first declared
-world. A schema that declares worlds has no world named `default`, so
-`?world=default` is answered with `400 unknown_world`. Only a schema that
+parameter serves the default world named by `default_world`. A schema that
+declares worlds has no world named `default`, so `?world=default` is answered
+with `400 unknown_world`. Only a schema that
 declares no worlds has the generated `default` world, which serves each faced
 type's faces in declaration order.
 
@@ -1021,8 +1024,15 @@ a face hidden from you, so a refusal does not reveal that one exists.
   The web app drops an unknown `?world=` from the URL and lands in the default
   world, so old bookmarks keep working.
 - Every route reads in the default world, including routes that refuse an
-  explicit `?world=`. Without `default_world` that is the first declared
-  world.
+  explicit `?world=`.
+- `default_world` is required when the schema declares more than one world.
+  A schema without it fails to load. Add `default_world: <world>` to
+  `schema.yaml`; before this release the first declared world was used.
+- `deny_worlds` naming the default world is refused at load. To keep a client
+  away from content, name the faces in `read:` or use `deny_read`.
+- The deprecated `app.default_world` in `data-entry.yaml` must name the same
+  world as the schema, or the load fails. It does not satisfy the
+  `default_world` requirement; move it to `schema.yaml`.
 - A bare-id write on a faced type is refused with `face_required`, except
   for an identity-scoped relation. Name the face. This covers updates,
   deletes, attachments and content-scoped relations, in the HTTP API, MCP,

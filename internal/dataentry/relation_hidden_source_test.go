@@ -152,6 +152,13 @@ func TestPatchRelations_HiddenSourceIsNonexistent(t *testing.T) {
 // store no draft.
 func policyRelationApp(t *testing.T, read []string, grant acl.RelationGrant, draft string) (*App, *acl.Declarative) {
 	t.Helper()
+	return policyGrantsApp(t, read, []acl.RelationGrant{grant}, draft)
+}
+
+// policyGrantsApp is policyRelationApp with every relation grant alice holds
+// on policy.
+func policyGrantsApp(t *testing.T, read []string, grants []acl.RelationGrant, draft string) (*App, *acl.Declarative) {
+	t.Helper()
 	write := []string{"feature", "policy@draft", "policy@published"}
 	app, d := facedAppWith(t, linkableMeta(t), policyPublishedScope(), func(st store.Store) *acl.Declarative {
 		ctx := context.Background()
@@ -170,7 +177,7 @@ func policyRelationApp(t *testing.T, read []string, grant acl.RelationGrant, dra
 		return mustNewACL(t, &acl.Policy{
 			Roles: map[string]acl.RoleDef{"r": {
 				Read: read, Create: write, Update: write, Delete: write,
-				Relations: map[string][]acl.RelationGrant{"policy": {grant}},
+				Relations: map[string][]acl.RelationGrant{"policy": grants},
 			}},
 			Assignments: map[string]string{"alice": "r"},
 		}, st)

@@ -28,7 +28,7 @@ func TestRelationSources_ReadsTheTailFace(t *testing.T) {
 
 	faces := func(t *testing.T, peer entity.Ref, direction string) []string {
 		t.Helper()
-		got, err := svc.relationSources(ctx, path, peer, direction)
+		got, err := svc.relationSources(ctx, path, peer, direction, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,7 +72,7 @@ func TestRelationSources_ReadsTheTailFace(t *testing.T) {
 		faulty := svc
 		fault := errors.New("store down")
 		faulty.sourceFamily = func(context.Context, string) ([]*entity.Entity, error) { return nil, fault }
-		if _, err := faulty.relationSources(ctx, path, entity.Ref{ID: "TKT-F", Face: entity.ImplicitFace}, incoming); !errors.Is(err, fault) {
+		if _, err := faulty.relationSources(ctx, path, entity.Ref{ID: "TKT-F", Face: entity.ImplicitFace}, incoming, ""); !errors.Is(err, fault) {
 			t.Errorf("err = %v, want the read fault", err)
 		}
 	})

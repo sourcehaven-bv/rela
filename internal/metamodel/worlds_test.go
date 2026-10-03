@@ -50,6 +50,7 @@ func TestWorlds_ParseAndDeclare(t *testing.T) {
       page: draft
     otherwise: default
     edits: review
+default_world: published
 `)))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -347,6 +348,7 @@ func TestWorlds_OnAbsentRedirectValidated(t *testing.T) {
     primary_for: published
     on_absent:
       redirect: ` + tc.target + `
+default_world: published
 `)))
 			if tc.wantErr == "" {
 				if err != nil {

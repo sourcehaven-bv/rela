@@ -1527,8 +1527,11 @@ It must name a declared world, or `default` when the schema declares no worlds.
 Anything else, a different capitalization included, fails the load. The key
 may appear only in the root schema file, not in an included one.
 
-Without the key, the default world is the first world declared under
-`worlds:`, or the generated `default` world when none is declared.
+The key is required when more than one world is declared; a schema that
+declares two or more worlds without it fails to load. A default taken from the
+order of `worlds:` would change whenever someone sorted the block. With one
+declared world the key may be left out and that world is the default. With
+none, the default is the generated `default` world.
 
 Lua scripts, the MCP server, the CLI, scheduled tasks, validation and the
 documentation builder all read in this world. A scheduled task reads under its
@@ -1537,8 +1540,9 @@ world that the principal may read.
 
 The data-entry web app lands a request without `?world=` in the world this key
 names. `app.default_world` in `data-entry.yaml` is a deprecated alias: it must
-name the same world as this key, or as the first declared world when this key
-is unset, and otherwise the configuration does not load (see
+name the same world as this key (or as the only declared world when this key
+is unset), and otherwise the configuration does not load. It does not satisfy
+the requirement above; a schema with several worlds needs the key itself (see
 [Data entry](data-entry.md#browsing-default-appdefault_world)).
 
 ### `primary_for:` — only when two worlds lead the same face

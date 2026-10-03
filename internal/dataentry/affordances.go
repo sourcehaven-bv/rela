@@ -685,27 +685,25 @@ type relationSource struct {
 	unconditional bool
 }
 
-// relationSources returns what gates a per-relation write. For
-// outgoing-direction operations the source IS the path entity (the
-// canonical case). For incoming-direction operations the path entity is the
-// TARGET; the source is the peer, so the resolver must be asked about the
-// peer's affordance, not the path entity's.
+// relationSources returns what gates a per-relation write of relType. The
+// gate reads the edge's source: the path entity for an outgoing edge, the
+// peer for an incoming one (the path entity is then the TARGET, so the
+// resolver must be asked about the peer's affordance, not the path entity's).
 //
 // peer is the source at the edge's tail: the tail an existing edge carries, or
-// the tail a new incoming edge will get. When the peer has no row there, the
-// edge belongs to the whole peer, and a write passes only if every face the
-// peer's type declares permits it. That is the case for a new or
-// identity-scoped edge from a faced peer: its zero face holds no row
-// (DEC-NPZICR), and falling back to the path entity would judge the edge by
-// the wrong type's policy.
+// the tail a new incoming edge will get. It is read for an incoming edge only.
 //
-// A face is judged on its row when the principal can read the row. Every
-// other face is judged on the policy alone: one unconditional source stands
-// for them all. A face the principal reads unconditionally and that has no
-// row does not exist, so it needs no judgement. Which faces get the
-// unconditional judgement depends on the grants only, never on a row the
-// principal cannot read, so the verdict neither discloses a hidden face nor
-// skips a `when:` that would deny on it.
+// An edge with no source row at its tail belongs to the whole source, and a
+// write passes only if every face the source's type declares permits it.
+// That is the case for a new or identity-scoped incoming edge from a faced
+// peer: its zero face holds no row (DEC-NPZICR), and falling back to the
+// path entity would judge the edge by the wrong type's policy. It is also
+// the case for an outgoing identity-scoped edge from a faced path entity: the
+// served face is one judgement among the family's, never the only one. An
+// outgoing content-scoped edge belongs to the served face and is judged on it
+// alone.
+//
+// Within a family, see [affordanceService.familySources].
 //
 // A peer with no readable row at all falls back to the path entity, so a
 // hidden peer is judged exactly as a missing one. The write refuses both as
@@ -713,10 +711,13 @@ type relationSource struct {
 //
 // A read fault is returned: the caller must not write on a guess.
 func (svc affordanceService) relationSources(
-	ctx context.Context, pathEntity *entityPkg.Entity, peer entityPkg.Ref, direction string,
+	ctx context.Context, pathEntity *entityPkg.Entity, peer entityPkg.Ref, direction, relType string,
 ) ([]relationSource, error) {
 	if direction != string(DirectionIncoming) {
-		return []relationSource{{row: pathEntity}}, nil
+		if pathEntity == nil || metamodel.IsContentScoped(svc.meta(), relType) || !svc.faced(pathEntity) {
+			return []relationSource{{row: pathEntity}}, nil
+		}
+		return svc.ownFamilySources(ctx, pathEntity)
 	}
 	if src, ok := svc.sourceRow(ctx, peer); ok {
 		return []relationSource{{row: src}}, nil
@@ -728,6 +729,41 @@ func (svc affordanceService) relationSources(
 	if len(family) == 0 {
 		return []relationSource{{row: pathEntity}}, nil
 	}
+	return svc.familySources(ctx, family), nil
+}
+
+// faced reports whether e's type declares faces.
+func (svc affordanceService) faced(e *entityPkg.Entity) bool {
+	return len(metamodel.FaceOrderOf(svc.meta(), e.Type)) > 0
+}
+
+// ownFamilySources is [affordanceService.familySources] for an identity edge
+// from e, a faced path entity. e is judged as the request holds it, which
+// for a create is the only row there is; its other faces are read.
+func (svc affordanceService) ownFamilySources(ctx context.Context, e *entityPkg.Entity) ([]relationSource, error) {
+	var family []*entityPkg.Entity
+	if e.ID != "" {
+		var err error
+		if family, err = svc.sourceFamily(ctx, e.ID); err != nil {
+			return nil, fmt.Errorf("reading relation source %s: %w", e.ID, err)
+		}
+	}
+	family = slices.DeleteFunc(family, func(f *entityPkg.Entity) bool { return f.Face == e.Face })
+	return svc.familySources(ctx, append([]*entityPkg.Entity{e}, family...)), nil
+}
+
+// familySources returns the judgements an edge owned by a whole faced entity
+// needs. family holds the rows of that entity the principal can read and is
+// not empty.
+//
+// A face is judged on its row when the principal can read the row. Every
+// other face is judged on the policy alone: one unconditional source stands
+// for them all. A face the principal reads unconditionally and that has no
+// row does not exist, so it needs no judgement. Which faces get the
+// unconditional judgement depends on the grants only, never on a row the
+// principal cannot read, so the verdict neither discloses a hidden face nor
+// skips a `when:` that would deny on it.
+func (svc affordanceService) familySources(ctx context.Context, family []*entityPkg.Entity) []relationSource {
 	out := make([]relationSource, 0, len(family)+1)
 	for _, e := range family {
 		out = append(out, relationSource{row: e})
@@ -735,7 +771,7 @@ func (svc affordanceService) relationSources(
 	if svc.hasUnreadFace(ctx, family) {
 		out = append(out, relationSource{row: family[0], unconditional: true})
 	}
-	return out, nil
+	return out
 }
 
 // hasUnreadFace reports whether the type of family declares a face that is
@@ -788,7 +824,8 @@ func (svc affordanceService) linkableFrom(
 	if scope.IsContent() {
 		tail = row.Face
 	}
-	sources, err := svc.relationSources(ctx, nil, entityPkg.Ref{ID: row.ID, Face: tail}, string(DirectionIncoming))
+	sources, err := svc.relationSources(ctx, nil, entityPkg.Ref{ID: row.ID, Face: tail},
+		string(DirectionIncoming), relType)
 	if err != nil {
 		return false
 	}
@@ -942,7 +979,8 @@ func (svc affordanceService) validateRelationOps(
 		direction = string(DirectionIncoming)
 	}
 	for _, op := range ops {
-		sources, err := svc.relationSources(ctx, e, entityPkg.Ref{ID: op.slot.peer, Face: op.slot.tail}, direction)
+		sources, err := svc.relationSources(ctx, e, entityPkg.Ref{ID: op.slot.peer, Face: op.slot.tail},
+			direction, canonical)
 		if err != nil {
 			return err
 		}
@@ -1159,7 +1197,7 @@ func redactedPropertyNames(v FieldVerdicts) []string {
 func (svc affordanceService) computeRelationAffordances(
 	ctx context.Context, e *entityPkg.Entity,
 ) map[string]v1.RelationAffordance {
-	v := svc.resolver().RelationVerdicts(ctx, e)
+	v := svc.outgoingRelationVerdicts(ctx, e)
 	out := make(map[string]v1.RelationAffordance)
 	for relType, rv := range v.Types {
 		var entry v1.RelationAffordance
@@ -1194,6 +1232,67 @@ func (svc affordanceService) computeRelationAffordances(
 		}
 	}
 	return out
+}
+
+// outgoingRelationVerdicts is the verdict per relation type for an edge
+// from e, as the write gate judges it ([affordanceService.relationSources]):
+// a content-scoped type on e alone, an identity-scoped type from a faced e
+// over every source of its family. A dimension is allowed only when every
+// source allows it. A family read fault denies every identity-scoped type,
+// as the write would fail.
+func (svc affordanceService) outgoingRelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts {
+	own := svc.resolver().RelationVerdicts(ctx, e)
+	if !svc.faced(e) {
+		return own
+	}
+	meta := svc.meta()
+	identity := func(relType string) bool { return !metamodel.IsContentScoped(meta, relType) }
+	out := RelationVerdicts{Types: map[string]RelationVerdict{}}
+	for relType, rv := range own.Types {
+		if !identity(relType) {
+			out.Types[relType] = rv
+		}
+	}
+	sources, err := svc.ownFamilySources(ctx, e)
+	if err != nil {
+		for relType := range meta.Relations {
+			if identity(relType) {
+				out.Types[relType] = RelationVerdict{}
+			}
+		}
+		return out
+	}
+	for _, src := range sources {
+		v := own
+		if src.row != e || src.unconditional {
+			v = svc.verdictsOf(ctx, src)
+		}
+		for relType, rv := range v.Types {
+			if !identity(relType) {
+				continue
+			}
+			acc, seen := out.Types[relType]
+			if !seen {
+				acc = RelationVerdict{Creatable: true, Removable: true}
+			}
+			out.Types[relType] = acc.and(rv)
+		}
+	}
+	return out
+}
+
+// and is v allowing a dimension only where o allows it too.
+func (v RelationVerdict) and(o RelationVerdict) RelationVerdict {
+	v.Creatable = v.Creatable && o.Creatable
+	v.Removable = v.Removable && o.Removable
+	for field, writable := range o.Fields {
+		if v.Fields == nil {
+			v.Fields = map[string]bool{}
+		}
+		prev, ok := v.Fields[field]
+		v.Fields[field] = writable && (!ok || prev)
+	}
+	return v
 }
 
 // copyVisibleProperties returns a fresh map of the entity's properties

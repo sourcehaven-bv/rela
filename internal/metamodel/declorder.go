@@ -249,10 +249,22 @@ func isPermutation[V any](order []string, m map[string]V) bool {
 // validateDefaultWorld checks the top-level `default_world:` key: the world a
 // request uses when it names none (TKT-7IZHP0 design §21 D3). With worlds
 // declared it must name one of them; with none it may only be the generated
-// default world. Unset is always valid; [EffectiveDefaultWorld] then picks.
+// default world.
+//
+// With more than one world declared the key is required. Falling back to the
+// first declared world would make the default depend on declaration order,
+// so sorting `worlds:` (a YAML linter, a tidy colleague) would silently change
+// what every surface reads. With one world or none, unset is valid and
+// [EffectiveDefaultWorld] picks the only world there is.
 func validateDefaultWorld(m *Metamodel) []string {
 	w := m.DefaultWorld
 	if w == "" {
+		if declared := WorldOrderOf(m); len(declared) > 1 {
+			return []string{fmt.Sprintf("worlds: %d worlds are declared (%s) but default_world is not set; "+
+				"add \"default_world: <world>\" so the default does not depend on declaration order "+
+				"(a deprecated app.default_world in data-entry.yaml does not count; move it to schema.yaml)",
+				len(declared), strings.Join(declared, ", "))}
+		}
 		return nil
 	}
 	if err := CheckWorldName(m, w); err != nil {
@@ -263,7 +275,9 @@ func validateDefaultWorld(m *Metamodel) []string {
 
 // EffectiveDefaultWorld returns the name of the world a request uses when it
 // names none (TKT-7IZHP0 design §21 D3): the `default_world:` key when set,
-// else the first declared world, else the generated [DefaultWorldName].
+// else the first declared world, else the generated [DefaultWorldName]. A
+// loaded schema that declares more than one world always sets the key
+// (validateDefaultWorld), so the fallback picks the only declared world.
 // Nil: accepted, returns [DefaultWorldName].
 func EffectiveDefaultWorld(m *Metamodel) string {
 	if m == nil {

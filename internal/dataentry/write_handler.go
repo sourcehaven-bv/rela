@@ -340,9 +340,9 @@ func (h *writeHandler) relationGateOK(
 // relationSourcesOr500 is [affordanceService.relationSources] that answers the
 // request itself when a source row cannot be read.
 func (h *writeHandler) relationSourcesOr500(
-	w http.ResponseWriter, r *http.Request, pathEntity *entityPkg.Entity, peer entityPkg.Ref, direction string,
+	w http.ResponseWriter, r *http.Request, pathEntity *entityPkg.Entity, peer entityPkg.Ref, direction, relType string,
 ) ([]relationSource, bool) {
-	sources, err := h.affordances.relationSources(r.Context(), pathEntity, peer, direction)
+	sources, err := h.affordances.relationSources(r.Context(), pathEntity, peer, direction, relType)
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation source", err.Error())
 		return nil, false
@@ -1169,7 +1169,7 @@ func (h *writeHandler) handleV1CreateRelation(
 	// Affordance gates: creatable + meta-writable, evaluated against
 	// the SOURCE of the new edge (not necessarily the path entity —
 	// for incoming-direction creates the path entity is the target).
-	sources, ok := h.relationSourcesOr500(w, r, entity, peer, req.Direction)
+	sources, ok := h.relationSourcesOr500(w, r, entity, peer, req.Direction, relType)
 	if !ok {
 		return
 	}
@@ -1242,7 +1242,7 @@ func (h *writeHandler) handleV1UpdateRelation(
 		return
 	}
 
-	sources, ok := h.relationSourcesOr500(w, r, entity, entityPkg.Ref{ID: from, Face: tail}, req.Direction)
+	sources, ok := h.relationSourcesOr500(w, r, entity, entityPkg.Ref{ID: from, Face: tail}, req.Direction, relType)
 	if !ok {
 		return
 	}
@@ -1329,7 +1329,7 @@ func (h *writeHandler) handleV1DeleteRelation(
 		return
 	}
 
-	sources, ok := h.relationSourcesOr500(w, r, entity, entityPkg.Ref{ID: from, Face: tail}, direction)
+	sources, ok := h.relationSourcesOr500(w, r, entity, entityPkg.Ref{ID: from, Face: tail}, direction, relType)
 	if !ok {
 		return
 	}

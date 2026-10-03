@@ -198,6 +198,7 @@ worlds:
   drafts:
     select: draft
     otherwise: default
+default_world: everything
 `
 	m, err := Parse([]byte(doc))
 	if err != nil {

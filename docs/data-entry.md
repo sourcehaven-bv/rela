@@ -6712,9 +6712,9 @@ default_world: published
 A handbook should land readers in the world holding the published text.
 
 `default_world` in the `app:` block of `data-entry.yaml` is the older spelling
-and is deprecated. It must name the schema's default world: the schema key when
-set, else the first declared world. Any other value fails the load. Remove it
-once `schema.yaml` carries the key.
+and is deprecated. It must name the schema's default world. Any other value
+fails the load. It does not replace the schema key, which a schema with more
+than one world must set: move the value to `schema.yaml` and remove it here.
 
 `default_world` is presentation, not policy. It grants nothing: the world's
 read grant is re-checked on every request exactly as for an explicit `?world=`,

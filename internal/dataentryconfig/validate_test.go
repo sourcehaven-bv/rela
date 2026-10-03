@@ -2472,14 +2472,20 @@ views:
 // warning, just the wrong faces everywhere. Failing the load is the only
 // signal an operator gets.
 func TestValidateApp_DefaultWorld(t *testing.T) {
+	// A schema that declares more than one world must set default_world, or
+	// it does not load, so every two-world metamodel here carries the key.
 	meta := &metamodel.Metamodel{
 		Version: "1.0",
 		Worlds: map[string]metamodel.WorldDef{
 			"published": {Select: []string{"published"}, Otherwise: "exclude"},
 			"site-nl":   {Select: []string{"nl", "en"}, Otherwise: "default"},
 		},
+		DefaultWorld: "published",
 	}
-	withSchemaDefault := &metamodel.Metamodel{Version: "1.0", Worlds: meta.Worlds, DefaultWorld: "published"}
+	withSchemaDefault := meta
+	oneWorld := &metamodel.Metamodel{Version: "1.0", Worlds: map[string]metamodel.WorldDef{
+		"published": {Select: []string{"published"}, Otherwise: "exclude"},
+	}}
 
 	tests := []struct {
 		name    string
@@ -2488,7 +2494,11 @@ func TestValidateApp_DefaultWorld(t *testing.T) {
 		wantErr string
 	}{
 		{name: "unset is fine", world: "", meta: meta},
-		{name: "the first declared world, which the schema lands in, is accepted", world: "published", meta: meta},
+		{name: "one world, no schema key: the alias may name it", world: "published", meta: oneWorld},
+		{
+			name: "one world, no schema key: the alias may not name another", world: "site-nl", meta: oneWorld,
+			wantErr: `world "site-nl" is not declared (declared, in order: published)`,
+		},
 		{
 			// TKT-7IZHP0 D11: beside declared worlds, `default` names nothing.
 			name: "the reserved default world is refused beside declared worlds", world: "default", meta: meta,
@@ -2502,13 +2512,6 @@ func TestValidateApp_DefaultWorld(t *testing.T) {
 			name:  "a typo is refused, and the error names what IS declared",
 			world: "publsihed", meta: meta,
 			wantErr: `world "publsihed" is not declared (declared, in order: published, site-nl)`,
-		},
-		{
-			// RR-26WKZX: with schema default_world unset, the schema lands in
-			// the first declared world, so naming another one contradicts it.
-			name:  "a declared world other than the effective default is refused",
-			world: "site-nl", meta: meta,
-			wantErr: `"site-nl" contradicts the schema's default world "published"`,
 		},
 		{
 			name:  "set with no metamodel is refused rather than assumed valid",
@@ -3123,6 +3126,7 @@ func TestValidateLists_CreateWorld(t *testing.T) {
 			"published": {Select: []string{"published"}, Otherwise: "exclude"},
 			"editorial": {Select: []string{"draft"}, Otherwise: "default"},
 		},
+		DefaultWorld: "editorial",
 	}
 
 	tests := []struct {

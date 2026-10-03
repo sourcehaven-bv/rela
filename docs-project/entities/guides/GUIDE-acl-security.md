@@ -744,8 +744,8 @@ content, say so with the grants: name the faces in `read:`, or use
 `deny_read`. Those run on every request path.
 
 **`deny_worlds` cannot name the default world.** The default world is the
-schema's `default_world:`: the declared one, else the first declared world,
-else the generated `default`. Requests that name no world read in it, and so do
+schema's `default_world:`, which a schema with more than one world must set;
+with one world it is that world, and with none the generated `default`. Requests that name no world read in it, and so do
 the CLI, MCP, scripts and scheduled tasks. A ceiling that denied it would deny
 every read on those surfaces, so naming it in `deny_worlds` is a load error. A
 `worlds:` allowlist need not list it either: a ceiling narrows only the worlds

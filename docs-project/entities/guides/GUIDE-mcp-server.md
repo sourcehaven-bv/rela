@@ -133,7 +133,7 @@ An entity type can declare faces, such as `concept` and `adopted`. A world
 picks one face per entity, in the order its `select:` names them.
 
 - A bare id resolves through a world. Without `world`, both servers use the
-  schema's default world: `default_world`, else the first declared world.
+  schema's default world, named by `default_world`.
 - `ID@face`, such as `POL-001@concept`, reads that face in any world.
 - `world` on `list_entities`, `search_entities` and `show_entity` reads in
   that world, so `world: "review"` lists what a `review` world selects.

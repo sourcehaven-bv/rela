@@ -64,7 +64,8 @@ type Metamodel struct {
 
 	// DefaultWorld names the world a request uses when it names none
 	// (TKT-7IZHP0 design §21 D3). With worlds declared it must name one of
-	// them; unset means the first declared world. With none declared it may
+	// them, and with more than one it is required: an order-derived default
+	// would change when someone sorts `worlds:`. With none declared it may
 	// only be [DefaultWorldName]. [EffectiveDefaultWorld] applies those
 	// rules. `app.default_world` in data-entry.yaml is a deprecated alias
 	// that must match the effective value.

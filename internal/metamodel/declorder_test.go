@@ -10,13 +10,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const twoWorlds = `worlds:
+// twoWorldsNoDefault declares two worlds and no default_world, which fails
+// the load; twoWorlds adds the key.
+const twoWorldsNoDefault = `worlds:
   published:
     select: published
     otherwise: exclude
   editorial:
     select: [review, published]
     otherwise: default
+`
+
+const twoWorlds = twoWorldsNoDefault + "default_world: published\n"
+
+const oneWorld = `worlds:
+  published:
+    select: published
+    otherwise: exclude
 `
 
 // TestDeclOrder_FromYAML pins that faces and worlds come back in the order
@@ -180,7 +190,9 @@ func TestValidateDeclOrder(t *testing.T) {
 }
 
 // TestDefaultWorldKey pins the top-level `default_world:` key: accepted as a
-// key, and validated against the declared worlds (TKT-7IZHP0 §21 D3).
+// key, validated against the declared worlds (TKT-7IZHP0 §21 D3), and
+// required when more than one world is declared, so the default never
+// depends on the order of `worlds:`.
 func TestDefaultWorldKey(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -189,17 +201,27 @@ func TestDefaultWorldKey(t *testing.T) {
 		value   string
 		wantErr string
 	}{
-		{name: "unset with worlds", worlds: twoWorlds},
+		{name: "unset with two worlds", worlds: twoWorldsNoDefault,
+			wantErr: `worlds: 2 worlds are declared (published, editorial) but default_world is not set; ` +
+				`add "default_world: <world>" so the default does not depend on declaration order`},
+		{name: "unset with two worlds names the alias", worlds: twoWorldsNoDefault,
+			wantErr: `a deprecated app.default_world in data-entry.yaml does not count; move it to schema.yaml`},
+		{name: "unset with three worlds", worlds: twoWorldsNoDefault + "  site:\n    select: published\n",
+			wantErr: `worlds: 3 worlds are declared (published, editorial, site) but default_world is not set`},
+		{name: "unset with one world", worlds: oneWorld},
 		{name: "unset without worlds"},
-		{name: "a declared world", worlds: twoWorlds, value: "editorial"},
+		{name: "one world, set", worlds: oneWorld, value: "published"},
+		{name: "one world, undeclared", worlds: oneWorld, value: "editorial",
+			wantErr: `default_world: world "editorial" is not declared (declared, in order: published)`},
+		{name: "two worlds, a declared world", worlds: twoWorldsNoDefault, value: "editorial"},
 		{name: "the generated world without worlds", value: "default"},
-		{name: "an undeclared world", worlds: twoWorlds, value: "publsihed",
+		{name: "two worlds, an undeclared world", worlds: twoWorldsNoDefault, value: "publsihed",
 			wantErr: `default_world: world "publsihed" is not declared (declared, in order: published, editorial)`},
-		{name: "the generated world beside declared worlds", worlds: twoWorlds, value: "default",
+		{name: "the generated world beside declared worlds", worlds: twoWorldsNoDefault, value: "default",
 			wantErr: `default_world: world "default" does not exist when worlds are declared`},
 		{name: "a world when none is declared", value: "published",
 			wantErr: `default_world: world "published" does not exist; no worlds are declared`},
-		{name: "case matters", worlds: twoWorlds, value: "Published",
+		{name: "case matters", worlds: twoWorldsNoDefault, value: "Published",
 			wantErr: `default_world: world "Published" is not declared`},
 	}
 	for _, tc := range cases {

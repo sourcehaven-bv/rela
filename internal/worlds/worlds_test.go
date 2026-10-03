@@ -20,7 +20,9 @@ func parseSchema(t *testing.T, yaml string) *metamodel.Metamodel {
 	return m
 }
 
-const facedSchema = `version: "1.0"
+// facedSchemaNoDefault declares two worlds and no default_world, which a
+// load refuses; facedSchema adds the key.
+const facedSchemaNoDefault = `version: "1.0"
 namespace: https://example.org/test#
 entities:
   page:
@@ -52,6 +54,8 @@ worlds:
       page: draft
     otherwise: default
 `
+
+const facedSchema = facedSchemaNoDefault + "default_world: published\n"
 
 func ptr(t *testing.T, s string) entity.Face {
 	t.Helper()
@@ -179,6 +183,7 @@ worlds:
   lenient:
     select: published
     otherwise: default
+default_world: published
 `)
 		// `note` declares `published` so the world is declarable, while
 		// `memo` declares only draft/archived — so memo's chain is EMPTY
@@ -418,12 +423,13 @@ func TestCompiled_DefaultWorld(t *testing.T) {
 			wantNames: []string{metamodel.DefaultWorldName}, wantPage: []entity.Face{"published", "draft"},
 		},
 		{
-			name: "declared worlds, no key: the first declared world", schema: facedSchema,
-			wantName: "published", wantNames: []string{"published", "editorial"},
+			name: "one declared world, no key: that world", schema: facedNoWorldsSchema +
+				"worlds:\n  published:\n    select: published\n    otherwise: exclude\n",
+			wantName: "published", wantNames: []string{"published"},
 			wantPage: []entity.Face{"published"},
 		},
 		{
-			name: "declared worlds, default_world key", schema: facedSchema + "default_world: editorial\n",
+			name: "declared worlds, default_world key", schema: facedSchemaNoDefault + "default_world: editorial\n",
 			wantName: "editorial", wantNames: []string{"published", "editorial"},
 			wantPage: []entity.Face{"draft"},
 		},

@@ -2664,8 +2664,9 @@ func validateApp(cfg *Config, meta *metamodel.Metamodel) []string {
 // validateDefaultWorldAlias checks app.default_world, the deprecated alias of
 // schema.yaml's default_world (TKT-7IZHP0 D3).
 //
-// The schema decides the default world: its default_world key, else the
-// first declared world, else the generated "default". The alias may only
+// The schema decides the default world: its default_world key (required
+// when it declares more than one world), else its only declared world, else
+// the generated "default". The alias may only
 // restate that answer. A name that differs fails the load, whether it is a
 // typo or a real world, because the HTTP surface and every non-HTTP reader
 // would otherwise land in different worlds, and nothing would look broken.

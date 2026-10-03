@@ -426,6 +426,7 @@ func metaWithWorlds() *metamodel.Metamodel {
 			"editorial": {},
 			"published": {},
 		},
+		DefaultWorld: "editorial",
 	}
 }
 

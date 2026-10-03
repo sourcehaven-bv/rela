@@ -53,6 +53,7 @@ func worldsMeta() *metamodel.Metamodel {
 				Overrides: map[string][]string{"policy": {"published"}},
 			},
 		},
+		DefaultWorld: "published",
 	}
 }
 
