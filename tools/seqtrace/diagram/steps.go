@@ -1,7 +1,7 @@
 package diagram
 
 import (
-	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -118,24 +118,47 @@ func (b *builder) step(from, to, fn string, c *Call) Step {
 	return s
 }
 
-// children builds the steps under c as seen from participant from.
-// Consecutive groups with the same shape fold into a loop.
+// children builds the steps under c as seen from participant from. Each
+// child call contributes a group of steps (more than one when the child is a
+// same-package call). Back-to-back groups of the same shape fold into a loop
+// first, whatever their size, so a helper called once per entity folds even
+// when it makes many calls. fold then catches repeats that span calls.
 func (b *builder) children(c *Call, from string, depth int) []Step {
-	flat := make([]Step, 0, len(c.Children))
-	for _, ch := range c.Children {
-		flat = append(flat, b.call(ch, from, depth)...)
+	var out, prev []Step
+	count, same := 0, true
+	flush := func() {
+		switch {
+		case count == 1:
+			out = append(out, prev...)
+		case count > 1:
+			out = append(out, Step{Repeat: count, Elided: !same, Children: fold(prev)})
+		}
 	}
-	return fold(flat)
+	for _, ch := range c.Children {
+		group := b.call(ch, from, depth)
+		if len(group) == 0 {
+			continue
+		}
+		if count > 0 && sameShape(group, prev) {
+			count++
+			same = same && equalSteps(group, prev)
+			continue
+		}
+		flush()
+		prev, count, same = group, 1, true
+	}
+	flush()
+	return fold(out)
 }
 
 // maxPeriod is the longest run of steps fold recognizes as a loop body.
 const maxPeriod = 8
 
 // fold replaces back-to-back repeats of a run of 1 to maxPeriod steps with
-// a loop step. A loop in one function that calls three others shows up as a
-// repeating run of three, so matching single steps only would miss it. At
-// each position it takes the period that covers the most steps, the shortest
-// on a tie.
+// a loop step. A loop in one function that calls three others directly shows
+// up as a repeating run of three steps, which children cannot see because
+// each step comes from a different child call. At each position fold takes
+// the period that covers the most steps, the shortest on a tie.
 func fold(steps []Step) []Step {
 	var out []Step
 	for i := 0; i < len(steps); {
@@ -157,12 +180,31 @@ func fold(steps []Step) []Step {
 		body := steps[i : i+bestK]
 		same := true
 		for j := 1; j < bestN && same; j++ {
-			same = reflect.DeepEqual(steps[i+j*bestK:i+(j+1)*bestK], body)
+			same = equalSteps(steps[i+j*bestK:i+(j+1)*bestK], body)
 		}
-		out = append(out, Step{Repeat: bestN, Elided: !same, Children: body})
+		out = append(out, Step{Repeat: bestN, Elided: !same, Children: fold(body)})
 		i += bestN * bestK
 	}
 	return out
+}
+
+// equalSteps reports whether a and b are the same steps with the same
+// values. Unlike reflect.DeepEqual it treats a nil and an empty value list
+// alike, since a trace read from JSON may hold either.
+func equalSteps(a, b []Step) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		x, y := &a[i], &b[i]
+		if x.From != y.From || x.To != y.To || x.Fn != y.Fn || x.Via != y.Via || x.Repeat != y.Repeat ||
+			x.Elided != y.Elided || !slices.Equal(x.Args, y.Args) || !slices.Equal(x.Results, y.Results) ||
+			!equalSteps(x.Children, y.Children) {
+
+			return false
+		}
+	}
+	return true
 }
 
 // call returns the steps c contributes: one step, or, for a call inside the

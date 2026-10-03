@@ -1,13 +1,15 @@
-// Package diagram turns a seqtrace event log into Mermaid sequence diagrams.
+// Package diagram turns a seqtrace event log into a tree of steps per
+// request ([Build]), and renders it as a Mermaid sequence diagram
+// ([Diagram.Mermaid]) or an indented text tree ([Diagram.Text]). [Compare]
+// reports how the trees of two runs differ.
 //
 // Participants are packages. A call inside one package is not drawn; its
 // cross-package calls are drawn from that package. A call whose parent runs
 // on another goroutine is drawn as an async arrow labeled with how the
-// parent was found (go, ctx, closure). Consecutive identical sibling calls
-// fold into a Mermaid loop block.
+// parent was found (go, ctx, closure). Repeats fold into loops; see fold.
 //
 // Call arrows carry the argument summaries the runtime recorded and return
-// arrows the result summaries. Siblings that differ only in those values
+// arrows the result summaries. Repeats that differ only in those values
 // still fold; the loop then shows "…" in place of the values.
 package diagram
 

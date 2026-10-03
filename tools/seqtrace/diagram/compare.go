@@ -16,16 +16,19 @@ type Scenario struct {
 	Diagram *Diagram `json:"diagram"`
 }
 
-// keys matches scenarios across runs: by name, or by handler and its
-// occurrence among unnamed scenarios.
+// keys matches scenarios across runs: by name, or by handler for unnamed
+// ones, plus the occurrence number when a key repeats.
 func keys(ss []Scenario) []string {
 	seen := map[string]int{}
 	out := make([]string, len(ss))
 	for i, s := range ss {
 		k := s.Name
 		if k == "" {
-			seen[s.Handler]++
-			k = fmt.Sprintf("%s #%d", s.Handler, seen[s.Handler])
+			k = s.Handler
+		}
+		seen[k]++
+		if s.Name == "" || seen[k] > 1 {
+			k = fmt.Sprintf("%s #%d", k, seen[k])
 		}
 		out[i] = k
 	}
@@ -60,7 +63,7 @@ func Compare(w io.Writer, base, head []Scenario, values bool) (int, error) {
 		old, ok := byKey[hk[i]]
 		if !ok {
 			changed++
-			fmt.Fprintf(&b, "## %s: added (%d calls)\n\n", hk[i], h.Diagram.Calls())
+			fmt.Fprintf(&b, "## %s: added (%d cross-package calls)\n\n", hk[i], h.Diagram.Calls())
 			continue
 		}
 		delete(byKey, hk[i])
@@ -70,7 +73,7 @@ func Compare(w io.Writer, base, head []Scenario, values bool) (int, error) {
 			continue
 		}
 		changed++
-		fmt.Fprintf(&b, "## %s: changed\n\ncalls: %d -> %d\n", hk[i], old.Diagram.Calls(), h.Diagram.Calls())
+		fmt.Fprintf(&b, "## %s: changed\n\ncross-package calls: %d -> %d\n", hk[i], old.Diagram.Calls(), h.Diagram.Calls())
 		writeEdgeDeltas(&b, old.Diagram.Edges(), h.Diagram.Edges())
 		b.WriteString("\n```diff\n")
 		writeLineDiff(&b, ol, nl)
@@ -79,7 +82,7 @@ func Compare(w io.Writer, base, head []Scenario, values bool) (int, error) {
 	for _, k := range bk {
 		if s, ok := byKey[k]; ok {
 			changed++
-			fmt.Fprintf(&b, "## %s: removed (%d calls)\n\n", k, s.Diagram.Calls())
+			fmt.Fprintf(&b, "## %s: removed (%d cross-package calls)\n\n", k, s.Diagram.Calls())
 		}
 	}
 	fmt.Fprintf(&b, "%d changed, %d unchanged\n", changed, unchanged)

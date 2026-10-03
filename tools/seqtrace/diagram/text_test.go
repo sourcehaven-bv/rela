@@ -1,6 +1,7 @@
 package diagram
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -71,13 +72,13 @@ func TestCompare(t *testing.T) {
 	}
 	got := b.String()
 	for _, want := range []string{
-		"## read: changed\n\ncalls: 5 -> 7\n",
+		"## read: changed\n\ncross-package calls: 5 -> 7\n",
 		"+ dataentry -> visibility: 1 (new edge)\n",
 		"~ dataentry -> store: 2 -> 3\n",
 		"-  2× store Get(…) -> …\n+  3× store Get(…) -> …\n",
 		"+  visibility Redact\n",
-		"## new #1: added (7 calls)",
-		"## gone: removed (5 calls)",
+		"## new #1: added (7 cross-package calls)",
+		"## gone: removed (5 cross-package calls)",
 		"3 changed, 1 unchanged",
 	} {
 		if !strings.Contains(got, want) {
@@ -125,5 +126,56 @@ func TestFoldPeriodic(t *testing.T) {
 	}, "\n")
 	if got != exp {
 		t.Errorf("folded =\n%s\nwant\n%s", got, exp)
+	}
+}
+
+// TestFoldLargeHelper: a same-package helper called once per item folds by
+// call, however many cross-package calls it makes.
+func TestFoldLargeHelper(t *testing.T) {
+	helper := func() *Call {
+		h := &Call{Event: Event{Pkg: "a", Fn: "helper"}}
+		for i := range 9 {
+			h.Children = append(h.Children, &Call{Event: Event{Pkg: "b", Fn: fmt.Sprintf("F%d", i)}})
+		}
+		return h
+	}
+	root := &Call{Event: Event{Pkg: "a", Fn: "Handle"}, Children: []*Call{helper(), helper(), helper()}}
+	d := Build(root, Options{})
+	if len(d.Root.Children) != 1 || d.Root.Children[0].Repeat != 3 || len(d.Root.Children[0].Children) != 9 {
+		t.Errorf("want one 3× loop of 9 steps, got:\n%s", strings.Join(d.Shape(), "\n"))
+	}
+}
+
+func TestFoldNestedBody(t *testing.T) {
+	st := func(to string) Step { return Step{From: "a", To: to, Fn: "F"} }
+	var steps []Step
+	for range 3 {
+		steps = append(steps, st("x"), st("x"), st("y"))
+	}
+	d := &Diagram{Root: Step{From: "Caller", To: "a", Fn: "H", Children: fold(steps)}}
+	want := "a H\n  3× loop\n    2× x F\n    y F"
+	if got := strings.Join(d.Shape(), "\n"); got != want {
+		t.Errorf("folded =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestCompareDuplicateNames(t *testing.T) {
+	d := buildTrace(t)
+	ss := []Scenario{{Name: "read", Diagram: d}, {Name: "read", Diagram: d}}
+	var b strings.Builder
+	n, err := Compare(&b, ss, ss, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("changed = %d, want 0:\n%s", n, b.String())
+	}
+}
+
+func TestTextStripsControlCharacters(t *testing.T) {
+	d := &Diagram{Root: Step{From: "Caller", To: "a", Fn: "F", Results: []string{"err: \x1b[31mred\r\nx"}}}
+	got := strings.Join(d.lines(false), "\n")
+	if strings.ContainsAny(got, "\x1b\r\n") {
+		t.Errorf("control character in %q", got)
 	}
 }

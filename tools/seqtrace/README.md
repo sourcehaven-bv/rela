@@ -80,11 +80,19 @@ just seqtrace-compare my-branch~3  # any git ref
 
 This runs the demo twice: once on the ref, exported with `git archive`, and
 once on the working tree, including uncommitted changes. Both runs use the
-current `tools/seqtrace` and scenarios. It then prints a report, also saved
-to `.ignored/seqtrace-demo/compare.md`. For each scenario that changed it
-shows:
+current `tools/seqtrace` and scenarios. Everything else in the base run comes
+from the ref: `go.mod`, the seeder and `prototypes/perf/project`. So a change
+to the perf project's schema or ACL shows up as a flow change, and the base
+build fails if the current seqtrace needs a dependency the ref lacks. The
+base run always serves a stub page instead of the frontend, which does not
+affect the API flows. `SEQTRACE_KEEP_DB=1` does not work here: the base
+run's postgres would keep the port.
 
-- the number of calls before and after;
+It then prints a report, also saved to `.ignored/seqtrace-demo/compare.md`.
+For each scenario that changed it shows:
+
+- the number of cross-package calls before and after; calls inside one
+  package and calls into collapsed packages are not counted;
 - the calls between each pair of packages that appeared, disappeared or
   changed in number, for example `+ dataentry -> store/pgstore: 1 (new
 edge)`;
@@ -137,7 +145,10 @@ Summaries never call a `String` method.
 The redaction is a guess based on names, and tracing runs below the ACL. A
 trace can hold secrets and values that ACL hides from the requesting user,
 from every user the server served while tracing. Handle trace files and
-diagrams like a database dump. Trace files are created with mode 0600.
+diagrams like a database dump. That includes the `.txt` trees, `steps.json`
+(every argument and result, even though `seqtrace diff` ignores them by
+default) and the output of `seqtrace diff -values`. Trace files are created
+with mode 0600; the other files use your umask.
 
 Repeated runs of up to eight sibling calls fold into one loop, so a loop
 that calls three functions per entity shows those three calls once. When the

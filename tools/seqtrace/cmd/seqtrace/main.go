@@ -253,6 +253,11 @@ func readSteps(dir string) ([]diagram.Scenario, error) {
 	if err := json.Unmarshal(b, &ss); err != nil {
 		return nil, fmt.Errorf("%s: %w", filepath.Join(dir, stepsFile), err)
 	}
+	for i, s := range ss {
+		if s.Diagram == nil {
+			return nil, fmt.Errorf("%s: scenario %d has no diagram", filepath.Join(dir, stepsFile), i+1)
+		}
+	}
 	return ss, nil
 }
 

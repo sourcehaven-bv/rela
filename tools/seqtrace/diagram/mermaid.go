@@ -11,13 +11,6 @@ import (
 // diagram. Mermaid wraps what remains.
 const maxLabel = 80
 
-// Render writes one Mermaid sequence diagram for root. It returns the
-// number of arrows drawn, so callers can skip trivial diagrams.
-func Render(w io.Writer, root *Call, opt Options) (int, error) {
-	d := Build(root, opt)
-	return d.Arrows(), d.Mermaid(w)
-}
-
 // Mermaid writes d as a Mermaid sequence diagram.
 func (d *Diagram) Mermaid(w io.Writer) error {
 	var b strings.Builder

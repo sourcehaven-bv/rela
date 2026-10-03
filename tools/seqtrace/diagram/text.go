@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 )
 
 // Text writes d as an indented call tree, one line per call:
@@ -74,6 +75,14 @@ func textSteps(steps []Step, depth int, elide bool, prefix string) []string {
 	return out
 }
 
+// oneLine replaces control characters with spaces. Values can come from
+// user content, and a raw escape sequence would act on the terminal that
+// prints the tree.
 func oneLine(s string) string {
-	return strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
 }
