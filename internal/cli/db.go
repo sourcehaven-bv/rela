@@ -1,5 +1,7 @@
 package cli
 
+import "context"
+
 // DBCmd groups database-administration subcommands for the PostgreSQL and
 // SQLite builds. The schema is applied automatically when the store first
 // opens; these commands exist for operators who want to apply or check
@@ -13,8 +15,8 @@ type DBCmd struct {
 	Migrate   DBMigrateCmd   `cmd:"" help:"Apply pending PostgreSQL schema migrations."`
 	Status    DBStatusCmd    `cmd:"" help:"Report the database schema version (read-only; non-zero exit if behind)."`
 	Reconcile DBReconcileCmd `cmd:"" help:"Converge derived-schema objects (unique and query indexes) with the configuration."`
-	Load      DBLoadCmd      `cmd:"" help:"Store the project's config files (schema, data-entry, ACL, scripts, templates) in the database (SQLite)."`
-	Dump      DBDumpCmd      `cmd:"" help:"Write the config files stored in the database to a directory (SQLite)."`
+	Load      DBLoadCmd      `cmd:"" help:"Store the project's config files (schema, data-entry, ACL, scripts, templates) and, with --data, its markdown data in the database (SQLite)."`
+	Dump      DBDumpCmd      `cmd:"" help:"Write the config files and, with --data, the data stored in the database to a directory (SQLite)."`
 }
 
 // DBLoadCmd bakes a project's operator-authored config into its SQLite
@@ -25,27 +27,43 @@ type DBCmd struct {
 // precedence over the stored copy when both exist, so a project being
 // edited keeps reading what the operator just wrote.
 //
+// With --data it also copies the markdown project's entities, relations
+// and attachments into the database. That copy is a raw-store write under
+// the same terms as `rela dev seed`: attributed to the "fs-import" tool,
+// one audit record per run, and refused when the database already holds
+// entities unless --force is given. It runs in one transaction, so a
+// failed import writes nothing. The data is imported before the config is
+// stored, so a refused import leaves the database untouched.
+//
 // Like `db migrate`, the trust boundary is the operator shell; it takes no
 // ACL. It opens the database, so it fails while a server has it open.
 type DBLoadCmd struct {
-	From string `help:"Directory to read config from (default: the project root)." type:"existingdir"`
+	From  string `help:"Directory to read config and data from (default: the project root)." type:"existingdir"`
+	Data  bool   `help:"Also import the markdown entities, relations and attachments (raw store write, no automations or validation)."`
+	Force bool   `help:"With --data, import even though the database already holds entities. An id that is already stored still fails the import."`
 }
 
 // Run executes `rela db load`.
-func (c *DBLoadCmd) Run() error {
-	return runDBLoad(c.From)
+func (c *DBLoadCmd) Run(ctx context.Context) error {
+	return runDBLoad(ctx, c.From, c.Data, c.Force)
 }
 
 // DBDumpCmd writes the config stored in the SQLite database out as files,
 // the export half of `db load`: dump, edit, load.
+//
+// With --data it also writes the entities, relations and attachments as
+// markdown, so the directory becomes a project the filesystem build opens.
+// That part refuses a directory that already has entities/, relations/ or
+// attachments/, with or without --force.
 type DBDumpCmd struct {
 	Dir   string `arg:"" help:"Directory to write the config files into."`
-	Force bool   `help:"Overwrite files that already exist."`
+	Data  bool   `help:"Also write the entities, relations and attachments as markdown."`
+	Force bool   `help:"Overwrite config files that already exist. Existing data directories are never written into."`
 }
 
 // Run executes `rela db dump`.
 func (c *DBDumpCmd) Run() error {
-	return runDBDump(c.Dir, c.Force)
+	return runDBDump(c.Dir, c.Data, c.Force)
 }
 
 // DBMigrateCmd applies pending schema migrations to the database named by the

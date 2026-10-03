@@ -812,6 +812,16 @@ Rules when touching this:
   single `unique:` property unique by construction, every edge endpoint emitted
   by the same generator. Do not route it through entitymanager to "fix" that —
   20k automations per seed is the cost it exists to avoid.
+- **Markdown import into SQLite** (TKT-LWOCW9, `appbuild.ImportMarkdownData`,
+  `rela db load --data`) is the fifth raw-store exception, under the same
+  terms: operator shell, attributed (`fs-import` tool), one `fs-import` audit
+  record, and it refuses a store that already holds entities unless `--force`.
+  It copies what an fsstore over the source directory reads, so it carries
+  data that already passed (or predates) validation; running automations would
+  rewrite it on the way in. It runs as ONE `store.Tx`, not perf seeding's
+  batches: SQLite is single-process, so nothing waits on the lock, and a
+  rolled-back import can simply be re-run. `ExportMarkdownData` (`rela db dump
+  --data`) is the read-side counterpart and writes through a plain fsstore.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the `db`

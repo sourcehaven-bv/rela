@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -119,8 +120,9 @@ func runDBReconcile(dryRun, _ bool) error {
 }
 
 // runDBLoad stores the config files under from (default: the project root)
-// in the project's database, replacing what it carried.
-func runDBLoad(from string) error {
+// in the project's database, replacing what it carried. With data it first
+// imports the markdown data under from.
+func runDBLoad(ctx context.Context, from string, data, force bool) error {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover("", fs)
 	if err != nil {
@@ -129,7 +131,19 @@ func runDBLoad(from string) error {
 	if from == "" {
 		from = paths.Root
 	}
-	names, err := appbuild.LoadProjectConfig(context.Background(), fs, paths, from)
+	if data {
+		sink, sinkErr := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
+		if sinkErr != nil {
+			return fmt.Errorf("build audit sink: %w", sinkErr)
+		}
+		sum, importErr := appbuild.ImportMarkdownData(ctx, fs, paths, from,
+			appbuild.DataImportOptions{Force: force, Audit: sink})
+		if importErr != nil {
+			return importErr
+		}
+		fmt.Printf("Imported %s.\n", sum)
+	}
+	names, err := appbuild.LoadProjectConfig(ctx, fs, paths, from)
 	if err != nil {
 		return err
 	}
@@ -140,24 +154,36 @@ func runDBLoad(from string) error {
 	return nil
 }
 
-// runDBDump writes the config stored in the project's database into dir.
-func runDBDump(dir string, force bool) error {
+// runDBDump writes the config stored in the project's database into dir,
+// and with data the entities, relations and attachments too.
+//
+// Config goes first because its dump checks every target before writing
+// any; the data export then refuses on its own if dir already holds data.
+func runDBDump(dir string, data, force bool) error {
 	fs := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover("", fs)
 	if err != nil {
 		return err
 	}
-	names, err := appbuild.DumpProjectConfig(context.Background(), fs, paths, dir, force)
+	ctx := context.Background()
+	names, err := appbuild.DumpProjectConfig(ctx, fs, paths, dir, force)
 	if err != nil {
 		return err
 	}
 	if len(names) == 0 {
 		fmt.Println("The database carries no config files.")
-		return nil
+	} else {
+		for _, name := range names {
+			fmt.Println("  " + name)
+		}
+		fmt.Printf("Wrote %d config files to %s.\n", len(names), dir)
 	}
-	for _, name := range names {
-		fmt.Println("  " + name)
+	if data {
+		sum, err := appbuild.ExportMarkdownData(ctx, fs, paths, dir)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Wrote %s to %s.\n", sum, dir)
 	}
-	fmt.Printf("Wrote %d config files to %s.\n", len(names), dir)
 	return nil
 }
