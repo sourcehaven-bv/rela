@@ -1109,7 +1109,10 @@ func NewApp(
 
 	// The copy surface (RULING 9) is built ONCE, here, for both of its
 	// consumers: the `_copies` affordance below and the invoke handler.
-	copyOffers, copiesHandler, cerr := wireCopies(em)
+	copyOffers, copiesHandler, cerr := wireCopies(em, copyEdgeGate{
+		affordances: func() affordanceService { return app.affordances },
+		visible:     app.visibleReader,
+	})
 	if cerr != nil {
 		return nil, fmt.Errorf("dataentry.NewApp: %w", cerr)
 	}

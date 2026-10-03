@@ -62,6 +62,9 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 
 	// `replace` removes the target face's existing edges of that type first.
 	// Deliberately scoped to the TAIL: the sibling faces' edges are theirs.
+	// Only the edges planning found removable go (plan.removable): an edge
+	// to a peer the principal cannot read stays, and so does one created
+	// after planning.
 	replaced := map[string]bool{}
 	for _, e := range plan.edges {
 		if !e.replace || replaced[e.relType] {
@@ -80,7 +83,9 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 				return fmt.Errorf("entitymanager: copy %q: list target edges: %w",
 					plan.name, err)
 			}
-			doomed = append(doomed, rel)
+			if plan.removable[copyEdgeKey{rel.Type, rel.To}] {
+				doomed = append(doomed, rel)
+			}
 		}
 		for _, rel := range doomed {
 			// Addressed BY TAIL. Dropping it here (as this did before

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 )
 
@@ -77,15 +78,58 @@ func newCopiesHandler(copies copyService) (*copiesHandler, error) {
 //
 // The concrete manager is required because Allowed must run the kernel's own
 // unexported authorization path (see copyService); NewApp's signature already
-// demands it, so there is no "not a manager" case to degrade on. Nil:
-// rejected — the manager is a required collaborator of NewApp.
-func wireCopies(mgr *entitymanager.Manager) (copyOffersFunc, *copiesHandler, error) {
-	aff := entitymanager.CopyAffordances{M: mgr}
+// demands it, so there is no "not a manager" case to degrade on. edges gates
+// the edges an invoke copies. Nil: rejected for both.
+func wireCopies(mgr *entitymanager.Manager, edges entitymanager.CopyEdgeGate) (copyOffersFunc, *copiesHandler, error) {
+	aff, err := entitymanager.NewCopyAffordances(mgr, edges)
+	if err != nil {
+		return nil, nil, err
+	}
 	h, err := newCopiesHandler(aff)
 	if err != nil {
 		return nil, nil, err
 	}
 	return aff.CopiesForSource, h, nil
+}
+
+// copyEdgeGate is the [entitymanager.CopyEdgeGate] of the HTTP copy surface.
+// It asks the questions a hand-made relation write asks, through the same
+// functions: the peer read gate of [writeHandler.requireReadablePeers]
+// ([visibleReader.readableTypes]) and the affordance gate over
+// [affordanceService.relationSources]. A copy therefore skips exactly the
+// edges a PATCH would refuse.
+//
+// affordances is a closure because the affordance service is built after the
+// copy surface and tests replace its resolver afterwards.
+type copyEdgeGate struct {
+	affordances func() affordanceService
+	visible     visibleReader
+}
+
+// ReadablePeers implements [entitymanager.CopyEdgeGate] with one read-gate
+// batch for every id.
+func (g copyEdgeGate) ReadablePeers(ctx context.Context, ids []string) (map[string]bool, error) {
+	types, err := g.visible.readableTypes(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(types))
+	for id, typ := range types {
+		out[id] = typ != ""
+	}
+	return out, nil
+}
+
+// RelationCreatable implements [entitymanager.CopyEdgeGate]: the copy target
+// is the path entity of an outgoing edge.
+func (g copyEdgeGate) RelationCreatable(ctx context.Context, target *entityPkg.Entity, relType string) (bool, error) {
+	svc := g.affordances()
+	sources, err := svc.relationSources(ctx, target, entityPkg.Ref{}, string(DirectionOutgoing), relType)
+	if err != nil {
+		return false, err
+	}
+	_, denial := svc.relationOpDenial(ctx, sources, relType, RelationOpCreate)
+	return denial == nil, nil
 }
 
 // handleV1Copies routes `/api/v1/_copies…`.

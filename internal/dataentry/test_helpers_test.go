@@ -190,7 +190,10 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// `_copies` rides test-app entity responses exactly as it does in NewApp.
 	// The construction only errors on a nil service, which a real manager
 	// cannot produce — same clean-boot swallow as the logo/palette stores.
-	copyOffers, copiesHandler, _ := wireCopies(svc.EntityManager())
+	copyOffers, copiesHandler, _ := wireCopies(svc.EntityManager(), copyEdgeGate{
+		affordances: func() affordanceService { return app.affordances },
+		visible:     app.visibleReader,
+	})
 	app.copies = copiesHandler
 	app.affordances = affordanceService{
 		acl:          func() acl.ACL { return app.acl },

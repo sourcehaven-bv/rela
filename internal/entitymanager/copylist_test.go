@@ -535,3 +535,35 @@ func TestCopiesForSource_GuardedCopyIntoTheBareFaceIsOffered(t *testing.T) {
 		t.Errorf("the write must agree with the hint; got %v", err)
 	}
 }
+
+// stubEdgeGate is a CopyEdgeGate that admits everything.
+type stubEdgeGate struct{}
+
+func (stubEdgeGate) ReadablePeers(context.Context, []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
+
+func (stubEdgeGate) RelationCreatable(context.Context, *entity.Entity, string) (bool, error) {
+	return true, nil
+}
+
+func TestNewCopyAffordances_RejectsNil(t *testing.T) {
+	mgr, _ := newCopyListManager(t, nil)
+	for _, tc := range []struct {
+		name  string
+		m     *entitymanager.Manager
+		edges entitymanager.CopyEdgeGate
+	}{
+		{"nil manager", nil, stubEdgeGate{}},
+		{"nil edge gate", mgr, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := entitymanager.NewCopyAffordances(tc.m, tc.edges); err == nil {
+				t.Error("NewCopyAffordances accepted a nil collaborator")
+			}
+		})
+	}
+	if _, err := entitymanager.NewCopyAffordances(mgr, stubEdgeGate{}); err != nil {
+		t.Errorf("NewCopyAffordances: %v", err)
+	}
+}

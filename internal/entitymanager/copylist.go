@@ -209,20 +209,36 @@ func copyDenialReason(err error) string {
 // interface at its call site, per the project's interfaces-at-the-consumer
 // rule, while [CopiesForSource] is a package function (see its doc for why).
 //
-// It carries no state and makes no decisions — in particular it does NOT
-// authorize. Every method forwards to the manager, which authorizes
-// internally. A wrapper that grew a check of its own would be the second
-// authorization site this design exists to avoid.
-type CopyAffordances struct{ M *Manager }
+// It makes no decisions of its own — in particular it does NOT authorize.
+// Every method runs the manager's copy path, which authorizes internally. A
+// wrapper that grew a check of its own would be the second authorization site
+// this design exists to avoid. The one thing it carries is the caller's
+// [CopyEdgeGate], handed to that path; build it with [NewCopyAffordances],
+// which refuses to leave the gate out.
+type CopyAffordances struct {
+	m     *Manager
+	edges CopyEdgeGate
+}
+
+// NewCopyAffordances adapts m, gating copied edges through edges.
+// Nil: rejected for both — a missing edge gate would copy edges to peers the
+// caller cannot read.
+func NewCopyAffordances(m *Manager, edges CopyEdgeGate) (CopyAffordances, error) {
+	if m == nil || edges == nil {
+		return CopyAffordances{}, errors.New("entitymanager: NewCopyAffordances: manager and edge gate must be non-nil")
+	}
+	return CopyAffordances{m: m, edges: edges}, nil
+}
 
 // CopiesForSource forwards to [CopiesForSource].
 func (c CopyAffordances) CopiesForSource(
 	ctx context.Context, entityType, face, sourceID string,
 ) ([]CopyOffer, error) {
-	return CopiesForSource(ctx, c.M, entityType, face, sourceID)
+	return CopiesForSource(ctx, c.m, entityType, face, sourceID)
 }
 
-// CopyState forwards to [Manager.CopyState], which authorizes internally.
+// CopyState runs the copy engine [Manager.CopyState] runs, which authorizes
+// internally, with this adapter's [CopyEdgeGate] deciding which edges travel.
 func (c CopyAffordances) CopyState(ctx context.Context, req CopyRequest) (*CopyResult, error) {
-	return c.M.CopyState(ctx, req)
+	return (&copyEngine{m: c.m, edges: c.edges}).copyState(ctx, req)
 }
