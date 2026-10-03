@@ -177,6 +177,6 @@ require (
 //     https://code.adriano.fyi/me/neoq/pulls/10
 //   - Shutdown pg_notify'd a sentinel that stopped the listener of EVERY process
 //     on the database, so any rela-postgres CLI command silently stopped
-//     rela-server's job processing.
+//     rela-server's job processing (BUG-YAMD6J).
 //   - acquire leaked a goroutine after every error, and could leak a connection.
 replace github.com/acaloiaro/neoq => github.com/sourcehaven-bv/neoq v0.72.2-0.20261003054052-c76a781e8d2c
