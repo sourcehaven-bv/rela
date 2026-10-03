@@ -441,7 +441,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	}
 
 	app, err := dataentry.NewApp(
-		fs, projCtx, svc.Meta(), svc.Store(), svc.Versions(),
+		fs, projCtx, svc.ProjectFiles(), svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),

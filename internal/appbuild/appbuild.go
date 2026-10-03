@@ -50,6 +50,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate/kvstate"
 	"github.com/Sourcehaven-BV/rela/internal/scopes"
@@ -352,6 +353,13 @@ func (s *Services) ScriptEngine() *script.Engine { return s.scriptEngine }
 // Config returns the project's data-entry config loader.
 func (s *Services) Config() config.Loader { return s.cfgLoader }
 
+// ProjectFiles returns the loader for the project's operator-authored files:
+// data-entry.yaml and the other root config, scripts/, actions/,
+// validations/, custom/ and apps/. Unlike [Services.Config] it always reads
+// the disk with os.Root containment, and on the sqlite build it also serves
+// the files the project's database carries (FEAT-UP14BT).
+func (s *Services) ProjectFiles() config.Loader { return s.base.cfg.projectFiles() }
+
 // State returns the .rela cache-directory KV (or a sentinel error-KV
 // when no cache dir is available).
 func (s *Services) State() state.KV { return s.stateKV }
@@ -415,13 +423,17 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 	if s.paths != nil {
 		root = s.paths.Root
 	}
-	return lua.ReadDeps{
+	deps := lua.ReadDeps{
 		VisibleReader: visibility.Unrestricted(s.store),
 		Tracer:        s.tracer,
 		Searcher:      s.searcher,
 		Meta:          s.meta,
 		ProjectRoot:   root,
 	}
+	if s.base != nil && s.base.cfg.projectConfig != nil {
+		deps.Files = s.base.cfg.projectConfig
+	}
+	return deps
 }
 
 // LuaReadDepsFor materializes a read bundle whose reads are ACL-bound to
@@ -1347,6 +1359,17 @@ func (c Config) configLoader() config.Loader {
 	return config.NewFSLoader(c.FS, c.Paths.Root)
 }
 
+// projectFiles returns the loader for operator-authored project files read
+// with containment: scripts, actions, validations, custom/ and apps/. It
+// differs from configLoader only without projectConfig, where it
+// reads the disk through os.Root rather than through c.FS.
+func (c Config) projectFiles() config.Loader {
+	if c.projectConfig != nil {
+		return c.projectConfig
+	}
+	return rootfs.New(c.Paths.Root)
+}
+
 // validate nil-checks the four build-agnostic collaborators. Each build's
 // New calls it first; backend-specific validation (e.g. a required DSN)
 // lives in that build's recipe.
@@ -1840,7 +1863,7 @@ func resolveACLAndRedactor(
 // see property values the same principal has redacted everywhere else.
 func cascadeReadDeps(
 	st store.Store, tr tracer.Tracer, searcher search.Searcher,
-	meta *metamodel.Metamodel, projectRoot string,
+	meta *metamodel.Metamodel, projectRoot string, files lua.ProjectFiles,
 	d *acl.Declarative, redactor visibility.FieldRedactor,
 ) lua.ReadDeps {
 	return lua.ReadDeps{
@@ -1849,6 +1872,7 @@ func cascadeReadDeps(
 		Searcher:      searcher,
 		Meta:          meta,
 		ProjectRoot:   projectRoot,
+		Files:         files,
 	}
 }
 
@@ -1929,7 +1953,7 @@ func assemble(
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
-	readDeps := cascadeReadDeps(st, tr, searcher, base.meta, cfg.Paths.Root,
+	readDeps := cascadeReadDeps(st, tr, searcher, base.meta, cfg.Paths.Root, cfg.projectFiles(),
 		aclDeclarative, fieldRedactor)
 
 	tw, err := CompileTransitions(base.meta, st, resolvedACL)

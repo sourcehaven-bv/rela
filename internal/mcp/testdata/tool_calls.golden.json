@@ -81,7 +81,7 @@
     "tool": "lua_run",
     "args": "{\"path\":\"missing.lua\"}",
     "isError": true,
-    "text": "scripts directory not found: openat scripts: no such file or directory"
+    "text": "script not found: missing.lua (must be in scripts/ directory)"
   },
   {
     "tool": "read_attachment",

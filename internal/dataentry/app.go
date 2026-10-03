@@ -543,6 +543,7 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 			Searcher:      a.searcher,
 			Meta:          a.Meta(),
 			ProjectRoot:   a.paths.Root,
+			Files:         a.cfgLoader,
 		},
 		EntityManager: a.entityManager,
 	}
@@ -869,6 +870,7 @@ func (a *App) SetJWTGate(cfg JWTGateConfig) error {
 func NewApp(
 	fs storage.FS,
 	paths *project.Context,
+	files config.Loader,
 	meta *metamodel.Metamodel,
 	st store.Store,
 	versions store.VersionService,
@@ -886,6 +888,9 @@ func NewApp(
 	// fs and paths can also be nil in tests that take a different code path
 	// (newAppFromParts wires them post-construction), so they're checked
 	// only when they participate in the construction below.
+	if files == nil {
+		return nil, errors.New("dataentry.NewApp: files is required (wire appbuild's Services.ProjectFiles())")
+	}
 	if meta == nil {
 		return nil, errors.New("dataentry.NewApp: meta is required")
 	}
@@ -921,8 +926,11 @@ func NewApp(
 		return nil, errors.New("dataentry.NewApp: commandAuthz is required " +
 			"(use SelectCommandAuthorizer, or UngatedCommandAuthorizer() for a loopback/in-process server)")
 	}
-	// Construct reconstructible services from the primitives.
-	cfgLoader := config.NewFSLoader(fs, paths.Root)
+	// Operator-authored files — data-entry.yaml, scripts, custom/, apps/ —
+	// come from the caller's loader rather than a filesystem loader built
+	// here: on the sqlite build they may live in the project's database
+	// (FEAT-UP14BT), layered behind the files on disk.
+	cfgLoader := files
 	// The state store comes from the caller (appbuild's Services.State()) rather
 	// than being rebuilt here: on the postgres build it is database-backed, so
 	// the render cache, user settings and the operator logo are shared by every
@@ -941,7 +949,7 @@ func NewApp(
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
 	}
-	cfg, err := loadConfig(cfgData, meta, paths.Root)
+	cfg, err := loadConfig(cfgData, meta, paths.Root, cfgLoader)
 	if err != nil {
 		return nil, err
 	}
@@ -1038,6 +1046,7 @@ func NewApp(
 		Searcher:      searcher,
 		Meta:          meta,
 		ProjectRoot:   paths.Root,
+		Files:         cfgLoader,
 	}
 	val, valErr := newGatedValidator(gatedReader, scriptTraversalGate(app), meta, readDeps, st)
 	if valErr != nil {
@@ -1278,7 +1287,7 @@ func NewApp(
 // is refused on reload too (TKT-IMBOK). It logs non-fatal config warnings.
 //
 // Nil: never returned with a nil error.
-func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config, error) {
+func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string, files lua.ProjectFiles) (*Config, error) {
 	// Check for deprecated syntax that needs migration
 	configPath := filepath.Join(root, ConfigFile)
 	detections := migration.DetectBytes(cfgData, migration.FileTypeDataEntry)
@@ -1312,16 +1321,16 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config
 		if action.Script == "" {
 			continue
 		}
-		if err := script.CheckActionScriptExists(root, action.Script); err != nil {
+		if err := script.CheckActionScriptExists(context.Background(), files, action.Script); err != nil {
 			return nil, fmt.Errorf("invalid %s: action %q: %w", ConfigFile, id, err)
 		}
 	}
 
-	if err := checkDocumentScripts(cfg.Documents, root); err != nil {
+	if err := checkDocumentScripts(cfg.Documents, files); err != nil {
 		return nil, err
 	}
 
-	if err := checkExportRenderScripts(&cfg, root); err != nil {
+	if err := checkExportRenderScripts(&cfg, files); err != nil {
 		return nil, err
 	}
 
@@ -1339,7 +1348,7 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config
 	// existence checks, so a project with a missing script fails on that
 	// rather than on a lint that could not read it. See mailgate.go for why
 	// this is a hint rather than a check.
-	warnUngatedMailActionsFromDisk(cfg.Actions, root)
+	warnUngatedMailActionsFromFiles(cfg.Actions, files)
 	return &cfg, nil
 }
 
@@ -1351,12 +1360,12 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config
 // Both override kinds are checked. The per-type one (views.<type>.export_render)
 // went unverified until the per-list one was added, which was an oversight
 // rather than a decision.
-func checkExportRenderScripts(cfg *Config, root string) error {
+func checkExportRenderScripts(cfg *Config, files lua.ProjectFiles) error {
 	for id, list := range cfg.Lists {
 		if list.ExportRender == "" {
 			continue
 		}
-		if err := script.CheckDocumentScriptExists(root, list.ExportRender); err != nil {
+		if err := script.CheckDocumentScriptExists(context.Background(), files, list.ExportRender); err != nil {
 			return fmt.Errorf("invalid %s: list %q: export_render: %w", ConfigFile, id, err)
 		}
 	}
@@ -1364,7 +1373,7 @@ func checkExportRenderScripts(cfg *Config, root string) error {
 		if view.ExportRender == "" {
 			continue
 		}
-		if err := script.CheckDocumentScriptExists(root, view.ExportRender); err != nil {
+		if err := script.CheckDocumentScriptExists(context.Background(), files, view.ExportRender); err != nil {
 			return fmt.Errorf("invalid %s: view %q: export_render: %w", ConfigFile, id, err)
 		}
 	}
@@ -1507,16 +1516,16 @@ func newGatedValidator(
 	return val, nil
 }
 
-// checkDocumentScripts verifies document scripts exist on disk. Shell-command
+// checkDocumentScripts verifies document scripts can be read. Shell-command
 // documents are not checkable this way (the binary may be on PATH at render
 // time but unavailable now); Lua scripts live in scripts/ under the project
 // root so existence can be verified upfront.
-func checkDocumentScripts(docs map[string]DocumentConfig, root string) error {
+func checkDocumentScripts(docs map[string]DocumentConfig, files lua.ProjectFiles) error {
 	for id, doc := range docs {
 		if doc.Script == "" {
 			continue
 		}
-		if err := script.CheckDocumentScriptExists(root, doc.Script); err != nil {
+		if err := script.CheckDocumentScriptExists(context.Background(), files, doc.Script); err != nil {
 			return fmt.Errorf("invalid %s: document %q: %w", ConfigFile, id, err)
 		}
 	}

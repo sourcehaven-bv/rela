@@ -292,3 +292,27 @@ func mustSymlink(t *testing.T, target, link string) {
 		t.Fatal(err)
 	}
 }
+
+// Scripts baked into the database are read through the same seam as the
+// schema: with the files gone from disk, the Lua deps and ProjectFiles still
+// serve them.
+func TestSQLite_BakedScriptsAreRead(t *testing.T) {
+	root := writeMinimalProject(t)
+	writeFile(t, root, "scripts/docs/report.lua", "return 'baked'\n")
+	bake(t, root)
+	removeAll(t, root, "scripts")
+
+	svc, err := discover(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = svc.Close() }()
+	ctx := context.Background()
+	got, err := svc.LuaReadDeps().ReadScript(ctx, "scripts", "docs/report.lua")
+	if err != nil || got != "return 'baked'\n" {
+		t.Fatalf("ReadScript = %q, %v", got, err)
+	}
+	if _, err := svc.ProjectFiles().Load(ctx, "scripts/docs/report.lua"); err != nil {
+		t.Fatalf("ProjectFiles().Load: %v", err)
+	}
+}

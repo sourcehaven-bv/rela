@@ -87,7 +87,7 @@ func ReconcileDerivedIndexes(
 		return nil, err
 	}
 	defer func() { _ = db.Close() }()
-	cfg, err := layerProjectConfig(config.NewFSLoader(fs, paths.Root), db)
+	cfg, err := layerProjectConfig(paths.Root, db)
 	if err != nil {
 		return nil, err
 	}

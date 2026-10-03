@@ -384,15 +384,17 @@ func TestReloadRejectedConfigKeepsPrevious(t *testing.T) {
 // shapes with their scripts present reload cleanly.
 func TestReloadAcceptsExistingScripts(t *testing.T) {
 	root := t.TempDir()
+	app, fs := setupReloadTestAppAt(t, root)
+	// Scripts are read through the app's config loader, the same one that
+	// serves data-entry.yaml, so they are written through the same fs.
 	for dir, file := range map[string]string{"actions": "close.lua", "scripts": "report.lua"} {
-		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+		if err := fs.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(root, dir, file), []byte("return nil\n"), 0o644); err != nil {
+		if err := fs.WriteFile(filepath.Join(root, dir, file), []byte("return nil\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	app, fs := setupReloadTestAppAt(t, root)
 	_ = fs.WriteFile(filepath.Join(root, ConfigFile), []byte(`version: "1.0"
 app:
   name: "Scripted App"

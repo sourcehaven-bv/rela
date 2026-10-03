@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -56,7 +55,7 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 		return nil, err
 	}
 
-	cfg.projectConfig, err = layerProjectConfig(config.NewFSLoader(cfg.FS, cfg.Paths.Root), db)
+	cfg.projectConfig, err = layerProjectConfig(cfg.Paths.Root, db)
 	if err != nil {
 		_ = db.Close()
 		return nil, err

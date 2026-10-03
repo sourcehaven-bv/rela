@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,7 +98,7 @@ func (h luaHandler) handleLuaEval(ctx context.Context, req *mcpgo.CallToolReques
 		// runtimes writes to os.Stdout (see lua/runtime.go:256), which
 		// is the right thing for MCP — operators want their print()
 		// landing in the terminal where they invoked the tool.
-		return luaScriptErrorResult(lua.SurfaceLuaEval, "<inline>", "",
+		return luaScriptErrorResult(lua.SurfaceLuaEval, "<inline>", nil,
 			runtime.ErrorFrames(), nil, err), nil
 	}
 
@@ -130,35 +130,13 @@ func (h luaHandler) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest
 	// Parse args if provided
 	args := in.GetStringSlice("args", nil)
 
-	projectRoot := h.projectRoot
-
-	// Security: Scripts must be in the scripts/ directory
-	// Use os.Root for traversal-resistant path access
-	root, err := os.OpenRoot(projectRoot)
+	// Read through the project files, which keep scripts/ contained
+	// (os.Root on disk) and serve a script carried in the project database.
+	scriptSource, err := h.writeDeps.ReadScript(ctx, scriptsDir, path)
 	if err != nil {
-		return errorResult("cannot open project root: " + err.Error()), nil
+		return errorResult(err.Error()), nil
 	}
-	defer root.Close()
-
-	// Verify script exists using traversal-resistant API
-	scriptsRoot, err := root.OpenRoot(scriptsDir)
-	if err != nil {
-		return errorResult("scripts directory not found: " + err.Error()), nil
-	}
-	defer scriptsRoot.Close()
-
-	// Read script content using traversal-resistant API to prevent symlink escapes
-	scriptFile, err := scriptsRoot.Open(path)
-	if err != nil {
-		return errorResult(fmt.Sprintf("script not found: %s (scripts must be in the scripts/ directory)", path)), nil
-	}
-	defer scriptFile.Close()
-
-	// Read script content
-	scriptContent, err := io.ReadAll(scriptFile)
-	if err != nil {
-		return errorResult("cannot read script: " + err.Error()), nil
-	}
+	scriptContent := []byte(scriptSource)
 
 	// Capture output
 	var output bytes.Buffer
@@ -176,8 +154,8 @@ func (h luaHandler) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest
 
 	// Use RunFileContent rather than RunString so the runtime wires
 	// up chunk name, rela.args, and cache namespace identically to a
-	// normal RunFile call. We read the bytes ourselves (via
-	// os.OpenRoot above) specifically for traversal resistance; passing
+	// normal RunFile call. We read the bytes ourselves (via ReadScript
+	// above) for containment and so a database-carried script runs; passing
 	// them through RunFileContent keeps that while sharing all the
 	// downstream invariants.
 	//
@@ -185,7 +163,7 @@ func (h luaHandler) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest
 	if err := runtime.RunFileContent(path, scriptContent, args); err != nil {
 		// See note above: print() bypasses `output` for MCP runs.
 		return luaScriptErrorResult(lua.SurfaceLuaRun,
-			filepath.ToSlash(filepath.Join(scriptsDir, path)), projectRoot,
+			filepath.ToSlash(filepath.Join(scriptsDir, path)), h.writeDeps.SourceFS(ctx),
 			runtime.ErrorFrames(), nil, err), nil
 	}
 
@@ -202,10 +180,10 @@ func (h luaHandler) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest
 // NewToolResultError (not NewToolResultText) so the result's IsError
 // flag stays true — clients keying off that flag still see the failure.
 //
-// projectRoot is "" for lua_eval (no script source on disk to slice);
-// otherwise the source FS is rooted there so the envelope can include
-// ±N lines around the failing line.
-func luaScriptErrorResult(surface lua.Surface, envelopePath, projectRoot string,
+// sourceFS is nil for lua_eval (no script source to slice); otherwise it
+// serves the project files so the envelope can include ±N lines around the
+// failing line.
+func luaScriptErrorResult(surface lua.Surface, envelopePath string, sourceFS fs.FS,
 	frames []lua.StackFrame, capturedOutput []byte, runErr error) *mcpgo.CallToolResult {
 	in := lua.BuildInput{
 		Surface:        surface,
@@ -214,8 +192,8 @@ func luaScriptErrorResult(surface lua.Surface, envelopePath, projectRoot string,
 		CapturedOutput: capturedOutput,
 		Err:            runErr,
 	}
-	if projectRoot != "" {
-		in.SourceFS = os.DirFS(projectRoot)
+	if sourceFS != nil {
+		in.SourceFS = sourceFS
 		// Frames coming from gopher-lua use the bare filename as Source;
 		// re-prefix matching frames so they line up with envelopePath.
 		bareName := strings.TrimPrefix(envelopePath, scriptsDir+"/")

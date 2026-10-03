@@ -10,10 +10,8 @@ package script
 import (
 	"bytes"
 	"context"
-	"errors"
-	"fmt"
 	"io"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"time"
@@ -89,7 +87,7 @@ func (e *Engine) ExecuteFile(ctx context.Context, path string, deps lua.WriteDep
 // capability grant (TKT-YH52OM). See [Engine.ExecuteCodeWithCapabilities].
 func (e *Engine) ExecuteFileWithCapabilities(ctx context.Context, path string, deps lua.WriteDeps,
 	newEntity, oldEntity *entity.Entity, caps lua.Capabilities) error {
-	scriptCode, err := loadScript(deps.ProjectRoot, path)
+	scriptCode, err := deps.ReadScript(ctx, scriptsDir, path)
 	if err != nil {
 		return err
 	}
@@ -164,7 +162,7 @@ func (e *Engine) ExecuteStandaloneDocument(
 // FS is left out since there's nothing on disk to slice.
 func wrapScriptError(surface lua.Surface, subdir, scriptPath, entityID string,
 	frames []lua.StackFrame, capturedOutput []byte, runErr error,
-	projectRoot string) error {
+	sourceFS fs.FS) error {
 	envelopePath := scriptPath
 	useSourceFS := false
 	if scriptPath != "" && !strings.ContainsAny(scriptPath, "<>") {
@@ -185,7 +183,7 @@ func wrapScriptError(surface lua.Surface, subdir, scriptPath, entityID string,
 		Err:            runErr,
 	}
 	if useSourceFS {
-		in.SourceFS = os.DirFS(projectRoot)
+		in.SourceFS = sourceFS
 	}
 	return lua.BuildScriptError(in)
 }
@@ -250,7 +248,7 @@ func (e *Engine) execute(ctx context.Context, code string, deps lua.WriteDeps, s
 			path = "<inline>"
 		}
 		return wrapScriptError(lua.SurfaceAutomation, scriptsDir, path, entityID,
-			runtime.ErrorFrames(), nil, runErr, deps.ProjectRoot)
+			runtime.ErrorFrames(), nil, runErr, deps.SourceFS(ctx))
 	}
 	return nil
 }
@@ -260,49 +258,7 @@ func (e *Engine) execute(ctx context.Context, code string, deps lua.WriteDeps, s
 // data-entry.yaml `documents:` entry points at a missing or malformed
 // script, instead of deferring the error to the first HTTP render.
 // Mirrors CheckActionScriptExists.
-func CheckDocumentScriptExists(projectRoot, scriptPath string) error {
-	_, err := loadScript(projectRoot, scriptPath)
+func CheckDocumentScriptExists(ctx context.Context, files lua.ProjectFiles, scriptPath string) error {
+	_, err := lua.ReadDeps{Files: files}.ReadScript(ctx, scriptsDir, scriptPath)
 	return err
-}
-
-// loadScript loads a script from the scripts/ directory using os.OpenRoot
-// for traversal-resistant file access.
-func loadScript(projectRoot, scriptPath string) (string, error) {
-	// Security: Validate path is local (no "..", no absolute paths)
-	if !filepath.IsLocal(scriptPath) {
-		return "", fmt.Errorf(
-			"script path must be a local path (no '..' or absolute paths): %s", scriptPath)
-	}
-
-	// Security: Must have .lua extension
-	if !strings.HasSuffix(scriptPath, ".lua") {
-		return "", fmt.Errorf("script must have .lua extension: %s", scriptPath)
-	}
-
-	// Use os.OpenRoot for traversal-resistant access.
-	// Error messages intentionally omit system paths to prevent information leakage.
-	root, err := os.OpenRoot(projectRoot)
-	if err != nil {
-		return "", errors.New("cannot access project directory")
-	}
-	defer root.Close()
-
-	scriptsRoot, err := root.OpenRoot(scriptsDir)
-	if err != nil {
-		return "", errors.New("cannot access scripts directory")
-	}
-	defer scriptsRoot.Close()
-
-	scriptFile, err := scriptsRoot.Open(scriptPath)
-	if err != nil {
-		return "", fmt.Errorf("script not found: %s (must be in scripts/ directory)", scriptPath)
-	}
-	defer scriptFile.Close()
-
-	content, err := io.ReadAll(scriptFile)
-	if err != nil {
-		return "", fmt.Errorf("cannot read script: %s", scriptPath)
-	}
-
-	return string(content), nil
 }

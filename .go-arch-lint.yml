@@ -185,6 +185,9 @@ components:
   # Serves operator config from a SQL table. A config package, not a storage
   # one: it touches no entity, relation or graph — just rows keyed by path.
   configsql:        { in: internal/config/configsql }
+  # Contained (os.Root) reads of scripts/, custom/ and the like. Depends only
+  # on storage, so lua can fall back to it without depending on config.
+  rootfs:           { in: internal/rootfs }
   # Stores runtime state in a SQL table. A state package, not a storage one,
   # and a sibling of configsql for the same reason: neither is the entity
   # graph, and both would otherwise live in files BESIDE the database and be
@@ -456,6 +459,7 @@ deps:
       - dataentryconfig
   dataentry:
     mayDependOn:
+      - rootfs
       # The next-action engine and its per-user state. dataentry supplies the
       # ACL-gated CandidateFunc; it does NOT choose a userstate backend —
       # that is a wiring-site decision, like the store backend.
@@ -581,6 +585,7 @@ deps:
   # as a plain string rather than a *project.Context.
   mcp:
     mayDependOn:
+      - rootfs
       # acl + attachment: the attachment tools (TKT-R6U15C) authorize an
       # `update` before any bytes are stored, and drive attachment.Service,
       # the write policy the CLI and web upload paths share.
@@ -629,6 +634,7 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      - rootfs
       # The sqlite recipe OPENS the database and hands the same handle to both
       # the store and the config loader, so it names all three. Owning the file
       # here is what keeps a store from owning config, or config from owning a
@@ -1302,6 +1308,7 @@ deps:
       - propmatch
   lua:
     mayDependOn:
+      - rootfs
       - ai
       - filter
       # mail.render builds a mailrender.Message from a script table so a Lua
@@ -1464,6 +1471,11 @@ deps:
   config:
     mayDependOn:
       - storage
+  rootfs:
+    # Only storage, for the file watcher behind Subscribe.
+    mayDependOn:
+      - storage
+
   configsql:
     # Only config, for the Loader interface it implements. No store, no
     # metamodel, no driver: it takes a *sql.DB the caller already opened, so
