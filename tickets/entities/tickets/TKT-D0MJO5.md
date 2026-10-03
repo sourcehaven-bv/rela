@@ -6,7 +6,8 @@ kind: enhancement
 priority: low
 effort: m
 started: "2026-10-03"
-status: review
+completed: "2026-10-03"
+status: done
 ---
 
 ## Description

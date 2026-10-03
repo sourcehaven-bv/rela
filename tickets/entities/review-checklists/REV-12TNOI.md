@@ -3,17 +3,17 @@ id: REV-12TNOI
 type: review-checklist
 title: 'Review: seqtrace: text call trees and flow diffs for agents'
 started: "2026-10-03"
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`)
+- [x] Lint clean (`just lint`)
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`)
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -34,41 +34,44 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** 14 (1 significant, 7 minor, 6 nit); 13 `addressed`, 1 `wont-fix` (RR-DDNT14, nit): RR-RTRYNJ, RR-0H1GNT, RR-3DPREG, RR-1V5W6F, RR-V6WB01, RR-G1HH9V, RR-1Z4XCG, RR-AMP1QK, RR-8ZPDBZ, RR-473DJM, RR-DDNT14, RR-O9QPI4, RR-II1A8D, RR-J9G964.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+1. PASS: after the refactor the ten demo Mermaid files were byte-identical to develop's; the later folding change alters them on purpose (`TestRender*` updated helpers).
+2. PASS: `TestRenderText`, `TestRenderTextMultiStepLoop`, `TestFoldPeriodic`, `TestFoldLargeHelper`, `TestFoldNestedBody`, `TestTextStripsControlCharacters`.
+3. PASS: `TestCompare`, `TestCompareDuplicateNames`, `TestLineDiffContext`.
+4. PASS: `just seqtrace-compare` against origin/develop: 0 changed, 10 unchanged.
 
 ## Documentation (enhancements only)
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] Docs-checklist created and linked via `has-docs`
+- [x] User-facing documentation updated
+- [x] Docs-checklist marked as done
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** DOCS-OL5SMK
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI (in progress; see the note below)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
