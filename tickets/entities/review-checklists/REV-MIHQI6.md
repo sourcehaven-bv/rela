@@ -3,17 +3,17 @@ id: REV-MIHQI6
 type: review-checklist
 title: 'Review: Path-scoped agent rules instead of one large CLAUDE.md'
 started: "2026-10-03"
-status: in-progress
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
 
 ## Automated Checks
 
-- [ ] All tests pass (`just test`)
-- [ ] Lint clean (`just lint`)
-- [ ] Comment lint gate clean (`just comment-lint`)
-- [ ] Coverage maintained (`just coverage-check`)
+- [x] All tests pass (`just test`)
+- [x] Lint clean (`just lint`)
+- [x] Comment lint gate clean (`just comment-lint`)
+- [x] Coverage maintained (`just coverage-check`)
 
 **Comment findings.** `just comment-report` lists the advisory rules
 (duplication, nil-contract, param-contract, restatement). They are not a merge
@@ -34,41 +34,44 @@ unexplained suppression is a finding nobody can re-evaluate later.
 
 ## Code Review
 
-- [ ] Run `/code-review` command (invokes cranky-code-reviewer agent)
-- [ ] All critical review-responses addressed
-- [ ] All significant review-responses addressed
-- [ ] Self-reviewed the diff for unrelated changes
+- [x] Run `/code-review` command (invokes cranky-code-reviewer agent)
+- [x] All critical review-responses addressed
+- [x] All significant review-responses addressed
+- [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** <!-- List IDs of review-response entities created, e.g.,
-RR-xxxx -->
+**Review Responses:** 19 (9 significant, 7 minor, 3 nit), all `addressed`: RR-2SF2L3, RR-475RJL, RR-4OQ6U3, RR-8DW523, RR-BXAZGK, RR-FFLIXZ, RR-K4N41Q, RR-L4XRIX, RR-MAYB1W, RR-OYVTT4, RR-P1D4BQ, RR-PNPFZP, RR-PS10LH, RR-QZDKHO, RR-V4CQ4S, RR-VGN26H, RR-VR5S4T, RR-WK1O10, RR-ZXVQJG.
 
 ## Acceptance Verification
 
-- [ ] Each acceptance criterion tested (reference planning checklist)
-- [ ] Test evidence documented in implementation checklist
+- [x] Each acceptance criterion tested (reference planning checklist)
+- [x] Test evidence documented in implementation checklist
 
 **Acceptance Status:**
-<!-- For each acceptance criterion, state PASS/FAIL with evidence -->
+
+1. PASS: scripted line check against origin/develop; the only differences are three intended cross-reference edits.
+2. PASS: `TestRulePathsMatchFiles`; a misspelled glob fails it.
+3. PASS: `TestGlobRegexp`, `TestListItem`.
+4. PASS: `git check-ignore`: nested `.claude/` directories and `.claude/settings.json` are ignored; `.claude/rules/*.md` is not.
 
 ## Documentation (enhancements only)
 
 Skip this section for bugs and internal refactors.
 
-- [ ] Docs-checklist created and linked via `has-docs`
-- [ ] User-facing documentation updated
-- [ ] Docs-checklist marked as done
+- [x] ~~Docs-checklist created and linked via `has-docs`~~ (N/A: chore ticket)
+- [x] ~~User-facing documentation updated~~ (N/A: chore ticket)
+- [x] ~~Docs-checklist marked as done~~ (N/A: chore ticket)
 
-**Docs Checklist:** <!-- e.g., DOCS-xxxx -->
+**Docs Checklist:** N/A
 
 ## Final Checks
 
-- [ ] Commit message explains the why, not just what
-- [ ] No TODOs or FIXMEs left unaddressed
-- [ ] Ready for another developer to use
+- [x] Commit message explains the why, not just what
+- [x] No TODOs or FIXMEs left unaddressed
+- [x] Ready for another developer to use
 
 ## Pull Request
 
-- [ ] Run `/pr` command to create PR and monitor CI
+- [x] Run `/pr` command to create PR and monitor CI (in progress; see the note below)
 
 <!--
 Deliberately NOT tracked here: the PR URL and whether CI passed.
