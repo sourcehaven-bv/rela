@@ -68,7 +68,10 @@ func CollectProjectConfig(fsys storage.FS, dir string) (map[string][]byte, error
 		if err != nil {
 			return err
 		}
-		if regErr := requireRegularFile(abs); regErr != nil {
+		if nameErr := checkConfigName(rel); nameErr != nil {
+			return nameErr
+		}
+		if regErr := requireRegularFile(dir, rel); regErr != nil {
 			return regErr
 		}
 		data, err := fsys.ReadFile(abs)
@@ -139,21 +142,64 @@ func collectConfigDir(fsys storage.FS, dir, sub string, add func(string) error) 
 	})
 }
 
-// requireRegularFile refuses a path that is not a regular file, a symlink
-// above all. Lstat, not Stat: a symlinked acl.yaml or schema include could
-// point at .rela/secrets.yaml, and following it would bake a credential
-// into a file meant to be shipped. Refused rather than skipped, because
-// silently dropping a config file the project relies on would ship a
-// database that boots differently from the directory it came from.
-func requireRegularFile(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("refusing to store %s: not a regular file (symlinks are not followed)", path)
+// requireRegularFile refuses a stored name that is not a regular file
+// under dir, or that reaches one through a symlink at any level. Every
+// component is checked with Lstat, not just the leaf: a symlinked acl.yaml,
+// or a symlinked directory holding a schema include, could point at
+// .rela/secrets.yaml or outside the project, and following it would bake
+// that file into a database meant to be shipped. Refused rather than
+// skipped, because silently dropping a config file the project relies on
+// would ship a database that boots differently from the directory it came
+// from.
+func requireRegularFile(dir, rel string) error {
+	current := dir
+	parts := strings.Split(rel, "/")
+	for i, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			return fmt.Errorf("refusing to store %s: %s is a symlink (symlinks are not followed)",
+				filepath.Join(dir, filepath.FromSlash(rel)), current)
+		case i == len(parts)-1 && !info.Mode().IsRegular():
+			return fmt.Errorf("refusing to store %s: not a regular file", current)
+		}
 	}
 	return nil
+}
+
+// checkConfigName refuses a name that is not one a project's config can
+// have: the schema file, a root config file, a file under a config
+// directory, or a schema include (a .yaml file outside the data
+// directories). No segment may be hidden, which keeps .rela/ (secrets,
+// mail settings), .git/ and the like out in both directions.
+//
+// It runs when config is collected AND when it is dumped. A database is a
+// file someone can hand over, so its names are checked again before any
+// is written: a crafted row named .git/config would otherwise run code on
+// the next git command in the target directory.
+func checkConfigName(name string) error {
+	parts := strings.Split(name, "/")
+	for _, part := range parts {
+		if strings.HasPrefix(part, ".") {
+			return fmt.Errorf("refusing config path %q: hidden files and directories are not config", name)
+		}
+	}
+	switch {
+	case name == project.SchemaFile, slices.Contains(configRootFiles, name):
+		return nil
+	case len(parts) > 1 && slices.Contains(configDirs, parts[0]):
+		return nil
+	case slices.Contains(markdownDataDirs, parts[0]):
+		return fmt.Errorf("refusing config path %q: %s/ holds data, not config", name, parts[0])
+	case strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml"):
+		return nil // a schema include
+	default:
+		return fmt.Errorf("refusing config path %q: not a config file a project can have", name)
+	}
 }
 
 // relativeConfigPath turns abs into a slash path under dir, refusing one
@@ -265,6 +311,9 @@ func DumpProjectConfig(
 // interface has no Lstat, and following symlinks is exactly what must not
 // happen here.
 func dumpTarget(dir, name string, overwrite bool) (string, error) {
+	if err := checkConfigName(name); err != nil {
+		return "", err
+	}
 	local := filepath.FromSlash(name)
 	if !filepath.IsLocal(local) {
 		return "", fmt.Errorf("refusing stored config path %q: not a relative path inside the target directory", name)

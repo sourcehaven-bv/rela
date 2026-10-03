@@ -327,6 +327,11 @@ func validatePath(name string) error {
 		if seg == "" || seg == "." || seg == ".." {
 			return errors.New("configsql: traversal or empty segment not allowed")
 		}
+		if strings.HasPrefix(seg, ".") {
+			// No config file is hidden; refusing them keeps .rela/ and .git/
+			// out of a database that may be shipped.
+			return errors.New("configsql: hidden file or directory not allowed")
+		}
 	}
 	if len(name) >= 2 && name[1] == ':' {
 		return errors.New("configsql: drive letter not allowed")

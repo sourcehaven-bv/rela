@@ -178,6 +178,8 @@ func TestLoader_RejectsUnsafeNames(t *testing.T) {
 		{"dot segment", "./file.yaml"},
 		{"empty segment", "sub//file.yaml"},
 		{"drive letter", "C:secret.yaml"},
+		{"hidden file", ".env"},
+		{"hidden directory", ".rela/secrets.yaml"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := l.Load(ctx, tc.input); err == nil {

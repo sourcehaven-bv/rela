@@ -213,7 +213,11 @@ func insertRawProjectFile(t *testing.T, root, name string) {
 // Dump re-checks every stored name: a handed-over database may hold a path
 // that would escape the target directory.
 func TestSQLite_DumpRefusesEscapingNames(t *testing.T) {
-	for _, name := range []string{"../escape.yaml", "/abs.yaml", "a/../../b.yaml"} {
+	for _, name := range []string{
+		"../escape.yaml", "/abs.yaml", "a/../../b.yaml",
+		// Inside the target, but not a config file a project can have.
+		".git/config", ".rela/mail.yaml", "scripts/.hidden.lua", "entities/docs/DOC-1.md", "install.sh",
+	} {
 		t.Run(name, func(t *testing.T) {
 			root := writeMinimalProject(t)
 			bake(t, root)
@@ -273,6 +277,17 @@ func TestSQLite_CollectRefusesSymlinks(t *testing.T) {
 			t.Helper()
 			mustSymlink(t, t.TempDir(), filepath.Join(root, "scripts"))
 		},
+		"schema include of a hidden file": func(t *testing.T, root, _ string) {
+			t.Helper()
+			appendInclude(t, root, ".rela/secrets.yaml")
+		},
+		"schema include in a symlinked directory": func(t *testing.T, root, _ string) {
+			t.Helper()
+			elsewhere := t.TempDir()
+			writeFile(t, elsewhere, "types.yaml", "x: 1\n")
+			mustSymlink(t, elsewhere, filepath.Join(root, "shared"))
+			appendInclude(t, root, "shared/types.yaml")
+		},
 	}
 	for name, plant := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -284,6 +299,19 @@ func TestSQLite_CollectRefusesSymlinks(t *testing.T) {
 				t.Fatalf("err = %v, want a refusal", err)
 			}
 		})
+	}
+}
+
+// appendInclude adds name to the fixture schema's includes.
+func appendInclude(t *testing.T, root, name string) {
+	t.Helper()
+	path := filepath.Join(root, "metamodel.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, []byte("includes:\n  - "+name+"\n")...), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
