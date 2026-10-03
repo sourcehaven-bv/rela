@@ -51,6 +51,8 @@ func TestPostgresQueue_SurvivesAnotherProcessClosing(t *testing.T) {
 	require.NoError(t, cli.Start(ctx))
 	require.NoError(t, cli.Close(ctx))
 
+	// The wait must stay below neoq's pending-job poll interval (60s): the poll
+	// would otherwise run the job even with a dead listener.
 	require.NoError(t, server.Enqueue(ctx, jobs.Job{Kind: kind, Retry: jobs.RetryNever}))
 	require.Eventually(t, func() bool { return ran.Load() == 2 }, 10*time.Second, 50*time.Millisecond,
 		"the queue must keep processing after another process closes its queue")

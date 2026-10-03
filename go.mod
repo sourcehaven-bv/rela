@@ -169,7 +169,7 @@ require (
 )
 
 // rela runs neoq from the `sourcehaven` branch of the sourcehaven-bv fork. Drop
-// each fix once it is upstream:
+// the replace once all of these are upstream:
 //   - make-job-id-bigint hardcoded `public.neoq_jobs_id_seq`, so the queue could
 //     not initialize against a schema-pinned DSN, which is how rela scopes a
 //     tenant (docs/postgres-backend.md). https://github.com/acaloiaro/neoq/pull/149
@@ -177,6 +177,8 @@ require (
 //     https://code.adriano.fyi/me/neoq/pulls/10
 //   - Shutdown pg_notify'd a sentinel that stopped the listener of EVERY process
 //     on the database, so any rela-postgres CLI command silently stopped
-//     rela-server's job processing (BUG-YAMD6J).
+//     rela-server's job processing (BUG-YAMD6J). Shutdown also never closed
+//     the LISTEN connection. Not yet proposed upstream.
 //   - acquire leaked a goroutine after every error, and could leak a connection.
-replace github.com/acaloiaro/neoq => github.com/sourcehaven-bv/neoq v0.72.2-0.20261003054052-c76a781e8d2c
+//     Not yet proposed upstream.
+replace github.com/acaloiaro/neoq => github.com/sourcehaven-bv/neoq v0.72.2-0.20261003061725-05694be452ec

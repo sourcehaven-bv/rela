@@ -209,10 +209,11 @@ above rather than by a clean `analyze all`.
   tables follow `search_path` — which is why `go.mod` carries a `replace` onto
   the `sourcehaven` branch of the sourcehaven-bv/neoq fork (BUG-YJEIFH, upstream
   acaloiaro/neoq#149). That branch also carries the cross-process shutdown fix
-  (BUG-YAMD6J) and the JobTimeout fix; `go.mod` lists each with its upstream
-  status. Drop the `replace` only when all of them are upstream:
+  (BUG-YAMD6J), the JobTimeout fix and the acquire fix; `go.mod` lists them.
+  Drop the `replace` only when all of them are upstream.
   `TestPostgresQueue_SchemaPinnedDSN` and
-  `TestPostgresQueue_SurvivesAnotherProcessClosing` fail if it goes early.
+  `TestPostgresQueue_SurvivesAnotherProcessClosing` catch losing the schema
+  and shutdown fixes; the fork's own tests cover the rest.
   **Test any new postgres-touching dependency through a schema-pinned DSN**,
   not just the bare `RELA_TEST_DATABASE_URL` — the bare DSN resolves to
   `public`, which is precisely the one case that worked.

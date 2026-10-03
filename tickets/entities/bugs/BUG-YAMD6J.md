@@ -13,7 +13,7 @@ why5: 'The queue''s conformance suite exercises one process per database. No tes
 prevention: TestPostgresQueue_SurvivesAnotherProcessClosing runs a second queue on the same database and asserts the first keeps processing. The fork carries TestShutdownDoesNotStopOtherBackends.
 started: "2026-10-03"
 completed: "2026-10-03"
-status: ready
+status: done
 ---
 
 ## Summary
@@ -66,4 +66,4 @@ schema-qualified sequence fix (BUG-YJEIFH).
 
 On restart, the queue starts before the scheduler registers its handlers, so the
 pending backlog is consumed as `no handler registered for kind, dropping`. The
-scheduler recovers through its lease and retry ladder. Separate ticket.
+scheduler recovers through its lease and retry ladder. Not filed yet.
