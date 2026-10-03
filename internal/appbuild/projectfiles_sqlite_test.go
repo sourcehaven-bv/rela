@@ -123,9 +123,6 @@ func TestSQLite_CollectProjectConfig(t *testing.T) {
 	writeFile(t, root, "templates/entities/doc.md", "---\n---\n")
 	writeFile(t, root, "migrations/applied.json", "[]\n")
 	writeFile(t, root, "README.md", "not config\n")
-	if err := os.Symlink(filepath.Join(root, "README.md"), filepath.Join(root, "scripts", "link.lua")); err != nil {
-		t.Fatal(err)
-	}
 
 	files, err := appbuild.CollectProjectConfig(storage.NewSafeFS(storage.NewOsFS()), root)
 	if err != nil {
@@ -254,5 +251,44 @@ func TestSQLite_DumpRefusesSymlinks(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
 		t.Fatalf("dump wrote through a symlink: %v", entries)
+	}
+}
+
+// A symlink anywhere in the config set fails the collection: following one
+// could bake .rela/secrets.yaml into a file meant to be shipped, and skipping
+// it would ship a database that boots differently from its directory.
+func TestSQLite_CollectRefusesSymlinks(t *testing.T) {
+	cases := map[string]func(t *testing.T, root, secret string){
+		"root file": func(t *testing.T, root, secret string) {
+			t.Helper()
+			mustSymlink(t, secret, filepath.Join(root, "acl.yaml"))
+		},
+		"file in a config dir": func(t *testing.T, root, secret string) {
+			t.Helper()
+			writeFile(t, root, "scripts/ok.lua", "return 1\n")
+			mustSymlink(t, secret, filepath.Join(root, "scripts", "link.lua"))
+		},
+		"config dir": func(t *testing.T, root, _ string) {
+			t.Helper()
+			mustSymlink(t, t.TempDir(), filepath.Join(root, "scripts"))
+		},
+	}
+	for name, plant := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := writeMinimalProject(t)
+			writeFile(t, root, ".rela/secrets.yaml", "smtp_password: hunter2\n")
+			plant(t, root, filepath.Join(root, ".rela", "secrets.yaml"))
+			_, err := appbuild.CollectProjectConfig(storage.NewSafeFS(storage.NewOsFS()), root)
+			if err == nil || !strings.Contains(err.Error(), "refusing") {
+				t.Fatalf("err = %v, want a refusal", err)
+			}
+		})
+	}
+}
+
+func mustSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
 	}
 }

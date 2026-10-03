@@ -48,9 +48,8 @@ var skippedConfigFiles = map[string]bool{
 // are slash-separated paths relative to dir.
 //
 // It reads the directory, not the project's database, so the result is
-// what `rela db load` bakes in. Hidden files and symlinks are skipped: a
-// symlink could point anywhere the process can read, .rela/secrets.yaml
-// included, and the result is meant to be shipped.
+// what `rela db load` bakes in. Hidden files are skipped; a symlink fails the
+// collection (see [requireRegularFile]).
 func CollectProjectConfig(fsys storage.FS, dir string) (map[string][]byte, error) {
 	schemaPath, _, found := project.SchemaFileAt(dir, fsys)
 	if !found {
@@ -68,6 +67,9 @@ func CollectProjectConfig(fsys storage.FS, dir string) (map[string][]byte, error
 		rel, err := relativeConfigPath(dir, abs)
 		if err != nil {
 			return err
+		}
+		if regErr := requireRegularFile(abs); regErr != nil {
+			return regErr
 		}
 		data, err := fsys.ReadFile(abs)
 		if err != nil {
@@ -92,10 +94,11 @@ func CollectProjectConfig(fsys storage.FS, dir string) (map[string][]byte, error
 	}
 	for _, name := range configRootFiles {
 		abs := filepath.Join(dir, name)
-		if info, err := fsys.Stat(abs); err == nil && info.Mode().IsRegular() {
-			if err := add(abs); err != nil {
-				return nil, err
-			}
+		if _, err := os.Lstat(abs); errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err := add(abs); err != nil {
+			return nil, err
 		}
 	}
 	for _, sub := range configDirs {
@@ -112,12 +115,12 @@ func CollectProjectConfig(fsys storage.FS, dir string) (map[string][]byte, error
 // collectConfigDir adds every regular, non-hidden file under dir/sub.
 func collectConfigDir(fsys storage.FS, dir, sub string, add func(string) error) error {
 	root := filepath.Join(dir, sub)
-	if info, err := fsys.Stat(root); errors.Is(err, os.ErrNotExist) {
+	if info, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
 		return err
 	} else if !info.IsDir() {
-		return fmt.Errorf("%s is not a directory", sub)
+		return fmt.Errorf("refusing to store %s: not a directory (symlinks are not followed)", root)
 	}
 	return fsys.Walk(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -129,11 +132,28 @@ func collectConfigDir(fsys storage.FS, dir, sub string, add func(string) error) 
 			}
 			return nil
 		}
-		if !d.Type().IsRegular() {
+		if d.IsDir() {
 			return nil
 		}
-		return add(path)
+		return add(path) // refuses anything but a regular file
 	})
+}
+
+// requireRegularFile refuses a path that is not a regular file, a symlink
+// above all. Lstat, not Stat: a symlinked acl.yaml or schema include could
+// point at .rela/secrets.yaml, and following it would bake a credential
+// into a file meant to be shipped. Refused rather than skipped, because
+// silently dropping a config file the project relies on would ship a
+// database that boots differently from the directory it came from.
+func requireRegularFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("refusing to store %s: not a regular file (symlinks are not followed)", path)
+	}
+	return nil
 }
 
 // relativeConfigPath turns abs into a slash path under dir, refusing one
