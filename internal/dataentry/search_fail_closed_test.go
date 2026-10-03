@@ -39,6 +39,9 @@ func (hidingResolver) FieldVerdicts(context.Context, *entityPkg.Entity) FieldVer
 func (hidingResolver) RelationVerdicts(context.Context, *entityPkg.Entity) RelationVerdicts {
 	return RelationVerdicts{}
 }
+func (hidingResolver) UnconditionalRelationVerdicts(context.Context, *entityPkg.Entity) RelationVerdicts {
+	return RelationVerdicts{}
+}
 
 // TestSearchVisibleHits_FailsClosedWithoutFieldSearcher pins TKT-NCLA67
 // (gh#1093): when the ACL policy hides fields but the wired searcher cannot

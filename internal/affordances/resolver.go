@@ -509,6 +509,25 @@ func (r *PolicyResolver) enumOptions(entityType string) map[string][]string {
 
 // RelationVerdicts computes the sparse relation-level verdicts for e.
 func (r *PolicyResolver) RelationVerdicts(ctx context.Context, e *entity.Entity) RelationVerdicts {
+	return r.relationVerdicts(ctx, e, true)
+}
+
+// UnconditionalRelationVerdicts is [PolicyResolver.RelationVerdicts] with
+// every `when:` treated as false. A grant then allows only if it has no
+// `when:`. The roles are resolved for e's id, which every face of the entity
+// shares. The answer is therefore a lower bound for every face of e, and
+// depends on the policy and the id only, never on a row's content.
+//
+// A write gate uses it for a face of e the caller cannot read. Evaluating
+// that face's `when:` would make the verdict depend on a row the caller
+// cannot see; skipping the face would let a `when:` that denies on it pass.
+func (r *PolicyResolver) UnconditionalRelationVerdicts(ctx context.Context, e *entity.Entity) RelationVerdicts {
+	return r.relationVerdicts(ctx, e, false)
+}
+
+// relationVerdicts computes the relation verdicts for e. conditional
+// evaluates each `when:`; otherwise a `when:` fails.
+func (r *PolicyResolver) relationVerdicts(ctx context.Context, e *entity.Entity, conditional bool) RelationVerdicts {
 	out := RelationVerdicts{}
 	if e == nil || r.policy == nil {
 		return out
@@ -525,8 +544,15 @@ func (r *PolicyResolver) RelationVerdicts(ctx context.Context, e *entity.Entity)
 			continue
 		}
 		for _, rg := range g.relations {
-			grantPassed := r.passes(ctx, bc, rg.program, role)
-			metaPassed := r.metaFieldResults(ctx, bc, role, rg, grantPassed)
+			var grantPassed bool
+			var metaPassed map[string]bool
+			if conditional {
+				grantPassed = r.passes(ctx, bc, rg.program, role)
+				metaPassed = r.metaFieldResults(ctx, bc, role, rg, grantPassed)
+			} else {
+				grantPassed = rg.program == nil
+				metaPassed = unconditionalMetaResults(rg, grantPassed)
+			}
 			acc.observe(role, rg, grantPassed, metaPassed)
 		}
 	}
@@ -935,6 +961,19 @@ func (r *PolicyResolver) applyOptionGrants(
 			dim.observeDeny(og.field, og.option, role)
 		}
 	}
+}
+
+// unconditionalMetaResults is metaFieldResults with every `when:` treated
+// as false: a meta field passes only when neither grant has one.
+func unconditionalMetaResults(rg compiledRelationGrant, grantPassed bool) map[string]bool {
+	if len(rg.fields) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(rg.fields))
+	for _, fg := range rg.fields {
+		out[fg.field] = grantPassed && fg.program == nil
+	}
+	return out
 }
 
 // metaFieldResults evaluates each meta-field grant's own predicate.

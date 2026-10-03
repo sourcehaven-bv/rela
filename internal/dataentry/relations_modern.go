@@ -363,6 +363,9 @@ func (h *writeHandler) applyRelationsModern(
 		if err != nil {
 			return warnings, err
 		}
+		if err := h.requireReadablePeers(ctx, canonical, ops); err != nil {
+			return warnings, err
+		}
 		for _, op := range ops {
 			k := edgeKeyOf(entityID, canonical, op.slot, incoming)
 			if op.remove {
@@ -398,6 +401,35 @@ func (h *writeHandler) applyRelationsModern(
 		}
 	}
 	return warnings, nil
+}
+
+// requireReadablePeers refuses the upserts of ops whose peer has no face the
+// principal may read. The manager checks only that a peer exists, so without
+// this a hidden peer would be linked, or its existing edge updated, while an
+// absent one is refused. Both get the dangling-peer error, before the manager
+// runs, so its ACL cannot answer them differently either. A remove needs no
+// check: the planner matches only edges whose endpoints the principal reads.
+// One read gate covers every peer of ops.
+func (h *writeHandler) requireReadablePeers(ctx context.Context, relType string, ops []edgeOp) error {
+	var ids []string
+	for _, op := range ops {
+		if !op.remove {
+			ids = append(ids, op.slot.peer)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	types, err := h.visible.readableTypes(ctx, ids)
+	if err != nil {
+		return &gateFaultError{err: err}
+	}
+	for _, op := range ops {
+		if !op.remove && types[op.slot.peer] == "" {
+			return danglingPeerError(relType, op.ref.ID)
+		}
+	}
+	return nil
 }
 
 // edgeWrite is one desired edge for upsertEdge.

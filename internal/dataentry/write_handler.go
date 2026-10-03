@@ -341,7 +341,7 @@ func (h *writeHandler) relationGateOK(
 // request itself when a source row cannot be read.
 func (h *writeHandler) relationSourcesOr500(
 	w http.ResponseWriter, r *http.Request, pathEntity *entityPkg.Entity, peer entityPkg.Ref, direction string,
-) ([]*entityPkg.Entity, bool) {
+) ([]relationSource, bool) {
 	sources, err := h.affordances.relationSources(r.Context(), pathEntity, peer, direction)
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation source", err.Error())

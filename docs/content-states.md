@@ -1002,8 +1002,10 @@ a face hidden from you, so a refusal does not reveal that one exists.
   the rename on the same terms.
 - An **identity-scoped relation** from a faced entity needs the write grant on
   every face the type declares, whether or not the entity stores that face. A
-  `relation_grants:` permission is the alternative, as for any relation. The
-  web app's `linkable` flag follows the same rule.
+  `relation_grants:` permission is the alternative, as for any relation. An
+  affordance `when:` is evaluated on the faces you can read. A face you cannot
+  read allows the relation only if the grant has no `when:`. The web app's
+  `linkable` flag follows the same rule.
 - Deleting a face deletes the entity when no other face you can read remains.
   The delete is then checked as an entity delete: it needs `cascade` when the
   entity has relations, and each identity-scoped and incoming edge must be
@@ -1051,7 +1053,13 @@ a face hidden from you, so a refusal does not reveal that one exists.
 - An identity-scoped relation from a faced entity is checked against every
   face its type declares, not only the faces the entity stores. A role that
   writes such relations needs the grant on each declared face, or a
-  `relation_grants:` permission.
+  `relation_grants:` permission. An affordance relation grant with `when:`
+  no longer allows such a relation when the caller cannot read every face of
+  the entity.
+- A relation write naming an entity or face the caller cannot read returns
+  `422 target_not_found`, as for one that does not exist. A write naming an
+  absent entity may now get this `422` where it got a `403` before, for
+  example under `--read-only`.
 - Deleting the last face you can read is checked as an entity delete, even
   when a face you cannot read still exists.
 

@@ -153,6 +153,11 @@ A replace never touches an edge the caller cannot read. An incoming edge whose
 source face is hidden from the caller is left alone, so a client cannot delete
 what it was never shown.
 
+An upsert that names an entity the caller cannot read, at either end of the
+edge, returns 422 `target_not_found`, exactly as for an id that does not exist.
+So does an incoming `ID@face` whose face the caller cannot read. Nothing is
+written.
+
 ### Delta: `add` and `remove`
 
 ```json

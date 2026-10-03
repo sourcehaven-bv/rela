@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"time"
 
@@ -150,7 +151,8 @@ type affordanceService struct {
 	// that the principal may READ, for a write gate whose source has no row
 	// at the edge's tail. It is never served either. A hidden face is left
 	// out so that no gate evaluates a `when:` against it: the verdict would
-	// then depend on a row the caller cannot see.
+	// then depend on a row the caller cannot see. relationSources judges the
+	// hidden faces on the policy alone instead.
 	sourceFamily func(ctx context.Context, id string) ([]*entityPkg.Entity, error)
 	// readable keeps the rows of a batch the principal may read
 	// ([visibleReader.filterVisible]); linkablePage filters a page's source
@@ -257,6 +259,11 @@ func (svc affordanceService) computeCollectionActions(ctx context.Context, entit
 type FieldVerdictResolver interface {
 	FieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts
 	RelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts
+	// UnconditionalRelationVerdicts is RelationVerdicts as it holds for
+	// every face of e, whatever the face holds: a conditional grant does
+	// not allow. A write gate judges a face the caller cannot read by it;
+	// see [affordanceService.relationSources].
+	UnconditionalRelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts
 }
 
 // traversalPrimer is the OPTIONAL capability of a [FieldVerdictResolver]
@@ -667,44 +674,96 @@ const (
 	RelationOpRemove
 )
 
-// relationSources returns the rows whose verdicts gate a per-relation write.
-// For outgoing-direction operations the source IS the path entity (the
+// relationSource is one judgement a per-relation write gate makes: the
+// verdicts of row, or, when unconditional is set, the verdicts that hold for
+// every face of row's entity whatever the face holds
+// ([FieldVerdictResolver.UnconditionalRelationVerdicts]). The second stands
+// for the faces the principal cannot read. row is the audit subject of a
+// denial either way.
+type relationSource struct {
+	row           *entityPkg.Entity
+	unconditional bool
+}
+
+// relationSources returns what gates a per-relation write. For
+// outgoing-direction operations the source IS the path entity (the
 // canonical case). For incoming-direction operations the path entity is the
 // TARGET; the source is the peer, so the resolver must be asked about the
 // peer's affordance, not the path entity's.
 //
 // peer is the source at the edge's tail: the tail an existing edge carries, or
 // the tail a new incoming edge will get. When the peer has no row there, the
-// gate uses every row of its family the principal may read, and a write
-// passes only if every one permits it. That is the case for a new or
+// edge belongs to the whole peer, and a write passes only if every face the
+// peer's type declares permits it. That is the case for a new or
 // identity-scoped edge from a faced peer: its zero face holds no row
 // (DEC-NPZICR), and falling back to the path entity would judge the edge by
-// the wrong type's policy. A face the principal cannot read is not consulted,
-// so the verdict is the same whether or not one exists.
+// the wrong type's policy.
 //
-// A peer with no readable row at all falls back to the path entity. No edge
-// to it can be written, because the manager refuses a missing endpoint, and
-// the fallback keeps the answer for a hidden peer the same as for a missing
-// one.
+// A face is judged on its row when the principal can read the row. Every
+// other face is judged on the policy alone: one unconditional source stands
+// for them all. A face the principal reads unconditionally and that has no
+// row does not exist, so it needs no judgement. Which faces get the
+// unconditional judgement depends on the grants only, never on a row the
+// principal cannot read, so the verdict neither discloses a hidden face nor
+// skips a `when:` that would deny on it.
+//
+// A peer with no readable row at all falls back to the path entity, so a
+// hidden peer is judged exactly as a missing one. The write refuses both as
+// a dangling peer.
 //
 // A read fault is returned: the caller must not write on a guess.
 func (svc affordanceService) relationSources(
 	ctx context.Context, pathEntity *entityPkg.Entity, peer entityPkg.Ref, direction string,
-) ([]*entityPkg.Entity, error) {
+) ([]relationSource, error) {
 	if direction != string(DirectionIncoming) {
-		return []*entityPkg.Entity{pathEntity}, nil
+		return []relationSource{{row: pathEntity}}, nil
 	}
 	if src, ok := svc.sourceRow(ctx, peer); ok {
-		return []*entityPkg.Entity{src}, nil
+		return []relationSource{{row: src}}, nil
 	}
 	family, err := svc.sourceFamily(ctx, peer.ID)
 	if err != nil {
 		return nil, fmt.Errorf("reading relation source %s: %w", peer.ID, err)
 	}
 	if len(family) == 0 {
-		return []*entityPkg.Entity{pathEntity}, nil
+		return []relationSource{{row: pathEntity}}, nil
 	}
-	return family, nil
+	out := make([]relationSource, 0, len(family)+1)
+	for _, e := range family {
+		out = append(out, relationSource{row: e})
+	}
+	if svc.hasUnreadFace(ctx, family) {
+		out = append(out, relationSource{row: family[0], unconditional: true})
+	}
+	return out, nil
+}
+
+// hasUnreadFace reports whether the type of family declares a face that is
+// not in family and that the principal does not read unconditionally. Such a
+// face may hold a row the principal cannot see. family holds the readable
+// rows of one entity and is not empty.
+func (svc affordanceService) hasUnreadFace(ctx context.Context, family []*entityPkg.Entity) bool {
+	typ := family[0].Type
+	read := readGateFromContext(ctx).ReadQuery(ctx, typ)
+	for _, name := range metamodel.FaceOrderOf(svc.meta(), typ) {
+		face := entityPkg.Face(name)
+		if slices.ContainsFunc(family, func(e *entityPkg.Entity) bool { return e.Face == face }) {
+			continue
+		}
+		if read.AllowAll && (read.Faces == nil || slices.Contains(read.Faces, face)) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// verdictsOf resolves the relation verdicts src stands for.
+func (svc affordanceService) verdictsOf(ctx context.Context, src relationSource) RelationVerdicts {
+	if src.unconditional {
+		return svc.resolver().UnconditionalRelationVerdicts(ctx, src.row)
+	}
+	return svc.resolver().RelationVerdicts(ctx, src.row)
 }
 
 // linkableFrom reports whether the principal may create a relType edge from
@@ -714,13 +773,14 @@ func (svc affordanceService) relationSources(
 // [affordanceService.relationSources] and the ACL request of
 // [translateRelationCreate]. The write re-authorizes; this is a hint.
 //
-// The tail is the one the write gets. A content-scoped edge belongs to the
-// row's face; an identity-scoped edge has the zero tail, and from a faced
-// source the ACL then requires every face the type declares.
+// row is a served row, which the principal may read. The tail is the one the
+// write gets. A content-scoped edge belongs to the row's face; an
+// identity-scoped edge has the zero tail, and from a faced source the ACL
+// then requires every face the type declares.
 //
-// Cost per row: the source read of relationSources (the readable family, for
-// an identity edge from a faced source), one RelationVerdicts call per source
-// and one AuthorizeWrite.
+// Cost per row: the source read of relationSources (the readable family and
+// the type's read verdict, for an identity edge from a faced source), one
+// verdict call per source and one AuthorizeWrite.
 func (svc affordanceService) linkableFrom(
 	ctx context.Context, row *entityPkg.Entity, relType string, scope metamodel.RelationScope,
 ) bool {
@@ -733,7 +793,7 @@ func (svc affordanceService) linkableFrom(
 		return false
 	}
 	for _, src := range sources {
-		if src == nil {
+		if src.row == nil {
 			// The row's source is gone; the write would find no peer.
 			return false
 		}
@@ -745,28 +805,28 @@ func (svc affordanceService) linkableFrom(
 	return svc.acl().AuthorizeWrite(ctx, req).Allow
 }
 
-// relationOpDenial is [affordanceService.validateRelationOp] over every row
-// [affordanceService.relationSources] returned. It reports the first denial
-// and the row that produced it, which is the write's audit subject.
+// relationOpDenial is [affordanceService.validateRelationOp] over every
+// source [affordanceService.relationSources] returned. It reports the first
+// denial and the row that produced it, which is the write's audit subject.
 func (svc affordanceService) relationOpDenial(
-	ctx context.Context, sources []*entityPkg.Entity, relType string, op RelationOp,
+	ctx context.Context, sources []relationSource, relType string, op RelationOp,
 ) (*entityPkg.Entity, *AffordanceDenialError) {
 	for _, src := range sources {
 		if denial := svc.validateRelationOp(ctx, src, relType, op); denial != nil {
-			return src, denial
+			return src.row, denial
 		}
 	}
 	return nil, nil
 }
 
 // relationMetaDenial is [affordanceService.validateRelationMetaWrite] over
-// every source row, like [affordanceService.relationOpDenial].
+// every source, like [affordanceService.relationOpDenial].
 func (svc affordanceService) relationMetaDenial(
-	ctx context.Context, sources []*entityPkg.Entity, relType string, meta map[string]any, metaUnset []string,
+	ctx context.Context, sources []relationSource, relType string, meta map[string]any, metaUnset []string,
 ) (*entityPkg.Entity, *AffordanceDenialError) {
 	for _, src := range sources {
 		if denial := svc.validateRelationMetaWrite(ctx, src, relType, meta, metaUnset); denial != nil {
-			return src, denial
+			return src.row, denial
 		}
 	}
 	return nil, nil
@@ -778,12 +838,12 @@ func (svc affordanceService) relationMetaDenial(
 // create / remove. The verdict is per-relation-type uniform —
 // per-link affordances are predicate territory.
 func (svc affordanceService) validateRelationOp(
-	ctx context.Context, e *entityPkg.Entity, relType string, op RelationOp,
+	ctx context.Context, src relationSource, relType string, op RelationOp,
 ) *AffordanceDenialError {
-	if e == nil {
+	if src.row == nil {
 		return nil
 	}
-	v := svc.resolver().RelationVerdicts(ctx, e)
+	v := svc.verdictsOf(ctx, src)
 	rv, ok := v.Types[relType]
 	if !ok {
 		return nil // default-permissive
@@ -915,12 +975,12 @@ func (svc affordanceService) validateRelationOps(
 // relation validation. The affordance check focuses on rejecting
 // keys explicitly marked non-writable.
 func (svc affordanceService) validateRelationMetaWrite(
-	ctx context.Context, e *entityPkg.Entity, relType string, meta map[string]any, metaUnset []string,
+	ctx context.Context, src relationSource, relType string, meta map[string]any, metaUnset []string,
 ) *AffordanceDenialError {
-	if e == nil {
+	if src.row == nil {
 		return nil
 	}
-	v := svc.resolver().RelationVerdicts(ctx, e)
+	v := svc.verdictsOf(ctx, src)
 	rv, ok := v.Types[relType]
 	if !ok || rv.Fields == nil {
 		return nil

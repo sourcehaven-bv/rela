@@ -319,8 +319,19 @@ answer is a `403` that names the type, whatever faces exist.
 belongs to the whole entity. Writing one needs the verb on every face the type
 **declares**, whether or not this entity stores it. A `relation_grants:`
 permission is the alternative, as for any relation. The data-entry `linkable`
-flag asks the same question, and an affordance `when:` is evaluated only on
-faces the caller can read.
+flag asks the same question.
+
+An affordance relation grant must allow the write on every declared face too.
+A face the caller can read is judged on its row, so its `when:` is evaluated.
+A face the caller cannot read is judged on the policy alone: only a grant
+without `when:` allows it, because a `when:` could deny on content the caller
+cannot see. This applies whether or not the entity stores that face, so the
+answer never reveals a hidden face. A face the caller is granted read on
+without conditions, and that is not stored, needs no judgement.
+
+A relation write that names an entity the caller cannot read, or a face of it
+the caller cannot read, is refused as if the entity did not exist: `422
+target_not_found`. This holds for both ends of the edge.
 
 **Deleting a face.** Deleting a face deletes the entity when no other face the
 caller can read remains. The delete is then checked as an entity delete: it

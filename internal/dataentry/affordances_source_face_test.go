@@ -33,8 +33,11 @@ func TestRelationSources_ReadsTheTailFace(t *testing.T) {
 			t.Fatal(err)
 		}
 		out := make([]string, len(got))
-		for i, e := range got {
-			out[i] = e.ID + "@" + string(e.Face)
+		for i, src := range got {
+			out[i] = src.row.ID + "@" + string(src.row.Face)
+			if src.unconditional {
+				out[i] += " unconditional"
+			}
 		}
 		return out
 	}

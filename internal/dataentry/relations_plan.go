@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -79,6 +80,9 @@ func (e edgeReader) plan(
 		incoming: incoming, content: content, newTail: newTail, path: path,
 		bySlot: map[edgeSlot]*entity.Relation{}, byPeer: map[string][]*entity.Relation{},
 		resolve: func(id string) (entity.Face, error) { return e.resolveIncomingPeer(ctx, canonical, id, path) },
+		named: func(id string, face entity.Face) error {
+			return e.requireReadableFace(ctx, canonical, entity.FormatStateRef(id, face), id, face)
+		},
 	}
 	for _, rel := range current {
 		s := edgeSlot{peer: rel.To, tail: rel.FromFace}
@@ -140,6 +144,28 @@ func (e edgeReader) resolveIncomingPeer(ctx context.Context, relType, id, path s
 	return ref.Face, nil
 }
 
+// requireReadableFace refuses a new incoming content edge from a face the
+// principal cannot read. Such a face is the same miss as one that does not
+// exist: the error is the dangling-peer error a write to an absent id gets,
+// and it names only the address the caller sent.
+func (e edgeReader) requireReadableFace(ctx context.Context, relType, addr, id string, face entity.Face) error {
+	typ, err := e.visible.readableType(ctx, id)
+	if err != nil {
+		return &gateFaultError{err: err}
+	}
+	if typ == "" {
+		return danglingPeerError(relType, addr)
+	}
+	fam, ok, err := e.visible.family(ctx, typ, id)
+	switch {
+	case err != nil:
+		return &gateFaultError{err: err}
+	case !ok || !slices.Contains(fam.Faces, face):
+		return danglingPeerError(relType, addr)
+	}
+	return nil
+}
+
 // edgePlan is the state of one edgeReader.plan call.
 type edgePlan struct {
 	incoming, content bool
@@ -148,6 +174,8 @@ type edgePlan struct {
 	bySlot            map[edgeSlot]*entity.Relation
 	byPeer            map[string][]*entity.Relation
 	resolve           func(id string) (entity.Face, error)
+	// named refuses a new edge from a face the principal cannot read.
+	named func(id string, face entity.Face) error
 }
 
 // replace plans a `data` wrapper: upsert every listed edge, remove every
@@ -230,7 +258,13 @@ func (p edgePlan) slots(ref v1.ResourceIdentifier, at string, removing bool) ([]
 		return []edgeSlot{{peer: id, tail: entity.ImplicitFace}}, nil
 	}
 	if named, ok := peer.Named(); ok {
-		return []edgeSlot{{peer: id, tail: named.Face}}, nil
+		s := edgeSlot{peer: id, tail: named.Face}
+		if !removing && p.bySlot[s] == nil {
+			if err := p.named(id, named.Face); err != nil {
+				return nil, err
+			}
+		}
+		return []edgeSlot{s}, nil
 	}
 	existing := p.byPeer[id]
 	switch {
