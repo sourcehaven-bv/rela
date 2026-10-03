@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/calfeed"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
@@ -37,7 +38,7 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s := a.State()
-	cfg, found := s.Cfg.Feeds[name]
+	feedID, cfg, found := configuredFeed(s.Cfg.Feeds, name)
 	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Feed not found", fmt.Sprintf("no feed named %q", name))
 		return
@@ -51,7 +52,7 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 	link := func(entityType, id string) string {
 		return base + "/entity/" + entityType + "/" + id
 	}
-	provider, err := newDeclarativeFeed(name, cfg, s.Meta, feedEntitySource{app: a}, link, appRedactor(a))
+	provider, err := newDeclarativeFeed(feedID, cfg, s.Meta, feedEntitySource{app: a}, link, appRedactor(a))
 	if err != nil {
 		writeV1Error(w, r, http.StatusInternalServerError, "feed_error", "Feed misconfigured", "")
 		return
@@ -164,4 +165,17 @@ func (s feedEntitySource) listType(ctx context.Context, entityType string) ([]*e
 // getEntity fetches one entity if the principal may read it (per-entity gate).
 func (s feedEntitySource) getEntity(ctx context.Context, entityType, addr string) (*entitypkg.Entity, bool, error) {
 	return s.app.visibleReader.address(ctx, entityType, addr)
+}
+
+// configuredFeed returns the configured feed named name, with its key read
+// from the config map rather than from the request. The key becomes the
+// default calendar name in the feed body, so the body carries only
+// operator-authored text, never the request path.
+func configuredFeed(feeds map[string]dataentryconfig.Feed, name string) (string, dataentryconfig.Feed, bool) {
+	for key, cfg := range feeds {
+		if key == name {
+			return key, cfg, true
+		}
+	}
+	return "", dataentryconfig.Feed{}, false
 }
