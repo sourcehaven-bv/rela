@@ -19,6 +19,7 @@ type layered struct {
 var (
 	_ Loader    = (*layered)(nil)
 	_ Stater    = (*layered)(nil)
+	_ Opener    = (*layered)(nil)
 	_ DirLister = (*layered)(nil)
 )
 
@@ -159,4 +160,22 @@ func (l *layered) Dirs(ctx context.Context, dir string) ([]string, error) {
 		}
 	}
 	return slices.Sorted(maps.Keys(seen)), nil
+}
+
+// Open opens the primary's file, or the secondary's when the primary does
+// not have it. The fall-through rule is [layered.Load]'s.
+func (l *layered) Open(ctx context.Context, name string) (fs.File, error) {
+	primary, ok := l.primary.(Opener)
+	if !ok {
+		return nil, errNoCapability
+	}
+	f, err := primary.Open(ctx, name)
+	if !errors.Is(err, fs.ErrNotExist) {
+		return f, err
+	}
+	secondary, ok := l.secondary.(Opener)
+	if !ok {
+		return nil, errNoCapability
+	}
+	return secondary.Open(ctx, name)
 }

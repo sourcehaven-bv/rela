@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -55,6 +56,11 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
+	if KeepsMarkdownData(cfg.Paths) {
+		// Opening a database here would show an empty project and keep
+		// every edit out of the files the operator versions.
+		return newFS(cfg, opts...)
+	}
 	ctx := context.Background()
 	db, err := openDatabase(ctx, cfg)
 	if err != nil {
@@ -89,6 +95,48 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	// nil VisibleSearcher → assemble derives the generic search.NewVisible
 	// wrapper. Only the postgres recipe has a native implementation.
 	return assemble(base, st, searcher, nil, closer, overrides)
+}
+
+// KeepsMarkdownData reports whether the project keeps its data in markdown
+// files rather than in a database: it has no database yet, and its entities/
+// or relations/ directory holds something. Such a project opens on the
+// filesystem store, as it would in the default build, until its data is
+// imported (`rela db load --data`, or the desktop's import), which creates
+// the database and from then on is what opens.
+//
+// "Holds something" means a file at any depth: a new project's empty
+// per-type directories are not data, and it opens on the database.
+func KeepsMarkdownData(paths *project.Context) bool {
+	if _, err := os.Lstat(DatabasePath(paths)); !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	return hasFile(paths.EntitiesDir) || hasFile(paths.RelationsDir)
+}
+
+// hasFile reports whether dir holds a non-directory entry at any depth.
+func hasFile(dir string) bool {
+	found := errors.New("found")
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() {
+			return found
+		}
+		return nil
+	})
+	return errors.Is(err, found)
+}
+
+// openExistingDatabase opens the project's database, refusing with
+// [ErrNoDatabase] when there is none. Operations that only read it use this:
+// creating a database as a side effect would switch a markdown project over
+// to an empty one (see [KeepsMarkdownData]).
+func openExistingDatabase(ctx context.Context, paths *project.Context) (*sqlitedb.DB, error) {
+	if _, err := os.Lstat(DatabasePath(paths)); errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%s: %w", DatabasePath(paths), ErrNoDatabase)
+	}
+	return openDatabase(ctx, Config{Paths: paths})
 }
 
 // openDatabase opens the project's SQLite database.

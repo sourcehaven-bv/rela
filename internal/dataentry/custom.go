@@ -1,7 +1,6 @@
 package dataentry
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -120,15 +119,16 @@ func validCustomEntry(entry string) (string, bool) {
 // [config.DirLister] capabilities, which [NewApp] requires of its loader.
 type projectAssets interface {
 	Load(ctx context.Context, name string) ([]byte, error)
+	Open(ctx context.Context, name string) (fs.File, error)
 	Stat(ctx context.Context, name string) (fs.FileInfo, error)
 	Dirs(ctx context.Context, dir string) ([]string, error)
 }
 
 // openCustomEntry reads custom/{entry} through files.
 //
-// Containment is the loader's: on disk a [rootfs.Dir] opens every directory
-// level as its own os.Root, so a symlink inside custom/ pointing at
-// ../schema.yaml never resolves. TestOpenCustomEntry_Symlink pins it.
+// Containment is the loader's: on disk a [rootfs.Dir] opens custom/ as its
+// own os.Root, so a symlink inside custom/ pointing at ../schema.yaml never
+// resolves. TestOpenCustomEntry_Symlink pins it.
 //
 // Every failure returns errCustomAssetNotFound.
 func openCustomEntry(ctx context.Context, files projectAssets, entry string) ([]byte, error) {
@@ -136,6 +136,7 @@ func openCustomEntry(ctx context.Context, files projectAssets, entry string) ([]
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = f.Close() }()
 	return io.ReadAll(f.Content)
 }
 
@@ -145,7 +146,11 @@ type customEntryFile struct {
 	Content io.ReadSeeker
 	ModTime time.Time
 	Size    int64
+	file    fs.File
 }
+
+// Close releases the open file.
+func (f *customEntryFile) Close() error { return f.file.Close() }
 
 // openCustomEntryFile resolves and reads a custom/ entry.
 //
@@ -163,22 +168,34 @@ func openCustomEntryFile(ctx context.Context, files projectAssets, entry string)
 	if !ok {
 		return nil, errCustomAssetNotFound
 	}
-	name := project.CustomDir + "/" + rel
-	info, err := files.Stat(ctx, name)
+	f, err := files.Open(ctx, project.CustomDir+"/"+rel)
+	if err != nil {
+		return nil, errCustomAssetNotFound
+	}
+	info, err := f.Stat()
 	if err != nil || info.IsDir() {
+		_ = f.Close()
 		return nil, errCustomAssetNotFound
 	}
 	if info.Size() > maxCustomFileBytes {
+		_ = f.Close()
 		slog.Warn("custom asset exceeds size cap, not served",
 			"entry", rel, "max_bytes", maxCustomFileBytes)
 		return nil, errCustomAssetNotFound
 	}
-	b, err := files.Load(ctx, name)
-	// Re-checked after the read: the file may have grown since the Stat.
-	if err != nil || len(b) > maxCustomFileBytes {
+	// Served as the section the Stat measured, streamed rather than
+	// buffered, so a file that grows after the check is never read past it.
+	at, ok := f.(io.ReaderAt)
+	if !ok {
+		_ = f.Close()
 		return nil, errCustomAssetNotFound
 	}
-	return &customEntryFile{Content: bytes.NewReader(b), ModTime: info.ModTime(), Size: int64(len(b))}, nil
+	return &customEntryFile{
+		Content: io.NewSectionReader(at, 0, info.Size()),
+		ModTime: info.ModTime(),
+		Size:    info.Size(),
+		file:    f,
+	}, nil
 }
 
 // customAssetExists reports whether an entry is servable from custom/. Runs on

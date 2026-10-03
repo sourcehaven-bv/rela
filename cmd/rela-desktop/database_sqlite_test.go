@@ -96,6 +96,42 @@ func TestDatabaseProject_OpensAndRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// A project whose schema lives only in its database, with no
+// data-entry.yaml, can still be set up: setup reads the schema the services
+// loaded, not the disk.
+func TestDatabaseProject_SetupFromDatabaseSchema(t *testing.T) {
+	src := t.TempDir()
+	writeTestFile(t, src, "schema.yaml", testSchema)
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, project.CacheDir), 0o755))
+	fsys := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover(root, fsys)
+	require.NoError(t, err)
+	_, err = appbuild.LoadProjectConfig(context.Background(), fsys, paths, src)
+	require.NoError(t, err)
+
+	d := newTestDesktop(t)
+	require.Equal(t, "needs_setup", d.loadProject(root, false))
+	info := d.GetSetupInfo()
+	require.NotContains(t, info, "error")
+	assert.Equal(t, []string{"doc"}, info["entity_types"])
+	require.Empty(t, d.GenerateDataEntryConfig("Test"))
+	require.NotNil(t, d.app)
+}
+
+// A load that fails after the services opened releases the database, so
+// fixing the cause and opening again works.
+func TestDatabaseProject_FailedLoadReleasesTheDatabase(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "schema.yaml", testSchema)
+	writeTestFile(t, root, "data-entry.yaml", "app: [\n")
+	d := newTestDesktop(t)
+	require.NotEmpty(t, d.loadProject(root, false))
+
+	writeTestFile(t, root, "data-entry.yaml", testDataEntry)
+	require.Empty(t, d.loadProject(root, false), "the failed load must not keep the database locked")
+}
+
 // A project with a schema but no data-entry.yaml anywhere still asks for
 // setup.
 func TestDatabaseProject_NeedsSetupWithoutDataEntry(t *testing.T) {

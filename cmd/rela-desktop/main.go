@@ -95,20 +95,19 @@ type Desktop struct {
 	// registry holds every loaded project. The single-project fields below
 	// still track the active one; they are the "no project loaded" path and
 	// the welcome page's view of the world.
-	registry          *projectRegistry
-	app               *dataentry.App
-	svc               *appbuild.Services // per-project services; closed on next LoadProject
-	handler           http.Handler
-	loadErr           string
-	prefs             *desktop.Preferences
-	cloneAuth         *cloneAuthState
-	lastCloneDir      string           // tracks the most recent clone for project selection
-	pendingSetupDir   string           // project dir awaiting data-entry.yaml setup
-	pendingSetupFS    storage.FS       // fs for pending setup
-	pendingSetupPaths *project.Context // project paths for pending setup
-	pendingProject    string           // project to load once the instance lock is held
-	menuReady         atomic.Bool      // true once the native menu exists (post-Run)
-	stopScheduler     context.CancelFunc
+	registry         *projectRegistry
+	app              *dataentry.App
+	svc              *appbuild.Services // per-project services; closed on next LoadProject
+	handler          http.Handler
+	loadErr          string
+	prefs            *desktop.Preferences
+	cloneAuth        *cloneAuthState
+	lastCloneDir     string               // tracks the most recent clone for project selection
+	pendingSetupDir  string               // project dir awaiting data-entry.yaml setup
+	pendingSetupMeta *metamodel.Metamodel // schema of the project pending setup
+	pendingProject   string               // project to load once the instance lock is held
+	menuReady        atomic.Bool          // true once the native menu exists (post-Run)
+	stopScheduler    context.CancelFunc
 }
 
 // cloneAuthState tracks an in-progress OAuth device flow.
@@ -422,17 +421,25 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 		d.mu.Unlock()
 		return svcErr.Error()
 	}
+	// Closed on every path that does not hand svc to the registry. On the
+	// sqlite build an open svc holds the database's exclusive lock, and a
+	// leaked one would refuse every later open of this project.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			_ = svc.Close()
+		}
+	}()
 
 	// data-entry.yaml is read through the project's loader, not looked up on
 	// disk: a project may carry it in its database. Checked after the
-	// services open because that loader is theirs.
+	// services open because that loader is theirs; the schema is kept for
+	// setup for the same reason.
 	_, cfgErr := svc.ProjectFiles().Load(context.Background(), dataentry.ConfigFile)
 	if errors.Is(cfgErr, fs.ErrNotExist) {
-		_ = svc.Close()
 		d.mu.Lock()
 		d.pendingSetupDir = dir
-		d.pendingSetupFS = fsys
-		d.pendingSetupPaths = projCtx
+		d.pendingSetupMeta = svc.Meta()
 		d.loadErr = ""
 		d.mu.Unlock()
 		return "needs_setup"
@@ -469,10 +476,10 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	d.handler = handler
 	d.loadErr = ""
 	d.pendingSetupDir = ""
-	d.pendingSetupFS = nil
-	d.pendingSetupPaths = nil
+	d.pendingSetupMeta = nil
 	d.stopScheduler = schedCancel
 	d.mu.Unlock()
+	handedOff = true
 
 	// Register it so /p/<id>/ can reach it, and so a later Open Project on the
 	// same directory can focus this project rather than loading a second copy.
@@ -514,14 +521,9 @@ func (d *Desktop) GetSetupInfo() map[string]any {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	if d.pendingSetupPaths == nil {
+	meta := d.pendingSetupMeta
+	if meta == nil {
 		return map[string]any{"error": "No project pending setup"}
-	}
-
-	loader := metamodel.NewFSLoader(d.pendingSetupFS, d.pendingSetupPaths.SchemaPath)
-	meta, _, err := loader.Load(context.Background())
-	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("Failed to load metamodel: %v", err)}
 	}
 
 	entityTypes := make([]string, 0, len(meta.Entities))
@@ -538,18 +540,12 @@ func (d *Desktop) GetSetupInfo() map[string]any {
 // GenerateDataEntryConfig creates a data-entry.yaml from the metamodel.
 func (d *Desktop) GenerateDataEntryConfig(appName string) string {
 	d.mu.Lock()
-	fs := d.pendingSetupFS
-	paths := d.pendingSetupPaths
+	meta := d.pendingSetupMeta
 	dir := d.pendingSetupDir
 	d.mu.Unlock()
 
-	if paths == nil {
+	if meta == nil {
 		return "No project pending setup"
-	}
-
-	meta, _, err := metamodel.NewFSLoader(fs, paths.SchemaPath).Load(context.Background())
-	if err != nil {
-		return fmt.Sprintf("Failed to load metamodel: %v", err)
 	}
 
 	config := generateDataEntryConfig(appName, meta)
@@ -562,8 +558,7 @@ func (d *Desktop) GenerateDataEntryConfig(appName string) string {
 	// Now load the project
 	d.mu.Lock()
 	d.pendingSetupDir = ""
-	d.pendingSetupFS = nil
-	d.pendingSetupPaths = nil
+	d.pendingSetupMeta = nil
 	d.mu.Unlock()
 
 	return d.LoadProject(dir)

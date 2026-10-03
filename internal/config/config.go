@@ -57,6 +57,15 @@ type Stater interface {
 	Stat(ctx context.Context, name string) (fs.FileInfo, error)
 }
 
+// Opener is the optional interface for a Loader that can open a file for
+// streaming. The file it returns also implements [io.ReaderAt] and
+// [io.Seeker], so a server can serve a bounded section of it without
+// buffering. Absence is an [os.ErrNotExist]-compatible error, as for
+// [Loader.Load].
+type Opener interface {
+	Open(ctx context.Context, name string) (fs.File, error)
+}
+
 // DirLister is the optional interface for a Loader that can list the
 // subdirectories directly under a directory, sorted. [Loader.List] lists only
 // files; discovering apps/<id>/ needs the directories. An absent directory

@@ -4,6 +4,7 @@ package appbuild_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -296,5 +297,50 @@ func TestExportMarkdownData_RefusesExistingDataDirs(t *testing.T) {
 				t.Fatalf("export wrote into %s: %v", out, entries)
 			}
 		})
+	}
+}
+
+// A markdown project with no database opens on its files, and nothing that
+// only reads the database creates one: a database would make it open empty.
+func TestSQLite_MarkdownProjectOpensOnItsFiles(t *testing.T) {
+	root := writeDataProject(t)
+	paths := projectAt(t, root)
+	ctx := context.Background()
+	if !appbuild.KeepsMarkdownData(paths) {
+		t.Fatal("KeepsMarkdownData = false for a project with markdown entities")
+	}
+
+	svc, err := discover(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := svc.Store().CountEntities(ctx, store.EntityQuery{})
+	_ = svc.Close()
+	if err != nil || n != 2 {
+		t.Fatalf("CountEntities = %d, %v; want the 2 markdown entities", n, err)
+	}
+
+	_, err = appbuild.DumpProjectConfig(ctx, osFS(), paths, t.TempDir(), false)
+	if !errors.Is(err, appbuild.ErrNoDatabase) {
+		t.Errorf("DumpProjectConfig err = %v, want ErrNoDatabase", err)
+	}
+	_, err = appbuild.ExportMarkdownData(ctx, osFS(), paths, t.TempDir())
+	if !errors.Is(err, appbuild.ErrNoDatabase) {
+		t.Errorf("ExportMarkdownData err = %v, want ErrNoDatabase", err)
+	}
+	_, err = appbuild.LoadProjectConfig(ctx, osFS(), paths, root)
+	if err == nil || !strings.Contains(err.Error(), "import the data first") {
+		t.Errorf("LoadProjectConfig err = %v, want a refusal", err)
+	}
+	if _, err := os.Stat(appbuild.DatabasePath(paths)); !os.IsNotExist(err) {
+		t.Fatalf("a read created the database: %v", err)
+	}
+
+	// Importing the data creates the database, which opens from then on.
+	if _, err := importData(t, root, false, audit.Nop{}); err != nil {
+		t.Fatal(err)
+	}
+	if appbuild.KeepsMarkdownData(paths) {
+		t.Error("KeepsMarkdownData = true after the import")
 	}
 }

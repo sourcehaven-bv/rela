@@ -126,6 +126,12 @@ func runDBLoad(ctx context.Context, from string, data, force bool) error {
 	if from == "" {
 		from = paths.Root
 	}
+	// Collected before anything is written: an import that commits and is
+	// then followed by a config refusal could not simply be re-run.
+	files, err := appbuild.CollectProjectConfig(fs, from)
+	if err != nil {
+		return err
+	}
 	if data {
 		sink, sinkErr := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
 		if sinkErr != nil {
@@ -138,7 +144,7 @@ func runDBLoad(ctx context.Context, from string, data, force bool) error {
 		}
 		fmt.Printf("Imported %s.\n", sum)
 	}
-	names, err := appbuild.LoadProjectConfig(ctx, fs, paths, from)
+	names, err := appbuild.StoreProjectConfig(ctx, paths, files)
 	if err != nil {
 		return err
 	}

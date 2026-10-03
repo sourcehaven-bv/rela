@@ -261,3 +261,20 @@ func TestLoader_StatAndDirs(t *testing.T) {
 		t.Fatal("Dirs accepted a traversal name")
 	}
 }
+
+// A directory name with non-ASCII characters lists its files and
+// subdirectories: the prefix is compared as bytes, not characters.
+func TestLoader_ListNonASCIIDirectory(t *testing.T) {
+	l, ctx := newLoader(t)
+	for _, name := range []string{"apps/café/index.html", "apps/café/sub/x.js"} {
+		if err := l.Put(ctx, name, []byte("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if files, err := l.List(ctx, "apps/café"); err != nil || len(files) != 1 || files[0] != "index.html" {
+		t.Fatalf("List = %v, %v; want [index.html]", files, err)
+	}
+	if dirs, err := l.Dirs(ctx, "apps/café"); err != nil || len(dirs) != 1 || dirs[0] != "sub" {
+		t.Fatalf("Dirs = %v, %v; want [sub]", dirs, err)
+	}
+}

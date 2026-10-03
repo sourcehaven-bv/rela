@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -186,5 +187,25 @@ func TestStorageFS_StatDirectories(t *testing.T) {
 	}
 	if _, err := nested.Stat("/proj/absent"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("Stat(absent) err = %v, want ErrNotExist", err)
+	}
+}
+
+// A directory on a real disk is a directory, although loading it fails with
+// an error other than ErrNotExist.
+func TestStorageFS_StatDiskDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "templates", "entities"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "templates", "entities", "doc.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	view, err := config.NewStorageFS(context.Background(),
+		config.NewFSLoader(storage.NewSafeFS(storage.NewOsFS()), root), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := view.Stat(filepath.Join(root, "templates", "entities")); err != nil || !info.IsDir() {
+		t.Fatalf("Stat = %v, %v; want a directory", info, err)
 	}
 }

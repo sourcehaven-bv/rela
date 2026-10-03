@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"path"
@@ -127,10 +128,10 @@ func appExists(ctx context.Context, files projectAssets, id string) bool {
 
 // openAppEntry reads apps/{id}/{entry} through files. entry uses forward
 // slashes; "." and ".." segments and absolute paths are rejected before the
-// read. Containment is the loader's: on disk every directory level is its own
+// read. Containment is the loader's: on disk each app directory is its own
 // os.Root, so a symlink in one app cannot reach another app or the project.
 // Returns the bytes, or an error for missing/oversize/escaping entries; the
-// size is checked on the Stat, before reading.
+// size is checked before reading.
 func openAppEntry(ctx context.Context, files projectAssets, id, entry string) ([]byte, error) {
 	if id == "" || !dataentryconfig.ValidAppID(id) {
 		return nil, fmt.Errorf("invalid app id: %q", id)
@@ -144,8 +145,12 @@ func openAppEntry(ctx context.Context, files projectAssets, id, entry string) ([
 		return nil, fmt.Errorf("invalid entry path: %q", entry)
 	}
 
-	name := path.Join(appsDir, id, rel)
-	info, err := files.Stat(ctx, name)
+	f, err := files.Open(ctx, path.Join(appsDir, id, rel))
+	if err != nil {
+		return nil, fmt.Errorf("app entry not found: %s/%s", id, rel)
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("app entry not found: %s/%s", id, rel)
 	}
@@ -155,7 +160,8 @@ func openAppEntry(ctx context.Context, files projectAssets, id, entry string) ([
 	if info.Size() > maxAppFileBytes {
 		return nil, fmt.Errorf("app entry too large: %s/%s (max %d bytes)", id, rel, maxAppFileBytes)
 	}
-	b, err := files.Load(ctx, name)
+	// Bounded: the file may have grown since the size check.
+	b, err := io.ReadAll(io.LimitReader(f, maxAppFileBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("cannot read app entry: %s/%s", id, rel)
 	}

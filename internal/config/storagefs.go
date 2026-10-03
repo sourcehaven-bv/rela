@@ -111,9 +111,8 @@ func (s *StorageFS) Stat(path string) (os.FileInfo, error) {
 	if err == nil {
 		return fileInfo{name: filepath.Base(name), size: int64(len(data))}, nil
 	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
+	// Any Load error, not only ErrNotExist: a disk loader reports a
+	// directory as unreadable rather than absent.
 	if isDir, dirErr := s.isDir(name); dirErr != nil || !isDir {
 		return nil, err
 	}

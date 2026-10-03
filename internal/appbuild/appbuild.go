@@ -129,7 +129,7 @@ import (
 // method. The run-state backend is chosen here to match the job queue's reach,
 // the same per-recipe choice as [Services.MigState].
 //
-//plimsoll:max-exported-methods=35
+//plimsoll:max-exported-methods=36
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -358,7 +358,17 @@ func (s *Services) Config() config.Loader { return s.cfgLoader }
 // validations/, custom/ and apps/. Unlike [Services.Config] it always reads
 // the disk with os.Root containment, and on the sqlite build it also serves
 // the files the project's database carries (FEAT-UP14BT).
-func (s *Services) ProjectFiles() config.Loader { return s.base.cfg.projectFiles() }
+func (s *Services) ProjectFiles() config.Loader {
+	if s.base != nil {
+		return s.base.cfg.projectFiles()
+	}
+	// A bundle built without SharedBase (tests) has no database config.
+	root := ""
+	if s.paths != nil {
+		root = s.paths.Root
+	}
+	return rootfs.New(root)
+}
 
 // State returns the .rela cache-directory KV (or a sentinel error-KV
 // when no cache dir is available).

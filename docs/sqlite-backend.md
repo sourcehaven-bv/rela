@@ -46,6 +46,18 @@ stored copy. A project that has both is a project being edited, so rela reads
 the file you just wrote, and falls back to the stored copy only for files that
 are not on disk.
 
+Only config files are stored: the schema and its includes, the root config
+files (`data-entry.yaml`, `acl.yaml`, `schedules.yaml`, ...) and the files
+under `scripts/`, `actions/`, `validations/`, `migrations/`, `templates/`,
+`custom/` and `apps/`. Hidden files are never stored, so `.rela/secrets.yaml`
+stays on the machine. `rela db load` refuses a symlink anywhere in that set,
+and `rela db dump` refuses to write any other name.
+
+A `rela.db` that carries config carries code: Lua scripts, external
+`transforms:` commands, and `custom.js`, which runs inside the app. Trust one
+the way you trust a project repository you clone. When a database comes from
+someone else, `rela db dump` it and read the config before you open it.
+
 ## Single process, enforced
 
 Opening the project takes an exclusive lock. A second process gets a clear
@@ -167,9 +179,13 @@ of the data.
 
 ## Migrating between backends
 
-A markdown project opened by the SQLite build starts with an empty database:
-the build does not read `entities/` or `relations/`. Copy the data across with
-`--data`.
+A markdown project, one with files under `entities/` or `relations/` and no
+`.rela/rela.db`, opens on its markdown files in the SQLite build too, exactly
+as the filesystem build opens it. It moves to the database when you import its
+data with `--data`; from then on the database is what opens. Commands that only
+read the database (`rela db dump`) refuse a project that has none, and
+`rela db load` without `--data` refuses a markdown project, because creating
+its database would leave it empty.
 
 **From markdown to SQLite.** Run this in the project directory with the SQLite
 build:

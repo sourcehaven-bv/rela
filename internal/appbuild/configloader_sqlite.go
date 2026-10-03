@@ -75,7 +75,7 @@ func backendServices(db *sqlitedb.DB) (backendOverrides, error) {
 //
 // The disk layer is a [rootfs.Dir], not a config.FSLoader, because the
 // result also serves scripts/, actions/, custom/ and apps/: those readers
-// used to open files through a nested os.Root, which refuses a symlink that
+// open files through an os.Root per area, which refuses a symlink that
 // leaves its directory, and the layered view must keep that.
 func layerProjectConfig(root string, db *sqlitedb.DB) (config.Loader, error) {
 	baked, err := configsql.New(db.DB())

@@ -168,3 +168,38 @@ func TestDir_Subscribe(t *testing.T) {
 		t.Fatal("Subscribe accepted a traversal name")
 	}
 }
+
+// Containment is per area, as the readers had it before the loader seam: a
+// symlink between subdirectories of scripts/ resolves, a top-level file may
+// be a symlink anywhere, and a symlinked area directory is refused.
+func TestDir_AreaContainment(t *testing.T) {
+	root := project(t)
+	write(t, root, "scripts/shared/u.lua", "u")
+	if err := os.MkdirAll(filepath.Join(root, "scripts", "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "shared", "u.lua"), filepath.Join(root, "scripts", "lib", "u.lua")); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	write(t, outside, "data-entry.yaml", "shared")
+	write(t, outside, "area/x.lua", "x")
+	if err := os.Symlink(filepath.Join(outside, "data-entry.yaml"), filepath.Join(root, "data-entry.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "area"), filepath.Join(root, "actions")); err != nil {
+		t.Fatal(err)
+	}
+
+	d := rootfs.New(root)
+	ctx := context.Background()
+	if got, err := d.Load(ctx, "scripts/lib/u.lua"); err != nil || string(got) != "u" {
+		t.Errorf("Load(scripts/lib/u.lua) = %q, %v; want the file its symlink names", got, err)
+	}
+	if got, err := d.Load(ctx, "data-entry.yaml"); err != nil || string(got) != "shared" {
+		t.Errorf("Load(data-entry.yaml) = %q, %v; want the shared file", got, err)
+	}
+	if _, err := d.Load(ctx, "actions/x.lua"); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Load through a symlinked area = %v; want a containment error", err)
+	}
+}

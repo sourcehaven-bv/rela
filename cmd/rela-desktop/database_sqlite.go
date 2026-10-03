@@ -124,38 +124,55 @@ func (d *Desktop) addDatabaseMenu(fileMenu *application.Menu) {
 	fileMenu.AddSeparator()
 }
 
-// databaseMenuAction asks for a folder, runs the op built for it and reports
-// the outcome in a dialog.
+// databaseMenuAction confirms which project the action applies to, asks for
+// a folder, runs the op built for it and reports the outcome in a dialog.
+//
+// The menu is application-wide and acts on the most recently opened project,
+// which need not be the focused window's; the confirmation names it so the
+// user cannot replace another project's config by accident.
 // coverage-ignore-func: menu callback - requires Wails runtime
 func (d *Desktop) databaseMenuAction(
 	title, prompt string, build func(dir string) databaseOp,
 ) func(*application.Context) {
 	return func(*application.Context) {
 		d.mu.RLock()
-		loaded := d.app != nil
+		app := d.app
 		d.mu.RUnlock()
-		if !loaded {
-			d.errorDialog(title, "Open a project first.")
-			return
-		}
 		if d.wails == nil {
 			return
 		}
-		// Folders only, and creatable: an export wants a fresh one.
-		dir, err := d.wails.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
-			Title:                prompt,
-			CanChooseDirectories: true,
-			CanCreateDirectories: true,
-		}).PromptForSingleSelection()
-		if err != nil || dir == "" {
+		if app == nil {
+			d.errorDialog(title, "Open a project first.")
 			return
 		}
-		summary, err := d.withProjectReleased(build(dir))
-		d.reloadWindow()
-		if err != nil {
-			d.errorDialog(title+" failed", strings.TrimSpace(err.Error()))
-			return
-		}
-		d.wails.Dialog.Info().SetTitle(title).SetMessage(summary).Show()
+		confirm := d.wails.Dialog.Question().SetTitle(title).
+			SetMessage(fmt.Sprintf("This applies to %s (%s).", app.ProjectName(), app.ProjectRoot()))
+		confirm.AddButton("Continue").SetAsDefault().OnClick(func() {
+			go d.runDatabaseAction(title, prompt, build)
+		})
+		confirm.AddButton("Cancel").SetAsCancel()
+		confirm.Show()
 	}
+}
+
+// runDatabaseAction is the part of a database menu action after the user
+// confirmed the project.
+// coverage-ignore-func: menu callback - requires Wails runtime
+func (d *Desktop) runDatabaseAction(title, prompt string, build func(dir string) databaseOp) {
+	// Folders only, and creatable: an export wants a fresh one.
+	dir, err := d.wails.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:                prompt,
+		CanChooseDirectories: true,
+		CanCreateDirectories: true,
+	}).PromptForSingleSelection()
+	if err != nil || dir == "" {
+		return
+	}
+	summary, err := d.withProjectReleased(build(dir))
+	d.reloadWindow()
+	if err != nil {
+		d.errorDialog(title+" failed", strings.TrimSpace(err.Error()))
+		return
+	}
+	d.wails.Dialog.Info().SetTitle(title).SetMessage(summary).Show()
 }

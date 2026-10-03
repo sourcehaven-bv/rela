@@ -39,6 +39,7 @@ func (c *customAssets) serveAsset(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	defer func() { _ = f.Close() }()
 
 	h := w.Header()
 	// Extension-based, from the same fixed map apps/ uses: deterministic across
@@ -69,7 +70,7 @@ func (c *customAssets) serveAsset(w http.ResponseWriter, r *http.Request) {
 	// endpoint with the caller's session. Escaping operator CSS or JS would
 	// break the feature rather than protect anything.
 	//
-	// The containment boundary is validCustomEntry + the loader's nested
+	// The containment boundary is validCustomEntry + the loader's per-area
 	// os.Root — NOT a filename allowlist, which TKT-IWMETE removed.
 	http.ServeContent(w, r, entry, f.ModTime, f.Content)
 }

@@ -231,6 +231,21 @@ func LoadProjectConfig(ctx context.Context, fsys storage.FS, paths *project.Cont
 	if err != nil {
 		return nil, err
 	}
+	return StoreProjectConfig(ctx, paths, files)
+}
+
+// StoreProjectConfig replaces the config the project's database carries
+// with files, as collected by [CollectProjectConfig], and returns the stored
+// paths. Collecting first lets a caller validate the config before it
+// changes anything else.
+//
+// It refuses a project that keeps its data in markdown files: creating its
+// database would switch it to an empty one. Import the data first.
+func StoreProjectConfig(ctx context.Context, paths *project.Context, files map[string][]byte) ([]string, error) {
+	if KeepsMarkdownData(paths) {
+		return nil, errors.New("the project keeps its data in markdown files and has no database; " +
+			"import the data first (rela db load --data) so the database does not open empty")
+	}
 	db, err := openDatabase(ctx, Config{Paths: paths})
 	if err != nil {
 		return nil, err
@@ -260,7 +275,7 @@ func LoadProjectConfig(ctx context.Context, fsys storage.FS, paths *project.Cont
 func DumpProjectConfig(
 	ctx context.Context, fsys storage.FS, paths *project.Context, dir string, overwrite bool,
 ) ([]string, error) {
-	db, err := openDatabase(ctx, Config{Paths: paths})
+	db, err := openExistingDatabase(ctx, paths)
 	if err != nil {
 		return nil, err
 	}

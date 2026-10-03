@@ -163,7 +163,7 @@ func ExportMarkdownData(
 		}
 	}
 
-	db, err := openDatabase(ctx, Config{Paths: paths})
+	db, err := openExistingDatabase(ctx, paths)
 	if err != nil {
 		return DataSummary{}, err
 	}
