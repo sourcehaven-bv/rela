@@ -267,8 +267,13 @@ async function loadTypeCandidates(
   // will never scroll to. One page left anything past the first 100
   // unresolvable, so `reshapeLegacyToModern` returned null and the form's
   // entire relations autosave aborted with "unknown types" (BUG-HOB9BR).
+  // A source that picks a face is read with the relation context, so each
+  // face row says whether this edge may be created from it (offersFace).
+  const perFace = picksFace(targetType)
+  const link = perFace ? { relation: props.field.relation, direction: 'incoming' as const } : {}
   const ambient = entitiesStore.fetchAllList(targetType, {
     ...(worldParam.value ? { world: worldParam.value } : {}),
+    ...link,
   })
   // A faced target is widened to every face the reader may read: the
   // relation's head is the entity, so a face the ambient world excludes
@@ -276,14 +281,13 @@ async function loadTypeCandidates(
   // resolves to its one row in every world, so it needs no second query.
   const worlds = hasFaces(targetType) ? widenWorlds(schemaStore.worlds, ambientWorld()) : []
   const widened = Promise.allSettled(
-    worlds.map((w) => entitiesStore.fetchAllList(targetType, { world: w }))
+    worlds.map((w) => entitiesStore.fetchAllList(targetType, { world: w, ...link }))
   )
   // The ambient list is the core of the picker, and its failure fails the load.
   // A widened list is an extra: one that fails is logged and left out, so the
   // rows the ambient world serves are still offered.
   const result = await ambient
   const others: Entity[][] = []
-  const perFace = picksFace(targetType)
   for (const [i, settled] of (await widened).entries()) {
     if (settled.status === 'fulfilled') {
       others.push(settled.value.data)

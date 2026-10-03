@@ -372,6 +372,43 @@ func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
 	assertBudget(t, "search", small, large, searchBudget, detail)
 }
 
+// The same search with a relation context (`linkable` per row): the rows'
+// source reads are batched, so the context adds a fixed number of reads.
+func TestQueryBudget_SearchLinkableIsSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/v1/_search?q=type%3Aticket&relation=blocks&direction=incoming", http.NoBody)
+		req = req.WithContext(gateCtxFor(ctx, t, d))
+		rec := httptest.NewRecorder()
+		app.handleV1Search(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("search: %d %s", rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), `"linkable":true`) {
+			t.Fatalf("no row is linkable, so this budget proves nothing: %s", rec.Body)
+		}
+	})
+	assertBudget(t, "search linkable", small, large, searchLinkableBudget, detail)
+}
+
+// A list page with a relation context, the RelationPicker shape: like the
+// search, the context adds a fixed number of reads.
+func TestQueryBudget_ListLinkableIsSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		_, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets",
+			"per_page=100&relation=blocks&direction=incoming")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), `"linkable":true`) {
+			t.Fatalf("no row is linkable, so this budget proves nothing: %s", rec.Body)
+		}
+	})
+	assertBudget(t, "list linkable", small, large, listLinkableBudget, detail)
+}
+
 // A RECURSIVE view traversal, the shape that exercises the BFS frontier source
 // gate (BUG-9Z20WH). This is the budget the gate's own doc comment claims: one
 // header scan + one probe per distinct type per LEVEL, so the cost is a
@@ -597,6 +634,12 @@ const (
 	navItemsBudget = 6
 	// search: whole-type read, membership walk.
 	searchBudget = 3
+	// search with a relation context: plus the family headers and the
+	// source rows of the page.
+	searchLinkableBudget = 5
+	// list page with a relation context: listPageBudget plus the same two
+	// reads as searchLinkableBudget.
+	listLinkableBudget = 8
 	// recursive view: entry, the fixpoint's relation queries, the collection
 	// load, and the BFS frontier source gate's ONE header scan per level
 	// walked (BUG-9Z20WH). Measured, not derived; the point of the pin is that

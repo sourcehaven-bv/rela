@@ -297,7 +297,8 @@ source face:
   not the world.
 - It names the face on each row.
 - It locks a row you may not change.
-- When you add an edge, it offers only the faces you may write.
+- When you add an edge, it offers only the faces you may create the edge
+  from. The server decides this with the checks the save runs.
 
 Removing the draft edge leaves the published one alone.
 

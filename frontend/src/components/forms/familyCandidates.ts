@@ -84,10 +84,13 @@ export function faceCandidates(lists: Entity[][]): Entity[] {
 }
 
 /**
- * Whether the dropdown offers a face candidate. A face whose `update` the
- * server denies is left out: a content edge is part of that face's content.
- * This is a hint read off the server's `_actions`; the write re-authorizes.
+ * Whether the dropdown offers a face candidate: the server's `linkable`
+ * answer to "may this principal create the edge from this face". Both
+ * pickers read face candidates with the relation context, so every such row
+ * carries it. A row without it was not judged, and is not offered: offering
+ * it would bring back the save that fails with 403, which is what the flag
+ * exists to prevent. The write re-authorizes either way.
  */
 export function offersFace(e: Entity): boolean {
-  return e._actions?.update !== false
+  return e.linkable === true
 }

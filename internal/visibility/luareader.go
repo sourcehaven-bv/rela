@@ -125,12 +125,17 @@ func (s *ScriptReader) GetAddress(ctx context.Context, addr string) (*entity.Ent
 	return s.res.addressAny(s.bind(ctx), worldIn(ctx, s.world), addr)
 }
 
-// WriteTarget resolves addr to the one face a face-level write edits, in
-// the reader's world (see [Resolver.WriteTarget]). Every miss is
-// [store.ErrNotFound]; a bare id on a faced type is an
-// [*AmbiguousAddressError] naming the faces the caller may read.
+// WriteTarget resolves addr to the one face a face-level write edits (see
+// [Resolver.WriteTarget]). Every miss is [store.ErrNotFound]; a bare id on a
+// faced type is an [*AmbiguousAddressError] naming the faces the caller may
+// read.
+//
+// It uses the world the reader was built with and ignores a per-operation
+// read world ([WithReadWorld]): the world a caller reads in must not change
+// which face a write lands on. The reader's world still refuses when the
+// wiring never set one.
 func (s *ScriptReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
-	return s.res.writeTargetAny(s.bind(ctx), worldIn(ctx, s.world), addr)
+	return s.res.writeTargetAny(s.bind(ctx), s.world, addr)
 }
 
 // Family reports which faces of the entity id the caller may read, reading

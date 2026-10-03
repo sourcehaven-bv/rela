@@ -335,14 +335,16 @@ watch(searchQuery, (q) => {
 })
 
 // The search rows of one type. A source that picks a face is searched in
-// every readable world, one row per face, offering only the faces the
-// principal may write (offersFace).
+// every readable world, one row per face. The search names the relation, so
+// each row says whether the principal may create this edge from its face
+// (`linkable`), and only those faces are offered (offersFace).
 async function searchType(q: string, type: string): Promise<Entity[]> {
   if (!picksFace(type)) return (await searchEntities(q, type)).data
   const ambient = world.value || schemaStore.defaultWorld || DEFAULT_WORLD
   const worlds = [ambient, ...widenWorlds(schemaStore.worlds, ambient)]
+  const link = { relation: props.field.relation ?? '', direction: 'incoming' as const }
   const lists = await Promise.all(
-    worlds.map((w) => searchEntities(q, type, undefined, w).then((r) => r.data))
+    worlds.map((w) => searchEntities(q, type, undefined, w, link).then((r) => r.data))
   )
   return faceCandidates(lists).filter(offersFace)
 }

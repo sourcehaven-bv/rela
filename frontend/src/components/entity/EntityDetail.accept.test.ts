@@ -4,10 +4,12 @@ import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
 import CommentsPanel from './CommentsPanel.vue'
+import TextSelectionComment from './TextSelectionComment.vue'
+import BlockCommentOverlay from './BlockCommentOverlay.vue'
 import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import type { ViewResponse } from '@/api'
-import type { Comment } from '@/api/comments'
+import { listComments, type Comment } from '@/api/comments'
 import type { CommitResult } from '@/composables/useAutoSave'
 
 // Accepting a suggestion from the detail page (TKT-S5C0K3). The server writes
@@ -48,9 +50,10 @@ vi.mock('vue-router', () => ({
 const OLD = 'The old sentence stands here.'
 const NEW = 'The new sentence stands here.'
 
-function view(content: string): ViewResponse {
+function view(content: string, self?: string): ViewResponse {
   const v: ViewResponse = {
     entry: {
+      ...(self ? { _self: self } : {}),
       id: 'TKT-1',
       type: 'ticket',
       _title: 'Ticket',
@@ -142,5 +145,19 @@ describe('EntityDetail accepting a suggestion', () => {
     expect(acceptMock).not.toHaveBeenCalled()
     expect(errorSpy).toHaveBeenCalled()
     expect(w.find('.content-body').text()).toContain(OLD)
+  })
+
+  // Comment threads are stored per face, and the server refuses to pick a
+  // face for a bare-id comment write. Every comment request from this page
+  // therefore names the face on screen, read off the entry's `_self`, even
+  // when the route id is bare.
+  it('addresses every comment request to the face on screen', async () => {
+    fetchViewMock.mockResolvedValue(view(OLD, '/api/v1/tickets/TKT-1@draft'))
+    const w = await mountAndAccept()
+    expect(vi.mocked(listComments)).toHaveBeenCalledWith('ticket', 'TKT-1@draft')
+    expect(acceptMock).toHaveBeenCalledWith('ticket', 'TKT-1@draft', 'c1')
+    expect(w.findComponent(CommentsPanel).props('entityId')).toBe('TKT-1@draft')
+    expect(w.findComponent(TextSelectionComment).props('entityId')).toBe('TKT-1@draft')
+    expect(w.findComponent(BlockCommentOverlay).props('entityId')).toBe('TKT-1@draft')
   })
 })

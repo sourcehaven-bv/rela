@@ -91,6 +91,18 @@ func translateRelationDelete(relType, fromType, fromID string, face entityPkg.Fa
 	}}
 }
 
+// translateRelationCreate maps the creation of a relType edge from fromID
+// (type fromType, storing familyFaces) at tail to the [acl.WriteRequest]
+// the manager authorizes it with. It delegates to
+// [entitymanager.RelationCreateRequest], which [entitymanager.Manager.CreateRelation]
+// itself calls, so a `linkable` hint and the write cannot ask different
+// questions.
+func translateRelationCreate(
+	relType, fromType, fromID string, familyFaces []entityPkg.Face, tail entityPkg.Face,
+) acl.WriteRequest {
+	return entitymanager.RelationCreateRequest(relType, fromType, fromID, familyFaces, tail)
+}
+
 // affordanceService computes the read-time affordance maps (_actions,
 // per-field/relation verdicts) and runs the write-time affordance validation
 // that gates field and relation writes. Extracted from App (TKT-N26KLB M5.2):
@@ -109,7 +121,7 @@ func translateRelationDelete(relType, fromType, fromID string, face entityPkg.Fa
 //     "_actions[v]==false ⇒ 403 on the write" contract against that shared
 //     instance; a divergent ACL here silently breaks it.
 //   - acl.WriteRequest is constructed ONLY via the package-level translateVerb
-//     / translateRelationWrite in this file (affordances.go); lint_test.go
+//     / translateRelation* functions in this file (affordances.go); lint_test.go
 //     greps this exact filename. Do not methodize those constructors or move
 //     them to another file.
 type affordanceService struct {
@@ -687,6 +699,46 @@ func (svc affordanceService) relationSources(
 		return []*entityPkg.Entity{pathEntity}, nil
 	}
 	return family, nil
+}
+
+// linkableFrom reports whether the principal may create a relType edge from
+// row to the entity on the request path, which /_search does not know and
+// neither gate reads. It runs the two gates a PATCH runs for an incoming add,
+// through the same functions: the affordance gate over
+// [affordanceService.relationSources] and the ACL request of
+// [translateRelationCreate]. The write re-authorizes; this is a hint.
+//
+// The tail is the one the write gets. A content-scoped edge belongs to the
+// row's face; an identity-scoped edge has the zero tail, and from a faced
+// source the ACL then requires every face of the family.
+//
+// Cost per row: the source read of relationSources (the family, for an
+// identity edge from a faced source), one RelationVerdicts call per source
+// and one AuthorizeWrite.
+func (svc affordanceService) linkableFrom(
+	ctx context.Context, row *entityPkg.Entity, relType string, scope metamodel.RelationScope,
+) bool {
+	var tail entityPkg.Face
+	if scope.IsContent() {
+		tail = row.Face
+	}
+	sources, err := svc.relationSources(ctx, nil, entityPkg.Ref{ID: row.ID, Face: tail}, string(DirectionIncoming))
+	if err != nil {
+		return false
+	}
+	faces := make([]entityPkg.Face, 0, len(sources))
+	for _, src := range sources {
+		if src == nil {
+			// The row's source is gone; the write would find no peer.
+			return false
+		}
+		faces = append(faces, src.Face)
+	}
+	if _, denial := svc.relationOpDenial(ctx, sources, relType, RelationOpCreate); denial != nil {
+		return false
+	}
+	req := translateRelationCreate(relType, row.Type, row.ID, faces, tail)
+	return svc.acl().AuthorizeWrite(ctx, req).Allow
 }
 
 // relationOpDenial is [affordanceService.validateRelationOp] over every row

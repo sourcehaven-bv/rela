@@ -194,7 +194,7 @@ func (h *commentsHandler) commentResolveCheck(
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
-	target, ent, ok := h.gateCommentTarget(w, r, addr)
+	target, ent, ok := h.gateCommentWriteTarget(w, r, addr)
 	if !ok {
 		return
 	}
@@ -369,7 +369,7 @@ func (h *commentsHandler) addComment(
 ) {
 	ctx := r.Context()
 
-	target, ent, ok := h.gateCommentTarget(w, r, addr)
+	target, ent, ok := h.gateCommentWriteTarget(w, r, addr)
 	if !ok {
 		return
 	}
@@ -496,7 +496,7 @@ func (h *commentsHandler) gateCommentMutation(
 ) (comments.Target, comments.Comment, bool) {
 	ctx := r.Context()
 
-	target, _, ok := h.gateCommentTarget(w, r, addr)
+	target, _, ok := h.gateCommentWriteTarget(w, r, addr)
 	if !ok {
 		return target, comments.Comment{}, false
 	}
@@ -535,8 +535,10 @@ type commentAddress struct {
 	ref      entity.Ref
 }
 
-// gateCommentTarget resolves the target entity, reporting whether the request
-// may proceed.
+// gateCommentTarget resolves the target entity for a read of the thread,
+// reporting whether the request may proceed. A bare id resolves to the face
+// the request's world selects, as other reads do. Routes that write use
+// [commentsHandler.gateCommentWriteTarget].
 //
 // Both "you may not read this" and "this does not exist" answer with the same
 // 404. Checking EXISTENCE as well as the read verdict matters: the read gate
@@ -571,6 +573,25 @@ func (h *commentsHandler) gateCommentTarget(
 	target.ID = ent.ID
 	target.Face = ent.Face
 	return target, ent, true
+}
+
+// gateCommentWriteTarget is [commentsHandler.gateCommentTarget] for a route
+// that writes the thread, or prepares a write to it.
+//
+// A thread is stored per face, so a write must land on the face the caller
+// names, never on the face a world ranks first. A named face is used as
+// given, subject to the read gate. A bare id resolves through
+// [visibility.Resolver.WriteTarget]: it names the implicit face of a faceless
+// type, and on a faced type it is a 422 `face_required` listing the readable
+// faces. Misses answer the same uniform 404 as the read gate.
+func (h *commentsHandler) gateCommentWriteTarget(
+	w http.ResponseWriter, r *http.Request, addr commentAddress,
+) (comments.Target, *entity.Entity, bool) {
+	ent, ok := writeTargetOr404(w, r, h.visibleReader, addr.typeName, addr.ref.String())
+	if !ok {
+		return comments.Target{Type: addr.typeName}, nil, false
+	}
+	return comments.Target{Type: addr.typeName, ID: ent.ID, Face: ent.Face}, ent, true
 }
 
 // refuseIfReadOnly denies a comment write on a read-only instance, reporting
@@ -802,7 +823,7 @@ func (h *commentsHandler) commentAccept(
 	r = h.withProvision(r)
 	ctx := r.Context()
 
-	target, visible, ok := h.gateCommentTarget(w, r, addr)
+	target, visible, ok := h.gateCommentWriteTarget(w, r, addr)
 	if !ok {
 		return
 	}

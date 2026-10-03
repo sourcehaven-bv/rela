@@ -118,11 +118,13 @@ func withWorld(ctx context.Context, w worldHandle) context.Context {
 // worldFromContext returns the request's world handle, or
 // [defaultWorldHandle] when none was bound.
 //
-// Defaulting to the DEFAULT world rather than erroring is correct here and is
-// not a fail-open: the default world is today's graph, so an unstamped
-// context behaves exactly as it did before worlds existed. A non-default
-// world can only ever arrive by passing the grant check in
-// [resolveWorld].
+// Every API request has a world stamped by attachWorld, so the fallback is
+// reached only by code that runs outside an API request (non-API routes,
+// tests, background callers). The fallback is the trivial scope, not the project's declared
+// default world: every id resolves to its implicit face, so an entity of a
+// faced type, which has no implicit face, appears to be missing. It narrows
+// rather than widens what is read. A non-default world can only arrive by
+// passing the grant check in [resolveWorld].
 func worldFromContext(ctx context.Context) worldHandle {
 	w, ok := ctx.Value(worldCtxKey{}).(worldHandle)
 	if !ok {

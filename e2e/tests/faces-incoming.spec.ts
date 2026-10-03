@@ -1,4 +1,4 @@
-import { facedTest as test, expect, FACED_SEED, FACE } from './faced-fixtures';
+import { facedTest as test, expect, FACED_SEED, FACED_USERS, FACE } from './faced-fixtures';
 import { FormPage } from '../pages';
 
 /**
@@ -51,6 +51,42 @@ test.describe('Faces: incoming edges per face', () => {
     await expect
       .poll(async () =>
         (await facedApi.listIncoming('controls', CTL3.id, 'implements')).map(
+          (e) => `${e.id}@${e.face}`,
+        ),
+      )
+      .toEqual([`${POL1.id}@${FACE.published}`]);
+  });
+});
+
+/**
+ * The faces offered are the server's `linkable` answer, not the face's update
+ * grant. The linker may create `policy@published` but update no policy face,
+ * so CTL-2's picker offers POL-1's published face only, and the save succeeds.
+ */
+test.describe('Faces: incoming edge from a create-only face', () => {
+  test.use({ facedUser: FACED_USERS.linker });
+
+  test('a create grant without update offers that face and the save succeeds', async ({
+    appPage,
+    facedApi,
+  }) => {
+    const CTL2 = FACED_SEED.controls.visitors;
+    const form = new FormPage(appPage);
+    await form.navigateToEditForm('control', CTL2.id);
+    const picker = form.relationPickerByLabel('Implemented by');
+
+    await form.openRelationPicker(picker);
+    const options = form.pickerOptions(picker).filter({ hasText: POL1.id });
+    await expect(options).toHaveCount(1);
+    await expect(options).toContainText('Published');
+    // POL-2 exists only as a draft, which the linker may not link from.
+    await expect(form.pickerOptions(picker).filter({ hasText: FACED_SEED.draftOnly.id })).toHaveCount(0);
+    await options.click();
+    await form.saveAndWaitForPatch('controls', CTL2.id);
+
+    await expect
+      .poll(async () =>
+        (await facedApi.listIncoming('controls', CTL2.id, 'implements')).map(
           (e) => `${e.id}@${e.face}`,
         ),
       )

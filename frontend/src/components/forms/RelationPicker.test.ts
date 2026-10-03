@@ -295,7 +295,11 @@ describe('RelationPicker — incoming direction on create (BUG-10IPBP)', () => {
   it('sends a new incoming peer by the face it was picked at', async () => {
     // An incoming content-scoped edge hangs on one face of the peer, so the
     // row is keyed by that address.
-    const peer = { ...entity('TKT-901', 'A draft blocker'), _self: '/api/v1/tickets/TKT-901@draft' }
+    const peer = {
+      ...entity('TKT-901', 'A draft blocker'),
+      _self: '/api/v1/tickets/TKT-901@draft',
+      linkable: true,
+    }
     const wrapper = await mountIncoming(undefined, [peer], 10, true)
 
     await wrapper.find('input[role="combobox"]').trigger('focus')
@@ -313,25 +317,53 @@ describe('RelationPicker — incoming direction on create (BUG-10IPBP)', () => {
     wrapper.unmount()
   })
 
-  it('offers each writable face of a source as its own candidate', async () => {
-    const draft = { ...entity('TKT-901', 'Blocker'), _self: '/api/v1/tickets/TKT-901@draft' }
+  it('offers each linkable face of a source as its own candidate', async () => {
+    // `linkable` decides, not the update hint: the write checks the relation
+    // create grant on the face.
+    const draft = {
+      ...entity('TKT-901', 'Blocker'),
+      _self: '/api/v1/tickets/TKT-901@draft',
+      _actions: { update: false },
+      linkable: true,
+    }
     const published = {
       ...entity('TKT-901', 'Blocker'),
       _self: '/api/v1/tickets/TKT-901@published',
-      _actions: { update: false },
+      _actions: { update: true },
+      linkable: false,
     }
-    const other = { ...entity('TKT-902', 'Other'), _self: '/api/v1/tickets/TKT-902@published' }
+    const other = {
+      ...entity('TKT-902', 'Other'),
+      _self: '/api/v1/tickets/TKT-902@published',
+      linkable: true,
+    }
     const wrapper = await mountIncoming('TKT-1', [draft, published, other], 10, true)
+
+    // Every candidate read names the relation context.
+    const calls = vi.mocked(useEntitiesStore().fetchAllList).mock.calls
+    expect(calls.length).toBeGreaterThan(0)
+    for (const call of calls) {
+      expect(call[1]).toMatchObject({ relation: 'blocks', direction: 'incoming' })
+    }
 
     await wrapper.find('input[role="combobox"]').trigger('focus')
     await flushPromises()
 
-    // TKT-901@published is not offered: the server denies its update.
+    // TKT-901@published is not offered: the server says the edge may not be
+    // created from that face.
     const items = wrapper.findAll('.dropdown-item').map((i) => i.text())
     expect(items).toHaveLength(2)
     expect(items[0]).toContain('TKT-901')
     expect(items[0]).toContain('Draft')
     expect(items[1]).toContain('TKT-902')
+    wrapper.unmount()
+  })
+
+  it('reads an unfaced source without the relation context', async () => {
+    const wrapper = await mountIncoming('TKT-1', [entity('TKT-901')], 10, false)
+    for (const call of vi.mocked(useEntitiesStore().fetchAllList).mock.calls) {
+      expect(call[1]).not.toHaveProperty('relation')
+    }
     wrapper.unmount()
   })
 

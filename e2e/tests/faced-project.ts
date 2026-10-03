@@ -21,6 +21,10 @@ export const FACED_USERS = {
   editor: "editor@example.com",
   /** Reads `policy@published`, controls, and the published world only. */
   reader: "reader@example.com",
+  /** Reads everything; may create `policy@published` and controls and update
+   *  controls, but update no policy face. A relation create needs the source
+   *  face's `create` grant, so this user may link from `policy@published`. */
+  linker: "linker@example.com",
 } as const;
 
 export type FacedUser = (typeof FACED_USERS)[keyof typeof FACED_USERS];
@@ -228,10 +232,15 @@ roles:
     delete: ["*", "policy@draft"]
   reader:
     read: ["policy@published", "control", "world:${WORLD.published}"]
+  linker:
+    read: ["*", "world:${WORLD.published}", "world:${WORLD.editorial}"]
+    create: ["control", "policy@published"]
+    update: ["control"]
 
 assignments:
   ${FACED_USERS.editor}: editor
   ${FACED_USERS.reader}: reader
+  ${FACED_USERS.linker}: linker
 `;
 
 export const FACED_RETIRE_LUA = `-- Deletes by bare id, which a faced entity refuses.

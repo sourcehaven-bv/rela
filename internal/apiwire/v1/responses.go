@@ -320,6 +320,29 @@ type ListResponse struct {
 	Actions map[string]bool `json:"_actions,omitempty"`
 }
 
+// LinkListResponse is a collection response whose rows may carry a
+// relation-context answer: always the shape of `/_search`, and the shape of
+// `GET /{plural}` when that request names a relation context. Otherwise it
+// matches [ListResponse].
+type LinkListResponse struct {
+	Data     []LinkRow         `json:"data"`
+	Meta     ListMeta          `json:"meta"`
+	Included map[string]Entity `json:"included,omitempty"`
+	Actions  map[string]bool   `json:"_actions,omitempty"`
+}
+
+// LinkRow is one row of a [LinkListResponse].
+//
+// Linkable is present only when the request named a relation context
+// (`relation` and `direction=incoming`). It answers whether the principal
+// may create that relation from this row's face to the entity being edited,
+// computed by the gates the write runs. It is a hint; the write
+// re-authorizes. Nil on a request without relation context.
+type LinkRow struct {
+	Entity
+	Linkable *bool `json:"linkable,omitempty"`
+}
+
 // ListMeta contains pagination metadata.
 type ListMeta struct {
 	Total   int  `json:"total"`

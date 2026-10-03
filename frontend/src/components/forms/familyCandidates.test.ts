@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeFamilyCandidates, widenWorlds } from './familyCandidates'
+import { mergeFamilyCandidates, offersFace, widenWorlds } from './familyCandidates'
 import type { Entity, WorldInfo } from '@/types'
 
 function row(id: string, face = ''): Entity {
@@ -66,4 +66,28 @@ describe('mergeFamilyCandidates', () => {
     expect(rows).toHaveLength(1)
     expect(offWorld.size).toBe(0)
   })
+})
+
+describe('offersFace', () => {
+  // `linkable` is the server's answer for a search with relation context, and
+  // it decides even where `_actions.update` says otherwise: the write checks
+  // the relation create grant, not the face's update grant.
+  it.each([
+    { name: 'linkable without update', linkable: true, update: false, want: true },
+    { name: 'update without linkable', linkable: false, update: true, want: false },
+    { name: 'linkable', linkable: true, update: true, want: true },
+  ])('$name', ({ linkable, update, want }) => {
+    expect(offersFace({ ...row('POL-1', 'draft'), linkable, _actions: { update } })).toBe(want)
+  })
+
+  // A row without `linkable` was not judged against the relation, so it is
+  // not offered, whatever its update hint says.
+  it.each([{ update: true }, { update: false }, { update: undefined }])(
+    'no linkable, update $update: not offered',
+    ({ update }) => {
+      const e = row('POL-1', 'draft')
+      if (update !== undefined) e._actions = { update }
+      expect(offersFace(e)).toBe(false)
+    }
+  )
 })

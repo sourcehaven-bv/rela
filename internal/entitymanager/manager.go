@@ -2269,10 +2269,8 @@ func (m *Manager) CreateRelation(
 	if fErr := m.deps.requireRelationFaceFor(relType, source.typ, key.FromFace); fErr != nil {
 		return nil, fErr
 	}
-	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op:      acl.OpCreate,
-		Subject: relationWriteSubject(relType, source, from, key.FromFace),
-	}); aclErr != nil {
+	if aclErr := m.authorizeAndAudit(ctx,
+		RelationCreateRequest(relType, source.typ, from, source.faces, key.FromFace)); aclErr != nil {
 		return nil, aclErr
 	}
 

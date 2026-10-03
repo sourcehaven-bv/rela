@@ -87,6 +87,43 @@ GET /api/v1/_search?q=type:ticket,feature sort:modified:desc&limit=8
 
 The editor's `@` mention menu uses this form to list recently modified entities.
 
+## Relation context on collection reads
+
+A relation picker can ask `GET /api/v1/_search` or `GET /api/v1/{plural}`
+whether each row may be the source of the edge it is about to create. Pass
+both parameters:
+
+| Parameter | Meaning |
+|---|---|
+| `relation` | The canonical name of a declared relation type. An inverse name or an undeclared type is a `400 invalid_relation`. |
+| `direction` | Must be `incoming`: each row is a candidate source and the edited entity is the target. Any other value, or a missing one, is a `400 invalid_direction`. |
+
+With both present, every served row carries `linkable`. It is `true` when the caller
+may create the `relation` edge from that row's face. Without them, rows carry
+no `linkable`.
+
+```text
+GET /api/v1/_search?q=type:policy&world=draft&relation=implements&direction=incoming
+GET /api/v1/policies?world=draft&per_page=100&relation=implements&direction=incoming
+```
+
+On a list, only the served page is judged. The answer costs a fixed number of
+extra store reads per request, not per row.
+
+The server computes `linkable` with the checks the write runs: the relation
+affordance (`_relations[rel].creatable`) on the source row, and the ACL
+request that `CreateRelation` authorizes. For a `scope: content` relation the
+edge belongs to the row's face. For an identity relation from a faced type,
+every face of the source must allow it. The target is not a parameter,
+because neither check reads it. This is why `linkable` can differ from the
+row's `_actions.update`: a relation create needs the source type's `create`
+grant (or a `relation_grants` create permission plus update on the face), and
+roles conferred on the entity itself do not count.
+
+`linkable` is a hint, like `_actions`; the write re-authorizes. Outgoing
+edges are not supported: their source is the edited entity, so the answer
+would be the same on every row.
+
 ## Relations field
 
 Each value of the `relations` map is one of TWO shapes:

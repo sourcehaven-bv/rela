@@ -741,6 +741,11 @@ func queryGet(query map[string][]string, key string) string {
 func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	query := r.URL.Query()
 	page, perPage := parseV1Pagination(query)
+	relCtx, relErr := parseSearchRelation(a.State().Meta, query)
+	if relErr != nil {
+		writeV1Error(w, r, http.StatusBadRequest, relErr.Code, relErr.Detail, relErr.Path)
+		return
+	}
 
 	entities, total, err := a.listPage(r.Context(), typeName, query, page, perPage)
 	if err != nil {
@@ -748,6 +753,11 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 	end := (page-1)*perPage + len(entities)
+	// The served page only: rows paged out are never judged.
+	linkable, ok := servedLinkable(w, r, a.affordances, entities, relCtx)
+	if !ok {
+		return
+	}
 
 	// Bodies are opt-in for a collection (rowcontent.go): one read per
 	// distinct face on the page, never for the rows that were paged out.
@@ -830,6 +840,14 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	w.Header().Set("X-Total-Count", strconv.Itoa(total))
 	w.Header().Set("X-Page", strconv.Itoa(page))
 	w.Header().Set("X-Per-Page", strconv.Itoa(perPage))
+
+	if linkable != nil {
+		writeV1JSON(w, http.StatusOK, v1.LinkListResponse{
+			Data: linkRows(resp.Data, entities, linkable), Meta: resp.Meta,
+			Included: included, Actions: resp.Actions,
+		})
+		return
+	}
 
 	// If includes were requested, add them to response
 	if len(included) > 0 {
@@ -1816,9 +1834,14 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("limit must be an integer between 1 and %d", maxSearchLimit), "")
 		return
 	}
+	relCtx, werr := parseSearchRelation(a.State().Meta, r.URL.Query())
+	if werr != nil {
+		writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
+		return
+	}
 	query := r.URL.Query().Get("q")
 	if query == "" {
-		writeV1JSON(w, http.StatusOK, v1.ListResponse{Data: []v1.Entity{}, Meta: v1.ListMeta{}})
+		writeV1JSON(w, http.StatusOK, v1.LinkListResponse{Data: []v1.LinkRow{}, Meta: v1.ListMeta{}})
 		return
 	}
 
@@ -1866,6 +1889,11 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	linkable, ok := servedLinkable(w, r, a.affordances, entities, relCtx)
+	if !ok {
+		return
+	}
+
 	meta := a.State().Meta
 	data := make([]v1.Entity, 0, len(entities))
 	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
@@ -1886,8 +1914,8 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		data = append(data, row)
 	}
 
-	resp := v1.ListResponse{
-		Data: data,
+	resp := v1.LinkListResponse{
+		Data: linkRows(data, entities, linkable),
 		Meta: v1.ListMeta{
 			Total:   len(data),
 			Page:    1,

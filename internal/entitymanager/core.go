@@ -629,6 +629,18 @@ func relationWriteSubject(
 	return s
 }
 
+// RelationCreateRequest is the authorization request [Manager.CreateRelation]
+// runs for an edge from fromID (type fromType, storing familyFaces) with the
+// given tail. It is exported so a caller that answers "may this principal
+// create the edge?" ahead of the write asks the question the write will ask,
+// instead of a copy of it.
+func RelationCreateRequest(
+	relType, fromType, fromID string, familyFaces []entity.Face, tail entity.Face,
+) acl.WriteRequest {
+	source := entityFamily{id: fromID, typ: fromType, faces: familyFaces}
+	return acl.WriteRequest{Op: acl.OpCreate, Subject: relationWriteSubject(relType, source, fromID, tail)}
+}
+
 // getEntityByRef resolves an entity ADDRESS — either a bare id or the fused
 // boundary form `ID@face` — to the row it names.
 //

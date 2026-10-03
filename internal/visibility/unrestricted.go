@@ -93,9 +93,10 @@ func (r *UnrestrictedReader) GetAddress(ctx context.Context, addr string) (*enti
 }
 
 // WriteTarget resolves addr to the face a write edits, through the allow-all
-// resolver in the reader's world. See [ScriptReader.WriteTarget].
+// resolver. Like [ScriptReader.WriteTarget] it ignores a per-operation read
+// world.
 func (r *UnrestrictedReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
-	return r.res.writeTargetAny(ctx, worldIn(ctx, r.world), addr)
+	return r.res.writeTargetAny(ctx, r.world, addr)
 }
 
 // Family reports every stored face of the entity id, reading headers only.

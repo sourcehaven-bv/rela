@@ -16,6 +16,11 @@ export interface Entity {
   relations?: Record<string, string[]>
   included?: Record<string, Entity>
   _self?: string
+  // Present only on rows of a `/_search` or list read made with a relation
+  // context (`relation` + `direction=incoming`): whether the principal may
+  // create that relation from this row's face. The server computes it with the gates the
+  // write runs; the write still re-authorizes.
+  linkable?: boolean
   // Per-resource verb-verdict map driven by the backend ACL. Keys are
   // verbs (phase 1: `update`, `delete`, `rename` per-item; `create`
   // on collection responses); values are booleans. Always present
@@ -419,6 +424,13 @@ export interface ListParams {
   scope_page?: string
   scope_tab?: string
   anchor?: string
+  /**
+   * The relation context of the read: the rows are candidate SOURCES of an
+   * incoming `relation` edge, and each carries `linkable`. Both or neither;
+   * the server accepts only `incoming`.
+   */
+  relation?: string
+  direction?: 'incoming'
   [key: `filter[${string}]`]: string | undefined
 }
 

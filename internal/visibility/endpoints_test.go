@@ -247,6 +247,49 @@ func TestScriptReader_Family(t *testing.T) {
 	}
 }
 
+// TestReaders_WriteTargetIgnoresReadWorld pins that a per-operation read
+// world ([visibility.WithReadWorld], MCP's `world` argument) does not change
+// where a write lands: each address resolves as it does with no read world on
+// ctx, even when that read world is denied or unset.
+func TestReaders_WriteTargetIgnoresReadWorld(t *testing.T) {
+	st := resolverStore(t)
+	pr, err := visibility.NewPolicyReader(resolverGate{}, visibility.NopRedactor{}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sr, err := visibility.NewScriptReader(pr, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trivial := visibility.WorldOf(store.TrivialScope())
+	type writeTargetFn func(context.Context, string) (entity.Ref, error)
+	readers := map[string]writeTargetFn{
+		"script":       sr.WithWorld(trivial).WriteTarget,
+		"unrestricted": visibility.Unrestricted(st).WithWorld(trivial).WriteTarget,
+	}
+	readWorlds := map[string]visibility.World{
+		"published": visibility.WorldOf(publishedWorld()),
+		"denied":    visibility.DeniedWorld(),
+		"unset":     {},
+	}
+	for name, writeTarget := range readers {
+		t.Run(name, func(t *testing.T) {
+			for _, addr := range []string{"TKT-1", "POL-1", "POL-1@draft", "NOPE-1"} {
+				wantRef, wantErr := writeTarget(context.Background(), addr)
+				for worldName, w := range readWorlds {
+					t.Run(addr+"/"+worldName, func(t *testing.T) {
+						ctx := visibility.WithReadWorld(t.Context(), w)
+						ref, err := writeTarget(ctx, addr)
+						if ref != wantRef || fmt.Sprint(err) != fmt.Sprint(wantErr) {
+							t.Fatalf("got (%v, %v), want (%v, %v)", ref, err, wantRef, wantErr)
+						}
+					})
+				}
+			}
+		})
+	}
+}
+
 // TestScriptReader_GateErrorIsAMiss pins that an untyped read answers a gate
 // failure like a miss. The gate only runs for an id the header read found,
 // so a returned error would tell an existing id from a missing one.
