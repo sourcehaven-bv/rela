@@ -192,3 +192,32 @@ func TestLoader_RejectsUnsafeNames(t *testing.T) {
 		})
 	}
 }
+
+// Replace makes the given files the whole stored set, atomically: a name
+// not in the new set is gone, and an invalid name changes nothing.
+func TestLoader_Replace(t *testing.T) {
+	l, ctx := newLoader(t)
+	if err := l.Put(ctx, "scripts/old.lua", []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Replace(ctx, map[string][]byte{
+		"schema.yaml":     []byte("s"),
+		"scripts/new.lua": []byte("n"),
+	}); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	paths, err := l.Paths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"schema.yaml", "scripts/new.lua"}; !slices.Equal(paths, want) {
+		t.Fatalf("Paths = %v, want %v", paths, want)
+	}
+
+	if err := l.Replace(ctx, map[string][]byte{"ok.yaml": nil, "../bad": nil}); err == nil {
+		t.Fatal("Replace accepted a traversal name")
+	}
+	if after, _ := l.Paths(ctx); !slices.Equal(after, paths) {
+		t.Fatalf("a rejected Replace changed the set: %v", after)
+	}
+}

@@ -117,3 +117,47 @@ func runDBReconcile(dryRun, _ bool) error {
 	}
 	return nil
 }
+
+// runDBLoad stores the config files under from (default: the project root)
+// in the project's database, replacing what it carried.
+func runDBLoad(from string) error {
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover("", fs)
+	if err != nil {
+		return err
+	}
+	if from == "" {
+		from = paths.Root
+	}
+	names, err := appbuild.LoadProjectConfig(context.Background(), fs, paths, from)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		fmt.Println("  " + name)
+	}
+	fmt.Printf("Stored %d config files in %s.\n", len(names), filepath.Join(paths.CacheDir, dbFileName))
+	return nil
+}
+
+// runDBDump writes the config stored in the project's database into dir.
+func runDBDump(dir string, force bool) error {
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover("", fs)
+	if err != nil {
+		return err
+	}
+	names, err := appbuild.DumpProjectConfig(context.Background(), fs, paths, dir, force)
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		fmt.Println("The database carries no config files.")
+		return nil
+	}
+	for _, name := range names {
+		fmt.Println("  " + name)
+	}
+	fmt.Printf("Wrote %d config files to %s.\n", len(names), dir)
+	return nil
+}

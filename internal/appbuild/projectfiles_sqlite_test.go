@@ -1,0 +1,258 @@
+//go:build sqlite
+
+package appbuild_test
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+)
+
+func writeFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	path := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// bake stores root's config in root's database, as `rela db load` does.
+func bake(t *testing.T, root string) []string {
+	t.Helper()
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover(root, fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names, err := appbuild.LoadProjectConfig(context.Background(), fs, paths, root)
+	if err != nil {
+		t.Fatalf("LoadProjectConfig: %v", err)
+	}
+	return names
+}
+
+func dump(t *testing.T, root, dir string, overwrite bool) ([]string, error) {
+	t.Helper()
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover(root, fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return appbuild.DumpProjectConfig(context.Background(), fs, paths, dir, overwrite)
+}
+
+func removeAll(t *testing.T, root string, rels ...string) {
+	t.Helper()
+	for _, rel := range rels {
+		if err := os.RemoveAll(filepath.Join(root, rel)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A project whose config lives only in its database boots: the schema is
+// read through the layered loader, which needs the database open BEFORE
+// prepare runs (FEAT-UP14BT).
+func TestSQLite_BootsFromBakedConfig(t *testing.T) {
+	root := writeMinimalProject(t)
+	bake(t, root)
+	removeAll(t, root, "metamodel.yaml", "entities", "relations")
+
+	svc, err := discover(t, root)
+	if err != nil {
+		t.Fatalf("boot from baked config: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+	if _, ok := svc.Meta().Entities["doc"]; !ok {
+		t.Fatalf("baked schema not loaded; entity types = %v", svc.Meta().Entities)
+	}
+}
+
+// A file on disk wins over the baked copy: a project holding both is being
+// edited, and the file the operator just wrote is the one that counts.
+func TestSQLite_DiskConfigShadowsBaked(t *testing.T) {
+	root := writeMinimalProject(t)
+	bake(t, root)
+	edited := strings.Replace(metamodelYAML, "  doc:\n", "  note:\n    label: Note\n    plural: notes\n    id_prefix: \"NOTE-\"\n    id_type: sequential\n    properties:\n      title:\n        type: string\n  doc:\n", 1)
+	writeFile(t, root, "metamodel.yaml", edited)
+
+	svc, err := discover(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = svc.Close() }()
+	if _, ok := svc.Meta().Entities["note"]; !ok {
+		t.Fatal("disk schema did not shadow the baked one")
+	}
+}
+
+// acl.yaml is read through the same loader: a baked policy that does not
+// parse fails the boot, which proves the baked copy is what was read.
+func TestSQLite_BakedACLIsRead(t *testing.T) {
+	root := writeMinimalProject(t)
+	writeFile(t, root, "acl.yaml", "roles: [this is not a map\n")
+	bake(t, root)
+	removeAll(t, root, "acl.yaml")
+
+	svc, err := discover(t, root)
+	if err == nil {
+		_ = svc.Close()
+		t.Fatal("boot succeeded with a broken baked acl.yaml; it was not read")
+	}
+	if !strings.Contains(err.Error(), "acl.yaml") {
+		t.Fatalf("error does not name acl.yaml: %v", err)
+	}
+}
+
+func TestSQLite_CollectProjectConfig(t *testing.T) {
+	root := writeMinimalProject(t)
+	writeFile(t, root, "data-entry.yaml", helloCard)
+	writeFile(t, root, "scripts/docs/report.lua", "return 1\n")
+	writeFile(t, root, "scripts/.hidden.lua", "return 2\n")
+	writeFile(t, root, "templates/entities/doc.md", "---\n---\n")
+	writeFile(t, root, "migrations/applied.json", "[]\n")
+	writeFile(t, root, "README.md", "not config\n")
+	if err := os.Symlink(filepath.Join(root, "README.md"), filepath.Join(root, "scripts", "link.lua")); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := appbuild.CollectProjectConfig(storage.NewSafeFS(storage.NewOsFS()), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for name := range files {
+		got = append(got, name)
+	}
+	slices.Sort(got)
+	want := []string{"data-entry.yaml", "schema.yaml", "scripts/docs/report.lua", "templates/entities/doc.md"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("collected %v, want %v", got, want)
+	}
+	if string(files["schema.yaml"]) != metamodelYAML {
+		t.Error("legacy metamodel.yaml was not stored under schema.yaml")
+	}
+}
+
+// Load replaces the stored set: a file removed from disk does not live on.
+func TestSQLite_LoadReplacesTheSet(t *testing.T) {
+	root := writeMinimalProject(t)
+	writeFile(t, root, "scripts/old.lua", "return 1\n")
+	bake(t, root)
+	removeAll(t, root, "scripts/old.lua")
+	names := bake(t, root)
+	if slices.Contains(names, "scripts/old.lua") {
+		t.Fatalf("second load kept a removed file: %v", names)
+	}
+
+	out := t.TempDir()
+	dumped, err := dump(t, root, out, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(dumped, []string{"schema.yaml"}) {
+		t.Fatalf("dumped %v, want only schema.yaml", dumped)
+	}
+}
+
+func TestSQLite_DumpRoundTripsAndRefusesOverwrite(t *testing.T) {
+	root := writeMinimalProject(t)
+	writeFile(t, root, "data-entry.yaml", helloCard)
+	writeFile(t, root, "scripts/docs/report.lua", "return 1\n")
+	bake(t, root)
+
+	out := t.TempDir()
+	if _, err := dump(t, root, out, false); err != nil {
+		t.Fatal(err)
+	}
+	for rel, want := range map[string]string{
+		"schema.yaml":             metamodelYAML,
+		"data-entry.yaml":         helloCard,
+		"scripts/docs/report.lua": "return 1\n",
+	} {
+		got, err := os.ReadFile(filepath.Join(out, rel))
+		if err != nil || string(got) != want {
+			t.Errorf("%s = %q (%v), want %q", rel, got, err, want)
+		}
+	}
+
+	if _, err := dump(t, root, out, false); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("second dump without overwrite: err = %v, want an already-exists refusal", err)
+	}
+	if _, err := dump(t, root, out, true); err != nil {
+		t.Fatalf("dump with overwrite: %v", err)
+	}
+}
+
+// insertRawProjectFile writes a row straight into project_files, bypassing
+// configsql's validation, as a database built by something other than rela
+// could.
+func insertRawProjectFile(t *testing.T, root, name string) {
+	t.Helper()
+	db, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: dbPath(root)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.DB().Exec(
+		`INSERT INTO project_files (path, content, updated_at) VALUES (?, x'78', '')`, name,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Dump re-checks every stored name: a handed-over database may hold a path
+// that would escape the target directory.
+func TestSQLite_DumpRefusesEscapingNames(t *testing.T) {
+	for _, name := range []string{"../escape.yaml", "/abs.yaml", "a/../../b.yaml"} {
+		t.Run(name, func(t *testing.T) {
+			root := writeMinimalProject(t)
+			bake(t, root)
+			insertRawProjectFile(t, root, name)
+			out := filepath.Join(t.TempDir(), "out")
+			if _, err := dump(t, root, out, true); err == nil || !strings.Contains(err.Error(), "refusing") {
+				t.Fatalf("dump err = %v, want a refusal", err)
+			}
+			if _, err := os.Stat(filepath.Join(out, "schema.yaml")); !os.IsNotExist(err) {
+				t.Error("dump wrote files before refusing")
+			}
+		})
+	}
+}
+
+// Dump never writes through a symlink, at the leaf or at a parent directory.
+func TestSQLite_DumpRefusesSymlinks(t *testing.T) {
+	root := writeMinimalProject(t)
+	writeFile(t, root, "scripts/a.lua", "return 1\n")
+	bake(t, root)
+
+	elsewhere := t.TempDir()
+	for name, link := range map[string]string{
+		"leaf":   "schema.yaml",
+		"parent": "scripts",
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := t.TempDir()
+			if err := os.Symlink(elsewhere, filepath.Join(out, link)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := dump(t, root, out, true); err == nil || !strings.Contains(err.Error(), "symlink") {
+				t.Fatalf("dump err = %v, want a symlink refusal", err)
+			}
+		})
+	}
+	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+		t.Fatalf("dump wrote through a symlink: %v", entries)
+	}
+}

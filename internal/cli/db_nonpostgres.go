@@ -20,3 +20,7 @@ func runDBMigrate() error { return errDBNotAvailable }
 func runDBStatus() error { return errDBNotAvailable }
 
 func runDBReconcile(_, _ bool) error { return errDBNotAvailable }
+
+func runDBLoad(string) error { return errDBNotAvailable }
+
+func runDBDump(string, bool) error { return errDBNotAvailable }

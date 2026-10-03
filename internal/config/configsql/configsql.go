@@ -127,7 +127,7 @@ func (l *Loader) List(ctx context.Context, dir string) ([]string, error) {
 
 // Put stores content at name, replacing whatever was there.
 //
-// This is the write half `rela db load` needs. There is deliberately no
+// `rela db load` uses [Loader.Replace] instead. There is deliberately no
 // richer editing API: config is loaded as a set and dumped as a set, never
 // edited row by row — that is what keeps the files on disk the thing an
 // operator actually edits.
@@ -146,6 +146,53 @@ func (l *Loader) Put(ctx context.Context, name string, content []byte) error {
 		name, content, time.Now().UTC().Format(timeFmt))
 	if err != nil {
 		return fmt.Errorf("configsql: write project file %q: %w", name, err)
+	}
+	return nil
+}
+
+// Replace makes files the complete stored set, in one transaction: every
+// path not in files is removed and every path in it is written. It backs
+// `rela db load`.
+//
+// A set replace rather than a sequence of [Loader.Put] calls, because config
+// is loaded as a set: a script deleted on disk must not live on in the
+// database, where the layered loader would keep serving it. One transaction,
+// because a half-replaced set would pair a new schema with old scripts.
+//
+// Every name is validated before anything is written, so an invalid name
+// leaves the stored set untouched.
+func (l *Loader) Replace(ctx context.Context, files map[string][]byte) (err error) {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		if vErr := validatePath(name); vErr != nil {
+			return fmt.Errorf("%w: %q", vErr, name)
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("configsql: replace project files: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM project_files`); err != nil {
+		return fmt.Errorf("configsql: replace project files: %w", err)
+	}
+	now := time.Now().UTC().Format(timeFmt)
+	for _, name := range names {
+		if _, err = tx.ExecContext(ctx,
+			`INSERT INTO project_files (path, content, updated_at) VALUES (?, ?, ?)`,
+			name, files[name], now); err != nil {
+			return fmt.Errorf("configsql: write project file %q: %w", name, err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("configsql: replace project files: %w", err)
 	}
 	return nil
 }

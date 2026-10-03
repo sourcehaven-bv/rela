@@ -1098,8 +1098,8 @@ func resolveDatabaseURL(opts []Option, getenv func(string) string) string {
 // Separated from [buildACL] so the caller can open the store between
 // the two phases — v1's [acl.Declarative] needs a [acl.Graph] backed
 // by the store.
-func loadACLPolicy(projectRoot string) (*acl.Policy, error) {
-	policy, err := acl.LoadPolicy(filepath.Join(projectRoot, "acl.yaml"))
+func loadACLPolicy(cfg Config) (*acl.Policy, error) {
+	policy, err := readACLPolicy(cfg)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// File genuinely absent → caller falls back to NopACL by
@@ -1326,6 +1326,25 @@ type Config struct {
 	// Consumed only by the postgres build; empty (and ignored) in the
 	// FS/memory builds.
 	DatabaseURL string
+
+	// projectConfig is the source operator-authored config is read from:
+	// schema.yaml and its includes, acl.yaml, and every file [Services.Config]
+	// serves. nil means the files under Paths.Root.
+	//
+	// Unexported because only a recipe sets it, from a handle it opened: the
+	// sqlite recipe layers the project's files in front of the config its
+	// database carries (FEAT-UP14BT). It lives on Config rather than on
+	// [SharedBase] so a successor base built from [SharedBase.Config] — the
+	// schema hot-reload path — reads through the same source.
+	projectConfig config.Loader
+}
+
+// configLoader returns the loader project config is read through.
+func (c Config) configLoader() config.Loader {
+	if c.projectConfig != nil {
+		return c.projectConfig
+	}
+	return config.NewFSLoader(c.FS, c.Paths.Root)
 }
 
 // validate nil-checks the four build-agnostic collaborators. Each build's
@@ -1414,6 +1433,39 @@ func buildAt(
 		Audit:        auditSink,
 		DatabaseURL:  resolveDatabaseURL(opts, os.Getenv),
 	}, opts...)
+}
+
+// readACLPolicy reads acl.yaml from the project's config source: straight
+// from disk when the project has no other source, so the fs, memory and
+// postgres builds keep their exact behavior, and through the config loader
+// when a recipe supplied one.
+func readACLPolicy(cfg Config) (*acl.Policy, error) {
+	const name = "acl.yaml"
+	if cfg.projectConfig == nil {
+		return acl.LoadPolicy(filepath.Join(cfg.Paths.Root, name))
+	}
+	data, err := cfg.projectConfig.Load(context.Background(), name)
+	if err != nil {
+		return nil, err // preserves os.ErrNotExist for errors.Is
+	}
+	return acl.ParsePolicy(data, name)
+}
+
+// loadMetamodel loads schema.yaml, its includes and the migration check
+// from the project's config source. With a recipe-supplied loader the
+// metamodel is read through a read-only view of it, so a schema carried
+// only in the database loads like one on disk.
+func loadMetamodel(ctx context.Context, cfg Config) (*metamodel.Metamodel, error) {
+	fsys := cfg.FS
+	if cfg.projectConfig != nil {
+		view, err := config.NewStorageFS(ctx, cfg.projectConfig, cfg.Paths.Root)
+		if err != nil {
+			return nil, err
+		}
+		fsys = view
+	}
+	meta, _, err := metamodel.NewFSLoader(fsys, cfg.Paths.SchemaPath).Load(ctx)
+	return meta, err
 }
 
 // SharedBase holds the build-agnostic inputs resolved by [prepare] and
@@ -1546,13 +1598,13 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		// store-backed [acl.Graph] adapter and the store isn't open
 		// yet at this point in the build.
 		var err error
-		aclPolicy, err = loadACLPolicy(cfg.Paths.Root)
+		aclPolicy, err = loadACLPolicy(cfg)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	meta, _, err := metamodel.NewFSLoader(cfg.FS, cfg.Paths.SchemaPath).Load(context.Background())
+	meta, err := loadMetamodel(context.Background(), cfg)
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
@@ -1809,11 +1861,6 @@ func cascadeReadDeps(
 // The zero value means "derive everything from the filesystem", which is what
 // the fs, memory and postgres recipes pass.
 type backendOverrides struct {
-	// projectConfig replaces the filesystem config loader. The sqlite recipe
-	// supplies one because its database may CARRY the project's config, which
-	// it layers behind the files.
-	projectConfig config.Loader
-
 	// migState replaces the file-backed migration record (TKT-XCJ0Y2).
 	// Supplied by the database recipes so a tenant's position lives with its
 	// data; nil selects the committed-file backend.
@@ -1878,10 +1925,7 @@ func assemble(
 
 	tr := tracer.New(st)
 	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
-	cfgLoader := overrides.projectConfig
-	if cfgLoader == nil {
-		cfgLoader = config.NewFSLoader(cfg.FS, cfg.Paths.Root)
-	}
+	cfgLoader := cfg.configLoader()
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.

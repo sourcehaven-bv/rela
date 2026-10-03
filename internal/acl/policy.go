@@ -927,7 +927,15 @@ func LoadPolicy(path string) (*Policy, error) {
 	if err != nil {
 		return nil, err // preserves os.ErrNotExist for errors.Is
 	}
+	return ParsePolicy(data, path)
+}
 
+// ParsePolicy parses acl.yaml bytes read from source, which names the
+// file in warnings and errors. It is [LoadPolicy] without the read, for a
+// policy served by a config loader rather than a path on disk; unlike
+// [LoadPolicyBytes] it warns on unknown top-level keys, because the bytes
+// are still operator-authored.
+func ParsePolicy(data []byte, source string) (*Policy, error) {
 	// First pass: discover unknown top-level keys. Decoding into
 	// map[string]any rather than KnownFields(true) on Policy lets
 	// us warn-and-continue rather than fail.
@@ -937,7 +945,7 @@ func LoadPolicy(path string) (*Policy, error) {
 			for k := range raw {
 				if !knownPolicyKeys[k] {
 					slog.Warn("acl: unknown key in acl.yaml; ignored",
-						"path", path, "key", k)
+						"path", source, "key", k)
 				}
 			}
 		}
@@ -947,10 +955,10 @@ func LoadPolicy(path string) (*Policy, error) {
 
 	var policy Policy
 	if uErr := yaml.Unmarshal(data, &policy); uErr != nil {
-		return nil, fmt.Errorf("acl: parse %s: %w", path, uErr)
+		return nil, fmt.Errorf("acl: parse %s: %w", source, uErr)
 	}
 	if vErr := policy.Validate(); vErr != nil {
-		return nil, fmt.Errorf("acl: validate %s: %w", path, vErr)
+		return nil, fmt.Errorf("acl: validate %s: %w", source, vErr)
 	}
 	return &policy, nil
 }

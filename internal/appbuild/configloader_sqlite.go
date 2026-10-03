@@ -13,17 +13,14 @@ import (
 )
 
 // backendServices builds the overrides that come from the opened database:
-// the project's config, its runtime state, and its comments.
+// the project's runtime state, its migration record and its comments. The
+// project's config comes from the same handle but is set on [Config] before
+// [prepare], because the schema itself may live there (see [New]).
 //
 // All in one place because they share a handle and a rationale — each is
 // something that would otherwise live in a file BESIDE the database, and so be
 // left behind when the single file is shipped.
-func backendServices(cfg Config, db *sqlitedb.DB) (backendOverrides, error) {
-	cfgLoader, err := layerProjectConfig(config.NewFSLoader(cfg.FS, cfg.Paths.Root), db)
-	if err != nil {
-		return backendOverrides{}, err
-	}
-
+func backendServices(db *sqlitedb.DB) (backendOverrides, error) {
 	raw, err := statesql.New(db.DB())
 	if err != nil {
 		return backendOverrides{}, err
@@ -56,10 +53,9 @@ func backendServices(cfg Config, db *sqlitedb.DB) (backendOverrides, error) {
 	}
 
 	return backendOverrides{
-		projectConfig: cfgLoader,
-		stateKV:       kv,
-		migState:      migState,
-		commentStore:  commentStore,
+		stateKV:      kv,
+		migState:     migState,
+		commentStore: commentStore,
 	}, nil
 }
 

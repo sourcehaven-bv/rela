@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -69,10 +68,6 @@ var ErrNoDatabase = errors.New("no database yet")
 func ReconcileDerivedIndexes(
 	ctx context.Context, fs storage.FS, paths *project.Context, opts store.ReconcileOptions,
 ) ([]store.DerivedObjectOutcome, error) {
-	meta, _, err := metamodel.NewFSLoader(fs, paths.SchemaPath).Load(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("load schema: %w", err)
-	}
 	path := filepath.Join(paths.CacheDir, dbFileName)
 	if opts.DryRun {
 		if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
@@ -95,6 +90,11 @@ func ReconcileDerivedIndexes(
 	cfg, err := layerProjectConfig(config.NewFSLoader(fs, paths.Root), db)
 	if err != nil {
 		return nil, err
+	}
+	// After the open, not before: the schema may be carried in the database.
+	meta, err := loadMetamodel(ctx, Config{FS: fs, Paths: paths, projectConfig: cfg})
+	if err != nil {
+		return nil, fmt.Errorf("load schema: %w", err)
 	}
 	specs, err := staticIndexSpecs(ctx, meta, cfg)
 	if err != nil {

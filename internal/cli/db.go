@@ -13,6 +13,39 @@ type DBCmd struct {
 	Migrate   DBMigrateCmd   `cmd:"" help:"Apply pending PostgreSQL schema migrations."`
 	Status    DBStatusCmd    `cmd:"" help:"Report the database schema version (read-only; non-zero exit if behind)."`
 	Reconcile DBReconcileCmd `cmd:"" help:"Converge derived-schema objects (unique and query indexes) with the configuration."`
+	Load      DBLoadCmd      `cmd:"" help:"Store the project's config files (schema, data-entry, ACL, scripts, templates) in the database (SQLite)."`
+	Dump      DBDumpCmd      `cmd:"" help:"Write the config files stored in the database to a directory (SQLite)."`
+}
+
+// DBLoadCmd bakes a project's operator-authored config into its SQLite
+// database, so the database file alone is a working project (FEAT-UP14BT).
+//
+// The stored set is REPLACED, not merged: a file removed from the source
+// directory is removed from the database too. Files on disk still take
+// precedence over the stored copy when both exist, so a project being
+// edited keeps reading what the operator just wrote.
+//
+// Like `db migrate`, the trust boundary is the operator shell; it takes no
+// ACL. It opens the database, so it fails while a server has it open.
+type DBLoadCmd struct {
+	From string `help:"Directory to read config from (default: the project root)." type:"existingdir"`
+}
+
+// Run executes `rela db load`.
+func (c *DBLoadCmd) Run() error {
+	return runDBLoad(c.From)
+}
+
+// DBDumpCmd writes the config stored in the SQLite database out as files,
+// the export half of `db load`: dump, edit, load.
+type DBDumpCmd struct {
+	Dir   string `arg:"" help:"Directory to write the config files into."`
+	Force bool   `help:"Overwrite files that already exist."`
+}
+
+// Run executes `rela db dump`.
+func (c *DBDumpCmd) Run() error {
+	return runDBDump(c.Dir, c.Force)
 }
 
 // DBMigrateCmd applies pending schema migrations to the database named by the
