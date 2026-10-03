@@ -178,6 +178,6 @@ var errDBConfigSQLiteOnly = errors.New(
 	"'db load' and 'db dump' carry project config in a SQLite database; " +
 		"use the SQLite build (rela-sqlite)")
 
-func runDBLoad(string) error { return errDBConfigSQLiteOnly }
+func runDBLoad(context.Context, string, bool, bool) error { return errDBConfigSQLiteOnly }
 
-func runDBDump(string, bool) error { return errDBConfigSQLiteOnly }
+func runDBDump(string, bool, bool) error { return errDBConfigSQLiteOnly }
