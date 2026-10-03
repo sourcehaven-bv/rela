@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/app"
@@ -146,7 +147,9 @@ func ImportMarkdownData(
 //
 // It refuses before writing anything when toDir already has an entities,
 // relations or attachments directory: merging into existing data could
-// collide with, or silently sit beside, what is there.
+// collide with, or silently sit beside, what is there. A copy that fails
+// part way leaves those directories behind, and its error says to remove
+// them.
 //
 // The schema used to lay out the files is the project's, read through the
 // same layered config the server reads. Timestamps are not kept: the files
@@ -186,7 +189,13 @@ func ExportMarkdownData(
 		return DataSummary{}, fmt.Errorf("open markdown target %s: %w", toDir, err)
 	}
 	defer func() { _ = dst.Close() }()
-	return copyData(ctx, src, dst)
+	sum, err := copyData(ctx, src, dst)
+	if err != nil {
+		// The refusal above would block a plain retry, so say what to remove.
+		return sum, fmt.Errorf("%w; the export is incomplete: remove %s from %s before trying again",
+			err, strings.Join(markdownDataDirs, ", "), toDir)
+	}
+	return sum, nil
 }
 
 // dataMetamodel loads the schema the data is laid out by: the files in dir

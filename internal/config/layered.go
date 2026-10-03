@@ -112,6 +112,10 @@ func (l *layered) List(ctx context.Context, dir string) ([]string, error) {
 // test failure — an operator editing data-entry.yaml would simply see
 // nothing happen. That directly undercuts the disk-first premise, which
 // exists so an operator's edit is the one that takes effect.
+//
+// Watching only the primary is enough for a disk-over-database stack: the
+// stored copy changes only through an import, which needs the database's
+// exclusive lock and so reopens the project, rereading every file.
 func (l *layered) Subscribe(ctx context.Context, name string, onChange func()) (func(), error) {
 	for _, candidate := range []Loader{l.primary, l.secondary} {
 		if sub, ok := candidate.(Subscriber); ok {

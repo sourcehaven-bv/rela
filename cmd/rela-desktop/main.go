@@ -404,10 +404,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 
 	auditSink, auditErr := audit.NewFilesystem(filepath.Join(projCtx.CacheDir, "audit"))
 	if auditErr != nil {
-		d.mu.Lock()
-		d.loadErr = auditErr.Error()
-		d.mu.Unlock()
-		return auditErr.Error()
+		return d.failLoad(auditErr)
 	}
 	svc, svcErr := appbuild.New(appbuild.Config{
 		FS:           fsys,
@@ -416,10 +413,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 		Audit:        auditSink,
 	})
 	if svcErr != nil {
-		d.mu.Lock()
-		d.loadErr = svcErr.Error()
-		d.mu.Unlock()
-		return svcErr.Error()
+		return d.failLoad(svcErr)
 	}
 	// Closed on every path that does not hand svc to the registry. On the
 	// sqlite build an open svc holds the database's exclusive lock, and a
@@ -443,6 +437,9 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 		d.loadErr = ""
 		d.mu.Unlock()
 		return "needs_setup"
+	}
+	if cfgErr != nil {
+		return d.failLoad(cfgErr)
 	}
 
 	fieldResolver, err := dataentry.ResolverFromServices(svc)

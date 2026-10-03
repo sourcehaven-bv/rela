@@ -142,20 +142,22 @@ func (d ReadDeps) projectFiles() ProjectFiles {
 // ReadScript returns the source of the Lua script at name under the project
 // directory dir (scripts, actions or validations).
 //
-// name must be a local slash path ending in .lua. Errors name the script but
-// never a filesystem path, so they are safe to return to an HTTP or MCP
-// caller.
+// name must be a local path ending in .lua. A backslash separates path
+// elements on every platform, so a name reads the same file on Windows as on
+// the Unix server or in the database. Errors name the script but never a
+// filesystem path, so they are safe to return to an HTTP or MCP caller.
 func (d ReadDeps) ReadScript(ctx context.Context, dir, name string) (string, error) {
 	if name == "" {
 		return "", errors.New("script path is empty")
 	}
-	if !filepath.IsLocal(name) {
+	slashed := strings.ReplaceAll(name, `\`, "/")
+	if !fs.ValidPath(slashed) || filepath.VolumeName(name) != "" {
 		return "", fmt.Errorf("script path must be a local path (no '..' or absolute paths): %s", name)
 	}
 	if !strings.HasSuffix(name, ".lua") {
 		return "", fmt.Errorf("script must have .lua extension: %s", name)
 	}
-	data, err := d.ReadProjectFile(ctx, dir+"/"+filepath.ToSlash(name))
+	data, err := d.ReadProjectFile(ctx, dir+"/"+slashed)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("script not found: %s (must be in %s/ directory)", name, dir)
 	}
