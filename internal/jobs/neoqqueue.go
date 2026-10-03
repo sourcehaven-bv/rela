@@ -425,10 +425,13 @@ func (q *neoqQueue) dispatch(ctx context.Context) error {
 		job.Deadline = deadline
 	}
 
-	// The cap must reach the handler as a deadline. neoq's JobTimeout only
-	// abandons a handler: handler.Exec derives a timeout context but passes
-	// the PARENT to Handle, so a wedged handler keeps running, and keeps any
-	// pool connection it holds, after neoq has given up on it (BUG-9TGOH1).
+	// The cap must reach the handler as a deadline. Upstream neoq's JobTimeout
+	// only abandons a handler: handler.Exec derives a timeout context but
+	// passes the PARENT to Handle, so a wedged handler keeps running, and
+	// keeps any pool connection it holds, after neoq has given up on it
+	// (BUG-9TGOH1). The pinned fork cancels it too, but only at the timeout
+	// itself; this earlier deadline still lets the handler's own error be
+	// recorded as the attempt's outcome.
 	ctx, cancel := context.WithTimeout(ctx, handlerTimeout-handlerCancelGrace)
 	defer cancel()
 
