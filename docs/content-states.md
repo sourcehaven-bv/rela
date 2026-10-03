@@ -570,13 +570,16 @@ confers roles. `guard.when` is accepted by the parser but refused at load with
 a message asking you to remove it, because a condition that is written but
 never evaluated is worse than none.
 
-A copy never creates an edge the caller could not create by hand. It does
-not copy an edge to an entity the caller cannot read, and it does not copy an
-edge that the relation affordances or the ACL refuse on the target face. Such
-an edge is skipped and the copy succeeds without it; the response does not
-mention it. A copy between two faces of one entity with a `guard.permission`
-skips the ACL check on its edges, as it does on the face itself. `replace`
-removes only the target face's edges to entities the caller can read.
+A copy never creates or removes an edge the caller could not create or remove
+by hand. It does not copy an edge to an entity the caller cannot read, and it
+does not copy an edge that the relation affordances or the ACL refuse on the
+target face. Such an edge is skipped and the copy succeeds without it; the
+response does not mention it. `replace` removes a target face's edge only when
+the caller could remove it by hand: the caller can read the entity at its other
+end, and the relation affordances and the ACL allow the removal. Every other
+edge stays. A copy between two faces of one entity with a `guard.permission`
+skips the ACL check on its edges, as it does on the face itself. A skipped edge
+leaves no `denied-write` record in the audit log.
 
 A copy runs as one store transaction and is audited after the commit. On the
 PostgreSQL backend a failed copy rolls back completely. On the filesystem and
@@ -1083,8 +1086,8 @@ a face hidden from you, so a refusal does not reveal that one exists.
 - A copy skips an edge the caller could not create by hand, where it copied
   it or refused the whole copy with a `403` before. This covers an edge to an
   entity the caller cannot read and an edge the relation affordances or the
-  ACL refuse. `replace` keeps the target face's edges to entities the caller
-  cannot read.
+  ACL refuse. `replace` keeps the target face's edges that the caller could
+  not remove by hand.
 
 ## What Worlds Do Not Cover Yet
 

@@ -58,10 +58,11 @@ type copyEngine struct {
 // CopyEdgeGate decides which edges a copy may write for the acting
 // principal. It is the read gate and the relation affordance gate that a
 // hand-made relation write runs, which live above this package: a copy must
-// never create an edge the caller could not create by hand.
+// never create or remove an edge the caller could not create or remove by
+// hand.
 //
-// Both methods are asked once per copy (ReadablePeers) or once per relation
-// type (RelationCreatable), never once per edge.
+// ReadablePeers is asked once per copy, the other methods once per relation
+// type, never once per edge.
 type CopyEdgeGate interface {
 	// ReadablePeers reports which of ids the principal may read at some
 	// face. An id missing from the result, or mapped to false, is a peer the
@@ -71,11 +72,15 @@ type CopyEdgeGate interface {
 	// the principal create a relType edge from target, the face the copy
 	// writes.
 	RelationCreatable(ctx context.Context, target *entity.Entity, relType string) (bool, error)
+	// RelationRemovable reports whether the relation affordance gate lets
+	// the principal remove a relType edge from target, the face the copy
+	// writes as it is stored before the copy.
+	RelationRemovable(ctx context.Context, target *entity.Entity, relType string) (bool, error)
 }
 
 // ungatedCopyEdges is the [CopyEdgeGate] of [Manager.CopyState]: every peer
-// is readable and every relation type creatable. The per-edge ACL check in
-// [copyEngine.planCopyEdges] still runs.
+// is readable and every relation type creatable and removable. The ACL check
+// in [copyEngine.planCopyEdges] still runs.
 type ungatedCopyEdges struct{}
 
 func (ungatedCopyEdges) ReadablePeers(_ context.Context, ids []string) (map[string]bool, error) {
@@ -87,6 +92,10 @@ func (ungatedCopyEdges) ReadablePeers(_ context.Context, ids []string) (map[stri
 }
 
 func (ungatedCopyEdges) RelationCreatable(context.Context, *entity.Entity, string) (bool, error) {
+	return true, nil
+}
+
+func (ungatedCopyEdges) RelationRemovable(context.Context, *entity.Entity, string) (bool, error) {
 	return true, nil
 }
 
@@ -325,8 +334,8 @@ type copyPlan struct {
 	// edges are the copied relations, already authorized.
 	edges []copyEdge
 	// removable holds the target face's edges, of a `replace` type, that
-	// the copy may remove: those whose peer the principal can read. Any
-	// other edge of that type stays, as it would on a hand-made write.
+	// the copy may remove: those the principal could remove by hand. Any
+	// other edge of that type stays.
 	removable map[copyEdgeKey]bool
 }
 
@@ -713,24 +722,28 @@ func (ce *copyEngine) confineFileValues(plan *copyPlan, src, target *entity.Enti
 // copying a role-conferring edge grants roles on the target, so a definition
 // must name a type before its edges travel (§9.2's first mitigation).
 //
-// A copy never creates an edge the principal could not create by hand. An
-// edge is SKIPPED, and the copy goes on without it, when:
+// A copy never creates or removes an edge the principal could not create or
+// remove by hand. An edge is SKIPPED (not created, or under `replace` not
+// removed), and the copy goes on without it, when:
 //
 //   - its peer is one the principal cannot read ([CopyEdgeGate.ReadablePeers]).
 //     A hidden peer is nonexistent to the caller, so the copy neither links
 //     it nor says that it did not;
 //   - the relation affordance gate refuses the type on the target face
-//     ([CopyEdgeGate.RelationCreatable]);
-//   - the ACL refuses the edge, through the request CreateRelation asks. A
-//     guarded face-to-face copy skips this check, because its guard stands in
-//     for the write check on the target (see [copyEngine.authorizeCopy]).
+//     ([CopyEdgeGate.RelationCreatable], [CopyEdgeGate.RelationRemovable]);
+//   - the ACL refuses the edge, through the request CreateRelation or
+//     DeleteRelation asks. A guarded face-to-face copy skips this check,
+//     because its guard stands in for the write check on the target (see
+//     [copyEngine.authorizeCopy]). An unguarded or cross-entity copy keeps it.
 //
 // Skipping rather than refusing keeps a copy usable by a caller who sees part
 // of the graph, and refusing would tell the caller that a hidden edge exists.
+// A skip leaves no trace in the response or in the audit log: no write was
+// attempted.
 //
 // Cost: one source edge read, one target edge read when a `replace` type
 // meets an existing target, one ReadablePeers call, and one affordance and
-// ACL verdict per relation type.
+// ACL verdict per relation type and operation.
 func (ce *copyEngine) planCopyEdges(ctx context.Context, plan *copyPlan) error {
 	if len(plan.def.Relations) == 0 {
 		return nil
@@ -755,12 +768,6 @@ func (ce *copyEngine) planCopyEdges(ctx context.Context, plan *copyPlan) error {
 		return fmt.Errorf("entitymanager: copy %q: read edge peers: %w", plan.name, err)
 	}
 
-	plan.removable = map[copyEdgeKey]bool{}
-	for _, rel := range existing {
-		if readable[rel.To] {
-			plan.removable[copyEdgeKey{rel.Type, rel.To}] = true
-		}
-	}
 	creatable := map[string]bool{}
 	for _, rel := range candidates {
 		if !readable[rel.To] {
@@ -768,7 +775,7 @@ func (ce *copyEngine) planCopyEdges(ctx context.Context, plan *copyPlan) error {
 		}
 		ok, seen := creatable[rel.Type]
 		if !seen {
-			if ok, err = ce.edgeTypeCreatable(ctx, plan, rel.Type); err != nil {
+			if ok, err = ce.edgeTypeAllowed(ctx, plan, rel.Type, acl.OpCreate); err != nil {
 				return err
 			}
 			creatable[rel.Type] = ok
@@ -777,6 +784,26 @@ func (ce *copyEngine) planCopyEdges(ctx context.Context, plan *copyPlan) error {
 			plan.edges = append(plan.edges, copyEdge{
 				relType: rel.Type, to: rel.To, replace: plan.def.Relations[rel.Type] == "replace",
 			})
+		}
+	}
+
+	// Only a type that copies at least one edge replaces anything (see
+	// applyCopyEdges), so only those types are asked about removal.
+	plan.removable = map[copyEdgeKey]bool{}
+	removableType := map[string]bool{}
+	for _, rel := range existing {
+		if !readable[rel.To] || !creatable[rel.Type] {
+			continue
+		}
+		ok, seen := removableType[rel.Type]
+		if !seen {
+			if ok, err = ce.edgeTypeAllowed(ctx, plan, rel.Type, acl.OpDelete); err != nil {
+				return err
+			}
+			removableType[rel.Type] = ok
+		}
+		if ok {
+			plan.removable[copyEdgeKey{rel.Type, rel.To}] = true
 		}
 	}
 	return nil
@@ -799,21 +826,38 @@ func (ce *copyEngine) namedEdges(
 	return out, nil
 }
 
-// edgeTypeCreatable reports whether the principal may create a relType edge
-// from the copy's target face: the relation affordance gate, then the ACL
-// question CreateRelation asks, at the face applyCopyEdges writes these edges
-// to (BUG-64MU2Q). An ACL denial is audited like any refused write; it is a
-// verdict, not an error.
-func (ce *copyEngine) edgeTypeCreatable(ctx context.Context, plan *copyPlan, relType string) (bool, error) {
-	ok, err := ce.edges.RelationCreatable(ctx, plan.entity, relType)
+// edgeTypeAllowed reports whether the principal may create (op OpCreate) or
+// remove (op OpDelete) a relType edge at the copy's target face: the relation
+// affordance gate, then the ACL question CreateRelation or DeleteRelation
+// asks, at the face applyCopyEdges writes these edges to (BUG-64MU2Q).
+//
+// A create is judged on the merged target, a removal on the target as stored,
+// which is the row a hand-made DELETE is judged on.
+//
+// An ACL denial is a verdict, not an error, and it is NOT audited: the copy
+// skips the edge rather than attempting the write, so a `denied-write` record
+// would claim a write the caller never asked for. The ACL request and its
+// verdict are unchanged; [withAffordanceProbe] suppresses only the record.
+func (ce *copyEngine) edgeTypeAllowed(ctx context.Context, plan *copyPlan, relType string, op acl.Op) (bool, error) {
+	var (
+		ok  bool
+		err error
+		req acl.WriteRequest
+	)
+	if op == acl.OpDelete {
+		ok, err = ce.edges.RelationRemovable(ctx, plan.existing, relType)
+		req = RelationDeleteRequest(ce.m.deps.Meta, relType, plan.to.Type, plan.targetID, plan.targetTail)
+	} else {
+		ok, err = ce.edges.RelationCreatable(ctx, plan.entity, relType)
+		req = RelationCreateRequest(ce.m.deps.Meta, relType, plan.to.Type, plan.targetID, plan.targetTail)
+	}
 	if err != nil {
 		return false, fmt.Errorf("entitymanager: copy %q: relation gate: %w", plan.name, err)
 	}
 	if !ok || plan.guardAuthorizes {
 		return ok, nil
 	}
-	aerr := ce.m.authorizeAndAudit(ctx, RelationCreateRequest(
-		ce.m.deps.Meta, relType, plan.to.Type, plan.targetID, plan.targetTail))
+	aerr := ce.m.authorizeAndAudit(withAffordanceProbe(ctx), req)
 	if _, denied := errors.AsType[*acl.ForbiddenError](aerr); denied {
 		return false, nil
 	}

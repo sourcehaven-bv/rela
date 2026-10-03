@@ -547,6 +547,10 @@ func (stubEdgeGate) RelationCreatable(context.Context, *entity.Entity, string) (
 	return true, nil
 }
 
+func (stubEdgeGate) RelationRemovable(context.Context, *entity.Entity, string) (bool, error) {
+	return true, nil
+}
+
 func TestNewCopyAffordances_RejectsNil(t *testing.T) {
 	mgr, _ := newCopyListManager(t, nil)
 	for _, tc := range []struct {

@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -76,16 +77,23 @@ copies:
     to: new memo
     fields: { title: "{{new.title}}" }
     relations: { cites: merge, refs: merge }
+  memo-replace:
+    from: memo
+    to: new memo
+    fields: { title: "{{new.title}}" }
+    relations: { cites: replace }
 `
 
 // copyEdgesPolicy configures alice's role for one copyEdgesApp.
 type copyEdgesPolicy struct {
 	readSecret bool                 // alice may read the secret type
 	memoCreate bool                 // alice may create memos (and so their edges)
+	memoDelete bool                 // alice may delete memos (and so their edges)
 	relations  []acl.RelationGrant  // alice's relation grants on policy and memo
 	sourceRels []entity.RelationKey // edges the copy source carries
 	targetRels []entity.RelationKey // edges the target face carries before the copy
 	extraPeers int                  // more readable features the source cites
+	audit      *audit.Memory        // records the app's audit log when set
 }
 
 // copyEdgesApp builds an App over copyEdgesMeta whose store counts reads. It
@@ -136,17 +144,25 @@ func copyEdgesApp(t *testing.T, p copyEdgesPolicy) (*App, *acl.Declarative, *sto
 	if p.memoCreate {
 		create = append(create, "memo")
 	}
+	var del []string
+	if p.memoDelete {
+		del = []string{"memo"}
+	}
 	d := mustNewACL(t, &acl.Policy{
 		Roles: map[string]acl.RoleDef{"r": {
-			Read: read, Create: create, Update: []string{"memo", "feature", "policy@draft"},
+			Read: read, Create: create, Update: []string{"memo", "feature", "policy@draft"}, Delete: del,
 			Permissions: []string{"promote"},
 			Relations:   map[string][]acl.RelationGrant{"policy": p.relations, "memo": p.relations},
 		}},
 		Assignments: map[string]string{"alice": "r"},
 	}, st)
 
-	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
-		appbuildtest.WithDeclarative(d))
+	opts := []appbuildtest.Option{appbuildtest.WithFS(fs, paths), appbuildtest.WithStore(st),
+		appbuildtest.WithDeclarative(d)}
+	if p.audit != nil {
+		opts = append(opts, appbuildtest.WithAudit(p.audit))
+	}
+	svc := appbuildtest.New(meta, opts...)
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
 	app.acl = d
@@ -274,8 +290,12 @@ func TestCopy_SkipsEdgesTheCallerCouldNotCreate(t *testing.T) {
 // TestCopy_ACLRefusedEdgesAreSkipped pins a cross-entity copy into an
 // existing memo by a caller who may update memos but not create them, and so
 // may not create their edges: the copy succeeds and writes no edge.
+//
+// The skipped edges leave no `denied-write` record: the copy never attempted
+// them, so the audit log must not say it did.
 func TestCopy_ACLRefusedEdgesAreSkipped(t *testing.T) {
-	app, d, st := copyEdgesApp(t, copyEdgesPolicy{readSecret: true, sourceRels: []entity.RelationKey{
+	sink := audit.NewMemory()
+	app, d, st := copyEdgesApp(t, copyEdgesPolicy{readSecret: true, audit: sink, sourceRels: []entity.RelationKey{
 		rel("MEMO-1", "", "cites", "FEAT-1"),
 		rel("MEMO-1", "", "refs", "FEAT-2"),
 	}})
@@ -289,6 +309,95 @@ func TestCopy_ACLRefusedEdgesAreSkipped(t *testing.T) {
 	got, err := st.GetEntity(t.Context(), entity.Ref{ID: "MEMO-2"})
 	if err != nil || got.Properties["title"] != "m1" {
 		t.Errorf("the copy did not write the target: %v %v", got, err)
+	}
+	assertNoDeniedWrite(t, sink)
+}
+
+// assertNoDeniedWrite fails when sink holds a `denied-write` record.
+func assertNoDeniedWrite(t *testing.T, sink *audit.Memory) {
+	t.Helper()
+	for _, r := range sink.Records() {
+		if r.Op == audit.OpDeniedWrite {
+			t.Errorf("denied-write recorded for a skipped edge: %+v", r)
+		}
+	}
+}
+
+// copyReplaceSources are the `replace` copy forms: a guarded face-to-face
+// promote, which its guard authorizes, and a cross-entity copy, which the
+// ACL authorizes per edge.
+var copyReplaceSources = []copyEdgeSource{
+	{name: "faced promote", def: "promote-replace", body: `{"source_id":"POL-1"}`,
+		from: "POL-1", fromFace: "draft", to: "POL-1", toFace: "published"},
+	{name: "cross-entity", def: "memo-replace", body: `{"source_id":"MEMO-1","target_id":"MEMO-2"}`,
+		from: "MEMO-1", to: "MEMO-2"},
+}
+
+// TestCopyReplace_KeepsEdgesTheCallerCouldNotRemove pins that `replace`
+// removes a target edge only when the caller could remove it by hand: the
+// relation affordance gate must let the type be removed, and the ACL must
+// allow the delete DeleteRelation asks. A kept edge is silent: the copy
+// succeeds, the response is byte-identical to one for a target that never
+// had the edge, and the audit log holds no `denied-write` record.
+//
+// A guarded face-to-face promote is exempt from the ACL check, as it is for
+// creates (see copyEngine.authorizeCopy), so the ACL case runs cross-entity
+// only.
+func TestCopyReplace_KeepsEdgesTheCallerCouldNotRemove(t *testing.T) {
+	noRemove := false
+	for _, src := range copyReplaceSources {
+		for _, tc := range []struct {
+			name    string
+			pol     copyEdgesPolicy
+			want    []string
+			aclOnly bool // a guarded face-to-face copy has no per-edge ACL check
+		}{
+			{
+				name: "affordance refuses removal",
+				pol: copyEdgesPolicy{memoCreate: true, memoDelete: true,
+					relations: []acl.RelationGrant{{Relation: "cites", Remove: &noRemove}}},
+				want: []string{"cites->FEAT-1", "cites->FEAT-2"},
+			},
+			{
+				name:    "ACL refuses delete",
+				pol:     copyEdgesPolicy{memoCreate: true},
+				want:    []string{"cites->FEAT-1", "cites->FEAT-2"},
+				aclOnly: true,
+			},
+			{
+				name: "removal allowed",
+				pol:  copyEdgesPolicy{memoCreate: true, memoDelete: true},
+				want: []string{"cites->FEAT-1"},
+			},
+		} {
+			if tc.aclOnly && src.toFace != "" {
+				continue
+			}
+			t.Run(src.name+"/"+tc.name, func(t *testing.T) {
+				pol := tc.pol
+				pol.audit = audit.NewMemory()
+				pol.sourceRels = []entity.RelationKey{rel(src.from, src.fromFace, "cites", "FEAT-1")}
+				pol.targetRels = []entity.RelationKey{rel(src.to, src.toFace, "cites", "FEAT-2")}
+				app, d, st := copyEdgesApp(t, pol)
+				rec := copyAs(t, app, d, src.def, src.body)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("copy = %d %s", rec.Code, rec.Body)
+				}
+				if got := edgesFrom(t, st, src.to, src.toFace); !slices.Equal(got, tc.want) {
+					t.Errorf("target edges = %v, want %v", got, tc.want)
+				}
+				assertNoDeniedWrite(t, pol.audit)
+
+				twinPol := tc.pol
+				twinPol.sourceRels = pol.sourceRels
+				twinApp, twinD, _ := copyEdgesApp(t, twinPol)
+				twin := copyAs(t, twinApp, twinD, src.def, src.body)
+				if twin.Code != rec.Code || twin.Body.String() != rec.Body.String() {
+					t.Errorf("response with a target edge = %d %s\nwithout = %d %s",
+						rec.Code, rec.Body, twin.Code, twin.Body)
+				}
+			})
+		}
 	}
 }
 
@@ -336,6 +445,34 @@ func TestCopy_EdgeGateReadsDoNotGrowWithEdges(t *testing.T) {
 			}
 			if r10, r50 := reads(10), reads(50); r10 != r50 {
 				t.Errorf("copy reads grow with edges: %d at 10, %d at 50", r10, r50)
+			}
+		})
+	}
+	// `replace` adds the target edge read and the removal verdicts; those
+	// must not grow with the edges either.
+	for _, src := range copyReplaceSources {
+		t.Run(src.name+"/replace", func(t *testing.T) {
+			reads := func(n int) int {
+				var source, target []entity.RelationKey
+				for i := range n {
+					source = append(source, rel(src.from, src.fromFace, "cites", fmt.Sprintf("FEAT-X%d", i)))
+					target = append(target, rel(src.to, src.toFace, "cites", fmt.Sprintf("FEAT-X%d", n+i)))
+				}
+				target = append(target, rel(src.to, src.toFace, "cites", "SEC-1"))
+				app, d, st := copyEdgesApp(t, copyEdgesPolicy{memoCreate: true, memoDelete: true,
+					extraPeers: 2 * n, sourceRels: source, targetRels: target})
+				if rec := copyAs(t, app, d, src.def, src.body); rec.Code != http.StatusOK {
+					t.Fatalf("copy = %d %s", rec.Code, rec.Body)
+				}
+				calls := st.Reads()
+				// The n source edges, plus the hidden peer's edge, which stays.
+				if got := len(edgesFrom(t, st, src.to, src.toFace)); got != n+1 {
+					t.Fatalf("target has %d edges, want %d", got, n+1)
+				}
+				return calls
+			}
+			if r10, r50 := reads(10), reads(50); r10 != r50 {
+				t.Errorf("replace reads grow with edges: %d at 10, %d at 50", r10, r50)
 			}
 		})
 	}

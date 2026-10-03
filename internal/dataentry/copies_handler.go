@@ -97,7 +97,7 @@ func wireCopies(mgr *entitymanager.Manager, edges entitymanager.CopyEdgeGate) (c
 // functions: the peer read gate of [writeHandler.requireReadablePeers]
 // ([visibleReader.readableTypes]) and the affordance gate over
 // [affordanceService.relationSources]. A copy therefore skips exactly the
-// edges a PATCH would refuse.
+// edge creates and removals a PATCH would refuse.
 //
 // affordances is a closure because the affordance service is built after the
 // copy surface and tests replace its resolver afterwards.
@@ -120,15 +120,30 @@ func (g copyEdgeGate) ReadablePeers(ctx context.Context, ids []string) (map[stri
 	return out, nil
 }
 
-// RelationCreatable implements [entitymanager.CopyEdgeGate]: the copy target
-// is the path entity of an outgoing edge.
+// RelationCreatable implements [entitymanager.CopyEdgeGate] with the
+// creatable check of [writeHandler.handleV1CreateRelation].
 func (g copyEdgeGate) RelationCreatable(ctx context.Context, target *entityPkg.Entity, relType string) (bool, error) {
+	return g.relationOpAllowed(ctx, target, relType, RelationOpCreate)
+}
+
+// RelationRemovable implements [entitymanager.CopyEdgeGate] with the
+// removable check of [writeHandler.handleV1DeleteRelation].
+func (g copyEdgeGate) RelationRemovable(ctx context.Context, target *entityPkg.Entity, relType string) (bool, error) {
+	return g.relationOpAllowed(ctx, target, relType, RelationOpRemove)
+}
+
+// relationOpAllowed runs the affordance gate for op on an outgoing relType
+// edge of target, the copy target and the path entity of the edge. An
+// outgoing edge's sources do not depend on the peer, so no peer is named.
+func (g copyEdgeGate) relationOpAllowed(
+	ctx context.Context, target *entityPkg.Entity, relType string, op RelationOp,
+) (bool, error) {
 	svc := g.affordances()
 	sources, err := svc.relationSources(ctx, target, entityPkg.Ref{}, string(DirectionOutgoing), relType)
 	if err != nil {
 		return false, err
 	}
-	_, denial := svc.relationOpDenial(ctx, sources, relType, RelationOpCreate)
+	_, denial := svc.relationOpDenial(ctx, sources, relType, op)
 	return denial == nil, nil
 }
 

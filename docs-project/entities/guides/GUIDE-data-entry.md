@@ -6964,7 +6964,8 @@ returns what was written:
 `false` when it overwrote one. The copy writes only the edges the caller could
 create by hand: an edge to an entity the caller cannot read, or one the
 relation affordances or the ACL refuse, is skipped without a mention in the
-response. A caller who lacks the guard permission receives
+response. Likewise `replace` removes only the target edges the caller could
+remove by hand, and leaves the others. A caller who lacks the guard permission receives
 a `403` naming it. A source the caller may not read produces the same `404` as
 a source that does not exist. Any other refusal, such as an unknown definition
 or a cross-entity copy without a `target_id`, is a `422`.

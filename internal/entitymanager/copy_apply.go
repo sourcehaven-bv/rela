@@ -63,7 +63,7 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 	// `replace` removes the target face's existing edges of that type first.
 	// Deliberately scoped to the TAIL: the sibling faces' edges are theirs.
 	// Only the edges planning found removable go (plan.removable): an edge
-	// to a peer the principal cannot read stays, and so does one created
+	// the principal could not remove by hand stays, and so does one created
 	// after planning.
 	replaced := map[string]bool{}
 	for _, e := range plan.edges {
