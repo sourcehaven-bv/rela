@@ -48,6 +48,12 @@ seqtrace-diagram *args:
 seqtrace-demo:
     tools/seqtrace/demo/run.sh
 
+# Compare the demo's request flows between REF and the working tree (tools/seqtrace/README.md)
+seqtrace-compare ref="origin/develop":
+    SEQTRACE_REF={{quote(ref)}} SEQTRACE_LABEL=base SEQTRACE_OPEN=0 tools/seqtrace/demo/run.sh
+    SEQTRACE_LABEL=head SEQTRACE_OPEN=0 tools/seqtrace/demo/run.sh
+    go run ./tools/seqtrace/cmd/seqtrace diff .ignored/seqtrace-demo/base/diagrams .ignored/seqtrace-demo/head/diagrams | tee .ignored/seqtrace-demo/compare.md
+
 # Build the desktop app
 build-desktop: build-frontend
     @echo "Building rela-desktop..."
