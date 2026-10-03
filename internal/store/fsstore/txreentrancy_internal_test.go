@@ -30,7 +30,7 @@ func TestTx_ReadsViaOuterHandleDoNotDeadlock(t *testing.T) {
 	if err := s.CreateEntity(ctx, entity.New("SOL-1", "solution")); err != nil {
 		t.Fatalf("seed entity: %v", err)
 	}
-	if _, err := s.CreateRelation(ctx, "REQ-1", "satisfied-by", "SOL-1", nil); err != nil {
+	if _, err := s.CreateRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "satisfied-by", To: "SOL-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
@@ -39,10 +39,10 @@ func TestTx_ReadsViaOuterHandleDoNotDeadlock(t *testing.T) {
 		done <- s.Tx(ctx, func(tx store.Store) error {
 			// Exactly what acl.StoreGraph does: reads against the OUTER
 			// handle, not the tx view.
-			if _, err := s.GetEntity(ctx, "REQ-1"); err != nil {
+			if _, err := s.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); err != nil {
 				return err
 			}
-			if _, err := s.GetRelation(ctx, "REQ-1", "satisfied-by", "SOL-1"); err != nil {
+			if _, err := s.GetRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "satisfied-by", To: "SOL-1"}); err != nil {
 				return err
 			}
 			for _, err := range s.ListRelations(ctx, store.RelationQuery{
@@ -53,7 +53,7 @@ func TestTx_ReadsViaOuterHandleDoNotDeadlock(t *testing.T) {
 				}
 			}
 			// The write still goes through the tx view, per the contract.
-			_, err := tx.DeleteEntity(ctx, "SOL-1", true)
+			_, err := tx.DeleteFamily(ctx, "SOL-1", true)
 			return err
 		})
 	}()

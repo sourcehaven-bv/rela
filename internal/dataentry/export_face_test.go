@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -106,8 +105,8 @@ func seedExportGraph(t *testing.T, app *App, ents []*entity.Entity, rels [][3]st
 		}
 	}
 	for i, r := range rels {
-		if _, err := app.store.CreateRelation(ctx, r[0], r[1], r[2],
-			&store.RelationData{FromFace: tails[i]}); err != nil {
+		k := entity.RelationKey{From: r[0], FromFace: tails[i], Type: r[1], To: r[2]}
+		if _, err := app.store.CreateRelation(ctx, k, nil); err != nil {
 			t.Fatalf("seed %v@%q: %v", r, tails[i], err)
 		}
 	}
@@ -249,22 +248,6 @@ func TestExport_UnreadableFaceIsIndistinguishableFromMissing(t *testing.T) {
 	if denied.Code != missing.Code || deniedBody != missing.Body.String() {
 		t.Errorf("denied face distinguishable from a missing entity:\ndenied:  %d %s\nmissing: %d %s",
 			denied.Code, denied.Body, missing.Code, missing.Body)
-	}
-}
-
-// TestExport_NeighborFaultFailsTheExport: a failed neighbor read must fail
-// the export, never ship a file that silently omits the links it could not
-// resolve.
-func TestExport_NeighborFaultFailsTheExport(t *testing.T) {
-	app, _ := facedExportApp(t, nil)
-	app.export.faceNeighbors = func(context.Context, *entity.Entity) (
-		outgoing, incoming []*entity.Relation, neighbors map[string]*entity.Entity, err error,
-	) {
-		return nil, nil, nil, errors.New("store is down")
-	}
-	rec := exportRouted(t, app, "policys/POL-1@published")
-	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "PUBLISHED TEXT") {
-		t.Errorf("export with a failing neighbor read = %d %s, want 500 and no content", rec.Code, rec.Body)
 	}
 }
 

@@ -203,6 +203,8 @@ relations:
     to: [policy, control]
     scope: content
 
+default_world: published
+
 worlds:
   published:
     select: published

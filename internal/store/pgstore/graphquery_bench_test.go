@@ -39,6 +39,7 @@ func BenchmarkGraphQuery(b *testing.B) {
 					InheritThrough: []string{"member-of"},
 					Depth:          5,
 				},
+				Faces: store.InWorld(store.TrivialScope()),
 			}
 			b.ResetTimer()
 			for range b.N {
@@ -74,7 +75,7 @@ func benchSetup(b *testing.B, n int) store.Store {
 		}
 	}
 	mustRel := func(from, relType, to string) {
-		if _, err := s.CreateRelation(ctx, from, relType, to, nil); err != nil {
+		if _, err := s.CreateRelation(ctx, entity.RelationKey{From: from, Type: relType, To: to}, nil); err != nil {
 			b.Fatalf("relation %s --%s--> %s: %v", from, relType, to, err)
 		}
 	}

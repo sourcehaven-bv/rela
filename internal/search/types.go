@@ -3,7 +3,9 @@ package search
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -152,8 +154,9 @@ type Backend interface {
 	// a limit counting entities fall out for free — no PARTITION BY, no
 	// over-fetch-and-group. Implementations must preserve it.
 	//
-	// The zero WorldScope is the default world and must reduce to
-	// exactly the pre-worlds query, allocating nothing.
+	// The trivial scope ([store.TrivialScope]) must reduce to exactly
+	// the pre-worlds query, allocating nothing. An unset scope is
+	// [store.ErrInvalidQuery].
 	Search(text string, limit int, world store.WorldScope) ([]Face, error)
 }
 
@@ -211,11 +214,65 @@ const WildcardType = "*"
 //   - zero value → deny the type (an explicit deny entry is equivalent
 //     to the type being absent from the map).
 //
+// Faces is the face allowlist of the grant: nil admits every face, a
+// non-empty list only the faces it names. An empty non-nil list is refused
+// by [ValidateScope], because [store.GraphQuery.FaceIn] reads an empty list
+// as "every face" and a backend that forwarded it would fail open. It
+// applies with either meaning above. Like the
+// verdict itself it trims the candidate faces BEFORE the world ranks them,
+// so a denied prime falls through to a readable face, as on lists and the
+// single-entity read. A [WildcardType] entry must leave it nil.
+//
 // The scope map is server-derived (from ACL policy verdicts), never
 // wire-supplied.
 type TypeScope struct {
 	AllowAll bool
 	Query    *store.GraphQuery
+	Faces    []entity.Face
+}
+
+// AdmitsFace reports whether the scope's face allowlist admits f.
+func (ts TypeScope) AdmitsFace(f entity.Face) bool {
+	return ts.Faces == nil || slices.Contains(ts.Faces, f)
+}
+
+// ValidateScope rejects the scope-map shapes every [VisibleSearcher]
+// refuses: an entry with an empty non-nil face allowlist (see
+// [TypeScope.Faces]), and a [WildcardType] entry carrying a Query (a
+// GraphQuery targets one entity type) or a face allowlist. The error wraps
+// [ErrScope].
+func ValidateScope(scope map[string]TypeScope) error {
+	for typ, ts := range scope {
+		if ts.Faces != nil && len(ts.Faces) == 0 {
+			return fmt.Errorf("%w: scope entry %q has an empty face allowlist", ErrScope, typ)
+		}
+	}
+	ws, ok := scope[WildcardType]
+	if !ok {
+		return nil
+	}
+	if ws.Query != nil {
+		return fmt.Errorf("%w: wildcard scope entry cannot carry a GraphQuery", ErrScope)
+	}
+	if ws.Faces != nil {
+		return fmt.Errorf("%w: wildcard scope entry cannot carry a face allowlist", ErrScope)
+	}
+	return nil
+}
+
+// AdmitFunc trims a batch of candidate faces to the ones a reader may see.
+// It returns the admitted subset; an error fails the search closed. A
+// backend calls it on whole families BEFORE the world ranks them, so the
+// world picks each entity's prime among admitted faces only.
+type AdmitFunc func(candidates []Candidate) ([]Candidate, error)
+
+// AdmittingBackend is the optional [Backend] capability a [Service] needs
+// to honor [Query.Admit]. SearchAdmitted is [Backend.Search] with admit
+// applied to the candidate faces before resolution; a nil admit is exactly
+// Search. A Service over a backend without it refuses an admitting query
+// rather than ranking unadmitted faces.
+type AdmittingBackend interface {
+	SearchAdmitted(text string, limit int, world store.WorldScope, admit AdmitFunc) ([]Face, error)
 }
 
 // ResolveTypeScope applies the scope lookup rule shared by every
@@ -254,8 +311,11 @@ func ResolveTypeScope(scope map[string]TypeScope, entityType string) (TypeScope,
 //     hidden while visible matches rank below them.)
 //   - Relative order of visible hits equals the order the ungated
 //     search on the same backend would yield them in.
-//   - A [WildcardType] entry carrying a Query is invalid (a GraphQuery
-//     targets one entity type) and yields an error.
+//   - A [WildcardType] entry carrying a Query or a face allowlist is
+//     invalid ([ValidateScope]) and yields an error.
+//   - The scope trims candidate faces BEFORE the world ranks them: a hit
+//     is the prime of the faces the scope admits, never a prime the scope
+//     denies.
 //   - q.Sort is ignored, matching [Service.Search].
 //
 // Service plus this package's generic wrapper (NewVisible) serve the
@@ -287,7 +347,7 @@ type FieldVisibleSearcher interface {
 }
 
 // ErrScope marks a SearchVisible failure that occurred while evaluating
-// the visibility scope (GraphQuery/MatchingIDs execution), as opposed
+// the visibility scope (GraphQuery/MatchingFaces execution), as opposed
 // to a plain search-backend failure. Consumers route ErrScope failures
 // through their ACL-error path. Implementations that cannot separate
 // the two phases (pgstore runs one combined statement) wrap the whole
@@ -303,14 +363,19 @@ type Query struct {
 	Limit   int              // max results (0 = no limit)
 
 	// World is the resolution scope: which face of each entity this
-	// search looks at. The zero value is the default world, which is
-	// byte-identical to the pre-worlds behavior — every existing
-	// construction site keeps working untouched.
+	// search looks at. It is required: the unset zero value is
+	// [store.ErrInvalidQuery] (see [ValidateQuery]).
 	//
 	// Limit counts ENTITIES, and that is structural rather than
 	// enforced: a world resolves at most one prime per entity, so the
 	// result set holds at most one row per entity to begin with.
 	World store.WorldScope
+
+	// Admit, when set, trims each entity's candidate faces before World
+	// ranks them ([AdmitFunc]). It is server-derived (the visibility
+	// wrapper sets it from the ACL scope, and runs a caller's own Admit on
+	// what the scope admitted), never wire-supplied. Nil admits every face.
+	Admit AdmitFunc
 }
 
 // PropertyFilter matches entities by property value.

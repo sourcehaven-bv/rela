@@ -146,6 +146,17 @@ describe('useEntityPageEditing', () => {
     expect(pushMock).toHaveBeenCalledWith('/')
   })
 
+  it('deletes the face on screen, not the bare id', async () => {
+    const menu = render(
+      setup(topic({ _self: '/api/v1/topics/TOP-1@draft' })).menu.value
+    ).getComponent(EntityPageMenu)
+    confirmMock.mockResolvedValueOnce(true)
+    menu.vm.$emit('delete')
+    await flushPromises()
+    expect(confirmMock.mock.lastCall?.[0].message).toContain('draft face')
+    expect(deleteEntityMock).toHaveBeenCalledWith('topic', 'TOP-1@draft')
+  })
+
   it('opens the details in the panel', () => {
     const menu = render(setup(topic()).menu.value).getComponent(EntityPageMenu)
     menu.vm.$emit('details')

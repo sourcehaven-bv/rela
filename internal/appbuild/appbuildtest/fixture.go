@@ -25,6 +25,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -52,6 +53,22 @@ type testConfig struct {
 	audit       audit.Audit
 	acl         acl.ACL
 	declarative *acl.Declarative
+}
+
+// auditOrNop is the configured audit sink, or [audit.Nop] when none was set.
+func (c *testConfig) auditOrNop() audit.Audit {
+	if c.audit == nil {
+		return audit.Nop{}
+	}
+	return c.audit
+}
+
+// aclOrNop is the configured ACL, or [acl.NopACL] when none was set.
+func (c *testConfig) aclOrNop() acl.ACL {
+	if c.acl == nil {
+		return acl.NopACL{}
+	}
+	return c.acl
 }
 
 // WithStore replaces the default empty memstore with a caller-supplied
@@ -153,23 +170,21 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 
 	searchBackend := newSearchBackend()
 	st := resolveStore(cfg.store, searchBackend)
-	tr := tracer.New(st)
+	// The trivial scope is the default world; the fixture compiles no worlds.
+	world := store.TrivialScope()
+	tr, err := tracer.New(st, world)
+	if err != nil {
+		panic("appbuildtest: tracer: " + err.Error())
+	}
 	searcher := resolveSearcher(st, searchBackend)
-	readDeps := buildReadDeps(st, tr, searcher, meta, cfg.paths)
+	readDeps := buildReadDeps(st, tr, searcher, meta, cfg.paths, world)
 
 	autoEngine, cascadeRunner := buildAutomation(meta, st)
 	templater := templating.NewFSTemplater(cfg.fs, cfg.paths)
 	cfgLoader := config.NewFSLoader(cfg.fs, cfg.paths.Root)
 	stateKV := mustBuildStateKV(cfg.fs, cfg.paths)
 	scriptEngine := script.NewEngine()
-	auditSink := cfg.audit
-	if auditSink == nil {
-		auditSink = audit.Nop{}
-	}
-	aclImpl := cfg.acl
-	if aclImpl == nil {
-		aclImpl = acl.NopACL{}
-	}
+	auditSink, aclImpl := cfg.auditOrNop(), cfg.aclOrNop()
 
 	tw, err := appbuild.CompileTransitions(meta, st, aclImpl)
 	if err != nil {
@@ -201,7 +216,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		// without an allow_acl_bypass action + an ElevatedProvider Mutator.
 		ScriptRunner: script.NewLuaScriptRunnerWithElevatedReads(
 			scriptEngine, readDeps, script.ReadElevation{
-				Reader:   visibility.Unrestricted(st),
+				Reader:   visibility.Unrestricted(st).WithWorld(visibility.WorldOf(world)),
 				Recorder: appbuild.NewElevationAuditor(auditSink),
 			},
 		),
@@ -222,9 +237,10 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		// its source ungated — the forgotten-wiring state entitymanager.New
 		// now refuses (#1437). Taking all three from tw makes the posture
 		// follow the ACL, exactly as in production.
-		CopyGuard:      tw.Guard,
-		CopyReadGate:   tw.ReadGate,
-		CopyVisibility: tw.Visibility,
+		CopyGuard:        tw.Guard,
+		CopyReadGate:     tw.ReadGate,
+		CopyVisibility:   tw.Visibility,
+		AttachmentLocker: lock.For(st),
 	})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build entitymanager: %v", err))
@@ -293,7 +309,7 @@ func backfill(ctx context.Context, backend *bleveindex.Index, s store.Store) err
 	}
 	entities := make([]*entity.Entity, 0)
 	var listErrs []error
-	for e, err := range s.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range s.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			listErrs = append(listErrs, err)
 			continue
@@ -336,7 +352,7 @@ func resolveSearcher(st store.Store, backend *bleveindex.Index) search.Searcher 
 }
 
 func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
-	meta *metamodel.Metamodel, paths *project.Context) lua.ReadDeps {
+	meta *metamodel.Metamodel, paths *project.Context, world store.WorldScope) lua.ReadDeps {
 	root := ""
 	if paths != nil {
 		root = paths.Root
@@ -344,11 +360,12 @@ func buildReadDeps(st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	// Test fixture: unrestricted reads (no ACL wiring here). Production
 	// identity-bearing paths use Services.luaReadDepsFor instead.
 	return lua.ReadDeps{
-		VisibleReader: visibility.Unrestricted(st),
+		VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(world)),
 		Tracer:        tr,
 		Searcher:      searcher,
 		Meta:          meta,
 		ProjectRoot:   root,
+		World:         world,
 	}
 }
 

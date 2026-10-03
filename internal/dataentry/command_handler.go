@@ -64,6 +64,10 @@ type commandHandler struct {
 	// A closure over App for the same reason as the other fields: tests
 	// rebind the affordance service after construction.
 	redactor visibility.FieldRedactor
+
+	// visible resolves the entity-context row through the same resolver the
+	// entity GET uses, so the row gate and the face gate run before redactor.
+	visible visibleReader
 }
 
 // authorizer returns the wired command authorizer, or a denyAuthorizer when the

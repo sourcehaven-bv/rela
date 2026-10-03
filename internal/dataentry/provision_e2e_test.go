@@ -23,8 +23,8 @@ import (
 // unmatched_principal: provision — end-to-end (TKT-ANUJDS).
 //
 // The load-bearing test is TestProvision_FirstWriteProvisionsAcrossPaths: it
-// drives an unmatched verified assertion through the REAL router to a CRUD, a
-// sync, and a Lua-action write, and asserts each provisions exactly one stub and
+// drives an unmatched verified assertion through the REAL router to a CRUD and
+// a Lua-action write, and asserts each provisions exactly one stub and
 // lets the write proceed. That covers the anti-bypass invariant (provision fires
 // on every write path, not just CRUD) the same way the reject e2e test does.
 
@@ -128,7 +128,7 @@ func provisionAppWithSubject(t *testing.T, subject string) (*App, store.Store) {
 func listPersonsBySub(t *testing.T, st store.Store) []*entity.Entity {
 	t.Helper()
 	var out []*entity.Entity
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person"}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person", Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)
 		}
@@ -150,9 +150,6 @@ func TestProvision_FirstWriteProvisionsAcrossPaths(t *testing.T) {
 	}{
 		{"CRUD create", http.MethodPost, "/api/v1/tickets", `{"properties":{"title":"x"}}`},
 		{"CRUD update", http.MethodPatch, "/api/v1/tickets/TKT-001", `{"properties":{"title":"x"}}`},
-		// The sync record write path was retired in TKT-8P1TM7 — sync now writes
-		// through the /api/v1 CRUD paths above, so provisioning on a sync push is
-		// already covered by the "CRUD create"/"CRUD update" cases.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app, st := provisionApp(t)
@@ -346,7 +343,7 @@ func TestProvision_ReservedSubjectNeverProvisioned(t *testing.T) {
 
 			// The load-bearing assertion: no person entity was minted carrying
 			// the reserved name as its join key.
-			for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person"}) {
+			for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person", Faces: store.InWorld(store.TrivialScope())}) {
 				if err != nil {
 					t.Fatalf("ListEntities: %v", err)
 				}
@@ -387,7 +384,7 @@ func TestMaybeProvision_RefusesReservedSubjectDirectly(t *testing.T) {
 		t.Errorf("principal = %q, want the ctx returned unchanged",
 			principal.From(got).User)
 	}
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person"}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person", Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)
 		}

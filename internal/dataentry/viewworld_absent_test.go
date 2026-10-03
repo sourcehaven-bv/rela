@@ -31,7 +31,7 @@ func TestEntityView_DraftWithNoFaceInThisWorldIsNotAnError(t *testing.T) {
 		ID: "TKT-DRAFT", Type: "ticket",
 		Properties: map[string]any{"title": "just created"},
 	})
-	app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 
 	// Precondition: without a world the page renders. If this fails the
 	// assertion below proves nothing.
@@ -72,7 +72,7 @@ func TestEntityView_DraftWithNoFaceInThisWorldIsNotAnError(t *testing.T) {
 // is a separate pre-existing question.
 func TestEntityView_NonexistentEntityStaysAnError(t *testing.T) {
 	app := newTestAppV1(t)
-	app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 
 	for _, path := range []string{
 		"/api/v1/_views/ticket/NOPE-1",
@@ -128,7 +128,7 @@ func TestEntityView_AbsenceNeverLeaksToADeniedPrincipal(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"nobody": {}},
 		Assignments: map[string]string{"bob": "nobody"},
 	}, app.store)
-	app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
 		return principal.Principal{User: "bob", Tool: principal.ToolDataEntry}
 	})

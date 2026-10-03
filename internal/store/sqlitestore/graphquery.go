@@ -114,32 +114,39 @@ func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, to
 	return matched, total, nil
 }
 
-func (s *Store) MatchingIDs(
+// MatchingFaces implements [store.GraphQueryer.MatchingFaces] in one
+// statement, falling back to graphquerynaive for a shape the builder cannot
+// render.
+func (s *Store) MatchingFaces(
 	ctx context.Context, q store.GraphQuery, ids []string,
-) (map[string]bool, error) {
+) (map[string][]entity.Face, error) {
 	if err := graphquerynaive.CheckEndpointShape(q); err != nil {
 		return nil, err
 	}
-	out := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		out[id] = false
-	}
-	if len(out) == 0 {
+	out := make(map[string][]entity.Face)
+	if len(ids) == 0 {
 		return out, nil
 	}
-	sqlText, args, ok := buildMatchingIDsSQL(q, ids)
+	sqlText, args, ok := buildMatchingFacesSQL(q, ids)
 	if !ok {
-		return graphquerynaive.MatchingIDs(ctx, s, q, ids)
+		return graphquerynaive.MatchingFaces(ctx, s, q, ids)
 	}
-	matched, err := collectRows(ctx, s.q(), sqlText, args, func(sc scanner) (string, error) {
-		var id string
-		return id, sc.Scan(&id)
+	type row struct {
+		id   string
+		face string
+	}
+	matched, err := collectRows(ctx, s.q(), sqlText, args, func(sc scanner) (row, error) {
+		var r row
+		return r, sc.Scan(&r.id, &r.face)
 	})
 	if err != nil {
 		return nil, err
 	}
-	for _, id := range matched {
-		out[id] = true
+	for _, r := range matched {
+		out[r.id] = append(out[r.id], entity.Face(r.face))
+	}
+	for id, faces := range out {
+		out[id] = store.SortedFaces(faces)
 	}
 	return out, nil
 }

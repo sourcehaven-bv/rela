@@ -140,7 +140,7 @@ func (r *Runner) processEntityCreations(
 		// return the create and miss the delete.
 		//
 		// The cascaded relation-deletes underneath that delete keep
-		// `cascade:delete-entity:<id>`, which cascadeHost.DeleteEntity stamps
+		// `cascade:delete-entity:<id>`, which the manager's family delete stamps
 		// on a ctx it derives itself.
 		writeCtx := triggeredByCtx(ctx, toCreate.AutomationName)
 
@@ -247,14 +247,15 @@ func (r *Runner) applyRelationCreations(
 
 		rel := toCreate.Relation
 		rel.From = triggerEntity.ID
+		rel.FromFace = triggerEntity.Face
 
-		targetEntity, err := host.GetEntity(ctx, rel.To)
+		targetType, err := host.EntityType(ctx, rel.To)
 		if err != nil {
 			outcome.Errors = append(outcome.Errors,
 				"automation relation target not found: "+rel.To)
 			continue
 		}
-		if err := host.ValidateRelation(rel.Type, triggerEntity.Type, targetEntity.Type); err != nil {
+		if err := host.ValidateRelation(rel.Type, triggerEntity.Type, targetType); err != nil {
 			outcome.Errors = append(outcome.Errors,
 				fmt.Sprintf("automation relation invalid: %v", err))
 			continue
@@ -389,7 +390,7 @@ func (r *Runner) handleIfExists(
 	}
 
 	existingTarget := host.FindExistingRelationTarget(
-		ctx, triggerEntity.ID, toCreate.RelationFromTrigger, toCreate.Type)
+		ctx, triggerEntity.Ref(), toCreate.RelationFromTrigger, toCreate.Type)
 
 	if existingTarget == nil {
 		return false
@@ -434,6 +435,7 @@ func (r *Runner) createTriggerRelation(
 	}
 
 	rel := entity.NewRelation(triggerEntity.ID, relationType, created.ID)
+	rel.FromFace = triggerEntity.Face
 	if err := host.WriteRelation(ctx, rel); err != nil {
 		outcome.Errors = append(outcome.Errors,
 			fmt.Sprintf("failed to create automation relation: %v", err))

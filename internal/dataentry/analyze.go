@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -11,24 +12,28 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
+	"github.com/Sourcehaven-BV/rela/internal/schema"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
 
 // analyzeReader is the narrow, consumer-side ENTITY-read surface the analyze
-// checks need. It is satisfied structurally by store.Store AND by the ctx-gating
+// checks need. It is satisfied by the ctx-gating
 // visibility.ScriptReader / Unrestricted readers. Wiring a GATED reader here
 // (per TKT-3FL2S6, superseding DEC-O59WM4) makes the whole-graph scans read only
 // the requester's slice: a hidden entity produces no issue, and a visible
 // entity comes back REDACTED, so its value cannot reach an issue title or a
 // validation message. The leak closes by construction, not by filtering output.
 //
-// Only entity reads: analyze never mutates. Relation COUNTS (cardinality) go
-// through a separate counter that stays on the raw store — a count is a
-// structural fact, not a value, so it cannot leak; under-visibility only makes
-// cardinality potentially false-positive, which is correctness (guarded by the
-// roles annotation, arc step 2), not a disclosure.
+// Read-only: analyze never mutates. Cardinality counts are folded from the
+// edges ListRelationsStrict yields, which the gated reader filters to edges whose
+// both endpoints the requester may read (TKT-5LW875). A count is therefore
+// computed after the gate, never before it, and cannot reveal a hidden
+// neighbor. Under partial visibility it may report a min violation the
+// requester cannot resolve; that is a less-visible answer, not a disclosure.
+// A gate fault fails the check instead of thinning the edges, so a fault
+// never reads as a missing relation.
 // The whole-store scans go through ListEntityHeaders, never ListEntities:
 // no analyze check reads an entity BODY (grep this file for `.Content` —
 // there are none), so loading bodies to discard them made a scan's peak
@@ -37,18 +42,14 @@ import (
 // The header type has no Content field, so this property is now enforced
 // by the compiler rather than by remembering.
 //
-// The per-ID GetEntity above stays: orphans and validation violations
+// The per-ID GetAddress in the orphan and validation checks stays: they
 // resolve a bounded set of ids (never a whole-store scan), and their
 // gated re-load is load-bearing for the leak TKT-3FL2S6 closed.
 type analyzeReader interface {
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 	ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter.Seq2[store.EntityHeader, error]
-}
-
-// relationCounter counts relations for the cardinality check. Raw (ungated) on
-// purpose — see analyzeReader.
-type relationCounter interface {
-	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
+	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
+	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
 // analyzeService runs the read-only graph-analysis checks (orphans,
@@ -58,19 +59,22 @@ type relationCounter interface {
 // per the project's snapshot rule) rather than reaching back into App.
 //
 // reads is GATED per the requesting principal (TKT-3FL2S6, DEC-O59WM4
-// superseded); relCounts is the raw relation counter (structural, cannot leak);
-// the tracer is the gated decorator. Under NopACL, reads/tracer are the raw
-// store/tracer (no gating).
+// superseded), and so is every count derived from it; the tracer is the gated
+// decorator. Under NopACL, reads is the ungated
+// visibility.Unrestricted reader and the tracer is the raw tracer.
 type analyzeService struct {
 	reads     analyzeReader
-	relCounts relationCounter
 	tracer    tracer.Tracer
 	validator validator.Validator
 }
 
 // AnalysisIssue represents a single validation issue, optionally linked to an entity.
 type AnalysisIssue struct {
-	EntityID   string // Empty for non-entity issues (e.g., ID gaps)
+	EntityID string // Empty for non-entity issues (e.g., ID gaps)
+	// Face names the row an issue is about when it was judged per face
+	// (BUG-95W7MV). Empty for a faceless entity and for a family-level
+	// finding.
+	Face       entity.Face
 	EntityType string
 	Title      string
 	Message    string
@@ -242,10 +246,13 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 		Description: "Entities with no incoming or outgoing relations",
 	}
 
-	orphanIDs, _ := svc.tracer.FindOrphans(ctx)
+	// The tracer is gated: an orphan is judged over the edges and faces
+	// this principal may read, and Faces lists only readable faces
+	// (RR-VN71BT). A family counts once, on any face (BUG-95W7MV).
+	found, _ := svc.tracer.FindOrphans(ctx)
 
 	// Each orphan id is re-loaded through the GATED reader before it can become
-	// an issue: a hidden entity's GetEntity returns not-found and is dropped, and
+	// an issue: a hidden entity's GetAddress returns not-found and is dropped, and
 	// a visible one is redacted. So even if the tracer yielded a raw id (it does
 	// not — svc.tracer is gated too), no hidden entity reaches the wire. Do NOT
 	// emit an issue straight from an orphan id/type without this gated re-load —
@@ -258,24 +265,29 @@ func (svc analyzeService) analyzeOrphans(ctx context.Context, meta *metamodel.Me
 	// (TKT-1ESTYJ). Sorting first keeps WHICH orphans get reported
 	// deterministic and id-ordered rather than dependent on how far the load
 	// got.
-	natsort.Strings(orphanIDs)
-	var orphans []*entity.Entity
+	//
+	// A faced family has no row at the bare id, so it is re-loaded at its
+	// first readable face and reported with its faces.
+	sort.Slice(found, func(i, j int) bool { return natsort.Less(found[i].ID, found[j].ID) })
 	st := svc.reads
-	for _, id := range orphanIDs {
-		if len(orphans) > maxSectionIssues {
+	for _, o := range found {
+		if len(section.Issues) > maxSectionIssues {
 			break
 		}
-		if e, err := st.GetEntity(ctx, id); err == nil {
-			orphans = append(orphans, e)
+		addr, msg := o.ID, "No relations"
+		if len(o.Faces) > 0 {
+			addr = entity.FormatStateRef(o.ID, o.Faces[0])
+			msg = "No relations on any face (" + joinFaces(o.Faces) + ")"
 		}
-	}
-
-	for _, e := range orphans {
+		e, err := st.GetAddress(ctx, addr)
+		if err != nil {
+			continue
+		}
 		section.Issues = append(section.Issues, AnalysisIssue{
 			EntityID:   e.ID,
 			EntityType: e.Type,
 			Title:      safeDisplayTitle(meta, e),
-			Message:    "No relations",
+			Message:    msg,
 			Severity:   "warning",
 		})
 	}
@@ -295,8 +307,11 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 	// row scanned, so the grouping must see the whole set. Grouping HEADERS
 	// rather than entities is what makes that affordable — the map holds
 	// ids and properties, never bodies.
+	//
+	// Every face row takes part, but rows of one id are never duplicates of
+	// each other: a group counts only when it spans two ids (BUG-95W7MV).
 	titleGroups := make(map[string][]store.EntityHeader)
-	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{}) {
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			break
 		}
@@ -309,7 +324,7 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 	// Collect groups with duplicates, sorted by title
 	var titles []string
 	for title, group := range titleGroups {
-		if len(group) > 1 {
+		if distinctHeaderIDs(group) > 1 {
 			titles = append(titles, title)
 		}
 	}
@@ -320,11 +335,12 @@ func (svc analyzeService) analyzeDuplicates(ctx context.Context, meta *metamodel
 		sortHeadersByID(group)
 		ids := make([]string, len(group))
 		for i, h := range group {
-			ids[i] = h.ID
+			ids[i] = entity.FormatStateRef(h.ID, h.Face)
 		}
 		for _, h := range group {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   h.ID,
+				Face:       h.Face,
 				EntityType: h.Type,
 				Title:      safeHeaderTitle(meta, h),
 				Message:    fmt.Sprintf("Duplicate title (shared by %s)", strings.Join(ids, ", ")),
@@ -358,12 +374,18 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 		}
 	}
 
-	// Group IDs by prefix
+	// Group IDs by prefix. Every face is scanned so a faced type is never
+	// absent; each id counts once (BUG-95W7MV).
 	prefixGroups := make(map[string][]int)
-	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{}) {
+	seen := make(map[string]bool)
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			break
 		}
+		if seen[h.ID] {
+			continue
+		}
+		seen[h.ID] = true
 		parsed, err := entity.ParseEntityID(h.ID)
 		if err != nil || parsed.Prefix == "" {
 			continue
@@ -410,137 +432,58 @@ func (svc analyzeService) analyzeGaps(ctx context.Context, meta *metamodel.Metam
 	return capIssues(section)
 }
 
-// analyzeCardinality checks relation cardinality constraints.
+// analyzeCardinality checks relation cardinality constraints through
+// [schema.CheckCardinality], the same checker the CLI and MCP use.
 //
-//nolint:gocognit,funlen // cardinality analysis enumerates min/max bounds across every relation def and direction; the branches are the distinct violation cases, not extractable shared logic.
+// Coverage follows it (BUG-95W7MV): the outgoing bound of a content-scoped
+// relation is a claim about one face and is counted and reported per face;
+// every other bound is a claim about the family and is counted once per id.
+//
+// Every read goes through svc.reads, the requester's gated reader, so the
+// subjects are the rows the requester may read and each count covers only
+// edges whose both endpoints the requester may read (TKT-5LW875).
 func (svc analyzeService) analyzeCardinality(ctx context.Context, meta *metamodel.Metamodel) AnalysisSection {
 	section := AnalysisSection{
 		Name:        "Cardinality",
 		Description: "Relation cardinality constraint violations",
 	}
 
-	// Sort relation names for deterministic output
-	relNames := make([]string, 0, len(meta.Relations))
-	for name := range meta.Relations {
-		relNames = append(relNames, name)
-	}
-	natsort.Strings(relNames)
-
-	// listEntities lists headers of a given type, sorted by ID. GATED: only the
-	// requester's visible entities are considered, so a hidden entity's title
-	// cannot reach a cardinality issue.
-	//
-	// Materializes per TYPE rather than per store — each entry is a body-free
-	// header, and the caller iterates a type's rows several times (once per
-	// bound being checked), so re-scanning would cost more than it saves.
-	listEntities := func(t string) []store.EntityHeader {
-		var out []store.EntityHeader
-		for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Type: t}) {
-			if err != nil {
-				break
-			}
-			out = append(out, h)
+	findings, err := schema.CheckCardinalityFindings(ctx, svc.reads, meta, nil)
+	if err != nil {
+		// A partial answer would read as a clean graph, so say the check
+		// did not run. The cause stays in the server log.
+		if ctx.Err() == nil {
+			slog.Warn("analyze: cardinality check failed", "err", err)
 		}
-		sortHeadersByID(out)
-		return out
-	}
-
-	// countRelations counts relations of a specific type for an entity. RAW
-	// (ungated): a count is a structural fact, not a value — it cannot leak.
-	// Under partial visibility this may over/under-count and produce a false
-	// cardinality violation (guarded by the roles annotation, arc step 2).
-	countRelations := func(entityID, relType string, direction store.Direction) int {
-		n, _ := svc.relCounts.CountRelations(ctx, store.RelationQuery{
-			EntityID: entityID, Type: relType, Direction: direction,
+		section.Issues = append(section.Issues, AnalysisIssue{
+			Message:  "Cardinality could not be checked; see the server log",
+			Severity: "error",
 		})
-		return n
+		return section
 	}
 
-	for _, relName := range relNames {
-		relDef := meta.Relations[relName]
-
-		// Check min_outgoing
-		if relDef.MinOutgoing != nil && *relDef.MinOutgoing > 0 {
-			for _, sourceType := range relDef.From {
-				for _, e := range listEntities(sourceType) {
-					count := countRelations(e.ID, relName, store.DirectionOutgoing)
-					if count < *relDef.MinOutgoing {
-						section.Issues = append(section.Issues, AnalysisIssue{
-							EntityID:   e.ID,
-							EntityType: e.Type,
-							Title:      safeHeaderTitle(meta, e),
-							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinOutgoing, relName, count),
-							Severity:   "error",
-						})
-					}
-				}
-			}
-		}
-
-		// Check max_outgoing
-		if relDef.MaxOutgoing != nil {
-			for _, sourceType := range relDef.From {
-				for _, e := range listEntities(sourceType) {
-					count := countRelations(e.ID, relName, store.DirectionOutgoing)
-					if count > *relDef.MaxOutgoing {
-						section.Issues = append(section.Issues, AnalysisIssue{
-							EntityID:   e.ID,
-							EntityType: e.Type,
-							Title:      safeHeaderTitle(meta, e),
-							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxOutgoing, relName, count),
-							Severity:   "error",
-						})
-					}
-				}
-			}
-		}
-
-		// Check min_incoming
-		if relDef.MinIncoming != nil && *relDef.MinIncoming > 0 {
-			for _, targetType := range relDef.To {
-				for _, e := range listEntities(targetType) {
-					count := countRelations(e.ID, relName, store.DirectionIncoming)
-					if count < *relDef.MinIncoming {
-						relLabel := relName
-						if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
-							relLabel = relDef.Inverse.GetID()
-						}
-						section.Issues = append(section.Issues, AnalysisIssue{
-							EntityID:   e.ID,
-							EntityType: e.Type,
-							Title:      safeHeaderTitle(meta, e),
-							Message:    fmt.Sprintf("Must have at least %d '%s' relation(s), has %d", *relDef.MinIncoming, relLabel, count),
-							Severity:   "error",
-						})
-					}
-				}
-			}
-		}
-
-		// Check max_incoming
-		if relDef.MaxIncoming != nil {
-			for _, targetType := range relDef.To {
-				for _, e := range listEntities(targetType) {
-					count := countRelations(e.ID, relName, store.DirectionIncoming)
-					if count > *relDef.MaxIncoming {
-						relLabel := relName
-						if relDef.Inverse != nil && relDef.Inverse.GetID() != "" {
-							relLabel = relDef.Inverse.GetID()
-						}
-						section.Issues = append(section.Issues, AnalysisIssue{
-							EntityID:   e.ID,
-							EntityType: e.Type,
-							Title:      safeHeaderTitle(meta, e),
-							Message:    fmt.Sprintf("Has more than %d '%s' relation(s): %d", *relDef.MaxIncoming, relLabel, count),
-							Severity:   "error",
-						})
-					}
-				}
-			}
-		}
+	for _, f := range findings {
+		section.Issues = append(section.Issues, AnalysisIssue{
+			EntityID:   f.EntityID,
+			Face:       f.Face,
+			EntityType: f.Subject.Type,
+			Title:      safeHeaderTitle(meta, f.Subject),
+			Message:    cardinalityMessage(f.CardinalityViolation),
+			Severity:   "error",
+		})
 	}
 
 	return capIssues(section)
+}
+
+// cardinalityMessage renders v as an issue message. It is
+// [schema.CardinalityViolation.Message] as a sentence of its own, which the
+// analyze view has always started with a capital.
+func cardinalityMessage(v schema.CardinalityViolation) string {
+	if v.IsMin() {
+		return "Must " + strings.TrimPrefix(v.Message(), "must ")
+	}
+	return "Has " + strings.TrimPrefix(v.Message(), "has ")
 }
 
 // analyzeProperties validates all entity properties against the metamodel.
@@ -555,13 +498,17 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 	// previous shape drained every entity into a slice purely to sort it —
 	// sorting the (far smaller) issue list afterwards is equivalent, since
 	// each entity contributes a contiguous run of issues in ID order.
-	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{}) {
+	//
+	// Every face row is validated: each holds its own values, and a faced
+	// type has no default row (BUG-95W7MV).
+	for h, err := range svc.reads.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			break
 		}
 		for _, verr := range meta.ValidateEntity(h.ID, h.Type, h.Properties) {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   h.ID,
+				Face:       h.Face,
 				EntityType: h.Type,
 				Title:      safeHeaderTitle(meta, h),
 				Message:    verr.Error(),
@@ -613,7 +560,7 @@ func (svc analyzeService) analyzeValidations(ctx context.Context, meta *metamode
 		}
 		severity := rule.GetSeverity()
 		for _, v := range full.Violations {
-			e, err := st.GetEntity(ctx, v.EntityID)
+			e, err := st.GetAddress(ctx, v.EntityID)
 			if err != nil {
 				continue
 			}
@@ -698,8 +645,12 @@ func safeDisplayTitle(meta *metamodel.Metamodel, e *entity.Entity) string {
 }
 
 // sortHeadersByID is [sortStoreEntitiesByID] for content-free headers.
+// Rows of one id are ordered by face.
 func sortHeadersByID(headers []store.EntityHeader) {
 	sort.Slice(headers, func(i, j int) bool {
+		if headers[i].ID == headers[j].ID {
+			return headers[i].Face < headers[j].Face
+		}
 		return natsort.Less(headers[i].ID, headers[j].ID)
 	})
 }
@@ -739,4 +690,22 @@ func normalizeTitle(s string) string {
 	s = strings.TrimSpace(s)
 	fields := strings.Fields(s)
 	return strings.Join(fields, " ")
+}
+
+// distinctHeaderIDs counts the ids among headers.
+func distinctHeaderIDs(headers []store.EntityHeader) int {
+	ids := make(map[string]struct{}, len(headers))
+	for _, h := range headers {
+		ids[h.ID] = struct{}{}
+	}
+	return len(ids)
+}
+
+// joinFaces renders a face list for an issue message.
+func joinFaces(faces []entity.Face) string {
+	names := make([]string, len(faces))
+	for i, f := range faces {
+		names[i] = string(f)
+	}
+	return strings.Join(names, ", ")
 }

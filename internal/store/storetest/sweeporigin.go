@@ -31,7 +31,7 @@ func RunSweepOriginTests(t *testing.T, f Factory, sweepNow func(t *testing.T, s 
 	}
 	onlyVersion := func(t *testing.T, v store.VersionService, id string) store.VersionMeta {
 		t.Helper()
-		metas, err := v.ListVersions(ctx(), id)
+		metas, err := v.ListVersions(ctx(), entity.Ref{ID: id})
 		require.NoError(t, err)
 		require.Len(t, metas, 1, "versions of %s", id)
 		return metas[0]
@@ -57,7 +57,7 @@ func RunSweepOriginTests(t *testing.T, f Factory, sweepNow func(t *testing.T, s 
 		require.True(t, hand.Origin.IsZero(), "a hand edit carries no origin")
 		require.Equal(t, editor.User, hand.PrincipalUser)
 
-		snap, err := v.GetVersion(ctx(), "POL-2", 1)
+		snap, err := v.GetVersion(ctx(), entity.Ref{ID: "POL-2"}, 1)
 		require.NoError(t, err)
 		require.Equal(t, copied, snap.Origin, "the snapshot read must agree with the timeline read")
 	})
@@ -72,7 +72,7 @@ func RunSweepOriginTests(t *testing.T, f Factory, sweepNow func(t *testing.T, s 
 		require.NoError(t, s.UpdateEntity(store.WithOrigin(ctx(), copied), policy("POL-5", "copied body")))
 		sweepNow(t, s)
 
-		metas, err := v.ListVersions(ctx(), "POL-5")
+		metas, err := v.ListVersions(ctx(), entity.Ref{ID: "POL-5"})
 		require.NoError(t, err)
 		require.Len(t, metas, 2)
 		require.True(t, metas[0].Origin.IsZero(), "v1 was typed by hand")
@@ -90,7 +90,7 @@ func RunSweepOriginTests(t *testing.T, f Factory, sweepNow func(t *testing.T, s 
 		require.NoError(t, s.UpdateEntity(ctx(), policy("POL-4", "hand-edited body")))
 		sweepNow(t, s)
 
-		metas, err := v.ListVersions(ctx(), "POL-4")
+		metas, err := v.ListVersions(ctx(), entity.Ref{ID: "POL-4"})
 		require.NoError(t, err)
 		require.Len(t, metas, 2)
 		require.Equal(t, copied, metas[0].Origin, "v1 was the copy")

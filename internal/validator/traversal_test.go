@@ -18,7 +18,7 @@ import (
 )
 
 func binder(meta *metamodel.Metamodel, st store.GraphQueryer) *relresolve.Binder {
-	b, err := relresolve.NewBinder(meta, relresolve.Ungated, st.MatchingIDs)
+	b, err := relresolve.NewBinder(meta, relresolve.Ungated, store.IDMatcher(st))
 	if err != nil {
 		panic(err)
 	}
@@ -63,7 +63,7 @@ func seedTickets(t *testing.T, st *memstore.MemStore, n int) {
 		id := fmt.Sprintf("T-%03d", i)
 		mustCreate(t, st, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"status": "done"}})
 		if i%2 == 0 {
-			if _, err := st.CreateRelation(t.Context(), id, "owned-by", "P-1", nil); err != nil {
+			if _, err := st.CreateRelation(t.Context(), entity.RelationKey{From: id, Type: "owned-by", To: "P-1"}, nil); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -75,16 +75,18 @@ type countingMatch struct {
 	calls int
 }
 
-func (c *countingMatch) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
+func (c *countingMatch) MatchingFaces(
+	ctx context.Context, q store.GraphQuery, ids []string,
+) (map[string][]entity.Face, error) {
 	c.calls++
-	return c.GraphQueryer.MatchingIDs(ctx, q, ids)
+	return c.GraphQueryer.MatchingFaces(ctx, q, ids)
 }
 
 func TestCheckRule_Traversal(t *testing.T) {
 	st := memstore.New()
 	seedTickets(t, st, 4)
 	meta := traversalMeta(ownedRule)
-	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta}, binder(meta, st)))
+	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta, World: store.TrivialScope()}, binder(meta, st)))
 
 	ids, err := v.CheckRule(t.Context(), ownedRule)
 	if err != nil {
@@ -104,7 +106,7 @@ func TestCheckRule_TraversalBudgetIsRowIndependent(t *testing.T) {
 			seedTickets(t, st, n)
 			meta := traversalMeta(ownedRule)
 			cm := &countingMatch{GraphQueryer: st}
-			v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta}, binder(meta, cm)))
+			v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta, World: store.TrivialScope()}, binder(meta, cm)))
 			ids, err := v.CheckRule(t.Context(), ownedRule)
 			if err != nil {
 				t.Fatal(err)
@@ -113,7 +115,7 @@ func TestCheckRule_TraversalBudgetIsRowIndependent(t *testing.T) {
 				t.Fatalf("violations = %d, want %d", len(ids), n/2)
 			}
 			if cm.calls != 1 {
-				t.Fatalf("MatchingIDs calls = %d, want 1", cm.calls)
+				t.Fatalf("MatchingFaces calls = %d, want 1", cm.calls)
 			}
 		})
 	}
@@ -131,11 +133,11 @@ func TestCheckRule_TraversalErrorIsLoadErrorNotSkip(t *testing.T) {
 	refuse := func(context.Context, string, acl.TraversalHop) (*store.RelationPredicate, error) {
 		return nil, acl.ErrTraversalUnsupported
 	}
-	b, err := relresolve.NewBinder(meta, refuse, st.MatchingIDs)
+	b, err := relresolve.NewBinder(meta, refuse, store.IDMatcher(st))
 	if err != nil {
 		t.Fatal(err)
 	}
-	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta}, b))
+	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta, World: store.TrivialScope()}, b))
 	full, err := v.CheckRuleFull(t.Context(), rule)
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +153,7 @@ func TestCheckRule_TraversalInvalidPathIsLoadError(t *testing.T) {
 	rule := ownedRule
 	rule.ThenCondition = "related(entity, 'nope')"
 	meta := traversalMeta(rule)
-	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta}, binder(meta, st)))
+	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta, World: store.TrivialScope()}, binder(meta, st)))
 	full, err := v.CheckRuleFull(t.Context(), rule)
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +176,7 @@ func TestCheckRule_TraversalOnNamedFaceIsLoadError(t *testing.T) {
 		mustCreate(t, st, &entity.Entity{ID: id, Type: "ticket", Face: entity.Face("en"),
 			Properties: map[string]any{"status": "done"}})
 	}
-	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta}, binder(meta, st)))
+	v := mustValidator(validator.New(st, meta, lua.ReadDeps{Meta: meta, World: store.TrivialScope()}, binder(meta, st)))
 	full, err := v.CheckRuleFull(t.Context(), rule)
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +189,7 @@ func TestCheckRule_TraversalOnNamedFaceIsLoadError(t *testing.T) {
 func TestNew_RejectsNilBinder(t *testing.T) {
 	st := memstore.New()
 	meta := traversalMeta()
-	if _, err := validator.New(st, meta, lua.ReadDeps{Meta: meta}, nil); err == nil {
+	if _, err := validator.New(st, meta, lua.ReadDeps{Meta: meta, World: store.TrivialScope()}, nil); err == nil {
 		t.Fatal("want an error for a nil traversal binder")
 	}
 }

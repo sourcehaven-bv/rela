@@ -64,7 +64,7 @@ func FuzzRelationKeyCollision(f *testing.F, factory FuzzFactory) {
 			return
 		}
 
-		r, err := s.CreateRelation(bg, from, relType, to, nil)
+		r, err := s.CreateRelation(bg, entity.RelationKey{From: from, Type: relType, To: to}, nil)
 		if storeutil.ValidateRelationType(relType) != nil {
 			assert.Error(t, err)
 			return
@@ -73,7 +73,7 @@ func FuzzRelationKeyCollision(f *testing.F, factory FuzzFactory) {
 			return
 		}
 
-		got, err := s.GetRelation(bg, from, relType, to)
+		got, err := s.GetRelation(bg, entity.RelationKey{From: from, Type: relType, To: to})
 		require.NoError(t, err)
 		assert.Equal(t, r.Key(), got.Key())
 	})
@@ -97,7 +97,7 @@ func FuzzAttachmentKeyCollision(f *testing.F, factory FuzzFactory) {
 			return
 		}
 
-		err := s.AttachFile(bg, entityID, prop, "f.txt", strings.NewReader("data"))
+		err := s.AttachFamilyFile(bg, entityID, prop, "f.txt", strings.NewReader("data"))
 		if storeutil.ValidateProperty(prop) != nil {
 			assert.Error(t, err)
 			return
@@ -106,7 +106,7 @@ func FuzzAttachmentKeyCollision(f *testing.F, factory FuzzFactory) {
 			return
 		}
 
-		rc, err := s.ReadAttachment(bg, entityID, prop, "f.txt")
+		rc, err := s.ReadFamilyAttachment(bg, entityID, prop, "f.txt")
 		require.NoError(t, err)
 		rc.Close()
 	})
@@ -136,16 +136,16 @@ func FuzzRenameKeyCollapse(f *testing.F, factory FuzzFactory) {
 			return
 		}
 
-		if _, err := s.CreateRelation(bg, id1, relType, id2, nil); err != nil {
+		if _, err := s.CreateRelation(bg, entity.RelationKey{From: id1, Type: relType, To: id2}, nil); err != nil {
 			return
 		}
-		if _, err := s.CreateRelation(bg, id1, relType, id3, nil); err != nil {
+		if _, err := s.CreateRelation(bg, entity.RelationKey{From: id1, Type: relType, To: id3}, nil); err != nil {
 			return
 		}
 
 		before := countRelations(t, s)
 
-		_, err := s.RenameEntity(bg, id2, id3)
+		_, err := s.RenameFamily(bg, id2, id3)
 		if err != nil {
 			return
 		}
@@ -176,7 +176,7 @@ func FuzzConcurrentOps(f *testing.F, factory FuzzFactory) {
 		for _, id := range []string{"E-1", "E-2", "E-3"} {
 			_ = s.CreateEntity(bg, entity.New(id, "ticket"))
 		}
-		_, _ = s.CreateRelation(bg, "E-1", "blocks", "E-2", nil)
+		_, _ = s.CreateRelation(bg, entity.RelationKey{From: "E-1", Type: "blocks", To: "E-2"}, nil)
 
 		var wg sync.WaitGroup
 		wg.Add(len(ops))
@@ -189,17 +189,17 @@ func FuzzConcurrentOps(f *testing.F, factory FuzzFactory) {
 				case 0: // CreateEntity
 					_ = s.CreateEntity(bg, entity.New("E-new", "ticket"))
 				case 1: // GetEntity
-					_, _ = s.GetEntity(bg, "E-1")
+					_, _ = s.GetEntity(bg, entity.Ref{ID: "E-1"})
 				case 2: // UpdateEntity
 					e := entity.New("E-1", "ticket")
 					e.SetString("title", "updated")
 					_ = s.UpdateEntity(bg, e)
 				case 3: // DeleteEntity
-					_, _ = s.DeleteEntity(bg, "E-3", true)
+					_, _ = s.DeleteFamily(bg, "E-3", true)
 				case 4: // RenameEntity
-					_, _ = s.RenameEntity(bg, "E-2", "E-renamed")
+					_, _ = s.RenameFamily(bg, "E-2", "E-renamed")
 				case 5: // ListEntities
-					for _, err := range s.ListEntities(bg, store.EntityQuery{}) {
+					for _, err := range s.ListEntities(bg, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 						_ = err
 					}
 				case 6: // Subscribe + use
@@ -212,7 +212,7 @@ func FuzzConcurrentOps(f *testing.F, factory FuzzFactory) {
 				case 7: // Close (tests double-close safety)
 					_ = s.Close()
 				case 8: // CreateRelation
-					_, _ = s.CreateRelation(bg, "E-1", "needs", "E-3", nil)
+					_, _ = s.CreateRelation(bg, entity.RelationKey{From: "E-1", Type: "needs", To: "E-3"}, nil)
 				case 9: // ListRelations
 					for _, err := range s.ListRelations(bg, store.RelationQuery{}) {
 						_ = err
@@ -278,7 +278,7 @@ func FuzzCloneNestedValues(f *testing.F, factory FuzzFactory) {
 			return
 		}
 
-		clone, err := s.GetEntity(bg, "T-1")
+		clone, err := s.GetEntity(bg, entity.Ref{ID: "T-1"})
 		require.NoError(t, err)
 
 		switch v := clone.Properties[propName].(type) {
@@ -294,7 +294,7 @@ func FuzzCloneNestedValues(f *testing.F, factory FuzzFactory) {
 			}
 		}
 
-		original, err := s.GetEntity(bg, "T-1")
+		original, err := s.GetEntity(bg, entity.Ref{ID: "T-1"})
 		require.NoError(t, err)
 
 		switch v := original.Properties[propName].(type) {
@@ -313,9 +313,10 @@ func FuzzCloneNestedValues(f *testing.F, factory FuzzFactory) {
 	})
 }
 
-// FuzzPropertyValuesTypeZoo verifies PropertyValues and Search filters
-// handle all property value types without panicking, and that every accepted
-// property value reads back equal to what was written.
+// FuzzPropertyValuesTypeZoo verifies that every accepted property value, of
+// any type, reads back equal to what was written. The name predates the
+// removal of PropertyValues (TKT-KQXVF7); it is kept so the backends' fuzz
+// corpora keep their directories.
 //
 // The round-trip half applies the same directional oracle as
 // createEntityOrSkip: anything storeutil.ValidateProperties rejects, the
@@ -383,14 +384,10 @@ func FuzzPropertyValuesTypeZoo(f *testing.F, factory FuzzFactory) {
 		}
 		require.NoError(t, err)
 
-		got, err := s.GetEntity(bg, "T-1")
+		got, err := s.GetEntity(bg, entity.Ref{ID: "T-1"})
 		require.NoError(t, err)
 		assert.Equal(t, normalizeProps(want.Properties), normalizeProps(got.Properties),
 			"property value did not round-trip")
-
-		vals, err := s.PropertyValues(bg, propName, 10)
-		require.NoError(t, err)
-		_ = vals
 
 		// Property filter fuzz testing is covered in search conformance tests.
 		_ = search.FilterEq

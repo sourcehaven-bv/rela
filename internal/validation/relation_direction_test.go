@@ -4,13 +4,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
 	"github.com/Sourcehaven-BV/rela/internal/validationgraph"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // atlasWorkspace models the shape that motivated direction/target_type: a
@@ -51,11 +54,11 @@ func atlasWorkspace(
 		}
 	}
 	for _, r := range rels {
-		if _, err := st.CreateRelation(ctx, r[0], r[1], r[2], nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r[0], Type: r[1], To: r[2]}, nil); err != nil {
 			t.Fatalf("create relation %v: %v", r, err)
 		}
 	}
-	return lua.ReadDeps{VisibleReader: st, Tracer: tracer.New(st), Meta: meta}
+	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), Tracer: tracertest.Must(st, store.TrivialScope()), Meta: meta, World: store.TrivialScope()}
 }
 
 // newAtlasSvc wires a Service the way production does, including the real

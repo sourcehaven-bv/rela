@@ -237,14 +237,9 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		case "_actions":
 			a.handleV1EntityAction(w, r, typeName, parts[1], parts[3])
 		case "_attachments":
-			// Attachments are per ENTITY (the store keys them by bare id), so
-			// a faced address names the same files as the bare one.
-			id, ok := bareEntityID(parts[1])
-			if !ok {
-				writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-				return
-			}
-			a.attachments.handleV1AttachmentRoute(w, r, typeName, plural, id, parts[3])
+			// The segment is an ADDRESS: bytes are per entity, but the files
+			// a face lists and serves are its own (BUG-CTUW2N).
+			a.attachments.handleV1AttachmentRoute(w, r, typeName, plural, parts[1], parts[3])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
@@ -255,12 +250,7 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		case "relations":
 			a.handleV1RelationTarget(w, r, typeName, parts[1], parts[3], parts[4])
 		case "_attachments":
-			id, ok := bareEntityID(parts[1])
-			if !ok {
-				writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-				return
-			}
-			a.attachments.handleV1AttachmentFileRoute(w, r, typeName, id, parts[3], parts[4])
+			a.attachments.handleV1AttachmentFileRoute(w, r, typeName, parts[1], parts[3], parts[4])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
@@ -558,7 +548,7 @@ func relationFilterClassifier(
 // edged rows (no title-match inference channel). Neighbors are gated in one
 // batch per relation param via matchRelationFilter → visibleNeighborTitles.
 // NOTE: when the sibling helper App.visibleRelationIDs (TKT-ODHV2D) merges,
-// this should converge on it; today it uses the same readGate.PermitsReadMany
+// this should converge on it; today it uses the same readGate.ReadableFacesMany
 // batching pattern inline.
 //
 // Cost (RR-38K7K9): this runs over the entire type's visible set BEFORE
@@ -602,7 +592,8 @@ func (a *App) applyRelationFilters(
 		}
 
 		direction, _ := cfg.RelationFilterDirection(typeName, relation)
-		matched, merr := matchRelationFilterMany(ctx, a.Services(), entities, relation, direction, want)
+		matched, merr := matchRelationFilterMany(
+			ctx, a.Services(), a.visibleReader, entities, relation, direction, want)
 		if merr != nil {
 			return nil, fmt.Errorf("%w: relation filter %q: %w", errListLoad, relation, merr)
 		}
@@ -631,71 +622,87 @@ func (a *App) applyRelationFilters(
 // empty map reads as "no row matches", which for a `ne` filter admits EVERY
 // row — a backend fault would silently widen a filter whose job is to narrow.
 func matchRelationFilterMany(
-	ctx context.Context, svc Services, rows []*entityPkg.Entity,
+	ctx context.Context, svc Services, visible visibleReader, rows []*entityPkg.Entity,
 	relation string, direction dataentryconfig.Direction, want string,
 ) (map[string]bool, error) {
 	matched := make(map[string]bool, len(rows))
 	if len(rows) == 0 {
 		return matched, nil
 	}
+	edges, neighborIDs, err := relationFilterEdges(ctx, svc, rows, relation, direction)
+	if err != nil || len(neighborIDs) == 0 {
+		return matched, err
+	}
+
+	// Each neighbor is read at the face the principal is served: the ACL
+	// trims its faces, then the world ranks what is left (servedIDsErr).
+	// Only that face's title is compared. Comparing another face's title,
+	// or a face the reader may not read, turns the filter into an oracle on
+	// that face (BUG-ISJHML), and a per-id "some face is readable" verdict
+	// is not enough to rule that out once grants differ per face. The
+	// served face is also the one an incoming content-scoped edge must be
+	// owned by.
+	served, err := visible.servedIDsErr(ctx, neighborIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, re := range edges {
+		h, ok := served[re.targetID]
+		if !ok || svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) != want {
+			continue
+		}
+		if direction.IsIncoming() && !ownedByFace(svc.Meta, re.rel, h.Face) {
+			continue
+		}
+		matched[re.rowID] = true
+	}
+	return matched, nil
+}
+
+// relationFilterEdge is one edge of a relation filter, oriented from the
+// filtered row to its neighbor.
+type relationFilterEdge struct {
+	rowID, targetID string
+	rel             *entityPkg.Relation
+}
+
+// relationFilterEdges reads the edges of every row over relation in ONE
+// query, and returns them with the distinct neighbor ids. An outgoing
+// content-scoped edge of another face of the row is dropped: matching on it
+// would tell a reader what a face they were not served links to
+// (BUG-ISJHML). Incoming edges are checked by the caller, which knows the
+// neighbor's face.
+func relationFilterEdges(
+	ctx context.Context, svc Services, rows []*entityPkg.Entity,
+	relation string, direction dataentryconfig.Direction,
+) ([]relationFilterEdge, []string, error) {
 	ids := make([]string, 0, len(rows))
+	rowFace := make(map[string]entityPkg.Face, len(rows))
 	for _, e := range rows {
 		ids = append(ids, e.ID)
+		rowFace[e.ID] = e.Face
 	}
 	q := store.RelationQuery{EntityIDs: ids, Type: relation, Direction: relationDirection(direction)}
-	neighborsOf := make(map[string][]string, len(rows)) // row id → neighbor ids
+	var edges []relationFilterEdge
 	var neighborIDs []string
 	seen := make(map[string]struct{})
 	for r, err := range svc.Store.ListRelations(ctx, q) {
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		rowID, targetID := r.From, r.To
 		if direction.IsIncoming() {
 			rowID, targetID = r.To, r.From
+		} else if !ownedByFace(svc.Meta, r, rowFace[rowID]) {
+			continue
 		}
-		neighborsOf[rowID] = append(neighborsOf[rowID], targetID)
+		edges = append(edges, relationFilterEdge{rowID: rowID, targetID: targetID, rel: r})
 		if _, dup := seen[targetID]; !dup {
 			seen[targetID] = struct{}{}
 			neighborIDs = append(neighborIDs, targetID)
 		}
 	}
-	if len(neighborIDs) == 0 {
-		return matched, nil
-	}
-
-	// Which neighbors carry the wanted title, by type — then gate per type.
-	candidatesByType := map[string][]string{}
-	for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: neighborIDs}) {
-		if err != nil {
-			return nil, err
-		}
-		if svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) == want {
-			candidatesByType[h.Type] = append(candidatesByType[h.Type], h.ID)
-		}
-	}
-	readable := make(map[string]bool)
-	gate := readGateFromContext(ctx)
-	for typ, cids := range candidatesByType {
-		perm, err := gate.PermitsReadMany(ctx, typ, cids)
-		if err != nil {
-			continue
-		}
-		for _, id := range cids {
-			if perm[id] {
-				readable[id] = true
-			}
-		}
-	}
-	for rowID, targets := range neighborsOf {
-		for _, t := range targets {
-			if readable[t] {
-				matched[rowID] = true
-				break
-			}
-		}
-	}
-	return matched, nil
+	return edges, neighborIDs, nil
 }
 
 // parseRelationFilterKey parses a `filter[<rel>]` or `filter[<rel>][<op>]` key
@@ -734,6 +741,11 @@ func queryGet(query map[string][]string, key string) string {
 func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	query := r.URL.Query()
 	page, perPage := parseV1Pagination(query)
+	relCtx, relErr := parseSearchRelation(a.State().Meta, query)
+	if relErr != nil {
+		writeV1Error(w, r, http.StatusBadRequest, relErr.Code, relErr.Detail, relErr.Path)
+		return
+	}
 
 	entities, total, err := a.listPage(r.Context(), typeName, query, page, perPage)
 	if err != nil {
@@ -741,6 +753,11 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 	end := (page-1)*perPage + len(entities)
+	// The served page only: rows paged out are never judged.
+	linkable, ok := servedLinkable(w, r, a.affordances, entities, relCtx)
+	if !ok {
+		return
+	}
 
 	// Bodies are opt-in for a collection (rowcontent.go): one read per
 	// distinct face on the page, never for the rows that were paged out.
@@ -795,7 +812,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		// on every row would be noise that also implies a world was applied.
 		// Same choice loadViewEntities' provenanceFor makes, for the same
 		// reason (see [viewWorld.provenanceFor]).
-		if !worldScopeFrom(r.Context()).IsDefaultWorld() {
+		if !worldScopeFrom(r.Context()).IsTrivial() {
 			v1Entity.World = worldProvenance(r.Context(), e)
 		}
 		data = append(data, v1Entity)
@@ -823,6 +840,14 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	w.Header().Set("X-Total-Count", strconv.Itoa(total))
 	w.Header().Set("X-Page", strconv.Itoa(page))
 	w.Header().Set("X-Per-Page", strconv.Itoa(perPage))
+
+	if linkable != nil {
+		writeV1JSON(w, http.StatusOK, v1.LinkListResponse{
+			Data: linkRows(resp.Data, entities, linkable), Meta: resp.Meta,
+			Included: included, Actions: resp.Actions,
+		})
+		return
+	}
 
 	// If includes were requested, add them to response
 	if len(included) > 0 {
@@ -899,29 +924,15 @@ func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeNam
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	ctx := r.Context()
 
-	// The path segment is an ADDRESS — `ID` or `ID@face` — parsed here and
-	// nowhere downstream (TKT-SLFURL). An address the grammar rejects cannot
-	// name a row, so it gets the same not-found a missing row does.
-	ref, ok := parseEntityRef(entityID)
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return
-	}
-
-	// ACL gate (TKT-VQGN). visibleReader.getVisible applies PermitsRead
-	// BEFORE the store read so a hidden id and a nonexistent id spend the
-	// same MatchingIDs roundtrip — otherwise the timing difference
-	// (in-memory lookup ~1µs vs. DB roundtrip ~1ms) is an id-enumeration
-	// side channel that defeats the indistinguishable-404-body invariant
-	// (RR-NGMI). A gate error surfaces via writeGateError; a deny is
-	// returned as (nil,false,nil), indistinguishable from a real miss.
-	entity, found, err := a.visibleReader.getVisibleRef(ctx, typeName, ref)
-	if err != nil {
-		writeGateError(w, r, err)
-		return
-	}
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+	// The path segment is an ADDRESS — `ID` or `ID@face` (TKT-SLFURL). The
+	// resolver applies PermitsRead BEFORE the store read, so a hidden id and
+	// a nonexistent id spend the same MatchingFaces roundtrip — otherwise the
+	// timing difference (in-memory lookup ~1µs vs. DB roundtrip ~1ms) is an
+	// id-enumeration side channel that defeats the indistinguishable-404-body
+	// invariant (RR-NGMI). Every miss, including a malformed address, a
+	// denied face and a stored type other than the route's, is the same 404.
+	entity, found := readAddressedOr404(w, r, a.visibleReader, typeName, entityID)
+	if !found {
 		return
 	}
 	// Serializing evaluates the grant traversals several times (strip,
@@ -945,7 +956,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// mixed-face response that reads as correct because the entity looks
 	// right and only its links are wrong.
 	outgoing, visibleNeighbors, werr := servedFaceEdges(
-		ctx, a.reader, a.worldNeighbors, a.visibleReader, entity)
+		ctx, a.reader, a.worldNeighbors, entity)
 	if werr != nil {
 		// A neighbor-resolution fault is an infrastructure failure, not an
 		// empty link set. Rendering it as "this world links to nothing"
@@ -969,7 +980,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// An EXPLICIT address was not resolved by the world at all, so it is
 	// labeled by [addressedProvenance] rather than by the chain position it
 	// happens to hold — see that function for why.
-	if ref.Explicit {
+	if isExplicitAddress(entityID) {
 		result.World = addressedProvenance(ctx, entity)
 	} else {
 		result.World = worldProvenance(ctx, entity)
@@ -1078,7 +1089,7 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-// writeGateError maps a readGate.PermitsRead / PermitsReadMany error
+// writeGateError maps a readGate.PermitsRead / ReadableFacesMany error
 // to the right HTTP shape: client-disconnect emits nothing,
 // deadline-exceeded is 504, everything else is 500 with the
 // acl_query_failed code (RR-89XK). Centralized so every gate call
@@ -1106,45 +1117,35 @@ func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
 // --- Relation Handlers ---
 
 func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, typeName, entityID string) {
-	// The path segment is an ADDRESS — `ID` or `ID@face` (BUG-VFHUWO). The
-	// bare id feeds the ACL row gate, which is face-blind by design; the face
-	// selects which tail's edges are served.
-	ref, refOK := parseEntityRef(entityID)
-	if !refOK {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return
-	}
-
+	// The path segment is an ADDRESS — `ID` or `ID@face` (BUG-VFHUWO); the
+	// face selects which tail's edges are served.
+	//
 	// ACL gate (TKT-VQGN CRIT-2): /relations on a hidden entity 404s
 	// indistinguishably. Without the gate the endpoint confirms
 	// existence (200 vs 404) AND leaks the full neighbor-id set —
 	// closing one channel via /include filter while leaving this open
-	// would defeat the per-entity-response invariant.
-	if !a.gateReadOrNotFound(w, r, typeName, ref.ID) {
+	// would defeat the per-entity-response invariant. The face gate matters
+	// even though the response carries no body: a content-scoped relation
+	// belongs to ONE face, so serving a withheld face's edges discloses its
+	// structure (TKT-O7R2A1).
+	entity, found := readAddressedOr404(w, r, a.visibleReader, typeName, entityID)
+	if !found {
 		return
 	}
-
+	ref := entity.Ref()
 	s := a.State()
-	entity, found := a.reader.getEntityRef(r.Context(), ref)
-	// The gate above authorized by (type, id), which a `type@face` grant is
-	// invisible to, and this reader is the raw store — so the face half is owed
-	// here (TKT-O7R2A1). It matters even though the response carries no body:
-	// a content-scoped relation belongs to ONE face, so serving the default
-	// face's edges discloses the structure of a face the grant withholds.
-	if !found || entity.Type != typeName ||
-		!faceReadable(r.Context(), entity.Type, entity.Face) {
-
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
 
 	// Outgoing edges at the ADDRESSED TAIL: a content-scoped edge belongs to
 	// one face of its source, so an unfiltered read returns the union of every
 	// face's edges and presents another face's links as this one's. Incoming
-	// edges stay entity-level — heads are faceless, so an inbound edge points
-	// at the entity and is shared by its faces.
+	// edges point at the entity, since heads are faceless; one whose tail is a
+	// face is served with that face named, if the caller may read it.
 	outgoing := a.reader.outgoingRelationsOnFace(r.Context(), ref)
-	incoming := a.reader.incomingRelations(r.Context(), ref.ID)
+	incoming, err := readableIncoming(r.Context(), a.reader, a.visibleReader, ref.ID)
+	if err != nil {
+		writeGateError(w, r, err)
+		return
+	}
 
 	// Gate hidden neighbors (BUG-ABXMAV / RR-HJV8CP). Without this, a hidden
 	// peer's `type` (via the ungated entityType read) and edge `meta` leak past
@@ -1156,8 +1157,9 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	// replicated here, in handleV1GetRelationType, and in the list path — a
 	// shared chokepoint (P3) would collapse the three; deferred to avoid
 	// churning the list path in a security fix.
-	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader,
-		neighborIDsOf(outgoing, incoming))
+	// Incoming edges are already gated, by ACL alone (readableIncoming).
+	visibleNeighbors := visibleRelationIDs(r.Context(), a.visibleReader,
+		neighborIDsOf(outgoing, nil))
 
 	relations := make(map[string][]map[string]any)
 
@@ -1198,9 +1200,6 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	}
 
 	for _, edge := range incoming {
-		if !visibleNeighbors[edge.From] {
-			continue
-		}
 		relDef, ok := s.Meta.Relations[edge.Type]
 		if !ok {
 			continue
@@ -1211,13 +1210,16 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 			"type":      a.reader.entityType(r.Context(), edge.From),
 			"direction": "incoming",
 		}
+		a.markIncomingFace(r.Context(), rel, entity, edge)
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
 			// The relation grant lives on the SOURCE entity type (edge.From for an
 			// incoming edge — the peer). Resolved fail-closed at strip time.
 			pendingStrips = append(pendingStrips, typedStrip{
-				relationMetaStrip: relationMetaStrip{rel: rel, incoming: true, peerID: edge.From},
-				relType:           edge.Type,
+				relationMetaStrip: relationMetaStrip{
+					rel: rel, incoming: true, peer: entityPkg.Ref{ID: edge.From, Face: edge.FromFace},
+				},
+				relType: edge.Type,
 			})
 		}
 		relations[inverseName] = append(relations[inverseName], rel)
@@ -1248,21 +1250,24 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 // The strip runs AFTER sortRelationGroup because the sort reads the managed order
 // property out of `meta`, so redacting a (possibly hidden) order key first would
 // break ordering. An outgoing edge's source is the path entity; an incoming edge's
-// source is the peer (peerID), resolved fail-closed at strip time.
+// source is the peer's row at the edge's tail (peer), resolved fail-closed at
+// strip time.
 type relationMetaStrip struct {
 	rel      map[string]any
 	incoming bool
-	peerID   string // incoming only: the source (from) entity id
+	peer     entityPkg.Ref // incoming only: the source (from) row, at the edge's tail
 }
 
 // buildRelationTypeRows builds the single-relation-type wire rows (id/type[/meta])
 // for the visible edges of relType in the given direction, plus the deferred meta
-// strips. It is the shared build step for handleV1GetRelationType; the caller
+// strips. An incoming row is marked with its source face (App.markIncomingFace).
+// It is the shared build step for handleV1GetRelationType; the caller
 // sorts then applies App.redactRelationMetaStrip.
-func buildRelationTypeRows(
-	ctx context.Context, reader entityReader, edges []*entityPkg.Relation,
+func (a *App) buildRelationTypeRows(
+	ctx context.Context, pathEntity *entityPkg.Entity, edges []*entityPkg.Relation,
 	relType string, incoming bool, visibleNeighbors map[string]bool,
 ) (rows []map[string]any, strips []relationMetaStrip) {
+	reader := a.reader
 	rows = make([]map[string]any, 0, len(edges))
 	for _, edge := range edges {
 		if edge.Type != relType {
@@ -1276,11 +1281,14 @@ func buildRelationTypeRows(
 			continue
 		}
 		rel := map[string]any{"id": peerID, "type": reader.entityType(ctx, peerID)}
+		if incoming {
+			a.markIncomingFace(ctx, rel, pathEntity, edge)
+		}
 		if len(edge.Properties) > 0 {
 			rel["meta"] = edge.Properties
 			s := relationMetaStrip{rel: rel, incoming: incoming}
 			if incoming {
-				s.peerID = peerID
+				s.peer = entityPkg.Ref{ID: edge.From, Face: edge.FromFace}
 			}
 			strips = append(strips, s)
 		}
@@ -1322,12 +1330,7 @@ func (a *App) handleV1EntityRelationType(w http.ResponseWriter, r *http.Request,
 	case http.MethodGet:
 		a.handleV1GetRelationType(w, r, typeName, entityID, relType)
 	case http.MethodPost:
-		ref, refOK := parseEntityRef(entityID)
-		if !refOK {
-			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-			return
-		}
-		a.write.handleV1CreateRelation(w, r, typeName, ref, relType)
+		a.write.handleV1CreateRelation(w, r, typeName, entityID, relType)
 	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 	}
@@ -1343,34 +1346,25 @@ func resolveRelationEndpoints(entityID, peerID, direction string) (from, to stri
 }
 
 func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, typeName, entityID, relType string) {
-	// An ADDRESS, as in handleV1EntityRelations (BUG-VFHUWO).
-	ref, refOK := parseEntityRef(entityID)
-	if !refOK {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+	// An ADDRESS, gated as in handleV1EntityRelations (BUG-VFHUWO).
+	entity, found := readAddressedOr404(w, r, a.visibleReader, typeName, entityID)
+	if !found {
 		return
 	}
-
-	// ACL gate (TKT-VQGN CRIT-2): see handleV1EntityRelations. BARE id.
-	if !a.gateReadOrNotFound(w, r, typeName, ref.ID) {
-		return
-	}
-
-	entity, found := a.reader.getEntityRef(r.Context(), ref)
-	// Face half of the grant, as in handleV1EntityRelations.
-	if !found || entity.Type != typeName ||
-		!faceReadable(r.Context(), entity.Type, entity.Face) {
-
-		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity not found", "")
-		return
-	}
+	ref := entity.Ref()
 
 	incoming := r.URL.Query().Get("direction") == string(DirectionIncoming)
 
 	// Outgoing at the addressed tail, incoming at the entity: see
 	// handleV1EntityRelations.
+	meta := a.State().Meta
 	var edges []*entityPkg.Relation
 	if incoming {
-		edges = a.reader.incomingRelations(r.Context(), ref.ID)
+		var err error
+		if edges, err = readableIncoming(r.Context(), a.reader, a.visibleReader, ref.ID); err != nil {
+			writeGateError(w, r, err)
+			return
+		}
 	} else {
 		edges = a.reader.outgoingRelationsOnFace(r.Context(), ref)
 	}
@@ -1391,12 +1385,21 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 		}
 		peerIDs = append(peerIDs, peerID)
 	}
-	visibleNeighbors := visibleRelationIDs(r.Context(), a.reader, a.visibleReader, peerIDs)
+	var visibleNeighbors map[string]bool
+	if incoming {
+		// Already gated, by ACL alone (readableIncoming).
+		visibleNeighbors = make(map[string]bool, len(peerIDs))
+		for _, id := range peerIDs {
+			visibleNeighbors[id] = true
+		}
+	} else {
+		visibleNeighbors = visibleRelationIDs(r.Context(), a.visibleReader, peerIDs)
+	}
 
-	relations, pendingStrips := buildRelationTypeRows(r.Context(), a.reader, edges, relType, incoming, visibleNeighbors)
+	relations, pendingStrips := a.buildRelationTypeRows(r.Context(), entity, edges, relType, incoming, visibleNeighbors)
 
 	// Apply orderable sort when the type declares the relevant side.
-	if relDef, ok := a.State().Meta.Relations[relType]; ok {
+	if relDef, ok := meta.Relations[relType]; ok {
 		var prop string
 		if incoming {
 			prop = relDef.IncomingOrderProperty()
@@ -1419,22 +1422,17 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 func (a *App) handleV1RelationTarget(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, relType, targetID string,
 ) {
-	// The path segment is an ADDRESS (BUG-VFHUWO); every arm below consumes
-	// the parsed form.
-	ref, refOK := parseEntityRef(entityID)
-	if !refOK {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return
-	}
+	// The path segment is an ADDRESS (BUG-VFHUWO); every arm resolves it
+	// through the visible reader before acting on a row.
 	switch r.Method {
 	case http.MethodGet:
-		// Single-relation body read for sync (RR-SYNCR1): meta + content +
+		// Single-relation body read (RR-SYNCR1): meta + content +
 		// _redacted + a relation-level ETag, dual-endpoint gated.
-		handleV1GetRelationTarget(a, w, r, typeName, ref, relType, targetID)
+		handleV1GetRelationTarget(a, w, r, typeName, entityID, relType, targetID)
 	case http.MethodPatch:
-		a.write.handleV1UpdateRelation(w, r, typeName, ref, relType, targetID)
+		a.write.handleV1UpdateRelation(w, r, typeName, entityID, relType, targetID)
 	case http.MethodDelete:
-		a.write.handleV1DeleteRelation(w, r, typeName, ref, relType, targetID)
+		a.write.handleV1DeleteRelation(w, r, typeName, entityID, relType, targetID)
 	default:
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 	}
@@ -1450,12 +1448,7 @@ func (a *App) handleV1EntityAction(w http.ResponseWriter, r *http.Request, typeN
 
 	switch action {
 	case "clone":
-		ref, refOK := parseEntityRef(entityID)
-		if !refOK {
-			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-			return
-		}
-		a.write.handleV1CloneEntity(w, r, typeName, ref)
+		a.write.handleV1CloneEntity(w, r, typeName, entityID)
 	default:
 		writeV1Error(w, r, http.StatusNotFound, "unknown_action", "Unknown action", "")
 	}
@@ -1471,10 +1464,11 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 
 	s := a.State()
 	schema := v1.Schema{
-		Entities:  make(map[string]v1.EntityType),
-		Relations: make(map[string]v1.RelationType),
-		Types:     make(map[string]v1.CustomType),
-		Worlds:    schemaWorlds(r.Context(), s.Meta),
+		Entities:   make(map[string]v1.EntityType),
+		Relations:  make(map[string]v1.RelationType),
+		Types:      make(map[string]v1.CustomType),
+		Worlds:     schemaWorlds(r.Context(), s.Meta),
+		WorldOrder: metamodel.WorldOrderOf(s.Meta),
 	}
 
 	for name, def := range s.Meta.Entities {
@@ -1495,6 +1489,9 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 		}
 		if def.Inverse != nil && def.Inverse.ID != "" {
 			rt.Inverse = &v1.InverseDef{ID: def.Inverse.ID, Label: def.Inverse.Label}
+		}
+		if def.Scope.IsContent() {
+			rt.Scope = "content"
 		}
 		if len(def.Properties) > 0 {
 			rt.Properties = make(map[string]v1.PropertyDef, len(def.Properties))
@@ -1776,7 +1773,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,
 			PlantUMLServerURL: s.Cfg.App.PlantUMLServerURL,
-			DefaultWorld:      s.Cfg.App.DefaultWorld,
+			DefaultWorld:      declaredDefaultWorld(s.Meta),
 			// The same nil check the history handler gates on, so the
 			// affordance and the endpoint cannot disagree.
 			HistoryEnabled: a.versions != nil,
@@ -1837,9 +1834,14 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("limit must be an integer between 1 and %d", maxSearchLimit), "")
 		return
 	}
+	relCtx, werr := parseSearchRelation(a.State().Meta, r.URL.Query())
+	if werr != nil {
+		writeV1Error(w, r, http.StatusBadRequest, werr.Code, werr.Detail, werr.Path)
+		return
+	}
 	query := r.URL.Query().Get("q")
 	if query == "" {
-		writeV1JSON(w, http.StatusOK, v1.ListResponse{Data: []v1.Entity{}, Meta: v1.ListMeta{}})
+		writeV1JSON(w, http.StatusOK, v1.LinkListResponse{Data: []v1.LinkRow{}, Meta: v1.ListMeta{}})
 		return
 	}
 
@@ -1887,6 +1889,11 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	linkable, ok := servedLinkable(w, r, a.affordances, entities, relCtx)
+	if !ok {
+		return
+	}
+
 	meta := a.State().Meta
 	data := make([]v1.Entity, 0, len(entities))
 	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
@@ -1901,14 +1908,14 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 		row := a.serializer.forWireRelated(pageCtx, e, nil, nil, nil, a.Meta(), plural)
 		// Same provenance a list row carries, and nil in the default world
 		// for the same reason (see handleV1ListEntities).
-		if !worldScopeFrom(r.Context()).IsDefaultWorld() {
+		if !worldScopeFrom(r.Context()).IsTrivial() {
 			row.World = worldProvenance(r.Context(), e)
 		}
 		data = append(data, row)
 	}
 
-	resp := v1.ListResponse{
-		Data: data,
+	resp := v1.LinkListResponse{
+		Data: linkRows(data, entities, linkable),
 		Meta: v1.ListMeta{
 			Total:   len(data),
 			Page:    1,
@@ -1956,6 +1963,7 @@ func (a *App) handleV1Analyze(w http.ResponseWriter, r *http.Request) {
 		issue, section := vi.issue, vi.section
 		api := APIIssue{
 			EntityID:    issue.EntityID,
+			Face:        string(issue.Face),
 			EntityType:  issue.EntityType,
 			Title:       issue.Title,
 			Message:     issue.Message,
@@ -2073,7 +2081,7 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 
 // filterVisibleIncludes drops any candidate the principal cannot read,
 // batched by entity type. For each distinct type ONE gate call
-// (PermitsReadMany over every candidate of that type) — turning a
+// (ReadableFacesMany over every candidate of that type) — turning a
 // worst case of O(N) per-id probes into O(distinct-types). RR-FRK1.
 //
 // On gate error: drop the whole type's candidates (fail-closed) and
@@ -2389,7 +2397,7 @@ func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, t
 // the edges they served should use [entityETagWithEdges] instead — see the
 // duplication note at the single-entity GET's call site.
 func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string {
-	edges, err := etagEdges(ctx, a.reader, a.worldNeighbors, a.visibleReader, e)
+	edges, err := etagEdges(ctx, a.reader, a.worldNeighbors, e)
 	if err != nil {
 		return etagUnresolved(ctx, e)
 	}
@@ -2778,7 +2786,7 @@ func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, do
 	// principal-independent command: render. Never widen this to script:
 	// docs, and never call GetCached from a per-principal path (RR-2QSGLU).
 	if !forceRefresh && renderCfg.Script == "" {
-		result := a.documents.GetCached(r.Context(), entityID)
+		result := a.documents.GetCached(r.Context(), resolved.entryID)
 		if result != nil {
 			html := RewriteDocumentLinks(result.HTML, returnPath, nil)
 			writeV1JSON(w, http.StatusOK, v1.DocumentResponse{
@@ -2791,7 +2799,7 @@ func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, do
 	}
 
 	// Render the document
-	result, err := a.documents.Render(r.Context(), entityID, renderCfg)
+	result, err := a.documents.Render(r.Context(), resolved.entryID, renderCfg)
 	if err != nil {
 		var se *lua.ScriptError
 		if errors.As(err, &se) {

@@ -264,10 +264,10 @@ func TestValidateCopies_Landing(t *testing.T) {
 		{"written", CopyLanding{Mode: LandingWritten}, ""},
 		{"stay", CopyLanding{Mode: LandingStay}, ""},
 		{"a declared world", CopyLanding{World: "site"}, ""},
-		{"the default world", CopyLanding{World: "default"}, ""},
+		{"default beside declared worlds", CopyLanding{World: "default"}, `world "default" does not exist when worlds are declared`},
 		{"a face the target type declares", CopyLanding{Face: "draft"}, ""},
 		{"an unknown scalar", CopyLanding{Mode: "elsewhere"}, `must be "written", "stay"`},
-		{"an undeclared world", CopyLanding{World: "nope"}, `names world "nope"`},
+		{"an undeclared world", CopyLanding{World: "nope"}, `world "nope" is not declared`},
 		{"a face the target type lacks", CopyLanding{Face: "nl"}, `names face "nl"`},
 		{"both a world and a face", CopyLanding{World: "site", Face: "draft"}, "pick one"},
 	} {

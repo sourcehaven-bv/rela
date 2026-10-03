@@ -25,10 +25,10 @@ func TestScriptReader_ListEntityHeadersGatesLikeListEntities(t *testing.T) {
 		name  string
 		query store.EntityQuery
 	}{
-		{"all types", store.EntityQuery{}},
-		{"readable type", store.EntityQuery{Type: "ticket"}},
-		{"hidden type", store.EntityQuery{Type: "secret"}},
-		{"by id, mixed visibility", store.EntityQuery{IDs: []string{"TKT-1", "SEC-1"}}},
+		{"all types", store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}},
+		{"readable type", store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}},
+		{"hidden type", store.EntityQuery{Type: "secret", Faces: store.InWorld(store.TrivialScope())}},
+		{"by id, mixed visibility", store.EntityQuery{IDs: []string{"TKT-1", "SEC-1"}, Faces: store.InWorld(store.TrivialScope())}},
 	} {
 		t.Run(q.name, func(t *testing.T) {
 			var wantIDs []string
@@ -84,9 +84,10 @@ func TestScriptReader_ListEntityHeadersRedactsFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
+	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 
 	n := 0
-	for h, err := range sr.ListEntityHeaders(ctx, store.EntityQuery{}) {
+	for h, err := range sr.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatalf("ListEntityHeaders: %v", err)
 		}
@@ -127,11 +128,12 @@ func TestScriptReader_ListEntityHeadersDoesNotMutateStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
+	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 
-	for range sr.ListEntityHeaders(ctx, store.EntityQuery{}) { //nolint:revive // draining
+	for range sr.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) { //nolint:revive // draining
 	}
 
-	got, err := st.GetEntity(ctx, "TKT-1")
+	got, err := st.GetEntity(ctx, entity.Ref{ID: "TKT-1"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -167,7 +169,7 @@ func TestScriptReader_ListEntityHeadersChunkBoundary(t *testing.T) {
 	sr := newTicketOnlyScriptReader(t, st)
 
 	got := 0
-	for h, err := range sr.ListEntityHeaders(ctx, store.EntityQuery{}) {
+	for h, err := range sr.ListEntityHeaders(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatalf("ListEntityHeaders: %v", err)
 		}
@@ -188,7 +190,7 @@ func TestScriptReader_ListEntityHeadersStopsOnEarlyReturn(t *testing.T) {
 	sr := newTicketOnlyScriptReader(t, st)
 
 	seen := 0
-	for range sr.ListEntityHeaders(context.Background(), store.EntityQuery{}) {
+	for range sr.ListEntityHeaders(context.Background(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		seen++
 		break
 	}

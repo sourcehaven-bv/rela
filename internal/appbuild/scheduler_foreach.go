@@ -30,7 +30,8 @@ func (s *Services) ScheduledForEachEntities(
 		return nil, 0, errors.New("appbuild: scheduled for_each has no visible reader")
 	}
 	ids = make([]string, 0, limit)
-	for e, listErr := range deps.VisibleReader.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
+	q := store.EntityQuery{Type: entityType, Faces: store.InWorld(s.worlds.DefaultWorld())}
+	for e, listErr := range deps.VisibleReader.ListEntities(ctx, q) {
 		if listErr != nil {
 			return nil, 0, listErr
 		}
@@ -60,15 +61,19 @@ func (s *Services) ScheduledForEachPrincipal(ctx context.Context, entityID strin
 	if s == nil || s.store == nil {
 		return "", errors.New("appbuild: scheduled for_each has no store")
 	}
-	e, err := s.store.GetEntity(ctx, entityID)
+	// A principal is an entity, not one of its faces, so the type check
+	// reads the family's headers: a faced user type has no zero-face row
+	// (DEC-NPZICR).
+	headers, err := store.FamilyHeaders(ctx, s.store, entityID)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return "", nil
-		}
 		return "", err
 	}
-	if s.aclPolicy == nil || s.aclPolicy.UserEntityType == "" || e.Type != s.aclPolicy.UserEntityType {
+	var typ string
+	if len(headers) > 0 {
+		typ = headers[0].Type
+	}
+	if typ == "" || s.aclPolicy == nil || s.aclPolicy.UserEntityType == "" || typ != s.aclPolicy.UserEntityType {
 		return "", nil
 	}
-	return e.ID, nil
+	return entityID, nil
 }

@@ -70,7 +70,7 @@ func buildPrincipalLookupWorld(
 		}
 	}
 	for _, r := range relations {
-		if _, err := ms.CreateRelation(ctx, r[0], r[1], r[2], nil); err != nil {
+		if _, err := ms.CreateRelation(ctx, entity.RelationKey{From: r[0], Type: r[1], To: r[2]}, nil); err != nil {
 			t.Fatalf("create relation %s--%s-->%s: %v", r[0], r[1], r[2], err)
 		}
 	}

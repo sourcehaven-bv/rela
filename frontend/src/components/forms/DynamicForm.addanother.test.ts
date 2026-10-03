@@ -49,7 +49,7 @@ const CountingPicker = defineComponent({
             const entries = [{ type: 'task', id: PEER_ID }]
             emit('incoming-changed', {
               currentEntries: entries,
-              added: entries,
+              added: [{ targetId: PEER_ID }],
               removed: [],
             })
           } else {
@@ -631,7 +631,7 @@ describe('DynamicForm — Create & add another', () => {
     expect(uiError).not.toHaveBeenCalled()
     expect(create).toHaveBeenCalledTimes(2)
     const second = create.mock.calls[1][1] as { relations: Record<string, unknown> }
-    expect(second.relations.blocks).toEqual({ data: [{ type: 'task', id: PEER_ID }] })
+    expect(second.relations.blocks).toEqual({ add: [{ type: 'task', id: PEER_ID }] })
   })
 
   // An incoming picker's selection is latched by DynamicForm into

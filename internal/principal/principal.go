@@ -393,9 +393,6 @@ const (
 	ToolDataEntry = "data-entry"
 	ToolScheduler = "scheduler"
 	ToolDesktop   = "desktop"
-	// ToolSync attributes writes applied by the sync API (FEAT-NJ9FEN) so the
-	// audit log distinguishes a synced write from a direct data-entry edit.
-	ToolSync = "sync"
 	// ToolWebhookReceiver attributes writes made by an inbound-webhook handler
 	// (e.g. an IdP membership event that provisions a person entity). It is a
 	// distinct entry point from data-entry: the write originates from a verified

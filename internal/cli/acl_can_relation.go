@@ -10,7 +10,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/output"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ACLCanRelationCmd implements
@@ -34,7 +33,7 @@ type ACLCanRelationCmd struct {
 	Principal string `arg:"" help:"Principal to check (a user entity ID, or the raw identifier — email/UPN — when principal_property is set)."`
 	Verb      string `arg:"" help:"Relation write verb: create|update|delete. (There is no relation read verb — visibility is derived from both endpoints.)" enum:"create,update,delete"`
 	Relation  string `arg:"" help:"Relation type to check (e.g. spawnt)."`
-	From      string `help:"Source entity ID the edge originates at (e.g. TERUG-1)." required:""`
+	From      string `help:"Source entity the edge originates at: ID, or ID@face for a content-scoped edge's tail (e.g. TERUG-1)." required:""`
 }
 
 // Run executes `rela acl can-relation`.
@@ -84,10 +83,7 @@ func (c *ACLCanRelationCmd) Run(ctx context.Context, svc *readServices) error {
 // access, but the source entity must still exist so a typo'd id cannot exit
 // green on nothing.
 func (c *ACLCanRelationCmd) runNoPolicy(ctx context.Context, svc *readServices) error {
-	if _, err := svc.Store.GetEntity(ctx, c.From); err != nil {
-		if stderrors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("entity %q not found", c.From)
-		}
+	if err := requireAddressExists(ctx, svc.Store, c.From); err != nil {
 		return err
 	}
 	out.WriteSuccess("No acl.yaml found; every principal has full access (no policy).")

@@ -17,7 +17,7 @@ func RunQueryTests(t *testing.T, f Factory) {
 		seedEntities(t, s)
 
 		var ids []string
-		for e, err := range s.ListEntities(ctx(), store.EntityQuery{}) {
+		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
 		}
@@ -29,7 +29,7 @@ func RunQueryTests(t *testing.T, f Factory) {
 		seedEntities(t, s)
 
 		var ids []string
-		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Type: "feature"}) {
+		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Type: "feature", Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
 		}
@@ -41,7 +41,7 @@ func RunQueryTests(t *testing.T, f Factory) {
 		seedEntities(t, s)
 
 		var ids []string
-		for e, err := range s.ListEntities(ctx(), store.EntityQuery{IDs: []string{"FEAT-001", "REQ-001"}}) {
+		for e, err := range s.ListEntities(ctx(), store.EntityQuery{IDs: []string{"FEAT-001", "REQ-001"}, Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
 		}
@@ -53,7 +53,7 @@ func RunQueryTests(t *testing.T, f Factory) {
 		seedEntities(t, s)
 
 		var ids []string
-		q := store.EntityQuery{Type: "feature", IDs: []string{"FEAT-001", "REQ-001"}}
+		q := store.EntityQuery{Type: "feature", IDs: []string{"FEAT-001", "REQ-001"}, Faces: store.InWorld(store.TrivialScope())}
 		for e, err := range s.ListEntities(ctx(), q) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
@@ -66,15 +66,15 @@ func RunQueryTests(t *testing.T, f Factory) {
 		s := f(t)
 		seedEntities(t, s)
 
-		n, err := s.CountEntities(ctx(), store.EntityQuery{})
+		n, err := s.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 4, n)
 
-		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "feature"})
+		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "feature", Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 3, n)
 
-		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "nonexistent"})
+		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "nonexistent", Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 0, n)
 	})
@@ -96,70 +96,21 @@ func RunQueryTests(t *testing.T, f Factory) {
 		assert.Equal(t, 0, n)
 	})
 
-	t.Run("PropertyValues", func(t *testing.T) {
+	// The SQL backends read HighestID as a range over "<prefix>-" (TKT-KQXVF7),
+	// and used to read it as a LIKE pattern. Ids just outside the range, and a
+	// prefix holding a LIKE wildcard, must not count.
+	t.Run("HighestIDIsExactPrefix", func(t *testing.T) {
 		s := f(t)
-		seedEntities(t, s)
+		for _, id := range []string{"FEAT-4", "FEATURE-99", "FEAT_9", "FEA-50", "FEAT", "A_B-4", "AXB-9"} {
+			require.NoError(t, s.CreateEntity(ctx(), entity.New(id, "feature")), id)
+		}
 
-		vals, err := s.PropertyValues(ctx(), "status", 10)
+		n, err := s.HighestID(ctx(), "FEAT")
 		require.NoError(t, err)
-		require.Len(t, vals, 2)
-		assert.Equal(t, "open", vals[0])
-		assert.Equal(t, "done", vals[1])
-	})
+		assert.Equal(t, 4, n)
 
-	t.Run("PropertyValuesWithLimit", func(t *testing.T) {
-		s := f(t)
-		seedEntities(t, s)
-
-		vals, err := s.PropertyValues(ctx(), "status", 1)
+		n, err = s.HighestID(ctx(), "A_B")
 		require.NoError(t, err)
-		assert.Len(t, vals, 1)
-		assert.Equal(t, "open", vals[0])
-	})
-
-	t.Run("PropertyValuesTiebreakAlphabetical", func(t *testing.T) {
-		s := f(t)
-		e1 := entity.New("A", "t")
-		e1.SetString("color", "red")
-		e2 := entity.New("B", "t")
-		e2.SetString("color", "blue")
-		e3 := entity.New("C", "t")
-		e3.SetString("color", "green")
-		require.NoError(t, s.CreateEntity(ctx(), e1))
-		require.NoError(t, s.CreateEntity(ctx(), e2))
-		require.NoError(t, s.CreateEntity(ctx(), e3))
-
-		vals, err := s.PropertyValues(ctx(), "color", 10)
-		require.NoError(t, err)
-		require.Len(t, vals, 3)
-		assert.Equal(t, []string{"blue", "green", "red"}, vals)
-	})
-
-	t.Run("PropertyValuesFrequencyBeatsAlpha", func(t *testing.T) {
-		s := f(t)
-		e1 := entity.New("A", "t")
-		e1.SetString("color", "zebra")
-		e2 := entity.New("B", "t")
-		e2.SetString("color", "zebra")
-		e3 := entity.New("C", "t")
-		e3.SetString("color", "alpha")
-		require.NoError(t, s.CreateEntity(ctx(), e1))
-		require.NoError(t, s.CreateEntity(ctx(), e2))
-		require.NoError(t, s.CreateEntity(ctx(), e3))
-
-		vals, err := s.PropertyValues(ctx(), "color", 10)
-		require.NoError(t, err)
-		require.Len(t, vals, 2)
-		assert.Equal(t, "zebra", vals[0], "higher frequency should come first")
-		assert.Equal(t, "alpha", vals[1])
-	})
-
-	t.Run("PropertyValuesUnknownProperty", func(t *testing.T) {
-		s := f(t)
-		seedEntities(t, s)
-
-		vals, err := s.PropertyValues(ctx(), "nonexistent", 10)
-		require.NoError(t, err)
-		assert.Empty(t, vals)
+		assert.Equal(t, 4, n, "_ in the prefix is a literal, not a wildcard")
 	})
 }

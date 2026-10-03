@@ -321,7 +321,7 @@ func TestNew_CorruptedIndexRecovery(t *testing.T) {
 // regardless of worlds (ranking, limits, rename/delete eviction).
 func searchIDs(t *testing.T, idx *bleveindex.Index, text string, limit int) []string {
 	t.Helper()
-	faces, err := idx.Search(text, limit, store.DefaultWorld())
+	faces, err := idx.Search(text, limit, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("Search(%q, %d): %v", text, limit, err)
 	}

@@ -49,7 +49,7 @@ type entitySource interface {
 	// ACL-scoped.
 	listType(ctx context.Context, entityType string) ([]*entity.Entity, error)
 	// getEntity returns one entity the caller may read, or ok=false.
-	getEntity(ctx context.Context, entityType, id string) (e *entity.Entity, ok bool, err error)
+	getEntity(ctx context.Context, entityType, addr string) (e *entity.Entity, ok bool, err error)
 }
 
 // deepLinker builds an app URL for an entity (mirrors rela.url on the Lua side).
@@ -163,7 +163,7 @@ func (d *declarativeFeed) List(ctx context.Context, opts feedListOpts) ([]calfee
 // Get implements feedProvider: it finds the source whose type matches the UID's
 // type prefix, loads that entity, re-applies the source filter, and maps it.
 func (d *declarativeFeed) Get(ctx context.Context, uid string) (calfeed.Event, bool, error) {
-	entityType, id, ok := splitFeedUID(uid)
+	entityType, addr, ok := splitFeedUID(uid)
 	if !ok {
 		return calfeed.Event{}, false, nil
 	}
@@ -171,15 +171,17 @@ func (d *declarativeFeed) Get(ctx context.Context, uid string) (calfeed.Event, b
 		if s.EntityType != entityType {
 			continue
 		}
-		e, found, err := d.src.getEntity(ctx, entityType, id)
+		e, found, err := d.src.getEntity(ctx, entityType, addr)
 		if err != nil {
 			return calfeed.Event{}, false, err
 		}
 		// getEntity may resolve by id alone (the production reader does), so an
 		// id shared across types could return a different type than the UID
 		// named. Reject the mismatch rather than map the wrong entity under this
-		// source's rules — mirrors the entity handlers' type guards.
-		if !found || e.Type != entityType {
+		// source's rules — mirrors the entity handlers' type guards. A bare
+		// UID on a faced type resolves to some face whose UID names it, so the
+		// served address must be the one asked for.
+		if !found || e.Type != entityType || e.Ref().String() != addr {
 			return calfeed.Event{}, false, nil
 		}
 		filters, err := filter.ParseAll(s.Where)
@@ -277,7 +279,7 @@ func (d *declarativeFeed) mapEntity(
 	}
 
 	ev := calfeed.Event{
-		UID:     feedUID(e.Type, e.ID),
+		UID:     feedUID(e.Type, e.Ref().String()),
 		Summary: e.GetString(summaryProp),
 		Start:   day,
 		URL:     d.link(e.Type, e.ID),

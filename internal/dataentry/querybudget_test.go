@@ -208,12 +208,12 @@ func newBudgetAppOn(t *testing.T, n int, base store.Store) (*App, *storetest.Cou
 	mk("PRG1", "program", "Program one")
 	for i := 1; i <= budgetEpics(n); i++ {
 		mk(fmt.Sprintf("EP%d", i), "epic", fmt.Sprintf("Epic %d", i))
-		_, err := counting.CreateRelation(ctx, fmt.Sprintf("EP%d", i), "in-program", "PRG1", nil)
+		_, err := counting.CreateRelation(ctx, entity.RelationKey{From: fmt.Sprintf("EP%d", i), Type: "in-program", To: "PRG1"}, nil)
 		must(err)
 	}
 	for i := 1; i <= 3; i++ {
 		mk(fmt.Sprintf("P%d", i), "person", fmt.Sprintf("Person %d", i))
-		_, err := counting.CreateRelation(ctx, fmt.Sprintf("P%d", i), "member-of", "T1", nil)
+		_, err := counting.CreateRelation(ctx, entity.RelationKey{From: fmt.Sprintf("P%d", i), Type: "member-of", To: "T1"}, nil)
 		must(err)
 	}
 	for i := 1; i <= 5; i++ {
@@ -225,20 +225,20 @@ func newBudgetAppOn(t *testing.T, n int, base store.Store) (*App, *storetest.Cou
 		e.SetString("title", "Ticket "+id)
 		e.SetString("status", []string{"open", "done"}[i%2])
 		must(counting.CreateEntity(ctx, e))
-		_, err := counting.CreateRelation(ctx, id, "implements", fmt.Sprintf("F%d", i%5+1), nil)
+		_, err := counting.CreateRelation(ctx, entity.RelationKey{From: id, Type: "implements", To: fmt.Sprintf("F%d", i%5+1)}, nil)
 		must(err)
-		_, err = counting.CreateRelation(ctx, id, "assigned-to", fmt.Sprintf("P%d", i%3+1), nil)
+		_, err = counting.CreateRelation(ctx, entity.RelationKey{From: id, Type: "assigned-to", To: fmt.Sprintf("P%d", i%3+1)}, nil)
 		must(err)
 		if i > 1 {
-			_, err = counting.CreateRelation(ctx, id, "blocks", "TKT-0001", nil)
+			_, err = counting.CreateRelation(ctx, entity.RelationKey{From: id, Type: "blocks", To: "TKT-0001"}, nil)
 			must(err)
 		}
 		// Every ticket is tracked by E1, so the recursive view's first level
 		// holds n rows — the size the budget must be independent of.
-		_, err = counting.CreateRelation(ctx, id, "tracked-by", "E1", nil)
+		_, err = counting.CreateRelation(ctx, entity.RelationKey{From: id, Type: "tracked-by", To: "E1"}, nil)
 		must(err)
 		// Spread across the nested view's epics, so both levels grow with n.
-		_, err = counting.CreateRelation(ctx, id, "in-epic", fmt.Sprintf("EP%d", (i-1)/budgetTicketsPerEpic+1), nil)
+		_, err = counting.CreateRelation(ctx, entity.RelationKey{From: id, Type: "in-epic", To: fmt.Sprintf("EP%d", (i-1)/budgetTicketsPerEpic+1)}, nil)
 		must(err)
 	}
 
@@ -372,6 +372,43 @@ func TestQueryBudget_SearchIsSizeIndependent(t *testing.T) {
 	assertBudget(t, "search", small, large, searchBudget, detail)
 }
 
+// The same search with a relation context (`linkable` per row): the rows'
+// source reads are batched, so the context adds a fixed number of reads.
+func TestQueryBudget_SearchLinkableIsSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet,
+			"/api/v1/_search?q=type%3Aticket&relation=blocks&direction=incoming", http.NoBody)
+		req = req.WithContext(gateCtxFor(ctx, t, d))
+		rec := httptest.NewRecorder()
+		app.handleV1Search(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("search: %d %s", rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), `"linkable":true`) {
+			t.Fatalf("no row is linkable, so this budget proves nothing: %s", rec.Body)
+		}
+	})
+	assertBudget(t, "search linkable", small, large, searchLinkableBudget, detail)
+}
+
+// A list page with a relation context, the RelationPicker shape: like the
+// search, the context adds a fixed number of reads.
+func TestQueryBudget_ListLinkableIsSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		_, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets",
+			"per_page=100&relation=blocks&direction=incoming")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", rec.Code, rec.Body)
+		}
+		if !strings.Contains(rec.Body.String(), `"linkable":true`) {
+			t.Fatalf("no row is linkable, so this budget proves nothing: %s", rec.Body)
+		}
+	})
+	assertBudget(t, "list linkable", small, large, listLinkableBudget, detail)
+}
+
 // A RECURSIVE view traversal, the shape that exercises the BFS frontier source
 // gate (BUG-9Z20WH). This is the budget the gate's own doc comment claims: one
 // header scan + one probe per distinct type per LEVEL, so the cost is a
@@ -488,13 +525,45 @@ func assertScopePushedDown(t *testing.T, newStore func(*testing.T) store.Store) 
 		// The scoped count is the pushed path's signature: the Go path counts
 		// its slice in memory and answers the traversal with MatchingIDs.
 		calls := counting.Calls()
-		if calls["MatchingIDs"] != 0 || calls["CountMatched"] != 1 {
+		if calls["MatchingFaces"] != 0 || calls["CountMatched"] != 1 {
 			t.Errorf("n=%d: the scope was not pushed down: %s", n, counting)
 		}
 		reads = append(reads, counting.Reads())
 		detail = counting.String()
 	}
 	assertBudget(t, "pushed traversal scope list page", reads[0], reads[1], listPageBudget, detail)
+}
+
+// Validating a relations body whose edges name n peers. Before batching
+// (RR-TYJON4): two header reads per edge, a stored-type read and the family
+// gate.
+func TestQueryBudget_EdgeWarningsAreSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		var data []v1.ResourceIdentifier
+		for e, err := range app.store.ListEntities(ctx, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = append(data, v1.ResourceIdentifier{Type: "ticket", ID: e.ID})
+		}
+		// A peer that does not exist, so the warning path is exercised too.
+		data = append(data, v1.ResourceIdentifier{Type: "ticket", ID: "TKT-9999"})
+		// A second peer type, so the pin covers one gate round per type.
+		features := []v1.ResourceIdentifier{{Type: "feature", ID: "F1"}, {Type: "feature", ID: "F2"}}
+		desired := map[string]v1.RelationsUpdate{
+			"blocks":     {DataPresent: true, Data: data},
+			"implements": {DataPresent: true, Data: features},
+		}
+		ws, err := app.write.validateRelationsModern(gateCtxFor(ctx, t, d), "TKT-0001", "ticket", desired)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ws) != 1 || ws[0].Code != "target_not_found" {
+			t.Fatalf("warnings = %+v, want one target_not_found", ws)
+		}
+	})
+	assertBudget(t, "edge warnings", small, large, edgeWarningsBudget, detail)
 }
 
 // A list page inside an entity page's tab (pagescope.go). The scope costs one
@@ -553,6 +622,10 @@ const (
 	// view: entry, two traverse passes, collection load, section columns +
 	// target headers, entry edges, membership walk.
 	viewSectionBudget = 11
+	// edge warnings: the test's own listing of the peers, ONE header read for
+	// every peer, and the membership walk.
+	edgeWarningsBudget = 4
+
 	// page-scoped list: the anchor read, the scope's relation query, the
 	// whole-type read, page edges, neighbor headers, membership walk.
 	pageScopedListBudget = 7
@@ -561,6 +634,12 @@ const (
 	navItemsBudget = 6
 	// search: whole-type read, membership walk.
 	searchBudget = 3
+	// search with a relation context: plus the family headers and the
+	// source rows of the page.
+	searchLinkableBudget = 5
+	// list page with a relation context: listPageBudget plus the same two
+	// reads as searchLinkableBudget.
+	listLinkableBudget = 8
 	// recursive view: entry, the fixpoint's relation queries, the collection
 	// load, and the BFS frontier source gate's ONE header scan per level
 	// walked (BUG-9Z20WH). Measured, not derived; the point of the pin is that
@@ -650,7 +729,7 @@ func TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly(t *testing.
 
 	mk("T1", "team", "Team one")
 	mk("P1", "person", "Person one")
-	_, err := breadth.CreateRelation(ctx, "P1", "member-of", "T1", nil)
+	_, err := breadth.CreateRelation(ctx, entity.RelationKey{From: "P1", Type: "member-of", To: "T1"}, nil)
 	must(err)
 	mk("PRG1", "program", "Program one")
 
@@ -672,7 +751,7 @@ func TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly(t *testing.
 	for p := 1; p <= parents; p++ {
 		epic := fmt.Sprintf("EP%d", p)
 		mk(epic, "epic", epic)
-		_, err := breadth.CreateRelation(ctx, epic, "in-program", "PRG1", nil)
+		_, err := breadth.CreateRelation(ctx, entity.RelationKey{From: epic, Type: "in-program", To: "PRG1"}, nil)
 		must(err)
 		for c := range childrenPerParent {
 			id := fmt.Sprintf("TKT-%d-%d", p, c)
@@ -680,9 +759,9 @@ func TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly(t *testing.
 			e.SetString("title", id)
 			e.SetString("status", "open")
 			must(breadth.CreateEntity(ctx, e))
-			_, err := breadth.CreateRelation(ctx, id, "in-epic", epic, nil)
+			_, err := breadth.CreateRelation(ctx, entity.RelationKey{From: id, Type: "in-epic", To: epic}, nil)
 			must(err)
-			_, err = breadth.CreateRelation(ctx, id, "assigned-to", "P1", nil)
+			_, err = breadth.CreateRelation(ctx, entity.RelationKey{From: id, Type: "assigned-to", To: "P1"}, nil)
 			must(err)
 			visibleChildren++
 		}

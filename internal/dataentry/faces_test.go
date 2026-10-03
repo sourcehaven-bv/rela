@@ -4,8 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -19,10 +21,34 @@ func facesSvc(t *testing.T) (affordanceService, *memstore.MemStore) {
 	t.Helper()
 	st := memstore.New()
 	m := worldsMeta()
+	vr, err := newVisibleReader(st, func() store.WorldScope { return familiesScope(nil, m) })
+	if err != nil {
+		t.Fatal(err)
+	}
 	return affordanceService{
-		store: st,
-		meta:  func() *metamodel.Metamodel { return m },
+		store:  st,
+		meta:   func() *metamodel.Metamodel { return m },
+		family: vr.family,
 	}, st
+}
+
+// faceRowGate reads every policy face except those listed per id, standing
+// in for a per-row verdict such as an owner edge.
+type faceRowGate struct {
+	nopReadGate
+	readable map[string][]entityPkg.Face
+}
+
+func (g faceRowGate) ReadableFacesMany(_ context.Context, _ string, ids []string) (acl.FaceVerdicts, error) {
+	out := make(map[string]acl.FaceVerdict, len(ids))
+	for _, id := range ids {
+		if faces, ok := g.readable[id]; ok {
+			out[id] = acl.FacesVerdict(faces...)
+		} else {
+			out[id] = acl.AllFacesVerdict()
+		}
+	}
+	return acl.PerEntityVerdicts(out), nil
 }
 
 func seedFaceInStore(ctx context.Context, t *testing.T, st *memstore.MemStore, id, typ string, p entityPkg.Face) {
@@ -64,6 +90,24 @@ func TestComputeFaces(t *testing.T) {
 		got = svc.computeFaces(ctx, &entityPkg.Entity{ID: "POL-2", Type: "policy", Face: "draft"})
 		if len(got) != 0 {
 			t.Errorf("POL-2 is draft-only, so it has no OTHER face; got %+v", got)
+		}
+	})
+
+	t.Run("omits a stored face the row's verdict withholds", func(t *testing.T) {
+		t.Parallel()
+		svc, st := facesSvc(t)
+		seedFaceInStore(ctx, t, st, "POL-1", "policy", "draft")
+		seedFaceInStore(ctx, t, st, "POL-1", "policy", "published")
+
+		// The `type@face` grant would admit the draft; this row's verdict
+		// does not. Listing it would offer an address that answers 404 and
+		// disclose that the draft exists.
+		gated := withReadGate(ctx, faceRowGate{readable: map[string][]entityPkg.Face{
+			"POL-1": {"published"},
+		}})
+		got := svc.computeFaces(gated, &entityPkg.Entity{ID: "POL-1", Type: "policy", Face: "published"})
+		if len(got) != 0 {
+			t.Errorf("the draft is withheld for POL-1; got %+v", got)
 		}
 	})
 

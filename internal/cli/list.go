@@ -27,7 +27,7 @@ type ListCmd struct {
 // Run dispatches `rela list [type]`.
 func (c *ListCmd) Run(ctx context.Context, svc *readServices) error {
 	meta := svc.Meta
-	entityTypeName, q, err := resolveListType(meta, c.Type)
+	entityTypeName, q, err := resolveListType(meta, c.Type, svc.World)
 	if err != nil {
 		return err
 	}
@@ -37,7 +37,7 @@ func (c *ListCmd) Run(ctx context.Context, svc *readServices) error {
 		return err
 	}
 
-	entities, err = applyListFilters(ctx, entities, c.Where, c.Filter, entityTypeName, meta, svc.Store.MatchingIDs)
+	entities, err = applyListFilters(ctx, entities, c.Where, c.Filter, entityTypeName, meta, store.IDMatcher(svc.Store))
 	if err != nil {
 		return err
 	}
@@ -53,8 +53,12 @@ func (c *ListCmd) Run(ctx context.Context, svc *readServices) error {
 	return out.WriteEntitiesWithSummary(entities)
 }
 
-func resolveListType(meta *metamodel.Metamodel, typeName string) (string, store.EntityQuery, error) {
-	q := store.EntityQuery{}
+// resolveListType resolves the listed type and returns the query listing it
+// in world.
+func resolveListType(
+	meta *metamodel.Metamodel, typeName string, world store.WorldScope,
+) (string, store.EntityQuery, error) {
+	q := store.EntityQuery{Faces: store.InWorld(world)}
 	if typeName == "" {
 		return "", q, nil
 	}

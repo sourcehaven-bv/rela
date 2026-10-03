@@ -122,9 +122,9 @@ func (s *countingStore) UpdateEntityIf(
 	s.updates.Add(1)
 	return s.Store.UpdateEntityIf(ctx, e, cond)
 }
-func (s *countingStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+func (s *countingStore) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	s.deletes.Add(1)
-	return s.Store.DeleteEntity(ctx, id, cascade)
+	return s.Store.DeleteFamily(ctx, id, cascade)
 }
 func (s *countingStore) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
 	s.scans.Add(1)
@@ -723,7 +723,7 @@ func TestDelete_HasRelationsRejectsWhenNotCascading(t *testing.T) {
 	ctx := context.Background()
 	req := createReq(t, mgr, "Linked Source")
 	dec := createDec(t, mgr, "Linked Target")
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec.ID, Type: "addresses", To: req.ID}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
@@ -738,7 +738,7 @@ func TestDelete_CascadeRemovesIncidentRelations(t *testing.T) {
 	ctx := context.Background()
 	req := createReq(t, mgr, "Source")
 	dec := createDec(t, mgr, "Target")
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec.ID, Type: "addresses", To: req.ID}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
@@ -787,7 +787,7 @@ func TestRename_DryRunDoesNotChangeStore(t *testing.T) {
 	}
 
 	// Entity still present at old ID.
-	if _, err := cs.GetEntity(ctx, req.ID); err != nil {
+	if _, err := cs.GetEntity(ctx, req.Ref()); err != nil {
 		t.Errorf("entity missing at old ID after dry-run: %v", err)
 	}
 }
@@ -798,7 +798,7 @@ func TestRename_AppliesAndRewritesRelations(t *testing.T) {
 	ctx := context.Background()
 	req := createReq(t, mgr, "Original")
 	dec := createDec(t, mgr, "Face")
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec.ID, Type: "addresses", To: req.ID}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
@@ -857,14 +857,14 @@ func TestRename_TargetExistsDoesNotOverwrite(t *testing.T) {
 
 	// Both entities still present at their original IDs, with their
 	// original titles — the target was not overwritten by the source.
-	gotDst, err := cs.GetEntity(ctx, dst.ID)
+	gotDst, err := cs.GetEntity(ctx, dst.Ref())
 	if err != nil {
 		t.Fatalf("target entity missing after conflicting rename: %v", err)
 	}
 	if title := gotDst.GetString("title"); title != "occupied target" {
 		t.Errorf("target title = %q, want %q — target was clobbered", title, "occupied target")
 	}
-	if _, err := cs.GetEntity(ctx, src.ID); err != nil {
+	if _, err := cs.GetEntity(ctx, src.Ref()); err != nil {
 		t.Errorf("source entity missing after failed rename: %v", err)
 	}
 }
@@ -878,10 +878,10 @@ func TestCreateRelation_DuplicateRejectedTyped(t *testing.T) {
 	req := createReq(t, mgr, "r")
 	dec := createDec(t, mgr, "d")
 
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec.ID, Type: "addresses", To: req.ID}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	_, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{})
+	_, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec.ID, Type: "addresses", To: req.ID}, entity.RelationOptions{})
 	if !errors.Is(err, entitymanager.ErrRelationAlreadyExists) {
 		t.Fatalf("expected ErrRelationAlreadyExists, got %v", err)
 	}
@@ -891,7 +891,7 @@ func TestCreateRelation_SourceNotFoundTyped(t *testing.T) {
 	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	dec := createDec(t, mgr, "Target")
-	_, err := mgr.CreateRelation(context.Background(), "REQ-999", "addresses", dec.ID, entity.RelationOptions{})
+	_, err := mgr.CreateRelation(context.Background(), entity.RelationKey{From: "REQ-999", Type: "addresses", To: dec.ID}, entity.RelationOptions{})
 	if !errors.Is(err, entitymanager.ErrEntityNotFound) {
 		t.Fatalf("expected ErrEntityNotFound, got %v", err)
 	}
@@ -903,14 +903,14 @@ func TestUpdateRelation_MergesProperties(t *testing.T) {
 	ctx := context.Background()
 	req := createReq(t, mgr, "r")
 	dec := createDec(t, mgr, "d")
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{
+	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec.ID, Type: "addresses", To: req.ID}, entity.RelationOptions{
 		Properties: map[string]any{"weight": "high", "extra": "keep"},
 	}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
 	// Merge a new value and unset "extra".
-	rel, err := mgr.UpdateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{
+	rel, err := mgr.UpdateRelation(ctx, entity.RelationKey{From: dec.ID, Type: "addresses", To: req.ID}, entity.RelationOptions{
 		Properties: map[string]any{"weight": "low"},
 		MetaUnset:  []string{"extra"},
 	})
@@ -928,7 +928,7 @@ func TestUpdateRelation_MergesProperties(t *testing.T) {
 func TestUpdateRelation_NotFoundTyped(t *testing.T) {
 	t.Parallel()
 	mgr, _ := newManager(t, nil)
-	_, err := mgr.UpdateRelation(context.Background(), "DEC-1", "addresses", "REQ-1", entity.RelationOptions{})
+	_, err := mgr.UpdateRelation(context.Background(), entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}, entity.RelationOptions{})
 	if !errors.Is(err, entitymanager.ErrRelationNotFound) {
 		t.Fatalf("expected ErrRelationNotFound, got %v", err)
 	}
@@ -940,15 +940,15 @@ func TestDeleteRelation_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	req := createReq(t, mgr, "r")
 	dec := createDec(t, mgr, "d")
-	if _, err := mgr.CreateRelation(ctx, dec.ID, "addresses", req.ID, entity.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec.ID, Type: "addresses", To: req.ID}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
-	if err := mgr.DeleteRelation(ctx, dec.ID, "addresses", req.ID); err != nil {
+	if err := mgr.DeleteRelation(ctx, entity.RelationKey{From: dec.ID, Type: "addresses", To: req.ID}); err != nil {
 		t.Fatalf("DeleteRelation: %v", err)
 	}
 	// Second delete is now a "not found" but DeleteRelation wraps as
 	// a generic "delete relation" error — we just assert it fails.
-	if err := mgr.DeleteRelation(ctx, dec.ID, "addresses", req.ID); err == nil {
+	if err := mgr.DeleteRelation(ctx, entity.RelationKey{From: dec.ID, Type: "addresses", To: req.ID}); err == nil {
 		t.Error("expected error deleting already-deleted relation")
 	}
 }

@@ -108,7 +108,7 @@ func TestNextActionSourceWorld_ScopesTheQuery(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestAppV1(t)
-			app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+			app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 			seedFacedTicket(t, app, "TKT-1", "draft title", "published title")
 			oneSourceConfig(t, app, dataentryconfig.NextActionSource{SourceWorld: tc.sourceWorld})
 
@@ -125,7 +125,7 @@ func TestNextActionSourceWorld_ScopesTheQuery(t *testing.T) {
 // ticket with no published face simply has nothing to match.
 func TestNextActionSourceWorld_ExcludedEntityIsNotACandidate(t *testing.T) {
 	app := newTestAppV1(t)
-	app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 	// Draft only — no published face.
 	seedFacedTicket(t, app, "TKT-UNPUB", "never published", "")
 	oneSourceConfig(t, app, dataentryconfig.NextActionSource{SourceWorld: "published"})
@@ -141,7 +141,7 @@ func TestNextActionSourceWorld_ExcludedEntityIsNotACandidate(t *testing.T) {
 // world the operator never named.
 func TestNextActionSourceWorld_RequestWorldDoesNotScopeTheQuery(t *testing.T) {
 	app := newTestAppV1(t)
-	app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 	seedFacedTicket(t, app, "TKT-1", "draft title", "published title")
 	// No source_world: this source reads the DEFAULT world, whatever the
 	// request asks for.
@@ -183,7 +183,7 @@ func TestNextActionSourceWorld_UnreadableWorldSkipsTheSource(t *testing.T) {
 			// state, so a ticket is visible in it. Without that, "the grant
 			// denied me" and "the world excluded everything" both look empty
 			// and this test would pass with the grant check removed.
-			app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}, resolveDefault: true})
+			app.setWorlds(stubWorlds{names: map[string]bool{"published": true}, resolveDefault: true})
 			seedFacedTicket(t, app, "TKT-1", "draft title", "")
 			oneSourceConfig(t, app, dataentryconfig.NextActionSource{SourceWorld: "published"})
 
@@ -204,7 +204,7 @@ func TestNextActionSourceWorld_UnreadableWorldSkipsTheSource(t *testing.T) {
 // outage as a quiet suggestion box hides it with no operator signal.
 func TestNextActionSourceWorld_GateFailureIsNotADenial(t *testing.T) {
 	app := newTestAppV1(t)
-	app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}, resolveDefault: true})
+	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}, resolveDefault: true})
 	seedFacedTicket(t, app, "TKT-1", "draft title", "")
 	oneSourceConfig(t, app, dataentryconfig.NextActionSource{SourceWorld: "published"})
 
@@ -268,7 +268,7 @@ func TestNextActionVisibleWorlds_GatesDisplay(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestAppV1(t)
-			app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+			app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 			seedFacedTicket(t, app, "TKT-1", "draft title", "published title")
 			// No source_world: this axis must work independently of the other.
 			oneSourceConfig(t, app, dataentryconfig.NextActionSource{VisibleWorlds: tc.visible})
@@ -291,7 +291,7 @@ func TestNextActionVisibleWorlds_GatesDisplay(t *testing.T) {
 // Collapsing the two keys into one would make this unexpressible.
 func TestNextActionWorlds_AxesAreIndependent(t *testing.T) {
 	app := newTestAppV1(t)
-	app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 	seedFacedTicket(t, app, "TKT-1", "draft title", "published title")
 	oneSourceConfig(t, app, dataentryconfig.NextActionSource{
 		// Read the published face...
@@ -326,7 +326,7 @@ func TestNextActionRoute_AcceptsWorldParam(t *testing.T) {
 // attachWorld. Feedback addresses a source and an entity id directly.
 func TestNextActionRoute_FeedbackRefusesWorldParam(t *testing.T) {
 	app := newTestAppV1(t)
-	app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost,

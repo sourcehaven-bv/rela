@@ -34,7 +34,10 @@ export function usePageTabScope(scope: () => PageScope | undefined) {
     const page = pageStore.pages[s.page]
     const tab = page?.tabs.find((t) => t.id === s.tab)
     if (!page?.entity_type || !tab?.relation) return undefined
-    return { anchorType: page.entity_type, anchor: s.entity, relation: tab.relation, direction: tab.direction }
+    // The face on screen: a content-scoped link from a faced anchor must
+    // name it, and a bare id would be refused as face_required.
+    const anchor = s.ref ?? s.entity
+    return { anchorType: page.entity_type, anchor, relation: tab.relation, direction: tab.direction }
   })
 
   async function linkCreated(entity: Entity): Promise<void> {

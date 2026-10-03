@@ -79,7 +79,7 @@ func seedRelation(t *testing.T, store *countingStore, from, relType, to string) 
 	if err != nil {
 		t.Fatalf("seedRelation: New: %v", err)
 	}
-	if _, err := mgr.CreateRelation(context.Background(), from, relType, to, entity.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: relType, To: to}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("seedRelation: CreateRelation: %v", err)
 	}
 }
@@ -157,7 +157,7 @@ func TestManager_ACLDenies_AllWritePathsBlocked(t *testing.T) {
 				seedEntity(t, store, "requirement", "ToEntity")
 			},
 			run: func(_ *testing.T, mgr *entitymanager.Manager) error {
-				_, err := mgr.CreateRelation(context.Background(), "DEC-001", "addresses", "REQ-001", entity.RelationOptions{})
+				_, err := mgr.CreateRelation(context.Background(), entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}, entity.RelationOptions{})
 				return err
 			},
 			wantSubjectKind: "relation",
@@ -171,7 +171,7 @@ func TestManager_ACLDenies_AllWritePathsBlocked(t *testing.T) {
 				seedRelation(t, store, "DEC-001", "addresses", "REQ-001")
 			},
 			run: func(_ *testing.T, mgr *entitymanager.Manager) error {
-				_, err := mgr.UpdateRelation(context.Background(), "DEC-001", "addresses", "REQ-001", entity.RelationOptions{})
+				_, err := mgr.UpdateRelation(context.Background(), entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}, entity.RelationOptions{})
 				return err
 			},
 			wantSubjectKind: "relation",
@@ -185,7 +185,7 @@ func TestManager_ACLDenies_AllWritePathsBlocked(t *testing.T) {
 				seedRelation(t, store, "DEC-001", "addresses", "REQ-001")
 			},
 			run: func(_ *testing.T, mgr *entitymanager.Manager) error {
-				return mgr.DeleteRelation(context.Background(), "DEC-001", "addresses", "REQ-001")
+				return mgr.DeleteRelation(context.Background(), entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"})
 			},
 			wantSubjectKind: "relation",
 		},
@@ -284,13 +284,13 @@ func TestManager_NopACLAllows_AllWritePathsSucceed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEntity (decision): %v", err)
 	}
-	if _, err := mgr.CreateRelation(context.Background(), decRes.Entity.ID, "addresses", res.Entity.ID, entity.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(context.Background(), entity.RelationKey{From: decRes.Entity.ID, Type: "addresses", To: res.Entity.ID}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
-	if _, err := mgr.UpdateRelation(context.Background(), decRes.Entity.ID, "addresses", res.Entity.ID, entity.RelationOptions{}); err != nil {
+	if _, err := mgr.UpdateRelation(context.Background(), entity.RelationKey{From: decRes.Entity.ID, Type: "addresses", To: res.Entity.ID}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("UpdateRelation: %v", err)
 	}
-	if err := mgr.DeleteRelation(context.Background(), decRes.Entity.ID, "addresses", res.Entity.ID); err != nil {
+	if err := mgr.DeleteRelation(context.Background(), entity.RelationKey{From: decRes.Entity.ID, Type: "addresses", To: res.Entity.ID}); err != nil {
 		t.Fatalf("DeleteRelation: %v", err)
 	}
 	if _, err := mgr.DeleteEntity(context.Background(), res.Entity.ID, false); err != nil {
@@ -413,7 +413,7 @@ role_relations:
 	// TKT-002. After this edge exists, alice should be able to edit
 	// TKT-001 and only TKT-001.
 	if _, sErr := seedMgr.CreateRelation(context.Background(),
-		"alice", "assigned-to", tkt1ID, entity.RelationOptions{}); sErr != nil {
+		entity.RelationKey{From: "alice", Type: "assigned-to", To: tkt1ID}, entity.RelationOptions{}); sErr != nil {
 		t.Fatalf("seed assigned-to: %v", sErr)
 	}
 
@@ -478,7 +478,7 @@ role_relations:
 	}
 
 	// Verify TKT-001's title actually changed (the allow path landed).
-	got, err := store.GetEntity(context.Background(), tkt1ID)
+	got, err := store.GetEntity(context.Background(), entity.Ref{ID: tkt1ID})
 	if err != nil {
 		t.Fatalf("post-update GetEntity(TKT-001): %v", err)
 	}
@@ -564,7 +564,7 @@ assignments:
 		t.Fatalf("seed viewers: %v", sErr)
 	}
 	if _, sErr := seedMgr.CreateRelation(context.Background(),
-		"alice", "member-of", "viewers", entity.RelationOptions{}); sErr != nil {
+		entity.RelationKey{From: "alice", Type: "member-of", To: "viewers"}, entity.RelationOptions{}); sErr != nil {
 		t.Fatalf("seed member-of: %v", sErr)
 	}
 	tkt := entity.New("", "ticket")

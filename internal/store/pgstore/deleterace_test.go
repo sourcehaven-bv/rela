@@ -57,7 +57,7 @@ func TestDeleteEntity_RacingStateCreateIsAtomicPerFamily(t *testing.T) {
 		// Without seeding this the graph assertion below could never fail.
 		peer := "PEER-" + string(rune('A'+i%26)) + string(rune('A'+i/26))
 		require.NoError(t, s.CreateEntity(ctx, entity.New(peer, "page")))
-		_, relErr := s.CreateRelation(ctx, peer, "links", id, nil)
+		_, relErr := s.CreateRelation(ctx, entity.RelationKey{From: peer, Type: "links", To: id}, nil)
 		require.NoError(t, relErr)
 
 		var wg sync.WaitGroup
@@ -70,7 +70,7 @@ func TestDeleteEntity_RacingStateCreateIsAtomicPerFamily(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			_, _ = s.DeleteEntity(ctx, id, true)
+			_, _ = s.DeleteFamily(ctx, id, true)
 		}()
 		wg.Wait()
 
@@ -80,7 +80,7 @@ func TestDeleteEntity_RacingStateCreateIsAtomicPerFamily(t *testing.T) {
 		// is legitimate: the delete won (nothing left), or the create won the
 		// lock and re-established the family (its own rows, intact).
 		var left []string
-		for e, err := range s.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, AllStates: true}) {
+		for e, err := range s.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
 			require.NoError(t, err)
 			left = append(left, e.ID+"@"+e.Face.String())
 		}

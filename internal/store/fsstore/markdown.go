@@ -395,7 +395,7 @@ func formatRelation(r *entity.Relation) (string, error) {
 		"relation": r.Type,
 		"to":       r.To,
 	}
-	if !r.FromFace.IsDefault() {
+	if !r.FromFace.IsImplicit() {
 		fm["from_face"] = string(r.FromFace)
 	}
 	maps.Copy(fm, r.Properties)

@@ -64,6 +64,10 @@ relations:
   implements:
     from: [policy]
     to: [feature]
+  # A FACED head: the target is named by bare id and has no zero-face row.
+  governs:
+    from: [feature]
+    to: [policy]
   cites:
     from: [policy]
     to: [feature]
@@ -102,7 +106,15 @@ func policyPublishedScope() store.WorldScope {
 // the manager and the affordance service authorize against it.
 func facedApp(t *testing.T, d func(st store.Store) *acl.Declarative) (*App, *acl.Declarative) {
 	t.Helper()
-	meta := facedMeta(t)
+	return facedAppWith(t, facedMeta(t), policyPublishedScope(), d)
+}
+
+// facedAppWith is facedApp over meta, with world as the configured default
+// world.
+func facedAppWith(
+	t *testing.T, meta *metamodel.Metamodel, world store.WorldScope, d func(st store.Store) *acl.Declarative,
+) (*App, *acl.Declarative) {
+	t.Helper()
 	fs := storage.NewMemFS()
 	paths := &project.Context{Root: "/project", CacheDir: "/project/.rela"}
 	if err := fs.MkdirAll(paths.CacheDir, 0o755); err != nil {
@@ -127,7 +139,7 @@ func facedApp(t *testing.T, d func(st store.Store) *acl.Declarative) (*App, *acl
 		app.acl = decl
 	}
 	app.schema.Publish(&Schema{Cfg: cfg, Meta: meta})
-	app.SetWorlds(fixedWorlds{scope: policyPublishedScope()})
+	app.setWorlds(fixedWorlds{scope: world})
 	// Neighbor resolution wired as production does (rela-server main): the
 	// face-scoped edge seam the write response now uses falls back to the
 	// bare-id UNION without it, which is the mixed-face shape under test.
@@ -167,30 +179,29 @@ func getRouted(t *testing.T, app *App, path string) (status int, got v1.Entity, 
 	return rec.Code, got, rec.Body.String()
 }
 
-func TestParseEntityRef(t *testing.T) {
+func TestIsExplicitAddress(t *testing.T) {
 	for _, tc := range []struct {
 		raw  string
-		want entityRef
-		ok   bool
+		want bool
 	}{
-		// An unsuffixed id names the zero coordinate, which for a faced
-		// type is no row at all — the request's world turns it into one.
-		{"POL-1", entityRef{ID: "POL-1"}, true},
-		{"POL-1@published", entityRef{ID: "POL-1", Face: "published", Explicit: true}, true},
+		// An unsuffixed id names the zero coordinate: the world resolves it.
+		{"POL-1", false},
+		{"POL-1@published", true},
 		// No face is privileged: `draft` is a coordinate like `published`.
-		{"POL-1@draft", entityRef{ID: "POL-1", Face: "draft", Explicit: true}, true},
-		// An undeclared name is taken as it is spelled; the store decides
-		// existence, so a row under a since-dropped face stays addressable.
-		{"POL-1@nope", entityRef{ID: "POL-1", Face: "nope", Explicit: true}, true},
-		{"POL-1@@", entityRef{}, false},
-		{"POL-1@Published", entityRef{}, false},
-		{"POL-1@a@b", entityRef{}, false},
-		{"not an id", entityRef{}, false},
+		{"POL-1@draft", true},
+		// An undeclared name is taken as it is spelled.
+		{"POL-1@nope", true},
+		// A malformed address names no face.
+		{"POL-1@@", false},
+		{"POL-1@Published", false},
+		{"POL-1@a@b", false},
+		{"not an id", false},
 	} {
-		got, ok := parseEntityRef(tc.raw)
-		if ok != tc.ok || got != tc.want {
-			t.Errorf("parseEntityRef(%q) = %+v, %v; want %+v, %v", tc.raw, got, ok, tc.want, tc.ok)
-		}
+		t.Run(tc.raw, func(t *testing.T) {
+			if got := isExplicitAddress(tc.raw); got != tc.want {
+				t.Errorf("isExplicitAddress(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -344,11 +355,11 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	if got.Self != "/api/v1/policys/POL-1@published" {
 		t.Errorf("PATCH response _self = %q, want the face that was written", got.Self)
 	}
-	pub, err := app.store.GetEntityState(ctx, "POL-1", "published")
+	pub, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "published"})
 	if err != nil || pub.Properties["title"] != "PUBLISHED v2" {
 		t.Errorf("published face after PATCH: %v %v, want PUBLISHED v2", pub, err)
 	}
-	draft, err := app.store.GetEntityState(ctx, "POL-1", "draft")
+	draft, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "draft"})
 	if err != nil || draft.Properties["title"] != "DRAFT TEXT" {
 		t.Errorf("the draft must be untouched by a write to the published face; got %v %v", draft, err)
 	}
@@ -359,7 +370,7 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH POL-1@draft = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
-	if draft, _ = app.store.GetEntityState(ctx, "POL-1", "draft"); draft.Properties["title"] != "DRAFT v2" {
+	if draft, _ = app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "draft"}); draft.Properties["title"] != "DRAFT v2" {
 		t.Errorf("POL-1@draft must write the draft row; got %v", draft.Properties["title"])
 	}
 
@@ -406,8 +417,7 @@ func TestFacedAddress_PatchWritesTheNamedFace(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed draft-only target: %v", err)
 	}
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-2",
-		&store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "cites", To: "FEAT-2"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed draft-tailed edge: %v", err)
 	}
 	rec = patchEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published",
@@ -472,7 +482,7 @@ func TestFacedAddress_WritesDenyAsNotFound(t *testing.T) {
 				tc.name, existing.Body, missing.Body)
 		}
 	}
-	if _, err := app.store.GetEntityState(context.Background(), "POL-1", "draft"); err != nil {
+	if _, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"}); err != nil {
 		t.Errorf("the denied delete must not have removed the draft: %v", err)
 	}
 }
@@ -512,19 +522,19 @@ func TestFacedAddress_DeleteRemovesOnlyTheFace(t *testing.T) {
 	if rec = deleteEntityAs(alice, t, app, d, "policy", "policys", "POL-1@published"); rec.Code != http.StatusForbidden {
 		t.Errorf("DELETE POL-1@published with a draft-only grant = %d, want 403", rec.Code)
 	}
-	if _, err := app.store.GetEntityState(ctx, "POL-1", "published"); err != nil {
+	if _, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "published"}); err != nil {
 		t.Fatalf("the denied delete must not have removed the face: %v", err)
 	}
 
 	if rec = deleteEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published"); rec.Code != http.StatusNoContent {
 		t.Fatalf("DELETE POL-1@published = %d, want 204 (%s)", rec.Code, rec.Body)
 	}
-	if _, err := app.store.GetEntityState(ctx, "POL-1", "published"); err == nil {
+	if _, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "published"}); err == nil {
 		t.Errorf("the published face must be gone")
 	}
 	// The claim the whole test is named for: removing one face leaves the
 	// entity's other faces standing.
-	if _, err := app.store.GetEntityState(ctx, "POL-1", "draft"); err != nil {
+	if _, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "draft"}); err != nil {
 		t.Errorf("deleting a face must leave the entity's other faces standing: %v", err)
 	}
 	if rec = deleteEntityAs(bob, t, app, d, "policy", "policys", "POL-1@published"); rec.Code != http.StatusNotFound {
@@ -537,7 +547,7 @@ func TestFacedAddress_DeleteRemovesOnlyTheFace(t *testing.T) {
 	if rec = deleteEntityAs(bob, t, app, d, "policy", "policys", "POL-1@draft"); rec.Code != http.StatusNoContent {
 		t.Fatalf("DELETE POL-1@draft = %d, want 204 (%s)", rec.Code, rec.Body)
 	}
-	if _, err := app.store.GetEntityState(ctx, "POL-1", "draft"); err == nil {
+	if _, err := app.store.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: "draft"}); err == nil {
 		t.Errorf("the draft face must be gone")
 	}
 }
@@ -637,6 +647,8 @@ func edgeTails(
 }
 
 // assertEdgeTail fails unless the triple has an edge tailed at face.
+//
+//nolint:unparam // the signature mirrors assertNoEdgeTail; see there.
 func assertEdgeTail(
 	ctx context.Context, t *testing.T, app *App, from string, face entity.Face, relType, to string,
 ) {
@@ -652,10 +664,12 @@ func assertEdgeTail(
 // assertNoEdgeTail fails if the triple has an edge tailed at face. The
 // negative matters as much as the positive: a faced write that also lands on
 // the zero coordinate is misfiled, not merely redundant.
-// read together at every call site, and narrowing one of them would make the
-// positive and negative assertions look like different operations.
 //
-//nolint:unparam // signature deliberately mirrors assertEdgeTail: the pair is
+// The pair's signatures mirror each other because they are read together at
+// every call site; narrowing one would make the positive and negative
+// assertions look like different operations.
+//
+//nolint:unparam // the signature mirrors assertEdgeTail, as described above.
 func assertNoEdgeTail(
 	ctx context.Context, t *testing.T, app *App, from string, face entity.Face, relType, to string,
 ) {
@@ -688,8 +702,7 @@ func TestFacedAddress_IncomingEdgeAddressedByItsOwnTail(t *testing.T) {
 	bob := principal.With(ctx, principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
 
 	// A content-scoped edge tailed at the DRAFT face.
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-1",
-		&store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "cites", To: "FEAT-1"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed draft-tailed edge: %v", err)
 	}
 
@@ -741,12 +754,10 @@ func TestFacedAddress_RelationsSubTreeReachesItsOwnTail(t *testing.T) {
 			t.Fatalf("seed %s: %v", id, err)
 		}
 	}
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-DRAFT",
-		&store.RelationData{FromFace: "draft"}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "draft", Type: "cites", To: "FEAT-DRAFT"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed draft-tailed edge: %v", err)
 	}
-	if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-PUB",
-		&store.RelationData{FromFace: "published"}); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: "published", Type: "cites", To: "FEAT-PUB"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed published-tailed edge: %v", err)
 	}
 
@@ -781,9 +792,9 @@ func TestFacedAddress_RelationsSubTreeReachesItsOwnTail(t *testing.T) {
 	}
 }
 
-// TestFacedAddress_SingleRelationPatchHitsItsOwnTail pins rule 1 of
-// tailOfExistingEdge: when a triple carries an edge at TWO tails, a PATCH
-// addressed to one face must modify THAT face's edge.
+// TestFacedAddress_SingleRelationPatchHitsItsOwnTail pins
+// [writeHandler.ownedSource]: when a triple carries an edge at TWO tails, a
+// PATCH addressed to one face must modify THAT face's edge.
 //
 // Discovering the tail from the triple instead returns whichever edge the
 // store yields first, so `POL-1@draft` could write the published edge's meta
@@ -807,11 +818,9 @@ func TestFacedAddress_SingleRelationPatchHitsItsOwnTail(t *testing.T) {
 	// ONE triple, TWO tails — the case a tail discovered from the triple
 	// cannot distinguish.
 	for _, face := range []entity.Face{"published", "draft"} {
-		if _, err := app.store.CreateRelation(ctx, "POL-1", "cites", "FEAT-1",
-			&store.RelationData{
-				FromFace:   face,
-				Properties: map[string]any{"note": string(face) + " original"},
-			}); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: face, Type: "cites", To: "FEAT-1"}, &store.RelationData{
+			Properties: map[string]any{"note": string(face) + " original"},
+		}); err != nil {
 			t.Fatalf("seed %s-tailed edge: %v", face, err)
 		}
 	}
@@ -834,7 +843,7 @@ func TestFacedAddress_SingleRelationPatchHitsItsOwnTail(t *testing.T) {
 
 	noteAt := func(face entity.Face) string {
 		t.Helper()
-		rel, err := edgeOnFace(ctx, app.store, "POL-1", face, "cites", "FEAT-1")
+		rel, err := app.store.GetRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: face, Type: "cites", To: "FEAT-1"})
 		if err != nil {
 			t.Fatalf("read %s-tailed edge: %v", face, err)
 		}

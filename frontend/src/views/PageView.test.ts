@@ -108,10 +108,12 @@ describe('PageView on an entity page', () => {
   })
 
   it('hands a relation tab the page scope and a gantt tab the root', async () => {
-    getEntityMock.mockResolvedValue({ id: 'TOP-1', type: 'topic', properties: {} })
+    getEntityMock.mockResolvedValue({
+      id: 'TOP-1', type: 'topic', properties: {}, _self: '/api/v1/topics/TOP-1@draft',
+    })
     const board = await mountPage({ page: 'topic', entity: 'TOP-1', tab: 'board' })
     expect(viewProps(board, 'KanbanView')).toEqual({
-      id: 'taken_bord', pageScope: { page: 'topic', tab: 'board', entity: 'TOP-1' },
+      id: 'taken_bord', pageScope: { page: 'topic', tab: 'board', entity: 'TOP-1', ref: 'TOP-1@draft' },
     })
     const gantt = await mountPage({ page: 'topic', entity: 'TOP-1', tab: 'tijdlijn' })
     expect(viewProps(gantt, 'GanttView')).toEqual({ id: 'portfolio', root: 'TOP-1' })

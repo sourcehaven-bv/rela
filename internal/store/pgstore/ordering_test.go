@@ -43,7 +43,7 @@ func TestListOrderIsByteWise(t *testing.T) {
 	sort.Strings(want)
 
 	var got []string
-	for e, err := range s.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range s.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		require.NoError(t, err)
 		got = append(got, e.ID)
 	}
@@ -54,7 +54,7 @@ func TestListOrderIsByteWise(t *testing.T) {
 	var paged []string
 	cursor := ""
 	for {
-		page, err := s.ListEntitiesPage(ctx, store.EntityQuery{Limit: 1, Cursor: cursor})
+		page, err := s.ListEntitiesPage(ctx, store.EntityQuery{Limit: 1, Cursor: cursor, Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		for _, e := range page.Items {
 			paged = append(paged, e.ID)

@@ -2,7 +2,6 @@ package dataentry
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"slices"
 
@@ -25,18 +24,17 @@ import (
 // route handles them as no-op navigation. Returns nil when no mentions
 // are found so callers can rely on JSON `omitempty` for empty maps.
 //
-// Store failures other than ErrNotFound are logged and skipped: a flaky
-// per-ID lookup must not break the whole view-fetch response. The
-// fall-through degrades to "code span stays as <code>" which matches the
-// unknown-ID UX. Context cancellation is honored — callers (HTTP handlers)
-// have already bound the request context and abandoning further lookups
-// after the client disconnects saves wasted work.
+// A store failure is logged and drops every mention: a failed lookup must
+// not break the whole view-fetch response. The fall-through degrades to
+// "code span stays as <code>", which matches the unknown-ID UX. A cancelled
+// context skips the lookup: callers (HTTP handlers) have already bound the
+// request context, and a client that disconnected wants no answer.
 func collectMentions(
-	ctx context.Context, s store.EntityReader, vis visibility.Reader,
+	ctx context.Context, s store.EntityLister, vis visibility.Reader,
 	meta *metamodel.Metamodel, contents ...string,
 ) map[string]v1.Mention {
 	candidates := scanCodeSpanCandidates(contents...)
-	if len(candidates) == 0 {
+	if len(candidates) == 0 || ctx.Err() != nil {
 		return nil
 	}
 
@@ -46,21 +44,23 @@ func collectMentions(
 	// display property is hidden falls back to its id (BUG-R9EHKV). Mentions
 	// are arbitrary code-span IDs in user markdown, so without this a `TKT-…`
 	// span pointing at a hidden entity leaked its title via DisplayTitle.
-	loaded := make([]*entityPkg.Entity, 0, len(candidates))
+	//
+	// Every candidate's default-face row is loaded content-free in one batch.
+	// An id with no such row is not a mention.
+	ids := make([]string, 0, len(candidates))
 	for id := range candidates {
-		if err := ctx.Err(); err != nil {
-			break
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	rows, err := loadDefaultFaceHeaders(ctx, s, ids)
+	if err != nil {
+		slog.WarnContext(ctx, "mentions: store lookup failed", "ids", len(ids), "err", err)
+	}
+	loaded := make([]*entityPkg.Entity, 0, len(rows))
+	for _, id := range ids {
+		if ent, ok := rows[id]; ok {
+			loaded = append(loaded, ent)
 		}
-		ent, err := s.GetEntity(ctx, id)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				continue
-			}
-			slog.WarnContext(ctx, "mentions: store lookup failed",
-				"id", id, "err", err)
-			continue
-		}
-		loaded = append(loaded, ent)
 	}
 
 	visible := vis.Filter(ctx, loaded)

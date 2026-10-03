@@ -61,6 +61,7 @@ func TestFacePrimacy_DeclaringOneResolvesTheTie(t *testing.T) {
   editorial-nl:
     select: [nl]
     otherwise: default
+default_world: site-nl
 `)
 	if err != nil {
 		t.Fatalf("one claimant resolves the ambiguity, so this must load: %v", err)
@@ -155,6 +156,7 @@ func TestFacePrimacy_DeclaringOneResolvesTheOtherwiseTie(t *testing.T) {
   lenient:
     select: [nl]
     otherwise: default
+default_world: published
 `); err != nil {
 		t.Fatalf("a declared claimant must resolve the tie: %v", err)
 	}
@@ -202,6 +204,7 @@ worlds:
     overrides:
       guide: [en]
     otherwise: default
+default_world: a
 `
 	if _, err := parseWorlds(t, doc); err != nil {
 		t.Fatalf("no (type, face) pair is led by both worlds, so this must load: %v", err)

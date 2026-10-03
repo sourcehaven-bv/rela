@@ -32,8 +32,12 @@ type Mutator interface {
 	// this for partial writes so they need no raw store handle.
 	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
-	CreateRelation(ctx context.Context, from, relType, to string, opts entity.RelationOptions) (*entity.Relation, error)
-	DeleteRelation(ctx context.Context, from, relType, to string) error
+	// DeleteEntityFace deletes one face and the edges tailed at it.
+	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
+	CreateRelation(ctx context.Context, key entity.RelationKey, opts entity.RelationOptions) (*entity.Relation, error)
+	// DeleteRelation deletes the edge key names, tail included; the zero
+	// tail is the implicit-tail edge.
+	DeleteRelation(ctx context.Context, key entity.RelationKey) error
 }
 
 // ElevatedProvider is an OPTIONAL capability a Mutator may expose

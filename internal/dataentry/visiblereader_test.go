@@ -8,7 +8,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // configGate is a configurable readGate test double for visibleReader unit
@@ -26,7 +28,7 @@ func (g configGate) PermitsRead(_ context.Context, _ /*entityType*/, id string) 
 	return g.permits[id], nil
 }
 
-func (g configGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g configGate) permitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
 	if g.err != nil {
 		return nil, g.err
 	}
@@ -62,15 +64,19 @@ func seedReader(t *testing.T) visibleReader {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	return newVisibleReader(st)
+	vr, err := newVisibleReader(st, tokenFamilies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return vr
 }
 
-func TestVisibleReader_GetVisible(t *testing.T) {
+func TestVisibleReader_InWorld(t *testing.T) {
 	vr := seedReader(t)
 
 	t.Run("permitted and present", func(t *testing.T) {
 		ctx := withReadGate(context.Background(), configGate{permits: map[string]bool{"TKT-001": true}})
-		e, found, err := vr.getVisible(ctx, "ticket", "TKT-001")
+		e, found, err := vr.inWorld(ctx, "ticket", "TKT-001")
 		if err != nil || !found || e == nil || e.ID != "TKT-001" {
 			t.Fatalf("got (%v, %v, %v), want (TKT-001, true, nil)", e, found, err)
 		}
@@ -78,7 +84,7 @@ func TestVisibleReader_GetVisible(t *testing.T) {
 
 	t.Run("denied is indistinguishable from absent", func(t *testing.T) {
 		ctx := withReadGate(context.Background(), configGate{permits: map[string]bool{"TKT-001": false}})
-		e, found, err := vr.getVisible(ctx, "ticket", "TKT-001")
+		e, found, err := vr.inWorld(ctx, "ticket", "TKT-001")
 		if err != nil || found || e != nil {
 			t.Fatalf("denied: got (%v, %v, %v), want (nil, false, nil)", e, found, err)
 		}
@@ -86,7 +92,7 @@ func TestVisibleReader_GetVisible(t *testing.T) {
 
 	t.Run("absent entity that is permitted", func(t *testing.T) {
 		ctx := withReadGate(context.Background(), configGate{permits: map[string]bool{"TKT-999": true}})
-		e, found, err := vr.getVisible(ctx, "ticket", "TKT-999")
+		e, found, err := vr.inWorld(ctx, "ticket", "TKT-999")
 		if err != nil || found || e != nil {
 			t.Fatalf("absent: got (%v, %v, %v), want (nil, false, nil)", e, found, err)
 		}
@@ -95,7 +101,7 @@ func TestVisibleReader_GetVisible(t *testing.T) {
 	t.Run("gate error surfaces (not a deny)", func(t *testing.T) {
 		sentinel := errors.New("gate boom")
 		ctx := withReadGate(context.Background(), configGate{err: sentinel})
-		e, found, err := vr.getVisible(ctx, "ticket", "TKT-001")
+		e, found, err := vr.inWorld(ctx, "ticket", "TKT-001")
 		if !errors.Is(err, sentinel) || found || e != nil {
 			t.Fatalf("gate error: got (%v, %v, %v), want (nil, false, sentinel)", e, found, err)
 		}
@@ -106,13 +112,70 @@ func TestVisibleReader_GetVisible(t *testing.T) {
 		// read of an absent id returns the same (nil,false,nil) as a denied
 		// read of a present id, so no existence signal leaks.
 		ctx := withReadGate(context.Background(), configGate{permits: map[string]bool{}})
-		ePresent, fp, _ := vr.getVisible(ctx, "ticket", "TKT-001")
-		eAbsent, fa, _ := vr.getVisible(ctx, "ticket", "TKT-999")
+		ePresent, fp, _ := vr.inWorld(ctx, "ticket", "TKT-001")
+		eAbsent, fa, _ := vr.inWorld(ctx, "ticket", "TKT-999")
 		if fp || fa || ePresent != nil || eAbsent != nil {
 			t.Fatalf("denied present vs absent must be identical: present=(%v,%v) absent=(%v,%v)",
 				ePresent, fp, eAbsent, fa)
 		}
 	})
+}
+
+// tokenFamilies ranks no face, so faces list by token. It is for tests
+// whose schema order does not matter.
+func tokenFamilies() store.WorldScope { return store.TrivialScope() }
+
+func TestNewVisibleReader_RejectsNilStore(t *testing.T) {
+	if _, err := newVisibleReader(nil, tokenFamilies); err == nil {
+		t.Fatal("newVisibleReader(nil) = nil error, want a refusal")
+	}
+	if _, err := newVisibleReader(memstore.New(), nil); err == nil {
+		t.Fatal("newVisibleReader with a nil order = nil error, want a refusal")
+	}
+}
+
+// TestVisibleReader_ReadableType pins the entity-level check a relation
+// endpoint named by bare id gets: the stored type when some face is readable,
+// and the same empty answer for a hidden id, an absent one and a gate error's
+// caller-visible verdict.
+func TestVisibleReader_ReadableType(t *testing.T) {
+	vr := seedReader(t)
+	sentinel := errors.New("gate boom")
+	for _, tc := range []struct {
+		name    string
+		gate    configGate
+		id      string
+		want    string
+		wantErr error
+	}{
+		{"readable", configGate{permits: map[string]bool{"FEAT-001": true}}, "FEAT-001", "feature", nil},
+		{"hidden", configGate{permits: map[string]bool{}}, "FEAT-001", "", nil},
+		{"absent", configGate{permits: map[string]bool{"NOPE-1": true}}, "NOPE-1", "", nil},
+		{"gate error", configGate{err: sentinel}, "FEAT-001", "", sentinel},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := vr.readableType(withReadGate(context.Background(), tc.gate), tc.id)
+			if got != tc.want || !errors.Is(err, tc.wantErr) {
+				t.Fatalf("readableType(%s) = (%q, %v), want (%q, %v)", tc.id, got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestVisibleReader_UntypedAddress pins the typeless read commands and detail
+// actions use: the gates run on the STORED type, and a malformed, absent or
+// hidden address is the same clean miss.
+func TestVisibleReader_UntypedAddress(t *testing.T) {
+	vr := seedReader(t)
+	ctx := withReadGate(context.Background(), configGate{permits: map[string]bool{"TKT-001": true}})
+	if e, ok, err := vr.untypedAddress(ctx, "TKT-001"); err != nil || !ok || e.Type != "ticket" {
+		t.Fatalf("readable: got (%v, %v, %v), want the ticket row", e, ok, err)
+	}
+	for _, addr := range []string{"TKT-002", "TKT-999", "not an id", "TKT-001@@"} {
+		if e, ok, err := vr.untypedAddress(ctx, addr); err != nil || ok || e != nil {
+			t.Errorf("%q: got (%v, %v, %v), want a clean miss", addr, e, ok, err)
+		}
+	}
 }
 
 func TestVisibleReader_FilterVisible(t *testing.T) {
@@ -164,4 +227,8 @@ func ids(es []*entity.Entity) []string {
 		out[i] = e.ID
 	}
 	return out
+}
+
+func (g configGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids))
 }

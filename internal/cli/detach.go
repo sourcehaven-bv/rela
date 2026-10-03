@@ -10,13 +10,17 @@ import (
 // property holds several attachments, --file selects which one.
 type DetachCmd struct {
 	File     string `short:"f" help:"File name to detach (required when the property holds more than one)."`
-	EntityID string `arg:"" name:"entity-id" help:"Target entity ID."`
+	EntityID string `arg:"" name:"entity-id" help:"Target entity ID, or ID@face for a faced type."`
 	Property string `arg:"" help:"Property name."`
 }
 
 // Run dispatches `rela detach <entity-id> <property> [--file <name>]`.
-func (c *DetachCmd) Run(ctx context.Context, att *attachment.Service) error {
-	removed, err := att.Detach(ctx, c.EntityID, c.Property, c.File)
+func (c *DetachCmd) Run(ctx context.Context, svc *readServices, att *attachment.Service) error {
+	ref, err := writeTarget(ctx, svc.Store, svc.Families, svc.World, c.EntityID)
+	if err != nil {
+		return err
+	}
+	removed, err := att.Detach(ctx, ref, c.Property, c.File)
 	if err != nil {
 		return err
 	}

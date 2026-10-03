@@ -8,11 +8,10 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	syncclient "github.com/Sourcehaven-BV/rela/internal/cli/sync"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -44,6 +43,12 @@ type readServices struct {
 	Config    config.Loader
 	Templater templating.Templater
 	FS        storage.FS
+	// World is the world `list` reads in when the user names none, from
+	// the compiled worlds' default-world seam.
+	World store.WorldScope
+	// Families selects one row per entity whichever face it stores, for
+	// per-type counts (worlds.Compiled.Families). Never a read world.
+	Families store.WorldScope
 }
 
 // writeServices is the read-write capability bundle. It embeds
@@ -59,23 +64,10 @@ type writeServices struct {
 	readServices
 	EntityManager entityWriter
 
-	// SyncApplier is the id-preserving, automation-suppressed write path
-	// `rela sync` needs (syncclient.LocalApplier). It is a SEPARATE typed
-	// field, not a type assertion on EntityManager, for two reasons.
-	//
-	// First, it is a genuinely distinct capability: ApplyEntity/ApplyRelation
-	// land a remote record verbatim, which is not part of the human-intent
-	// write surface the other subcommands use — so it is its own dependency,
-	// declared as one (CLAUDE.md: define a typed dependency rather than a
-	// type-assertion back-channel).
-	//
-	// Second, the assertion it replaces failed OPEN: it set the applier to nil
-	// on a miss, and `sync push` dereferences it on the create-id-adoption path
-	// (push.go, `newID != ch.Key`), so a miss was a panic rather than the
-	// "only breaks pull" the old comment claimed. The wiring site holds the
-	// concrete *entitymanager.Manager, so assigning this field is checked by
-	// the compiler and the failure mode is gone (TKT-IVSJV6).
-	SyncApplier  syncclient.LocalApplier
+	// Recreator brings a deleted face back at its own id on `rela restore`,
+	// create-only: it never falls through to a whole-record update when the
+	// face was recreated in the meantime.
+	Recreator    entityRecreator
 	Validator    validator.Validator
 	Audit        audit.Audit
 	LuaCache     *lua.Cache
@@ -93,27 +85,22 @@ type writeServices struct {
 // Eight of the manager's nine write methods. ValidateCreate is absent because
 // no subcommand dry-runs a create — the CLI either writes or it doesn't, and
 // the advisory path exists for the data-entry form.
-//
-// Note `rela sync pull` additionally type-asserts this value to
-// syncclient.LocalApplier for the id-preserving applier — see buildSyncEngine.
-// Those methods stay off this interface deliberately: they are a distinct
-// capability (apply a remote record verbatim), not part of the human-intent
-// write surface the other subcommands use.
 type entityWriter interface {
 	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
 	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
 	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
+	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
 	RenameEntity(
 		ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 	) (*entity.RenameResult, error)
 	CreateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
 	UpdateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
-	DeleteRelation(ctx context.Context, from, relType, to string) error
+	DeleteRelation(ctx context.Context, key entity.RelationKey) error
 }
 
 // cliBundles is everything the kong wiring binds for command Run methods:
@@ -132,11 +119,15 @@ type cliBundles struct {
 // appbuild.Services. Used by the kong wiring in production and by CLI
 // test fixtures.
 func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
+	owner, err := entitymanager.AttachmentsOf(svc.EntityManager())
+	if err != nil { // coverage-ignore: defensive: appbuild always wires the manager's attachment lock
+		return nil, fmt.Errorf("attachment service: %w", err)
+	}
 	att, err := attachment.New(attachment.Deps{
 		Store:         svc.Store(),
 		Meta:          svc.Meta(),
-		EntityManager: svc.EntityManager(),
-		Locker:        lock.For(svc.Store()),
+		EntityManager: owner,
+		Locker:        owner,
 		Authorizer:    attachment.AllowAllWrites{}, // operator shell: no ACL
 		// Native MIME allowlist on the CLI attach path too (runner nil →
 		// no external scan/transform until the cmd: harness is wired).
@@ -178,11 +169,13 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		Config:    svc.Config(),
 		Templater: svc.Templater(),
 		FS:        svc.FS(),
+		World:     appbuild.CompiledWorlds(svc).DefaultWorld(),
+		Families:  appbuild.CompiledWorlds(svc).Families(),
 	}
 	write := writeServices{
 		readServices:  read,
 		EntityManager: svc.EntityManager(),
-		SyncApplier:   svc.EntityManager(),
+		Recreator:     entitymanager.Recreator{M: svc.EntityManager()},
 		Validator:     svc.Validator(),
 		Audit:         svc.Audit(),
 		LuaCache:      svc.ScriptEngine().LuaCache(),

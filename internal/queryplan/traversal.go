@@ -110,7 +110,7 @@ func traversalIndexTarget(
 // scopeTraversalSpecs returns the traversal index specs of EVERY declared
 // query scope, not only the ones a list names. A request may select any
 // declared scope by name, and each traversal in it issues one
-// [store.Store.MatchingIDs] query against the far-end type, so a scope a list
+// [store.MatchingIDs] query against the far-end type, so a scope a list
 // does not mention is still a query shape the store serves.
 //
 // A scope that does not compile contributes nothing; the metamodel loader
@@ -150,7 +150,7 @@ func scopeTraversalSpecs(meta *metamodel.Metamodel) []store.DerivedObjectSpec {
 
 // conditionTraversalSpecs returns the traversal index specs of every list
 // and next-action condition. Each traversal in one issues a
-// [store.Store.MatchingIDs] query per page, the same shape a scope's does.
+// [store.MatchingIDs] query per page, the same shape a scope's does.
 //
 // A condition that does not compile contributes nothing; conditionlint has
 // already refused it at config load.

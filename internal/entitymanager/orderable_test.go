@@ -130,11 +130,11 @@ func TestCreateRelation_AssignsOrder(t *testing.T) {
 			step1 := mkStep(t, mgr, "Boil water")
 			step2 := mkStep(t, mgr, "Add salt")
 
-			rel1, err := mgr.CreateRelation(ctx, recipe.ID, "has-step", step1.ID, entity.RelationOptions{})
+			rel1, err := mgr.CreateRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step1.ID}, entity.RelationOptions{})
 			if err != nil {
 				t.Fatalf("create rel1: %v", err)
 			}
-			rel2, err := mgr.CreateRelation(ctx, recipe.ID, "has-step", step2.ID, entity.RelationOptions{})
+			rel2, err := mgr.CreateRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step2.ID}, entity.RelationOptions{})
 			if err != nil {
 				t.Fatalf("create rel2: %v", err)
 			}
@@ -178,7 +178,7 @@ func TestCreateRelation_ExplicitOrderRespected(t *testing.T) {
 	recipe := mkRecipe(t, mgr, "Stew")
 	step := mkStep(t, mgr, "Chop")
 
-	rel, err := mgr.CreateRelation(ctx, recipe.ID, "has-step", step.ID, entity.RelationOptions{
+	rel, err := mgr.CreateRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step.ID}, entity.RelationOptions{
 		Properties: map[string]any{metamodel.OrderPropertyOut: 42.5},
 	})
 	if err != nil {
@@ -212,7 +212,7 @@ func TestCreateRelation_GarbageOrderValueIsOverwritten(t *testing.T) {
 			recipe := mkRecipe(t, mgr, "X")
 			step := mkStep(t, mgr, "Y")
 
-			rel, err := mgr.CreateRelation(ctx, recipe.ID, "has-step", step.ID, entity.RelationOptions{
+			rel, err := mgr.CreateRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step.ID}, entity.RelationOptions{
 				Properties: map[string]any{metamodel.OrderPropertyOut: tt.value},
 			})
 			if err != nil {
@@ -232,7 +232,7 @@ func TestUpdateRelation_BothMode_SidesIndependent(t *testing.T) {
 	recipe := mkRecipe(t, mgr, "X")
 	step := mkStep(t, mgr, "Y")
 
-	rel, err := mgr.CreateRelation(ctx, recipe.ID, "has-step", step.ID, entity.RelationOptions{})
+	rel, err := mgr.CreateRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step.ID}, entity.RelationOptions{})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -241,14 +241,14 @@ func TestUpdateRelation_BothMode_SidesIndependent(t *testing.T) {
 			rel.Properties[metamodel.OrderPropertyOut], rel.Properties[metamodel.OrderPropertyIn])
 	}
 
-	_, err = mgr.UpdateRelation(ctx, recipe.ID, "has-step", step.ID, entity.RelationOptions{
+	_, err = mgr.UpdateRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step.ID}, entity.RelationOptions{
 		Properties: map[string]any{metamodel.OrderPropertyOut: 5.5},
 	})
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
 
-	got, err := st.GetRelation(ctx, recipe.ID, "has-step", step.ID)
+	got, err := st.GetRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step.ID})
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -279,18 +279,18 @@ func TestUpdateRelation_RejectsNonFiniteOrder(t *testing.T) {
 			ctx := context.Background()
 			recipe := mkRecipe(t, mgr, "X")
 			step := mkStep(t, mgr, "Y")
-			if _, err := mgr.CreateRelation(ctx, recipe.ID, "has-step", step.ID, entity.RelationOptions{}); err != nil {
+			if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step.ID}, entity.RelationOptions{}); err != nil {
 				t.Fatalf("create baseline: %v", err)
 			}
 
-			_, err := mgr.UpdateRelation(ctx, recipe.ID, "has-step", step.ID, entity.RelationOptions{
+			_, err := mgr.UpdateRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step.ID}, entity.RelationOptions{
 				Properties: map[string]any{metamodel.OrderPropertyOut: tt.value},
 			})
 			if err == nil {
 				t.Fatalf("expected update to fail for value %v, got nil error", tt.value)
 			}
 
-			got, getErr := st.GetRelation(ctx, recipe.ID, "has-step", step.ID)
+			got, getErr := st.GetRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: step.ID})
 			if getErr != nil {
 				t.Fatalf("get: %v", getErr)
 			}
@@ -316,7 +316,7 @@ func TestRenumber_EmitsAuditRecords(t *testing.T) {
 
 	// Steps get dense orders 1, 2, 3.
 	for _, s := range []*entity.Entity{s1, s2, s3} {
-		if _, err := mgr.CreateRelation(ctx, recipe.ID, "has-step", s.ID, entity.RelationOptions{}); err != nil {
+		if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: s.ID}, entity.RelationOptions{}); err != nil {
 			t.Fatalf("create relation: %v", err)
 		}
 	}
@@ -325,7 +325,7 @@ func TestRenumber_EmitsAuditRecords(t *testing.T) {
 	// the outgoing side. The update itself is one audited write; the renumber
 	// writes are additional records.
 	before := len(mem.Records())
-	if _, err := mgr.UpdateRelation(ctx, recipe.ID, "has-step", s3.ID, entity.RelationOptions{
+	if _, err := mgr.UpdateRelation(ctx, entity.RelationKey{From: recipe.ID, Type: "has-step", To: s3.ID}, entity.RelationOptions{
 		Properties: map[string]any{metamodel.OrderPropertyOut: 2.0},
 	}); err != nil {
 		t.Fatalf("update relation: %v", err)

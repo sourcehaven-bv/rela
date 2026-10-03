@@ -29,7 +29,7 @@ import "encoding/json"
 //
 // Faces are INCLUDED, and A5 does not argue against them (TKT-O0A8FO). A face
 // is not part of the id: entity.Entity.Face is its own field, addressed as a
-// separate parameter (store.GetEntityState(ctx, id, face)); the `GUIDE-1@nl`
+// separate field of entity.Ref (store.GetEntity(ctx, ref)); the `GUIDE-1@nl`
 // spelling is a display and URL convention. So a face rename is an in-place
 // field rewrite of the kind rename_entity_type already performs, not the id
 // rewrite A5 says no step can do.
@@ -40,6 +40,12 @@ type ShapeProjection struct {
 	Relations map[string]RelationShape `json:"relations"`
 	// Types maps each named custom (enum) type to its ordered value list.
 	Types map[string][]string `json:"types"`
+	// RelationScopes records that this projection carries RelationShape.Scope.
+	// A projection recorded before Scope joined the shape decodes every
+	// relation as identity-scoped, which is wrong for a content-scoped one, so
+	// CompareShapes compares scopes only when both sides record them. Not
+	// hashed: it describes the record's format, not the data.
+	RelationScopes bool `json:"relation_scopes,omitempty"`
 }
 
 // EntityShape is the data-shape projection of one entity type.
@@ -80,15 +86,21 @@ type PropertyShape struct {
 
 // RelationShape is the data-shape projection of one relation type.
 type RelationShape struct {
-	From        []string                 `json:"from,omitempty"`
-	To          []string                 `json:"to,omitempty"`
-	Symmetric   bool                     `json:"symmetric,omitempty"`
-	MinOutgoing *int                     `json:"min_outgoing,omitempty"`
-	MaxOutgoing *int                     `json:"max_outgoing,omitempty"`
-	MinIncoming *int                     `json:"min_incoming,omitempty"`
-	MaxIncoming *int                     `json:"max_incoming,omitempty"`
-	Content     bool                     `json:"content,omitempty"`
-	Properties  map[string]PropertyShape `json:"properties,omitempty"`
+	From        []string `json:"from,omitempty"`
+	To          []string `json:"to,omitempty"`
+	Symmetric   bool     `json:"symmetric,omitempty"`
+	MinOutgoing *int     `json:"min_outgoing,omitempty"`
+	MaxOutgoing *int     `json:"max_outgoing,omitempty"`
+	MinIncoming *int     `json:"min_incoming,omitempty"`
+	MaxIncoming *int     `json:"max_incoming,omitempty"`
+	Content     bool     `json:"content,omitempty"`
+	// Scope is ScopeContent or empty. Both identity spellings project to
+	// empty, so writing out `scope: identity` is not a shape change. A
+	// stored edge's tail is a coordinate like an entity's face: a
+	// content-scoped edge hangs from one face, an identity-scoped edge from
+	// the entity. Scope is therefore part of the shape.
+	Scope      RelationScope            `json:"scope,omitempty"`
+	Properties map[string]PropertyShape `json:"properties,omitempty"`
 }
 
 // ShapeProjection returns the data-shape projection of the metamodel.
@@ -99,6 +111,8 @@ func (m *Metamodel) ShapeProjection() ShapeProjection {
 		Entities:  make(map[string]EntityShape, len(m.Entities)),
 		Relations: make(map[string]RelationShape, len(m.Relations)),
 		Types:     make(map[string][]string, len(m.Types)),
+
+		RelationScopes: true,
 	}
 	for name, def := range m.Entities {
 		es := EntityShape{
@@ -120,6 +134,9 @@ func (m *Metamodel) ShapeProjection() ShapeProjection {
 			MinIncoming: cloneIntPtr(def.MinIncoming),
 			MaxIncoming: cloneIntPtr(def.MaxIncoming),
 			Content:     def.Content,
+		}
+		if def.Scope.IsContent() {
+			rs.Scope = ScopeContent
 		}
 		if len(def.Properties) > 0 {
 			rs.Properties = make(map[string]PropertyShape, len(def.Properties))
@@ -195,6 +212,16 @@ func (p ShapeProjection) Hash() string {
 		h.optInt(rs.MinIncoming)
 		h.optInt(rs.MaxIncoming)
 		h.boolean(rs.Content)
+		// Hashed only when content-scoped, so a schema without content-scoped
+		// relations keeps the hash it had before Scope joined the shape. One
+		// with them moves its hash once on upgrade; the gate then finds no
+		// delta, because CompareShapes skips scopes against an older record,
+		// and adopts silently. The
+		// tag byte cannot be mistaken for the property count that follows,
+		// whose first byte is zero.
+		if rs.Scope.IsContent() {
+			h.tag('C')
+		}
 		hashPropertyShapes(h, rs.Properties)
 	}
 

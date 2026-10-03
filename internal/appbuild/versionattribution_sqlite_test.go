@@ -40,7 +40,7 @@ func TestSQLiteSweptVersionCreditsThePrincipal(t *testing.T) {
 
 	var metas []store.VersionMeta
 	require.Eventually(t, func() bool {
-		metas, err = svc.Versions().ListVersions(context.Background(), id)
+		metas, err = svc.Versions().ListVersions(context.Background(), entity.Ref{ID: id})
 		return err == nil && len(metas) == 1
 	}, 5*time.Second, 20*time.Millisecond, "the sweep never captured %s", id)
 	require.Equal(t, editor.User, metas[0].PrincipalUser)
@@ -100,7 +100,7 @@ func TestSQLiteSweptCopyNamesItsSource(t *testing.T) {
 
 	var metas []store.VersionMeta
 	require.Eventually(t, func() bool {
-		metas, err = svc.Versions().ListVersions(context.Background(), "NOTE-1")
+		metas, err = svc.Versions().ListVersions(context.Background(), entity.Ref{ID: "NOTE-1"})
 		return err == nil && len(metas) == 1
 	}, 5*time.Second, 20*time.Millisecond, "the sweep never captured NOTE-1")
 	require.Equal(t, store.OriginCopy, metas[0].Origin.Kind)

@@ -8,6 +8,7 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // TestNewServer_RejectsZeroPrincipal verifies that NewServer refuses
@@ -16,7 +17,7 @@ import (
 // invisible bug.
 func TestNewServer_RejectsZeroPrincipal(t *testing.T) {
 	t.Parallel()
-	_, err := NewServer(Deps{}, "0.0.0")
+	_, err := NewServer(Deps{World: store.TrivialScope(), Families: store.TrivialScope()}, "0.0.0")
 	if err == nil {
 		t.Fatal("expected error when WithPrincipal is omitted")
 	}
@@ -47,6 +48,8 @@ func TestNewServer_RejectsIncompleteDeps(t *testing.T) {
 		"Config":        func(d *Deps) { d.Config = nil },
 		"Watcher":       func(d *Deps) { d.Watcher = nil },
 		"ProjectRoot":   func(d *Deps) { d.ProjectRoot = "" },
+		"World":         func(d *Deps) { d.World = store.WorldScope{} },
+		"Families":      func(d *Deps) { d.Families = store.WorldScope{} },
 	}
 	for field, zero := range mutators {
 		t.Run(field, func(t *testing.T) {

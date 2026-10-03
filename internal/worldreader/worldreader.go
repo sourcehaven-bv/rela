@@ -23,12 +23,6 @@
 // published face — the world is a view onto the part of the graph that is
 // visible to them, not onto the whole graph.
 //
-// [BoundReader] is a second resolution site: its single-entity read ranks,
-// with [store.ResolveWorldPrimes], the faces the gated reader returns. A
-// type-less list is resolved by the store before the gate filters it, so it
-// can drop an entity whose prime is a face the reader may not see. That only
-// narrows the result.
-//
 // The resolver itself still never consults a gate: it cannot, and that is
 // what keeps "same candidates, same prime" true.
 //
@@ -37,8 +31,8 @@
 // Resolution reaches the store two ways, and both are required:
 //
 //   - as a DECORATOR, for the read paths that go through a reader; and
-//   - as a FIELD ON THE QUERY ([store.EntityQuery.World] /
-//     [store.GraphQuery.World]), because `internal/visibility`'s pushdown
+//   - as a FIELD ON THE QUERY ([store.EntityQuery.Faces] /
+//     [store.GraphQuery.Faces], an [store.InWorld] selection), because `internal/visibility`'s pushdown
 //     composes a GraphQuery and hands it straight to the raw store,
 //     reaching past every decorator.
 //

@@ -34,6 +34,7 @@ type promptHandler struct {
 	meta   *metamodel.Metamodel
 	tracer tracer.Tracer
 	types  typeResolver
+	world  store.WorldScope // [Deps.World]
 }
 
 func promptAnalyzeTraceability() *mcpgo.Prompt {
@@ -84,7 +85,7 @@ func (h promptHandler) handleAnalyzeTraceabilityPrompt(
 	}
 
 	st := h.store
-	e, getErr := st.GetEntity(ctx, id)
+	e, getErr := st.Resolve(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
@@ -144,32 +145,13 @@ func (h promptHandler) handleReviewOrphansPrompt(
 ) (*mcpgo.GetPromptResult, error) {
 	entityType := request.Params.Arguments["type"]
 
-	orphanIDs, _ := h.tracer.FindOrphans(ctx)
-
-	st := h.store
 	var resolved string
 	if entityType != "" {
 		resolved = h.types.resolveType(entityType)
 	}
-
-	type orphanSummary struct {
-		ID     string `json:"id"`
-		Type   string `json:"type"`
-		Title  string `json:"title,omitempty"`
-		Status string `json:"status,omitempty"`
-	}
-	summaries := make([]orphanSummary, 0)
-	for _, id := range orphanIDs {
-		e, err := st.GetEntity(ctx, id)
-		if err != nil {
-			continue
-		}
-		if resolved != "" && e.Type != resolved {
-			continue
-		}
-		summaries = append(summaries, orphanSummary{
-			ID: e.ID, Type: e.Type, Title: displayTitle(h.meta, e), Status: e.Status(),
-		})
+	summaries, err := orphanSummaries(ctx, h.tracer, h.store, h.meta, resolved)
+	if err != nil {
+		return nil, err
 	}
 
 	orphanText, err := marshalJSON(summaries)
@@ -230,7 +212,7 @@ func (h promptHandler) handleSummarizeProjectPrompt(
 	var entityCounts strings.Builder
 	totalEntities := 0
 	for _, t := range entityTypes {
-		count, _ := st.CountEntities(ctx, store.EntityQuery{Type: t})
+		count, _ := st.CountEntities(ctx, store.EntityQuery{Type: t, Faces: store.InWorld(h.world)})
 		totalEntities += count
 		def, _ := meta.GetEntityDef(t)
 		label := t
@@ -302,7 +284,7 @@ func (h promptHandler) handleReviewEntityPrompt(
 	}
 
 	st := h.store
-	entity, getErr := st.GetEntity(ctx, id)
+	entity, getErr := st.Resolve(ctx, id)
 	if getErr != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}

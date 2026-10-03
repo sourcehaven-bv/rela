@@ -20,7 +20,9 @@ func parseSchema(t *testing.T, yaml string) *metamodel.Metamodel {
 	return m
 }
 
-const facedSchema = `version: "1.0"
+// facedSchemaNoDefault declares two worlds and no default_world, which a
+// load refuses; facedSchema adds the key.
+const facedSchemaNoDefault = `version: "1.0"
 namespace: https://example.org/test#
 entities:
   page:
@@ -53,6 +55,8 @@ worlds:
     otherwise: default
 `
 
+const facedSchema = facedSchemaNoDefault + "default_world: published\n"
+
 func ptr(t *testing.T, s string) entity.Face {
 	t.Helper()
 	p, err := entity.ParseFace(s)
@@ -74,11 +78,12 @@ entities:
 `)
 	c, err := worlds.Compile(m)
 	require.NoError(t, err)
-	assert.Empty(t, c.Names(), "no worlds declared")
+	assert.Equal(t, []string{metamodel.DefaultWorldName}, c.Names(), "only the generated world")
+	assert.True(t, c.Generated())
 
 	scope, ok := c.Lookup(metamodel.DefaultWorldName)
 	require.True(t, ok, "the default world is always available")
-	assert.True(t, scope.IsDefaultWorld())
+	assert.True(t, scope.IsTrivial())
 	assert.Nil(t, scope.Types(), "the default world allocates no per-type map")
 
 	// And an undeclared name fails closed rather than degrading.
@@ -91,7 +96,7 @@ func TestCompile_NilMetamodel(t *testing.T) {
 	require.NoError(t, err)
 	scope, ok := c.Lookup(metamodel.DefaultWorldName)
 	require.True(t, ok)
-	assert.True(t, scope.IsDefaultWorld())
+	assert.True(t, scope.IsTrivial())
 }
 
 // TestCompile_ChainsAndFallback covers the three resolution rules as they
@@ -99,7 +104,7 @@ func TestCompile_NilMetamodel(t *testing.T) {
 func TestCompile_ChainsAndFallback(t *testing.T) {
 	c, err := worlds.Compile(parseSchema(t, facedSchema))
 	require.NoError(t, err)
-	assert.Equal(t, []string{"editorial", "published"}, c.Names())
+	assert.Equal(t, []string{"published", "editorial"}, c.Names(), "declaration order, not sorted")
 
 	t.Run("rule 1: a faceless type is ABSENT, not excluded", func(t *testing.T) {
 		for _, name := range []string{"published", "editorial"} {
@@ -178,6 +183,7 @@ worlds:
   lenient:
     select: published
     otherwise: default
+default_world: published
 `)
 		// `note` declares `published` so the world is declarable, while
 		// `memo` declares only draft/archived — so memo's chain is EMPTY
@@ -361,7 +367,8 @@ worlds:
 	compiled, err := worlds.Compile(m)
 	require.Error(t, err)
 
-	assert.Empty(t, compiled.Names(), "a failed compile must not hand back usable worlds")
+	assert.Equal(t, []string{metamodel.DefaultWorldName}, compiled.Names(),
+		"a failed compile must not hand back usable worlds")
 	_, ok := compiled.Lookup("pub")
 	assert.False(t, ok, "a world compiled from grammar-invalid faces must be unreachable")
 
@@ -370,11 +377,113 @@ worlds:
 	// built from a schema whose face names did not parse.
 	scope, ok := compiled.Lookup(metamodel.DefaultWorldName)
 	require.True(t, ok, "the default world is implicit and always resolves")
-	assert.True(t, scope.IsDefaultWorld(),
+	assert.True(t, scope.IsTrivial(),
 		"the only reachable scope after a failed compile is the untouched default world")
 }
 
-// TestDefault is the trivial-but-load-bearing accessor pin.
-func TestDefault(t *testing.T) {
-	assert.True(t, worlds.Default().IsDefaultWorld())
+// facedNoWorldsSchema declares faces but no world, so rela generates the
+// `default` world.
+const facedNoWorldsSchema = `version: "1.0"
+namespace: https://example.org/test#
+entities:
+  page:
+    label: Page
+    id_prefix: PAGE
+    properties: {title: {type: string}}
+    faces:
+      published: {}
+      draft: {}
+  ticket:
+    label: Ticket
+    id_prefix: TKT
+    properties: {title: {type: string}}
+`
+
+// TestCompiled_DefaultWorld pins the default-world seam (TKT-7IZHP0 §3.2,
+// §21 D3): which world a surface with no request world reads, per shape of
+// schema, and that Lookup of that name agrees with it.
+func TestCompiled_DefaultWorld(t *testing.T) {
+	pageChain := func(t *testing.T, scope store.WorldScope) []entity.Face {
+		t.Helper()
+		res, ok := scope.For("page")
+		require.True(t, ok, "page must have a resolution")
+		return res.Chain
+	}
+	tests := []struct {
+		name      string
+		schema    string
+		wantName  string
+		generated bool
+		wantNames []string
+		wantPage  []entity.Face
+	}{
+		{
+			name: "no worlds: generated default holds every face in declaration order", schema: facedNoWorldsSchema,
+			wantName: metamodel.DefaultWorldName, generated: true,
+			wantNames: []string{metamodel.DefaultWorldName}, wantPage: []entity.Face{"published", "draft"},
+		},
+		{
+			name: "one declared world, no key: that world", schema: facedNoWorldsSchema +
+				"worlds:\n  published:\n    select: published\n    otherwise: exclude\n",
+			wantName: "published", wantNames: []string{"published"},
+			wantPage: []entity.Face{"published"},
+		},
+		{
+			name: "declared worlds, default_world key", schema: facedSchemaNoDefault + "default_world: editorial\n",
+			wantName: "editorial", wantNames: []string{"published", "editorial"},
+			wantPage: []entity.Face{"draft"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := worlds.Compile(parseSchema(t, tc.schema))
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantName, c.DefaultWorldName())
+			assert.Equal(t, tc.generated, c.Generated())
+			assert.Equal(t, tc.wantNames, c.Names())
+			assert.Equal(t, tc.wantPage, pageChain(t, c.DefaultWorld()))
+			looked, ok := c.Lookup(tc.wantName)
+			require.True(t, ok)
+			assert.Equal(t, c.DefaultWorld(), looked)
+		})
+	}
+}
+
+// TestCompiled_NoDefaultBesideDeclaredWorlds pins design D11: once a world
+// is declared, `default` names nothing. A surface asking for it fails
+// closed rather than reading the generated scope.
+func TestCompiled_NoDefaultBesideDeclaredWorlds(t *testing.T) {
+	c, err := worlds.Compile(parseSchema(t, facedSchema))
+	require.NoError(t, err)
+	_, ok := c.Lookup(metamodel.DefaultWorldName)
+	assert.False(t, ok)
+	assert.NotContains(t, c.Names(), metamodel.DefaultWorldName)
+}
+
+// TestCompiled_ZeroValue pins that the zero value is the generated world of
+// a faceless project (G17): trivial, and named `default`.
+func TestCompiled_ZeroValue(t *testing.T) {
+	var c worlds.Compiled
+	assert.Equal(t, metamodel.DefaultWorldName, c.DefaultWorldName())
+	assert.True(t, c.DefaultWorld().IsSet())
+	assert.True(t, c.DefaultWorld().IsTrivial())
+	assert.True(t, c.Generated())
+}
+
+// TestCompile_RejectsUnknownDefaultWorld pins that a metamodel built in Go
+// with a default world that does not exist does not compile, so no surface
+// can read in a world nobody declared.
+func TestCompile_RejectsUnknownDefaultWorld(t *testing.T) {
+	for name, dw := range map[string]string{
+		"undeclared name":         "nope",
+		"default beside declared": metamodel.DefaultWorldName,
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := parseSchema(t, facedSchema)
+			m.DefaultWorld = dw
+			_, err := worlds.Compile(m)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "default_world")
+		})
+	}
 }

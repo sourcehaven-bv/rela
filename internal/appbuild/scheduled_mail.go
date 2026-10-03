@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/mailrender"
 	"github.com/Sourcehaven-BV/rela/internal/mailtemplate"
@@ -35,13 +36,17 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 	}
 
 	// The raw recipient record is used only to address the envelope. It is
-	// never supplied to content rendering, which remains ACL-visible.
-	recipient, err := s.store.GetEntity(ctx, recipientID)
+	// never supplied to content rendering, which remains ACL-visible. It is
+	// the face the default world selects, the world scheduled mail iterates
+	// in (TKT-KQXVF7 D7).
+	recipient, found, err := s.defaultWorldRow(ctx, recipientID)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil
-		}
 		return err
+	}
+	if !found {
+		slog.WarnContext(ctx, "scheduled mail recipient has no row in the default world; skipping",
+			"recipient", recipientID)
+		return nil
 	}
 	raw, ok := recipient.Properties[tmpl.AddressProperty]
 	if !ok {
@@ -57,7 +62,8 @@ func (s *Services) RunScheduledTemplate(ctx context.Context, name, recipientID s
 	}
 
 	deps := s.ScheduledLuaWriteDeps()
-	model, contributed, err := mailtemplate.Build(ctx, s.meta, deps.VisibleReader, tmpl, time.Now())
+	world := s.worlds.DefaultWorld()
+	model, contributed, err := mailtemplate.Build(ctx, s.meta, deps.VisibleReader, world, tmpl, time.Now())
 	if err != nil {
 		return err
 	}
@@ -103,4 +109,24 @@ func skipBadAddress(ctx context.Context, recipientID, property string) error {
 	slog.WarnContext(ctx, "scheduled mail recipient has no usable address; skipping",
 		"recipient", recipientID, "property", property)
 	return nil
+}
+
+// defaultWorldRow reads the raw row the default world selects for id. found
+// is false when the world selects none.
+//
+// Raw, not through the task principal's visibility reader: the row only
+// addresses the envelope and is never rendered or returned to the principal,
+// and a recipient must be reachable even when the principal may not read the
+// face that holds the address.
+func (s *Services) defaultWorldRow(ctx context.Context, id string) (row *entity.Entity, found bool, err error) {
+	q := store.EntityQuery{IDs: []string{id}, Faces: store.InWorld(s.worlds.DefaultWorld())}
+	for e, lerr := range s.store.ListEntities(ctx, q) {
+		if lerr != nil {
+			return nil, false, lerr
+		}
+		if e.ID == id {
+			return e, true, nil
+		}
+	}
+	return nil, false, nil
 }

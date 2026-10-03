@@ -1,0 +1,113 @@
+package store_test
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+)
+
+func TestFaceSelection_Modes(t *testing.T) {
+	draft := entity.Face("draft")
+	world := store.NewWorldScope(map[string]store.TypeResolution{
+		"doc": {Chain: []entity.Face{draft}, Fallback: store.FallbackDefaultState},
+	})
+
+	var zero store.FaceSelection
+	assert.True(t, zero.IsZero())
+	require.ErrorIs(t, zero.Validate(), store.ErrInvalidQuery)
+	assert.False(t, zero.Admits(""), "the zero selection admits nothing")
+	assert.Equal(t, "unset", zero.String())
+
+	def := store.InWorld(store.TrivialScope())
+	require.NoError(t, def.Validate())
+	assert.True(t, def.IsTrivial())
+	assert.Equal(t, "in-world(trivial)", def.String())
+
+	// InWorld of the unset zero scope is refused like the zero selection
+	// (TKT-7IZHP0 design A4).
+	var unsetScope store.WorldScope
+	unset := store.InWorld(unsetScope)
+	assert.False(t, unset.IsZero(), "the selection mode is set; its world is not")
+	require.ErrorIs(t, unset.Validate(), store.ErrInvalidQuery)
+	assert.Equal(t, "in-world(unset)", unset.String())
+
+	in := store.InWorld(world)
+	w, ok := in.World()
+	assert.True(t, ok)
+	assert.False(t, w.IsTrivial())
+	assert.False(t, in.IsTrivial())
+	assert.True(t, in.Admits(draft), "ranking decides per family, after admission")
+	assert.Equal(t, "in-world(doc)", in.String())
+	_, ok = in.Faces()
+	assert.False(t, ok)
+
+	all := store.AllFaces()
+	assert.True(t, all.IsAll())
+	assert.True(t, all.Admits(draft))
+	_, ok = all.World()
+	assert.False(t, ok)
+	assert.Equal(t, "all-faces", all.String())
+
+	src := []entity.Face{"", draft}
+	at := store.AtFaces(src...)
+	src[1] = "mutated"
+	faces, ok := at.Faces()
+	assert.True(t, ok)
+	assert.Equal(t, []entity.Face{"", draft}, faces, "AtFaces copies its input")
+	faces[0] = "mutated"
+	again, _ := at.Faces()
+	assert.Equal(t, entity.Face(""), again[0], "Faces returns a copy")
+	assert.True(t, at.Admits(draft))
+	assert.False(t, at.Admits("published"))
+	assert.False(t, at.IsAll())
+	assert.Equal(t, `at-faces("","draft")`, at.String())
+
+	none, ok := store.AtFaces().Faces()
+	assert.True(t, ok)
+	assert.NotNil(t, none)
+	assert.Empty(t, none)
+	assert.False(t, store.AtFaces().Admits(""), "an empty set matches nothing")
+}
+
+// Lowered flattens a world to a face set exactly where the world ranks
+// nothing for the queried type (TKT-7IZHP0 A9), and leaves everything else.
+func TestFaceSelection_Lowered(t *testing.T) {
+	world := store.NewWorldScope(map[string]store.TypeResolution{
+		"page": {Chain: []entity.Face{"published"}, Fallback: store.FallbackExclude},
+		"doc":  {Chain: []entity.Face{"published", "draft"}, Fallback: store.FallbackExclude},
+		"note": {Chain: []entity.Face{"published"}, Fallback: store.FallbackDefaultState},
+		"stub": {Fallback: store.FallbackDefaultState},
+		"gone": {Fallback: store.FallbackExclude},
+	})
+	sel := store.InWorld(world)
+	for _, tc := range []struct {
+		typ       string
+		wantFlat  bool
+		wantFaces []entity.Face
+	}{
+		{"page", true, []entity.Face{"published"}},
+		{"doc", false, nil},
+		{"note", false, nil},
+		{"stub", true, []entity.Face{entity.ImplicitFace}},
+		{"gone", true, []entity.Face{}},
+		{"ticket", true, []entity.Face{entity.ImplicitFace}},
+		{"", false, nil},
+	} {
+		t.Run(tc.typ, func(t *testing.T) {
+			got := sel.Lowered(tc.typ)
+			faces, flat := got.Faces()
+			assert.Equal(t, tc.wantFlat, flat, got.String())
+			if tc.wantFlat {
+				assert.Equal(t, tc.wantFaces, faces)
+			} else {
+				_, isWorld := got.World()
+				assert.True(t, isWorld, "a ranked world must stay a world")
+			}
+		})
+	}
+	assert.True(t, store.AllFaces().Lowered("page").IsAll())
+}

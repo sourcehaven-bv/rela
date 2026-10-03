@@ -108,6 +108,10 @@ relations:
     # English one, so the edge belongs to the face that declares it.
     scope: content
 
+# Browsing lands on what is IN FORCE. A draft is reached deliberately, by
+# naming the editorial world, not by default.
+default_world: published
+
 worlds:
   # The reader's view. `otherwise: exclude` is the publication bit: a policy
   # with no published face is not merely unstyled here, it is ABSENT.

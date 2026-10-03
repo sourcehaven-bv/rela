@@ -68,13 +68,14 @@ func (h *writeHandler) handleV1RestoreEntity(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 
 	// Only a whole entity is soft-deleted, so only a bare id can be restored.
-	ref, ok := parseEntityRef(entityID)
-	if !ok || ref.Explicit || h.softDeletes == nil {
+	addr, err := entityPkg.ParseAddress(entityID)
+	_, named := addr.Named()
+	if err != nil || named || h.softDeletes == nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
-	found, marked, err := h.softDeletes.FindSoftDeleted(ctx, ref.ID)
+	found, marked, err := h.softDeletes.FindSoftDeleted(ctx, addr.ID())
 	if err != nil {
 		slog.Error("dataentry: restore lookup failed", "err", err)
 		writeV1Error(w, r, http.StatusInternalServerError, "restore_failed", "Failed to restore entity", "")
@@ -84,7 +85,7 @@ func (h *writeHandler) handleV1RestoreEntity(w http.ResponseWriter, r *http.Requ
 	// missing one cost the same. It runs under the reveal for the reason
 	// RestoreEntity authorizes under it: local roles come from the entity's
 	// own relations.
-	readable, err := readGateFromContext(ctx).PermitsRead(store.WithRevealed(ctx, ref.ID), typeName, ref.ID)
+	readable, err := readGateFromContext(ctx).PermitsRead(store.WithRevealed(ctx, addr.ID()), typeName, addr.ID())
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -97,7 +98,7 @@ func (h *writeHandler) handleV1RestoreEntity(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if _, err := h.softDeletes.RestoreEntity(ctx, ref.ID); err != nil {
+	if _, err := h.softDeletes.RestoreEntity(ctx, addr.ID()); err != nil {
 		h.writeRestoreError(w, r, err)
 		return
 	}

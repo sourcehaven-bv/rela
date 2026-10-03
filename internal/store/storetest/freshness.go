@@ -64,7 +64,7 @@ func RunFreshnessTests(t *testing.T, f Factory) {
 		require.NoError(t, err)
 
 		waitForClock()
-		_, err = s.CreateRelation(ctx(), "FEAT-001", "requires", "REQ-001", nil)
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "FEAT-001", Type: "requires", To: "REQ-001"}, nil)
 		require.NoError(t, err)
 
 		after, err := s.LastModified(ctx())
@@ -85,9 +85,9 @@ func RunFreshnessTests(t *testing.T, f Factory) {
 		waitForClock()
 		// Reads must not advance it — otherwise a consumer rebuilds its index
 		// on every poll.
-		_, err = s.GetEntity(ctx(), "FEAT-001")
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
 		require.NoError(t, err)
-		_, err = s.CountEntities(ctx(), store.EntityQuery{})
+		_, err = s.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 
 		second, err := s.LastModified(ctx())

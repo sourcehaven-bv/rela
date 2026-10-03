@@ -57,7 +57,7 @@ func newBodyWatchApp(t *testing.T, n int) (*App, *storetest.BodyWatch, *acl.Decl
 	}
 	mk("T1", "team", "Team one", "team body")
 	mk("P1", "person", "Person one", "person body")
-	if _, err := watch.CreateRelation(ctx, "P1", "member-of", "T1", nil); err != nil {
+	if _, err := watch.CreateRelation(ctx, entity.RelationKey{From: "P1", Type: "member-of", To: "T1"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 5; i++ {
@@ -69,10 +69,10 @@ func newBodyWatchApp(t *testing.T, n int) (*App, *storetest.BodyWatch, *acl.Decl
 		// assertion (bodies are COUNTED, not weighed), so these stay short and
 		// the fixture stays fast.
 		mk(id, "ticket", "Ticket "+id, "body of "+id)
-		if _, err := watch.CreateRelation(ctx, id, "implements", fmt.Sprintf("F%d", i%5+1), nil); err != nil {
+		if _, err := watch.CreateRelation(ctx, entity.RelationKey{From: id, Type: "implements", To: fmt.Sprintf("F%d", i%5+1)}, nil); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := watch.CreateRelation(ctx, id, "assigned-to", "P1", nil); err != nil {
+		if _, err := watch.CreateRelation(ctx, entity.RelationKey{From: id, Type: "assigned-to", To: "P1"}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

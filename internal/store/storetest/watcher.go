@@ -59,7 +59,7 @@ func RunWatcherTests(t *testing.T, f Factory) {
 		events, cancel := s.Subscribe(10)
 		defer cancel()
 
-		_, err := s.DeleteEntity(ctx(), "T-1", false)
+		_, err := s.DeleteFamily(ctx(), "T-1", false)
 		require.NoError(t, err)
 
 		select {
@@ -79,7 +79,7 @@ func RunWatcherTests(t *testing.T, f Factory) {
 		events, cancel := s.Subscribe(10)
 		defer cancel()
 
-		_, err := s.CreateRelation(ctx(), "A", "requires", "B", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"}, nil)
 		require.NoError(t, err)
 
 		select {
@@ -187,12 +187,12 @@ func RunWatcherTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
-		_, _ = s.CreateRelation(ctx(), "A", "requires", "B", nil)
+		_, _ = s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"}, nil)
 
 		events, cancel := s.Subscribe(10)
 		defer cancel()
 
-		_, err := s.DeleteEntity(ctx(), "A", true)
+		_, err := s.DeleteFamily(ctx(), "A", true)
 		require.NoError(t, err)
 
 		var ops []store.EventOp

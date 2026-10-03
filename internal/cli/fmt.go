@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -25,7 +27,7 @@ func (c *FmtCmd) Run(ctx context.Context, svc *readServices) error {
 
 	dryRun := c.DryRun || c.Check
 
-	q := store.EntityQuery{}
+	q := store.EntityQuery{Faces: store.AllFaces()}
 	if c.Type != "" {
 		resolvedType, err := resolveEntityType(svc.Meta, c.Type)
 		if err != nil {
@@ -57,25 +59,25 @@ func (c *FmtCmd) formatEntities(
 	q store.EntityQuery,
 	dryRun bool,
 ) (int, error) {
-	var entityIDs []string
+	var refs []entity.Ref
 	for e, err := range st.ListEntities(ctx, q) {
 		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return 0, err
 		}
-		entityIDs = append(entityIDs, e.ID)
+		refs = append(refs, e.Ref())
 	}
 	modified := 0
-	for _, id := range entityIDs {
-		changed, err := f.FormatEntity(ctx, id, dryRun)
+	for _, ref := range refs {
+		changed, err := f.FormatEntity(ctx, ref, dryRun)
 		if err != nil {
-			out.WriteWarning("Failed to format %s: %v", id, err)
+			out.WriteWarning("Failed to format %s: %v", ref, err)
 			continue
 		}
 		if !changed {
 			continue
 		}
 		modified++
-		c.reportFmtItem(id)
+		c.reportFmtItem(ref.String())
 	}
 	return modified, nil
 }
@@ -86,26 +88,25 @@ func (c *FmtCmd) formatRelations(
 	f store.Formatter,
 	dryRun bool,
 ) (int, error) {
-	type relKey struct{ from, typ, to string }
-	var relKeys []relKey
+	var relKeys []entity.RelationKey
 	for r, err := range st.ListRelations(ctx, store.RelationQuery{}) {
 		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
 			return 0, err
 		}
-		relKeys = append(relKeys, relKey{r.From, r.Type, r.To})
+		relKeys = append(relKeys, r.Identity())
 	}
 	modified := 0
 	for _, k := range relKeys {
-		changed, err := f.FormatRelation(ctx, k.from, k.typ, k.to, dryRun)
+		changed, err := f.FormatRelation(ctx, k, dryRun)
 		if err != nil {
-			out.WriteWarning("Failed to format relation %s--%s--%s: %v", k.from, k.typ, k.to, err)
+			out.WriteWarning("Failed to format relation %s: %v", k, err)
 			continue
 		}
 		if !changed {
 			continue
 		}
 		modified++
-		c.reportFmtItem(k.from + "--" + k.typ + "--" + k.to)
+		c.reportFmtItem(k.String())
 	}
 	return modified, nil
 }

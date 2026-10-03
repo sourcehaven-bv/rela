@@ -320,6 +320,29 @@ type ListResponse struct {
 	Actions map[string]bool `json:"_actions,omitempty"`
 }
 
+// LinkListResponse is a collection response whose rows may carry a
+// relation-context answer: always the shape of `/_search`, and the shape of
+// `GET /{plural}` when that request names a relation context. Otherwise it
+// matches [ListResponse].
+type LinkListResponse struct {
+	Data     []LinkRow         `json:"data"`
+	Meta     ListMeta          `json:"meta"`
+	Included map[string]Entity `json:"included,omitempty"`
+	Actions  map[string]bool   `json:"_actions,omitempty"`
+}
+
+// LinkRow is one row of a [LinkListResponse].
+//
+// Linkable is present only when the request named a relation context
+// (`relation` and `direction=incoming`). It answers whether the principal
+// may create that relation from this row's face to the entity being edited,
+// computed by the gates the write runs. It is a hint; the write
+// re-authorizes. Nil on a request without relation context.
+type LinkRow struct {
+	Entity
+	Linkable *bool `json:"linkable,omitempty"`
+}
+
 // ListMeta contains pagination metadata.
 type ListMeta struct {
 	Total   int  `json:"total"`
@@ -341,6 +364,10 @@ type Schema struct {
 	// has no other worlds" from "this server is too old to tell me", and an
 	// omitted key cannot say the first.
 	Worlds map[string]World `json:"worlds,omitempty"`
+	// WorldOrder lists the declared worlds in schema.yaml order, which a JSON
+	// object cannot carry. A world switcher lists them in this order. Absent
+	// when the schema declares no worlds.
+	WorldOrder []string `json:"world_order,omitempty"`
 }
 
 // World is the JSON representation of one declared world — a named
@@ -415,6 +442,10 @@ type World struct {
 	// OnAbsent is the behavior for an entity with no face in this world.
 	// Mirrors metamodel.WorldOnAbsent.
 	OnAbsent *WorldOnAbsent `json:"on_absent,omitempty"`
+	// Create is the face a create issued from this world lands on
+	// (`worlds.<name>.create`). Empty when the world declares none; a create
+	// form on a faced type then asks for a face.
+	Create string `json:"create,omitempty"`
 	// Readable reports whether THIS caller may select the world via
 	// `?world=`. False means a request naming it is served an empty result
 	// rather than a 403 — so a client that respects this flag shows the user
@@ -430,10 +461,11 @@ type World struct {
 	// server too old to compute it. `default: false`, by contrast, is noise
 	// on every declared world.
 	Readable bool `json:"readable"`
-	// Default marks the implicit default world — today's graph, total by
-	// construction, always present and always selectable. Spelled as a flag
-	// rather than left for the client to infer from the reserved name, so a
-	// selector can label it without hardcoding the string.
+	// Default marks the default world: schema.yaml's `default_world:`, else
+	// the first declared world, else the generated `default` world. A
+	// request that names no world reads in it, and it is always selectable.
+	// Spelled as a flag so a selector can label it without knowing the
+	// name.
 	Default bool `json:"default,omitempty"`
 }
 
@@ -556,6 +588,9 @@ type RelationType struct {
 	MinIncoming *int                   `json:"min_incoming,omitempty"`
 	MaxIncoming *int                   `json:"max_incoming,omitempty"`
 	Properties  map[string]PropertyDef `json:"properties,omitempty"`
+	// Scope is "content" for a relation type whose edges belong to one face
+	// of their source, and omitted for an identity-scoped one.
+	Scope string `json:"scope,omitempty"`
 	// Orderable, when set, declares that the frontend may offer drag-to-reorder
 	// controls on the corresponding side. The managed property names are
 	// always the reserved `_order_out` (outgoing) and `_order_in` (incoming).
@@ -641,12 +676,12 @@ type AppConfig struct {
 	// the on switch for ```plantuml diagram rendering.
 	PlantUMLServerURL string `json:"plantuml_server_url,omitempty"`
 	// DefaultWorld names the world a request lands in when no `?world=` is
-	// given. Empty means the default world (raw stored faces).
+	// given: schema.yaml's `default_world:`, else the first declared world.
+	// Empty when the schema declares no worlds, so the generated default
+	// world, which ranks nothing, serves every request.
 	//
-	// A browsing default, not a grant: the world's read permission is
-	// re-checked per request exactly as for an explicit `?world=`, so this
-	// can only change which face a bare URL resolves to, never who may see
-	// it. Validated at load against the declared worlds.
+	// The default world needs no world grant; the per-entity and per-face
+	// gates still decide what it shows.
 	DefaultWorld string `json:"default_world,omitempty"`
 	// HistoryEnabled reports whether THIS DEPLOYMENT can serve version
 	// history. Content versioning is a postgres-only, OPTIONAL store
@@ -674,6 +709,10 @@ type Error struct {
 	Detail   string       `json:"detail,omitempty"`
 	Instance string       `json:"instance,omitempty"`
 	Errors   []FieldError `json:"errors,omitempty"`
+	// Faces lists the addresses (`ID@face`) a `face_required` refusal of a
+	// bare id offers: the faces of the entity the caller may read, in
+	// declaration order. A client retries with one of them.
+	Faces []string `json:"faces,omitempty"`
 }
 
 // FieldError represents a validation error on a specific field.

@@ -18,9 +18,9 @@ import (
 // mustAllowAll wraps a store in a pass-through visibility.Reader for mention
 // tests: these exercise scanning/resolution, not ACL, so the reader must not
 // gate or redact. ACL behavior for mentions is covered separately.
-func mustAllowAll(t *testing.T, get visibility.EntityGetter) visibility.Reader {
+func mustAllowAll(t *testing.T, load visibility.Loader) visibility.Reader {
 	t.Helper()
-	r, err := visibility.NewAllowAllReader(get)
+	r, err := visibility.NewAllowAllReader(load)
 	if err != nil {
 		t.Fatalf("NewAllowAllReader: %v", err)
 	}
@@ -237,12 +237,12 @@ func TestCollectMentions_ContextCancellationStops(t *testing.T) {
 	}
 }
 
-func TestCollectMentions_StoreErrorIsLoggedAndSkipped(t *testing.T) {
+func TestCollectMentions_StoreErrorDegradesToNoMentions(t *testing.T) {
 	t.Parallel()
 
-	// A flaky store error must not break the whole view-fetch response —
-	// it degrades to "code span stays as <code>" (the same UX as
-	// unknown-ID), and the bad ID drops out of the result.
+	// A store error must not break the whole view-fetch response. The
+	// mentions load in one batch, so a failed read drops every mention and
+	// each code span stays as <code> (the same UX as an unknown ID).
 	meta := buildTestMetamodel(t)
 	flaky := &flakyStore{
 		err:  errors.New("backend offline"),
@@ -250,10 +250,9 @@ func TestCollectMentions_StoreErrorIsLoggedAndSkipped(t *testing.T) {
 	}
 
 	got := collectMentions(context.Background(), flaky, mustAllowAll(t, flaky), meta, "`TKT-FAIL` then `TKT-OK`")
-	want := map[string]v1.Mention{
-		"TKT-OK": {Type: "ticket", Title: "Resolves fine"},
+	if got != nil {
+		t.Errorf("a failed batch read must yield no mentions, got %+v", got)
 	}
-	assertMentionsEqual(t, want, got)
 }
 
 func TestCollectMentions_ConcurrentScanIsSafe(t *testing.T) {
@@ -404,26 +403,23 @@ func assertMentionsEqual(t *testing.T, want, got map[string]v1.Mention) {
 }
 
 // flakyStore is an EntityReader test double: GetEntity returns `err` for
-// every lookup except the one matching `good.ID`. Other EntityReader
-// methods panic — collectMentions does not call them.
+// every lookup except the one matching `good.ID`, and ListEntities fails
+// outright. The other EntityReader methods panic; collectMentions does not
+// call them.
 type flakyStore struct {
 	err  error
 	good *entity.Entity
 }
 
-func (f *flakyStore) GetEntity(_ context.Context, id string) (*entity.Entity, error) {
-	if f.good != nil && f.good.ID == id {
+func (f *flakyStore) GetEntity(_ context.Context, ref entity.Ref) (*entity.Entity, error) {
+	if f.good != nil && f.good.ID == ref.ID {
 		return f.good, nil
 	}
 	return nil, f.err
 }
 
-func (f *flakyStore) GetEntityState(ctx context.Context, id string, _ entity.Face) (*entity.Entity, error) {
-	return f.GetEntity(ctx, id)
-}
-
 func (f *flakyStore) ListEntities(_ context.Context, _ store.EntityQuery) iter.Seq2[*entity.Entity, error] {
-	panic("flakyStore: ListEntities not implemented")
+	return func(yield func(*entity.Entity, error) bool) { yield(nil, f.err) }
 }
 
 func (f *flakyStore) ListEntitiesPage(_ context.Context, _ store.EntityQuery) (store.Page[*entity.Entity], error) {
@@ -436,8 +432,4 @@ func (f *flakyStore) CountEntities(_ context.Context, _ store.EntityQuery) (int,
 
 func (f *flakyStore) HighestID(_ context.Context, _ string) (int, error) {
 	panic("flakyStore: HighestID not implemented")
-}
-
-func (f *flakyStore) PropertyValues(_ context.Context, _ string, _ int) ([]string, error) {
-	panic("flakyStore: PropertyValues not implemented")
 }

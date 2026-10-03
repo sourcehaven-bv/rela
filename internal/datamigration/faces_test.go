@@ -56,9 +56,9 @@ func TestRunner_MigratesEveryContentState(t *testing.T) {
 	}
 
 	// And so did the face — the actual regression this pins.
-	face, err := st.GetEntityState(ctx, "TSK-1", entity.Face("nl"))
+	face, err := st.GetEntity(ctx, entity.Ref{ID: "TSK-1", Face: entity.Face("nl")})
 	if err != nil {
-		t.Fatalf("GetEntityState: %v", err)
+		t.Fatalf("GetEntity: %v", err)
 	}
 	if got := face.Properties["state"]; got != "todo" {
 		t.Errorf("nl face state = %v, want todo — the face row was skipped", got)
@@ -96,20 +96,20 @@ func TestRenameFace_MovesRowsToTheNewCoordinate(t *testing.T) {
 	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
 	f := mustParse(t, testName("face"), mustFileYAML(t,
 		facedMeta("en", "nl"),
-		facedMeta("en", "nl-BE"),
-		"  - rename_face: {entity: task, from: nl, to: nl-BE}\n"))
+		facedMeta("en", "nl-be"),
+		"  - rename_face: {entity: task, from: nl, to: nl-be}\n"))
 	if _, err := r.Run(ctx, []*File{f}, true); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	moved, err := st.GetEntityState(ctx, "TSK-1", entity.Face("nl-BE"))
+	moved, err := st.GetEntity(ctx, entity.Ref{ID: "TSK-1", Face: entity.Face("nl-be")})
 	if err != nil || moved == nil {
-		t.Fatalf("row did not move to nl-BE: %v", err)
+		t.Fatalf("row did not move to nl-be: %v", err)
 	}
 	if got := moved.Properties["title"]; got != "een" {
 		t.Errorf("content changed during the move: %v", got)
 	}
-	if old, err := st.GetEntityState(ctx, "TSK-1", entity.Face("nl")); err == nil && old != nil {
+	if old, err := st.GetEntity(ctx, entity.Ref{ID: "TSK-1", Face: entity.Face("nl")}); err == nil && old != nil {
 		t.Error("the old coordinate still holds a row — the rename duplicated instead of moving")
 	}
 	// The bare row is a different member of the family and must be untouched.
@@ -125,7 +125,7 @@ func TestRenameFace_MovesRowsToTheNewCoordinate(t *testing.T) {
 func TestRenameFace_OntoAnOccupiedCoordinateIsRefused(t *testing.T) {
 	st := seedStore(t)
 	ctx := t.Context()
-	for face, title := range map[string]string{"nl": "twee", "nl-BE": "anders"} {
+	for face, title := range map[string]string{"nl": "twee", "nl-be": "anders"} {
 		if err := st.CreateEntity(ctx, &entity.Entity{
 			ID: "TSK-2", Type: "task", Face: entity.Face(face),
 			Properties: map[string]any{"title": title},
@@ -136,9 +136,9 @@ func TestRenameFace_OntoAnOccupiedCoordinateIsRefused(t *testing.T) {
 
 	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
 	f := mustParse(t, testName("face"), mustFileYAML(t,
-		facedMeta("en", "nl", "nl-BE"),
-		facedMeta("en", "nl-BE"),
-		"  - rename_face: {entity: task, from: nl, to: nl-BE}\n"))
+		facedMeta("en", "nl", "nl-be"),
+		facedMeta("en", "nl-be"),
+		"  - rename_face: {entity: task, from: nl, to: nl-be}\n"))
 
 	_, err := r.Run(ctx, []*File{f}, true)
 	if err == nil {
@@ -150,13 +150,13 @@ func TestRenameFace_OntoAnOccupiedCoordinateIsRefused(t *testing.T) {
 	}
 
 	// Both rows survive the refusal — nothing is half-applied.
-	src, serr := st.GetEntityState(ctx, "TSK-2", entity.Face("nl"))
+	src, serr := st.GetEntity(ctx, entity.Ref{ID: "TSK-2", Face: entity.Face("nl")})
 	if serr != nil || src.Properties["title"] != "twee" {
 		t.Errorf("nl row lost or altered: %v (%v)", src, serr)
 	}
-	dst, derr := st.GetEntityState(ctx, "TSK-2", entity.Face("nl-BE"))
+	dst, derr := st.GetEntity(ctx, entity.Ref{ID: "TSK-2", Face: entity.Face("nl-be")})
 	if derr != nil || dst.Properties["title"] != "anders" {
-		t.Errorf("nl-BE row lost or altered: %v (%v)", dst, derr)
+		t.Errorf("nl-be row lost or altered: %v (%v)", dst, derr)
 	}
 }
 
@@ -167,7 +167,7 @@ func TestRenameFace_OntoAnOccupiedCoordinateIsRefused(t *testing.T) {
 func TestRenameFace_ReRunConvergesAfterACrash(t *testing.T) {
 	st := seedStore(t)
 	ctx := t.Context()
-	for _, face := range []string{"nl", "nl-BE"} {
+	for _, face := range []string{"nl", "nl-be"} {
 		if err := st.CreateEntity(ctx, &entity.Entity{
 			ID: "TSK-1", Type: "task", Face: entity.Face(face),
 			Properties: map[string]any{"title": "een"},
@@ -179,15 +179,15 @@ func TestRenameFace_ReRunConvergesAfterACrash(t *testing.T) {
 	r := newTestRunner(t, Deps{Store: st, State: newFakeKV(), Audit: audit.NewMemory()})
 	f := mustParse(t, testName("face"), mustFileYAML(t,
 		facedMeta("en", "nl"),
-		facedMeta("en", "nl-BE"),
-		"  - rename_face: {entity: task, from: nl, to: nl-BE}\n"))
+		facedMeta("en", "nl-be"),
+		"  - rename_face: {entity: task, from: nl, to: nl-be}\n"))
 	if _, err := r.Run(ctx, []*File{f}, true); err != nil {
 		t.Fatalf("a re-run over the previous run's own copy must converge, not refuse: %v", err)
 	}
-	if old, err := st.GetEntityState(ctx, "TSK-1", entity.Face("nl")); err == nil && old != nil {
+	if old, err := st.GetEntity(ctx, entity.Ref{ID: "TSK-1", Face: entity.Face("nl")}); err == nil && old != nil {
 		t.Error("the source row survived the re-run")
 	}
-	moved, err := st.GetEntityState(ctx, "TSK-1", entity.Face("nl-BE"))
+	moved, err := st.GetEntity(ctx, entity.Ref{ID: "TSK-1", Face: entity.Face("nl-be")})
 	if err != nil || moved.Properties["title"] != "een" {
 		t.Errorf("the destination row must hold the content: %v %v", moved, err)
 	}

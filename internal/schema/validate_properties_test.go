@@ -75,7 +75,7 @@ func TestValidateRelationProperties(t *testing.T) {
 			t.Fatalf("seed entity %s: %v", e.ID, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "TKT-001", "blocks", "TKT-002", &store.RelationData{
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TKT-001", Type: "blocks", To: "TKT-002"}, &store.RelationData{
 		Properties: map[string]any{"since": "not-a-date"},
 	}); err != nil {
 		t.Fatalf("seed relation: %v", err)

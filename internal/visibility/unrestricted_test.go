@@ -31,7 +31,7 @@ func seedStore(t *testing.T) store.Store {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "TKT-1", "implements", "FEAT-1", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 	return st
@@ -42,15 +42,15 @@ func seedStore(t *testing.T) store.Store {
 // to Unrestricted would be a behavior change rather than a rename.
 func TestUnrestricted_IsPassThrough(t *testing.T) {
 	st := seedStore(t)
-	r := visibility.Unrestricted(st)
+	r := visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
 	ctx := context.Background()
 
-	t.Run("GetEntity matches the store", func(t *testing.T) {
-		got, err := r.GetEntity(ctx, "TKT-1")
+	t.Run("GetAddress matches the store", func(t *testing.T) {
+		got, err := r.GetAddress(ctx, "TKT-1")
 		if err != nil {
-			t.Fatalf("GetEntity: %v", err)
+			t.Fatalf("GetAddress: %v", err)
 		}
-		want, err := st.GetEntity(ctx, "TKT-1")
+		want, err := st.GetEntity(ctx, entity.Ref{ID: "TKT-1"})
 		if err != nil {
 			t.Fatalf("store.GetEntity: %v", err)
 		}
@@ -64,15 +64,15 @@ func TestUnrestricted_IsPassThrough(t *testing.T) {
 		}
 	})
 
-	t.Run("GetEntity propagates a miss", func(t *testing.T) {
-		if _, err := r.GetEntity(ctx, "NOPE-1"); err == nil {
+	t.Run("GetAddress propagates a miss", func(t *testing.T) {
+		if _, err := r.GetAddress(ctx, "NOPE-1"); err == nil {
 			t.Error("expected an error for a missing entity")
 		}
 	})
 
 	t.Run("ListEntities yields every entity", func(t *testing.T) {
 		var ids []string
-		for e, err := range r.ListEntities(ctx, store.EntityQuery{}) {
+		for e, err := range r.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			if err != nil {
 				t.Fatalf("ListEntities: %v", err)
 			}
@@ -113,12 +113,23 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// with the body projected away — so it cannot widen a wiring site's
 	// capability. Anything that is not a strict narrowing of an existing
 	// read method still belongs outside this set.
+	//
+	// Family (TKT-2528AB) is the same kind of narrowing: it reports which
+	// faces of an id exist, from headers, which ListEntityHeaders already
+	// answers. WithWorld returns a copy that resolves bare ids in another
+	// world; it reads nothing and writes nothing. ResolveHeaders (TKT-2528AB
+	// PR 5b) is GetAddress and Family for a batch, projected to headers.
+	// ListRelationsStrict (TKT-5LW875) is ListRelations itself here: with no
+	// gate there is no fault to report. WriteTarget (TKT-7IZHP0) picks one
+	// face out of the Family by header: it names the face a write would
+	// edit and performs none.
 	want := map[string]bool{
-		"GetEntity": true, "ListEntities": true, "ListRelations": true,
-		"ListEntityHeaders": true,
+		"GetAddress": true, "ListEntities": true, "ListRelations": true,
+		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
+		"ResolveHeaders": true, "ListRelationsStrict": true, "WriteTarget": true,
 	}
 
-	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)))
+	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))
 	got := make(map[string]bool, typ.NumMethod())
 	for m := range typ.Methods() {
 		got[m.Name] = true
@@ -139,7 +150,7 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	}
 
 	// It must also not be usable anywhere a full store is expected.
-	var r any = visibility.Unrestricted(seedStore(t))
+	var r any = visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope()))
 	if _, ok := r.(store.Store); ok {
 		t.Error("UnrestrictedReader satisfies store.Store — it has widened back " +
 			"into a full store handle and no longer narrows the surface")
@@ -174,7 +185,7 @@ func TestUnrestricted_NilStorePanics(t *testing.T) {
 // lua.EntityReader, which is what structural satisfaction relies on.
 func TestUnrestricted_SatisfiesReadSurfaceNonNil(t *testing.T) {
 	type entityReader interface {
-		GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+		GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 		ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 		ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 	}
@@ -184,12 +195,12 @@ func TestUnrestricted_SatisfiesReadSurfaceNonNil(t *testing.T) {
 	// and the linter (correctly) rejects it. What is being pinned is that
 	// the interface holds a non-nil POINTER — the property that would break
 	// if Unrestricted ever returned a typed nil again.
-	var r entityReader = visibility.Unrestricted(seedStore(t))
+	var r entityReader = visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope()))
 	if reflect.ValueOf(r).IsNil() {
 		t.Fatal("the interface holds a NIL face — a caller's `== nil` deny " +
 			"check would report 'wired' and the first read would nil-deref")
 	}
-	if _, err := r.GetEntity(context.Background(), "TKT-1"); err != nil {
+	if _, err := r.GetAddress(context.Background(), "TKT-1"); err != nil {
 		t.Errorf("read through the structural interface failed: %v", err)
 	}
 }

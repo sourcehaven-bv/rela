@@ -231,13 +231,14 @@ an internal one usually wants `default`. Guessing wrong would mean a
 `published` world quietly serving a draft, which is exactly the failure this
 feature exists to prevent, so the schema has to say which one it means.
 
-Every project also has an implicit **default world**. It applies no
-resolution: every entity appears with its single unnamed state, exactly as a
-project without worlds behaves. It needs no declaration, and the name `default`
-is reserved so nothing can shadow it. Because a faced type has no such state,
-its rows are reached under the default world only by addressing a face
-explicitly as `ID@face`; browsing a faced type there shows nothing. Declare a
-world for every axis you expect people to browse.
+A schema that declares no worlds gets one generated world, named `default`. It
+holds every entity once: a faceless type at its only state, a faced type at the
+first face it has, in the order the type declares its faces. Once you declare
+worlds, only they exist. There is no `default` world beside them, and naming
+one anywhere in the configuration is a load error rather than a quiet
+reference to some other world. The name `default` stays reserved, so no
+declared world can take it. Declare a world for every axis you expect people to
+browse.
 
 The schema loader rejects a world that declares neither `select:` nor
 `overrides:`, a chain naming a face no type declares, an override naming a type
@@ -286,6 +287,20 @@ neighbour is then resolved through the same world on its own, so a Dutch page
 links to Dutch neighbours where they exist and to English ones where they do
 not, and a `published` world drops links to controls that have no published
 face.
+
+Seen from the target, the same source can link from several faces.
+`POL-1@draft` and `POL-1@published` both implementing `CTRL-1` are two edges.
+On the control's page, an incoming relation widget groups these edges per
+source face:
+
+- It shows every edge whose source face you may read. The ACL decides this,
+  not the world.
+- It names the face on each row.
+- It locks a row you may not change.
+- When you add an edge, it offers only the faces you may create the edge
+  from. The server decides this with the checks the save runs.
+
+Removing the draft edge leaves the published one alone.
 
 With the graph shape settled, you can now control who reads which world.
 
@@ -354,8 +369,13 @@ the same not-found response as a missing one.
 
 Under a world, the grant trims the candidates before the world ranks them: a
 `policy@published` reader in a world that prefers `review` and falls back to
-`published` is served the published face, on lists and on the single-entity
-read alike. The world is a view onto the part of the graph the reader may see.
+`published` is served the published face. The single-entity read, lists,
+`?include=` neighbours, the links in a response's `relations`, relation
+filters, and search all work this way. Views do not yet: a view drops a
+neighbour whose preferred face is denied instead of falling through, which
+shows less, never more. The world is a view onto the part of the graph the
+reader may see. An entity with no readable face in the world is absent, and
+that absence looks the same as an entity the world excludes.
 
 Reads and writes default differently, and the difference is deliberate:
 
@@ -367,6 +387,7 @@ Reads and writes default differently, and the difference is deliberate:
 | `update: [policy]` | Nothing, on a faced type — see the warning below |
 | `update: [policy@published]` | The published face only |
 | `update: ["*"]` | Every type, unnamed state only |
+| `rename: [policy]` | Renaming a policy, which moves every face |
 
 A bare read grant covers every face because a world never serves the unnamed
 state when its chain names a face. If a bare read grant covered only that
@@ -377,18 +398,35 @@ grants. If a role must be kept away from drafts, name the face it may read, as
 `reader` does.
 
 **Warning:** A write grant names the face **as stored**, and a faced type
-stores nothing at the bare coordinate. A bare `update: [policy]` therefore
-reaches no row at all: it reads like "may update policies" and denies every
-face. Name each face the role may write:
+stores nothing at the bare coordinate. A bare `update: [policy]` would reach no
+row at all, so it is a load error: `acl.yaml` is refused, and the message names
+the grant and the face-qualified grants to write instead. Name each face the
+role may write:
 
 ```yaml
 editor:
   update: [policy@draft, policy@published]
 ```
 
-`rela acl audit` reports the bare form as `B12-bare-grant-on-faced-type`
-(severity High). It fails closed, so the symptom is a denial with no visible
-cause, which is exactly why the audit names it.
+A rename moves every face of an entity, including faces the renaming user
+cannot read. So it is granted for the whole entity, never per face:
+
+```yaml
+editor:
+  update: [policy@draft, policy@published]
+  rename: [policy]
+```
+
+Face grants do not grant a rename, even on every face. A face-qualified
+rename grant such as `rename: [policy@draft]` is a load error. `rename: ["*"]`
+covers every type. On a faceless type, `update:` still grants a rename as
+well. Global roles and local roles both count. A local role is conferred
+through an identity-scoped relation, so it belongs to the whole entity.
+
+The user type, group types and the relations the ACL walks for roles must stay
+faceless and identity-scoped. The
+[ACL: Security Hardening guide](acl-security.md#users-groups-and-role-relations-must-be-faceless)
+lists the rules.
 
 The `role_relations` block at the top is not optional once a non-default world
 grant exists. A role that can read `world:editorial` is worth stealing, so a
@@ -538,6 +576,17 @@ confers roles. `guard.when` is accepted by the parser but refused at load with
 a message asking you to remove it, because a condition that is written but
 never evaluated is worse than none.
 
+A copy never creates or removes an edge the caller could not create or remove
+by hand. It does not copy an edge to an entity the caller cannot read, and it
+does not copy an edge that the relation affordances or the ACL refuse on the
+target face. Such an edge is skipped and the copy succeeds without it; the
+response does not mention it. `replace` removes a target face's edge only when
+the caller could remove it by hand: the caller can read the entity at its other
+end, and the relation affordances and the ACL allow the removal. Every other
+edge stays. A copy between two faces of one entity with a `guard.permission`
+skips the ACL check on its edges, as it does on the face itself. A skipped edge
+leaves no `denied-write` record in the audit log.
+
 A copy runs as one store transaction and is audited after the commit. On the
 PostgreSQL backend a failed copy rolls back completely. On the filesystem and
 in-memory backends the transaction is a write lock only, so a copy that fails
@@ -556,30 +605,32 @@ app presents it.
 
 ## Step 6 — Configuring the Web App
 
-The web app reads the world from the URL and applies the operator's browsing
-default when the URL names none. Two keys in `data-entry.yaml` control this.
-
-Set the browsing default in the `app:` block:
+The web app reads the world from the URL and applies the schema's default world
+when the URL names none. Set it with a top-level key in `schema.yaml`:
 
 ```yaml
-app:
-  name: "Handbook"
-  default_world: published
+default_world: published
 ```
 
 `default_world` names the world a request lands in when it carries no
-`?world=`. Without it, browsing lands in the default world, which applies no
-resolution and therefore shows no policies at all — every policy row sits under
-a face name. For a faced project `default_world` is effectively required, and
-for a handbook the world to land in is `published`, so readers see the adopted
-text and editors reach drafts deliberately by selecting `editorial`.
+`?world=`. For a handbook the world to land in is `published`, so readers see
+the adopted text and editors reach drafts deliberately by selecting
+`editorial`. The key is required when the schema declares more than one
+world, and a schema without it fails to load. Otherwise reordering `worlds:`
+would change the default world without anyone noticing. With a single declared
+world the key may be left out, and that world is the default. Lua scripts, the
+MCP server, the CLI, scheduled tasks and validation read in the same world.
+
+`app.default_world` in `data-entry.yaml` is the older spelling. It is now a
+deprecated alias that must name the same world as the schema, and a
+contradiction fails the load. It does not stand in for the schema key: move
+the value to `schema.yaml` and remove it from `data-entry.yaml`.
 
 `default_world` is presentation, not policy. It grants nothing: the world's
 read grant is re-checked on every request exactly as for an explicit `?world=`,
 so pointing it at a world a role may not read yields that world's ordinary
 empty result. The server applies it to `curl` and to the browser alike, but
-only on read requests and only on routes that can serve a world. An explicit
-`?world=default` still selects the unresolved default world. Naming an
+only on read requests and only on routes that can serve a world. Naming an
 undeclared world here is a startup error.
 
 Next, tell the policies list where its create button should land:
@@ -706,10 +757,11 @@ curl -s "http://localhost:8080/api/v1/policys?world=published"
 ```
 
 The list contains only policies that have a published face. Omitting the
-parameter serves the default world unless `default_world` is configured.
-Passing `?world=default` explicitly applies no resolution at all, which for a
-faced type means an empty list — a policy's rows all sit under face names, and
-the default world reaches none of them.
+parameter serves the default world named by `default_world`. A schema that
+declares worlds has no world named `default`, so `?world=default` is answered
+with `400 unknown_world`. Only a schema that
+declares no worlds has the generated `default` world, which serves each faced
+type's faces in declaration order.
 
 Read one entity in a world:
 
@@ -786,7 +838,7 @@ A world reaches the following routes:
 | --- | --- |
 | `/api/v1/{plural}` and `/api/v1/{plural}/{id}` | Yes, including `?q=` search and `?include=` neighbours |
 | `/api/v1/_views/{type}/{id}` | Yes. A view's `where:` clauses evaluate against the resolved face |
-| `/api/v1/_history/{type}/{id}` | Yes. Versioning is per face on PostgreSQL, so the history is the served face's |
+| `/api/v1/_history/{type}/{id}` | Yes. Versioning is per face on the database backends, so the history is the served face's. `{id}` may be `ID@face` |
 | `/api/v1/_next_action` | Yes, as the display world for `visible_worlds` |
 | `/api/v1/_search` | Yes. The command palette, search page and entity picker send the page's world. Dashboard cards count in the default world |
 | `/api/v1/_position` | Yes. Prev/next within a search or list runs in the same world as the results it steps through |
@@ -807,10 +859,12 @@ Analysis is deliberately unscoped. It reports on the health of the whole graph
 a caller may read, and a world that hides a broken draft would make the graph
 look clean precisely where it is not.
 
-Search under a world matches the text of the face the world resolves, and an
-entity the world excludes has nothing to match. Searching the `published` world
-for a word that appears only in a draft returns exactly what searching for a
-nonsense word returns.
+Search under a world matches the text of the face the world resolves for the
+caller, and an entity the world excludes has nothing to match. Searching the
+`published` world for a word that appears only in a draft returns exactly what
+searching for a nonsense word returns. The same holds for a face the caller may
+not read: search never matches its text, and serves the next readable face in
+the world instead, as the other read paths do.
 
 You have verified the schema, the grants, and the copy from outside the web
 app. The last step checks the stored data itself.
@@ -839,10 +893,10 @@ Next, audit the access policy:
 rela acl audit
 ```
 
-Look for `B10-undeclared-world`, `B11-undeclared-face` and
-`B12-bare-grant-on-faced-type` findings, which mark grants that will silently
-match nothing. The last one is the mistake warned about in Step 4: a bare
-`update: [policy]` on a type that declares faces.
+Look for `B10-undeclared-world` and `B11-undeclared-face` findings, which
+mark grants that will silently match nothing. The mistake warned about in
+Step 4, a bare `update: [policy]` on a type that declares faces, never reaches
+the audit: `acl.yaml` fails to load and the error names the grant.
 
 Finally, check the stored faces against the schema:
 
@@ -863,10 +917,183 @@ It detects only. To move rows between faces, use the `rename_face` step of the
 [data migration system](data-migration.md#renaming-a-content-state); to adopt
 bare rows into a face, use `migrate_face`.
 
-If your project uses the PostgreSQL backend, each face keeps its own version
-history. Editing the draft versions `POL-1@draft`, and invoking `publish`
-versions `POL-1@published`. The history page in the web app names the face it
-shows, and restoring a version restores that face only.
+If your project uses the PostgreSQL or SQLite backend, each face keeps its own
+version history. Editing the draft versions `POL-1@draft`, and invoking
+`publish` versions `POL-1@published`. The history page in the web app names the
+face it shows, and restoring a version restores that face only.
+
+Every history surface takes an address:
+
+- `GET /api/v1/_history/policy/POL-1@draft` reads the draft's history, and
+  `POST .../POL-1@draft/3/restore` restores it. A bare id is resolved the way
+  the entity endpoint resolves it.
+- `rela history POL-1@draft`, `rela restore POL-1@draft 3` and
+  `rela history-purge POL-1@draft ...` name the face on the command line. A
+  bare id of a faced entity is refused, and the error lists its faces.
+- Restoring a version of a deleted face re-creates that face at the same id.
+  The restore is authorized as a create on `policy@draft`, or as an update when
+  the face still exists. If another writer re-creates the face during the
+  restore, the restore is refused with a conflict and the new face is kept.
+- A purge reaches one face. `--all` erases the draft's history and leaves the
+  published face's history intact.
+
+### Attachments and export on a face
+
+A file belongs to the face it was uploaded on. Attaching a file to
+`POL-1@draft` does not show it on `POL-1@published`. Every attachment surface
+takes an address:
+
+- The HTTP API: `PUT /api/v1/policies/POL-1@draft/_attachments/evidence`.
+- The command line: `rela attach POL-1@draft evidence.pdf`. A bare id of a
+  faced entity is refused, and the message names its faces.
+- The MCP tools: `"id": "POL-1@draft"`.
+
+The bytes are stored once per entity. A face lists and serves only the files
+its own file property names. A copy that carries the file property, such as
+`publish` with `fields: all`, gives the target face a reference to the same
+bytes, so nothing is duplicated. A copy can only carry files the source face
+already references.
+
+File names are unique per face, not per entity. Every upload gets its own
+storage key, which the file property records next to the name. So two faces
+can each hold a `report.pdf` with different contents. An upload behaves
+exactly as if no other face held a file of that name: it is never renamed
+because of another face, so it reveals nothing about files the writer
+cannot read.
+
+Deleting a file from one face keeps the bytes while another face still
+references them. The last reference takes the bytes with it, and so does
+deleting a face that held the last reference.
+
+Only the attachment surfaces, copies, sync and data migrations change a file
+property. An ordinary update that changes or clears a file value is refused
+with `422`, because the value decides which files a face may serve. Restoring
+a version keeps the face's current file values, and duplicating an entity
+leaves them out. An automation cannot write a file property either: a
+schema whose automation names one in `set:` or `create_entity` fails to
+load.
+
+Export takes an address as well: `GET /api/v1/policies/POL-1@draft/_export`
+exports the draft. The read grant for that face applies, so a reader granted
+`policy@published` gets a not-found for the draft.
+
+## How a Write Finds Its Face
+
+Every create names a face: the HTTP API takes `face` or `world` in the body,
+the web app's create form asks for a face when its world declares no
+`create:`, `rela create` takes `--face`, the MCP `create_entity` tool takes
+`face`, and the Lua `create_entity` binding takes `{ face = ... }`. A create
+on a faced type that names none is refused with `422 face_required`, and the
+error lists the faces the type declares in `faces`.
+
+An update, delete, attach or content-scoped relation write on a faced type
+names the face it changes (`POL-1@draft`). A bare id is refused with
+`422 face_required`, even when only one face exists, and the error names the
+faces the caller may read, for example
+`POL-1 has faces; address one: POL-1@draft, POL-1@published`. A write never
+lands on whichever face a world ranks first, and a write that works today
+does not start failing when a second face is published. On a faceless type a
+bare id names its one face. Deleting the last face of an entity deletes the
+entity.
+
+An identity-scoped relation belongs to the entity, not to a face, so a bare
+id is accepted for it, and a faced address writes the same edge.
+
+A content-scoped relation belongs to one face of its source. An edge created
+from the target's side (an incoming edge) therefore names the source's face
+in the body: `{"id": "POL-1@draft", "direction": "incoming"}`, or
+`POL-1@draft` in a relations PATCH. An edge the source already has keeps its
+face, so a PATCH may list it by bare id. The entity manager refuses a
+content-scoped edge from a faced source that names no face, whichever client
+sends it.
+
+A calendar client names the face too: a faced to-do is served over CalDAV
+under its face's address (`task--TSK-1@draft@rela.ics`). When the world
+starts serving another face, the client sees one to-do removed and another
+added.
+
+Some writes concern the whole entity rather than one face. Their outcome
+depends only on your grants and on the faces you can read. It never depends on
+a face hidden from you, so a refusal does not reveal that one exists.
+
+- A **rename** moves every face, hidden ones included. It needs a `rename:`
+  grant on the type. A user with the grant who can read no face of the entity
+  gets the same `404` as for an entity that does not exist. The web app offers
+  the rename on the same terms.
+- An **identity-scoped relation** from a faced entity needs the write grant on
+  every face the type declares, whether or not the entity stores that face. A
+  `relation_grants:` permission is the alternative, as for any relation. An
+  affordance `when:` is evaluated on the faces you can read. A face you cannot
+  read allows the relation only if the grant has no `when:`. The web app's
+  `linkable` flag follows the same rule.
+- Deleting a face deletes the entity when no other face you can read remains.
+  The delete is then checked as an entity delete: it needs `cascade` when the
+  entity has relations, and each identity-scoped and incoming edge must be
+  deletable. When a face you cannot read still exists, rela keeps the entity,
+  that face and those edges, and deletes only the face you named and its own
+  edges. The answer you get is the same either way.
+- A `rela-docs` `assert-acl` claim about a rename is decided the same way and
+  refuses `face=`; a delete claim with no face covers the family.
+
+## Upgrading from a Release Without Implicit Faces
+
+- `?world=default` is a `400 unknown_world` on a schema that declares worlds.
+  The web app drops an unknown `?world=` from the URL and lands in the default
+  world, so old bookmarks keep working.
+- Every route reads in the default world, including routes that refuse an
+  explicit `?world=`.
+- `default_world` is required when the schema declares more than one world.
+  A schema without it fails to load. Add `default_world: <world>` to
+  `schema.yaml`; before this release the first declared world was used.
+- `deny_worlds` naming the default world is refused at load. To keep a client
+  away from content, name the faces in `read:` or use `deny_read`.
+- The deprecated `app.default_world` in `data-entry.yaml` must name the same
+  world as the schema, or the load fails. It does not satisfy the
+  `default_world` requirement; move it to `schema.yaml`.
+- A bare-id write on a faced type is refused with `face_required`, except
+  for an identity-scoped relation. Name the face. This covers updates,
+  deletes, attachments and content-scoped relations, in the HTTP API, MCP,
+  the command line and Lua. A bare-id delete no longer deletes every face;
+  delete each face, and the last one deletes the entity.
+- A content-scoped relation from a faced entity must name the source face:
+  a Lua `create_relation` passes `opts.face`, and an incoming edge names the
+  source as `ID@face`. A content-scoped edge stored with no face before the
+  upgrade can still be deleted.
+- CalDAV and calendar-feed UIDs of a faced entity carry its face, so a
+  calendar client sees each faced to-do or event once removed and re-added
+  after the upgrade.
+- A `face_required` error now carries `faces`.
+- A list's collection `_actions` carries `create@<face>` for a faced type,
+  and `create` is true when any face is creatable.
+- `/api/v1/_schema` carries `world_order`, and each world carries its
+  `create` face.
+- A webhook whose `find.type` is faced must name `find.face` (see
+  [Webhooks](webhooks.md#types-with-faces)).
+- The derived static-query indexes are keyed on the face and are rebuilt on
+  the first start.
+- `rela acl audit` reports a grant on an undeclared world as finding
+  `B10-undeclared-world`.
+- A rename of a faced entity needs a `rename:` grant on its type; update
+  grants on every face no longer grant it. Add `rename: [policy]` (with your
+  type) to each role that renames. `rename: [policy@draft]` is refused at
+  load.
+- An identity-scoped relation from a faced entity is checked against every
+  face its type declares, not only the faces the entity stores. A role that
+  writes such relations needs the grant on each declared face, or a
+  `relation_grants:` permission. An affordance relation grant with `when:`
+  no longer allows such a relation when the caller cannot read every face of
+  the entity.
+- A relation write naming an entity or face the caller cannot read returns
+  `422 target_not_found`, as for one that does not exist. A write naming an
+  absent entity may now get this `422` where it got a `403` before, for
+  example under `--read-only`.
+- Deleting the last face you can read is checked as an entity delete, even
+  when a face you cannot read still exists.
+- A copy skips an edge the caller could not create by hand, where it copied
+  it or refused the whole copy with a `403` before. This covers an edge to an
+  entity the caller cannot read and an edge the relation affordances or the
+  ACL refuse. `replace` keeps the target face's edges that the caller could
+  not remove by hand.
 
 ## What Worlds Do Not Cover Yet
 
@@ -875,27 +1102,18 @@ its whole read path has been scoped and tested, so widening the set is a
 visible change rather than a forgotten call site.
 
 - The command-line interface has no `--world` flag, and `rela list`, `rela
-  show`, and the export commands read the default world. The MCP server and
-  Lua scripts read the default world as well.
+  show`, and the export commands read the default world. The MCP server, Lua
+  scripts, the scheduler and mail read the default world as well.
 - Documents, calendar feeds, sync, attachments, exports, and the relation
   sub-resources of an entity refuse a world.
 - Restoring a version under a world is refused, like every other write with a
   world. Restoring a version onto a face that still exists works; restoring a
   face that was **deleted** is refused for a faced type, because a version
   snapshot does not yet report which face it captured.
-- Only the HTTP API can **create** into a face. The web app's create forms,
-  `rela create`, the MCP `create_entity` tool and the Lua `create` binding all
-  name no face, so they reach faceless types only; against a faced type they
-  are refused with `face_required`.
-- **Updates are not restricted this way.** Every write path that takes an id
-  takes an address, because the entity manager parses it — so
-  `rela update POL-1@draft`, `rela.update_entity("POL-1@draft", …)` and a
-  `PATCH` of `POL-1@draft` all reach the named face. The asymmetry is create
-  versus update, not API versus client.
 - `guard.when` on a copy and `edits:` on a world are parsed but not
   implemented. The first is refused at load, the second is accepted and
   ignored.
-- Version history is available on the PostgreSQL backend only.
+- Version history is available on the PostgreSQL and SQLite backends only.
 
 ## Conclusion
 

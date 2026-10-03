@@ -146,7 +146,6 @@ type CLI struct {
 	Script               ScriptCmd               `cmd:"" help:"Execute a Lua script against the graph."`
 	Scheduler            SchedulerCmd            `cmd:"" help:"Run scheduled Lua tasks."`
 	Renumber             RenumberCmd             `cmd:"" help:"Renumber managed order properties on orderable relations."`
-	Sync                 SyncCmd                 `cmd:"" help:"Sync local changes with a remote rela-server."`
 	Secrets              SecretsCmd              `cmd:"" help:"Inspect how project secrets are supplied."`
 }
 

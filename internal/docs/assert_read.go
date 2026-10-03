@@ -8,6 +8,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -42,7 +43,7 @@ import (
 //
 // # hidden{} is the load-bearing one
 //
-// A denied read is indistinguishable from a missing row: Reader.Get returns
+// A denied read is indistinguishable from a missing row: Resolver.Address returns
 // (nil, false, nil) for both. That is the security property, and it is also
 // what makes `hidden{}` easy to pass for the wrong reason — a typo'd id is
 // hidden too. So an id that exists in NO face is refused: a claim about
@@ -90,6 +91,11 @@ func luaReadClaim(dr *docRuntime, ls *lua.LState, wantVisible bool) int {
 	}
 
 	target := readTarget(id, face)
+	if _, perr := entity.ParseAddress(target); perr != nil {
+		// The resolver answers an address it cannot parse as a miss, which
+		// hidden{} would accept against any policy. Refuse it instead.
+		return dr.luaFail(ls, "%s{id=%q}: not a valid entity address: %v", verb, target, perr)
+	}
 
 	// The vacuous-pass guard for hidden{}: a row that does not exist is hidden
 	// from everyone, so the claim would hold against any policy — including one
@@ -106,8 +112,12 @@ func luaReadClaim(dr *docRuntime, ls *lua.LState, wantVisible bool) int {
 		return dr.luaFail(ls, "%s: %v", verb, err)
 	}
 
+	defaultScope, err := dr.worldScope("")
+	if err != nil {
+		return dr.luaFail(ls, "%s: %v", verb, err)
+	}
 	ctx := principal.With(dr.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
-	_, visible, gerr := reader.Get(ctx, typ, target)
+	_, visible, gerr := reader.Address(ctx, visibility.WorldOf(defaultScope), typ, target)
 	if gerr != nil {
 		return dr.luaFail(ls, "%s{id=%q}: the read gate errored: %v", verb, target, gerr)
 	}
@@ -134,9 +144,10 @@ func readTarget(id, face string) string {
 
 // readerFor builds the gated reader over the seeded graph.
 //
-// Mirrors appbuild.scriptEntityReader: a DeclarativeGate over the evaluator,
-// wrapped in a PolicyReader — the same two types the application wires, so a
-// claim fails if the row gate or the face gate stops being consulted.
+// A DeclarativeGate over the evaluator, read through a visibility.Resolver:
+// the same gate the application wires and the same single-entity read every
+// gated route uses, so a claim fails if the row gate or the face gate stops
+// being consulted.
 //
 // # Why the redactor is a no-op, and what that costs
 //
@@ -150,16 +161,20 @@ func readTarget(id, face string) string {
 // pass vacuously against a NopRedactor. Field redaction is asserted through
 // api{} instead, which goes over HTTP against a real server that has the
 // genuine redactor wired.
-func readerFor(dr *docRuntime) (visibility.Reader, error) {
+func readerFor(dr *docRuntime) (*visibility.Resolver, error) {
 	d, err := acl.NewDeclarative(dr.policy, acl.NewStoreGraph(dr.store), dr.store)
 	if err != nil {
 		return nil, fmt.Errorf("building the evaluator failed: %w", err)
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	defaultScope, err := dr.worldScope("")
+	if err != nil {
+		return nil, err
+	}
+	gate, err := visibility.NewDeclarativeGate(d, defaultScope)
 	if err != nil {
 		return nil, fmt.Errorf("building the read gate failed: %w", err)
 	}
-	reader, err := visibility.NewPolicyReader(gate, visibility.NopRedactor{}, dr.store)
+	reader, err := visibility.NewResolver(gate, visibility.NopRedactor{}, dr.store, familiesOption(dr.worlds))
 	if err != nil {
 		return nil, fmt.Errorf("building the reader failed: %w", err)
 	}
@@ -208,7 +223,7 @@ func readEvidence(dr *docRuntime, who, target, face string, visible bool) eviden
 // seededIDs lists what WAS seeded for a type, for the unknown-id message.
 func seededIDs(dr *docRuntime, typ string) []string {
 	var ids []string
-	for e, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, AllStates: true}) {
+	for e, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, Faces: store.AllFaces()}) {
 		if err != nil {
 			return ids
 		}

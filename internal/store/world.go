@@ -8,11 +8,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-// ErrInvalidQuery reports a query whose fields contradict each other, as
-// opposed to one that simply matches nothing. Today the only such pair is
-// AllStates together with a non-default World on an [EntityQuery]: raw
-// storage truth and world resolution are opposite intents, and silently
-// picking one is a precedence rule nobody remembers.
+// ErrInvalidQuery reports a query that cannot be answered as built, as
+// opposed to one that simply matches nothing: today, an [EntityQuery] or
+// [GraphQuery] whose [FaceSelection] is the zero value (TKT-KQXVF7).
 var ErrInvalidQuery = errors.New("store: invalid query")
 
 // Fallback is what a world does with an entity whose type declares
@@ -87,15 +85,18 @@ type TypeResolution struct {
 // consult a metamodel) and internal/visibility (which arch-lint forbids
 // from importing metamodel) can both hold one.
 //
-// # The two zero values mean different things, on purpose
+// # The zero value is invalid
 //
-// The zero WorldScope is the DEFAULT WORLD: total, every entity present
-// via its default state, byte-identical to the pre-worlds system — which
-// is what lets every existing query construction site keep working
-// untouched. The zero [Fallback], by contrast, is EXCLUSION. Both choices
-// are the safe direction for their own type: an unconfigured scope must
-// not start hiding things, and an unconfigured fallback must not start
-// revealing them.
+// A WorldScope must be built: by [TrivialScope], by [NewWorldScope], or by
+// internal/worlds. The zero value is unset, and [InWorld] of an unset scope
+// is [ErrInvalidQuery] on every backend (TKT-7IZHP0, design A4). This
+// follows [FaceSelection]: a world nobody chose is a bug to surface, not a
+// default to guess. It used to mean "every entity at its implicit face",
+// which made a forgotten World field on a wiring struct indistinguishable
+// from a deliberate choice.
+//
+// The zero [Fallback], by contrast, is EXCLUSION. An unconfigured fallback
+// must not start revealing things.
 //
 // # Absence is not the zero value
 //
@@ -122,10 +123,12 @@ type TypeResolution struct {
 // exclude it.
 type WorldScope struct {
 	byType map[string]TypeResolution
+	// set is true for every constructed scope; the zero value is unset.
+	set bool
 }
 
 // NewWorldScope compiles a per-type resolution map into a WorldScope.
-// Passing an empty or nil map yields the default world.
+// Passing an empty or nil map yields the trivial scope.
 //
 // The map and every Chain in it are copied, so the caller may reuse or
 // mutate its input: a WorldScope is handed to every backend and must not
@@ -137,25 +140,38 @@ type WorldScope struct {
 // into `select: draft`.
 func NewWorldScope(byType map[string]TypeResolution) WorldScope {
 	if len(byType) == 0 {
-		return WorldScope{}
+		return TrivialScope()
 	}
 	cp := make(map[string]TypeResolution, len(byType))
 	for typ, res := range byType {
 		cp[typ] = TypeResolution{Chain: slices.Clone(res.Chain), Fallback: res.Fallback}
 	}
-	return WorldScope{byType: cp}
+	return WorldScope{byType: cp, set: true}
 }
 
-// DefaultWorld returns the implicit total world: every entity contributes
-// its default state. It is the zero value, named for call sites that want
-// to say so explicitly rather than passing a bare WorldScope{}.
-func DefaultWorld() WorldScope { return WorldScope{} }
+// TrivialScope returns the scope with no per-type entries: every entity
+// resolves to its implicit face ([entity.ImplicitFace]). It is what a
+// project without faces compiles to, and what the backends' fast paths
+// test for with [WorldScope.IsTrivial].
+//
+// It is not "the default world": which world a request lands in is the
+// compiled worlds' decision (internal/worlds), and a guard in
+// internal/archguard pins the call sites outside the store and worlds
+// packages.
+func TrivialScope() WorldScope { return WorldScope{set: true} }
 
-// IsDefaultWorld reports whether w resolves every entity to its default
-// state. Backends branch on this for the historical fast path: it must
-// reduce to exactly the pre-worlds empty-face query, allocating
-// nothing, so a project that never declares a face pays nothing.
-func (w WorldScope) IsDefaultWorld() bool { return len(w.byType) == 0 }
+// IsTrivial reports whether w has no per-type entries, so it resolves every
+// entity to its implicit face. Backends branch on this for the historical
+// fast path: it must reduce to exactly the pre-worlds empty-face query,
+// allocating nothing, so a project that never declares a face pays nothing.
+//
+// It says nothing about validity: the unset zero value is also "trivial"
+// here, and is refused separately by [FaceSelection.Validate].
+func (w WorldScope) IsTrivial() bool { return len(w.byType) == 0 }
+
+// IsSet reports whether w was constructed ([TrivialScope], [NewWorldScope]).
+// The zero value is unset and invalid in a query.
+func (w WorldScope) IsSet() bool { return w.set }
 
 // For returns the resolution w applies to entityType, and whether one is
 // declared at all.
@@ -173,6 +189,27 @@ func (w WorldScope) For(entityType string) (res TypeResolution, ok bool) {
 		return TypeResolution{}, false
 	}
 	return TypeResolution{Chain: slices.Clone(res.Chain), Fallback: res.Fallback}, true
+}
+
+// FlatFaces returns the faces a row of entityType may hold in w when the
+// world admits at most one of them per entity, and ok=false when it ranks
+// two or more (TKT-7IZHP0 A9). A flat type needs no per-family ranking: its
+// selection is the plain set `face IN faces`, which a `(type, face, ...)`
+// index serves as a range scan. An unscoped type is flat at the implicit
+// face; an empty chain under `otherwise: exclude` is flat at no face.
+func (w WorldScope) FlatFaces(entityType string) (faces []entity.Face, ok bool) {
+	res, scoped := w.byType[entityType]
+	if !scoped {
+		return []entity.Face{entity.ImplicitFace}, true
+	}
+	faces = slices.Clone(res.Chain)
+	if res.Fallback == FallbackDefaultState && !slices.Contains(faces, entity.ImplicitFace) {
+		faces = append(faces, entity.ImplicitFace)
+	}
+	if len(faces) > 1 {
+		return nil, false
+	}
+	return faces, true
 }
 
 // Types returns the entity types w declares a resolution for. The order

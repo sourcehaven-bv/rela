@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // mockTransport is a test transport that returns pre-configured events.
@@ -33,7 +35,7 @@ func (m *mockTransport) Present(screen Screen) (Event, error) {
 func newTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	var buf bytes.Buffer
-	r := NewReader(ReadDeps{ProjectRoot: "/tmp"}, &buf)
+	r := NewReader(ReadDeps{ProjectRoot: "/tmp", World: store.TrivialScope()}, &buf)
 	return r
 }
 
