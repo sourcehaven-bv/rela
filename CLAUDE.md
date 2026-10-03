@@ -206,12 +206,17 @@ above rather than by a clean `analyze all`.
   and neoq's insert trigger does `pg_notify(NEW.queue, ...)`, so tables shared
   across tenants would mean tenants consuming each other's jobs. neoq v0.72.1
   could not do this — one migration named `public.neoq_jobs_id_seq` while its
-  tables follow `search_path` — which is why `go.mod` carries a `replace` onto a
-  fork (BUG-YJEIFH, upstream acaloiaro/neoq#149). Drop the `replace` when that
-  lands, not before: `TestPostgresQueue_SchemaPinnedDSN` is what fails if it
-  goes early. **Test any new postgres-touching dependency through a
-  schema-pinned DSN**, not just the bare `RELA_TEST_DATABASE_URL` — the bare DSN
-  resolves to `public`, which is precisely the one case that worked.
+  tables follow `search_path` — which is why `go.mod` carries a `replace` onto
+  the `sourcehaven` branch of the sourcehaven-bv/neoq fork (BUG-YJEIFH, upstream
+  acaloiaro/neoq#149). That branch also carries the cross-process shutdown fix
+  (BUG-YAMD6J), the JobTimeout fix and the acquire fix; `go.mod` lists them.
+  Drop the `replace` only when all of them are upstream.
+  `TestPostgresQueue_SchemaPinnedDSN` and
+  `TestPostgresQueue_SurvivesAnotherProcessClosing` catch losing the schema
+  and shutdown fixes; the fork's own tests cover the rest.
+  **Test any new postgres-touching dependency through a schema-pinned DSN**,
+  not just the bare `RELA_TEST_DATABASE_URL` — the bare DSN resolves to
+  `public`, which is precisely the one case that worked.
 
 - **The configuration is not a secret; the data is.** `schema.yaml`,
   `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
