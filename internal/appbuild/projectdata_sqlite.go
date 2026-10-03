@@ -12,7 +12,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -196,7 +195,7 @@ func ExportMarkdownData(
 func dataMetamodel(
 	ctx context.Context, fsys storage.FS, paths *project.Context, dir string, db *sqlitedb.DB,
 ) (*metamodel.Metamodel, error) {
-	loader, err := layerProjectConfig(config.NewFSLoader(fsys, dir), db)
+	loader, err := layerProjectConfig(dir, db)
 	if err != nil {
 		return nil, err
 	}
