@@ -288,6 +288,19 @@ links to Dutch neighbours where they exist and to English ones where they do
 not, and a `published` world drops links to controls that have no published
 face.
 
+Seen from the target, the same source can link from several faces.
+`POL-1@draft` and `POL-1@published` both implementing `CTRL-1` are two edges.
+On the control's page, an incoming relation widget groups these edges per
+source face:
+
+- It shows every edge whose source face you may read. The ACL decides this,
+  not the world.
+- It names the face on each row.
+- It locks a row you may not change.
+- When you add an edge, it offers only the faces you may write.
+
+Removing the draft edge leaves the published one alone.
+
 With the graph shape settled, you can now control who reads which world.
 
 ## Step 4 — Granting Access to Worlds and Faces
@@ -942,19 +955,36 @@ the web app's create form asks for a face when its world declares no
 on a faced type that names none is refused with `422 face_required`, and the
 error lists the faces the type declares in `faces`.
 
-An update, delete, attach or relation write may name the face
-(`POL-1@draft`) or give a bare id. A bare id is resolved in the request's
-world: the faces of the entity that the principal may read and that the world
-admits are counted. Exactly one is the target. None or several is refused,
-and the error names the faces to choose from, for example
+An update, delete, attach or content-scoped relation write on a faced type
+names the face it changes (`POL-1@draft`). A bare id is refused with
+`422 face_required`, even when only one face exists, and the error names the
+faces the caller may read, for example
 `POL-1 has faces; address one: POL-1@draft, POL-1@published`. A write never
-lands on whichever face a world happens to rank first.
+lands on whichever face a world ranks first, and a write that works today
+does not start failing when a second face is published. On a faceless type a
+bare id names its one face. Deleting the last face of an entity deletes the
+entity.
 
-Three writes act on the whole family rather than one face:
+An identity-scoped relation belongs to the entity, not to a face, so a bare
+id is accepted for it, and a faced address writes the same edge.
+
+A content-scoped relation belongs to one face of its source. An edge created
+from the target's side (an incoming edge) therefore names the source's face
+in the body: `{"id": "POL-1@draft", "direction": "incoming"}`, or
+`POL-1@draft` in a relations PATCH. An edge the source already has keeps its
+face, so a PATCH may list it by bare id. The entity manager refuses a
+content-scoped edge from a faced source that names no face, whichever client
+sends it.
+
+A calendar client names the face too: a faced to-do is served over CalDAV
+under its face's address (`task--TSK-1@draft@rela.ics`). When the world
+starts serving another face, the client sees one to-do removed and another
+added.
+
+Two writes act on the whole family rather than one face:
 
 - A **rename** moves every face, so it needs the update grant on every stored
   face. The web app offers it only then.
-- A **delete** of a bare id deletes every face; `ID@face` deletes one.
 - A `rela-docs` `assert-acl` claim about a rename covers every face and
   refuses `face=`; a delete claim with no face covers the family.
 
@@ -966,8 +996,18 @@ Three writes act on the whole family rather than one face:
 - Every route reads in the default world, including routes that refuse an
   explicit `?world=`. Without `default_world` that is the first declared
   world.
-- A bare-id write on an entity with several readable faces in the world is
-  refused instead of reaching the implicit face. Name the face.
+- A bare-id write on a faced type is refused with `face_required`, except
+  for an identity-scoped relation. Name the face. This covers updates,
+  deletes, attachments and content-scoped relations, in the HTTP API, MCP,
+  the command line and Lua. A bare-id delete no longer deletes every face;
+  delete each face, and the last one deletes the entity.
+- A content-scoped relation from a faced entity must name the source face:
+  a Lua `create_relation` passes `opts.face`, and an incoming edge names the
+  source as `ID@face`. A content-scoped edge stored with no face before the
+  upgrade can still be deleted.
+- CalDAV and calendar-feed UIDs of a faced entity carry its face, so a
+  calendar client sees each faced to-do or event once removed and re-added
+  after the upgrade.
 - A `face_required` error now carries `faces`.
 - A list's collection `_actions` carries `create@<face>` for a faced type,
   and `create` is true when any face is creatable.

@@ -1123,7 +1123,7 @@ func (a *App) handleV1EntityRelations(w http.ResponseWriter, r *http.Request, ty
 	// edges point at the entity, since heads are faceless; one whose tail is a
 	// face is served with that face named, if the caller may read it.
 	outgoing := a.reader.outgoingRelationsOnFace(r.Context(), ref)
-	incoming, err := a.readableIncoming(r.Context(), ref.ID)
+	incoming, err := readableIncoming(r.Context(), a.reader, a.visibleReader, ref.ID)
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -1343,7 +1343,7 @@ func (a *App) handleV1GetRelationType(w http.ResponseWriter, r *http.Request, ty
 	var edges []*entityPkg.Relation
 	if incoming {
 		var err error
-		if edges, err = a.readableIncoming(r.Context(), ref.ID); err != nil {
+		if edges, err = readableIncoming(r.Context(), a.reader, a.visibleReader, ref.ID); err != nil {
 			writeGateError(w, r, err)
 			return
 		}

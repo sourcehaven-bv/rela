@@ -133,7 +133,7 @@ type writeHandler struct {
 	// caller may see. The write path answers with the row it wrote, so it
 	// owes the row's own edges, not the bare id's union of every face's.
 	faceEdges func(ctx context.Context, e *entityPkg.Entity) ([]*entityPkg.Relation, map[string]bool, error)
-	// planEdges is [App.planEdges]: the edge writes one relation wrapper
+	// planEdges is edgeReader.plan: the edge writes one relation wrapper
 	// asks for, matched against the edges the caller can see.
 	planEdges edgePlanner
 

@@ -1120,14 +1120,18 @@ func NewApp(
 	// App methods, so it's wired after the struct literal. It MUST share the
 	// same acl instance as the write path (contract-test invariant).
 	app.affordances = affordanceService{
-		acl:              func() acl.ACL { return app.acl },
-		resolver:         func() FieldVerdictResolver { return app.fieldResolver },
-		store:            st,
-		meta:             func() *metamodel.Metamodel { return app.State().Meta },
-		family:           app.visibleReader.family,
-		sourceRow:        app.reader.writePrepRow,
-		sourceFamily:     app.reader.writePrepFamily,
-		planEdges:        app.planEdges,
+		acl:          func() acl.ACL { return app.acl },
+		resolver:     func() FieldVerdictResolver { return app.fieldResolver },
+		store:        st,
+		meta:         func() *metamodel.Metamodel { return app.State().Meta },
+		family:       app.visibleReader.family,
+		sourceRow:    app.reader.writePrepRow,
+		sourceFamily: app.reader.writePrepFamily,
+		planEdges: edgeReader{
+			meta:    func() *metamodel.Metamodel { return app.State().Meta },
+			reader:  app.reader,
+			visible: app.visibleReader,
+		}.plan,
 		copies:           copyOffers,
 		schema:           app.State,
 		actionConditions: func() ViewConditionFunc { return app.viewConditions },
@@ -1335,7 +1339,11 @@ func NewApp(
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
 			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
 		},
-		planEdges:        app.planEdges,
+		planEdges: edgeReader{
+			meta:    func() *metamodel.Metamodel { return app.State().Meta },
+			reader:  app.reader,
+			visible: app.visibleReader,
+		}.plan,
 		engine:           func() *script.Engine { return app.scriptEngine },
 		luaDeps:          app.luaWriteDeps,
 		fullScriptDetail: app.allowFullScriptDetail,

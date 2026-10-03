@@ -30,14 +30,23 @@ type edgeOp struct {
 	remove   bool
 }
 
-// edgePlanner is the signature of App.planEdges, injected into the write
+// edgePlanner is the signature of edgeReader.plan, injected into the write
 // handler and the affordance service.
 type edgePlanner func(
 	ctx context.Context, entityID string, tail entity.Face, canonical string, incoming bool,
 	upd v1.RelationsUpdate, path string,
 ) ([]edgeOp, error)
 
-// planEdges turns one relation wrapper into the edge writes it asks for. It
+// edgeReader reads the current edges a relation wrapper is matched against.
+// The wiring site builds one from the App's read seams; it holds no state of
+// its own.
+type edgeReader struct {
+	meta    func() *metamodel.Metamodel
+	reader  entityReader
+	visible visibleReader
+}
+
+// plan turns one relation wrapper into the edge writes it asks for. It
 // is the one place a wrapper is matched against the current edges, shared by
 // the affordance check and the reconciler, so the two cannot disagree on
 // which edge a body names.
@@ -52,24 +61,24 @@ type edgePlanner func(
 // has to the path entity. `data` and `add` keep all of them; `remove` needs
 // exactly one, and answers face_required otherwise. A bare id with no edge
 // yet is resolved as a single create resolves it ([visibility.Resolver.WriteTarget]).
-func (a *App) planEdges(
+func (e edgeReader) plan(
 	ctx context.Context, entityID string, tail entity.Face, canonical string, incoming bool,
 	upd v1.RelationsUpdate, path string,
 ) ([]edgeOp, error) {
-	meta := a.State().Meta
+	meta := e.meta()
 	content := metamodel.IsContentScoped(meta, canonical)
 	newTail := entity.ImplicitFace
 	if !incoming && content {
 		newTail = tail
 	}
-	current, err := a.currentEdges(ctx, entityID, newTail, canonical, incoming)
+	current, err := e.currentEdges(ctx, entityID, newTail, canonical, incoming)
 	if err != nil {
 		return nil, &gateFaultError{err: err}
 	}
 	p := edgePlan{
 		incoming: incoming, content: content, newTail: newTail, path: path,
 		bySlot: map[edgeSlot]*entity.Relation{}, byPeer: map[string][]*entity.Relation{},
-		resolve: func(id string) (entity.Face, error) { return a.resolveIncomingPeer(ctx, canonical, id, path) },
+		resolve: func(id string) (entity.Face, error) { return e.resolveIncomingPeer(ctx, canonical, id, path) },
 	}
 	for _, rel := range current {
 		s := edgeSlot{peer: rel.To, tail: rel.FromFace}
@@ -88,14 +97,14 @@ func (a *App) planEdges(
 // currentEdges returns the edges of canonical touching entityID that the
 // principal can read. Outgoing edges are those tail owns (BUG-64MU2Q);
 // incoming ones carry the peer's tail, so every face's are returned.
-func (a *App) currentEdges(
+func (e edgeReader) currentEdges(
 	ctx context.Context, entityID string, tail entity.Face, canonical string, incoming bool,
 ) ([]*entity.Relation, error) {
 	var edges []*entity.Relation
 	if incoming {
-		edges = a.reader.incomingRelations(ctx, entityID)
+		edges = e.reader.incomingRelations(ctx, entityID)
 	} else {
-		edges = a.reader.outgoingRelations(ctx, entityID)
+		edges = e.reader.outgoingRelations(ctx, entityID)
 	}
 	out := edges[:0:0]
 	for _, edge := range edges {
@@ -103,21 +112,21 @@ func (a *App) currentEdges(
 			out = append(out, edge)
 		}
 	}
-	return a.visibleReader.readableRelations(ctx, out)
+	return e.visible.readableRelations(ctx, out)
 }
 
 // resolveIncomingPeer is the face a new incoming content edge from the bare
 // id takes. A peer that does not exist, or that the caller cannot read, is
 // left at the implicit face for the manager to refuse as missing.
-func (a *App) resolveIncomingPeer(ctx context.Context, relType, id, path string) (entity.Face, error) {
-	typ, err := a.visibleReader.readableType(ctx, id)
+func (e edgeReader) resolveIncomingPeer(ctx context.Context, relType, id, path string) (entity.Face, error) {
+	typ, err := e.visible.readableType(ctx, id)
 	if err != nil {
 		return "", &gateFaultError{err: err}
 	}
 	if typ == "" {
 		return entity.ImplicitFace, nil
 	}
-	ref, ok, err := a.visibleReader.resolver.WriteTarget(ctx, worldFromContext(ctx).visibility(), typ,
+	ref, ok, err := e.visible.resolver.WriteTarget(ctx, worldFromContext(ctx).visibility(), typ,
 		entity.BareAddress(id))
 	var amb *visibility.AmbiguousAddressError
 	switch {
@@ -131,7 +140,7 @@ func (a *App) resolveIncomingPeer(ctx context.Context, relType, id, path string)
 	return ref.Face, nil
 }
 
-// edgePlan is the state of one App.planEdges call.
+// edgePlan is the state of one edgeReader.plan call.
 type edgePlan struct {
 	incoming, content bool
 	newTail           entity.Face
@@ -210,7 +219,7 @@ func (p edgePlan) upserts(refs []v1.ResourceIdentifier, key string) ([]edgeOp, m
 	return ops, listed, nil
 }
 
-// slots is the edges one listed id names; see App.planEdges.
+// slots is the edges one listed id names; see edgeReader.plan.
 func (p edgePlan) slots(ref v1.ResourceIdentifier, at string, removing bool) ([]edgeSlot, error) {
 	peer := peerAddress(ref.ID, p.incoming)
 	id := peer.ID()
@@ -258,8 +267,8 @@ func edgeKeyOf(entityID, relType string, s edgeSlot, incoming bool) entity.Relat
 // face otherwise ([visibleReader.readableRelations]). The read is ACL only,
 // never narrowed by the world: the relations routes serve an edge editor,
 // and a user manipulates the set they can see.
-func (a *App) readableIncoming(ctx context.Context, id string) ([]*entity.Relation, error) {
-	return a.visibleReader.readableRelations(ctx, a.reader.incomingRelations(ctx, id))
+func readableIncoming(ctx context.Context, r entityReader, v visibleReader, id string) ([]*entity.Relation, error) {
+	return v.readableRelations(ctx, r.incomingRelations(ctx, id))
 }
 
 // markIncomingFace adds `face` and `editable` to the wire row of an incoming

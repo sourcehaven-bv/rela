@@ -138,7 +138,7 @@ type affordanceService struct {
 	// `_copies` is omitted rather than sent empty — see computeCopyOffers.
 	// Wired by wireCopies, in production and in the test rebind alike.
 	copies copyOffersFunc
-	// planEdges is [App.planEdges]: the edge writes one relation wrapper
+	// planEdges is edgeReader.plan: the edge writes one relation wrapper
 	// asks for, which this service authorizes one by one.
 	planEdges edgePlanner
 	// schema and actionConditions back the detail-action affordance

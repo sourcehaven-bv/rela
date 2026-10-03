@@ -895,11 +895,18 @@ When `direction: incoming` is set:
 - Cardinality (single vs. multi) honors the relation's `max_incoming` instead of `max_outgoing`.
 - Saving a new link writes the edge as `(peer) → {relType} → (current entity)`; the backend
   swaps from/to so the on-disk relation file stays canonical.
+- On a `scope: content` relation from a faced type, each face of a peer is its own edge.
+  The widget groups the edges per face, marks the ones you may not change with a lock, and
+  offers one candidate per face you may write. A new link names that face (`POL-1@draft`).
+  See [Content States](content-states.md#how-a-write-finds-its-face).
 - Grouped responses from `GET /api/v1/{plural}/{id}/relations` surface incoming edges under
   the relation's `inverse:` name (see [metamodel.md](metamodel.md#inverse-relations)), e.g.
   `blocks` → `blockedBy`.
 
 All form widgets (`select`, `multi-select`, `search`, `cards`) honor `direction: incoming`.
+
+A form saves relation changes as a delta (`add` / `remove`), never as the full set. An edge
+the form did not show, such as one from a face you cannot read, is never removed by a save.
 
 **Label collision:** The widget's section heading defaults to `label || relation`. If you
 put two widgets with the same relation and no `label:` next to each other (one outgoing, one
@@ -6349,8 +6356,10 @@ Each entity becomes one event — **all-day** when the `date:` source is a `date
 property, or **timed** (a UTC `DTSTART` with a time-of-day) when it is a
 `datetime` property:
 
-- **UID** is `<type>--<id>@rela` — stable across refreshes so a calendar client
-  tracks the same event over time.
+- **UID** is `<type>--<id>@rela`, stable across refreshes so a calendar client
+  tracks the same event over time. On a faced type the id carries the face
+  the world served (`policy--POL-1@published@rela`), so a different face is a
+  different event.
 - **Deep link** — every event carries an absolute `URL` back to the entity in the
   data-entry app (Apple Calendar shows it in the event's Get Info panel).
 - **JSON** — the same feed at `.json` returns `{ name, color, events: [...] }`

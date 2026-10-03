@@ -469,13 +469,6 @@ export class FormPage extends BasePage {
     return picker.locator(".selected-entity");
   }
 
-  /** A relation picker, scoped by its label. */
-  relationPickerByLabel(label: string): Locator {
-    return this.page
-      .locator(".relation-picker")
-      .filter({ has: this.page.locator(`label:has-text("${label}")`) });
-  }
-
   /** An incoming picker's group of edges from one source face, by the
    *  face's label. */
   pickerFaceGroup(picker: Locator, faceLabel: string): Locator {
