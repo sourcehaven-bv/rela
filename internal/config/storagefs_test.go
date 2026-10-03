@@ -162,3 +162,29 @@ func TestStorageFS_FileInfo(t *testing.T) {
 		t.Errorf("ReadDir entry type = %v, want regular", entries[0].Type())
 	}
 }
+
+// A directory the loader lists something under is a directory; one it lists
+// nothing under is absent.
+func TestStorageFS_StatDirectories(t *testing.T) {
+	view, root := newStorageFS(t)
+	if info, err := view.Stat(filepath.Join(root, "scripts")); err != nil || !info.IsDir() {
+		t.Fatalf("Stat(scripts) = %v, %v; want a directory", info, err)
+	}
+	mem := storage.NewMemFS()
+	if err := mem.MkdirAll("/proj/templates/entities", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.WriteFile("/proj/templates/entities/doc.md", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested, err := config.NewStorageFS(context.Background(), config.NewFSLoader(mem, "/proj"), "/proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := nested.Stat("/proj/templates"); err != nil || !info.IsDir() {
+		t.Fatalf("Stat(templates) = %v, %v; want a directory via Dirs", info, err)
+	}
+	if _, err := nested.Stat("/proj/absent"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Stat(absent) err = %v, want ErrNotExist", err)
+	}
+}

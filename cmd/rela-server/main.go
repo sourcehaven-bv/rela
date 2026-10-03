@@ -494,7 +494,7 @@ func main() {
 	commandAuthz := buildCommandAuthorizer(f, svc)
 
 	app, err := dataentry.NewApp(
-		svc.FS(), svc.Paths(), svc.ProjectFiles(), svc.Meta(), svc.Store(), svc.Versions(),
+		svc.FS(), svc.Paths(), svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),

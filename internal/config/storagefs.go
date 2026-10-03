@@ -95,9 +95,10 @@ func (s *StorageFS) Open(path string) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-// Stat reports a config file's size, or a directory for the root itself.
-// Any other directory is not detectable through a Loader (see [FSView]) and
-// reports as absent.
+// Stat reports a config file's size, or a directory for the root and for any
+// path the loader lists something under: files, or subdirectories when it is
+// a [DirLister]. A directory holding nothing is not detectable through a
+// Loader and reports as absent, which every reader treats like an empty one.
 func (s *StorageFS) Stat(path string) (os.FileInfo, error) {
 	name, err := s.name(path)
 	if err != nil {
@@ -107,10 +108,30 @@ func (s *StorageFS) Stat(path string) (os.FileInfo, error) {
 		return fileInfo{name: filepath.Base(s.root), dir: true}, nil
 	}
 	data, err := s.loader.Load(s.ctx, name)
-	if err != nil {
+	if err == nil {
+		return fileInfo{name: filepath.Base(name), size: int64(len(data))}, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
-	return fileInfo{name: filepath.Base(name), size: int64(len(data))}, nil
+	if isDir, dirErr := s.isDir(name); dirErr != nil || !isDir {
+		return nil, err
+	}
+	return fileInfo{name: filepath.Base(name), dir: true}, nil
+}
+
+// isDir reports whether the loader holds anything under name.
+func (s *StorageFS) isDir(name string) (bool, error) {
+	files, err := s.loader.List(s.ctx, name)
+	if err != nil || len(files) > 0 {
+		return len(files) > 0, err
+	}
+	lister, ok := s.loader.(DirLister)
+	if !ok {
+		return false, nil
+	}
+	dirs, err := lister.Dirs(s.ctx, name)
+	return len(dirs) > 0, err
 }
 
 // ReadDir lists the regular files directly under path.

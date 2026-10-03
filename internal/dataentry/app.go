@@ -874,6 +874,7 @@ func NewApp(
 	fs storage.FS,
 	paths *project.Context,
 	files config.Loader,
+	templater templating.Templater,
 	meta *metamodel.Metamodel,
 	st store.Store,
 	versions store.VersionService,
@@ -893,6 +894,9 @@ func NewApp(
 	// only when they participate in the construction below.
 	if files == nil {
 		return nil, errors.New("dataentry.NewApp: files is required (wire appbuild's Services.ProjectFiles())")
+	}
+	if templater == nil {
+		return nil, errors.New("dataentry.NewApp: templater is required (wire appbuild's Services.Templater())")
 	}
 	assets, ok := files.(projectAssets)
 	if !ok {
@@ -946,7 +950,6 @@ func NewApp(
 	// visible only on whichever node served the POST (TKT-VC27L3).
 	kv := stateKV
 	trc := tracer.New(st)
-	templater := templating.NewFSTemplater(fs, paths)
 	// The validator (val) is built AFTER app.affordances below — its reader is
 	// now GATED (TKT-3FL2S6, superseding DEC-O59WM4), which needs the redactor
 	// that closes over app.affordances.

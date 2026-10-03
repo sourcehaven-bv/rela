@@ -349,3 +349,27 @@ func TestSQLite_BakedAssetsAreServed(t *testing.T) {
 		t.Fatalf("Dirs(apps) = %v, %v", dirs, err)
 	}
 }
+
+// Entity templates the database carries are used when the files are gone.
+func TestSQLite_BakedTemplatesAreUsed(t *testing.T) {
+	root := writeMinimalProject(t)
+	writeFile(t, root, "templates/entities/doc.md", "---\ntitle: From the database\n---\nBody\n")
+	writeFile(t, root, "templates/entities/doc--short.md", "---\ntitle: Short\n---\n")
+	bake(t, root)
+	removeAll(t, root, "templates")
+
+	svc, err := discover(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = svc.Close() }()
+	ctx := context.Background()
+	tmpl, err := svc.Templater().EntityTemplate(ctx, "doc", "")
+	if err != nil || tmpl == nil {
+		t.Fatalf("EntityTemplate = %v, %v; want the baked template", tmpl, err)
+	}
+	all, err := svc.Templater().EntityTemplates(ctx, "doc")
+	if err != nil || len(all) != 2 {
+		t.Fatalf("EntityTemplates = %d templates, %v; want 2", len(all), err)
+	}
+}

@@ -1948,7 +1948,10 @@ func assemble(
 	// coverage-ignore-end
 
 	tr := tracer.New(st)
-	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
+	templater, err := newTemplater(cfg)
+	if err != nil {
+		return nil, err
+	}
 	cfgLoader := cfg.configLoader()
 
 	// Build the static lua read deps once — the ScriptRunner (automation
