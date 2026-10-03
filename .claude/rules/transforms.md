@@ -4,6 +4,8 @@ paths:
   - "internal/cmdexec/**"
   - "internal/attachment/**"
   - "internal/dataentry/export*.go"
+  - "internal/dataentry/document.go"
+  - "internal/cli/render.go"
 ---
 
 # View export & transforms (`internal/transform`)

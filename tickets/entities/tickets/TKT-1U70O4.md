@@ -6,7 +6,7 @@ kind: chore
 priority: medium
 effort: m
 started: "2026-10-03"
-status: in-progress
+status: review
 ---
 
 ## Description

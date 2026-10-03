@@ -2,7 +2,11 @@
 paths:
   - "internal/mail/**"
   - "internal/mailrender/**"
+  - "internal/mailtemplate/**"
   - "internal/lua/mail*.go"
+  - "internal/appbuild/mail.go"
+  - "internal/appbuild/scheduled_mail.go"
+  - "internal/script/runtime.go"
 ---
 
 # Mail

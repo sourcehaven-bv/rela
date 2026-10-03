@@ -3,6 +3,12 @@ paths:
   - "internal/jobs/**"
   - "internal/scheduler/**"
   - "internal/schedulerstate/**"
+  - "internal/automation/**"
+  - "internal/entitymanager/**"
+  - "internal/lua/**"
+  - "internal/dataentry/**"
+  - "internal/dataentryconfig/**"
+  - "internal/appbuild/jobqueue_*.go"
 ---
 
 # Background jobs

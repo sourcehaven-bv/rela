@@ -4,6 +4,12 @@ paths:
   - "internal/store/**"
   - "internal/queryplan/**"
   - "internal/search/**"
+  - "internal/mcp/**"
+  - "internal/visibility/**"
+  - "internal/scopes/**"
+  - "internal/relresolve/**"
+  - "internal/tracer/**"
+  - "internal/lua/**"
 ---
 
 # Collection reads

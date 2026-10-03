@@ -3,6 +3,7 @@ paths:
   - "internal/datamigration/**"
   - "internal/perfseed/**"
   - "internal/cli/migrate*.go"
+  - "internal/cli/dev.go"
 ---
 
 # Data migration and perf seeding
@@ -60,6 +61,7 @@ paths:
   only double-apply guard, re-run IS the crash recovery.** The Lua step is a
   pure transform (patch in, patch out, engine applies); never hand it a write
   handle.
+
 - **Perf seeding** (TKT-1U8XYN, `internal/perfseed`, `rela dev seed`) is the
   fourth raw-store exception, under the same terms: operator shell, attributed
   (`perf-seed` tool), one `perf-seed` audit record, and it refuses a non-empty

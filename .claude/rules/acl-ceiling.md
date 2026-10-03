@@ -2,6 +2,9 @@
 paths:
   - "internal/acl/**"
   - "internal/aclmap/**"
+  - "internal/visibility/**"
+  - "internal/store/pgstore/graphquery*.go"
+  - "internal/store/sqlitestore/graphquery*.go"
 ---
 
 # ACL client attenuation

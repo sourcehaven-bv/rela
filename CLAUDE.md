@@ -206,23 +206,27 @@ above rather than by a clean `analyze all`.
 
 Rules that apply to one subsystem live in `.claude/rules/*.md`. Each file names
 the paths it covers in its `paths:` frontmatter, and Claude Code loads it when
-you read or edit a matching file. Read the file directly when you work in that
-area from another tool. `tools/agentrules` fails the build when a `paths:` glob
-matches no file, so a move or rename cannot silently unload a rule.
+you read or edit a matching file. If you change code in an area without first
+reading a file the rule covers, read the rule file yourself. `tools/agentrules`
+fails the build when a `paths:` glob matches no tracked file, so a move or
+rename cannot silently unload a rule.
 
-| Rule file             | Covers                                                                 |
-| --------------------- | ---------------------------------------------------------------------- |
-| `acl-ceiling.md`      | Client attenuation compiles to allowlists at load; no runtime deny     |
-| `jobs.md`             | Retry intents, idempotency keys, deferral to commit, tenant queues     |
-| `mail.md`             | Render pipeline order, email CSS, dark mode, SMTP secrets, outbox      |
-| `collection-reads.md` | Header-only, batched, store-paged list/search/kanban reads             |
-| `classification.md`   | `classification.yaml` describes data and never drives behavior         |
-| `predicate.md`        | Condition engine, `condition:` vs `when:` keys, filter DSL             |
-| `transforms.md`       | View export, `cmdexec` confinement, shared transform engine            |
-| `storage.md`          | Build-tag backends, pgstore wiring, change feed, derived indexes, SQL  |
-| `comments.md`         | Backend-selected comment stores, kept out of the graph                 |
-| `versioning.md`       | Entity and relation versioning, version purge                          |
-| `datamigration.md`    | Data migrations, the applied-state store, perf seeding                 |
+The table gives each file's one invariant that holds everywhere, including in
+code outside its globs.
+
+| Rule file             | Holds everywhere                                                                                   |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| `acl-ceiling.md`      | No runtime deny: restrictions compile to allowlists when `acl.yaml` loads                          |
+| `jobs.md`             | External side effects (mail, HTTP, AI) go on `jobs.Queue`, not inline on a write path              |
+| `mail.md`             | Sanitize only the untrusted content, inline CSS last; a message's language is on `Message`         |
+| `collection-reads.md` | No per-row lookups on a list path; read headers, batch per page, pin cost with a budget test       |
+| `classification.md`   | `classification.yaml` describes data and never drives behavior                                     |
+| `predicate.md`        | Conditions evaluate through `internal/predicate`; `condition:` and `when:` stay separate keys      |
+| `transforms.md`       | Export follows an authorized view; external commands run only through `cmdexec`                    |
+| `storage.md`          | Runtime state uses `state.KV`, not local files; test postgres dependencies via a schema-pinned DSN |
+| `comments.md`         | Comments stay out of the graph: no entity type, audit, versioning or search                        |
+| `versioning.md`       | History reads are gated like live reads; relation history on both endpoints                        |
+| `datamigration.md`    | Migration steps stay idempotent; files are named by timestamp, never sequence                      |
 
 ## Architecture
 

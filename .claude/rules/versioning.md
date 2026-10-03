@@ -1,8 +1,12 @@
 ---
 paths:
+  - "internal/store/*.go"
   - "internal/store/pgstore/**"
   - "internal/store/sqlitestore/**"
   - "internal/entitymanager/**"
+  - "internal/dataentry/history_*.go"
+  - "internal/dataentry/historyworld.go"
+  - "internal/dataentry/relation_history_handler.go"
   - "internal/cli/history*.go"
   - "internal/cli/relation_history.go"
 ---
@@ -21,7 +25,7 @@ paths:
   synchronously at the entitymanager boundary (they carry old→new id /
   pre-delete state the sweep can't reconstruct); create/update are captured by a
   debounced reconciliation **sweep** goroutine (`sweep.go`, started/stopped like
-  the listener). The sweep runs its **entire tick on ONE acquired pool
+  the listener in the change feed, see `storage.md`). The sweep runs its **entire tick on ONE acquired pool
   connection** under `pg_try_advisory_lock` — the lock is session-scoped, so
   issuing the inserts via the pool (other sessions) would silently void the
   single-writer guarantee. Attribution comes from ctx only, via exactly two

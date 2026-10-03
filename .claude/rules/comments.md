@@ -1,6 +1,8 @@
 ---
 paths:
   - "internal/comments/**"
+  - "internal/appbuild/comments.go"
+  - "internal/appbuild/appbuild_*.go"
 ---
 
 # Comments storage
@@ -13,7 +15,7 @@ paths:
   `internal/comments/commentstest.RunAll`.
 
   The two database backends were split along the SAME reasoning that divided
-  `state.KV` from versioning, and the split is the point. **postgres**: a
+  `state.KV` (see `storage.md`) from versioning, and the split is the point. **postgres**: a
   comment posted through one `rela-server` node was invisible to the others, the
   defect class TKT-VC27L3 fixed for `state.KV`. **sqlite** is single-process, so
   that argument does not apply and the decision went the other way anyway —

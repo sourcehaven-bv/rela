@@ -3,14 +3,21 @@ paths:
   - "internal/store/**"
   - "internal/appbuild/**"
   - "internal/state/**"
+  - "internal/userstate/**"
   - "internal/queryplan/**"
+  - "internal/dataentry/listpushdown.go"
+  - "internal/dataentry/settings_service.go"
+  - "internal/dataentry/logo_store.go"
+  - "internal/dataentry/palette_service.go"
+  - "internal/dataentryconfig/nextaction.go"
   - "internal/cli/db*.go"
-  - "internal/cli/mcp_wiring_*.go"
+  - "internal/cli/kong.go"
+  - "cmd/rela-server/main.go"
 ---
 
 # Storage backends
 
-Rules when touching this:
+Rules when touching storage backends:
 
 - **The `postgres` build must not link bleve; the default build must not link
   pgx; no build but `sqlite` may link `modernc.org/sqlite`.** CI asserts each of
@@ -38,6 +45,7 @@ Rules when touching this:
   write leaks across tenants), and `Services.Close` must tear down only the
   store and search closer it was assembled with — never anything shared, or
   evicting one tenant breaks its siblings.
+
 - **The metamodel is always read from disk**, even in the postgres build —
   `schema.yaml` and `templates/` stay on the filesystem, as does
   operator-authored config generally; PostgreSQL backs

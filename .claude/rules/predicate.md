@@ -8,6 +8,11 @@ paths:
   - "internal/statemachine/**"
   - "internal/affordances/**"
   - "internal/conditionlint/**"
+  - "internal/metamodel/**"
+  - "internal/dataentryconfig/**"
+  - "internal/scopes/**"
+  - "internal/mailtemplate/**"
+  - "internal/appbuild/viewconditions.go"
   - "internal/cli/list.go"
 ---
 
