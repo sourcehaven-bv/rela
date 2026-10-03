@@ -212,9 +212,10 @@ above rather than by a clean `analyze all`.
   (BUG-YAMD6J) and the JobTimeout fix; `go.mod` lists each with its upstream
   status. Drop the `replace` only when all of them are upstream:
   `TestPostgresQueue_SchemaPinnedDSN` and
-  `TestPostgresQueue_SurvivesAnotherProcessClosing` fail if it goes early. **Test any new postgres-touching dependency through a
-  schema-pinned DSN**, not just the bare `RELA_TEST_DATABASE_URL` — the bare DSN
-  resolves to `public`, which is precisely the one case that worked.
+  `TestPostgresQueue_SurvivesAnotherProcessClosing` fail if it goes early.
+  **Test any new postgres-touching dependency through a schema-pinned DSN**,
+  not just the bare `RELA_TEST_DATABASE_URL` — the bare DSN resolves to
+  `public`, which is precisely the one case that worked.
 
 - **The configuration is not a secret; the data is.** `schema.yaml`,
   `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
