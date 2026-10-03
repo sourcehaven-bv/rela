@@ -23,6 +23,24 @@ Run it against a copy of a project, because writes are real.
 Each diagram is also written as a Markdown file with a `mermaid` block. GitHub
 and most editors render these.
 
+## Text call trees
+
+Each diagram also has a `.txt` file with the same calls as an indented tree,
+one line per call. It is a fraction of the size of the diagram, so it suits
+agents and diffs:
+
+```text
+dataentry (*writeHandler).handleV1UpdateEntity(w=*http.response, r=*http.Request)
+  acl (*Declarative).ResolvePrincipal(rawUser="bob@perf.example") -> "PERS-00002"
+    store/pgstore (*Store).GraphQueryHeaders(q=store.GraphQuery) -> func
+  2× store/pgstore (*Store).ListRelations(…) -> …
+  ~go jobs run
+```
+
+A child is indented under its caller. `->` gives the results, `N×` a loop,
+and `~go`, `~ctx` or `~closure` a call on another goroutine. `steps.json`
+holds the same trees for `seqtrace diff`.
+
 ## Postgres and ACL demo
 
 ```bash
@@ -52,6 +70,33 @@ diagrams in your browser. It runs these steps:
 The scenarios are the `req` lines in `tools/seqtrace/demo/run.sh`. The
 environment variables at the top of that script set the ports and the data
 size.
+
+## Comparing two versions
+
+```bash
+just seqtrace-compare              # origin/develop against the working tree
+just seqtrace-compare my-branch~3  # any git ref
+```
+
+This runs the demo twice: once on the ref, exported with `git archive`, and
+once on the working tree, including uncommitted changes. Both runs use the
+current `tools/seqtrace` and scenarios. It then prints a report, also saved
+to `.ignored/seqtrace-demo/compare.md`. For each scenario that changed it
+shows:
+
+- the number of calls before and after;
+- the calls between each pair of packages that appeared, disappeared or
+  changed in number, for example `+ dataentry -> store/pgstore: 1 (new
+edge)`;
+- a diff of the call trees.
+
+Calls are compared by shape: function names, nesting and repeat counts, not
+argument values. Seeded IDs are stable, but values such as timestamps are
+not. Run `seqtrace diff -values BASE HEAD` to include values.
+
+Use it to check that a change moved a request flow as intended. A new edge
+from `dataentry` straight to a store, for example, may be a path around the
+`visibility` read wrappers.
 
 The demo uses header identity, not JWT. JWT identity needs the proxy's key
 set served over HTTPS, which a local run does not have.
@@ -94,8 +139,10 @@ trace can hold secrets and values that ACL hides from the requesting user,
 from every user the server served while tracing. Handle trace files and
 diagrams like a database dump. Trace files are created with mode 0600.
 
-When sibling calls repeat with different values, they still fold into one
-loop, and the loop shows `…` in place of the values. Pass `-values=false` to
+Repeated runs of up to eight sibling calls fold into one loop, so a loop
+that calls three functions per entity shows those three calls once. When the
+repeats differ only in values, they still fold, and the loop shows `…` in
+place of the values. Pass `-values=false` to
 draw names only.
 
 ## Linking work across goroutines

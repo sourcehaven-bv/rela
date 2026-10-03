@@ -14,10 +14,18 @@
 # Environment: SEQTRACE_PG_PORT (55439), SEQTRACE_HTTP_PORT (18766),
 # SEQTRACE_SCALE (0.05, about 1000 entities), SEQTRACE_KEEP_DB=1 to leave
 # postgres running, SEQTRACE_OPEN=0 to not open the result.
+#
+# SEQTRACE_REF traces a git ref instead of the working tree; the current
+# tools/seqtrace and scenarios are used either way, so two runs compare like
+# with like. SEQTRACE_LABEL writes to .ignored/seqtrace-demo/LABEL so two runs
+# can sit side by side; `just seqtrace-compare` uses both.
 set -euo pipefail
 
 REPO=$(pwd)
-OUT="$REPO/.ignored/seqtrace-demo"
+REF=${SEQTRACE_REF:-}
+LABEL=${SEQTRACE_LABEL:-}
+[[ $LABEL =~ ^[a-z0-9-]*$ ]] || { echo "seqtrace-demo: SEQTRACE_LABEL must match [a-z0-9-]*" >&2; exit 1; }
+OUT="$REPO/.ignored/seqtrace-demo${LABEL:+/$LABEL}"
 WORK="$OUT/work"
 SRC="$WORK/src"
 PG_PORT=${SEQTRACE_PG_PORT:-55439}
@@ -80,11 +88,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step "Copying the checkout to $SRC"
 mkdir -p "$WORK"
-rsync -a --delete \
-    --exclude '/.git' --exclude '/.ignored' --exclude '/build' --exclude 'node_modules' \
-    "$REPO/" "$SRC/"
+if [[ -n $REF ]]; then
+    step "Exporting $REF to $SRC"
+    git -C "$REPO" rev-parse --verify --quiet "$REF^{commit}" >/dev/null || die "unknown git ref: $REF"
+    rm -rf "$SRC"
+    mkdir -p "$SRC"
+    git -C "$REPO" archive --format=tar "$REF" | tar -x -C "$SRC"
+    rsync -a --delete "$REPO/tools/seqtrace/" "$SRC/tools/seqtrace/"
+else
+    step "Copying the checkout to $SRC"
+    rsync -a --delete \
+        --exclude '/.git' --exclude '/.ignored' --exclude '/build' --exclude 'node_modules' \
+        "$REPO/" "$SRC/"
+fi
 # The server refuses to start without the embedded SPA. The diagrams are about
 # the API, so a stub replaces a frontend build when the checkout has none.
 if [[ ! -f "$SRC/internal/dataentry/static/v2/index.html" ]]; then

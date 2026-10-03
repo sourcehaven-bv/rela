@@ -3,6 +3,7 @@
 //
 //	seqtrace overlay -out DIR [-tags T] [-exclude RE] PATTERN...
 //	seqtrace diagram -in TRACE -out DIR [-root RE] [-collapse RE] [-depth N] [-min N] [-values=false]
+//	seqtrace diff [-values] BASE_DIR HEAD_DIR
 package main
 
 import (
@@ -39,6 +40,8 @@ func main() {
 		err = overlay(os.Args[2:])
 	case "diagram":
 		err = diagrams(os.Args[2:])
+	case "diff":
+		err = diffDirs(os.Args[2:])
 	default:
 		usage()
 	}
@@ -49,7 +52,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: seqtrace overlay|diagram [flags] ...")
+	fmt.Fprintln(os.Stderr, "usage: seqtrace overlay|diagram|diff [flags] ...")
 	os.Exit(2)
 }
 
@@ -222,7 +225,55 @@ type page struct {
 	title, scenario, handler string
 	base                     string // file name without extension
 	arrows                   int
-	mermaid                  string
+	mermaid, text            string
+	diagram                  *diagram.Diagram
+}
+
+// stepsFile holds every scenario's step tree, for seqtrace diff.
+const stepsFile = "steps.json"
+
+func writeSteps(dir string, pages []page) error {
+	ss := make([]diagram.Scenario, len(pages))
+	for i, p := range pages {
+		ss[i] = diagram.Scenario{Name: p.scenario, Handler: p.handler, Base: p.base, Diagram: p.diagram}
+	}
+	b, err := json.Marshal(ss)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, stepsFile), b, filePerm)
+}
+
+func readSteps(dir string) ([]diagram.Scenario, error) {
+	b, err := os.ReadFile(filepath.Join(dir, stepsFile))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w (was it written by seqtrace diagram?)", dir, err)
+	}
+	var ss []diagram.Scenario
+	if err := json.Unmarshal(b, &ss); err != nil {
+		return nil, fmt.Errorf("%s: %w", filepath.Join(dir, stepsFile), err)
+	}
+	return ss, nil
+}
+
+// diffDirs compares two diagram directories and prints the report.
+func diffDirs(args []string) error {
+	fs := flag.NewFlagSet("diff", flag.ExitOnError)
+	values := fs.Bool("values", false, "compare argument and result values too, not only call shapes")
+	_ = fs.Parse(args)
+	if fs.NArg() != 2 {
+		return errors.New("usage: seqtrace diff [-values] BASE_DIR HEAD_DIR")
+	}
+	base, err := readSteps(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	head, err := readSteps(fs.Arg(1))
+	if err != nil {
+		return err
+	}
+	_, err = diagram.Compare(os.Stdout, base, head, *values)
+	return err
 }
 
 func diagrams(args []string) error {
@@ -258,31 +309,30 @@ func diagrams(args []string) error {
 		}
 		named := r.Title(f.titleRe)
 		f.opt.RootLabel = named.Fn
-		var buf bytes.Buffer
-		arrows, err := diagram.Render(&buf, r, f.opt)
-		if err != nil {
-			return err
-		}
+		d := diagram.Build(r, f.opt)
+		arrows := d.Arrows()
 		if arrows < f.minArrows {
 			continue
 		}
+		var mer, txt bytes.Buffer
+		if err := d.Mermaid(&mer); err != nil {
+			return err
+		}
+		if err := d.Text(&txt); err != nil {
+			return err
+		}
 		n := len(pages) + 1
-		p := page{scenario: scenario, handler: named.Name(), arrows: arrows, mermaid: buf.String(),
-			title: fmt.Sprintf("%03d %s", n, named.Name()), base: fmt.Sprintf("%03d-%s", n, fileSafe(named.Fn))}
+		p := page{scenario: scenario, handler: named.Name(), arrows: arrows, mermaid: mer.String(), text: txt.String(),
+			diagram: d,
+			title:   fmt.Sprintf("%03d %s", n, named.Name()), base: fmt.Sprintf("%03d-%s", n, fileSafe(named.Fn))}
 		if scenario != "" {
 			p.title = fmt.Sprintf("%03d %s", n, scenario)
 			p.base = fmt.Sprintf("%03d-%s", n, fileSafe(scenario))
 		}
 		pages = append(pages, p)
 	}
-	for i, p := range pages {
-		if err := writePage(f.out, pages, i); err != nil {
-			return err
-		}
-		md := fmt.Sprintf("# %s\n\n`%s`\n\n```mermaid\n%s```\n", p.title, p.handler, p.mermaid)
-		if err := os.WriteFile(filepath.Join(f.out, p.base+".md"), []byte(md), filePerm); err != nil {
-			return err
-		}
+	if err := writeOutputs(f.out, pages); err != nil {
+		return err
 	}
 	if f.names != "" && i+1 != len(names) {
 		// Names are assigned by position, so a count mismatch means the labels
@@ -295,6 +345,25 @@ func diagrams(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "seqtrace: %d diagrams from %d roots; open %s\n", len(pages), len(roots), index)
 	return nil
+}
+
+// writeOutputs writes each page as HTML, Markdown and text, and the step
+// trees of all of them.
+func writeOutputs(dir string, pages []page) error {
+	for i, p := range pages {
+		if err := writePage(dir, pages, i); err != nil {
+			return err
+		}
+		md := fmt.Sprintf("# %s\n\n`%s`\n\n```mermaid\n%s```\n", p.title, p.handler, p.mermaid)
+		if err := os.WriteFile(filepath.Join(dir, p.base+".md"), []byte(md), filePerm); err != nil {
+			return err
+		}
+		txt := fmt.Sprintf("# %s\n# %s\n%s", p.title, p.handler, p.text)
+		if err := os.WriteFile(filepath.Join(dir, p.base+".txt"), []byte(txt), filePerm); err != nil {
+			return err
+		}
+	}
+	return writeSteps(dir, pages)
 }
 
 // writePage writes pages[i] as HTML with links to its neighbors.
@@ -310,10 +379,10 @@ func writePage(dir string, pages []page, i int) error {
 	}
 	body := fmt.Sprintf(`<nav>%s <a href="index.html">index</a> %s</nav>
 <h1>%s</h1>
-<p><code>%s</code> &middot; %d arrows &middot; <a href="%s.md">markdown</a></p>
+<p><code>%s</code> &middot; %d arrows &middot; <a href="%s.md">markdown</a> &middot; <a href="%s.txt">text</a></p>
 <pre class="mermaid">
 %s</pre>
-`, prev, next, e(p.title), e(p.handler), p.arrows, p.base, e(p.mermaid))
+`, prev, next, e(p.title), e(p.handler), p.arrows, p.base, p.base, e(p.mermaid))
 	return os.WriteFile(filepath.Join(dir, p.base+".html"), fmt.Appendf(nil, pageTmpl, e(p.title), mermaidJS, body), filePerm)
 }
 
