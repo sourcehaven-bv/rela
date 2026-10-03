@@ -34,12 +34,11 @@ import (
 func (c *customAssets) serveAsset(w http.ResponseWriter, r *http.Request) {
 	entry := strings.TrimPrefix(r.URL.Path, customURLPrefix)
 
-	f, err := openCustomEntryFile(c.projectRoot, entry)
+	f, err := openCustomEntryFile(r.Context(), c.files, entry)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	defer f.Close()
 
 	h := w.Header()
 	// Extension-based, from the same fixed map apps/ uses: deterministic across
@@ -70,9 +69,9 @@ func (c *customAssets) serveAsset(w http.ResponseWriter, r *http.Request) {
 	// endpoint with the caller's session. Escaping operator CSS or JS would
 	// break the feature rather than protect anything.
 	//
-	// The containment boundary is validCustomEntry + the nested os.OpenRoot in
-	// openCustomEntryFile — NOT a filename allowlist, which TKT-IWMETE removed.
-	http.ServeContent(w, r, entry, f.ModTime, f.File)
+	// The containment boundary is validCustomEntry + the loader's nested
+	// os.Root — NOT a filename allowlist, which TKT-IWMETE removed.
+	http.ServeContent(w, r, entry, f.ModTime, f.Content)
 }
 
 // customEntryETag derives a strong ETag from an entry's modtime and size.

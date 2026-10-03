@@ -20,6 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -41,7 +43,11 @@ type Loader struct {
 	db *sql.DB
 }
 
-var _ config.Loader = (*Loader)(nil)
+var (
+	_ config.Loader    = (*Loader)(nil)
+	_ config.Stater    = (*Loader)(nil)
+	_ config.DirLister = (*Loader)(nil)
+)
 
 // New returns a Loader over db.
 //
@@ -124,6 +130,81 @@ func (l *Loader) List(ctx context.Context, dir string) ([]string, error) {
 	slices.Sort(names)
 	return names, nil
 }
+
+// Stat reports the size and last write time of the file stored at name. An
+// absent row is an [fs.ErrNotExist]-compatible error, as for [Loader.Load].
+func (l *Loader) Stat(ctx context.Context, name string) (fs.FileInfo, error) {
+	if err := validatePath(name); err != nil {
+		return nil, err
+	}
+	var (
+		size    int64
+		updated string
+	)
+	err := l.db.QueryRowContext(ctx,
+		`SELECT length(content), updated_at FROM project_files WHERE path = ?`, name,
+	).Scan(&size, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("configsql: stat project file %q: %w", name, err)
+	}
+	// An unparseable time is the zero time: it only feeds cache validators,
+	// and a file that is otherwise readable must not fail over it.
+	modTime, _ := time.Parse(timeFmt, updated)
+	return fileInfo{name: path.Base(name), size: size, modTime: modTime}, nil
+}
+
+// Dirs returns the sorted names of the directories directly under dir: the
+// next path segment of every stored path below dir that has one. An absent
+// directory lists empty with a nil error.
+func (l *Loader) Dirs(ctx context.Context, dir string) ([]string, error) {
+	if err := validatePath(dir); err != nil {
+		return nil, err
+	}
+	prefix := dir + "/"
+	rows, err := l.db.QueryContext(ctx,
+		`SELECT path FROM project_files WHERE substr(path, 1, ?) = ?`,
+		len(prefix), prefix)
+	if err != nil {
+		return nil, fmt.Errorf("configsql: list directories under %q: %w", dir, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	seen := map[string]bool{}
+	for rows.Next() {
+		var p string
+		if scanErr := rows.Scan(&p); scanErr != nil {
+			return nil, fmt.Errorf("configsql: list directories under %q: %w", dir, scanErr)
+		}
+		if sub, _, deeper := strings.Cut(p[len(prefix):], "/"); deeper {
+			seen[sub] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("configsql: list directories under %q: %w", dir, err)
+	}
+	return slices.Sorted(maps.Keys(seen)), nil
+}
+
+// fileInfo is the fs.FileInfo [Loader.Stat] reports.
+type fileInfo struct {
+	name    string
+	size    int64
+	modTime time.Time
+}
+
+func (f fileInfo) Name() string       { return f.name }
+func (f fileInfo) Size() int64        { return f.size }
+func (f fileInfo) Mode() fs.FileMode  { return readOnlyFileMode }
+func (f fileInfo) ModTime() time.Time { return f.modTime }
+func (f fileInfo) IsDir() bool        { return false }
+func (f fileInfo) Sys() any           { return nil }
+
+// readOnlyFileMode is the mode a stored file reports: it is never written
+// through a Loader.
+const readOnlyFileMode fs.FileMode = 0o444
 
 // Put stores content at name, replacing whatever was there.
 //

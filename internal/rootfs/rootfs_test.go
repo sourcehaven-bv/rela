@@ -98,6 +98,42 @@ func TestDir_List(t *testing.T) {
 	}
 }
 
+// The nested roots reach every directory level: a symlink in apps/a/ cannot
+// read apps/b/, which a root at apps/ alone would allow.
+func TestDir_SymlinkStaysInItsDirectory(t *testing.T) {
+	root := project(t)
+	write(t, root, "apps/b/secret.html", "b")
+	write(t, root, "apps/a/index.html", "a")
+	if err := os.Symlink(filepath.Join("..", "b", "secret.html"), filepath.Join(root, "apps", "a", "leak.html")); err != nil {
+		t.Fatal(err)
+	}
+	d := rootfs.New(root)
+	if _, err := d.Load(context.Background(), "apps/a/leak.html"); err == nil {
+		t.Fatal("served apps/b through a symlink in apps/a")
+	}
+	if got, err := d.Load(context.Background(), "apps/a/index.html"); err != nil || string(got) != "a" {
+		t.Fatalf("Load(apps/a/index.html) = %q, %v", got, err)
+	}
+}
+
+func TestDir_Dirs(t *testing.T) {
+	root := project(t)
+	write(t, root, "apps/b/index.html", "b")
+	write(t, root, "apps/a/index.html", "a")
+	write(t, root, "apps/file.txt", "x")
+	if err := os.Symlink("a", filepath.Join(root, "apps", "link")); err != nil {
+		t.Fatal(err)
+	}
+	d := rootfs.New(root)
+	got, err := d.Dirs(context.Background(), "apps")
+	if err != nil || !slices.Equal(got, []string{"a", "b"}) {
+		t.Fatalf("Dirs(apps) = %v, %v; want [a b]", got, err)
+	}
+	if got, err := d.Dirs(context.Background(), "absent"); err != nil || len(got) != 0 {
+		t.Fatalf("Dirs(absent) = %v, %v", got, err)
+	}
+}
+
 func TestDir_Stat(t *testing.T) {
 	d := rootfs.New(project(t))
 	info, err := d.Stat(context.Background(), "custom/theme.css")

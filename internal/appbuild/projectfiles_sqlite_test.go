@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -314,5 +315,37 @@ func TestSQLite_BakedScriptsAreRead(t *testing.T) {
 	}
 	if _, err := svc.ProjectFiles().Load(ctx, "scripts/docs/report.lua"); err != nil {
 		t.Fatalf("ProjectFiles().Load: %v", err)
+	}
+}
+
+// custom/ and apps/ are served through ProjectFiles too, which must support
+// the Stat and Dirs the data-entry handlers need.
+func TestSQLite_BakedAssetsAreServed(t *testing.T) {
+	root := writeMinimalProject(t)
+	writeFile(t, root, "custom/theme.css", "body{}\n")
+	writeFile(t, root, "apps/demo/index.html", "<html></html>\n")
+	bake(t, root)
+	removeAll(t, root, "custom", "apps")
+
+	svc, err := discover(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = svc.Close() }()
+	ctx := context.Background()
+	files := svc.ProjectFiles()
+	stater, ok := files.(config.Stater)
+	if !ok {
+		t.Fatalf("ProjectFiles (%T) is not a config.Stater", files)
+	}
+	if info, err := stater.Stat(ctx, "custom/theme.css"); err != nil || info.Size() != int64(len("body{}\n")) {
+		t.Fatalf("Stat(custom/theme.css) = %v, %v", info, err)
+	}
+	lister, ok := files.(config.DirLister)
+	if !ok {
+		t.Fatalf("ProjectFiles (%T) is not a config.DirLister", files)
+	}
+	if dirs, err := lister.Dirs(ctx, "apps"); err != nil || !slices.Equal(dirs, []string{"demo"}) {
+		t.Fatalf("Dirs(apps) = %v, %v", dirs, err)
 	}
 }

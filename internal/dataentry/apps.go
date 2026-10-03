@@ -2,12 +2,11 @@ package dataentry
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
-	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -22,9 +21,9 @@ import (
 
 // appsDir is the project directory holding custom apps. Each app is a
 // subdirectory containing an index.html (plus any sibling assets). Mirrors the
-// actions/ and scripts/ convention: a top-level project directory loaded
-// traversal-resistant via os.OpenRoot, never stored in the entity store, so it
-// lives on the filesystem in every storage backend.
+// actions/ and scripts/ convention: a top-level project directory read through
+// the project files loader, never stored in the entity store. On the sqlite
+// build the project's database may carry it (FEAT-UP14BT).
 //
 // An app is live iff apps/<id>/index.html exists and <id> is a valid app id.
 // Unpublish by renaming the folder or removing its index.html.
@@ -86,39 +85,22 @@ type appInfo struct {
 	BridgeVersion int
 }
 
-// scanApps lists the live apps under {projectRoot}/apps: every subdirectory
-// with a valid id that contains an index.html. It reads each index.html to
-// extract metadata, so the returned list is populated for the sidebar. A
-// missing apps/ directory yields an empty list, not an error.
-func scanApps(projectRoot string) ([]appInfo, error) {
-	root, err := os.OpenRoot(projectRoot)
-	if err != nil {
-		return nil, errors.New("cannot access project directory")
-	}
-	defer func() { _ = root.Close() }()
-
-	appsRoot, err := root.OpenRoot(appsDir)
-	if err != nil {
-		// No apps/ directory (or not a directory) → no apps. Not an error.
-		return nil, nil
-	}
-	defer func() { _ = appsRoot.Close() }()
-
-	entries, err := fs.ReadDir(appsRoot.FS(), ".")
+// scanApps lists the live apps under apps/: every subdirectory with a valid
+// id that contains an index.html. It reads each index.html to extract
+// metadata, so the returned list is populated for the sidebar. A missing apps/
+// directory yields an empty list, not an error.
+func scanApps(ctx context.Context, files projectAssets) ([]appInfo, error) {
+	ids, err := files.Dirs(ctx, appsDir)
 	if err != nil {
 		return nil, fmt.Errorf("cannot list %s directory", appsDir)
 	}
 
 	var apps []appInfo
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		id := e.Name()
+	for _, id := range ids {
 		if !dataentryconfig.ValidAppID(id) {
 			continue
 		}
-		index, err := openAppEntry(projectRoot, id, appIndexFile)
+		index, err := openAppEntry(ctx, files, id, appIndexFile)
 		if err != nil {
 			// No index.html → not an app.
 			continue
@@ -138,18 +120,18 @@ func scanApps(projectRoot string) ([]appInfo, error) {
 }
 
 // appExists reports whether apps/<id>/index.html exists (id pre-validated).
-func appExists(projectRoot, id string) bool {
-	_, err := openAppEntry(projectRoot, id, appIndexFile)
+func appExists(ctx context.Context, files projectAssets, id string) bool {
+	_, err := openAppEntry(ctx, files, id, appIndexFile)
 	return err == nil
 }
 
-// openAppEntry reads {projectRoot}/apps/{id}/{entry} traversal-resistant: it
-// opens a fresh os.Root scoped to the app's own directory, so "../" / absolute
-// / symlink entries cannot escape it (the same guard used for action scripts,
-// extended one level deeper). entry uses forward slashes; "." and ".." segments
-// and absolute paths are rejected before opening. Returns the bytes, or an error
-// for missing/oversize/escaping entries.
-func openAppEntry(projectRoot, id, entry string) ([]byte, error) {
+// openAppEntry reads apps/{id}/{entry} through files. entry uses forward
+// slashes; "." and ".." segments and absolute paths are rejected before the
+// read. Containment is the loader's: on disk every directory level is its own
+// os.Root, so a symlink in one app cannot reach another app or the project.
+// Returns the bytes, or an error for missing/oversize/escaping entries; the
+// size is checked on the Stat, before reading.
+func openAppEntry(ctx context.Context, files projectAssets, id, entry string) ([]byte, error) {
 	if id == "" || !dataentryconfig.ValidAppID(id) {
 		return nil, fmt.Errorf("invalid app id: %q", id)
 	}
@@ -162,33 +144,18 @@ func openAppEntry(projectRoot, id, entry string) ([]byte, error) {
 		return nil, fmt.Errorf("invalid entry path: %q", entry)
 	}
 
-	root, err := os.OpenRoot(projectRoot)
-	if err != nil {
-		return nil, errors.New("cannot access project directory")
-	}
-	defer func() { _ = root.Close() }()
-
-	appRoot, err := root.OpenRoot(path.Join(appsDir, id))
-	if err != nil {
-		return nil, fmt.Errorf("app not found: %s", id)
-	}
-	defer func() { _ = appRoot.Close() }()
-
-	f, err := appRoot.Open(rel)
+	name := path.Join(appsDir, id, rel)
+	info, err := files.Stat(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("app entry not found: %s/%s", id, rel)
-	}
-	defer func() { _ = f.Close() }()
-
-	info, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("cannot stat app entry: %s/%s", id, rel)
 	}
 	if info.IsDir() {
 		return nil, fmt.Errorf("app entry is a directory: %s/%s", id, rel)
 	}
-
-	b, err := io.ReadAll(io.LimitReader(f, maxAppFileBytes+1))
+	if info.Size() > maxAppFileBytes {
+		return nil, fmt.Errorf("app entry too large: %s/%s (max %d bytes)", id, rel, maxAppFileBytes)
+	}
+	b, err := files.Load(ctx, name)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read app entry: %s/%s", id, rel)
 	}

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -47,6 +48,23 @@ type Loader interface {
 	List(ctx context.Context, dir string) ([]string, error)
 }
 
+// Stater is the optional interface for a Loader that can report a file's
+// size and modification time without reading it. The custom/ and apps/
+// handlers need it to refuse an oversize file before buffering it, and for
+// cache validators. Absence is an [os.ErrNotExist]-compatible error, as for
+// [Loader.Load].
+type Stater interface {
+	Stat(ctx context.Context, name string) (fs.FileInfo, error)
+}
+
+// DirLister is the optional interface for a Loader that can list the
+// subdirectories directly under a directory, sorted. [Loader.List] lists only
+// files; discovering apps/<id>/ needs the directories. An absent directory
+// lists empty with a nil error, as for List. Symlinks are not listed.
+type DirLister interface {
+	Dirs(ctx context.Context, dir string) ([]string, error)
+}
+
 // Subscriber is the optional change-notification interface on a Loader.
 // Backends that can detect external changes to a named file satisfy
 // Subscriber; consumers type-assert to subscribe. Backends with no
@@ -68,6 +86,8 @@ type FSLoader struct {
 var (
 	_ Loader     = (*FSLoader)(nil)
 	_ Subscriber = (*FSLoader)(nil)
+	_ Stater     = (*FSLoader)(nil)
+	_ DirLister  = (*FSLoader)(nil)
 )
 
 // NewFSLoader constructs a filesystem-backed project-config loader rooted
@@ -133,6 +153,38 @@ func (l *FSLoader) List(_ context.Context, dir string) ([]string, error) {
 	// order is part of this method's contract (a script chain's execution
 	// order depends on it), so it must not rest on a promise made by
 	// whichever FS implementation happens to be installed.
+	slices.Sort(names)
+	return names, nil
+}
+
+// Stat reports the named file's info.
+func (l *FSLoader) Stat(_ context.Context, name string) (fs.FileInfo, error) {
+	if err := validateName(name); err != nil {
+		return nil, err
+	}
+	return l.fs.Stat(filepath.Join(l.root, name))
+}
+
+// Dirs returns the sorted subdirectories directly under dir. As in
+// [FSLoader.List], a missing directory is an empty list and symlinks are
+// skipped.
+func (l *FSLoader) Dirs(_ context.Context, dir string) ([]string, error) {
+	if err := validateName(dir); err != nil {
+		return nil, err
+	}
+	entries, err := l.fs.ReadDir(filepath.Join(l.root, dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
 	slices.Sort(names)
 	return names, nil
 }

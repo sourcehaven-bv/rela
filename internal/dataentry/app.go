@@ -374,8 +374,11 @@ type App struct {
 	gantt     *ganttHandler
 	templater templating.Templater
 	cfgLoader config.Loader
-	kv        state.KV
-	acl       acl.ACL
+	// assets is cfgLoader seen as the custom/ and apps/ reader; NewApp
+	// requires the loader to support it.
+	assets projectAssets
+	kv     state.KV
+	acl    acl.ACL
 
 	// attachmentLocker serializes attachment writers to one (entity,
 	// property), for web uploads and remote MCP tools alike. Built once from
@@ -891,6 +894,10 @@ func NewApp(
 	if files == nil {
 		return nil, errors.New("dataentry.NewApp: files is required (wire appbuild's Services.ProjectFiles())")
 	}
+	assets, ok := files.(projectAssets)
+	if !ok {
+		return nil, fmt.Errorf("dataentry.NewApp: files (%T) must support Stat and Dirs to serve custom/ and apps/", files)
+	}
 	if meta == nil {
 		return nil, errors.New("dataentry.NewApp: meta is required")
 	}
@@ -978,6 +985,7 @@ func NewApp(
 		tracer:          trc,
 		templater:       templater,
 		cfgLoader:       cfgLoader,
+		assets:          assets,
 		kv:              kv,
 		acl:             aclImpl,
 		broker:          newEventBroker(),

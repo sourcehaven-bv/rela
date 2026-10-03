@@ -149,7 +149,7 @@ func (a *App) NewRouter() http.Handler {
 	// disable_custom_injection) must not stop /_custom/ from serving, so the
 	// route is registered unconditionally and only the shell rewrite degrades.
 	shell, shellErr := fs.ReadFile(spaFS, spaIndexFile)
-	custom := newCustomAssets(a.paths.Root, shell, func() bool {
+	custom := newCustomAssets(a.assets, shell, func() bool {
 		return shellErr == nil && !a.State().Cfg.App.DisableCustomInjection
 	})
 	mux.HandleFunc(customURLPrefix, custom.serveAsset)
@@ -970,7 +970,7 @@ func spaHandlerWithCustom(fsys fs.FS, custom *customAssets) http.Handler {
 	fallback := spaHandler(fsys)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body := custom.shell()
+		body := custom.shell(r.Context())
 		// A non-shell path, or an unreadable shell (nil body): delegate to the
 		// plain file server exactly as before.
 		if body == nil || !servesSPAShell(fsys, r.URL.Path) {

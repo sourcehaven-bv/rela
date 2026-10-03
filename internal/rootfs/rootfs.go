@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -32,13 +33,13 @@ import (
 //
 // # Containment
 //
-// The first segment of a multi-segment name is opened as a NESTED root, and
-// the rest of the name is resolved inside it. That narrower root is
-// security-critical: a symlink inside custom/ pointing at ../schema.yaml never
-// leaves the project directory, so a single root at the project would follow
-// it and serve the file. Only the nested root refuses it. A symlink that
-// escapes is an error, never [fs.ErrNotExist], so a layered loader does not
-// fall through to another source and hide it.
+// Every directory on the way to a file is opened as its own NESTED root, so a
+// symlink resolves only within the directory that holds it. That is what
+// keeps a symlink in custom/ pointing at ../schema.yaml from being served,
+// and a symlink in apps/a/ from reading apps/b/: a single root at the project
+// would follow both. A symlink that escapes is an error, never
+// [fs.ErrNotExist], so a layered loader does not fall through to another
+// source and hide it.
 //
 // Nil: [New] never returns nil; a nil *Dir is a programming error.
 type Dir struct {
@@ -71,29 +72,34 @@ func (d *Dir) Load(_ context.Context, name string) ([]byte, error) {
 // Symlinks are not listed: whatever they point at is not a regular file of
 // this directory.
 func (d *Dir) List(_ context.Context, dir string) ([]string, error) {
+	return d.entries(dir, func(e fs.DirEntry) bool { return e.Type().IsRegular() })
+}
+
+// Dirs returns the sorted names of the subdirectories directly under dir,
+// symlinks excluded. An absent directory lists empty with a nil error.
+func (d *Dir) Dirs(_ context.Context, dir string) ([]string, error) {
+	return d.entries(dir, func(e fs.DirEntry) bool { return e.IsDir() })
+}
+
+func (d *Dir) entries(dir string, keep func(fs.DirEntry) bool) ([]string, error) {
 	if !fs.ValidPath(dir) || dir == "." {
 		return nil, fmt.Errorf("rootfs: invalid directory name %q", dir)
 	}
-	root, err := os.OpenRoot(d.path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = root.Close() }()
-	sub, err := root.OpenRoot(dir)
+	root, closeRoots, err := d.openDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = sub.Close() }()
-	entries, err := fs.ReadDir(sub.FS(), ".")
+	defer closeRoots()
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return nil, err
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if e.Type().IsRegular() {
+		if keep(e) {
 			names = append(names, e.Name())
 		}
 	}
@@ -102,14 +108,21 @@ func (d *Dir) List(_ context.Context, dir string) ([]string, error) {
 }
 
 // Stat returns the file info of name, resolved with the same containment as
-// [Dir.Load].
+// [Dir.Load]. It opens the file and stats the handle, so a file Load could
+// not read (no read permission) fails here too: a caller that checks with
+// Stat before serving must not promise a file that then 404s.
 func (d *Dir) Stat(_ context.Context, name string) (fs.FileInfo, error) {
-	root, rest, closeRoots, err := d.open(name)
+	root, base, closeRoots, err := d.open(name)
 	if err != nil {
 		return nil, err
 	}
 	defer closeRoots()
-	return root.Stat(rest)
+	f, err := root.Open(base)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return f.Stat()
 }
 
 // Subscribe watches the named file and calls onChange after each change,
@@ -136,27 +149,43 @@ func (d *Dir) Subscribe(_ context.Context, name string, onChange func()) (func()
 // whichever loader serves the file.
 const watchDebounce = 200 * time.Millisecond
 
-// open validates name and returns the root that contains it, the name
-// relative to that root, and a func closing every root it opened.
-func (d *Dir) open(name string) (root *os.Root, rest string, closeRoots func(), err error) {
+// open validates name and returns the root of the directory holding it,
+// the file's base name, and a func closing every root it opened.
+func (d *Dir) open(name string) (root *os.Root, base string, closeRoots func(), err error) {
 	if !fs.ValidPath(name) || name == "." {
 		return nil, "", nil, fmt.Errorf("rootfs: invalid file name %q", name)
 	}
+	dir, base := path.Split(name)
+	root, closeRoots, err = d.openDir(strings.TrimSuffix(dir, "/"))
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return root, base, closeRoots, nil
+}
+
+// openDir opens dir ("" for the directory itself) one nested root per
+// component; see the type comment.
+func (d *Dir) openDir(dir string) (*os.Root, func(), error) {
 	top, err := os.OpenRoot(d.path)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
-	first, rest, nested := strings.Cut(name, "/")
-	if !nested {
-		return top, name, func() { _ = top.Close() }, nil
+	roots := []*os.Root{top}
+	closeAll := func() {
+		for i := len(roots) - 1; i >= 0; i-- {
+			_ = roots[i].Close()
+		}
 	}
-	sub, err := top.OpenRoot(first)
-	if err != nil {
-		_ = top.Close()
-		return nil, "", nil, err
+	if dir == "" {
+		return top, closeAll, nil
 	}
-	return sub, rest, func() {
-		_ = sub.Close()
-		_ = top.Close()
-	}, nil
+	for part := range strings.SplitSeq(dir, "/") {
+		next, err := roots[len(roots)-1].OpenRoot(part)
+		if err != nil {
+			closeAll()
+			return nil, nil, err
+		}
+		roots = append(roots, next)
+	}
+	return roots[len(roots)-1], closeAll, nil
 }

@@ -221,3 +221,41 @@ func TestLoader_Replace(t *testing.T) {
 		t.Fatalf("a rejected Replace changed the set: %v", after)
 	}
 }
+
+func TestLoader_StatAndDirs(t *testing.T) {
+	l, ctx := newLoader(t)
+	for name, body := range map[string]string{
+		"apps/b/index.html":  "b",
+		"apps/a/index.html":  "aa",
+		"apps/a/sub/x.js":    "x",
+		"apps/top.txt":       "t",
+		"custom/theme.css":   "css",
+		"appsx/c/index.html": "c",
+	} {
+		if err := l.Put(ctx, name, []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	info, err := l.Stat(ctx, "apps/a/index.html")
+	if err != nil || info.Size() != 2 || info.Name() != "index.html" || info.IsDir() || info.ModTime().IsZero() {
+		t.Fatalf("Stat = %+v, %v", info, err)
+	}
+	if _, absentErr := l.Stat(ctx, "apps/absent"); !errors.Is(absentErr, fs.ErrNotExist) {
+		t.Fatalf("Stat(absent) err = %v, want ErrNotExist", absentErr)
+	}
+	if _, travErr := l.Stat(ctx, "../x"); travErr == nil {
+		t.Fatal("Stat accepted a traversal name")
+	}
+
+	dirs, err := l.Dirs(ctx, "apps")
+	if err != nil || !slices.Equal(dirs, []string{"a", "b"}) {
+		t.Fatalf("Dirs(apps) = %v, %v; want [a b]", dirs, err)
+	}
+	if absent, absentErr := l.Dirs(ctx, "absent"); absentErr != nil || len(absent) != 0 {
+		t.Fatalf("Dirs(absent) = %v, %v", absent, absentErr)
+	}
+	if _, travErr := l.Dirs(ctx, "../x"); travErr == nil {
+		t.Fatal("Dirs accepted a traversal name")
+	}
+}
