@@ -1,0 +1,114 @@
+//go:build sqlite
+
+package main
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/desktop"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
+)
+
+const testSchema = `version: "1.0"
+entities:
+  doc:
+    label: Document
+    id_prefix: DOC
+    id_type: sequential
+    properties:
+      title:
+        type: string
+        required: true
+`
+
+const testDataEntry = `app:
+  name: Test
+`
+
+func writeTestFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	path := filepath.Join(root, rel)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+}
+
+// newTestDesktop returns a Desktop whose preferences are written under a
+// temporary home, so loading a project does not touch the user's own.
+func newTestDesktop(t *testing.T) *Desktop {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	d := &Desktop{prefs: &desktop.Preferences{}, registry: newProjectRegistry()}
+	t.Cleanup(d.releaseLoadedProject)
+	return d
+}
+
+// A project whose config lives only in its database is recognized, opens
+// without the setup prompt, and round-trips its config and data through the
+// import and export actions.
+func TestDatabaseProject_OpensAndRoundTrips(t *testing.T) {
+	src := t.TempDir()
+	writeTestFile(t, src, "schema.yaml", testSchema)
+	writeTestFile(t, src, "data-entry.yaml", testDataEntry)
+	writeTestFile(t, src, "entities/docs/DOC-1.md", "---\nid: DOC-1\ntype: doc\ntitle: First\n---\n")
+
+	root := t.TempDir()
+	require.False(t, isRelaProject(root), "an empty directory is not a project")
+	fsys := storage.NewSafeFS(storage.NewOsFS())
+	require.NoError(t, os.Mkdir(filepath.Join(root, project.CacheDir), 0o755))
+	paths, err := project.Discover(root, fsys)
+	require.NoError(t, err)
+	_, err = appbuild.LoadProjectConfig(context.Background(), fsys, paths, src)
+	require.NoError(t, err)
+	require.True(t, isRelaProject(root), "a directory holding only rela.db is a project")
+
+	d := newTestDesktop(t)
+	require.Empty(t, d.loadProject(root, false), "data-entry.yaml comes from the database")
+	require.False(t, d.NeedsSetup())
+
+	summary, err := d.withProjectReleased(importData(src))
+	require.NoError(t, err)
+	assert.Contains(t, summary, "1 entities")
+	require.NotNil(t, d.app, "the project is open again after the import")
+
+	out := t.TempDir()
+	_, err = d.withProjectReleased(exportConfig(out))
+	require.NoError(t, err)
+	_, err = d.withProjectReleased(exportData(out))
+	require.NoError(t, err)
+	assert.FileExists(t, filepath.Join(out, "schema.yaml"))
+	assert.FileExists(t, filepath.Join(out, "data-entry.yaml"))
+	assert.FileExists(t, filepath.Join(out, "entities", "docs", "DOC-1.md"))
+
+	_, err = d.withProjectReleased(exportConfig(out))
+	require.Error(t, err, "exporting over existing files is refused")
+	require.NotNil(t, d.app, "a failed export still reopens the project")
+
+	_, err = d.withProjectReleased(importConfig(out))
+	require.NoError(t, err)
+}
+
+// A project with a schema but no data-entry.yaml anywhere still asks for
+// setup.
+func TestDatabaseProject_NeedsSetupWithoutDataEntry(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "schema.yaml", testSchema)
+	d := newTestDesktop(t)
+	require.Equal(t, "needs_setup", d.loadProject(root, false))
+	require.True(t, d.NeedsSetup())
+	require.Nil(t, d.app)
+}
+
+func TestWithProjectReleased_NoProject(t *testing.T) {
+	d := newTestDesktop(t)
+	_, err := d.withProjectReleased(exportConfig(t.TempDir()))
+	require.Error(t, err)
+}

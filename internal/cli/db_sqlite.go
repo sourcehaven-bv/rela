@@ -17,18 +17,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// dbFileName duplicates appbuild's constant rather than importing it: the
-// appbuild one is unexported, and exporting it to serve two CLI commands
-// would widen a wiring package's API for a filename.
-const dbFileName = "rela.db"
-
 // databasePath locates the project's SQLite file the same way appbuild does.
 func databasePath() (string, error) {
 	paths, err := project.Discover("", storage.NewSafeFS(storage.NewOsFS()))
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(paths.CacheDir, dbFileName), nil
+	return appbuild.DatabasePath(paths), nil
 }
 
 // runDBMigrate carries the database forward to the shape this binary expects.
@@ -150,7 +145,7 @@ func runDBLoad(ctx context.Context, from string, data, force bool) error {
 	for _, name := range names {
 		fmt.Println("  " + name)
 	}
-	fmt.Printf("Stored %d config files in %s.\n", len(names), filepath.Join(paths.CacheDir, dbFileName))
+	fmt.Printf("Stored %d config files in %s.\n", len(names), appbuild.DatabasePath(paths))
 	return nil
 }
 

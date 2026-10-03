@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -68,7 +67,7 @@ var ErrNoDatabase = errors.New("no database yet")
 func ReconcileDerivedIndexes(
 	ctx context.Context, fs storage.FS, paths *project.Context, opts store.ReconcileOptions,
 ) ([]store.DerivedObjectOutcome, error) {
-	path := filepath.Join(paths.CacheDir, dbFileName)
+	path := DatabasePath(paths)
 	if opts.DryRun {
 		if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
 			return nil, ErrNoDatabase

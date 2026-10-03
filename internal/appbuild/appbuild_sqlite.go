@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -29,6 +30,11 @@ import (
 // replacement. A project with both is a project being edited, and the file the
 // operator just wrote must win over the copy baked in (FEAT-UP14BT).
 const dbFileName = "rela.db"
+
+// DatabasePath returns where the project's database lives.
+func DatabasePath(paths *project.Context) string {
+	return filepath.Join(paths.CacheDir, dbFileName)
+}
 
 // New builds the services bundle for the sqlite build: a single-process
 // SQLite store plus an in-memory/on-disk bleve index wired as a write
@@ -104,7 +110,7 @@ func openDatabase(ctx context.Context, cfg Config) (*sqlitedb.DB, error) {
 	// enabled because the project sits on a network/sync filesystem.
 	// Wrapping them in "open store" would bury the part the operator needs.
 	return sqlitedb.Open(ctx, sqlitedb.Options{
-		Path: filepath.Join(cfg.Paths.CacheDir, dbFileName),
+		Path: DatabasePath(cfg.Paths),
 	})
 }
 

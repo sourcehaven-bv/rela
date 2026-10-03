@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -391,22 +392,9 @@ func (d *Desktop) LoadProject(dir string) string {
 // is left running, which is what opening a second window needs; otherwise it
 // is released first — the ordering that matters, see releaseLoadedProject.
 func (d *Desktop) loadProject(dir string, keepExisting bool) string {
-	fs, projCtx, err := discoverProject(dir)
+	fsys, projCtx, err := discoverProject(dir)
 	if err != nil {
 		return d.failLoad(err)
-	}
-
-	// Check if data-entry.yaml exists
-	configPath := filepath.Join(dir, dataentry.ConfigFile)
-	if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
-		// Store pending setup state
-		d.mu.Lock()
-		d.pendingSetupDir = dir
-		d.pendingSetupFS = fs
-		d.pendingSetupPaths = projCtx
-		d.loadErr = ""
-		d.mu.Unlock()
-		return "needs_setup"
 	}
 
 	// Opening a project in a NEW window must not close the one already open;
@@ -423,7 +411,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 		return auditErr.Error()
 	}
 	svc, svcErr := appbuild.New(appbuild.Config{
-		FS:           fs,
+		FS:           fsys,
 		Paths:        projCtx,
 		ScriptEngine: script.NewEngine(),
 		Audit:        auditSink,
@@ -435,13 +423,28 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 		return svcErr.Error()
 	}
 
+	// data-entry.yaml is read through the project's loader, not looked up on
+	// disk: a project may carry it in its database. Checked after the
+	// services open because that loader is theirs.
+	_, cfgErr := svc.ProjectFiles().Load(context.Background(), dataentry.ConfigFile)
+	if errors.Is(cfgErr, fs.ErrNotExist) {
+		_ = svc.Close()
+		d.mu.Lock()
+		d.pendingSetupDir = dir
+		d.pendingSetupFS = fsys
+		d.pendingSetupPaths = projCtx
+		d.loadErr = ""
+		d.mu.Unlock()
+		return "needs_setup"
+	}
+
 	fieldResolver, err := dataentry.ResolverFromServices(svc)
 	if err != nil {
 		return d.failLoad(err)
 	}
 
 	app, err := dataentry.NewApp(
-		fs, projCtx, svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), svc.Versions(),
+		fsys, projCtx, svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),
@@ -1024,6 +1027,7 @@ func (d *Desktop) buildAppMenu() *application.Menu {
 	fileMenu.Add("Open Project...").SetAccelerator("CmdOrCtrl+o").OnClick(d.openProjectFromMenu)
 	fileMenu.Add("Clone from Git...").SetAccelerator("CmdOrCtrl+shift+o").OnClick(d.cloneFromGitMenu)
 	fileMenu.AddSeparator()
+	d.addDatabaseMenu(fileMenu)
 
 	// Recent Projects submenu
 	if len(d.prefs.RecentProjects) > 0 {
@@ -1246,11 +1250,12 @@ func projectRootOf(path string) string {
 	return path
 }
 
-// isRelaProject checks if the directory looks like a rela project, accepting
-// either schema file name.
+// isRelaProject checks if the directory looks like a rela project: it has a
+// schema file under either name, or a project database that may carry the
+// schema itself.
 func isRelaProject(dir string) bool {
 	_, _, found := project.SchemaFileAt(dir, storage.NewSafeFS(storage.NewOsFS()))
-	return found
+	return found || hasProjectDatabase(dir)
 }
 
 // discoverProject returns the filesystem and project context for the
