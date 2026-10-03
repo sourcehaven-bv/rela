@@ -1251,6 +1251,9 @@ func NewApp(
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
 			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, app.visibleReader, e)
 		},
+		readVisible: func(ctx context.Context, typeName string, ref entityRef) (*entity.Entity, bool, error) {
+			return app.visibleReader.getVisibleRef(ctx, typeName, ref)
+		},
 		currentEdgesByPeer: app.currentEdgesByPeerOnFace,
 		engine:             func() *script.Engine { return app.scriptEngine },
 		luaDeps:            app.luaWriteDeps,

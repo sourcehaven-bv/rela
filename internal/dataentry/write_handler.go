@@ -132,6 +132,9 @@ type writeHandler struct {
 	// caller may see. The write path answers with the row it wrote, so it
 	// owes the row's own edges, not the bare id's union of every face's.
 	faceEdges func(ctx context.Context, e *entityPkg.Entity) ([]*entityPkg.Relation, map[string]bool, error)
+	// readVisible is [visibleReader.getVisibleRef]: the GET's gated read,
+	// for re-reading a row after a write whose outcome may have hidden it.
+	readVisible func(ctx context.Context, typeName string, ref entityRef) (*entityPkg.Entity, bool, error)
 	// currentEdgesByPeer is face-scoped: the reconciler diffs against the
 	// edges ONE face owns, because it DELETES whatever is current but not
 	// desired. Handed the bare-id union of every face's edges, a PATCH to
@@ -658,6 +661,141 @@ func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
 	writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 }
 
+// currentVersions returns the field tokens of e as this caller sees it: the
+// same face-scoped edges and redaction the GET applies.
+func (h *writeHandler) currentVersions(
+	ctx context.Context, e *entityPkg.Entity, plural string,
+) (*v1.FieldVersions, error) {
+	rels, visible, err := h.faceEdges(ctx, e)
+	if err != nil {
+		return nil, err
+	}
+	view := h.serializer.forWireScoped(ctx, e, rels, visible, h.schema().Meta, plural)
+	return fieldVersionsOf(&view, h.schema().Meta), nil
+}
+
+// visibleStored re-reads the row at ref through the GET's row and face
+// gates. It reports false when the row is gone, has another type, or is
+// hidden from this caller, and on a gate error: every caller then answers
+// without the row's state, which a GET would not serve either.
+func (h *writeHandler) visibleStored(
+	ctx context.Context, typeName string, ref entityRef,
+) (*entityPkg.Entity, bool) {
+	e, found, err := h.readVisible(ctx, typeName, ref)
+	if err != nil || !found || e.Type != typeName {
+		return nil, false
+	}
+	return e, true
+}
+
+// servedAfterWrite picks the row a PATCH response describes, and reports
+// whether it may carry version tokens. It is the STORED row, not the entity
+// the manager handed back: fsstore reformats the body on write, so tokens of
+// the in-memory body would never match the next GET and every later save
+// would 412. Body and tokens come from this one read, so they describe one
+// state even when another node wrote in between. The read is gated like a
+// GET: a row the write (or a concurrent one) hid from this caller answers
+// with written and no tokens.
+func (h *writeHandler) servedAfterWrite(
+	ctx context.Context, typeName string, ref entityRef, written *entityPkg.Entity,
+) (*entityPkg.Entity, bool) {
+	if stored, ok := h.visibleStored(ctx, typeName, ref); ok {
+		return stored, true
+	}
+	return written, false
+}
+
+// preconditionScope is the set of fields a PATCH writes.
+type preconditionScope struct {
+	props     map[string]any
+	unset     []string
+	content   bool
+	relations bool
+}
+
+// checkPreconditions validates a PATCH's preconditions against the fields it
+// writes and compares them with the tokens of entity, the row this handler
+// read. It writes the 400, the 412 or the edge-read failure, and returns
+// false when the write must not proceed. A nil pre always passes.
+func (h *writeHandler) checkPreconditions(
+	w http.ResponseWriter, r *http.Request, pre *v1.Preconditions, scope preconditionScope,
+	entity *entityPkg.Entity, plural string,
+) bool {
+	if pre == nil {
+		return true
+	}
+	if ptr, ok := validatePreconditionScope(pre, scope); !ok {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_precondition",
+			"Precondition names a field this request does not write", ptr)
+		return false
+	}
+	versions, err := h.currentVersions(r.Context(), entity, plural)
+	if err != nil {
+		writeGateError(w, r, err)
+		return false
+	}
+	if conflicts := preconditionConflicts(pre, versions, entity.ID, entity.Type); conflicts != nil {
+		writeFieldConflict(w, r, conflicts, versions)
+		return false
+	}
+	return true
+}
+
+// writeLostRace answers a PATCH with preconditions whose store
+// compare-and-swap lost to a concurrent write. It re-reads the row and
+// reports which preconditions now fail, which may be none: the other write
+// can have touched only fields this request does not name. The handler does
+// not retry. The client holds the edit and its base, so it decides whether to
+// resend with the fresh tokens or to merge. Returns false when err is not a
+// lost race. When the row is gone or now hidden from this caller it answers a
+// bare 412 without tokens: the winning write may have changed what the row
+// gate depends on, and a hidden row's tokens would disclose its new values.
+// It is still a 412, not writePatchError's 409, because the client did set a
+// precondition.
+func (h *writeHandler) writeLostRace(
+	w http.ResponseWriter, r *http.Request, err error, pre *v1.Preconditions,
+	typeName string, ref entityRef, plural string,
+) bool {
+	var conflict *store.VersionConflictError
+	if !errors.As(err, &conflict) {
+		return false
+	}
+	current, found := h.visibleStored(r.Context(), typeName, ref)
+	var versions *v1.FieldVersions
+	if found {
+		versions, err = h.currentVersions(r.Context(), current, plural)
+	}
+	if !found || err != nil {
+		writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
+			"Entity has been modified", "concurrent write detected")
+		return true
+	}
+	conflicts := preconditionConflicts(pre, versions, current.ID, current.Type)
+	if conflicts == nil {
+		conflicts = &v1.FieldConflicts{}
+	}
+	writeFieldConflict(w, r, conflicts, versions)
+	return true
+}
+
+// writeFieldConflict writes the 412 for failed per-field preconditions, with
+// the failed fields and the current tokens as problem+json extension members.
+func writeFieldConflict(
+	w http.ResponseWriter, r *http.Request, conflicts *v1.FieldConflicts, versions *v1.FieldVersions,
+) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(http.StatusPreconditionFailed)
+	_ = json.NewEncoder(w).Encode(v1.Error{
+		Type:      "https://rela.dev/errors/precondition_failed",
+		Title:     "Entity has been modified",
+		Status:    http.StatusPreconditionFailed,
+		Detail:    "field changed since it was read",
+		Instance:  r.URL.Path,
+		Conflicts: conflicts,
+		Versions:  versions,
+	})
+}
+
 //nolint:gocognit,funlen // update handler threads the validation-policy classes (400/422/200-with-warnings) through each field; the branches are the documented write-policy cases, not extractable shared logic.
 func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	r = h.withProvision(r)
@@ -718,6 +856,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		PropertiesUnset []string          `json:"properties_unset,omitempty"`
 		Content         *string           `json:"content,omitempty"`
 		Relations       v1.RelationsField `json:"relations"`
+		Preconditions   *v1.Preconditions `json:"preconditions,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -757,6 +896,20 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 			h.denyAfford(r.Context(), w, entity, *denial)
 			return
 		}
+	}
+
+	// Per-field preconditions (TKT-2VDVHF). Checked after the affordance
+	// gates, which refuse a hidden field, so a precondition can only name a
+	// field the caller may read. The tokens are computed from this handler's
+	// read, and the patch below carries that read's store version, so a write
+	// landing between this check and the patch is caught by the store.
+	// Relations have no store version: their check holds only under writeMu.
+	scope := preconditionScope{
+		props: req.Properties, unset: req.PropertiesUnset,
+		content: req.Content != nil, relations: req.Relations.Modern != nil,
+	}
+	if !h.checkPreconditions(w, r, req.Preconditions, scope, entity, plural) {
+		return
 	}
 
 	// Phase A: validate relations (no writes). Returns warnings (will
@@ -823,9 +976,12 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		// STORED row it loads, and loading by bare id would land on the
 		// default face — so a write to POL-1@published would be authorized
 		// (and applied) against POL-1's default state instead.
-		ref := entityPkg.FormatStateRef(entity.ID, entity.Face)
-		updateResult, err := h.manager.PatchEntity(r.Context(), ref, patch)
+		stateRef := entityPkg.FormatStateRef(entity.ID, entity.Face)
+		updateResult, err := h.manager.PatchEntity(r.Context(), stateRef, patch)
 		if err != nil {
+			if req.Preconditions != nil && h.writeLostRace(w, r, err, req.Preconditions, typeName, ref, plural) {
+				return
+			}
 			writePatchError(w, r, err)
 			return
 		}
@@ -865,11 +1021,15 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		writeGateError(w, r, rerr)
 		return
 	}
-	result := h.serializer.forWireScoped(r.Context(), entity, rels, visibleNeighbors, h.schema().Meta, plural)
+	served, versioned := h.servedAfterWrite(r.Context(), typeName, ref, entity)
+	result := h.serializer.forWireScoped(r.Context(), served, rels, visibleNeighbors, h.schema().Meta, plural)
 	if len(warnings) > 0 {
 		result.Warnings = warnings
 	}
-	newETag := h.computeETag(r.Context(), entity)
+	if versioned {
+		result.Versions = fieldVersionsOf(&result, h.schema().Meta)
+	}
+	newETag := h.computeETag(r.Context(), served)
 	w.Header().Set("ETag", newETag)
 
 	// SSE broadcast is driven by the store-event bridge: an entity update only

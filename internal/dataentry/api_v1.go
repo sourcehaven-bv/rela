@@ -955,6 +955,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 		return
 	}
 	result := a.serializer.forWireScoped(ctx, entity, outgoing, visibleNeighbors, a.Meta(), plural)
+	result.Versions = fieldVersionsOf(&result, a.Meta())
 
 	// Face provenance (TKT-WRLDAPI item 2). Attached HERE rather than inside
 	// forWire, even though forWire is the shared per-entity serializer,
