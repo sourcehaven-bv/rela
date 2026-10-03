@@ -2562,10 +2562,8 @@ func (m *Manager) UpdateRelation(
 	if fErr := m.deps.requireRelationFaceFor(relType, source.typ, key.FromFace); fErr != nil {
 		return nil, fErr
 	}
-	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op:      acl.OpUpdate,
-		Subject: relationWriteSubject(m.deps.Meta, relType, source, from, key.FromFace),
-	}); aclErr != nil {
+	if aclErr := m.authorizeAndAudit(ctx,
+		RelationUpdateRequest(m.deps.Meta, relType, source.typ, from, key.FromFace)); aclErr != nil {
 		return nil, aclErr
 	}
 
@@ -2655,10 +2653,8 @@ func (m *Manager) DeleteRelation(ctx context.Context, key entity.RelationKey) er
 	// source doesn't exist).
 	// A lookup error leaves the family zero, whose empty type matches no grant.
 	source, _ := lookupFamily(ctx, m.deps.Store, from)
-	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op:      acl.OpDelete,
-		Subject: relationWriteSubject(m.deps.Meta, relType, source, from, face),
-	}); aclErr != nil {
+	if aclErr := m.authorizeAndAudit(ctx,
+		RelationDeleteRequest(m.deps.Meta, relType, source.typ, from, face)); aclErr != nil {
 		return aclErr
 	}
 	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return

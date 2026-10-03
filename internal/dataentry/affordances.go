@@ -69,27 +69,25 @@ func translateVerb(verb, entityType, entityID string, face entityPkg.Face) acl.W
 	panic("dataentry.translateVerb: unknown verb: " + verb)
 }
 
-// translateRelationWrite maps a relation write to the [acl.WriteRequest]
-// that authorizes it, mirroring how entitymanager gates relation
-// updates: Op=update with a [acl.RelationSubject] evaluated against the
-// source entity's type. It lives here so the lint_test
-// single-construction-site invariant covers relation writes too; the
-// only caller today is the conflict-resolve handler, whose write is
-// file-level and cannot route through entitymanager.
-func translateRelationWrite(relType, fromType, fromID string) acl.WriteRequest {
-	return acl.WriteRequest{Op: acl.OpUpdate, Subject: acl.RelationSubject{
-		Type:     relType,
-		FromType: fromType,
-		FromID:   fromID,
-	}}
+// translateRelationWrite maps an update of a relType edge from fromID (type
+// fromType) at tail to the [acl.WriteRequest] [entitymanager.Manager.UpdateRelation]
+// authorizes it with, by delegating to [entitymanager.RelationUpdateRequest].
+// The only caller is the conflict-resolve handler, whose write is file-level
+// and cannot route through entitymanager, so it must ask the manager's
+// question rather than a copy of it.
+func translateRelationWrite(
+	meta *metamodel.Metamodel, relType, fromType, fromID string, tail entityPkg.Face,
+) acl.WriteRequest {
+	return entitymanager.RelationUpdateRequest(meta, relType, fromType, fromID, tail)
 }
 
 // translateRelationDelete maps the removal of a relType edge whose source is
-// fromID at face to the [acl.WriteRequest] the manager authorizes it with.
-func translateRelationDelete(relType, fromType, fromID string, face entityPkg.Face) acl.WriteRequest {
-	return acl.WriteRequest{Op: acl.OpDelete, Subject: acl.RelationSubject{
-		Type: relType, FromType: fromType, FromID: fromID, FromFace: face,
-	}}
+// fromID at tail to the [acl.WriteRequest] [entitymanager.Manager.DeleteRelation]
+// authorizes it with.
+func translateRelationDelete(
+	meta *metamodel.Metamodel, relType, fromType, fromID string, tail entityPkg.Face,
+) acl.WriteRequest {
+	return entitymanager.RelationDeleteRequest(meta, relType, fromType, fromID, tail)
 }
 
 // translateRelationCreate maps the creation of a relType edge from fromID

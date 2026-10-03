@@ -1502,9 +1502,12 @@ func (h *writeHandler) authorizeConflictResolve(
 	var aclReq acl.WriteRequest
 	if rel != nil {
 		// Write authorization needs the real type whether or not the caller
-		// may read the row, and a faced source has no zero-face row.
+		// may read the row, and a faced source has no zero-face row. The
+		// conflict parser reads no tail, so an edge from a faced source is
+		// judged on every face its type declares: at least what the manager
+		// asks for the edge at any tail.
 		fromType := storedTypeOf(ctx, h.store, rel.From)
-		aclReq = translateRelationWrite(rel.Type, fromType, rel.From)
+		aclReq = translateRelationWrite(h.schema().Meta, rel.Type, fromType, rel.From, rel.FromFace)
 	} else {
 		aclReq = translateVerb("update", e.Type, e.ID, e.Face)
 	}

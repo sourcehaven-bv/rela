@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -458,9 +459,15 @@ func restoreRelationHistoryVersion(a *App,
 	// Liveness is probed on the addressed tail for the same reason: a probe
 	// of the default tail would find a live faced edge absent and take the
 	// create branch.
-	_, liveErr := a.store.GetRelation(ctx, key)
+	live, liveErr := a.store.GetRelation(ctx, key)
+	if liveErr != nil {
+		live = nil
+	}
+	if !restoreAffordanceOK(a, w, r, key, live, opts.Properties) {
+		return
+	}
 	var writeErr error
-	if liveErr == nil {
+	if live != nil {
 		_, writeErr = a.entityManager.UpdateRelation(ctx, key, opts)
 	} else {
 		_, writeErr = a.entityManager.CreateRelation(ctx, key, opts)
@@ -483,4 +490,44 @@ func restoreRelationHistoryVersion(a *App,
 		"restored_from_version": snap.Version,
 		"relation":              map[string]any{"from": fromRef.String(), "type": relType, "to": to},
 	})
+}
+
+// restoreAffordanceOK gates a restore as the PATCH that makes the same change
+// is gated: a re-create needs the edge to be creatable, and every meta value
+// the restore changes must be writable. Both are judged over the sources
+// [affordanceService.relationSources] returns for the edge's source at its
+// tail, so an identity edge from a faced source answers for every face. It
+// writes the answer itself when the restore may not proceed.
+//
+// live is the edge as stored, or nil when the restore re-creates it.
+func restoreAffordanceOK(
+	a *App, w http.ResponseWriter, r *http.Request,
+	key entityPkg.RelationKey, live *entityPkg.Relation, props map[string]any,
+) bool {
+	ctx := r.Context()
+	sources, err := a.affordances.relationSources(ctx, nil,
+		entityPkg.Ref{ID: key.From, Face: key.FromFace}, string(DirectionIncoming), key.Type)
+	if err != nil {
+		writeGateError(w, r, err)
+		return false
+	}
+	changed := props
+	if live == nil {
+		if src, denial := a.affordances.relationOpDenial(ctx, sources, key.Type, RelationOpCreate); denial != nil {
+			a.denyAffordance(ctx, w, src, *denial)
+			return false
+		}
+	} else {
+		changed = make(map[string]any)
+		for k, v := range props {
+			if cur, ok := live.Properties[k]; !ok || !reflect.DeepEqual(cur, v) {
+				changed[k] = v
+			}
+		}
+	}
+	if src, denial := a.affordances.relationMetaDenial(ctx, sources, key.Type, changed, nil); denial != nil {
+		a.denyAffordance(ctx, w, src, *denial)
+		return false
+	}
+	return true
 }

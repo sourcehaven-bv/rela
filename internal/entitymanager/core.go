@@ -650,8 +650,30 @@ func declaredFaces(meta *metamodel.Metamodel, typ string) []entity.Face {
 func RelationCreateRequest(
 	meta *metamodel.Metamodel, relType, fromType, fromID string, tail entity.Face,
 ) acl.WriteRequest {
+	return relationRequest(meta, acl.OpCreate, relType, fromType, fromID, tail)
+}
+
+// RelationUpdateRequest is the authorization request [Manager.UpdateRelation]
+// runs, exported for the reason [RelationCreateRequest] is.
+func RelationUpdateRequest(
+	meta *metamodel.Metamodel, relType, fromType, fromID string, tail entity.Face,
+) acl.WriteRequest {
+	return relationRequest(meta, acl.OpUpdate, relType, fromType, fromID, tail)
+}
+
+// RelationDeleteRequest is the authorization request [Manager.DeleteRelation]
+// runs, exported for the reason [RelationCreateRequest] is.
+func RelationDeleteRequest(
+	meta *metamodel.Metamodel, relType, fromType, fromID string, tail entity.Face,
+) acl.WriteRequest {
+	return relationRequest(meta, acl.OpDelete, relType, fromType, fromID, tail)
+}
+
+func relationRequest(
+	meta *metamodel.Metamodel, op acl.Op, relType, fromType, fromID string, tail entity.Face,
+) acl.WriteRequest {
 	source := entityFamily{id: fromID, typ: fromType}
-	return acl.WriteRequest{Op: acl.OpCreate, Subject: relationWriteSubject(meta, relType, source, fromID, tail)}
+	return acl.WriteRequest{Op: op, Subject: relationWriteSubject(meta, relType, source, fromID, tail)}
 }
 
 // getEntityByRef resolves an entity ADDRESS — either a bare id or the fused

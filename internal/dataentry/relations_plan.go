@@ -317,7 +317,7 @@ func (a *App) markIncomingFace(
 	}
 	row["face"] = string(edge.FromFace)
 	row["editable"] = false
-	req := translateRelationDelete(edge.Type, a.reader.entityType(ctx, edge.From), edge.From, edge.FromFace)
+	req := translateRelationDelete(a.Meta(), edge.Type, a.reader.entityType(ctx, edge.From), edge.From, edge.FromFace)
 	if !a.affordances.acl().AuthorizeWrite(ctx, req).Allow {
 		return
 	}

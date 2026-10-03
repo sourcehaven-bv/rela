@@ -686,18 +686,11 @@ func (ce *copyEngine) planCopyEdges(ctx context.Context, plan *copyPlan) ([]copy
 			continue
 		}
 		if crossEntity {
-			if aerr := ce.m.authorizeAndAudit(ctx, acl.WriteRequest{
-				Op: acl.OpCreate,
-				Subject: acl.RelationSubject{
-					Type: rel.Type, FromType: plan.to.Type, FromID: plan.targetID,
-					// The face applyCopyEdges actually writes these edges to
-					// (BUG-64MU2Q). Omitting it asked about the default face
-					// while the write landed on targetTail — the check-here/
-					// write-there split the entity-level gate above already
-					// avoids by carrying EntitySubject.Face.
-					FromFace: plan.targetTail,
-				},
-			}); aerr != nil {
+			// At the face applyCopyEdges writes these edges to (BUG-64MU2Q),
+			// through the request CreateRelation asks, so a copied edge is
+			// authorized exactly as a hand-made one.
+			if aerr := ce.m.authorizeAndAudit(ctx, RelationCreateRequest(
+				ce.m.deps.Meta, rel.Type, plan.to.Type, plan.targetID, plan.targetTail)); aerr != nil {
 				return nil, aerr
 			}
 		}
