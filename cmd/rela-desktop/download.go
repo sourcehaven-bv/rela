@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -54,25 +55,35 @@ type Downloads struct {
 // errTooLarge refuses a response over the download limit.
 var errTooLarge = errors.New("the file is too large to save from here")
 
-// cappedRecorder records a response but refuses body bytes past limit, so an
-// oversized file fails while it is written, not after it is held in memory.
+// cappedRecorder records a response in memory but refuses body bytes past
+// limit, so an oversized file fails while it is written, not after it is
+// held. It records into a plain buffer: the bytes are saved to a file, never
+// served to a page.
 type cappedRecorder struct {
-	*httptest.ResponseRecorder
-	limit int
-	over  bool
+	header http.Header
+	code   int
+	body   bytes.Buffer
+	limit  int
+	over   bool
+}
+
+func (c *cappedRecorder) Header() http.Header { return c.header }
+
+func (c *cappedRecorder) WriteHeader(code int) {
+	if c.code == 0 {
+		c.code = code
+	}
 }
 
 func (c *cappedRecorder) Write(p []byte) (int, error) {
-	if c.over || c.Body.Len()+len(p) > c.limit {
+	if c.code == 0 {
+		c.code = http.StatusOK
+	}
+	if c.over || c.body.Len()+len(p) > c.limit {
 		c.over = true
 		return 0, errTooLarge
 	}
-	return c.ResponseRecorder.Write(p)
-}
-
-// WriteString goes through Write, so the cap holds for it too.
-func (c *cappedRecorder) WriteString(s string) (int, error) {
-	return c.Write([]byte(s)) //nolint:gocritic // WriteString here would call itself
+	return c.body.Write(p)
 }
 
 // newDownloads checks its collaborators; see the struct for each one.
@@ -116,21 +127,20 @@ func (dl *Downloads) fetch(raw string) (name string, body []byte, err error) {
 	if limit <= 0 {
 		limit = maxDownloadBytes
 	}
-	capped := &cappedRecorder{ResponseRecorder: httptest.NewRecorder(), limit: limit}
-	dl.handler.ServeHTTP(capped, req)
-	rec := capped.ResponseRecorder
-	if capped.over {
+	rec := &cappedRecorder{header: http.Header{}, limit: limit}
+	dl.handler.ServeHTTP(rec, req)
+	if rec.over {
 		return "", nil, errTooLarge
 	}
 
-	if rec.Code != http.StatusOK {
-		msg := strings.TrimSpace(rec.Body.String())
+	if rec.code != http.StatusOK && rec.code != 0 {
+		msg := strings.TrimSpace(rec.body.String())
 		if len(msg) > maxErrorChars {
 			msg = msg[:maxErrorChars] + "…"
 		}
-		return "", nil, fmt.Errorf("the server answered %d: %s", rec.Code, msg)
+		return "", nil, fmt.Errorf("the server answered %d: %s", rec.code, msg)
 	}
-	return downloadName(rec.Header(), route), rec.Body.Bytes(), nil
+	return downloadName(rec.header, route), rec.body.Bytes(), nil
 }
 
 // downloadName is the file name to offer: the response's attachment name if

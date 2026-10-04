@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/zalando/go-keyring"
 
 	"github.com/Sourcehaven-BV/rela/internal/ai"
@@ -278,14 +279,33 @@ func TestCheckHostFile(t *testing.T) {
 	require.Error(t, checkHostFile(hostconfig.MailFile, []byte("transport: carrier-pigeon\n")))
 }
 
-func TestProjectSettings_NoProject(t *testing.T) {
-	s := &ProjectSettings{d: &Desktop{registry: newProjectRegistry()}}
-	assert.Equal(t, errNoProject.Error(), s.Load("").Error)
-	assert.Equal(t, errNoProject.Error(), s.SetSecret("", "a", "b"))
-	assert.Equal(t, errNoProject.Error(), s.DeleteSecret("", "a"))
-	assert.Equal(t, errNoProject.Error(), s.TrustSecrets(""))
-	assert.Equal(t, errNoProject.Error(), s.SaveFile("", hostconfig.AIFile, ""))
-	assert.NotEmpty(t, s.Load("gone").Error, "a closed project is not edited")
+// fakeWindow stands in for the Wails window a bound call came from.
+type fakeWindow struct{ name string }
+
+func (w fakeWindow) Name() string { return w.name }
+
+// fromWindow is a bound call's context from the window with this name.
+func fromWindow(name string) context.Context {
+	return context.WithValue(context.Background(), application.WindowKey, fakeWindow{name})
+}
+
+func TestProjectSettings_RefusesOtherWindows(t *testing.T) {
+	_, err := newProjectSettings(nil, nil)
+	require.Error(t, err)
+	s, err := newProjectSettings(&Desktop{registry: newProjectRegistry()}, nil)
+	require.NoError(t, err)
+	s.windows.add("settings-1", "gone")
+
+	for _, ctx := range []context.Context{context.Background(), fromWindow("main"), fromWindow("")} {
+		assert.Equal(t, errNotSettingsWindow.Error(), s.Load(ctx).Error)
+		assert.Equal(t, errNotSettingsWindow.Error(), s.SetSecret(ctx, "a", "b"))
+		assert.Equal(t, errNotSettingsWindow.Error(), s.DeleteSecret(ctx, "a"))
+		assert.Equal(t, errNotSettingsWindow.Error(), s.TrustSecrets(ctx))
+		assert.Equal(t, errNotSettingsWindow.Error(), s.SaveFile(ctx, hostconfig.AIFile, ""))
+	}
+	assert.NotEmpty(t, s.Load(fromWindow("settings-1")).Error, "a closed project is not edited")
+	s.windows.remove("settings-1")
+	assert.Equal(t, errNotSettingsWindow.Error(), s.Load(fromWindow("settings-1")).Error)
 }
 
 func TestKeychainSecrets_SetRollsBackWhenIndexFails(t *testing.T) {

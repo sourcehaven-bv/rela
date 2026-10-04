@@ -117,6 +117,7 @@ type Desktop struct {
 	activePath       string               // what the active project was opened from: a folder or a .rela file
 	menuReady        atomic.Bool          // true once the native menu exists (post-Run)
 	menu             *menuBar             // the menu bar; nil until main builds it
+	settings         *ProjectSettings     // the Project Settings service; nil until main builds it
 	notify           *notifyHub           // notifications and Dock badge; nil in tests
 	stopScheduler    context.CancelFunc
 }
@@ -1105,6 +1106,10 @@ func main() {
 		os.Exit(1)
 	}
 	d.notify.notes.OnNotificationResponse(d.onNotificationClicked)
+	if d.settings, err = newProjectSettings(d, d.confirmDialog); err != nil { // coverage-ignore: d is never nil here
+		slog.Error("could not start", "error", err)
+		os.Exit(1)
+	}
 
 	// Which project to open — resolved now, but NOT loaded yet. Opening the
 	// store here would mean a redundant second instance takes the sqlite and
@@ -1123,7 +1128,7 @@ func main() {
 		// as under v2. Verified streaming (SSE) works through it.
 		Assets: application.AssetOptions{Handler: d},
 		Services: append([]application.Service{application.NewService(d), application.NewService(downloads),
-			application.NewService(&ProjectSettings{d: d, confirm: d.confirmDialog})},
+			application.NewService(d.settings)},
 			d.notify.services()...),
 		// v2 had no shutdown hook, so the scheduler and services leaked on
 		// quit. ServiceShutdown now releases them.

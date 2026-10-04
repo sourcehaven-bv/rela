@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
@@ -178,11 +177,11 @@ func (m *menuBar) addFileMenu(menu *application.Menu, mac bool) {
 	m.addDatabaseMenu(file)
 	file.Add("Project Settings…").OnClick(func(*application.Context) {
 		// The settings edit the project of the window they were opened from.
-		route := settingsPath
-		if id := m.focused.Load(); id != nil && *id != "" {
-			route += "?project=" + url.QueryEscape(*id)
+		id := ""
+		if f := m.focused.Load(); f != nil {
+			id = *f
 		}
-		if errMsg := d.OpenWindow(route, "Project Settings"); errMsg != "" {
+		if errMsg := d.settings.open(id); errMsg != "" {
 			d.errorDialog("Could not open Project Settings", errMsg)
 		}
 	})

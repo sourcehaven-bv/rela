@@ -5,7 +5,9 @@ title: Data-entry, templates and scripts read config through the services' confi
 kind: enhancement
 priority: high
 effort: l
-status: ready
+started: "2026-10-04"
+completed: "2026-10-04"
+status: done
 ---
 
 ## Description

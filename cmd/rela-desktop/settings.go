@@ -10,12 +10,15 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,14 +41,19 @@ type settingsView struct {
 
 // ProjectSettings is the bound service behind the settings window. It edits
 // one project's secrets (in the keychain) and its AI and mail settings (in
-// the project's state). Every method takes the project's id: "" means the
-// active project.
+// the project's state).
 //
-// Every page can call these methods, including a document's own custom.js,
-// so none of them may widen what a document's scripts can read. Approving
-// secrets therefore goes through confirm, which page script cannot answer.
+// Every page can call a bound service, including a document's own
+// custom.js. So the project a call edits is never taken from the page: Go
+// pins it to the settings window when it opens one (see open), and a call
+// from any other window is refused. Approving secrets also goes through
+// confirm, which page script cannot answer.
 type ProjectSettings struct {
 	d *Desktop
+	// windows maps each open settings window to its project.
+	//
+	// Nil: rejected by newProjectSettings.
+	windows *settingsWindows
 	// confirm asks the user to approve message in a native dialog and
 	// reports the answer.
 	//
@@ -53,8 +61,89 @@ type ProjectSettings struct {
 	confirm func(title, message, approve string) bool
 }
 
+// newProjectSettings returns the settings service for d.
+func newProjectSettings(d *Desktop, confirm func(title, message, approve string) bool) (*ProjectSettings, error) {
+	if d == nil {
+		return nil, errors.New("project settings: nil desktop")
+	}
+	return &ProjectSettings{d: d, windows: &settingsWindows{byName: map[string]string{}}, confirm: confirm}, nil
+}
+
+// settingsWindows maps a settings window's name to the id of the project it
+// edits.
+type settingsWindows struct {
+	mu     sync.Mutex
+	byName map[string]string
+}
+
+func (w *settingsWindows) add(name, projectID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.byName[name] = projectID
+}
+
+func (w *settingsWindows) remove(name string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.byName, name)
+}
+
+func (w *settingsWindows) project(name string) (string, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	id, ok := w.byName[name]
+	return id, ok
+}
+
+// callerWindow is the name of the window a bound call came from, or "".
+func callerWindow(ctx context.Context) string {
+	if w, ok := ctx.Value(application.WindowKey).(interface{ Name() string }); ok && w != nil {
+		return w.Name()
+	}
+	return ""
+}
+
 // errNoProject is returned when no project is open.
 var errNoProject = errors.New("open a project first")
+
+// errNotSettingsWindow refuses a call from a window that is not a settings
+// window.
+var errNotSettingsWindow = errors.New("settings can only be changed from the Project Settings window")
+
+// open opens a settings window for the project with this id; "" means
+// the active project. It returns an error message, or "".
+// coverage-ignore-func: requires Wails runtime
+func (s *ProjectSettings) open(id string) string {
+	d := s.d
+	if d.wails == nil {
+		return "application not ready"
+	}
+	if id == "" {
+		d.mu.RLock()
+		app := d.app
+		d.mu.RUnlock()
+		if app == nil {
+			return errNoProject.Error()
+		}
+		id = projectID(app.ProjectRoot())
+	}
+	name := fmt.Sprintf("settings-%d", windowSeq.Add(1))
+	s.windows.add(name, id)
+	application.InvokeAsync(func() {
+		win := d.wails.Window.NewWithOptions(application.WebviewWindowOptions{
+			Name:   name,
+			Title:  "Project Settings",
+			URL:    settingsPath,
+			Width:  defaultSecondaryWidth,
+			Height: defaultSecondaryHeight,
+			Mac:    macWindow(),
+		})
+		win.OnWindowEvent(events.Common.WindowClosing, func(*application.WindowEvent) { s.windows.remove(name) })
+		d.menu.trackWindow(win, id)
+		win.Show()
+	})
+	return ""
+}
 
 // settingsTarget is the project a settings call edits.
 type settingsTarget struct {
@@ -65,38 +154,37 @@ type settingsTarget struct {
 	active bool
 }
 
-// target resolves projectID to a loaded project: "" is the active one.
-func (s *ProjectSettings) target(projectID string) (settingsTarget, error) {
-	d := s.d
-	d.mu.RLock()
-	svc, app := d.svc, d.app
-	d.mu.RUnlock()
-	if projectID != "" {
-		p := d.registry.get(projectID)
-		if p == nil {
-			return settingsTarget{}, errors.New("that project is no longer open")
-		}
-		svc, app = p.svc, p.app
+// target resolves the project pinned to the calling window.
+func (s *ProjectSettings) target(ctx context.Context) (settingsTarget, error) {
+	name := callerWindow(ctx)
+	if name == "" || s.windows == nil {
+		return settingsTarget{}, errNotSettingsWindow
 	}
-	if svc == nil || app == nil || svc.Paths() == nil {
-		return settingsTarget{}, errNoProject
+	id, ok := s.windows.project(name)
+	if !ok {
+		return settingsTarget{}, errNotSettingsWindow
+	}
+	d := s.d
+	p := d.registry.get(id)
+	if p == nil || p.svc == nil || p.app == nil || p.svc.Paths() == nil {
+		return settingsTarget{}, errors.New("that project is no longer open")
 	}
 	if d.keychain == nil {
 		return settingsTarget{}, errors.New("the keychain is not available")
 	}
-	host, err := newDesktopHost(context.Background(), svc.Paths().CacheDir, svc.State(), d.keychain)
+	host, err := newDesktopHost(ctx, p.svc.Paths().CacheDir, p.svc.State(), d.keychain)
 	if err != nil {
 		return settingsTarget{}, err
 	}
 	d.mu.RLock()
-	active := d.app == app
+	active := d.app == p.app
 	d.mu.RUnlock()
-	return settingsTarget{host: host, name: app.ProjectName(), active: active}, nil
+	return settingsTarget{host: host, name: p.app.ProjectName(), active: active}, nil
 }
 
 // Load returns a project's settings.
-func (s *ProjectSettings) Load(projectID string) settingsView {
-	t, err := s.target(projectID)
+func (s *ProjectSettings) Load(ctx context.Context) settingsView {
+	t, err := s.target(ctx)
 	if err != nil {
 		return settingsView{Error: err.Error()}
 	}
@@ -121,8 +209,8 @@ func (s *ProjectSettings) Load(projectID string) settingsView {
 }
 
 // SetSecret stores a secret in the keychain. It returns "" or an error message.
-func (s *ProjectSettings) SetSecret(projectID, name, value string) string {
-	t, err := s.target(projectID)
+func (s *ProjectSettings) SetSecret(ctx context.Context, name, value string) string {
+	t, err := s.target(ctx)
 	if err == nil {
 		err = t.host.secrets.set(t.host.docID, t.host.Path(), strings.TrimSpace(name), value)
 	}
@@ -135,8 +223,8 @@ var errTrustDeclined = errors.New("not allowed")
 // TrustSecrets lets a project's scripts read the keychain secrets stored for
 // its document ID, once the user approves in a native dialog. It returns ""
 // or an error message.
-func (s *ProjectSettings) TrustSecrets(projectID string) string {
-	t, err := s.target(projectID)
+func (s *ProjectSettings) TrustSecrets(ctx context.Context) string {
+	t, err := s.target(ctx)
 	if err != nil {
 		return err.Error()
 	}
@@ -152,8 +240,8 @@ func (s *ProjectSettings) TrustSecrets(projectID string) string {
 
 // DeleteSecret removes a secret from the keychain. It returns "" or an
 // error message.
-func (s *ProjectSettings) DeleteSecret(projectID, name string) string {
-	t, err := s.target(projectID)
+func (s *ProjectSettings) DeleteSecret(ctx context.Context, name string) string {
+	t, err := s.target(ctx)
 	if err == nil {
 		err = t.host.secrets.remove(t.host.docID, t.host.Path(), name)
 	}
@@ -164,8 +252,8 @@ func (s *ProjectSettings) DeleteSecret(projectID, name string) string {
 // it parses; empty content removes it. Saving mail settings reopens the
 // project, because its mail sender is built once when the project opens.
 // It returns "" or an error message.
-func (s *ProjectSettings) SaveFile(projectID, name, content string) string {
-	t, err := s.target(projectID)
+func (s *ProjectSettings) SaveFile(ctx context.Context, name, content string) string {
+	t, err := s.target(ctx)
 	if err != nil {
 		return err.Error()
 	}
@@ -173,7 +261,6 @@ func (s *ProjectSettings) SaveFile(projectID, name, content string) string {
 	if err = hostconfig.CheckName(name); err != nil {
 		return err.Error()
 	}
-	ctx := context.Background()
 	key := hostFileKeyPrefix + name
 	if strings.TrimSpace(content) == "" {
 		err = host.kv.Delete(ctx, key)
@@ -190,6 +277,7 @@ func (s *ProjectSettings) SaveFile(projectID, name, content string) string {
 		s.d.mu.RLock()
 		path := s.d.activePath
 		s.d.mu.RUnlock()
+		//nolint:contextcheck // the reopened project outlives this call, so it must not inherit its context
 		if msg := s.d.loadProject(path, false); msg != "" && msg != "needs_setup" {
 			return "Saved, but reopening the project failed: " + msg
 		}
@@ -300,8 +388,7 @@ const settingsPage = `<!doctype html>
 <script type="module">
 import "/wails/runtime.js";
 
-const project = new URLSearchParams(location.search).get("project") || "";
-const call = (method, ...args) => window.wails.Call.ByName("main.ProjectSettings." + method, project, ...args);
+const call = (method, ...args) => window.wails.Call.ByName("main.ProjectSettings." + method, ...args);
 const $ = (id) => document.getElementById(id);
 
 function status(message, isError) {

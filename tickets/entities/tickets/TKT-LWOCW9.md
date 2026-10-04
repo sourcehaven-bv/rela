@@ -5,7 +5,9 @@ title: 'rela db dump / rela db load: export and import a project''s config (and 
 kind: enhancement
 priority: high
 effort: m
-status: ready
+started: "2026-10-04"
+completed: "2026-10-04"
+status: done
 ---
 
 ## Description

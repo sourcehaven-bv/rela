@@ -5,7 +5,9 @@ title: 'Boot a SQLite project from its database: schema and acl.yaml through the
 kind: enhancement
 priority: high
 effort: m
-status: ready
+started: "2026-10-04"
+completed: "2026-10-04"
+status: done
 ---
 
 ## Description
