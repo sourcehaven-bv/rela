@@ -6,6 +6,7 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { getErrorMessage } from '@/api'
 import {
   useKeyboardShortcuts,
+  useShellCommands,
   shortcutsModalOpen,
   paletteOpen,
   useEvents,
@@ -109,6 +110,9 @@ const error = ref<string | null>(null)
 
 // Initialize global keyboard shortcuts
 useKeyboardShortcuts()
+
+// Commands from a native shell's menu bar (the desktop app).
+useShellCommands()
 
 // Initialize SSE connection for real-time updates
 useEvents()

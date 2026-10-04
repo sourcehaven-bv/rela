@@ -25,6 +25,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -442,27 +443,6 @@ func (a webhookVerifierAdapter) VerifyWebhook(ctx context.Context, raw string) (
 	return dataentry.WebhookClaims{Event: c.Event, UserID: c.UserID, OrgID: c.OrgID, ID: c.ID}, nil
 }
 
-// coverage-ignore-func: startup wiring — exercised at startup, not in tests
-//
-// wireWorlds gives the app request-level world selection and the link
-// resolution that must accompany it.
-//
-// The two are wired TOGETHER and never separately: a surface that can SELECT a
-// world but cannot resolve that world's links renders every page with no
-// relations, which reads as a data problem rather than a wiring gap. Keeping
-// them in one function makes the pairing structural instead of a convention
-// someone has to notice.
-//
-// Without either, the app serves the default world only and refuses any other
-// `?world=` — the right posture for a surface whose wiring never opted in.
-func wireWorlds(app *dataentry.App, svc *appbuild.Services) {
-	app.SetWorlds(appbuild.CompiledWorlds(svc))
-	if err := dataentry.SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
-		slog.Error("failed to wire world-scoped relations", "error", err)
-		os.Exit(1)
-	}
-}
-
 // coverage-ignore-func: main function - entry point
 // coverage-ignore-start: main-or-wiring: process entry point — discovers services, builds the app, binds a listener,
 // and calls ListenAndServe;
@@ -514,22 +494,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// CalDAV needs the alias service to remember client-created resources;
-	// without it the routes are not registered at all.
-	app.SetCalDAVAliases(svc.CalDAVAliases())
-	app.SetComments(svc.Comments())
-
-	wireWorlds(app, svc)
-
-	// Next-action per-user state. The composition root picks the backend
-	// (durable over state.KV, or the store-native one on postgres); this only
-	// hands the app what it built.
-	if err := app.SetUserState(svc.UserState()); err != nil {
-		slog.Error("failed to wire next-action state", "error", err)
+	if err := dataentrywire.Services(app, svc); err != nil {
+		slog.Error("failed to wire the data-entry app", "error", err)
 		os.Exit(1)
 	}
-
-	wireConditionCompilers(app)
 
 	// Start file watcher for live-reload.
 	// The watcher goroutine is cleaned up on process exit.
@@ -837,39 +805,4 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
-}
-
-// wireConditionCompilers supplies the predicate compilers backing a
-// next-action source's `condition:`, a list's or kanban's `condition:`, and an
-// entity type's `query_scopes:`.
-//
-// All three live above internal/dataentry (arch-lint keeps the condition
-// engine there), so the composition root bridges them rather than dataentry
-// importing one. Extracted from main() to keep it inside the funlen budget.
-//
-// Every failure is fatal: a silently absent compiler leaves conditions
-// unevaluated and scopes unapplied, which shows rows the operator explicitly
-// excluded — and nothing on screen would say so.
-//
-// The view halves need AdaptViewConditions / AdaptQueryScopes because appbuild
-// cannot name dataentry's types (dataentry's tests import appbuild, closing a
-// cycle), so each returns a structurally identical func under its own name.
-// This call is where the two meet: a drift between them fails to compile here.
-func wireConditionCompilers(app *dataentry.App) {
-	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
-		slog.Error("failed to wire next-action matchers", "error", err)
-		os.Exit(1)
-	}
-	if err := app.SetViewConditions(
-		dataentry.AdaptViewConditions(appbuild.ViewConditions),
-	); err != nil {
-		slog.Error("failed to wire view conditions", "error", err)
-		os.Exit(1)
-	}
-	if err := app.SetQueryScopeResolver(
-		dataentry.AdaptQueryScopes(appbuild.QueryScopes),
-	); err != nil {
-		slog.Error("failed to wire query scopes", "error", err)
-		os.Exit(1)
-	}
 }

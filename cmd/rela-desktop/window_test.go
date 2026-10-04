@@ -33,10 +33,20 @@ func TestBuiltSPAHasBodyTag(t *testing.T) {
 // silently does nothing. Both injected surfaces must load it.
 func TestInjectedScriptLoadsWailsRuntime(t *testing.T) {
 	out := string(injectMultiWindow([]byte("<html><body>app</body></html>"), ""))
-	require.Contains(t, out, `src="/wails/runtime.js"`,
-		"the runtime must be loaded or window.wails is undefined")
-	assert.Less(t, strings.Index(out, "/wails/runtime.js"), strings.Index(out, "main.Desktop.OpenWindow"),
-		"the runtime must load before the script that uses it")
+	assertLoadsWailsRuntime(t, out)
+	assert.Less(t, strings.Index(out, "window.relaWailsReady.then"), strings.Index(out, "main.Desktop.OpenWindow"),
+		"the script must wait for the runtime before using it")
+}
+
+// assertLoadsWailsRuntime checks that page loads the runtime as a module and
+// announces it. The runtime ends in an export statement, so a plain
+// <script src> is a SyntaxError and window.wails is never set.
+func assertLoadsWailsRuntime(t *testing.T, page string) {
+	t.Helper()
+	require.Contains(t, page, "<script type=\"module\">\nimport \"/wails/runtime.js\";")
+	require.NotContains(t, page, `<script src="/wails/runtime.js">`)
+	assert.Less(t, strings.Index(page, "window.relaWailsReady = "), strings.Index(page, "import \"/wails/runtime.js\""),
+		"the ready promise must exist before the module can announce itself")
 }
 
 func TestSafeRoute(t *testing.T) {

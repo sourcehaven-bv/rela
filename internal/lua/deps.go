@@ -97,6 +97,13 @@ type ReadDeps struct {
 	// carry them.
 	Files ProjectFiles
 
+	// Host supplies secrets and the AI and mail settings to writer runtimes
+	// (see [LoadContextOptions]).
+	//
+	// Nil: accepted — they are read from ProjectRoot/.rela, which is what
+	// every build did before the desktop kept them elsewhere.
+	Host HostConfig
+
 	// Capabilities declares the ambient, non-graph capabilities a runtime
 	// built from these deps may reach — outbound HTTP, the AI provider, named
 	// secrets, and rela.write_file (TKT-YH52OM).

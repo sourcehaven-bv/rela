@@ -108,7 +108,7 @@ Compared with the **filesystem** build:
   because every entity is a file in your repository. The SQLite build replaces
   that with built-in content versioning, the same way the PostgreSQL build
   does — a time machine you can list, diff and restore from, stored in the
-  database rather than in your repository. What you give up is the *review*
+  database rather than in your repository. What you give up is the _review_
   workflow: history is queryable, but there is no pull request to read.
 
 Compared with the **PostgreSQL** build:
@@ -124,7 +124,7 @@ Content versioning, version purge and comments are NOT in that list any more —
 both backends implement the same contract, and one shared conformance suite
 holds them to it.
 
-Comments are the one thing that went into the database *despite* the
+Comments are the one thing that went into the database _despite_ the
 single-process argument above, and the difference is worth naming. Settings and
 a render cache are about the machine; a comment is about the content. An
 operator who copies `rela.db` expecting "the project" would otherwise find every
@@ -140,6 +140,12 @@ entity present and every remark on them left behind.
   observes a change that did not commit — the same guarantee the PostgreSQL
   build makes, which the filesystem build cannot.
 - **One file to back up.** Copy `.rela/rela.db` while rela is not running.
+- **Search inside the database.** Full-text search uses SQLite's FTS5, in
+  `rela.db` itself, so there is no index folder to build at startup. It
+  matches any part of a word, ignoring case, as the PostgreSQL build does: a
+  search for `port` finds "report". Older versions of this build kept a
+  separate search index; the first start after upgrading builds the new one
+  from the data.
 - **Queries answered in the database.** Lists, counts, query scopes and the
   ACL's relation gates run as one SQL statement each, as on PostgreSQL, and
   listings never load markdown bodies they will not show. The

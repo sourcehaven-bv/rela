@@ -22,6 +22,7 @@ import (
 // besides the schema file and its includes.
 var configRootFiles = []string{
 	"data-entry.yaml",
+	"desktop.yaml",
 	"acl.yaml",
 	"schedules.yaml",
 	"mail-templates.yaml",
@@ -264,6 +265,21 @@ func StoreProjectConfig(ctx context.Context, paths *project.Context, files map[s
 	}
 	slices.Sort(names)
 	return names, nil
+}
+
+// PutProjectConfigFile stores one config file in the project's database,
+// keeping the others. The database must already exist.
+func PutProjectConfigFile(ctx context.Context, paths *project.Context, name string, content []byte) error {
+	db, err := openExistingDatabase(ctx, paths)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	loader, err := configsql.New(db.DB())
+	if err != nil {
+		return err
+	}
+	return loader.Put(ctx, name, content)
 }
 
 // DumpProjectConfig writes the config the project's database carries into

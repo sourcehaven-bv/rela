@@ -45,6 +45,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/datamigration/memmigstate"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -169,6 +170,9 @@ type Services struct {
 	// exist, and the data-entry app serves no comment routes.
 	comments     *comments.Service
 	scriptEngine *script.Engine
+	// host is where writer runtimes read secrets and the AI and mail
+	// settings; see [SharedBase.hostConfigFor].
+	host         lua.HostConfig
 	searchCloser io.Closer
 	acl          acl.ACL
 	// aclDeclarative is set when buildACL constructs a Declarative; nil
@@ -439,6 +443,7 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 		Searcher:      s.searcher,
 		Meta:          s.meta,
 		ProjectRoot:   root,
+		Host:          s.host,
 	}
 	if s.base != nil && s.base.cfg.projectConfig != nil {
 		deps.Files = s.base.cfg.projectConfig
@@ -1052,6 +1057,20 @@ type options struct {
 	// [New] takes the DSN from [Config.DatabaseURL], because a caller
 	// building a Config already decides where the data lives.
 	databaseURL string
+
+	// hostConfig builds where secrets and the AI and mail settings come
+	// from, given the assembled store's state. Nil means the project's .rela
+	// directory.
+	hostConfig func(state.KV) (HostConfig, error)
+}
+
+// HostConfig is where a project's secrets and AI and mail settings come
+// from. It is lua.HostConfig, restated so a caller of [WithHostConfig] need
+// not import the Lua runtime.
+type HostConfig interface {
+	File(name string) ([]byte, error)
+	Secrets(scriptPath string) (map[string]string, error)
+	Path() string
 }
 
 // WithACL overrides the auto-loaded ACL with the supplied
@@ -1086,6 +1105,14 @@ func WithACL(a acl.ACL) Option {
 // Ignored by the FS and memory builds, which have no DSN.
 func WithDatabaseURL(dsn string) Option {
 	return func(o *options) { o.databaseURL = dsn }
+}
+
+// WithHostConfig replaces the .rela directory as the source of secrets and
+// the AI and mail settings. build runs once per assembled store, with that
+// store's state, so a source may keep settings in the project's database.
+// The desktop uses it to read secrets from the OS keychain.
+func WithHostConfig(build func(state.KV) (HostConfig, error)) Option {
+	return func(o *options) { o.hostConfig = build }
 }
 
 // resolveDatabaseURL decides which DSN [Discover] hands to [New]: an explicit
@@ -1614,6 +1641,19 @@ func NewSharedBase(cfg Config, opts ...Option) (*SharedBase, error) {
 // the project has no acl.yaml" — both end up NopACL, but only the
 // latter triggers the "consider adding an acl.yaml" warning an entry
 // point may render.
+// hostConfigFor returns the host config for one assembled store: the
+// [WithHostConfig] source, else the project's .rela directory.
+func (b *SharedBase) hostConfigFor(stateKV state.KV) (lua.HostConfig, error) {
+	if b.opts.hostConfig != nil {
+		host, err := b.opts.hostConfig(stateKV)
+		if err != nil {
+			return nil, fmt.Errorf("host config: %w", err)
+		}
+		return host, nil
+	}
+	return hostconfig.Dir(b.cfg.Paths.CacheDir), nil
+}
+
 func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -1802,6 +1842,9 @@ type backgroundServices struct {
 	softDeleteStop func()
 	mailStop       func()
 	mail           *mailRuntime
+	// host is the host config the mail runtime was built from, kept for the
+	// writer runtimes Services builds later.
+	host lua.HostConfig
 }
 
 // startBackgroundServices launches the optional per-store subsystems: the
@@ -1813,6 +1856,7 @@ type backgroundServices struct {
 func startBackgroundServices(
 	base *SharedBase, st store.Store, stateKV state.KV, migState datamigration.StateStore,
 	cfgLoader config.Loader, versions store.VersionService, mgr *entitymanager.Manager, q jobs.Client,
+	host lua.HostConfig,
 ) backgroundServices {
 	cfg := base.cfg
 
@@ -1829,13 +1873,14 @@ func startBackgroundServices(
 	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
 	// lands, and storing a handle no code reads would look wired when it is
 	// not. Only the stop function is retained, because Close genuinely uses it.
-	mailRuntime, mailStop := startMailRuntime(cfg.Paths)
+	mailRuntime, mailStop := startMailRuntime(host)
 
 	return backgroundServices{
 		gcStop:         gcStop,
 		softDeleteStop: softDeleteStop,
 		mailStop:       mailStop,
 		mail:           mailRuntime,
+		host:           host,
 	}
 }
 
@@ -1871,19 +1916,23 @@ func resolveACLAndRedactor(
 // Field-level `visible:` redaction applies here too (TKT-BUYEW1) — a Lua action
 // can send what it reads onward exactly as a scheduled job can, so it must not
 // see property values the same principal has redacted everywhere else.
-func cascadeReadDeps(
-	st store.Store, tr tracer.Tracer, searcher search.Searcher,
-	meta *metamodel.Metamodel, projectRoot string, files lua.ProjectFiles,
+func (b *SharedBase) cascadeReadDeps(
+	st store.Store, tr tracer.Tracer, searcher search.Searcher, stateKV state.KV,
 	d *acl.Declarative, redactor visibility.FieldRedactor,
-) lua.ReadDeps {
+) (lua.ReadDeps, error) {
+	host, err := b.hostConfigFor(stateKV)
+	if err != nil {
+		return lua.ReadDeps{}, err
+	}
 	return lua.ReadDeps{
 		VisibleReader: scriptEntityReader(st, d, redactor),
 		Tracer:        scriptTracer(tr, st, d, redactor),
 		Searcher:      searcher,
-		Meta:          meta,
-		ProjectRoot:   projectRoot,
-		Files:         files,
-	}
+		Meta:          b.meta,
+		ProjectRoot:   b.cfg.Paths.Root,
+		Files:         b.cfg.projectFiles(),
+		Host:          host,
+	}, nil
 }
 
 // backendOverrides are the services a recipe supplies because they come from
@@ -1964,11 +2013,6 @@ func assemble(
 	}
 	cfgLoader := cfg.configLoader()
 
-	// Build the static lua read deps once — the ScriptRunner (automation
-	// cascades) is constructed with these.
-	readDeps := cascadeReadDeps(st, tr, searcher, base.meta, cfg.Paths.Root, cfg.projectFiles(),
-		aclDeclarative, fieldRedactor)
-
 	tw, err := CompileTransitions(base.meta, st, resolvedACL)
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
@@ -2015,6 +2059,13 @@ func assemble(
 			closeJobQueue(jobQueue)
 		}
 	}()
+
+	// Build the static lua read deps once — the ScriptRunner (automation
+	// cascades) is constructed with these.
+	readDeps, err := base.cascadeReadDeps(st, tr, searcher, stateKV, aclDeclarative, fieldRedactor)
+	if err != nil {
+		return nil, err
+	}
 
 	// Comments are keyed by target entity id, so the service must learn about
 	// renames and deletes. It rides the AliasRewriter hook rather than
@@ -2081,7 +2132,8 @@ func assemble(
 	// changes, warn on incompatible ones) and start the drift GC sweep
 	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
 	// per-assembled, like the search closer.
-	background := startBackgroundServices(base, st, stateKV, migState, cfgLoader, versions, mgr, jobQueue)
+	background := startBackgroundServices(
+		base, st, stateKV, migState, cfgLoader, versions, mgr, jobQueue, readDeps.Host)
 
 	return newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
@@ -2110,6 +2162,7 @@ func newServices(
 		softDeleteStop:  background.softDeleteStop,
 		mailStop:        background.mailStop,
 		mail:            background.mail,
+		host:            background.host,
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,

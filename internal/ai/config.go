@@ -36,10 +36,15 @@ var ErrConfigNotFound = errors.New("ai: not configured (no .rela/ai.yaml)")
 
 // Config is the contents of .rela/ai.yaml.
 //
-// APIKeyEnv is OPTIONAL. When empty, the provider sends no Authorization
-// header at all (supports auth-free local providers like ollama, apfel,
-// LM Studio). When non-empty, the named environment variable must be set
-// to a non-empty value at Chat() call time.
+// The API key comes from the project's secrets under [SecretKey] when it is
+// there, else from the environment variable APIKeyEnv names. Both are
+// OPTIONAL: with neither, the provider sends no Authorization header at all
+// (supports auth-free local providers like ollama, apfel, LM Studio). When
+// only APIKeyEnv is set, the variable must be non-empty at Chat() call time.
+//
+// The secret comes first because a desktop app started from Finder or the
+// Dock does not see the user's shell environment; there, the keychain is the
+// only place a key can come from.
 type Config struct {
 	Provider       string `yaml:"provider"`
 	BaseURL        string `yaml:"base_url"`
@@ -47,6 +52,21 @@ type Config struct {
 	EmbeddingModel string `yaml:"embedding_model"`
 	APIKeyEnv      string `yaml:"api_key_env"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
+
+	// secrets returns the project's global secrets; nil means none. Read at
+	// call time, never at load, so the key does not sit in memory for the
+	// life of a runtime that never calls the model.
+	secrets func() (map[string]string, error)
+}
+
+// SecretKey is the secret the API key is read from.
+const SecretKey = "ai_api_key"
+
+// WithSecrets makes the config read the API key from secrets first. fn
+// returns the project's global secrets.
+func (c *Config) WithSecrets(fn func() (map[string]string, error)) *Config {
+	c.secrets = fn
+	return c
 }
 
 // LoadConfig reads .rela/ai.yaml from the given .rela directory.
@@ -66,16 +86,19 @@ func LoadConfig(relaDir string) (*Config, error) {
 		}
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	return ParseConfig(data, path)
+}
 
+// ParseConfig parses and validates the contents of an ai.yaml. origin names
+// where the bytes came from, for error messages.
+func ParseConfig(data []byte, origin string) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		return nil, fmt.Errorf("parse %s: %w", origin, err)
 	}
-
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid %s: %w", path, err)
+		return nil, fmt.Errorf("invalid %s: %w", origin, err)
 	}
-
 	return &cfg, nil
 }
 

@@ -4,6 +4,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -130,6 +133,50 @@ func TestDatabaseProject_FailedLoadReleasesTheDatabase(t *testing.T) {
 
 	writeTestFile(t, root, "data-entry.yaml", testDataEntry)
 	require.Empty(t, d.loadProject(root, false), "the failed load must not keep the database locked")
+}
+
+// The desktop wires the same services onto the app as the server: a list's
+// condition: narrows its rows instead of failing as "not compiled".
+func TestDesktop_ListConditionApplies(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "schema.yaml", testSchema)
+	writeTestFile(t, root, "data-entry.yaml", testDataEntry+`lists:
+  first_only:
+    entity_type: doc
+    condition: "entity.title == 'First'"
+`)
+	writeTestFile(t, root, "entities/docs/DOC-1.md", "---\nid: DOC-1\ntype: doc\ntitle: First\n---\n")
+	writeTestFile(t, root, "entities/docs/DOC-2.md", "---\nid: DOC-2\ntype: doc\ntitle: Second\n---\n")
+	d := newTestDesktop(t)
+	require.Empty(t, d.loadProject(root, false))
+
+	rec := httptest.NewRecorder()
+	d.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/docs?list_id=first_only", http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp struct {
+		Data []struct{ ID string } `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(t, resp.Data, 1, rec.Body.String())
+	assert.Equal(t, "DOC-1", resp.Data[0].ID)
+}
+
+// An acl.yaml does not restrict the desktop user: a project with one that
+// grants nothing still opens and serves its API, even with no OS user name
+// to attribute requests to, which the ACL would refuse.
+func TestDesktop_IgnoresACL(t *testing.T) {
+	t.Setenv("USER", "")
+	t.Setenv("RELA_DATAENTRY_USER", "")
+	root := t.TempDir()
+	writeTestFile(t, root, "schema.yaml", testSchema)
+	writeTestFile(t, root, "data-entry.yaml", testDataEntry)
+	writeTestFile(t, root, "acl.yaml", "roles:\n  nobody: {}\n")
+	d := newTestDesktop(t)
+	require.Empty(t, d.loadProject(root, false))
+
+	rec := httptest.NewRecorder()
+	d.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
 // A project with a schema but no data-entry.yaml anywhere still asks for

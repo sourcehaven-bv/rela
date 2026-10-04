@@ -13,7 +13,6 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
-	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -41,11 +40,11 @@ type databaseOp func(ctx context.Context, fsys storage.FS, paths *project.Contex
 func (d *Desktop) withProjectReleased(op databaseOp) (string, error) {
 	d.mu.RLock()
 	app := d.app
+	root := d.activePath // a document's file, not its workspace
 	d.mu.RUnlock()
 	if app == nil {
 		return "", errors.New("no project is open")
 	}
-	root := app.ProjectRoot()
 	fsys, paths, err := discoverProject(root)
 	if err != nil {
 		return "", err
@@ -86,11 +85,7 @@ func exportConfig(dir string) databaseOp {
 // which must hold no entities yet.
 func importData(dir string) databaseOp {
 	return func(ctx context.Context, fsys storage.FS, paths *project.Context) (string, error) {
-		sink, err := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
-		if err != nil {
-			return "", err
-		}
-		sum, err := appbuild.ImportMarkdownData(ctx, fsys, paths, dir, appbuild.DataImportOptions{Audit: sink})
+		sum, err := appbuild.ImportMarkdownData(ctx, fsys, paths, dir, appbuild.DataImportOptions{Audit: desktopAudit})
 		if err != nil {
 			return "", err
 		}
@@ -110,16 +105,17 @@ func exportData(dir string) databaseOp {
 }
 
 // addDatabaseMenu adds the import and export items for the project database.
-func (d *Desktop) addDatabaseMenu(fileMenu *application.Menu) {
-	m := fileMenu.AddSubmenu("Project Database")
-	m.Add("Import Config from Folder...").OnClick(d.databaseMenuAction(
+func (m *menuBar) addDatabaseMenu(fileMenu *application.Menu) {
+	d := m.d
+	sub := fileMenu.AddSubmenu("Project Database")
+	sub.Add("Import Config from Folder...").OnClick(d.databaseMenuAction(
 		"Import Config", "Choose the folder holding schema.yaml and the other config files", importConfig))
-	m.Add("Export Config to Folder...").OnClick(d.databaseMenuAction(
+	sub.Add("Export Config to Folder...").OnClick(d.databaseMenuAction(
 		"Export Config", "Choose an empty folder for the config files", exportConfig))
-	m.AddSeparator()
-	m.Add("Import Markdown Data from Folder...").OnClick(d.databaseMenuAction(
+	sub.AddSeparator()
+	sub.Add("Import Markdown Data from Folder...").OnClick(d.databaseMenuAction(
 		"Import Data", "Choose the markdown project to import entities, relations and attachments from", importData))
-	m.Add("Export Data as Markdown to Folder...").OnClick(d.databaseMenuAction(
+	sub.Add("Export Data as Markdown to Folder...").OnClick(d.databaseMenuAction(
 		"Export Data", "Choose a folder without entities/, relations/ or attachments/", exportData))
 	fileMenu.AddSeparator()
 }
@@ -137,6 +133,7 @@ func (d *Desktop) databaseMenuAction(
 	return func(*application.Context) {
 		d.mu.RLock()
 		app := d.app
+		activePath := d.activePath
 		d.mu.RUnlock()
 		if d.wails == nil {
 			return
@@ -146,7 +143,7 @@ func (d *Desktop) databaseMenuAction(
 			return
 		}
 		confirm := d.wails.Dialog.Question().SetTitle(title).
-			SetMessage(fmt.Sprintf("This applies to %s (%s).", app.ProjectName(), app.ProjectRoot()))
+			SetMessage(fmt.Sprintf("This applies to %s (%s).", app.ProjectName(), activePath))
 		confirm.AddButton("Continue").SetAsDefault().OnClick(func() {
 			go d.runDatabaseAction(title, prompt, build)
 		})

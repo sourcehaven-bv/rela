@@ -59,6 +59,10 @@ components:
   desktop:          { in: internal/desktop }
   docs:             { in: internal/docs }
   docscapture:      { in: internal/docscapture }
+  dataentrywire:    { in: internal/dataentrywire }
+  # desktop.yaml: native notifications and the Dock badge. Wails-free; the
+  # desktop shell delivers what it reports.
+  desktopnotify:    { in: internal/desktopnotify }
 
   # Server protocols
   mcp:              { in: internal/mcp }
@@ -180,6 +184,7 @@ components:
   jwtauth:          { in: internal/jwtauth }
   principal:        { in: internal/principal }
   secrets:          { in: internal/secrets }
+  hostconfig:       { in: internal/hostconfig }
   cache:            { in: internal/cache }
   config:           { in: internal/config }
   # Serves operator config from a SQL table. A config package, not a storage
@@ -267,6 +272,7 @@ vendors:
     in:
       - github.com/modelcontextprotocol/go-sdk/**
   wails:       { in: github.com/wailsapp/wails/** }
+  keyring:     { in: github.com/zalando/go-keyring }
   tablewriter:
     in:
       - github.com/olekukonko/tablewriter
@@ -337,6 +343,7 @@ deps:
       - audit
       - cmdexec
       - dataentry
+      - dataentrywire
       - jwtauth
       - lua
       - mcp
@@ -347,19 +354,43 @@ deps:
       - http2
   cmdDesktop:
     mayDependOn:
+      - acl
+      # ai, mail: the settings window checks ai.yaml and mail.yaml parse
+      # before storing them.
+      - ai
       - appbuild
       - audit
       - dataentry
+      - config
+      - dataentrywire
       - desktop
+      - desktopnotify
       - git
+      # hostconfig, secrets: the desktop's host config keeps secrets in the
+      # OS keychain and falls back to the .rela directory.
+      - hostconfig
+      - mail
       - metamodel
       - principal
       - project
       - scheduler
       - script
+      - secrets
+      - state
       - storage
+      - store
     canUse:
+      # The OS credential store for project secrets (see
+      # docs/architecture/desktop-documents.md).
+      - keyring
       - wails
+
+  desktopnotify:
+    mayDependOn:
+      - metamodel
+      - predicate
+      - predicatefns
+      - store
 
   # CLI layer — orchestrates everything. memstore is here because
   # cli/mcp_wiring has its own per-build store seam (the FS variant
@@ -635,6 +666,8 @@ deps:
   appbuild:
     mayDependOn:
       - rootfs
+      # hostconfig.Dir: the default source of secrets and AI/mail settings.
+      - hostconfig
       # The sqlite recipe OPENS the database and hands the same handle to both
       # the store and the config loader, so it names all three. Owning the file
       # here is what keeps a store from owning config, or config from owning a
@@ -873,8 +906,16 @@ deps:
   # Sender seam, transports, config and the best-effort outbox. Depends on
   # mailrender for the body model only; it reaches the store through a narrow
   # structural interface at the wiring site, never by importing appbuild.
+  # Where a project's secrets and AI/mail settings come from: the .rela
+  # directory by default, the OS keychain and the project's state on the
+  # desktop. A leaf over secrets.
+  hostconfig:
+    mayDependOn:
+      - secrets
   mail:
     mayDependOn:
+      # hostconfig.Dir is the default mail.Source (the .rela directory).
+      - hostconfig
       - mailrender
       # The SMTP password lives in .rela/secrets.yaml under smtp_password, the
       # same store Lua scripts read: an SMTP credential is no different in kind
@@ -995,6 +1036,12 @@ deps:
       - tracer
     canUse:
       - gopherlua
+  # The setters every surface serving the SPA must call after NewApp, in one
+  # place so the server and the desktop cannot drift apart again.
+  dataentrywire:
+    mayDependOn:
+      - appbuild
+      - dataentry
   docscapture:
     mayDependOn:
       - acl
@@ -1368,6 +1415,8 @@ deps:
       # cannot import internal/mail (mail -> lua already, for transport:
       # script), so the adapter has to live at a site that sees both.
       - mail
+      # The default host config when ReadDeps.Host is nil.
+      - hostconfig
       - metamodel
       - principal
       - project
@@ -1441,6 +1490,9 @@ deps:
       # each further entry should have to justify widening this list.
       - entity
       - graphquerynaive
+      # The FTS5 search backend (DEC-10Z731) implements search.Backend, as
+      # pgstore's in-database search does.
+      - search
       - sqlitedb
       - store
       - storeutil

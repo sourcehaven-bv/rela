@@ -3,12 +3,28 @@ package lua
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 
 	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
-// MailSenderLoader builds the mail transport for a project's .rela directory.
+// HostConfig is what a runtime reads from the machine rather than from the
+// project's config: secrets, and the AI and mail settings.
+// hostconfig.Dir implements it over a .rela directory; the desktop supplies
+// one backed by the OS keychain and the project's database.
+type HostConfig interface {
+	// File returns ai.yaml or mail.yaml; an error wrapping fs.ErrNotExist
+	// when the project has none.
+	File(name string) ([]byte, error)
+	// Secrets returns the secrets visible to scriptPath ("" for the global
+	// ones); secrets.ErrNotFound when the project has none.
+	Secrets(scriptPath string) (map[string]string, error)
+	// Path is the .rela directory, or "" when there is none on disk.
+	Path() string
+}
+
+// MailSenderLoader builds the mail transport from a project's host config.
 //
 // A function supplied BY THE CALLER rather than a direct internal/mail import,
 // because internal/mail depends on this package (transport: script runs a Lua
@@ -19,11 +35,11 @@ import (
 // an error: mail is off in the overwhelmingly common case, every other Lua
 // binding must still work, and mail.send reports the absence as a typed
 // not_configured error rather than by being missing.
-type MailSenderLoader func(cacheDir string) (MailSender, error)
+type MailSenderLoader func(host HostConfig) (MailSender, error)
 
-// LoadContextOptions loads AI provider, secrets and the mail transport from
-// the .rela directory and returns them as runtime options. This is the single
-// entry point for all Lua callers (CLI, MCP, automation, actions) to load
+// LoadContextOptions loads the AI provider, secrets and the mail transport
+// from host and returns them as runtime options. This is the single entry
+// point for all Lua callers (CLI, MCP, automation, actions) to load
 // project-level context into a runtime.
 //
 // scriptPath is the script being executed (used to resolve per-script
@@ -39,10 +55,15 @@ type MailSenderLoader func(cacheDir string) (MailSender, error)
 //
 // Returns ai.ErrConfigNotFound (via errors.Is) when AI is not configured —
 // callers that want to silently ignore missing AI can check for it.
-func LoadContextOptions(cacheDir, scriptPath string, mailLoader MailSenderLoader) ([]Option, error) {
+//
+// Nil: host is rejected; a caller with no config passes hostconfig.Dir("").
+func LoadContextOptions(host HostConfig, scriptPath string, mailLoader MailSenderLoader) ([]Option, error) {
+	if host == nil {
+		return nil, errors.New("lua: LoadContextOptions requires a host config")
+	}
 	var opts []Option
 
-	provider, err := ai.LoadProvider(cacheDir)
+	provider, err := loadAIProvider(host)
 	switch {
 	case errors.Is(err, ai.ErrConfigNotFound):
 		// no AI configured
@@ -53,7 +74,7 @@ func LoadContextOptions(cacheDir, scriptPath string, mailLoader MailSenderLoader
 	}
 
 	if scriptPath != "" {
-		sec, secErr := secrets.Load(cacheDir, scriptPath)
+		sec, secErr := host.Secrets(scriptPath)
 		switch {
 		case errors.Is(secErr, secrets.ErrNotFound):
 			// no secrets configured
@@ -67,7 +88,7 @@ func LoadContextOptions(cacheDir, scriptPath string, mailLoader MailSenderLoader
 	}
 
 	if mailLoader != nil {
-		sender, mailErr := mailLoader(cacheDir)
+		sender, mailErr := mailLoader(host)
 		if mailErr != nil {
 			// A broken mail.yaml is reported, not swallowed. "Configured but
 			// invalid" and "not configured" look identical to a script
@@ -81,4 +102,23 @@ func LoadContextOptions(cacheDir, scriptPath string, mailLoader MailSenderLoader
 	}
 
 	return opts, nil
+}
+
+// loadAIProvider builds the provider ai.yaml configures, reading its API key
+// from the global secrets first. ai.ErrConfigNotFound when there is no
+// ai.yaml.
+func loadAIProvider(host HostConfig) (ai.Provider, error) {
+	data, err := host.File(ai.ConfigFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ai.ErrConfigNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", ai.ConfigFile, err)
+	}
+	cfg, err := ai.ParseConfig(data, ai.ConfigFile)
+	if err != nil {
+		return nil, err
+	}
+	cfg.WithSecrets(func() (map[string]string, error) { return host.Secrets("") })
+	return ai.NewOpenAICompatProvider(cfg)
 }
