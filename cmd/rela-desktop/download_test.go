@@ -83,3 +83,26 @@ func TestDownloads(t *testing.T) {
 	_, err = newDownloads(Downloads{handler: handler})
 	require.Error(t, err)
 }
+
+// The cap stops a response while it is written, before it is all in memory.
+func TestDownloads_CapStopsTheWriter(t *testing.T) {
+	var refused bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		chunk := []byte(strings.Repeat("x", 10))
+		for range 5 {
+			if _, err := w.Write(chunk); err != nil {
+				refused = true
+				return
+			}
+		}
+	})
+	dl, err := newDownloads(Downloads{
+		handler: handler,
+		prompt:  func(string) (string, error) { return "", nil },
+		alert:   func(string, string) {},
+		limit:   25,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, dl.Save("/big"), "too large")
+	assert.True(t, refused, "the handler sees the refusal")
+}

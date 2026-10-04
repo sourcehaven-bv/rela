@@ -289,6 +289,22 @@ func (d *Desktop) pickDirectory(title, defaultDir string) (string, error) {
 	}).PromptForSingleSelection()
 }
 
+// confirmDialog asks a question in a native dialog and waits for the answer.
+// Page script cannot click a native dialog, so an approval made here comes
+// from the user. Cancel is the default button.
+// coverage-ignore-func: requires Wails runtime
+func (d *Desktop) confirmDialog(title, message, approve string) bool {
+	if d.wails == nil {
+		return false
+	}
+	answer := make(chan bool, 1)
+	q := d.wails.Dialog.Question().SetTitle(title).SetMessage(message)
+	q.AddButton(approve).OnClick(func() { answer <- true })
+	q.AddButton("Cancel").SetAsDefault().SetAsCancel().OnClick(func() { answer <- false })
+	q.Show()
+	return <-answer
+}
+
 // errorDialog shows a native error dialog. Replaces v2's runtime.MessageDialog.
 // coverage-ignore-func: requires Wails runtime
 func (d *Desktop) errorDialog(title, message string) {
@@ -1107,7 +1123,7 @@ func main() {
 		// as under v2. Verified streaming (SSE) works through it.
 		Assets: application.AssetOptions{Handler: d},
 		Services: append([]application.Service{application.NewService(d), application.NewService(downloads),
-			application.NewService(&ProjectSettings{d: d})},
+			application.NewService(&ProjectSettings{d: d, confirm: d.confirmDialog})},
 			d.notify.services()...),
 		// v2 had no shutdown hook, so the scheduler and services leaked on
 		// quit. ServiceShutdown now releases them.

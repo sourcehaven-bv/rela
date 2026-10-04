@@ -5,7 +5,9 @@ title: rela-desktop runs on the SQLite backend and opens self-contained projects
 kind: enhancement
 priority: high
 effort: m
-status: ready
+started: "2026-10-04"
+completed: "2026-10-04"
+status: done
 ---
 
 ## Description

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zalando/go-keyring"
 
+	"github.com/Sourcehaven-BV/rela/internal/ai"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
@@ -23,6 +25,8 @@ type fakeKeychain struct {
 	mu    sync.Mutex
 	items map[string]string
 	gets  int
+	// failSet makes Set fail for this account.
+	failSet string
 }
 
 func newFakeKeychain() *fakeKeychain { return &fakeKeychain{items: map[string]string{}} }
@@ -41,6 +45,9 @@ func (f *fakeKeychain) Get(service, user string) (string, error) {
 func (f *fakeKeychain) Set(service, user, password string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if user == f.failSet {
+		return errors.New("keychain refused")
+	}
 	f.items[service+"|"+user] = password
 	return nil
 }
@@ -103,12 +110,12 @@ func TestKeychainSecrets(t *testing.T) {
 		assert.Equal(t, `{"names":["api.key","token"],"places":["`+placeKey("here")+`"]}`,
 			kc.items[keychainService+"|doc1"], "index lists names, sorted, and the place that set them")
 
-		require.NoError(t, store.remove("doc1", "token"))
+		require.NoError(t, store.remove("doc1", "here", "token"))
 		got, err = store.all("doc1")
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{"api.key": "def"}, got)
 
-		require.NoError(t, store.remove("doc1", "api.key"))
+		require.NoError(t, store.remove("doc1", "here", "api.key"))
 		_, indexed := kc.items[keychainService+"|doc1"]
 		assert.False(t, indexed, "an empty index is removed")
 
@@ -226,6 +233,8 @@ func TestDesktopHost(t *testing.T) {
 		require.ErrorIs(t, err, secrets.ErrNotFound, "a copy carrying the id must not read the keychain")
 		require.ErrorIs(t, store.set(moved.docID, moved.Path(), "new", "v"), errNotTrusted,
 			"setting a secret must not approve the existing ones")
+		require.ErrorIs(t, store.remove(moved.docID, moved.Path(), "token"), errNotTrusted,
+			"a copy must not delete the original's secrets")
 
 		require.NoError(t, store.trust(moved.docID, moved.Path()))
 		got, err := moved.Secrets("")
@@ -270,10 +279,26 @@ func TestCheckHostFile(t *testing.T) {
 }
 
 func TestProjectSettings_NoProject(t *testing.T) {
-	s := &ProjectSettings{d: &Desktop{}}
-	assert.Equal(t, errNoProject.Error(), s.Load().Error)
-	assert.Equal(t, errNoProject.Error(), s.SetSecret("a", "b"))
-	assert.Equal(t, errNoProject.Error(), s.DeleteSecret("a"))
-	assert.Equal(t, errNoProject.Error(), s.TrustSecrets())
-	assert.Equal(t, errNoProject.Error(), s.SaveFile(hostconfig.AIFile, ""))
+	s := &ProjectSettings{d: &Desktop{registry: newProjectRegistry()}}
+	assert.Equal(t, errNoProject.Error(), s.Load("").Error)
+	assert.Equal(t, errNoProject.Error(), s.SetSecret("", "a", "b"))
+	assert.Equal(t, errNoProject.Error(), s.DeleteSecret("", "a"))
+	assert.Equal(t, errNoProject.Error(), s.TrustSecrets(""))
+	assert.Equal(t, errNoProject.Error(), s.SaveFile("", hostconfig.AIFile, ""))
+	assert.NotEmpty(t, s.Load("gone").Error, "a closed project is not edited")
+}
+
+func TestKeychainSecrets_SetRollsBackWhenIndexFails(t *testing.T) {
+	kc := newFakeKeychain()
+	kc.failSet = "doc3"
+	store, err := newKeychainSecrets(kc)
+	require.NoError(t, err)
+	require.Error(t, store.set("doc3", "here", "token", "v"))
+	assert.NotContains(t, kc.items, keychainService+"|doc3/token", "an unlisted item would be unreachable")
+}
+
+func TestCheckHostFile_RefusesKeyInAIConfig(t *testing.T) {
+	err := checkHostFile(hostconfig.AIFile, []byte("base_url: http://localhost:1/v1\nmodel: m\napi_key: sk-x\n"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), ai.SecretKey)
 }

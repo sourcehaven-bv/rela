@@ -66,8 +66,8 @@ command line; see the SQLite backend guide.
 
 ### Secrets, AI and mail settings
 
-Open **File > Project Settings** to set these for the open project or
-document:
+Open **File > Project Settings** to set these for the project in the front
+window:
 
 - **Secrets**, such as API tokens, are stored in your computer's keychain:
   the Keychain on macOS, Credential Manager on Windows, and the Secret Service
@@ -84,8 +84,9 @@ ID inside it, not by its path. On another computer, set them again.
 
 A document opened from a new location, such as a moved, renamed or copied
 document, cannot use the secrets until you allow it. **File > Project
-Settings** then shows **Allow This Document to Use Them**. Allow it only for a
-document you moved or copied yourself. A document from someone else can carry
+Settings** then shows **Allow This Document to Use Them**, which asks you to
+confirm in a system dialog. Until then, the document can neither add nor remove
+secrets. Allow it only for a document you moved or copied yourself. A document from someone else can carry
 the same ID, and its scripts would then read your secrets.
 
 Any person or program that can use your user account can read these

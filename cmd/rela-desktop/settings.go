@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"slices"
@@ -12,6 +15,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
+
+	"gopkg.in/yaml.v3"
 )
 
 // settingsPath is the route of the project settings window.
@@ -32,38 +37,71 @@ type settingsView struct {
 }
 
 // ProjectSettings is the bound service behind the settings window. It edits
-// the active project's secrets (in the keychain) and its AI and mail
-// settings (in the project's state).
+// one project's secrets (in the keychain) and its AI and mail settings (in
+// the project's state). Every method takes the project's id: "" means the
+// active project.
+//
+// Every page can call these methods, including a document's own custom.js,
+// so none of them may widen what a document's scripts can read. Approving
+// secrets therefore goes through confirm, which page script cannot answer.
 type ProjectSettings struct {
 	d *Desktop
+	// confirm asks the user to approve message in a native dialog and
+	// reports the answer.
+	//
+	// Nil: accepted — every approval is refused.
+	confirm func(title, message, approve string) bool
 }
 
 // errNoProject is returned when no project is open.
 var errNoProject = errors.New("open a project first")
 
-// active returns the active project's host config and name.
-func (s *ProjectSettings) active() (host *desktopHost, name string, err error) {
+// settingsTarget is the project a settings call edits.
+type settingsTarget struct {
+	host *desktopHost
+	name string
+	// active is set when the project is the one at the bare root, the only
+	// one SaveFile can reopen.
+	active bool
+}
+
+// target resolves projectID to a loaded project: "" is the active one.
+func (s *ProjectSettings) target(projectID string) (settingsTarget, error) {
 	d := s.d
 	d.mu.RLock()
 	svc, app := d.svc, d.app
 	d.mu.RUnlock()
+	if projectID != "" {
+		p := d.registry.get(projectID)
+		if p == nil {
+			return settingsTarget{}, errors.New("that project is no longer open")
+		}
+		svc, app = p.svc, p.app
+	}
 	if svc == nil || app == nil || svc.Paths() == nil {
-		return nil, "", errNoProject
+		return settingsTarget{}, errNoProject
 	}
 	if d.keychain == nil {
-		return nil, "", errors.New("the keychain is not available")
+		return settingsTarget{}, errors.New("the keychain is not available")
 	}
-	host, err = newDesktopHost(context.Background(), svc.Paths().CacheDir, svc.State(), d.keychain)
-	return host, app.ProjectName(), err
+	host, err := newDesktopHost(context.Background(), svc.Paths().CacheDir, svc.State(), d.keychain)
+	if err != nil {
+		return settingsTarget{}, err
+	}
+	d.mu.RLock()
+	active := d.app == app
+	d.mu.RUnlock()
+	return settingsTarget{host: host, name: app.ProjectName(), active: active}, nil
 }
 
-// Load returns the active project's settings.
-func (s *ProjectSettings) Load() settingsView {
-	host, name, err := s.active()
+// Load returns a project's settings.
+func (s *ProjectSettings) Load(projectID string) settingsView {
+	t, err := s.target(projectID)
 	if err != nil {
 		return settingsView{Error: err.Error()}
 	}
-	view := settingsView{Project: name}
+	host := t.host
+	view := settingsView{Project: t.name}
 	fromKeychain, err := host.secrets.all(host.docID)
 	if err != nil {
 		view.Error = err.Error()
@@ -83,30 +121,41 @@ func (s *ProjectSettings) Load() settingsView {
 }
 
 // SetSecret stores a secret in the keychain. It returns "" or an error message.
-func (s *ProjectSettings) SetSecret(name, value string) string {
-	host, _, err := s.active()
+func (s *ProjectSettings) SetSecret(projectID, name, value string) string {
+	t, err := s.target(projectID)
 	if err == nil {
-		err = host.secrets.set(host.docID, host.Path(), strings.TrimSpace(name), value)
+		err = t.host.secrets.set(t.host.docID, t.host.Path(), strings.TrimSpace(name), value)
 	}
 	return errText(err)
 }
 
-// TrustSecrets lets this project's scripts read the keychain secrets stored
-// for its document ID. It returns "" or an error message.
-func (s *ProjectSettings) TrustSecrets() string {
-	host, _, err := s.active()
-	if err == nil {
-		err = host.secrets.trust(host.docID, host.Path())
+// errTrustDeclined is returned when the user does not approve.
+var errTrustDeclined = errors.New("not allowed")
+
+// TrustSecrets lets a project's scripts read the keychain secrets stored for
+// its document ID, once the user approves in a native dialog. It returns ""
+// or an error message.
+func (s *ProjectSettings) TrustSecrets(projectID string) string {
+	t, err := s.target(projectID)
+	if err != nil {
+		return err.Error()
 	}
-	return errText(err)
+	msg := fmt.Sprintf("Allow %q to use the secrets stored for this document?\n\n"+
+		"Only allow a document you moved or copied yourself. A document from "+
+		"someone else can carry the same ID, and its scripts would then read "+
+		"your secrets.", t.name)
+	if s.confirm == nil || !s.confirm("Allow Secrets", msg, "Allow") {
+		return errTrustDeclined.Error()
+	}
+	return errText(t.host.secrets.trust(t.host.docID, t.host.Path()))
 }
 
 // DeleteSecret removes a secret from the keychain. It returns "" or an
 // error message.
-func (s *ProjectSettings) DeleteSecret(name string) string {
-	host, _, err := s.active()
+func (s *ProjectSettings) DeleteSecret(projectID, name string) string {
+	t, err := s.target(projectID)
 	if err == nil {
-		err = host.secrets.remove(host.docID, name)
+		err = t.host.secrets.remove(t.host.docID, t.host.Path(), name)
 	}
 	return errText(err)
 }
@@ -115,11 +164,12 @@ func (s *ProjectSettings) DeleteSecret(name string) string {
 // it parses; empty content removes it. Saving mail settings reopens the
 // project, because its mail sender is built once when the project opens.
 // It returns "" or an error message.
-func (s *ProjectSettings) SaveFile(name, content string) string {
-	host, _, err := s.active()
+func (s *ProjectSettings) SaveFile(projectID, name, content string) string {
+	t, err := s.target(projectID)
 	if err != nil {
 		return err.Error()
 	}
+	host := t.host
 	if err = hostconfig.CheckName(name); err != nil {
 		return err.Error()
 	}
@@ -134,6 +184,9 @@ func (s *ProjectSettings) SaveFile(name, content string) string {
 		return err.Error()
 	}
 	if name == hostconfig.MailFile {
+		if !t.active {
+			return "Saved. Reopen the project to use the new mail settings."
+		}
 		s.d.mu.RLock()
 		path := s.d.activePath
 		s.d.mu.RUnlock()
@@ -147,6 +200,14 @@ func (s *ProjectSettings) SaveFile(name, content string) string {
 // checkHostFile parses content as the named file would be parsed on use.
 func checkHostFile(name string, content []byte) error {
 	if name == hostconfig.AIFile {
+		// Strict, so a key typed in as api_key is refused rather than stored
+		// in the document, where it would travel with the file.
+		dec := yaml.NewDecoder(bytes.NewReader(content))
+		dec.KnownFields(true)
+		var cfg ai.Config
+		if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
+			return fmt.Errorf("%s: %w (put the API key in the secret %s)", name, err, ai.SecretKey)
+		}
 		_, err := ai.ParseConfig(content, name)
 		return err
 	}
@@ -239,7 +300,8 @@ const settingsPage = `<!doctype html>
 <script type="module">
 import "/wails/runtime.js";
 
-const call = (method, ...args) => window.wails.Call.ByName("main.ProjectSettings." + method, ...args);
+const project = new URLSearchParams(location.search).get("project") || "";
+const call = (method, ...args) => window.wails.Call.ByName("main.ProjectSettings." + method, project, ...args);
 const $ = (id) => document.getElementById(id);
 
 function status(message, isError) {
@@ -257,6 +319,7 @@ async function load() {
     row.insertCell().textContent = name;
     const actions = row.insertCell();
     actions.className = "actions";
+    if (view.untrusted) continue; // removing is refused until allowed
     const remove = document.createElement("button");
     remove.textContent = "Remove";
     remove.onclick = async () => done(await call("DeleteSecret", name), "Removed " + name + ".");

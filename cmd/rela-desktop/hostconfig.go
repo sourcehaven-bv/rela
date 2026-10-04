@@ -195,19 +195,32 @@ func (k *keychainSecrets) set(docID, place, name, value string) error {
 		return fmt.Errorf("store secret %s in the keychain: %w", name, err)
 	}
 	names := e.Names
-	if !slices.Contains(names, name) {
+	isNew := !slices.Contains(names, name)
+	if isNew {
 		names = append(slices.Clone(names), name)
 	}
-	return k.writeIndex(docID, names, withPlace(e.Places, place))
+	if err := k.writeIndex(docID, names, withPlace(e.Places, place)); err != nil {
+		if isNew {
+			// Unlisted, the item could be neither shown nor removed.
+			_ = k.kc.Delete(keychainService, docID+"/"+name)
+		}
+		return err
+	}
+	return nil
 }
 
-// remove deletes one secret and drops it from the index.
-func (k *keychainSecrets) remove(docID, name string) error {
+// remove deletes one secret and drops it from the index. Like set, it is
+// refused at a place that may not read the secrets: a copy carrying the ID
+// must not delete the original's credentials.
+func (k *keychainSecrets) remove(docID, place, name string) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	e, err := k.entry(docID)
 	if err != nil {
 		return err
+	}
+	if len(e.values) > 0 && !slices.Contains(e.Places, placeKey(place)) {
+		return errNotTrusted
 	}
 	delete(k.cache, docID)
 	if err := k.kc.Delete(keychainService, docID+"/"+name); err != nil && !errors.Is(err, keyring.ErrNotFound) {

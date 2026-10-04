@@ -47,6 +47,32 @@ type Downloads struct {
 	prompt func(name string) (string, error)
 	// alert shows an error the page has no place for.
 	alert func(title, message string)
+	// limit overrides maxDownloadBytes; 0 means maxDownloadBytes.
+	limit int
+}
+
+// errTooLarge refuses a response over the download limit.
+var errTooLarge = errors.New("the file is too large to save from here")
+
+// cappedRecorder records a response but refuses body bytes past limit, so an
+// oversized file fails while it is written, not after it is held in memory.
+type cappedRecorder struct {
+	*httptest.ResponseRecorder
+	limit int
+	over  bool
+}
+
+func (c *cappedRecorder) Write(p []byte) (int, error) {
+	if c.over || c.Body.Len()+len(p) > c.limit {
+		c.over = true
+		return 0, errTooLarge
+	}
+	return c.ResponseRecorder.Write(p)
+}
+
+// WriteString goes through Write, so the cap holds for it too.
+func (c *cappedRecorder) WriteString(s string) (int, error) {
+	return c.Write([]byte(s)) //nolint:gocritic // WriteString here would call itself
 }
 
 // newDownloads checks its collaborators; see the struct for each one.
@@ -86,8 +112,16 @@ func (dl *Downloads) fetch(raw string) (name string, body []byte, err error) {
 		}
 	}
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, route, http.NoBody)
-	rec := httptest.NewRecorder()
-	dl.handler.ServeHTTP(rec, req)
+	limit := dl.limit
+	if limit <= 0 {
+		limit = maxDownloadBytes
+	}
+	capped := &cappedRecorder{ResponseRecorder: httptest.NewRecorder(), limit: limit}
+	dl.handler.ServeHTTP(capped, req)
+	rec := capped.ResponseRecorder
+	if capped.over {
+		return "", nil, errTooLarge
+	}
 
 	if rec.Code != http.StatusOK {
 		msg := strings.TrimSpace(rec.Body.String())
@@ -95,9 +129,6 @@ func (dl *Downloads) fetch(raw string) (name string, body []byte, err error) {
 			msg = msg[:maxErrorChars] + "…"
 		}
 		return "", nil, fmt.Errorf("the server answered %d: %s", rec.Code, msg)
-	}
-	if rec.Body.Len() > maxDownloadBytes {
-		return "", nil, errors.New("the file is too large to save from here")
 	}
 	return downloadName(rec.Header(), route), rec.Body.Bytes(), nil
 }
