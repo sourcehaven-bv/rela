@@ -190,6 +190,11 @@ func (d *Dir) openFile(name string) (*os.File, error) {
 	parts := strings.Split(name, "/")
 	depth := areaDepth(parts, false)
 	if depth == 0 {
+		// One path component, so fs.ValidPath already rules out "..". The
+		// check states it where the path is built.
+		if strings.Contains(name, "..") {
+			return nil, fmt.Errorf("rootfs: invalid file name %q", name)
+		}
 		full := filepath.Join(d.path, name)
 		info, err := os.Stat(full)
 		if err != nil {
