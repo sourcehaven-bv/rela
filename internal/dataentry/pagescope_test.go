@@ -14,6 +14,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // Entity pages (pagescope.go): a tab of an entity page narrows its collection
@@ -249,5 +250,72 @@ func TestPageScope_SidebarWire(t *testing.T) {
 	require.Equal(t, v1.SidebarPage{Label: "Feature", EntityType: "feature", Badge: "title", Tabs: []v1.SidebarPageTab{{
 		ID: "tickets", Label: "Tickets", View: "list", Target: "tickets",
 		Scope: "relation", Relation: "implements", Direction: "incoming",
+		Links: []v1.SidebarPageLink{{Type: "ticket", Relation: "implements", Direction: "incoming"}},
 	}}}, resp.Pages["feat"])
+}
+
+// TestPageScope_TabLinks pins which relation a row created on a tab is linked
+// to the anchor over: a relation tab's scope for its row type, and a root
+// gantt tab's hierarchy relations from the anchor type to each drawn child.
+func TestPageScope_TabLinks(t *testing.T) {
+	meta := &metamodel.Metamodel{Relations: map[string]metamodel.RelationDef{
+		"contains":  {From: []string{"topic"}, To: []string{"task", "note"}},
+		"subtopic":  {From: []string{"topic"}, To: []string{"topic"}},
+		"has-task":  {From: []string{"project"}, To: []string{"task"}},
+		"blocks":    {From: []string{"task"}, To: []string{"task"}},
+		"discusses": {From: []string{"note"}, To: []string{"topic"}},
+	}}
+	cfg := &dataentryconfig.Config{
+		Lists:   map[string]dataentryconfig.List{"tasks": {EntityType: "task"}},
+		Kanbans: map[string]dataentryconfig.Kanban{"notes": {EntityType: "note"}},
+		Gantts: map[string]dataentryconfig.Gantt{"plan": {
+			Hierarchy: []string{"contains", "subtopic", "has-task"},
+			Sources:   map[string]dataentryconfig.GanttSource{"topic": {}, "task": {}, "project": {}},
+		}},
+	}
+	tests := []struct {
+		name string
+		tab  dataentryconfig.PageTab
+		want []v1.SidebarPageLink
+	}{
+		{
+			name: "list tab links over its scope",
+			tab: dataentryconfig.PageTab{List: "tasks", Scope: &dataentryconfig.PageTabScope{
+				Relation: "contains", Direction: dataentryconfig.DirectionOutgoing,
+			}},
+			want: []v1.SidebarPageLink{{Type: "task", Relation: "contains", Direction: "outgoing"}},
+		},
+		{
+			name: "kanban tab resolves an incoming scope",
+			tab:  dataentryconfig.PageTab{Kanban: "notes", Scope: &dataentryconfig.PageTabScope{Relation: "discusses"}},
+			want: []v1.SidebarPageLink{{Type: "note", Relation: "discusses", Direction: "incoming"}},
+		},
+		{
+			// note is a contains child but not drawn; has-task does not
+			// start at topic.
+			name: "root gantt tab links each drawn child of the anchor",
+			tab:  dataentryconfig.PageTab{Gantt: "plan", Scope: &dataentryconfig.PageTabScope{Root: true}},
+			want: []v1.SidebarPageLink{
+				{Type: "task", Relation: "contains", Direction: "outgoing"},
+				{Type: "topic", Relation: "subtopic", Direction: "outgoing"},
+			},
+		},
+		{
+			name: "unscoped tab links nothing",
+			tab:  dataentryconfig.PageTab{List: "tasks"},
+		},
+		{
+			name: "root tab over an unknown gantt links nothing",
+			tab:  dataentryconfig.PageTab{Gantt: "missing", Scope: &dataentryconfig.PageTabScope{Root: true}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, pageTabLinks(cfg, meta, "topic", tc.tab))
+		})
+	}
+	t.Run("root tab without a metamodel links nothing", func(t *testing.T) {
+		tab := dataentryconfig.PageTab{Gantt: "plan", Scope: &dataentryconfig.PageTabScope{Root: true}}
+		require.Nil(t, pageTabLinks(cfg, nil, "topic", tab))
+	})
 }

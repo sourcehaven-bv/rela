@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -121,6 +124,61 @@ func pageScopeParams(query map[string][]string) (page, tab, anchor string, err e
 		values = append(values, v[0])
 	}
 	return values[0], values[1], values[2], nil
+}
+
+// pageTabLinks returns the relations a row created on a tab of an entity
+// page is linked to the anchor over, one per type the tab can show. A list or
+// kanban tab gives its scope relation for its row type. A `scope: root` gantt
+// tab gives each hierarchy relation that starts at the anchor type, for each
+// child type the gantt draws. Other tabs give none.
+//
+// The SPA links a row created from the space's Create menu with these, so the
+// row appears on the page it was created from. They are a convenience, not a
+// gate: the link is an ordinary relation write under the normal ACL.
+func pageTabLinks(
+	cfg *dataentryconfig.Config, meta *metamodel.Metamodel, anchorType string, tab dataentryconfig.PageTab,
+) []v1.SidebarPageLink {
+	switch sc := tab.Scope; {
+	case sc == nil:
+		return nil
+	case sc.Root:
+		return ganttRootLinks(cfg, meta, anchorType, tab.Gantt)
+	default:
+		rowType := pageTabRowType(cfg, tab)
+		if rowType == "" {
+			return nil
+		}
+		return []v1.SidebarPageLink{{
+			Type: rowType, Relation: sc.Relation, Direction: string(sc.ResolvedDirection(anchorType, meta)),
+		}}
+	}
+}
+
+// ganttRootLinks returns the links of a gantt tab rooted at the anchor: each
+// hierarchy relation that starts at the anchor type, for each child type the
+// gantt draws. Hierarchy edges run parent to child, so the link is outgoing.
+func ganttRootLinks(
+	cfg *dataentryconfig.Config, meta *metamodel.Metamodel, anchorType, gantt string,
+) []v1.SidebarPageLink {
+	g, ok := cfg.Gantts[gantt]
+	if !ok || meta == nil {
+		return nil
+	}
+	var out []v1.SidebarPageLink
+	for _, rel := range g.Hierarchy {
+		def, ok := meta.GetRelationDef(rel)
+		if !ok || !slices.Contains(def.From, anchorType) {
+			continue
+		}
+		for _, child := range def.To {
+			if _, drawn := g.Sources[child]; drawn {
+				out = append(out, v1.SidebarPageLink{
+					Type: child, Relation: rel, Direction: string(dataentryconfig.DirectionOutgoing),
+				})
+			}
+		}
+	}
+	return out
 }
 
 // pageTabRowType is the entity type a list or kanban tab shows, or "".
