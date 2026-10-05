@@ -79,14 +79,20 @@ const props = withDefaults(
      * Right for a value, which has nothing inside it to click.
      *
      * `explicit` renders the read view in a plain div and puts a small edit
-     * button beside it, revealed on hover and focus-within but always in the
-     * tab order. A click on the content still starts the edit, except where
-     * it lands on something interactive of the caller's own, or where it ends
-     * a text selection — a drag to select is not a request to edit.
+     * button in its top-right corner, revealed on hover and focus-within but
+     * always in the tab order. The button is the only way in: a click on the
+     * content is left to the content, so reading gestures work as on any
+     * page. A click clears a selection, a double-click selects a word and a
+     * triple-click a paragraph; none of them opens the editor, whose first
+     * click would otherwise have swallowed the rest. The one exception is
+     * the placeholder of an empty value, which has nothing to select.
+     *
+     * The button is sticky, so on content taller than the viewport it stays
+     * in view while the content scrolls under it. Set
+     * `--rl-inline-edit-sticky-top` to move it below a sticky bar above it.
      *
      * For rendered content: links, task checkboxes, comment markers, a
-     * diagram. Mark anything else the click should leave alone with
-     * `data-rl-inline-edit-ignore`.
+     * diagram.
      */
     trigger?: 'value' | 'explicit'
     /**
@@ -241,33 +247,6 @@ function onChange() {
   if (props.commitOnChange) stop('commit')
 }
 
-/** What a click must not turn into an edit, because it is already something. */
-const INTERACTIVE =
-  'a, button, input, select, textarea, label, summary, [role="button"], [role="link"], [role="checkbox"], [contenteditable="true"], [data-rl-inline-edit-ignore]'
-
-/**
- * A click on the read content, when the content is the caller's own. It
- * starts the edit only if it was not aimed at something else.
- */
-function onReadClick(event: MouseEvent) {
-  /*
-   * The content already did something with this click, so it was not a
-   * request to edit. This is bound on the wrapper and the content sits
-   * inside it, so a handler of the caller's has already run by now.
-   *
-   * It is the general form of the check below: a delegated handler on a
-   * comment highlight or a diagram node cannot be named by a selector, and
-   * should not have to be marked by hand.
-   */
-  if (event.defaultPrevented) return
-
-  const target = event.target as Element | null
-  if (target?.closest(INTERACTIVE)) return
-  // A drag that ends here selected text; the user was reading, not editing.
-  if (!window.getSelection()?.isCollapsed) return
-  start()
-}
-
 defineExpose({ start, cancel: () => stop('cancel') })
 </script>
 
@@ -296,31 +275,36 @@ defineExpose({ start, cancel: () => stop('cancel') })
     </button>
 
     <!--
-      Explicit: the content is the caller's, so it is rendered plainly and the
-      click is only interpreted. The edit button is the reliable way in, and
-      is a real button in the tab order rather than a hover affordance, since
-      a control that only appears on hover cannot be reached without a mouse.
+      Explicit: the content is the caller's, so it is rendered plainly and
+      keeps every click. The edit button is the way in, and is a real button
+      in the tab order rather than a hover affordance, since a control that
+      only appears on hover cannot be reached without a mouse.
+
+      The button comes first so it can stick: a sticky element only sticks
+      within its parent from where it sits, and placed first it holds the top
+      of the content for the whole height of it.
     -->
     <div
       v-else-if="!editing && !disabled"
       class="rl-inline-edit__trigger rl-inline-edit__read"
       :class="{ 'rl-inline-edit__trigger--empty': empty }"
-      @click="onReadClick"
     >
+      <div class="rl-inline-edit__edit-rail">
+        <button
+          ref="triggerEl"
+          type="button"
+          class="rl-inline-edit__edit-button"
+          :aria-label="messages.editField({ label })"
+          @click="start"
+        >
+          <RlIcon name="edit" :size="14" />
+        </button>
+      </div>
+
       <span class="rl-inline-edit__value">
         <slot v-if="!empty" name="read" />
-        <span v-else class="rl-inline-edit__placeholder">{{ placeholder }}</span>
+        <span v-else class="rl-inline-edit__placeholder" @click="start">{{ placeholder }}</span>
       </span>
-
-      <button
-        ref="triggerEl"
-        type="button"
-        class="rl-inline-edit__edit-button"
-        :aria-label="messages.editField({ label })"
-        @click.stop="start"
-      >
-        <RlIcon name="edit" :size="14" />
-      </button>
     </div>
 
     <!-- Disabled reads as the value alone: an affordance that does nothing is
@@ -466,17 +450,49 @@ defineExpose({ start, cancel: () => stop('cancel') })
 
 /*
  * Explicit: the same box as the button trigger, but a div, so the content
- * inside keeps its own clicks. The hover treatment is the button's, because
- * it still has to read as editable.
+ * inside keeps its own clicks. The box is not a click target, so it keeps
+ * the content's cursor and, on hover, only outlines what the edit button
+ * will edit; a filled background would promise a click that does nothing.
  */
 .rl-inline-edit__read {
-  position: relative;
-  cursor: text;
+  /* The edit button's box, which the rail below has to match. */
+  --rl-inline-edit-button-size: calc(14px + 2 * var(--rl-space-1) + 2px);
+  /* Block, so the rail spans the content rather than sitting beside it as
+     one more item of the trigger's flex row. */
+  display: block;
+  cursor: auto;
 }
 
 .rl-inline-edit__read:hover {
-  background: var(--rl-color-bg-hover);
+  background: transparent;
   border-color: var(--rl-color-border);
+}
+
+.rl-inline-edit__read .rl-inline-edit__placeholder { cursor: pointer; }
+
+/*
+ * Holds the edit button in the top-right corner of the content and keeps it
+ * there while long content scrolls. The rail is as tall as the button, so
+ * sticking stops where the button meets the end of the content rather than
+ * hanging past it; the negative margin gives that height back, so the
+ * content does not move down and the button overlays the first line the
+ * way an absolutely placed one would.
+ *
+ * Sticking means it also overlays whatever line is at the top of the pane,
+ * which can be a link or a checkbox. Scrolling a little uncovers it; that is
+ * the cost of keeping the button in reach.
+ */
+.rl-inline-edit__edit-rail {
+  position: sticky;
+  top: var(--rl-inline-edit-sticky-top, var(--rl-space-1));
+  z-index: var(--rl-z-sticky);
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  height: var(--rl-inline-edit-button-size);
+  margin-bottom: calc(-1 * var(--rl-inline-edit-button-size));
+  /* The rail spans the content; only the button may take a click. */
+  pointer-events: none;
 }
 
 /*
@@ -485,11 +501,14 @@ defineExpose({ start, cancel: () => stop('cancel') })
  * document, which `display: none` would.
  */
 .rl-inline-edit__edit-button {
-  position: absolute;
-  top: var(--rl-space-1);
-  right: var(--rl-space-1);
   display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: var(--rl-inline-edit-button-size);
+  height: var(--rl-inline-edit-button-size);
   padding: var(--rl-space-1);
+  pointer-events: auto;
   border: 1px solid var(--rl-color-border);
   border-radius: var(--rl-radius-sm);
   background: var(--rl-color-bg);
@@ -500,7 +519,7 @@ defineExpose({ start, cancel: () => stop('cancel') })
 }
 
 .rl-inline-edit__read:hover .rl-inline-edit__edit-button,
-.rl-inline-edit__edit-button:focus-visible {
+.rl-inline-edit__read:focus-within .rl-inline-edit__edit-button {
   opacity: 1;
 }
 
@@ -519,13 +538,8 @@ defineExpose({ start, cancel: () => stop('cancel') })
   /* A tap target smaller than this is hard to hit deliberately. */
   .rl-inline-edit__trigger { min-height: var(--rl-tap-target); }
 
-  /* No hover to reveal it, so it stays. */
-  .rl-inline-edit__edit-button {
-    opacity: 1;
-    min-width: var(--rl-tap-target);
-    min-height: var(--rl-tap-target);
-    align-items: center;
-    justify-content: center;
-  }
+  /* No hover to reveal it, so it stays, at a size a finger can hit. */
+  .rl-inline-edit__read { --rl-inline-edit-button-size: var(--rl-tap-target); }
+  .rl-inline-edit__edit-button { opacity: 1; }
 }
 </style>

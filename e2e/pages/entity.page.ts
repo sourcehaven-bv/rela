@@ -70,6 +70,13 @@ export class EntityPage extends BasePage {
     await expect(this.heading).toBeVisible();
   }
 
+  /** Open an entity the way a list does, so it has a back target. */
+  async navigateToEntityFrom(entityType: string, id: string, returnTo: string) {
+    await this.navigateTo(`/entity/${entityType}/${id}?return_to=${encodeURIComponent(returnTo)}`);
+    await this.waitForSpinnerToDisappear();
+    await expect(this.heading).toBeVisible();
+  }
+
   async expectHeadingText(text: string | RegExp) {
     const matcher = text instanceof RegExp ? text : new RegExp(text);
     await expect(this.heading.filter({ hasText: matcher })).toBeVisible();
@@ -407,6 +414,76 @@ export class EntityPage extends BasePage {
 
   get checkboxStats(): Locator {
     return this.page.locator('.cb-stats');
+  }
+
+  // --- body inline-edit helpers ---
+
+  /** The button that opens the body editor; the only way into it. */
+  get bodyEditButton(): Locator {
+    return this.page.getByRole('button', { name: 'Body, edit', exact: true });
+  }
+
+  /** The body editor's writing surface, present only while editing. */
+  get bodyEditor(): Locator {
+    return this.page.locator('.entity-body-editor .ProseMirror');
+  }
+
+  /** The body's read view, which the edit swaps out synchronously. */
+  get bodyReadView(): Locator {
+    return this.page.locator('.rl-inline-edit__read').filter({ has: this.contentBody });
+  }
+
+  /** The back/scope bar, which sticks to the top of the pane on a phone. */
+  get mobileTopbar(): Locator {
+    return this.page.locator('.scope-nav.mobile-topbar');
+  }
+
+  /** Whether the body's edit button lies below the mobile top bar. */
+  async bodyEditButtonClearsTopbar(): Promise<boolean> {
+    const button = await this.bodyEditButton.boundingBox();
+    const bar = await this.mobileTopbar.boundingBox();
+    if (!button || !bar) return false;
+    return button.y >= bar.y + bar.height;
+  }
+
+  /**
+   * Click a paragraph of the read view `clickCount` times, on its first word.
+   * The paragraph is as wide as the body, so its centre can be empty space
+   * past the end of the text, where a double-click selects nothing.
+   */
+  async clickBodyText(text: string, clickCount: 1 | 2 | 3) {
+    const paragraph = this.contentBody.getByText(text);
+    const box = await paragraph.boundingBox();
+    if (!box) throw new Error(`body paragraph "${text}" is not rendered`);
+    await paragraph.click({ clickCount, position: { x: 10, y: box.height / 2 } });
+  }
+
+  async selectedText(): Promise<string> {
+    return this.page.evaluate(() => window.getSelection()?.toString() ?? '');
+  }
+
+  /** Scroll the main pane so the middle of the body is at the top of it. */
+  async scrollBodyHalfway() {
+    await this.contentBody.evaluate((el) => {
+      const pane = el.closest('.rl-app-shell__main');
+      if (!pane) throw new Error('no scrolling pane above the body');
+      const body = el.getBoundingClientRect();
+      pane.scrollTop += body.top - pane.getBoundingClientRect().top + body.height / 2;
+    });
+  }
+
+  /** Whether the edit button lies inside both the viewport and the body. */
+  async bodyEditButtonInView(): Promise<boolean> {
+    const button = await this.bodyEditButton.boundingBox();
+    const body = await this.contentBody.boundingBox();
+    const viewport = this.page.viewportSize();
+    if (!button || !body || !viewport) return false;
+    return (
+      button.y >= 0 &&
+      button.y + button.height <= viewport.height &&
+      button.y >= body.y &&
+      button.y + button.height <= body.y + body.height
+    );
   }
 
   // --- mermaid body-content helpers ---

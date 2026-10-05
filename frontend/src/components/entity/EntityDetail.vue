@@ -86,6 +86,7 @@ import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
 import { useDelayedPending } from '@/composables/useDelayedPending'
 import { beginRouteLoad } from '@/composables/useNavigationPending'
+import { useStickyHeight } from '@/composables/useStickyHeight'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 import { recordRecentEntity } from '@/utils/recentEntities'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
@@ -253,6 +254,19 @@ const historyTarget = computed<RouteLocationRaw | undefined>(() => {
 })
 
 const contentRef = ref<HTMLElement | null>(null)
+
+/*
+ * The back/scope bar sticks to the top of the pane on a phone. The body's
+ * edit button sticks too, so it is moved down by the bar's height to stay
+ * tappable rather than slide underneath it.
+ */
+const topbarRef = ref<HTMLElement | null>(null)
+const topbarHeight = useStickyHeight(topbarRef)
+const stickyOffsetStyle = computed(() =>
+  topbarHeight.value > 0
+    ? { '--rl-inline-edit-sticky-top': `calc(${topbarHeight.value}px + var(--rl-space-1))` }
+    : undefined
+)
 
 // Computed
 const typeDef = computed(() => schemaStore.getEntityType(props.entityType))
@@ -1895,7 +1909,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 </script>
 
 <template>
-  <div class="entity-detail" :data-testid="`page-state-${pageState}`">
+  <div
+    class="entity-detail"
+    :data-testid="`page-state-${pageState}`"
+    :style="stickyOffsetStyle"
+  >
     <!-- Deliberately empty while loading below the threshold: no spinner,
          no reserved block, no layout spring. The ActivityBar carries the
          navigation case; this only paints for a slow cold load. -->
@@ -1916,7 +1934,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
            renders when either a back target exists (?return_to or ?from)
            or the user is in a list-scoped context (?from drives scopeNav).
            Both can be present simultaneously. -->
-      <div v-if="backTarget || scopeNav" class="scope-nav mobile-topbar">
+      <div v-if="backTarget || scopeNav" ref="topbarRef" class="scope-nav mobile-topbar">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
           <!--
