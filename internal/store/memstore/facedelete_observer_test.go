@@ -45,14 +45,14 @@ func TestFaceDeleteDoesNotDeIndexALiveEntity(t *testing.T) {
 	mk("")
 	mk("draft")
 
-	_, err := s.DeleteEntityState(ctx, "PAGE-1", entity.Face("draft"))
+	_, err := s.DeleteFace(ctx, entity.Ref{ID: "PAGE-1", Face: entity.Face("draft")})
 	require.NoError(t, err)
 	require.Empty(t, obs.deleted,
 		"deleting one face must NOT tell bare-id-keyed observers the entity is "+
 			"gone — the default face still exists, so this would de-index a live entity")
 
 	// The last face going IS an entity deletion, and must notify.
-	_, err = s.DeleteEntityState(ctx, "PAGE-1", "")
+	_, err = s.DeleteFace(ctx, entity.Ref{ID: "PAGE-1"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"PAGE-1"}, obs.deleted,
 		"removing the last face must notify observers, or the index keeps a ghost")

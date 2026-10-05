@@ -328,6 +328,9 @@ func (f fakeResolver) FieldVerdicts(context.Context, *entity.Entity) FieldVerdic
 func (f fakeResolver) RelationVerdicts(context.Context, *entity.Entity) RelationVerdicts {
 	return f.rv
 }
+func (f fakeResolver) UnconditionalRelationVerdicts(context.Context, *entity.Entity) RelationVerdicts {
+	return f.rv
+}
 
 // byTypeResolver returns different verdicts depending on the entity
 // type. Used by tests that need to prove the source-not-path-entity
@@ -345,6 +348,9 @@ func (r byTypeResolver) RelationVerdicts(_ context.Context, e *entity.Entity) Re
 		return RelationVerdicts{}
 	}
 	return r.rvByType[e.Type]
+}
+func (r byTypeResolver) UnconditionalRelationVerdicts(ctx context.Context, e *entity.Entity) RelationVerdicts {
+	return r.RelationVerdicts(ctx, e)
 }
 
 // affordanceServiceWithResolver builds a bare affordanceService over a fixed

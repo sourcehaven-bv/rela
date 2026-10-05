@@ -207,7 +207,7 @@ func TestCopy_UnguardedCopyNeedsUpdate(t *testing.T) {
 	if !errors.As(err, &forbidden) {
 		t.Fatalf("an UNGUARDED copy must be authorized as an ordinary write; got err=%v", err)
 	}
-	got, gerr := st.GetEntityState(ctx, "PAGE-1", entity.Face("draft"))
+	got, gerr := st.GetEntity(ctx, entity.Ref{ID: "PAGE-1", Face: entity.Face("draft")})
 	if gerr != nil || got.Properties["title"] != "draft" {
 		t.Errorf("the draft must be untouched after a refused revert; got %v %v", got.Properties, gerr)
 	}
@@ -252,7 +252,7 @@ func TestCopy_ExistingCrossEntityTargetIsAnUpdate(t *testing.T) {
 		if !errors.As(err, &forbidden) {
 			t.Fatalf("overwriting TKT-2 must be authorized as an update; got err=%v", err)
 		}
-		v, _ := st.GetEntity(ctx, "TKT-2")
+		v, _ := st.GetEntity(ctx, entity.Ref{ID: "TKT-2"})
 		if v.Properties["title"] != "victim" {
 			t.Errorf("TKT-2 must be untouched; got %v", v.Properties)
 		}
@@ -282,7 +282,7 @@ func TestCopy_TargetOfAnotherTypeIsRefused(t *testing.T) {
 	if !errors.Is(err, entitymanager.ErrCopyTargetTypeMismatch) {
 		t.Fatalf("want ErrCopyTargetTypeMismatch, got %v", err)
 	}
-	p, _ := st.GetEntity(ctx, "NOTE-9")
+	p, _ := st.GetEntity(ctx, entity.Ref{ID: "NOTE-9"})
 	if p.Type != "note" {
 		t.Errorf("NOTE-9 must keep its type; got %q", p.Type)
 	}
@@ -326,7 +326,7 @@ func TestCopy_SingleReferenceKeepsTheStoredValue(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CopyState: %v", err)
 	}
-	v, _ := st.GetEntity(ctx, "TKT-5")
+	v, _ := st.GetEntity(ctx, entity.Ref{ID: "TKT-5"})
 	if v.Properties["points"] != 3 {
 		t.Errorf("points must survive as the stored integer; got %#v", v.Properties["points"])
 	}
@@ -371,7 +371,7 @@ func TestCopy_TargetPassesUniqueAndValidation(t *testing.T) {
 	if err == nil {
 		t.Fatal("a copy that would persist a duplicate unique slug must be refused")
 	}
-	if _, gerr := st.GetEntity(ctx, "TKT-2"); !errors.Is(gerr, store.ErrNotFound) {
+	if _, gerr := st.GetEntity(ctx, entity.Ref{ID: "TKT-2"}); !errors.Is(gerr, store.ErrNotFound) {
 		t.Errorf("no target may be written when validation refuses; got err=%v", gerr)
 	}
 }
@@ -432,7 +432,7 @@ func TestCopy_GuardIsTheAuthorizationForASameEntityCopy(t *testing.T) {
 		// to the unsuffixed id. With no privileged face the zero coordinate is
 		// a separate row that this copy does not write, so asking it would
 		// assert the copy went somewhere it never claimed to go.
-		got, gerr := st.GetEntityState(ctx, "PAGE-1", entity.Face("draft"))
+		got, gerr := st.GetEntity(ctx, entity.Ref{ID: "PAGE-1", Face: entity.Face("draft")})
 		if gerr != nil || got.Properties["title"] != "NEXT" {
 			t.Errorf("the promote must have landed in the draft face; got %v %v", got.Properties, gerr)
 		}
@@ -455,7 +455,7 @@ func TestCopy_GuardIsTheAuthorizationForASameEntityCopy(t *testing.T) {
 		if forbidden.Decision.RuleKind != "copy-guard" {
 			t.Errorf("RuleKind must name the guard, got %q", forbidden.Decision.RuleKind)
 		}
-		got, _ := st.GetEntity(ctx, "PAGE-1")
+		got, _ := st.GetEntity(ctx, entity.Ref{ID: "PAGE-1"})
 		if got.Properties["title"] != "adopted" {
 			t.Errorf("the bare face must be untouched; got %v", got.Properties)
 		}
@@ -483,7 +483,7 @@ func TestCopy_GuardIsTheAuthorizationForASameEntityCopy(t *testing.T) {
 			t.Error("the read gate must be consulted; the error alone does not " +
 				"prove it, since an absent source produces the same one")
 		}
-		got, _ := st.GetEntity(ctx, "PAGE-1")
+		got, _ := st.GetEntity(ctx, entity.Ref{ID: "PAGE-1"})
 		if got.Properties["title"] != "adopted" {
 			t.Errorf("the bare face must be untouched; got %v", got.Properties)
 		}
@@ -525,7 +525,7 @@ func TestCopy_GuardDoesNotOverruleACrossEntityWrite(t *testing.T) {
 		t.Errorf("the ordinary write check must be what refuses; got RuleKind=%q reason=%q",
 			forbidden.Decision.RuleKind, forbidden.Decision.Reason)
 	}
-	v, _ := st.GetEntityState(ctx, "PAGE-1", "published")
+	v, _ := st.GetEntity(ctx, entity.Ref{ID: "PAGE-1", Face: "published"})
 	if v.Properties["title"] != "victim" {
 		t.Errorf("the published face must be untouched; got %v", v.Properties)
 	}
@@ -553,7 +553,7 @@ func TestCopy_GuardDoesNotOverruleASameFaceCopy(t *testing.T) {
 	if !errors.As(err, &forbidden) {
 		t.Fatalf("a guarded copy that crosses no face boundary still needs update; got %v", err)
 	}
-	got, _ := st.GetEntity(ctx, "PAGE-1")
+	got, _ := st.GetEntity(ctx, entity.Ref{ID: "PAGE-1"})
 	if got.Properties["title"] != "original" {
 		t.Errorf("the entity must be untouched; got %v", got.Properties)
 	}

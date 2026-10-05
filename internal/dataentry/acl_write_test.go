@@ -73,7 +73,7 @@ func TestACLWrite_PatchOnHiddenIs404(t *testing.T) {
 // test models would obtain the ETag through a side channel).
 func computeETagForTest(t *testing.T, app *App, entityID string) string {
 	t.Helper()
-	e, found := app.reader.getEntity(t.Context(), entityID)
+	e, found := app.reader.writePrepRow(t.Context(), entity.Ref{ID: entityID})
 	if !found {
 		t.Fatalf("computeETagForTest: %s not in store", entityID)
 	}
@@ -200,7 +200,7 @@ func TestACLWrite_RelationTargetIsReadGated(t *testing.T) {
 			strings.NewReader(`{"id":"`+target+`"}`))
 		req = req.WithContext(ctx)
 		rec := httptest.NewRecorder()
-		app.write.handleV1CreateRelation(rec, req, "ticket", entityRef{ID: "TKT-001"}, "implements")
+		app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
 		return rec
 	}
 

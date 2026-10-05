@@ -14,7 +14,7 @@ import (
 )
 
 // failingListReader yields the iterator error before any row, so the scan
-// collects nothing. Store must be non-nil: CountRelations delegates to it.
+// collects nothing. Store must be non-nil: ListRelations delegates to it.
 type failingListReader struct {
 	store.Store
 	err error
@@ -67,7 +67,7 @@ func TestCheckCardinality_TruncatedScanAborts(t *testing.T) {
 
 	scanErr := errors.New("scan interrupted")
 	violations, err := schema.CheckCardinality(
-		ctx, failingListReader{Store: st, err: scanErr}, meta, nil)
+		ctx, schema.Ungated(failingListReader{Store: st, err: scanErr}), meta, nil)
 	if !errors.Is(err, scanErr) {
 		t.Fatalf("a truncated scan must abort the run, got err=%v", err)
 	}

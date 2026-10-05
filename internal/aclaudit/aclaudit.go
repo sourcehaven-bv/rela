@@ -139,15 +139,18 @@ type MetamodelReader interface {
 	EnumOptions(t, field string) ([]string, bool)
 	// HasWorld reports whether name is a DECLARED world. The implicit
 	// default world is not declared and reports false; callers that accept
-	// it must say so themselves (see checkUndeclaredWorlds).
+	// it must say so themselves (see worldExists).
 	HasWorld(name string) bool
+	// DeclaresWorlds reports whether the metamodel declares any world. When
+	// it does, the generated default world does not exist (TKT-7IZHP0 D11).
+	DeclaresWorlds() bool
+	// DefaultWorld names the world an unqualified read lands in: the
+	// schema's default_world, else its first declared world, else the
+	// generated default world.
+	DefaultWorld() string
 	// HasFace reports whether entity type t declares the content state
 	// named face.
 	HasFace(t, face string) bool
-	// HasFaces reports whether entity type t declares any content states.
-	// A type that does stores no row at the zero coordinate, so a BARE
-	// type grant on it reaches nothing (see checkBareGrantOnFacedType).
-	HasFaces(t string) bool
 }
 
 // PermissionConsumer reports permissions referenced OUTSIDE acl.yaml. The
@@ -286,19 +289,20 @@ func splitStateGrant(entry string) (typeName, face string, isState bool) {
 	return typeName, face, true
 }
 
-// verbLists returns the four grant lists of a role for iteration.
+// verbLists returns the grant lists of a role for iteration.
 func verbLists(r acl.RoleDef) map[string][]string {
 	return map[string][]string{
 		"create": r.Create,
 		"update": r.Update,
 		"delete": r.Delete,
+		"rename": r.Rename,
 		"read":   r.Read,
 	}
 }
 
 // hasWildcardWrite reports whether a role grants "*" on any write verb.
 func hasWildcardWrite(r acl.RoleDef) bool {
-	for _, list := range [][]string{r.Create, r.Update, r.Delete} {
+	for _, list := range [][]string{r.Create, r.Update, r.Delete, r.Rename} {
 		if slices.Contains(list, "*") {
 			return true
 		}

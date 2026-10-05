@@ -150,32 +150,18 @@ func TestTransition_LegalEntryOnCreatePasses(t *testing.T) {
 	seedSnapshot(t, mgr, "")
 }
 
-// RR-NB135: the sync/upsert path (ApplyEntity) must enforce transitions too —
-// it is a served write path and must not be a bypass.
-func TestTransition_ApplyEntity_EnforcesLegality(t *testing.T) {
+// RR-NB135: RecreateEntity is a served write path and must enforce the
+// state machine's entry rule too, not be a bypass.
+func TestTransition_RecreateEntity_EnforcesEntry(t *testing.T) {
 	mgr := newTransitionManager(t, allowAllGuard{})
 	snap := seedSnapshot(t, mgr, "") // in-review
 
-	// A sync-apply that skips approved (in-review→established) must be rejected.
-	snap.SetString("status", "established")
-	_, err := mgr.ApplyEntity(context.Background(), snap)
-	if !errors.Is(err, statemachine.ErrIllegalTransition) {
-		t.Fatalf("ApplyEntity must enforce legality; want ErrIllegalTransition, got %v", err)
-	}
-}
-
-func TestTransition_ApplyEntity_EnforcesGuard(t *testing.T) {
-	mgr := newTransitionManager(t, denyAllGuard{})
-	snap := seedSnapshot(t, mgr, "") // in-review
-
-	snap.SetString("status", "approved") // legal edge, guard denied
-	_, err := mgr.ApplyEntity(context.Background(), snap)
-	var fe *acl.ForbiddenError
-	if !errors.As(err, &fe) {
-		t.Fatalf("ApplyEntity guard denial must be *acl.ForbiddenError (403), got %v", err)
-	}
-	if fe.Decision.RuleID != "approve" {
-		t.Errorf("RuleID = %q, want the permission name 'approve'", fe.Decision.RuleID)
+	back := snap.Clone()
+	back.ID = snap.ID + "0"
+	back.SetString("status", "established") // not the initial value
+	_, err := entitymanager.RecreateEntity(context.Background(), mgr, back)
+	if !errors.Is(err, statemachine.ErrIllegalEntry) {
+		t.Fatalf("RecreateEntity must enforce the entry rule; want ErrIllegalEntry, got %v", err)
 	}
 }
 
@@ -213,7 +199,7 @@ func TestTransition_IllegalEntry_DoesNotPersist(t *testing.T) {
 	// No snapshot row must exist — the check runs before the store write, so a
 	// rejected illegal entry never persists (and thus never emits a store event).
 	count := 0
-	for range st.ListEntities(context.Background(), store.EntityQuery{Type: "snapshot"}) {
+	for range st.ListEntities(context.Background(), store.EntityQuery{Type: "snapshot", Faces: store.InWorld(store.TrivialScope())}) {
 		count++
 	}
 	if count != 0 {

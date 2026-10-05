@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"iter"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -37,25 +38,30 @@ type GraphQuery struct {
 	HasInbound  *RelationPredicate // entity has matching relation FROM (expanded) endpoints
 	HasOutbound *RelationPredicate // entity has matching relation TO (expanded) endpoints
 
-	// World scopes the RESULT to each entity's prime under the compiled
-	// world, exactly as [EntityQuery.World] does. The zero value is the
-	// default world.
+	// Faces is the RESULT selection, exactly as [EntityQuery.Faces]: required,
+	// and the zero value is [ErrInvalidQuery] at execution. ACL-built
+	// GraphQuery values are templates that internal/visibility/pushdown.go
+	// completes from the request's EntityQuery, which is why the zero value
+	// is checked when the query runs rather than when it is built.
 	//
 	// It must live here as well as on EntityQuery, not only there: the
 	// ACL read path swaps an EntityQuery for a GraphQuery the moment a
 	// policy query exists (internal/visibility/pushdown.go), and the
-	// AllowAll principal takes the EntityQuery branch. A world carried
-	// on only one of the two would make the list path and the
-	// single-entity path disagree — and would do so precisely for the
-	// privileged principal.
+	// AllowAll principal takes the EntityQuery branch. A selection carried
+	// on only one of the two would make the list path and the single-entity
+	// path disagree — and would do so precisely for the privileged principal.
+	//
+	// Under InWorld one row per id is returned; under AllFaces and AtFaces
+	// one row per selected face, and GraphCount counts those rows.
 	//
 	// Scoping applies to the entities the query RETURNS. Relation
 	// predicates walk the graph's identity structure and are NOT
-	// world-resolved: who an entity is related to must not depend on the
-	// reader's world.
-	World WorldScope
+	// face-resolved: who an entity is related to must not depend on the
+	// reader's world. The one exception is an endpoint's own properties
+	// under [RelationPredicate.EndpointMatch]; see [EndpointPredicate.Faces].
+	Faces FaceSelection
 
-	// FaceIn is [EntityQuery.FaceIn], carried here for the same reason World
+	// FaceIn is [EntityQuery.FaceIn], carried here for the same reason Faces
 	// is: the ACL read path swaps an EntityQuery for a GraphQuery the moment
 	// a policy query exists, and the AllowAll principal takes the EntityQuery
 	// branch. A face set on only one of the two would make the list path and
@@ -125,7 +131,7 @@ type GraphQuery struct {
 	// OrderBy, Limit and Offset page a ROW query (GraphQuery,
 	// GraphQueryHeaders) inside the backend (TKT-1U8XYN), so a list page
 	// costs one bounded read instead of a whole-type scan sorted and sliced
-	// in Go. GraphCount and MatchingIDs IGNORE all three — a count answers
+	// in Go. GraphCount and MatchingFaces IGNORE all three — a count answers
 	// for the matched set, and a page must never change it.
 	//
 	// OrderBy sorts by the STRING form of each property, byte-wise (the
@@ -455,12 +461,15 @@ type RelationPredicate struct {
 	// an ACL-folded expansion would gate the same principal differently from
 	// one that honored it; both refuse instead.
 	//
-	// A hop carrying an EndpointMatch reads the DEFAULT state only: the
-	// endpoint's default face, reached over a default-tailed edge. A named
-	// face belongs to a world the reader may not be granted, and the query's
-	// World scopes its RESULT rows, not the neighbors it filters on — so
-	// admitting a named face here would disclose that world's content
-	// through which candidates match. Every backend pins it (TKT-CXQEV0).
+	// A hop carrying an EndpointMatch follows identity-scoped edges only (a
+	// "" tail), and reads the endpoint at a face chosen by its selection
+	// (TKT-KQXVF7, design A6): the endpoint's own [EndpointPredicate.Faces]
+	// when set, else the enclosing hop's, else the query's
+	// [GraphQuery.Faces]. Under InWorld(w) the endpoint is w's prime for its
+	// own type; under AtFaces(fs) only its rows at fs are tested, so an
+	// endpoint with none of fs does not match; under AllFaces it matches when
+	// any of its rows does. InWorld of the default world is the historical
+	// reading: the "" face only.
 	//
 	// SECURITY: this predicate reads properties of entities the query does
 	// not RETURN, so a caller-supplied EndpointMatch is an inference channel
@@ -477,9 +486,23 @@ type RelationPredicate struct {
 // incoming relation predicate.
 //
 // Deliberately NOT [GraphQuery]: an endpoint match is a filter on a row the
-// query does not return, so it carries no paging, no ordering, no world and no
-// face set. Reusing GraphQuery would offer all four and silently ignore them.
+// query does not return, so it carries no paging, no ordering and no face
+// allowlist. Reusing GraphQuery would offer all three and silently ignore them.
 type EndpointPredicate struct {
+	// Faces, when set, is the face selection this endpoint (and every hop
+	// nested under it that sets none) is evaluated at, instead of the
+	// enclosing selection. The zero value inherits; see
+	// [RelationPredicate.EndpointMatch] for how each selection reads an
+	// endpoint.
+	//
+	// The ACL sets it on every hop it gates (acl.Request.GateTraversal) to
+	// InWorld of the REQUEST's world, so a row gate folded into an endpoint
+	// is evaluated where the request reads and never under a query's
+	// AllFaces or AtFaces selection, where "any face matches" could satisfy
+	// a gate the request's world does not (stage-2 design section 12,
+	// RR-QUXMAF).
+	Faces FaceSelection
+
 	// EntityType restricts the endpoint to one entity type. Empty means any
 	// type. This is what a chained traversal uses to resolve a relation whose
 	// declared target is a UNION of types: without it, a property reference
@@ -507,25 +530,73 @@ type GraphQueryer interface {
 	// the iterator yields (nil, err) and terminates.
 	GraphQuery(ctx context.Context, q GraphQuery) iter.Seq2[*entity.Entity, error]
 
-	// GraphCount returns (matched, total): the number of entities of
+	// GraphCount returns (matched, total): the number of rows of
 	// q.EntityType that satisfy q's predicates, and the total number of
-	// entities of q.EntityType ignoring those predicates. Callers use
-	// (total - matched) for "filtered by" counts.
+	// rows of q.EntityType ignoring those predicates. Callers use
+	// (total - matched) for "filtered by" counts. A row is what GraphQuery
+	// would yield: one per id under InWorld, one per selected face under
+	// AllFaces and AtFaces.
 	GraphCount(ctx context.Context, q GraphQuery) (matched, total int, err error)
 
-	// MatchingIDs answers: "of these candidate ids, which ones satisfy
-	// q's predicates?" Returns a map keyed by every candidate id with
-	// the boolean value indicating match (true) or no-match (false).
-	// All input ids appear in the result regardless of outcome, so
-	// callers can distinguish "absent because no-match" from "absent
-	// because no answer."
+	// MatchingFaces answers: "of these candidate ids, which stored face
+	// rows satisfy q?" It runs q, with its selection, FaceIn and Any
+	// branches, restricted to ids, and returns each matching (id, face)
+	// row. Under InWorld that is at most one face per id (the prime); under
+	// AllFaces or AtFaces it is every selected row that matches.
 	//
-	// q is passed by value: implementations MUST NOT mutate it, and
-	// the caller is free to reuse the input on the next call. ids is
-	// the candidate set; an empty slice yields an empty map.
+	// An id with no matching row is absent from the map, and a present id
+	// has at least one face. Faces are distinct and sorted by token; a
+	// caller that needs another order sorts them itself.
 	//
-	// Use this rather than threading id filters through GraphQuery —
-	// it's the single-entity-visibility and batched-include shape used
-	// by the ACL read gate.
-	MatchingIDs(ctx context.Context, q GraphQuery, ids []string) (map[string]bool, error)
+	// q is passed by value: implementations MUST NOT mutate it, and the
+	// caller is free to reuse the input on the next call. ids is the
+	// candidate set; an empty slice yields an empty map. OrderBy, Limit and
+	// Offset are ignored, as for GraphCount.
+	//
+	// It is the per-face read verdict the ACL row gate uses
+	// (acl.Request.ReadableFacesMany), and [MatchingIDs] projects it for
+	// callers that need ids only. Backends implement this method alone, so
+	// the two answers cannot drift.
+	MatchingFaces(ctx context.Context, q GraphQuery, ids []string) (map[string][]entity.Face, error)
+}
+
+// FaceMatcher is the [GraphQueryer.MatchingFaces] half of the graph queryer,
+// for a consumer that needs nothing else.
+type FaceMatcher interface {
+	MatchingFaces(ctx context.Context, q GraphQuery, ids []string) (map[string][]entity.Face, error)
+}
+
+// MatchingIDs answers "of these candidate ids, which ones satisfy q?" on any
+// [FaceMatcher]: an id matches when any of its selected rows does. The map is
+// keyed by every input id, true for a match and false otherwise, so a caller
+// can tell "no match" from "not asked".
+//
+// It projects [GraphQueryer.MatchingFaces]; backends do not implement it.
+func MatchingIDs(ctx context.Context, fm FaceMatcher, q GraphQuery, ids []string) (map[string]bool, error) {
+	faces, err := fm.MatchingFaces(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = len(faces[id]) > 0
+	}
+	return out, nil
+}
+
+// SortedFaces returns faces deduplicated and sorted by token, the order
+// [GraphQueryer.MatchingFaces] promises. Backends that collect rows in
+// another order finish with it.
+func SortedFaces(faces []entity.Face) []entity.Face {
+	out := slices.Clone(faces)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// IDMatcher is [MatchingIDs] bound to fm, for a consumer that takes the
+// match as a function value.
+func IDMatcher(fm FaceMatcher) func(ctx context.Context, q GraphQuery, ids []string) (map[string]bool, error) {
+	return func(ctx context.Context, q GraphQuery, ids []string) (map[string]bool, error) {
+		return MatchingIDs(ctx, fm, q, ids)
+	}
 }

@@ -94,6 +94,27 @@ webhooks:
 A delivery matching nothing answers `200` with `{"action":"no_match"}`. It is
 not an error — nothing to update is a legitimate outcome.
 
+### Types with faces
+
+When `find.type` declares `faces:`, name the face the hook works on with
+`find.face`. The hook matches entities at that face, edits that face, and
+creates new entities at it. A delivery cannot name a face, so the face is part
+of the configuration. Loading fails when a faced type has no `find.face`, when
+the face is not declared, or when a faceless type has one. A
+`create_if_missing.type` other than `find.type` must not declare faces.
+
+```yaml
+webhooks:
+  policy-review:
+    find:
+      type: policy
+      face: draft
+      match: [reference]
+    then:
+      - set:
+          review_status: requested
+```
+
 ## Identity: a computed, unique property
 
 You name the source fields; **rela derives the key**. Declare the key as a

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -74,7 +75,7 @@ func resolvePageScope(
 
 	// The anchor goes through the same gated read an entity GET does, so a
 	// hidden anchor and a missing one cannot be told apart.
-	e, visible, err := a.visibleReader.getVisible(ctx, page.EntityType, anchor)
+	e, visible, err := a.visibleReader.address(ctx, page.EntityType, anchor)
 	if err != nil {
 		return nil, false, fmt.Errorf("%w: %w", errACLListQuery, err)
 	}
@@ -84,11 +85,19 @@ func resolvePageScope(
 
 	dir := tab.Scope.ResolvedDirection(page.EntityType, state.Meta)
 	q := store.RelationQuery{EntityIDs: []string{e.ID}, Type: tab.Scope.Relation, Direction: relationDirection(dir)}
-	ids = map[string]bool{}
+	var rels []*entityPkg.Relation
 	for r, lerr := range a.store.ListRelations(ctx, q) {
 		if lerr != nil {
 			return nil, false, fmt.Errorf("%w: page scope: %w", errListLoad, lerr)
 		}
+		rels = append(rels, r)
+	}
+	if !dir.IsIncoming() {
+		// Only the edges the anchor's face owns, as on the entity page.
+		rels = edgesOwnedBy(state.Meta, rels, e.Face)
+	}
+	ids = map[string]bool{}
+	for _, r := range rels {
 		if dir.IsIncoming() {
 			ids[r.From] = true
 		} else {

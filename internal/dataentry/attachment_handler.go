@@ -17,26 +17,27 @@ import (
 // It holds the full store.Store because attachment.New (the shared HTTP/CLI
 // write-policy service) requires it. The write handle is NOT the full manager:
 // this handler never calls it, only passes it to attachment.New, so it holds
-// exactly attachment's own one-method attachment.EntityPatcher (TKT-IVSJV6). The
-// swappable collaborators (acl, audit sink, field resolver, command runner) are closures over
-// App so tests that reassign app.acl / app.fieldResolver after construction
-// stay effective — same rationale as affordanceService. gateRead is App's
-// shared uniform-404 read gate (handlers_attachment and the entity read path
-// must 404 identically for hidden and nonexistent ids).
+// exactly the manager's attachment surface (entitymanager.AttachmentsOf): the
+// one write that may change a file value, and its lock (TKT-IVSJV6,
+// BUG-CTUW2N). The swappable collaborators (acl, audit sink, field resolver,
+// command runner) are closures over App so tests that reassign app.acl /
+// app.fieldResolver after construction stay effective — same rationale as
+// affordanceService. visible is the gated resolver every addressed route
+// reads through, so hidden and nonexistent faces 404 identically.
 type attachmentHandler struct {
 	schema     func() *Schema
 	store      store.Store
-	manager    attachment.EntityPatcher
 	runner     func() attachment.CommandRunner
 	reader     entityReader
+	visible    visibleReader
 	serializer entitySerializer
 	acl        func() acl.ACL
 	audit      func() audit.Audit
 	fields     func() FieldVerdictResolver
-	gateRead   func(w http.ResponseWriter, r *http.Request, typeName, entityID string) bool
-	// locker serializes writers to one (entity, property); shared with the
-	// remote MCP attachment tools through [MCPHost].
-	locker attachment.Locker
+	// owner stamps file values and serializes writers to one (entity,
+	// property). The manager's copy engine and face delete hold the same
+	// lock, and so do the remote MCP attachment tools.
+	owner attachmentOwner
 	// uploads bounds concurrent uploads; shared with the remote MCP tools.
 	uploads *attachment.Limiter
 
@@ -45,6 +46,13 @@ type attachmentHandler struct {
 	// no-op unless an unmatched verified principal hits a provision policy.
 	// See writeHandler.withProvision for the shared rationale.
 	provision func(context.Context) context.Context
+}
+
+// attachmentOwner is the manager's attachment surface the handler needs;
+// entitymanager.Attachments supplies it.
+type attachmentOwner interface {
+	attachment.Stamper
+	attachment.Locker
 }
 
 // withProvision runs the provision seam and returns the request the handler

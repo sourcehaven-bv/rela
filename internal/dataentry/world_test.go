@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,12 +15,13 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // stubWorlds is a WorldLookup over a fixed name set. The scopes are
-// non-default only in the sense that matters here — IsDefaultWorld() is
+// non-default only in the sense that matters here — IsTrivial() is
 // false — which is what the refusal and stamping logic branch on.
 type stubWorlds struct {
 	names map[string]bool
@@ -29,8 +31,13 @@ type stubWorlds struct {
 }
 
 func (s stubWorlds) Lookup(name string) (store.WorldScope, bool) {
-	if !s.names[name] {
-		return store.WorldScope{}, false
+	if declared, set := s.names[name]; name == metamodel.DefaultWorldName && !set {
+		// The generated default world of a metamodel that declares none. A
+		// fixture standing for a schema that declares worlds maps the name
+		// to false.
+		return store.TrivialScope(), true
+	} else if !declared {
+		return store.TrivialScope(), false
 	}
 	if s.resolveDefault {
 		// A world that resolves `ticket` to its DEFAULT state, so an entity
@@ -43,7 +50,7 @@ func (s stubWorlds) Lookup(name string) (store.WorldScope, bool) {
 			"ticket": {Fallback: store.FallbackDefaultState},
 		}), true
 	}
-	// A resolution for one type is enough to make IsDefaultWorld() false,
+	// A resolution for one type is enough to make IsTrivial() false,
 	// which is what every branch under test keys on. FallbackExclude is the
 	// public-world shape: an entity with no matching state contributes
 	// nothing.
@@ -103,7 +110,7 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/_relation_history/decision/DEC-1/addresses/REQ-1", false,
 			"relation history is a separate, unscoped surface — gated on BOTH " +
 				"endpoints with its own lineage rules"},
-		{"/api/sync/manifest", false, "outside the versioned API"},
+		{"/api/git/status", false, "outside the versioned API"},
 		{"/api/v1/", false, "the bare mount carries no data"},
 	}
 	for _, tc := range tests {
@@ -294,13 +301,13 @@ func TestAttachWorld_DefaultWorldIsUnaffected(t *testing.T) {
 }
 
 // TestAttachWorld_NoWorldsWiredRefuses pins that a deployment whose wiring
-// never called SetWorlds cannot acquire the parameter by accident.
+// never called setWorlds cannot acquire the parameter by accident.
 func TestAttachWorld_NoWorldsWiredRefuses(t *testing.T) {
 	t.Parallel()
-	app := &App{} // SetWorlds never called
+	app := &App{} // setWorlds never called
 	rec := serveWorldRequest(t, app, "/api/v1/tickets?world=published")
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("without SetWorlds every named world is unknown; got %d", rec.Code)
+		t.Fatalf("without setWorlds every named world is unknown; got %d", rec.Code)
 	}
 }
 
@@ -311,11 +318,11 @@ func TestAttachWorld_NoWorldsWiredRefuses(t *testing.T) {
 func TestWorldHandleIsConstructedOnce(t *testing.T) {
 	t.Parallel()
 	w := worldHandle{name: "published"}
-	if !w.isDefault() {
+	if !w.ranksNothing() {
 		t.Error("a handle carrying only a name has the zero scope and IS the " +
 			"default world — the scope is what reads resolve against")
 	}
-	if got := worldFromContext(context.Background()); !got.isDefault() {
+	if got := worldFromContext(context.Background()); !got.ranksNothing() {
 		t.Error("an unstamped context must be the default world")
 	}
 }
@@ -381,7 +388,6 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 	// these two handlers are now written — see the worldBound branches).
 	worldCapableFuncs := map[string]bool{
 		"scopedSortedEntities": true,
-		"getWorldEntity":       true,
 		"handleV1ListEntities": true,
 		"handleV1GetEntity":    true,
 		"resolveV1Includes":    true,
@@ -464,7 +470,7 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 			scanned++
 			// A reader call is acceptable only inside a function that also
 			// consults the world — i.e. it is guarded by an
-			// IsDefaultWorld()/blocksAllReads() branch, or the whole
+			// IsTrivial()/blocksAllReads() branch, or the whole
 			// endpoint is refused for a non-default world. Requiring the
 			// world to be MENTIONED is a coarse check, but it is the one
 			// that fails loudly when someone adds an unguarded read.
@@ -529,7 +535,7 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 					"a world-bound response would pair a resolved entity with "+
 					"draft relations and draft neighbors — the mixed-face bug "+
 					"that reads as correct. Guard the call on "+
-					"worldScopeFrom(ctx).IsDefaultWorld(), or refuse the route.",
+					"worldScopeFrom(ctx).IsTrivial(), or refuse the route.",
 					fn.Name.Name, name)
 			}
 			return false
@@ -763,7 +769,7 @@ func TestWorldListGetParity_ACLGatedPrincipal(t *testing.T) {
 	// the principal as the endpoint): alice owns both tickets, so both are in her
 	// read scope and the world — not the ACL — is what removes TKT-200.
 	for _, id := range []string{"TKT-100", "TKT-200"} {
-		if _, err := app.store.CreateRelation(ctx, "alice", "owned-by", id, nil); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "owned-by", To: id}, nil); err != nil {
 			t.Fatalf("seed owned-by for %s: %v", id, err)
 		}
 	}
@@ -800,7 +806,7 @@ func TestWorldListGetParity_ACLGatedPrincipal(t *testing.T) {
 
 	// GET under the same world, for each id.
 	for _, id := range []string{"TKT-100", "TKT-200"} {
-		got, found, gerr := app.visibleReader.getVisible(wctx, "ticket", id)
+		got, found, gerr := app.visibleReader.inWorld(wctx, "ticket", id)
 		if gerr != nil {
 			t.Fatalf("get %s: %v", id, gerr)
 		}
@@ -928,7 +934,7 @@ func TestWorldGrantCheckThroughTheRealRouter(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.SetWorlds(stubWorlds{
+	app.setWorlds(stubWorlds{
 		names:          map[string]bool{"published": true},
 		resolveDefault: true,
 	})
@@ -960,11 +966,33 @@ func TestWorldGrantCheckThroughTheRealRouter(t *testing.T) {
 // with `published` declared.
 func appWithDefaultWorld(t *testing.T, name string) *App {
 	t.Helper()
-	a := &App{worlds: stubWorlds{names: map[string]bool{"published": true}}}
+	names := map[string]bool{"published": true}
+	if name != "" {
+		// The schema declares worlds, so the generated one is gone.
+		names[metamodel.DefaultWorldName] = false
+	}
+	a := &App{worlds: stubWorlds{names: names}}
 	cfg := &Config{}
 	cfg.App.DefaultWorld = name
-	a.schema.Publish(&Schema{Cfg: cfg})
+	meta := &metamodel.Metamodel{}
+	if name != "" {
+		meta = withDeclaredDefaultWorld(meta, name)
+	}
+	a.schema.Publish(&Schema{Cfg: cfg, Meta: meta})
 	return a
+}
+
+// withDeclaredDefaultWorld returns a copy of meta that declares world name
+// and names it as the default world, as schema.yaml's `default_world:` does.
+func withDeclaredDefaultWorld(meta *metamodel.Metamodel, name string) *metamodel.Metamodel {
+	m := *meta
+	m.Worlds = make(map[string]metamodel.WorldDef, len(meta.Worlds)+1)
+	maps.Copy(m.Worlds, meta.Worlds)
+	if _, ok := m.Worlds[name]; !ok {
+		m.Worlds[name] = metamodel.WorldDef{}
+	}
+	m.DefaultWorld = name
+	return &m
 }
 
 // boundWorld runs a request through attachWorld and reports the handle the
@@ -1002,187 +1030,130 @@ func TestDefaultWorld_AppliesToABareRequest(t *testing.T) {
 	if got.name != "published" {
 		t.Errorf("a bare request must land in the operator's default world; got %q", got.name)
 	}
-	if got.isDefault() {
+	if got.ranksNothing() {
 		t.Error("the handle must carry the configured world's scope, not the default world's")
 	}
 }
 
-// TestDefaultWorld_ExplicitDefaultReachesRawFaces pins the escape hatch: with
-// a default configured, `?world=default` is how a caller asks for the raw
-// stored faces.
-//
-// This calls resolveWorld DIRECTLY rather than going through attachWorld,
-// because attachWorld only computes `configured` when the parameter is absent
-// — so from outside, `?world=default` and "no default configured" look
-// identical and the test would pass against the bug it is meant to catch.
-// (It did: mutating the absent-check from `len(values) == 0` to `name == ""`
-// left the middleware-level version green.)
-//
-// `len(values) == 0` vs `name == ""` is the whole point. Once a default
-// exists, "no parameter" and "the parameter names the default world" are
-// different questions with different answers.
-func TestDefaultWorld_ExplicitDefaultReachesRawFaces(t *testing.T) {
+// TestDefaultWorld_ParameterResolution pins how ?world= names a world once
+// the schema declares worlds: absent and empty both mean the default world,
+// and the generated name `default` no longer exists (BUG-4NQ2JF).
+func TestDefaultWorld_ParameterResolution(t *testing.T) {
 	t.Parallel()
-	lookup := stubWorlds{names: map[string]bool{"published": true}}
+	lookup := stubWorlds{names: map[string]bool{"published": true, "review": true, metamodel.DefaultWorldName: false}}
 	for _, tc := range []struct {
-		name   string
-		target string
-		want   string // "" means the default world
+		name    string
+		target  string
+		want    string
+		unknown bool
 	}{
-		{"absent takes the configured default", "/api/v1/tickets", "published"},
-		{"explicit default reaches raw faces", "/api/v1/tickets?world=default", ""},
-		{"explicit world still wins", "/api/v1/tickets?world=published", "published"},
-		// `?world=` PRESENT but empty is the case that makes `len(values) == 0`
-		// and `name == ""` different spellings rather than the same one. A
-		// client that builds the query string from an empty variable sent the
-		// parameter and named the default world with it; honoring the
-		// operator's default there would override an explicit request.
-		{"present but empty is explicit", "/api/v1/tickets?world=", ""},
+		{name: "absent takes the default world", target: "/api/v1/tickets", want: "published"},
+		{name: "empty takes the default world", target: "/api/v1/tickets?world=", want: "published"},
+		{name: "explicit world wins", target: "/api/v1/tickets?world=review", want: "review"},
+		{name: "generated name is unknown", target: "/api/v1/tickets?world=default", unknown: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			req := httptest.NewRequest(http.MethodGet, tc.target, http.NoBody)
+			ctx := withReadGate(context.Background(), worldGate{permit: map[string]bool{"review": true}})
+			req := httptest.NewRequest(http.MethodGet, tc.target, http.NoBody).WithContext(ctx)
 			got, err := resolveWorld(req, lookup, "published")
+			if tc.unknown {
+				if !errors.Is(err, errWorldUnknown) {
+					t.Fatalf("resolveWorld err = %v, want errWorldUnknown", err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("resolveWorld: %v", err)
 			}
 			if got.name != tc.want {
 				t.Errorf("world = %q, want %q", got.name, tc.want)
 			}
-			if got.isDefault() != (tc.want == "") {
-				t.Errorf("isDefault() = %v for world %q", got.isDefault(), got.name)
-			}
 		})
 	}
 }
 
-// TestDefaultWorld_UnconfiguredIsUnchanged pins that a deployment which sets
-// nothing behaves exactly as before.
-func TestDefaultWorld_UnconfiguredIsUnchanged(t *testing.T) {
+func TestDefaultWorld_UnconfiguredIsTheGeneratedWorld(t *testing.T) {
 	t.Parallel()
 	a := appWithDefaultWorld(t, "")
 	got, code := boundWorld(context.Background(), t, a, http.MethodGet, "/api/v1/tickets")
-	if code != http.StatusOK || !got.isDefault() {
-		t.Errorf("no configured default must leave the request in the default world; got %q (%d)",
+	if code != http.StatusOK || got.name != metamodel.DefaultWorldName {
+		t.Errorf("with no worlds declared a request must land in the generated default world; got %q (%d)",
 			got.name, code)
 	}
 }
 
-// TestDefaultWorld_DoesNotBreakNonWorldCapableRoutes is the guard against the
-// obvious way to implement this wrong.
-//
-// `worldCapablePath` is a deny-by-default allowlist: most routes refuse a
-// non-default world with a 422. Blanket-applying the configured default would
-// therefore turn every bare request to relations/attachments/exports/sync into
-// a 422 the moment an operator set `app.default_world` — breaking the
-// deployment wholesale rather than fixing the cliff it was set to fix.
-//
-// This also mirrors the SPA, which attaches `worldParam` at specific call
-// sites rather than to every fetch.
-func TestDefaultWorld_DoesNotBreakNonWorldCapableRoutes(t *testing.T) {
+// TestDefaultWorld_BindsEveryRoute pins that every API request, read or
+// write, world-capable or not, binds the default world when it names none.
+func TestDefaultWorld_BindsEveryRoute(t *testing.T) {
 	t.Parallel()
 	a := appWithDefaultWorld(t, "published")
-	for _, path := range []string{
-		"/api/v1/tickets/TKT-1/relations",
-		"/api/v1/_analyze",
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/tickets/TKT-1/relations"},
+		{http.MethodGet, "/api/v1/_analyze"},
+		{http.MethodPatch, "/api/v1/tickets"},
+		{http.MethodPost, "/api/v1/tickets"},
+		{http.MethodDelete, "/api/v1/tickets"},
 	} {
-		got, code := boundWorld(context.Background(), t, a, http.MethodGet, path)
-		if code != http.StatusOK {
-			t.Errorf("%s: a bare request must not become an error merely because a "+
-				"default world is configured; got %d", path, code)
-		}
-		if !got.isDefault() {
-			t.Errorf("%s: a route that cannot serve a non-default world must stay in "+
-				"the default world; got %q", path, got.name)
+		got, code := boundWorld(context.Background(), t, a, tc.method, tc.path)
+		if code != http.StatusOK || got.name != "published" {
+			t.Errorf("%s %s: got %q (%d), want the default world", tc.method, tc.path, got.name, code)
 		}
 	}
 }
 
-// TestDefaultWorld_ExplicitStillRefusedOnUnsupportedRoute pins the asymmetry
-// the test above depends on: a caller who NAMED a world the route cannot serve
-// is still told so. Only the caller who named nothing is quietly left in the
-// default world.
-func TestDefaultWorld_ExplicitStillRefusedOnUnsupportedRoute(t *testing.T) {
+// TestDefaultWorld_NonCapableRouteAcceptsOnlyTheDefaultName pins that a
+// route that cannot serve a world accepts the default world's name and
+// refuses every other.
+func TestDefaultWorld_NonCapableRouteAcceptsOnlyTheDefaultName(t *testing.T) {
 	t.Parallel()
 	a := appWithDefaultWorld(t, "published")
-	_, code := boundWorld(context.Background(), t, a, http.MethodGet,
-		"/api/v1/tickets/TKT-1/relations?world=published")
-	if code != http.StatusUnprocessableEntity {
-		t.Errorf("an explicit ?world= on a route that cannot serve it must still "+
-			"refuse; got %d", code)
-	}
-}
-
-// TestDefaultWorld_DoesNotBreakWrites pins that a browsing default stays
-// read-side. Applying it to a PATCH would trip the world_read_only refusal and
-// make `app.default_world` break every write on the deployment.
-func TestDefaultWorld_DoesNotBreakWrites(t *testing.T) {
-	t.Parallel()
-	a := appWithDefaultWorld(t, "published")
-	for _, method := range []string{http.MethodPatch, http.MethodPost, http.MethodDelete} {
-		got, code := boundWorld(context.Background(), t, a, method, "/api/v1/tickets")
-		if code != http.StatusOK {
-			t.Errorf("%s: a bare write must not be refused because a default world is "+
-				"configured; got %d", method, code)
-		}
-		if !got.isDefault() {
-			t.Errorf("%s: a write must address a face by id, never ride a world; got %q",
-				method, got.name)
+	a.worlds = stubWorlds{names: map[string]bool{
+		"published": true, "review": true, metamodel.DefaultWorldName: false,
+	}}
+	for world, want := range map[string]int{
+		"published": http.StatusOK,
+		"review":    http.StatusUnprocessableEntity,
+	} {
+		_, code := boundWorld(context.Background(), t, a, http.MethodGet,
+			"/api/v1/tickets/TKT-1/relations?world="+world)
+		if code != want {
+			t.Errorf("?world=%s on a non-world-capable route: got %d, want %d", world, code, want)
 		}
 	}
 }
 
-// TestDefaultWorld_GrantIsRecheckedAndDenialIsEmpty is the security-relevant
-// half of applying the operator's default server-side.
-//
-// `app.default_world` is presentation, not policy: it changes which face a
-// bare URL resolves to and grants nothing. So the per-world read grant must be
-// checked for a defaulted world exactly as for an explicit `?world=` — the
-// pre-change code returned before ever reaching PermitsWorld, and keeping that
-// early return while sourcing the name from config would have turned the
-// browsing default into a way to read a world the principal was denied.
-//
-// A denial must also render as the ORDINARY empty result, never a 403 and
-// never a silent fall back to the default world: what a world CONTAINS is the
-// secret this feature keeps, and falling back would serve the raw faces to
-// someone the operator pointed at `published`.
-func TestDefaultWorld_GrantIsRecheckedAndDenialIsEmpty(t *testing.T) {
+// TestDefaultWorld_NeedsNoWorldGrant pins D2: the default world is readable
+// with any read grant, so a gate that grants no world still lands there, and
+// a gate failure cannot make it unreadable.
+func TestDefaultWorld_NeedsNoWorldGrant(t *testing.T) {
 	t.Parallel()
 	a := appWithDefaultWorld(t, "published")
+	ctx := withReadGate(context.Background(), worldGate{permit: map[string]bool{}})
+	got, code := boundWorld(ctx, t, a, http.MethodGet, "/api/v1/tickets")
+	if code != http.StatusOK || got.name != "published" || got.blocksAllReads() {
+		t.Errorf("the default world must resolve without a world grant; got %q denied=%v (%d)",
+			got.name, got.blocksAllReads(), code)
+	}
+}
 
-	t.Run("granted", func(t *testing.T) {
-		t.Parallel()
-		ctx := withReadGate(context.Background(),
-			worldGate{permit: map[string]bool{"published": true}})
-		got, code := boundWorld(ctx, t, a, http.MethodGet, "/api/v1/tickets")
-		if code != http.StatusOK || got.name != "published" || got.blocksAllReads() {
-			t.Errorf("a granted default world must resolve normally; got %q denied=%v (%d)",
-				got.name, got.blocksAllReads(), code)
-		}
-	})
-
-	t.Run("denied", func(t *testing.T) {
-		t.Parallel()
-		ctx := withReadGate(context.Background(),
-			worldGate{permit: map[string]bool{}}) // published denied
-		got, code := boundWorld(ctx, t, a, http.MethodGet, "/api/v1/tickets")
-		if code == http.StatusForbidden {
-			t.Fatal("a denied world must not answer 403: that confirms a world exists " +
-				"holding things the caller may not see")
-		}
-		if !got.blocksAllReads() {
-			t.Errorf("a denied default world must block all reads; got %q denied=%v",
-				got.name, got.blocksAllReads())
-		}
-		if got.isDefault() {
-			t.Error("a denied world must NOT fall back to the default world — that would " +
-				"serve the raw faces to a caller the operator pointed at `published`")
-		}
-		if got.name != "published" {
-			t.Errorf("the denied handle must name the world that was actually resolved, "+
-				"not the empty query parameter; got %q", got.name)
-		}
-	})
+// TestDefaultWorld_OtherWorldDenialIsEmpty pins that a denied non-default
+// world blocks every read rather than answering 403 or falling back.
+func TestDefaultWorld_OtherWorldDenialIsEmpty(t *testing.T) {
+	t.Parallel()
+	a := appWithDefaultWorld(t, "published")
+	a.worlds = stubWorlds{names: map[string]bool{
+		"published": true, "review": true, metamodel.DefaultWorldName: false,
+	}}
+	ctx := withReadGate(context.Background(), worldGate{permit: map[string]bool{}})
+	got, code := boundWorld(ctx, t, a, http.MethodGet, "/api/v1/tickets?world=review")
+	if code == http.StatusForbidden {
+		t.Fatal("a denied world must not answer 403")
+	}
+	if !got.blocksAllReads() || got.name != "review" {
+		t.Errorf("a denied world must block all reads under its own name; got %q denied=%v",
+			got.name, got.blocksAllReads())
+	}
 }
 
 // --- BUG-CV8L3B: a denied world must not outrun the route allowlist ------
@@ -1207,7 +1178,7 @@ func appForWorldGrant(t *testing.T, granted bool) *App {
 		Roles:       map[string]acl.RoleDef{"viewer": role},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.SetWorlds(stubWorlds{
+	app.setWorlds(stubWorlds{
 		names:          map[string]bool{"published": true},
 		resolveDefault: true,
 	})
@@ -1302,20 +1273,9 @@ func TestAttachWorld_DeniedWorldStillReachesCapableRoutes(t *testing.T) {
 	}
 }
 
-// TestRefuseWorldIncapablePath_EmptyWorldIsTheDefaultWorld pins the one
-// spelling of the default world that [TestAttachWorld_DefaultWorldIsUnaffected]
-// does not cover: an EXPLICIT but empty `?world=` on a route the allowlist
-// refuses.
-//
-// It looks like a dead branch and is not. `?world=` makes `explicit` true, so
-// the request survives attachWorld's `!explicit && configured == ""` early
-// return and reaches the refusal with `requested == ""` — which
-// [resolveWorld] treats as the default world. Without the empty check,
-// `?world=` would 422 a request that means "the world I already had", and a
-// client appending an unset parameter would break every refused route.
-//
-// The sibling spelling `?world=default` is already covered on
-// `/tickets/TKT-1/relations` by that test; this is the gap beside it.
+// TestRefuseWorldIncapablePath_EmptyWorldIsTheDefaultWorld pins that an
+// empty `?world=` on a route that cannot serve a world is not refused: it
+// names the default world, which every route serves.
 func TestRefuseWorldIncapablePath_EmptyWorldIsTheDefaultWorld(t *testing.T) {
 	t.Parallel()
 	app := &App{worlds: stubWorlds{names: map[string]bool{"published": true}}}

@@ -236,7 +236,7 @@ func (r *Request) AccessRoutes(
 //
 // Create is intentionally computed with the concrete entityID, same as
 // every other write verb — NOT globals-only. This mirrors the production
-// create path: entitymanager.ApplyEntity authorizes create with
+// create path: entitymanager.RecreateEntity authorizes create with
 // EntitySubject{ID: e.ID} (the new entity's id, which exists at authz
 // time), so authorizeEntityWrite takes its `s.ID != ""` branch and folds
 // in local-role-via-edge / via-ancestor routes. Collapsing create to

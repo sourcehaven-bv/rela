@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // permGate is a readGate that grants a configurable SET of named permissions
@@ -27,12 +28,12 @@ type permGate struct {
 
 func (g permGate) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
 
-func (g permGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g permGate) permitsReadMany(_ context.Context, _ string, ids []string) map[string]bool {
 	m := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		m[id] = true
 	}
-	return m, nil
+	return m
 }
 
 func (g permGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
@@ -118,7 +119,7 @@ func TestHistoryRedaction_SubjectConditional_FailsClosed(t *testing.T) {
 	})
 	// Live edge present → the grant passes on a LIVE read.
 	if _, err := app.store.CreateRelation(context.Background(),
-		"TKT-001", "depends_on", "TKT-002", nil); err != nil {
+		entity.RelationKey{From: "TKT-001", Type: "depends_on", To: "TKT-002"}, nil); err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
 	app.versions = historyStore{
@@ -176,7 +177,7 @@ role_relations:
 	})
 	// Live edge alice --owns--> TKT-001 confers `owner` on alice for this entity.
 	if _, err := app.store.CreateRelation(context.Background(),
-		"alice", "owns", "TKT-001", nil); err != nil {
+		entity.RelationKey{From: "alice", Type: "owns", To: "TKT-001"}, nil); err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
 	app.versions = historyStore{
@@ -404,4 +405,8 @@ func TestHistoryReveal_NoACL_NotAudited(t *testing.T) {
 		t.Errorf("no-ACL history read must not be recorded as a reveal (nothing is redacted, "+
 			"so nothing is revealed), got %d: %+v", len(recs), recs)
 	}
+}
+
+func (g permGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids), nil)
 }

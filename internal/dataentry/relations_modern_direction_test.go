@@ -69,8 +69,7 @@ func seedDirectionFixture(t *testing.T, app *App) (sourceID, targetID string) {
 	seedEntity(app, &entity.Entity{ID: targetID, Type: "feature", Properties: map[string]any{"title": "target"}})
 	if _, err := app.store.CreateRelation(
 		context.Background(),
-		sourceID, "blocks", targetID,
-		&store.RelationData{Properties: map[string]any{"reason": "test block"}},
+		entity.RelationKey{From: sourceID, Type: "blocks", To: targetID}, &store.RelationData{Properties: map[string]any{"reason": "test block"}},
 	); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

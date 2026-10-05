@@ -247,7 +247,7 @@ func (q *queryService) runVisibleFreeTextSearch(
 	// coherent set of currently-existing entities.
 	out := make([]*entity.Entity, 0, len(hits))
 	for _, hit := range hits {
-		if e, ok := loaded[rowKey{hit.ID, hit.Face}]; ok {
+		if e, ok := loaded[entity.Ref{ID: hit.ID, Face: hit.Face}]; ok {
 			out = append(out, e)
 		}
 	}
@@ -349,30 +349,27 @@ func (q *queryService) matchesPropertyFilters(e *entity.Entity, filters []*filte
 
 // loadHitHeaders reads the content-free rows the hits name, grouped by
 // face: default-face hits in one IDs query, each other face in one
-// AllStates query narrowed to that face on the way out. Returns only rows
+// AtFaces query at that face on the way out. Returns only rows
 // that exist, as content-free entities (see rowcontent.go).
-func loadHitHeaders(ctx context.Context, st store.Store, hits []search.Hit) (map[rowKey]*entity.Entity, error) {
+func loadHitHeaders(ctx context.Context, st store.Store, hits []search.Hit) (map[entity.Ref]*entity.Entity, error) {
 	byFace := make(map[entity.Face][]string)
-	seen := make(map[rowKey]struct{}, len(hits))
+	seen := make(map[entity.Ref]struct{}, len(hits))
 	for _, h := range hits {
-		k := rowKey{h.ID, h.Face}
+		k := entity.Ref{ID: h.ID, Face: h.Face}
 		if _, dup := seen[k]; dup {
 			continue
 		}
 		seen[k] = struct{}{}
 		byFace[h.Face] = append(byFace[h.Face], h.ID)
 	}
-	out := make(map[rowKey]*entity.Entity, len(seen))
+	out := make(map[entity.Ref]*entity.Entity, len(seen))
 	for face, ids := range byFace {
-		q := store.EntityQuery{IDs: ids, AllStates: !face.IsDefault()}
+		q := store.EntityQuery{IDs: ids, Faces: store.AtFaces(face)}
 		for h, err := range store.ListEntityHeaders(ctx, st, q) {
 			if err != nil {
 				return nil, err
 			}
-			if h.Face != face {
-				continue // AllStates over-returns the family's other faces
-			}
-			out[rowKey{h.ID, h.Face}] = headerEntity(h)
+			out[entity.Ref{ID: h.ID, Face: h.Face}] = headerEntity(h)
 		}
 	}
 	return out, nil

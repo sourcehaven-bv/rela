@@ -49,11 +49,9 @@ func (p *faceMoveProbe) CreateEntity(ctx context.Context, e *entity.Entity) erro
 	return p.Store.CreateEntity(ctx, e)
 }
 
-func (p *faceMoveProbe) DeleteEntityState(
-	ctx context.Context, id string, f entity.Face,
-) (*store.DeleteResult, error) {
+func (p *faceMoveProbe) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
 	p.note()
-	return p.Store.DeleteEntityState(ctx, id, f)
+	return p.Store.DeleteFace(ctx, ref)
 }
 
 func (p *faceMoveProbe) note() {
@@ -95,7 +93,7 @@ func TestRenameFace_MovesRunInsideATransaction(t *testing.T) {
 	ctx := t.Context()
 	// Put the tasks on a named face so there is something to rename.
 	for _, id := range []string{"TSK-1", "TSK-2", "TSK-3"} {
-		e, err := st.GetEntity(ctx, id)
+		e, err := st.GetEntity(ctx, entity.Ref{ID: id})
 		if err != nil {
 			t.Fatalf("seed read %s: %v", id, err)
 		}
@@ -109,8 +107,8 @@ func TestRenameFace_MovesRunInsideATransaction(t *testing.T) {
 	probe := &faceMoveProbe{Store: st}
 	r := newTestRunner(t, Deps{Store: probe, State: newFakeKV(), Audit: audit.NewMemory()})
 	f := mustParse(t, "20260919143022-rename.yaml", mustFileYAML(t,
-		facedMeta("nl", "nl-BE"), facedMeta("nl-BE"),
-		"  - rename_face: {entity: task, from: nl, to: nl-BE}\n"))
+		facedMeta("nl", "nl-be"), facedMeta("nl-be"),
+		"  - rename_face: {entity: task, from: nl, to: nl-be}\n"))
 
 	if _, err := r.Run(ctx, []*File{f}, true); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -125,7 +123,7 @@ func TestRenameFace_MovesRunInsideATransaction(t *testing.T) {
 
 // A move must carry the row's OUTGOING edges to the new face.
 //
-// Deleting a face takes its outgoing edges with it (the DeleteEntityState
+// Deleting a face takes its outgoing edges with it (the DeleteFace
 // contract: they were written against that face and nothing else can own
 // them), and the create at the destination copies content, not edges. Before
 // this was handled, adopting faces on a populated type silently destroyed

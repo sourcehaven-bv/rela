@@ -27,7 +27,7 @@ func TestListRelationLifetimes_ReusedKeyEnumeratesAll(t *testing.T) {
 	vs := s.VersionStore()
 
 	// gen1: create + delete, then remove the live row.
-	_, err = s.CreateRelation(ctx, "A", "blocks", "X", &store.RelationData{Content: "gen1"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "blocks", To: "X"}, &store.RelationData{Content: "gen1"})
 	require.NoError(t, err)
 	rid1 := relRecordID(ctx, t, pool, "A", "blocks", "X")
 	c1 := newRelVersionInput(rid1, "A", "blocks", "X", "gen1")
@@ -36,10 +36,10 @@ func TestListRelationLifetimes_ReusedKeyEnumeratesAll(t *testing.T) {
 	d1 := newRelVersionInput(rid1, "A", "blocks", "X", "gen1")
 	d1.Op = store.VersionOpDelete
 	require.NoError(t, vs.WriteRelationVersion(ctx, d1))
-	require.NoError(t, s.DeleteRelation(ctx, "A", "blocks", "X"))
+	require.NoError(t, s.DeleteRelation(ctx, entity.RelationKey{From: "A", Type: "blocks", To: "X"}))
 
 	// gen2: recreate the same triple (fresh rel_record_id), create + delete.
-	_, err = s.CreateRelation(ctx, "A", "blocks", "X", &store.RelationData{Content: "gen2"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "blocks", To: "X"}, &store.RelationData{Content: "gen2"})
 	require.NoError(t, err)
 	rid2 := relRecordID(ctx, t, pool, "A", "blocks", "X")
 	require.NotEqual(t, rid1, rid2)
@@ -49,10 +49,10 @@ func TestListRelationLifetimes_ReusedKeyEnumeratesAll(t *testing.T) {
 	d2 := newRelVersionInput(rid2, "A", "blocks", "X", "gen2")
 	d2.Op = store.VersionOpDelete
 	require.NoError(t, vs.WriteRelationVersion(ctx, d2))
-	require.NoError(t, s.DeleteRelation(ctx, "A", "blocks", "X"))
+	require.NoError(t, s.DeleteRelation(ctx, entity.RelationKey{From: "A", Type: "blocks", To: "X"}))
 
 	// Enumerate: two lifetimes, newest-first, distinct record ids, neither live.
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "A", entity.Face(""), "blocks", "X")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, entity.RelationKey{From: "A", FromFace: entity.Face(""), Type: "blocks", To: "X"})
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 2, "both lifetimes of the reused key are enumerated")
 	require.Equal(t, 1, lifetimes[0].Lifetime)
@@ -66,19 +66,19 @@ func TestListRelationLifetimes_ReusedKeyEnumeratesAll(t *testing.T) {
 
 	// Newest (RecordID 0) reads gen2; the OLDER lifetime is now reachable by
 	// RecordID — the regression this ticket fixes (it was orphaned before).
-	newest, err := vs.ListRelationVersions(ctx, store.RelationHistoryQuery{From: "A", Type: "blocks", To: "X"})
+	newest, err := vs.ListRelationVersions(ctx, store.RelationHistoryQuery{Key: entity.RelationKey{From: "A", Type: "blocks", To: "X"}})
 	require.NoError(t, err)
 	require.Len(t, newest, 2)
-	snapNew, err := vs.GetRelationVersion(ctx, store.RelationHistoryQuery{From: "A", Type: "blocks", To: "X"}, 1)
+	snapNew, err := vs.GetRelationVersion(ctx, store.RelationHistoryQuery{Key: entity.RelationKey{From: "A", Type: "blocks", To: "X"}}, 1)
 	require.NoError(t, err)
 	require.Equal(t, "gen2", snapNew.Content)
 
 	old, err := vs.ListRelationVersions(ctx,
-		store.RelationHistoryQuery{From: "A", Type: "blocks", To: "X", RecordID: rid1})
+		store.RelationHistoryQuery{Key: entity.RelationKey{From: "A", Type: "blocks", To: "X"}, RecordID: rid1})
 	require.NoError(t, err)
 	require.Len(t, old, 2, "gen1 lifetime reachable via its RecordID")
 	snapOld, err := vs.GetRelationVersion(ctx,
-		store.RelationHistoryQuery{From: "A", Type: "blocks", To: "X", RecordID: rid1}, 1)
+		store.RelationHistoryQuery{Key: entity.RelationKey{From: "A", Type: "blocks", To: "X"}, RecordID: rid1}, 1)
 	require.NoError(t, err)
 	require.Equal(t, "gen1", snapOld.Content, "older lifetime's content is no longer orphaned")
 }
@@ -93,14 +93,14 @@ func TestListRelationLifetimes_LiveKeyOneLifetime(t *testing.T) {
 	ctx := context.Background()
 	vs := s.VersionStore()
 
-	_, err = s.CreateRelation(ctx, "L", "links", "M", &store.RelationData{Content: "v1"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "L", Type: "links", To: "M"}, &store.RelationData{Content: "v1"})
 	require.NoError(t, err)
 	rid := relRecordID(ctx, t, pool, "L", "links", "M")
 	c := newRelVersionInput(rid, "L", "links", "M", "v1")
 	c.Op = store.VersionOpCreate
 	require.NoError(t, vs.WriteRelationVersion(ctx, c))
 
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "L", entity.Face(""), "links", "M")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, entity.RelationKey{From: "L", FromFace: entity.Face(""), Type: "links", To: "M"})
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 1)
 	require.True(t, lifetimes[0].Live, "the single lifetime is the live relation")
@@ -116,7 +116,7 @@ func TestListRelationLifetimes_UnknownKeyEmpty(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 
-	lifetimes, err := s.VersionStore().ListRelationLifetimes(ctx, "NO", entity.Face(""), "such", "KEY")
+	lifetimes, err := s.VersionStore().ListRelationLifetimes(ctx, entity.RelationKey{From: "NO", FromFace: entity.Face(""), Type: "such", To: "KEY"})
 	require.NoError(t, err)
 	require.Empty(t, lifetimes)
 }
@@ -133,7 +133,7 @@ func TestRelationHistoryQuery_RecordIDMustBelongToKey(t *testing.T) {
 	vs := s.VersionStore()
 
 	// Key ONE with a lineage.
-	_, err = s.CreateRelation(ctx, "ONE-A", "links", "ONE-B", &store.RelationData{Content: "x"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "ONE-A", Type: "links", To: "ONE-B"}, &store.RelationData{Content: "x"})
 	require.NoError(t, err)
 	ridOne := relRecordID(ctx, t, pool, "ONE-A", "links", "ONE-B")
 	c := newRelVersionInput(ridOne, "ONE-A", "links", "ONE-B", "x")
@@ -141,7 +141,7 @@ func TestRelationHistoryQuery_RecordIDMustBelongToKey(t *testing.T) {
 	require.NoError(t, vs.WriteRelationVersion(ctx, c))
 
 	// Unrelated key TWO.
-	_, err = s.CreateRelation(ctx, "TWO-A", "links", "TWO-B", &store.RelationData{Content: "y"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "TWO-A", Type: "links", To: "TWO-B"}, &store.RelationData{Content: "y"})
 	require.NoError(t, err)
 	ridTwo := relRecordID(ctx, t, pool, "TWO-A", "links", "TWO-B")
 	c2 := newRelVersionInput(ridTwo, "TWO-A", "links", "TWO-B", "y")
@@ -150,12 +150,12 @@ func TestRelationHistoryQuery_RecordIDMustBelongToKey(t *testing.T) {
 
 	// Asking for key ONE but with key TWO's rel_record_id → ErrNotFound.
 	_, err = vs.ListRelationVersions(ctx,
-		store.RelationHistoryQuery{From: "ONE-A", Type: "links", To: "ONE-B", RecordID: ridTwo})
+		store.RelationHistoryQuery{Key: entity.RelationKey{From: "ONE-A", Type: "links", To: "ONE-B"}, RecordID: ridTwo})
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	// The valid own RecordID resolves fine.
 	metas, err := vs.ListRelationVersions(ctx,
-		store.RelationHistoryQuery{From: "ONE-A", Type: "links", To: "ONE-B", RecordID: ridOne})
+		store.RelationHistoryQuery{Key: entity.RelationKey{From: "ONE-A", Type: "links", To: "ONE-B"}, RecordID: ridOne})
 	require.NoError(t, err)
 	require.Len(t, metas, 1)
 }
@@ -174,15 +174,15 @@ func TestListRelationLifetimes_DeleteOnlyLineage(t *testing.T) {
 
 	// Create the row, capture ONLY a delete version (no create), delete the row —
 	// modeling a relation created and deleted inside one sweep-idle window.
-	_, err = s.CreateRelation(ctx, "SL-A", "links", "SL-B", &store.RelationData{Content: "brief"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "SL-A", Type: "links", To: "SL-B"}, &store.RelationData{Content: "brief"})
 	require.NoError(t, err)
 	rid := relRecordID(ctx, t, pool, "SL-A", "links", "SL-B")
 	d := newRelVersionInput(rid, "SL-A", "links", "SL-B", "brief")
 	d.Op = store.VersionOpDelete
 	require.NoError(t, vs.WriteRelationVersion(ctx, d))
-	require.NoError(t, s.DeleteRelation(ctx, "SL-A", "links", "SL-B"))
+	require.NoError(t, s.DeleteRelation(ctx, entity.RelationKey{From: "SL-A", Type: "links", To: "SL-B"}))
 
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "SL-A", entity.Face(""), "links", "SL-B")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, entity.RelationKey{From: "SL-A", FromFace: entity.Face(""), Type: "links", To: "SL-B"})
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 1, "a delete-only lineage is still a lifetime")
 	require.Equal(t, 1, lifetimes[0].VersionCount)
@@ -199,7 +199,7 @@ func seedTwoDeletedLifetimes(
 	vs := s.VersionStore()
 	rids := []*int64{&rid1, &rid2}
 	for i, content := range []string{"gen1", "gen2"} {
-		_, err := s.CreateRelation(ctx, from, relType, to, &store.RelationData{Content: content})
+		_, err := s.CreateRelation(ctx, entity.RelationKey{From: from, Type: relType, To: to}, &store.RelationData{Content: content})
 		require.NoError(t, err)
 		*rids[i] = relRecordID(ctx, t, pool, from, relType, to)
 		c := newRelVersionInput(*rids[i], from, relType, to, content)
@@ -208,7 +208,7 @@ func seedTwoDeletedLifetimes(
 		d := newRelVersionInput(*rids[i], from, relType, to, content)
 		d.Op = store.VersionOpDelete
 		require.NoError(t, vs.WriteRelationVersion(ctx, d))
-		require.NoError(t, s.DeleteRelation(ctx, from, relType, to))
+		require.NoError(t, s.DeleteRelation(ctx, entity.RelationKey{From: from, Type: relType, To: to}))
 	}
 	return rid1, rid2
 }
@@ -227,9 +227,8 @@ func TestPurgeRelationVersions_MultiLifetimeRefusedWithoutSelector(t *testing.T)
 	seedTwoDeletedLifetimes(ctx, t, s, pool, "P-A", "blocks", "P-B")
 
 	res, err := vs.PurgeRelationVersions(ctx, store.RelationVersionPurgeRequest{
-		From: "P-A", Type: "blocks", To: "P-B",
-		Selector: store.PurgeSelector{All: true}, // purge-all within a lifetime, but no LIFETIME chosen
-		Reason:   "gdpr", PrincipalUser: "op",
+		Key: entity.RelationKey{From: "P-A", Type: "blocks", To: "P-B"}, Selector: store.PurgeSelector{All: true}, // purge-all within a lifetime, but no LIFETIME chosen
+		Reason: "gdpr", PrincipalUser: "op",
 	})
 	require.NoError(t, err)
 	require.True(t, res.MultiLifetimeRefused, "reused key without a lifetime selector is refused")
@@ -237,7 +236,7 @@ func TestPurgeRelationVersions_MultiLifetimeRefusedWithoutSelector(t *testing.T)
 	require.Zero(t, res.Purged, "nothing erased on refusal")
 
 	// Both lifetimes intact.
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "P-A", entity.Face(""), "blocks", "P-B")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, entity.RelationKey{From: "P-A", FromFace: entity.Face(""), Type: "blocks", To: "P-B"})
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 2)
 }
@@ -256,8 +255,7 @@ func TestPurgeRelationVersions_LifetimePurgesOnlyThatLineage(t *testing.T) {
 
 	// Purge only the OLDER lifetime (rid1).
 	res, err := vs.PurgeRelationVersions(ctx, store.RelationVersionPurgeRequest{
-		From: "Q-A", Type: "blocks", To: "Q-B",
-		Selector: store.PurgeSelector{All: true},
+		Key: entity.RelationKey{From: "Q-A", Type: "blocks", To: "Q-B"}, Selector: store.PurgeSelector{All: true},
 		RecordID: rid1,
 		Reason:   "gdpr", PrincipalUser: "op",
 	})
@@ -266,7 +264,7 @@ func TestPurgeRelationVersions_LifetimePurgesOnlyThatLineage(t *testing.T) {
 	require.Positive(t, res.Purged, "the selected lifetime's rows are purged")
 
 	// The newer lifetime (rid2) survives; only one lifetime remains.
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "Q-A", entity.Face(""), "blocks", "Q-B")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, entity.RelationKey{From: "Q-A", FromFace: entity.Face(""), Type: "blocks", To: "Q-B"})
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 1)
 	require.Equal(t, rid2, lifetimes[0].RecordID, "the un-purged (newer) lifetime remains")
@@ -285,8 +283,7 @@ func TestPurgeRelationVersions_AllLifetimesErasesEverything(t *testing.T) {
 	seedTwoDeletedLifetimes(ctx, t, s, pool, "R-A", "blocks", "R-B")
 
 	res, err := vs.PurgeRelationVersions(ctx, store.RelationVersionPurgeRequest{
-		From: "R-A", Type: "blocks", To: "R-B",
-		Selector:     store.PurgeSelector{All: true},
+		Key: entity.RelationKey{From: "R-A", Type: "blocks", To: "R-B"}, Selector: store.PurgeSelector{All: true},
 		AllLifetimes: true,
 		Reason:       "gdpr", PrincipalUser: "op",
 	})
@@ -294,7 +291,7 @@ func TestPurgeRelationVersions_AllLifetimesErasesEverything(t *testing.T) {
 	require.False(t, res.MultiLifetimeRefused)
 	require.Equal(t, 4, res.Purged, "both lifetimes' create+delete rows (2×2) erased")
 
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "R-A", entity.Face(""), "blocks", "R-B")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, entity.RelationKey{From: "R-A", FromFace: entity.Face(""), Type: "blocks", To: "R-B"})
 	require.NoError(t, err)
 	require.Empty(t, lifetimes, "no lifetimes remain after --all-lifetimes")
 }
@@ -310,7 +307,7 @@ func TestPurgeRelationVersions_SingleLifetimeNoSelector(t *testing.T) {
 	vs := s.VersionStore()
 
 	// One deleted lifetime.
-	_, err = s.CreateRelation(ctx, "S-A", "blocks", "S-B", &store.RelationData{Content: "only"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "S-A", Type: "blocks", To: "S-B"}, &store.RelationData{Content: "only"})
 	require.NoError(t, err)
 	rid := relRecordID(ctx, t, pool, "S-A", "blocks", "S-B")
 	c := newRelVersionInput(rid, "S-A", "blocks", "S-B", "only")
@@ -319,12 +316,11 @@ func TestPurgeRelationVersions_SingleLifetimeNoSelector(t *testing.T) {
 	d := newRelVersionInput(rid, "S-A", "blocks", "S-B", "only")
 	d.Op = store.VersionOpDelete
 	require.NoError(t, vs.WriteRelationVersion(ctx, d))
-	require.NoError(t, s.DeleteRelation(ctx, "S-A", "blocks", "S-B"))
+	require.NoError(t, s.DeleteRelation(ctx, entity.RelationKey{From: "S-A", Type: "blocks", To: "S-B"}))
 
 	res, err := vs.PurgeRelationVersions(ctx, store.RelationVersionPurgeRequest{
-		From: "S-A", Type: "blocks", To: "S-B",
-		Selector: store.PurgeSelector{All: true},
-		Reason:   "gdpr", PrincipalUser: "op",
+		Key: entity.RelationKey{From: "S-A", Type: "blocks", To: "S-B"}, Selector: store.PurgeSelector{All: true},
+		Reason: "gdpr", PrincipalUser: "op",
 	})
 	require.NoError(t, err)
 	require.False(t, res.MultiLifetimeRefused, "single-lifetime key is not refused")
@@ -344,7 +340,7 @@ func TestListRelationLifetimes_RenamedAwayNotListedUnderOldKey(t *testing.T) {
 
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("RA", "")))
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("RX", "")))
-	_, err = s.CreateRelation(ctx, "RA", "links", "RX", &store.RelationData{Content: "v1"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "RA", Type: "links", To: "RX"}, &store.RelationData{Content: "v1"})
 	require.NoError(t, err)
 	rid := relRecordID(ctx, t, pool, "RA", "links", "RX")
 	c := newRelVersionInput(rid, "RA", "links", "RX", "v1")
@@ -352,7 +348,7 @@ func TestListRelationLifetimes_RenamedAwayNotListedUnderOldKey(t *testing.T) {
 	require.NoError(t, vs.WriteRelationVersion(ctx, c))
 
 	// Rename RA->RA2 (atomic): the lineage's final row now carries (RA2,links,RX).
-	_, err = s.RenameEntity(ctx, "RA", "RA2")
+	_, err = s.RenameFamily(ctx, "RA", "RA2")
 	require.NoError(t, err)
 	ren := newRelVersionInput(0, "RA2", "links", "RX", "v1")
 	ren.Op = store.VersionOpRename
@@ -361,12 +357,12 @@ func TestListRelationLifetimes_RenamedAwayNotListedUnderOldKey(t *testing.T) {
 	require.NoError(t, vs.WriteRelationVersion(ctx, ren))
 
 	// The OLD key has NO lifetime (the lineage was renamed away from it)...
-	oldLifetimes, err := vs.ListRelationLifetimes(ctx, "RA", entity.Face(""), "links", "RX")
+	oldLifetimes, err := vs.ListRelationLifetimes(ctx, entity.RelationKey{From: "RA", FromFace: entity.Face(""), Type: "links", To: "RX"})
 	require.NoError(t, err)
 	require.Empty(t, oldLifetimes, "renamed-away lineage is not a lifetime of the old key")
 
 	// ...and the NEW key has exactly one (live) lifetime carrying the whole history.
-	newLifetimes, err := vs.ListRelationLifetimes(ctx, "RA2", entity.Face(""), "links", "RX")
+	newLifetimes, err := vs.ListRelationLifetimes(ctx, entity.RelationKey{From: "RA2", FromFace: entity.Face(""), Type: "links", To: "RX"})
 	require.NoError(t, err)
 	require.Len(t, newLifetimes, 1)
 	require.True(t, newLifetimes[0].Live)
@@ -390,17 +386,17 @@ func TestListRelationLifetimes_ForkedRenameStitchesToOneLifetime(t *testing.T) {
 
 	// Old lineage on (FA,links,FX): create then delete (the decomposition's delete
 	// of the old triple). Model with an explicit rel_record_id we control.
-	_, err = s.CreateRelation(ctx, "FA", "links", "FX", &store.RelationData{Content: "v1"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "FA", Type: "links", To: "FX"}, &store.RelationData{Content: "v1"})
 	require.NoError(t, err)
 	oldRID := relRecordID(ctx, t, pool, "FA", "links", "FX")
 	c1 := newRelVersionInput(oldRID, "FA", "links", "FX", "v1")
 	c1.Op = store.VersionOpCreate
 	require.NoError(t, vs.WriteRelationVersion(ctx, c1))
-	require.NoError(t, s.DeleteRelation(ctx, "FA", "links", "FX"))
+	require.NoError(t, s.DeleteRelation(ctx, entity.RelationKey{From: "FA", Type: "links", To: "FX"}))
 
 	// New lineage on (FA2,links,FX): fresh rel_record_id + a rename row carrying the
 	// old triple as prev_from/prev_to — the pre-#1127 stitch link.
-	_, err = s.CreateRelation(ctx, "FA2", "links", "FX", &store.RelationData{Content: "v1"})
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "FA2", Type: "links", To: "FX"}, &store.RelationData{Content: "v1"})
 	require.NoError(t, err)
 	newRID := relRecordID(ctx, t, pool, "FA2", "links", "FX")
 	require.NotEqual(t, oldRID, newRID)
@@ -412,7 +408,7 @@ func TestListRelationLifetimes_ForkedRenameStitchesToOneLifetime(t *testing.T) {
 
 	// The new key reports ONE lifetime — the two rel_record_ids are stitched, not
 	// double-listed (the claimed-set fold firing).
-	lifetimes, err := vs.ListRelationLifetimes(ctx, "FA2", entity.Face(""), "links", "FX")
+	lifetimes, err := vs.ListRelationLifetimes(ctx, entity.RelationKey{From: "FA2", FromFace: entity.Face(""), Type: "links", To: "FX"})
 	require.NoError(t, err)
 	require.Len(t, lifetimes, 1, "forked rename stitches to a single lifetime")
 	require.Equal(t, newRID, lifetimes[0].RecordID)
@@ -420,8 +416,7 @@ func TestListRelationLifetimes_ForkedRenameStitchesToOneLifetime(t *testing.T) {
 
 	// AllLifetimes purge erases every row of the stitched pair exactly once.
 	res, err := vs.PurgeRelationVersions(ctx, store.RelationVersionPurgeRequest{
-		From: "FA2", Type: "links", To: "FX",
-		Selector:     store.PurgeSelector{All: true},
+		Key: entity.RelationKey{From: "FA2", Type: "links", To: "FX"}, Selector: store.PurgeSelector{All: true},
 		AllLifetimes: true,
 		ForceLive:    true, // the FA2 relation is live; erase anyway (writes a tombstone)
 		Reason:       "gdpr", PrincipalUser: "op",
@@ -443,8 +438,7 @@ func TestPurgeRelationVersions_RecordIDAndAllLifetimesMutuallyExclusive(t *testi
 	ctx := context.Background()
 
 	_, err = s.VersionStore().PurgeRelationVersions(ctx, store.RelationVersionPurgeRequest{
-		From: "X", Type: "links", To: "Y",
-		RecordID: 5, AllLifetimes: true,
+		Key: entity.RelationKey{From: "X", Type: "links", To: "Y"}, RecordID: 5, AllLifetimes: true,
 		Reason: "gdpr", PrincipalUser: "op",
 	})
 	require.Error(t, err)

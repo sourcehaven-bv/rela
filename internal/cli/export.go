@@ -80,7 +80,7 @@ func (c *ExportCmd) Run(ctx context.Context, svc *readServices) error {
 func (c *ExportCmd) exportEntities(ctx context.Context, svc *readServices, entityType string) error {
 	st := svc.Store
 	entities := make([]*entity.Entity, 0)
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: entityType, Faces: store.InWorld(svc.World)}) {
 		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return err
 		}
@@ -119,7 +119,7 @@ func (c *ExportCmd) exportAllData(ctx context.Context, svc *readServices) error 
 	st := svc.Store
 
 	allEntities := make([]*entity.Entity, 0)
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
 			return err
 		}
@@ -196,13 +196,36 @@ func getEntityRelations(ctx context.Context, svc *readServices, entityID string)
 		Outgoing: make(map[string][]RelationTarget),
 		Incoming: make(map[string][]RelationTarget),
 	}
+	var outgoing, incoming []*entity.Relation
 	outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing}
 	for rel, err := range st.ListRelations(ctx, outQ) {
 		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
 			break
 		}
+		outgoing = append(outgoing, rel)
+	}
+	inQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}
+	for rel, err := range st.ListRelations(ctx, inQ) {
+		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
+			break
+		}
+		incoming = append(incoming, rel)
+	}
+
+	// Every neighbor's title in one query, from the face the CLI's world
+	// selects. A neighbor the world resolves to no face keeps an empty title.
+	ids := make([]string, 0, len(outgoing)+len(incoming))
+	for _, rel := range outgoing {
+		ids = append(ids, rel.To)
+	}
+	for _, rel := range incoming {
+		ids = append(ids, rel.From)
+	}
+	rows := rowsInWorld(ctx, st, svc.World, ids)
+
+	for _, rel := range outgoing {
 		target := RelationTarget{ID: rel.To}
-		if node, err := st.GetEntity(ctx, rel.To); err == nil {
+		if node, ok := rows[rel.To]; ok {
 			// Export is a data-interchange format: emit the raw title
 			// property (empty when absent), not a DisplayTitle that would
 			// echo the ID for titleless entities. Presentation-layer
@@ -211,13 +234,9 @@ func getEntityRelations(ctx context.Context, svc *readServices, entityID string)
 		}
 		relations.Outgoing[rel.Type] = append(relations.Outgoing[rel.Type], target)
 	}
-	inQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}
-	for rel, err := range st.ListRelations(ctx, inQ) {
-		if err != nil { // coverage-ignore: defensive: memstore.ListRelations iterator never yields a non-nil error
-			break
-		}
+	for _, rel := range incoming {
 		source := RelationTarget{ID: rel.From}
-		if node, err := st.GetEntity(ctx, rel.From); err == nil {
+		if node, ok := rows[rel.From]; ok {
 			// See the outgoing branch: export keeps the raw title property.
 			source.Title = node.Title()
 		}

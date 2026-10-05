@@ -79,6 +79,7 @@ func checkOrderSide(
 		parentIDs = append(parentIDs, id)
 	}
 	sort.Strings(parentIDs)
+	types := familyTypes(ctx, st, parentIDs)
 
 	for _, pid := range parentIDs {
 		rels := parents[pid]
@@ -99,10 +100,7 @@ func checkOrderSide(
 			}
 			seen[v] = true
 		}
-		etype := ""
-		if e, gErr := st.GetEntity(ctx, pid); gErr == nil {
-			etype = e.Type
-		}
+		etype := types[pid]
 		if missing > 0 {
 			issues = append(issues, RelationOrderIssue{
 				EntityID: pid, EntityType: etype, RelationType: relType,
@@ -117,4 +115,22 @@ func checkOrderSide(
 		}
 	}
 	return issues
+}
+
+// familyTypes reads the type of each id from one header query over every
+// face, so a faced parent (no row at the bare id) still reports its type
+// (BUG-95W7MV). A read error leaves the remaining types empty, like the
+// per-parent read it replaces.
+func familyTypes(ctx context.Context, st store.Store, ids []string) map[string]string {
+	types := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return types
+	}
+	for h, err := range store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: ids, Faces: store.AllFaces()}) {
+		if err != nil {
+			break
+		}
+		types[h.ID] = h.Type
+	}
+	return types
 }

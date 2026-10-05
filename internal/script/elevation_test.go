@@ -74,7 +74,7 @@ var errStubRead = errors.New("stubReader: not expected to be called")
 // stubReader is a non-nil lua.EntityReader standing in for the raw store.
 type stubReader struct{}
 
-func (stubReader) GetEntity(context.Context, string) (*entity.Entity, error) {
+func (stubReader) GetAddress(context.Context, string) (*entity.Entity, error) {
 	return nil, errStubRead
 }
 func (stubReader) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
@@ -160,7 +160,7 @@ func TestRun_ElevationRequiresBothKeys(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			exec := &depsCapturingExecutor{}
-			r := NewLuaScriptRunnerWithElevatedReads(exec, lua.ReadDeps{}, elevation)
+			r := NewLuaScriptRunnerWithElevatedReads(exec, lua.ReadDeps{World: store.TrivialScope()}, elevation)
 
 			err := r.Run(context.Background(), autocascade.ScriptAction{
 				Code:           "print('x')",
@@ -210,7 +210,7 @@ func TestRun_NoElevatedReaderWhenNoneSupplied(t *testing.T) {
 	t.Parallel()
 	exec := &depsCapturingExecutor{}
 	// NewLuaScriptRunner is the no-read-elevation constructor.
-	r := NewLuaScriptRunner(exec, lua.ReadDeps{})
+	r := NewLuaScriptRunner(exec, lua.ReadDeps{World: store.TrivialScope()})
 
 	err := r.Run(context.Background(), autocascade.ScriptAction{
 		Code:           "print('x')",

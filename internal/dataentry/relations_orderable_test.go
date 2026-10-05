@@ -56,8 +56,7 @@ func patchRecipe(t *testing.T, app *App, body string) *httptest.ResponseRecorder
 // PATCH that sets a valid numeric _order_out is accepted (200) and persisted.
 func TestOrderable_PatchSetsOrderOut(t *testing.T) {
 	app := newOrderableModernTestApp(t, metamodel.OrderableOutgoing)
-	if _, err := app.store.CreateRelation(context.Background(), "REC-001", "has-step", "STP-001",
-		&store.RelationData{Properties: map[string]any{metamodel.OrderPropertyOut: 1.0}}); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "REC-001", Type: "has-step", To: "STP-001"}, &store.RelationData{Properties: map[string]any{metamodel.OrderPropertyOut: 1.0}}); err != nil {
 		t.Fatal(err)
 	}
 	body := `{"relations":{"has-step":{"data":[{"type":"step","id":"STP-001","meta":{"_order_out":2.5}}]}}}`
@@ -65,7 +64,7 @@ func TestOrderable_PatchSetsOrderOut(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	got, err := app.store.GetRelation(context.Background(), "REC-001", "has-step", "STP-001")
+	got, err := app.store.GetRelation(context.Background(), entity.RelationKey{From: "REC-001", Type: "has-step", To: "STP-001"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,8 +98,7 @@ func TestOrderable_PatchRejectsNonFiniteOrder(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := newOrderableModernTestApp(t, metamodel.OrderableOutgoing)
-			if _, err := app.store.CreateRelation(context.Background(), "REC-001", "has-step", "STP-001",
-				&store.RelationData{Properties: map[string]any{metamodel.OrderPropertyOut: 1.0}}); err != nil {
+			if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "REC-001", Type: "has-step", To: "STP-001"}, &store.RelationData{Properties: map[string]any{metamodel.OrderPropertyOut: 1.0}}); err != nil {
 				t.Fatal(err)
 			}
 			rec := patchRecipe(t, app, tt.body)
@@ -132,7 +130,7 @@ func patchEdge(t *testing.T, app *App, relType, targetID, body string) *httptest
 	url := "/api/v1/recipes/REC-001/relations/" + relType + "/" + targetID
 	req := httptest.NewRequest(http.MethodPatch, url, bytes.NewReader([]byte(body)))
 	rec := httptest.NewRecorder()
-	app.write.handleV1UpdateRelation(rec, req, "recipe", entityRef{ID: "REC-001"}, relType, targetID)
+	app.write.handleV1UpdateRelation(rec, req, "recipe", "REC-001", relType, targetID)
 	return rec
 }
 
@@ -151,8 +149,7 @@ func TestOrderable_PatchEdgeRejectsNonFiniteOrderIn(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := newOrderableModernTestApp(t, metamodel.OrderableIncoming)
-			if _, err := app.store.CreateRelation(context.Background(), "REC-001", "has-step", "STP-001",
-				&store.RelationData{Properties: map[string]any{metamodel.OrderPropertyIn: 1.0}}); err != nil {
+			if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "REC-001", Type: "has-step", To: "STP-001"}, &store.RelationData{Properties: map[string]any{metamodel.OrderPropertyIn: 1.0}}); err != nil {
 				t.Fatal(err)
 			}
 			rec := patchEdge(t, app, "has-step", "STP-001", tt.body)
@@ -168,8 +165,7 @@ func TestOrderable_PatchEdgeRejectsNonFiniteOrderIn(t *testing.T) {
 // incoming-mode wires up identically to outgoing-mode.
 func TestOrderable_PatchEdgeIncomingModeAcceptsFinite(t *testing.T) {
 	app := newOrderableModernTestApp(t, metamodel.OrderableIncoming)
-	if _, err := app.store.CreateRelation(context.Background(), "REC-001", "has-step", "STP-001",
-		&store.RelationData{Properties: map[string]any{metamodel.OrderPropertyIn: 1.0}}); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "REC-001", Type: "has-step", To: "STP-001"}, &store.RelationData{Properties: map[string]any{metamodel.OrderPropertyIn: 1.0}}); err != nil {
 		t.Fatal(err)
 	}
 	body := `{"meta":{"_order_in":2.5}}`
@@ -177,7 +173,7 @@ func TestOrderable_PatchEdgeIncomingModeAcceptsFinite(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	got, err := app.store.GetRelation(context.Background(), "REC-001", "has-step", "STP-001")
+	got, err := app.store.GetRelation(context.Background(), entity.RelationKey{From: "REC-001", Type: "has-step", To: "STP-001"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,8 +186,7 @@ func TestOrderable_PatchEdgeIncomingModeAcceptsFinite(t *testing.T) {
 // (managed properties are optional on writes that don't touch them).
 func TestOrderable_PatchWithoutOrderUntouched(t *testing.T) {
 	app := newOrderableModernTestApp(t, metamodel.OrderableOutgoing)
-	if _, err := app.store.CreateRelation(context.Background(), "REC-001", "has-step", "STP-001",
-		&store.RelationData{Properties: map[string]any{metamodel.OrderPropertyOut: 1.0}}); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "REC-001", Type: "has-step", To: "STP-001"}, &store.RelationData{Properties: map[string]any{metamodel.OrderPropertyOut: 1.0}}); err != nil {
 		t.Fatal(err)
 	}
 	body := `{"relations":{"has-step":{"data":[{"type":"step","id":"STP-001"}]}}}`
@@ -199,7 +194,7 @@ func TestOrderable_PatchWithoutOrderUntouched(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	got, err := app.store.GetRelation(context.Background(), "REC-001", "has-step", "STP-001")
+	got, err := app.store.GetRelation(context.Background(), entity.RelationKey{From: "REC-001", Type: "has-step", To: "STP-001"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,8 +207,7 @@ func TestOrderable_PatchWithoutOrderUntouched(t *testing.T) {
 // is just a plain meta key) but produces an `unknown_meta_key` warning.
 func TestOrderable_NonOrderableTypeStillAcceptsOrderKey(t *testing.T) {
 	app := newOrderableModernTestApp(t, metamodel.OrderableNone)
-	if _, err := app.store.CreateRelation(context.Background(), "REC-001", "has-step", "STP-001",
-		&store.RelationData{Properties: map[string]any{}}); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "REC-001", Type: "has-step", To: "STP-001"}, &store.RelationData{Properties: map[string]any{}}); err != nil {
 		t.Fatal(err)
 	}
 	body := `{"relations":{"has-step":{"data":[{"type":"step","id":"STP-001","meta":{"_order_out":1.5}}]}}}`

@@ -7,12 +7,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func newDateTestRuntime(t *testing.T) (*Runtime, *strings.Builder) {
 	t.Helper()
 	var sb strings.Builder
-	rt := NewReader(ReadDeps{}, &sb)
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &sb)
 	return rt, &sb
 }
 

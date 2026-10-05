@@ -285,8 +285,7 @@ func TestNoOpsDoNotWrite(t *testing.T) {
 
 // TestCorruptStoreIsHardError pins the policy: a corrupt table REFUSES rather
 // than starting empty. An empty table re-creates every to-do as a new entity,
-// silently doubling the user's list — the failure internal/cli/sync also
-// refuses to risk.
+// silently doubling the user's list.
 func TestCorruptStoreIsHardError(t *testing.T) {
 	kv := newMemKV()
 	if err := kv.Put(t.Context(), stateKey, []byte("{not json")); err != nil {

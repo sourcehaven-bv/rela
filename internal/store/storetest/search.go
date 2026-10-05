@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // RunSearchTests runs search and filter conformance tests.
@@ -15,7 +16,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "login"}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "login", World: store.TrivialScope()}))
 		assert.Len(t, results, 2) // FEAT-001 title + REQ-001 content
 	})
 
@@ -23,7 +24,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "accessing the system"}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "accessing the system", World: store.TrivialScope()}))
 		assert.Len(t, results, 1)
 		assert.Equal(t, "REQ-001", results[0].ID)
 	})
@@ -32,7 +33,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "FEAT-002"}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "FEAT-002", World: store.TrivialScope()}))
 		assert.Len(t, results, 1)
 		assert.Equal(t, "FEAT-002", results[0].ID)
 	})
@@ -41,7 +42,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), search.Query{Types: []string{"feature"}}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Types: []string{"feature"}, World: store.TrivialScope()}))
 		assert.Len(t, results, 2)
 	})
 
@@ -53,6 +54,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 			Filters: []search.PropertyFilter{
 				{Property: "status", Value: "open", Op: search.FilterEq},
 			},
+			World: store.TrivialScope(),
 		}))
 		assert.Len(t, results, 2)
 	})
@@ -65,6 +67,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 			Filters: []search.PropertyFilter{
 				{Property: "status", Value: "open", Op: search.FilterNe},
 			},
+			World: store.TrivialScope(),
 		}))
 		assert.Len(t, results, 1)
 		assert.Equal(t, "FEAT-002", results[0].ID)
@@ -78,6 +81,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 			Filters: []search.PropertyFilter{
 				{Property: "title", Value: "user", Op: search.FilterContains},
 			},
+			World: store.TrivialScope(),
 		}))
 		assert.Len(t, results, 2)
 	})
@@ -90,6 +94,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 			Filters: []search.PropertyFilter{
 				{Property: "priority", Value: "high,critical", Op: search.FilterIn},
 			},
+			World: store.TrivialScope(),
 		}))
 		assert.Len(t, results, 1)
 		assert.Equal(t, "FEAT-001", results[0].ID)
@@ -103,6 +108,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 			Filters: []search.PropertyFilter{
 				{Property: "priority", Op: search.FilterExists},
 			},
+			World: store.TrivialScope(),
 		}))
 		assert.Len(t, results, 2)
 	})
@@ -115,6 +121,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 			Filters: []search.PropertyFilter{
 				{Property: "priority", Op: search.FilterNotExists},
 			},
+			World: store.TrivialScope(),
 		}))
 		assert.Len(t, results, 1)
 		assert.Equal(t, "REQ-001", results[0].ID)
@@ -129,6 +136,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 			Filters: []search.PropertyFilter{
 				{Property: "status", Value: "open", Op: search.FilterEq},
 			},
+			World: store.TrivialScope(),
 		}))
 		assert.Len(t, results, 2)
 	})
@@ -140,6 +148,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		results := collectHits(t, searcher.Search(ctx(), search.Query{
 			Text:  "login",
 			Types: []string{"feature"},
+			World: store.TrivialScope(),
 		}))
 		assert.Len(t, results, 1)
 		assert.Equal(t, "FEAT-001", results[0].ID)
@@ -149,7 +158,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), search.Query{Limit: 1}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Limit: 1, World: store.TrivialScope()}))
 		assert.Len(t, results, 1)
 	})
 
@@ -157,7 +166,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), search.Query{Limit: 3}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Limit: 3, World: store.TrivialScope()}))
 		assert.Len(t, results, 3)
 	})
 
@@ -165,7 +174,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), search.Query{}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{World: store.TrivialScope()}))
 		assert.Len(t, results, 3)
 	})
 
@@ -174,7 +183,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		seedSearchData(t, s)
 
 		var ids []string
-		for h, err := range searcher.Search(ctx(), search.Query{}) {
+		for h, err := range searcher.Search(ctx(), search.Query{World: store.TrivialScope()}) {
 			require.NoError(t, err)
 			ids = append(ids, h.ID)
 			if len(ids) == 1 {
@@ -184,11 +193,23 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 		assert.Len(t, ids, 1)
 	})
 
+	// An unset world is a wiring bug, refused rather than read as the
+	// trivial world (TKT-7IZHP0 design A4). Text and no-text queries take
+	// different paths, so both are pinned.
+	t.Run("UnsetWorldIsInvalid", func(t *testing.T) {
+		s, searcher := sf(t)
+		seedSearchData(t, s)
+		for _, text := range []string{"", "alpha"} {
+			err := searchError(searcher.Search(ctx(), search.Query{Text: text}))
+			require.ErrorIs(t, err, store.ErrInvalidQuery, "text %q", text)
+		}
+	})
+
 	t.Run("NoMatch", func(t *testing.T) {
 		s, searcher := sf(t)
 		seedSearchData(t, s)
 
-		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "zzzznotfound"}))
+		results := collectHits(t, searcher.Search(ctx(), search.Query{Text: "zzzznotfound", World: store.TrivialScope()}))
 		assert.Empty(t, results)
 	})
 
@@ -215,6 +236,7 @@ func RunSearchTests(t *testing.T, sf SearchFactory) {
 				Filters: []search.PropertyFilter{
 					{Property: "priority", Value: "high", Op: op.op},
 				},
+				World: store.TrivialScope(),
 			}))
 			require.ErrorIs(t, err, search.ErrOrderedFilterUnsupported)
 		})

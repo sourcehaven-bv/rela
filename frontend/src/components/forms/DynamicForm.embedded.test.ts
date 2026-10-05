@@ -95,6 +95,8 @@ async function mountCreate(
     embeddedLink?: { relation: string; peer: string; linkAs: 'from' | 'to' }
     embeddedTemplate?: string
     embeddedWorld?: string
+    embeddedFace?: string
+
     embeddedAddAnother?: boolean
   } = {}
 ) {
@@ -296,7 +298,7 @@ describe('DynamicForm — embedded pre-link props', () => {
 
     expect(create.mock.calls.length, 'create should have been called').toBe(1)
     const payload = create.mock.calls[0][1] as {
-      relations?: Record<string, { data: { type: string; id: string }[] }>
+      relations?: Record<string, { add: { type: string; id: string }[] }>
       properties?: Record<string, unknown>
     }
     // The edge rides the create payload for linkAs: 'to', in the modern
@@ -305,7 +307,7 @@ describe('DynamicForm — embedded pre-link props', () => {
     // the entire create — so a pre-linked relation with no picker field on the
     // form could not save at all until the prefill registered its type.
     expect(payload.relations?.implements).toEqual({
-      data: [{ type: 'feature', id: 'FEAT-1' }],
+      add: [{ type: 'feature', id: 'FEAT-1' }],
     })
     // And the host page's `prop.title` is still ignored — the prop channel
     // supplies context, it does not re-enable the URL overlay.
@@ -342,7 +344,33 @@ describe('DynamicForm — embedded pre-link props', () => {
     expect(payload.relations?.implements).toBeUndefined()
 
     // (type, entityId, relation, targetId) => entityId --relation--> targetId.
-    expect(createRelationMock).toHaveBeenCalledWith('ticket', CREATED.id, 'implements', 'no-prefix-id')
+    expect(createRelationMock).toHaveBeenCalledWith(
+      'ticket',
+      CREATED.id,
+      'implements',
+      'no-prefix-id'
+    )
+  })
+
+  // BUG-FYEEVX: a content-scoped edge belongs to the face just created.
+  it('links from the created face, addressed by its _self', async () => {
+    const api = await import('@/api')
+    const createRelationMock = vi.mocked(api.createRelation)
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'implements', peer: 'no-prefix-id', linkAs: 'from' },
+    })
+    create.mockResolvedValue({ ...CREATED, _self: '/api/v1/tickets/TKT-9@draft' })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(createRelationMock).toHaveBeenCalledWith(
+      'ticket',
+      'TKT-9@draft',
+      'implements',
+      'no-prefix-id'
+    )
   })
 
   it('surfaces a link failure instead of silently creating an unlinked entity', async () => {
@@ -380,6 +408,22 @@ describe('DynamicForm — embedded pre-link props', () => {
     expect((create.mock.calls[0][1] as { world?: string }).world).toBe('published')
   })
 
+  // BUG-FYEEVX: a duplicate of a face is created on that face.
+  it('creates on the face the host named, and names no world', async () => {
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedWorld: 'published',
+      embeddedFace: 'draft',
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const body = create.mock.calls[0][1] as { world?: string; face?: string }
+    expect(body.face).toBe('draft')
+    expect(body.world).toBeUndefined()
+  })
+
   it('carries no world when the host had none', async () => {
     const { wrapper, create } = await mountCreate({ embedded: true })
 
@@ -414,7 +458,10 @@ describe('DynamicForm — pre-link cannot be silently dropped', () => {
     } as never)
     schema.entityTypes.set('ticket', ENTITY_TYPE as never)
     schema.entityTypes.set('feature', {
-      name: 'feature', label: 'Feature', id_prefix: 'FEAT', properties: {},
+      name: 'feature',
+      label: 'Feature',
+      id_prefix: 'FEAT',
+      properties: {},
     } as never)
     schema.loaded = true
 
@@ -429,8 +476,12 @@ describe('DynamicForm — pre-link cannot be silently dropped', () => {
       },
       global: {
         stubs: {
-          RouterLink: true, MarkdownEditor: true, RelationPicker: true,
-          RelationCards: true, AutoSaveIndicator: true, HelpModal: true,
+          RouterLink: true,
+          MarkdownEditor: true,
+          RelationPicker: true,
+          RelationCards: true,
+          AutoSaveIndicator: true,
+          HelpModal: true,
         },
       },
     })
@@ -451,7 +502,10 @@ describe('DynamicForm — pre-link cannot be silently dropped', () => {
     // The paired positive: the check must not refuse the ordinary case.
     const schema = useSchemaStore()
     schema.entityTypes.set('feature', {
-      name: 'feature', label: 'Feature', id_prefix: 'FEAT', properties: {},
+      name: 'feature',
+      label: 'Feature',
+      id_prefix: 'FEAT',
+      properties: {},
     } as never)
 
     const { wrapper, create } = await mountCreate({

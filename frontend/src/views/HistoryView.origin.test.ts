@@ -17,7 +17,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import HistoryView from './HistoryView.vue'
-import { listVersions, getVersion } from '@/api/history'
+import { listVersions, getVersion, restoreVersion } from '@/api/history'
 import { getEntity } from '@/api/entities'
 import type { VersionMeta } from '@/api/history'
 
@@ -52,6 +52,7 @@ vi.mock('@/api/entities', async () => {
 const mockList = vi.mocked(listVersions)
 const mockGetVersion = vi.mocked(getVersion)
 const mockGetEntity = vi.mocked(getEntity)
+const mockRestore = vi.mocked(restoreVersion)
 
 function meta(over: Partial<VersionMeta> = {}): VersionMeta {
   return {
@@ -150,11 +151,10 @@ describe('HistoryView copy provenance', () => {
   })
 })
 
-// A restore is a WRITE to the BARE id (the restore route takes no face), so it
-// is offered only while the timeline is the bare face's — which is what the
-// served row's `_self` says, not the world. Under a world that resolved to the
-// bare face, restoring puts back exactly what is shown; under one that served
-// a NON-bare face, restoring would land that face's version on the bare one.
+// A restore writes to the face on screen, which is what the served row's
+// `_self` says (BUG-4SYAA6). The restore takes no world, so the route's bare
+// id would name a different face than the timeline shows; the served address
+// names exactly the one.
 describe('HistoryView restore follows the face on screen', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -169,20 +169,23 @@ describe('HistoryView restore follows the face on screen', () => {
     expect(w.text()).toContain('Restore')
   })
 
-  it('offers Restore under a world that served the BARE face', async () => {
-    // The world is not what withdraws the affordance; the face is. A chain hit
-    // on the bare face restores what it shows.
-    mockRouteQuery.value = { world: 'editorial' }
-    const w = await mountWith([meta({ op: 'update' })], {
-      _actions: { update: true }, _self: '/api/v1/policys/POL-1',
-    })
-    expect(w.text()).toContain('Restore')
-  })
-
-  it('withdraws Restore while a NON-bare face is on screen', async () => {
+  it('restores the NON-bare face on screen, not the bare id', async () => {
     mockRouteQuery.value = { world: 'published' }
+    mockRestore.mockResolvedValue({} as never)
     const w = await mountWith([meta({ op: 'update' })], {
       _actions: { update: true }, _self: '/api/v1/policys/POL-1@published',
+    })
+    // RlButton also renders its pending label, hidden, after the label.
+    const button = w.findAll('button').find((b) => b.text().startsWith('Restore'))
+    expect(button).toBeDefined()
+    await button!.trigger('click')
+    await vi.waitFor(() => expect(mockRestore).toHaveBeenCalled())
+    expect(mockRestore).toHaveBeenCalledWith('policy', 'POL-1@published', 1)
+  })
+
+  it('withdraws Restore when the face is not writable', async () => {
+    const w = await mountWith([meta({ op: 'update' })], {
+      _actions: { update: false }, _self: '/api/v1/policys/POL-1@published',
     })
     expect(w.text()).not.toContain('Restore')
   })

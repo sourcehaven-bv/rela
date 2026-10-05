@@ -87,14 +87,14 @@ type stateFamily struct {
 // collectStateFamilies scans raw storage truth into per-id families,
 // scope-filtered on the bare id, returning ids in sorted order. The
 // findings are computed AFTER this scan completes, on purpose: no
-// backend documents an iteration order for AllStates, so any
+// backend documents an iteration order for AllFaces, so any
 // default-before-state assumption during the stream would silently
 // drop findings on a backend that yields families interleaved.
 func (s *Service) collectStateFamilies(
 	ctx context.Context, opts Options,
 ) (families map[string]*stateFamily, order []string, err error) {
 	families = make(map[string]*stateFamily)
-	for h, iterErr := range store.ListEntityHeaders(ctx, s.deps.Store, store.EntityQuery{AllStates: true}) {
+	for h, iterErr := range store.ListEntityHeaders(ctx, s.deps.Store, store.EntityQuery{Faces: store.AllFaces()}) {
 		if iterErr != nil {
 			// Classified as an incomplete scan so every caller treats an
 			// unreadable file the same way, whichever analysis hit it
@@ -182,7 +182,7 @@ func (s *Service) faceStatusOf(entityType string, p entity.Face) faceStatus {
 	if !ok {
 		return faceUnknownType
 	}
-	if p.IsDefault() {
+	if p.IsImplicit() {
 		if len(def.Faces) == 0 {
 			return faceOK
 		}
@@ -194,7 +194,7 @@ func (s *Service) faceStatusOf(entityType string, p entity.Face) faceStatus {
 	return faceUndeclared
 }
 
-// CheckStates scans RAW storage truth (EntityQuery.AllStates) for
+// CheckStates scans RAW storage truth (store.AllFaces) for
 // content-state integrity findings, filtered by scope on the bare id.
 //
 // Error policy matches CheckCardinality, not the under-count logging of

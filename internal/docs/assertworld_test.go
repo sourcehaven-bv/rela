@@ -40,6 +40,7 @@ func worldFixtureMeta(t *testing.T) *metamodel.Metamodel {
 			"published": {Select: []string{"published"}, Otherwise: metamodel.OtherwiseExclude},
 			"preview":   {Select: []string{"draft", "published"}, Otherwise: metamodel.OtherwiseDefault},
 		},
+		DefaultWorld: "preview",
 	}
 	m.InitAliases()
 	return m
@@ -81,11 +82,13 @@ create("policy", { id = "POL-2", title = "Unpublished draft" })
 		{
 			name:    "an undeclared world is refused, not read as empty",
 			body:    `shows{ type = "policy", world = "publsihed", exactly = {} }`,
-			wantErr: `no world named "publsihed" is declared`,
+			wantErr: `no world named "publsihed" exists`,
 		},
 		{
-			name: "the reserved default name is accepted",
-			body: `shows{ type = "policy", world = "default", exactly = { "POL-1", "POL-2" } }`,
+			// D11: once worlds are declared, `default` names nothing.
+			name:    "default is not a world beside declared worlds",
+			body:    `shows{ type = "policy", world = "default", exactly = { "POL-1", "POL-2" } }`,
+			wantErr: `no world named "default" exists`,
 		},
 	}
 

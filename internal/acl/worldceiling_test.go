@@ -91,33 +91,22 @@ func TestCeilingWorlds_ScopeReopens(t *testing.T) {
 	}
 }
 
-// TestCeilingWorlds_DefaultWorldDenialNeedsPermitsWorld is the finding the
-// design review surfaced (RR-TFATPO), pinned so the reasoning cannot be
-// refactored away.
-//
-// The default world is spelled as the ABSENCE of a world grant, so a role
-// permitted only the default world has an EMPTY Worlds list. Intersection
-// cannot narrow empty, which means `deny_worlds: [default]` is invisible to
-// clamp — it would be a silent no-op if clamp were the only mechanism.
-//
-// permitsWorld is therefore MANDATORY, not an optional re-check: it is the
-// only place that denial can be expressed.
-func TestCeilingWorlds_DefaultWorldDenialNeedsPermitsWorld(t *testing.T) {
+// TestCeilingWorlds_DefaultWorldAlwaysPermitted pins that an active ceiling
+// never denies the default world. A deny_worlds naming it is refused at load
+// (TestValidateAgainstMetamodel_DenyDefaultWorld), so permitsWorld need not
+// and must not consult it.
+func TestCeilingWorlds_DefaultWorldAlwaysPermitted(t *testing.T) {
 	t.Parallel()
 	c := worldCeiling(t, ClientBaseline{AppliesTo: []string{"app"},
-		Restriction: Restriction{DenyWorlds: []string{DefaultWorldName}}})
-
-	// clamp alone cannot see it: the role's world list is empty either way.
-	if got := c.clamp(RoleDef{Read: []string{"page"}}).Worlds; len(got) != 0 {
-		t.Fatalf("precondition: a default-world-only role has no world grants, got %v", got)
+		Restriction: Restriction{Worlds: []string{"published"}}})
+	c.defaultWorld = "editorial"
+	for _, w := range []string{"", "editorial", "published"} {
+		if !c.permitsWorld(w) {
+			t.Errorf("permitsWorld(%q) = false, want true", w)
+		}
 	}
-
-	// permitsWorld is where the denial actually lands.
-	if c.permitsWorld(DefaultWorldName) {
-		t.Error("deny_worlds: [default] must deny the default world")
-	}
-	if c.permitsWorld("") {
-		t.Error(`the empty world name means the default world and must be denied too`)
+	if c.permitsWorld("archive") {
+		t.Error("a world outside the allowlist that is not the default must be denied")
 	}
 }
 
@@ -200,30 +189,6 @@ func TestCeilingWorlds_AllowlistDoesNotRevokeDefaultWorld(t *testing.T) {
 	}
 	if c.permitsWorld("editorial") {
 		t.Error("a world outside the allowlist must be denied")
-	}
-}
-
-// TestCeilingWorlds_ScopeReopensDeniedDefaultWorld pins that an explicit
-// default-world denial still composes with scope grants, rather than being
-// short-circuited by the rule above.
-func TestCeilingWorlds_ScopeReopensDeniedDefaultWorld(t *testing.T) {
-	t.Parallel()
-	p := &Policy{
-		ClientBaselines: map[string]ClientBaseline{"app": {
-			AppliesTo:   []string{"app"},
-			Restriction: Restriction{DenyWorlds: []string{DefaultWorldName}},
-		}},
-		ScopeGrants: map[string]ScopeGrant{
-			"full": {Restriction: Restriction{Worlds: []string{DefaultWorldName}}},
-		},
-	}
-	p.normalizeClientAttenuation()
-
-	if p.ceilingFor("app", nil).permitsWorld(DefaultWorldName) {
-		t.Error("an explicit deny_worlds: [default] must deny the default world")
-	}
-	if !p.ceilingFor("app", []string{"full"}).permitsWorld(DefaultWorldName) {
-		t.Error("a scope grant must be able to re-open an explicitly denied default world")
 	}
 }
 

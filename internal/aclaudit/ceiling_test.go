@@ -289,16 +289,22 @@ func TestB10_CeilingUndeclaredWorld(t *testing.T) {
 		worlds: map[string]bool{"published": true},
 	}
 	tests := []struct {
-		name    string
-		r       acl.Restriction
-		wantB10 bool
+		name     string
+		r        acl.Restriction
+		wantB10  bool
+		noWorlds bool // audit against a metamodel declaring no world
 	}{
-		{"declared world", acl.Restriction{Worlds: []string{"published"}}, false},
-		{"undeclared world in allowlist", acl.Restriction{Worlds: []string{"nope"}}, true},
-		{"undeclared world in denylist", acl.Restriction{DenyWorlds: []string{"nope"}}, true},
+		{"declared world", acl.Restriction{Worlds: []string{"published"}}, false, false},
+		{"undeclared world in allowlist", acl.Restriction{Worlds: []string{"nope"}}, true, false},
+		{"undeclared world in denylist", acl.Restriction{DenyWorlds: []string{"nope"}}, true, false},
 		{
-			name: "the implicit default world needs no declaration",
-			r:    acl.Restriction{DenyWorlds: []string{"default"}}, wantB10: false,
+			// TKT-7IZHP0 D11: beside declared worlds, `default` names nothing.
+			name: "the default world is flagged beside declared worlds",
+			r:    acl.Restriction{DenyWorlds: []string{"default"}}, wantB10: true,
+		},
+		{
+			name: "the generated default world needs no declaration",
+			r:    acl.Restriction{DenyWorlds: []string{"default"}}, noWorlds: true,
 		},
 	}
 	for _, tc := range tests {
@@ -312,8 +318,12 @@ func TestB10_CeilingUndeclaredWorld(t *testing.T) {
 			if err := p.Validate(); err != nil {
 				t.Fatalf("Validate: %v", err)
 			}
+			m := meta
+			if tc.noWorlds {
+				m.worlds = nil
+			}
 			var got bool
-			for _, f := range Audit(p, meta, nil) {
+			for _, f := range Audit(p, m, nil) {
 				if f.Rule == "B10-undeclared-world" {
 					got = true
 				}

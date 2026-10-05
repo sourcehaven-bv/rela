@@ -67,52 +67,43 @@ func (h *attachmentHandler) handleV1AttachmentFileRoute(
 }
 
 // handleV1GetAttachment streams one file attached to a `file`-type
-// property of an entity:
+// property of one face:
 //
-//	GET /api/v1/{plural}/{id}/_attachments/{property}/{fileName}
+//	GET /api/v1/{plural}/{address}/_attachments/{property}/{fileName}
 //
-// Access inherits the owning entity's read permission — a caller who
-// cannot read the entity cannot read its attachment. The gate runs
-// BEFORE any store lookup so a hidden id and a nonexistent id are
-// indistinguishable (404, no body difference, no timing side channel —
-// same RR-NGMI invariant as handleV1GetEntity).
+// The address (`ID` or `ID@face`) is resolved through the gated resolver
+// BEFORE any store lookup, so a hidden face and a nonexistent one are
+// indistinguishable (404, no body difference — the RR-NGMI invariant of
+// handleV1GetEntity).
 //
-// The bytes are resolved from (entityID, property, fileName) only; the
-// path string stored in the entity's frontmatter is never parsed or
-// trusted, so a renamed entity resolves correctly by its current id and
-// there is no caller-supplied-path traversal surface. The fileName comes
-// from the URL but is only ever a store key (never a filesystem path the
-// handler builds), and the store's ValidateFileName rejects separators.
+// Bytes are shared by the entity's faces, so the face gate is the face's
+// own property value: the file name must be one it references, else the
+// same 404 (BUG-CTUW2N). A face therefore never serves another face's
+// upload. The fileName from the URL is a display name: it is resolved to a
+// storage key through the face's own value ([attachment.StorageKey]), never
+// used as a key or a filesystem path itself.
 func (h *attachmentHandler) handleV1GetAttachment(
-	w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string,
+	w http.ResponseWriter, r *http.Request, typeName, addr, property, fileName string,
 ) {
 	ctx := r.Context()
 	s := h.schema()
 
-	// ACL gate first — before any store access (see handleV1GetEntity).
-	if !h.gateRead(w, r, typeName, entityID) {
-		return
-	}
-
-	// The gate above authorized by (type, id), which a `type@face` grant is
-	// invisible to, and this reader is the raw store — so the face half is
-	// owed here, as on the relations route (TKT-O7R2A1). A file lives on ONE
-	// face's property, so serving it discloses that face's content.
-	entity, found := h.reader.getEntity(ctx, entityID)
-	if !found || entity.Type != typeName || !faceReadable(ctx, entity.Type, entity.Face) {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+	entity, found := readAddressedOr404(w, r, h.visible, typeName, addr)
+	if !found {
 		return
 	}
 
 	// The property must be a declared `file`-type property on this entity
-	// type, and visible to this viewer. Anything else 404s — we never reveal
-	// whether some other (or hidden) property or path exists.
-	if !isFileProperty(s, typeName, property) || h.isPropertyHidden(ctx, entity, property) {
+	// type, visible to this viewer, and must reference the file on THIS
+	// face. Anything else 404s — we never reveal whether some other (or
+	// hidden) property, path or face's file exists.
+	key, referenced := attachment.StorageKey(entity, property, fileName)
+	if !isFileProperty(s, typeName, property) || h.isPropertyHidden(ctx, entity, property) || !referenced {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
-	rc, err := h.store.ReadAttachment(ctx, entityID, property, fileName)
+	rc, err := h.store.ReadFamilyAttachment(ctx, entity.ID, property, key)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
@@ -121,7 +112,7 @@ func (h *attachmentHandler) handleV1GetAttachment(
 		// Don't leak backend error strings (table/column/path names) —
 		// same rationale as writeGateError. Log server-side, 500 client-side.
 		slog.Warn("dataentry: read attachment failed",
-			"err", err, "entity", entityID, "property", property)
+			"err", err, "entity", entity.ID, "property", property)
 		writeV1Error(w, r, http.StatusInternalServerError, "attachment_read_failed",
 			"Reading the attachment failed", "check server logs")
 		return
@@ -134,7 +125,7 @@ func (h *attachmentHandler) handleV1GetAttachment(
 		// Headers (and likely some bytes) are already written; we can't
 		// change the status now. Log and move on.
 		slog.Warn("dataentry: streaming attachment failed",
-			"err", err, "entity", entityID, "property", property)
+			"err", err, "entity", entity.ID, "property", property)
 	}
 }
 
@@ -234,7 +225,9 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	}
 	entity = written.Entity
 
-	result := h.serializer.forWire(ctx, entity, h.reader.outgoingRelations(ctx, entity.ID), s.Meta, plural)
+	// The written face's own edges, not every face's (BUG-ISJHML).
+	rels := edgesOwnedBy(s.Meta, h.reader.outgoingRelations(ctx, entity.ID), entity.Face)
+	result := h.serializer.forWire(ctx, entity, rels, s.Meta, plural)
 	writeV1JSON(w, http.StatusOK, result)
 }
 
@@ -397,7 +390,7 @@ func probeAttachmentCommands(meta *metamodel.Metamodel, runner *attachment.CmdRu
 }
 
 // aclAttachmentAuthorizer re-runs the preflight's `update` decision for the
-// attachment service, under its property lock. A denial is audited like the
+// attachment service, under its attachment lock. A denial is audited like the
 // preflight's and returned as an [acl.ForbiddenError], which the handlers
 // already map to 403.
 type aclAttachmentAuthorizer struct {
@@ -423,8 +416,8 @@ func (h *attachmentHandler) attachmentService(s *Schema) (*attachment.Service, e
 	return attachment.New(attachment.Deps{
 		Store:         h.store,
 		Meta:          s.Meta,
-		EntityManager: h.manager,
-		Locker:        h.locker,
+		EntityManager: h.owner,
+		Locker:        h.owner,
 		Authorizer:    aclAttachmentAuthorizer{acl: h.acl(), audit: h.audit()},
 		// Native MIME allowlist + (when a command runner is wired) scan/
 		// transform. h.runner is nil out-of-box → MIME validation only.
@@ -445,11 +438,11 @@ func filePropertyDef(s *Schema, typeName, property string) metamodel.PropertyDef
 //
 //	DELETE /api/v1/{plural}/{id}/_attachments/{property}/{fileName}
 //
-// Inherits the entity's `update` permission (a deny is handled up front in
-// attachmentWritePreflight, before anything is touched). The bytes are
-// removed, then the property is re-stamped from the store's remaining
-// files and persisted. Idempotent: deleting a missing file still
-// re-stamps and returns 204.
+// Inherits the face's `update` permission (a deny is handled up front in
+// attachmentWritePreflight, before anything is touched). The name is
+// removed from the face's value, and the bytes go when no other face
+// references them. Idempotent: deleting a name the face does not reference
+// changes nothing and returns 204.
 func (h *attachmentHandler) handleV1DeleteAttachment(
 	w http.ResponseWriter, r *http.Request, typeName, entityID, property, fileName string,
 ) {
@@ -484,24 +477,21 @@ func (h *attachmentHandler) handleV1DeleteAttachment(
 }
 
 // attachmentWritePreflight runs the shared front matter for an attachment
-// write: read-gate (uniform 404), load the entity, validate the property
-// is a declared `file` type, reject a locked (inaccessible) entity, and
-// authorize the `update` write UP FRONT so a deny never reaches the store.
-// Returns the loaded entity and true when the write may proceed.
+// write: resolve the face the address names, as every content write does
+// ([writeTargetOr404]: uniform 404, `face_required` for a bare id on a faced
+// type), validate the property is a declared `file` type, reject a locked
+// (inaccessible) entity, and authorize the `update` write on that face UP
+// FRONT so a deny never reaches the store. Returns the raw face and true
+// when the write may proceed.
 func (h *attachmentHandler) attachmentWritePreflight(
-	w http.ResponseWriter, r *http.Request, s *Schema, typeName, entityID, property string,
+	w http.ResponseWriter, r *http.Request, s *Schema, typeName, addr, property string,
 ) (*entityPkg.Entity, bool) {
 	ctx := r.Context()
 
-	// Read-gate first: a hidden or nonexistent id yields a uniform 404
+	// Read first: a hidden, denied or nonexistent face yields a uniform 404
 	// (RR-NGMI), the same as the read path.
-	if !h.gateRead(w, r, typeName, entityID) {
-		return nil, false
-	}
-
-	entity, found := h.reader.getEntity(ctx, entityID)
-	if !found || entity.Type != typeName {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+	entity, found := writeTargetOr404(w, r, h.visible, typeName, addr)
+	if !found {
 		return nil, false
 	}
 	if !isFileProperty(s, typeName, property) || h.isPropertyHidden(ctx, entity, property) {

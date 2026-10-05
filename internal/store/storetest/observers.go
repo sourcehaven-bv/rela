@@ -93,7 +93,7 @@ func RunObserverTests(t *testing.T, f ObserverFactory) {
 		draft.Face = face(t, "draft")
 		require.NoError(t, s.CreateEntity(ctx(), draft))
 
-		_, err := s.DeleteEntityState(ctx(), "PAGE-1", face(t, "draft"))
+		_, err := s.DeleteFace(ctx(), entity.Ref{ID: "PAGE-1", Face: face(t, "draft")})
 		require.NoError(t, err)
 		assert.Equal(t, []string{"PAGE-1|draft"}, aware.faceDeletes,
 			"the face-aware observer is told WHICH face went")
@@ -102,7 +102,7 @@ func RunObserverTests(t *testing.T, f ObserverFactory) {
 		assert.Empty(t, bare.deletes,
 			"the entity still exists via its default face, so a bare-id observer hears nothing")
 
-		_, err = s.DeleteEntity(ctx(), "PAGE-1", false)
+		_, err = s.DeleteFamily(ctx(), "PAGE-1", false)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"PAGE-1"}, bare.deletes,
 			"the bare-id observer hears exactly one delete, when the entity goes")
@@ -125,7 +125,7 @@ func RunObserverTests(t *testing.T, f ObserverFactory) {
 		draft.Face = face(t, "draft")
 		require.NoError(t, s.CreateEntity(ctx(), draft))
 
-		_, err := s.RenameEntity(ctx(), "PAGE-1", "PAGE-2")
+		_, err := s.RenameFamily(ctx(), "PAGE-1", "PAGE-2")
 		require.NoError(t, err)
 		assert.Equal(t, []string{"PAGE-1->PAGE-2|", "PAGE-1->PAGE-2|draft"}, obs.renames)
 		assert.Empty(t, obs.deletes, "a rename is announced as a rename, not as delete+put")

@@ -54,8 +54,26 @@ describe('mergeProperty', () => {
 
 describe('mergeRelations', () => {
   const typeOf = (id: string) => (id.startsWith('F') ? 'feature' : undefined)
+  const dataOf = (r: ReturnType<typeof mergeRelations>, key: string) => {
+    const entry = r?.[key]
+    return entry && 'data' in entry ? entry.data : undefined
+  }
   const ids = (r: ReturnType<typeof mergeRelations>, key: string) =>
-    r?.[key].data.map((e) => e.id).sort()
+    dataOf(r, key)
+      ?.map((e) => e.id)
+      .sort()
+
+  it('passes a delta entry through unchanged', () => {
+    const delta = { add: [{ type: 'feature', id: 'F9' }], remove: [{ id: 'F1' }] }
+    const r = mergeRelations(
+      { implements: ['F1'] },
+      { implements: delta },
+      { implements: ['F1', 'F2'] },
+      () => false,
+      typeOf
+    )
+    expect(r?.implements).toBe(delta)
+  })
 
   it('keeps their additions and ours', () => {
     const r = mergeRelations(
@@ -102,7 +120,7 @@ describe('mergeRelations', () => {
       () => false,
       typeOf
     )
-    expect(r?.implements.data).toEqual([mine])
+    expect(dataOf(r, 'implements')).toEqual([mine])
   })
 
   it('refuses when a target type is unknown rather than drop the edge', () => {

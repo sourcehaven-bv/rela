@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -25,7 +27,7 @@ func TestEntityTypeWatermark_MovesOnWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, afterCreate, empty, "create must move the watermark")
 
-	e, err := st.GetEntity(ctx, "REQ-1")
+	e, err := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err)
 	e.SetString("title", "changed")
 	require.NoError(t, st.UpdateEntity(ctx, e))
@@ -51,7 +53,7 @@ func TestEntityTypeWatermark_DeleteDoesNotGoBackwards(t *testing.T) {
 	require.NoError(t, err)
 
 	// Delete the NEWEST row: without tombstones this is the case that regresses.
-	_, err = st.DeleteEntity(ctx, "REQ-2", false)
+	_, err = st.DeleteFamily(ctx, "REQ-2", false)
 	require.NoError(t, err)
 
 	afterDelete, err := st.EntityTypeWatermark(ctx, "requirement")
@@ -93,13 +95,13 @@ func TestEntityTypeWatermark_RelationDeleteDoesNotMoveEntityType(t *testing.T) {
 
 	mustCreateEntity(t, st, "REQ-1", "requirement")
 	mustCreateEntity(t, st, "REQ-2", "requirement")
-	_, err := st.CreateRelation(ctx, "REQ-1", "relates-to", "REQ-2", nil)
+	_, err := st.CreateRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "relates-to", To: "REQ-2"}, nil)
 	require.NoError(t, err)
 
 	before, err := st.EntityTypeWatermark(ctx, "requirement")
 	require.NoError(t, err)
 
-	require.NoError(t, st.DeleteRelation(ctx, "REQ-1", "relates-to", "REQ-2"))
+	require.NoError(t, st.DeleteRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "relates-to", To: "REQ-2"}))
 
 	after, err := st.EntityTypeWatermark(ctx, "requirement")
 	require.NoError(t, err)

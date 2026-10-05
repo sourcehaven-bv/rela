@@ -69,9 +69,9 @@ func TestFaceGrantParity_ListAndGetAgree(t *testing.T) {
 	// LIST: only the granted face may appear.
 	var listed []*entity.Entity
 	for e, err := range app.store.ListEntities(gctx, store.EntityQuery{
-		Type:      "ticket",
-		AllStates: true,
-		FaceIn:    gate.ReadQuery(gctx, "ticket").Faces,
+		Type:   "ticket",
+		Faces:  store.AllFaces(),
+		FaceIn: gate.ReadQuery(gctx, "ticket").Faces,
 	}) {
 		if err != nil {
 			t.Fatalf("list: %v", err)
@@ -87,7 +87,7 @@ func TestFaceGrantParity_ListAndGetAgree(t *testing.T) {
 
 	// GET: the denied face is indistinguishable from a miss, and the granted
 	// one is served.
-	_, foundDraft, err := app.visibleReader.getVisible(gctx, "ticket", "TKT-1")
+	_, foundDraft, err := app.visibleReader.inWorld(gctx, "ticket", "TKT-1")
 	if err != nil {
 		t.Fatalf("get draft: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestFaceGrant_BareGrantReadsEveryFace(t *testing.T) {
 	if faces := gate.ReadQuery(gctx, "ticket").Faces; faces != nil {
 		t.Fatalf("a bare grant must push NO face filter (nil = every face), got %v", faces)
 	}
-	if _, found, err := app.visibleReader.getVisible(gctx, "ticket", "TKT-2"); err != nil || !found {
+	if _, found, err := app.visibleReader.inWorld(gctx, "ticket", "TKT-2"); err != nil || !found {
 		t.Errorf("a bare grant must still read the entity: found=%v err=%v", found, err)
 	}
 }
@@ -231,7 +231,7 @@ func TestFaceGrant_RelationReadsAreFaceGated(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "neighbor"},
 	})
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", "FEAT-1", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 

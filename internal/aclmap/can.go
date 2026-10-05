@@ -2,11 +2,9 @@ package aclmap
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // CanResult is the answer to "can principal P perform verb on entity E".
@@ -54,14 +52,10 @@ func (e *Engine) Can(ctx context.Context, rawPrincipal string, verb acl.Verb, en
 		return nil, fmt.Errorf("aclmap: unknown verb %q", verb)
 	}
 
-	ent, err := e.src.GetEntity(ctx, entityID)
+	entityID, entityType, err := e.entityTarget(ctx, entityID)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, entityID)
-		}
-		return nil, fmt.Errorf("aclmap: load entity %q: %w", entityID, err)
+		return nil, err
 	}
-	entityType := ent.Type
 
 	result := &CanResult{
 		SchemaVersion: schemaVersion,

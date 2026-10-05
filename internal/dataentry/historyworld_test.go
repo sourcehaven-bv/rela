@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -38,16 +40,17 @@ func TestHistoryFace_ResolvesTheFaceOnScreen(t *testing.T) {
 
 	// The default world addresses the default face, spelled as the zero
 	// face — byte-identical to the pre-BUG-2 unscoped read.
-	p, ok, err := historyFace(context.Background(), app.store, "TKT-H")
-	if err != nil || !ok || p != "" {
-		t.Fatalf("default world: got (%q,%v,%v), want (\"\",true,nil)", p, ok, err)
+	bare := entityPkg.Ref{ID: "TKT-H"}
+	s, ok, err := resolveHistorySubject(context.Background(), app.visibleReader, "ticket", bare)
+	if err != nil || !ok || s.ref.Face != "" || s.live == nil {
+		t.Fatalf("default world: got (%+v,%v,%v), want the live default face", s, ok, err)
 	}
 
-	p, ok, err = historyFace(worldCtx(pubScope), app.store, "TKT-H")
+	s, ok, err = resolveHistorySubject(worldCtx(pubScope), app.visibleReader, "ticket", bare)
 	if err != nil || !ok {
-		t.Fatalf("published world: got (%q,%v,%v)", p, ok, err)
+		t.Fatalf("published world: got (%+v,%v,%v)", s, ok, err)
 	}
-	if p != entityPkg.Face("published") {
+	if p := s.ref.Face; p != entityPkg.Face("published") {
 		t.Errorf("the history face must be the face the WORLD resolved, not the "+
 			"default one — versioning is per-face, so this is the difference "+
 			"between the right record and a plausible wrong one; got %q", p)
@@ -72,124 +75,80 @@ func TestHistoryFace_AbsentWhenTheWorldResolvesNothing(t *testing.T) {
 		},
 	})
 
-	p, ok, err := historyFace(worldCtx(pubScope), app.store, "TKT-DONLY")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	s, ok, err := resolveHistorySubject(worldCtx(pubScope), app.visibleReader, "ticket",
+		entityPkg.Ref{ID: "TKT-DONLY"})
+	if err != nil || !ok {
+		t.Fatalf("unexpected (%v,%v)", ok, err)
 	}
-	if ok {
+	if !s.worldAbsent {
 		t.Errorf("a draft with no published face must resolve NO face in the "+
-			"published world; got face %q", p)
+			"published world; got face %q", s.ref.Face)
 	}
 }
 
-// stubHistory records which face-scoped calls it received, so a test can prove
-// the face reached the store rather than being dropped on the way.
+// stubHistory records the face each history read carried, so a test can
+// prove the face reached the store rather than being dropped on the way.
 type stubHistory struct {
 	gotList entityPkg.Face
 	gotGet  entityPkg.Face
-	// unscopedCalls counts reads through the plain HistoryReader shape — the
-	// default-face path.
-	unscopedCalls int
 }
 
-func (s *stubHistory) ListVersions(context.Context, string) ([]store.VersionMeta, error) {
-	s.unscopedCalls++
+func (s *stubHistory) ListVersions(_ context.Context, ref entityPkg.Ref) ([]store.VersionMeta, error) {
+	s.gotList = ref.Face
 	return nil, nil
 }
 
-func (s *stubHistory) GetVersion(context.Context, string, int) (*store.VersionSnapshot, error) {
-	s.unscopedCalls++
-	return &store.VersionSnapshot{}, nil
+func (s *stubHistory) GetVersion(_ context.Context, ref entityPkg.Ref, _ int) (*store.VersionSnapshot, error) {
+	s.gotGet = ref.Face
+	return &store.VersionSnapshot{VersionMeta: store.VersionMeta{Face: ref.Face}}, nil
 }
 
-func (s *stubHistory) ListStateVersions(
-	_ context.Context, _ string, p entityPkg.Face,
-) ([]store.VersionMeta, error) {
-	s.gotList = p
-	return nil, nil
-}
-
-func (s *stubHistory) GetStateVersion(
-	_ context.Context, _ string, p entityPkg.Face, _ int,
-) (*store.VersionSnapshot, error) {
-	s.gotGet = p
-	return &store.VersionSnapshot{}, nil
-}
-
-// TestFaceHistoryReader_ScopesBothReadsToTheFace pins that BOTH history reads
-// carry the face. A timeline scoped to the face while the snapshot silently
+// TestHistoryReads_CarryTheFace pins that BOTH history reads carry the
+// subject's face. A timeline scoped to the face while the snapshot silently
 // read the default one would be the worst shape: the list would look right and
 // clicking a row would show another face's content.
-func TestFaceHistoryReader_ScopesBothReadsToTheFace(t *testing.T) {
+func TestHistoryReads_CarryTheFace(t *testing.T) {
+	app := newTestAppV1(t)
 	stub := &stubHistory{}
-	scoped, ok := faceHistoryReader(stub, entityPkg.Face("published"))
-	if !ok {
-		t.Fatal("a StateHistoryReader-capable backend must be narrowable")
-	}
-	if _, err := scoped.ListVersions(context.Background(), "TKT-1"); err != nil {
-		t.Fatalf("ListVersions: %v", err)
-	}
-	if _, err := scoped.GetVersion(context.Background(), "TKT-1", 1); err != nil {
-		t.Fatalf("GetVersion: %v", err)
-	}
-	if stub.gotList != entityPkg.Face("published") {
+	ref := entityPkg.Ref{ID: "TKT-1", Face: entityPkg.Face("published")}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_history/ticket/TKT-1", http.NoBody)
+	req = req.WithContext(withReadGate(req.Context(), fakeGate{holdsPermission: true}))
+
+	serveHistoryTimeline(httptest.NewRecorder(), req, stub, "ticket", ref, false)
+	serveHistoryVersion(app, httptest.NewRecorder(), req, stub, "ticket", ref, "1")
+
+	if stub.gotList != ref.Face {
 		t.Errorf("the timeline read must carry the face; got %q", stub.gotList)
 	}
-	if stub.gotGet != entityPkg.Face("published") {
-		t.Errorf("the snapshot read must carry the face too — a scoped timeline "+
-			"over unscoped snapshots would show another face's content behind a "+
-			"correct-looking list; got %q", stub.gotGet)
-	}
-	if stub.unscopedCalls != 0 {
-		t.Errorf("a face-scoped reader must never fall through to the unscoped "+
-			"calls; got %d", stub.unscopedCalls)
+	if stub.gotGet != ref.Face {
+		t.Errorf("the snapshot read must carry the face too; got %q", stub.gotGet)
 	}
 }
 
-// TestFaceHistoryReader_DefaultFaceStaysUnscoped pins the byte-identical
-// default path: the zero face IS the default face, so it must not be
-// wrapped — the adapter would otherwise require StateHistoryReader on every
-// backend that has history at all.
-func TestFaceHistoryReader_DefaultFaceStaysUnscoped(t *testing.T) {
-	stub := &stubHistory{}
-	scoped, ok := faceHistoryReader(stub, "")
-	if !ok {
-		t.Fatal("the default face must always be readable")
-	}
-	if _, err := scoped.ListVersions(context.Background(), "TKT-1"); err != nil {
-		t.Fatalf("ListVersions: %v", err)
-	}
-	if stub.unscopedCalls != 1 || stub.gotList != "" {
-		t.Errorf("the default face must read through the plain HistoryReader; "+
-			"unscoped=%d faceScoped=%q", stub.unscopedCalls, stub.gotList)
-	}
+// wrongFaceHistory answers every snapshot read with another face's row, as
+// a HistoryReader that ignored ref.Face would.
+type wrongFaceHistory struct{ stubHistory }
+
+func (*wrongFaceHistory) GetVersion(context.Context, entityPkg.Ref, int) (*store.VersionSnapshot, error) {
+	return &store.VersionSnapshot{
+		VersionMeta: store.VersionMeta{Version: 1, Type: "ticket", Face: "draft"},
+		Content:     "DRAFT BODY",
+	}, nil
 }
 
-// plainHistory implements HistoryReader ONLY — the fs/mem-shaped backend that
-// has no per-face capability.
-type plainHistory struct{}
+// A snapshot of another face is a 404, not content served under the
+// requested face's grant: the handler checks the face as restore does.
+func TestHistoryVersion_RefusesASnapshotOfAnotherFace(t *testing.T) {
+	app := newTestAppV1(t)
+	ref := entityPkg.Ref{ID: "TKT-1", Face: entityPkg.Face("published")}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/_history/ticket/TKT-1@published/1", http.NoBody)
+	req = req.WithContext(withReadGate(req.Context(), fakeGate{holdsPermission: true}))
+	rec := httptest.NewRecorder()
 
-func (plainHistory) ListVersions(context.Context, string) ([]store.VersionMeta, error) {
-	return nil, nil
-}
+	serveHistoryVersion(app, rec, req, &wrongFaceHistory{}, "ticket", ref, "1")
 
-func (plainHistory) GetVersion(context.Context, string, int) (*store.VersionSnapshot, error) {
-	return &store.VersionSnapshot{}, nil
-}
-
-// TestFaceHistoryReader_RefusesWhenTheBackendCannotScope is the fail-closed
-// half. A backend without the face-scoped capability must REFUSE a face-scoped
-// read, never fall back to the default face — that fallback is precisely the
-// wrong-record bug, and it would be invisible because the response looks
-// perfectly well-formed.
-func TestFaceHistoryReader_RefusesWhenTheBackendCannotScope(t *testing.T) {
-	if _, ok := faceHistoryReader(plainHistory{}, entityPkg.Face("published")); ok {
-		t.Error("a backend with no StateHistoryReader must not silently serve " +
-			"the DEFAULT face's history under a world")
-	}
-	// It must still serve the default face, which needs no narrowing.
-	if _, ok := faceHistoryReader(plainHistory{}, ""); !ok {
-		t.Error("the default face needs no face-scoped capability")
+	if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "DRAFT BODY") {
+		t.Fatalf("snapshot of another face = %d %s, want a 404", rec.Code, rec.Body)
 	}
 }
 
@@ -205,7 +164,7 @@ func TestHistoryRouteAcceptsAWorld(t *testing.T) {
 	seedEntity(app, &entityPkg.Entity{
 		ID: "TKT-R", Type: "ticket", Properties: map[string]any{"title": "t"},
 	})
-	app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 
 	rec := viewRecord(t, app, "/api/v1/_history/ticket/TKT-R?world=published")
 	if rec.Code == http.StatusUnprocessableEntity {
@@ -219,49 +178,26 @@ func TestHistoryRouteAcceptsAWorld(t *testing.T) {
 	}
 }
 
-// TestFaceHistoryReader_ReachesThroughTheVersionServiceInterface guards the
-// wiring shape BUG-2's fix depends on.
-//
-// `App.versions` is a [store.VersionService] — an interface — and the face
-// narrowing type-asserts the value inside it to [store.StateHistoryReader]. A
-// Go type assertion on an interface value tests the DYNAMIC type, so this works
-// only because the concrete value (pgstore's *VersionStore) implements both.
-//
-// Worth pinning because the failure mode is silent and remote: nothing here
-// breaks, and instead every world-scoped history request on the one backend
-// that HAS history refuses with 501. That would read as "the feature is not
-// built" rather than "the wiring lost a capability".
-func TestFaceHistoryReader_ReachesThroughTheVersionServiceInterface(t *testing.T) {
-	// A value satisfying both capabilities, held behind the narrow interface
-	// the handler actually has — the same shape appbuild hands the App.
-	var held store.HistoryReader = &stubHistory{}
-	if _, ok := faceHistoryReader(held, entityPkg.Face("published")); !ok {
-		t.Error("the face narrowing must see through the HistoryReader " +
-			"interface to the concrete type's StateHistoryReader methods")
-	}
-}
-
-// TestHistoryFace_DefaultWorldNeverProbesTheStore pins the property that keeps
+// TestHistoryFace_DeletedEntityResolvesItsLineage pins the property that keeps
 // DELETED-entity history working.
 //
-// A deleted entity has surviving versions but no live row, and
-// authorizeHistoryRead admits it on the global acl.PermHistoryRead. If the
-// default-world path probed the store for a face, it would report absence and
-// serve an empty timeline for a record the caller is entitled to read — a
-// regression invisible from the response, which would look like "no versions
-// recorded yet".
-func TestHistoryFace_DefaultWorldNeverProbesTheStore(t *testing.T) {
+// A deleted entity has surviving versions but no live row, and the global
+// acl.PermHistoryRead admits it. Reporting absence instead would serve an
+// empty timeline for a record the caller is entitled to read, a regression
+// invisible from the response, which would look like "no versions recorded
+// yet".
+func TestHistoryFace_DeletedEntityResolvesItsLineage(t *testing.T) {
 	app := newTestAppV1(t)
 
 	// Nothing seeded: the deleted-entity shape, as the handler sees it.
-	p, ok, err := historyFace(t.Context(), app.store, "GONE-1")
+	s, ok, err := resolveHistorySubject(t.Context(), app.visibleReader, "ticket", entityPkg.Ref{ID: "GONE-1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !ok || p != "" {
+	if !ok || s.ref.Face != "" || s.worldAbsent || s.live != nil {
 		t.Errorf("under the default world an absent LIVE row must still resolve "+
 			"the default face — a deleted entity's history is a supported read; "+
-			"got (%q,%v)", p, ok)
+			"got (%+v,%v)", s, ok)
 	}
 }
 
@@ -320,7 +256,7 @@ func TestHistoryTimeline_LabelsHowTheFaceWasChosen(t *testing.T) {
 			req = req.WithContext(withReadGate(worldCtx(scope), fakeGate{holdsPermission: true}))
 			rec := httptest.NewRecorder()
 
-			serveHistoryTimeline(rec, req, &stubHistory{}, "policy", "POL-1", tc.face)
+			serveHistoryTimeline(rec, req, &stubHistory{}, "policy", entityPkg.Ref{ID: "POL-1", Face: tc.face}, false)
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("timeline: got %d, want 200; body=%s", rec.Code, rec.Body)
@@ -350,5 +286,46 @@ func TestHistoryTimeline_LabelsHowTheFaceWasChosen(t *testing.T) {
 					"used; got %d", *body.ChainPosition)
 			}
 		})
+	}
+}
+
+// hiddenRowGate is permGate with a row gate that refuses every id.
+type hiddenRowGate struct{ permGate }
+
+func (hiddenRowGate) PermitsRead(context.Context, string, string) (bool, error) { return false, nil }
+
+func (hiddenRowGate) ReadableFacesMany(context.Context, string, []string) (acl.FaceVerdicts, error) {
+	return acl.FaceVerdicts{}, nil
+}
+
+// TestHistoryFace_HiddenLiveIsIndistinguishableFromAbsent pins that a bare id
+// in a world answers the same for a live entity the caller cannot read as for
+// an id that was never stored. A 404 for one and the empty world answer for
+// the other would let a `history:read` holder probe which ids exist.
+func TestHistoryFace_HiddenLiveIsIndistinguishableFromAbsent(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entityPkg.Entity{
+		ID: "TKT-SECRET", Type: "ticket", Properties: map[string]any{"title": "hidden"},
+	})
+	pubScope := store.NewWorldScope(map[string]store.TypeResolution{
+		"ticket": {Chain: []entityPkg.Face{entityPkg.Face("published")}, Fallback: store.FallbackExclude},
+	})
+
+	for _, perms := range []map[string]bool{{acl.PermHistoryRead: true}, {}} {
+		ctx := withReadGate(worldCtx(pubScope), hiddenRowGate{permGate{perms: perms}})
+		hidden, hiddenOK, err := resolveHistorySubject(ctx, app.visibleReader, "ticket",
+			entityPkg.Ref{ID: "TKT-SECRET"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		absent, absentOK, err := resolveHistorySubject(ctx, app.visibleReader, "ticket",
+			entityPkg.Ref{ID: "TKT-NEVER"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hiddenOK != absentOK || hidden.worldAbsent != absent.worldAbsent {
+			t.Errorf("perms %v: hidden live (%v, absent=%v) differs from never stored (%v, absent=%v)",
+				perms, hiddenOK, hidden.worldAbsent, absentOK, absent.worldAbsent)
+		}
 	}
 }

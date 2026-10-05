@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 func TestFieldToken(t *testing.T) {
@@ -240,7 +241,7 @@ func TestV1UpdateEntity_Preconditions(t *testing.T) {
 		if c.Actual != want || p.Versions == nil || p.Versions.Properties["status"] != want {
 			t.Errorf("actual/versions must carry the stored token %q: %+v %+v", want, c, p.Versions)
 		}
-		stored, _ := app.reader.getEntity(context.Background(), "TKT-001")
+		stored, _ := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-001"})
 		if stored.Properties["status"] != "blocked" {
 			t.Errorf("a refused write must not land: status=%v", stored.Properties["status"])
 		}
@@ -400,12 +401,12 @@ func (g hidingGate) PermitsRead(context.Context, string, string) (bool, error) {
 	return !*g.hidden, nil
 }
 
-func (g hidingGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g hidingGate) ReadableFacesMany(_ context.Context, _ string, ids []string) (acl.FaceVerdicts, error) {
 	m := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		m[id] = !*g.hidden
 	}
-	return m, nil
+	return visibilitytest.IDVerdicts(m, nil)
 }
 
 func (g hidingGate) ReadQuery(context.Context, string) acl.ReadQueryResult {

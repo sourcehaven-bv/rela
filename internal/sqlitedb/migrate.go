@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 10
+const schemaVersion = 11
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -136,6 +136,19 @@ var migrations = []migration{
 		// Pure CREATE IF NOT EXISTS, a no-op where schemaSQL already made them.
 		to:    10,
 		apply: sqlSteps(softDeleteDDL),
+	},
+	{
+		// v10 → v11: the type page index serves every face (TKT-KQXVF7).
+		// schemaSQL has already created entities_type_id_face_idx by the
+		// time this runs, so the rung's create is a no-op kept to state
+		// what v11 means; the rung drops the (type) index it replaces and
+		// moves the stamp. Both statements are IF [NOT] EXISTS, so a re-run
+		// after a crash is a no-op.
+		to: 11,
+		apply: sqlSteps(
+			`DROP INDEX IF EXISTS entities_type_idx`,
+			entitiesTypeIDFaceIndexDDL,
+		),
 	},
 }
 

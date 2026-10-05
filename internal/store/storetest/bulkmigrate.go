@@ -41,16 +41,16 @@ func RunBulkMigrateTests(t *testing.T, f Factory) {
 		assert.Equal(t, 2, n)
 
 		// Properties and body travel with the edge, not just the endpoints.
-		got, err := s.GetRelation(ctx(), "B", "blocks", "A")
+		got, err := s.GetRelation(ctx(), entity.RelationKey{From: "B", Type: "blocks", To: "A"})
 		require.NoError(t, err)
 		assert.Equal(t, "high", got.Properties["weight"])
 		assert.Equal(t, "why A blocks B", got.Content)
 
-		_, err = s.GetRelation(ctx(), "C", "blocks", "A")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "C", Type: "blocks", To: "A"})
 		assert.NoError(t, err)
-		_, err = s.GetRelation(ctx(), "A", "blocks", "B")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "A", Type: "blocks", To: "B"})
 		assert.ErrorIs(t, err, store.ErrNotFound, "the original direction must be gone")
-		_, err = s.GetRelation(ctx(), "B", "requires", "C")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "B", Type: "requires", To: "C"})
 		assert.NoError(t, err, "a relation of another type must be untouched")
 	})
 
@@ -65,7 +65,7 @@ func RunBulkMigrateTests(t *testing.T, f Factory) {
 
 		// The regression this pins: a create-then-delete loop conflicts on the
 		// create and then deletes the only copy, destroying the edge.
-		got, err := s.GetRelation(ctx(), "A", "blocks", "A")
+		got, err := s.GetRelation(ctx(), entity.RelationKey{From: "A", Type: "blocks", To: "A"})
 		require.NoError(t, err, "the self-edge must survive")
 		assert.Equal(t, "keep me", got.Content)
 	})
@@ -82,10 +82,10 @@ func RunBulkMigrateTests(t *testing.T, f Factory) {
 
 		// All-or-nothing: a half-applied rewrite is the failure mode that loses
 		// an edge and leaves the survivor carrying the other's content.
-		ab, err := s.GetRelation(ctx(), "A", "blocks", "B")
+		ab, err := s.GetRelation(ctx(), entity.RelationKey{From: "A", Type: "blocks", To: "B"})
 		require.NoError(t, err)
 		assert.Equal(t, "AB", ab.Content)
-		ba, err := s.GetRelation(ctx(), "B", "blocks", "A")
+		ba, err := s.GetRelation(ctx(), entity.RelationKey{From: "B", Type: "blocks", To: "A"})
 		require.NoError(t, err)
 		assert.Equal(t, "BA", ba.Content)
 	})
@@ -107,7 +107,7 @@ func RunBulkMigrateTests(t *testing.T, f Factory) {
 		for _, want := range []struct{ from, to, content string }{
 			{"B", "A", "AB"}, {"C", "B", "BC"}, {"A", "C", "CA"},
 		} {
-			got, gErr := s.GetRelation(ctx(), want.from, "blocks", want.to)
+			got, gErr := s.GetRelation(ctx(), entity.RelationKey{From: want.from, Type: "blocks", To: want.to})
 			require.NoError(t, gErr, "%s--blocks--%s missing", want.from, want.to)
 			assert.Equal(t, want.content, got.Content,
 				"%s--blocks--%s carries the wrong payload", want.from, want.to)
@@ -170,14 +170,14 @@ func RunBulkMigrateTests(t *testing.T, f Factory) {
 		s := f(t)
 		seedSwapEntities(t, s, "A", "B")
 		mustRelation(t, s, "A", "blocks", "B", nil)
-		before, err := s.GetRelation(ctx(), "A", "blocks", "B")
+		before, err := s.GetRelation(ctx(), entity.RelationKey{From: "A", Type: "blocks", To: "B"})
 		require.NoError(t, err)
 
 		time.Sleep(10 * time.Millisecond) // clocks with coarse resolution
 		_, err = store.SwapRelationEndpoints(ctx(), s, "blocks")
 		require.NoError(t, err)
 
-		after, err := s.GetRelation(ctx(), "B", "blocks", "A")
+		after, err := s.GetRelation(ctx(), entity.RelationKey{From: "B", Type: "blocks", To: "A"})
 		require.NoError(t, err)
 		assert.True(t, after.UpdatedAt.After(before.UpdatedAt),
 			"UpdatedAt did not move: before=%s after=%s", before.UpdatedAt, after.UpdatedAt)
@@ -207,7 +207,7 @@ func RunBulkMigrateTests(t *testing.T, f Factory) {
 		// edge still needs reversing. Asserting it here stops a future
 		// "optimization" from adding a hidden marker down where the store
 		// cannot know what the schema means.
-		_, err = s.GetRelation(ctx(), "A", "blocks", "B")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "A", Type: "blocks", To: "B"})
 		assert.NoError(t, err, "two swaps return the edge to its original direction")
 	})
 }
@@ -246,6 +246,6 @@ func seedSwapEntities(t *testing.T, s store.Store, ids ...string) {
 // mustRelation creates a relation or fails the test.
 func mustRelation(t *testing.T, s store.Store, from, relType, to string, data *store.RelationData) {
 	t.Helper()
-	_, err := s.CreateRelation(ctx(), from, relType, to, data)
+	_, err := s.CreateRelation(ctx(), entity.RelationKey{From: from, Type: relType, To: to}, data)
 	require.NoError(t, err)
 }

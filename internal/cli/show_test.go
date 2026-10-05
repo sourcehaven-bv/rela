@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -167,8 +169,7 @@ func TestShowFaceAddress(t *testing.T) {
 	}
 	seeder.addRelation("DEC-001", "addresses", "REQ-001")
 	seeder.addRelation("REQ-001", "implements", "SOL-001")
-	if _, err := seeder.s.CreateRelation(ctx, "REQ-001", "implements", "SOL-002",
-		&store.RelationData{FromFace: draft.Face}); err != nil {
+	if _, err := seeder.s.CreateRelation(ctx, entity.RelationKey{From: "REQ-001", FromFace: draft.Face, Type: "implements", To: "SOL-002"}, &store.RelationData{}); err != nil {
 		t.Fatal(err)
 	}
 	svc := seeder.build(t).read

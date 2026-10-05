@@ -12,7 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/config"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -52,10 +52,6 @@ type mcpServices struct {
 	// service generation — job queue, mail worker, GC sweep — against a store
 	// Close has already torn down, and nothing would ever stop them.
 	closed bool
-	// attachLocker serializes the MCP attachment writes of this process per
-	// (entity, property). It outlives reloads, so writes under an old and a
-	// new schema still exclude each other.
-	attachLocker lock.Locker
 	// attachUploads bounds this process's concurrent MCP uploads. It
 	// outlives reloads for the same reason.
 	attachUploads *attachment.Limiter
@@ -89,7 +85,6 @@ func newMCPServices(startDir string) (*mcpServices, error) {
 		svc:           svc,
 		origin:        svc,
 		watcher:       &mcpWatcher{store: svc.Store()},
-		attachLocker:  lock.For(svc.Store()),
 		attachUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
 	}, nil
 }
@@ -137,7 +132,7 @@ func (s *mcpServices) reload() (relamcp.Deps, error) {
 	// searchCloser is nil on purpose: the closer belongs to the ORIGIN
 	// assembly, which retains it and closes it at shutdown. Handing it to the
 	// successor too would give two bundles the same closer and close it twice.
-	next, err := base.ForReassembly().Assemble(old.Store(), old.Searcher(), old.VisibleSearcher(), nil)
+	next, err := base.ForReassembly(old).Assemble(old.Store(), old.Searcher(), old.VisibleSearcher(), nil)
 	if err != nil {
 		return relamcp.Deps{}, fmt.Errorf("reload schema: %w", err)
 	}
@@ -250,6 +245,8 @@ func (s *mcpServices) deps() relamcp.Deps {
 		LuaCache:      s.svc.ScriptEngine().LuaCache(),
 		Watcher:       s.watcher,
 		ProjectRoot:   s.svc.Paths().Root,
+		World:         reads.LuaReads.World,
+		Families:      appbuild.CompiledWorlds(s.svc).Families(),
 	}
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals
@@ -263,8 +260,15 @@ func (s *mcpServices) deps() relamcp.Deps {
 // snapshot is built once per assembly because the metamodel only changes on
 // reload, which rebuilds the Deps. Caller holds mu.
 func (s *mcpServices) attachmentDeps() relamcp.AttachmentDeps {
-	snap, err := relamcp.NewAttachmentSnapshot(
-		s.svc.Store(), s.svc.EntityManager(), s.attachLocker, s.svc.ACL(), s.svc.Meta(), nil, store.MaxAttachmentBytes)
+	// The manager's attachment surface carries its lock, which a reload
+	// reuses (appbuild.SharedBase.ForReassembly), so writes under an old and
+	// a new schema still exclude each other.
+	var snap relamcp.AttachmentSnapshot
+	owner, err := entitymanager.AttachmentsOf(s.svc.EntityManager())
+	if err == nil {
+		snap, err = relamcp.NewAttachmentSnapshot(
+			s.svc.Store(), owner, s.svc.ACL(), s.svc.Meta(), nil, store.MaxAttachmentBytes)
+	}
 	return relamcp.AttachmentDeps{
 		Snapshot:   func() (relamcp.AttachmentSnapshot, error) { return snap, err },
 		Uploads:    s.attachUploads,

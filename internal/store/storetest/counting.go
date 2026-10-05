@@ -28,7 +28,7 @@ import (
 // optional capabilities above, so the count moves with store.Store rather than
 // with this type.
 //
-//plimsoll:max-exported-methods=22
+//plimsoll:max-exported-methods=20
 type Counting struct {
 	store.Store
 
@@ -107,14 +107,9 @@ func itoa(n int) string {
 	return string(d)
 }
 
-func (c *Counting) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+func (c *Counting) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
 	c.hit("GetEntity")
-	return c.Store.GetEntity(ctx, id)
-}
-
-func (c *Counting) GetEntityState(ctx context.Context, id string, face entity.Face) (*entity.Entity, error) {
-	c.hit("GetEntityState")
-	return c.Store.GetEntityState(ctx, id, face)
+	return c.Store.GetEntity(ctx, ref)
 }
 
 func (c *Counting) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
@@ -137,14 +132,9 @@ func (c *Counting) HighestID(ctx context.Context, prefix string) (int, error) {
 	return c.Store.HighestID(ctx, prefix)
 }
 
-func (c *Counting) PropertyValues(ctx context.Context, property string, limit int) ([]string, error) {
-	c.hit("PropertyValues")
-	return c.Store.PropertyValues(ctx, property, limit)
-}
-
-func (c *Counting) GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error) {
+func (c *Counting) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error) {
 	c.hit("GetRelation")
-	return c.Store.GetRelation(ctx, from, relType, to)
+	return c.Store.GetRelation(ctx, k)
 }
 
 func (c *Counting) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
@@ -172,9 +162,11 @@ func (c *Counting) GraphCount(ctx context.Context, q store.GraphQuery) (matched,
 	return c.Store.GraphCount(ctx, q)
 }
 
-func (c *Counting) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
-	c.hit("MatchingIDs")
-	return c.Store.MatchingIDs(ctx, q, ids)
+func (c *Counting) MatchingFaces(
+	ctx context.Context, q store.GraphQuery, ids []string,
+) (map[string][]entity.Face, error) {
+	c.hit("MatchingFaces")
+	return c.Store.MatchingFaces(ctx, q, ids)
 }
 
 // GraphQueryHeaders forwards to the wrapped store's native header query, or

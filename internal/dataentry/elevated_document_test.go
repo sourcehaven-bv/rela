@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	scriptpkg "github.com/Sourcehaven-BV/rela/internal/script"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -346,12 +347,16 @@ func (denyMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteRe
 }
 
 func (denyMutator) CreateRelation(
-	context.Context, string, string, string, entity.RelationOptions,
+	context.Context, entity.RelationKey, entity.RelationOptions,
 ) (*entity.Relation, error) {
 	return nil, errors.New("writes are not expected in this test")
 }
 
-func (denyMutator) DeleteRelation(context.Context, string, string, string) error {
+func (denyMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
+	return nil, errors.New("writes are not expected in this test")
+}
+
+func (denyMutator) DeleteRelation(context.Context, entity.RelationKey) error {
 	return errors.New("writes are not expected in this test")
 }
 
@@ -424,13 +429,14 @@ end)`
 				ReadDeps: lua.ReadDeps{
 					VisibleReader: visibility.DenyReader{},
 					ProjectRoot:   root,
+					World:         store.TrivialScope(),
 				},
 				EntityManager: denyMutator{},
 			}
 		},
 		func() documentElevation {
 			return documentElevation{
-				Reader:   visibility.Unrestricted(st),
+				Reader:   visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
 				Recorder: elevationRecorder(sink),
 			}
 		})
@@ -486,12 +492,13 @@ func TestUnelevatedRender_CannotReachHiddenEntity(t *testing.T) {
 				ReadDeps: lua.ReadDeps{
 					VisibleReader: visibility.DenyReader{},
 					ProjectRoot:   root,
+					World:         store.TrivialScope(),
 				},
 				EntityManager: denyMutator{},
 			}
 		},
 		func() documentElevation {
-			return documentElevation{Reader: visibility.Unrestricted(st), Recorder: elevationRecorder(sink)}
+			return documentElevation{Reader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), Recorder: elevationRecorder(sink)}
 		})
 
 	// Elevated:false — the capability is available to the service but this

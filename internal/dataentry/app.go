@@ -21,7 +21,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/git"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
@@ -49,6 +48,14 @@ const userDefaultsFile = "user-defaults.yaml"
 // userPaletteFile is the filename for user-specific palette overrides within the .rela directory.
 const userPaletteFile = "palette.yaml"
 
+// entityRecreator is the create-only write a history restore of a deleted
+// face needs. It never falls through to an update: a face recreated between
+// the restore's resolve and its write surfaces as ErrEntityAlreadyExists, not
+// as a whole-record overwrite of the live row (see entitymanager.RecreateEntity).
+type entityRecreator interface {
+	RecreateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
+}
+
 // appEntityWriter is the write surface App itself calls — the CalDAV write
 // path, entity/relation history restore, and the value it hands to the Lua
 // writer runtime. See the internal/entitymanager package doc for the
@@ -72,12 +79,15 @@ type appEntityWriter interface {
 	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
 	CreateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
 	UpdateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
-	DeleteRelation(ctx context.Context, from, relType, to string) error
+	DeleteRelation(ctx context.Context, key entity.RelationKey) error
+	// DeleteEntityFace is here for the script runtime's Mutator, which App
+	// hands a.entityManager as.
+	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
 }
 
 // App is the central application struct for the data-entry server.
@@ -104,10 +114,11 @@ type appEntityWriter interface {
 // 40-method load line — extract the API/serialization/relation services into
 // their own types. Ratchet this number DOWN as methods move out; never up
 // EXCEPT for a new required route handler (App owns one method per registered
-// HTTP route by the router's design). The sync route cluster (16 methods) moved
-// to syncHandler (170 → 154); the command cluster (11 methods) moved to
-// commandHandler (154 → 143); the attachment cluster (12 methods) moved to
-// attachmentHandler / package functions (143 → 131); the write nucleus —
+// HTTP route by the router's design). The sync route cluster (16 methods)
+// moved to syncHandler (170 → 154; sync itself was later removed); the
+// command cluster (11 methods) moved to commandHandler (154 → 143); the
+// attachment cluster (12 methods) moved to attachmentHandler / package
+// functions (143 → 131); the write nucleus —
 // entity/relation CRUD, clone, conflict-resolve, and the modern relations
 // reconciler (18 methods) — moved to writeHandler (131 → 114); the Lua
 // action handler joined it (115 → 114, from a base that had absorbed the
@@ -139,7 +150,7 @@ type appEntityWriter interface {
 // positional NewApp parameter. The compiling and matching themselves stay OFF
 // App entirely — conditionlint owns them and appbuild bridges — so the feature
 // cost one method, not a subsystem.
-// TKT-DN37J2 adds [App.SetWorlds] on the same terms, and the same discipline
+// TKT-DN37J2 adds setWorlds on the same terms, and the same discipline
 // held for the rest: `resolveWorld`, `attachWorld` and `worldCapablePath` are
 // all package functions taking what they need, so request-level world
 // selection cost ONE method rather than four.
@@ -163,7 +174,7 @@ type appEntityWriter interface {
 // this struct. The load line doing its job is worth recording, because the
 // habit it interrupts is the one that produced the pre-extraction 104.
 //
-// The merge of FEAT-9CD2MX with develop adds SetWorlds on top of develop's
+// The merge of FEAT-9CD2MX with develop adds setWorlds on top of develop's
 // extractions (86 → 87). Neither side grew it carelessly — the worlds side
 // cost exactly one method and said why above — but the integration is where
 // the count actually moves, so it is recorded here rather than in either
@@ -176,7 +187,7 @@ type appEntityWriter interface {
 //
 // SetComments is also App's 21st EXPORTED method, one past the default line of
 // 20. It is a wiring setter in the established shape (SetCalDAVAliases,
-// SetUserState, SetWorlds), and the alternative — reaching into App from
+// SetUserState, setWorlds), and the alternative — reaching into App from
 // appbuild to assign the field — would trade a named seam for a hidden one.
 // The routes themselves are on commentsHandler, so the public surface grew by
 // exactly the one setter. Ratchet target, as above.
@@ -220,14 +231,18 @@ type App struct {
 	versions      store.VersionService
 	entityManager appEntityWriter
 
+	// recreator brings a deleted face back at its own id on a history
+	// restore, create-only (see entitymanager.RecreateEntity).
+	recreator entityRecreator
+
 	// caldavAliases links CalDAV resources to entities. Optional: nil when no
 	// alias service is wired, in which case the CalDAV routes are not served
 	// (a collection with no way to remember client-created resources would
 	// duplicate every to-do on the next sync).
 	caldavAliases *caldavalias.Service
-	// worlds resolves a `?world=` name to its compiled scope. Nil until
-	// [App.SetWorlds] is called, in which case the App serves the default
-	// world only and refuses any other `?world=` — see world.go.
+	// worlds resolves a `?world=` name to its compiled scope. [NewApp]
+	// requires it. Only a test App built without NewApp leaves it nil, and
+	// that App serves the generated default world only — see world.go.
 	worlds WorldLookup
 	// copies serves the copy surface (list-by-source, invoke-by-name).
 	// Constructed in NewApp from the entity manager, which is required, so
@@ -336,10 +351,6 @@ type App struct {
 	// settings owns the per-user default values (create-form/relation defaults).
 	// Self-synchronized; extracted from the schema snapshot.
 	settings *settingsService
-	// sync owns the /api/sync/ route cluster (fs-client ↔ pg-server
-	// replication). Extracted from App (TKT-R68TV8); holds narrow store/deleter
-	// surfaces.
-	sync *syncHandler
 	// commands owns the user-configured command surface (SSE shell-exec,
 	// file/URL launchers, command resolution). Extracted from App (TKT-R68TV8);
 	// holds narrow closures over the schema snapshot, Services bundle, project
@@ -377,11 +388,12 @@ type App struct {
 	kv        state.KV
 	acl       acl.ACL
 
-	// attachmentLocker serializes attachment writers to one (entity,
-	// property), for web uploads and remote MCP tools alike. Built once from
-	// the store by [lock.For], so on postgres it also excludes other
-	// processes.
-	attachmentLocker attachment.Locker
+	// attachmentOwner is the manager's attachment surface: the one write
+	// that may change a file value, and the lock serializing writers to one
+	// entity's attachments for web uploads, remote MCP tools, the copy engine
+	// and face deletes alike. The zero value (a manager without a file
+	// property in its metamodel) fails every attachment write.
+	attachmentOwner entitymanager.Attachments
 
 	// attachmentUploads bounds concurrent uploads in this process, web and
 	// remote MCP together.
@@ -543,6 +555,7 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 			Searcher:      a.searcher,
 			Meta:          a.Meta(),
 			ProjectRoot:   a.paths.Root,
+			World:         defaultWorldScope(a.worlds),
 		},
 		EntityManager: a.entityManager,
 	}
@@ -591,7 +604,28 @@ func appRedactor(a *App) visibility.FieldRedactor {
 // appbuild's guard: it would convert a caught bug into a silent downgrade,
 // and delete the fault path failclosed_test.go exercises.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
-	return gatedScriptReader(a.acl, a.store, redactor)
+	return gatedScriptReader(a.acl, a.store, redactor, familiesOption(a), defaultWorldScope(a.worlds))
+}
+
+// familiesOption is the resolver option every App-wired resolver takes, so a
+// Family lists faces in declaration order on every read tier (G18).
+//
+// A free function rather than an App method: App is at its plimsoll method
+// load line.
+func familiesOption(a *App) visibility.ResolverOption {
+	return visibility.WithFamilies((&appFamilies{app: a}).scope)
+}
+
+// appFamilies resolves the families scope from the LIVE App, so worlds set
+// after construction are honored. NewApp sets app once it has built the App;
+// before that faces sort by token.
+type appFamilies struct{ app *App }
+
+func (o *appFamilies) scope() store.WorldScope {
+	if o.app == nil {
+		return familiesScope(nil, nil)
+	}
+	return familiesScope(o.app.worlds, o.app.Meta())
 }
 
 // lateGatedReader is a lua.EntityReader that resolves the gated reader from the
@@ -606,8 +640,8 @@ func (r lateGatedReader) reader() lua.EntityReader {
 	return r.app.scriptReader(appRedactor(r.app))
 }
 
-func (r lateGatedReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	return r.reader().GetEntity(ctx, id)
+func (r lateGatedReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
+	return r.reader().GetAddress(ctx, addr)
 }
 
 func (r lateGatedReader) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
@@ -648,6 +682,58 @@ func (r lateGatedReader) ListRelations(ctx context.Context, q store.RelationQuer
 	return r.reader().ListRelations(ctx, q)
 }
 
+// errNoStrictRelations reports a gated reader without the strict relation
+// read. Every reader gatedScriptReader returns has it, so this is a wiring
+// bug; the tolerant read is never substituted, because a count over edges a
+// faulted gate hid would invent missing relations.
+var errNoStrictRelations = errors.New("dataentry: reader has no strict relation read")
+
+// ListRelationsStrict is ListRelations with gate faults returned as errors
+// ([visibility.ScriptReader.ListRelationsStrict]).
+func (r lateGatedReader) ListRelationsStrict(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	sr, ok := r.reader().(interface {
+		ListRelationsStrict(context.Context, store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	})
+	if !ok {
+		return func(yield func(*entity.Relation, error) bool) { yield(nil, errNoStrictRelations) }
+	}
+	return sr.ListRelationsStrict(ctx, q)
+}
+
+// writeTargeter resolves the one face a script write edits.
+type writeTargeter interface {
+	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
+}
+
+// WriteTarget forwards to the live gated reader, refused like Family when
+// the reader lacks it.
+func (r lateGatedReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
+	wt, ok := r.reader().(writeTargeter)
+	if !ok {
+		return entity.Ref{}, errors.New("dataentry: script reader has no WriteTarget")
+	}
+	return wt.WriteTarget(ctx, addr)
+}
+
+// familyReader is the header-only "which faces of this id may the caller
+// read" check a script write target needs.
+type familyReader interface {
+	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+}
+
+// Family forwards to the live gated reader. Every reader gatedScriptReader
+// returns provides it; one that did not would be a wiring bug, so it is
+// refused rather than answered ungated.
+func (r lateGatedReader) Family(ctx context.Context, id string) (visibility.Family, bool, error) {
+	fr, ok := r.reader().(familyReader)
+	if !ok {
+		return visibility.Family{}, false, errors.New("dataentry: script reader has no Family")
+	}
+	return fr.Family(ctx, id)
+}
+
 // lateGatedTracer is the tracer.Tracer counterpart of lateGatedReader: it
 // resolves the gated tracer (scriptTracer, which prunes hidden nodes and fails
 // closed) from the LIVE App per call, so a rule's rela.trace_from/trace_to/
@@ -672,7 +758,7 @@ func (t lateGatedTracer) FindPath(ctx context.Context, fromID, toID string) []tr
 	return t.tracer().FindPath(ctx, fromID, toID)
 }
 
-func (t lateGatedTracer) FindOrphans(ctx context.Context) ([]string, error) {
+func (t lateGatedTracer) FindOrphans(ctx context.Context) ([]tracer.Orphan, error) {
 	return t.tracer().FindOrphans(ctx)
 }
 
@@ -708,19 +794,22 @@ func elevationRecorder(sink audit.Audit) lua.ElevationRecorder {
 // Declarative policy it row-gates + field-redacts, resolving the principal from
 // ctx per call; a construction fault REFUSES (DenyReader) rather than reading
 // ungated. Same policy the per-request App.scriptReader wraps.
-func gatedScriptReader(aclImpl acl.ACL, store store.Store, redactor visibility.FieldRedactor) lua.EntityReader {
+func gatedScriptReader(
+	aclImpl acl.ACL, store store.Store, redactor visibility.FieldRedactor, order visibility.ResolverOption,
+	world store.WorldScope,
+) lua.EntityReader {
 	d, ok := aclImpl.(*acl.Declarative)
 	if !ok || d == nil {
 		// Named so the NopACL path is greppable alongside every other
 		// ungated read site (TKT-1WV50C).
-		return visibility.Unrestricted(store)
+		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world))
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, world)
 	if err != nil {
 		slog.Error("dataentry: ACL gate unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	reader, err := visibility.NewPolicyReader(gate, redactor, store)
+	reader, err := visibility.NewPolicyReader(gate, redactor, store, order)
 	if err != nil {
 		slog.Error("dataentry: policy reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
@@ -730,7 +819,7 @@ func gatedScriptReader(aclImpl acl.ACL, store store.Store, redactor visibility.F
 		slog.Error("dataentry: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	return sr
+	return sr.WithWorld(visibility.WorldOf(world))
 }
 
 // scriptTraversalGate authorizes a validation rule's traversal under the same
@@ -744,7 +833,7 @@ func scriptTraversalGate(a *App) relresolve.Gate {
 		if !ok || d == nil {
 			return relresolve.Ungated(ctx, candidateType, hop)
 		}
-		gate, err := visibility.NewDeclarativeGate(d)
+		gate, err := visibility.NewDeclarativeGate(d, defaultWorldScope(a.worlds))
 		if err != nil {
 			// coverage-ignore: invariant: d is non-nil here
 			return nil, fmt.Errorf("%w: %w", acl.ErrTraversalUnsupported, err)
@@ -765,12 +854,22 @@ func (a *App) scriptTracer(redactor visibility.FieldRedactor) tracer.Tracer {
 	if !ok || d == nil {
 		return a.tracer
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, defaultWorldScope(a.worlds))
 	if err != nil {
 		slog.Error("dataentry: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
 	}
-	vt, err := visibility.NewVisibleTracer(a.tracer, gate, redactor, a.store)
+	res, err := visibility.NewResolver(gate, redactor, a.store, familiesOption(a))
+	if err != nil {
+		slog.Error("dataentry: resolver unavailable; traversal REFUSED", "err", err)
+		return visibility.DenyTracer{}
+	}
+	gatable, ok := a.tracer.(visibility.EdgeGatable)
+	if !ok {
+		slog.Error("dataentry: tracer cannot gate edges; traversal REFUSED", "tracer", fmt.Sprintf("%T", a.tracer))
+		return visibility.DenyTracer{}
+	}
+	vt, err := visibility.NewVisibleTracer(gatable, res, a.store, defaultWorldScope(a.worlds))
 	if err != nil {
 		slog.Error("dataentry: visible tracer unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -880,46 +979,44 @@ func NewApp(
 	auditSink audit.Audit,
 	stateKV state.KV,
 	commandAuthz commandAuthorizer,
+	worlds WorldLookup,
 ) (*App, error) {
 	// Reject nil required collaborators up front rather than letting a
 	// downstream handler panic on the first request that exercises them.
 	// fs and paths can also be nil in tests that take a different code path
 	// (newAppFromParts wires them post-construction), so they're checked
 	// only when they participate in the construction below.
-	if meta == nil {
-		return nil, errors.New("dataentry.NewApp: meta is required")
-	}
-	if st == nil {
-		return nil, errors.New("dataentry.NewApp: store is required")
-	}
-	if em == nil {
-		return nil, errors.New("dataentry.NewApp: entityManager is required")
-	}
-	if searcher == nil {
-		return nil, errors.New("dataentry.NewApp: searcher is required")
-	}
-	if visibleSearcher == nil {
-		return nil, errors.New("dataentry.NewApp: visibleSearcher is required (wire appbuild's Services.VisibleSearcher)")
-	}
-	if aclImpl == nil {
-		return nil, errors.New("dataentry.NewApp: acl is required (use acl.NopACL{} to opt out)")
-	}
-	if fieldResolver == nil {
-		return nil, errors.New("dataentry.NewApp: fieldResolver is required (pass NopFieldVerdictResolver{} for permissive default)")
-	}
-	if auditSink == nil {
-		return nil, errors.New("dataentry.NewApp: auditSink is required (pass audit.Nop{} to opt out)")
-	}
-	if stateKV == nil {
-		return nil, errors.New("dataentry.NewApp: stateKV is required (wire appbuild's Services.State())")
-	}
-	if commandAuthz == nil {
+	for _, req := range []struct {
+		missing bool
+		msg     string
+	}{
+		{meta == nil, "meta is required"},
+		{worlds == nil, "worlds are required"},
+		{st == nil, "store is required"},
+		{em == nil, "entityManager is required"},
+		{searcher == nil, "searcher is required"},
+		{visibleSearcher == nil, "visibleSearcher is required (wire appbuild's Services.VisibleSearcher)"},
+		{aclImpl == nil, "acl is required (use acl.NopACL{} to opt out)"},
+		{fieldResolver == nil, "fieldResolver is required (pass NopFieldVerdictResolver{} for permissive default)"},
+		{auditSink == nil, "auditSink is required (pass audit.Nop{} to opt out)"},
+		{stateKV == nil, "stateKV is required (wire appbuild's Services.State())"},
 		// Fail closed on a wiring omission: a missing command authorizer must
-		// not default to "allow shell exec". Callers pass an explicit impl —
+		// not default to "allow shell exec". Callers pass an explicit impl:
 		// SelectCommandAuthorizer(...) in cmd/rela-server, or
 		// UngatedCommandAuthorizer() for the in-process desktop/docscapture servers.
-		return nil, errors.New("dataentry.NewApp: commandAuthz is required " +
-			"(use SelectCommandAuthorizer, or UngatedCommandAuthorizer() for a loopback/in-process server)")
+		{commandAuthz == nil, "commandAuthz is required " +
+			"(use SelectCommandAuthorizer, or UngatedCommandAuthorizer() for a loopback/in-process server)"},
+	} {
+		if req.missing {
+			return nil, errors.New("dataentry.NewApp: " + req.msg)
+		}
+	}
+	// The manager owns the attachment lock, so every writer shares one
+	// instance. A manager built for a metamodel without file properties
+	// has none; the zero value then fails any attachment write.
+	attachmentOwner, ownerErr := entitymanager.AttachmentsOf(em)
+	if ownerErr != nil && metamodel.HasFileProperties(meta) {
+		return nil, fmt.Errorf("dataentry.NewApp: %w", ownerErr)
 	}
 	// Construct reconstructible services from the primitives.
 	cfgLoader := config.NewFSLoader(fs, paths.Root)
@@ -930,7 +1027,11 @@ func NewApp(
 	// those back to this node's .rela/ — the bug where an uploaded logo is
 	// visible only on whichever node served the POST (TKT-VC27L3).
 	kv := stateKV
-	trc := tracer.New(st)
+	// The default world until setWorlds supplies the lookup and rebuilds it.
+	trc, err := tracer.New(st, defaultWorldScope(nil))
+	if err != nil {
+		return nil, fmt.Errorf("dataentry: tracer: %w", err)
+	}
 	templater := templating.NewFSTemplater(fs, paths)
 	// The validator (val) is built AFTER app.affordances below — its reader is
 	// now GATED (TKT-3FL2S6, superseding DEC-O59WM4), which needs the redactor
@@ -949,12 +1050,18 @@ func NewApp(
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, avatarErr)
 	}
 
-	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{})
+	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{Faces: store.AllFaces()})
 	relCount, _ := st.CountRelations(context.Background(), store.RelationQuery{})
 	slog.Info("loaded project", "entities", entCount, "relations", relCount)
 
 	// Build style map from config styles
 	styleMap, styledTypes := buildStyleMap(cfg, meta)
+
+	families := &appFamilies{}
+	visible, err := newVisibleReader(st, families.scope)
+	if err != nil {
+		return nil, err
+	}
 
 	scriptEngine := script.NewEngine()
 	app := &App{
@@ -963,9 +1070,10 @@ func NewApp(
 		store:           st,
 		versions:        versions,
 		entityManager:   em,
+		recreator:       entitymanager.Recreator{M: em},
 		searcher:        searcher,
 		visibleSearcher: visibleSearcher,
-		visibleReader:   newVisibleReader(st),
+		visibleReader:   visible,
 		reader:          entityReader{store: st},
 		tracer:          trc,
 		templater:       templater,
@@ -976,11 +1084,12 @@ func NewApp(
 		scriptEngine:    scriptEngine,
 		fieldResolver:   fieldResolver,
 		auditSink:       auditSink,
-		// attachmentLocker must be set before the attachment handler copies
+		// attachmentOwner must be set before the attachment handler copies
 		// it below.
-		attachmentLocker:  lock.For(st),
+		attachmentOwner:   attachmentOwner,
 		attachmentUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
 	}
+	families.app = app
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
 	// Constructed after app because luaWriteDeps is a method on App.
@@ -992,14 +1101,18 @@ func NewApp(
 	app.documents = newDocumentService(st, kv, paths.Root, scriptEngine, app.luaWriteDeps,
 		func() documentElevation {
 			return documentElevation{
-				Reader:   visibility.Unrestricted(st),
+				Reader: visibility.Unrestricted(st, familiesOption(app)).
+					WithWorld(visibility.WorldOf(defaultWorldScope(app.worlds))),
 				Recorder: elevationRecorder(app.auditSink),
 			}
 		})
 
 	// The copy surface (RULING 9) is built ONCE, here, for both of its
 	// consumers: the `_copies` affordance below and the invoke handler.
-	copyOffers, copiesHandler, cerr := wireCopies(em)
+	copyOffers, copiesHandler, cerr := wireCopies(em, copyEdgeGate{
+		affordances: func() affordanceService { return app.affordances },
+		visible:     app.visibleReader,
+	})
 	if cerr != nil {
 		return nil, fmt.Errorf("dataentry.NewApp: %w", cerr)
 	}
@@ -1010,15 +1123,22 @@ func NewApp(
 	// App methods, so it's wired after the struct literal. It MUST share the
 	// same acl instance as the write path (contract-test invariant).
 	app.affordances = affordanceService{
-		acl:                func() acl.ACL { return app.acl },
-		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
-		store:              st,
-		meta:               func() *metamodel.Metamodel { return app.State().Meta },
-		getEntity:          app.reader.getEntity,
-		currentEdgesByPeer: app.currentEdgesByPeer,
-		copies:             copyOffers,
-		schema:             app.State,
-		actionConditions:   func() ViewConditionFunc { return app.viewConditions },
+		acl:          func() acl.ACL { return app.acl },
+		resolver:     func() FieldVerdictResolver { return app.fieldResolver },
+		store:        st,
+		meta:         func() *metamodel.Metamodel { return app.State().Meta },
+		family:       app.visibleReader.family,
+		sourceRow:    app.reader.writePrepRow,
+		sourceFamily: readableFamilyOf(app.reader, app.visibleReader),
+		readable:     app.visibleReader.filterVisible,
+		planEdges: edgeReader{
+			meta:    func() *metamodel.Metamodel { return app.State().Meta },
+			reader:  app.reader,
+			visible: app.visibleReader,
+		}.plan,
+		copies:           copyOffers,
+		schema:           app.State,
+		actionConditions: func() ViewConditionFunc { return app.viewConditions },
 	}
 
 	app.serializer = entitySerializer{affordances: app.affordances}
@@ -1031,34 +1151,19 @@ func NewApp(
 	// NopACL it is the raw store. The trigger entity the validator loads
 	// (validator.New's first arg) and its rule bodies' cross-entity lookups
 	// (ReadDeps.VisibleReader) both go through it.
-	gatedReader := lateGatedReader{app: app}
-	readDeps := lua.ReadDeps{
-		VisibleReader: gatedReader,
-		Tracer:        lateGatedTracer{app: app},
-		Searcher:      searcher,
-		Meta:          meta,
-		ProjectRoot:   paths.Root,
-	}
-	val, valErr := newGatedValidator(gatedReader, scriptTraversalGate(app), meta, readDeps, st)
-	if valErr != nil {
+	//
+	// setWorlds runs after NewApp, so this wires the default world of a nil
+	// lookup, and setWorlds rewires it to the schema's default world.
+	if valErr := wireValidation(app, meta, defaultWorldScope(nil)); valErr != nil {
 		return nil, valErr
-	}
-	app.validator = val
-
-	// analyzeService entity reads route through the same gated reader; relation
-	// COUNTS stay raw (structural, cannot leak).
-	app.analyze = analyzeService{
-		reads:     gatedReader,
-		relCounts: st,
-		tracer:    lateGatedTracer{app: app},
-		validator: val,
 	}
 
 	// viewReader row-gates + field-redacts entities on their way out of the
 	// view pipeline (DEC-ZBI39P). Wired here — after app.affordances — because
 	// the redactor closes over it. Same construction as the export handler's
 	// visReader: ctx-resolved gate, affordance-backed redactor, raw store.
-	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), app.store)
+	viewReader, viewReaderErr := visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), app.store,
+		visibility.WithFamilies(families.scope))
 	if viewReaderErr != nil {
 		return nil, fmt.Errorf("dataentry: wire view reader: %w", viewReaderErr)
 	}
@@ -1083,16 +1188,6 @@ func NewApp(
 		return nil, fmt.Errorf("load user logo: %w", logoErr)
 	}
 	app.logo = logo
-
-	// syncHandler owns the /api/sync/manifest change feed (fs-client ↔ pg-server
-	// replication). The record read/write channel was retired in TKT-8P1TM7 (the
-	// sync client now uses /api/v1), so the handler holds only App's store (to
-	// resolve a relation entry's source type for the read gate); the manifest
-	// capability is resolved from the concrete store (nil on fs/memory builds,
-	// where the endpoint degrades to 501). It has no write path, so the
-	// unmatched_principal provision seam (TKT-ANUJDS) is wired only into the v1
-	// write handler now, not here.
-	app.sync = newSyncHandler(st)
 
 	// viewsHandler owns the read-only view-assembly surface (view traversal,
 	// section building, /_views, /_sidepanel, /_sidebar). Fixed service
@@ -1134,6 +1229,7 @@ func NewApp(
 		authz:    commandAuthz,
 		files:    newCommandFileStore(),
 		redactor: appRedactor(app),
+		visible:  app.visibleReader,
 	}
 
 	// Build and publish the initial Schema snapshot. All reloadable
@@ -1211,20 +1307,16 @@ func NewApp(
 	// on App after construction (same rationale as affordanceService); the
 	// store/manager handles are fixed for App's lifetime.
 	app.attachments = &attachmentHandler{
-		schema: app.State,
-		store:  st,
-		// The concrete manager, not app.entityManager: each sub-handler
-		// narrows to its OWN interface at its own field, so App's stays
-		// exactly what App calls (TKT-IVSJV6).
-		manager:    em,
+		schema:     app.State,
+		store:      st,
 		runner:     func() attachment.CommandRunner { return app.attachmentRunner },
 		reader:     app.reader,
+		visible:    app.visibleReader,
 		serializer: app.serializer,
 		acl:        func() acl.ACL { return app.acl },
 		audit:      func() audit.Audit { return app.auditSink },
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
-		gateRead:   app.gateReadOrNotFound,
-		locker:     app.attachmentLocker,
+		owner:      app.attachmentOwner,
 		uploads:    app.attachmentUploads,
 		provision:  newProvisionSeam(app),
 	}
@@ -1232,7 +1324,7 @@ func NewApp(
 	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve
 	// nucleus. Same collaborator rationale as attachmentHandler above: fixed
 	// services by value, test-swappable deps as closures over App, and the
-	// shared read/write helpers (gateRead/denyAfford/computeETag) as closures
+	// shared read/write helpers (visible/denyAfford/computeETag) as closures
 	// so both paths stay behaviorally identical.
 	app.write = &writeHandler{
 		schema:      app.State,
@@ -1245,21 +1337,25 @@ func NewApp(
 		affordances: app.affordances,
 		acl:         func() acl.ACL { return app.acl },
 		audit:       func() audit.Audit { return app.auditSink },
-		gateRead:    app.gateReadOrNotFound,
+		visible:     app.visibleReader,
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, app.visibleReader, e)
+			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
 		},
-		readVisible: func(ctx context.Context, typeName string, ref entityRef) (*entity.Entity, bool, error) {
-			return app.visibleReader.getVisibleRef(ctx, typeName, ref)
+		readVisible: func(ctx context.Context, typeName string, ref entity.Ref) (*entity.Entity, bool, error) {
+			return app.visibleReader.addressRef(ctx, typeName, ref)
 		},
-		currentEdgesByPeer: app.currentEdgesByPeerOnFace,
-		engine:             func() *script.Engine { return app.scriptEngine },
-		luaDeps:            app.luaWriteDeps,
-		fullScriptDetail:   app.allowFullScriptDetail,
-		paths:              paths,
-		provision:          newProvisionSeam(app),
+		planEdges: edgeReader{
+			meta:    func() *metamodel.Metamodel { return app.State().Meta },
+			reader:  app.reader,
+			visible: app.visibleReader,
+		}.plan,
+		engine:           func() *script.Engine { return app.scriptEngine },
+		luaDeps:          app.luaWriteDeps,
+		fullScriptDetail: app.allowFullScriptDetail,
+		paths:            paths,
+		provision:        newProvisionSeam(app),
 	}
 
 	// Nudge the operator to make a conscious virus-scan choice: if the
@@ -1272,6 +1368,7 @@ func NewApp(
 			"docs", "docs/attachment-security.md")
 	}
 
+	app.setWorlds(worlds)
 	return app, nil
 }
 
@@ -1479,6 +1576,7 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 		serializer:  app.serializer,
 		affordances: app.affordances,
 		viewReader:  app.viewReader,
+		visible:     app.visibleReader,
 		services:    app.Services,
 		logo:        logo,
 		gateRead:    app.gateReadOrNotFound,
@@ -1487,10 +1585,42 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 			ctx context.Context, e *entity.Entity,
 		) ([]*entity.Relation, error) {
 			edges, _, err := servedFaceEdges(
-				ctx, app.reader, app.worldNeighbors, app.visibleReader, e)
+				ctx, app.reader, app.worldNeighbors, e)
 			return edges, err
 		},
 	}
+}
+
+// wireValidation builds app's validator and analyze service over the gated
+// reads, with world as the scripts' default world (RR-HKVULG). NewApp calls
+// it and setWorlds calls it again, because the schema's default world
+// is only known once the worlds are set.
+//
+// A free function rather than an App method: App is at its plimsoll method
+// load line.
+func wireValidation(app *App, meta *metamodel.Metamodel, world store.WorldScope) error {
+	gatedReader := lateGatedReader{app: app}
+	readDeps := lua.ReadDeps{
+		VisibleReader: gatedReader,
+		Tracer:        lateGatedTracer{app: app},
+		Searcher:      app.searcher,
+		Meta:          meta,
+		ProjectRoot:   app.paths.Root,
+		World:         world,
+	}
+	val, err := newGatedValidator(gatedReader, scriptTraversalGate(app), meta, readDeps, app.store)
+	if err != nil {
+		return err
+	}
+	app.validator = val
+	// analyzeService reads, relation counts included, route through the same
+	// gated reader.
+	app.analyze = analyzeService{
+		reads:     gatedReader,
+		tracer:    lateGatedTracer{app: app},
+		validator: val,
+	}
+	return nil
 }
 
 // newGatedValidator builds the request-path validator. gate must answer rule

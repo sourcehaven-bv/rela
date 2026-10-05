@@ -65,26 +65,38 @@ func SoftDeleteEntity(ctx context.Context, m *Manager, id string) (*entity.Delet
 	if !SupportsSoftDelete(m) {
 		return nil, ErrSoftDeleteUnsupported
 	}
-	// Fails closed on a non-not-found error, as DeleteEntity does.
-	current, err := anyFaceOf(ctx, m.deps.Store, id)
+	// The principal needs the delete grant on every face, as DeleteEntity
+	// requires: the mark removes them all.
+	family, err := familyRows(ctx, m.deps.Store, id)
 	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			return nil, err
-		}
+		return nil, err
+	}
+	if len(family) == 0 {
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
-	if aclErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op:      acl.OpDelete,
-		Subject: acl.NewEntitySubject(current.Type, id, current.Face),
-	}); aclErr != nil {
+	authorized := make(familyAuthorization, len(family))
+	if aclErr := m.authorizeFamily(ctx, acl.OpDelete, id, family, authorized); aclErr != nil {
 		return nil, aclErr
 	}
+	current := family[0]
 
 	// Collect, authorize and mark under one serialization, for the reason
 	// DeleteEntity gives: an edge added between an outside check and the mark
 	// would go without authorization.
 	var res *store.DeleteResult
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		// The family is re-read and re-authorized inside the serialization,
+		// for the reason DeleteEntity gives.
+		inTx, fErr := familyRows(ctx, tx, id)
+		if fErr != nil {
+			return fErr
+		}
+		if len(inTx) == 0 {
+			return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
+		}
+		if aErr := m.authorizeFamily(ctx, acl.OpDelete, id, inTx, authorized); aErr != nil {
+			return aErr
+		}
 		incoming, cErr := collectIncidentRelations(ctx, tx, id, store.DirectionIncoming)
 		if cErr != nil {
 			return fmt.Errorf("collect incoming relations for %q: %w", id, cErr)
@@ -221,11 +233,10 @@ func RestoreEntity(ctx context.Context, m *Manager, id string) (*entity.DeleteRe
 // authorizeRestore runs the delete checks for a restore of marked. ctx must
 // reveal marked.ID.
 func authorizeRestore(ctx context.Context, m *Manager, tx store.Store, marked store.MarkedEntity) error {
-	head := marked.Entities[0]
-	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op:      acl.OpDelete,
-		Subject: acl.NewEntitySubject(head.Type, marked.ID, ""),
-	}); err != nil {
+	// Every face comes back, so every face needs the grant, as for the
+	// delete.
+	if err := m.authorizeFamily(ctx, acl.OpDelete, marked.ID, marked.Entities,
+		make(familyAuthorization, len(marked.Entities))); err != nil {
 		return err
 	}
 	incoming, err := collectIncidentRelations(ctx, tx, marked.ID, store.DirectionIncoming)
@@ -237,27 +248,29 @@ func authorizeRestore(ctx context.Context, m *Manager, tx store.Store, marked st
 		return fmt.Errorf("collect outgoing relations for %q: %w", marked.ID, err)
 	}
 	// The cascade check resolves each edge's source type with GetEntity. The
-	// marked entity is not readable, so an outgoing edge would resolve to no
-	// type and be refused; markedSource answers for it.
-	src := markedSource{Store: tx, head: head}
+	// marked faces are not readable, so an outgoing edge would resolve to no
+	// type and be refused; markedSource answers for them.
+	src := markedSource{Store: tx, family: marked.Entities}
 	if err := m.authorizeCascadeRelations(ctx, src, marked.ID, incoming, outgoing); err != nil {
 		return fmt.Errorf("cannot restore %s: %w", marked.ID, err)
 	}
 	return nil
 }
 
-// markedSource answers GetEntity for one marked entity and passes every other
-// call through.
+// markedSource answers GetEntity for the faces of one marked entity and
+// passes every other call through.
 type markedSource struct {
 	store.Store
-	head *entity.Entity
+	family []*entity.Entity
 }
 
-func (s markedSource) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	if id == s.head.ID {
-		return s.head, nil
+func (s markedSource) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
+	for _, e := range s.family {
+		if e.ID == ref.ID && e.Face == ref.Face {
+			return e, nil
+		}
 	}
-	return s.Store.GetEntity(ctx, id)
+	return s.Store.GetEntity(ctx, ref)
 }
 
 // PurgeSoftDeleted removes, for real, every soft-deleted entity marked before
@@ -305,9 +318,11 @@ func recordPurge(ctx context.Context, m *Manager, id string, res *store.DeleteRe
 	if len(res.DeletedEntities) == 0 {
 		return
 	}
-	// The default face leads; DeleteEntity likewise records one version.
+	// One delete version per face, as DeleteEntity records.
 	head := res.DeletedEntities[0]
-	m.recordEntityVersion(ctx, store.VersionOpDelete, head, "")
+	for _, e := range res.DeletedEntities {
+		m.recordEntityVersion(ctx, store.VersionOpDelete, e, "")
+	}
 	m.notifyAliasesOfDelete(ctx, id)
 	cascadeTB := "cascade:delete-entity:" + id
 	for _, rel := range res.DeletedRelations {

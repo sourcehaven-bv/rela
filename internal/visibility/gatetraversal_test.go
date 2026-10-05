@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -32,7 +33,7 @@ func TestDeclarativeGate_GateTraversalUsesCtxPrincipal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, store.TrivialScope())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,7 +21,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 		s := f(t)
 		seedEntities(t, s)
 
-		page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{})
+		page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Len(t, page.Items, 4)
 		assert.Empty(t, page.NextCursor, "limit=0 never sets a cursor")
@@ -34,7 +34,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 		var ids []string
 		cursor := ""
 		for range 10 {
-			page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 2, Cursor: cursor})
+			page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 2, Cursor: cursor, Faces: store.InWorld(store.TrivialScope())})
 			require.NoError(t, err)
 			for _, e := range page.Items {
 				ids = append(ids, e.ID)
@@ -54,7 +54,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 
 		// Page size 4 matches the dataset exactly. After emitting all four
 		// items there is nothing more — NextCursor must be empty.
-		page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 4})
+		page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 4, Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Len(t, page.Items, 4)
 		assert.Empty(t, page.NextCursor,
@@ -66,7 +66,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 		s := f(t)
 		seedEntities(t, s)
 
-		page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 4})
+		page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 4, Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		require.Empty(t, page.NextCursor)
 
@@ -75,6 +75,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 		page2, err := s.ListEntitiesPage(ctx(), store.EntityQuery{
 			Limit:  10,
 			Cursor: encodeTestCursor(t, "zzz-sentinel"),
+			Faces:  store.InWorld(store.TrivialScope()),
 		})
 		require.NoError(t, err)
 		assert.Empty(t, page2.Items)
@@ -84,7 +85,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 	t.Run("EntitiesEmptyStore", func(t *testing.T) {
 		s := f(t)
 
-		page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 10})
+		page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 10, Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Empty(t, page.Items)
 		assert.Empty(t, page.NextCursor)
@@ -99,6 +100,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 		for range 10 {
 			page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{
 				Type: "feature", Limit: 2, Cursor: cursor,
+				Faces: store.InWorld(store.TrivialScope()),
 			})
 			require.NoError(t, err)
 			for _, e := range page.Items {
@@ -120,6 +122,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 		page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{
 			IDs:   []string{"FEAT-001", "REQ-001"},
 			Limit: 10,
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.NoError(t, err)
 		ids := make([]string, len(page.Items))
@@ -133,7 +136,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 		s := f(t)
 		seedEntities(t, s)
 
-		_, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Cursor: "not-base64!!!", Limit: 2})
+		_, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Cursor: "not-base64!!!", Limit: 2, Faces: store.InWorld(store.TrivialScope())})
 		assert.Error(t, err, "malformed cursors must not be silently treated as start-of-stream")
 	})
 
@@ -141,7 +144,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 		s := f(t)
 		seedEntities(t, s)
 
-		page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 100})
+		page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 100, Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Len(t, page.Items, 4)
 		assert.Empty(t, page.NextCursor)
@@ -162,7 +165,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 			var ids []string
 			cursor := ""
 			for {
-				page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 7, Cursor: cursor})
+				page, err := s.ListEntitiesPage(ctx(), store.EntityQuery{Limit: 7, Cursor: cursor, Faces: store.InWorld(store.TrivialScope())})
 				require.NoError(t, err)
 				for _, e := range page.Items {
 					ids = append(ids, e.ID)
@@ -189,7 +192,7 @@ func RunPaginationTests(t *testing.T, f Factory) {
 			{"FEAT-002", "relates-to", "REQ-001"},
 			{"FEAT-013", "relates-to", "REQ-001"},
 		} {
-			_, err := s.CreateRelation(ctx(), rel.from, rel.typ, rel.to, nil)
+			_, err := s.CreateRelation(ctx(), entity.RelationKey{From: rel.from, Type: rel.typ, To: rel.to}, nil)
 			require.NoError(t, err)
 		}
 
@@ -212,9 +215,9 @@ func RunPaginationTests(t *testing.T, f Factory) {
 	t.Run("RelationsLastPageHasEmptyCursor", func(t *testing.T) {
 		s := f(t)
 		seedEntities(t, s)
-		_, err := s.CreateRelation(ctx(), "FEAT-001", "relates-to", "REQ-001", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "FEAT-001", Type: "relates-to", To: "REQ-001"}, nil)
 		require.NoError(t, err)
-		_, err = s.CreateRelation(ctx(), "FEAT-002", "relates-to", "REQ-001", nil)
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "FEAT-002", Type: "relates-to", To: "REQ-001"}, nil)
 		require.NoError(t, err)
 
 		page, err := s.ListRelationsPage(ctx(), store.RelationQuery{Limit: 2})
@@ -226,9 +229,9 @@ func RunPaginationTests(t *testing.T, f Factory) {
 	t.Run("RelationsRespectsDirectionFilter", func(t *testing.T) {
 		s := f(t)
 		seedEntities(t, s)
-		_, err := s.CreateRelation(ctx(), "FEAT-001", "relates-to", "REQ-001", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "FEAT-001", Type: "relates-to", To: "REQ-001"}, nil)
 		require.NoError(t, err)
-		_, err = s.CreateRelation(ctx(), "REQ-001", "requires", "FEAT-002", nil)
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "REQ-001", Type: "requires", To: "FEAT-002"}, nil)
 		require.NoError(t, err)
 
 		page, err := s.ListRelationsPage(ctx(), store.RelationQuery{

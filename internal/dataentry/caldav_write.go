@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/emersion/go-ical"
@@ -16,7 +17,9 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // PutCalendarObject applies a client write: an update to a mapped entity, or a
@@ -206,7 +209,7 @@ func (b *caldavBackend) createFromTodo(
 	// A DYNAMIC collection is defined by a relation, so an entry created inside
 	// one is not a member until that edge exists. See linkToDriver for why a
 	// failure here deletes the entity rather than leaving it.
-	if linkErr := b.linkToDriver(ctx, collection, created.Entity.ID); linkErr != nil {
+	if linkErr := b.linkToDriver(ctx, collection, created.Entity.Ref()); linkErr != nil {
 		return nil, linkErr
 	}
 
@@ -217,7 +220,7 @@ func (b *caldavBackend) createFromTodo(
 	if err := b.app.caldavAliases.Put(ctx, caldavalias.Alias{
 		Principal:  aliasPrincipal(ctx),
 		Collection: collection, Href: href, UID: in.Todo.UID,
-		EntityID: created.Entity.ID,
+		EntityID: created.Entity.Ref().String(),
 	}); err != nil {
 		return nil, fmt.Errorf("caldav: record alias: %w", err)
 	}
@@ -231,16 +234,13 @@ func (b *caldavBackend) createFromTodo(
 // It has NO side effect on the entity. Whether a failure to attach should undo
 // anything depends on which flow is calling — see linkToDriver (create) and
 // updateFromTodo (update), which decide that differently and for good reason.
-func (b *caldavBackend) attachToDriver(ctx context.Context, collection, entityID string) error {
+func (b *caldavBackend) attachToDriver(ctx context.Context, collection string, member entitypkg.Ref) error {
 	dyn, driverID, ok := b.resolveDynamic(ctx, collection)
 	if !ok {
 		return nil // static collection: membership needs no edge
 	}
-	from, to := entityID, driverID
-	if dyn.Direction.IsIncoming() {
-		from, to = driverID, entityID
-	}
-	_, err := b.app.entityManager.CreateRelation(ctx, from, dyn.Relation, to, entitypkg.RelationOptions{})
+	key := b.membershipKey(dyn, driverID, member)
+	_, err := b.app.entityManager.CreateRelation(ctx, key, entitypkg.RelationOptions{})
 	// Already a member: the normal case on every edit, since an ordinary
 	// check-off re-asserts the membership it already has. Idempotent, never an
 	// error.
@@ -248,6 +248,27 @@ func (b *caldavBackend) attachToDriver(ctx context.Context, collection, entityID
 		return nil
 	}
 	return err
+}
+
+// membershipKey is the edge that makes member part of a dynamic collection.
+// An outgoing edge's source is the member: a content-scoped one tails at the
+// member's face, an identity-scoped one at the implicit face. An incoming
+// edge's source is the driver, which a collection names by bare id, so it
+// tails at the implicit face; the manager refuses that for a content-scoped
+// relation from a faced driver (entitymanager.ErrRelationFaceRequired).
+func (b *caldavBackend) membershipKey(
+	dyn dataentryconfig.CalDAVDynamicCollection, driverID string, member entitypkg.Ref,
+) entitypkg.RelationKey {
+	if dyn.Direction.IsIncoming() {
+		return entitypkg.RelationKey{
+			From: driverID, FromFace: entitypkg.ImplicitFace, Type: dyn.Relation, To: member.ID,
+		}
+	}
+	tail := entitypkg.ImplicitFace
+	if metamodel.IsContentScoped(b.app.State().Meta, dyn.Relation) {
+		tail = member.Face
+	}
+	return entitypkg.RelationKey{From: member.ID, FromFace: tail, Type: dyn.Relation, To: driverID}
 }
 
 // linkToDriver attaches a NEWLY CREATED entity to its dynamic collection,
@@ -285,8 +306,9 @@ func (b *caldavBackend) attachToDriver(ctx context.Context, collection, entityID
 // If the compensation ITSELF fails, the orphan survives and the error says so.
 // Nothing better is available at this layer, and a silent success would leave
 // the user with a to-do they cannot see.
-func (b *caldavBackend) linkToDriver(ctx context.Context, collection, entityID string) error {
-	err := b.attachToDriver(ctx, collection, entityID)
+func (b *caldavBackend) linkToDriver(ctx context.Context, collection string, member entitypkg.Ref) error {
+	entityID := member.ID
+	err := b.attachToDriver(ctx, collection, member)
 	if err == nil {
 		return nil
 	}
@@ -306,7 +328,15 @@ func (b *caldavBackend) updateFromTodo(
 	if err != nil {
 		return nil, err
 	}
-	res, err := b.app.entityManager.PatchEntity(ctx, entityID, patch)
+	addr, ambiguous, err := b.writeAddress(ctx, m, entityID)
+	if err != nil {
+		return nil, caldavWriteError(err)
+	}
+	if ambiguous {
+		// No face to write is a permanent refusal, answered as one.
+		return b.refusedWriteResponse(ctx, collection, href, m, in, entityID)
+	}
+	res, err := b.app.entityManager.PatchEntity(ctx, addr, patch)
 	if errors.Is(err, entitymanager.ErrEntityNotFound) || errors.Is(err, store.ErrNotFound) {
 		// The alias points at an entity the write could not find, which USUALLY
 		// means it was deleted in rela (the SPA, the CLI, a git pull) while this
@@ -352,7 +382,7 @@ func (b *caldavBackend) updateFromTodo(
 	// would destroy this already-patched, arbitrarily-old entity (BUG-2ATX4H).
 	// The patch has landed and is the user's data; a membership that could not
 	// be recorded is not a reason to remove it.
-	if linkErr := b.attachToDriver(ctx, collection, res.Entity.ID); linkErr != nil {
+	if linkErr := b.attachToDriver(ctx, collection, res.Entity.Ref()); linkErr != nil {
 		var linkDenied *acl.ForbiddenError
 		if errors.As(linkErr, &linkDenied) {
 			// Same answer as a deny on the patch itself: accept, serve the
@@ -372,7 +402,7 @@ func (b *caldavBackend) updateFromTodo(
 	if err := b.app.caldavAliases.Put(ctx, caldavalias.Alias{
 		Principal:  aliasPrincipal(ctx),
 		Collection: collection, Href: href, UID: in.Todo.UID,
-		EntityID: res.Entity.ID,
+		EntityID: res.Entity.Ref().String(),
 	}); err != nil {
 		return nil, fmt.Errorf("caldav: record alias: %w", err)
 	}
@@ -494,16 +524,32 @@ func notFoundHere() error {
 // response tells the client to discard its copy. Anything else — an I/O error,
 // a parse failure, a dead connection — is reported as retryable, so a transient
 // fault costs a retry instead of the user's data.
-// The probe goes to the STORE, not through the ACL read path: getVisible maps
+// The probe goes to the STORE, not through the ACL read path: the resolver maps
 // every store error to (nil,false,nil) on purpose, so that a denied read is
 // indistinguishable from a real miss — which is right for the read gate and
 // useless here, where telling those apart is the whole question. This asks only
 // "does this row exist?", never returning content, so it discloses nothing the
 // caller has not already proven it may write to (the alias binds this href to
 // this entity, and the write itself is separately authorized).
-func (b *caldavBackend) entityIsGone(ctx context.Context, _ *caldavMapper, entityID string) bool {
-	_, err := b.app.Services().Store.GetEntity(ctx, entityID)
-	return errors.Is(err, store.ErrNotFound)
+//
+// An address naming a face is gone when that face is not stored: a faced
+// to-do is served under its face's address ([feedUID]), so deleting the face
+// retires the resource. A bare id is gone when no face of it is stored; a
+// faced type has no zero-face row (DEC-NPZICR), so probing the zero face
+// alone would call a live faced entity deleted.
+func (b *caldavBackend) entityIsGone(ctx context.Context, _ *caldavMapper, addr string) bool {
+	parsed, err := entitypkg.ParseAddress(addr)
+	if err != nil {
+		return false
+	}
+	_, faces, err := loadStoredFaces(ctx, b.app.Services().Store, parsed.ID())
+	if err != nil {
+		return false
+	}
+	if named, ok := parsed.Named(); ok {
+		return !slices.Contains(faces, named.Face)
+	}
+	return len(faces) == 0
 }
 
 // staleWriteResponse answers a PUT whose alias points at an entity that is gone.
@@ -558,22 +604,26 @@ func staleWriteResponse() error {
 // the membership is still gone, which is the half the user actually asked for —
 // the reverse order could leave a cancelled entity still sitting in the list.
 func (b *caldavBackend) unlinkFromDriver(
-	ctx context.Context, collection, entityID string,
+	ctx context.Context, collection, addr string,
 ) (handled, entityDisposed bool, err error) {
 	dyn, driverID, ok := b.resolveDynamic(ctx, collection)
 	if !ok {
 		return false, false, nil
 	}
-	from, to := entityID, driverID
-	if dyn.Direction.IsIncoming() {
-		from, to = driverID, entityID
+	entityID := addressID(addr)
+	member := entitypkg.Ref{ID: entityID, Face: entitypkg.ImplicitFace}
+	if parsed, perr := entitypkg.ParseAddress(addr); perr == nil {
+		if named, ok := parsed.Named(); ok {
+			member = named
+		}
 	}
 
 	last, err := b.isLastMembership(ctx, dyn, entityID)
 	if err != nil {
 		return false, false, err
 	}
-	if delErr := b.app.entityManager.DeleteRelation(ctx, from, dyn.Relation, to); delErr != nil {
+	key := b.membershipKey(dyn, driverID, member)
+	if delErr := b.app.entityManager.DeleteRelation(ctx, key); delErr != nil {
 		return false, false, caldavWriteError(delErr)
 	}
 	if !last || !b.disposeOnLastUnlink(dyn) {
@@ -592,15 +642,43 @@ func (b *caldavBackend) unlinkFromDriver(
 		return true, false, nil
 	}
 	if hard {
-		if _, e := b.app.entityManager.DeleteEntity(ctx, entityID, false); e != nil {
+		if e := b.deleteAddressed(ctx, addr); e != nil {
 			return true, false, caldavWriteError(e)
 		}
 		return true, true, nil
 	}
-	if _, e := b.app.entityManager.PatchEntity(ctx, entityID, patch); e != nil {
-		return true, false, caldavWriteError(e)
+	if e := b.patchEntity(ctx, m, addr, patch); e != nil {
+		return true, false, e
 	}
 	return true, true, nil
+}
+
+// deleteAddressed hard-deletes what a resource's address names: the face it
+// names, or the whole entity for a faceless type's bare id. A faced to-do is
+// served under its face's address (see [feedUID]), so a calendar delete
+// removes the face the client was shown, never its other faces.
+func (b *caldavBackend) deleteAddressed(ctx context.Context, addr string) error {
+	parsed, err := entitypkg.ParseAddress(addr)
+	if err != nil {
+		return err
+	}
+	if named, ok := parsed.Named(); ok {
+		_, err = b.app.entityManager.DeleteEntityFace(ctx, named.ID, named.Face, false)
+		return err
+	}
+	_, err = b.app.entityManager.DeleteEntity(ctx, parsed.ID(), false)
+	return err
+}
+
+// addressID is the entity id of a resource address, which carries a face
+// for a faced to-do. An address that does not parse is returned unchanged,
+// so the read it feeds answers its own miss.
+func addressID(addr string) string {
+	parsed, err := entitypkg.ParseAddress(addr)
+	if err != nil {
+		return addr
+	}
+	return parsed.ID()
 }
 
 // isLastMembership reports whether the entity's only remaining edge of this
@@ -689,14 +767,14 @@ func (b *caldavBackend) DeleteCalendarObject(ctx context.Context, p string) erro
 		// The alias is deliberately KEPT: it becomes the tombstone that lets a
 		// later PUT from a client that has not synced be refused rather than
 		// resurrecting this entity. See staleWriteResponse.
-		if _, err := b.app.entityManager.DeleteEntity(ctx, entityID, false); err != nil {
+		if err := b.deleteAddressed(ctx, entityID); err != nil {
 			return caldavWriteError(err)
 		}
 		return nil
 	}
 
-	if _, err := b.app.entityManager.PatchEntity(ctx, entityID, patch); err != nil {
-		return caldavWriteError(err)
+	if err := b.patchEntity(ctx, m, entityID, patch); err != nil {
+		return err
 	}
 	// The alias is KEPT, exactly as on the hard-delete path.
 	//
@@ -733,11 +811,60 @@ func (b *caldavBackend) entityIDFor(ctx context.Context, collection, href string
 	if !ok {
 		return "", false
 	}
-	e, err := b.app.Services().Store.GetEntity(ctx, id)
-	if err != nil || e.Type != m.cfg.EntityType {
+	// The type is the family's, read over every stored face: a faced type has
+	// no zero-face row. A read error answers "" and so refuses.
+	if typ := storedTypeOf(ctx, b.app.Services().Store, addressID(id)); typ == "" || typ != m.cfg.EntityType {
 		return "", false
 	}
 	return id, true
+}
+
+// writeAddress resolves entityID to the face a CalDAV write edits, by the
+// rule every write follows ([visibility.Resolver.WriteTarget]). A faced
+// to-do's href and UID carry its face ([feedUID]), so the client names the
+// face it was shown; a bare id names the implicit face of a faceless type.
+// ambiguous reports a bare id on a faced type, which a legacy href can still
+// carry. A miss returns entityID unchanged, so the write answers the
+// not-found its caller already handles.
+func (b *caldavBackend) writeAddress(
+	ctx context.Context, m *caldavMapper, entityID string,
+) (addr string, ambiguous bool, err error) {
+	parsed, err := entitypkg.ParseAddress(entityID)
+	if err != nil {
+		return entityID, false, nil //nolint:nilerr // an unparseable id is a miss, answered by the write
+	}
+	ref, ok, err := b.app.visibleReader.resolver.WriteTarget(
+		ctx, worldFromContext(ctx).visibility(), m.cfg.EntityType, parsed)
+	if _, isAmb := errors.AsType[*visibility.AmbiguousAddressError](err); isAmb {
+		return "", true, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !ok {
+		return entityID, false, nil
+	}
+	return ref.String(), false, nil
+}
+
+// patchEntity applies an on_delete patch to the face entityID resolves to. An
+// entity with no single face to write is refused with 403, like any other
+// permanent refusal (see [caldavWriteError]).
+func (b *caldavBackend) patchEntity(
+	ctx context.Context, m *caldavMapper, entityID string, patch entitypkg.Patch,
+) error {
+	addr, ambiguous, err := b.writeAddress(ctx, m, entityID)
+	if err != nil {
+		return caldavWriteError(err)
+	}
+	if ambiguous {
+		return webdav.NewHTTPError(http.StatusForbidden,
+			errors.New("caldav: this to-do has several faces; edit it in rela"))
+	}
+	if _, err := b.app.entityManager.PatchEntity(ctx, addr, patch); err != nil {
+		return caldavWriteError(err)
+	}
+	return nil
 }
 
 // resolveEntityID maps an href to a candidate entity id, without validating it.

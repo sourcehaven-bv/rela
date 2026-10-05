@@ -62,7 +62,9 @@ export function mergeProperty(
  * removed, both measured against BASE.
  *
  * `incoming` names body keys that address incoming edges; those are not in
- * the entity's `relations` map, so they pass through unchanged.
+ * the entity's `relations` map, so they pass through unchanged. A delta entry
+ * (`add`/`remove`) also passes through: it names only the edges it changes,
+ * so it already composes with whatever THEIRS did to the others.
  *
  * `typeOf` resolves the entity type of an edge only THEIRS has. A PATCH entry
  * needs it and the relations map carries ids only. Returns null when a type is
@@ -77,7 +79,7 @@ export function mergeRelations(
 ): ModernRelationsField | null {
   const out: ModernRelationsField = {}
   for (const [key, update] of Object.entries(ours)) {
-    if (incoming(key)) {
+    if (incoming(key) || !('data' in update)) {
       out[key] = update
       continue
     }

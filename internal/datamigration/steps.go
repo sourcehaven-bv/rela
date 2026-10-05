@@ -308,7 +308,7 @@ func (s *renameFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	}
 
 	var moving []*entity.Entity
-	q := store.EntityQuery{Type: s.Entity, AllStates: true}
+	q := store.EntityQuery{Type: s.Entity, Faces: store.AllFaces()}
 	for e, err := range x.Store.ListEntities(ctx, q) {
 		if err != nil {
 			return res, err
@@ -557,7 +557,7 @@ func applyMoves(ctx context.Context, st store.Store, moves []faceMove) error {
 // on pg.
 func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to string) error {
 	var alreadyMoved bool
-	if existing, err := s.GetEntityState(ctx, e.ID, entity.Face(to)); err == nil && existing != nil {
+	if existing, err := s.GetEntity(ctx, entity.Ref{ID: e.ID, Face: entity.Face(to)}); err == nil && existing != nil {
 		alreadyMoved = sameContent(existing, e)
 		if !alreadyMoved {
 			return fmt.Errorf(
@@ -575,15 +575,16 @@ func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to stri
 	}
 	// Deleting a face takes its OUTGOING edges with it — they were written
 	// against that face and nothing else can own them (see the
-	// store.DeleteEntityState contract). The CreateEntity above copies the
+	// store.EntityWriter.DeleteFace contract). The CreateEntity above copies the
 	// row's content, not its edges, so without re-creating them a move
 	// silently destroys every relation the row owned. Incoming edges are
-	// entity-level and survive the delete untouched.
+	// entity-level and survive the delete untouched, because the destination
+	// row created above keeps the family alive: this is never the last face.
 	//
 	// DeleteResult names exactly what went, which is why the result is read
 	// rather than discarded: the store reports what it destroyed and this is
 	// the code that has to listen.
-	del, err := s.DeleteEntityState(ctx, e.ID, e.Face)
+	del, err := s.DeleteFace(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 	if err != nil {
 		return fmt.Errorf("%s: remove the source row at face %q: %w", e.ID, e.Face, err)
 	}
@@ -594,10 +595,11 @@ func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to stri
 			// the wrong tail would invent an edge rather than preserve it.
 			continue
 		}
-		if _, err := s.CreateRelation(ctx, e.ID, rel.Type, rel.To, &store.RelationData{
+		if _, err := s.CreateRelation(ctx, entity.RelationKey{
+			From: e.ID, FromFace: entity.Face(to), Type: rel.Type, To: rel.To,
+		}, &store.RelationData{
 			Properties: rel.Properties,
 			Content:    rel.Content,
-			FromFace:   entity.Face(to),
 		}); err != nil {
 			return fmt.Errorf("%s: carry relation %q to %q across to face %q: %w",
 				e.ID, rel.Type, rel.To, to, err)
@@ -630,6 +632,10 @@ func enumValuesIn(p metamodel.ShapeProjection, typ, prop string) []string {
 
 // ---- rename_relation_type ----
 
+// renameRelationTypeStep moves every edge of one relation type to another,
+// keeping each edge's tail. The tail is copied verbatim, so Validate refuses
+// a rename between a content-scoped and an identity-scoped type: the copied
+// tails would be ones the new type does not expect.
 type renameRelationTypeStep struct {
 	From string `yaml:"from"`
 	To   string `yaml:"to"`
@@ -642,13 +648,32 @@ func (s *renameRelationTypeStep) Validate(from, to metamodel.ShapeProjection) er
 	if s.From == "" || s.To == "" {
 		return errors.New("from and to are required")
 	}
-	if _, ok := from.Relations[s.From]; !ok {
+	fromRel, ok := from.Relations[s.From]
+	if !ok {
 		return fmt.Errorf("relation type %q is not in the from-schema", s.From)
 	}
-	if _, ok := to.Relations[s.To]; !ok {
+	toRel, ok := to.Relations[s.To]
+	if !ok {
 		return fmt.Errorf("relation type %q is not in the to-schema", s.To)
 	}
+	// A projection recorded before scopes joined the shape cannot tell, so
+	// the check needs both sides to record them.
+	if from.RelationScopes && to.RelationScopes && fromRel.Scope.IsContent() != toRel.Scope.IsContent() {
+		return fmt.Errorf("relation type %q is %s-scoped and %q is %s-scoped: a rename copies "+
+			"each edge's tail, which the new scope does not expect. Rename between types of the "+
+			"same scope, and change the scope as a separate schema edit; the stored tails then "+
+			"need a data migration that rewrites them, which no declarative step performs yet",
+			s.From, scopeWord(fromRel.Scope), s.To, scopeWord(toRel.Scope))
+	}
 	return nil
+}
+
+// scopeWord names a relation scope for a message.
+func scopeWord(s metamodel.RelationScope) string {
+	if s.IsContent() {
+		return "content"
+	}
+	return "identity"
 }
 
 func (s *renameRelationTypeStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
@@ -668,7 +693,9 @@ func (s *renameRelationTypeStep) Run(ctx context.Context, x *Exec) (StepResult, 
 	}
 	for _, r := range rels {
 		data := &store.RelationData{Properties: r.Properties, Content: r.Content}
-		if _, err := x.Store.CreateRelation(ctx, r.From, s.To, r.To, data); err != nil {
+		renamed := r.Identity()
+		renamed.Type = s.To
+		if _, err := x.Store.CreateRelation(ctx, renamed, data); err != nil {
 			if !errors.Is(err, store.ErrConflict) {
 				return res, fmt.Errorf("create %s--%s--%s: %w", r.From, s.To, r.To, err)
 			}
@@ -677,7 +704,7 @@ func (s *renameRelationTypeStep) Run(ctx context.Context, x *Exec) (StepResult, 
 		if err := x.captureRelationDelete(ctx, r); err != nil {
 			return res, err
 		}
-		if err := x.Store.DeleteRelation(ctx, r.From, s.From, r.To); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err := x.Store.DeleteRelation(ctx, r.Identity()); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return res, fmt.Errorf("delete %s--%s--%s: %w", r.From, s.From, r.To, err)
 		}
 	}
@@ -1068,7 +1095,7 @@ func (s *dropEntitiesStep) Validate(_, to metamodel.ShapeProjection) error {
 
 func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
-	ids, err := collectEntityIDs(ctx, x.Store, s.Type)
+	ids, faces, err := collectEntityFaces(ctx, x.Store, s.Type)
 	if err != nil {
 		return res, err
 	}
@@ -1077,19 +1104,16 @@ func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error)
 		return res, nil
 	}
 	for _, id := range ids {
-		// Capture BEFORE the delete: the row is gone afterwards and no
-		// sweep can reconstruct it (amendment A1).
-		e, err := x.Store.GetEntity(ctx, id)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				continue // already deleted by a prior crashed run
+		// Capture every face BEFORE the delete: the rows are gone afterwards
+		// and no sweep can reconstruct them (amendment A1). A row a prior
+		// crashed run already deleted is not listed, so it is not captured
+		// twice.
+		for _, e := range faces[id] {
+			if capErr := x.captureEntityDelete(ctx, e); capErr != nil {
+				return res, capErr
 			}
-			return res, err
 		}
-		if capErr := x.captureEntityDelete(ctx, e); capErr != nil {
-			return res, capErr
-		}
-		del, err := x.Store.DeleteEntity(ctx, id, true)
+		del, err := x.Store.DeleteFamily(ctx, id, true)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				continue
@@ -1163,7 +1187,7 @@ func (s *dropRelationsStep) Run(ctx context.Context, x *Exec) (StepResult, error
 		if capErr := x.captureRelationDelete(ctx, r); capErr != nil {
 			return res, capErr
 		}
-		delErr := x.Store.DeleteRelation(ctx, r.From, r.Type, r.To)
+		delErr := x.Store.DeleteRelation(ctx, r.Identity())
 		if delErr != nil && !errors.Is(delErr, store.ErrNotFound) {
 			return res, delErr
 		}
@@ -1187,15 +1211,23 @@ func isEmptyValue(v any) bool {
 
 // ---- shared collection helpers ----
 
-func collectEntityIDs(ctx context.Context, st store.Store, typ string) ([]string, error) {
-	var ids []string
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: typ}) {
+// collectEntityFaces returns every id of type typ, in listing order, and each
+// id's rows at every face. A dropped type goes as a whole entity, so a faced
+// type's rows, which have no zero face (DEC-NPZICR), are dropped with it.
+func collectEntityFaces(
+	ctx context.Context, st store.Store, typ string,
+) (ids []string, faces map[string][]*entity.Entity, err error) {
+	faces = map[string][]*entity.Entity{}
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: typ, Faces: store.AllFaces()}) {
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		ids = append(ids, e.ID)
+		if _, seen := faces[e.ID]; !seen {
+			ids = append(ids, e.ID)
+		}
+		faces[e.ID] = append(faces[e.ID], e)
 	}
-	return ids, nil
+	return ids, faces, nil
 }
 
 func collectRelations(ctx context.Context, st store.Store, typ string) ([]*entity.Relation, error) {

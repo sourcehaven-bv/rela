@@ -66,6 +66,12 @@ time proportional to the entity table — seconds at twenty thousand rows,
 longer on a large one. Run `rela db migrate` as a deploy step if that pause
 must not land on the first web request.
 
+Migration 18 rebuilds the entity read index so it serves every face. The
+build holds a lock that blocks writes to the entity table, but not reads,
+until the migration commits: seconds at twenty thousand rows, longer on a
+large table. Plan a maintenance window, or run `rela db migrate` as a deploy
+step, when the table is large.
+
 ### Applying migrations explicitly
 
 If you would rather apply the schema as a separate, controlled step
@@ -385,6 +391,11 @@ entity requires the global `history:read` permission — see
 [ACL security](acl-security.md). Restore is a normal write: it is authorized,
 validated, and audited like any edit, and produces a new version.
 
+Faces: on a type that declares `faces:`, each face has its own history. The
+CLI, the API and purge all take an `ID@face` address, and a bare id of a faced
+entity is refused on the command line. A purge reaches one face only. See
+[Content states](content-states.md).
+
 Scope: an entity version captures that entity's content and properties. Its
 *relation set* as-of the version is not part of the entity snapshot, so an entity
 restore recovers content and properties — relations are versioned separately (see
@@ -417,8 +428,9 @@ rela relation-restore TKT-42 blocks TKT-99 2          # restore to version 2
 ```
 
 Access control: relation history is read-gated on **both** endpoints — you must
-be able to read the `from` AND the `to` entity (a deleted relation uses the same
-global `history:read`). In the web UI, a relation's history is owned by its
+be able to read the `from` AND the `to` entity. When part of the relation is
+gone, every endpoint that still exists keeps its check and the global
+`history:read` is required too (see the ACL security guide). In the web UI, a relation's history is owned by its
 **source** (`from`) entity: each outgoing relation on an entity's detail page has
 a History affordance. Restore goes through the normal write path; re-creating a
 relation whose endpoint entity no longer exists is refused (409).

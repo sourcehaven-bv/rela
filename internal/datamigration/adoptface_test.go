@@ -46,16 +46,16 @@ func TestAdopt_MovesStrandedRowsOntoFaces(t *testing.T) {
 	// empty. A half-move that left both would be the bug create-then-delete
 	// exists to make recoverable, not acceptable.
 	for id, face := range map[string]string{"TSK-1": "draft", "TSK-2": "draft", "TSK-3": "published"} {
-		moved, err := st.GetEntityState(ctx, id, entity.Face(face))
+		moved, err := st.GetEntity(ctx, entity.Ref{ID: id, Face: entity.Face(face)})
 		if err != nil || moved == nil {
 			t.Fatalf("%s not at face %q: %v", id, face, err)
 		}
-		if bare, err := st.GetEntityState(ctx, id, ""); err == nil && bare != nil {
+		if bare, err := st.GetEntity(ctx, entity.Ref{ID: id}); err == nil && bare != nil {
 			t.Errorf("%s still has a zero-coordinate row", id)
 		}
 	}
 	// A type without faces is not stranded and must not be touched.
-	if _, err := st.GetEntityState(ctx, "PER-1", ""); err != nil {
+	if _, err := st.GetEntity(ctx, entity.Ref{ID: "PER-1"}); err != nil {
 		t.Errorf("person row was moved: %v", err)
 	}
 }
@@ -80,7 +80,7 @@ func TestAdopt_DryRunCountsWithoutMoving(t *testing.T) {
 	if res.Applied {
 		t.Error("Applied set on a dry run")
 	}
-	if bare, err := st.GetEntityState(ctx, "TSK-1", ""); err != nil || bare == nil {
+	if bare, err := st.GetEntity(ctx, entity.Ref{ID: "TSK-1"}); err != nil || bare == nil {
 		t.Error("dry run moved a row")
 	}
 }
@@ -117,7 +117,7 @@ func TestAdopt_PartialMappingMovesWhatItCanAndReportsTheRest(t *testing.T) {
 		}
 	}
 	// Left where it was, not guessed at a face.
-	if bare, err := st.GetEntityState(ctx, "TSK-2", ""); err != nil || bare == nil {
+	if bare, err := st.GetEntity(ctx, entity.Ref{ID: "TSK-2"}); err != nil || bare == nil {
 		t.Error("an unmapped row was moved")
 	}
 }
@@ -178,7 +178,7 @@ func TestAdopt_OccupiedDestinationWithDifferentContentIsRefused(t *testing.T) {
 		t.Errorf("error does not name the colliding id: %v", err)
 	}
 	// Both rows survive the refusal.
-	if bare, gErr := st.GetEntityState(ctx, "TSK-1", ""); gErr != nil || bare == nil {
+	if bare, gErr := st.GetEntity(ctx, entity.Ref{ID: "TSK-1"}); gErr != nil || bare == nil {
 		t.Error("the source row was destroyed by a refused move")
 	}
 }

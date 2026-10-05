@@ -89,8 +89,7 @@ func TestCheckCardinality_CountsContentEdgesPerFace(t *testing.T) {
 		// zero coordinate the edge belongs to no face, both faces would lack
 		// one, and the test would pass whether or not counting is per-face
 		// (verified by mutation: deleting it left the old spelling green).
-		if _, rerr := st.CreateRelation(ctx, "POL-1", "implements", "CTL-1",
-			&store.RelationData{FromFace: entity.Face("draft")}); rerr != nil {
+		if _, rerr := st.CreateRelation(ctx, entity.RelationKey{From: "POL-1", FromFace: entity.Face("draft"), Type: "implements", To: "CTL-1"}, &store.RelationData{}); rerr != nil {
 			t.Fatalf("seed edge: %v", rerr)
 		}
 	})

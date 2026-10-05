@@ -20,11 +20,12 @@ type partialMetamodel struct {
 	Includes    []string               `yaml:"includes"`
 
 	// Fields that are not allowed in included files
-	Version     string              `yaml:"version"`
-	Namespace   string              `yaml:"namespace"`
-	Description string              `yaml:"description"`
-	Worlds      map[string]WorldDef `yaml:"worlds"`
-	Copies      map[string]CopyDef  `yaml:"copies"`
+	Version      string              `yaml:"version"`
+	Namespace    string              `yaml:"namespace"`
+	Description  string              `yaml:"description"`
+	Worlds       map[string]WorldDef `yaml:"worlds"`
+	Copies       map[string]CopyDef  `yaml:"copies"`
+	DefaultWorld string              `yaml:"default_world"`
 }
 
 // includeState tracks file processing state during recursive include resolution.
@@ -131,6 +132,12 @@ func resolveIncludes(
 		return nil, err
 	}
 	partial.sourcePath = includePath
+	// The face order of the types this file declares: the struct unmarshal
+	// above drops it, and a merged type without it fails validateDeclOrder.
+	if err := recordFileFaceOrder(data, partial.Entities); err != nil { // coverage-ignore: defensive: the same
+		// bytes already unmarshaled into partial
+		return nil, err
+	}
 
 	// Validate no root-only fields
 	if partial.Version != "" {
@@ -154,6 +161,10 @@ func resolveIncludes(
 	// appears, for a definition the operator can see in their file.
 	if len(partial.Copies) > 0 {
 		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "copies"}
+	}
+	// `default_world:` names a world, and worlds are root-only.
+	if partial.DefaultWorld != "" {
+		return nil, &IncludeHasRootFieldError{Path: includePath, Field: "default_world"}
 	}
 
 	// Push onto stack for circular detection

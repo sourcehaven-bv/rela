@@ -16,21 +16,18 @@ import (
 
 // --- EntityReader ---------------------------------------------------------
 
-// GetEntity returns a single entity by ID, or store.ErrNotFound. The bare id
-// addresses the DEFAULT state (TKT-DOFYR1).
-func (s *Store) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	return s.GetEntityState(ctx, id, "")
-}
+// getEntitySQL reads one face row by its primary key (id, face).
+const getEntitySQL = `SELECT ` + entityColumns + ` FROM entities WHERE id = ? AND face = ?`
 
-// GetEntityState returns the content state addressed by (id, p); the zero face
-// is the default state. ErrNotFound covers a missing state even when sibling
-// states of the same id exist.
-func (s *Store) GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error) {
-	row := s.q().QueryRowContext(ctx,
-		`SELECT `+entityColumns+` FROM entities WHERE id = ? AND face = ?`, id, string(p))
-	e, err := scanEntity(row)
+// GetEntity returns the face row ref addresses, or store.ErrNotFound. A
+// missing face is ErrNotFound even when sibling faces of the same id exist.
+func (s *Store) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
+	if !storeutil.Addressable(ref) {
+		return nil, fmt.Errorf("sqlitestore: get %s: %w", ref, store.ErrNotFound)
+	}
+	e, err := scanEntity(s.q().QueryRowContext(ctx, getEntitySQL, ref.ID, string(ref.Face)))
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("sqlitestore: get %s: %w", entity.FormatStateRef(id, p), store.ErrNotFound)
+		return nil, fmt.Errorf("sqlitestore: get %s: %w", ref, store.ErrNotFound)
 	}
 	return e, err
 }
@@ -88,7 +85,7 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 	if err := storeutil.ValidateID(e.ID); err != nil {
 		return fmt.Errorf("sqlitestore: create: %w", err)
 	}
-	if e.Face.IsDefault() {
+	if e.Face.IsImplicit() {
 		return s.createEntityLocked(ctx, e)
 	}
 	return s.Tx(ctx, func(tx store.Store) error {
@@ -107,7 +104,7 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 	// siblings at all and only a DIVERGENT type is refused.
 	//
 	// Runs for EVERY face including the zero coordinate. Gating it on
-	// `!e.Face.IsDefault()` was complete only while every family necessarily
+	// `!e.Face.IsImplicit()` was complete only while every family necessarily
 	// had a zero-coordinate row: a family created named-face-first would then
 	// take a zero-coordinate write with no type check at all.
 	var famType string
@@ -172,7 +169,7 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	// its family (TKT-DOFYR1, design doc §6). The default face carries the
 	// family's type, so re-typing IT is the legitimate whole-family retype the
 	// storetest UpdateChangesType case covers.
-	if !e.Face.IsDefault() {
+	if !e.Face.IsImplicit() {
 		var curType string
 		err := s.q().QueryRowContext(ctx,
 			`SELECT type FROM entities WHERE id = ? AND face = ?`, e.ID, string(e.Face)).Scan(&curType)
@@ -255,7 +252,7 @@ func (s *Store) UpdateEntityIf(
 		if !ok { // unreachable: Tx always hands back our own view type
 			return errors.New("sqlitestore: unexpected transaction view type")
 		}
-		current, gErr := view.GetEntity(ctx, e.ID)
+		current, gErr := view.GetEntity(ctx, e.Ref())
 		if gErr != nil {
 			return gErr // already ErrNotFound-wrapped by GetEntity
 		}
@@ -291,7 +288,7 @@ func (s *Store) UpdateEntityIf(
 //
 // Nesting is safe: a call from inside an existing Tx joins it rather than
 // opening a second one.
-func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+func (s *Store) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	var result *store.DeleteResult
 	err := s.Tx(ctx, func(tx store.Store) error {
 		view, ok := tx.(*Store)
@@ -385,22 +382,20 @@ func (s *Store) deleteEntityLocked(
 	return result, nil
 }
 
-// DeleteEntityState removes ONE content state (face) and only the edges that
-// belong to it (TKT-C1XUA8).
+// DeleteFace removes ONE face row and the edges [store.EntityWriter.DeleteFace]
+// says belong to it (TKT-C1XUA8, RR-2466U1): the outgoing edges tailed at the
+// face, or every incident edge when it is the family's last face.
 //
-// Contrast DeleteEntity above, which sweeps the whole family and every incident
-// edge on BOTH sides. Reusing that here would make discarding a draft destroy
-// the published face and cut every inbound link unrelated entities hold on it —
-// so this deletes by (id, face), and among relations only the OUTGOING edges
-// whose tail is this face. Incoming edges survive: heads are entity-level
-// (design doc §2.3), so an inbound edge points at the ENTITY, not at one of its
-// faces.
+// Contrast DeleteFamily above, which sweeps the whole family. Reusing that here
+// would make discarding a draft destroy the published face and cut every
+// inbound link unrelated entities hold on it.
 //
-// Transacted for the same reason DeleteEntity is: it issues several statements
+// Transacted for the same reason DeleteFamily is: it issues several statements
 // plus a check-then-act on the sibling count.
-func (s *Store) DeleteEntityState(
-	ctx context.Context, id string, p entity.Face,
-) (*store.DeleteResult, error) {
+func (s *Store) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
+	if !storeutil.Addressable(ref) {
+		return nil, fmt.Errorf("sqlitestore: delete %s: %w", ref, store.ErrNotFound)
+	}
 	var result *store.DeleteResult
 	err := s.Tx(ctx, func(tx store.Store) error {
 		view, ok := tx.(*Store)
@@ -408,7 +403,7 @@ func (s *Store) DeleteEntityState(
 			return errors.New("sqlitestore: unexpected transaction view type")
 		}
 		var derr error
-		result, derr = view.deleteEntityStateLocked(ctx, id, p)
+		result, derr = view.deleteFaceLocked(ctx, ref.ID, ref.Face)
 		return derr
 	})
 	if err != nil {
@@ -417,20 +412,36 @@ func (s *Store) DeleteEntityState(
 	return result, nil
 }
 
-func (s *Store) deleteEntityStateLocked(
+func (s *Store) deleteFaceLocked(
 	ctx context.Context, id string, p entity.Face,
 ) (*store.DeleteResult, error) {
-	target, err := s.GetEntityState(ctx, id, p)
+	target, err := s.GetEntity(ctx, entity.Ref{ID: id, Face: p})
 	if err != nil {
 		return nil, err
 	}
+	var size int
+	if cErr := s.q().QueryRowContext(ctx,
+		`SELECT count(*) FROM entities WHERE id = ?`, id).Scan(&size); cErr != nil {
+		return nil, fmt.Errorf("sqlitestore: delete state %s: %w", id, cErr)
+	}
+	last := size == 1
 
-	owned, err := s.ownedRelations(ctx, id, p)
+	// The last face takes every incident edge, as DeleteFamily does
+	// (RR-2466U1); otherwise only the outgoing edges tailed at this face.
+	var owned []*entity.Relation
+	if last {
+		owned, err = s.incidentRelations(ctx, id)
+	} else {
+		owned, err = s.ownedRelations(ctx, id, p)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.write(ctx,
-		`DELETE FROM relations WHERE from_id = ? AND from_face = ?`, id, string(p)); err != nil {
+	ownedDelete, ownedArgs := `DELETE FROM relations WHERE from_id = ? AND from_face = ?`, []any{id, string(p)}
+	if last {
+		ownedDelete, ownedArgs = `DELETE FROM relations WHERE from_id = ? OR to_id = ?`, []any{id, id}
+	}
+	if _, err := s.write(ctx, ownedDelete, ownedArgs...); err != nil {
 		return nil, fmt.Errorf("sqlitestore: delete state %s relations: %w", id, err)
 	}
 	if _, err := s.write(ctx,
@@ -441,13 +452,8 @@ func (s *Store) deleteEntityStateLocked(
 	// Attachments are keyed to the BARE id, so they belong to the entity rather
 	// than to a face: only sweep them once the last face is gone. A discarded
 	// draft must not destroy attachments the surviving faces serve.
-	var remaining int
-	if cErr := s.q().QueryRowContext(ctx,
-		`SELECT count(*) FROM entities WHERE id = ?`, id).Scan(&remaining); cErr != nil {
-		return nil, fmt.Errorf("sqlitestore: delete state %s: %w", id, cErr)
-	}
 	s.notifyFaceDelete(id, p)
-	if remaining == 0 {
+	if last {
 		if _, err := s.write(ctx, `DELETE FROM attachments WHERE entity_id = ?`, id); err != nil {
 			return nil, fmt.Errorf("sqlitestore: delete state %s attachments: %w", id, err)
 		}
@@ -506,7 +512,7 @@ func (s *Store) incidentRelations(ctx context.Context, id string) ([]*entity.Rel
 
 // ownedRelations lists the OUTGOING edges whose tail is exactly p — the edges
 // that belong to one face and go with it. Incoming edges are deliberately not
-// included; see DeleteEntityState.
+// included; see DeleteFace.
 func (s *Store) ownedRelations(
 	ctx context.Context, id string, p entity.Face,
 ) ([]*entity.Relation, error) {

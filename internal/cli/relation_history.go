@@ -44,7 +44,7 @@ func (c *RelationHistoryCmd) Run(ctx context.Context, svc *writeServices) error 
 		return err
 	}
 	q := store.RelationHistoryQuery{
-		From: from, FromFace: fromFace, Type: c.Type, To: c.To, RecordID: recordID,
+		Key: entity.RelationKey{From: from, FromFace: fromFace, Type: c.Type, To: c.To}, RecordID: recordID,
 	}
 	if c.Version > 0 {
 		return c.printSnapshot(ctx, reader, q)
@@ -78,9 +78,11 @@ func resolveLifetimeRecordID(
 	if lifetime <= 0 {
 		return 0, nil
 	}
-	lifetimes, err := reader.ListRelationLifetimes(ctx, from, fromFace, relType, to)
+	lifetimes, err := reader.ListRelationLifetimes(ctx, entity.RelationKey{
+		From: from, FromFace: fromFace, Type: relType, To: to,
+	})
 	if err != nil {
-		return 0, fmt.Errorf("list lifetimes for %s--%s--%s: %w", from, relType, to, err)
+		return 0, fmt.Errorf("list lifetimes for %s--%s--%s: %w", entity.FormatStateRef(from, fromFace), relType, to, err)
 	}
 	if lifetime > len(lifetimes) {
 		return 0, fmt.Errorf("no lifetime %d for %s--%s--%s (%d exist)", lifetime, from, relType, to, len(lifetimes))
@@ -91,7 +93,9 @@ func resolveLifetimeRecordID(
 func (c *RelationHistoryCmd) printLifetimes(
 	ctx context.Context, reader store.RelationHistoryReader, from string, fromFace entity.Face,
 ) error {
-	lifetimes, err := reader.ListRelationLifetimes(ctx, from, fromFace, c.Type, c.To)
+	lifetimes, err := reader.ListRelationLifetimes(ctx, entity.RelationKey{
+		From: from, FromFace: fromFace, Type: c.Type, To: c.To,
+	})
 	if err != nil {
 		return fmt.Errorf("list lifetimes for %s--%s--%s: %w", c.From, c.Type, c.To, err)
 	}
@@ -143,8 +147,7 @@ func (c *RelationHistoryCmd) printTimeline(
 	}
 	// Footer: signal that older deleted lifetimes exist (only for the newest view).
 	if q.RecordID == 0 {
-		if lifetimes, err := reader.ListRelationLifetimes(
-			ctx, q.From, q.FromFace, c.Type, c.To); err == nil && len(lifetimes) > 1 {
+		if lifetimes, err := reader.ListRelationLifetimes(ctx, q.Key); err == nil && len(lifetimes) > 1 {
 			out.WriteMessage("note: %d earlier deleted lifetime(s) of this key exist — "+
 				"use --list-lifetimes, or --lifetime K to view one.", len(lifetimes)-1)
 		}
@@ -214,7 +217,7 @@ func (c *RelationRestoreCmd) Run(ctx context.Context, svc *writeServices) error 
 		return err
 	}
 	q := store.RelationHistoryQuery{
-		From: from, FromFace: fromFace, Type: c.Type, To: c.To, RecordID: recordID,
+		Key: entity.RelationKey{From: from, FromFace: fromFace, Type: c.Type, To: c.To}, RecordID: recordID,
 	}
 	snap, err := reader.GetRelationVersion(ctx, q, c.Version)
 	if errors.Is(err, store.ErrNotFound) {
@@ -225,16 +228,18 @@ func (c *RelationRestoreCmd) Run(ctx context.Context, svc *writeServices) error 
 	}
 
 	content := snap.Content
+	// The restore writes back to the tail it read from; the default tail of
+	// a faced source is a different relation (TKT-JAROC3).
 	opts := entity.RelationOptions{Properties: snap.Properties, Content: &content}
 
-	_, getErr := svc.Store.GetRelation(ctx, c.From, c.Type, c.To)
+	_, getErr := svc.Store.GetRelation(ctx, q.Key)
 	switch {
 	case getErr == nil:
-		if _, err := svc.EntityManager.UpdateRelation(ctx, c.From, c.Type, c.To, opts); err != nil {
+		if _, err := svc.EntityManager.UpdateRelation(ctx, q.Key, opts); err != nil {
 			return fmt.Errorf("restore (update) %s--%s--%s to v%d: %w", c.From, c.Type, c.To, c.Version, err)
 		}
 	case errors.Is(getErr, store.ErrNotFound):
-		if _, err := svc.EntityManager.CreateRelation(ctx, c.From, c.Type, c.To, opts); err != nil {
+		if _, err := svc.EntityManager.CreateRelation(ctx, q.Key, opts); err != nil {
 			return fmt.Errorf("restore (re-create) %s--%s--%s to v%d: %w", c.From, c.Type, c.To, c.Version, err)
 		}
 	default: // coverage-ignore: defensive: memstore.GetRelation returns only nil or store.ErrNotFound, so a non-

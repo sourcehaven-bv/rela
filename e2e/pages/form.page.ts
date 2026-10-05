@@ -1,4 +1,4 @@
-import { type Page, type Locator, expect } from "@playwright/test";
+import { type Page, type Locator, type Response, expect } from "@playwright/test";
 import { BasePage } from "./base.page";
 
 export class FormPage extends BasePage {
@@ -467,6 +467,34 @@ export class FormPage extends BasePage {
   /** Selected-entity tiles inside a relation picker. */
   pickerSelections(picker: Locator): Locator {
     return picker.locator(".selected-entity");
+  }
+
+  /** An incoming picker's group of edges from one source face, by the
+   *  face's label. */
+  pickerFaceGroup(picker: Locator, faceLabel: string): Locator {
+    return picker
+      .locator(".selected-group")
+      .filter({ has: this.page.locator(`.group-face:text-is("${faceLabel}")`) });
+  }
+
+  /** The labels of an incoming picker's face groups, in order. */
+  async pickerFaceLabels(picker: Locator): Promise<string[]> {
+    return picker.locator(".selected-group .group-face").allTextContents();
+  }
+
+  /** The lock on a row the principal may not change. */
+  pickerLocks(scope: Locator): Locator {
+    return scope.locator(".lock");
+  }
+
+  /** The remove buttons on a picker's (or group's) rows. */
+  pickerRemoveButtons(scope: Locator): Locator {
+    return scope.locator(".remove-btn");
+  }
+
+  /** The options of an open relation picker dropdown. */
+  pickerOptions(picker: Locator): Locator {
+    return picker.locator(".dropdown-item");
   }
 
   /** A cards relation widget, scoped by its section label.
@@ -1066,6 +1094,16 @@ export class FormPage extends BasePage {
     });
   }
 
+  /** Edit mode only: attach a file and wait for its upload to succeed, so a
+   *  following navigation cannot abort it. */
+  async attachFileAndWaitForUpload(property: string, name: string, contents: string) {
+    const upload = this.page.waitForResponse(
+      (r) => r.url().includes("/_attachments/") && r.request().method() === "PUT",
+    );
+    await this.attachFile(property, name, contents);
+    expect((await upload).ok()).toBeTruthy();
+  }
+
   /** Filenames currently listed on a `file` property — staged or uploaded. */
   async attachedFileNames(property: string): Promise<string[]> {
     await this.waitForFileWidget(property);
@@ -1134,14 +1172,34 @@ export class FormPage extends BasePage {
     plural: string,
     expectedUploads: number,
   ): Promise<{ id: string }> {
-    const uploads = Array.from({ length: expectedUploads }, () =>
-      this.page.waitForResponse(
-        (r) =>
-          r.url().includes("/_attachments/") && r.request().method() === "PUT",
-      ),
-    );
-    const created = await this.submitAndExpectCreate(plural);
-    await Promise.all(uploads);
-    return created;
+    // One waitForResponse per upload would not do: every waiter resolves on
+    // the FIRST matching response, so the second upload went unawaited.
+    // A failed upload rejects at once rather than counting towards done.
+    let seen = 0;
+    let done!: () => void;
+    let fail!: (err: Error) => void;
+    const allUploaded = new Promise<void>((resolve, reject) => {
+      done = resolve;
+      fail = reject;
+    });
+    const onResponse = (r: Response) => {
+      if (!r.url().includes("/_attachments/") || r.request().method() !== "PUT") {
+        return;
+      }
+      if (!r.ok()) {
+        fail(new Error(`attachment upload failed: ${r.status()} ${r.url()}`));
+        return;
+      }
+      seen += 1;
+      if (seen >= expectedUploads) done();
+    };
+    this.page.on("response", onResponse);
+    try {
+      const created = await this.submitAndExpectCreate(plural);
+      await allUploaded;
+      return created;
+    } finally {
+      this.page.off("response", onResponse);
+    }
   }
 }

@@ -245,19 +245,18 @@ func (v *GenericValidator) CheckAll(ctx context.Context) ([]Violation, error) {
 // cannot meaningfully evaluate rules against them.
 // # Every content state, not just the bare row
 //
-// The query sets AllStates, so each FACE of an entity is validated as its own
-// row. Without it (the zero value means default-state rows only) a rule
-// evaluated the bare row and silently never ran against any other state — so a
+// The query selects AllFaces, so each FACE of an entity is validated as its
+// own row. Before selections were required, the zero query read default-state
+// rows only, so a rule evaluated the bare row and silently never ran against any other state — so a
 // published face could be missing a required property while `rela validate`
 // reported a clean run, which is worse than no check because it is a claim
 // (TKT-4Y6CMV).
 //
 // Every row of a state family conforms to the same schema, so validating each
 // one is the same question asked of each. Choosing ONE state to validate would
-// be world resolution, a read-path concern that has no business here — and the
-// store forbids combining AllStates with a World for exactly that reason.
+// be world resolution, a read-path concern that has no business here.
 func (v *GenericValidator) loadCandidates(ctx context.Context, entityType string) ([]*entity.Entity, error) {
-	q := store.EntityQuery{AllStates: true}
+	q := store.EntityQuery{Faces: store.AllFaces()}
 	if entityType != "" {
 		q.Type = entityType
 	}

@@ -243,10 +243,14 @@ func ceilingWorldFindings(
 		worlds []string
 	}{{"worlds", r.Worlds}, {"deny_worlds", r.DenyWorlds}} {
 		for _, world := range c.worlds {
-			if world == acl.DefaultWorldName || m.HasWorld(world) || seen[world] {
+			if worldExists(m, world) || seen[world] {
 				continue
 			}
 			seen[world] = true
+			if d, isDefault := defaultBesideDeclared(name, world, m); isDefault {
+				f = append(f, d)
+				continue
+			}
 			if cv, isCaseVariant := defaultWorldCaseVariant(name, world); isCaseVariant {
 				f = append(f, cv)
 				continue

@@ -3,6 +3,7 @@ package automation
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 
@@ -109,7 +110,51 @@ func NewEngineFromMetamodel(
 	if err := e.compileConditions(); err != nil {
 		return nil, err
 	}
+	if err := rejectFilePropertyWrites(meta, automations); err != nil {
+		return nil, err
+	}
 	return e, nil
+}
+
+// rejectFilePropertyWrites refuses an automation whose `set:` or
+// `create_entity` writes a `file` property. A file value is the capability
+// to download the bytes it names, and only the attachment paths may change
+// one (BUG-CTUW2N). The manager checks caller-authored values, but applies
+// automation values after that check, so an automation writing one would
+// bypass the rule; it is refused here, at load. A `set:` on an automation
+// with no `entity:` is checked against every type, since it may fire on
+// any of them.
+func rejectFilePropertyWrites(meta *metamodel.Metamodel, automations []Automation) error {
+	if meta == nil {
+		return nil
+	}
+	for _, auto := range automations {
+		types := auto.On.Entity
+		if len(types) == 0 {
+			types = slices.Sorted(maps.Keys(meta.Entities))
+		}
+		for _, act := range auto.Do {
+			if act.Set != "" {
+				for _, t := range types {
+					if slices.Contains(metamodel.FileProperties(meta, t), act.Set) {
+						return fmt.Errorf(
+							"automation %q: `set: %s` writes a file property of %q; file values change only through the attachments API",
+							auto.Name, act.Set, t)
+					}
+				}
+			}
+			if ce := act.CreateEntity; ce != nil {
+				for _, prop := range metamodel.FileProperties(meta, ce.Type) {
+					if _, ok := ce.Properties[prop]; ok {
+						return fmt.Errorf(
+							"automation %q: create_entity sets file property %q of %q; file values change only through the attachments API",
+							auto.Name, prop, ce.Type)
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // compileConditions compiles every `condition:` expression up front, so a

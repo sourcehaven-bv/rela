@@ -6,11 +6,14 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // relationWorkspace builds a memstore with a ticket + review-checklist
@@ -43,11 +46,11 @@ func relationWorkspace(
 		}
 	}
 	for _, r := range rels {
-		if _, err := st.CreateRelation(ctx, r[0], r[1], r[2], nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r[0], Type: r[1], To: r[2]}, nil); err != nil {
 			t.Fatalf("create relation %v: %v", r, err)
 		}
 	}
-	return lua.ReadDeps{VisibleReader: st, Tracer: tracer.New(st), Meta: meta}
+	return lua.ReadDeps{VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), Tracer: tracertest.Must(st, store.TrivialScope()), Meta: meta, World: store.TrivialScope()}
 }
 
 // newWithGraph builds a Service wired exactly as production does: the same
@@ -86,7 +89,7 @@ func (g testGraph) RelatedEntities(
 			out = append(out, Related{ID: rel[2]})
 			continue
 		}
-		e, gErr := g.deps.VisibleReader.GetEntity(ctx, rel[2])
+		e, gErr := g.deps.VisibleReader.GetAddress(ctx, rel[2])
 		if gErr != nil || e == nil {
 			out = append(out, Related{ID: rel[2]})
 			continue
@@ -252,7 +255,7 @@ func TestRelationConstraint_NoReader(t *testing.T) {
 			Severity: "error",
 		}},
 	}
-	svc := New(meta, lua.ReadDeps{}) // no VisibleReader
+	svc := New(meta, lua.ReadDeps{World: store.TrivialScope()}) // no VisibleReader
 	res := svc.Check(context.Background(), []*entity.Entity{tkt("done")}, nil)
 	if len(res.LoadErrors) == 0 {
 		t.Fatal("a missing reader must be reported as a LoadError, not silently pass the gate")

@@ -9,7 +9,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // shows{} asserts what a manual's prose claims, against the seeded graph.
@@ -139,38 +138,25 @@ func showsEvidence(typ, world string, got, absent []string, faced bool) evidence
 
 // worldScope compiles a declared world name to the scope a store query takes.
 //
-// An empty name is the default world — the zero WorldScope, which every backend
-// reads as "no resolution applied: every entity at its default face". That is a
-// real answer, not a missing one, so it is not an error.
+// An empty name is the default world, from the compiled worlds' seam
+// ([worlds.Compiled.DefaultWorld]). That is a real answer, not a missing one, so it
+// is not an error.
 //
 // An UNDECLARED name is an error. A world that resolves nothing looks exactly
 // like a world where nothing is published, so a typo would make `absent=` pass
 // for the wrong reason — the vacuous-pass shape this whole feature refuses.
 func (dr *docRuntime) worldScope(name string) (store.WorldScope, error) {
-	if name == "" || name == metamodel.DefaultWorldName {
-		return store.WorldScope{}, nil
-	}
-	compiled, err := worlds.Compile(dr.meta)
-	if err != nil {
-		return store.WorldScope{}, fmt.Errorf("compiling worlds: %w", err)
+	compiled := dr.worlds
+	if name == "" {
+		return compiled.DefaultWorld(), nil
 	}
 	scope, ok := compiled.Lookup(name)
 	if !ok {
 		return store.WorldScope{}, fmt.Errorf(
-			"no world named %q is declared (schema.yaml declares: %s)",
-			name, strings.Join(declaredWorlds(dr), ", "))
+			"no world named %q exists (worlds: %s)",
+			name, strings.Join(compiled.Names(), ", "))
 	}
 	return scope, nil
-}
-
-// declaredWorlds lists the schema's world names for a failure message.
-func declaredWorlds(dr *docRuntime) []string {
-	out := make([]string, 0, len(dr.meta.Worlds))
-	for name := range dr.meta.Worlds {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // describeSubject names what a failure is about: the type, and the world when
@@ -234,7 +220,7 @@ func claimList(tbl *lua.LTable, key string) ([]string, error) {
 // stable and diffable.
 func (dr *docRuntime) entityIDs(typ string, scope store.WorldScope) ([]string, error) {
 	var ids []string
-	for e, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, World: scope}) {
+	for e, err := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, Faces: store.InWorld(scope)}) {
 		if err != nil {
 			return nil, err
 		}

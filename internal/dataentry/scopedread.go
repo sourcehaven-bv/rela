@@ -175,11 +175,11 @@ func scopedHeaders(
 	case rqr.AllowAll && len(req.Props) == 0 && len(req.ScopeProps) == 0:
 		// No extra conjuncts, so the cheaper type-scan serves it. Stamping
 		// the world here as well as on the branches below is the RR-GQWRLD
-		// invariant; note store.DefaultWorld() is the zero value, so a
+		// invariant; note store.TrivialScope() is the zero value, so a
 		// surface with no world in ctx pays nothing for this.
 		for h, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{
 			Type:   req.Type,
-			World:  worldScopeFrom(ctx),
+			Faces:  store.InWorld(worldScopeFrom(ctx)),
 			FaceIn: req.Faces,
 		}) {
 			if err != nil {
@@ -258,7 +258,7 @@ func applyScope(
 		return nil, fmt.Errorf("%w: query scope on %q has no evaluator", errListLoad, req.Type)
 	}
 	match := func(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
-		return svc.Store.MatchingIDs(ctx, stampScope(ctx, q, req), ids)
+		return store.MatchingIDs(ctx, svc.Store, stampScope(ctx, q, req), ids)
 	}
 	out, err := req.ScopeFilter(ctx, req.Scope, req.Type, headers,
 		traversalGateFromContext(ctx).GateTraversal, match)
@@ -277,7 +277,7 @@ func applyScope(
 // place: if this function does not mention a dimension, no data-entry
 // collection read applies it.
 func stampScope(ctx context.Context, q store.GraphQuery, req scopeRequest) store.GraphQuery {
-	q.World = worldScopeFrom(ctx)
+	q.Faces = store.InWorld(worldScopeFrom(ctx))
 	if len(req.Faces) > 0 {
 		q.FaceIn = req.Faces
 	}

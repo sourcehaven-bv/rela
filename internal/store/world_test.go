@@ -10,20 +10,26 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// TestWorldScope_ZeroValueIsTheDefaultWorld pins the compatibility
-// guarantee: the zero value resolves every entity to its default state,
-// costs no allocation, and is what every existing query construction site
-// keeps meaning.
-func TestWorldScope_ZeroValueIsTheDefaultWorld(t *testing.T) {
+// TestWorldScope_ZeroValueIsUnset pins that the zero value is not a world
+// (TKT-7IZHP0 design A4): it is unset, while every constructor returns a set
+// scope. An empty or nil map compiles to the trivial scope, so a caller
+// cannot build a non-trivial world that resolves nothing.
+func TestWorldScope_ZeroValueIsUnset(t *testing.T) {
 	var zero store.WorldScope
-	assert.True(t, zero.IsDefaultWorld())
+	assert.False(t, zero.IsSet())
 	assert.Nil(t, zero.Types())
-	assert.True(t, store.DefaultWorld().IsDefaultWorld())
 
-	// An empty or nil map compiles to the same thing — a caller must not
-	// be able to build a non-default world that resolves nothing.
-	assert.True(t, store.NewWorldScope(nil).IsDefaultWorld())
-	assert.True(t, store.NewWorldScope(map[string]store.TypeResolution{}).IsDefaultWorld())
+	for name, w := range map[string]store.WorldScope{
+		"TrivialScope":      store.TrivialScope(),
+		"NewWorldScope nil": store.NewWorldScope(nil),
+		"NewWorldScope {}":  store.NewWorldScope(map[string]store.TypeResolution{}),
+	} {
+		assert.True(t, w.IsSet(), name)
+		assert.True(t, w.IsTrivial(), name)
+	}
+	faced := store.NewWorldScope(map[string]store.TypeResolution{"page": {Chain: []entity.Face{"published"}}})
+	assert.True(t, faced.IsSet())
+	assert.False(t, faced.IsTrivial())
 }
 
 // TestWorldScope_AbsenceIsNotTheZeroValue is the RR-CZN30X pin, and the

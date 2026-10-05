@@ -4,8 +4,12 @@ type: feature
 title: Two-way sync between local fsstore and remote pgstore repos
 summary: Hash-based two-way fsstore↔pgstore sync with opaque pull cursor and manual conflict resolution.
 description: 'Two-way sync between a local fsstore rela repo and a remote pgstore rela-server. A per-record content hash is the single token: it detects local changes and serves as the If-Match precondition for conditional push through entitymanager. Pull uses a manifest of {id -> hash | tombstone} keyed by an opaque server-minted cursor (server-internal; may be backed by a hash/seq column for O(changes) deltas later). Conflicts are detected (412 on push, both-dirty on pull) but resolved manually via rela CLI force flags. CRDTs and three-way auto-merge are rejected/deferred.'
-status: proposed
+status: removed
 ---
+
+> **Removed.** The sync feature was removed in Stage 3 PR 10 of TKT-7IZHP0
+> (ruling D9: unused). It can return in a follow-up; this entity records the
+> old design.
 
 ## Summary
 

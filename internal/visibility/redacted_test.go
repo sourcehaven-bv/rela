@@ -3,10 +3,12 @@ package visibility_test
 import (
 	"context"
 	"errors"
+	"iter"
 	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -191,10 +193,14 @@ func TestPushdownBranch_MarksRedacted(t *testing.T) {
 	}
 }
 
-// stubGetter satisfies visibility.EntityGetter for a reader that is only
+// stubGetter satisfies visibility.Loader for a reader that is only
 // used through RedactRow (which performs no load).
 type stubGetter struct{}
 
-func (stubGetter) GetEntityState(context.Context, string, entity.Face) (*entity.Entity, error) {
+func (stubGetter) GetEntity(context.Context, entity.Ref) (*entity.Entity, error) {
 	return nil, errors.New("not used")
+}
+
+func (stubGetter) ListEntities(context.Context, store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	return func(func(*entity.Entity, error) bool) {}
 }

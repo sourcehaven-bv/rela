@@ -62,6 +62,9 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 
 	// `replace` removes the target face's existing edges of that type first.
 	// Deliberately scoped to the TAIL: the sibling faces' edges are theirs.
+	// Only the edges planning found removable go (plan.removable): an edge
+	// the principal could not remove by hand stays, and so does one created
+	// after planning.
 	replaced := map[string]bool{}
 	for _, e := range plan.edges {
 		if !e.replace || replaced[e.relType] {
@@ -80,7 +83,9 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 				return fmt.Errorf("entitymanager: copy %q: list target edges: %w",
 					plan.name, err)
 			}
-			doomed = append(doomed, rel)
+			if plan.removable[copyEdgeKey{rel.Type, rel.To}] {
+				doomed = append(doomed, rel)
+			}
 		}
 		for _, rel := range doomed {
 			// Addressed BY TAIL. Dropping it here (as this did before
@@ -89,7 +94,7 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 			// DeleteRelation deletes the DEFAULT face's edge on the same
 			// triple — a face this copy has no business touching — and
 			// reports success, while the edge being replaced survives.
-			derr := view.DeleteRelationState(ctx, rel.From, rel.FromFace, rel.Type, rel.To)
+			derr := view.DeleteRelation(ctx, rel.Identity())
 			if derr != nil && !errors.Is(derr, store.ErrNotFound) {
 				return fmt.Errorf("entitymanager: copy %q: replace edges: %w",
 					plan.name, derr)
@@ -98,8 +103,9 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 	}
 
 	for _, e := range plan.edges {
-		_, err := view.CreateRelation(ctx, plan.targetID, e.relType, e.to,
-			&store.RelationData{FromFace: tail})
+		_, err := view.CreateRelation(ctx, entity.RelationKey{
+			From: plan.targetID, FromFace: tail, Type: e.relType, To: e.to,
+		}, &store.RelationData{})
 		if err != nil && !errors.Is(err, store.ErrConflict) {
 			// A conflict is `merge` finding the edge already present, which is
 			// exactly what merge means.

@@ -70,6 +70,10 @@
           "description": "Markdown body",
           "type": "string"
         },
+        "face": {
+          "description": "Face to create; required for a type that declares faces",
+          "type": "string"
+        },
         "id": {
           "description": "Custom ID (only for types with id_type manual)",
           "type": "string"
@@ -101,7 +105,7 @@
           "type": "string"
         },
         "from": {
-          "description": "Source entity ID",
+          "description": "Source entity ID; ID@face for a content-scoped relation",
           "type": "string"
         },
         "properties": {
@@ -153,15 +157,15 @@
   },
   {
     "name": "delete_entity",
-    "description": "Delete an entity",
+    "description": "Delete an entity, or one face of it",
     "inputSchema": {
       "properties": {
         "cascade": {
-          "description": "Also delete its relations (default false)",
+          "description": "Also delete its relations (default false). An ID@face delete always removes the edges tailed at that face",
           "type": "boolean"
         },
         "id": {
-          "description": "Entity ID; deletes every face",
+          "description": "Entity ID; on a faced type name a face: ID@face deletes that face and its edges, and the last face deletes the entity",
           "type": "string"
         }
       },
@@ -177,7 +181,7 @@
     "inputSchema": {
       "properties": {
         "from": {
-          "description": "Source entity ID",
+          "description": "Source entity ID; ID@face for a content-scoped relation",
           "type": "string"
         },
         "to": {
@@ -256,7 +260,7 @@
           "type": "string"
         },
         "world": {
-          "description": "World to read in (see list_worlds). A world picks one content state per entity; `default` reads the default state. Omitted, the server's default world applies",
+          "description": "World to read in (see list_worlds). A world picks one face (content state) per entity. Omitted, the server's default world applies",
           "type": "string"
         }
       },
@@ -420,7 +424,7 @@
           "type": "string"
         },
         "world": {
-          "description": "World to read in (see list_worlds). A world picks one content state per entity; `default` reads the default state. Omitted, the server's default world applies",
+          "description": "World to read in (see list_worlds). A world picks one face (content state) per entity. Omitted, the server's default world applies",
           "type": "string"
         }
       },
@@ -444,7 +448,7 @@
           "type": "string"
         },
         "world": {
-          "description": "World to read in (see list_worlds). A world picks one content state per entity; `default` reads the default state. Omitted, the server's default world applies",
+          "description": "World to read in (see list_worlds). A world picks one face (content state) per entity. Omitted, the server's default world applies",
           "type": "string"
         }
       },
@@ -492,7 +496,7 @@
           "type": "string"
         },
         "id": {
-          "description": "Entity ID, or ID@face to update one content state",
+          "description": "Entity ID, or ID@face for one face of a faced type",
           "type": "string"
         },
         "properties": {

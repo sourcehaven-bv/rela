@@ -56,76 +56,58 @@ func (m *MemStore) UpdateEntityIf(
 	return m.updateEntityIf(ctx, e, cond)
 }
 
-// DeleteEntity implements store.EntityWriter.
-// Returns store.ErrNotFound if the entity does not exist.
-func (m *MemStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+// DeleteFamily implements store.EntityWriter.
+// Returns store.ErrNotFound if no face of id exists.
+func (m *MemStore) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	defer m.lockTx()()
 	return m.deleteEntity(ctx, id, cascade)
 }
 
-// DeleteEntityState implements store.EntityWriter.
+// DeleteFace implements store.EntityWriter.
 // Returns store.ErrNotFound if that face does not exist.
-func (m *MemStore) DeleteEntityState(
-	ctx context.Context, id string, p entity.Face,
-) (*store.DeleteResult, error) {
+func (m *MemStore) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
 	defer m.lockTx()()
-	return m.deleteEntityState(ctx, id, p)
+	return m.deleteFace(ctx, ref)
 }
 
-// RenameEntity implements store.EntityWriter.
+// RenameFamily implements store.EntityWriter.
 // Returns store.ErrNotFound if oldID is absent, store.ErrConflict if
 // newID exists.
-func (m *MemStore) RenameEntity(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
+func (m *MemStore) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	defer m.lockTx()()
 	return m.renameEntity(ctx, oldID, newID)
 }
 
 // CreateRelation implements store.RelationWriter.
 func (m *MemStore) CreateRelation(
-	ctx context.Context, from, relType, to string, data *store.RelationData,
+	ctx context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
 	defer m.lockTx()()
-	return m.createRelation(ctx, from, relType, to, data)
+	return m.createRelation(ctx, k, data)
 }
 
 // UpdateRelation implements store.RelationWriter.
 func (m *MemStore) UpdateRelation(
-	ctx context.Context, from, relType, to string, data store.RelationData,
+	ctx context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
 	defer m.lockTx()()
-	return m.updateRelation(ctx, from, relType, to, data)
-}
-
-// UpdateRelationState implements store.RelationWriter.
-func (m *MemStore) UpdateRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
-) (*entity.Relation, error) {
-	defer m.lockTx()()
-	return m.updateRelationState(ctx, from, p, relType, to, data)
+	return m.updateRelation(ctx, k, data)
 }
 
 // DeleteRelation implements store.RelationWriter.
-func (m *MemStore) DeleteRelation(ctx context.Context, from, relType, to string) error {
+func (m *MemStore) DeleteRelation(ctx context.Context, k entity.RelationKey) error {
 	defer m.lockTx()()
-	return m.deleteRelation(ctx, from, relType, to)
+	return m.deleteRelation(ctx, k)
 }
 
-// DeleteRelationState implements store.RelationWriter.
-func (m *MemStore) DeleteRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string,
-) error {
-	defer m.lockTx()()
-	return m.deleteRelationState(ctx, from, p, relType, to)
-}
-
-// AttachFile implements store.AttachmentManager.
-func (m *MemStore) AttachFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
+// AttachFamilyFile implements store.AttachmentManager.
+func (m *MemStore) AttachFamilyFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
 	defer m.lockTx()()
 	return m.attachFile(ctx, entityID, property, fileName, r)
 }
 
-// DeleteAttachment implements store.AttachmentManager.
-func (m *MemStore) DeleteAttachment(ctx context.Context, entityID, property, fileName string) error {
+// DeleteFamilyAttachment implements store.AttachmentManager.
+func (m *MemStore) DeleteFamilyAttachment(ctx context.Context, entityID, property, fileName string) error {
 	defer m.lockTx()()
 	return m.deleteAttachment(ctx, entityID, property, fileName)
 }
@@ -155,53 +137,39 @@ func (t txStore) UpdateEntityIf(
 	return t.updateEntityIf(ctx, e, cond)
 }
 
-func (t txStore) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+func (t txStore) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	return t.deleteEntity(ctx, id, cascade)
 }
 
-func (t txStore) DeleteEntityState(
-	ctx context.Context, id string, p entity.Face,
-) (*store.DeleteResult, error) {
-	return t.deleteEntityState(ctx, id, p)
+func (t txStore) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
+	return t.deleteFace(ctx, ref)
 }
 
-func (t txStore) RenameEntity(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
+func (t txStore) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	return t.renameEntity(ctx, oldID, newID)
 }
 
 func (t txStore) CreateRelation(
-	ctx context.Context, from, relType, to string, data *store.RelationData,
+	ctx context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
-	return t.createRelation(ctx, from, relType, to, data)
+	return t.createRelation(ctx, k, data)
 }
 
 func (t txStore) UpdateRelation(
-	ctx context.Context, from, relType, to string, data store.RelationData,
+	ctx context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
-	return t.updateRelation(ctx, from, relType, to, data)
+	return t.updateRelation(ctx, k, data)
 }
 
-func (t txStore) UpdateRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
-) (*entity.Relation, error) {
-	return t.updateRelationState(ctx, from, p, relType, to, data)
+func (t txStore) DeleteRelation(ctx context.Context, k entity.RelationKey) error {
+	return t.deleteRelation(ctx, k)
 }
 
-func (t txStore) DeleteRelation(ctx context.Context, from, relType, to string) error {
-	return t.deleteRelation(ctx, from, relType, to)
-}
-
-func (t txStore) DeleteRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string,
-) error {
-	return t.deleteRelationState(ctx, from, p, relType, to)
-}
-
-func (t txStore) AttachFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
+func (t txStore) AttachFamilyFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
 	return t.attachFile(ctx, entityID, property, fileName, r)
 }
 
-func (t txStore) DeleteAttachment(ctx context.Context, entityID, property, fileName string) error {
+func (t txStore) DeleteFamilyAttachment(ctx context.Context, entityID, property, fileName string) error {
 	return t.deleteAttachment(ctx, entityID, property, fileName)
 }
 

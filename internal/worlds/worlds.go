@@ -32,6 +32,7 @@ package worlds
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -39,51 +40,110 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// Compiled is the result of compiling a metamodel's worlds: every
-// declared world by name, plus the implicit default world.
+// Compiled is the result of compiling a metamodel's worlds: every world by
+// name, and which of them a request uses when it names none.
 //
-// The ZERO VALUE is usable and means "no declared worlds": [Compiled.Lookup]
-// still answers the default world, and [Compiled.Names] is empty. That is
-// also what Compile returns for a nil metamodel or one with no `worlds:`.
+// When the schema declares no worlds, rela generates one, named
+// [metamodel.DefaultWorldName]: each faced type serves its faces in
+// declaration order and excludes an entity with none of them, and each
+// faceless type serves its implicit face. For a project with no faced type
+// that is the trivial scope, so nothing changes there. When any world is
+// declared, no `default` world exists (TKT-7IZHP0 design §3.2).
+//
+// The ZERO VALUE is the generated world of a faceless project: its default
+// world is `default`, with the trivial scope (design G17). That is also what
+// Compile returns for a nil metamodel.
 type Compiled struct {
 	byName map[string]store.WorldScope
+	// order is the declared world names in declaration order.
+	order []string
+	// defaultName is the default world's name; "" in the zero value, which
+	// [Compiled.DefaultWorldName] reads as the generated world.
+	defaultName string
+	// families is the scope [Compiled.Families] returns; unset in the zero
+	// value, which has no faced type.
+	families store.WorldScope
+	// declared reports that the schema declared worlds. False means the one
+	// world is the generated `default`, which the zero value also is.
+	declared bool
 }
 
-// Default returns the implicit default world — total, every entity via
-// its default state. Always available, declared or not.
-func Default() store.WorldScope { return store.DefaultWorld() }
+// DefaultWorldName returns the name of the world a surface uses when the
+// request names none: the schema's `default_world:`, else the first declared
+// world, else the generated `default` (TKT-7IZHP0 design §21 D3).
+func (c Compiled) DefaultWorldName() string {
+	if c.defaultName == "" {
+		return metamodel.DefaultWorldName
+	}
+	return c.defaultName
+}
+
+// DefaultWorld returns the scope of the world [Compiled.DefaultWorldName]
+// names.
+//
+// This is the one seam for that choice. A surface with no request world
+// takes its world from here, never from store.TrivialScope directly: CLI,
+// MCP, Lua, the scheduler, scheduled mail, tracer titles and docs.
+func (c Compiled) DefaultWorld() store.WorldScope {
+	// Compile checks the name before it returns, and the zero value's name
+	// is the generated world, so the lookup always succeeds. Were it ever to
+	// fail, the unset scope it returns fails every query closed.
+	scope, _ := c.Lookup(c.DefaultWorldName())
+	return scope
+}
+
+// Generated reports whether the schema declared no worlds, so the only
+// world is the generated `default`.
+func (c Compiled) Generated() bool { return !c.declared }
 
 // Lookup returns the compiled scope for a world name.
 //
-// [metamodel.DefaultWorldName] always resolves, even for a project with
-// no `worlds:` block, because that world is implicit. Any other unknown
-// name returns ok=false — callers fail closed rather than substituting
-// the default world, which would silently widen a world-bound surface.
+// The generated `default` resolves only when no world is declared. Any
+// other unknown name, and `default` beside declared worlds (design D11),
+// returns ok=false: callers fail closed rather than substituting the default
+// world, which would silently widen a world-bound surface.
 func (c Compiled) Lookup(name string) (scope store.WorldScope, ok bool) {
-	if name == metamodel.DefaultWorldName {
-		return Default(), true
+	if !c.declared {
+		if name != metamodel.DefaultWorldName {
+			return store.WorldScope{}, false
+		}
+		return c.Families(), true
 	}
 	scope, ok = c.byName[name]
 	return scope, ok
 }
 
-// Names returns the declared world names in sorted order, NOT including
-// the implicit default world.
+// Names returns the world names in declaration order (RR-V3UH7K): the
+// declared worlds, or just `default` when the world is generated.
 func (c Compiled) Names() []string {
-	out := make([]string, 0, len(c.byName))
-	for name := range c.byName {
-		out = append(out, name)
+	if !c.declared {
+		return []string{metamodel.DefaultWorldName}
 	}
-	sort.Strings(out)
-	return out
+	return slices.Clone(c.order)
+}
+
+// Families returns the scope that selects one row per entity: each faced
+// type ranks its faces in declaration order and excludes an entity with
+// none of them; a faceless type reads its implicit face. It does not depend
+// on the declared worlds; it is the generated world's scope.
+//
+// Beside declared worlds it is for internal code that needs "whichever face
+// exists" with no world, such as a per-type usage count or the face order of
+// a family (TKT-7IZHP0 design §3.4, G18). It is then never a selectable
+// world and never an ACL lens: a caller that shows content to a principal
+// must still restrict to the faces that principal may read.
+func (c Compiled) Families() store.WorldScope {
+	if !c.families.IsSet() {
+		return store.TrivialScope()
+	}
+	return c.families
 }
 
 // Compile turns a metamodel's declarations into compiled world scopes.
 //
 // It reports EVERY problem it finds rather than the first, matching the
 // loader's collect-then-report discipline: an operator fixing a schema
-// should see the whole list. A nil metamodel compiles to just the
-// implicit default world.
+// should see the whole list. A nil metamodel compiles to the zero value.
 //
 // Errors name the entity type, the offending coordinate, and the grammar,
 // so a schema typo is as diagnosable here as it would be from the loader.
@@ -100,21 +160,49 @@ func Compile(m *metamodel.Metamodel) (Compiled, error) {
 	// latent; returning here keeps it unreachable even if a future caller
 	// wants a best-effort compile.
 	errs = append(errs, validateWorldNames(m)...)
+	// The loader checks `default_world:` too. Checking again here keeps a
+	// metamodel built in Go from compiling to a default world that does not
+	// exist.
+	defaultName := metamodel.EffectiveDefaultWorld(m)
+	if err := metamodel.CheckWorldName(m, defaultName); err != nil {
+		errs = append(errs, fmt.Errorf("default_world: %w", err))
+	}
 	if err := joinErrors(errs); err != nil {
 		return Compiled{}, err
 	}
+	families := compileFamilies(m, faces)
 	if len(m.Worlds) == 0 {
-		// No worlds declared: nothing to compile, but the face
-		// grammar still had to hold — a project may declare states
-		// before it declares any world that selects them.
-		return Compiled{}, nil
+		// No worlds declared: the generated world is the families scope.
+		// The face grammar still had to hold — a project may declare
+		// states before it declares any world that selects them.
+		return Compiled{defaultName: defaultName, families: families}, nil
 	}
 
 	byName := make(map[string]store.WorldScope, len(m.Worlds))
 	for _, name := range sortedWorldNames(m) {
 		byName[name] = compileWorld(m, m.Worlds[name], faces)
 	}
-	return Compiled{byName: byName}, nil
+	return Compiled{
+		byName:      byName,
+		order:       metamodel.WorldOrderOf(m),
+		defaultName: defaultName,
+		families:    families,
+		declared:    true,
+	}, nil
+}
+
+// compileFamilies builds the [Compiled.Families] scope: every faced type
+// ranks its declared faces in declaration order, with an exclude fallback.
+// A metamodel with no faced type yields the trivial scope.
+func compileFamilies(m *metamodel.Metamodel, faces map[string]map[string]entity.Face) store.WorldScope {
+	byType := make(map[string]store.TypeResolution, len(faces))
+	for typeName := range faces {
+		byType[typeName] = store.TypeResolution{
+			Chain:    resolveChain(metamodel.FaceOrderOf(m, typeName), faces[typeName]),
+			Fallback: store.FallbackExclude,
+		}
+	}
+	return store.NewWorldScope(byType)
 }
 
 // validateWorldNames checks every declared world name against the same
@@ -187,7 +275,7 @@ func declaredFaces(m *metamodel.Metamodel) (map[string]map[string]entity.Face, [
 			continue
 		}
 		parsed := make(map[string]entity.Face, len(def.Faces))
-		for _, name := range sortedFaceNames(def) {
+		for _, name := range metamodel.FaceOrderOf(m, typeName) {
 			if _, err := entity.ParseFace(name); err != nil {
 				errs = append(errs, fmt.Errorf(
 					"entity %q: invalid face name %q: %w", typeName, name, err))
@@ -283,15 +371,6 @@ func sortedWorldNames(m *metamodel.Metamodel) []string {
 func sortedTypeNames(m *metamodel.Metamodel) []string {
 	out := make([]string, 0, len(m.Entities))
 	for name := range m.Entities {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func sortedFaceNames(def metamodel.EntityDef) []string {
-	out := make([]string, 0, len(def.Faces))
-	for name := range def.Faces {
 		out = append(out, name)
 	}
 	sort.Strings(out)

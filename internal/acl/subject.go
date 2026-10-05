@@ -72,6 +72,22 @@ type EntitySubject struct {
 	// writing a draft and writing a published face is WHICH FACE, which is
 	// a property of the subject.
 	face entity.Face
+
+	// family marks a subject that names the WHOLE FAMILY of a faced type
+	// rather than one face; see [NewFamilySubject].
+	family bool
+}
+
+// NewFamilySubject builds a subject for an operation on every face of an
+// entity of a faced type: today, rename.
+//
+// Such an operation is authorized from the role's grants alone, never from
+// the faces the entity stores. Iterating the stored faces would consult
+// faces the caller cannot read, and a denial would then disclose that a
+// hidden face exists. A family subject is granted only by a family-level
+// grant (`rename: [type]`); a face-named write grant never satisfies it.
+func NewFamilySubject(typ, id string) EntitySubject {
+	return EntitySubject{typ: typ, id: id, family: true}
 }
 
 // NewEntitySubject builds an entity write subject that names its face.
@@ -95,10 +111,8 @@ func NewEntitySubject(typ, id string, face entity.Face) EntitySubject {
 // face.
 //
 // Use it only when naming a face would assert a NARROWER scope than the
-// operation actually has. The one production case is rename: it re-keys
-// the whole entity family (fsstore.renameEntity walks stateFamily(oldID)
-// and store.RenameEntity takes no Face), so authorizing "rename of the
-// draft face" would describe an operation that is not the one running.
+// operation actually has, on a type without faces. An operation on every
+// face of a faced type, such as rename, uses [NewFamilySubject] instead.
 //
 // It is deliberately a second, longer, differently-named function rather
 // than a default or an optional argument: the faceless case must be
@@ -116,7 +130,12 @@ func (s EntitySubject) Type() string { return s.typ }
 func (s EntitySubject) ID() string { return s.id }
 
 // Face is the content state being written; the zero value is the default face.
+// A family subject has no face and reports the zero value.
 func (s EntitySubject) Face() entity.Face { return s.face }
+
+// Family reports whether the subject names every face of a faced entity
+// ([NewFamilySubject]) rather than one face.
+func (s EntitySubject) Family() bool { return s.family }
 
 func (EntitySubject) isSubject() {} // coverage-ignore: sealing marker: never called at runtime; exists only so
 // EntitySubject satisfies the sealed Subject interface (compiler-checked), so no test can reach it without an
@@ -150,7 +169,20 @@ type RelationSubject struct {
 	// addresses the default one, and a bare-type grant covers exactly
 	// that. An identity-scoped edge is entity-level and always leaves
 	// this zero.
+	//
+	// A named FromFace also narrows `relation_grants:`: the grant satisfies
+	// the write only when the principal may update that face (D4).
 	FromFace entity.Face
+
+	// FamilyFaces lists every face the source TYPE declares, for an edge
+	// at the zero tail from a faced source. Such an edge belongs to the
+	// entity as a whole, so the source-type verb must be granted on each
+	// face (D4, TKT-KQXVF7). The list comes from the schema, never from
+	// the faces the entity stores: a per-stored-face decision would
+	// consult faces the caller cannot read and disclose that they exist.
+	// Empty means a single check at FromFace, which is every faceless
+	// source and every edge with a named tail.
+	FamilyFaces []entity.Face
 }
 
 func (RelationSubject) isSubject() {} // coverage-ignore: sealing marker: never called at runtime; exists only so

@@ -87,7 +87,7 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // fail with no error anywhere. Still a net -2 against the pre-split count.
 //
 // The content-states surface (TKT-DOFYR1 / TKT-C1XUA8 / TKT-WAV8XP) is the
-// latest interface growth: GetEntityState, DeleteEntityState and
+// latest interface growth: the per-face read, DeleteFace and
 // DeleteRelationState are store.Store methods, and each brought its own locked
 // helper plus the family/relation scan helpers the family-wide semantics need.
 // Interface-driven again, so the numbers move with store.Store rather than
@@ -128,11 +128,14 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // they must live on this type. The SQL they run is built by free functions in
 // graphsql.go.
 //
+// -2 exported (TKT-KQXVF7): UpdateRelationState and
+// DeleteRelationState folded into UpdateRelation and DeleteRelation, which
+// now take an entity.RelationKey that carries the tail.
 // +1 exported / +1 method: SoftDelete, the optional store.SoftDeleteProvider
 // accessor. The work lives on softDeleter and free functions in softdelete.go.
 //
-//plimsoll:max-methods=59
-//plimsoll:max-exported-methods=40
+//plimsoll:max-methods=54
+//plimsoll:max-exported-methods=36
 type Store struct {
 	db *sql.DB
 

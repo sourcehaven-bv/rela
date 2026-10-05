@@ -49,16 +49,6 @@ func (e entityNotFoundError) EntityNotFound() bool { return true }
 // newEntityNotFound builds the not-found error for a given id.
 func newEntityNotFound(id string) error { return entityNotFoundError{id: id} }
 
-// ErrEntityVanishedOnUpdate is returned by the sync apply path when an
-// update-intent write finds its target row gone at write time: the existence
-// probe observed the entity, but the durable UpdateEntity hit
-// [store.ErrNotFound] because a concurrent delete landed in between. It wraps
-// [ErrEntityNotFound] via %w so existing errors.Is(err, ErrEntityNotFound)
-// callers still match, while the sync handler can single it out and map it to
-// a 412 conflict (symmetric with the relation vanished-on-update case) rather
-// than the 404 reserved for a genuinely missing relation endpoint.
-var ErrEntityVanishedOnUpdate = fmt.Errorf("%w (vanished concurrently on update)", ErrEntityNotFound)
-
 // ErrEntityAlreadyExists is returned by create paths when the supplied
 // or generated ID collides with an existing entity.
 var ErrEntityAlreadyExists = errors.New("entity already exists")
@@ -98,6 +88,12 @@ var ErrFaceImmutable = errors.New("entity face is immutable on update; body face
 //
 // Refusing is the fail-closed direction. Surfaced as HTTP 422.
 var ErrFaceRequired = errors.New("this entity type declares content states; a create must name one")
+
+// ErrRelationFaceRequired is returned when a `scope: content` relation from a
+// faced source names no source face. Such an edge belongs to one face, and a
+// zero tail would belong to none, so no world would show it as any face's
+// content. Surfaced as HTTP 422.
+var ErrRelationFaceRequired = errors.New("a content-scoped relation from a faced entity must name the source face")
 
 // ErrFaceNotDeclared is returned when a create names a face the type does not
 // declare, or names any face for a type declaring none.

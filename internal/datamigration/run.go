@@ -223,7 +223,7 @@ type Exec struct {
 //
 // # Every content state, not just the bare row
 //
-// The query sets AllStates, so a step sees each FACE of an entity as its own
+// The query selects AllFaces, so a step sees each FACE of an entity as its own
 // row. Without it (the zero value means default-state rows only) a project
 // using faces got half-migrated: `rename_property` would rewrite the bare row
 // and leave every `@nl` row on the old name, silently (TKT-O0A8FO).
@@ -240,7 +240,7 @@ type Exec struct {
 func (x *Exec) forEachEntity(
 	ctx context.Context, typ string, fn func(e *entity.Entity) (bool, error), res *StepResult,
 ) error {
-	q := store.EntityQuery{AllStates: true}
+	q := store.EntityQuery{Faces: store.AllFaces()}
 	if typ != "*" {
 		q.Type = typ
 	}
@@ -346,6 +346,7 @@ func newCapturer(v VersionCapture, meta *metamodel.Metamodel, tool, triggeredBy 
 func (c *capturer) entityDelete(ctx context.Context, e *entity.Entity) error {
 	err := c.w.WriteVersion(ctx, store.VersionInput{
 		EntityID:      e.ID,
+		Face:          e.Face,
 		Op:            store.VersionOpDelete,
 		Type:          e.Type,
 		Content:       e.Content,
@@ -364,9 +365,7 @@ func (c *capturer) entityDelete(ctx context.Context, e *entity.Entity) error {
 
 func (c *capturer) relationDelete(ctx context.Context, rel *entity.Relation) error {
 	err := c.w.WriteRelationVersion(ctx, store.RelationVersionInput{
-		From:          rel.From,
-		Type:          rel.Type,
-		To:            rel.To,
+		Key:           rel.Identity(),
 		Op:            store.VersionOpDelete,
 		Content:       rel.Content,
 		Properties:    rel.Properties,

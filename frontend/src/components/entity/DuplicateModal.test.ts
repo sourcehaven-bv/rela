@@ -54,11 +54,19 @@ const source = {
   _redacted: ['salary'],
 } as never
 
-function mountModal() {
+function mountModal(props: Record<string, unknown> = {}) {
   return mount(DuplicateModal, {
-    props: { source, formId: 'create_ticket' },
+    props: { source, formId: 'create_ticket', ...props },
     global: { stubs: { DynamicForm: true, Teleport: true } },
   })
+}
+
+// Clicks Continue so the embedded form mounts.
+async function continueToForm(w: ReturnType<typeof mountModal>) {
+  const proceed = w.findAll('button').find((b) => b.text() === 'Continue')
+  if (!proceed) throw new Error('no Continue button')
+  await proceed.trigger('click')
+  await flushPromises()
 }
 
 beforeEach(() => {
@@ -163,5 +171,66 @@ describe('DuplicateModal', () => {
     expect(notices).toContain('not visible to you')
     expect(notices).toContain('shot')
     expect(notices).toContain('attached file')
+  })
+
+  // BUG-FYEEVX. The relations sub-resource refuses `?world=` (422), and a
+  // content-scoped edge belongs to one face, so the read goes to the source's
+  // ADDRESS. A copy of a face lands on that face, whatever the world.
+  describe('a source on a named face', () => {
+    const draft = {
+      id: 'POL-1',
+      type: 'policy',
+      _self: '/api/v1/policies/POL-1@draft',
+      properties: { title: 'Draft' },
+    } as never
+
+    it('reads the relations of the face on screen, with no world', async () => {
+      mountModal({ source: draft, world: 'published' })
+      await flushPromises()
+      expect(getAllEntityRelations).toHaveBeenCalledWith('policy', 'POL-1@draft')
+    })
+
+    it('creates the copy on that face rather than in the world', async () => {
+      const w = mountModal({ source: draft, world: 'published' })
+      await flushPromises()
+      await continueToForm(w)
+      const form = w.findComponent({ name: 'DynamicForm' })
+      expect(form.props('embeddedFace')).toBe('draft')
+      expect(form.props('embeddedWorld')).toBeUndefined()
+    })
+
+    it.each([
+      ['a fallback', { name: 'editorial', face: 'published', via: 'fallback-default' }],
+      [
+        'a later chain entry',
+        { name: 'editorial', face: 'published', via: 'chain', chain_position: 1 },
+      ],
+    ])('leaves the copy to the world when the face stands in by %s', async (_label, served) => {
+      const standIn = {
+        id: 'POL-1',
+        type: 'policy',
+        _self: '/api/v1/policies/POL-1@published',
+        _world: served,
+        properties: { title: 'Published' },
+      } as never
+      const w = mountModal({ source: standIn, world: 'editorial' })
+      await flushPromises()
+      // The relations on screen are still those of the served face.
+      expect(getAllEntityRelations).toHaveBeenCalledWith('policy', 'POL-1@published')
+      await continueToForm(w)
+      const form = w.findComponent({ name: 'DynamicForm' })
+      expect(form.props('embeddedWorld')).toBe('editorial')
+      expect(form.props('embeddedFace')).toBeUndefined()
+    })
+
+    it('keeps the world for a source on the bare face', async () => {
+      const w = mountModal({ world: 'editorial' })
+      await flushPromises()
+      expect(getAllEntityRelations).toHaveBeenCalledWith('ticket', 'TKT-001')
+      await continueToForm(w)
+      const form = w.findComponent({ name: 'DynamicForm' })
+      expect(form.props('embeddedWorld')).toBe('editorial')
+      expect(form.props('embeddedFace')).toBeUndefined()
+    })
   })
 })

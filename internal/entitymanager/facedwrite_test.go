@@ -97,7 +97,7 @@ func TestCreate_AuthorizesTheFaceItWrites(t *testing.T) {
 		t.Fatalf("CreateEntity: %v", err)
 	}
 
-	stored, err := st.GetEntityState(ctx, res.Entity.ID, entity.Face("concept"))
+	stored, err := st.GetEntity(ctx, entity.Ref{ID: res.Entity.ID, Face: entity.Face("concept")})
 	if err != nil {
 		t.Fatalf("the row is not at the face that was authorized: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestCreate_AuthorizesTheFaceItWrites(t *testing.T) {
 	if gate.asked[0] != stored.Face {
 		t.Errorf("authorized face %q but wrote face %q", gate.asked[0], stored.Face)
 	}
-	if _, bareErr := st.GetEntity(ctx, res.Entity.ID); bareErr == nil {
+	if _, bareErr := st.GetEntity(ctx, entity.Ref{ID: res.Entity.ID}); bareErr == nil {
 		t.Error("a faced type must write no row at the zero coordinate")
 	}
 }
@@ -190,7 +190,7 @@ entities:
 
 // UpdateEntity had the same authorize-here/read-there split as the create
 // path: it authorized against e.Face and then read its pre-image with
-// GetEntity, which is GetEntityState(id, ZERO). On a faced type that row does
+// GetEntity at the zero face. On a faced type that row does
 // not exist, so every faced update returned not-found.
 func TestUpdate_ReadsThePreImageAtTheAuthorizedFace(t *testing.T) {
 	mgr, _ := facedWriteManager(t, acl.NopACL{})
@@ -268,44 +268,120 @@ func TestUnique_TwoFacesOfOneEntityDoNotCollide(t *testing.T) {
 	}
 }
 
-// ApplyEntity (the sync upsert) decided create-vs-update from a probe at the
-// ZERO coordinate, so on a faced type it always resolved as CREATE. That made
-// the update branch — and the ErrFaceImmutable guard it carries — unreachable,
-// and left the body free to name the face it was authorized against.
-//
-// The probe now addresses the row the body names, so the op, the subject and
-// the write all describe one row.
-func TestApply_ProbesTheFaceTheBodyNames(t *testing.T) {
+// RecreateEntity probes the row the body names, not the ZERO coordinate. A
+// probe at the zero coordinate always misses on a faced type, so an existing
+// face would be recreated over rather than refused. The existing face must
+// come back as ErrEntityAlreadyExists, before any authorization.
+func TestRecreate_ProbesTheFaceTheBodyNames(t *testing.T) {
 	gate := &conceptOnlyACL{}
 	mgr, st := facedWriteManager(t, gate)
 	ctx := context.Background()
 
-	// An existing row at the face this principal may NOT write.
 	if err := st.CreateEntity(ctx, &entity.Entity{
-		ID: "POL-1", Type: "beleid", Face: entity.Face("vastgesteld"),
-		Properties: map[string]any{"title": "adopted"},
+		ID: "POL-1", Type: "beleid", Face: entity.Face("concept"),
+		Properties: map[string]any{"title": "draft"},
 	}); err != nil {
-		t.Fatalf("seed the adopted face: %v", err)
+		t.Fatalf("seed the concept face: %v", err)
 	}
 
-	_, err := mgr.ApplyEntity(ctx, &entity.Entity{
+	_, err := entitymanager.RecreateEntity(ctx, mgr, &entity.Entity{
+		ID: "POL-1", Type: "beleid", Face: entity.Face("concept"),
+		Properties: map[string]any{"title": "overwritten"},
+	})
+	if !errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
+		t.Fatalf("recreating a live face = %v, want ErrEntityAlreadyExists", err)
+	}
+
+	got, gerr := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: entity.Face("concept")})
+	if gerr != nil {
+		t.Fatalf("the refusal removed the row: %v", gerr)
+	}
+	if title := got.GetString("title"); title != "draft" {
+		t.Errorf("the live row's content changed to %q", title)
+	}
+}
+
+// RecreateEntity authorizes against the face the body names: a principal
+// holding only beleid@concept may not recreate the adopted face.
+func TestRecreate_AuthorizesTheFaceItWrites(t *testing.T) {
+	gate := &conceptOnlyACL{}
+	mgr, st := facedWriteManager(t, gate)
+	ctx := context.Background()
+
+	_, err := entitymanager.RecreateEntity(ctx, mgr, &entity.Entity{
 		ID: "POL-1", Type: "beleid", Face: entity.Face("vastgesteld"),
 		Properties: map[string]any{"title": "hijacked"},
 	})
 	var forbidden *acl.ForbiddenError
 	if !errors.As(err, &forbidden) {
-		t.Fatalf("a denied face must be refused through the sync path too, got %v", err)
+		t.Fatalf("a denied face must be refused, got %v", err)
 	}
 	if len(gate.asked) == 0 || gate.asked[len(gate.asked)-1] != entity.Face("vastgesteld") {
 		t.Errorf("authorized against %q, want the face the body named", gate.asked)
 	}
-
-	got, gerr := st.GetEntityState(ctx, "POL-1", entity.Face("vastgesteld"))
-	if gerr != nil {
-		t.Fatalf("the refusal removed the row: %v", gerr)
+	if _, gerr := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: entity.Face("vastgesteld")}); gerr == nil {
+		t.Error("the denied recreate wrote the row")
 	}
-	if title := got.GetString("title"); title != "adopted" {
-		t.Errorf("the denied row's content changed to %q", title)
+}
+
+// RecreateEntity applies the same face rule as the other create paths: no row
+// at an undeclared face, and none at the zero coordinate of a faced type.
+func TestRecreate_EnforcesTheFaceRule(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		face entity.Face
+		want error
+	}{
+		{"undeclared face", entity.Face("nonsuch"), entitymanager.ErrFaceNotDeclared},
+		{"zero face of a faced type", "", entitymanager.ErrFaceRequired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, st := facedWriteManager(t, acl.NopACL{})
+			ctx := context.Background()
+
+			_, err := entitymanager.RecreateEntity(ctx, mgr, &entity.Entity{
+				ID: "POL-1", Type: "beleid", Face: tc.face,
+				Properties: map[string]any{"title": "x"},
+			})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("got %v, want %v", err, tc.want)
+			}
+			if _, gerr := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: tc.face}); gerr == nil {
+				t.Error("the refused recreate wrote a row")
+			}
+		})
+	}
+}
+
+// A recreate whose unique value another entity already holds in that face is
+// a validation error, not ErrEntityAlreadyExists: the id is free, the value is
+// not.
+func TestRecreate_EnforcesUnique(t *testing.T) {
+	mgr, st := facedWriteManager(t, acl.NopACL{})
+	ctx := context.Background()
+
+	if err := st.CreateEntity(ctx, &entity.Entity{
+		ID: "POL-1", Type: "beleid", Face: entity.Face("concept"),
+		Properties: map[string]any{"title": "holder", "code": "ISMS-1"},
+	}); err != nil {
+		t.Fatalf("seed the holder: %v", err)
+	}
+
+	_, err := entitymanager.RecreateEntity(ctx, mgr, &entity.Entity{
+		ID: "POL-2", Type: "beleid", Face: entity.Face("concept"),
+		Properties: map[string]any{"title": "restored", "code": "ISMS-1"},
+	})
+	if err == nil {
+		t.Fatal("a recreate took a unique value another entity holds")
+	}
+	if errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
+		t.Fatalf("a unique collision reported as an id collision: %v", err)
+	}
+	if !isValidationError(err) {
+		t.Fatalf("want *ValidationError, got %T: %v", err, err)
+	}
+	if _, gerr := st.GetEntity(ctx, entity.Ref{ID: "POL-2", Face: entity.Face("concept")}); gerr == nil {
+		t.Error("the refused recreate wrote the row")
 	}
 }
 
@@ -364,7 +440,7 @@ entities:
 // TestPatch_AddressesTheFaceTheRefNames pins that PatchEntity resolves the
 // fused boundary form rather than always asking the zero coordinate.
 //
-// Store.GetEntity is GetEntityState(id, zero) in every backend, so before this
+// A bare-id read addresses the zero face in every backend, so before this
 // a patch of `POL-1@concept` reported "not found" for a row that plainly
 // exists — and on a faceless type it worked, which is what kept the gap hidden.
 //
@@ -407,11 +483,11 @@ func TestPatch_AddressesTheFaceTheRefNames(t *testing.T) {
 		t.Fatalf("patching a faced address must resolve that row; got %v", err)
 	}
 
-	got, err := st.GetEntityState(ctx, "POL-1", entity.Face("concept"))
+	got, err := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: entity.Face("concept")})
 	if err != nil || got.Properties["title"] != "patched" {
 		t.Errorf("concept face = %v (err %v), want the patched title", got.Properties, err)
 	}
-	sib, err := st.GetEntityState(ctx, "POL-1", entity.Face("draft"))
+	sib, err := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: entity.Face("draft")})
 	if err != nil || sib.Properties["title"] != "draft text" {
 		t.Errorf("draft face = %v (err %v), want it untouched", sib.Properties, err)
 	}

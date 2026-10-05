@@ -18,7 +18,7 @@ type NormalizeCmd struct {
 func (c *NormalizeCmd) Run(ctx context.Context, svc *readServices) error {
 	st := svc.Store
 
-	q := store.EntityQuery{}
+	q := store.EntityQuery{Faces: store.AllFaces()}
 	if c.Type != "" {
 		resolvedType, err := resolveEntityType(svc.Meta, c.Type)
 		if err != nil {

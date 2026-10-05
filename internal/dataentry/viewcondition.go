@@ -244,15 +244,17 @@ func applyViewCondition(
 	return kept, nil
 }
 
-// pageMatch answers a traversal in the request's world, as [applyScope] does,
-// so a condition cannot see further than the list it filters. It adds no face
-// narrowing: the rows here are already the list's faces, and an allowlist
-// built from them would drop default-face rows from a mixed page.
+// pageMatch answers a traversal for rows the page already read. It keeps the
+// candidate selection acl.TraversalQuery chose: the rows are already the
+// page's faces, and stamping the request world over them would drop a row
+// read at a face that world does not serve. The request world reaches the
+// endpoints through the gate, so a condition still cannot see further than
+// the list it filters.
 func pageMatch(st store.GraphQueryer) relresolve.Match {
 	return func(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
 		if st == nil {
 			return nil, errors.New("view condition: no store to answer related()")
 		}
-		return st.MatchingIDs(ctx, stampScope(ctx, q, scopeRequest{}), ids)
+		return store.MatchingIDs(ctx, st, q, ids)
 	}
 }

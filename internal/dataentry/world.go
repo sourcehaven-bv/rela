@@ -9,7 +9,10 @@ import (
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // WorldParam is the query parameter that selects a world on the read API:
@@ -17,12 +20,6 @@ import (
 // explicitly at this boundary — the interior never sees "unspecified"
 // (design doc §4.4).
 const WorldParam = "world"
-
-// defaultWorldName is the reserved name of the implicit default world,
-// mirroring metamodel.DefaultWorldName and acl.DefaultWorldName. Spelled
-// here so `?world=default` is accepted as an explicit way to ask for what
-// an absent parameter already means.
-const defaultWorldName = "default"
 
 // errWorldUnknown names a `?world=` value no declared world matches. A
 // CONFIG error, rendered as a named 400 — see [resolveWorld].
@@ -47,7 +44,7 @@ var errWorldUnsupported = errors.New("this endpoint cannot serve a non-default w
 //
 // Consumer-side interface: internal/dataentry may not import internal/worlds
 // (arch-lint), and a store.WorldScope is metamodel-free by construction, so
-// the compiled map is injected from the wiring site via [App.SetWorlds].
+// the compiled map is injected from the wiring site via [NewApp].
 //
 // It must FAIL CLOSED on an unknown name — returning ok=false rather than
 // substituting the default world, which would silently widen a request that
@@ -76,13 +73,31 @@ type worldHandle struct {
 	denied bool
 }
 
-// isDefault reports whether this handle is the default world. The zero
-// handle is the default world, which is what makes an unstamped context and
-// an explicit `?world=default` behave identically.
-func (w worldHandle) isDefault() bool { return !w.denied && w.scope.IsDefaultWorld() }
+// defaultWorldHandle is the handle of the default world: the trivial scope,
+// every entity at its implicit face. It is the generated default world, and
+// the scope an unstamped context falls back to.
+//
+// The zero handle is NOT this: its scope is unset, and a query built from it
+// fails with store.ErrInvalidQuery (TKT-7IZHP0 design A4).
+func defaultWorldHandle() worldHandle { return worldHandle{scope: store.TrivialScope()} }
+
+// ranksNothing reports whether this world reads every entity at its implicit
+// face, so a bare id needs no resolution. That is the generated default
+// world of a metamodel that declares none. A declared default world ranks,
+// and a denied world never reads at all.
+func (w worldHandle) ranksNothing() bool { return !w.denied && w.scope.IsTrivial() }
 
 // blocksAllReads reports a handle that must yield nothing at all.
 func (w worldHandle) blocksAllReads() bool { return w.denied }
+
+// visibility converts the handle to the world a [visibility.Resolver] reads
+// in. It is the one place the request's world crosses into that package.
+func (w worldHandle) visibility() visibility.World {
+	if w.denied {
+		return visibility.DeniedWorld()
+	}
+	return visibility.WorldOf(w.scope)
+}
 
 type worldCtxKey struct{}
 
@@ -100,34 +115,117 @@ func withWorld(ctx context.Context, w worldHandle) context.Context {
 	return context.WithValue(ctx, worldCtxKey{}, w)
 }
 
-// worldFromContext returns the request's world handle, or the zero handle
-// (the default world) when none was bound.
+// worldFromContext returns the request's world handle, or
+// [defaultWorldHandle] when none was bound.
 //
-// Defaulting to the DEFAULT world rather than erroring is correct here and is
-// not a fail-open: the default world is today's graph, so an unstamped
-// context behaves exactly as it did before worlds existed. A non-default
-// world can only ever arrive by passing the grant check in
-// [resolveWorld].
+// Every API request has a world stamped by attachWorld, so the fallback is
+// reached only by code that runs outside an API request (non-API routes,
+// tests, background callers). The fallback is the trivial scope, not the project's declared
+// default world: every id resolves to its implicit face, so an entity of a
+// faced type, which has no implicit face, appears to be missing. It narrows
+// rather than widens what is read. A non-default world can only arrive by
+// passing the grant check in [resolveWorld].
 func worldFromContext(ctx context.Context) worldHandle {
-	w, _ := ctx.Value(worldCtxKey{}).(worldHandle)
+	w, ok := ctx.Value(worldCtxKey{}).(worldHandle)
+	if !ok {
+		return defaultWorldHandle()
+	}
 	return w
 }
 
 // worldScopeFrom returns the store scope to stamp onto a query built from
 // ctx. Spelled as its own helper so query-construction sites read as
-// `q.World = worldScopeFrom(ctx)` and a reviewer can grep for the ones that
+// `Faces: store.InWorld(worldScopeFrom(ctx))` and a reviewer can grep for the ones that
 // forgot.
 func worldScopeFrom(ctx context.Context) store.WorldScope {
 	return worldFromContext(ctx).scope
 }
 
-// SetWorlds injects the compiled world map, enabling `?world=` selection.
+// setWorlds injects the compiled world map, enabling `?world=` selection.
 //
 // Until this is called the App serves the default world only and REFUSES any
 // `?world=` naming something else — which is the correct posture for a
 // surface whose wiring never opted in, and means a deployment that does not
 // use worlds cannot accidentally acquire the parameter.
-func (a *App) SetWorlds(w WorldLookup) { a.worlds = w }
+//
+// It also rebuilds the base tracer, whose node titles come from the default
+// world (BUG-95W7MV): NewApp built it before any world lookup existed.
+//
+// It also rewires the validator, whose scripts resolve bare ids in the
+// default world (RR-HKVULG).
+func (a *App) setWorlds(w WorldLookup) {
+	a.worlds = w
+	world := defaultWorldScope(w)
+	tr, err := tracer.New(a.store, world)
+	if err != nil { // coverage-ignore: invariant: store is non-nil and the scope is always set
+		panic("dataentry: setWorlds: " + err.Error())
+	}
+	a.tracer = tr
+	// coverage-ignore: invariant: NewApp built the same validator
+	if err := wireValidation(a, a.Meta(), world); err != nil {
+		panic("dataentry: setWorlds: " + err.Error())
+	}
+}
+
+// defaultWorlder is the optional capability of a [WorldLookup] that names
+// the schema's default world (worlds.Compiled.DefaultWorld).
+type defaultWorlder interface {
+	DefaultWorld() store.WorldScope
+}
+
+// familiesProvider is the optional capability of a [WorldLookup] that
+// supplies the families scope, which ranks each faced type's faces in
+// declaration order (worlds.Compiled.Families, G18).
+type familiesProvider interface {
+	Families() store.WorldScope
+}
+
+// defaultWorldScope is the scope of the default world in w, the world a
+// non-HTTP surface uses: the lookup's DefaultWorld when it offers one, else
+// its `default` entry. A nil lookup, or an unset scope, yields the trivial
+// scope, so the result is always set.
+func defaultWorldScope(w WorldLookup) store.WorldScope {
+	if w == nil {
+		return defaultWorldHandle().scope
+	}
+	if dw, ok := w.(defaultWorlder); ok {
+		if scope := dw.DefaultWorld(); scope.IsSet() {
+			return scope
+		}
+		return defaultWorldHandle().scope
+	}
+	scope, ok := w.Lookup(metamodel.DefaultWorldName)
+	if !ok || !scope.IsSet() {
+		return defaultWorldHandle().scope
+	}
+	return scope
+}
+
+// familiesScope is the families scope a resolver orders faces by: the
+// lookup's own when it offers one, else one built from meta's face
+// declaration order. The fallback serves an App whose wiring set no worlds
+// (tests), and orders faces exactly as the compiled families scope would.
+func familiesScope(w WorldLookup, meta *metamodel.Metamodel) store.WorldScope {
+	if fp, ok := w.(familiesProvider); ok {
+		return fp.Families()
+	}
+	byType := map[string]store.TypeResolution{}
+	if meta == nil {
+		return store.NewWorldScope(byType)
+	}
+	for typ := range meta.Entities {
+		order := metamodel.FaceOrderOf(meta, typ)
+		if len(order) == 0 {
+			continue
+		}
+		chain := make([]entity.Face, len(order))
+		for i, name := range order {
+			chain[i] = entity.Face(name)
+		}
+		byType[typ] = store.TypeResolution{Chain: chain, Fallback: store.FallbackExclude}
+	}
+	return store.NewWorldScope(byType)
+}
 
 // resolveWorld resolves the request's `?world=` parameter into a handle,
 // applying the per-world read grant BEFORE any resolver is constructed.
@@ -164,58 +262,49 @@ func (a *App) SetWorlds(w WorldLookup) { a.worlds = w }
 //
 // Do NOT "unify" these two into one response shape. They protect different
 // things: one is config, the other is content.
-func resolveWorld(r *http.Request, lookup WorldLookup, configured string) (worldHandle, error) {
+func resolveWorld(r *http.Request, lookup WorldLookup, defaultName string) (worldHandle, error) {
 	values := r.URL.Query()[WorldParam]
 	if len(values) > 1 {
-		// Get() would silently take the FIRST, so `?world=default&world=published`
-		// would serve the default world under a request that also asked for
-		// published — a client-side param-append bug becoming a silent
-		// wrong-face serve, which is the direction this arc refuses.
+		// Get() would silently take the FIRST, so a client-side param-append
+		// bug would become a silent wrong-face serve.
 		return worldHandle{}, errWorldDuplicated
 	}
 	name := r.URL.Query().Get(WorldParam)
-	if len(values) == 0 {
-		// No `?world=` at all: the operator's browsing default applies
-		// (`app.default_world`). Empty means the default world, so an
-		// unconfigured deployment behaves exactly as before.
-		//
-		// This used to be a SPA-only rule, and that was the defect: the
-		// config was serialized to `/_schema` and applied in useWorld.ts,
-		// so a bare `curl` and the browser disagreed about the same URL.
-		// A face-scoped role then read nothing from the raw API despite a
-		// valid grant, which looks like a broken ACL rather than a missing
-		// parameter (QA finding 1).
-		//
-		// An EXPLICIT `?world=default` still reaches the raw faces — that
-		// is why this branch tests `len(values) == 0` and the one below
-		// tests the name. The two are no longer the same question.
-		name = configured
+	if name == "" {
+		// An absent or empty parameter names the default world.
+		name = defaultName
 	}
-	return resolveNamedWorld(r.Context(), lookup, name)
+	return resolveNamedWorld(r.Context(), lookup, name, defaultName)
 }
 
 // resolveNamedWorld is [resolveWorld] after the name is known: the lookup and
-// the per-world read grant. The remote MCP endpoint shares it through
-// [mcpReadWorld], so an MCP read and a data-entry read of the same world are
-// resolved and authorized by one function.
-func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name string) (worldHandle, error) {
-	if name == "" || name == defaultWorldName {
-		// The default world needs no grant beyond the ordinary read gates
-		// that already run per entity: it IS today's graph.
-		return worldHandle{}, nil
-	}
+// the per-world read grant. The remote MCP endpoint shares it, so an MCP read
+// and a data-entry read of the same world are resolved and authorized by one
+// function.
+func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name, defaultName string) (worldHandle, error) {
 	if lookup == nil {
+		// No worlds wired: only the generated default world exists, and it
+		// ranks nothing.
+		if name == defaultName {
+			return worldHandle{name: name, scope: defaultWorldHandle().scope}, nil
+		}
 		return worldHandle{}, errWorldUnknown
 	}
 	scope, ok := lookup.Lookup(name)
 	if !ok {
 		return worldHandle{}, errWorldUnknown
 	}
+	if name == defaultName {
+		// D2: the default world is readable with any read grant. The
+		// per-entity and per-face gates decide what it shows, and a client
+		// ceiling cannot deny it (acl.Policy.DefaultWorld).
+		return worldHandle{name: name, scope: scope}, nil
+	}
 	permitted, err := readGateFromContext(ctx).PermitsWorld(ctx, name)
 	if err != nil {
 		// An infrastructure failure is NOT a denial. Rendering it as an
 		// empty result would hide an outage behind a page that looks like a
-		// correctly-empty world, with no operator signal (RR-4TFZNL).
+		// correctly-empty world (RR-4TFZNL).
 		return worldHandle{}, err
 	}
 	if !permitted {
@@ -230,7 +319,7 @@ func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name string) (wo
 // internal/dataentry reaches entity content through roughly forty store call
 // sites across a dozen files — the list pipeline, the ungated entityReader
 // used for relations and serialization, view traversal, document render,
-// feeds, CalDAV, sync, commands. Teaching all of them in one change would be
+// feeds, CalDAV, commands. Teaching all of them in one change would be
 // a large diff in which a single missed site is a silent leak, and "silence
 // in the direction of serving the wrong face" is the failure this arc keeps
 // hitting.
@@ -247,7 +336,7 @@ func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name string) (wo
 // collection list (`/{plural}`), the single-entity GET (`/{plural}/{id}`) and
 // exactly five underscore routes named one at a time below — `_views`,
 // `_history`, `_next_action`, `_search` and `_position`. Every other
-// underscore endpoint (analyze, documents, feeds, sync) is refused, along
+// underscore endpoint (analyze, documents, feeds) is refused, along
 // with every sub-resource of an entity except its export (relations,
 // attachments, the list export), because each reaches content through a path
 // that is still world-blind.
@@ -260,7 +349,7 @@ func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name string) (wo
 func worldCapablePath(path string) bool {
 	trimmed := strings.TrimPrefix(path, "/api/v1/")
 	if trimmed == path {
-		// Not under the versioned API (e.g. /api/sync/...). Refuse.
+		// Not under the versioned API (e.g. /api/git/...). Refuse.
 		return false
 	}
 	trimmed = strings.Trim(trimmed, "/")
@@ -378,7 +467,7 @@ func refuseWorldConfigError(w http.ResponseWriter, r *http.Request, requested st
 //
 // Whether a route can serve a non-default world is a property of the ROUTE. It
 // does not depend on the principal, and it must not be allowed to: this check
-// used to live inside `if !handle.isDefault()`, downstream of [resolveWorld],
+// used to live inside `if !handle.ranksNothing()`, downstream of [resolveWorld],
 // where a DENIED world never reached it. `errWorldDenied` short-circuits
 // straight to the handler so the ordinary empty result renders — so a
 // principal WITHOUT the world grant sailed past a refusal that a principal
@@ -393,12 +482,12 @@ func refuseWorldConfigError(w http.ResponseWriter, r *http.Request, requested st
 //
 // Keyed on the NAME rather than a resolved handle deliberately. A denied
 // handle carries the ZERO scope, and a zero scope IS the default world, so
-// `handle.isDefault()` cannot distinguish "no world asked for" from "a world
+// `handle.ranksNothing()` cannot distinguish "no world asked for" from "a world
 // asked for and refused" — the same trap [queryService.freeTextIDsForType]
 // documents at its own seam. That is also why the empty name passes through:
 // `?world=` is explicit but means the default world.
-func refuseWorldIncapablePath(w http.ResponseWriter, r *http.Request, requested string) bool {
-	if requested == "" || requested == defaultWorldName {
+func refuseWorldIncapablePath(w http.ResponseWriter, r *http.Request, requested, defaultName string) bool {
+	if requested == "" || requested == defaultName {
 		return false
 	}
 	if worldCapablePath(r.URL.Path) {
@@ -466,25 +555,29 @@ func isWorldCapableHistoryPath(trimmed string) bool {
 	return parts[1] != "" && parts[2] != ""
 }
 
-// configuredDefaultWorld returns the operator's browsing default
-// (`app.default_world`), or "" when none is set or no config is loaded.
-//
-// A free function taking the App rather than a method, for the same reason
-// resolveWorld is one: App sits at its plimsoll load line, and adding a
-// method to it is the habit that got it there.
-//
-// Tolerates an App with no schema state: middleware is exercised in tests
-// against a bare App, and a nil-deref there would be a panic in a path whose
-// whole job is to be transparent when unconfigured.
-func configuredDefaultWorld(a *App) string {
+// effectiveDefaultWorld is the world a request that names none reads in:
+// schema.yaml's `default_world:`, else the first declared world, else the
+// generated default world. The deprecated `app.default_world` alias must
+// agree with it (config load refuses one that does not), so it is not read.
+func effectiveDefaultWorld(a *App) string {
 	if a == nil {
-		return ""
+		return metamodel.DefaultWorldName
 	}
 	state := a.State()
-	if state == nil || state.Cfg == nil {
+	if state == nil {
+		return metamodel.DefaultWorldName
+	}
+	return metamodel.EffectiveDefaultWorld(state.Meta)
+}
+
+// declaredDefaultWorld is the default world's name for `/_config`, or ""
+// when the schema declares no worlds and the generated default world ranks
+// nothing. The SPA treats "" as "no world binds this page".
+func declaredDefaultWorld(meta *metamodel.Metamodel) string {
+	if meta == nil || len(meta.Worlds) == 0 {
 		return ""
 	}
-	return state.Cfg.App.DefaultWorld
+	return metamodel.EffectiveDefaultWorld(meta)
 }
 
 // readOnlyMethod reports whether a method only reads. Worlds are a read-side
@@ -505,107 +598,39 @@ func readOnlyMethod(method string) bool {
 // structural rather than a convention each handler must remember.
 func attachWorld(next http.Handler, a *App) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Any occurrence counts, including an EMPTY value: resolveWorld
-		// decides on the values slice (a duplicate is a 400, an empty value
-		// is the default world), so this must agree with it or
-		// `?world=&world=published` slips past the write refusal and the
-		// duplicate check as "not explicit" while resolveWorld sees two
-		// values. One question, one spelling.
-		explicit := len(r.URL.Query()[WorldParam]) > 0
-		// The operator's browsing default applies only where the path can
-		// actually serve a non-default world. Without this clause, merely
-		// setting `app.default_world` would turn every bare request to a
-		// non-world-capable route — relations, attachments, exports, sync —
-		// into a 422 `world_unsupported`, breaking the deployment wholesale
-		// rather than fixing the cliff it was set to fix.
-		//
-		// This is also precisely what the SPA does: `useWorld().worldParam`
-		// is attached at specific call sites (lists, entity detail, views,
-		// history, kanban, next-action), never blanket-applied to every
-		// fetch. Restricting the server-side default to the same set is what
-		// makes the two agree.
-		//
-		// An EXPLICIT `?world=` on such a path still refuses, loudly, below:
-		// a caller who named a world deserves to be told the route cannot
-		// serve it, whereas a caller who named nothing asked for no such
-		// thing and gets the default world.
-		configured := ""
-		if !explicit && readOnlyMethod(r.Method) && worldCapablePath(r.URL.Path) {
-			// Read PER REQUEST, never captured at wiring: the config is
-			// hot-reloaded by the watcher, so a value read once at startup
-			// would go stale the first time an operator edits
-			// data-entry.yaml.
-			configured = configuredDefaultWorld(a)
-		}
-		if !isAPIPath(r.URL.Path) || (!explicit && configured == "") {
+		if !isAPIPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// A write addresses the row its ID names — `POL-1@published` one
-		// face of a faced type, `POL-1` the single state of a type
-		// declaring none — but it never takes a
-		// world. A world is a read-side routing rule that can answer with a
-		// FALLBACK face, so a write riding that indirection would save the
-		// wrong state's content: `PATCH ...?world=published` would silently
-		// edit the DRAFT of an entity with no published face, and
-		// `DELETE ...?world=published` would delete the entity outright
-		// while the caller believed they were unpublishing. Refusing the
-		// parameter keeps the target of every write named directly.
-		//
-		// Only an EXPLICIT parameter is refused. A bare write carries no
-		// world to refuse — the operator's browsing default is a read-side
-		// presentation rule, so applying it to a PATCH and then rejecting
-		// the request would make `app.default_world` break every write on
-		// the deployment.
+		explicit := len(r.URL.Query()[WorldParam]) > 0
 		if explicit && !readOnlyMethod(r.Method) {
 			writeV1Error(w, r, http.StatusUnprocessableEntity, "world_read_only",
 				"worlds are read-only on this API",
 				"omit ?world= — address the face directly by id (`ID` or `ID@face`)")
 			return
 		}
-		handle, err := resolveWorld(r, a.worlds, configured)
-		// The world this request resolved to, for diagnostics and for the
-		// denied handle's name. NOT `r.URL.Query().Get(WorldParam)`, which is
-		// empty when the operator's default supplied the world — reporting ""
-		// there would name the wrong world in an error and, worse, hand
-		// `worldHandle.name` an empty string, which `isDefault` reads as the
-		// DEFAULT world and would turn a denial into a default-world serve.
+		defaultName := effectiveDefaultWorld(a)
 		requested := r.URL.Query().Get(WorldParam)
-		if !explicit {
-			requested = configured
+		if requested == "" {
+			requested = defaultName
 		}
-		// Two guards, then one dispatch. The ORDER is the security property:
-		// both guards answer without consulting the grant, so neither can
-		// distinguish principals, and the arms below — which do consult it —
-		// cannot reach a route a permitted world would have been refused on.
-		// See [refuseWorldIncapablePath].
+		handle, err := resolveWorld(r, a.worlds, defaultName)
 		if refuseWorldConfigError(w, r, requested, err) {
 			return
 		}
-		if refuseWorldIncapablePath(w, r, requested) {
+		if refuseWorldIncapablePath(w, r, requested, defaultName) {
 			return
 		}
 		switch {
 		case errors.Is(err, errWorldDenied):
-			// NOT a 403, and NOT a synthetic body either. The request
-			// continues with a handle marked `denied`, so the ORDINARY
-			// handler runs and renders its own empty result — same JSON
-			// shape, same `meta`, same `_actions`, same pagination headers
-			// as a world that genuinely holds nothing this caller may read.
-			//
-			// Writing a hand-built `{"data":[]}` here was the first attempt
-			// and it was wrong: the real list response carries meta/_actions/
-			// X-Total-Count, so the bare body announced the denial on the
-			// first byte — turning the thing designed to close an existence
-			// oracle into one.
-			//
-			// Continuing is only safe on a route that can honor a world at
-			// all, which is what the guard above establishes.
+			// Only a non-default world can be denied, and only a
+			// world-capable route reaches here with one: the refusal above
+			// answers every other route. The handle blocks every read, so a
+			// denial renders as an empty world.
 			next.ServeHTTP(w, r.WithContext(withWorld(r.Context(),
-				worldHandle{name: requested, denied: true})))
+				worldHandle{name: requested, scope: defaultWorldHandle().scope, denied: true})))
 			return
 		case err != nil:
-			// Infrastructure failure, not a denial.
 			writeGateError(w, r, err)
 			return
 		}
@@ -619,7 +644,7 @@ func attachWorld(next http.Handler, a *App) http.Handler {
 // # Labeling, not re-resolving
 //
 // Resolution itself happens exactly once, in the store: the world scope rides
-// the query ([store.EntityQuery.World]) and the backend picks the prime. This
+// the query (an InWorld selection on [store.EntityQuery.Faces]) and the backend picks the prime. This
 // function reads the answer back — the coordinate the returned row was stored
 // at — and names the rule that must have produced it. It never fetches, never
 // walks the chain, and cannot disagree with the store about WHICH face was
@@ -681,7 +706,7 @@ func worldProvenance(ctx context.Context, e *entity.Entity) *v1.EntityWorld {
 	handle := worldFromContext(ctx)
 	name := handle.name
 	if name == "" {
-		name = defaultWorldName
+		name = metamodel.DefaultWorldName
 	}
 	rule, position := resolutionRuleAt(handle.scope, e.Type, e.Face)
 	return &v1.EntityWorld{
@@ -744,7 +769,7 @@ func resolutionRule(scope store.WorldScope, entityType string, p entity.Face) st
 func resolutionRuleAt(
 	scope store.WorldScope, entityType string, p entity.Face,
 ) (rule string, position *int) {
-	r, pos := store.ResolutionAt(scope, entityType, p)
+	r, pos := scope.RuleAt(entityType, p)
 	if r == store.ResolutionChain {
 		return r.String(), &pos
 	}

@@ -324,7 +324,7 @@ async function waitForServer(
 /** Wait for a child process to actually exit. SIGTERM is async; a bare
  *  proc.kill() returns immediately and the kernel may hold the socket past the
  *  next test start. See RR-17XTS. */
-async function waitForExit(
+export async function waitForExit(
   proc: ChildProcess,
   signal: NodeJS.Signals = "SIGTERM",
 ): Promise<void> {
@@ -439,7 +439,7 @@ function createTestProject(): string {
  *  listener Node re-raises it as an unhandled error out of band, which is how
  *  a failed startup came to be reported as a bare, and entirely misleading,
  *  `spawn ... ENOENT`. (BUG-YJEIFH) */
-async function spawnServer(
+export async function spawnServer(
   serverBinary: string,
   cwd: string,
   extraEnv: NodeJS.ProcessEnv = {},

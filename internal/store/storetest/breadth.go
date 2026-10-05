@@ -30,7 +30,7 @@ import (
 //
 // Three batch carriers are recorded, and they are the ones a batching read
 // path grows: EntityQuery.IDs, RelationQuery.EntityIDs, and the explicit ids
-// argument to MatchingIDs (the ACL membership walk, one round-trip per
+// argument to MatchingFaces (the ACL membership walk, one round-trip per
 // distinct type rather than per row). An empty slice means "no id filter"
 // rather than "no ids", so it records 0 and a test asserting a bound is
 // unaffected by it.
@@ -133,12 +133,14 @@ func (b *Breadth) ListRelationsPage(ctx context.Context, q store.RelationQuery) 
 // ListEntityHeaders forwards to the wrapped store's header reader, or to the
 // generic projection when it has none — the same forwarding Counting does, so
 // a consumer that type-asserts the header capability still finds it.
-// MatchingIDs is the ACL membership-walk batch: one round-trip per distinct
+// MatchingFaces is the ACL membership-walk batch: one round-trip per distinct
 // type rather than one per row, so its width grows with the row set exactly
 // like the two query fields above.
-func (b *Breadth) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
-	b.record("MatchingIDs", len(ids))
-	return b.Store.MatchingIDs(ctx, q, ids)
+func (b *Breadth) MatchingFaces(
+	ctx context.Context, q store.GraphQuery, ids []string,
+) (map[string][]entity.Face, error) {
+	b.record("MatchingFaces", len(ids))
+	return b.Store.MatchingFaces(ctx, q, ids)
 }
 
 func (b *Breadth) ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter.Seq2[store.EntityHeader, error] {
@@ -189,9 +191,11 @@ func (v *breadthView) ListRelationsPage(ctx context.Context, q store.RelationQue
 	return v.Store.ListRelationsPage(ctx, q)
 }
 
-func (v *breadthView) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
-	v.parent.record("MatchingIDs", len(ids))
-	return v.Store.MatchingIDs(ctx, q, ids)
+func (v *breadthView) MatchingFaces(
+	ctx context.Context, q store.GraphQuery, ids []string,
+) (map[string][]entity.Face, error) {
+	v.parent.record("MatchingFaces", len(ids))
+	return v.Store.MatchingFaces(ctx, q, ids)
 }
 
 func (v *breadthView) ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter.Seq2[store.EntityHeader, error] {

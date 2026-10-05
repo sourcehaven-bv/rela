@@ -6,6 +6,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // cascadeScriptRunner builds the automation-cascade script runner, granting
@@ -20,9 +21,10 @@ import (
 // a script runtime can reach — the always-present write-prep handle is gone.
 func cascadeScriptRunner(
 	engine *script.Engine, readDeps lua.ReadDeps, st store.Store, sink audit.Audit,
+	w worlds.Compiled,
 ) *script.LuaScriptRunner {
 	return script.NewLuaScriptRunnerWithElevatedReads(engine, readDeps, script.ReadElevation{
-		Reader:   visibility.Unrestricted(st),
+		Reader:   unrestrictedReader(st, w),
 		Recorder: NewElevationAuditor(sink),
 	})
 }
@@ -47,4 +49,19 @@ func NewElevationAuditor(sink audit.Audit) lua.ElevationRecorder {
 		return nil
 	}
 	return audit.NewElevationRecorder(sink)
+}
+
+// familiesOption is the resolver option that lists a type's faces in
+// declaration order, from the compiled families scope (TKT-7IZHP0 design
+// §3.1, G18). Every resolver appbuild wires takes it, so a Family reads the
+// same on every read tier.
+func familiesOption(w worlds.Compiled) visibility.ResolverOption {
+	families := w.Families()
+	return visibility.WithFamilies(func() store.WorldScope { return families })
+}
+
+// unrestrictedReader is [visibility.Unrestricted] over st, listing faces by
+// w's families and resolving bare ids in w's default world.
+func unrestrictedReader(st store.Store, w worlds.Compiled) *visibility.UnrestrictedReader {
+	return visibility.Unrestricted(st, familiesOption(w)).WithWorld(visibility.WorldOf(w.DefaultWorld()))
 }

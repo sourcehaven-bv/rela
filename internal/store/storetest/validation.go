@@ -50,11 +50,11 @@ func RunValidationTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A-B", "t")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C-D", "t")))
 
-		_, err = s.CreateRelation(ctx(), "A-B", "req--ires", "C-D", nil)
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "A-B", Type: "req--ires", To: "C-D"}, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "consecutive dashes")
 
-		_, err = s.CreateRelation(ctx(), "A-B", "requires", "C-D", nil)
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "A-B", Type: "requires", To: "C-D"}, nil)
 		require.NoError(t, err)
 	})
 
@@ -65,14 +65,12 @@ func RunValidationTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "t")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("X", "t")))
 
-		_, err := s.CreateRelation(ctx(), "A", "requires", "X",
-			&store.RelationData{Content: "from-A"})
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "X"}, &store.RelationData{Content: "from-A"})
 		require.NoError(t, err)
-		_, err = s.CreateRelation(ctx(), "C", "requires", "X",
-			&store.RelationData{Content: "from-C"})
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "C", Type: "requires", To: "X"}, &store.RelationData{Content: "from-C"})
 		require.NoError(t, err)
 
-		_, err = s.RenameEntity(ctx(), "A", "C")
+		_, err = s.RenameFamily(ctx(), "A", "C")
 		assert.ErrorIs(t, err, store.ErrConflict)
 	})
 
@@ -82,7 +80,7 @@ func RunValidationTests(t *testing.T, f Factory) {
 	// tests on purpose. fsstore on a case-insensitive filesystem (macOS,
 	// Windows) folds "abc" and "ABC" onto one file, while memstore and pgstore
 	// (id TEXT COLLATE "C") keep them as two rows. Entities move between
-	// backends via migration and `rela sync`, so a project holding both would
+	// backends via migration and import, so a project holding both would
 	// silently lose one on import. The backends must agree on identity, and
 	// only a shared test can enforce that.
 	//
@@ -98,7 +96,7 @@ func RunValidationTests(t *testing.T, f Factory) {
 			"creating \"ABC\" while \"abc\" exists must conflict, not silently overwrite")
 
 		// The original must be intact and still reachable under its own ID.
-		got, err := s.GetEntity(ctx(), "abc")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "abc"})
 		require.NoError(t, err)
 		assert.Equal(t, "abc", got.ID)
 	})
@@ -109,7 +107,7 @@ func RunValidationTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("abc", "t")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("other", "t")))
 
-		_, err := s.RenameEntity(ctx(), "other", "ABC")
+		_, err := s.RenameFamily(ctx(), "other", "ABC")
 		assert.ErrorIsf(t, err, store.ErrConflict,
 			"renaming to \"ABC\" while \"abc\" exists must conflict")
 	})
@@ -122,10 +120,10 @@ func RunValidationTests(t *testing.T, f Factory) {
 
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("abc", "t")))
 
-		_, err := s.RenameEntity(ctx(), "abc", "ABC")
+		_, err := s.RenameFamily(ctx(), "abc", "ABC")
 		require.NoError(t, err, "an entity may change its own casing")
 
-		got, err := s.GetEntity(ctx(), "ABC")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "ABC"})
 		require.NoError(t, err)
 		assert.Equal(t, "ABC", got.ID)
 	})
@@ -154,7 +152,7 @@ func RunValidationTests(t *testing.T, f Factory) {
 			e.Properties[name] = "v"
 			require.NoErrorf(t, s.CreateEntity(ctx(), e), "create with property %q", name)
 
-			got, err := s.GetEntity(ctx(), id)
+			got, err := s.GetEntity(ctx(), entity.Ref{ID: id})
 			require.NoErrorf(t, err, "read back entity with property %q", name)
 			assert.Equalf(t, "v", got.Properties[name], "property %q lost its value", name)
 		}
@@ -175,14 +173,14 @@ func RunValidationTests(t *testing.T, f Factory) {
 			err := s.CreateEntity(ctx(), e)
 			require.Errorf(t, err, "create with %s invalid UTF-8 must fail", name)
 			assert.Contains(t, err.Error(), "invalid UTF-8")
-			_, err = s.GetEntity(ctx(), e.ID)
+			_, err = s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 			assert.ErrorIs(t, err, store.ErrNotFound, "a refused create must persist nothing")
 		}
 
 		good := entity.New("E-good", "t")
 		good.SetString("p", "héllo ☃")
 		require.NoError(t, s.CreateEntity(ctx(), good))
-		got, err := s.GetEntity(ctx(), "E-good")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "E-good"})
 		require.NoError(t, err)
 		assert.Equal(t, "héllo ☃", got.GetString("p"), "valid non-ASCII must round-trip untouched")
 
@@ -191,26 +189,23 @@ func RunValidationTests(t *testing.T, f Factory) {
 		err = s.UpdateEntity(ctx(), upd)
 		require.Error(t, err, "update with invalid UTF-8 must fail")
 		assert.Contains(t, err.Error(), "invalid UTF-8")
-		got, err = s.GetEntity(ctx(), "E-good")
+		got, err = s.GetEntity(ctx(), entity.Ref{ID: "E-good"})
 		require.NoError(t, err)
 		assert.Equal(t, "héllo ☃", got.GetString("p"), "a refused update must leave the stored value alone")
 
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("E-other", "t")))
-		_, err = s.CreateRelation(ctx(), "E-good", "rel", "E-other",
-			&store.RelationData{Properties: map[string]any{"p": bad}})
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "E-good", Type: "rel", To: "E-other"}, &store.RelationData{Properties: map[string]any{"p": bad}})
 		require.Error(t, err, "relation create with invalid UTF-8 must fail")
 		assert.Contains(t, err.Error(), "invalid UTF-8")
-		_, err = s.GetRelation(ctx(), "E-good", "rel", "E-other")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "E-good", Type: "rel", To: "E-other"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 
-		_, err = s.CreateRelation(ctx(), "E-good", "rel", "E-other",
-			&store.RelationData{Properties: map[string]any{"p": "ok"}})
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: "E-good", Type: "rel", To: "E-other"}, &store.RelationData{Properties: map[string]any{"p": "ok"}})
 		require.NoError(t, err)
-		_, err = s.UpdateRelation(ctx(), "E-good", "rel", "E-other",
-			store.RelationData{Properties: map[string]any{"p": bad}})
+		_, err = s.UpdateRelation(ctx(), entity.RelationKey{From: "E-good", Type: "rel", To: "E-other"}, store.RelationData{Properties: map[string]any{"p": bad}})
 		require.Error(t, err, "relation update with invalid UTF-8 must fail")
 		assert.Contains(t, err.Error(), "invalid UTF-8")
-		r, err := s.GetRelation(ctx(), "E-good", "rel", "E-other")
+		r, err := s.GetRelation(ctx(), entity.RelationKey{From: "E-good", Type: "rel", To: "E-other"})
 		require.NoError(t, err)
 		assert.Equal(t, "ok", r.Properties["p"], "a refused relation update must leave the stored value alone")
 	})

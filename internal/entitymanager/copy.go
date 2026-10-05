@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -45,7 +47,57 @@ import (
 // Exporting them, or making invocability computable from outside this package,
 // would let a caller answer the question a different way and reintroduce the
 // two-authorization-sites defect.
-type copyEngine struct{ m *Manager }
+type copyEngine struct {
+	m *Manager
+	// edges gates the edges a copy writes. Only [copyEngine.copyState] reads
+	// it; the affordance probe ([copyInvocable]) plans no edges, because a
+	// refused edge is skipped and so never changes whether a copy may run.
+	edges CopyEdgeGate
+}
+
+// CopyEdgeGate decides which edges a copy may write for the acting
+// principal. It is the read gate and the relation affordance gate that a
+// hand-made relation write runs, which live above this package: a copy must
+// never create or remove an edge the caller could not create or remove by
+// hand.
+//
+// ReadablePeers is asked once per copy, the other methods once per relation
+// type, never once per edge.
+type CopyEdgeGate interface {
+	// ReadablePeers reports which of ids the principal may read at some
+	// face. An id missing from the result, or mapped to false, is a peer the
+	// copy treats as nonexistent.
+	ReadablePeers(ctx context.Context, ids []string) (map[string]bool, error)
+	// RelationCreatable reports whether the relation affordance gate lets
+	// the principal create a relType edge from target, the face the copy
+	// writes.
+	RelationCreatable(ctx context.Context, target *entity.Entity, relType string) (bool, error)
+	// RelationRemovable reports whether the relation affordance gate lets
+	// the principal remove a relType edge from target, the face the copy
+	// writes as it is stored before the copy.
+	RelationRemovable(ctx context.Context, target *entity.Entity, relType string) (bool, error)
+}
+
+// ungatedCopyEdges is the [CopyEdgeGate] of [Manager.CopyState]: every peer
+// is readable and every relation type creatable and removable. The ACL check
+// in [copyEngine.planCopyEdges] still runs.
+type ungatedCopyEdges struct{}
+
+func (ungatedCopyEdges) ReadablePeers(_ context.Context, ids []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, nil
+}
+
+func (ungatedCopyEdges) RelationCreatable(context.Context, *entity.Entity, string) (bool, error) {
+	return true, nil
+}
+
+func (ungatedCopyEdges) RelationRemovable(context.Context, *entity.Entity, string) (bool, error) {
+	return true, nil
+}
 
 // Copy errors. ErrUnknownCopy is caller input (4xx); the guard errors map to
 // 403/422 exactly as the statemachine's do, because they ARE the
@@ -61,6 +113,10 @@ var (
 	// ErrCopySourceMissing means the source face does not exist. Distinct
 	// from a denial: the caller asked to copy something that is not there.
 	ErrCopySourceMissing = errors.New("entitymanager: copy source face does not exist")
+
+	// ErrCopyFileReference: a copy would give the target face a file
+	// reference the source face does not hold (see confineFileValues).
+	ErrCopyFileReference = errors.New("entitymanager: copy would mint a file reference")
 
 	// ErrCopyTargetRequired: a cross-entity copy names its target id.
 	ErrCopyTargetRequired = errors.New("entitymanager: cross-entity copy requires a target id")
@@ -152,8 +208,24 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrUnknownCopy, req.Definition)
 	}
+
+	// A copy writes the target face's file values, so it holds the target
+	// entity's attachment lock from the reads to the sweep after the write
+	// (RR-0SD5ER). Taken before planning: a same-entity copy reads the
+	// source face's references, which a delete landing before the write
+	// could release; a cross-entity copy writes back the target's own value,
+	// which an upload landing before the write would otherwise revert.
+	release, err := ce.lockCopyTarget(ctx, req, def)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	plan, err := ce.planCopy(ctx, req, def)
 	if err != nil {
+		return nil, err
+	}
+	if err := ce.planCopyEdges(ctx, plan); err != nil {
 		return nil, err
 	}
 
@@ -193,7 +265,38 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 
 	// AFTER the commit — see the godoc.
 	ce.recordCopyAudit(ctx, plan, result)
+
+	// Still under the lock taken above: names the target face no longer
+	// references lose their bytes when no other face references them.
+	if len(metamodel.FileProperties(ce.m.deps.Meta, plan.to.Type)) > 0 {
+		cctx, cancel := cleanupContext(ctx)
+		defer cancel()
+		if derr := sweepUnreferencedFiles(cctx, ce.m.deps.Store, plan.targetID); derr != nil {
+			slog.Warn("entitymanager: unreferenced attachment bytes left behind",
+				"entity", plan.targetID, "err", derr)
+		}
+	}
 	return &result, nil
+}
+
+// lockCopyTarget takes the attachment lock of the entity a copy writes, when
+// its type has a file property. A malformed target or id takes no lock:
+// planning refuses it with its own error, which a lock error would
+// otherwise mask.
+func (ce *copyEngine) lockCopyTarget(ctx context.Context, req CopyRequest, def metamodel.CopyDef) (func(), error) {
+	noLock := func() {}
+	to, perr := metamodel.ParseCopyTarget(def.To)
+	if perr != nil || len(metamodel.FileProperties(ce.m.deps.Meta, to.Type)) == 0 {
+		return noLock, nil //nolint:nilerr // planning reports the malformed target
+	}
+	targetID := req.SourceID
+	if !def.IsSameEntity() {
+		targetID = req.TargetID
+	}
+	if entity.ValidateID(targetID) != nil {
+		return noLock, nil //nolint:nilerr // planning reports the malformed id
+	}
+	return acquireAttachmentLock(ctx, ce.m.deps.AttachmentLocker, targetID)
 }
 
 // copyPlan is a resolved, authorized copy: the exact bytes to write and where.
@@ -224,8 +327,16 @@ type copyPlan struct {
 	entity *entity.Entity
 	// created records whether the target face existed before.
 	created bool
+	// guardAuthorizes records that the definition's guard stands in for the
+	// write check on the target (see [copyEngine.authorizeCopy]). The
+	// per-edge ACL check is skipped then too, for the same reason.
+	guardAuthorizes bool
 	// edges are the copied relations, already authorized.
 	edges []copyEdge
+	// removable holds the target face's edges, of a `replace` type, that
+	// the copy may remove: those the principal could remove by hand. Any
+	// other edge of that type stays.
+	removable map[copyEdgeKey]bool
 }
 
 type copyEdge struct {
@@ -234,6 +345,9 @@ type copyEdge struct {
 	// replace means the target face's edges of this type are removed first.
 	replace bool
 }
+
+// copyEdgeKey names an edge from the copy target face.
+type copyEdgeKey struct{ relType, to string }
 
 // planCopy resolves the definition against the request: reads the source
 // face, evaluates the guard, authorizes the write, and merges the target.
@@ -308,7 +422,7 @@ func (ce *copyEngine) planCopy(
 // face — a silent full overwrite whose audit record cheerfully says
 // created=true. Only ErrNotFound means absent.
 func (ce *copyEngine) probeCopyTarget(ctx context.Context, plan *copyPlan) error {
-	existing, err := ce.m.deps.Store.GetEntityState(ctx, plan.targetID, plan.targetTail)
+	existing, err := ce.m.deps.Store.GetEntity(ctx, entity.Ref{ID: plan.targetID, Face: plan.targetTail})
 	switch {
 	case err == nil:
 		if existing.Type != plan.to.Type {
@@ -334,7 +448,7 @@ func (ce *copyEngine) readCopySource(
 		// RAW and elevated. The read feeds a write, and a redacted read that
 		// feeds a write destroys the hidden fields it could not see — the
 		// precise bug the never-redact-a-write-prep rule pins.
-		e, err := ce.m.deps.Store.GetEntityState(ctx, plan.sourceID, ptr)
+		e, err := ce.m.deps.Store.GetEntity(ctx, entity.Ref{ID: plan.sourceID, Face: ptr})
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
 		}
@@ -345,7 +459,7 @@ func (ce *copyEngine) readCopySource(
 	// wired, which is the CLI/no-policy case — the raw read is then what
 	// every other read on that deployment already does.
 	if ce.m.deps.CopyVisibility == nil {
-		e, err := ce.m.deps.Store.GetEntityState(ctx, plan.sourceID, ptr)
+		e, err := ce.m.deps.Store.GetEntity(ctx, entity.Ref{ID: plan.sourceID, Face: ptr})
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
 		}
@@ -481,6 +595,7 @@ func (ce *copyEngine) authorizeCopy(ctx context.Context, plan *copyPlan) error {
 	if guarded && plan.def.IsSameEntity() && plan.sourceTail != plan.targetTail {
 		// (3) does not apply to a guarded face-to-face copy — see above. The
 		// guard checked just now IS the authorization for this write.
+		plan.guardAuthorizes = true
 		return nil
 	}
 	op := acl.OpUpdate
@@ -537,6 +652,9 @@ func (ce *copyEngine) buildCopyTarget(
 			delete(target.Properties, field)
 		}
 	}
+	if err := ce.confineFileValues(plan, src, target); err != nil {
+		return err
+	}
 
 	hard, _ := partitionValidationErrors(
 		ce.m.deps.Meta.ValidateEntity(target.ID, target.Type, target.Properties))
@@ -550,66 +668,200 @@ func (ce *copyEngine) buildCopyTarget(
 	}
 
 	plan.entity = target
-	edges, err := ce.planCopyEdges(ctx, plan)
-	if err != nil {
-		return err
+	return nil
+}
+
+// confineFileValues applies the file-property rule (see attachments.go) to a
+// copy target. A file value is the capability to download the named bytes,
+// which the entity's faces share, so a copy may only move a reference the
+// source face already holds:
+//
+//   - Same entity: each file property the copy writes (`fields: all`, or a
+//     mapped field) must name a subset of the SOURCE face's files (name and
+//     storage key) for the SAME property. A template mapping another
+//     property into a file property would otherwise mint a reference to any
+//     bytes. The carried entries keep their keys, so the faces share the
+//     bytes. A property the
+//     copy does not write keeps the target's own value, whatever it holds.
+//   - Cross entity: bytes are keyed per entity, so a copied name would point
+//     at the target's bytes, not the source's. File properties keep the
+//     target's own value.
+func (ce *copyEngine) confineFileValues(plan *copyPlan, src, target *entity.Entity) error {
+	for _, prop := range metamodel.FileProperties(ce.m.deps.Meta, target.Type) {
+		if _, mapped := plan.def.Fields[prop]; plan.def.IsSameEntity() && !plan.def.AllFields && !mapped {
+			continue
+		}
+		if !plan.def.IsSameEntity() {
+			delete(target.Properties, prop)
+			if plan.existing != nil {
+				if v, ok := plan.existing.Properties[prop]; ok {
+					target.Properties[prop] = v
+				}
+			}
+			continue
+		}
+		// Compare storage keys, not only names: a mapped value could keep a
+		// source name and forge the token of another face's bytes.
+		have := metamodel.FileRefs(src.Properties[prop])
+		for _, ref := range metamodel.FileRefs(target.Properties[prop]) {
+			held := func(h metamodel.FileRef) bool { return h.Name == ref.Name && h.Key == ref.Key }
+			if !slices.ContainsFunc(have, held) {
+				return fmt.Errorf("%w: copy %q: file property %q may only carry the source face's own %q files",
+					ErrCopyFileReference, plan.name, prop, prop)
+			}
+		}
 	}
-	plan.edges = edges
 	return nil
 }
 
 // planCopyEdges resolves which edges the definition copies, reading the
-// SOURCE face's outgoing relations.
+// SOURCE face's outgoing relations, and which edges of the target face a
+// `replace` may remove.
 //
 // An omitted relation type is NOT copied, and that default is load-bearing:
 // copying a role-conferring edge grants roles on the target, so a definition
 // must name a type before its edges travel (§9.2's first mitigation).
 //
-// For a CROSS-ENTITY copy each edge is additionally authorized as the acting
-// principal — the mandatory runtime half of that mitigation. A copy can
-// never create an edge the principal could not create by hand. Same-entity
-// elevated copies only touch the entity's own state edges, so the concern
-// does not arise there.
-func (ce *copyEngine) planCopyEdges(ctx context.Context, plan *copyPlan) ([]copyEdge, error) {
+// A copy never creates or removes an edge the principal could not create or
+// remove by hand. An edge is SKIPPED (not created, or under `replace` not
+// removed), and the copy goes on without it, when:
+//
+//   - its peer is one the principal cannot read ([CopyEdgeGate.ReadablePeers]).
+//     A hidden peer is nonexistent to the caller, so the copy neither links
+//     it nor says that it did not;
+//   - the relation affordance gate refuses the type on the target face
+//     ([CopyEdgeGate.RelationCreatable], [CopyEdgeGate.RelationRemovable]);
+//   - the ACL refuses the edge, through the request CreateRelation or
+//     DeleteRelation asks. A guarded face-to-face copy skips this check,
+//     because its guard stands in for the write check on the target (see
+//     [copyEngine.authorizeCopy]). An unguarded or cross-entity copy keeps it.
+//
+// Skipping rather than refusing keeps a copy usable by a caller who sees part
+// of the graph, and refusing would tell the caller that a hidden edge exists.
+// A skip leaves no trace in the response or in the audit log: no write was
+// attempted.
+//
+// Cost: one source edge read, one target edge read when a `replace` type
+// meets an existing target, one ReadablePeers call, and one affordance and
+// ACL verdict per relation type and operation.
+func (ce *copyEngine) planCopyEdges(ctx context.Context, plan *copyPlan) error {
 	if len(plan.def.Relations) == 0 {
-		return nil, nil
+		return nil
 	}
-	srcTail := plan.sourceTail
-	crossEntity := !plan.def.IsSameEntity()
-
-	var out []copyEdge
-	for rel, err := range ce.m.deps.Store.ListRelations(ctx, store.RelationQuery{
-		From: plan.sourceID, FromFace: &srcTail,
-	}) {
-		if err != nil {
-			return nil, fmt.Errorf("entitymanager: copy %q: read source edges: %w",
-				plan.name, err)
+	candidates, err := ce.namedEdges(ctx, plan, plan.sourceID, plan.sourceTail, "")
+	if err != nil {
+		return fmt.Errorf("entitymanager: copy %q: read source edges: %w", plan.name, err)
+	}
+	var existing []*entity.Relation
+	if !plan.created {
+		if existing, err = ce.namedEdges(ctx, plan, plan.targetID, plan.targetTail, "replace"); err != nil {
+			return fmt.Errorf("entitymanager: copy %q: read target edges: %w", plan.name, err)
 		}
-		mode, named := plan.def.Relations[rel.Type]
-		if !named {
+	}
+	peers := make([]string, 0, len(candidates)+len(existing))
+	for _, rel := range slices.Concat(candidates, existing) {
+		peers = append(peers, rel.To)
+	}
+	slices.Sort(peers)
+	readable, err := ce.edges.ReadablePeers(ctx, slices.Compact(peers))
+	if err != nil {
+		return fmt.Errorf("entitymanager: copy %q: read edge peers: %w", plan.name, err)
+	}
+
+	creatable := map[string]bool{}
+	for _, rel := range candidates {
+		if !readable[rel.To] {
 			continue
 		}
-		if crossEntity {
-			if aerr := ce.m.authorizeAndAudit(ctx, acl.WriteRequest{
-				Op: acl.OpCreate,
-				Subject: acl.RelationSubject{
-					Type: rel.Type, FromType: plan.to.Type, FromID: plan.targetID,
-					// The face applyCopyEdges actually writes these edges to
-					// (BUG-64MU2Q). Omitting it asked about the default face
-					// while the write landed on targetTail — the check-here/
-					// write-there split the entity-level gate above already
-					// avoids by carrying EntitySubject.Face.
-					FromFace: plan.targetTail,
-				},
-			}); aerr != nil {
-				return nil, aerr
+		ok, seen := creatable[rel.Type]
+		if !seen {
+			if ok, err = ce.edgeTypeAllowed(ctx, plan, rel.Type, acl.OpCreate); err != nil {
+				return err
 			}
+			creatable[rel.Type] = ok
 		}
-		out = append(out, copyEdge{
-			relType: rel.Type, to: rel.To, replace: mode == "replace",
-		})
+		if ok {
+			plan.edges = append(plan.edges, copyEdge{
+				relType: rel.Type, to: rel.To, replace: plan.def.Relations[rel.Type] == "replace",
+			})
+		}
+	}
+
+	// Only a type that copies at least one edge replaces anything (see
+	// applyCopyEdges), so only those types are asked about removal.
+	plan.removable = map[copyEdgeKey]bool{}
+	removableType := map[string]bool{}
+	for _, rel := range existing {
+		if !readable[rel.To] || !creatable[rel.Type] {
+			continue
+		}
+		ok, seen := removableType[rel.Type]
+		if !seen {
+			if ok, err = ce.edgeTypeAllowed(ctx, plan, rel.Type, acl.OpDelete); err != nil {
+				return err
+			}
+			removableType[rel.Type] = ok
+		}
+		if ok {
+			plan.removable[copyEdgeKey{rel.Type, rel.To}] = true
+		}
+	}
+	return nil
+}
+
+// namedEdges lists the edges from id at face whose type the definition
+// names, with the given mode when mode is not empty.
+func (ce *copyEngine) namedEdges(
+	ctx context.Context, plan *copyPlan, id string, face entity.Face, mode string,
+) ([]*entity.Relation, error) {
+	var out []*entity.Relation
+	for rel, err := range ce.m.deps.Store.ListRelations(ctx, store.RelationQuery{From: id, FromFace: &face}) {
+		if err != nil {
+			return nil, err
+		}
+		if m, named := plan.def.Relations[rel.Type]; named && (mode == "" || m == mode) {
+			out = append(out, rel)
+		}
 	}
 	return out, nil
+}
+
+// edgeTypeAllowed reports whether the principal may create (op OpCreate) or
+// remove (op OpDelete) a relType edge at the copy's target face: the relation
+// affordance gate, then the ACL question CreateRelation or DeleteRelation
+// asks, at the face applyCopyEdges writes these edges to (BUG-64MU2Q).
+//
+// A create is judged on the merged target, a removal on the target as stored,
+// which is the row a hand-made DELETE is judged on.
+//
+// An ACL denial is a verdict, not an error, and it is NOT audited: the copy
+// skips the edge rather than attempting the write, so a `denied-write` record
+// would claim a write the caller never asked for. The ACL request and its
+// verdict are unchanged; [withAffordanceProbe] suppresses only the record.
+func (ce *copyEngine) edgeTypeAllowed(ctx context.Context, plan *copyPlan, relType string, op acl.Op) (bool, error) {
+	var (
+		ok  bool
+		err error
+		req acl.WriteRequest
+	)
+	if op == acl.OpDelete {
+		ok, err = ce.edges.RelationRemovable(ctx, plan.existing, relType)
+		req = RelationDeleteRequest(ce.m.deps.Meta, relType, plan.to.Type, plan.targetID, plan.targetTail)
+	} else {
+		ok, err = ce.edges.RelationCreatable(ctx, plan.entity, relType)
+		req = RelationCreateRequest(ce.m.deps.Meta, relType, plan.to.Type, plan.targetID, plan.targetTail)
+	}
+	if err != nil {
+		return false, fmt.Errorf("entitymanager: copy %q: relation gate: %w", plan.name, err)
+	}
+	if !ok || plan.guardAuthorizes {
+		return ok, nil
+	}
+	aerr := ce.m.authorizeAndAudit(withAffordanceProbe(ctx), req)
+	if _, denied := errors.AsType[*acl.ForbiddenError](aerr); denied {
+		return false, nil
+	}
+	return aerr == nil, aerr
 }
 
 // recordCopyAudit emits one record per definition invocation, naming the
@@ -646,6 +898,11 @@ func copyFaceLabel(id string, t metamodel.CopyTarget) string {
 // CopyState executes a declared copy definition. See [copyEngine.copyState]
 // for the full contract; this is the Manager-facing entry point and delegates
 // without deciding anything.
+//
+// It gates edges by the ACL alone: every peer counts as readable and every
+// relation type as creatable by the affordance gate, which this package
+// cannot see. A surface acting for a principal invokes copies through
+// [CopyAffordances] instead, which carries the full [CopyEdgeGate].
 func (m *Manager) CopyState(ctx context.Context, req CopyRequest) (*CopyResult, error) {
-	return (&copyEngine{m: m}).copyState(ctx, req)
+	return (&copyEngine{m: m, edges: ungatedCopyEdges{}}).copyState(ctx, req)
 }

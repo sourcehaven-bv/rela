@@ -17,17 +17,25 @@ type fakeMetamodel struct {
 	fields    map[string]map[string][]string // type -> field -> enum options (nil = non-enum/declared field)
 	worlds    map[string]bool                // declared world names
 	faces     map[string][]string            // type -> declared content states
+	defWorld  string                         // the declared default world
 }
 
 func (m fakeMetamodel) HasEntityType(t string) bool { return m.types[t] }
 
 func (m fakeMetamodel) HasWorld(name string) bool { return m.worlds[name] }
 
+func (m fakeMetamodel) DeclaresWorlds() bool { return len(m.worlds) > 0 }
+
+func (m fakeMetamodel) DefaultWorld() string {
+	if len(m.worlds) == 0 {
+		return acl.DefaultWorldName
+	}
+	return m.defWorld
+}
+
 func (m fakeMetamodel) HasFace(t, face string) bool {
 	return slices.Contains(m.faces[t], face)
 }
-
-func (m fakeMetamodel) HasFaces(t string) bool { return len(m.faces[t]) > 0 }
 
 func (m fakeMetamodel) GetRelation(name string) (RelationView, bool) {
 	from, ok := m.relations[name]
@@ -761,17 +769,23 @@ func TestB10_UndeclaredWorld(t *testing.T) {
 		worlds: map[string]bool{"published": true},
 	}
 	tests := []struct {
-		name    string
-		read    []string
-		wantB10 bool
+		name     string
+		read     []string
+		wantB10  bool
+		noWorlds bool // audit against a metamodel declaring no world
 	}{
-		{"declared world is fine", []string{"world:published"}, false},
-		{"undeclared world is flagged", []string{"world:pubished"}, true},
+		{"declared world is fine", []string{"world:published"}, false, false},
+		{"undeclared world is flagged", []string{"world:pubished"}, true, false},
 		{
-			name: "the implicit default world needs no declaration",
-			read: []string{"world:default"}, wantB10: false,
+			// TKT-7IZHP0 D11: beside declared worlds, `default` names nothing.
+			name: "the default world is flagged beside declared worlds",
+			read: []string{"world:default"}, wantB10: true,
 		},
-		{"a bare type grant is not a world grant", []string{"page"}, false},
+		{
+			name: "the generated default world needs no declaration",
+			read: []string{"world:default"}, noWorlds: true,
+		},
+		{"a bare type grant is not a world grant", []string{"page"}, false, false},
 		{
 			name: "one good and one bad world: only the bad one fires",
 			read: []string{"world:published", "world:nope"}, wantB10: true,
@@ -783,9 +797,43 @@ func TestB10_UndeclaredWorld(t *testing.T) {
 			if err := p.Validate(); err != nil {
 				t.Fatalf("Validate: %v", err)
 			}
-			got := slices.Contains(findingRules(Audit(p, meta, nil)), "B10-undeclared-world")
+			m := meta
+			if tc.noWorlds {
+				m.worlds = nil
+			}
+			got := slices.Contains(findingRules(Audit(p, m, nil)), "B10-undeclared-world")
 			if got != tc.wantB10 {
 				t.Errorf("B10 fired = %v, want %v (read: %v)", got, tc.wantB10, tc.read)
+			}
+		})
+	}
+}
+
+// A world grant on the default world grants nothing, since every read grant
+// reads there (TKT-7IZHP0 D2). It is advisory, never the B10 denial.
+func TestB10_RedundantDefaultWorldGrant(t *testing.T) {
+	declared := fakeMetamodel{worlds: map[string]bool{"published": true, "preview": true}, defWorld: "published"}
+	for _, tc := range []struct {
+		name string
+		meta fakeMetamodel
+		read []string
+		want bool
+	}{
+		{"the declared default world", declared, []string{"world:published"}, true},
+		{"another declared world", declared, []string{"world:preview"}, false},
+		{"the generated default world", fakeMetamodel{}, []string{"world:default"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{"r": {Read: tc.read}}}
+			if err := p.Validate(); err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			rules := findingRules(Audit(p, tc.meta, nil))
+			if got := slices.Contains(rules, "B10-redundant-default-world"); got != tc.want {
+				t.Errorf("redundant finding = %v, want %v (rules %v)", got, tc.want, rules)
+			}
+			if slices.Contains(rules, "B10-undeclared-world") {
+				t.Errorf("an existing world must not be reported undeclared: %v", rules)
 			}
 		})
 	}
@@ -853,43 +901,6 @@ func TestB1_DoesNotFlagWellFormedGrantSyntax(t *testing.T) {
 	}
 	if got := findingRules(Audit(p, meta, nil)); len(got) != 0 {
 		t.Errorf("a fully well-formed policy must produce no findings; got %v", got)
-	}
-}
-
-// TestB12_BareGrantOnAFacedType pins the spelling the audit used to wave
-// through: a type that declares faces stores no row at the bare coordinate,
-// so `update: [policy]` reaches neither face. Fail-closed at runtime, so the
-// only symptom is a denial nobody can explain.
-func TestB12_BareGrantOnAFacedType(t *testing.T) {
-	meta := fakeMetamodel{
-		types: map[string]bool{"policy": true, "page": true},
-		faces: map[string][]string{"policy": {"draft", "published"}},
-	}
-	for _, tc := range []struct {
-		name    string
-		update  []string
-		wantB12 bool
-	}{
-		{"a bare grant on a faced type is flagged", []string{"policy"}, true},
-		{"naming the face is the correct spelling", []string{"policy@draft"}, false},
-		{"a bare grant on a faceless type is fine", []string{"page"}, false},
-		{"the wildcard is never flagged", []string{"*"}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			p := &acl.Policy{Roles: map[string]acl.RoleDef{
-				"r": {Update: tc.update, Read: []string{"*"}},
-			}}
-			if err := p.Validate(); err != nil {
-				t.Fatalf("Validate: %v", err)
-			}
-			rules := findingRules(Audit(p, meta, nil))
-			if got := slices.Contains(rules, "B12-bare-grant-on-faced-type"); got != tc.wantB12 {
-				t.Errorf("B12 = %v, want %v; findings: %v", got, tc.wantB12, rules)
-			}
-			if slices.Contains(rules, "B11-undeclared-face") {
-				t.Errorf("a DECLARED face must not also trip B11; findings: %v", rules)
-			}
-		})
 	}
 }
 

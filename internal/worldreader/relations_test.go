@@ -175,7 +175,9 @@ func TestNeighbors_ExcludedEntityHasNoEdges(t *testing.T) {
 // TestNeighbors_DirectionBothMatchesEitherEndpoint pins the endpoint
 // selection. DirectionBoth is the ZERO value of store.Direction, so
 // setting From alone would silently narrow every unspecified query to
-// outgoing-only — a wrong-by-default failure.
+// outgoing-only — a wrong-by-default failure. The identity query matches
+// either endpoint; the content edges are read as one outgoing and one
+// incoming query, because their tails are filtered differently.
 func TestNeighbors_DirectionBothMatchesEitherEndpoint(t *testing.T) {
 	lister := &recordingLister{}
 	rr, err := worldreader.NewRelationReader(lister, contentTypes{})
@@ -184,11 +186,62 @@ func TestNeighbors_DirectionBothMatchesEitherEndpoint(t *testing.T) {
 	res := worldreader.Resolved{Entity: entity.New("PAGE-1", "page"), Found: true}
 	_, err = rr.Neighbors(context.Background(), res, store.DirectionBoth)
 	require.NoError(t, err)
+	require.Len(t, lister.queries, 3)
 
-	for _, q := range lister.queries {
-		assert.Equal(t, "PAGE-1", q.EntityID, "DirectionBoth must filter on either endpoint")
-		assert.Empty(t, q.From, "From alone would narrow both to outgoing-only")
-		assert.Empty(t, q.To)
+	assert.Equal(t, "PAGE-1", lister.queries[0].EntityID, "identity: either endpoint")
+	assert.Empty(t, lister.queries[0].From, "From alone would narrow both to outgoing-only")
+	assert.Equal(t, "PAGE-1", lister.queries[1].From, "content: the entity as source")
+	assert.Equal(t, store.DirectionOutgoing, lister.queries[1].Direction)
+	assert.Equal(t, "PAGE-1", lister.queries[2].To, "content: the entity as target")
+	assert.Equal(t, store.DirectionIncoming, lister.queries[2].Direction)
+}
+
+// TestNeighbors_IncomingContentTailIsTheSources pins BUG-ISJHML at the
+// query: an incoming content edge's tail is a face of the SOURCE, so it is
+// read with a nil tail and left for the caller to check with Owns. Filtering
+// it by the target's face hid every edge from a faced source to a faceless
+// target.
+func TestNeighbors_IncomingContentTailIsTheSources(t *testing.T) {
+	draftEdge := &entity.Relation{From: "POL-1", FromFace: "draft", Type: "cites", To: "FEAT-1"}
+	pubEdge := &entity.Relation{From: "POL-1", FromFace: "published", Type: "cites", To: "FEAT-1"}
+	lister := &filteringLister{rels: []*entity.Relation{draftEdge, pubEdge}}
+	rr, err := worldreader.NewRelationReader(lister, contentTypes{"cites": true})
+	require.NoError(t, err)
+
+	res := worldreader.Resolved{Entity: entity.New("FEAT-1", "feature"), Found: true}
+	got, err := rr.Neighbors(context.Background(), res, store.DirectionIncoming)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []*entity.Relation{draftEdge, pubEdge}, got,
+		"every tail is returned; the source's served face decides")
+
+	assert.True(t, rr.Owns(pubEdge, "published"))
+	assert.False(t, rr.Owns(draftEdge, "published"), "a draft edge is not served with the published face")
+	assert.True(t, rr.Owns(&entity.Relation{From: "POL-1", Type: "owned-by", To: "X"}, "published"),
+		"an identity edge is served with every face")
+}
+
+// A content self-edge is the entity's own outgoing edge: it is served once,
+// and only when its tail is the prime's face, in every direction. Neighbors
+// and NeighborsForPage must agree on it.
+func TestNeighbors_ContentSelfEdge(t *testing.T) {
+	published := face(t, "published")
+	own := &entity.Relation{From: "POL-1", FromFace: published, Type: "cites", To: "POL-1"}
+	other := &entity.Relation{From: "POL-1", FromFace: face(t, "draft"), Type: "cites", To: "POL-1"}
+	res := worldreader.Resolved{
+		Entity: &entity.Entity{ID: "POL-1", Type: "policy", Face: published}, Face: published, Found: true,
+	}
+	for _, dir := range []store.Direction{store.DirectionBoth, store.DirectionOutgoing, store.DirectionIncoming} {
+		rr, err := worldreader.NewRelationReader(
+			&filteringLister{rels: []*entity.Relation{own, other}}, contentTypes{"cites": true})
+		require.NoError(t, err)
+
+		got, err := rr.Neighbors(context.Background(), res, dir)
+		require.NoError(t, err)
+		assert.Equal(t, []*entity.Relation{own}, got, "Neighbors, direction %v", dir)
+
+		page, err := rr.NeighborsForPage(context.Background(), []worldreader.Resolved{res}, dir)
+		require.NoError(t, err)
+		assert.Equal(t, [][]*entity.Relation{{own}}, page, "NeighborsForPage, direction %v", dir)
 	}
 }
 
