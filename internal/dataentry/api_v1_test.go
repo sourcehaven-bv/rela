@@ -1778,8 +1778,9 @@ func TestV1SchemaWithCustomTypes(t *testing.T) {
 	app.Meta().Entities["ticket"] = metamodel.EntityDef{
 		Label: "Ticket",
 		Properties: map[string]metamodel.PropertyDef{
-			"title":  {Type: "string", Required: true},
-			"status": {Type: "status_type"},
+			"title":       {Type: "string", Required: true},
+			"status":      {Type: "status_type"},
+			"behandeling": {Type: "string", Label: "Behandelstrategie"},
 		},
 	}
 
@@ -1806,6 +1807,9 @@ func TestV1SchemaWithCustomTypes(t *testing.T) {
 	ticketType := schema.Entities["ticket"]
 	if ticketType.Properties["status"].Values == nil {
 		t.Error("expected status property to have values from custom type")
+	}
+	if got := ticketType.Properties["behandeling"].Label; got != "Behandelstrategie" {
+		t.Errorf("expected property label to be serialized, got %q", got)
 	}
 }
 
