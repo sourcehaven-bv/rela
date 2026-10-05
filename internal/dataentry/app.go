@@ -447,6 +447,11 @@ type App struct {
 	// with both, so a JWT failure can never downgrade to a spoofable header.
 	jwtGate *JWTGateConfig
 
+	// accessLog, when true, logs one `request` record per request at Info
+	// (method, path, status, wall and database time). Set via SetAccessLog
+	// before NewRouter. See requestStats for why it never adds a header.
+	accessLog bool
+
 	// mcpHandler, when non-nil, serves the remote MCP endpoint at
 	// [MCPPath]. Built once by SetRemoteMCP (before NewRouter) from an
 	// [MCPHandlerFactory]; nil means the route is not registered at
@@ -851,6 +856,12 @@ func (a *App) SetJWTGate(cfg JWTGateConfig) error {
 	}
 	a.jwtGate = &cfg
 	return nil
+}
+
+// SetAccessLog turns the per-request access log on or off. Must be called
+// before NewRouter, which reads it once.
+func (a *App) SetAccessLog(on bool) {
+	a.accessLog = on
 }
 
 // NewApp creates and initializes an App. Callers pass in the

@@ -45,7 +45,7 @@ func countingHandler(t *testing.T, wantStats bool) http.Handler {
 
 func TestRequestStats_DebugEmitsHeaderAndLog(t *testing.T) {
 	buf := withLogLevel(t, slog.LevelDebug)
-	h := requestStats(countingHandler(t, true))
+	h := requestStats(countingHandler(t, true), false)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/tickets?page=2", http.NoBody))
@@ -66,7 +66,7 @@ func TestRequestStats_DebugEmitsHeaderAndLog(t *testing.T) {
 
 func TestRequestStats_InfoIsPassThrough(t *testing.T) {
 	buf := withLogLevel(t, slog.LevelInfo)
-	h := requestStats(countingHandler(t, false))
+	h := requestStats(countingHandler(t, false), false)
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody))
@@ -76,6 +76,49 @@ func TestRequestStats_InfoIsPassThrough(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Errorf("no request record below Debug, got %q", buf.String())
+	}
+}
+
+// --access-log: the record is emitted at Info so it survives the default
+// level, and the client never sees the query count.
+func TestRequestStats_AccessLogAtInfoWithoutHeader(t *testing.T) {
+	buf := withLogLevel(t, slog.LevelInfo)
+	h := requestStats(countingHandler(t, true), true)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/tickets?token=secret", http.NoBody))
+
+	if got := rec.Header().Get("Server-Timing"); got != "" {
+		t.Errorf("access log must not add Server-Timing, got %q", got)
+	}
+	out := buf.String()
+	for _, want := range []string{"level=INFO", "msg=request", "method=GET", "path=/api/v1/tickets ", "status=201", "queries=2", "db_ms=2", "wall_ms="} {
+		if !strings.Contains(out, want) {
+			t.Errorf("access log missing %q in %q", want, out)
+		}
+	}
+	if strings.Contains(out, "secret") {
+		t.Errorf("access log must not contain the query string, got %q", out)
+	}
+}
+
+// Debug plus --access-log: the header behaves as under Debug alone, and the
+// record is written once, at Info.
+func TestRequestStats_AccessLogUnderDebugLogsOnce(t *testing.T) {
+	buf := withLogLevel(t, slog.LevelDebug)
+	h := requestStats(countingHandler(t, true), true)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody))
+
+	if got := rec.Header().Get("Server-Timing"); got == "" {
+		t.Error("Debug must still stamp Server-Timing when the access log is on")
+	}
+	if n := strings.Count(buf.String(), "msg=request"); n != 1 {
+		t.Errorf("request records = %d, want 1 in %q", n, buf.String())
+	}
+	if !strings.Contains(buf.String(), "level=INFO") {
+		t.Errorf("record must be at INFO, got %q", buf.String())
 	}
 }
 
@@ -90,7 +133,7 @@ func TestRequestStats_SSEGetsNoHeaderButFlushes(t *testing.T) {
 		_, _ = w.Write([]byte("data: x\n\n"))
 		f.Flush()
 		flushed = true
-	}))
+	}), false)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_events", http.NoBody))
 	if !flushed {
@@ -109,7 +152,7 @@ func TestRequestStats_ImplicitWriteHeaderStillStamps(t *testing.T) {
 	h := requestStats(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		store.QueryStatsFrom(r.Context()).Record(time.Millisecond)
 		_, _ = w.Write([]byte("body without explicit WriteHeader"))
-	}))
+	}), false)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
 	if got, want := rec.Header().Get("Server-Timing"), `db;dur=1.0;desc="1 queries"`; got != want {
@@ -145,5 +188,25 @@ func TestRequestStats_WiredIntoRouter(t *testing.T) {
 				t.Errorf("Server-Timing present = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// SetAccessLog reaches the middleware through NewRouter: a real API route
+// at Info logs a request record and still sends no header.
+func TestRequestStats_AccessLogWiredIntoRouter(t *testing.T) {
+	buf := withLogLevel(t, slog.LevelInfo)
+	app := newTestAppV1(t)
+	app.SetAccessLog(true)
+	router := app.NewRouter()
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if got := rec.Header().Get("Server-Timing"); got != "" {
+		t.Errorf("access log must not add Server-Timing, got %q", got)
+	}
+	if !strings.Contains(buf.String(), "msg=request method=GET path=/api/v1/_schema status=200") {
+		t.Errorf("no request record in %q", buf.String())
 	}
 }

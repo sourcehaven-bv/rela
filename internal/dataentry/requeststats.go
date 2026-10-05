@@ -17,8 +17,8 @@ import (
 // `request` log record with method, path, status, wall time, query count
 // and database time.
 //
-// Below Debug it is a pass-through: nothing is attached, nothing is
-// emitted, no header is set. That gate is deliberate and security-relevant,
+// Below Debug, and without accessLog, it is a pass-through: nothing is
+// attached, nothing is emitted, no header is set. That gate is deliberate and security-relevant,
 // not a convenience. A per-response query count varies with the rows a
 // request touched — on a path that still loads neighbors one by one it
 // varies with rows the principal is NOT allowed to see — so it is an
@@ -29,21 +29,32 @@ import (
 // SSE responses carry no header: their WriteHeader fires before the stream
 // does any work, so the numbers would be meaningless; the log record on
 // disconnect is still emitted.
-func requestStats(next http.Handler) http.Handler {
+//
+// accessLog (--access-log) emits the same `request` record at Info for
+// every request, so an operator can collect request timing without Debug,
+// which would also log every SQL statement with its bound arguments. It
+// never sets the header: the record goes to the operator's log, the header
+// to the client, and only the header is the side channel described above.
+func requestStats(next http.Handler, accessLog bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !slog.Default().Enabled(r.Context(), slog.LevelDebug) {
+		debug := slog.Default().Enabled(r.Context(), slog.LevelDebug)
+		if !debug && !accessLog {
 			next.ServeHTTP(w, r)
 			return
+		}
+		level := slog.LevelDebug
+		if accessLog {
+			level = slog.LevelInfo
 		}
 		ctx, stats := store.WithQueryStats(r.Context())
 		start := time.Now()
 		sw := &statsResponseWriter{
 			ResponseWriter: w,
 			stats:          stats,
-			header:         !isSSEPath(r.URL.Path),
+			header:         debug && !isSSEPath(r.URL.Path),
 		}
 		next.ServeHTTP(sw, r.WithContext(ctx))
-		slog.DebugContext(ctx, "request",
+		slog.Log(ctx, level, "request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", sw.statusOrDefault(),
