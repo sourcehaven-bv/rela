@@ -16,24 +16,12 @@ import (
 // it must satisfy the whole surface.)
 type stubVersionService struct{}
 
-func (stubVersionService) ListVersions(context.Context, string) ([]store.VersionMeta, error) {
+func (stubVersionService) ListVersions(context.Context, entity.Ref) ([]store.VersionMeta, error) {
 	panic("stubVersionService.ListVersions not implemented")
 }
 
-func (stubVersionService) GetVersion(context.Context, string, int) (*store.VersionSnapshot, error) {
+func (stubVersionService) GetVersion(context.Context, entity.Ref, int) (*store.VersionSnapshot, error) {
 	panic("stubVersionService.GetVersion not implemented")
-}
-
-func (stubVersionService) ListStateVersions(
-	context.Context, string, entity.Face,
-) ([]store.VersionMeta, error) {
-	panic("stubVersionService.ListStateVersions not implemented")
-}
-
-func (stubVersionService) GetStateVersion(
-	context.Context, string, entity.Face, int,
-) (*store.VersionSnapshot, error) {
-	panic("stubVersionService.GetStateVersion not implemented")
 }
 
 func (stubVersionService) WriteVersion(context.Context, store.VersionInput) error {
@@ -53,7 +41,7 @@ func (stubVersionService) GetRelationVersion(
 }
 
 func (stubVersionService) ListRelationLifetimes(
-	context.Context, string, entity.Face, string, string,
+	context.Context, entity.RelationKey,
 ) ([]store.RelationLifetime, error) {
 	panic("stubVersionService.ListRelationLifetimes not implemented")
 }

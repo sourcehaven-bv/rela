@@ -152,7 +152,7 @@ func TestNewDeclarative_RejectsNil(t *testing.T) {
 	}{
 		{"nil policy", nil, NullGraph{}, NullGraphQueryer{}, "policy must be non-nil"},
 		{"nil graph", &Policy{}, nil, NullGraphQueryer{}, "graph must be non-nil"},
-		{"nil graphQueryer", &Policy{}, NullGraph{}, nil, "graphQueryer must be non-nil"},
+		{"nil graphQueryer", &Policy{}, NullGraph{}, nil, "faceMatcher must be non-nil"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

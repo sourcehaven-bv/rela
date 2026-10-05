@@ -2472,13 +2472,20 @@ views:
 // warning, just the wrong faces everywhere. Failing the load is the only
 // signal an operator gets.
 func TestValidateApp_DefaultWorld(t *testing.T) {
+	// A schema that declares more than one world must set default_world, or
+	// it does not load, so every two-world metamodel here carries the key.
 	meta := &metamodel.Metamodel{
 		Version: "1.0",
 		Worlds: map[string]metamodel.WorldDef{
 			"published": {Select: []string{"published"}, Otherwise: "exclude"},
 			"site-nl":   {Select: []string{"nl", "en"}, Otherwise: "default"},
 		},
+		DefaultWorld: "published",
 	}
+	withSchemaDefault := meta
+	oneWorld := &metamodel.Metamodel{Version: "1.0", Worlds: map[string]metamodel.WorldDef{
+		"published": {Select: []string{"published"}, Otherwise: "exclude"},
+	}}
 
 	tests := []struct {
 		name    string
@@ -2487,21 +2494,38 @@ func TestValidateApp_DefaultWorld(t *testing.T) {
 		wantErr string
 	}{
 		{name: "unset is fine", world: "", meta: meta},
-		{name: "declared world accepted", world: "published", meta: meta},
+		{name: "one world, no schema key: the alias may name it", world: "published", meta: oneWorld},
 		{
-			// `default` is implicit and total — never declared under `worlds:`,
-			// so it must be accepted without being found there.
-			name: "the reserved default world is accepted", world: "default", meta: meta,
+			name: "one world, no schema key: the alias may not name another", world: "site-nl", meta: oneWorld,
+			wantErr: `world "site-nl" is not declared (declared, in order: published)`,
+		},
+		{
+			// TKT-7IZHP0 D11: beside declared worlds, `default` names nothing.
+			name: "the reserved default world is refused beside declared worlds", world: "default", meta: meta,
+			wantErr: `world "default" does not exist when worlds are declared`,
+		},
+		{
+			name: "the reserved default world is accepted when none is declared", world: "default",
+			meta: &metamodel.Metamodel{Version: "1.0"},
 		},
 		{
 			name:  "a typo is refused, and the error names what IS declared",
 			world: "publsihed", meta: meta,
-			wantErr: `"publsihed" is not a declared world`,
+			wantErr: `world "publsihed" is not declared (declared, in order: published, site-nl)`,
 		},
 		{
 			name:  "set with no metamodel is refused rather than assumed valid",
 			world: "published", meta: nil,
 			wantErr: "no metamodel is available",
+		},
+		// schema.yaml's default_world is the source; app.default_world is a
+		// deprecated alias that must match it (TKT-7IZHP0 D3).
+		{name: "alias matching schema default_world accepted", world: "published", meta: withSchemaDefault},
+		{name: "alias unset beside schema default_world accepted", world: "", meta: withSchemaDefault},
+		{
+			name:  "alias contradicting schema default_world refused",
+			world: "site-nl", meta: withSchemaDefault,
+			wantErr: `"site-nl" contradicts the schema's default world "published"`,
 		},
 	}
 
@@ -3102,6 +3126,7 @@ func TestValidateLists_CreateWorld(t *testing.T) {
 			"published": {Select: []string{"published"}, Otherwise: "exclude"},
 			"editorial": {Select: []string{"draft"}, Otherwise: "default"},
 		},
+		DefaultWorld: "editorial",
 	}
 
 	tests := []struct {
@@ -3112,13 +3137,14 @@ func TestValidateLists_CreateWorld(t *testing.T) {
 		{name: "unset is fine — the form opens in the list's own world"},
 		{name: "a declared world is accepted", createWorld: "editorial"},
 		{
-			// `default` is implicit and total, never listed under `worlds:`.
-			name: "the reserved default world is accepted", createWorld: "default",
+			// TKT-7IZHP0 D11: beside declared worlds, `default` names nothing.
+			name: "the reserved default world is refused", createWorld: "default",
+			wantErr: `create_world: world "default" does not exist when worlds are declared`,
 		},
 		{
 			name:        "a typo is refused, and the error names what IS declared",
 			createWorld: "editorail",
-			wantErr:     `create_world "editorail" is not a declared world`,
+			wantErr:     `create_world: world "editorail" is not declared`,
 		},
 	}
 

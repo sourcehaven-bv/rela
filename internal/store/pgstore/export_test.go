@@ -70,6 +70,11 @@ func NotificationEmitsForTest(t *testing.T, selfOrigin, selfSchema, payload stri
 // key so the stress tests can assert it never leaks in pg_locks. Test-only.
 const WriteAdvisoryLockKeyForTest = writeAdvisoryLockKey
 
+// FamilyAdvisoryLockKeyForTest exposes the family lock's first key, which
+// pg_locks reports as classid, so a test can observe a queued family lock.
+// Test-only.
+const FamilyAdvisoryLockKeyForTest = familyAdvisoryLockKey
+
 // MaxStateValueBytesForTest exposes the state-value ceiling so a test can build
 // an over-limit payload without restating the constant. Test-only.
 const MaxStateValueBytesForTest = maxStateValueBytes
@@ -88,10 +93,31 @@ func BuildGraphQuerySQLForTest(q store.GraphQuery, countOnly bool) (sqlText stri
 	return buildGraphQuerySQL(q, countOnly)
 }
 
-// BuildMatchingIDsSQLForTest exposes the SQL [Store.MatchingIDs] issues, so
-// EXPLAIN tests can check the shape the traversal path actually runs.
-func BuildMatchingIDsSQLForTest(q store.GraphQuery, ids []string) (sqlText string, args []any) {
-	return buildMatchingIDsSQL(q, ids)
+// BuildEntityListSQLForTest exposes the SQL [Store.ListEntitiesPage] issues
+// for q, cursor and LIMIT included, so EXPLAIN tests can check the plan of
+// each face selection. Test-only.
+func BuildEntityListSQLForTest(t *testing.T, q store.EntityQuery) (sqlText string, args []any) {
+	t.Helper()
+	sqlText, args, err := entityPageSQL(q)
+	if err != nil {
+		t.Fatalf("entity page sql: %v", err)
+	}
+	return sqlText, args
+}
+
+// GetEntitySQLForTest is the SQL [Store.GetEntity] issues. Test-only.
+const GetEntitySQLForTest = getEntitySQL
+
+// BuildHighestIDSQLForTest exposes the SQL [Store.HighestID] issues for
+// prefix. Test-only.
+func BuildHighestIDSQLForTest(prefix string) (sqlText string, args []any) {
+	return buildHighestIDSQL(prefix)
+}
+
+// BuildMatchingFacesSQLForTest exposes the SQL [Store.MatchingFaces] issues,
+// so EXPLAIN tests can check the shape the traversal path actually runs.
+func BuildMatchingFacesSQLForTest(q store.GraphQuery, ids []string) (sqlText string, args []any) {
+	return buildMatchingFacesSQL(q, ids)
 }
 
 // SweepNow runs exactly one reconciliation tick synchronously, so a test can

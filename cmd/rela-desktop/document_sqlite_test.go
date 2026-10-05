@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 // useTestDocumentsRoot keeps document workspaces in a temporary directory.
@@ -87,7 +88,7 @@ func TestNewDocumentFromTemplate(t *testing.T) {
 	assert.Equal(t, dest, d.activePath)
 	assert.Equal(t, dest, d.prefs.RecentProjects[0].Path, "Open Recent reopens the file")
 	assert.Equal(t, "Budget", d.prefs.RecentProjects[0].Name)
-	got, err := d.svc.Store().GetEntity(context.Background(), "DOC-1")
+	got, err := d.svc.Store().GetEntity(context.Background(), entity.Ref{ID: "DOC-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "First", got.Properties["title"])
 

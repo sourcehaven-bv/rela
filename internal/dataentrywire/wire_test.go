@@ -70,7 +70,7 @@ lists:
 	app, err := dataentry.NewApp(
 		fsys, paths, svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
-		resolver, svc.Audit(), svc.State(), dataentry.UngatedCommandAuthorizer(),
+		resolver, svc.Audit(), svc.State(), dataentry.UngatedCommandAuthorizer(), appbuild.CompiledWorlds(svc),
 	)
 	require.NoError(t, err)
 	require.NoError(t, dataentrywire.Services(app, svc))

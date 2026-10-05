@@ -148,9 +148,9 @@ linters:
         # new G703 finding is a real path-containment question.
         #
         # G704 (SSRF) is ENABLED: its two findings were reviewed and are
-        # operator-configured destinations (.rela/ai.yaml base_url; the
-        # `rela sync --remote` flag), annotated with narrow nolint
-        # directives naming the trust boundary at each call site.
+        # operator-configured destinations (.rela/ai.yaml base_url),
+        # annotated with narrow nolint directives naming the trust boundary
+        # at each call site.
         #
         # G705 (XSS) is ENABLED: the data-entry HTML/feed sinks were audited
         # and fixed — the entity-help fragment now renders through
@@ -331,7 +331,7 @@ linters:
       # contextcheck flags every r.Context() after the reassignment as
       # "non-inherited" — it cannot trace the derivation through the *http.Request
       # swap — and propagates that up to the dispatchers that call these handlers
-      # (api_v1.go, sync.go). The seam is pinned structurally by
+      # (api_v1.go). The seam is pinned structurally by
       # TestProvisionSeam_EveryWriteHandlerUsesWithProvision and end-to-end by the
       # provision e2e tests, so the guarantee is tested, not asserted. Path
       # exclusion rather than ~15 //nolint comments so the reasoning lives in one
@@ -342,11 +342,11 @@ linters:
       # the specific withProvision handlers so the rest of those files stays checked.
       - linters:
           - contextcheck
-        path: internal/dataentry/(write_handler|softdelete_handler|actions|sync_handler|sync_handlers|attachment_handler|handlers_attachment)\.go
+        path: internal/dataentry/(write_handler|softdelete_handler|actions|attachment_handler|handlers_attachment)\.go
       - linters:
           - contextcheck
-        path: internal/dataentry/(api_v1|sync|acl_write_test|handlers_attachment_write_test)\.go
-        text: handleV1(CreateEntity|UpdateEntity|DeleteEntity|RestoreEntity|CreateRelation|UpdateRelation|DeleteRelation|CloneEntity|Action|ConflictResolve|PutAttachment|DeleteAttachment)|handleSyncDelete|handleSyncPut
+        path: internal/dataentry/(api_v1|acl_write_test|handlers_attachment_write_test)\.go
+        text: handleV1(CreateEntity|UpdateEntity|DeleteEntity|RestoreEntity|CreateRelation|UpdateRelation|DeleteRelation|CloneEntity|Action|ConflictResolve|PutAttachment|DeleteAttachment)
       - linters:
           - contextcheck
         path: internal/dataentry/comments_handler\.go

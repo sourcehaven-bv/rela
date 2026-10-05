@@ -29,7 +29,7 @@ type ReadQueryResult struct {
 	// never builds a Query: listPushdown short-circuits it straight to
 	// ListEntities. A face set carried only on Query would therefore filter
 	// nothing for exactly the most privileged principals — the same
-	// list/single-entity divergence GraphQuery.World's doc warns about.
+	// list/single-entity divergence GraphQuery.Faces's doc warns about.
 	//
 	// The UNION across granting roles, not the intersection: grants are
 	// additive (DEC-RG878), so holding two roles reads what either allows.
@@ -132,10 +132,10 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 		return ReadQueryResult{DenyAll: true}
 	}
 
-	// World is deliberately left ZERO here, and that is CORRECT rather
-	// than a gap: the world is stamped onto this query by the caller,
-	// at internal/visibility's listPushdown seam, which copies it from
-	// the EntityQuery it was given (TKT-WAV8XP PR-D).
+	// Faces is deliberately left ZERO here, and that is CORRECT rather
+	// than a gap: the executor stamps a face selection onto a copy of this
+	// template (internal/visibility's listPushdown copies it from the
+	// EntityQuery it was given; the bare-id gates stamp their own).
 	//
 	// internal/acl structurally cannot resolve a world itself — arch-lint
 	// forbids it from importing internal/metamodel, and a WorldScope is

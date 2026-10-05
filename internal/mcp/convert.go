@@ -11,13 +11,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // entityJSON represents an entity for JSON output in MCP responses.
 type entityJSON struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
-	// Face names the content state served, omitted for the default state.
+	// Face names the face served, omitted for the implicit face.
 	// `ID@face` addresses this exact row in show_entity and update_entity.
 	Face       string         `json:"face,omitempty"`
 	Title      string         `json:"title,omitempty"`
@@ -42,7 +43,9 @@ type relationsJSON struct {
 	Incoming map[string][]relationTargetJSON `json:"incoming,omitempty"`
 }
 
-// relationTargetJSON represents a related entity.
+// relationTargetJSON represents a related entity. ID is the neighbor's
+// address: the tail of a content-scoped incoming edge is one face of its
+// source, so it is named `ID@face`.
 type relationTargetJSON struct {
 	ID    string `json:"id"`
 	Title string `json:"title,omitempty"`
@@ -50,7 +53,10 @@ type relationTargetJSON struct {
 
 // relationJSON represents a relation for JSON output.
 type relationJSON struct {
-	From       string         `json:"from"`
+	From string `json:"from"`
+	// FromFace is the source face a content-scoped edge attaches to; empty
+	// for an identity-scoped edge.
+	FromFace   string         `json:"from_face,omitempty"`
 	Type       string         `json:"relation"`
 	To         string         `json:"to"`
 	Properties map[string]any `json:"properties,omitempty"`
@@ -64,6 +70,7 @@ type traceNodeJSON struct {
 	ID       string           `json:"id"`
 	Type     string           `json:"type"`
 	Title    string           `json:"title,omitempty"`
+	Faces    []entity.Face    `json:"faces,omitempty"`
 	Relation string           `json:"relation,omitempty"`
 	Incoming bool             `json:"incoming,omitempty"`
 	Children []*traceNodeJSON `json:"children,omitempty"`
@@ -71,10 +78,11 @@ type traceNodeJSON struct {
 
 // pathStepJSON represents a path step for JSON output.
 type pathStepJSON struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Title    string `json:"title,omitempty"`
-	Relation string `json:"relation,omitempty"`
+	ID       string        `json:"id"`
+	Type     string        `json:"type"`
+	Title    string        `json:"title,omitempty"`
+	Faces    []entity.Face `json:"faces,omitempty"`
+	Relation string        `json:"relation,omitempty"`
 }
 
 // entityView selects the optional parts of an entity rendered by
@@ -107,7 +115,7 @@ func buildEntityJSON(
 		ej.Content = e.Content
 	}
 	if view.relations {
-		ej.Relations = buildStoreRelations(ctx, e.ID, e.Face, st, meta)
+		ej.Relations = buildStoreRelations(ctx, e, st, meta)
 	}
 	return ej
 }
@@ -166,60 +174,80 @@ func convertStoreEntitySummary(meta *metamodel.Metamodel, e *entity.Entity) enti
 		Title:  displayTitle(meta, e),
 		Status: e.Status(),
 	}
-	if !e.Face.IsDefault() {
+	if !e.Face.IsImplicit() {
 		summary.Face = e.Face.String()
 	}
 	return summary
 }
 
-// buildStoreRelations builds relation JSON for one face of an entity.
+// buildStoreRelations builds relation JSON for the served face e.
 //
-// Outgoing edges are the ones tailed at face: a content-scoped edge belongs to
-// one face of its source, so an unfiltered read would present another face's
-// links as this one's (BUG-VFHUWO, the same rule as the data-entry entity
-// GET). Incoming edges stay entity-level, because heads are faceless.
+// Face ownership (BUG-ISJHML): a content-scoped edge belongs to one face of
+// its source. An OUTGOING edge is therefore listed only when e's own face is
+// its tail; identity-scoped edges belong to the entity and are listed with
+// every face. An INCOMING edge's head is e, which is entity level, so every
+// incoming edge is e's; its tail is named by address, `From@face` for a
+// content-scoped one.
 //
-// Neighbor visibility (RR-CFFL52): a relation is only reported when the
-// entity at its far end is READABLE through st. Listing the edge while
-// dropping only the unreadable neighbor's title would still disclose that
-// neighbor's ID — and an ID is exactly what the row-level rule protects,
-// since whether an entity EXISTS is a genuine secret. So the whole edge is
-// withheld. `st` is the gated GraphReader, so under a networked wiring
-// GetEntity on a hidden neighbor returns not-found and the edge drops;
-// under the stdio (NopACL) wiring every GetEntity succeeds and the output is
-// unchanged.
+// Neighbor visibility (RR-CFFL52): an edge is only reported when the entity
+// at its far end is readable through st. Listing the edge while dropping
+// only the unreadable neighbor's title would still disclose that neighbor's
+// ID, and an ID is exactly what the row-level rule protects, since whether
+// an entity EXISTS is a genuine secret. So the whole edge is withheld. See
+// [neighbor] for how each end is checked.
+//
+// Every neighbor is answered by ONE [GraphReader.ResolveHeaders] batch, so
+// the cost does not grow with the number of edges (RR-XD7YN9).
 func buildStoreRelations(
-	ctx context.Context, entityID string, face entity.Face, st GraphReader, meta *metamodel.Metamodel,
+	ctx context.Context, e *entity.Entity, st GraphReader, meta *metamodel.Metamodel,
 ) *relationsJSON {
-	rels := &relationsJSON{
-		Outgoing: make(map[string][]relationTargetJSON),
-		Incoming: make(map[string][]relationTargetJSON),
+	type edge struct {
+		typ string
+		ref entity.Ref
 	}
+	var out, in []edge
+	var refs []entity.Ref
 
-	outQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionOutgoing, FromFace: &face}
+	outQ := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionOutgoing}
 	for r, err := range st.ListRelations(ctx, outQ) {
 		if err != nil {
 			break
 		}
-		e, getErr := st.GetEntity(ctx, r.To)
-		if getErr != nil {
-			continue // neighbor hidden or absent — withhold the edge entirely
+		if metamodel.IsContentScoped(meta, r.Type) && r.FromFace != e.Face {
+			continue // another face's content edge
 		}
-		rels.Outgoing[r.Type] = append(rels.Outgoing[r.Type],
-			relationTargetJSON{ID: r.To, Title: displayTitle(meta, e)})
+		ref := entity.Ref{ID: r.To}
+		out = append(out, edge{typ: r.Type, ref: ref})
+		refs = append(refs, ref)
 	}
 
-	inQ := store.RelationQuery{EntityID: entityID, Direction: store.DirectionIncoming}
+	inQ := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionIncoming}
 	for r, err := range st.ListRelations(ctx, inQ) {
 		if err != nil {
 			break
 		}
-		e, getErr := st.GetEntity(ctx, r.From)
-		if getErr != nil {
-			continue // neighbor hidden or absent — withhold the edge entirely
+		ref := entity.Ref{ID: r.From, Face: r.FromFace}
+		in = append(in, edge{typ: r.Type, ref: ref})
+		refs = append(refs, ref)
+	}
+
+	if len(refs) == 0 {
+		return nil
+	}
+	resolved := st.ResolveHeaders(ctx, refs)
+	rels := &relationsJSON{
+		Outgoing: make(map[string][]relationTargetJSON),
+		Incoming: make(map[string][]relationTargetJSON),
+	}
+	for _, ed := range out {
+		if t, ok := neighbor(meta, ed.ref, resolved[ed.ref]); ok {
+			rels.Outgoing[ed.typ] = append(rels.Outgoing[ed.typ], t)
 		}
-		rels.Incoming[r.Type] = append(rels.Incoming[r.Type],
-			relationTargetJSON{ID: r.From, Title: displayTitle(meta, e)})
+	}
+	for _, ed := range in {
+		if t, ok := neighbor(meta, ed.ref, resolved[ed.ref]); ok {
+			rels.Incoming[ed.typ] = append(rels.Incoming[ed.typ], t)
+		}
 	}
 
 	if len(rels.Outgoing) == 0 {
@@ -234,10 +262,35 @@ func buildStoreRelations(
 	return rels
 }
 
+// neighbor returns the far end of an edge as the caller may see it, or false
+// when the caller may not read it (hidden and absent alike). res is the
+// batch answer for ref.
+//
+// An end with a face (a content-scoped tail) is that face, and must be
+// served. An end without one is entity level: it is readable when some face
+// of it is (res.Family). Its title belongs to a face, so it comes from the
+// face the world resolves the bare id to; a faced neighbor has none in the
+// default world until TKT-7IZHP0, and is listed by id alone.
+func neighbor(
+	meta *metamodel.Metamodel, ref entity.Ref, res visibility.ResolvedHeader,
+) (relationTargetJSON, bool) {
+	addr := ref.String()
+	if res.Served() {
+		h := res.Header
+		title := titleOrEmpty(h.ID, meta.DisplayTitle(h.ID, h.Type, h.Properties))
+		return relationTargetJSON{ID: addr, Title: title}, true
+	}
+	if !ref.Face.IsImplicit() || !res.Family {
+		return relationTargetJSON{}, false
+	}
+	return relationTargetJSON{ID: ref.ID}, true
+}
+
 // convertStoreRelation converts an entity.Relation to JSON string.
 func convertStoreRelation(r *entity.Relation) (string, error) {
 	rj := relationJSON{
 		From:       r.From,
+		FromFace:   r.FromFace.String(),
 		Type:       r.Type,
 		To:         r.To,
 		Properties: r.Properties,
@@ -264,6 +317,7 @@ func convertTraceNode(tr *tracer.TraceResult, meta *metamodel.Metamodel) *traceN
 		ID:       tr.ID,
 		Type:     tr.Type,
 		Title:    titleOrEmpty(tr.ID, meta.DisplayTitle(tr.ID, tr.Type, tr.Properties)),
+		Faces:    tr.Faces,
 		Relation: tr.Relation,
 		Incoming: tr.Incoming,
 	}
@@ -283,6 +337,7 @@ func convertPathSteps(steps []tracer.PathStep, title func(tracer.PathStep) strin
 			ID:       s.ID,
 			Type:     s.Type,
 			Title:    title(s),
+			Faces:    s.Faces,
 			Relation: s.Relation,
 		}
 	}
@@ -296,6 +351,7 @@ func convertStoreRelationsList(relations []*entity.Relation) []relationJSON {
 	for i, r := range relations {
 		result[i] = relationJSON{
 			From:       r.From,
+			FromFace:   r.FromFace.String(),
 			Type:       r.Type,
 			To:         r.To,
 			Properties: r.Properties,

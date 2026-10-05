@@ -19,20 +19,19 @@ import (
 
 // --- RelationReader -------------------------------------------------------
 
-// GetRelation returns the DEFAULT-tail edge of the triple (TKT-DOFYR1) — see
-// store.RelationData.FromFace. A triple can carry one edge per tail face, so
-// this is an address, not a wildcard.
-func (s *Store) GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error) {
+// GetRelation returns the edge at k, tail included. A triple can carry one
+// edge per tail face, so this is an address, not a wildcard.
+func (s *Store) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error) {
 	row := s.q().QueryRowContext(ctx,
 		`SELECT `+relationColumns+`
-		 FROM relations WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ''`,
-		from, relType, to)
+		 FROM relations WHERE from_id = ? AND from_face = ? AND rel_type = ? AND to_id = ?`,
+		k.From, string(k.FromFace), k.Type, k.To)
 	r, err := scanRelation(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		r, err = revealedRelation(ctx, s, from, relType, to)
+		r, err = revealedRelation(ctx, s, k)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("sqlitestore: get relation %s--%s->%s: %w", from, relType, to, store.ErrNotFound)
+		return nil, fmt.Errorf("sqlitestore: get relation %s: %w", k, store.ErrNotFound)
 	}
 	return r, err
 }
@@ -175,25 +174,24 @@ const relationColumns = "from_id, from_face, rel_type, to_id, properties, conten
 // --- RelationWriter -------------------------------------------------------
 
 func (s *Store) CreateRelation(
-	ctx context.Context, from, relType, to string, data *store.RelationData,
+	ctx context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
 	// storeutil is the validity ORACLE the fuzz suite enforces directionally:
 	// anything it rejects the store MUST reject. Skipping this let an empty
 	// relation type through — caught by FuzzRelationKeyCollision seed #4.
-	if err := storeutil.ValidateRelationType(relType); err != nil {
+	if err := storeutil.ValidateRelationType(k.Type); err != nil {
 		return nil, fmt.Errorf("sqlitestore: create relation: %w", err)
 	}
-	if err := storeutil.ValidateID(from); err != nil {
+	if err := storeutil.ValidateID(k.From); err != nil {
 		return nil, fmt.Errorf("sqlitestore: create relation from: %w", err)
 	}
-	if err := storeutil.ValidateID(to); err != nil {
+	if err := storeutil.ValidateID(k.To); err != nil {
 		return nil, fmt.Errorf("sqlitestore: create relation to: %w", err)
 	}
 
 	var (
 		props   = "{}"
 		content string
-		face    entity.Face
 		err     error
 	)
 	if data != nil {
@@ -201,9 +199,6 @@ func (s *Store) CreateRelation(
 			return nil, err
 		}
 		content = data.Content
-		// The tail is part of the edge's IDENTITY, not a property of it: two
-		// edges on one triple with different tails are two relations.
-		face = data.FromFace
 	}
 	now := time.Now().UTC()
 
@@ -225,7 +220,7 @@ func (s *Store) CreateRelation(
 		(from_id, from_face, rel_type, to_id, properties, content, updated_at,
 		 last_edited_by_user, last_edited_by_tool, rel_record_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT next FROM rel_record_seq WHERE id = 1))`,
-		from, string(face), relType, to, props, content, sqlitedb.FormatTime(now),
+		k.From, string(k.FromFace), k.Type, k.To, props, content, sqlitedb.FormatTime(now),
 		editorUser, editorTool); err != nil {
 		if isUniqueViolation(err) {
 			return nil, fmt.Errorf("sqlitestore: create relation: %w", store.ErrConflict)
@@ -241,47 +236,17 @@ func (s *Store) CreateRelation(
 	}
 
 	s.emit(store.Event{
-		Op: store.EventRelationCreated, RelationType: relType, From: from, To: to, Face: face,
+		Op: store.EventRelationCreated, RelationType: k.Type, From: k.From, To: k.To, Face: k.FromFace,
 	})
-	return s.getRelationState(ctx, from, face, relType, to)
+	return s.GetRelation(ctx, k)
 }
 
-// getRelationState reads the edge of a triple carrying EXACTLY tail p. Unlike
-// GetRelation (default-tail only, per the store.RelationReader contract) this
-// is internal, so CreateRelation can echo back the state-tailed edge it just
-// wrote rather than a different edge that happens to share the triple.
-func (s *Store) getRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string,
-) (*entity.Relation, error) {
-	row := s.q().QueryRowContext(ctx,
-		`SELECT `+relationColumns+`
-		 FROM relations WHERE from_id = ? AND from_face = ? AND rel_type = ? AND to_id = ?`,
-		from, string(p), relType, to)
-	r, err := scanRelation(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("sqlitestore: get relation %s--%s->%s: %w",
-			entity.FormatStateRef(from, p), relType, to, store.ErrNotFound)
-	}
-	return r, err
-}
-
-// UpdateRelation updates the DEFAULT-tail edge of the triple.
-// UpdateRelationState is the general form.
-func (s *Store) UpdateRelation(
-	ctx context.Context, from, relType, to string, data store.RelationData,
-) (*entity.Relation, error) {
-	return s.UpdateRelationState(ctx, from, "", relType, to, data)
-}
-
-// UpdateRelationState updates the edge with EXACTLY this tail (BUG-64MU2Q).
+// UpdateRelation updates the edge at k, tail included (BUG-64MU2Q).
 //
 // The tail is part of a relation's identity, so addressing the wrong one
-// writes the caller's properties onto a DIFFERENT edge rather than failing —
-// the same hazard DeleteRelationState exists to make unavailable.
-//
-// data.FromFace is ignored; p is the address.
-func (s *Store) UpdateRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
+// writes the caller's properties onto a DIFFERENT edge rather than failing.
+func (s *Store) UpdateRelation(
+	ctx context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
 	props, err := marshalProps(data.Properties)
 	if err != nil {
@@ -292,7 +257,7 @@ func (s *Store) UpdateRelationState(
 		    last_edited_by_user = ?, last_edited_by_tool = ?
 		WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`,
 		props, data.Content, sqlitedb.FormatTime(time.Now()), editorUser, editorTool,
-		from, relType, to, string(p))
+		k.From, k.Type, k.To, string(k.FromFace))
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: update relation: %w", err)
 	}
@@ -305,30 +270,19 @@ func (s *Store) UpdateRelationState(
 	}
 
 	s.emit(store.Event{
-		Op: store.EventRelationUpdated, RelationType: relType, From: from, To: to, Face: p,
+		Op: store.EventRelationUpdated, RelationType: k.Type, From: k.From, To: k.To, Face: k.FromFace,
 	})
-	// getRelationState, not GetRelation: the latter reads the default tail,
-	// so a faced update would echo back a different edge than it wrote.
-	return s.getRelationState(ctx, from, p, relType, to)
+	return s.GetRelation(ctx, k)
 }
 
-// DeleteRelation removes the DEFAULT-tail edge of the triple.
-// DeleteRelationState is the general form.
-func (s *Store) DeleteRelation(ctx context.Context, from, relType, to string) error {
-	return s.DeleteRelationState(ctx, from, "", relType, to)
-}
-
-// DeleteRelationState removes the edge with EXACTLY this tail (TKT-C1XUA8).
+// DeleteRelation removes the edge at k, tail included (TKT-C1XUA8).
 //
 // The tail is part of a relation's identity, so addressing the wrong one
-// deletes a DIFFERENT edge rather than failing — which is precisely the bug
-// this separate method exists to make unavailable.
-func (s *Store) DeleteRelationState(
-	ctx context.Context, from string, p entity.Face, relType, to string,
-) error {
+// deletes a DIFFERENT edge rather than failing.
+func (s *Store) DeleteRelation(ctx context.Context, k entity.RelationKey) error {
 	res, err := s.write(ctx,
 		`DELETE FROM relations WHERE from_id = ? AND from_face = ? AND rel_type = ? AND to_id = ?`,
-		from, string(p), relType, to)
+		k.From, string(k.FromFace), k.Type, k.To)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: delete relation: %w", err)
 	}
@@ -341,7 +295,7 @@ func (s *Store) DeleteRelationState(
 	}
 
 	s.emit(store.Event{
-		Op: store.EventRelationDeleted, RelationType: relType, From: from, To: to, Face: p,
+		Op: store.EventRelationDeleted, RelationType: k.Type, From: k.From, To: k.To, Face: k.FromFace,
 	})
 	return nil
 }

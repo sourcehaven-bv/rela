@@ -12,7 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
@@ -76,7 +76,7 @@ func seedFromFixture(st store.Store, f *fixture) {
 		}
 	}
 	for _, r := range f.relations {
-		if _, err := st.CreateRelation(ctx, r.From, r.Type, r.To, nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, nil); err != nil {
 			panic(err)
 		}
 	}
@@ -84,7 +84,7 @@ func seedFromFixture(st store.Store, f *fixture) {
 
 // seedRelation is the relation counterpart to seedEntity.
 func seedRelation(app *App, r *entity.Relation) {
-	if _, err := app.store.CreateRelation(context.Background(), r.From, r.Type, r.To, nil); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, nil); err != nil {
 		panic(err)
 	}
 }
@@ -95,7 +95,7 @@ func entitiesByType(app *App, entityType string) []*entity.Entity {
 	out := make([]*entity.Entity, 0)
 	for e, err := range app.store.ListEntities(
 		context.Background(),
-		store.EntityQuery{Type: entityType},
+		store.EntityQuery{Type: entityType, Faces: store.InWorld(store.TrivialScope())},
 	) {
 		if err != nil {
 			continue
@@ -131,9 +131,14 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.fs = fs
 	app.paths = paths
 	app.store = svc.Store()
-	app.visibleReader = newVisibleReader(svc.Store())
+	visible, err := newVisibleReader(svc.Store(), (&appFamilies{app: app}).scope)
+	if err != nil {
+		panic(err.Error())
+	}
+	app.visibleReader = visible
 	app.reader = entityReader{store: svc.Store()}
 	app.entityManager = svc.EntityManager()
+	app.recreator = entitymanager.Recreator{M: svc.EntityManager()}
 	app.searcher = svc.Searcher()
 	app.visibleSearcher = svc.VisibleSearcher()
 	app.tracer = svc.Tracer()
@@ -148,12 +153,13 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		Searcher:      svc.Searcher(),
 		Meta:          svc.Meta(),
 		ProjectRoot:   paths.Root,
+		World:         store.TrivialScope(),
 	}, svc.Store())
 	if err != nil {
 		panic(err.Error())
 	}
 	app.validator = val
-	app.analyze = analyzeService{reads: gatedReader, relCounts: svc.Store(), tracer: lateGatedTracer{app: app}, validator: app.validator}
+	app.analyze = analyzeService{reads: gatedReader, tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
 	app.assets = rootfs.New(paths.Root)
@@ -177,7 +183,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		app.documents = newDocumentService(app.store, app.kv, "/", app.scriptEngine, app.luaWriteDeps,
 			func() documentElevation {
 				return documentElevation{
-					Reader:   visibility.Unrestricted(app.store),
+					Reader:   visibility.Unrestricted(app.store).WithWorld(visibility.WorldOf(store.TrivialScope())),
 					Recorder: elevationRecorder(app.auditSink),
 				}
 			})
@@ -186,18 +192,28 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// `_copies` rides test-app entity responses exactly as it does in NewApp.
 	// The construction only errors on a nil service, which a real manager
 	// cannot produce — same clean-boot swallow as the logo/palette stores.
-	copyOffers, copiesHandler, _ := wireCopies(svc.EntityManager())
+	copyOffers, copiesHandler, _ := wireCopies(svc.EntityManager(), copyEdgeGate{
+		affordances: func() affordanceService { return app.affordances },
+		visible:     app.visibleReader,
+	})
 	app.copies = copiesHandler
 	app.affordances = affordanceService{
-		acl:                func() acl.ACL { return app.acl },
-		resolver:           func() FieldVerdictResolver { return app.fieldResolver },
-		store:              svc.Store(),
-		meta:               func() *metamodel.Metamodel { return app.State().Meta },
-		getEntity:          app.reader.getEntity,
-		currentEdgesByPeer: app.currentEdgesByPeer,
-		copies:             copyOffers,
-		schema:             app.State,
-		actionConditions:   func() ViewConditionFunc { return app.viewConditions },
+		acl:          func() acl.ACL { return app.acl },
+		resolver:     func() FieldVerdictResolver { return app.fieldResolver },
+		store:        svc.Store(),
+		meta:         func() *metamodel.Metamodel { return app.State().Meta },
+		family:       app.visibleReader.family,
+		sourceRow:    app.reader.writePrepRow,
+		sourceFamily: readableFamilyOf(app.reader, app.visibleReader),
+		readable:     app.visibleReader.filterVisible,
+		planEdges: edgeReader{
+			meta:    func() *metamodel.Metamodel { return app.State().Meta },
+			reader:  app.reader,
+			visible: app.visibleReader,
+		}.plan,
+		copies:           copyOffers,
+		schema:           app.State,
+		actionConditions: func() ViewConditionFunc { return app.viewConditions },
 	}
 	app.serializer = entitySerializer{affordances: app.affordances}
 	// viewReader mirrors the production wiring (NewApp) so view-pipeline reads
@@ -205,9 +221,6 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// on nil args, which the literals above cannot produce — same clean-boot
 	// swallow as the logo/palette stores.
 	app.viewReader, _ = visibility.NewPolicyReader(ctxRowGate{}, appRedactor(app), svc.Store())
-	// Rebuild the sync handler (manifest-only) over the rebound store. The record
-	// write path was retired in TKT-8P1TM7, so there is no provision seam here.
-	app.sync = newSyncHandler(svc.Store())
 	// The SAME constructor production uses, not a copy of it. The literal
 	// that stood here called itself a mirror of NewApp's wiring and then
 	// drifted from it — a field added in production was missing here, leaving
@@ -237,8 +250,11 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		authz:    ungatedAuthorizer{},
 		files:    newCommandFileStore(),
 		redactor: appRedactor(app),
+		visible:  app.visibleReader,
 	}
-	app.attachmentLocker = lock.For(svc.Store())
+	if owner, err := entitymanager.AttachmentsOf(svc.EntityManager()); err == nil {
+		app.attachmentOwner = owner
+	}
 	app.attachmentUploads = attachment.NewLimiter(attachment.DefaultMaxUploads)
 	// attachmentHandler mirrors production wiring: closures for the swappable
 	// acl/audit/field-resolver fields (attachment ACL tests reassign app.acl
@@ -246,15 +262,14 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.attachments = &attachmentHandler{
 		schema:     app.State,
 		store:      svc.Store(),
-		manager:    svc.EntityManager(),
 		runner:     func() attachment.CommandRunner { return app.attachmentRunner },
 		reader:     app.reader,
 		serializer: app.serializer,
 		acl:        func() acl.ACL { return app.acl },
 		audit:      func() audit.Audit { return app.auditSink },
 		fields:     func() FieldVerdictResolver { return app.fieldResolver },
-		gateRead:   app.gateReadOrNotFound,
-		locker:     app.attachmentLocker,
+		visible:    app.visibleReader,
+		owner:      app.attachmentOwner,
 		uploads:    app.attachmentUploads,
 		provision:  newProvisionSeam(app),
 	}
@@ -285,28 +300,23 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		affordances: app.affordances,
 		acl:         func() acl.ACL { return app.acl },
 		audit:       func() audit.Audit { return app.auditSink },
-		gateRead:    app.gateReadOrNotFound,
+		visible:     app.visibleReader,
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, app.visibleReader, e)
+			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
 		},
-		currentEdgesByPeer: app.currentEdgesByPeerOnFace,
-		engine:             func() *script.Engine { return app.scriptEngine },
-		luaDeps:            app.luaWriteDeps,
-		fullScriptDetail:   app.allowFullScriptDetail,
-		paths:              paths,
-		provision:          newProvisionSeam(app),
+		planEdges: edgeReader{
+			meta:    func() *metamodel.Metamodel { return app.State().Meta },
+			reader:  app.reader,
+			visible: app.visibleReader,
+		}.plan,
+		engine:           func() *script.Engine { return app.scriptEngine },
+		luaDeps:          app.luaWriteDeps,
+		fullScriptDetail: app.allowFullScriptDetail,
+		paths:            paths,
+		provision:        newProvisionSeam(app),
 	}
-}
-
-// rebindSyncHandler rebuilds app.sync over the app's CURRENT store/manager.
-// Production resolves the sync capabilities once at construction (the store is
-// fixed for App's lifetime); a test that swaps app.store after construction to
-// inject a fake manifest/apply source must call this so the handler re-resolves
-// against the swapped store.
-func rebindSyncHandler(app *App) {
-	app.sync = newSyncHandler(app.store)
 }
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper
@@ -332,7 +342,7 @@ func reseedStore(dst, src store.Store) {
 		return
 	}
 	ctx := context.Background()
-	for e, err := range src.ListEntities(ctx, store.EntityQuery{}) {
+	for e, err := range src.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			continue
 		}
@@ -344,7 +354,7 @@ func reseedStore(dst, src store.Store) {
 		if err != nil {
 			continue
 		}
-		if _, err := dst.CreateRelation(ctx, r.From, r.Type, r.To, nil); err != nil {
+		if _, err := dst.CreateRelation(ctx, entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, nil); err != nil {
 			panic(err)
 		}
 	}

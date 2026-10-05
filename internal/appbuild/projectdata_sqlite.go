@@ -99,7 +99,7 @@ func ImportMarkdownData(
 	}
 	defer func() { _ = dst.Close() }()
 
-	existing, err := dst.CountEntities(ctx, store.EntityQuery{AllStates: true})
+	existing, err := dst.CountEntities(ctx, store.EntityQuery{Faces: store.AllFaces()})
 	if err != nil {
 		return DataSummary{}, fmt.Errorf("count entities: %w", err)
 	}
@@ -228,7 +228,7 @@ func copyData(ctx context.Context, src, dst store.Store) (DataSummary, error) {
 	var sum DataSummary
 	ids := map[string]bool{}
 	var order []string
-	for e, err := range src.ListEntities(ctx, store.EntityQuery{AllStates: true}) {
+	for e, err := range src.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			return sum, fmt.Errorf("read entities: %w", err)
 		}
@@ -262,8 +262,8 @@ func copyData(ctx context.Context, src, dst store.Store) (DataSummary, error) {
 			return sum, fmt.Errorf("relation %s --> %s has no relation type; its file needs a 'relation:' key",
 				r.From, r.To)
 		}
-		data := &store.RelationData{Properties: r.Properties, Content: r.Content, FromFace: r.FromFace}
-		if _, err := dst.CreateRelation(ctx, r.From, r.Type, r.To, data); err != nil {
+		data := &store.RelationData{Properties: r.Properties, Content: r.Content}
+		if _, err := dst.CreateRelation(ctx, r.Identity(), data); err != nil {
 			return sum, fmt.Errorf("create %s --%s--> %s: %w", r.From, r.Type, r.To, err)
 		}
 		sum.Relations++
@@ -281,10 +281,9 @@ func copyData(ctx context.Context, src, dst store.Store) (DataSummary, error) {
 
 // copyAttachments copies the files attached to entity id.
 func copyAttachments(ctx context.Context, src, dst store.AttachmentManager, id string) (int, error) {
-	infos, err := src.ListAttachments(ctx, id)
+	infos, err := src.ListFamilyAttachments(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
-		// fsstore indexes attachments under the default state, so an id
-		// stored only under a named face has none to list.
+		// The source has no face of id, so nothing is attached to it.
 		return 0, nil
 	}
 	if err != nil {
@@ -299,12 +298,12 @@ func copyAttachments(ctx context.Context, src, dst store.AttachmentManager, id s
 }
 
 func copyAttachment(ctx context.Context, src, dst store.AttachmentManager, info store.AttachmentInfo) error {
-	r, err := src.ReadAttachment(ctx, info.EntityID, info.Property, info.FileName)
+	r, err := src.ReadFamilyAttachment(ctx, info.EntityID, info.Property, info.FileName)
 	if err != nil {
 		return fmt.Errorf("read attachment %s/%s/%s: %w", info.EntityID, info.Property, info.FileName, err)
 	}
 	defer func() { _ = r.Close() }()
-	if err := dst.AttachFile(ctx, info.EntityID, info.Property, info.FileName, r); err != nil {
+	if err := dst.AttachFamilyFile(ctx, info.EntityID, info.Property, info.FileName, r); err != nil {
 		return fmt.Errorf("write attachment %s/%s/%s: %w", info.EntityID, info.Property, info.FileName, err)
 	}
 	return nil

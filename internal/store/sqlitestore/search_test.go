@@ -48,25 +48,25 @@ func createEntity(t *testing.T, s *sqlitestore.Store, id, typ, prop, value, cont
 func TestSearch_FollowsEveryWrite(t *testing.T) {
 	ctx := context.Background()
 	s, b := openSearch(t, filepath.Join(t.TempDir(), "s.db"), nil)
-	w := store.DefaultWorld()
+	w := store.TrivialScope()
 
 	createEntity(t, s, "Old-ID", "ticket", "title", "Ünïcode Heading", "first body")
 	require.Equal(t, []string{"Old-ID"}, searchIDs(t, b, "first", w))
 	require.Equal(t, []string{"Old-ID"}, searchIDs(t, b, "ÜNÏCODE", w), "case folding is not ASCII-only")
 
-	e, err := s.GetEntity(ctx, "Old-ID")
+	e, err := s.GetEntity(ctx, entity.Ref{ID: "Old-ID"})
 	require.NoError(t, err)
 	e.Content = "second body"
 	require.NoError(t, s.UpdateEntity(ctx, e))
 	require.Empty(t, searchIDs(t, b, "first", w), "an update replaces the indexed text")
 	require.Equal(t, []string{"Old-ID"}, searchIDs(t, b, "second", w))
 
-	_, err = s.RenameEntity(ctx, "Old-ID", "New-MixedCase")
+	_, err = s.RenameFamily(ctx, "Old-ID", "New-MixedCase")
 	require.NoError(t, err)
 	require.Equal(t, []string{"New-MixedCase"}, searchIDs(t, b, "new-mixedcase", w))
 	require.Empty(t, searchIDs(t, b, "old-id", w))
 
-	_, err = s.DeleteEntity(ctx, "New-MixedCase", true)
+	_, err = s.DeleteFamily(ctx, "New-MixedCase", true)
 	require.NoError(t, err)
 	require.Empty(t, searchIDs(t, b, "second", w), "a delete removes the row")
 
@@ -78,7 +78,7 @@ func TestSearch_FollowsEveryWrite(t *testing.T) {
 
 func TestSearch_Needles(t *testing.T) {
 	s, b := openSearch(t, filepath.Join(t.TempDir(), "s.db"), nil)
-	w := store.DefaultWorld()
+	w := store.TrivialScope()
 	createEntity(t, s, "A-1", "note", "title", "Plan", `say "hi" to 50% of us_ers`)
 	createEntity(t, s, "B-2", "note", "title", "Other", "nothing here")
 	createEntity(t, s, "C-3", "note", "count", "", "")
@@ -119,9 +119,9 @@ func TestSearch_RanksByConfiguredTitle(t *testing.T) {
 	createEntity(t, s, "O-1", "odd", "label", "telemetry", "")  // unusable title property: ranks by id
 
 	require.Equal(t, []string{"N-2", "P-1", "N-3", "N-1", "O-1", "X-1"},
-		searchIDs(t, b, "Telemetry", store.DefaultWorld()))
+		searchIDs(t, b, "Telemetry", store.TrivialScope()))
 
-	faces, err := b.Search("telemetry", 2, store.DefaultWorld())
+	faces, err := b.Search("telemetry", 2, store.TrivialScope())
 	require.NoError(t, err)
 	require.Len(t, faces, 2)
 	require.Equal(t, search.RuleUnscoped, faces[0].Via)
@@ -145,8 +145,8 @@ func TestSearch_MatchesThePrimeFaceOnly(t *testing.T) {
 	require.Equal(t, []string{"DOC-1"}, searchIDs(t, b, "draft", drafts))
 	require.Equal(t, []string{"DOC-2"}, searchIDs(t, b, "published", drafts),
 		"DOC-1's prime is its draft, which does not say published")
-	require.ElementsMatch(t, []string{"DOC-1", "DOC-2"}, searchIDs(t, b, "published", store.DefaultWorld()))
-	require.Empty(t, searchIDs(t, b, "draft", store.DefaultWorld()))
+	require.ElementsMatch(t, []string{"DOC-1", "DOC-2"}, searchIDs(t, b, "published", store.TrivialScope()))
+	require.Empty(t, searchIDs(t, b, "draft", store.TrivialScope()))
 
 	faces, err := b.Search("words", 0, drafts)
 	require.NoError(t, err)
@@ -163,7 +163,7 @@ func TestSearch_MatchesThePrimeFaceOnly(t *testing.T) {
 	require.Equal(t, []string{"DOC-1", "DOC-2"}, all, "an empty needle lists every prime in id order")
 }
 
-// A database written before the index existed gets it filled by the v11 rung.
+// A database written before the index existed gets it filled by the v12 rung.
 func TestSearch_MigrationFillsIndex(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "old.db")
@@ -172,16 +172,16 @@ func TestSearch_MigrationFillsIndex(t *testing.T) {
 	s, err := sqlitestore.New(db)
 	require.NoError(t, err)
 	createEntity(t, s, "OLD-1", "note", "title", "Legacy row", "")
-	// Stand in for a v10 database: no index rows, an older version stamp.
+	// Stand in for a v11 database: no index rows, an older version stamp.
 	_, err = db.DB().ExecContext(ctx, `DELETE FROM entity_search`)
 	require.NoError(t, err)
-	_, err = db.DB().ExecContext(ctx, `PRAGMA user_version = 10`)
+	_, err = db.DB().ExecContext(ctx, `PRAGMA user_version = 11`)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 	require.NoError(t, db.Close())
 
 	_, b := openSearch(t, path, nil)
-	require.Equal(t, []string{"OLD-1"}, searchIDs(t, b, "legacy", store.DefaultWorld()))
+	require.Equal(t, []string{"OLD-1"}, searchIDs(t, b, "legacy", store.TrivialScope()))
 }
 
 func TestNewSearchBackend_RejectsNil(t *testing.T) {

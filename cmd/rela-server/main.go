@@ -480,6 +480,7 @@ func main() {
 		svc.Audit(),
 		svc.State(),
 		commandAuthz,
+		appbuild.CompiledWorlds(svc),
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError

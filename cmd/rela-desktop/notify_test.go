@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -111,6 +112,7 @@ func TestProjectNotifier_NotifiesNewMatchesAfterAWrite(t *testing.T) {
 		files:     fakeLoader{"desktop.yaml": notifyYAML},
 		meta:      func() *metamodel.Metamodel { return meta },
 		entities:  st,
+		world:     store.TrivialScope(),
 		feed:      st,
 		tracker:   tracker,
 		deliver:   rec.deliver,
@@ -162,7 +164,7 @@ func TestProjectNotifier_BadConfigClearsBadge(t *testing.T) {
 		projectID: "p1",
 		files:     fakeLoader{"desktop.yaml": "notifications: [ {id: x, type: nope, condition: 'true'} ]"},
 		meta:      func() *metamodel.Metamodel { return meta },
-		entities:  st, feed: st, tracker: tracker,
+		entities:  st, world: store.TrivialScope(), feed: st, tracker: tracker,
 		deliver: rec.deliver, badge: rec.setBadge,
 	})
 	if err != nil {

@@ -41,13 +41,13 @@ func TestSoftDelete_DeleteThenRestore(t *testing.T) {
 	rec := serveAs(alice, app, http.MethodDelete, "/api/v1/tickets/TKT-001")
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	assert.Equal(t, http.StatusNotFound, serveAs(alice, app, http.MethodGet, "/api/v1/tickets/TKT-001").Code)
-	_, err := app.store.GetRelation(context.Background(), "TKT-001", "implements", "FEAT-001")
+	_, err := app.store.GetRelation(context.Background(), entity.RelationKey{From: "TKT-001", Type: "implements", To: "FEAT-001"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 
 	rec = serveAs(alice, app, http.MethodPost, "/api/v1/tickets/TKT-001/restore")
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	assert.Equal(t, http.StatusOK, serveAs(alice, app, http.MethodGet, "/api/v1/tickets/TKT-001").Code)
-	_, err = app.store.GetRelation(context.Background(), "TKT-001", "implements", "FEAT-001")
+	_, err = app.store.GetRelation(context.Background(), entity.RelationKey{From: "TKT-001", Type: "implements", To: "FEAT-001"})
 	require.NoError(t, err)
 
 	// A second undo finds nothing to restore.
@@ -115,4 +115,37 @@ func TestSoftDelete_RestoreReadGate(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, restoreAs("carol", "TKT-001").Code, "a reader may restore")
 	assert.Equal(t, http.StatusNoContent, restoreAs("alice", "TKT-002").Code,
 		"the deleter may restore without the read grant")
+}
+
+// TestDelete_FacedEntityByFace pins the delete rule for a type that declares
+// faces: a bare id is refused with `face_required` and deletes nothing,
+// `ID@face` removes that face only, and the last face takes the entity.
+func TestDelete_FacedEntityByFace(t *testing.T) {
+	app := facedTicketApp(t)
+	seedDeclaredFaceTicket(context.Background(), t, app)
+	// serveAs skips the world middleware, so the world rides on ctx.
+	alice := withWorld(softDeleteUser("alice"), worldHandle{name: "published", scope: store.NewWorldScope(
+		map[string]store.TypeResolution{"ticket": {Chain: []entity.Face{"published", "draft"}}})})
+	faces := func() []entity.Face {
+		var out []entity.Face
+		for e, err := range app.store.ListEntities(context.Background(),
+			store.EntityQuery{IDs: []string{"TKT-1"}, Faces: store.AllFaces()}) {
+			require.NoError(t, err)
+			out = append(out, e.Face)
+		}
+		return out
+	}
+
+	rec := serveAs(alice, app, http.MethodDelete, "/api/v1/tickets/TKT-1")
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "face_required")
+	assert.ElementsMatch(t, []entity.Face{"draft", "published"}, faces(), "a refused delete removes nothing")
+
+	rec = serveAs(alice, app, http.MethodDelete, "/api/v1/tickets/TKT-1@draft")
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Equal(t, []entity.Face{"published"}, faces())
+
+	rec = serveAs(alice, app, http.MethodDelete, "/api/v1/tickets/TKT-1@published")
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Empty(t, faces(), "the last face takes the entity")
 }

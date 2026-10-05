@@ -205,7 +205,7 @@ func TestCalDAV_ClientCreateGetsAnAlias(t *testing.T) {
 	}
 
 	// The entity really exists, with the configured default applied.
-	e, err := app.Services().Store.GetEntity(t.Context(), alias.EntityID)
+	e, err := app.Services().Store.GetEntity(t.Context(), entity.Ref{ID: alias.EntityID})
 	if err != nil {
 		t.Fatalf("created entity is missing: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestCalDAV_CompletionWriteBackPreservesUnmappedProperties(t *testing.T) {
 		t.Fatalf("PUT = %d\n%s", rec.Code, rec.Body.String())
 	}
 
-	e, err := app.Services().Store.GetEntity(t.Context(), "TSK-1")
+	e, err := app.Services().Store.GetEntity(t.Context(), entity.Ref{ID: "TSK-1"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestCalDAV_DeleteAppliesStatusTransition(t *testing.T) {
 		t.Fatalf("DELETE = %d\n%s", rec.Code, rec.Body.String())
 	}
 
-	e, err := app.Services().Store.GetEntity(t.Context(), "TSK-1")
+	e, err := app.Services().Store.GetEntity(t.Context(), entity.Ref{ID: "TSK-1"})
 	if err != nil {
 		t.Fatalf("the entity was destroyed by a client delete: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestCalDAV_AppleFixtureDoesNotEraseNotes(t *testing.T) {
 		t.Fatalf("PUT = %d\n%s", rec.Code, rec.Body.String())
 	}
 
-	e, err := app.Services().Store.GetEntity(t.Context(), "TSK-1")
+	e, err := app.Services().Store.GetEntity(t.Context(), entity.Ref{ID: "TSK-1"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestCalDAV_IfMatchRejectsStale(t *testing.T) {
 		t.Errorf("If-Match with a stale etag = %d, want 412", rec.Code)
 	}
 	// And the write must not have landed.
-	e, _ := app.Services().Store.GetEntity(t.Context(), "TSK-1")
+	e, _ := app.Services().Store.GetEntity(t.Context(), entity.Ref{ID: "TSK-1"})
 	if e.GetString("title") != "Buy milk" {
 		t.Errorf("a rejected conditional write still modified the entity: %q", e.GetString("title"))
 	}
@@ -435,7 +435,7 @@ func TestCalDAV_HardDeleteActuallyDeletes(t *testing.T) {
 	if rec.Code >= 400 {
 		t.Fatalf("DELETE = %d\n%s", rec.Code, rec.Body.String())
 	}
-	if _, err := app.Services().Store.GetEntity(t.Context(), "TSK-1"); err == nil {
+	if _, err := app.Services().Store.GetEntity(t.Context(), entity.Ref{ID: "TSK-1"}); err == nil {
 		t.Error("hard delete did not remove the entity")
 	}
 }
@@ -604,7 +604,7 @@ func TestCalDAV_EncodedHrefResolves(t *testing.T) {
 		t.Fatalf("PUT to a percent-encoded href = %d\n%s", rec.Code, rec.Body.String())
 	}
 
-	e, err := app.Services().Store.GetEntity(t.Context(), "TSK-1")
+	e, err := app.Services().Store.GetEntity(t.Context(), entity.Ref{ID: "TSK-1"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -1689,7 +1689,7 @@ func TestDynamicCollections_FailedLinkRemovesTheOrphan(t *testing.T) {
 func countStoredEntities(t *testing.T, app *App, typ string) int {
 	t.Helper()
 	n := 0
-	for e, err := range app.Services().Store.ListEntities(t.Context(), store.EntityQuery{Type: typ}) {
+	for e, err := range app.Services().Store.ListEntities(t.Context(), store.EntityQuery{Type: typ, Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)
 		}
@@ -1763,7 +1763,7 @@ func TestDynamicCollections_FailedAssignNeverDeletesAnExistingEntity(t *testing.
 
 	// THE ASSERTION: the pre-existing entity must still be there. Before the
 	// fix it was deleted by the compensating delete.
-	if _, gErr := app.store.GetEntity(t.Context(), "TSK-A"); gErr != nil {
+	if _, gErr := app.store.GetEntity(t.Context(), entity.Ref{ID: "TSK-A"}); gErr != nil {
 		t.Fatalf("a failed collection assignment DELETED the pre-existing to-do: %v", gErr)
 	}
 }
@@ -1790,7 +1790,7 @@ func TestDynamicCollections_FailedCreateStillCompensates(t *testing.T) {
 
 	// No orphan left behind in the entity type.
 	var orphans int
-	for e, eErr := range app.store.ListEntities(t.Context(), store.EntityQuery{Type: "task"}) {
+	for e, eErr := range app.store.ListEntities(t.Context(), store.EntityQuery{Type: "task", Faces: store.InWorld(store.TrivialScope())}) {
 		if eErr != nil {
 			t.Fatalf("ListEntities: %v", eErr)
 		}
@@ -1841,7 +1841,7 @@ func TestDynamicCollections_DeleteRemovesMembershipNotEntity(t *testing.T) {
 	if len(kept) != 1 {
 		t.Fatalf("removing one membership destroyed the other (%d members in PRJ-2)", len(kept))
 	}
-	e, err := app.Services().Store.GetEntity(t.Context(), "TSK-A")
+	e, err := app.Services().Store.GetEntity(t.Context(), entity.Ref{ID: "TSK-A"})
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -1880,7 +1880,7 @@ func TestDynamicCollections_LastMembershipFollowsCardinality(t *testing.T) {
 				b.calendarPath("project_tasks--PRJ-1")+"task--TSK-A@rela.ics"); err != nil {
 				t.Fatalf("DeleteCalendarObject: %v", err)
 			}
-			e, err := app.Services().Store.GetEntity(t.Context(), "TSK-A")
+			e, err := app.Services().Store.GetEntity(t.Context(), entity.Ref{ID: "TSK-A"})
 			if err != nil {
 				t.Fatalf("GetEntity: %v", err)
 			}

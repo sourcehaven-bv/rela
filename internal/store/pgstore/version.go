@@ -242,20 +242,13 @@ func lineageWhere() string {
 		         AND (lin.hi IS NULL OR ev.vseq < lin.hi)`
 }
 
-// ListVersions implements store.HistoryReader.
-func (v *VersionStore) ListVersions(ctx context.Context, id string) ([]store.VersionMeta, error) {
-	return v.ListStateVersions(ctx, id, "")
-}
-
-// ListStateVersions implements store.StateHistoryReader: the same fenced
-// lineage walk, for one face. The zero face is the default face, which is
-// what makes ListVersions a delegation rather than a second query.
-func (v *VersionStore) ListStateVersions(
-	ctx context.Context, id string, p entity.Face,
-) ([]store.VersionMeta, error) {
+// ListVersions implements store.HistoryReader: the fenced lineage walk of
+// one face. Ref{ID: id} is the implicit face of a faceless type.
+func (v *VersionStore) ListVersions(ctx context.Context, ref entity.Ref) ([]store.VersionMeta, error) {
+	id, p := ref.ID, ref.Face
 	sel := lineageCTE + `
 		SELECT DISTINCT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
-		       ev.principal_user, ev.principal_tool, ev.triggered_by,
+		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.face,
 		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
 		       ev.origin_source_type, ev.origin_definition,
 		       ev.created_at
@@ -286,29 +279,22 @@ func (v *VersionStore) ListStateVersions(
 }
 
 // GetVersion implements store.HistoryReader. version is a 1-based ordinal over
-// the fenced lineage ordered by vseq. NOTE: the ordinal is only meaningful
-// relative to a ListVersions read taken at the same time — the lineage is
-// append-only, so an ordinal a caller already holds stays valid, but callers
-// should treat it as a cursor into a specific ListVersions result.
+// the face's fenced lineage ordered by vseq, so version 1 of draft and
+// version 1 of published are different snapshots. NOTE: the ordinal is only
+// meaningful relative to a ListVersions read taken at the same time — the
+// lineage is append-only, so an ordinal a caller already holds stays valid,
+// but callers should treat it as a cursor into a specific ListVersions
+// result.
 func (v *VersionStore) GetVersion(
-	ctx context.Context, id string, version int,
+	ctx context.Context, ref entity.Ref, version int,
 ) (*store.VersionSnapshot, error) {
-	return v.GetStateVersion(ctx, id, "", version)
-}
-
-// GetStateVersion implements store.StateHistoryReader. See GetVersion for the
-// ordinal's cursor semantics; they are unchanged, but the ordinal is over the
-// FACE's lineage, so version 1 of draft and version 1 of published are
-// different snapshots.
-func (v *VersionStore) GetStateVersion(
-	ctx context.Context, id string, p entity.Face, version int,
-) (*store.VersionSnapshot, error) {
+	id, p := ref.ID, ref.Face
 	if version < 1 {
 		return nil, store.ErrNotFound
 	}
 	sel := lineageCTE + `
 		SELECT ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
-		       ev.principal_user, ev.principal_tool, ev.triggered_by,
+		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.face,
 		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
 		       ev.origin_source_type, ev.origin_definition,
 		       ev.created_at,
@@ -323,12 +309,13 @@ func (v *VersionStore) GetStateVersion(
 		snap  store.VersionSnapshot
 		op    string
 		prev  *string
+		face  string
 		props []byte
 		oc    originCols
 	)
-	scanArgs := make([]any, 0, 12+originColumnCount)
+	scanArgs := make([]any, 0, 13+originColumnCount)
 	scanArgs = append(scanArgs, &op, &prev, &snap.Type, &snap.ContentHash, &snap.SchemaHash,
-		&snap.PrincipalUser, &snap.PrincipalTool, &snap.TriggeredBy)
+		&snap.PrincipalUser, &snap.PrincipalTool, &snap.TriggeredBy, &face)
 	scanArgs = append(scanArgs, oc.scanTargets()...)
 	scanArgs = append(scanArgs, &snap.CreatedAt, &snap.Content, &props, &snap.Projection)
 	err := row.Scan(scanArgs...)
@@ -339,6 +326,7 @@ func (v *VersionStore) GetStateVersion(
 		return nil, err
 	}
 	snap.Version = version
+	snap.Face = entity.Face(face)
 	snap.Op = store.VersionOp(op)
 	snap.Origin = scanOrigin(oc)
 	if prev != nil {
@@ -359,18 +347,20 @@ func scanVersionMeta(row scanner) (store.VersionMeta, error) {
 		vseq    int64
 		op      string
 		prev    *string
+		face    string
 		oc      originCols
 		created time.Time
 	)
-	scanArgs := make([]any, 0, 10+originColumnCount)
+	scanArgs := make([]any, 0, 11+originColumnCount)
 	scanArgs = append(scanArgs, &vseq, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
-		&m.PrincipalUser, &m.PrincipalTool, &m.TriggeredBy)
+		&m.PrincipalUser, &m.PrincipalTool, &m.TriggeredBy, &face)
 	scanArgs = append(scanArgs, oc.scanTargets()...)
 	scanArgs = append(scanArgs, &created)
 	if err := row.Scan(scanArgs...); err != nil {
 		return store.VersionMeta{}, err
 	}
 	m.Op = store.VersionOp(op)
+	m.Face = entity.Face(face)
 	m.Origin = scanOrigin(oc)
 	if prev != nil {
 		m.PrevID = *prev

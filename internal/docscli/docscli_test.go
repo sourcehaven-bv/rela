@@ -138,6 +138,27 @@ func TestBuild_ACLMalformed_FailsLoud(t *testing.T) {
 	}
 }
 
+// acl.yaml that the server would refuse (a bare write grant on a faced type)
+// fails the build: the docs loader validates like every other loader
+// (TKT-7IZHP0, G16).
+func TestBuild_ACLFacedWriteGrant_FailsLoud(t *testing.T) {
+	t.Parallel()
+	proj := newFakeProject(t)
+	def := proj.meta.Entities["risico"]
+	def.Faces = map[string]metamodel.FaceDef{"concept": {}}
+	proj.meta.Entities["risico"] = def
+	if err := os.WriteFile(filepath.Join(proj.Paths().Root, "acl.yaml"),
+		[]byte("roles:\n  editor:\n    read: [\"*\"]\n    update: [risico]\n"), 0o644); err != nil {
+		t.Fatalf("write acl.yaml: %v", err)
+	}
+	manual := writeManual(t, t.TempDir(), "# Manual\n")
+	cmd := &BuildCmd{Manual: manual, newCapturer: okCapturer}
+	err := cmd.Run(context.Background(), proj)
+	if err == nil || !strings.Contains(err.Error(), `"risico@concept"`) {
+		t.Fatalf("want the faced-grant load error, got %v", err)
+	}
+}
+
 // A screenshot{} manual with no browser available fails loud with the
 // actionable reason — the "no graceful degradation" contract. Deterministic:
 // the capturer seam forces the no-browser path regardless of the host.

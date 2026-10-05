@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -112,7 +113,7 @@ func putTaak(t *testing.T, st *memstore.MemStore, tk taak) {
 	}
 	e := &entity.Entity{ID: tk.id, Type: "taak", Properties: props}
 	ctx := context.Background()
-	if _, err := st.GetEntity(ctx, tk.id); err == nil {
+	if _, err := st.GetEntity(ctx, entity.Ref{ID: tk.id}); err == nil {
 		if err := st.UpdateEntity(ctx, e); err != nil {
 			t.Fatalf("UpdateEntity: %v", err)
 		}
@@ -205,7 +206,7 @@ func TestLoad_MissingFileAndEmpty(t *testing.T) {
 			if len(cfg.RuleIDs()) != 0 || cfg.HasBadge() {
 				t.Fatalf("want no rules and no badge, got %v badge=%v", cfg.RuleIDs(), cfg.HasBadge())
 			}
-			res, err := cfg.Evaluate(context.Background(), newStore(t, taak{"TAAK-1", "a", "open", ""}))
+			res, err := cfg.Evaluate(context.Background(), newStore(t, taak{"TAAK-1", "a", "open", ""}), store.TrivialScope())
 			if err != nil {
 				t.Fatalf("Evaluate: %v", err)
 			}
@@ -231,7 +232,7 @@ func TestLoad_ReadErrorAndNilArgs(t *testing.T) {
 		t.Fatal("nil metamodel accepted")
 	}
 	cfg := load(t, "")
-	if _, err := cfg.Evaluate(ctx, nil); err == nil {
+	if _, err := cfg.Evaluate(ctx, nil, store.TrivialScope()); err == nil {
 		t.Fatal("nil reader accepted")
 	}
 	if _, err := NewTracker(nil); err == nil {
@@ -276,7 +277,7 @@ func TestEvaluate_MatchesAndBadge(t *testing.T) {
 		t.Fatalf("CreateEntity: %v", err)
 	}
 
-	res, err := cfg.Evaluate(context.Background(), st)
+	res, err := cfg.Evaluate(context.Background(), st, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -305,7 +306,7 @@ func TestEvaluate_EvalErrorIsNoMatch(t *testing.T) {
 	t.Parallel()
 	cfg := load(t, "notifications:\n  - id: a\n    type: taak\n    condition: \"entity.vervaldatum <= today()\"\n")
 	st := newStore(t, taak{"TAAK-1", "bad date", "open", "not-a-date"})
-	res, err := cfg.Evaluate(context.Background(), st)
+	res, err := cfg.Evaluate(context.Background(), st, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -440,7 +441,7 @@ notifications:
 		if step.cfg != nil {
 			c = step.cfg
 		}
-		res, err := c.Evaluate(ctx, st)
+		res, err := c.Evaluate(ctx, st, store.TrivialScope())
 		if err != nil {
 			t.Fatalf("%s: Evaluate: %v", step.name, err)
 		}

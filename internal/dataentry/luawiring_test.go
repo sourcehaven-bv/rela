@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // TKT-ZF2DTV: the WIRING is the security control. internal/lua's tests
@@ -125,8 +126,8 @@ func TestLuaWiring_NoRawReadHandleOnWriterDeps(t *testing.T) {
 	if deps.VisibleReader == nil {
 		t.Fatal("VisibleReader is nil — script reads would deny outright")
 	}
-	if deps.VisibleReader == lua.EntityReader(app.store) {
-		t.Error("VisibleReader IS the raw store under a configured policy — " +
+	if _, ungated := deps.VisibleReader.(*visibility.UnrestrictedReader); ungated {
+		t.Error("VisibleReader is the ungated reader under a configured policy — " +
 			"script reads are not ACL-bound")
 	}
 	// The elevated (raw) read path must stay opt-in: absent unless the

@@ -193,6 +193,10 @@ type Policy struct {
 	// entity type under a role. See [RelationWriteGrant].
 	RelationWriteGrants map[string]RelationWriteGrant `yaml:"relation_grants"`
 
+	// defaultWorld is the schema's effective default_world, recorded by
+	// [Policy.ValidateAgainstMetamodel]. See [Policy.DefaultWorld].
+	defaultWorld string
+
 	// UnmatchedPrincipal decides what happens when a verified principal's
 	// identifier resolves to no [Policy.UserEntityType] entity (the
 	// principal_property lookup found no match). It governs the data-entry
@@ -423,9 +427,20 @@ type RoleDef struct {
 	// phase 1b, TKT-JO2SAD).
 	Description string `yaml:"description,omitempty"`
 
-	Create      []string `yaml:"create"`
-	Update      []string `yaml:"update"`
-	Delete      []string `yaml:"delete"`
+	Create []string `yaml:"create"`
+	Update []string `yaml:"update"`
+	Delete []string `yaml:"delete"`
+
+	// Rename lists the types whose WHOLE FAMILY this role may rename. A
+	// rename re-keys every face of an entity, including faces the caller
+	// cannot read, so a faced type is renamed only through this list and
+	// never through a face-named `update:` grant: deciding from the faces
+	// the entity happens to store would make the answer disclose the
+	// hidden ones. Entries are bare types or "*"; a `type@face` entry is a
+	// load error, because a face names less than the operation moves. A
+	// faceless type is also renamed through its `update:` grant.
+	Rename []string `yaml:"rename"`
+
 	Read        []string `yaml:"read"`
 	Permissions []string `yaml:"permissions"`
 
@@ -459,7 +474,7 @@ type RoleDef struct {
 }
 
 // IsPrivileged reports whether the role confers escalation-relevant
-// power: it grants any write verb (Create/Update/Delete, including the
+// power: it grants any write verb (Create/Update/Delete/Rename, including the
 // "*" wildcard) or holds any permission.
 //
 // Read grants are NOT privilege — a read-everything role is a
@@ -467,7 +482,8 @@ type RoleDef struct {
 // Exported so the aclaudit linter shares this definition rather than
 // keeping its own copy; its A2/A3 checks reference the same notion.
 func (r RoleDef) IsPrivileged() bool {
-	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Permissions) > 0
+	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Rename) > 0 ||
+		len(r.Permissions) > 0
 }
 
 // grantsVerb reports whether the role may perform op on entity type
@@ -1338,7 +1354,7 @@ func validateVerbReadCoverage(name string, role RoleDef) error {
 	for _, verb := range []struct {
 		name  string
 		types []string
-	}{{"update", role.Update}, {"delete", role.Delete}} {
+	}{{"update", role.Update}, {"delete", role.Delete}, {"rename", role.Rename}} {
 		for _, t := range verb.types {
 			// Compare on the TYPE half. A state-shaped grant
 			// (`update: ["policy@draft"]`) still requires read coverage of
@@ -1414,8 +1430,17 @@ type MetamodelView interface {
 	// PropertyInfo describes property on entityType (existence, unique,
 	// list). A missing type or property yields PropertyInfo{Exists:false}.
 	PropertyInfo(entityType, property string) PropertyInfo
-	// HasRelationType reports whether relationType is declared.
-	HasRelationType(relationType string) bool
+	// FaceNames returns the canonical name of entityType (resolving
+	// aliases) and the faces it declares, in declaration order. A
+	// faceless or undeclared type yields no faces.
+	FaceNames(entityType string) (canonical string, faces []string)
+	// DefaultWorld returns the schema's effective default_world: the
+	// declared one, else the first declared world, else the generated
+	// [DefaultWorldName].
+	DefaultWorld() string
+	// RelationInfo describes relationType. An undeclared type yields
+	// RelationInfo{Exists:false}.
+	RelationInfo(relationType string) RelationInfo
 }
 
 // ValidateAgainstMetamodel enforces the schema-dependent invariants that
@@ -1444,6 +1469,13 @@ type MetamodelView interface {
 //
 // user_entity_type set WITHOUT principal_property is NOT an error — it is
 // meaningful on its own (the type a membership edge originates from).
+//
+// Then, collected and reported together (TKT-7IZHP0):
+//
+//   - a write grant naming a faced type without a face (see
+//     Policy.validateFacedWriteGrants);
+//   - a faced user, member or group type, or a content-scoped relation the
+//     ACL walks for roles (see Policy.validateIdentityStructure).
 func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 	if meta == nil {
 		return errors.New("acl: ValidateAgainstMetamodel: metamodel view must be non-nil")
@@ -1476,6 +1508,15 @@ func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 	if err := p.validateRelationTypesDeclared(meta); err != nil {
 		return err
 	}
+	p.defaultWorld = meta.DefaultWorld()
+	if err := p.validateDefaultWorldNotDenied(); err != nil {
+		return err
+	}
+	errs, refused := p.validateIdentityStructure(meta)
+	errs = append(errs, p.validateFacedWriteGrants(meta, refused)...)
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
 	return p.validateProvisionerGrant(userType)
 }
 
@@ -1487,7 +1528,7 @@ func (p *Policy) ValidateAgainstMetamodel(meta MetamodelView) error {
 // ever surface it.
 func (p *Policy) validateRelationTypesDeclared(meta MetamodelView) error {
 	for _, relType := range slices.Sorted(maps.Keys(p.RelationWriteGrants)) {
-		if !meta.HasRelationType(relType) {
+		if !meta.RelationInfo(relType).Exists {
 			return fmt.Errorf(
 				"acl: relation_grants.%s is not a declared relation type", relType)
 		}
@@ -1543,4 +1584,40 @@ func isBlank(s string) bool {
 		}
 	}
 	return true
+}
+
+// DefaultWorld returns the world a request reads when it names none: the
+// schema's effective default_world. Every read grant covers it, and a client
+// ceiling cannot deny it. Before [Policy.ValidateAgainstMetamodel] has run it
+// is [DefaultWorldName], the name rela generates when no worlds are declared.
+func (p *Policy) DefaultWorld() string {
+	if p.defaultWorld == "" {
+		return DefaultWorldName
+	}
+	return p.defaultWorld
+}
+
+// validateDefaultWorldNotDenied rejects a ceiling whose deny_worlds names the
+// default world. Surfaces that do not take a world read in it, so denying it
+// would deny every read there; the denial must name types instead.
+func (p *Policy) validateDefaultWorldNotDenied() error {
+	name := p.DefaultWorld()
+	check := func(kind, key string, r Restriction) error {
+		if slices.Contains(r.DenyWorlds, name) {
+			return fmt.Errorf("acl: %s %q: deny_worlds names %q, the default world; "+
+				"that denies every read. Remove it, or deny the types instead", kind, key, name)
+		}
+		return nil
+	}
+	for _, key := range slices.Sorted(maps.Keys(p.ClientBaselines)) {
+		if err := check("client_baselines", key, p.ClientBaselines[key].Restriction); err != nil {
+			return err
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(p.ScopeGrants)) {
+		if err := check("scope_grants", key, p.ScopeGrants[key].Restriction); err != nil {
+			return err
+		}
+	}
+	return nil
 }

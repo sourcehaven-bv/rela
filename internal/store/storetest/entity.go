@@ -21,7 +21,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		err := s.CreateEntity(ctx(), e)
 		require.NoError(t, err)
 
-		got, err := s.GetEntity(ctx(), "FEAT-001")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
 		require.NoError(t, err)
 		assert.Equal(t, e.ID, got.ID)
 		assert.Equal(t, e.Type, got.Type)
@@ -36,7 +36,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		e := entity.New("FEAT-001", "feature")
 		e.SetString("title", "first")
 		require.NoError(t, s.CreateEntity(ctx(), e))
-		before, err := s.GetEntity(ctx(), "FEAT-001")
+		before, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
 		require.NoError(t, err)
 
 		time.Sleep(20 * time.Millisecond)
@@ -44,7 +44,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		next.SetString("title", "second")
 		require.NoError(t, s.UpdateEntity(ctx(), next))
 
-		after, err := s.GetEntity(ctx(), "FEAT-001")
+		after, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
 		require.NoError(t, err)
 		require.True(t, after.UpdatedAt.After(before.UpdatedAt),
 			"UpdatedAt did not move: before=%s after=%s", before.UpdatedAt, after.UpdatedAt)
@@ -52,7 +52,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 
 	t.Run("GetNotFound", func(t *testing.T) {
 		s := f(t)
-		_, err := s.GetEntity(ctx(), "NOPE")
+		_, err := s.GetEntity(ctx(), entity.Ref{ID: "NOPE"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
@@ -74,7 +74,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 
 		require.NoError(t, s.CreateEntity(ctx(), e))
 
-		got, err := s.GetEntity(ctx(), "FEAT-002")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-002"})
 		require.NoError(t, err)
 		assert.Empty(t, got.Redacted, "Redacted is a read-out artifact and must not round-trip")
 	})
@@ -94,10 +94,10 @@ func RunEntityTests(t *testing.T, f Factory) {
 		e.SetString("title", "Original")
 		require.NoError(t, s.CreateEntity(ctx(), e))
 
-		got, _ := s.GetEntity(ctx(), "T-1")
+		got, _ := s.GetEntity(ctx(), entity.Ref{ID: "T-1"})
 		got.SetString("title", "Mutated")
 
-		got2, _ := s.GetEntity(ctx(), "T-1")
+		got2, _ := s.GetEntity(ctx(), entity.Ref{ID: "T-1"})
 		assert.Equal(t, "Original", got2.GetString("title"))
 	})
 
@@ -109,7 +109,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 
 		e.SetString("title", "After")
 
-		got, _ := s.GetEntity(ctx(), "T-1")
+		got, _ := s.GetEntity(ctx(), entity.Ref{ID: "T-1"})
 		assert.Equal(t, "Before", got.GetString("title"))
 	})
 
@@ -124,7 +124,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		err := s.UpdateEntity(ctx(), updated)
 		require.NoError(t, err)
 
-		got, _ := s.GetEntity(ctx(), "T-1")
+		got, _ := s.GetEntity(ctx(), entity.Ref{ID: "T-1"})
 		assert.Equal(t, "v2", got.GetString("title"))
 	})
 
@@ -149,14 +149,14 @@ func RunEntityTests(t *testing.T, f Factory) {
 		moved.SetString("title", "v1")
 		require.NoError(t, s.UpdateEntity(ctx(), moved))
 
-		got, err := s.GetEntity(ctx(), "T-1")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "T-1"})
 		require.NoError(t, err)
 		assert.Equal(t, "issue", got.Type)
 
-		oldCount, err := s.CountEntities(ctx(), store.EntityQuery{Type: "ticket"})
+		oldCount, err := s.CountEntities(ctx(), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 0, oldCount, "old type still lists the entity")
-		newCount, err := s.CountEntities(ctx(), store.EntityQuery{Type: "issue"})
+		newCount, err := s.CountEntities(ctx(), store.EntityQuery{Type: "issue", Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 1, newCount, "new type does not list the entity")
 	})
@@ -167,18 +167,18 @@ func RunEntityTests(t *testing.T, f Factory) {
 		e.SetString("title", "Bye")
 		require.NoError(t, s.CreateEntity(ctx(), e))
 
-		result, err := s.DeleteEntity(ctx(), "T-1", false)
+		result, err := s.DeleteFamily(ctx(), "T-1", false)
 		require.NoError(t, err)
 		require.Len(t, result.DeletedEntities, 1)
 		assert.Equal(t, "T-1", result.DeletedEntities[0].ID)
 
-		_, err = s.GetEntity(ctx(), "T-1")
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "T-1"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
 	t.Run("DeleteNotFound", func(t *testing.T) {
 		s := f(t)
-		_, err := s.DeleteEntity(ctx(), "NOPE", false)
+		_, err := s.DeleteFamily(ctx(), "NOPE", false)
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
@@ -186,10 +186,10 @@ func RunEntityTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
-		_, err := s.CreateRelation(ctx(), "A", "requires", "B", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"}, nil)
 		require.NoError(t, err)
 
-		result, err := s.DeleteEntity(ctx(), "A", true)
+		result, err := s.DeleteFamily(ctx(), "A", true)
 		require.NoError(t, err)
 		assert.Len(t, result.DeletedRelations, 1)
 		assert.Equal(t, "requires", result.DeletedRelations[0].Type)
@@ -199,15 +199,15 @@ func RunEntityTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
-		_, err := s.CreateRelation(ctx(), "A", "requires", "B", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"}, nil)
 		require.NoError(t, err)
 
-		result, err := s.DeleteEntity(ctx(), "B", true)
+		result, err := s.DeleteFamily(ctx(), "B", true)
 		require.NoError(t, err)
 		assert.Len(t, result.DeletedRelations, 1)
 		assert.Equal(t, "requires", result.DeletedRelations[0].Type)
 
-		_, err = s.GetRelation(ctx(), "A", "requires", "B")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
@@ -215,13 +215,13 @@ func RunEntityTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
-		_, err := s.CreateRelation(ctx(), "A", "requires", "B", nil)
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"}, nil)
 		require.NoError(t, err)
 
-		_, err = s.DeleteEntity(ctx(), "A", false)
+		_, err = s.DeleteFamily(ctx(), "A", false)
 		assert.ErrorIs(t, err, store.ErrHasRelations)
 
-		_, err = s.GetEntity(ctx(), "A")
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "A"})
 		assert.NoError(t, err)
 	})
 
@@ -231,14 +231,14 @@ func RunEntityTests(t *testing.T, f Factory) {
 		e.SetString("title", "Keep me")
 		require.NoError(t, s.CreateEntity(ctx(), e))
 
-		result, err := s.RenameEntity(ctx(), "OLD-1", "NEW-1")
+		result, err := s.RenameFamily(ctx(), "OLD-1", "NEW-1")
 		require.NoError(t, err)
 		assert.Equal(t, 0, result.RelationsUpdated)
 
-		_, err = s.GetEntity(ctx(), "OLD-1")
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "OLD-1"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 
-		got, err := s.GetEntity(ctx(), "NEW-1")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "NEW-1"})
 		require.NoError(t, err)
 		assert.Equal(t, "Keep me", got.GetString("title"))
 	})
@@ -248,30 +248,30 @@ func RunEntityTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "req")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "req")))
-		s.CreateRelation(ctx(), "A", "requires", "B", nil)
-		s.CreateRelation(ctx(), "C", "blocks", "A", nil)
+		s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"}, nil)
+		s.CreateRelation(ctx(), entity.RelationKey{From: "C", Type: "blocks", To: "A"}, nil)
 
-		result, err := s.RenameEntity(ctx(), "A", "A2")
+		result, err := s.RenameFamily(ctx(), "A", "A2")
 		require.NoError(t, err)
 		assert.Equal(t, 2, result.RelationsUpdated)
 
-		_, err = s.GetRelation(ctx(), "A", "requires", "B")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "A", Type: "requires", To: "B"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
-		_, err = s.GetRelation(ctx(), "C", "blocks", "A")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "C", Type: "blocks", To: "A"})
 		assert.ErrorIs(t, err, store.ErrNotFound)
 
-		r1, err := s.GetRelation(ctx(), "A2", "requires", "B")
+		r1, err := s.GetRelation(ctx(), entity.RelationKey{From: "A2", Type: "requires", To: "B"})
 		require.NoError(t, err)
 		assert.Equal(t, "A2", r1.From)
 
-		r2, err := s.GetRelation(ctx(), "C", "blocks", "A2")
+		r2, err := s.GetRelation(ctx(), entity.RelationKey{From: "C", Type: "blocks", To: "A2"})
 		require.NoError(t, err)
 		assert.Equal(t, "A2", r2.To)
 	})
 
 	t.Run("RenameNotFound", func(t *testing.T) {
 		s := f(t)
-		_, err := s.RenameEntity(ctx(), "NOPE", "NEW")
+		_, err := s.RenameFamily(ctx(), "NOPE", "NEW")
 		assert.ErrorIs(t, err, store.ErrNotFound)
 	})
 
@@ -280,7 +280,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "feature")))
 
-		_, err := s.RenameEntity(ctx(), "A", "B")
+		_, err := s.RenameFamily(ctx(), "A", "B")
 		assert.ErrorIs(t, err, store.ErrConflict)
 	})
 
@@ -288,7 +288,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		s := f(t)
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "feature")))
 
-		_, err := s.RenameEntity(ctx(), "A", "B--C")
+		_, err := s.RenameFamily(ctx(), "A", "B--C")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "consecutive dashes")
 	})
@@ -307,7 +307,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		}
 
 		var ids []string
-		for e, err := range s.ListEntities(ctx(), store.EntityQuery{}) {
+		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
 		}
@@ -321,7 +321,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "t")))
 
 		var ids []string
-		for e, err := range s.ListEntities(ctx(), store.EntityQuery{}) {
+		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			ids = append(ids, e.ID)
 			if len(ids) == 1 {
@@ -337,11 +337,11 @@ func RunEntityTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "feature")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "req")))
 
-		n, err := s.CountEntities(ctx(), store.EntityQuery{IDs: []string{"A", "C"}})
+		n, err := s.CountEntities(ctx(), store.EntityQuery{IDs: []string{"A", "C"}, Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 2, n)
 
-		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "feature", IDs: []string{"A", "C"}})
+		n, err = s.CountEntities(ctx(), store.EntityQuery{Type: "feature", IDs: []string{"A", "C"}, Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 1, n)
 	})
@@ -351,13 +351,13 @@ func RunEntityTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("A", "t")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("B", "t")))
 		require.NoError(t, s.CreateEntity(ctx(), entity.New("C", "t")))
-		s.CreateRelation(ctx(), "B", "links", "C", nil)
+		s.CreateRelation(ctx(), entity.RelationKey{From: "B", Type: "links", To: "C"}, nil)
 
-		result, err := s.RenameEntity(ctx(), "A", "A2")
+		result, err := s.RenameFamily(ctx(), "A", "A2")
 		require.NoError(t, err)
 		assert.Equal(t, 0, result.RelationsUpdated)
 
-		r, err := s.GetRelation(ctx(), "B", "links", "C")
+		r, err := s.GetRelation(ctx(), entity.RelationKey{From: "B", Type: "links", To: "C"})
 		require.NoError(t, err)
 		assert.Equal(t, "B", r.From)
 	})
@@ -369,7 +369,7 @@ func RunEntityTests(t *testing.T, f Factory) {
 		events, cancel := s.Subscribe(10)
 		defer cancel()
 
-		_, err := s.RenameEntity(ctx(), "A", "B")
+		_, err := s.RenameFamily(ctx(), "A", "B")
 		require.NoError(t, err)
 
 		ev := <-events

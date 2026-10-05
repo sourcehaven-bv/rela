@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -41,7 +43,7 @@ func TestReadEntityFile_FilenameWinsOverFrontmatter(t *testing.T) {
 	require.NoError(t, err)
 	defer s.Close()
 
-	e, err := s.GetEntity(context.Background(), "POL-001")
+	e, err := s.GetEntity(context.Background(), entity.Ref{ID: "POL-001"})
 	require.NoError(t, err, "the entity must be reachable by its FILENAME id")
 	require.Equal(t, "POL-001", e.ID, "frontmatter must not override the filename")
 	require.Equal(t, "policy", e.Type, "the directory is authoritative for type")

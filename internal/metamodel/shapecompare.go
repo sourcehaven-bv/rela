@@ -105,7 +105,7 @@ func CompareShapes(from, to ShapeProjection) ShapeReport {
 	var r ShapeReport
 
 	compareEntityShapes(&r, from.Entities, to.Entities)
-	compareRelationShapes(&r, from.Relations, to.Relations)
+	compareRelationShapes(&r, from.Relations, to.Relations, from.RelationScopes && to.RelationScopes)
 	compareNamedTypes(&r, from.Types, to.Types)
 
 	return r
@@ -229,7 +229,7 @@ func compareFaces(r *ShapeReport, typeName string, from, to EntityShape) {
 	}
 }
 
-func compareRelationShapes(r *ShapeReport, from, to map[string]RelationShape) {
+func compareRelationShapes(r *ShapeReport, from, to map[string]RelationShape, scopes bool) {
 	for _, name := range sortedKeys(from) {
 		if _, ok := to[name]; !ok {
 			r.add(TierDrift, "relation_type_removed", "rel:"+name,
@@ -278,8 +278,29 @@ func compareRelationShapes(r *ShapeReport, from, to map[string]RelationShape) {
 		} else if !fromRel.Content && toRel.Content {
 			r.add(TierAdditive, "relation_content_added", subject, fmt.Sprintf("relation %q now supports body content", name))
 		}
+		if scopes {
+			compareRelationScope(r, subject, name, fromRel.Scope, toRel.Scope)
+		}
 
 		compareProperties(r, name, fromRel.Properties, toRel.Properties, func(s string) string { return "rel:" + s })
+	}
+}
+
+// compareRelationScope reports a content/identity scope change as drift.
+// It is not TierMigration because no declarative step rewrites relation
+// tails, so demanding a migration would leave the store unable to adopt the
+// schema at all. Edges keep the tail they were filed under, which the new
+// scope does not expect, and the operator is told.
+func compareRelationScope(r *ShapeReport, subject, name string, from, to RelationScope) {
+	switch {
+	case from.IsContent() && to.IsIdentity():
+		r.add(TierDrift, "relation_scope_changed", subject, fmt.Sprintf(
+			"relation %q scope changed content → identity: edges filed on a face keep that tail, "+
+				"which identity-scoped reads do not expect", name))
+	case from.IsIdentity() && to.IsContent():
+		r.add(TierDrift, "relation_scope_changed", subject, fmt.Sprintf(
+			"relation %q scope changed identity → content: existing edges stay on the entity "+
+				"(zero tail) and hang from no face", name))
 	}
 }
 

@@ -80,7 +80,7 @@ end
 // TestCreateRelation_FaceMustMatchScope in internal/entitymanager.
 func TestCreateRelation_FaceReachesTheManager(t *testing.T) {
 	mgr, err := runScript(t, `
-rela.create_entity("ticket", {title = "A"}, "", "TICK-1")
+rela.create_entity("ticket", {title = "A"}, "", "TICK-1", { face = "draft" })
 rela.create_entity("ticket", {title = "B"}, "", "TICK-2")
 rela.create_relation("TICK-1", "blocks", "TICK-2", { face = "draft" })
 `)
@@ -199,7 +199,7 @@ func TestWriteOpts_AbsentAndNilMeanNoFace(t *testing.T) {
 // cross-world dangling references inexpressible.
 func TestRelationTable_CarriesFromFace(t *testing.T) {
 	_, err := runScript(t, `
-rela.create_entity("ticket", {title = "A"}, "", "TICK-1")
+rela.create_entity("ticket", {title = "A"}, "", "TICK-1", { face = "draft" })
 rela.create_entity("ticket", {title = "B"}, "", "TICK-2")
 local rel = rela.create_relation("TICK-1", "blocks", "TICK-2", { face = "draft" })
 if rel.from_face ~= "draft" then
@@ -236,7 +236,7 @@ end
 // TestElevatedCreateRelation_TakesAFace is AC 7's elevated half, and the
 // reason RR-3NNWNK made the manager check a prerequisite: authorizeAndAudit
 // returns early under bypassACL, so on this path the manager check is the
-// ONLY thing between a Lua string and store.RelationData.FromFace. The
+// ONLY thing between a Lua string and the stored edge's tail. The
 // binding must reach it, and it must reject there.
 //
 // Asserts at the manager boundary rather than on a returned table:
@@ -292,5 +292,116 @@ end
 `)
 	if err != nil {
 		t.Fatalf("RunString: %v", err)
+	}
+}
+
+// rela.delete_entity takes an address: `ID@face` deletes that face
+// (BUG-J3PBFN), a bare id deletes a faceless entity, and a bare id of a faced
+// entity raises naming its faces and deletes nothing.
+func TestDeleteEntity_AddressReachesTheManager(t *testing.T) {
+	mgr, err := runScript(t, `
+rela.create_entity("ticket", {title = "T"}, "", "TICK-1", { face = "draft" })
+rela.delete_entity("TICK-1@draft")
+`)
+	if err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+	if mgr.faceDeleteCalls != 1 || mgr.deletedFace != "draft" || mgr.familyDeletes != 0 {
+		t.Errorf("face deletes = %d at %q, family deletes = %d; want one face delete at draft",
+			mgr.faceDeleteCalls, mgr.deletedFace, mgr.familyDeletes)
+	}
+
+	mgr, err = runScript(t, `
+rela.create_entity("ticket", {title = "T"}, "", "TICK-1")
+rela.delete_entity("TICK-1")
+`)
+	if err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+	if mgr.familyDeletes != 1 || mgr.faceDeleteCalls != 0 {
+		t.Errorf("family deletes = %d, face deletes = %d; want one family delete",
+			mgr.familyDeletes, mgr.faceDeleteCalls)
+	}
+
+	mgr, err = runScript(t, `
+rela.create_entity("ticket", {title = "T"}, "", "TICK-1", { face = "draft" })
+rela.delete_entity("TICK-1")
+`)
+	if err == nil || !strings.Contains(err.Error(), "TICK-1@draft") {
+		t.Fatalf("bare delete of a faced entity: err = %v, want one naming its faces", err)
+	}
+	if mgr.familyDeletes != 0 || mgr.faceDeleteCalls != 0 {
+		t.Errorf("family deletes = %d, face deletes = %d; a refused delete must reach no manager",
+			mgr.familyDeletes, mgr.faceDeleteCalls)
+	}
+}
+
+// rela.delete_relation's face option names the edge's tail; without it the
+// identity tail is meant (BUG-J3PBFN).
+func TestDeleteRelation_FaceReachesTheManager(t *testing.T) {
+	mgr, err := runScript(t, `
+rela.create_entity("ticket", {title = "A"}, "", "TICK-1", { face = "draft" })
+rela.create_entity("ticket", {title = "B"}, "", "TICK-2")
+rela.create_relation("TICK-1", "blocks", "TICK-2", { face = "draft" })
+rela.delete_relation("TICK-1", "blocks", "TICK-2", { face = "draft" })
+`)
+	if err != nil {
+		t.Fatalf("RunString: %v", err)
+	}
+	if mgr.relationUnlinked != 1 || mgr.unlinkedFace != "draft" {
+		t.Errorf("unlinks = %d at %q, want one at draft", mgr.relationUnlinked, mgr.unlinkedFace)
+	}
+
+	if _, err = runScript(t, `rela.delete_relation("TICK-1", "blocks", "TICK-2", { tail = "draft" })`); err == nil {
+		t.Error("an unknown option was accepted, want an error")
+	}
+
+	// The read gate checks the tail face, not just some face of the family.
+	mgr, err = runScript(t, `
+rela.create_entity("ticket", {title = "A"}, "", "TICK-1", { face = "draft" })
+rela.create_entity("ticket", {title = "B"}, "", "TICK-2")
+rela.delete_relation("TICK-1", "blocks", "TICK-2", { face = "published" })
+`)
+	if err == nil || !strings.Contains(err.Error(), "entity not found: TICK-1@published") {
+		t.Errorf("unreadable tail: err = %v, want not found on TICK-1@published", err)
+	}
+	if mgr.relationUnlinked != 0 {
+		t.Errorf("an unreadable tail reached the manager %d time(s)", mgr.relationUnlinked)
+	}
+
+	// The tail goes in opts.face; a fused address is refused before the
+	// manager is reached.
+	mgr, err = runScript(t, `rela.delete_relation("TICK-1@draft", "blocks", "TICK-2")`)
+	if err == nil || !strings.Contains(err.Error(), "must be bare entity ids") {
+		t.Errorf("fused from: err = %v, want the bare-id refusal", err)
+	}
+	if mgr.relationUnlinked != 0 {
+		t.Errorf("fused from reached the manager %d time(s)", mgr.relationUnlinked)
+	}
+}
+
+// TestUpdateEntity_FacedBareIDNamesItsFaces pins rela.update_entity's write
+// target (TKT-7IZHP0 §6): a bare id that picks no single face raises naming
+// the faces.
+func TestUpdateEntity_FacedBareIDNamesItsFaces(t *testing.T) {
+	ws := newMockWorkspace(t)
+	for _, f := range []entity.Face{"draft", "published"} {
+		ws.seedEntity(&entity.Entity{ID: "TKT-9", Type: "ticket", Face: f, Properties: map[string]any{"title": "T"}})
+	}
+	mgr := &mockManager{ws: ws}
+	deps := ws.services(t.TempDir())
+	deps.EntityManager = mgr
+	var buf bytes.Buffer
+	r := NewWriter(deps, &buf)
+	defer r.Close()
+
+	err := r.RunString(`rela.update_entity("TKT-9", {title = "new"})`)
+	if err == nil {
+		t.Fatal("update of a faced bare id succeeded; want it refused")
+	}
+	for _, want := range []string{"TKT-9@draft", "TKT-9@published"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s", err, want)
+		}
 	}
 }

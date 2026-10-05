@@ -146,8 +146,8 @@ func validateNextActionSource(
 // query touches is a per-entity, per-principal question that load time cannot
 // answer, and the read gate answers it at request time anyway.
 //
-// The reserved name "default" is always legal — it names the implicit default
-// world, which is not listed in meta.Worlds.
+// The reserved name "default" is legal only when no worlds are declared
+// (checkDeclaredWorld).
 func validateNextActionWorlds(where string, s NextActionSource, meta *metamodel.Metamodel) []string {
 	var errs []string
 	if err := checkDeclaredWorld(where, "source_world", s.SourceWorld, meta); err != "" {
@@ -162,25 +162,25 @@ func validateNextActionWorlds(where string, s NextActionSource, meta *metamodel.
 	return errs
 }
 
-// checkDeclaredWorld returns an error message when world is set but not
-// declared, or "" when it is fine. Empty and the reserved default name pass.
+// checkDeclaredWorld returns an error message when world is set but names no
+// world of meta, or "" when it is fine. Empty passes. The reserved name
+// "default" passes only when meta declares no worlds: with worlds declared it
+// names nothing (TKT-7IZHP0 D11), so accepting it would quietly mean a world
+// the operator did not name.
 func checkDeclaredWorld(where, key, world string, meta *metamodel.Metamodel) string {
-	if world == "" || world == metamodel.DefaultWorldName {
+	if world == "" {
 		return ""
 	}
 	if meta == nil {
+		if world == metamodel.DefaultWorldName {
+			return ""
+		}
 		return fmt.Sprintf("%s: %s is set, but no metamodel is available to validate it against", where, key)
 	}
-	if _, ok := meta.Worlds[world]; ok {
-		return ""
+	if err := metamodel.CheckWorldName(meta, world); err != nil {
+		return fmt.Sprintf("%s: %s: %v", where, key, err)
 	}
-	declared := make([]string, 0, len(meta.Worlds))
-	for name := range meta.Worlds {
-		declared = append(declared, name)
-	}
-	sort.Strings(declared)
-	return fmt.Sprintf("%s: %s %q is not a declared world (schema.yaml declares: %s)",
-		where, key, world, strings.Join(declared, ", "))
+	return ""
 }
 
 // validateNextActionCandidateSource checks the three mutually exclusive ways

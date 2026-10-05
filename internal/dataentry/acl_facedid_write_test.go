@@ -20,10 +20,10 @@ import (
 //
 // `ID@face` is the boundary serialization of a state reference, and
 // fsstore/memstore key their index on exactly that string
-// (stateKey = entity.FormatStateRef). Because FormatStateRef(id, "") returns
-// the id verbatim, `GetEntity("POL-1@published")` resolves to the SAME row as
-// `GetEntityState("POL-1", "published")` — it returns the published face, with
-// `Face` correctly populated.
+// (stateKey = entity.FormatStateRef). Because FormatStateRef(id, "") returned
+// the id verbatim, the old `GetEntity("POL-1@published")` resolved to the SAME
+// row as the published face — it returned that face, with `Face` correctly
+// populated.
 //
 // The write path then dropped that face on the floor: every
 // `acl.EntitySubject` literal in entitymanager was built `{Type, ID}` with no
@@ -128,7 +128,7 @@ func TestFacedIDWrite_AuthorizesTheFaceItWrites(t *testing.T) {
 			// The status alone is not the contract — assert the bytes on disk.
 			// A denial that still wrote would be the worst outcome, and is
 			// exactly what the pre-fix code did while returning 200.
-			after, err := st.GetEntityState(ctx, "POL-1", published)
+			after, err := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: published})
 			if err != nil {
 				t.Fatalf("re-read published face: %v", err)
 			}
@@ -197,7 +197,7 @@ func TestFacedIDWrite_ExplicitFaceGrantStillWorks(t *testing.T) {
 		t.Fatalf("PATCH POL-1@published with an explicit policy@published grant = %d, "+
 			"want 200 (body %s)", rec.Code, rec.Body.String())
 	}
-	after, err := st.GetEntityState(ctx, "POL-1", published)
+	after, err := st.GetEntity(ctx, entity.Ref{ID: "POL-1", Face: published})
 	if err != nil {
 		t.Fatalf("re-read published face: %v", err)
 	}

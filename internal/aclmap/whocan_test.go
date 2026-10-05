@@ -49,6 +49,10 @@ type world struct {
 type ent struct{ id, typ string }
 type rel struct{ from, typ, to string }
 
+// noDeclaredFaces is the schema of the test worlds: no type declares faces.
+// A test about a faced type builds its engine with [facedTerugkerend].
+func noDeclaredFaces(string) []entity.Face { return nil }
+
 func buildWorld(t *testing.T, policyYAML string, ents []ent, rels []rel) *world {
 	t.Helper()
 	ctx := context.Background()
@@ -64,7 +68,7 @@ func buildWorld(t *testing.T, policyYAML string, ents []ent, rels []rel) *world 
 		}
 	}
 	for _, r := range rels {
-		if _, cErr := ms.CreateRelation(ctx, r.from, r.typ, r.to, nil); cErr != nil {
+		if _, cErr := ms.CreateRelation(ctx, entity.RelationKey{From: r.from, Type: r.typ, To: r.to}, nil); cErr != nil {
 			t.Fatalf("create relation %s--%s-->%s: %v", r.from, r.typ, r.to, cErr)
 		}
 	}
@@ -72,7 +76,7 @@ func buildWorld(t *testing.T, policyYAML string, ents []ent, rels []rel) *world 
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	eng, err := aclmap.New(ms, decl)
+	eng, err := aclmap.New(ms, decl, noDeclaredFaces)
 	if err != nil {
 		t.Fatalf("aclmap.New: %v", err)
 	}
@@ -124,7 +128,7 @@ func buildWorldWithMeta(t *testing.T, meta *metamodel.Metamodel, policyYAML stri
 		}
 	}
 	for _, r := range rels {
-		if _, cErr := ms.CreateRelation(ctx, r.from, r.typ, r.to, nil); cErr != nil {
+		if _, cErr := ms.CreateRelation(ctx, entity.RelationKey{From: r.from, Type: r.typ, To: r.to}, nil); cErr != nil {
 			t.Fatalf("create relation %s--%s-->%s: %v", r.from, r.typ, r.to, cErr)
 		}
 	}
@@ -133,7 +137,7 @@ func buildWorldWithMeta(t *testing.T, meta *metamodel.Metamodel, policyYAML stri
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	eng, err := aclmap.New(ms, decl)
+	eng, err := aclmap.New(ms, decl, noDeclaredFaces)
 	if err != nil {
 		t.Fatalf("aclmap.New: %v", err)
 	}
@@ -149,9 +153,18 @@ func (v metaView) HasEntityType(t string) bool {
 	return ok
 }
 
-func (v metaView) HasRelationType(t string) bool {
-	_, ok := v.m.Relations[t]
-	return ok
+func (v metaView) RelationInfo(t string) acl.RelationInfo {
+	def, ok := v.m.Relations[t]
+	if !ok {
+		return acl.RelationInfo{}
+	}
+	return acl.RelationInfo{Exists: true, Content: def.Scope.IsContent(), From: def.From, To: def.To}
+}
+
+func (v metaView) DefaultWorld() string { return metamodel.EffectiveDefaultWorld(v.m) }
+
+func (v metaView) FaceNames(t string) (canonical string, faces []string) {
+	return v.m.ResolveAlias(t), metamodel.FaceOrderOf(v.m, t)
 }
 
 func (v metaView) PropertyInfo(entityType, property string) acl.PropertyInfo {

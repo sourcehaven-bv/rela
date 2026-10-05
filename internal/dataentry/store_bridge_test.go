@@ -71,7 +71,7 @@ func TestStoreEventBridgeMapsEntityEvents(t *testing.T) {
 	require.NoError(t, st.UpdateEntity(ctx, upd))
 	waitForEntityChange(t, ch, "ticket")
 
-	_, err := st.DeleteEntity(ctx, "TKT-1", false)
+	_, err := st.DeleteFamily(ctx, "TKT-1", false)
 	require.NoError(t, err)
 	waitForEntityChange(t, ch, "ticket")
 }
@@ -95,7 +95,7 @@ func TestStoreEventBridgeRelationSignalsVerdictInvalidation(t *testing.T) {
 	waitForEntityChange(t, ch, "ticket")
 	waitForEntityChange(t, ch, "ticket")
 
-	_, err := st.CreateRelation(ctx, "A", "depends_on", "B", nil)
+	_, err := st.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "depends_on", To: "B"}, nil)
 	require.NoError(t, err)
 
 	// A relation write produces a RelationChange marker, never an

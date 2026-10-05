@@ -140,12 +140,16 @@ func (stubMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteRe
 }
 
 func (stubMutator) CreateRelation(
-	context.Context, string, string, string, entity.RelationOptions,
+	context.Context, entity.RelationKey, entity.RelationOptions,
 ) (*entity.Relation, error) {
 	return nil, errStubMutator
 }
 
-func (stubMutator) DeleteRelation(context.Context, string, string, string) error {
+func (stubMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
+	return nil, errStubMutator
+}
+
+func (stubMutator) DeleteRelation(context.Context, entity.RelationKey) error {
 	return errStubMutator
 }
 

@@ -209,7 +209,7 @@ func (s entitySerializer) forWireRelated(
 // A type with NO faces is unaffected and keeps the bare href: it has exactly
 // one state, stored at the zero coordinate, and no name for it.
 func selfHref(plural string, e *entityPkg.Entity) string {
-	if e.Face.IsDefault() {
+	if e.Face.IsImplicit() {
 		return fmt.Sprintf("/api/v1/%s/%s", plural, e.ID)
 	}
 	return fmt.Sprintf("/api/v1/%s/%s@%s", plural, e.ID, e.Face.String())

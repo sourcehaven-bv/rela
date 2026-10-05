@@ -259,6 +259,6 @@ func (e *Engine) execute(ctx context.Context, code string, deps lua.WriteDeps, s
 // script, instead of deferring the error to the first HTTP render.
 // Mirrors CheckActionScriptExists.
 func CheckDocumentScriptExists(ctx context.Context, files lua.ProjectFiles, scriptPath string) error {
-	_, err := lua.ReadDeps{Files: files}.ReadScript(ctx, scriptsDir, scriptPath)
+	_, err := lua.ReadScript(ctx, files, scriptsDir, scriptPath)
 	return err
 }

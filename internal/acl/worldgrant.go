@@ -125,8 +125,8 @@ func roleHasWorldToken(role RoleDef) bool {
 // re-check it. The ceiling's world DENIAL is applied separately by
 // [compiledCeiling.permitsWorld] — see that method for why a denial
 // cannot be expressed by clamping alone.
-func roleGrantsWorldRead(role RoleDef, world string) bool {
-	if world == "" || world == DefaultWorldName {
+func roleGrantsWorldRead(role RoleDef, world, defaultWorld string) bool {
+	if world == "" || world == defaultWorld {
 		// The default world is the absence of a world grant. Any read
 		// grant at all covers it; holding none covers nothing.
 		return len(role.Read) > 0
@@ -197,6 +197,26 @@ func (p *Policy) validateStateGrants() error {
 				}
 			}
 		}
+		if err := validateRenameGrants(name, role.Rename); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRenameGrants refuses a `rename:` entry that names a face. A rename
+// moves every face of the entity, hidden ones included, so a grant that names
+// one face would describe less than the operation does; the only coherent
+// grant names the type.
+func validateRenameGrants(role string, list []string) error {
+	for _, entry := range list {
+		typeName, face, faced := strings.Cut(entry, entity.StateRefSeparator)
+		if !faced {
+			continue
+		}
+		return fmt.Errorf("roles.%s: rename: %q names the face %q; a rename moves every face "+
+			"of an entity, so a rename grant names the type alone: %q",
+			role, entry, face, typeName)
 	}
 	return nil
 }
@@ -227,7 +247,7 @@ func sortedRoleNames(roles map[string]RoleDef) []string {
 func (p *Policy) GrantsAnyNonDefaultWorldRead() bool {
 	for _, role := range p.Roles {
 		for _, w := range role.Worlds {
-			if w != DefaultWorldName {
+			if w != p.DefaultWorld() {
 				return true
 			}
 		}
@@ -242,9 +262,9 @@ func (p *Policy) GrantsAnyNonDefaultWorldRead() bool {
 // doc §8.2, fail closed):
 //
 //   - `update: ["page"]` grants the DEFAULT state of page, and nothing
-//     else. An operator who adds faces to an existing type finds their
-//     existing grants now cover one face — the correct fail-closed reading,
-//     and the reason it is documented as a migration note.
+//     else. On a type that declares faces that state holds no row, so
+//     Policy.ValidateAgainstMetamodel refuses such a grant at load; here
+//     it still matches only the default state, which fails closed.
 //   - `update: ["page@draft"]` grants the draft face only; it does NOT
 //     grant published, nor the default state.
 //   - `update: ["*"]` grants every type's DEFAULT state. It is a wildcard
@@ -257,7 +277,14 @@ func GrantsVerbOnState(role RoleDef, op Op, target string, p entity.Face) bool {
 	switch op {
 	case OpCreate:
 		list = role.Create
-	case OpUpdate, OpRename:
+	case OpUpdate:
+		list = role.Update
+	case OpRename:
+		// A faceless entity's family is its one implicit row, so a
+		// `rename:` grant covers it as it covers a faced family.
+		if p.IsImplicit() && grantsFamilyRename(role, target) {
+			return true
+		}
 		list = role.Update
 	case OpDelete:
 		list = role.Delete
@@ -266,7 +293,7 @@ func GrantsVerbOnState(role RoleDef, op Op, target string, p entity.Face) bool {
 	}
 	for _, entry := range list {
 		if entry == "*" {
-			if p.IsDefault() {
+			if p.IsImplicit() {
 				return true
 			}
 			continue

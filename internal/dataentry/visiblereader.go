@@ -2,281 +2,446 @@ package dataentry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"iter"
 	"log/slog"
+	"net/http"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entitypkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // visibleReader is the ACL-bounded entity-read seam for the data-entry
-// handlers. It composes a raw [store.Store] with the per-request read gate
-// ([readGate]) so that every read it exposes is filtered by the principal's
-// read-ACL. It is the entity-read analog of [search.VisibleSearcher]: the
-// gate produces a per-type scope/verdict, and the reader consumes (store
-// handle + verdict) to emit only visible rows — never a raw, ungated entity.
+// handlers. Every single-entity read it exposes goes through one
+// [visibility.Resolver] (TKT-2528AB), so the world, the face-blind row gate,
+// the readable-face set, the load, the stored-type check and the face gate
+// run in one place and in one order. A handler cannot obtain a row from it
+// without the face gate having run.
 //
-// Why a dedicated type rather than ad-hoc gate calls at each handler: the read
-// gate already exists ([readGateFromContext]) but is applied by *convention* —
-// a handler can reach `a.store.GetEntity` directly and forget to gate. That
-// "gate by convention" is the read-ACL bug class (TKT-N26KLB, #1010). A type
-// that holds the store privately and exposes only gated reads makes the gating
-// structural: a consumer that takes a visibleReader cannot bypass it.
+// The resolver is built over [ctxRowGate], which resolves the per-request
+// gate from ctx at call time, so it keeps the binding [attachACLRequest] sets
+// up. Under no ACL that is the permit-all [nopReadGate].
 //
-// The gate is resolved from the request context at call time (not held on the
-// struct) so it keeps the per-request binding that [attachACLRequest] sets up.
-// Under no ACL, [readGateFromContext] returns the permit-all [nopReadGate], so
-// behavior is byte-identical to the pre-ACL path.
+// # It returns raw rows, deliberately
 //
-// Scope (TKT-N26KLB M5.0b): this type absorbs the *already-gated* read paths
-// (single-entity GET, list-with-verdict, include-filtering). Ungated reads that
-// the audit surfaced (e.g. nav badge counts, BUG-ZM7SBI) are deliberately NOT
-// migrated here yet — closing those changes ACL behavior and is tracked
-// separately.
+// The resolver here redacts with [visibility.NopRedactor]. Field redaction on
+// the data-entry surfaces happens once, where the response is built
+// (stripHiddenProperties and `_redacted`), and [visibility.Redact] is not
+// composable: redacting here as well would evaluate `visible:` conditions a
+// second time, on an already-redacted row. The write preflights need the raw
+// row too, because a redacted read-modify-write would clobber hidden fields.
+//
+// A miss is (nil, false, nil). It covers denied, missing, type-mismatched,
+// face-denied, world-denied and a failed load, so a caller renders every miss
+// as the same not-found. Only a gate failure is an error; callers surface it
+// with writeGateError.
 type visibleReader struct {
-	store store.Store
+	store    store.Store
+	resolver *visibility.Resolver
 }
 
-// newVisibleReader constructs a visibleReader over s. s must be non-nil; the
-// data-entry composition root always has a store, so a nil here is a wiring
-// bug, not a runtime condition.
-func newVisibleReader(s store.Store) visibleReader {
-	return visibleReader{store: s}
-}
-
-// getVisible looks up an entity by ID, applying the read gate FIRST so a
-// hidden id and a nonexistent id are indistinguishable (same MatchingIDs
-// roundtrip, no existence side channel — the RR-NGMI invariant). It returns:
-//
-//   - (entity, true, nil)  — readable and present
-//   - (nil, false, nil)    — denied OR absent (caller cannot tell which, by design)
-//   - (nil, false, err)    — the gate itself failed (caller surfaces via writeGateError)
-//
-// This mirrors the gate-then-read ordering of the former gateReadOrNotFound +
-// getEntity pair: callers translate (nil,false,nil) into the same not-found
-// wire response a genuinely-missing entity produces.
-func (vr visibleReader) getVisible(ctx context.Context, entityType, id string) (*entitypkg.Entity, bool, error) {
-	if worldFromContext(ctx).blocksAllReads() {
-		// Same not-found a genuine miss produces — the caller cannot tell a
-		// denied world from an entity with no face in this one.
-		return nil, false, nil
+// newVisibleReader constructs a visibleReader over s whose [visibility.Family]
+// lists faces in the order families ranks them (declaration order; see
+// appFamilies). The order is required rather than an option because readableFaceOf and the
+// relation read pick a face by position, so a reader built without it would
+// serve a different face than production.
+// Nil: rejected, for s and families alike.
+func newVisibleReader(s store.Store, families visibility.Families) (visibleReader, error) {
+	if s == nil {
+		return visibleReader{}, errors.New("dataentry: newVisibleReader: store must be non-nil")
 	}
-	ok, err := readGateFromContext(ctx).PermitsRead(ctx, entityType, id)
+	if families == nil {
+		return visibleReader{}, errors.New("dataentry: newVisibleReader: families must be non-nil")
+	}
+	res, err := visibility.NewResolver(ctxRowGate{}, visibility.NopRedactor{}, s, visibility.WithFamilies(families))
 	if err != nil {
-		return nil, false, err
+		return visibleReader{}, fmt.Errorf("dataentry: newVisibleReader: %w", err)
 	}
-	if !ok {
-		return nil, false, nil
-	}
-	e, gerr := vr.getWorldEntity(ctx, entityType, id)
-	if gerr != nil && !errors.Is(gerr, errWorldEntityAbsent) &&
-		!worldScopeFrom(ctx).IsDefaultWorld() {
-		// On the WORLD path the underlying read is a ListEntities iterator,
-		// whose error is always an infrastructure failure — a genuine miss
-		// is errWorldEntityAbsent. Folding it into not-found would render a
-		// backend outage as "this entity has no published face", which is
-		// the same mistake resolveWorld refuses to make one file over
-		// (RR-4TFZNL). The default-world branch keeps GetEntity's inherited
-		// miss-is-not-found contract unchanged.
-		return nil, false, gerr
-	}
-	if gerr != nil {
-		// A store miss is treated as not-found, matching the former
-		// App.getEntity contract (err -> not found). The store error is
-		// deliberately not surfaced as the gate error: callers map
-		// (nil,false,nil) to the same indistinguishable 404 a real miss
-		// produces. Only a *gate* error (above) is propagated.
-		return nil, false, nil //nolint:nilerr // store miss == not-found, by design
-	}
-	// The FACE gate (TKT-O7R2A1). The row gate above decided WHICH entities
-	// this principal reads; this decides which of their content states.
-	//
-	// It consults the SAME ReadQueryResult.Faces the list path pushes into
-	// its query — one source, two consumers. Deriving it independently here
-	// is how the two paths come to disagree about which faces exist, which a
-	// parity test pins.
-	//
-	// A denied face returns the (nil,false,nil) a miss produces, so it is
-	// indistinguishable from "this entity has no such face". Reporting a
-	// distinct refusal would disclose that the face exists — the row-level
-	// rule applied one level down.
-	if !faceReadable(ctx, entityType, e.Face) {
-		return nil, false, nil
-	}
-	return e, true, nil
+	return visibleReader{store: s, resolver: res}, nil
 }
 
-// getVisibleRef is [visibleReader.getVisible] for a parsed address.
-//
-// A bare address takes the ordinary path: the request's world resolves it. An
-// EXPLICIT address (`ID@face`, including the bare face by its declared name)
-// is served literally, whatever world the request is in — the caller named
-// the row, so there is nothing for the world to resolve (see [entityRef]).
-//
-// The gates are the same two the world path applies, in the same order: the
-// face-blind row gate on the BARE id first (a suffixed string handed to a
-// query-shaped policy matches nothing, which would 404 every explicit address
-// under a non-wildcard grant), then the face gate on the row that came back.
-// A denied face returns the (nil,false,nil) a missing one produces, so a
-// `type@face` grant still withholds the existence of what it withholds.
-//
-// A denied WORLD blocks the read as well, even though the address does not
-// use the world: a principal who may not select `?world=editorial` must get
-// the same empty answer whatever they append to the path, or the world grant
-// would be bypassable by spelling the face.
-func (vr visibleReader) getVisibleRef(
-	ctx context.Context, entityType string, ref entityRef,
+// address reads the row a wire address names (`ID` or `ID@face`) in the
+// request's world: a named face literally, a bare id through the world. An
+// address the grammar rejects is a miss.
+func (vr visibleReader) address(ctx context.Context, entityType, addr string) (*entitypkg.Entity, bool, error) {
+	return rowOf(vr.resolver.Address(ctx, worldFromContext(ctx).visibility(), entityType, addr))
+}
+
+// addressRef is [visibleReader.address] for an address already parsed: a
+// named face literally, a bare id through the request's world.
+func (vr visibleReader) addressRef(
+	ctx context.Context, entityType string, ref entitypkg.Ref,
 ) (*entitypkg.Entity, bool, error) {
-	if !ref.Explicit {
-		return vr.getVisible(ctx, entityType, ref.ID)
+	if ref.Face.IsImplicit() {
+		return vr.inWorld(ctx, entityType, ref.ID)
 	}
-	if worldFromContext(ctx).blocksAllReads() {
+	return vr.ref(ctx, entityType, ref)
+}
+
+// inWorld resolves a bare id to the face the request's world selects.
+func (vr visibleReader) inWorld(ctx context.Context, entityType, id string) (*entitypkg.Entity, bool, error) {
+	return vr.inWorldOf(ctx, worldFromContext(ctx).visibility(), entityType, id)
+}
+
+// inWorldOf is [visibleReader.inWorld] in an explicit world, for the view
+// engine, whose callers pass the world rather than binding it to ctx.
+func (vr visibleReader) inWorldOf(
+	ctx context.Context, w visibility.World, entityType, id string,
+) (*entitypkg.Entity, bool, error) {
+	return rowOf(vr.resolver.InWorld(ctx, w, entityType, id))
+}
+
+// ref reads the row ref names, literally, in the request's world.
+func (vr visibleReader) ref(
+	ctx context.Context, entityType string, ref entitypkg.Ref,
+) (*entitypkg.Entity, bool, error) {
+	return vr.refIn(ctx, worldFromContext(ctx).visibility(), entityType, ref)
+}
+
+// refIn is [visibleReader.ref] in an explicit world; see
+// [visibleReader.inWorldOf].
+func (vr visibleReader) refIn(
+	ctx context.Context, w visibility.World, entityType string, ref entitypkg.Ref,
+) (*entitypkg.Entity, bool, error) {
+	return rowOf(vr.resolver.Ref(ctx, w, entityType, ref))
+}
+
+// family reports the faces of id the principal may read. It answers the
+// entity-level question "does a readable face of this id exist, of this
+// type", and reads headers only.
+func (vr visibleReader) family(ctx context.Context, entityType, id string) (visibility.Family, bool, error) {
+	return vr.resolver.Family(ctx, entityType, id)
+}
+
+// untypedAddress is [visibleReader.address] for a request that carries no
+// entity type (commands, detail actions). The type comes from the stored row
+// ([visibleReader.storedType]), so the gates run on the real type, never on
+// one the caller claims.
+func (vr visibleReader) untypedAddress(ctx context.Context, addr string) (*entitypkg.Entity, bool, error) {
+	ref, err := entitypkg.ParseRef(addr)
+	if err != nil {
+		return nil, false, nil //nolint:nilerr // a malformed address is a miss, not a fault
+	}
+	return vr.untypedRef(ctx, ref)
+}
+
+// untypedRef is [visibleReader.untypedAddress] for an address already parsed.
+func (vr visibleReader) untypedRef(ctx context.Context, ref entitypkg.Ref) (*entitypkg.Entity, bool, error) {
+	typ := vr.storedType(ctx, ref.ID)
+	if typ == "" {
 		return nil, false, nil
 	}
-	ok, err := readGateFromContext(ctx).PermitsRead(ctx, entityType, ref.ID)
+	return vr.addressRef(ctx, typ, ref)
+}
+
+// readableType returns the stored type of id when the principal may read
+// some face of it, and "" otherwise. It is [visibleReader.family] for a
+// caller that holds only the id.
+func (vr visibleReader) readableType(ctx context.Context, id string) (string, error) {
+	typ := vr.storedType(ctx, id)
+	if typ == "" {
+		return "", nil
+	}
+	_, ok, err := vr.family(ctx, typ, id)
+	if err != nil || !ok {
+		return "", err
+	}
+	return typ, nil
+}
+
+// readableTypes is [visibleReader.readableType] for many ids at once; see
+// [visibility.Resolver.ReadableTypes]. A failed read or gate is returned,
+// never folded into a miss.
+func (vr visibleReader) readableTypes(ctx context.Context, ids []string) (map[string]string, error) {
+	return vr.resolver.ReadableTypes(ctx, ids)
+}
+
+// readableRelations keeps, in order, the relations whose endpoints the
+// principal may read: the head at some face, a content-scoped tail at its own
+// face ([visibility.Resolver.EndpointsReadableErr]). It reads headers once for
+// the whole batch. A failed read or gate is returned, never folded into "no
+// readable relations", for a caller that must not act on a partial answer.
+func (vr visibleReader) readableRelations(
+	ctx context.Context, rels []*entitypkg.Relation,
+) ([]*entitypkg.Relation, error) {
+	if len(rels) == 0 {
+		return nil, nil
+	}
+	ok, err := vr.resolver.EndpointsReadableErr(ctx, rels)
 	if err != nil {
+		return nil, err
+	}
+	out := make([]*entitypkg.Relation, 0, len(rels))
+	for i, rel := range rels {
+		if ok[i] {
+			out = append(out, rel)
+		}
+	}
+	return out, nil
+}
+
+// storedType is [storedTypeOf] over this reader's store.
+func (vr visibleReader) storedType(ctx context.Context, id string) string {
+	return storedTypeOf(ctx, vr.store, id)
+}
+
+// storedTypeOf returns the type of any stored face of id, or "" when no face
+// exists or the read fails. It reads one content-free header and applies no
+// gate, so its answer must never decide what is served. Callers pass it to a
+// gated read, or use it for write authorization, which needs the real type
+// whether or not the caller may read the row.
+func storedTypeOf(ctx context.Context, st store.EntityLister, id string) string {
+	typ, _ := storedFacesOf(ctx, st, id)
+	return typ
+}
+
+// storedFacesOf is [storedTypeOf] plus every stored face of id. The same
+// caveat applies: no gate runs, so the faces decide liveness, never what is
+// served. A read error is logged and answered as "nothing stored", which is
+// safe only where "nothing stored" leads to a refusal; a caller that grants
+// more to a missing row than to a live one uses [loadStoredFaces].
+func storedFacesOf(ctx context.Context, st store.EntityLister, id string) (string, []entitypkg.Face) {
+	typ, faces, err := loadStoredFaces(ctx, st, id)
+	if err != nil {
+		slog.Warn("dataentry: reading an entity's stored faces failed", "id", id, "err", err)
+		return "", nil
+	}
+	return typ, faces
+}
+
+// loadStoredFaces is [storedFacesOf] that returns the read error. The
+// history surfaces need it: they open a deleted face's history on a global
+// permission, so answering a failed read as "deleted" would fail open onto a
+// live face the caller cannot see.
+func loadStoredFaces(ctx context.Context, st store.EntityLister, id string) (string, []entitypkg.Face, error) {
+	if id == "" {
+		return "", nil, nil
+	}
+	fams, err := loadStoredFamilies(ctx, st, []string{id})
+	if err != nil {
+		return "", nil, err
+	}
+	fam := fams[id]
+	return fam.typ, fam.faces, nil
+}
+
+// storedFamily is one id's stored type and faces, as [loadStoredFamilies]
+// reads them.
+type storedFamily struct {
+	typ   string
+	faces []entitypkg.Face
+}
+
+// loadStoredFamilies is [loadStoredFaces] for many ids in one header read,
+// keyed by id. An id with no stored face is absent. The same caveat applies:
+// no gate runs, so the answer decides liveness or the gate's type, never what
+// is served.
+func loadStoredFamilies(ctx context.Context, st store.EntityLister, ids []string) (map[string]storedFamily, error) {
+	out := make(map[string]storedFamily, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	for h, err := range listIDHeaders(ctx, st, ids, true) {
+		if err != nil {
+			return nil, err
+		}
+		fam := out[h.ID]
+		fam.typ = h.Type
+		fam.faces = append(fam.faces, h.Face)
+		out[h.ID] = fam
+	}
+	return out, nil
+}
+
+// loadDefaultFaceHeaders reads each id's default-face row content-free, in one
+// header read, keyed by id. It is the row the default world selects, so it
+// suits a caller that serves only the default world, such as a neighbor
+// title. An id with no such row is absent. No gate runs and nothing is
+// redacted: the caller gates the ids first and redacts a row before serving
+// any of it.
+func loadDefaultFaceHeaders(
+	ctx context.Context, st store.EntityLister, ids []string,
+) (map[string]*entitypkg.Entity, error) {
+	out := make(map[string]*entitypkg.Entity, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	for h, err := range listIDHeaders(ctx, st, ids, false) {
+		if err != nil {
+			return map[string]*entitypkg.Entity{}, err
+		}
+		if h.Face.IsImplicit() {
+			out[h.ID] = headerEntity(h)
+		}
+	}
+	return out, nil
+}
+
+// listIDHeaders is the one header read by id this file makes: every stored
+// face of ids when allFaces is set, else the default face only.
+func listIDHeaders(
+	ctx context.Context, st store.EntityLister, ids []string, allFaces bool,
+) iter.Seq2[store.EntityHeader, error] {
+	sel := store.AtFaces(entitypkg.Face(""))
+	if allFaces {
+		sel = store.AllFaces()
+	}
+	return store.ListEntityHeaders(ctx, st, store.EntityQuery{IDs: ids, Faces: sel})
+}
+
+// rowOf drops the provenance a [visibility.Resolved] carries. The data-entry
+// surfaces label provenance themselves (worldProvenance, addressedProvenance),
+// which keeps their wire output unchanged.
+func rowOf(res visibility.Resolved, ok bool, err error) (*entitypkg.Entity, bool, error) {
+	if err != nil || !ok {
 		return nil, false, err
 	}
+	return res.Entity, true, nil
+}
+
+// readAddressedOr404 reads the row the path segment addr names and writes
+// the response itself when there is none: the uniform not-found for every
+// miss, or the gate error. Every addressed route owes this read before it
+// acts on a row, reads and writes alike. A face the principal may not read
+// is then the same 404 as an absent one, never a 403 that confirms it exists.
+func readAddressedOr404(
+	w http.ResponseWriter, r *http.Request, vr visibleReader, entityType, addr string,
+) (*entitypkg.Entity, bool) {
+	e, ok, err := vr.address(r.Context(), entityType, addr)
+	if err != nil {
+		writeGateError(w, r, err)
+		return nil, false
+	}
 	if !ok {
-		return nil, false, nil
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return nil, false
 	}
-	e, gerr := vr.store.GetEntityState(ctx, ref.ID, ref.Face)
-	if gerr != nil {
-		// A store miss is not-found, as on the default-world branch of
-		// getVisible: GetEntityState reports ErrNotFound for a missing state
-		// even when sibling states exist, which is exactly "no such row".
-		// Anything else is an infrastructure fault; it still answers
-		// not-found (the inherited GetEntity contract) but is logged so an
-		// outage does not read as "no such face" with no operator signal.
-		if !errors.Is(gerr, store.ErrNotFound) {
-			slog.Warn("dataentry: reading an addressed face failed; answering not-found",
-				"type", entityType, "ref", ref.String(), "err", gerr)
-		}
-		return nil, false, nil
+	return e, true
+}
+
+// writeTargetOr404 resolves a write's path address to the one face it
+// edits ([visibility.Resolver.WriteTarget]) in the request's world, and
+// reads that face. A miss is the uniform 404; a bare id on a faced type is a
+// 422 `face_required` listing the readable faces.
+func writeTargetOr404(
+	w http.ResponseWriter, r *http.Request, vr visibleReader, entityType, addr string,
+) (*entitypkg.Entity, bool) {
+	parsed, err := entitypkg.ParseAddress(addr)
+	if err != nil {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return nil, false
 	}
-	if !faceReadable(ctx, entityType, e.Face) {
-		return nil, false, nil
+	world := worldFromContext(r.Context()).visibility()
+	ref, ok, err := vr.resolver.WriteTarget(r.Context(), world, entityType, parsed)
+	var amb *visibility.AmbiguousAddressError
+	switch {
+	case errors.As(err, &amb):
+		writeFaceRequired(w, r, amb)
+		return nil, false
+	case err != nil:
+		writeGateError(w, r, err)
+		return nil, false
+	case !ok:
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return nil, false
 	}
-	return e, true, nil
+	e, ok, err := rowOf(vr.resolver.Ref(r.Context(), world, entityType, ref))
+	if err != nil {
+		writeGateError(w, r, err)
+		return nil, false
+	}
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return nil, false
+	}
+	return e, true
+}
+
+// writeFaceRequired answers a bare address that names no single face.
+func writeFaceRequired(w http.ResponseWriter, r *http.Request, amb *visibility.AmbiguousAddressError) {
+	faces := make([]string, len(amb.Faces))
+	for i, f := range amb.Faces {
+		faces[i] = entitypkg.FormatStateRef(amb.ID, f)
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	_ = json.NewEncoder(w).Encode(v1.Error{
+		Type:     "https://rela.dev/errors/face_required",
+		Title:    "Address one face",
+		Status:   http.StatusUnprocessableEntity,
+		Detail:   amb.Error(),
+		Instance: r.URL.Path,
+		Faces:    faces,
+	})
+}
+
+// familyReadableOr404 reports whether the principal may read some face of
+// the entity id, and writes the uniform not-found when not. It is the check
+// for a relation endpoint named by bare id (a body target, a head): such an
+// id names an entity, never one face of it. The type comes from the stored
+// row, so the gate runs on the real type.
+func familyReadableOr404(w http.ResponseWriter, r *http.Request, vr visibleReader, id string) bool {
+	typ, err := vr.readableType(r.Context(), id)
+	if err != nil {
+		writeGateError(w, r, err)
+		return false
+	}
+	if typ == "" {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return false
+	}
+	return true
 }
 
 // faceReadable reports whether this principal's read grants cover the given
 // content state.
 //
-// Shared rather than inlined because it is the check every read-out path owes
-// an entity AFTER the row gate has cleared it: the row gate decides WHICH
-// entities a principal reads, this decides which of their faces. The two are
-// separate questions and answering only the first is how [TKT-O7R2A1]'s gate
-// was missed on the view surface, which served a draft body to a principal
-// holding `policy@published` while the entity route 404'd the same face.
+// Single-entity reads get this check from the resolver. It remains for the
+// list-side paths, which gate a batch of rows they already hold (headers,
+// neighbors, view collections), and for the history of a DELETED face, which
+// has no row for the resolver to find (see resolveHistorySubject).
 //
-// An empty Faces slice means "every face" — see [acl.ReadQueryResult.Faces] for
-// why a bare grant widens rather than narrows.
-//
-// It delegates to [visibility.FaceAllowed] through the same [ctxRowGate] the
-// visibility wrappers are built over, so this package holds NO second copy of
-// the rule. The two exist because a handler that reads the raw store (the view
-// ENTRY, which is deliberately not routed through a redacting Reader) still
-// owes the entity a face verdict, and it must be the same verdict
-// [visibility.PolicyReader] would reach.
+// An empty Faces slice means "every face"; see [acl.ReadQueryResult.Faces]
+// for why a bare grant widens rather than narrows. It delegates to
+// [visibility.FaceAllowed] through the same [ctxRowGate] the resolver uses, so
+// this package holds no second copy of the rule.
 func faceReadable(ctx context.Context, entityType string, face entitypkg.Face) bool {
 	return visibility.FaceAllowed(ctx, ctxRowGate{}, entityType, face)
 }
 
-// getWorldEntity fetches the entity's face in the request's world.
-//
-// For the DEFAULT world this is exactly the previous GetEntity call — the
-// zero WorldScope is the default world, so a faceless project and every
-// existing caller are byte-identical.
-//
-// For a non-default world it goes through a one-id ListEntities query
-// carrying the world scope AND the principal's face allowlist, so the
-// BACKEND resolves the chain and the fallback verdict over the faces this
-// reader may see — exactly the query the list path runs. That keeps ONE
-// resolution site and ONE ordering: the ACL trims the candidates first, the
-// world ranks what is left, so a `policy@published` reader under `select:
-// [review, published]` is served the published face here just as the list
-// serves it, rather than a 404 beside a listed row (the parity bug this
-// closed). It also means an entity the world EXCLUDES is simply absent
-// from the result, which the caller renders as the same not-found a
-// genuine miss produces.
-func (vr visibleReader) getWorldEntity(
-	ctx context.Context, entityType, id string,
-) (*entitypkg.Entity, error) {
-	scope := worldScopeFrom(ctx)
-	if scope.IsDefaultWorld() {
-		return vr.store.GetEntity(ctx, id)
-	}
-	for e, err := range vr.store.ListEntities(ctx, store.EntityQuery{
-		IDs:    []string{id},
-		World:  scope,
-		FaceIn: readGateFromContext(ctx).ReadQuery(ctx, entityType).Faces,
-	}) {
-		if err != nil {
-			return nil, err
-		}
-		return e, nil
-	}
-	return nil, errWorldEntityAbsent
+// servedIDs resolves bare ids in the request's world to the face that world
+// serves among the faces the principal may read
+// ([visibility.Resolver.ResolveIDs]). The ACL trims each id's faces first
+// and the world ranks what is left, so a denied prime falls through to a
+// readable face. An id absent from the result is served nothing. The rows
+// are raw (the reader's redactor is the nop one); only ids and faces leave.
+func (vr visibleReader) servedIDs(ctx context.Context, ids []string) map[string]store.EntityHeader {
+	return vr.resolver.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
 }
 
-// errWorldEntityAbsent means the world resolved the id to no face — either
-// no state matched the chain under `otherwise: exclude`, or the entity does
-// not exist. The caller cannot tell the two apart, which is the point:
-// existence in a world IS the publication bit (§4.1).
-var errWorldEntityAbsent = errors.New("entity has no face in this world")
+// servedIDsErr is servedIDs for a caller that must not read a store fault
+// as "nothing is served": a failed header read is returned
+// ([visibility.Resolver.ResolveIDsErr]).
+func (vr visibleReader) servedIDsErr(ctx context.Context, ids []string) (map[string]store.EntityHeader, error) {
+	return vr.resolver.ResolveIDsErr(ctx, worldFromContext(ctx).visibility(), ids)
+}
 
 // filterVisible drops every candidate the principal cannot read, batching the
-// gate probe by entity type — one PermitsReadMany per distinct type, turning a
-// worst case of O(N) per-id probes into O(distinct-types) (RR-FRK1). Order is
-// preserved and a fresh slice is returned (RR-I2SI). On a gate error for a
+// gate probe by entity type — one ReadableFacesMany per distinct type, turning
+// a worst case of O(N) per-id probes into O(distinct-types) (RR-FRK1). A
+// candidate is kept only when the verdict holds on its own face's row. Order
+// is preserved and a fresh slice is returned (RR-I2SI). On a gate error for a
 // type, that whole type is dropped fail-closed (RR-7TIU) — a read-ACL failure
 // must never widen visibility — and logged loud so operators see the cause
 // rather than a silently-empty include block.
 //
 // This is the extraction of the former App.filterVisibleIncludes; behavior is
 // preserved, including the nil return for empty input.
-// visibleHeaderIDs is the row-gate half of filterVisible over content-free
-// headers: the set of candidate ids the principal may read, probed once per
-// distinct type. No redaction is involved because only ids leave here — the
-// caller uses the set to decide which neighbor ids may appear in a
-// relations map, never to serve a property.
-func (vr visibleReader) visibleHeaderIDs(ctx context.Context, candidates []store.EntityHeader) map[string]bool {
-	out := make(map[string]bool, len(candidates))
-	if len(candidates) == 0 {
-		return out
-	}
-	gate := readGateFromContext(ctx)
-	byType := make(map[string][]string)
-	for _, c := range candidates {
-		byType[c.Type] = append(byType[c.Type], c.ID)
-	}
-	allowed := make(map[string]bool, len(candidates))
-	for typeName, ids := range byType {
-		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
-		if err != nil {
-			slog.Warn("dataentry: visibleReader.visibleHeaderIDs: PermitsReadMany failed; dropping type",
-				"type", typeName, "candidates", len(ids), "err", err)
-			continue
-		}
-		for id, ok := range perm {
-			if ok {
-				allowed[id] = true
-			}
-		}
-	}
-	// The face grant is the other half of filterVisible's gate (TKT-O7R2A1);
-	// a header carries its Face, so applying it here keeps the two gates
-	// from drifting when a caller one day passes AllStates or a World.
-	for _, c := range candidates {
-		if allowed[c.ID] && faceReadable(ctx, c.Type, c.Face) {
-			out[c.ID] = true
-		}
-	}
-	return out
-}
-
 func (vr visibleReader) filterVisible(ctx context.Context, candidates []*entitypkg.Entity) []*entitypkg.Entity {
 	if len(candidates) == 0 {
 		return nil
@@ -288,36 +453,35 @@ func (vr visibleReader) filterVisible(ctx context.Context, candidates []*entityp
 		byType[c.Type] = append(byType[c.Type], c)
 	}
 
-	allowed := make(map[string]bool, len(candidates))
+	allowed := make(map[string]acl.FaceVerdict, len(candidates))
 	for typeName, group := range byType {
 		ids := make([]string, 0, len(group))
 		for _, c := range group {
 			ids = append(ids, c.ID)
 		}
-		perm, err := gate.PermitsReadMany(ctx, typeName, ids)
+		verdicts, err := gate.ReadableFacesMany(ctx, typeName, ids)
 		if err != nil {
-			slog.Warn("dataentry: visibleReader.filterVisible: PermitsReadMany failed; dropping type",
+			slog.Warn("dataentry: visibleReader.filterVisible: ReadableFacesMany failed; dropping type",
 				"type", typeName,
 				"candidates", len(ids),
 				"err", err)
 			continue
 		}
-		for id, ok := range perm {
-			if ok {
-				allowed[id] = true
-			}
+		for _, id := range ids {
+			allowed[id] = verdicts.For(id)
 		}
 	}
 
-	// Preserve original candidate order; allocate a fresh slice. The face
-	// half is owed HERE too (TKT-O7R2A1): the row gate is face-blind, and a
-	// neighbor arrives as a resolved face — under a world, possibly a
-	// within-chain fallback to a face a `type@face` grant withholds. Without
-	// this a principal granted only `feature@published` saw a draft-only
-	// neighbor's title through `?include=` while its own GET 404'd.
+	// Preserve original candidate order; allocate a fresh slice. A neighbor
+	// arrives as a resolved face — under a world, possibly a within-chain
+	// fallback to a face a `type@face` grant withholds — so both the verdict
+	// on that face's row and the type-level face grant must hold
+	// (TKT-O7R2A1). Without the face half a principal granted only
+	// `feature@published` saw a draft-only neighbor's title through
+	// `?include=` while its own GET 404'd.
 	out := make([]*entitypkg.Entity, 0, len(candidates))
 	for _, c := range candidates {
-		if allowed[c.ID] && faceReadable(ctx, c.Type, c.Face) {
+		if allowed[c.ID].Contains(c.Face) && faceReadable(ctx, c.Type, c.Face) {
 			out = append(out, c)
 		}
 	}

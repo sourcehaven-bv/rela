@@ -16,7 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 )
 
 // The regression from BUG-NEQRY2 / BUG-4KPN2M: one entity file with
@@ -105,7 +105,7 @@ func runChecksWithStore(t *testing.T, meta *metamodel.Metamodel, st *truncatingS
 	an, err := analysis.New(analysis.Deps{
 		Store:       svc.Store(),
 		Meta:        svc.Meta(),
-		Tracer:      tracer.New(svc.Store()),
+		Tracer:      tracertest.Must(svc.Store(), store.TrivialScope()),
 		LuaReadDeps: svc.LuaReadDeps(),
 	})
 	if err != nil {

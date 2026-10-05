@@ -49,9 +49,15 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 	if err := validatePurgeFlags(c.Reason, c.Vseq, c.ContentHash, c.All); err != nil {
 		return err
 	}
+	// ONE face's lineage: --all erases that face's history and no other.
+	ref, err := historyAddress(ctx, svc.Store, svc.Meta, svc.Versions, c.ID)
+	if err != nil {
+		return err
+	}
+	target := ref.String()
 	p := principal.From(ctx)
 	req := store.VersionPurgeRequest{
-		EntityID:      c.ID,
+		Ref:           ref,
 		Selector:      store.PurgeSelector{Vseq: c.Vseq, ContentHash: c.ContentHash, All: c.All},
 		Reason:        c.Reason,
 		ForceLive:     c.ForceLive,
@@ -65,12 +71,12 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 	preview.DryRun = true
 	res, err := purger.PurgeVersions(ctx, preview)
 	if err != nil {
-		return fmt.Errorf("purge history for %q: %w", c.ID, err)
+		return fmt.Errorf("purge history for %q: %w", target, err)
 	}
-	if refused := reportPurgePreview(res, c.ID, !c.Commit); refused || !c.Commit {
+	if refused := reportPurgePreview(res, target, !c.Commit); refused || !c.Commit {
 		return nil
 	}
-	if !c.Yes && !confirmPurge(c.ID) {
+	if !c.Yes && !confirmPurge(target) {
 		out.WriteMessage("Cancelled")
 		return nil
 	}
@@ -78,10 +84,10 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 	// Confirmed: do the real (destructive) purge.
 	final, err := purger.PurgeVersions(ctx, req)
 	if err != nil {
-		return fmt.Errorf("purge history for %q: %w", c.ID, err)
+		return fmt.Errorf("purge history for %q: %w", target, err)
 	}
-	auditPurge(svc.Audit, p, audit.Subject{Kind: "entity", ID: c.ID}, final, c.Reason)
-	out.WriteSuccess("Purged %d version row(s) for %s. This is irreversible.", final.Purged, c.ID)
+	auditPurge(svc.Audit, p, audit.Subject{Kind: "entity", ID: ref.ID}, ref.Face, final, c.Reason)
+	out.WriteSuccess("Purged %d version row(s) for %s. This is irreversible.", final.Purged, target)
 	if final.TombstoneWritten {
 		out.WriteInfo("Wrote a purge tombstone (a live row still held the content); the sweep will not re-capture it.")
 	}
@@ -90,7 +96,7 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 
 // RelationHistoryPurgeCmd is the relation analog.
 type RelationHistoryPurgeCmd struct {
-	From         string `arg:"" help:"Source entity ID (the relation's 'from')."`
+	From         string `arg:"" help:"Source entity address (the relation's 'from'): ID, or ID@face for a faced tail."`
 	Type         string `arg:"" help:"Relation type."`
 	To           string `arg:"" help:"Target entity ID (the relation's 'to')."`
 	Vseq         int64  `help:"Purge the single version row with this vseq." default:"0"`
@@ -118,18 +124,22 @@ func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) e
 	if c.Lifetime != 0 && c.AllLifetimes {
 		return errors.New("--lifetime and --all-lifetimes are mutually exclusive")
 	}
+	from, fromFace, err := parseRelationFrom(c.From)
+	if err != nil {
+		return err
+	}
 	p := principal.From(ctx)
 	key := fmt.Sprintf("%s--%s--%s", c.From, c.Type, c.To)
 
-	// Default tail: RelationVersionPurgeRequest names no face, so purge
-	// addresses the default-tail edge (TKT-JAROC3).
+	// The tail face is part of the key: the purge reaches this tail's
+	// lineages only, never a sibling tail's (BUG-4SYAA6).
 	recordID, err := resolveLifetimeRecordID(
-		ctx, svc.Versions, c.From, entity.Face(""), c.Type, c.To, c.Lifetime)
+		ctx, svc.Versions, from, fromFace, c.Type, c.To, c.Lifetime)
 	if err != nil {
 		return err
 	}
 	req := store.RelationVersionPurgeRequest{
-		From: c.From, Type: c.Type, To: c.To,
+		Key:           entity.RelationKey{From: from, FromFace: fromFace, Type: c.Type, To: c.To},
 		Selector:      store.PurgeSelector{Vseq: c.Vseq, ContentHash: c.ContentHash, All: c.All},
 		RecordID:      recordID,
 		AllLifetimes:  c.AllLifetimes,
@@ -166,8 +176,8 @@ func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) e
 		return fmt.Errorf("purge relation history for %s: %w", key, err)
 	}
 	auditPurge(svc.Audit, p, audit.Subject{
-		Kind: "relation", RelationType: c.Type, FromID: c.From, ToID: c.To,
-	}, final, c.Reason)
+		Kind: "relation", RelationType: c.Type, FromID: from, ToID: c.To,
+	}, fromFace, final, c.Reason)
 	out.WriteSuccess("Purged %d version row(s) for %s. This is irreversible.", final.Purged, key)
 	if final.TombstoneWritten {
 		out.WriteInfo("Wrote a purge tombstone (a live relation still held the content); the sweep will not re-capture it.")
@@ -247,9 +257,17 @@ func confirmPurge(target string) bool {
 
 // auditPurge records the forensic purge event through the audit sink. It records
 // identity + count + reason + the vseqs/hash targeted — NEVER the purged content.
-func auditPurge(sink audit.Audit, p principal.Principal, subj audit.Subject, res *store.PurgeResult, reason string) {
+// face is the purged lineage's face (for a relation, its source face); the
+// audit subject has no face field, so a non-zero one is named in the summary.
+func auditPurge(
+	sink audit.Audit, p principal.Principal, subj audit.Subject, face entity.Face,
+	res *store.PurgeResult, reason string,
+) {
 	// Summarize the targeted vseqs compactly (count + range), not an enumeration.
 	summary := fmt.Sprintf("purged=%d reason=%q", res.Purged, reason)
+	if !face.IsImplicit() {
+		summary += fmt.Sprintf(" face=%q", face)
+	}
 	if len(res.Targets) > 0 {
 		summary += fmt.Sprintf(" vseq_range=[%d,%d]",
 			res.Targets[0].Vseq, res.Targets[len(res.Targets)-1].Vseq)

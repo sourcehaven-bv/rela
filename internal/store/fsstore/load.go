@@ -1,0 +1,35 @@
+package fsstore
+
+import (
+	"fmt"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+)
+
+// loadEntityMeta reads the state an index meta describes. The face is
+// filename/index-authoritative — entity frontmatter carries no face
+// key — so it is stamped here after the read (TKT-DOFYR1).
+func (s *FSStore) loadEntityMeta(m entityMeta) (*entity.Entity, error) {
+	key := s.layout.entityFileKey(m.Type, stateKey(m.ID, m.Face))
+	e, err := s.codec.readEntityFile(key, m.ID, m.Type)
+	if err != nil {
+		// Name the file. A bare "failed to parse frontmatter" reaches the
+		// caller through an iterator with no other identifying detail, so
+		// whoever reports the failure cannot say which file to fix
+		// (BUG-NEQRY2 acceptance criterion 1).
+		return nil, fmt.Errorf("%s: %w", key, err)
+	}
+	e.Face = m.Face
+	return e, nil
+}
+
+// loadRelationMeta reads the relation an index meta describes, stamping
+// the identity-bearing tail face from the index.
+func (s *FSStore) loadRelationMeta(m relationMeta) (*entity.Relation, error) {
+	r, err := s.codec.readRelationFile(s.layout.relationFileKeyMeta(m), m.From, m.Type, m.To)
+	if err != nil {
+		return nil, err
+	}
+	r.FromFace = m.FromFace
+	return r, nil
+}

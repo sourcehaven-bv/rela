@@ -35,7 +35,7 @@ func (ss *storeSeeder) addEntity(b *testutil.EntityBuilder) {
 }
 
 func (ss *storeSeeder) addRelation(from, relType, to string) {
-	if _, err := ss.s.CreateRelation(context.Background(), from, relType, to, nil); err != nil {
+	if _, err := ss.s.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: relType, To: to}, nil); err != nil {
 		panic(err)
 	}
 }
@@ -57,7 +57,7 @@ func fixtureEntities(t *testing.T, st store.Store, entityType string) []*entity.
 	out := make([]*entity.Entity, 0)
 	for e, err := range st.ListEntities(
 		context.Background(),
-		store.EntityQuery{Type: entityType},
+		store.EntityQuery{Type: entityType, Faces: store.InWorld(store.TrivialScope())},
 	) {
 		if err != nil {
 			continue
@@ -71,7 +71,7 @@ func fixtureEntities(t *testing.T, st store.Store, entityType string) []*entity.
 func fixtureAllEntities(t *testing.T, st store.Store) []*entity.Entity {
 	t.Helper()
 	out := make([]*entity.Entity, 0)
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{}) {
+	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			continue
 		}

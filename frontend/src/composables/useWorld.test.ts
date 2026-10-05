@@ -83,13 +83,13 @@ describe('useWorld', () => {
       expect(worldParam.value).toBe('published')
     })
 
-    it('an explicit "default" is the bare faces, and SENDS it', () => {
+    it('never sends an explicit "default"', () => {
+      // A schema that declares worlds has no world named `default`; the
+      // server answers it with a 400, so the SPA must not send it.
       mockRouteQuery.value = { world: DEFAULT_WORLD }
       const { isWorldBound, worldParam } = useWorld()
-      // Not world-bound: the bare faces are where writes land...
       expect(isWorldBound.value).toBe(false)
-      // ...but the param must travel, or the server applies the default.
-      expect(worldParam.value).toBe(DEFAULT_WORLD)
+      expect(worldParam.value).toBeUndefined()
     })
 
     it('without a configured default, "default" still sends nothing', () => {

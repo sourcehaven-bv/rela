@@ -415,12 +415,45 @@ func (f *fakeSearcher) Search(_ context.Context, q search.Query) iter.Seq2[searc
 			yield(search.Hit{}, f.err)
 			return
 		}
-		for _, h := range f.hits {
+		hits, err := admitHits(q, f.hits)
+		if err != nil {
+			yield(search.Hit{}, err)
+			return
+		}
+		for _, h := range hits {
 			if !yield(h, nil) {
 				return
 			}
 		}
 	}
+}
+
+// admitHits applies q.Admit to a fake searcher's hits, as a real backend
+// admits candidate faces before ranking. The fakes hold one face per hit,
+// so admitting the hits is the same thing.
+func admitHits(q search.Query, hits []search.Hit) ([]search.Hit, error) {
+	if q.Admit == nil {
+		return hits, nil
+	}
+	cands := make([]search.Candidate, 0, len(hits))
+	for _, h := range hits {
+		cands = append(cands, search.Candidate{ID: h.ID, Type: h.Type, Face: h.Face})
+	}
+	admitted, err := q.Admit(cands)
+	if err != nil {
+		return nil, err
+	}
+	keep := make(map[search.Candidate]bool, len(admitted))
+	for _, c := range admitted {
+		keep[c] = true
+	}
+	var out []search.Hit
+	for _, h := range hits {
+		if keep[search.Candidate{ID: h.ID, Type: h.Type, Face: h.Face}] {
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }
 
 func TestV1ListEntitiesSearchQuery(t *testing.T) {
@@ -1778,8 +1811,9 @@ func TestV1SchemaWithCustomTypes(t *testing.T) {
 	app.Meta().Entities["ticket"] = metamodel.EntityDef{
 		Label: "Ticket",
 		Properties: map[string]metamodel.PropertyDef{
-			"title":  {Type: "string", Required: true},
-			"status": {Type: "status_type"},
+			"title":       {Type: "string", Required: true},
+			"status":      {Type: "status_type"},
+			"behandeling": {Type: "string", Label: "Behandelstrategie"},
 		},
 	}
 
@@ -1806,6 +1840,9 @@ func TestV1SchemaWithCustomTypes(t *testing.T) {
 	ticketType := schema.Entities["ticket"]
 	if ticketType.Properties["status"].Values == nil {
 		t.Error("expected status property to have values from custom type")
+	}
+	if got := ticketType.Properties["behandeling"].Label; got != "Behandelstrategie" {
+		t.Errorf("expected property label to be serialized, got %q", got)
 	}
 }
 
@@ -2887,8 +2924,7 @@ func seedBlocksReverseFixture(t *testing.T, app *App) (sourceID, targetID string
 	seedEntity(app, &entity.Entity{ID: targetID, Type: "feature", Properties: map[string]any{"title": "target"}})
 	if _, err := app.store.CreateRelation(
 		t.Context(),
-		sourceID, "blocks", targetID,
-		&store.RelationData{Properties: map[string]any{"reason": "test block"}},
+		entity.RelationKey{From: sourceID, Type: "blocks", To: targetID}, &store.RelationData{Properties: map[string]any{"reason": "test block"}},
 	); err != nil {
 		t.Fatalf("seed blocks relation: %v", err)
 	}
@@ -3324,7 +3360,7 @@ func TestV1UpdateEntity_Relations_UnknownTarget(t *testing.T) {
 		t.Fatalf("response missing target_not_found/FEAT-999, got: %s", rec.Body.String())
 	}
 	// The edge must NOT have been written to the store.
-	if _, err := app.store.GetRelation(t.Context(), "TKT-001", "implements", "FEAT-999"); err == nil {
+	if _, err := app.store.GetRelation(t.Context(), entity.RelationKey{From: "TKT-001", Type: "implements", To: "FEAT-999"}); err == nil {
 		t.Fatal("dangling-peer edge was persisted; want no store mutation")
 	}
 }
@@ -3370,7 +3406,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "F"}})
 
-	entityBefore, _ := app.reader.getEntity(context.Background(), "TKT-001")
+	entityBefore, _ := app.reader.writePrepRow(context.Background(), entity.Ref{ID: "TKT-001"})
 	etagBefore := app.computeEntityETag(context.Background(), entityBefore)
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
@@ -3381,7 +3417,7 @@ func TestV1UpdateEntity_Relations_OnlyPATCH_ETagChangesButEntityStable(t *testin
 		t.Fatalf("PATCH returned %d: %s", rec.Code, rec.Body.String())
 	}
 
-	entityAfter, _ := app.reader.getEntity(context.Background(), "TKT-001")
+	entityAfter, _ := app.reader.writePrepRow(context.Background(), entity.Ref{ID: "TKT-001"})
 	// Entity fields (id/type/props/content) should be byte-identical.
 	if entityAfter.Content != entityBefore.Content ||
 		len(entityAfter.Properties) != len(entityBefore.Properties) {
@@ -4727,7 +4763,7 @@ func TestV1Affordance_PatchReadOnlyField_Forbidden(t *testing.T) {
 			t.Fatalf("got %d, want 403; body=%s", code, body)
 		}
 		// Verify title was NOT updated.
-		e, _ := app.reader.getEntity(context.Background(), "TKT-001")
+		e, _ := app.reader.writePrepRow(context.Background(), entity.Ref{ID: "TKT-001"})
 		if e.Properties["title"] != "Original" {
 			t.Errorf("title must not be applied when status fails: got %v", e.Properties["title"])
 		}
@@ -4999,7 +5035,7 @@ func dryRunCreateRaw(t *testing.T, app *App, body string) (code int, resp *httpt
 func countStoreEntities(t *testing.T, app *App) int {
 	t.Helper()
 	n := 0
-	for _, err := range app.store.ListEntities(context.Background(), store.EntityQuery{}) {
+	for _, err := range app.store.ListEntities(context.Background(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			continue
 		}
@@ -5204,7 +5240,7 @@ func TestHandleV1DryRunCreate_UnknownType(t *testing.T) {
 //
 //nolint:unparam // see preceding doc comment
 func bindEdge(app *App, from, relType, to string) {
-	if _, err := app.store.CreateRelation(context.Background(), from, relType, to, nil); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: relType, To: to}, nil); err != nil {
 		panic(err)
 	}
 }
@@ -5243,7 +5279,7 @@ func TestV1Affordance_PerRelationCreate_ForbiddenWhenNotCreatable(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets/TKT-001/relations/implements",
 		strings.NewReader(`{"id":"FEAT-001"}`))
 	rec := httptest.NewRecorder()
-	app.write.handleV1CreateRelation(rec, req, "ticket", entityRef{ID: "TKT-001"}, "implements")
+	app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
@@ -5268,7 +5304,7 @@ func TestV1Affordance_PerRelationDelete_ForbiddenWhenNotRemovable(t *testing.T) 
 	req := httptest.NewRequest(http.MethodDelete,
 		"/api/v1/tickets/TKT-001/relations/implements/FEAT-001", http.NoBody)
 	rec := httptest.NewRecorder()
-	app.write.handleV1DeleteRelation(rec, req, "ticket", entityRef{ID: "TKT-001"}, "implements", "FEAT-001")
+	app.write.handleV1DeleteRelation(rec, req, "ticket", "TKT-001", "implements", "FEAT-001")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
@@ -5287,7 +5323,7 @@ func TestV1Affordance_PerRelationCreate_AllowedWhenCreatable(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tickets/TKT-001/relations/implements",
 		strings.NewReader(`{"id":"FEAT-001"}`))
 	rec := httptest.NewRecorder()
-	app.write.handleV1CreateRelation(rec, req, "ticket", entityRef{ID: "TKT-001"}, "implements")
+	app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("got %d, want 201; body=%s", rec.Code, rec.Body.String())
 	}
@@ -5331,7 +5367,7 @@ func TestV1Affordance_PerRelationCreate_IncomingResolvesAgainstSource(t *testing
 		"/api/v1/concepts/CONC-001/relations/affects",
 		strings.NewReader(`{"id":"TKT-001","direction":"incoming"}`))
 	rec := httptest.NewRecorder()
-	app.write.handleV1CreateRelation(rec, req, "concept", entityRef{ID: "CONC-001"}, "affects")
+	app.write.handleV1CreateRelation(rec, req, "concept", "CONC-001", "affects")
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("got %d, want 403 (incoming-direction must resolve verdict against source); body=%s", rec.Code, rec.Body.String())
 	}
@@ -5397,7 +5433,7 @@ func TestV1Affordance_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
 			"/api/v1/tickets/TKT-001/relations/implements",
 			strings.NewReader(`{"id":"FEAT-001","meta":{"note":"hi"}}`))
 		rec := httptest.NewRecorder()
-		app.write.handleV1CreateRelation(rec, req, "ticket", entityRef{ID: "TKT-001"}, "implements")
+		app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
 		}
@@ -5413,7 +5449,7 @@ func TestV1Affordance_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
 			"/api/v1/tickets/TKT-001/relations/implements/FEAT-001",
 			strings.NewReader(`{"meta":{"note":"hi"}}`))
 		rec := httptest.NewRecorder()
-		app.write.handleV1UpdateRelation(rec, req, "ticket", entityRef{ID: "TKT-001"}, "implements", "FEAT-001")
+		app.write.handleV1UpdateRelation(rec, req, "ticket", "TKT-001", "implements", "FEAT-001")
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("got %d, want 403; body=%s", rec.Code, rec.Body.String())
 		}
@@ -5441,7 +5477,7 @@ func TestV1Affordance_RelationMeta_ForbiddenWhenNotWritable(t *testing.T) {
 			"/api/v1/tickets/TKT-001/relations/implements",
 			strings.NewReader(`{"id":"FEAT-001","meta":{"role":"primary"}}`))
 		rec := httptest.NewRecorder()
-		app.write.handleV1CreateRelation(rec, req, "ticket", entityRef{ID: "TKT-001"}, "implements")
+		app.write.handleV1CreateRelation(rec, req, "ticket", "TKT-001", "implements")
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("got %d, want 201; body=%s", rec.Code, rec.Body.String())
 		}

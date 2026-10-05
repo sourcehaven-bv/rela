@@ -299,3 +299,42 @@ func TestJSONPointerEscape(t *testing.T) {
 		}
 	}
 }
+
+func TestV1RelationsField_DeltaShape(t *testing.T) {
+	body := `{"tagged": {"add": [{"type": "label", "id": "L-001"}], "remove": [{"id": "L-002"}]}}`
+	var f RelationsField
+	if err := json.Unmarshal([]byte(body), &f); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	upd := f.Modern["tagged"]
+	if !upd.Delta || upd.DataPresent {
+		t.Fatalf("Delta=%v DataPresent=%v, want a delta", upd.Delta, upd.DataPresent)
+	}
+	if len(upd.Add) != 1 || upd.Add[0].ID != "L-001" || len(upd.Remove) != 1 || upd.Remove[0].ID != "L-002" {
+		t.Fatalf("Add=%+v Remove=%+v", upd.Add, upd.Remove)
+	}
+	if got := upd.Upserts(); len(got) != 1 || got[0].ID != "L-001" {
+		t.Fatalf("Upserts = %+v, want the added edge", got)
+	}
+}
+
+func TestV1RelationsField_DeltaShape_Rejected(t *testing.T) {
+	cases := []struct{ name, body, code, path string }{
+		{"data beside add", `{"tagged": {"data": [], "add": []}}`, "wrapper_invalid", "/relations/tagged"},
+		{"null remove", `{"tagged": {"remove": null}}`, "relation_value_invalid", "/relations/tagged/remove"},
+		{"missing id", `{"tagged": {"add": [{"type": "label"}]}}`, "", "/relations/tagged/add/0/id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var f RelationsField
+			err := json.Unmarshal([]byte(tc.body), &f)
+			var werr *WireError
+			if !errors.As(err, &werr) {
+				t.Fatalf("err = %v, want a *WireError", err)
+			}
+			if (tc.code != "" && werr.Code != tc.code) || werr.Path != tc.path {
+				t.Fatalf("= %s at %s, want %s at %s", werr.Code, werr.Path, tc.code, tc.path)
+			}
+		})
+	}
+}

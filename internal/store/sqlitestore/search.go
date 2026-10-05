@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,7 +30,10 @@ type SearchBackend struct {
 	titles SearchTitles
 }
 
-var _ search.Backend = (*SearchBackend)(nil)
+var (
+	_ search.Backend          = (*SearchBackend)(nil)
+	_ search.AdmittingBackend = (*SearchBackend)(nil)
+)
 
 // minTrigramRunes is the shortest needle the trigram index can answer. A
 // shorter one is matched with LIKE over the indexed text, which scans it.
@@ -72,6 +76,27 @@ func (b *SearchBackend) Close() error { return nil }
 // Search returns the faces whose text contains text, best title match first,
 // resolved under w. An empty text matches every entity, in id order.
 func (b *SearchBackend) Search(text string, limit int, w store.WorldScope) ([]search.Face, error) {
+	return b.SearchAdmitted(text, limit, w, nil)
+}
+
+// SearchAdmitted implements [search.AdmittingBackend]: [SearchBackend.Search]
+// with admit trimming the matched entities' families before the world ranks
+// them. A nil admit is exactly Search.
+//
+// With admit, the families of every entity with a matching face are read and
+// admitted in ONE call, the world picks each prime among the admitted faces,
+// and a hit is kept only when that prime is itself a matching face. The hits
+// keep the order of the ranked match query, so the result is an ordered
+// subsequence of what the same query ranks without admission.
+func (b *SearchBackend) SearchAdmitted(
+	text string, limit int, w store.WorldScope, admit search.AdmitFunc,
+) ([]search.Face, error) {
+	if !w.IsSet() {
+		return nil, fmt.Errorf("%w: search with an unset world", store.ErrInvalidQuery)
+	}
+	if admit != nil {
+		return b.searchAdmitted(text, limit, w, admit)
+	}
 	sqlText, args := buildSearchSQL(text, limit, w, b.titles)
 	rows, err := b.db.QueryContext(context.Background(), sqlText, args...)
 	if err != nil {
@@ -93,10 +118,98 @@ func (b *SearchBackend) Search(text string, limit int, w store.WorldScope) ([]se
 	return out, rows.Err()
 }
 
+// searchAdmitted is SearchAdmitted with a non-nil admit.
+func (b *SearchBackend) searchAdmitted(
+	text string, limit int, w store.WorldScope, admit search.AdmitFunc,
+) ([]search.Face, error) {
+	ctx := context.Background()
+	matchText, matchArgs := buildMatchedFacesSQL(text, b.titles)
+	matched, err := b.queryCandidates(ctx, matchText, matchArgs)
+	if err != nil {
+		return nil, err
+	}
+	if len(matched) == 0 {
+		return nil, nil
+	}
+
+	familyText, familyArgs := buildFamiliesSQL(text)
+	families, err := b.queryCandidates(ctx, familyText, familyArgs)
+	if err != nil {
+		return nil, err
+	}
+	admitted, err := admit(families)
+	if err != nil {
+		return nil, err
+	}
+	primes := search.ResolvePrimes(w, admitted)
+
+	var out []search.Face
+	for _, c := range matched {
+		res, ok := primes[c.ID]
+		if !ok || res.Face != c.Face {
+			// The world serves another face of this entity, or none the
+			// reader may see; a match on a non-prime face is not a hit.
+			continue
+		}
+		out = append(out, search.Face{ID: c.ID, Face: res.Face, Via: res.Via, ChainPosition: res.ChainPosition})
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// queryCandidates runs a query returning (id, face, type) rows.
+func (b *SearchBackend) queryCandidates(ctx context.Context, sqlText string, args []any) ([]search.Candidate, error) {
+	rows, err := b.db.QueryContext(ctx, sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []search.Candidate
+	for rows.Next() {
+		var id, face, typ string
+		if err := rows.Scan(&id, &face, &typ); err != nil {
+			return nil, err
+		}
+		out = append(out, search.Candidate{ID: id, Type: typ, Face: entity.Face(face)})
+	}
+	return out, rows.Err()
+}
+
+// buildMatchedFacesSQL selects every face row whose own text contains text,
+// in the order [buildSearchSQL] ranks primes. An empty text matches every
+// row, in id order.
+func buildMatchedFacesSQL(text string, titles SearchTitles) (sqlText string, args []any) {
+	b := &sqlBuilder{}
+	needle := strings.ToLower(text)
+	all := `SELECT rowid AS rid, id, face, type, properties FROM entities`
+	if needle == "" {
+		return `SELECT id, face, type FROM (` + all + `) ORDER BY id, face`, b.args
+	}
+	matched := `SELECT id, face, type, ` + titleSQL(b, titles) + ` AS t FROM (` + all + `) p` +
+		` WHERE p.rid IN (` + matchSQL(b, needle) + `)`
+	ranked := `SELECT id, face, type, t, ` + titleRankSQL(b, needle) + ` AS r FROM (` + matched + `)`
+	return `SELECT id, face, type FROM (` + ranked + `)` +
+		` ORDER BY r DESC, CASE WHEN r > 0 THEN length(t) ELSE 0 END, id, face`, b.args
+}
+
+// buildFamiliesSQL selects every face of every entity that has a face whose
+// text contains text: the whole families admission and ranking need.
+func buildFamiliesSQL(text string) (sqlText string, args []any) {
+	b := &sqlBuilder{}
+	needle := strings.ToLower(text)
+	if needle == "" {
+		return `SELECT id, face, type FROM entities`, b.args
+	}
+	return `SELECT id, face, type FROM entities WHERE id IN (` +
+		`SELECT id FROM entities WHERE rowid IN (` + matchSQL(b, needle) + `))`, b.args
+}
+
 // faceFor records which world rule chose a face, as pgstore's does.
 func faceFor(id, entityType string, p entity.Face, rank int, w store.WorldScope) search.Face {
 	f := search.Face{ID: id, Face: p}
-	if w.IsDefaultWorld() {
+	if w.IsTrivial() {
 		f.Via = search.RuleUnscoped
 		return f
 	}
@@ -105,7 +218,7 @@ func faceFor(id, entityType string, p entity.Face, rank int, w store.WorldScope)
 		f.Via = search.RuleUnscoped
 		return f
 	}
-	if p.IsDefault() && rank >= len(res.Chain) {
+	if p.IsImplicit() && rank >= len(res.Chain) {
 		f.Via = search.RuleFallbackDefault
 		return f
 	}
@@ -124,7 +237,7 @@ func buildSearchSQL(text string, limit int, w store.WorldScope, titles SearchTit
 	needle := strings.ToLower(text)
 
 	primes := `SELECT rowid AS rid, id, face, type, properties, 0 AS wrank FROM entities WHERE face = ''`
-	if !w.IsDefaultWorld() {
+	if !w.IsTrivial() {
 		rank, candidate := worldSQL(b, w, "")
 		primes = `SELECT rid, id, face, type, properties, wrank FROM (` +
 			`SELECT rowid AS rid, id, face, type, properties, (` + rank + `) AS wrank, ` +

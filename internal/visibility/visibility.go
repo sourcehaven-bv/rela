@@ -13,7 +13,7 @@
 //
 //   - Gate BEFORE read: a denied row and a nonexistent row are
 //     indistinguishable (the RR-NGMI invariant — no existence oracle).
-//   - Stored type must equal the caller's claimed type: [Reader.Get]
+//   - Stored type must equal the caller's claimed type: a [Resolver]
 //     authorizes against the claimed type but verifies the loaded entity's
 //     actual type, returning not-found on mismatch (RR-SRZK6X; the
 //     read-side analog of BUG-ZWTDH9).
@@ -45,21 +45,27 @@ package visibility
 
 import (
 	"context"
-	"slices"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// RowGate answers entity-level read-permission questions for the principal
+// RowGate answers row-level read-permission questions for the principal
 // carried on ctx. Consumer-side contract of the acl read gate; the
 // production adapter is [DeclarativeGate], the permit-all one is [NopGate].
 //
+// A row is one stored face of an entity, so the gate answers per face:
+// ReadableFacesMany says, per id, which faces pass the read verdict. A face
+// whose row fails the verdict stays hidden even when another face of the
+// same id passes. PermitsRead is the bare-id question: whether SOME face is
+// readable. It must agree with ReadableFacesMany.
+//
 // Neither method verifies existence — they answer "the policy permits
-// reading this id IF it exists" (same contract as acl.Request).
+// reading this row IF it exists" (same contract as acl.Request).
 type RowGate interface {
 	PermitsRead(ctx context.Context, entityType, id string) (bool, error)
-	PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error)
+	ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error)
 }
 
 // FaceGate is the OPTIONAL content-state half of a [RowGate] (TKT-O7R2A1).
@@ -98,19 +104,15 @@ type FaceGate interface {
 //
 // A gate that is not a [FaceGate], or one reporting no restriction, permits
 // every face.
+//
+// It answers the face half only, after a row verdict made elsewhere, so it
+// consults [FaceGate] and not [FaceSetGate]. Some callers reach it without a
+// type-level read grant (deleted-entity history under the history
+// permission), and the "none" a FaceSetGate reports for such a type would
+// newly hide what they serve. [ReadableFaces] is the read that stops on
+// "none".
 func FaceAllowed(ctx context.Context, gate RowGate, entityType string, face entity.Face) bool {
-	fg, ok := gate.(FaceGate)
-	if !ok {
-		return true
-	}
-	faces, err := fg.PermittedFaces(ctx, entityType)
-	if err != nil {
-		return false
-	}
-	if len(faces) == 0 {
-		return true
-	}
-	return slices.Contains(faces, face)
+	return faceGateSet(ctx, gate, entityType).Contains(face)
 }
 
 // FieldRedactor reports the property names hidden from the ctx principal
@@ -144,50 +146,21 @@ func PrimeTraversals(ctx context.Context, red FieldRedactor, rows []*entity.Enti
 }
 
 // EntityGetter is the single-entity load this package needs from the
-// store. Satisfied by store.Store.
-//
-// It loads by (id, face) rather than by id because the readers accept an
-// ADDRESS (`ID` or `ID@face`) and parse it themselves; see [parseAddress].
+// store. Satisfied by store.Store. It loads one face row by its Ref; a
+// caller holding an address parses it first (BUG-R1PQY9).
 type EntityGetter interface {
-	GetEntityState(ctx context.Context, id string, face entity.Face) (*entity.Entity, error)
+	GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
 }
 
-// parseAddress splits an entity address into the bare id and the face it
-// names.
-//
-// Readers parse rather than pass the string through because the stores take a
-// bare id: an unparsed `ID@face` matches no row, and a row gate keyed on the
-// bare id matches nothing either (BUG-R1PQY9). A string the grammar rejects is
-// returned whole at the default face, as [store.GetEntityAt] does, so a
-// hand-edited id the current grammar would refuse stays readable. The fallback
-// cannot pair a gate on one id with a load of another: a rejected string that
-// contains the separator is refused by every store.
-//
-// It splits instead of delegating to [store.GetEntityAt] because the row gate
-// needs the bare id before the load.
-func parseAddress(addr string) (id string, face entity.Face) {
-	id, face, err := entity.ParseStateRef(addr)
-	if err != nil {
-		return addr, ""
-	}
-	return id, face
-}
-
-// Reader is the row-gating, field-redacting entity read-out surface.
-// Implementations: [PolicyReader] (policy-enforcing) and [AllowAllReader]
-// (explicit pass-through capability for system jobs).
+// Reader is the row-gating, field-redacting read-out surface for
+// collections. Implementations: [PolicyReader] (policy-enforcing) and
+// [AllowAllReader] (explicit pass-through capability for system jobs). A
+// single entity is read through the [Resolver] each one exposes.
 type Reader interface {
-	// Get returns the entity when the ctx principal may read it AND its
-	// stored type matches entityType. Denied, missing, and type-mismatched
-	// are indistinguishable: (nil, false, nil). Only a gate failure is an
-	// error — a store-load fault is deliberately swallowed into the same
-	// clean miss (the oracle-free contract requires it), so a backend
-	// outage reads as 404s; operators debugging phantom misses should
-	// check store health, not the gate. The returned entity's PROPERTIES
-	// are redacted (hidden names absent). Body redaction is out of scope:
-	// the `visible:` policy universe is metamodel-declared properties, so
-	// Content is not policy-hideable today and passes through verbatim.
-	Get(ctx context.Context, entityType, id string) (*entity.Entity, bool, error)
+	// Resolver returns the single-entity read that applies the same policy.
+	// Nil: never returned by either implementation; [NewScriptReader]
+	// rejects it.
+	Resolver() *Resolver
 
 	// Filter drops candidates the ctx principal may not read and redacts
 	// the survivors. Order is preserved; the returned slice is fresh; a
@@ -198,10 +171,18 @@ type Reader interface {
 	// FilterRelations keeps only relations whose BOTH endpoints are
 	// visible to the ctx principal (FROM ∧ TO — the relation-history
 	// precedent: the FROM side owns UI placement, it is not the auth
-	// boundary). Order preserved, fresh slice, fail-closed on gate error
-	// or a missing endpoint. Relations carry no field-level redaction
-	// today; row-gating is the whole contract.
+	// boundary). The tail of a content-scoped edge is its FromFace, which
+	// must itself be readable; every other end is entity level (see
+	// [Resolver.EndpointsReadable]). Order preserved, fresh slice,
+	// fail-closed on gate error or a missing endpoint. Relations carry no
+	// field-level redaction today; row-gating is the whole contract.
 	FilterRelations(ctx context.Context, rels []*entity.Relation) []*entity.Relation
+
+	// FilterRelationsStrict is FilterRelations for a caller that folds the
+	// result into an aggregate. A gate fault is returned as an error instead
+	// of hiding the affected relations: a count over a silently thinned set
+	// would report missing edges that exist (TKT-5LW875).
+	FilterRelationsStrict(ctx context.Context, rels []*entity.Relation) ([]*entity.Relation, error)
 }
 
 // HeaderFilterer is [Reader.Filter] for content-free [store.EntityHeader] values

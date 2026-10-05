@@ -40,6 +40,7 @@ interface HarnessOptions {
   onClearSelection?: () => void
   onComplete?: () => void
   onRequestConfirm?: (action: ActionConfig, actionId: string) => void
+  addressOf?: (entityId: string) => string
 }
 
 function mountHarness(opts: HarnessOptions = {}) {
@@ -53,6 +54,7 @@ function mountHarness(opts: HarnessOptions = {}) {
         listId,
         selectedIds,
         entities,
+        addressOf: opts.addressOf,
         onClearSelection: opts.onClearSelection ?? (() => {}),
         onRequestConfirm: opts.onRequestConfirm ?? (() => {}),
         onComplete: opts.onComplete ?? (() => {}),
@@ -271,5 +273,30 @@ describe('useListActions — script error dispatch', () => {
     expect(onRequestConfirm.mock.calls[0]?.[0]).toBe(action)
     expect(onRequestConfirm.mock.calls[0]?.[1]).toBe('act-1')
     expect(onRequestConfirm.mock.calls[0]?.[2]).toBe(trigger)
+  })
+})
+
+// BUG-FYEEVX: a script action acts on the face the row shows, like a `set`.
+describe('useListActions — addressing', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.resetAllMocks()
+  })
+
+  it('runs a script action against the row address', async () => {
+    const action: ActionConfig = { label: 'Run', key: 'r' }
+    configureSchema(action)
+    vi.mocked(runAction).mockResolvedValueOnce(null)
+
+    const { wrapper } = mountHarness({
+      selectedIds: new Set(['t1']),
+      entities: [ent('t1')],
+      addressOf: (id) => `${id}@draft`,
+    })
+
+    const { executeAction } = wrapper.vm as unknown as ReturnType<typeof useListActions>
+    await executeAction('act-1', action)
+
+    expect(runAction).toHaveBeenCalledWith('act-1', 't1@draft', 'task')
   })
 })

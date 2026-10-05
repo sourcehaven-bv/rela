@@ -28,7 +28,7 @@ func RunTxTests(t *testing.T, f Factory) {
 		})
 		require.NoError(t, err)
 
-		got, err := s.GetEntity(ctx(), "FEAT-100")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-100"})
 		require.NoError(t, err)
 		require.Equal(t, "In transaction", got.GetString("title"))
 	})
@@ -41,14 +41,14 @@ func RunTxTests(t *testing.T, f Factory) {
 			if err := tx.CreateEntity(ctx(), e); err != nil {
 				return err
 			}
-			got, err := tx.GetEntity(ctx(), "FEAT-100")
+			got, err := tx.GetEntity(ctx(), entity.Ref{ID: "FEAT-100"})
 			if err != nil {
 				return err
 			}
 			if got.GetString("title") != "Visible inside" {
 				return errors.New("tx read did not observe tx write")
 			}
-			if _, err := tx.GetEntity(ctx(), "FEAT-404"); !errors.Is(err, store.ErrNotFound) {
+			if _, err := tx.GetEntity(ctx(), entity.Ref{ID: "FEAT-404"}); !errors.Is(err, store.ErrNotFound) {
 				return errors.New("missing entity should be ErrNotFound inside tx")
 			}
 			return nil
@@ -75,7 +75,7 @@ func RunTxTests(t *testing.T, f Factory) {
 		for i := range writers {
 			wg.Go(func() {
 				errs[i] = s.Tx(ctx(), func(tx store.Store) error {
-					e, err := tx.GetEntity(ctx(), "FEAT-001")
+					e, err := tx.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
 					if err != nil {
 						return err
 					}
@@ -94,7 +94,7 @@ func RunTxTests(t *testing.T, f Factory) {
 			require.NoError(t, err, "writer %d", i)
 		}
 
-		got, err := s.GetEntity(ctx(), "FEAT-001")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
 		require.NoError(t, err)
 		require.Equal(t, strconv.Itoa(writers), got.GetString("n"),
 			"lost update: transactions interleaved")
@@ -119,9 +119,9 @@ func RunTxTests(t *testing.T, f Factory) {
 		})
 		require.NoError(t, err)
 
-		_, err = s.GetEntity(ctx(), "FEAT-100")
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "FEAT-100"})
 		require.NoError(t, err)
-		_, err = s.GetEntity(ctx(), "FEAT-101")
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "FEAT-101"})
 		require.NoError(t, err)
 	})
 }
@@ -144,7 +144,7 @@ func RunTxRollbackTests(t *testing.T, f Factory) {
 		})
 		require.ErrorIs(t, err, sentinel)
 
-		_, err = s.GetEntity(ctx(), "FEAT-900")
+		_, err = s.GetEntity(ctx(), entity.Ref{ID: "FEAT-900"})
 		require.ErrorIs(t, err, store.ErrNotFound)
 	})
 
@@ -155,7 +155,7 @@ func RunTxRollbackTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), seed))
 
 		err := s.Tx(ctx(), func(tx store.Store) error {
-			e, err := tx.GetEntity(ctx(), "FEAT-001")
+			e, err := tx.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
 			if err != nil {
 				return err
 			}
@@ -167,7 +167,7 @@ func RunTxRollbackTests(t *testing.T, f Factory) {
 		})
 		require.ErrorIs(t, err, sentinel)
 
-		got, err := s.GetEntity(ctx(), "FEAT-001")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-001"})
 		require.NoError(t, err)
 		require.Equal(t, "Original", got.GetString("title"))
 	})
@@ -242,7 +242,7 @@ func RunTxAbnormalExitTests(t *testing.T, f Factory) {
 		}()
 
 		// The write must not have survived...
-		_, err := s.GetEntity(ctx(), "PANIC-1")
+		_, err := s.GetEntity(ctx(), entity.Ref{ID: "PANIC-1"})
 		require.ErrorIs(t, err, store.ErrNotFound,
 			"a panicking transaction must not commit its writes")
 
@@ -253,7 +253,7 @@ func RunTxAbnormalExitTests(t *testing.T, f Factory) {
 			return tx.CreateEntity(ctx(), entity.New("AFTER-PANIC", "feature"))
 		}), "the store must remain usable after a panic inside Tx")
 
-		got, err := s.GetEntity(ctx(), "AFTER-PANIC")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "AFTER-PANIC"})
 		require.NoError(t, err)
 		require.Equal(t, "AFTER-PANIC", got.ID)
 	})

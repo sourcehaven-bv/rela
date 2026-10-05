@@ -163,14 +163,14 @@ func TestListPushdown_Eligibility(t *testing.T) {
 		{"range", "filter%5Bdue%5D%5Bgte%5D=2026-01-01", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, ok := planListPushdown(meta, "ticket", parseQuery(tc.query), allow, store.WorldScope{}, 1, 25, isRel)
+			_, ok := planListPushdown(meta, "ticket", parseQuery(tc.query), allow, store.TrivialScope(), 1, 25, isRel)
 			if ok != tc.want {
 				t.Errorf("eligible = %v, want %v", ok, tc.want)
 			}
 		})
 	}
 	t.Run("deny all", func(t *testing.T) {
-		_, ok := planListPushdown(meta, "ticket", parseQuery(""), acl.ReadQueryResult{DenyAll: true}, store.WorldScope{}, 1, 25, isRel)
+		_, ok := planListPushdown(meta, "ticket", parseQuery(""), acl.ReadQueryResult{DenyAll: true}, store.TrivialScope(), 1, 25, isRel)
 		if ok {
 			t.Error("a denied type must not be pushed")
 		}

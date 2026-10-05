@@ -21,7 +21,7 @@ import (
 )
 
 // Services wires app to the services in svc: CalDAV aliases, comments,
-// worlds and their relation scopes, next-action user state, and the
+// the worlds' relation scopes, next-action user state, and the
 // predicate compilers behind next-action sources, list and kanban
 // `condition:`, and `query_scopes:`.
 //
@@ -33,10 +33,9 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	app.SetCalDAVAliases(svc.CalDAVAliases())
 	app.SetComments(svc.Comments())
 
-	// Selecting a world and resolving its links are wired together: a
-	// surface that can select a world but not resolve its links renders every
-	// page with no relations, which reads as a data problem.
-	app.SetWorlds(appbuild.CompiledWorlds(svc))
+	// The worlds themselves are a NewApp argument; this resolves their links.
+	// A surface that can select a world but not resolve its links renders
+	// every page with no relations, which reads as a data problem.
 	if err := dataentry.SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
 		return fmt.Errorf("wire world-scoped relations: %w", err)
 	}

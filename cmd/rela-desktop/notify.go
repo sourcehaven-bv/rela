@@ -58,6 +58,7 @@ type projectNotifier struct {
 	files     desktopnotify.ConfigLoader
 	meta      func() *metamodel.Metamodel
 	entities  store.EntityReader
+	world     store.WorldScope // the world entities are read in
 	feed      changeFeed
 	tracker   *desktopnotify.Tracker
 
@@ -73,7 +74,7 @@ func newProjectNotifier(n projectNotifier) (*projectNotifier, error) {
 	switch {
 	case n.projectID == "":
 		return nil, errors.New("notifier: project id is required")
-	case n.files == nil, n.meta == nil, n.entities == nil, n.feed == nil, n.tracker == nil:
+	case n.files == nil, n.meta == nil, n.entities == nil, n.feed == nil, n.tracker == nil, !n.world.IsSet():
 		return nil, errors.New("notifier: project services are required")
 	case n.deliver == nil, n.badge == nil:
 		return nil, errors.New("notifier: deliver and badge callbacks are required")
@@ -134,7 +135,7 @@ func (n *projectNotifier) evaluate(ctx context.Context) {
 	}
 	n.lastErr = ""
 
-	res, err := cfg.Evaluate(ctx, n.entities)
+	res, err := cfg.Evaluate(ctx, n.entities, n.world)
 	if err != nil {
 		slog.Warn("desktop notifications: evaluation failed", "project", n.projectID, "error", err)
 		return
@@ -277,8 +278,10 @@ func (d *Desktop) onNotificationClicked(result notifications.NotificationResult)
 
 // startNotifier runs desktop.yaml for a freshly loaded project until ctx,
 // the project's lifetime, ends. A project the notifier cannot be built for
-// still opens; it just sends nothing.
-func (d *Desktop) startNotifier(ctx context.Context, projectID string, svc notifierServices) {
+// still opens; it just sends nothing. world is the world entities are read in.
+func (d *Desktop) startNotifier(
+	ctx context.Context, projectID string, svc notifierServices, world store.WorldScope,
+) {
 	if d.notify == nil {
 		return // no OS services (tests)
 	}
@@ -292,6 +295,7 @@ func (d *Desktop) startNotifier(ctx context.Context, projectID string, svc notif
 		files:     svc.ProjectFiles(),
 		meta:      svc.Meta,
 		entities:  svc.Store(),
+		world:     world,
 		feed:      svc.Store(),
 		tracker:   tracker,
 		deliver:   d.notify.deliver,

@@ -3,6 +3,7 @@ package analysis_test
 import (
 	"context"
 	"errors"
+	"iter"
 	"strings"
 	"testing"
 
@@ -12,7 +13,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // addEntity / addRelation: terse seed helpers that panic on error.
@@ -27,7 +29,7 @@ func addEntity(s store.Store, id, entityType string, props map[string]any) {
 }
 
 func addRelation(s store.Store, from, relType, to string) {
-	if _, err := s.CreateRelation(context.Background(), from, relType, to, nil); err != nil {
+	if _, err := s.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: relType, To: to}, nil); err != nil {
 		panic(err)
 	}
 }
@@ -42,15 +44,16 @@ func newServiceWith(t *testing.T, meta *metamodel.Metamodel, seed func(store.Sto
 	if seed != nil {
 		seed(st)
 	}
-	tr := tracer.New(st)
+	tr := tracertest.Must(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{
 		Store:  st,
 		Meta:   meta,
 		Tracer: tr,
 		LuaReadDeps: lua.ReadDeps{
-			VisibleReader: st,
+			VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
 			Tracer:        tr,
 			Meta:          meta,
+			World:         store.TrivialScope(),
 		},
 	})
 	if err != nil {
@@ -466,20 +469,22 @@ func TestCheckCardinality_MinMaxGroupedAcrossTypes(t *testing.T) {
 	}
 }
 
-// failingCountStore wraps a store.Store and fails every CountRelations
-// call, simulating a backend outage during the cardinality scan.
+// failingCountStore wraps a store.Store and fails every ListRelations
+// call, simulating a backend outage while cardinality reads its edges.
 type failingCountStore struct {
 	store.Store
 	err error
 }
 
-func (f *failingCountStore) CountRelations(context.Context, store.RelationQuery) (int, error) {
-	return 0, f.err
+func (f *failingCountStore) ListRelations(context.Context, store.RelationQuery) iter.Seq2[*entity.Relation, error] {
+	return func(yield func(*entity.Relation, error) bool) {
+		yield(nil, f.err)
+	}
 }
 
 // TestCheckCardinality_CountErrorFailsLoudly pins the TKT-RNBLAC error
-// policy: a failing CountRelations must abort the run with a wrapped
-// error naming the entity and relation, and must NOT surface as a
+// policy: a failing edge read must abort the run with a wrapped
+// error naming the relation, and must NOT surface as a
 // count-0 min violation (the fabricated-violation bug the old
 // `n, _ :=` produced).
 func TestCheckCardinality_CountErrorFailsLoudly(t *testing.T) {
@@ -504,9 +509,9 @@ func TestCheckCardinality_CountErrorFailsLoudly(t *testing.T) {
 
 	countErr := errors.New("backend down")
 	broken := &failingCountStore{Store: st, err: countErr}
-	tr := tracer.New(broken)
+	tr := tracertest.Must(broken, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{Store: broken, Meta: meta, Tracer: tr,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: broken, Tracer: tr, Meta: meta}})
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(broken).WithWorld(visibility.WorldOf(store.TrivialScope())), Tracer: tr, Meta: meta, World: store.TrivialScope()}})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)
 	}
@@ -518,7 +523,7 @@ func TestCheckCardinality_CountErrorFailsLoudly(t *testing.T) {
 	if !errors.Is(err, countErr) {
 		t.Errorf("error does not wrap the store error: %v", err)
 	}
-	for _, want := range []string{"TKT-001", "affects"} {
+	for _, want := range []string{"affects"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q missing context %q", err, want)
 		}
@@ -658,7 +663,7 @@ func TestService_New_RejectsNilDeps(t *testing.T) {
 	// the next nil-check fires.
 	meta := &metamodel.Metamodel{}
 	st := memstore.New()
-	tr := tracer.New(st)
+	tr := tracertest.Must(st, store.TrivialScope())
 
 	cases := []struct {
 		name string

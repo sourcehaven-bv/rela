@@ -472,6 +472,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 		// Wails asset server, no network listener: the server host IS the
 		// user's machine, so commands run ungated like any local desktop app.
 		dataentry.UngatedCommandAuthorizer(),
+		appbuild.CompiledWorlds(svc),
 	)
 	if err != nil {
 		return d.failLoad(err)
@@ -513,7 +514,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	})
 
 	scheduler.StartBackground(schedCtx, svc, slog.Default())
-	d.startNotifier(schedCtx, projectID(app.ProjectRoot()), svc)
+	d.startNotifier(schedCtx, projectID(app.ProjectRoot()), svc, appbuild.CompiledWorlds(svc).DefaultWorld())
 
 	if d.win != nil {
 		d.win.SetTitle(name)

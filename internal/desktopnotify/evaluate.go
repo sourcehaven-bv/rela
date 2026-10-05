@@ -39,14 +39,20 @@ type Result struct {
 // current matches and badge count. It reads each entity type once, however
 // many rules name it. A store error fails the whole evaluation.
 //
+// world is the world the entities are read in: one face per entity, the one
+// the desktop shows. An unset world is rejected.
+//
 // The reader must be the store the desktop user sees. The desktop is a
 // single-user app with no read ACL, so no visibility wrapper is applied here.
 // It takes store.EntityReader, not a narrower interface, because that is what
 // store.ListEntityHeaders accepts; the helper reads content-free headers when
 // the backend can, which is all a condition and a template need.
-func (c *Config) Evaluate(ctx context.Context, entities store.EntityReader) (Result, error) {
+func (c *Config) Evaluate(ctx context.Context, entities store.EntityReader, world store.WorldScope) (Result, error) {
 	if entities == nil {
 		return Result{}, errors.New("desktopnotify: Evaluate requires an entity reader")
+	}
+	if !world.IsSet() {
+		return Result{}, errors.New("desktopnotify: Evaluate requires a world")
 	}
 	res := Result{Rules: c.RuleIDs()}
 
@@ -56,7 +62,8 @@ func (c *Config) Evaluate(ctx context.Context, entities store.EntityReader) (Res
 			return hs, nil
 		}
 		var hs []store.EntityHeader
-		for h, err := range store.ListEntityHeaders(ctx, entities, store.EntityQuery{Type: entityType}) {
+		q := store.EntityQuery{Type: entityType, Faces: store.InWorld(world)}
+		for h, err := range store.ListEntityHeaders(ctx, entities, q) {
 			if err != nil {
 				return nil, fmt.Errorf("list %s: %w", entityType, err)
 			}

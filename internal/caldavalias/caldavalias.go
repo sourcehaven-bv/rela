@@ -52,9 +52,8 @@ const stateKey = "caldav/aliases.json"
 // This is a HARD failure, deliberately unlike scheduler state (which treats a
 // corrupt file as empty). An empty alias table is not a degraded state — every
 // client resource loses its entity link, so the next sync re-creates every
-// to-do as a NEW entity and the user's list silently doubles. That is the same
-// reasoning internal/cli/sync applies to its own state: silently discarding it
-// "would re-push every local record as a blind create."
+// to-do as a NEW entity and the user's list silently doubles. Silently
+// discarding the table would turn every known record into a blind create.
 var ErrCorrupt = errors.New("caldavalias: stored aliases are corrupt")
 
 // Alias is one CalDAV resource's link to a rela entity.

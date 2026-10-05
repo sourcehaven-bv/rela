@@ -68,10 +68,18 @@ func (m *Manager) recordRelationAudit(ctx context.Context, op string, rel *entit
 // from the post-rename entity (oldID + after.Type for Before,
 // after.ID + after.Type for After). Callers that lose the
 // post-rename fetch log via slog and skip the audit — never silently.
+//
+// A rename moves every face, and each face gets its own record. The audit
+// subject has no face field, so a faced row names its face in the summary,
+// as a family delete does.
 func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *entity.Entity) {
-	if after == nil { // coverage-ignore: defensive: only caller is RenameEntity, which invokes this only after a non-
-		// nil post-rename fetch succeeds
+	if after == nil { // coverage-ignore: defensive: only caller is familyRename.record, which passes the rows a
+		// post-rename family read returned
 		return
+	}
+	summary := "renamed"
+	if !after.Face.IsImplicit() {
+		summary = "renamed face " + string(after.Face)
 	}
 	m.deps.Audit.Record(audit.Record{
 		Time: time.Now().UTC(),
@@ -88,7 +96,7 @@ func (m *Manager) recordRenameAudit(ctx context.Context, oldID string, after *en
 		},
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
-		Summary:     "renamed",
+		Summary:     summary,
 	})
 }
 

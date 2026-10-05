@@ -4,12 +4,15 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 )
 
 func ctx() context.Context { return context.Background() }
@@ -28,10 +31,10 @@ func seedGraph(t *testing.T) *tracer.GenericTracer {
 	} {
 		require.NoError(t, s.CreateEntity(ctx(), e))
 	}
-	s.CreateRelation(ctx(), "A", "implements", "B", nil)
-	s.CreateRelation(ctx(), "B", "requires", "C", nil)
+	s.CreateRelation(ctx(), entity.RelationKey{From: "A", Type: "implements", To: "B"}, nil)
+	s.CreateRelation(ctx(), entity.RelationKey{From: "B", Type: "requires", To: "C"}, nil)
 
-	return tracer.New(s)
+	return tracertest.Must(s, store.TrivialScope())
 }
 
 func TestTraceFrom(t *testing.T) {
@@ -144,7 +147,7 @@ func TestFindOrphans(t *testing.T) {
 	orphans, err := tr.FindOrphans(ctx())
 	require.NoError(t, err)
 	require.Len(t, orphans, 1)
-	assert.Equal(t, "D", orphans[0])
+	assert.Equal(t, tracer.Orphan{ID: "D", Type: orphans[0].Type, Title: "Orphan D"}, orphans[0])
 }
 
 func TestHasCycle_NoCycle(t *testing.T) {
@@ -156,9 +159,20 @@ func TestHasCycle_WithCycle(t *testing.T) {
 	s := memstore.New()
 	s.CreateEntity(ctx(), entity.New("X", "t"))
 	s.CreateEntity(ctx(), entity.New("Y", "t"))
-	s.CreateRelation(ctx(), "X", "dep", "Y", nil)
-	s.CreateRelation(ctx(), "Y", "dep", "X", nil)
+	s.CreateRelation(ctx(), entity.RelationKey{From: "X", Type: "dep", To: "Y"}, nil)
+	s.CreateRelation(ctx(), entity.RelationKey{From: "Y", Type: "dep", To: "X"}, nil)
 
-	tr := tracer.New(s)
+	tr := tracertest.Must(s, store.TrivialScope())
 	assert.True(t, tr.HasCycle(ctx(), "X"))
+}
+
+func TestNew_RejectsMissingCollaborators(t *testing.T) {
+	t.Parallel()
+	_, err := tracer.New(nil, store.TrivialScope())
+	require.Error(t, err, "a nil reader must be refused")
+	_, err = tracer.New(memstore.New(), store.WorldScope{})
+	require.Error(t, err, "an unset world must be refused")
+	tr, err := tracer.New(memstore.New(), store.TrivialScope())
+	require.NoError(t, err)
+	require.NotNil(t, tr)
 }

@@ -27,8 +27,8 @@ import (
 //   - Routes are not method-split at registration (GET and the mutating verbs
 //     share the /api/v1/ catch-all), so "wrap only writes" is not cleanly
 //     registrable.
-//   - Every write path reaches this helper, so provision covers CRUD, sync,
-//     action, and attachment uniformly — the same anti-bypass property reject
+//   - Every write path reaches this helper, so provision covers CRUD, action,
+//     and attachment uniformly — the same anti-bypass property reject
 //     gets from the single AuthorizeWrite choke point.
 //
 // # What it returns

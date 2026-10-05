@@ -11,6 +11,9 @@ export interface Schema {
   // disclosed and the server does not filter them per principal. Only
   // `readable` varies by caller.
   worlds?: Record<string, WorldInfo>
+  // The declared worlds in schema.yaml order, which a JSON object cannot
+  // carry. Absent when the schema declares no worlds.
+  world_order?: string[]
 }
 
 // WorldInfo mirrors v1.World. See internal/dataentry/schemaworlds.go.
@@ -37,6 +40,10 @@ export interface WorldInfo {
   // Behaviour for an entity with no face in this world: `redirect` names the
   // world the app navigates to instead of rendering the page.
   on_absent?: { redirect?: string }
+  // The face a create issued from this world lands on (`create:`). Absent
+  // when the world declares none; a create form on a faced type then asks
+  // for a face.
+  create?: string
   // Whether this caller may select the world via `?world=`.
   //
   // A UI HINT about SELECTION, never a boundary: the server re-checks the
@@ -117,6 +124,7 @@ export interface WorldMessages {
 }
 
 export interface PropertyDef {
+  label?: string
   type: 'string' | 'date' | 'datetime' | 'integer' | 'boolean' | 'enum' | 'file' | 'rrule'
   required?: boolean
   values?: string[]
@@ -145,6 +153,9 @@ export interface RelationType {
   max_incoming?: number
   properties?: Record<string, PropertyDef>
   orderable?: RelationOrderable
+  // 'content' when each edge belongs to one face of its source; absent for
+  // an identity-scoped relation, whose edges belong to the entity.
+  scope?: 'content'
 }
 
 export interface RelationOrderable {

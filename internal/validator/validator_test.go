@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
@@ -64,7 +65,7 @@ func newTestValidator(t *testing.T) *validator.GenericValidator {
 
 	// Minimal Lua services; none of our validation rules use Lua so the
 	// individual service fields are not exercised here.
-	deps := lua.ReadDeps{Meta: meta}
+	deps := lua.ReadDeps{Meta: meta, World: store.TrivialScope()}
 
 	return mustValidator(validator.New(s, meta, deps, binder(meta, s)))
 }
@@ -148,7 +149,7 @@ func TestGenericValidator_CheckRuleFull_ContentDetail(t *testing.T) {
 		Entities:    map[string]metamodel.EntityDef{"ncr": {Label: "NCR"}},
 		Validations: []metamodel.ValidationRule{rule},
 	}
-	v := mustValidator(validator.New(s, meta, lua.ReadDeps{Meta: meta}, binder(meta, s)))
+	v := mustValidator(validator.New(s, meta, lua.ReadDeps{Meta: meta, World: store.TrivialScope()}, binder(meta, s)))
 
 	full, err := v.CheckRuleFull(ctx, rule)
 	if err != nil {

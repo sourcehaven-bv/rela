@@ -66,6 +66,12 @@ const derivedQueryPrefix = "rela_derived_query__"
 
 const derivedListPrefix = "rela_derived_list__"
 
+// derivedIndexShape is hashed into every derived index name. Changing an
+// index's column layout must change its name, or the reconciler keeps the
+// old index under the name it still computes. "face-key" is TKT-7IZHP0 A9:
+// face became a key column instead of a partial guard on the implicit face.
+const derivedIndexShape = "face-key"
+
 // uniqueIndexName is the deterministic index name for a (type, property) unique
 // rule. Deterministic across processes and versions (no per-run entropy) so the
 // drop side of reconcile is safe: an index whose name is not recomputed from the
@@ -95,6 +101,7 @@ const uniqueIndexShape = "per-face-v2"
 // in a different role or order name a different index.
 func listIndexName(spec store.DerivedObjectSpec) string {
 	h := sha256.New()
+	_, _ = h.Write([]byte(derivedIndexShape))
 	_, _ = h.Write([]byte(spec.Type))
 	for _, property := range spec.Properties {
 		_, _ = h.Write([]byte{'\x00'})
@@ -120,12 +127,15 @@ func listIndexName(spec store.DerivedObjectSpec) string {
 
 // createListIndexDDL is the shape a pushed list page (listpushdown.go)
 // scans: type first (a parameter in the query, so it must be a column, not
-// a partial-index guard), the equality-filtered properties, the sort keys
-// under the collation the page orders by, and id as the tiebreak; partial on
-// the default face, which every list page filters on literally.
+// a partial-index guard), then face, the equality-filtered properties, the
+// sort keys under the collation the page orders by, and id as the
+// tiebreak. face is a key column rather than a partial guard
+// (TKT-7IZHP0 A9): a page in a world that ranks nothing for the type reads
+// one face (see store.FaceSelection.Lowered), which may be any face, and
+// with face second that page is a range scan.
 func createListIndexDDL(name string, spec store.DerivedObjectSpec) string {
-	columns := make([]string, 0, 2+len(spec.Properties)+len(spec.OrderBy))
-	columns = append(columns, "type")
+	columns := make([]string, 0, 3+len(spec.Properties)+len(spec.OrderBy))
+	columns = append(columns, "type", "face")
 	for _, property := range spec.Properties {
 		columns = append(columns, "(properties->>"+quoteLiteral(property)+")")
 	}
@@ -136,8 +146,19 @@ func createListIndexDDL(name string, spec store.DerivedObjectSpec) string {
 		columns = append(columns, "((properties->>"+quoteLiteral(property)+`) COLLATE "C")`)
 	}
 	columns = append(columns, "id")
-	return "CREATE INDEX IF NOT EXISTS " + quoteIdent(name) + " ON entities (" +
-		strings.Join(columns, ", ") + ") WHERE face = ''"
+	ddl := "CREATE INDEX IF NOT EXISTS " + quoteIdent(name) + " ON entities (" + strings.Join(columns, ", ") + ")"
+	// The scalar equality a page pushes carries a jsonb_typeof guard (see
+	// propCond). Left out of the index it is a per-row filter the planner
+	// cannot estimate, and the misestimate makes a sort look cheaper than
+	// walking the index. As the partial predicate it is implied instead.
+	guards := make([]string, 0, len(spec.Properties))
+	for _, property := range spec.Properties {
+		guards = append(guards, "jsonb_typeof(properties->"+quoteLiteral(property)+") = 'string'")
+	}
+	if len(guards) > 0 {
+		ddl += " WHERE " + strings.Join(guards, " AND ")
+	}
+	return ddl
 }
 
 // orderValuesAt returns the declared value order of the i-th sort key, or nil
@@ -173,6 +194,7 @@ func orderRankSQL(property string, values []string) string {
 
 func queryIndexName(entityType string, properties []string) string {
 	h := sha256.New()
+	_, _ = h.Write([]byte(derivedIndexShape))
 	_, _ = h.Write([]byte(entityType))
 	for _, property := range properties {
 		_, _ = h.Write([]byte{'\x00'})
@@ -481,7 +503,7 @@ func createQueryIndexDDL(name string, spec store.DerivedObjectSpec) string {
 		expressions = append(expressions, "(properties->>"+quoteLiteral(property)+")")
 		guards = append(guards, "jsonb_typeof(properties->"+quoteLiteral(property)+") = 'string'")
 	}
-	return "CREATE INDEX IF NOT EXISTS " + quoteIdent(name) + " ON entities (" +
+	return "CREATE INDEX IF NOT EXISTS " + quoteIdent(name) + " ON entities (face, " +
 		strings.Join(expressions, ", ") + ") WHERE " + strings.Join(guards, " AND ")
 }
 

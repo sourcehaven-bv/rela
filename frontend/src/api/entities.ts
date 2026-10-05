@@ -222,12 +222,17 @@ export async function restoreEntity(type: string, id: string): Promise<void> {
  * `world` selects the world the hits are resolved in. Omitted, the server
  * applies `app.default_world`; callers on a page pass `useWorld().worldParam`
  * so search agrees with the page the user is browsing.
+ *
+ * `link` names the relation a picker is about to create with each hit as its
+ * source. The server then answers per row, in `linkable`, whether the
+ * principal may create that edge.
  */
 export async function searchEntities(
   query: string,
   type?: string,
   signal?: AbortSignal,
-  world?: string
+  world?: string,
+  link?: SearchLinkContext
 ): Promise<ListResponse<Entity>> {
   const params: Record<string, string> = { q: query }
   if (type) {
@@ -236,7 +241,20 @@ export async function searchEntities(
   if (world) {
     params.world = world
   }
+  if (link) {
+    params.relation = link.relation
+    params.direction = link.direction
+  }
   return api.get<ListResponse<Entity>>('/_search', params, signal)
+}
+
+/**
+ * The relation context of a search: the hits are candidate SOURCES of an
+ * incoming `relation` edge. The server accepts only `incoming`.
+ */
+export interface SearchLinkContext {
+  relation: string
+  direction: 'incoming'
 }
 
 /**
@@ -364,16 +382,12 @@ export async function createRelation(
  */
 export async function getAllEntityRelations(
   type: string,
-  entityId: string,
-  world?: string
+  entityId: string
 ): Promise<Record<string, RelationEntry[]>> {
-  // The world is carried because a content-scoped relation belongs to ONE
-  // face: reading unscoped while the page shows a non-default world would
-  // enumerate a different face's edges than the one on screen.
-  return api.get<Record<string, RelationEntry[]>>(
-    `/${getPlural(type)}/${entityId}/relations`,
-    world ? { world } : undefined
-  )
+  // `entityId` is the ADDRESS (`POL-1@draft`), never a bare id plus a world:
+  // a content-scoped relation belongs to one face, and this sub-resource
+  // refuses `?world=` (422), so the face must ride the path.
+  return api.get<Record<string, RelationEntry[]>>(`/${getPlural(type)}/${entityId}/relations`)
 }
 
 export async function getEntityRelations(

@@ -2,12 +2,15 @@ package docs
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -45,7 +48,7 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 		return a.luaFail(ls, `%s: expects a table, e.g. %s{who="auditor", op="update", type="policy"}`, verb, verb)
 	}
 
-	if rejectUnknownKeys(a, ls, verb, tbl, "who", "op", "type", "id", "because", "unassigned", "emit") {
+	if rejectUnknownKeys(a, ls, verb, tbl, "who", "op", "type", "id", "face", "because", "unassigned", "emit") {
 		return 0
 	}
 	show := fieldBoolDefault(ls, tbl, "emit", true)
@@ -54,6 +57,7 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	op := fieldString(ls, tbl, "op")
 	typ := fieldString(ls, tbl, "type")
 	id := fieldString(ls, tbl, "id")
+	faceArg := fieldString(ls, tbl, "face")
 	because := fieldString(ls, tbl, "because")
 	unassigned := fieldBool(ls, tbl, "unassigned")
 
@@ -70,6 +74,11 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	}
 	if !validOp(op) {
 		return a.luaFail(ls, "%s{op=%q}: unknown op — one of create, update, delete, rename", verb, op)
+	}
+	declared := metamodel.FaceOrderOf(a.meta, typ)
+	faces, msg := claimFaces(verb, acl.Op(op), typ, faceArg, declared)
+	if msg != "" {
+		return a.luaFail(ls, "%s", msg)
 	}
 	// A principal with no assignment has no grants, so it is refused BY
 	// CONSTRUCTION — which makes every refuses{} with a misspelled `who` green
@@ -110,22 +119,38 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	}
 
 	ctx := principal.With(a.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
-	dec := d.AuthorizeWrite(ctx, acl.WriteRequest{
-		Op: acl.Op(op),
-		// Faceless: the allows{}/refuses{} Lua surface takes who/op/type/id
-		// and has no `face` field, so a doc claim has no face to name and is
-		// asserted against the default one. Adding `face=` to the surface
-		// would make faced claims expressible; until then the faceless
-		// constructor says out loud that this claim covers the default face
-		// only, rather than implying a face it never asked for.
-		Subject: acl.NewFacelessEntitySubject(typ, id),
-	})
+	// The claim holds when every face in it is allowed, as the manager
+	// authorizes a family operation on every face it touches; the first
+	// refusal is the decision reported.
+	//
+	// A rename of a faced type is the exception: the manager decides it once,
+	// at family level, from the `rename:` grants, so the claim does too.
+	var dec acl.Decision
+	if acl.Op(op) == acl.OpRename && len(declared) > 0 {
+		dec = d.AuthorizeWrite(ctx, acl.WriteRequest{Op: acl.OpRename, Subject: acl.NewFamilySubject(typ, id)})
+	} else {
+		for _, face := range faces {
+			dec = d.AuthorizeWrite(ctx, acl.WriteRequest{
+				Op:      acl.Op(op),
+				Subject: acl.NewEntitySubject(typ, id, face),
+			})
+			if !dec.Allow {
+				break
+			}
+		}
+	}
 
-	if msg := checkAuthz(verb, who, op, typ, wantAllow, because, dec); msg != "" {
+	// The type is shown with its face, so a reader sees which face the claim
+	// is about. A faceless type and a family claim render as the bare type.
+	claimed := typ
+	if len(faces) == 1 && !faces[0].IsImplicit() {
+		claimed = typ + entity.StateRefSeparator + faces[0].String()
+	}
+	if msg := checkAuthz(verb, who, op, claimed, wantAllow, because, dec); msg != "" {
 		return a.luaFail(ls, "%s", msg)
 	}
 
-	emitEvidence(a.emit, show, authzEvidence(a, who, op, typ, wantAllow, dec))
+	emitEvidence(a.emit, show, authzEvidence(a, who, op, claimed, wantAllow, dec))
 	return 0
 }
 
@@ -220,6 +245,53 @@ func reasonMatches(dec acl.Decision, because string) bool {
 	}
 	const minReasonFragment = 8
 	return len(because) >= minReasonFragment && strings.Contains(dec.Reason, because)
+}
+
+// claimFaces resolves the faces an authorization claim is about, or returns
+// a failure message. The claim holds only if it holds on every one.
+//
+// A faceless type has the implicit face and refuses `face=`, since it has no
+// face to name. On a faced type the faces follow the manager (BUG-GJUBSA): a
+// rename moves the whole family, so it is about every declared face, is
+// decided once at family level, and refuses `face=`; a delete without `face=` is the family delete, about every
+// declared face, and with one is that face's delete; create and update write
+// one face, so they require `face=`. A claim naming no face there would ask
+// about a row that cannot exist, and a refuses{} would pass against any
+// policy.
+func claimFaces(
+	verb string, op acl.Op, typ, faceArg string, declared []string,
+) (faces []entity.Face, failure string) {
+	if len(declared) == 0 {
+		if faceArg != "" {
+			return nil, fmt.Sprintf("%s{type=%q, face=%q}: %q declares no faces, so the claim "+
+				"has no face to name. Remove `face=`", verb, typ, faceArg, typ)
+		}
+		return []entity.Face{entity.ImplicitFace}, ""
+	}
+	family := func() []entity.Face {
+		out := make([]entity.Face, len(declared))
+		for i, f := range declared {
+			out[i] = entity.Face(f)
+		}
+		return out
+	}
+	switch {
+	case op == acl.OpRename && faceArg != "":
+		return nil, fmt.Sprintf("%s{type=%q, face=%q}: a rename moves every face of %q, so it "+
+			"names no face. Remove `face=`", verb, typ, faceArg, typ)
+	case op == acl.OpRename, op == acl.OpDelete && faceArg == "":
+		return family(), ""
+	case faceArg == "":
+		return nil, fmt.Sprintf("%s{type=%q}: %q declares faces (%s) and stores no row without one, "+
+			"so a claim that names no face would hold against any policy. Add face=, one of: %s",
+			verb, typ, typ, strings.Join(declared, ", "), strings.Join(declared, ", "))
+	}
+	face, err := entity.ParseFace(faceArg)
+	if err != nil || !slices.Contains(declared, faceArg) {
+		return nil, fmt.Sprintf("%s{type=%q, face=%q}: not a face of %q. Declared faces: %s",
+			verb, typ, faceArg, typ, strings.Join(declared, ", "))
+	}
+	return []entity.Face{face}, ""
 }
 
 func validOp(op string) bool {

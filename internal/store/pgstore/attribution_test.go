@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -58,8 +60,7 @@ func TestAttributionColumnsStamped(t *testing.T) {
 
 	// Relations: create + update stamp the same columns.
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("ATTR-2", "peer")))
-	_, err = s.CreateRelation(attributedCtx("carol", "mcp"), "ATTR-1", "blocks", "ATTR-2",
-		&store.RelationData{Content: "why"})
+	_, err = s.CreateRelation(attributedCtx("carol", "mcp"), entity.RelationKey{From: "ATTR-1", Type: "blocks", To: "ATTR-2"}, &store.RelationData{Content: "why"})
 	require.NoError(t, err)
 	require.NoError(t, pool.QueryRow(ctx,
 		`SELECT last_edited_by_user, last_edited_by_tool FROM relations
@@ -68,7 +69,7 @@ func TestAttributionColumnsStamped(t *testing.T) {
 	require.Equal(t, "carol", *user)
 	require.Equal(t, "mcp", *tool)
 
-	_, err = s.UpdateRelation(ctx, "ATTR-1", "blocks", "ATTR-2", store.RelationData{Content: "changed"})
+	_, err = s.UpdateRelation(ctx, entity.RelationKey{From: "ATTR-1", Type: "blocks", To: "ATTR-2"}, store.RelationData{Content: "changed"})
 	require.NoError(t, err)
 	require.NoError(t, pool.QueryRow(ctx,
 		`SELECT last_edited_by_user, last_edited_by_tool FROM relations
@@ -92,7 +93,7 @@ func TestSweepAttributesRealEditor(t *testing.T) {
 		mkEntity("WHO-1", "policy text")))
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("WHO-2", "peer")))
 	_, err = s.CreateRelation(attributedCtx("alice@example.com", "data-entry"),
-		"WHO-1", "blocks", "WHO-2", &store.RelationData{Content: "reason"})
+		entity.RelationKey{From: "WHO-1", Type: "blocks", To: "WHO-2"}, &store.RelationData{Content: "reason"})
 	require.NoError(t, err)
 
 	// Backdate so both settle past the idle window.
@@ -105,11 +106,11 @@ func TestSweepAttributesRealEditor(t *testing.T) {
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {
-		metas, e := s.VersionStore().ListVersions(ctx, "WHO-1")
+		metas, e := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "WHO-1"})
 		return e == nil && len(metas) == 1
 	}, 3*time.Second, 25*time.Millisecond)
 
-	metas, err := s.VersionStore().ListVersions(ctx, "WHO-1")
+	metas, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "WHO-1"})
 	require.NoError(t, err)
 	require.Equal(t, store.VersionOpCreate, metas[0].Op)
 	require.Equal(t, "alice@example.com", metas[0].PrincipalUser)
@@ -117,12 +118,12 @@ func TestSweepAttributesRealEditor(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		rm, e := s.VersionStore().ListRelationVersions(ctx,
-			store.RelationHistoryQuery{From: "WHO-1", Type: "blocks", To: "WHO-2"})
+			store.RelationHistoryQuery{Key: entity.RelationKey{From: "WHO-1", Type: "blocks", To: "WHO-2"}})
 		return e == nil && len(rm) == 1
 	}, 3*time.Second, 25*time.Millisecond)
 
 	rm, err := s.VersionStore().ListRelationVersions(ctx,
-		store.RelationHistoryQuery{From: "WHO-1", Type: "blocks", To: "WHO-2"})
+		store.RelationHistoryQuery{Key: entity.RelationKey{From: "WHO-1", Type: "blocks", To: "WHO-2"}})
 	require.NoError(t, err)
 	require.Equal(t, "alice@example.com", rm[0].PrincipalUser)
 	require.Equal(t, "data-entry", rm[0].PrincipalTool)
@@ -130,10 +131,10 @@ func TestSweepAttributesRealEditor(t *testing.T) {
 	// WHO-2 was written WITHOUT attribution: its swept version must fall back
 	// to the system principal, never a fabricated identity (AC5, RR-U964M0).
 	require.Eventually(t, func() bool {
-		metas, e := s.VersionStore().ListVersions(ctx, "WHO-2")
+		metas, e := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "WHO-2"})
 		return e == nil && len(metas) == 1
 	}, 3*time.Second, 25*time.Millisecond)
-	fallback, err := s.VersionStore().ListVersions(ctx, "WHO-2")
+	fallback, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "WHO-2"})
 	require.NoError(t, err)
 	require.Empty(t, fallback[0].PrincipalUser)
 	require.Equal(t, "version-sweep", fallback[0].PrincipalTool)
@@ -159,11 +160,11 @@ func TestSweepAttributesLastEditorOfBurst(t *testing.T) {
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {
-		metas, e := s.VersionStore().ListVersions(ctx, "BURST-1")
+		metas, e := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "BURST-1"})
 		return e == nil && len(metas) == 1
 	}, 3*time.Second, 25*time.Millisecond)
 
-	metas, err := s.VersionStore().ListVersions(ctx, "BURST-1")
+	metas, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "BURST-1"})
 	require.NoError(t, err)
 	require.Equal(t, "bob", metas[0].PrincipalUser)
 	require.Equal(t, "data-entry", metas[0].PrincipalTool)

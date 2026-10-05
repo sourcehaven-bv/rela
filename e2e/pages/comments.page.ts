@@ -17,9 +17,11 @@ export class CommentsPage extends BasePage {
 
   /** The comment indicator beside a property label. */
   fieldIndicator(property: string): Locator {
+    // A read-only row is a `.property-item`; an editable one is a
+    // `.property-row` keyed by `data-property`.
     return this.page
-      .locator(".property-item")
-      .filter({ hasText: property })
+      .locator(`.property-row[data-property="${property}"]`)
+      .or(this.page.locator(".property-item").filter({ hasText: property }))
       .locator(".ci-btn")
       .first();
   }

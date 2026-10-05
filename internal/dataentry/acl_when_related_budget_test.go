@@ -43,7 +43,7 @@ func TestQueryBudget_ListPageACLRelatedWhenIsSizeIndependent(t *testing.T) {
 		for _, row := range resp.Data {
 			assertStatusVerdict(t, row)
 		}
-		counts = append(counts, counting.Calls()["MatchingIDs"])
+		counts = append(counts, counting.Calls()["MatchingFaces"])
 		detail = counting.String()
 	}
 	if counts[0] != counts[1] || counts[1] != 1 {
@@ -78,7 +78,7 @@ func TestQueryBudget_GetEntityACLRelatedWhenBindsOnce(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("get: %d %s", rec.Code, rec.Body)
 		}
-		return counting.Calls()["MatchingIDs"]
+		return counting.Calls()["MatchingFaces"]
 	}
 	base := get("entity.title ~= ''")
 	if n := get("not related(entity, 'implements', { title = 'Feature 1' })"); n != base+1 {

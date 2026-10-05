@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func TestSecretsCredentialNameCmd(t *testing.T) {
@@ -16,7 +17,7 @@ func TestSecretsCredentialNameCmd(t *testing.T) {
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	svc := &readServices{Paths: &project.Context{CacheDir: cacheDir}}
+	svc := &readServices{Paths: &project.Context{CacheDir: cacheDir}, World: store.TrivialScope()}
 
 	out, err := captureStdout(t, func() error {
 		cmd := &SecretsCredentialNameCmd{}
@@ -41,7 +42,7 @@ func TestSecretsCredentialNameCmd_UnderivableIsAnError(t *testing.T) {
 	// A path that is not a <project>/.rela directory names no project. Printing
 	// an empty or invented name would send the operator to a unit-file line
 	// that can never match.
-	svc := &readServices{Paths: &project.Context{CacheDir: ""}}
+	svc := &readServices{Paths: &project.Context{CacheDir: ""}, World: store.TrivialScope()}
 	cmd := &SecretsCredentialNameCmd{}
 	if err := cmd.Run(svc); err == nil {
 		t.Fatal("expected an error for an underivable credential name")

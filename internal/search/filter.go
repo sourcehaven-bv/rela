@@ -2,9 +2,11 @@ package search
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // ErrOrderedFilterUnsupported is returned when a [Query] uses an ordered
@@ -17,6 +19,17 @@ import (
 var ErrOrderedFilterUnsupported = errors.New(
 	"search: ordered property filters (>, <, >=, <=) are unsupported; " +
 		"use the metamodel-typed filter path for typed comparison")
+
+// ValidateQuery rejects a query no search implementation may run: an unset
+// [Query.World] ([store.ErrInvalidQuery], as for an unset scope in a store
+// query) or a filter [ValidateFilters] refuses. Every Searcher and
+// VisibleSearcher calls it before any backend or scope work.
+func ValidateQuery(q Query) error {
+	if !q.World.IsSet() {
+		return fmt.Errorf("%w: search query without a world (set Query.World)", store.ErrInvalidQuery)
+	}
+	return ValidateFilters(q.Filters)
+}
 
 // ValidateFilters rejects filters the search backend cannot evaluate
 // correctly. Today that is the ordered operators, which would be

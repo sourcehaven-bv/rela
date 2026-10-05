@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,26 +68,15 @@ func entityReadFailed(label, id string, err error) *mcpgo.CallToolResult {
 }
 
 // wholeEntityRef refuses an `ID@face` address for a tool that acts on the
-// whole entity (delete, rename, trace, find_path). The entity store resolves
+// whole entity (rename, trace, find_path). The entity store resolves
 // such an address to one face, so without this the existence check would
 // pass and the tool would then use the fused string as an id.
 func wholeEntityRef(ref string) *mcpgo.CallToolResult {
 	id, face, err := entity.ParseStateRef(ref)
-	if err != nil || face.IsDefault() {
+	if err != nil || face.IsImplicit() {
 		return nil
 	}
 	return errorResult(fmt.Sprintf("%s names one face; this tool acts on the whole entity, so pass %s", ref, id))
-}
-
-// faceAddressRequired refuses a bare id that the world resolved to a named
-// face. A write to a bare id addresses the default face, which a faced entity
-// may not have, so the caller must name the face they mean.
-func faceAddressRequired(ref string, e *entity.Entity) *mcpgo.CallToolResult {
-	if e.Face.IsDefault() || strings.Contains(ref, "@") {
-		return nil
-	}
-	return errorResult(fmt.Sprintf("%s has no default face; it resolves to %s here. Address that face explicitly",
-		ref, entity.FormatStateRef(e.ID, e.Face)))
 }
 
 func (r typeResolver) resolveEntityType(typeName string) (string, *metamodel.EntityDef, error) {
@@ -248,4 +238,28 @@ func applyPagination[T any](items []T, offset, limit int) []T {
 		items = items[:limit]
 	}
 	return items
+}
+
+// readable reports whether the caller may read what addr names, through st.
+// A named face (`ID@face`) must itself be readable ([GraphReader.Resolve]). A
+// bare id needs SOME readable face ([GraphReader.Family]): writes and
+// traversals act on the entity, and a faced type has no row at the zero
+// coordinate. A hidden and a missing entity both answer false, so a handler
+// that checks this first cannot be used as an existence oracle. A gate
+// failure is logged and answers false.
+func readable(ctx context.Context, st GraphReader, addr string) bool {
+	ref, err := entity.ParseRef(addr)
+	if err != nil {
+		return false
+	}
+	if !ref.Face.IsImplicit() {
+		e, rerr := st.Resolve(ctx, addr)
+		return rerr == nil && e != nil
+	}
+	_, ok, ferr := st.Family(ctx, ref.ID)
+	if ferr != nil {
+		slog.Warn("mcp: entity gate failed; answering not-found", "id", ref.ID, "err", ferr)
+		return false
+	}
+	return ok
 }

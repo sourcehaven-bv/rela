@@ -18,8 +18,8 @@ interface UseListActionsOptions {
   /**
    * The ADDRESS a selected entity's write goes to (`POL-1@published` for a
    * row served at a non-bare face). Selection is keyed by bare id; the write
-   * must not be, or a bulk `set` under a world edits a state the list is not
-   * showing. Defaults to the id itself. See utils/entityRef.
+   * must not be, or a bulk `set` or script action under a world acts on a
+   * state the list is not showing. Defaults to the id itself. See utils/entityRef.
    */
   addressOf?: (entityId: string) => string
   onClearSelection: () => void
@@ -82,7 +82,8 @@ export function useListActions(options: UseListActionsOptions) {
           }
           return updateEntity(entityType, options.addressOf?.(entityId) ?? entityId, { properties })
         }
-        return runAction(actionId, entityId, entityType)
+        // The address too: a script action acts on the face the row shows.
+        return runAction(actionId, options.addressOf?.(entityId) ?? entityId, entityType)
       }),
     )
 

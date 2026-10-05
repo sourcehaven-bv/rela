@@ -56,7 +56,7 @@ func TestOpenReadThenNew(t *testing.T) {
 	if err := st.CreateEntity(ctx, &entity.Entity{ID: "T-1", Type: "ticket"}); err != nil {
 		t.Fatalf("CreateEntity after New: %v", err)
 	}
-	if _, err := st.GetEntity(ctx, "T-1"); err != nil {
+	if _, err := st.GetEntity(ctx, entity.Ref{ID: "T-1"}); err != nil {
 		t.Errorf("GetEntity after New: %v", err)
 	}
 

@@ -8,7 +8,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // CanRelationResult is the answer to "may principal P create/update/delete a
@@ -88,12 +87,21 @@ func (e *Engine) CanRelation(
 		return nil, errors.New("aclmap: relation type must not be empty")
 	}
 
-	from, err := e.src.GetEntity(ctx, fromID)
+	from, err := e.target(ctx, fromID)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, fromID)
-		}
-		return nil, fmt.Errorf("aclmap: load entity %q: %w", fromID, err)
+		return nil, err
+	}
+	// The subject the entitymanager builds (ruling D4, TKT-KQXVF7): a named
+	// tail is authorized at that face, and a zero tail from a faced type on
+	// every face the type declares.
+	subject := acl.RelationSubject{
+		Type:     relType,
+		FromType: from.typ,
+		FromID:   from.ref.ID,
+		FromFace: from.ref.Face,
+	}
+	if from.ref.Face.IsImplicit() {
+		subject.FamilyFaces = e.faces(from.typ)
 	}
 
 	user, rawShown, err := e.resolveEffective(ctx, rawPrincipal)
@@ -106,14 +114,7 @@ func (e *Engine) CanRelation(
 		return nil, fmt.Errorf("aclmap: open resolver for %q: %w", user, err)
 	}
 
-	d := req.AuthorizeWrite(ctx, acl.WriteRequest{
-		Op: op,
-		Subject: acl.RelationSubject{
-			Type:     relType,
-			FromType: from.Type,
-			FromID:   fromID,
-		},
-	})
+	d := req.AuthorizeWrite(ctx, acl.WriteRequest{Op: op, Subject: subject})
 
 	return &CanRelationResult{
 		SchemaVersion: schemaVersion,
@@ -122,7 +123,7 @@ func (e *Engine) CanRelation(
 		Verb:          string(verb),
 		Relation:      relType,
 		From:          fromID,
-		FromType:      from.Type,
+		FromType:      from.typ,
 		Allowed:       d.Allow,
 		RuleKind:      d.RuleKind,
 		RuleID:        d.RuleID,

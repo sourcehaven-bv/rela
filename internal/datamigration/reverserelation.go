@@ -68,6 +68,12 @@ func (s *reverseRelationStep) Validate(from, to metamodel.ShapeProjection) error
 		return fmt.Errorf("relation type %q is symmetric: direction carries no meaning, so "+
 			"reversing every edge would rewrite the whole type to no effect", s.Type)
 	}
+	// A projection recorded before scopes joined the shape cannot tell; the
+	// store's check on state-tailed edges in Run still covers that case.
+	if from.RelationScopes && to.RelationScopes && (fromRel.Scope.IsContent() || toRel.Scope.IsContent()) {
+		return fmt.Errorf("relation type %q is content-scoped: its edges hang from a face on "+
+			"their tail, and a head has no face slot, so a reversed edge is unrepresentable", s.Type)
+	}
 	if overlappingEndpoints(fromRel) {
 		return fmt.Errorf("relation type %q has overlapping endpoints (from %v, to %v): an edge "+
 			"between two entities of a shared type satisfies both directions, so nothing can tell "+
@@ -87,10 +93,10 @@ func (s *reverseRelationStep) Validate(from, to metamodel.ShapeProjection) error
 
 // Run reverses the edges via the store, after the refusals the store cannot make.
 //
-// The scope check needs the LIVE metamodel — `scope:` is deliberately absent
-// from ShapeProjection, since it does not affect whether a stored edge conforms
-// — so it happens here rather than in Validate. Dry-run is the default at every
-// layer above, so the refusal still reaches the operator before any write.
+// Validate refuses a content-scoped type. The store check below refuses any
+// state-tailed edge, which also covers a file whose projections predate
+// scopes. Dry-run is the default at every layer above, so either refusal
+// reaches the operator before any write.
 func (s *reverseRelationStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	res := StepResult{Kind: s.Kind(), Target: s.Target()}
 

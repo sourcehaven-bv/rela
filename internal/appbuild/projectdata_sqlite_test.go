@@ -90,19 +90,19 @@ func snapshot(t *testing.T, st store.Store) graph {
 		Relations:   map[string]entity.Relation{},
 		Attachments: map[string]string{},
 	}
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{AllStates: true}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			t.Fatal(err)
 		}
 		g.Entities[entity.FormatStateRef(e.ID, e.Face)] = entity.Entity{
 			ID: e.ID, Type: e.Type, Face: e.Face, Properties: e.Properties, Content: strings.TrimSpace(e.Content),
 		}
-		infos, err := st.ListAttachments(ctx, e.ID)
+		infos, err := st.ListFamilyAttachments(ctx, e.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, info := range infos {
-			r, err := st.ReadAttachment(ctx, info.EntityID, info.Property, info.FileName)
+			r, err := st.ReadFamilyAttachment(ctx, info.EntityID, info.Property, info.FileName)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -198,7 +198,7 @@ func TestImportMarkdownData_NonEmptyDatabase(t *testing.T) {
 				t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
 			}
 			withDatabase(t, root, func(st store.Store) {
-				n, err := st.CountEntities(context.Background(), store.EntityQuery{AllStates: true})
+				n, err := st.CountEntities(context.Background(), store.EntityQuery{Faces: store.AllFaces()})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -230,7 +230,7 @@ func TestImportMarkdownData_ForceAddsBesideStoredRows(t *testing.T) {
 		t.Fatalf("imported %d entities, want 1", sum.Entities)
 	}
 	withDatabase(t, root, func(st store.Store) {
-		if n, _ := st.CountEntities(context.Background(), store.EntityQuery{}); n != 3 {
+		if n, _ := st.CountEntities(context.Background(), store.EntityQuery{Faces: store.AllFaces()}); n != 3 {
 			t.Fatalf("entities = %d, want 3", n)
 		}
 	})
@@ -314,7 +314,7 @@ func TestSQLite_MarkdownProjectOpensOnItsFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := svc.Store().CountEntities(ctx, store.EntityQuery{})
+	n, err := svc.Store().CountEntities(ctx, store.EntityQuery{Faces: store.AllFaces()})
 	_ = svc.Close()
 	if err != nil || n != 2 {
 		t.Fatalf("CountEntities = %d, %v; want the 2 markdown entities", n, err)

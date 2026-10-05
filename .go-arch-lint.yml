@@ -8,6 +8,7 @@ exclude:
   - internal/testutil
   - internal/store/storetest
   - internal/entitymanager/entitymanagertest
+  - internal/tracer/tracertest
   - internal/visibility/visibilitytest
   - internal/state/statetest
   - internal/lock/locktest
@@ -44,7 +45,6 @@ components:
 
   # CLI layer
   cli:              { in: internal/cli }
-  clisync:          { in: internal/cli/sync }
   docscli:          { in: internal/docscli }
 
   # Web / UI layer
@@ -131,7 +131,6 @@ components:
   migration:        { in: internal/migration }
   markdown:         { in: internal/markdown }
   canonical:        { in: internal/canonical }
-  sync:             { in: internal/sync }
   frontmatter:      { in: internal/frontmatter }
   filter:           { in: internal/filter }
   queryplan:        { in: internal/queryplan }
@@ -415,7 +414,6 @@ deps:
       - autocascade
       - automation
       - bleveindex
-      - clisync
       - cmdexec
       - config
       - configsql
@@ -425,9 +423,6 @@ deps:
       - entitymanager
       - filter
       - importer
-      # lock.For picks the attachment service's keyed lock from the store
-      # (TKT-WE0S2K), at the CLI and MCP wiring sites.
-      - lock
       - lua
       - markdown
       - mcp
@@ -462,20 +457,16 @@ deps:
       - tracer
       - transform
       - validator
+      # The CLI address helper resolves `ID@face` through the allow-all
+      # visibility.Resolver: the operator shell reads everything, but a
+      # single-entity read still takes one mode (TKT-KQXVF7).
+      - visibility
     canUse:
       - kong
       - color
       - glamour
       - huh
       - tablewriter
-
-  clisync:
-    mayDependOn:
-      - canonical
-      - entity
-      - entitymanager
-      - storage
-      - store
 
   # Web / UI layer
   # apiwire is a leaf: it may use the domain types and the data-entry config
@@ -518,10 +509,6 @@ deps:
       - principal
       - git
       - htmlutil
-      # lock.For picks the attachment service's keyed lock from the store
-      # (TKT-WE0S2K). Only the wiring in app.go uses it; handlers hold the
-      # consumer-side attachment.Locker.
-      - lock
       - lua
       # Declarative-webhook `append_section` splices a named section into an
       # entity body (TKT-1EM4KL). markdown is a near-leaf (it depends only on
@@ -540,6 +527,10 @@ deps:
       # does not hand dataentry the predicate engine; dataentry only picks the
       # gate (the request gate for rules, the raw store for transitions).
       - relresolve
+      # The one cardinality checker the CLI and MCP also use (TKT-5LW875).
+      # The analyze view passes its gated reader, so the counts it reports
+      # are folded from visible edges only.
+      - schema
       - script
       - search
       - searchparser
@@ -547,7 +538,6 @@ deps:
       - statemachine
       - storage
       - store
-      - sync
       - templating
       - tracer
       - transform
@@ -640,8 +630,9 @@ deps:
       - store
       - tracer
       - validator
-      # visibility.Readable: the write tools gate the ids they name through
-      # the injected (gated) reader before calling entitymanager.
+      # visibility.Family: GraphReader.Family returns it; the write tools
+      # gate the ids they name through the injected (gated) reader before
+      # calling entitymanager.
       - visibility
     canUse:
       - mcpgo
@@ -685,6 +676,10 @@ deps:
       # The composition root picks the userstate backend, the same way it
       # picks the store backend. Consumers take the userstate.Store seam.
       - userstate
+      # lock.For picks the attachment lock from the store (TKT-WE0S2K). The
+      # manager and the attachment service must share one instance
+      # (BUG-CTUW2N), so the composition root builds it once for both.
+      - lock
       - memuserstate
       - kvuserstate
       # Likewise the commentary layer: the root picks the backend and hands the
@@ -801,6 +796,7 @@ deps:
   appbuildtest:
     mayDependOn:
       - acl
+      - lock
       - appbuild
       - audit
       - autocascade
@@ -1064,6 +1060,10 @@ deps:
   docscli:
     mayDependOn:
       - acl
+      # appbuild: only for ValidateACLPolicy, the one schema check every
+      # acl.yaml loader shares. docscapture already depends on appbuild, so
+      # this adds nothing to the rela-docs binary.
+      - appbuild
       - docs
       - docscapture
       - metamodel
@@ -1374,7 +1374,7 @@ deps:
       - secrets
       - store
       - tracer
-      # visibility.Readable: the write bindings gate the ids they name through
+      # visibility.Family: the write bindings gate the ids they name through
       # the runtime's VisibleReader before calling the manager.
       - visibility
     canUse:
@@ -1480,14 +1480,13 @@ deps:
       - search
       - store
       - storeutil
-      - sync
     canUse:
       - pgx
   sqlitestore:
     mayDependOn:
-      # Still narrower than pgstore: no userstate, no sync. This backend keeps
-      # the filesystem KV on purpose (TKT-L1A3PH) and has no sync manifest, and
-      # each further entry should have to justify widening this list.
+      # Still narrower than pgstore: no userstate. This backend keeps the
+      # filesystem KV on purpose (TKT-L1A3PH), and each further entry should
+      # have to justify widening this list.
       - entity
       - graphquerynaive
       # The FTS5 search backend (DEC-10Z731) implements search.Backend, as

@@ -214,7 +214,7 @@ func createRelationAllowed(t *testing.T, createGrants []string, seedSource bool)
 	}
 
 	ctx := principal.With(bg, principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
-	_, wErr := mgr.CreateRelation(ctx, "DEC-001", "addresses", "REQ-001", entity.RelationOptions{})
+	_, wErr := mgr.CreateRelation(ctx, entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}, entity.RelationOptions{})
 
 	// A ForbiddenError means the gate refused. Anything else — including the
 	// not-found error for an absent source — means it got through.

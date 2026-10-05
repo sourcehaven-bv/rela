@@ -27,14 +27,15 @@ import (
 //
 // The wiring site decides what backs it, and that decision IS the read-ACL
 // (DEC-O59WM4): a visibility-backed adapter binds reads to the acting
-// identity, while a plain store.Store satisfies it structurally for the
-// operator-trust-boundary paths (CLI, docs runtime). Bindings therefore
-// contain no ACL logic at all — they cannot forget to gate, because they
-// have nothing else to read through.
+// identity, while the operator-trust-boundary paths (CLI, docs runtime)
+// take the ungated visibility reader. Bindings therefore contain no ACL
+// logic at all — they cannot forget to gate, because they have nothing else
+// to read through.
 type EntityReader interface {
-	// GetEntity takes an entity ADDRESS (`ID` or `ID@face`). Both visibility
-	// readers the wiring supplies parse it.
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	// GetAddress reads an entity ADDRESS (`ID` or `ID@face`), not an id: a
+	// bare id resolves in the reader's world. A store does not satisfy this
+	// method, because its GetEntity takes an entity.Ref.
+	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
@@ -124,6 +125,13 @@ type ReadDeps struct {
 	// every plain ExecuteCode/ExecuteFile caller — which is how the scheduler
 	// runs. See the WithCapabilities godoc.
 	Capabilities Capabilities
+
+	// World is the world script list reads resolve in: rela.list_entities,
+	// admin.list_entities and rela.md.entity_refs list each entity at the
+	// face this world serves. Wiring passes worlds.Compiled.DefaultWorld. The
+	// zero value is unset, and a list read in it fails with
+	// store.ErrInvalidQuery rather than reading the trivial world.
+	World store.WorldScope
 }
 
 // ProjectFiles reads operator-authored project files by slash path relative
@@ -154,6 +162,17 @@ func (d ReadDeps) projectFiles() ProjectFiles {
 // the Unix server or in the database. Errors name the script but never a
 // filesystem path, so they are safe to return to an HTTP or MCP caller.
 func (d ReadDeps) ReadScript(ctx context.Context, dir, name string) (string, error) {
+	return ReadScript(ctx, d.projectFiles(), dir, name)
+}
+
+// ReadScript is [ReadDeps.ReadScript] over files, for callers that read a
+// script without running it and so hold no read bundle.
+//
+// Nil: files is rejected.
+func ReadScript(ctx context.Context, files ProjectFiles, dir, name string) (string, error) {
+	if files == nil {
+		return "", errors.New("no project files to read the script from")
+	}
 	if name == "" {
 		return "", errors.New("script path is empty")
 	}
@@ -164,7 +183,7 @@ func (d ReadDeps) ReadScript(ctx context.Context, dir, name string) (string, err
 	if !strings.HasSuffix(name, ".lua") {
 		return "", fmt.Errorf("script must have .lua extension: %s", name)
 	}
-	data, err := d.ReadProjectFile(ctx, dir+"/"+slashed)
+	data, err := files.Load(ctx, dir+"/"+slashed)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("script not found: %s (must be in %s/ directory)", name, dir)
 	}
@@ -237,8 +256,9 @@ type Mutator interface {
 	UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error)
 	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
-	CreateRelation(ctx context.Context, from, relType, to string, opts entity.RelationOptions) (*entity.Relation, error)
-	DeleteRelation(ctx context.Context, from, relType, to string) error
+	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
+	CreateRelation(ctx context.Context, key entity.RelationKey, opts entity.RelationOptions) (*entity.Relation, error)
+	DeleteRelation(ctx context.Context, key entity.RelationKey) error
 }
 
 // NotFoundError is an OPTIONAL capability a [Mutator]'s returned error may

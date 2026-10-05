@@ -4,13 +4,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // scriptEntityReader / scriptTracer back BOTH the Services accessors and
@@ -60,16 +63,16 @@ func seedCascadeWorld(t *testing.T) *memstore.MemStore {
 // entity she cannot see stays invisible to the automation (DEC-O59WM4).
 func TestScriptEntityReader_GatesOnActingIdentity(t *testing.T) {
 	st := seedCascadeWorld(t)
-	rd := scriptEntityReader(st, mustDeclarative(t, st), nil)
+	rd := scriptEntityReader(st, mustDeclarative(t, st), nil, worlds.Compiled{})
 
 	ctx := principal.With(context.Background(), principal.Principal{
 		User: "alice", Tool: principal.ToolDataEntry,
 	})
 
-	if _, err := rd.GetEntity(ctx, "TKT-1"); err != nil {
+	if _, err := rd.GetAddress(ctx, "TKT-1"); err != nil {
 		t.Errorf("granted entity unreadable: %v", err)
 	}
-	if _, err := rd.GetEntity(ctx, "SEC-1"); err == nil {
+	if _, err := rd.GetAddress(ctx, "SEC-1"); err == nil {
 		t.Error("cascade reads are NOT gated — an automation read an entity the " +
 			"triggering user cannot see")
 	}
@@ -80,7 +83,7 @@ func TestScriptEntityReader_GatesOnActingIdentity(t *testing.T) {
 // pre-ACL.
 //
 // Asserted behaviorally, not by identity with the raw store. Since
-// TKT-1WV50C the helper returns visibility.Unrestricted(st) so that the
+// TKT-1WV50C the helper returns visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())) so that the
 // NopACL path — the largest ungated surface in the tree — shows up in
 // `grep -rn visibility.Unrestricted`. That is a naming change, not a
 // behavior change, and this test pins the behavior.
@@ -88,23 +91,23 @@ func TestScriptEntityReader_NoPolicyIsPassThrough(t *testing.T) {
 	st := seedCascadeWorld(t)
 	ctx := context.Background()
 
-	rd := scriptEntityReader(st, nil, nil)
+	rd := scriptEntityReader(st, nil, nil, worlds.Compiled{})
 	if rd == nil {
 		t.Fatal("scriptEntityReader returned nil with no policy")
 	}
 	// SEC-1 is the entity the gated tests above prove is HIDDEN under a
 	// policy. With no policy it must be readable: that is what ungated means.
 	for _, id := range []string{"TKT-1", "SEC-1"} {
-		if _, err := st.GetEntity(ctx, id); err != nil {
+		if _, err := st.GetEntity(ctx, entity.Ref{ID: id}); err != nil {
 			t.Fatalf("fixture: %s missing from the raw store: %v", id, err)
 		}
-		if _, err := rd.GetEntity(ctx, id); err != nil {
+		if _, err := rd.GetAddress(ctx, id); err != nil {
 			t.Errorf("NopACL path gated a read of %s (%v) — with no policy "+
 				"every entity the store holds must be readable", id, err)
 		}
 	}
 
-	if got := scriptTracer(tracer.New(st), st, nil, nil); got == nil {
+	if got := scriptTracer(tracertest.Must(st, store.TrivialScope()), st, nil, nil, worlds.Compiled{}); got == nil {
 		t.Error("scriptTracer returned nil with no policy")
 	}
 }
@@ -112,10 +115,10 @@ func TestScriptEntityReader_NoPolicyIsPassThrough(t *testing.T) {
 // TestScriptTracer_GatesOnActingIdentity pins the traversal helper.
 func TestScriptTracer_GatesOnActingIdentity(t *testing.T) {
 	st := seedCascadeWorld(t)
-	if _, err := st.CreateRelation(context.Background(), "TKT-1", "relates", "SEC-1", nil); err != nil {
+	if _, err := st.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-1", Type: "relates", To: "SEC-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
-	tr := scriptTracer(tracer.New(st), st, mustDeclarative(t, st), nil)
+	tr := scriptTracer(tracertest.Must(st, store.TrivialScope()), st, mustDeclarative(t, st), nil, worlds.Compiled{})
 
 	ctx := principal.With(context.Background(), principal.Principal{
 		User: "alice", Tool: principal.ToolDataEntry,

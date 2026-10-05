@@ -52,7 +52,10 @@ function seedSchema() {
   } as never)
 }
 
-function seedRelations(targets: string[], metaByTarget: Record<string, Record<string, unknown>> = {}) {
+function seedRelations(
+  targets: string[],
+  metaByTarget: Record<string, Record<string, unknown>> = {}
+) {
   ;(getEntityRelations as ReturnType<typeof vi.fn>).mockResolvedValue(
     targets.map((id) => ({
       id,
@@ -69,10 +72,7 @@ function seedRelations(targets: string[], metaByTarget: Record<string, Record<st
   )
 }
 
-async function mountCards(opts: {
-  verdict?: RelationAffordance
-  links?: string[]
-}) {
+async function mountCards(opts: { verdict?: RelationAffordance; links?: string[] }) {
   seedSchema()
   seedRelations(opts.links ?? ['FEAT-001'])
   const field: FormFieldOrRelation = {
@@ -194,6 +194,86 @@ describe('RelationCards affordance plumbing', () => {
   })
 })
 
+// An incoming content edge from a faced source belongs to one face, so the
+// add search offers one row per face. Which faces it offers is the server's
+// `linkable` answer for this relation, never the face's update hint.
+describe('RelationCards incoming face picking', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  function face(faceName: string, linkable: boolean | undefined, update: boolean): Entity {
+    return {
+      id: 'POL-1',
+      type: 'policy',
+      properties: {},
+      _title: `POL-1 ${faceName}`,
+      _self: `/api/v1/policies/POL-1@${faceName}`,
+      _actions: { update },
+      ...(linkable === undefined ? {} : { linkable }),
+    }
+  }
+
+  async function searchFaces(rows: Entity[]) {
+    const schemaStore = useSchemaStore()
+    schemaStore.entityTypes.set('policy', {
+      name: 'policy',
+      label: 'Policy',
+      properties: {},
+      faces: { draft: { label: 'Draft' }, published: { label: 'Published' } },
+    } as never)
+    schemaStore.entityTypes.set('control', {
+      name: 'control',
+      label: 'Control',
+      properties: {},
+    } as never)
+    schemaStore.relationTypes.set('implements', {
+      name: 'implements',
+      from: ['policy'],
+      to: ['control'],
+      scope: 'content',
+    } as never)
+    ;(getEntityRelations as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(searchEntities as ReturnType<typeof vi.fn>).mockResolvedValue({ data: rows })
+    const field: FormFieldOrRelation = {
+      relation: 'implements',
+      label: 'Implemented by',
+      widget: 'cards',
+      direction: 'incoming',
+    } as never
+    const wrapper = mount(RelationCards, {
+      props: { field, entityType: 'control', entityId: 'CTRL-1' },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    await wrapper.find('button.add-btn').trigger('click')
+    await wrapper.find('input.search-input').setValue('pol')
+    // The searchQuery watcher debounces 200ms before calling doSearch.
+    await new Promise((r) => setTimeout(r, 250))
+    await flushPromises()
+    return wrapper
+  }
+
+  it('asks the search for the relation context', async () => {
+    const wrapper = await searchFaces([face('draft', true, true)])
+    const calls = (searchEntities as ReturnType<typeof vi.fn>).mock.calls
+    expect(calls.length).toBeGreaterThan(0)
+    for (const call of calls) {
+      expect(call[1]).toBe('policy')
+      expect(call[4]).toEqual({ relation: 'implements', direction: 'incoming' })
+    }
+    wrapper.unmount()
+  })
+
+  it('offers the linkable faces, whatever the update hint says', async () => {
+    const wrapper = await searchFaces([face('draft', true, false), face('published', false, true)])
+    const titles = wrapper.findAll('.search-result .result-title').map((r) => r.text())
+    expect(titles).toEqual(['POL-1 draft'])
+    wrapper.unmount()
+  })
+})
+
 // TKT-CBSTYLE. Both boolean inputs in RelationCards render the shared
 // CheckboxWidget rather than a locally-styled `<input type="checkbox">`.
 //
@@ -215,10 +295,14 @@ describe('RelationCards boolean meta fields use the shared CheckboxWidget', () =
   }) {
     const schemaStore = useSchemaStore()
     schemaStore.entityTypes.set('ticket', {
-      name: 'ticket', label: 'Ticket', properties: {},
+      name: 'ticket',
+      label: 'Ticket',
+      properties: {},
     } as never)
     schemaStore.entityTypes.set('feature', {
-      name: 'feature', label: 'Feature', properties: {},
+      name: 'feature',
+      label: 'Feature',
+      properties: {},
     } as never)
     schemaStore.relationTypes.set('implements', {
       name: 'implements',
@@ -235,7 +319,10 @@ describe('RelationCards boolean meta fields use the shared CheckboxWidget', () =
     } as never
     const wrapper = mount(RelationCards, {
       props: {
-        field, entityType: 'ticket', entityId: 'TKT-001', verdict: opts.verdict,
+        field,
+        entityType: 'ticket',
+        entityId: 'TKT-001',
+        verdict: opts.verdict,
       },
       attachTo: document.body,
     })

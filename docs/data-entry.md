@@ -267,7 +267,7 @@ app:
 | ------------- | -------------------------------- |
 | `name`        | Application title in the header  |
 | `description` | Subtitle shown below the title   |
-| `default_world` | World a request lands in when the URL carries no `?world=`. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
+| `default_world` | Deprecated alias for the schema's `default_world:`; must name the same world. See [Worlds in the web app and API](#worlds-in-the-web-app-and-api) |
 
 ### PlantUML diagrams
 
@@ -889,11 +889,18 @@ When `direction: incoming` is set:
 - Cardinality (single vs. multi) honors the relation's `max_incoming` instead of `max_outgoing`.
 - Saving a new link writes the edge as `(peer) → {relType} → (current entity)`; the backend
   swaps from/to so the on-disk relation file stays canonical.
+- On a `scope: content` relation from a faced type, each face of a peer is its own edge.
+  The widget groups the edges per face, marks the ones you may not change with a lock, and
+  offers one candidate per face you may write. A new link names that face (`POL-1@draft`).
+  See [Content States](content-states.md#how-a-write-finds-its-face).
 - Grouped responses from `GET /api/v1/{plural}/{id}/relations` surface incoming edges under
   the relation's `inverse:` name (see [metamodel.md](metamodel.md#inverse-relations)), e.g.
   `blocks` → `blockedBy`.
 
 All form widgets (`select`, `multi-select`, `search`, `cards`) honor `direction: incoming`.
+
+A form saves relation changes as a delta (`add` / `remove`), never as the full set. An edge
+the form did not show, such as one from a face you cannot read, is never removed by a save.
 
 **Label collision:** The widget's section heading defaults to `label || relation`. If you
 put two widgets with the same relation and no `label:` next to each other (one outgoing, one
@@ -5997,7 +6004,7 @@ When invoked in document mode, the runtime exposes extra context:
 |----------------------------|---------|
 | `rela.mode`                | Always `"document"` in this context; `nil` elsewhere |
 | `rela.document.id`         | The key under `documents:` in `data-entry.yaml` |
-| `rela.document.entry_id`   | The ID of the entity being rendered; **`nil` for a standalone document** |
+| `rela.document.entry_id`   | The address of the entity being rendered: its ID, or `ID@face` for a type that declares faces; **`nil` for a standalone document** |
 
 A script shared between both document kinds should branch on `entry_id`
 rather than assume it:
@@ -6343,8 +6350,10 @@ Each entity becomes one event — **all-day** when the `date:` source is a `date
 property, or **timed** (a UTC `DTSTART` with a time-of-day) when it is a
 `datetime` property:
 
-- **UID** is `<type>--<id>@rela` — stable across refreshes so a calendar client
-  tracks the same event over time.
+- **UID** is `<type>--<id>@rela`, stable across refreshes so a calendar client
+  tracks the same event over time. On a faced type the id carries the face
+  the world served (`policy--POL-1@published@rela`), so a different face is a
+  different event.
 - **Deep link** — every event carries an absolute `URL` back to the entity in the
   data-entry app (Apple Calendar shows it in the event's Get Info panel).
 - **JSON** — the same feed at `.json` returns `{ name, color, events: [...] }`
@@ -6692,19 +6701,20 @@ A project that declares no worlds is unaffected by everything below.
 
 ### Browsing default (`app.default_world`)
 
-`default_world` in the `app:` block names the world a request lands in when the
-URL carries no `?world=`:
+A request whose URL carries no `?world=` lands in the world named by the
+top-level `default_world:` key in `schema.yaml` (see
+[Metamodel](metamodel.md#the-default_world-key)):
 
 ```yaml
-app:
-  name: "Handbook"
-  default_world: published
+default_world: published
 ```
 
-Without it, browsing lands in the default world, which applies no resolution
-and so shows none of a faced type's rows at all. For a project using faces
-`default_world` is effectively required, and a handbook should land readers in
-the world holding the published text.
+A handbook should land readers in the world holding the published text.
+
+`default_world` in the `app:` block of `data-entry.yaml` is the older spelling
+and is deprecated. It must name the schema's default world. Any other value
+fails the load. It does not replace the schema key, which a schema with more
+than one world must set: move the value to `schema.yaml` and remove it here.
 
 `default_world` is presentation, not policy. It grants nothing: the world's
 read grant is re-checked on every request exactly as for an explicit `?world=`,
@@ -6712,8 +6722,7 @@ so pointing it at a world a role may not read yields that world's ordinary
 empty result. The server applies it to `curl` and to the browser alike, but
 only on read requests and only on the routes listed under
 [Routes that serve a world](#routes-that-serve-a-world). Passing
-`?world=default` explicitly still selects the unresolved default world. Naming
-an undeclared world here is a startup error.
+`?world=default` explicitly still selects the unresolved default world.
 
 ### Creating into another world (`create_world`)
 
@@ -6946,7 +6955,11 @@ returns what was written:
 ```
 
 `created` is `true` when the copy brought the target face into existence and
-`false` when it overwrote one. A caller who lacks the guard permission receives
+`false` when it overwrote one. The copy writes only the edges the caller could
+create by hand: an edge to an entity the caller cannot read, or one the
+relation affordances or the ACL refuse, is skipped without a mention in the
+response. Likewise `replace` removes only the target edges the caller could
+remove by hand, and leaves the others. A caller who lacks the guard permission receives
 a `403` naming it. A source the caller may not read produces the same `404` as
 a source that does not exist. Any other refusal, such as an unknown definition
 or a cross-entity copy without a `target_id`, is a `422`.
@@ -7009,7 +7022,7 @@ default-world data under it.
 | --- | --- |
 | `/api/v1/{plural}` and `/api/v1/{plural}/{id}` | Yes, including `?q=` search and `?include=` neighbours |
 | `/api/v1/_views/{type}/{id}` | Yes. A view's `where:` clauses evaluate against the resolved face |
-| `/api/v1/_history/{type}/{id}` | Yes. Versioning is per face on PostgreSQL, so the history is the served face's own |
+| `/api/v1/_history/{type}/{id}` | Yes. Versioning is per face on the database backends, so the history is the served face's own. `{id}` may be `ID@face` |
 | `/api/v1/_next_action` | Yes, as the display world for `visible_worlds` |
 | `/api/v1/_search` | Yes. The command palette, search page and entity picker send the page's world. Dashboard cards count in the default world |
 | `/api/v1/_position` | Yes. Prev/next within a search or list runs in the same world as the results it steps through |
@@ -7028,7 +7041,8 @@ History under a world is the history of the face the world resolves. A backend
 that has history but cannot scope it per face answers `501
 history_face_unsupported` rather than serving the default face's record.
 Restoring a version is a write, so a world on a restore is refused like any
-other write.
+other write. Name the face in the address instead: `ID@face` reads and
+restores that face's history, including a face that was deleted.
 
 ## Best Practices
 

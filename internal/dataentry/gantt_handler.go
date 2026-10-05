@@ -62,8 +62,11 @@ type ganttHandler struct {
 
 // ganttNode is one entity in the build, carrying parsed dates and tree links.
 type ganttNode struct {
-	id        string
-	entType   string
+	id      string
+	entType string
+	// face is the face the node's row was loaded at; it decides which
+	// content-scoped edges the node owns.
+	face      entity.Face
 	title     string
 	color     string
 	start     *time.Time // own declared window (planned)
@@ -199,7 +202,7 @@ func (h *ganttHandler) buildGanttForest(
 	if gerr != nil {
 		return nil, gerr
 	}
-	edges, gerr := h.ganttEdges(ctx, g, nodes)
+	edges, gerr := h.ganttEdges(ctx, s.Meta, g, nodes)
 	if gerr != nil {
 		return nil, gerr
 	}
@@ -411,7 +414,7 @@ func (h *ganttHandler) loadGanttType(
 		out := make([]*entity.Entity, 0, len(hdrs))
 		for _, hdr := range hdrs {
 			red := visibility.RedactHeader(ctx, h.redactor(), hdr)
-			out = append(out, &entity.Entity{ID: red.ID, Type: red.Type, Properties: red.Properties})
+			out = append(out, &entity.Entity{ID: red.ID, Type: red.Type, Face: red.Face, Properties: red.Properties})
 		}
 		return out, nil
 	default:
@@ -472,9 +475,18 @@ func (h *ganttHandler) addGanttNodes(
 				continue
 			}
 		}
+		if prev, dup := nodes[red.ID]; dup && prev.face != red.Face {
+			// A node knows one face, and ganttEdges decides edge
+			// ownership by it, so two faces of one id would make the tree
+			// depend on read order. Refuse rather than pick one.
+			slog.Error("gantt: two faces of one entity in the node set",
+				"entity", red.ID, "faces", []entity.Face{prev.face, red.Face})
+			return &ganttError{http.StatusInternalServerError, "internal", "Ambiguous entity face", ""}
+		}
 		nodes[red.ID] = &ganttNode{
 			id:        red.ID,
 			entType:   typeName,
+			face:      red.Face,
 			title:     ganttTitle(red, src, entDef),
 			color:     src.Color,
 			start:     ganttDate(red, src.Start, entDef),
@@ -527,6 +539,21 @@ func ganttSubtreeVerdicts(
 	return verdicts, nil
 }
 
+// ganttHasFacedSource reports whether any source type declares faces. The
+// drill closure (collectGanttRound) reads in the request's world under the
+// grant's face ceiling, as the full build does, but the drill's ROOT is read
+// by id with no face, and a faced type has no such row: the drill would 404
+// a root the full build serves. It declines until that read names an
+// address (TKT-KQXVF7 entity flip).
+func ganttHasFacedSource(meta *metamodel.Metamodel, g dataentryconfig.Gantt) bool {
+	for typeName := range g.Sources {
+		if def, ok := meta.Entities[typeName]; ok && len(def.Faces) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // buildGanttSubtree is the ?root= fast path (TKT-5LUGYP, closes RR-FJWAZS):
 // resolve the drilled subtree with per-type GraphQuery pushdown instead of
 // building and discarding the global forest. Its reads scale with the drilled
@@ -569,6 +596,12 @@ func ganttSubtreeVerdicts(
 func (h *ganttHandler) buildGanttSubtree(
 	ctx context.Context, s *Schema, g dataentryconfig.Gantt, rootID string,
 ) (*ganttForest, *ganttError) {
+	if ganttHasFacedSource(s.Meta, g) {
+		return nil, nil // the root read has no face; see ganttHasFacedSource
+	}
+	if worldFromContext(ctx).blocksAllReads() {
+		return nil, nil // the full build answers a denied world with nothing
+	}
 	verdicts, verdictErr := ganttSubtreeVerdicts(ctx, g)
 	if verdicts == nil {
 		return nil, verdictErr // scoped verdict (nil,nil) or a real error
@@ -579,7 +612,7 @@ func (h *ganttHandler) buildGanttSubtree(
 
 	// The root itself: must exist, be a permitted source type, and survive
 	// its own where: filter — otherwise it is indistinguishable from absent.
-	rootEnt, err := h.store.GetEntity(ctx, rootID)
+	rootEnt, err := h.store.GetEntity(ctx, entity.Ref{ID: rootID})
 	if err != nil || rootEnt == nil {
 		return empty, nil
 	}
@@ -641,6 +674,10 @@ func (h *ganttHandler) collectGanttRound(
 				Depth:          ganttClosureRoundDepth,
 			},
 		}
+		// The same world and face ceiling the full build's scopedHeaders
+		// read applies, so both paths pick the same row per id.
+		rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
+		q = stampScope(ctx, q, scopeRequest{Type: typeName, Faces: rqr.Faces})
 		// Headers: the gantt reads ids, types and properties, never a body
 		// (TKT-U9DYW4). Redaction happens here, exactly once per entity.
 		var fresh []*entity.Entity
@@ -653,7 +690,9 @@ func (h *ganttHandler) collectGanttRound(
 				continue
 			}
 			red := visibility.RedactHeader(ctx, h.redactor(), hdr)
-			fresh = append(fresh, &entity.Entity{ID: red.ID, Type: red.Type, Properties: red.Properties})
+			fresh = append(fresh, &entity.Entity{
+				ID: red.ID, Type: red.Type, Face: red.Face, Properties: red.Properties,
+			})
 			next = append(next, hdr.ID)
 		}
 		if gerr := h.addGanttNodes(s, g, typeName, fresh, nodes); gerr != nil {
@@ -791,7 +830,7 @@ func (h *ganttHandler) addOutsideParents(
 		q := store.EntityQuery{
 			Type:   typeName,
 			IDs:    ids,
-			World:  worldScopeFrom(ctx),
+			Faces:  store.InWorld(worldScopeFrom(ctx)),
 			FaceIn: readGateFromContext(ctx).ReadQuery(ctx, typeName).Faces,
 		}
 		var ents []*entity.Entity
@@ -974,8 +1013,15 @@ func (b *ganttBudget) take() bool {
 
 // ganttEdges lists every hierarchy edge (one bulk query per relation type)
 // and keeps those whose endpoints are both in the gated node set.
+//
+// A content-scoped edge is kept only when its tail is the face its parent
+// node was loaded at ([ownedByFace], BUG-BZQQDP). Another face's edge would
+// place a child, and fold its dates, under a face that does not own the
+// edge. The check runs here, before the fold, so the roll-up only ever sees
+// owned edges. The subtree path declines for faced sources
+// (ganttHasFacedSource), so it needs no such check.
 func (h *ganttHandler) ganttEdges(
-	ctx context.Context, g dataentryconfig.Gantt, nodes map[string]*ganttNode,
+	ctx context.Context, meta *metamodel.Metamodel, g dataentryconfig.Gantt, nodes map[string]*ganttNode,
 ) (map[string][][2]string, *ganttError) {
 	out := map[string][][2]string{}
 	for _, relType := range g.Hierarchy {
@@ -988,6 +1034,9 @@ func (h *ganttHandler) ganttEdges(
 				continue // self-loop: degenerate cycle, never a tree edge
 			}
 			if nodes[rel.From] == nil || nodes[rel.To] == nil {
+				continue
+			}
+			if !ownedByFace(meta, rel, nodes[rel.From].face) {
 				continue
 			}
 			out[relType] = append(out[relType], [2]string{rel.From, rel.To})

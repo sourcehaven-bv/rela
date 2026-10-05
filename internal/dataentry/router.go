@@ -101,9 +101,6 @@ func (a *App) NewRouter() http.Handler {
 	// REST API v1 - main API for Vue SPA
 	a.registerAPIV1Routes(inner)
 
-	// Sync API (FEAT-NJ9FEN) - machine-to-machine fs↔pg sync, under /api/sync/.
-	a.sync.registerSyncRoutes(inner)
-
 	// Remote MCP (TKT-BDG8U9) — opt-in, absent unless SetRemoteMCP enabled it.
 	registerMCPRoute(inner, a.mcpHandler)
 

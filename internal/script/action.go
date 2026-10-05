@@ -243,7 +243,7 @@ func CheckActionScriptExists(ctx context.Context, files lua.ProjectFiles, script
 // Nil: never returns a nil error with an empty body for a readable script; an
 // empty script file yields ("", nil).
 func ReadActionScript(ctx context.Context, files lua.ProjectFiles, scriptPath string) (string, error) {
-	return lua.ReadDeps{Files: files}.ReadScript(ctx, actionsDir, scriptPath)
+	return lua.ReadScript(ctx, files, actionsDir, scriptPath)
 }
 
 // parseActionResponse converts a Lua return value (already converted to Go

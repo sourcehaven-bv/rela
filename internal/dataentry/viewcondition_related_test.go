@@ -39,7 +39,7 @@ func TestViewCondition_RelatedIsSizeIndependent(t *testing.T) {
 		if len(resp.Data) != n/5 {
 			t.Fatalf("n=%d: rows = %d, want %d", n, len(resp.Data), n/5)
 		}
-		counts = append(counts, counting.Calls()["MatchingIDs"])
+		counts = append(counts, counting.Calls()["MatchingFaces"])
 	}
 	if counts[0] != counts[1] || counts[1] != 1 {
 		t.Fatalf("MatchingIDs = %v, want 1 at both sizes", counts)
@@ -95,7 +95,7 @@ func TestViewCondition_RelatedWithTraversingGrantIsSizeIndependent(t *testing.T)
 		if rec.Code != http.StatusOK || len(resp.Data) != n/5 {
 			t.Fatalf("n=%d: %d, %d rows, want %d", n, rec.Code, len(resp.Data), n/5)
 		}
-		counts = append(counts, counting.Calls()["MatchingIDs"])
+		counts = append(counts, counting.Calls()["MatchingFaces"])
 	}
 	if counts[0] != counts[1] {
 		t.Fatalf("MatchingIDs = %v, want the same at both sizes", counts)

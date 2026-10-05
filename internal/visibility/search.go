@@ -137,9 +137,9 @@ func (s *Searcher) scope(ctx context.Context, want []string) (map[string]search.
 		}
 		switch {
 		case rqr.AllowAll:
-			scope[typ] = search.TypeScope{AllowAll: true}
+			scope[typ] = search.TypeScope{AllowAll: true, Faces: rqr.Faces}
 		case rqr.Query != nil:
-			scope[typ] = search.TypeScope{Query: rqr.Query}
+			scope[typ] = search.TypeScope{Query: rqr.Query, Faces: rqr.Faces}
 		}
 	}
 	return scope, nil
