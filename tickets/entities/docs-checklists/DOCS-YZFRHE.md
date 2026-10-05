@@ -10,7 +10,7 @@ status: done
 ## Code Documentation
 
 - [x] Comments where logic isn't obvious (requestStats: separate sink, Debug to both, defer and the recorded 500, 1xx handling; accesslog.go: which function owns which check, why time/level are dropped for syslog)
-- [x] Function/type docs if public API (App.SetAccessLog)
+- [x] Function/type docs if public API (dataentry.WithAccessLog)
 
 ## Project Documentation
 

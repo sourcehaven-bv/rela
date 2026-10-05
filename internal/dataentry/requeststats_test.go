@@ -346,14 +346,13 @@ func TestRequestStats_WiredIntoRouter(t *testing.T) {
 	}
 }
 
-// SetAccessLog reaches the middleware through NewRouter: a real API route
+// WithAccessLog reaches the middleware through NewRouter: a real API route
 // at Info logs a request record and still sends no header.
 func TestRequestStats_AccessLogWiredIntoRouter(t *testing.T) {
 	withLogLevel(t, slog.LevelInfo)
 	logger, buf := accessLogger()
 	app := newTestAppV1(t)
-	app.SetAccessLog(logger)
-	router := app.NewRouter()
+	router := app.NewRouter(WithAccessLog(logger))
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/_schema", http.NoBody))
 	if rec.Code != http.StatusOK {

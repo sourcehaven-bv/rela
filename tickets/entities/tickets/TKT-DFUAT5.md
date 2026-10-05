@@ -31,6 +31,10 @@ The access logger is independent of `--verbose`/`--quiet`. It never sets the
 `Server-Timing` header: the per-response query count stays a Debug-only
 diagnostic because, sent to a client, it is an existence side channel.
 
+The logger reaches the middleware as a `dataentry.WithAccessLog` option to
+`App.NewRouter`, not as an `App` setter, so `App` stays under its plimsoll
+method cap.
+
 Consumer: the devops perf-report (slow-request mail for atlas).
 
 ## Scope

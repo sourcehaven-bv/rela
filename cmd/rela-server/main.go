@@ -561,8 +561,7 @@ func main() {
 	// so a conflicting config never reaches a running server.
 	wireIdentityAndMCP(app, svc, f)
 
-	app.SetAccessLog(accessLog)
-	srv := newHTTPServer(addr, app.NewRouter())
+	srv := newHTTPServer(addr, app.NewRouter(dataentry.WithAccessLog(accessLog)))
 
 	if !isLoopbackHost(f.bind) {
 		slog.Warn("rela-server bound beyond loopback; see docs/server-security.md for threat model",

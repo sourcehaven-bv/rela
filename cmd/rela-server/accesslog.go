@@ -64,7 +64,7 @@ func newSyslogAccessLogger(w io.Writer) *slog.Logger {
 // flag was valid, the environment is not.
 //
 // Nil: returned when dest is empty — the access log is off, and
-// App.SetAccessLog treats nil as off.
+// dataentry.WithAccessLog treats nil as off.
 func openAccessLog(dest string) *slog.Logger {
 	if dest == "" {
 		return nil
