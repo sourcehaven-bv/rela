@@ -28,14 +28,14 @@ func TestAttachFileSizeCap(t *testing.T) {
 
 	// At the limit: succeeds.
 	atLimit := bytes.Repeat([]byte("x"), maxAttachmentBytes)
-	require.NoError(t, s.AttachFile(ctx, "E-1", "blob", "ok.bin", bytes.NewReader(atLimit)))
+	require.NoError(t, s.AttachFamilyFile(ctx, "E-1", "blob", "ok.bin", bytes.NewReader(atLimit)))
 
 	// Over the limit: rejected, without the store buffering the whole thing.
 	over := io.MultiReader(bytes.NewReader(atLimit), strings.NewReader("y"))
-	err := s.AttachFile(ctx, "E-1", "blob2", "too-big.bin", over)
+	err := s.AttachFamilyFile(ctx, "E-1", "blob2", "too-big.bin", over)
 	require.ErrorIs(t, err, store.ErrAttachmentTooLarge)
 
 	// The over-limit attachment was not stored.
-	_, err = s.ReadAttachment(ctx, "E-1", "blob2", "too-big.bin")
+	_, err = s.ReadFamilyAttachment(ctx, "E-1", "blob2", "too-big.bin")
 	require.Error(t, err)
 }

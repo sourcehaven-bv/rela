@@ -453,9 +453,9 @@ func (b *caldavBackend) listTodos(ctx context.Context, name string) ([]caldav.Ca
 func (b *caldavBackend) objectFor(
 	ctx context.Context, collection string, m *caldavMapper, e *entitypkg.Entity,
 ) (caldav.CalendarObject, error) {
-	uid := feedUID(e.Type, e.ID)
+	uid := feedUID(e.Type, e.Ref().String())
 	href := uid + ".ics"
-	if alias, ok := b.app.caldavAliases.LookupByEntity(aliasPrincipal(ctx), collection, e.ID); ok {
+	if alias, ok := b.app.caldavAliases.LookupByEntity(aliasPrincipal(ctx), collection, e.Ref().String()); ok {
 		href = alias.Href
 		uid = alias.UID
 	}

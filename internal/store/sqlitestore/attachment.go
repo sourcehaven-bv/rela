@@ -14,7 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
-// AttachFile stores a file attachment on an entity, keyed by
+// AttachFamilyFile stores a file attachment on an entity, keyed by
 // (entity_id, property, file_name). The entity must exist
 // (store.ErrNotFound otherwise). The reader is fully consumed into memory
 // and persisted as a BLOB, matching memstore/pgstore: SQLite has
@@ -26,7 +26,7 @@ import (
 // store.SuffixOnCollision are write-path policy (internal/attachment),
 // applied before the name reaches any backend. A store that silently
 // rewrote the name would return a different key than the caller asked for.
-func (s *Store) AttachFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
+func (s *Store) AttachFamilyFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
 	if err := storeutil.ValidateProperty(property); err != nil {
 		return err
 	}
@@ -51,10 +51,11 @@ func (s *Store) AttachFile(ctx context.Context, entityID, property, fileName str
 	// Existence is checked in the same statement as the insert: an
 	// INSERT..SELECT whose source is the entities row writes zero rows when
 	// the entity is absent, so the check cannot race a concurrent delete the
-	// way a separate SELECT-then-INSERT could.
+	// way a separate SELECT-then-INSERT could. A faced id has one row per
+	// face; LIMIT 1 makes any face count as existence exactly once.
 	const q = `
 		INSERT INTO attachments (entity_id, property, file_name, data, size, updated_at)
-		SELECT id, ?, ?, ?, ?, ? FROM entities WHERE id = ?
+		SELECT id, ?, ?, ?, ?, ? FROM entities WHERE id = ? LIMIT 1
 		ON CONFLICT (entity_id, property, file_name)
 		DO UPDATE SET data = excluded.data,
 		              size = excluded.size,
@@ -75,11 +76,11 @@ func (s *Store) AttachFile(ctx context.Context, entityID, property, fileName str
 	return nil
 }
 
-// ReadAttachment returns a reader over the stored bytes, or
+// ReadFamilyAttachment returns a reader over the stored bytes, or
 // store.ErrNotFound. The bytes are already in memory, so the returned
 // closer is a no-op — but callers still own it and must Close, since other
 // backends (fsstore) hand back a real file handle.
-func (s *Store) ReadAttachment(ctx context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
+func (s *Store) ReadFamilyAttachment(ctx context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
 	const q = `SELECT data FROM attachments WHERE entity_id = ? AND property = ? AND file_name = ?`
 	var data []byte
 	err := s.q().QueryRowContext(ctx, q, entityID, property, fileName).Scan(&data)
@@ -92,9 +93,9 @@ func (s *Store) ReadAttachment(ctx context.Context, entityID, property, fileName
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-// DeleteAttachment removes one attachment, leaving its siblings on the same
+// DeleteFamilyAttachment removes one attachment, leaving its siblings on the same
 // property untouched. Returns store.ErrNotFound if absent.
-func (s *Store) DeleteAttachment(ctx context.Context, entityID, property, fileName string) error {
+func (s *Store) DeleteFamilyAttachment(ctx context.Context, entityID, property, fileName string) error {
 	const q = `DELETE FROM attachments WHERE entity_id = ? AND property = ? AND file_name = ?`
 	res, err := s.q().ExecContext(ctx, q, entityID, property, fileName)
 	if err != nil {
@@ -110,12 +111,12 @@ func (s *Store) DeleteAttachment(ctx context.Context, entityID, property, fileNa
 	return nil
 }
 
-// ListAttachments lists an entity's attachments. Returns store.ErrNotFound
+// ListFamilyAttachments lists an entity's attachments. Returns store.ErrNotFound
 // if the entity does not exist — distinct from an existing entity with no
 // attachments, which yields an empty slice.
-func (s *Store) ListAttachments(ctx context.Context, entityID string) ([]store.AttachmentInfo, error) {
+func (s *Store) ListFamilyAttachments(ctx context.Context, entityID string) ([]store.AttachmentInfo, error) {
 	var exists int
-	err := s.q().QueryRowContext(ctx, `SELECT 1 FROM entities WHERE id = ?`, entityID).Scan(&exists)
+	err := s.q().QueryRowContext(ctx, `SELECT 1 FROM entities WHERE id = ? LIMIT 1`, entityID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

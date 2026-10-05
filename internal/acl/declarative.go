@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // Declarative is the policy-driven [ACL] implementation. It composes
@@ -36,9 +36,9 @@ import (
 //     with a Reason that names ErrUnstampedPrincipal.
 type Declarative struct {
 	policy          *Policy
-	graph           Graph              // required: NewDeclarative rejects nil
-	graphQueryer    store.GraphQueryer // required: needed by Request.PermitsRead / PermitsReadMany
-	principalLookup PrincipalLookup    // optional: required only when principal_property lookup is enabled
+	graph           Graph           // required: NewDeclarative rejects nil
+	faceMatcher     FaceMatcher     // required: needed by Request.ReadableFacesMany
+	principalLookup PrincipalLookup // optional: required only when principal_property lookup is enabled
 
 	// provisionWarn logs "provision not yet implemented" at most once per
 	// Declarative (i.e. per policy load), so a `unmatched_principal: provision`
@@ -61,15 +61,14 @@ func WithPrincipalLookup(l PrincipalLookup) DeclarativeOption {
 	return func(d *Declarative) { d.principalLookup = l }
 }
 
-// NewDeclarative wraps a [Policy] + [Graph] + [store.GraphQueryer] as
+// NewDeclarative wraps a [Policy] + [Graph] + [FaceMatcher] as
 // an [ACL]. The first three must be non-nil:
 //
 //   - Policy is the static role / assignment definitions.
 //   - Graph supplies the read-side access the resolver needs for
 //     member-of walks and ancestor probes used by AuthorizeWrite.
-//   - GraphQueryer supplies [store.MatchingIDs] execution used by
-//     [Request.PermitsRead] / [Request.PermitsReadMany] for per-entity
-//     read gating.
+//   - FaceMatcher runs the per-row read verdict for
+//     [Request.ReadableFacesMany] and the gates built on it.
 //
 // Optional collaborators are supplied via [DeclarativeOption]. When the
 // policy enables `principal_property` lookup, a [PrincipalLookup] MUST be
@@ -77,18 +76,18 @@ func WithPrincipalLookup(l PrincipalLookup) DeclarativeOption {
 //
 // Tests that don't exercise group expansion can pass [NullGraph];
 // tests that don't exercise read gating can pass [NullGraphQueryer]
-// (returns false for every id probe). Production wiring (appbuild)
-// passes the store as both Graph (via [NewStoreGraph]) and as the
-// GraphQueryer, and supplies [WithPrincipalLookup].
-func NewDeclarative(p *Policy, g Graph, gq store.GraphQueryer, opts ...DeclarativeOption) (*Declarative, error) {
+// (matches no row). Production wiring (appbuild) passes the store as both
+// Graph (via [NewStoreGraph]) and as the FaceMatcher, and supplies
+// [WithPrincipalLookup].
+func NewDeclarative(p *Policy, g Graph, fm FaceMatcher, opts ...DeclarativeOption) (*Declarative, error) {
 	if p == nil {
 		return nil, errors.New("acl: NewDeclarative: policy must be non-nil")
 	}
 	if g == nil {
 		return nil, errors.New("acl: NewDeclarative: graph must be non-nil")
 	}
-	if gq == nil {
-		return nil, errors.New("acl: NewDeclarative: graphQueryer must be non-nil")
+	if fm == nil {
+		return nil, errors.New("acl: NewDeclarative: faceMatcher must be non-nil")
 	}
 	// Split world grants here as well as in [Policy.Validate]. Validate is
 	// the LOAD chokepoint; this constructor is the SERVE chokepoint, and a
@@ -118,7 +117,7 @@ func NewDeclarative(p *Policy, g Graph, gq store.GraphQueryer, opts ...Declarati
 	// failure mode: GrantsVerbOnState treats an unparseable entry as
 	// granting nothing, so the policy is already fail-closed and Validate
 	// remains the place that says so with a useful message.
-	d := &Declarative{policy: p, graph: g, graphQueryer: gq}
+	d := &Declarative{policy: p, graph: g, faceMatcher: fm}
 	for _, opt := range opts {
 		opt(d)
 	}
@@ -260,6 +259,22 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 		}
 	}
 	return r.AuthorizeWrite(ctx, req)
+}
+
+// PermitsReadFace reports whether the principal on ctx may read the row of
+// entityID at face, resolving the [Request] the way [Declarative.AuthorizeWrite]
+// does. It is for a write whose response must depend only on what the caller
+// can read, such as a family rename or a face delete, and which therefore may
+// not judge by the raw stored family. An unresolvable principal is an error;
+// callers fail closed.
+func (d *Declarative) PermitsReadFace(
+	ctx context.Context, entityType, entityID string, face entity.Face,
+) (bool, error) {
+	r, err := d.requestFor(ctx)
+	if err != nil {
+		return false, err
+	}
+	return r.PermitsReadFace(ctx, entityType, entityID, face)
 }
 
 // requestFor returns the per-operation [Request] for ctx: the one the

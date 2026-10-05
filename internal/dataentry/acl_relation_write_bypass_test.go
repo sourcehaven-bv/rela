@@ -22,6 +22,12 @@ import (
 // *acl.ForbiddenError); the dataentry reconciler then fell back to a DIRECT,
 // UNGATED store write. Result: 200 + a persisted edge with no audit — a full
 // ACL bypass. This test fails against that code and passes after the fix.
+//
+// The reconciler now refuses a peer the caller cannot read before the manager
+// runs (requireReadablePeers), so the refusal is the dangling-peer 422 rather
+// than the manager's 403, and no denied-write record is written. A hidden
+// peer gets the same answer, which a manager-side 403 could not give: the
+// manager's ACL sees a hidden source's type and an absent one's as different.
 func TestReadOnlyACL_DanglingPeerRelationWrite_Refused(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.ReadOnlyACL{}, sink)
@@ -37,36 +43,23 @@ func TestReadOnlyACL_DanglingPeerRelationWrite_Refused(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
 
-	// Must NOT be a 200. Under ReadOnlyACL every write is denied, so authz
-	// (which now runs before the existence check) produces a 403.
 	if rec.Code == http.StatusOK {
 		t.Fatalf("read-only ACL let a dangling-peer relation write through (200): %s", rec.Body.String())
 	}
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 (ACL deny), got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "target_not_found") {
+		t.Fatalf("expected 422 target_not_found, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// The edge must not exist in the store.
-	if _, err := app.store.GetRelation(t.Context(), "TKT-001", "belongs_to", "CMP-999"); err == nil {
+	if _, err := app.store.GetRelation(t.Context(), entity.RelationKey{From: "TKT-001", Type: "belongs_to", To: "CMP-999"}); err == nil {
 		t.Fatal("dangling-peer edge persisted under ReadOnlyACL; ACL/audit bypass")
 	}
 
-	// No successful create-relation audit record; a denied-write record is
-	// expected instead.
-	var sawCreate, sawDenied bool
+	// No successful create-relation audit record.
 	for _, r := range sink.Records() {
-		switch r.Op {
-		case audit.OpCreateRelation:
-			sawCreate = true
-		case audit.OpDeniedWrite:
-			sawDenied = true
+		if r.Op == audit.OpCreateRelation {
+			t.Errorf("unexpected create-relation audit record for a refused write: %+v", sink.Records())
 		}
-	}
-	if sawCreate {
-		t.Errorf("unexpected create-relation audit record for a denied write: %+v", sink.Records())
-	}
-	if !sawDenied {
-		t.Errorf("expected a denied-write audit record, got %+v", sink.Records())
 	}
 }
 
@@ -88,7 +81,7 @@ func TestReadOnlyACL_ExistingPeerRelationWrite_Forbidden(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if _, err := app.store.GetRelation(t.Context(), "TKT-001", "belongs_to", "CMP-001"); err == nil {
+	if _, err := app.store.GetRelation(t.Context(), entity.RelationKey{From: "TKT-001", Type: "belongs_to", To: "CMP-001"}); err == nil {
 		t.Fatal("edge persisted despite ReadOnlyACL deny")
 	}
 }
@@ -115,7 +108,7 @@ func TestDanglingPeerRelationWrite_AllowedACL_422(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "target_not_found") {
 		t.Errorf("expected target_not_found in body, got %s", rec.Body.String())
 	}
-	if _, err := app.store.GetRelation(t.Context(), "TKT-001", "belongs_to", "CMP-999"); err == nil {
+	if _, err := app.store.GetRelation(t.Context(), entity.RelationKey{From: "TKT-001", Type: "belongs_to", To: "CMP-999"}); err == nil {
 		t.Fatal("dangling-peer edge persisted despite hard 422")
 	}
 }

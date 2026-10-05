@@ -4,9 +4,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // Every reader here takes an ADDRESS (`ID` or `ID@face`), not an id
@@ -43,16 +46,17 @@ func TestReaders_ResolveAnAddressToItsFace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
-	unrestricted := visibility.Unrestricted(st)
+	script = script.WithWorld(visibility.WorldOf(store.TrivialScope()))
+	unrestricted := visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
 
 	type get func(addr string) (*entity.Entity, error)
-	viaReader := func(r visibility.Reader) get {
+	viaReader := func(r interface{ Resolver() *visibility.Resolver }) get {
 		return func(addr string) (*entity.Entity, error) {
-			e, ok, gerr := r.Get(ctx, "ticket", addr)
+			res, ok, gerr := r.Resolver().Address(ctx, visibility.WorldOf(store.TrivialScope()), "ticket", addr)
 			if gerr != nil || !ok {
 				return nil, gerr
 			}
-			return e, nil
+			return res.Entity, nil
 		}
 	}
 	for _, tc := range []struct {
@@ -61,8 +65,8 @@ func TestReaders_ResolveAnAddressToItsFace(t *testing.T) {
 	}{
 		{"PolicyReader", viaReader(policy)},
 		{"AllowAllReader", viaReader(allowAll)},
-		{"ScriptReader", func(addr string) (*entity.Entity, error) { return script.GetEntity(ctx, addr) }},
-		{"UnrestrictedReader", func(addr string) (*entity.Entity, error) { return unrestricted.GetEntity(ctx, addr) }},
+		{"ScriptReader", func(addr string) (*entity.Entity, error) { return script.GetAddress(ctx, addr) }},
+		{"UnrestrictedReader", func(addr string) (*entity.Entity, error) { return unrestricted.GetAddress(ctx, addr) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for addr, want := range map[string]string{"TKT-1": "bare", "TKT-1@draft": "draft"} {
@@ -86,10 +90,15 @@ type idGate struct{ id string }
 
 func (g idGate) PermitsRead(_ context.Context, _, id string) (bool, error) { return id == g.id, nil }
 
-func (g idGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g idGate) permitsReadMany(_ context.Context, _ string, ids []string) map[string]bool {
 	out := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		out[id] = id == g.id
 	}
-	return out, nil
+	return out
+}
+
+// ReadableFacesMany implements the row gate over permitsReadMany.
+func (g idGate) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids), nil)
 }

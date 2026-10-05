@@ -52,10 +52,9 @@ import (
 func (v *VersionStore) WriteRelationVersion(ctx context.Context, in store.RelationVersionInput) error {
 	if in.RecordID == 0 {
 		// Resolve from the (still-live, pre-delete) row or the most-recent lineage.
-		id, err := v.recordIDForKey(ctx, in.From, in.FromFace, in.Type, in.To)
+		id, err := v.recordIDForKey(ctx, in.Key)
 		if err != nil {
-			return fmt.Errorf("sqlitestore: resolve rel_record_id for %s--%s--%s: %w",
-				entity.FormatStateRef(in.From, in.FromFace), in.Type, in.To, err)
+			return fmt.Errorf("sqlitestore: resolve rel_record_id for %s: %w", in.Key, err)
 		}
 		in.RecordID = id
 	}
@@ -76,10 +75,10 @@ func (v *VersionStore) WriteRelationVersion(ctx context.Context, in store.Relati
 // against each other.
 func contentHashOfRelation(in store.RelationVersionInput) string {
 	r := entity.Relation{
-		From:       in.From,
-		FromFace:   in.FromFace,
-		Type:       in.Type,
-		To:         in.To,
+		From:       in.Key.From,
+		FromFace:   in.Key.FromFace,
+		Type:       in.Key.Type,
+		To:         in.Key.To,
 		Properties: in.Properties,
 		Content:    in.Content,
 	}
@@ -117,7 +116,7 @@ func insertRelationVersion(
 		     principal_user, principal_tool, triggered_by, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = q.ExecContext(ctx, ins,
-		in.RecordID, string(in.Op), in.From, string(in.FromFace), in.Type, in.To,
+		in.RecordID, string(in.Op), in.Key.From, string(in.Key.FromFace), in.Key.Type, in.Key.To,
 		prevFrom, prevTo, in.Content, props, contentHash, in.SchemaHash,
 		in.PrincipalUser, in.PrincipalTool, in.TriggeredBy, now)
 	if err != nil {
@@ -217,7 +216,7 @@ func (v *VersionStore) relationLineageIDs(ctx context.Context, headID int64) ([]
 // recordIDForKey resolves a composite key to the rel_record_id of its current
 // (or most recent) lineage.
 //
-// The key includes the TAIL (fromFace): a state-tailed edge and its default-tail
+// The key includes the TAIL (k.FromFace): a state-tailed edge and its default-tail
 // sibling share a (from, type, to) triple but are different edges with their own
 // lineages, so the face has to select between them (TKT-JAROC3). Passing the zero
 // face asks about the default tail, which is what a caller that never names a
@@ -225,13 +224,11 @@ func (v *VersionStore) relationLineageIDs(ctx context.Context, headID int64) ([]
 //
 // Nil: returns (0, store.ErrNotFound) when the key has neither a live row nor
 // any history.
-func (v *VersionStore) recordIDForKey(
-	ctx context.Context, from string, fromFace entity.Face, relType, to string,
-) (int64, error) {
+func (v *VersionStore) recordIDForKey(ctx context.Context, k entity.RelationKey) (int64, error) {
 	const live = `SELECT rel_record_id FROM relations
 	              WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`
 	var id int64
-	err := v.db.QueryRowContext(ctx, live, from, relType, to, string(fromFace)).Scan(&id)
+	err := v.db.QueryRowContext(ctx, live, k.From, k.Type, k.To, string(k.FromFace)).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
@@ -251,7 +248,7 @@ func (v *VersionStore) recordIDForKey(
 		WHERE rv.from_id = ? AND rv.rel_type = ? AND rv.to_id = ? AND rv.from_face = ?
 		ORDER BY rv.vseq DESC
 		LIMIT 1`
-	err = v.db.QueryRowContext(ctx, dead, from, relType, to, string(fromFace)).Scan(&id)
+	err = v.db.QueryRowContext(ctx, dead, k.From, k.Type, k.To, string(k.FromFace)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, store.ErrNotFound
 	}
@@ -276,13 +273,13 @@ func (v *VersionStore) resolveLineageIDs(
 		// The query's face selects the tail; zero means the default tail, so
 		// a caller that names no face reads the default tail specifically
 		// rather than whichever tail happens to sort first (TKT-JAROC3).
-		id, err := v.recordIDForKey(ctx, q.From, q.FromFace, q.Type, q.To)
+		id, err := v.recordIDForKey(ctx, q.Key)
 		if err != nil {
 			return nil, err // ErrNotFound propagates
 		}
 		head = id
 	} else {
-		ok, err := v.recordIDIsHeadOfKey(ctx, head, q.From, q.Type, q.To)
+		ok, err := v.recordIDIsHeadOfKey(ctx, head, q.Key)
 		if err != nil {
 			return nil, err
 		}
@@ -294,10 +291,12 @@ func (v *VersionStore) resolveLineageIDs(
 }
 
 // recordIDIsHeadOfKey reports whether recordID is a lineage whose FINAL version
-// row carries (from,type,to) — a valid lifetime handle for this key. This is the
+// row carries k's (from,type,to) on k's tail — a valid lifetime handle
+// for this key. The tail is part of the key: without it a record id of a
+// sibling tail would pass. This is the
 // membership check that keeps a caller-supplied RecordID bounded to the key.
 func (v *VersionStore) recordIDIsHeadOfKey(
-	ctx context.Context, recordID int64, from, relType, to string,
+	ctx context.Context, recordID int64, k entity.RelationKey,
 ) (bool, error) {
 	const q = `
 		SELECT EXISTS (
@@ -306,9 +305,11 @@ func (v *VersionStore) recordIDIsHeadOfKey(
 		    WHERE rv.rel_record_id = ?
 		      AND rv.vseq = (SELECT max(vseq) FROM relation_versions WHERE rel_record_id = ?)
 		      AND rv.from_id = ? AND rv.rel_type = ? AND rv.to_id = ?
+		      AND rv.from_face = ?
 		)`
 	var ok bool
-	if err := v.db.QueryRowContext(ctx, q, recordID, recordID, from, relType, to).Scan(&ok); err != nil {
+	if err := v.db.QueryRowContext(ctx, q, recordID, recordID, k.From, k.Type, k.To,
+		string(k.FromFace)).Scan(&ok); err != nil {
 		return false, err
 	}
 	return ok, nil
@@ -448,12 +449,11 @@ func (v *VersionStore) GetRelationVersion(
 // presence of a create row: create/update rows come only from the async sweep,
 // so a short-lived relation's lineage may hold only a delete.
 //
-// The enumeration is scoped to ONE tail (fromFace; zero = the default tail,
-// TKT-JAROC3). Tails are separate relations, and the response carries no face,
+// The enumeration is scoped to ONE tail (k.FromFace, TKT-JAROC3). Tails are separate relations, and the response carries no face,
 // so listing them together would hand a caller asking about one edge an opaque
 // RecordID belonging to another.
 func (v *VersionStore) ListRelationLifetimes(
-	ctx context.Context, from string, fromFace entity.Face, relType, to string,
+	ctx context.Context, k entity.RelationKey,
 ) ([]store.RelationLifetime, error) {
 	// Heads: every lineage whose FINAL row carries this key, newest-first.
 	const headsQ = `
@@ -465,7 +465,7 @@ func (v *VersionStore) ListRelationLifetimes(
 		WHERE rv.from_id = ? AND rv.rel_type = ? AND rv.to_id = ?
 		  AND rv.from_face = ?
 		ORDER BY latest.vseq DESC`
-	heads, err := scanIDs(ctx, v.db, headsQ, from, relType, to, string(fromFace))
+	heads, err := scanIDs(ctx, v.db, headsQ, k.From, k.Type, k.To, string(k.FromFace))
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: list relation lifetimes: %w", err)
 	}
@@ -475,7 +475,7 @@ func (v *VersionStore) ListRelationLifetimes(
 
 	// Same tail as the heads above: the live edge on ANOTHER tail is a
 	// different relation and must not mark this tail's lifetime live.
-	liveID, err := v.liveRecordID(ctx, from, fromFace, relType, to)
+	liveID, err := v.liveRecordID(ctx, k)
 	if err != nil {
 		return nil, err
 	}
@@ -507,16 +507,14 @@ func (v *VersionStore) ListRelationLifetimes(
 	return lifetimes, nil
 }
 
-// liveRecordID returns the rel_record_id of the live relations row for this key,
-// or 0 when the relation is not currently live. fromFace selects the tail; the
-// zero face is the default tail (TKT-JAROC3).
-func (v *VersionStore) liveRecordID(
-	ctx context.Context, from string, fromFace entity.Face, relType, to string,
-) (int64, error) {
+// liveRecordID returns the rel_record_id of the live relations row at k, or 0
+// when the relation is not currently live. k's tail selects the edge
+// (TKT-JAROC3).
+func (v *VersionStore) liveRecordID(ctx context.Context, k entity.RelationKey) (int64, error) {
 	const q = `SELECT rel_record_id FROM relations
 	           WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`
 	var id int64
-	err := v.db.QueryRowContext(ctx, q, from, relType, to, string(fromFace)).Scan(&id)
+	err := v.db.QueryRowContext(ctx, q, k.From, k.Type, k.To, string(k.FromFace)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
@@ -604,8 +602,8 @@ func scanRelationVersionMeta(row scanner) (store.RelationVersionMeta, error) {
 	return m, nil
 }
 
-// RelationRecordID returns the surrogate lineage id of the live relation row for
-// this triple's DEFAULT tail, or 0 when no such row exists.
+// RelationRecordID returns the surrogate lineage id of the live relation row at
+// k, tail included, or 0 when no such row exists.
 //
 // This is not part of [store.Store] — it is an accessor for the opaque handle
 // callers otherwise obtain from [store.RelationLifetime]. It exists so a caller
@@ -618,8 +616,8 @@ func scanRelationVersionMeta(row scanner) (store.RelationVersionMeta, error) {
 // argue for itself, and this one does not need to be there — lineage is this
 // type's concern. Keeping the two backends' accessor in the same place also
 // lets storetest discover them with one lookup.
-func (v *VersionStore) RelationRecordID(ctx context.Context, from, relType, to string) (int64, error) {
-	return v.liveRecordID(ctx, from, entity.Face(""), relType, to)
+func (v *VersionStore) RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error) {
+	return v.liveRecordID(ctx, k)
 }
 
 // bumpRelRecordSeq consumes the relation-lineage id the caller just used.

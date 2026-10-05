@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 	"time"
 
@@ -41,8 +42,6 @@ func multipartBody(t *testing.T, fileName string, data []byte) (body *bytes.Buff
 
 // putAttachmentAs invokes the upload handler directly with the gate ctx.
 // Type/plural are the fixture's "ticket"/"tickets" (newTestAppV1).
-//
-//nolint:unparam // entityID is conceptually variable; tests use one fixture.
 func putAttachmentAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarative,
 	entityID, property, fileName string, data []byte,
 ) *httptest.ResponseRecorder {
@@ -130,7 +129,8 @@ func TestAttachmentUpload_RoundTrips(t *testing.T) {
 
 	// Property stamped on the entity.
 	e := mustGet(t, app, "TKT-001")
-	if got := e.GetString("screenshot"); got != "attachments/TKT-001/screenshot/shot.txt" {
+	stamped := regexp.MustCompile(`^attachments/TKT-001/screenshot/[0-9a-f]{16}/shot\.txt$`)
+	if got := e.GetString("screenshot"); !stamped.MatchString(got) {
 		t.Errorf("property = %q, want the stamped attachment path", got)
 	}
 }

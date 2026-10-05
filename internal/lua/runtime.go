@@ -397,9 +397,27 @@ func WithCache(c *Cache) Option {
 // registered; calling them from Lua raises "attempt to call a nil value".
 //
 // The Lua VM is sandboxed with only safe libraries loaded (no io, os, or debug).
+//
+// d.World must be set: a reader with an unset world would fail every list
+// read at run time, so the wiring mistake panics here instead (RR-HKVULG).
+// A runtime with no graph access at all is [NewDetached].
 func NewReader(d ReadDeps, stdout io.Writer, opts ...Option) *Runtime {
 	return newRuntime(WriteDeps{ReadDeps: d}, stdout, false, opts...)
 }
+
+// NewDetached creates a read-only Runtime with NO graph collaborators: no
+// store reader, tracer, searcher or metamodel, and no world. The graph
+// bindings are registered against nothing, so they raise rather than read.
+// It is for a script that must never touch the graph, such as a mail send
+// script, which gets an already-rendered message.
+func NewDetached(stdout io.Writer, opts ...Option) *Runtime {
+	return newRuntime(WriteDeps{ReadDeps: ReadDeps{World: detachedWorld}}, stdout, false, opts...)
+}
+
+// detachedWorld is the world of a [NewDetached] runtime. It has no reader to
+// query, so the scope never reaches a store; it is set only so the runtime
+// passes the unset-world check every other runtime must pass.
+var detachedWorld = store.NewWorldScope(nil)
 
 // NewWriter creates a read-write Runtime. All read bindings plus mutation
 // bindings (create_entity, update_entity, delete_entity, create_relation,
@@ -417,6 +435,12 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 	// or start-time panic with a clear message.
 	if allowWrites && deps.EntityManager == nil {
 		panic("lua.NewWriter: WriteDeps.EntityManager is required for a writer runtime")
+	}
+	// Same reasoning for the world: an unset one fails every list read with
+	// store.ErrInvalidQuery, far from the wiring site that forgot it. Wiring
+	// passes worlds.Compiled.DefaultWorld (RR-HKVULG).
+	if !deps.World.IsSet() {
+		panic("lua: ReadDeps.World is unset; wire the default world (worlds.Compiled.DefaultWorld)")
 	}
 
 	// Create sandboxed Lua state - skip default libraries for security
@@ -818,6 +842,7 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 				er:       r.deps.ElevatedReader,
 				recorder: r.deps.ElevationRecorder,
 				ctxFn:    r.callerCtx,
+				world:    r.deps.World,
 			}
 			r.L.SetField(rela, "bypass_acl", r.L.NewFunction(eb.luaBypassACL))
 		}
@@ -1171,7 +1196,7 @@ func (r *Runtime) luaGetEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	e, err := rd.GetEntity(r.callerCtx(), id)
+	e, err := rd.GetAddress(r.callerCtx(), id)
 	if err != nil {
 		ls.Push(lua.LNil)
 		return 1
@@ -1208,7 +1233,9 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 	// caller cannot tell "that is everything" from "the rest was filtered".
 	// Resolving that needs the cursor -- DEC-IYHLNF stage 2.
 	entities := make([]*entity.Entity, 0, min(opts.limit, initialRowCapacity))
-	for e, err := range rd.ListEntities(r.callerCtx(), store.EntityQuery{Type: entityType}) {
+	for e, err := range rd.ListEntities(r.callerCtx(), store.EntityQuery{
+		Type: entityType, Faces: store.InWorld(r.deps.World),
+	}) {
 		if err != nil {
 			// RAISE, never break-and-return-what-we-have (TKT-FVQ4). A short
 			// list is indistinguishable from a genuinely short result, so
@@ -1704,7 +1731,7 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 	result := ls.NewTable()
 	i := 1
 	ctx := r.callerCtx()
-	for hit, err := range r.deps.Searcher.Search(ctx, search.Query{Text: query, Limit: limit}) {
+	for hit, err := range r.deps.Searcher.Search(ctx, search.Query{Text: query, Limit: limit, World: r.deps.World}) {
 		if err != nil {
 			ls.RaiseError("search error: %s", err.Error())
 			return 0
@@ -1713,8 +1740,10 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 		// This hydration is ALSO the gate: hits the caller may not read fail
 		// here and are skipped, so no hidden entity or property reaches the
 		// script. Whether the hit list itself is gated depends on the wiring;
-		// see ReadDeps.Searcher.
-		e, err := rd.GetEntity(ctx, hit.ID)
+		// see ReadDeps.Searcher. A hit names the face it matched, so it is
+		// read at that face: a bare id would resolve through the world and
+		// could return a different face, or miss a faced one.
+		e, err := rd.GetAddress(ctx, entity.Ref{ID: hit.ID, Face: hit.Face}.String())
 		if err != nil {
 			// A denied hit arrives as ErrNotFound and is skipped silently —
 			// that is the gate working. Anything else is a real fault, and
@@ -1815,35 +1844,85 @@ func writtenEntityTable(ctx context.Context, ls *lua.LState, rd EntityReader, wr
 	}
 }
 
-// readFace reads one face of id through rd.
+// readFace reads one face of id through rd, by its explicit address.
 func readFace(ctx context.Context, rd EntityReader, id string, face entity.Face) (*entity.Entity, error) {
-	if face.IsDefault() {
-		return rd.GetEntity(ctx, id)
-	}
-	for e, err := range rd.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, FaceIn: []entity.Face{face}}) {
-		if err != nil {
-			return nil, err
-		}
-		if e != nil && e.ID == id {
-			return e, nil
-		}
-	}
-	return nil, store.ErrNotFound
+	return rd.GetAddress(ctx, entity.Ref{ID: id, Face: face}.String())
 }
 
 // gateWriteTarget raises "entity not found" unless the caller may read every
-// id a write names. The manager answers "forbidden" for an entity that exists
-// but is hidden and "not found" for a missing one, so without this a script
-// could probe for hidden ids. This matches the data-entry write path, which
-// also reads the target through the gated reader first.
+// entity a write names. The manager answers "forbidden" for an entity that
+// exists but is hidden and "not found" for a missing one, so without this a
+// script could probe for hidden ids. This matches the data-entry write path,
+// which also reads the target through the gated reader first.
 func gateWriteTarget(ctx context.Context, ls *lua.LState, rd EntityReader, ids ...string) bool {
 	for _, id := range ids {
-		if !visibility.Readable(ctx, rd, id) {
+		if !writeTargetReadable(ctx, rd, id) {
 			ls.RaiseError("entity not found: %s", id)
 			return false
 		}
 	}
 	return true
+}
+
+// writeTargeter resolves an address to the one face a write edits.
+// [visibility.ScriptReader] and [visibility.UnrestrictedReader] provide it.
+type writeTargeter interface {
+	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
+}
+
+// resolveWriteTarget resolves addr to the face a face-level write edits
+// ([visibility.Resolver.WriteTarget]), raising on failure. A miss raises
+// "entity not found"; a bare id on a faced type raises naming the faces the
+// caller may read. A reader without WriteTarget is refused: every
+// gated reader provides it, so its absence is a wiring bug.
+func resolveWriteTarget(ctx context.Context, ls *lua.LState, rd EntityReader, addr string) (entity.Ref, bool) {
+	wt, ok := rd.(writeTargeter)
+	if !ok {
+		ls.RaiseError("entity not found: %s", addr)
+		return entity.Ref{}, false
+	}
+	ref, err := wt.WriteTarget(ctx, addr)
+	if amb, isAmb := errors.AsType[*visibility.AmbiguousAddressError](err); isAmb {
+		ls.RaiseError("%s", amb.Error())
+		return entity.Ref{}, false
+	}
+	if err != nil {
+		ls.RaiseError("entity not found: %s", addr)
+		return entity.Ref{}, false
+	}
+	return ref, true
+}
+
+// familyReader answers which faces of an id the caller may read, from headers
+// only. [visibility.ScriptReader] and [visibility.UnrestrictedReader] provide
+// it.
+type familyReader interface {
+	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+}
+
+// writeTargetReadable reports whether rd lets the caller read the entity addr
+// names. A named face (`ID@face`) must itself be readable. A bare id needs
+// SOME readable face: a write acts on the entity, and a faced type has no row
+// at the zero coordinate, so asking for that row alone would refuse every
+// faced entity. A read error and an unparseable address count as unreadable.
+//
+// The bare-id check is [visibility.Resolver.Family]. A reader without it is
+// refused: every gated reader provides it, so its absence is a wiring bug.
+func writeTargetReadable(ctx context.Context, rd EntityReader, addr string) bool {
+	ref, err := entity.ParseRef(addr)
+	if err != nil {
+		return false
+	}
+	if !ref.Face.IsImplicit() {
+		e, gerr := readFace(ctx, rd, ref.ID, ref.Face)
+		return gerr == nil && e != nil
+	}
+	fr, ok := rd.(familyReader)
+	if !ok {
+		return false
+	}
+	_, found, ferr := fr.Family(ctx, ref.ID)
+	return ferr == nil && found
 }
 
 // luaUpdateEntity implements rela.update_entity(id, properties, content?) -> (entity, warnings).
@@ -1883,11 +1962,16 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		patch.Content = &content
 	}
 
-	if rd, ok := r.reader(ls, "rela.update_entity"); !ok || !gateWriteTarget(ctx, ls, rd, id) {
+	rd, ok := r.reader(ls, "rela.update_entity")
+	if !ok {
+		return 0
+	}
+	target, ok := resolveWriteTarget(ctx, ls, rd, id)
+	if !ok {
 		return 0
 	}
 
-	result, err := r.deps.EntityManager.PatchEntity(ctx, id, patch)
+	result, err := r.deps.EntityManager.PatchEntity(ctx, target.String(), patch)
 	if err != nil {
 		// Preserve the pre-TKT-80EWGM message for a missing entity: scripts
 		// match on it. The check is STRUCTURAL (see [NotFoundError]) — a
@@ -1973,6 +2057,12 @@ func relationQuery(s *lua.LState) (store.RelationQuery, error) {
 }
 
 // luaDeleteEntity implements rela.delete_entity(id, cascade?) -> boolean
+//
+// The id resolves as every write does ([resolveWriteTarget]): a bare id
+// deletes a faceless entity and names the faces of a faced one. `ID@face`
+// deletes that face and the edges tailed at it (BUG-J3PBFN); the last face
+// takes the entity. cascade guards every delete that removes the entity, the
+// last face included (RR-2466U1); the manager enforces it.
 func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 	id := ls.CheckString(1)
 	if id == "" {
@@ -1983,16 +2073,44 @@ func (r *Runtime) luaDeleteEntity(ls *lua.LState) int {
 	cascade := ls.OptBool(2, false)
 
 	ctx := r.callerCtx()
-	if rd, ok := r.reader(ls, "rela.delete_entity"); !ok || !gateWriteTarget(ctx, ls, rd, id) {
+	rd, ok := r.reader(ls, "rela.delete_entity")
+	if !ok {
 		return 0
 	}
-	if _, err := r.deps.EntityManager.DeleteEntity(ctx, id, cascade); err != nil {
+	ref, ok := resolveWriteTarget(ctx, ls, rd, id)
+	if !ok {
+		return 0
+	}
+	if err := deleteRef(ctx, r.deps.EntityManager, ref, cascade); err != nil {
 		ls.RaiseError("delete entity error: %s", err.Error())
 		return 0
 	}
 
 	ls.Push(lua.LTrue)
 	return 1
+}
+
+// deleteRef deletes a resolved write target: the entity at its implicit
+// face, else that face.
+func deleteRef(ctx context.Context, em Mutator, ref entity.Ref, cascade bool) error {
+	if ref.Face.IsImplicit() {
+		_, err := em.DeleteEntity(ctx, ref.ID, cascade)
+		return err
+	}
+	_, err := em.DeleteEntityFace(ctx, ref.ID, ref.Face, cascade)
+	return err
+}
+
+// relationSource checks the endpoints of a relation write and returns the
+// address the source's read gate must check. Both endpoints are bare ids: a
+// target has no face, and the tail is named by opts.face, never fused into
+// from. The gate checks the tail face itself, so a script cannot probe a face
+// it cannot read by writing or deleting an edge on it.
+func relationSource(from, to string, tail entity.Face) (string, error) {
+	if strings.Contains(from, entity.StateRefSeparator) || strings.Contains(to, entity.StateRefSeparator) {
+		return "", errors.New("from and to must be bare entity ids; name the tail with opts.face")
+	}
+	return entity.FormatStateRef(from, tail), nil
 }
 
 // luaCreateRelation implements rela.create_relation(from, type, to, opts?) -> table
@@ -2022,13 +2140,18 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 		return 0
 	}
 
-	ctx := r.callerCtx()
-	if rd, ok := r.reader(ls, "rela.create_relation"); !ok || !gateWriteTarget(ctx, ls, rd, from, to) {
+	source, endErr := relationSource(from, to, opts.Face)
+	if endErr != nil {
+		ls.RaiseError("create relation error: %s", endErr.Error())
 		return 0
 	}
-	rel, err := r.deps.EntityManager.CreateRelation(
-		ctx, from, relType, to,
-		entity.RelationOptions{FromFace: opts.Face, Content: opts.Content})
+	ctx := r.callerCtx()
+	if rd, ok := r.reader(ls, "rela.create_relation"); !ok || !gateWriteTarget(ctx, ls, rd, source, to) {
+		return 0
+	}
+	rel, err := r.deps.EntityManager.CreateRelation(ctx,
+		entity.RelationKey{From: from, FromFace: opts.Face, Type: relType, To: to},
+		entity.RelationOptions{Content: opts.Content})
 	if err != nil {
 		ls.RaiseError("create relation error: %s", err.Error())
 		return 0
@@ -2038,7 +2161,11 @@ func (r *Runtime) luaCreateRelation(ls *lua.LState) int {
 	return 1
 }
 
-// luaDeleteRelation implements rela.delete_relation(from, type, to) -> boolean
+// luaDeleteRelation implements rela.delete_relation(from, type, to, opts?) -> boolean
+//
+// opts is an optional table taking `face`, the tail of a `scope: content`
+// edge, as create_relation does. The tail is part of the edge's identity, so
+// without it only the default-tail edge is addressed (BUG-J3PBFN).
 func (r *Runtime) luaDeleteRelation(ls *lua.LState) int {
 	from := ls.CheckString(1)
 	relType := ls.CheckString(2)
@@ -2049,11 +2176,23 @@ func (r *Runtime) luaDeleteRelation(ls *lua.LState) int {
 		return 0
 	}
 
-	ctx := r.callerCtx()
-	if rd, ok := r.reader(ls, "rela.delete_relation"); !ok || !gateWriteTarget(ctx, ls, rd, from, to) {
+	opts, optErr := parseWriteOpts(ls, argPosCreateRelationOpts, deleteRelationOptKeys, deleteRelationOptSet)
+	if optErr != nil {
+		ls.RaiseError("delete relation error: %s", optErr.Error())
 		return 0
 	}
-	if err := r.deps.EntityManager.DeleteRelation(ctx, from, relType, to); err != nil {
+
+	source, endErr := relationSource(from, to, opts.Face)
+	if endErr != nil {
+		ls.RaiseError("delete relation error: %s", endErr.Error())
+		return 0
+	}
+	ctx := r.callerCtx()
+	if rd, ok := r.reader(ls, "rela.delete_relation"); !ok || !gateWriteTarget(ctx, ls, rd, source, to) {
+		return 0
+	}
+	key := entity.RelationKey{From: from, FromFace: opts.Face, Type: relType, To: to}
+	if err := r.deps.EntityManager.DeleteRelation(ctx, key); err != nil {
 		ls.RaiseError("delete relation error: %s", err.Error())
 		return 0
 	}

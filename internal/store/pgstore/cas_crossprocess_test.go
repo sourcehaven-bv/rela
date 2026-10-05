@@ -84,9 +84,9 @@ func TestCrossProcess_UnconditionalUpdateSilentlyLosesAnAppend(t *testing.T) {
 	require.NoError(t, a.CreateEntity(ctx, base))
 
 	// Both handles read the SAME base state, as two processes would.
-	readA, err := a.GetEntity(ctx, base.ID)
+	readA, err := a.GetEntity(ctx, base.Ref())
 	require.NoError(t, err)
-	readB, err := b.GetEntity(ctx, base.ID)
+	readB, err := b.GetEntity(ctx, base.Ref())
 	require.NoError(t, err)
 
 	readA.Content += "[A]"
@@ -95,7 +95,7 @@ func TestCrossProcess_UnconditionalUpdateSilentlyLosesAnAppend(t *testing.T) {
 	readB.Content += "[B]"
 	require.NoError(t, b.UpdateEntity(ctx, readB), "the loser is not even told it lost")
 
-	got, err := a.GetEntity(ctx, base.ID)
+	got, err := a.GetEntity(ctx, base.Ref())
 	require.NoError(t, err)
 	assert.NotContains(t, got.Content, "[A]",
 		"A's append is silently discarded — this is the hazard TKT-34XS2R fixes")
@@ -115,10 +115,10 @@ func TestCrossProcess_ConditionalUpdateConflictsInsteadOfLosing(t *testing.T) {
 	base.Content = "start"
 	require.NoError(t, a.CreateEntity(ctx, base))
 
-	readA, err := a.GetEntity(ctx, base.ID)
+	readA, err := a.GetEntity(ctx, base.Ref())
 	require.NoError(t, err)
 	versionA := store.VersionOf(readA)
-	readB, err := b.GetEntity(ctx, base.ID)
+	readB, err := b.GetEntity(ctx, base.Ref())
 	require.NoError(t, err)
 	versionB := store.VersionOf(readB)
 	require.Equal(t, versionA, versionB,
@@ -138,7 +138,7 @@ func TestCrossProcess_ConditionalUpdateConflictsInsteadOfLosing(t *testing.T) {
 	assert.Equal(t, base.ID, conflict.ID)
 	assert.Equal(t, versionB, conflict.Expected)
 
-	got, err := b.GetEntity(ctx, base.ID)
+	got, err := b.GetEntity(ctx, base.Ref())
 	require.NoError(t, err)
 	assert.Contains(t, got.Content, "[A]", "the winner's write survives")
 	assert.NotContains(t, got.Content, "[B]", "the rejected write applied nothing")
@@ -174,7 +174,7 @@ func TestCrossProcess_ConcurrentAppendersAllLandAcrossHandles(t *testing.T) {
 			h := handles[i%len(handles)]
 			marker := fmt.Sprintf("[line-%d]", i)
 			for range maxAttempts {
-				cur, err := h.GetEntity(ctx, base.ID)
+				cur, err := h.GetEntity(ctx, base.Ref())
 				if err != nil {
 					errs[i] = err
 					return
@@ -198,7 +198,7 @@ func TestCrossProcess_ConcurrentAppendersAllLandAcrossHandles(t *testing.T) {
 		require.NoErrorf(t, err, "appender %d", i)
 	}
 
-	got, err := a.GetEntity(ctx, base.ID)
+	got, err := a.GetEntity(ctx, base.Ref())
 	require.NoError(t, err)
 	for i := range appenders {
 		assert.Containsf(t, got.Content, fmt.Sprintf("[line-%d]", i),

@@ -68,7 +68,7 @@ func TestExternalCreateEmitsCreated(t *testing.T) {
 	assert.Equal(t, "T-1", events[0].EntityID)
 	assert.Equal(t, "ticket", events[0].EntityType)
 
-	e, err := s.GetEntity(context.Background(), "T-1")
+	e, err := s.GetEntity(context.Background(), entity.Ref{ID: "T-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "ticket", e.Type)
 }
@@ -96,7 +96,7 @@ func TestExternalUpdateEmitsUpdated(t *testing.T) {
 	assert.Equal(t, store.EventEntityUpdated, events[0].Op)
 	assert.Equal(t, "T-1", events[0].EntityID)
 
-	e, err := s.GetEntity(context.Background(), "T-1")
+	e, err := s.GetEntity(context.Background(), entity.Ref{ID: "T-1"})
 	require.NoError(t, err)
 	assert.Equal(t, "closed", e.Properties["status"])
 }
@@ -122,7 +122,7 @@ func TestExternalDeleteEmitsDeleted(t *testing.T) {
 	assert.Equal(t, store.EventEntityDeleted, events[0].Op)
 	assert.Equal(t, "T-1", events[0].EntityID)
 
-	_, err := s.GetEntity(context.Background(), "T-1")
+	_, err := s.GetEntity(context.Background(), entity.Ref{ID: "T-1"})
 	assert.ErrorIs(t, err, store.ErrNotFound)
 }
 
@@ -175,7 +175,7 @@ func TestExternalRelationDelete(t *testing.T) {
 
 	require.NoError(t, s.CreateEntity(context.Background(), &entity.Entity{ID: "A", Type: "ticket"}))
 	require.NoError(t, s.CreateEntity(context.Background(), &entity.Entity{ID: "B", Type: "ticket"}))
-	_, err := s.CreateRelation(context.Background(), "A", "blocks", "B", nil)
+	_, err := s.CreateRelation(context.Background(), entity.RelationKey{From: "A", Type: "blocks", To: "B"}, nil)
 	require.NoError(t, err)
 
 	ch, cancel := s.Subscribe(16)

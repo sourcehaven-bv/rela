@@ -22,7 +22,7 @@ var _ search.VisibleSearcher = (*Store)(nil)
 // [search.VisibleSearcher]: visibility is composed into the search
 // statement itself, so hidden rows are never returned, the LIMIT
 // applies post-visibility (no cap starvation), and there is no
-// per-type MatchingIDs round trip.
+// per-type MatchingFaces round trip.
 //
 // Shape: the trgm-accelerated LIKE from [SearchBackend.Search] ANDed
 // with a per-type visibility disjunction — a bare type test for
@@ -48,12 +48,12 @@ func (s *Store) SearchVisible(
 	ctx context.Context, q search.Query, scope map[string]search.TypeScope,
 ) iter.Seq2[search.Hit, error] {
 	return func(yield func(search.Hit, error) bool) {
-		if err := search.ValidateFilters(q.Filters); err != nil {
+		if err := search.ValidateQuery(q); err != nil {
 			yield(search.Hit{}, err)
 			return
 		}
-		if ws, ok := scope[search.WildcardType]; ok && ws.Query != nil {
-			yield(search.Hit{}, fmt.Errorf("%w: wildcard scope entry cannot carry a GraphQuery", search.ErrScope))
+		if err := search.ValidateScope(scope); err != nil {
+			yield(search.Hit{}, err)
 			return
 		}
 
@@ -67,7 +67,7 @@ func (s *Store) SearchVisible(
 				if q.Limit > 0 && emitted >= q.Limit {
 					return
 				}
-				if !yield(search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, nil) {
+				if !yield(search.Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face}, nil) {
 					return
 				}
 				emitted++
@@ -184,12 +184,12 @@ func (s *Store) SearchVisibleFields(
 	ctx context.Context, q search.Query, scope map[string]search.TypeScope, hidden search.HiddenFieldsFunc,
 ) iter.Seq2[search.Hit, error] {
 	return func(yield func(search.Hit, error) bool) {
-		if err := search.ValidateFilters(q.Filters); err != nil {
+		if err := search.ValidateQuery(q); err != nil {
 			yield(search.Hit{}, err)
 			return
 		}
-		if ws, ok := scope[search.WildcardType]; ok && ws.Query != nil {
-			yield(search.Hit{}, fmt.Errorf("%w: wildcard scope entry cannot carry a GraphQuery", search.ErrScope))
+		if err := search.ValidateScope(scope); err != nil {
+			yield(search.Hit{}, err)
 			return
 		}
 
@@ -226,7 +226,7 @@ func emitFieldVisibleRows(
 	// remembers the rows whose verdict depends on the body.
 	var (
 		cands    []searchCandidate
-		bodyless []stateKey
+		bodyless []entity.Ref
 		decided  int
 	)
 	for _, e := range ents {
@@ -236,7 +236,7 @@ func emitFieldVisibleRows(
 			return 0, false
 		}
 		if c.needBody {
-			bodyless = append(bodyless, stateKey{id: e.ID, face: e.Face})
+			bodyless = append(bodyless, e.Ref())
 		}
 		cands = append(cands, c)
 		if !c.needBody {
@@ -258,7 +258,7 @@ func emitFieldVisibleRows(
 
 	for _, c := range cands {
 		if c.needBody {
-			c.e.Content = bodies[stateKey{id: c.e.ID, face: c.e.Face}]
+			c.e.Content = bodies[c.e.Ref()]
 			if !search.MatchHasVisibleField(search.MatchTextFields(c.e, q.Text), c.hidden) {
 				continue
 			}
@@ -288,7 +288,7 @@ type searchCandidate struct {
 func judgeWithoutBody(
 	ctx context.Context, q search.Query, e *entity.Entity, hidden search.HiddenFieldsFunc,
 ) (searchCandidate, error) {
-	c := searchCandidate{hit: search.Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, e: e}
+	c := searchCandidate{hit: search.Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face}, e: e}
 	if hidden == nil || q.Text == "" {
 		return c, nil
 	}
@@ -302,23 +302,17 @@ func judgeWithoutBody(
 	return c, nil
 }
 
-// stateKey addresses one stored state of an entity.
-type stateKey struct {
-	id   string
-	face entity.Face
-}
-
 // searchBodies loads the bodies of exactly the given states. The keys are the
 // (id, face) pairs the GATED query resolved, so this statement reads no row
 // the gate did not already admit — it must never widen to "every state of
 // these ids", which would pull a face the world or the ACL withheld.
-func searchBodies(ctx context.Context, db DBTX, keys []stateKey) (map[stateKey]string, error) {
+func searchBodies(ctx context.Context, db DBTX, keys []entity.Ref) (map[entity.Ref]string, error) {
 	if len(keys) == 0 {
-		return map[stateKey]string{}, nil
+		return map[entity.Ref]string{}, nil
 	}
 	ids, faces := make([]string, len(keys)), make([]string, len(keys))
 	for i, k := range keys {
-		ids[i], faces[i] = k.id, string(k.face)
+		ids[i], faces[i] = k.ID, string(k.Face)
 	}
 	rows, err := db.Query(ctx,
 		"SELECT e.id, e.face, e.content FROM entities e"+
@@ -328,13 +322,13 @@ func searchBodies(ctx context.Context, db DBTX, keys []stateKey) (map[stateKey]s
 		return nil, err
 	}
 	defer rows.Close()
-	out := make(map[stateKey]string, len(keys))
+	out := make(map[entity.Ref]string, len(keys))
 	for rows.Next() {
 		var id, face, content string
 		if err := rows.Scan(&id, &face, &content); err != nil {
 			return nil, err
 		}
-		out[stateKey{id: id, face: entity.Face(face)}] = content
+		out[entity.Ref{ID: id, Face: entity.Face(face)}] = content
 	}
 	return out, rows.Err()
 }
@@ -374,7 +368,7 @@ func buildVisibleSearchSQL(
 
 	var withParts, visParts []string
 	if !wildcardAllow {
-		withParts, visParts = buildVisibilityDisjunction(b, scope)
+		withParts, visParts = buildVisibilityDisjunction(b, scope, store.InWorld(q.World))
 		if len(visParts) == 0 {
 			return "", nil, false
 		}
@@ -405,11 +399,16 @@ func buildVisibleSearchSQL(
 	// makes the row gate world-INDEPENDENT, so a draft leaking through this
 	// scope would not be caught downstream.
 	//
-	// The ACL visibility clause is applied to the RESOLVED row, after the
-	// prime is chosen — world first, gate second, the same order
-	// internal/worldreader fixes for the read path. Gating first would let
-	// what the ACL denied change WHICH face the world resolves to, which is
-	// the existence oracle that ordering exists to close.
+	// The ACL visibility clause trims the CANDIDATE faces before the world
+	// ranks them (TKT-7IZHP0), as on lists and the single-entity read: a
+	// principal whose grant denies the prime is served the next readable
+	// face rather than losing the entity. The verdict is evaluated per face
+	// row, and only the resolved rows come out, so a face the world ranked
+	// out is never counted or matched.
+	visCond := ""
+	if !wildcardAllow {
+		visCond = " AND (" + strings.Join(visParts, " OR ") + ")"
+	}
 	// Text match + ordering mirror SearchBackend.Search exactly:
 	// escaped needle for LIKE, raw lowercased needle for similarity,
 	// id ASC ties — the parity baseline orders by the same expressions.
@@ -423,12 +422,12 @@ func buildVisibleSearchSQL(
 		orderBy = " ORDER BY search_rank DESC, e.id ASC"
 	}
 	columns := visibleSearchColumns + ", " + rankCol + " AS search_rank"
-	if q.World.IsDefaultWorld() {
-		sb.WriteString("SELECT " + columns + " FROM entities e WHERE e.face = ''")
+	if q.World.IsTrivial() {
+		sb.WriteString("SELECT " + columns + " FROM entities e WHERE e.face = ''" + visCond)
 	} else {
 		rank, candidate := worldSQL(q.World, "e", &b.args)
 		sb.WriteString("SELECT " + columns + " FROM (" +
-			"SELECT DISTINCT ON (id) * FROM entities e WHERE " + candidate +
+			"SELECT DISTINCT ON (id) * FROM entities e WHERE " + candidate + visCond +
 			" ORDER BY id ASC, (" + rank + ") ASC, face ASC) e WHERE true")
 	}
 	if q.Text != "" {
@@ -446,9 +445,6 @@ func buildVisibleSearchSQL(
 	if len(q.Types) > 0 {
 		sb.WriteString(" AND e.type = ANY(" + b.arg(q.Types) + ")")
 	}
-	if !wildcardAllow {
-		sb.WriteString(" AND (" + strings.Join(visParts, " OR ") + ")")
-	}
 	sb.WriteString(orderBy)
 	sb.WriteString(" LIMIT " + b.arg(pageLimit))
 	return sb.String(), b.args, true
@@ -458,8 +454,12 @@ func buildVisibleSearchSQL(
 // visibility clause: a bare type test for AllowAll entries, type test
 // + EXISTS chain for Query entries, nothing for deny entries. Scope
 // keys are visited in sorted order; CTE names get per-type prefixes
-// ("v<i>_in"/"v<i>_out") so two Query verdicts can't collide.
-func buildVisibilityDisjunction(b *sqlBuilder, scope map[string]search.TypeScope) (withParts, visParts []string) {
+// ("v<i>_in"/"v<i>_out") so two Query verdicts can't collide. sel is the
+// search's world: an EndpointMatch in a gate query that names no selection
+// of its own reads its endpoint there.
+func buildVisibilityDisjunction(
+	b *sqlBuilder, scope map[string]search.TypeScope, sel store.FaceSelection,
+) (withParts, visParts []string) {
 	types := make([]string, 0, len(scope))
 	for typ := range scope {
 		if typ != search.WildcardType {
@@ -470,9 +470,17 @@ func buildVisibilityDisjunction(b *sqlBuilder, scope map[string]search.TypeScope
 
 	for i, typ := range types {
 		ts := scope[typ]
+		faceCond := ""
+		if len(ts.Faces) > 0 {
+			vals := make([]string, len(ts.Faces))
+			for j, f := range ts.Faces {
+				vals[j] = f.String()
+			}
+			faceCond = " AND e.face = ANY(" + b.arg(vals) + ")"
+		}
 		switch {
 		case ts.AllowAll:
-			visParts = append(visParts, "e.type = "+b.arg(typ))
+			visParts = append(visParts, "(e.type = "+b.arg(typ)+faceCond+")")
 		case ts.Query != nil:
 			// The scope-map key, not ts.Query.EntityType, drives the
 			// type test: the seam contract makes the consumer keep
@@ -480,14 +488,16 @@ func buildVisibilityDisjunction(b *sqlBuilder, scope map[string]search.TypeScope
 			// mismatched Query can only ever narrow its own type.
 			typeArg := b.arg(typ)
 			var part strings.Builder
-			part.WriteString("(e.type = " + typeArg)
+			part.WriteString("(e.type = " + typeArg + faceCond)
 			if ts.Query.HasInbound != nil {
-				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_in", i), *ts.Query.HasInbound, typeArg, store.DirectionIncoming)
+				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_in", i), *ts.Query.HasInbound, typeArg,
+					store.DirectionIncoming, sel)
 				withParts = append(withParts, w...)
 				part.WriteString(" AND EXISTS (" + ex + ")")
 			}
 			if ts.Query.HasOutbound != nil {
-				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_out", i), *ts.Query.HasOutbound, typeArg, store.DirectionOutgoing)
+				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_out", i), *ts.Query.HasOutbound, typeArg,
+					store.DirectionOutgoing, sel)
 				withParts = append(withParts, w...)
 				part.WriteString(" AND EXISTS (" + ex + ")")
 			}
@@ -495,12 +505,12 @@ func buildVisibilityDisjunction(b *sqlBuilder, scope map[string]search.TypeScope
 			// because skipping a field of the gate's query would widen it.
 			for j, rel := range ts.Query.Related {
 				w, ex := buildPredicateSQL(b, fmt.Sprintf("v%d_%s", i, relatedPrefix(j)), rel.Pred, typeArg,
-					relatedDirection(rel))
+					relatedDirection(rel), sel)
 				withParts = append(withParts, w...)
 				part.WriteString(" AND " + existsCond(ex, rel.Pred.Negate))
 			}
 			if len(ts.Query.Any) > 0 {
-				w, cond := buildAnySQL(b, fmt.Sprintf("v%d_any", i), ts.Query.Any, typeArg)
+				w, cond := buildAnySQL(b, fmt.Sprintf("v%d_any", i), ts.Query.Any, typeArg, sel)
 				withParts = append(withParts, w...)
 				part.WriteString(" AND " + cond)
 			}

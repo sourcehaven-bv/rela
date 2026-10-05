@@ -26,7 +26,7 @@ func TestList_RowsCarryFaceProvenance(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed published face: %v", err)
 	}
-	app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 
 	rows := listRows(t, app, "/api/v1/tickets?world=published")
 	if len(rows) != 1 {

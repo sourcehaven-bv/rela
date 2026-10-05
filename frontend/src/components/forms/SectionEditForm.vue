@@ -312,7 +312,7 @@ defineExpose({
     -->
     <dl class="properties-list properties-list--rows">
       <RlDetailField
-        v-for="row in widgetRows"
+        v-for="(row, index) in widgetRows"
         :key="row.field.property"
         class="property-row"
         :data-property="row.field.property"
@@ -320,6 +320,12 @@ defineExpose({
         :field="{ id: row.field.property, label: row.field.label, type: 'text' }"
         :stacked="row.isLong || row.isBlock"
       >
+        <!-- Per-field affordances, as on PropertyDisplay: the host fills it
+             with the comment indicator. `index` is the row's position in
+             `fields`. -->
+        <template #label-trailing>
+          <slot name="label-affordance" :property="row.field.property" :index="index" />
+        </template>
         <template #value>
           <InlinePropertyValue
             :property="row.field.property"

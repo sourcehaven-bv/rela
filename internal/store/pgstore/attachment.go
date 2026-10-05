@@ -11,13 +11,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// AttachFile stores (or replaces) a file attachment on an entity. The entity
+// AttachFamilyFile stores (or replaces) a file attachment on an entity. The entity
 // must exist (store.ErrNotFound otherwise). The reader is fully consumed into
 // memory and persisted as BYTEA, matching memstore's behavior, up to the shared
 // store.MaxAttachmentBytes backstop (the same cap every backend enforces so no
 // backend is ever unbounded; the API layer caps at its own ingress). A single
 // (entity_id, property) holds one attachment; re-attaching overwrites it.
-func (s *Store) AttachFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
+func (s *Store) AttachFamilyFile(ctx context.Context, entityID, property, fileName string, r io.Reader) error {
 	if err := validateProperty(property); err != nil {
 		return err
 	}
@@ -41,7 +41,7 @@ func (s *Store) AttachFile(ctx context.Context, entityID, property, fileName str
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
 	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT true FROM entities WHERE id = $1`, entityID).Scan(&exists); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT true FROM entities WHERE id = $1 LIMIT 1`, entityID).Scan(&exists); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return store.ErrNotFound
 		}
@@ -52,7 +52,7 @@ func (s *Store) AttachFile(ctx context.Context, entityID, property, fileName str
 	// re-attach replaces only that one row; sibling files are untouched.
 	// content_type is intentionally left at its '' default: content type is
 	// derived from the file name at the service layer (attachment.Service.List
-	// via contentTypeForName), so the column is never written. ListAttachments
+	// via contentTypeForName), so the column is never written. ListFamilyAttachments
 	// selects it for forward-compatibility but callers should not rely on it.
 	const q = `
 		INSERT INTO attachments (entity_id, property, file_name, bytes, updated_at)
@@ -66,8 +66,8 @@ func (s *Store) AttachFile(ctx context.Context, entityID, property, fileName str
 	return tx.Commit(ctx)
 }
 
-// ReadAttachment returns a reader over the stored bytes, or store.ErrNotFound.
-func (s *Store) ReadAttachment(ctx context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
+// ReadFamilyAttachment returns a reader over the stored bytes, or store.ErrNotFound.
+func (s *Store) ReadFamilyAttachment(ctx context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
 	const q = `SELECT bytes FROM attachments WHERE entity_id = $1 AND property = $2 AND file_name = $3`
 	var data []byte
 	err := s.db.QueryRow(ctx, q, entityID, property, fileName).Scan(&data)
@@ -80,8 +80,8 @@ func (s *Store) ReadAttachment(ctx context.Context, entityID, property, fileName
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-// DeleteAttachment removes an attachment. Returns store.ErrNotFound if absent.
-func (s *Store) DeleteAttachment(ctx context.Context, entityID, property, fileName string) error {
+// DeleteFamilyAttachment removes an attachment. Returns store.ErrNotFound if absent.
+func (s *Store) DeleteFamilyAttachment(ctx context.Context, entityID, property, fileName string) error {
 	const q = `DELETE FROM attachments WHERE entity_id = $1 AND property = $2 AND file_name = $3`
 	tag, err := s.db.Exec(ctx, q, entityID, property, fileName)
 	if err != nil {
@@ -93,11 +93,11 @@ func (s *Store) DeleteAttachment(ctx context.Context, entityID, property, fileNa
 	return nil
 }
 
-// ListAttachments lists an entity's attachments. Returns store.ErrNotFound if
+// ListFamilyAttachments lists an entity's attachments. Returns store.ErrNotFound if
 // the entity does not exist.
-func (s *Store) ListAttachments(ctx context.Context, entityID string) ([]store.AttachmentInfo, error) {
+func (s *Store) ListFamilyAttachments(ctx context.Context, entityID string) ([]store.AttachmentInfo, error) {
 	var exists bool
-	err := s.db.QueryRow(ctx, `SELECT true FROM entities WHERE id = $1`, entityID).Scan(&exists)
+	err := s.db.QueryRow(ctx, `SELECT true FROM entities WHERE id = $1 LIMIT 1`, entityID).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -105,7 +105,7 @@ func (s *Store) ListAttachments(ctx context.Context, entityID string) ([]store.A
 		return nil, err
 	}
 
-	// content_type is always '' here — it is never written (see AttachFile); the
+	// content_type is always '' here — it is never written (see AttachFamilyFile); the
 	// service layer derives content type from the file name. Selected for
 	// forward-compatibility only.
 	const q = `SELECT entity_id, property, file_name, content_type, octet_length(bytes)

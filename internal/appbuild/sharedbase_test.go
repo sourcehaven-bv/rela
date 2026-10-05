@@ -84,7 +84,7 @@ func TestSharedBase_AssembleTwiceOverDistinctStores(t *testing.T) {
 	if err := a.Store().CreateEntity(ctx, entity.New("DOC-1", "doc")); err != nil {
 		t.Fatalf("write to store A: %v", err)
 	}
-	if _, err := b.Store().GetEntity(ctx, "DOC-1"); err == nil {
+	if _, err := b.Store().GetEntity(ctx, entity.Ref{ID: "DOC-1"}); err == nil {
 		t.Fatal("store B saw store A's write — the stores are not isolated")
 	}
 }
@@ -305,7 +305,7 @@ func TestCloseAssembly_LeavesStoreAndSearcherUsable(t *testing.T) {
 	if err := second.Store().CreateEntity(ctx, entity.New("DOC-3", "doc")); err != nil {
 		t.Fatalf("store unusable after retiring the previous assembly: %v", err)
 	}
-	if _, err := second.Store().GetEntity(ctx, "DOC-3"); err != nil {
+	if _, err := second.Store().GetEntity(ctx, entity.Ref{ID: "DOC-3"}); err != nil {
 		t.Fatalf("read-back failed after CloseAssembly: %v", err)
 	}
 }
@@ -374,7 +374,7 @@ func TestReassembly_ClosesSearchCloserExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Assemble origin: %v", err)
 	}
-	successor, err := base.ForReassembly().Assemble(
+	successor, err := base.ForReassembly(origin).Assemble(
 		origin.Store(), origin.Searcher(), origin.VisibleSearcher(), nil)
 	if err != nil {
 		t.Fatalf("Assemble successor: %v", err)
@@ -400,7 +400,7 @@ func TestReassembly_ClosesSearchCloserExactlyOnce(t *testing.T) {
 func TestReassembly_SkipsStoreOpenOnlySteps(t *testing.T) {
 	base := newSharedBase(t)
 
-	reassembly := base.ForReassembly()
+	reassembly := base.ForReassembly(&appbuild.Services{})
 	if !reassembly.IsReassembly() {
 		t.Error("ForReassembly() must mark the base as re-assembling")
 	}

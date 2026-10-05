@@ -66,6 +66,13 @@ type WebhookFind struct {
 	// Type is the entity type to search. Required.
 	Type string `yaml:"type" json:"type"`
 
+	// Face is the face the hook reads, writes and creates, for a Type that
+	// declares `faces:`. Required for such a type and refused for one
+	// without. A delivery names no face, and a world may rank several, so
+	// the face a hook edits is configuration, never a world's choice
+	// (TKT-7IZHP0 §6).
+	Face string `yaml:"face,omitempty" json:"face,omitempty"`
+
 	// Match names the properties whose values identify the entity. Each is
 	// compared against the interpolated value in Values, or — when Values has
 	// no entry for it — against the same-named field of the request body.

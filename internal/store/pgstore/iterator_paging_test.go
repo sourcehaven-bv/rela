@@ -35,9 +35,9 @@ func TestIteratorPaging_LegacyIDAtPageBoundary(t *testing.T) {
 	for _, id := range []string{"LEG-1", "LEG-2", "LEG-3"} {
 		mustCreateEntity(t, st, id, "feature")
 	}
-	_, err := st.CreateRelation(ctx, "LEG-1", "nest", "LEG-3", nil)
+	_, err := st.CreateRelation(ctx, entity.RelationKey{From: "LEG-1", Type: "nest", To: "LEG-3"}, nil)
 	require.NoError(t, err)
-	_, err = st.CreateRelation(ctx, "LEG-2", "nest", "LEG-3", nil)
+	_, err = st.CreateRelation(ctx, entity.RelationKey{From: "LEG-2", Type: "nest", To: "LEG-3"}, nil)
 	require.NoError(t, err)
 	// "--" is no longer a valid id; rows written before that rule keep it.
 	_, err = pool.Exec(ctx, `UPDATE entities SET id = 'LEG--2' WHERE id = 'LEG-2'`)
@@ -46,7 +46,7 @@ func TestIteratorPaging_LegacyIDAtPageBoundary(t *testing.T) {
 	require.NoError(t, err)
 
 	var ids []string
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: "feature"}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: "feature", Faces: store.InWorld(store.TrivialScope())}) {
 		require.NoError(t, err)
 		ids = append(ids, e.ID)
 	}
@@ -86,7 +86,7 @@ func TestIteratorPaging_WorldPrimeChangesMidIteration(t *testing.T) {
 		"page": {Chain: []entity.Face{face("review"), face("published")}, Fallback: store.FallbackExclude},
 	})
 	var ids []string
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: "page", World: world}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: "page", Faces: store.InWorld(world)}) {
 		require.NoError(t, err)
 		ids = append(ids, e.ID)
 		if e.ID == "PAGE-1" {

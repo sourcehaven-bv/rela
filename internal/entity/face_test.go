@@ -57,7 +57,7 @@ func TestParseStateRef(t *testing.T) {
 	t.Run("bare id is the default state", func(t *testing.T) {
 		t.Parallel()
 		id, p, err := ParseStateRef("PAGE-1")
-		if err != nil || id != "PAGE-1" || !p.IsDefault() {
+		if err != nil || id != "PAGE-1" || !p.IsImplicit() {
 			t.Errorf("got (%q, %q, %v), want (PAGE-1, default, nil)", id, p, err)
 		}
 	})

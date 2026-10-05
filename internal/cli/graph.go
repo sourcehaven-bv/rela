@@ -26,12 +26,9 @@ func (c *GraphCmd) Run(ctx context.Context, svc *readServices) error {
 	st := svc.Store
 	meta := svc.Meta
 
-	var entities []*entity.Entity
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
-		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
-			return err
-		}
-		entities = append(entities, e)
+	entities, err := graphNodes(ctx, st, svc.World)
+	if err != nil {
+		return err
 	}
 
 	var edges []*entity.Relation
@@ -198,4 +195,33 @@ func renderWithGraphviz(ctx context.Context, dot, outputPath, format string) err
 	out.WriteSuccess("Rendered graph to %s", outputPath)
 	return nil
 	// coverage-ignore-end
+}
+
+// graphNodes returns one node per entity id. Membership reads every face: the
+// graph is of entities, and a faced entity may have no row in the world. A
+// node shows the row the world selects (design section 5.3); a family the
+// world resolves to no face shows its first row, as rows arrive ordered by
+// (id, face).
+func graphNodes(ctx context.Context, st store.EntityLister, world store.WorldScope) ([]*entity.Entity, error) {
+	inWorld := make(map[string]*entity.Entity)
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(world)}) {
+		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
+			return nil, err
+		}
+		inWorld[e.ID] = e
+	}
+	var entities []*entity.Entity
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
+		if err != nil { // coverage-ignore: defensive: memstore.ListEntities iterator never yields a non-nil error
+			return nil, err
+		}
+		if n := len(entities); n > 0 && entities[n-1].ID == e.ID {
+			continue
+		}
+		if w, ok := inWorld[e.ID]; ok {
+			e = w
+		}
+		entities = append(entities, e)
+	}
+	return entities, nil
 }

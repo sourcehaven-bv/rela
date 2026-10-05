@@ -129,9 +129,8 @@ above rather than by a clean `analyze all`.
   `TestScriptReads_UpdatePreservesHiddenProperties`.
 
   `UpdateEntity` still exists for callers that legitimately own the whole entity
-  (a form save that renders every field). `ApplyEntity` is the whole-record
-  replace the sync channel needs. If you are writing a _subset_, you want
-  `PatchEntity`.
+  (a form save that renders every field). If you are writing a _subset_, you
+  want `PatchEntity`.
 - **The configuration is not a secret; the data is.** `schema.yaml`,
   `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
   `templates/` are operator-authored files that live in the repo — routinely a
@@ -193,6 +192,20 @@ above rather than by a clean `analyze all`.
   single-subject evaluation the caller explicitly requested (e.g. performable
   transitions for one field on one entity). See
   `internal/entitymanager/CLAUDE.md`.
+- **Don't add a zero-face read.** Store reads and writes take an
+  `entity.Ref{ID, Face}`. A Ref with an id and no face names the zero-face
+  row, which a faced type does not have (DEC-NPZICR). Use the entity's own
+  `Ref()`, the face the resolver chose, or a parsed address.
+  `internal/archguard/bareref_test.go` pins every bare `entity.Ref` literal in
+  non-test code to an allowlist with a reason per file, and the list may only
+  shrink. In tests, seed faced types only at their declared faces.
+- **Don't pick a face for a bare-id write by rank.** A write that receives a
+  bare id resolves it through `visibility.Resolver.WriteTarget` (or a reader's
+  `WriteTarget`): exactly one readable face the world admits is the target,
+  otherwise `*visibility.AmbiguousAddressError` names the faces. A read may
+  take the face the world ranks first; a write may not, because the world's
+  first face is a presentation choice, not the author's intent. Rename and a
+  bare-id delete act on the whole family instead (`authorizeFamily`).
 
 ### Subsystem-specific rules (nested CLAUDE.md / godoc)
 

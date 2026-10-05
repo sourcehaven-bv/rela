@@ -38,11 +38,23 @@ func (p *policyResolver) FieldVerdicts(ctx context.Context, e *entityPkg.Entity)
 	}
 }
 
-// RelationVerdicts maps affordances relation verdicts onto the
-// wire-shape type. Each relation type's per-dimension attribution
-// ("create" / "remove" / "fields.<name>") is preserved.
+// RelationVerdicts maps [affordances.PolicyResolver.RelationVerdicts] onto
+// the wire-shape type.
 func (p *policyResolver) RelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts {
-	v := p.inner.RelationVerdicts(ctx, e)
+	return relationVerdictsWire(p.inner.RelationVerdicts(ctx, e))
+}
+
+// UnconditionalRelationVerdicts maps
+// [affordances.PolicyResolver.UnconditionalRelationVerdicts] like
+// RelationVerdicts.
+func (p *policyResolver) UnconditionalRelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts {
+	return relationVerdictsWire(p.inner.UnconditionalRelationVerdicts(ctx, e))
+}
+
+// relationVerdictsWire maps affordances relation verdicts onto the wire
+// type. Each relation type's per-dimension attribution ("create" / "remove"
+// / "fields.<name>") is preserved.
+func relationVerdictsWire(v affordances.RelationVerdicts) RelationVerdicts {
 	if len(v.Types) == 0 {
 		return RelationVerdicts{}
 	}

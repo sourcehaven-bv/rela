@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // nopMutator satisfies lua.Mutator so a writer runtime can be built. These
@@ -31,10 +32,15 @@ func (nopMutator) PatchEntity(context.Context, string, entity.Patch) (*entity.Up
 func (nopMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteResult, error) {
 	return nil, errNoMutate
 }
-func (nopMutator) CreateRelation(context.Context, string, string, string, entity.RelationOptions) (*entity.Relation, error) {
+func (nopMutator) CreateRelation(context.Context, entity.RelationKey, entity.RelationOptions) (*entity.Relation, error) {
 	return nil, errNoMutate
 }
-func (nopMutator) DeleteRelation(context.Context, string, string, string) error { return errNoMutate }
+func (nopMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
+	return nil, errNoMutate
+}
+func (nopMutator) DeleteRelation(context.Context, entity.RelationKey) error {
+	return errNoMutate
+}
 
 // capProject writes a throwaway project whose script asserts, from inside Lua,
 // that the capabilities it was promised are actually present. Asserting in Lua
@@ -83,6 +89,7 @@ if rela.secrets.db_dsn ~= nil then error("UNGRANTED secret leaked") end
 		ReadDeps: lua.ReadDeps{
 			ProjectRoot:  root,
 			Capabilities: lua.Capabilities{HTTP: true, Secrets: []string{"slack"}},
+			World:        store.TrivialScope(),
 		},
 		EntityManager: nopMutator{},
 	}
@@ -102,7 +109,7 @@ if ai ~= nil then error("ai present without a grant") end
 if rela.secrets.slack ~= nil then error("secret present without a grant") end
 `)
 	deps := lua.WriteDeps{
-		ReadDeps:      lua.ReadDeps{ProjectRoot: root},
+		ReadDeps:      lua.ReadDeps{ProjectRoot: root, World: store.TrivialScope()},
 		EntityManager: nopMutator{},
 	}
 	if err := NewEngine().ExecuteFile(context.Background(), "probe.lua", deps, nil, nil); err != nil {
@@ -124,6 +131,7 @@ if rela.secrets.db_dsn ~= "SECRET-DSN" then error("explicit secret did not apply
 		ReadDeps: lua.ReadDeps{
 			ProjectRoot:  root,
 			Capabilities: lua.Capabilities{HTTP: true, Secrets: []string{"slack"}},
+			World:        store.TrivialScope(),
 		},
 		EntityManager: nopMutator{},
 	}

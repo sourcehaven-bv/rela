@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/transform"
 )
 
@@ -28,8 +29,9 @@ import (
 const exportSegment = dataentryconfig.ReservedExportSegment
 
 // resolvedDocument is what the gate chain produces: a render config for a
-// document the caller has been authorized to render, plus the entry entity ID
-// ("" for a standalone document).
+// document the caller has been authorized to render, plus the entry entity's
+// ADDRESS (`ID` or `ID@face`, "" for a standalone document): the exact row the
+// gates cleared, which is the row the renderer reads.
 //
 // It deliberately carries nothing else. Everything the HTML path additionally
 // needs — the return_to rewrite target, the refresh flag, the disk cache — is
@@ -137,10 +139,10 @@ func resolveAnchoredDocument(
 	// names a CACHE FILE, so "this path is unusable" is the honest answer and
 	// the caller learns nothing about which entities exist — the id never
 	// reaches the store. It is also what keeps a reserved segment in the entity
-	// position (`/_documents/sales/_EXPORT`) a 400: `parseEntityRef` rejects a
+	// position (`/_documents/sales/_EXPORT`) a 400: `entity.ParseRef` rejects a
 	// leading underscore, which is exactly the case this route must not serve.
-	ref, refOK := parseEntityRef(entityID)
-	if !isSafePathSegment(docName) || !isSafeStateRefSegment(entityID) || !refOK {
+	ref, refErr := entity.ParseRef(entityID)
+	if !isSafePathSegment(docName) || !isSafeStateRefSegment(entityID) || refErr != nil {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path", "Path segment contains forbidden characters", "")
 		return resolvedDocument{}, false
 	}
@@ -160,12 +162,36 @@ func resolveAnchoredDocument(
 		return resolvedDocument{}, false
 	}
 
-	// ACL gate (TKT-C0R07J), FIRST — see the ordering note in the doc comment.
-	// Document rendering serves entity-derived content and may run a Lua script
-	// that reads related entities, so a denied caller must never reach the
-	// renderer, and must not learn whether the id exists.
-	// The BARE id: the row gate is face-blind by design.
-	if !a.gateReadOrNotFound(w, r, docCfg.EntityType, ref.ID) {
+	// ACL gates (TKT-C0R07J), FIRST — see the ordering note in the doc
+	// comment. Document rendering serves entity-derived content and may run a
+	// Lua script that reads related entities, so a denied caller must never
+	// reach the renderer, and must not learn whether the id exists.
+	//
+	// The resolver runs the gates every addressed read owes (BUG-8J3LSB): the
+	// face-blind row gate on the BARE id, then the face gate on the row it
+	// read. A denied face answers the same not-found as a missing entity, so a
+	// `policy@published` reader cannot render a document over the draft.
+	//
+	// The row is judged against its OWN stored type, not the document's. A
+	// grant covering every row of the document's type would pass whatever id
+	// it is handed, so judging a row of another type against it would let the
+	// type-mismatch 400 below become an existence and type oracle on rows the
+	// caller may not read.
+	//
+	// An absent id still runs the gates, against the document's type, so a
+	// miss costs at least what a denial does and the response time does not
+	// tell a hidden id from an absent one (RR-NGMI).
+	typ := a.visibleReader.storedType(r.Context(), ref.ID)
+	if typ == "" {
+		typ = docCfg.EntityType
+	}
+	ent, found, gateErr := a.visibleReader.addressRef(r.Context(), typ, ref)
+	if gateErr != nil {
+		writeGateError(w, r, gateErr)
+		return resolvedDocument{}, false
+	}
+	if !found {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return resolvedDocument{}, false
 	}
 
@@ -189,30 +215,21 @@ func resolveAnchoredDocument(
 	// docs shown for an entity, but an HTTP caller can hit
 	// /_documents/<doc>/<wrong-type-id> directly.
 	//
-	// The read is safe here because the gate above already authorized this
-	// principal for this id; a miss gets the SAME uniform 404 a denial gets,
-	// so the two remain indistinguishable (entityNotFoundTitle's godoc
-	// requires exactly this).
-	ent, entErr := a.store.GetEntityState(r.Context(), ref.ID, ref.Face)
-	if entErr != nil {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return resolvedDocument{}, false
-	}
-	// The face half of the read gate (BUG-6DBV6N): the row gate above is
-	// face-blind, so without this a principal holding only `type@published`
-	// renders the draft, and a `command:` renderer receives it raw. Same
-	// uniform 404, before the renderer runs.
-	if !faceReadable(r.Context(), docCfg.EntityType, ent.Face) {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return resolvedDocument{}, false
-	}
+	// The row has cleared the gates against its own type above, so naming
+	// that type here discloses nothing the caller may not read.
 	if ent.Type != docCfg.EntityType {
 		writeV1Error(w, r, http.StatusBadRequest, "entity_type_mismatch",
 			documentTypeMismatch(docName, docCfg.EntityType, entityID, ent.Type), "")
 		return resolvedDocument{}, false
 	}
 
-	return resolvedDocument{cfg: a.toDocumentRenderConfig(docName, &docCfg), entryID: entityID}, true
+	// The render is keyed on the address of the row the gates cleared, so the
+	// renderer reads that same row rather than the zero face.
+	//
+	// This address is also what a script sees as rela.document.entry_id. For a
+	// faceless type it is the bare id, exactly as before; for a faced row it is
+	// `ID@face`, which no bare-id request could render until BUG-8J3LSB.
+	return resolvedDocument{cfg: a.toDocumentRenderConfig(docName, &docCfg), entryID: ent.Ref().String()}, true
 }
 
 // handleV1ExportDocument serves the document export routes:
@@ -275,14 +292,15 @@ func handleV1ExportDocument(a *App, w http.ResponseWriter, r *http.Request, docN
 		return []byte(md), nil
 	})
 
-	a.export.convertAndWrite(w, r, reg, name, renderer, exportBaseName(docName, entityID),
+	a.export.convertAndWrite(w, r, reg, name, renderer, exportBaseName(docName, resolved.entryID),
 		"document", docName)
 }
 
 // exportBaseName is the download filename stem: the document name for a
-// standalone export, "<doc>-<id>" when anchored to an entity. Both components
-// have already passed isSafePathSegment, and safeAttachmentFilename sanitizes
-// the result again downstream.
+// standalone export, "<doc>-<address>" when anchored to an entity, using the
+// address of the row that was rendered. The document name has passed
+// isSafePathSegment, the address was built from a stored row, and
+// safeAttachmentFilename sanitizes the result again downstream.
 func exportBaseName(docName, entityID string) string {
 	if entityID == "" {
 		return docName

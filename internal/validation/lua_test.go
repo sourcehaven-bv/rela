@@ -6,12 +6,15 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // mockWorkspace is a test helper that produces lua.ReadDeps backed by
@@ -65,7 +68,7 @@ func newMockWorkspace() *mockWorkspace {
 	for _, e := range entities {
 		_ = st.CreateEntity(ctx, e)
 	}
-	_, _ = st.CreateRelation(ctx, "TKT-001", "child-of", "PARENT-001", nil)
+	_, _ = st.CreateRelation(ctx, entity.RelationKey{From: "TKT-001", Type: "child-of", To: "PARENT-001"}, nil)
 
 	return &mockWorkspace{meta: meta, store: st}
 }
@@ -73,10 +76,11 @@ func newMockWorkspace() *mockWorkspace {
 // services returns lua.ReadDeps for the validation runtime.
 func (m *mockWorkspace) services(projectRoot string) lua.ReadDeps {
 	return lua.ReadDeps{
-		VisibleReader: m.store,
-		Tracer:        tracer.New(m.store),
+		VisibleReader: visibility.Unrestricted(m.store).WithWorld(visibility.WorldOf(store.TrivialScope())),
+		Tracer:        tracertest.Must(m.store, store.TrivialScope()),
 		Meta:          m.meta,
 		ProjectRoot:   projectRoot,
+		World:         store.TrivialScope(),
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -113,7 +115,7 @@ func newGoldenServer(t *testing.T) *Server {
 		"REQ-003": "Third requirement",
 		"DEC-001": "First decision",
 	} {
-		e, err := st.GetEntity(ctx, id)
+		e, err := st.GetEntity(ctx, entity.Ref{ID: id})
 		if err != nil {
 			t.Fatalf("golden fixture: get %s: %v", id, err)
 		}

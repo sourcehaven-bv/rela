@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func TestCheck(t *testing.T) {
@@ -64,7 +65,7 @@ func TestCheck(t *testing.T) {
 		},
 	}
 
-	svc := New(meta, lua.ReadDeps{})
+	svc := New(meta, lua.ReadDeps{World: store.TrivialScope()})
 
 	t.Run("finds violations", func(t *testing.T) {
 		t.Parallel()
@@ -128,7 +129,7 @@ func TestCheckWarnings(t *testing.T) {
 		},
 	}
 
-	svc := New(meta, lua.ReadDeps{})
+	svc := New(meta, lua.ReadDeps{World: store.TrivialScope()})
 	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	if len(violations) != 1 {
@@ -165,7 +166,7 @@ func TestContentViolationCarriesMissingHeaderDetail(t *testing.T) {
 		{ID: "NCR-001", Type: "ncr", Content: "# NCR\n## Beschrijving\nsome text"},
 	}
 
-	svc := New(meta, lua.ReadDeps{})
+	svc := New(meta, lua.ReadDeps{World: store.TrivialScope()})
 	violations := svc.Check(context.Background(), entities, nil).Violations
 	if len(violations) != 1 {
 		t.Fatalf("got %d violations, want 1", len(violations))
@@ -203,7 +204,7 @@ func TestRules(t *testing.T) {
 		},
 	}
 
-	svc := New(meta, lua.ReadDeps{})
+	svc := New(meta, lua.ReadDeps{World: store.TrivialScope()})
 	rules := svc.Rules()
 
 	if len(rules) != 2 {
@@ -215,7 +216,7 @@ func TestNoRules(t *testing.T) {
 	t.Parallel()
 	meta := &metamodel.Metamodel{}
 
-	svc := New(meta, lua.ReadDeps{})
+	svc := New(meta, lua.ReadDeps{World: store.TrivialScope()})
 	violations := svc.Check(context.Background(), []*entity.Entity{{ID: "X", Type: "x"}}, nil).Violations
 
 	if len(violations) != 0 {
@@ -247,7 +248,7 @@ func TestAllEntityTypes(t *testing.T) {
 		{ID: "TKT-001", Type: "ticket", Properties: map[string]any{}}, // missing status
 	}
 
-	svc := New(meta, lua.ReadDeps{})
+	svc := New(meta, lua.ReadDeps{World: store.TrivialScope()})
 	violations := svc.Check(context.Background(), entities, nil).Violations
 
 	if len(violations) != 1 {

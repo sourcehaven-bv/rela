@@ -54,7 +54,7 @@ func newComputedManager(t *testing.T, st *memstore.MemStore) *entitymanager.Mana
 	return mgr
 }
 
-func TestComputed_CreatePatchUpdateAndApply(t *testing.T) {
+func TestComputed_CreatePatchUpdateAndRecreate(t *testing.T) {
 	ctx := context.Background()
 	mgr := newComputedManager(t, memstore.New())
 	e := entity.New("", "item")
@@ -83,17 +83,19 @@ func TestComputed_CreatePatchUpdateAndApply(t *testing.T) {
 		t.Fatalf("UpdateEntity computed error = %T %v", updateErr, updateErr)
 	}
 
-	// Apply is trusted replica input: stale incoming computed data is ignored
-	// and recomputed under the receiving schema.
-	apply := updated.Entity.Clone()
-	apply.Properties["source"] = 7
-	apply.Properties["doubled"] = int64(-1)
-	res, err := mgr.ApplyEntity(ctx, apply)
+	// A recreate is a whole-record write from a stored snapshot: stale
+	// incoming computed data is ignored and recomputed under the current
+	// schema.
+	recreate := updated.Entity.Clone()
+	recreate.ID = updated.Entity.ID + "0"
+	recreate.Properties["source"] = 7
+	recreate.Properties["doubled"] = int64(-1)
+	res, err := entitymanager.RecreateEntity(ctx, mgr, recreate)
 	if err != nil {
-		t.Fatalf("ApplyEntity: %v", err)
+		t.Fatalf("RecreateEntity: %v", err)
 	}
 	if got := res.Entity.Properties["doubled"]; got != int64(14) {
-		t.Fatalf("applied doubled = %v", got)
+		t.Fatalf("recreated doubled = %v", got)
 	}
 }
 
@@ -128,7 +130,7 @@ func TestComputed_MaterializedValueReachesSearchIndex(t *testing.T) {
 	}
 	// The default world: computed properties are indexed on the entity's own
 	// face, so an unscoped search resolves it.
-	faces, err := idx.Search("computed-marker", 0, store.WorldScope{})
+	faces, err := idx.Search("computed-marker", 0, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}

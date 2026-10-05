@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
@@ -644,7 +645,7 @@ func TestExportDocument_ElevationAndCapabilitiesReachTheRender(t *testing.T) {
 	svc := newDocumentService(st, nil, "/p", fake,
 		func() lua.WriteDeps { return lua.WriteDeps{} },
 		func() documentElevation {
-			return documentElevation{Reader: visibility.Unrestricted(st)}
+			return documentElevation{Reader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))}
 		})
 
 	cfg := documentRenderConfig{

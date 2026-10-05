@@ -315,11 +315,12 @@ func (w *Writer) writeTraceNode(node *tracer.TraceResult, prefix string, isLast 
 		relInfo = color.HiBlackString(" [%s]", node.Relation)
 	}
 
-	fmt.Fprintf(w.Out, "%s%s%s %s%s\n",
+	fmt.Fprintf(w.Out, "%s%s%s %s%s%s\n",
 		prefix,
 		connector,
 		color.CyanString(node.ID),
 		truncate(w.traceTitle(node.ID, node.Type, node.Title, node.Properties), traceNodeMaxLen),
+		facesInfo(node.Faces),
 		relInfo)
 
 	// Print children
@@ -339,6 +340,19 @@ func (w *Writer) writeTraceNode(node *tracer.TraceResult, prefix string, isLast 
 	for i, child := range node.Children {
 		w.writeTraceNode(child, newPrefix, i == len(node.Children)-1)
 	}
+}
+
+// facesInfo renders a family node's faces, or "" for a faceless entity. A
+// faced node is a family (BUG-95W7MV), so its faces are shown beside its id.
+func facesInfo(faces []entity.Face) string {
+	if len(faces) == 0 {
+		return ""
+	}
+	names := make([]string, len(faces))
+	for i, f := range faces {
+		names[i] = string(f)
+	}
+	return color.HiBlackString(" {faces: %s}", strings.Join(names, ", "))
 }
 
 // WritePath outputs a path between nodes
@@ -374,9 +388,10 @@ func (w *Writer) WritePath(path []tracer.PathStep) error {
 			fmt.Fprintf(w.Out, "  │ %s\n", color.HiBlackString(step.Relation))
 			fmt.Fprintln(w.Out, "  ▼")
 		}
-		fmt.Fprintf(w.Out, "%s %s\n",
+		fmt.Fprintf(w.Out, "%s %s%s\n",
 			color.CyanString(step.ID),
-			color.HiBlackString("(%s)", step.Type))
+			color.HiBlackString("(%s)", step.Type),
+			facesInfo(step.Faces))
 	}
 
 	return nil
@@ -531,9 +546,10 @@ func (w *Writer) writeFooterSummary(text string) {
 
 // PropertyValidationResult represents validation errors for JSON output
 type PropertyValidationResult struct {
-	EntityID   string   `json:"entity_id"`
-	EntityType string   `json:"entity_type"`
-	Errors     []string `json:"errors"`
+	EntityID   string      `json:"entity_id"`
+	EntityType string      `json:"entity_type"`
+	Face       entity.Face `json:"face,omitempty"`
+	Errors     []string    `json:"errors"`
 }
 
 // RelationPropertyValidationResult represents validation errors for a relation
@@ -547,8 +563,11 @@ type RelationPropertyValidationResult struct {
 type AnalysisResult struct {
 	Status  string `json:"status"` // "success", "warning", "error"
 	Message string `json:"message"`
-	Count   int    `json:"count,omitempty"`
-	Details any    `json:"details,omitempty"`
+	// Coverage states what one finding stands for on a faced type
+	// (BUG-95W7MV), e.g. per face or per family.
+	Coverage string `json:"coverage,omitempty"`
+	Count    int    `json:"count,omitempty"`
+	Details  any    `json:"details,omitempty"`
 }
 
 // WriteAnalysisResult outputs an analysis result in the appropriate format

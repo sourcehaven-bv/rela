@@ -341,9 +341,9 @@ rela.get_relations(e.id)               -- NOT a filter: a bare id is not a
 |----------|-------------|---------|
 | `rela.create_entity(type, props, content?, id?, opts?)` | Create entity | table, warnings? |
 | `rela.update_entity(id, props, content?)` | Update entity | table, warnings? |
-| `rela.delete_entity(id, cascade?)` | Delete entity | boolean |
+| `rela.delete_entity(id, cascade?)` | Delete entity; `ID@face` deletes one face and its edges | boolean |
 | `rela.create_relation(from, type, to, opts?)` | Create relation | table |
-| `rela.delete_relation(from, type, to)` | Delete relation | boolean |
+| `rela.delete_relation(from, type, to, opts?)` | Delete relation; `opts.face` names a content edge's tail | boolean |
 | `rela.refresh()` | Reload graph from disk | boolean |
 
 #### Writing to a content state (face)
@@ -374,16 +374,13 @@ The name must be one the type declares. A face on a type that declares none
 is refused, as is a `scope: identity` relation given a face — such an edge
 attaches to the entity rather than to one of its states.
 
-The two creates differ in whether a face is **required**. An entity create on
-a faced type must name one: the type stores no row at a default coordinate, so
-there is nothing to fall back to. A relation create may omit it — the edge
-then attaches at the identity coordinate, which is a real and readable edge
-rather than a missing row. Omitting it on a `scope: content` type usually
-means the edge is not where you want it, but it is addressable, and it is what
-every caller that cannot yet name a face (`rela link`, the MCP tool) relies
-on. Unknown keys and
-non-string values raise rather than being ignored, so a typo cannot quietly
-become "no face". A script names a face **directly**; it is never derived
+Both creates **require** a face where the row or edge belongs to one. An
+entity create on a faced type must name one: the type stores no row at a
+default coordinate, so there is nothing to fall back to. A `scope: content`
+relation from a faced entity must name one too: the edge belongs to one face,
+and without one it would belong to none. A `scope: identity` relation takes no
+face. Unknown keys and non-string values raise rather than being ignored, so a
+typo cannot quietly become "no face". A script names a face **directly**; it is never derived
 from a world, because a world resolves through a chain that can answer with
 a fallback and a write must name the row it changes.
 
@@ -394,17 +391,15 @@ sibling on the same face as something it just read. Relations have no
 
 #### Addressing a face on the other write bindings
 
-The three id-addressed bindings differ, and the differences matter:
+| Binding | Addressing a face |
+|---------|-------------------|
+| `rela.update_entity` | `ID@face` selects that face |
+| `rela.delete_entity` | `ID@face` deletes that face and the edges tailed at it, and the last face deletes the entity; a bare id of a faced entity raises, naming its faces |
+| `rela.create_relation`, `rela.delete_relation` | `opts.face` names the edge's tail; `from` and `to` must be bare ids |
 
-| Binding | A `ID@face` address |
-|---------|---------------------|
-| `rela.update_entity` | Selects that face — intended behaviour |
-| `rela.delete_entity` | **Deletes the whole entity**, every face — intended behaviour |
-| `rela.delete_relation` | Ignored; removes the **default** face's edge and reports success — **known defect, BUG-YVU8CP** |
-
-The first two rows describe the design. The third is a bug awaiting a fix, not
-a contract: do not build on it. A per-face delete is not currently expressible
-from Lua.
+A face delete always removes the edges tailed at that face, whatever
+`cascade` says: they are that face's content, as its properties are.
+`cascade` guards the family delete only.
 
 #### Validation warnings (multi-return)
 
@@ -483,7 +478,7 @@ end)
 | Method | Purpose |
 |--------|---------|
 | `admin.create_relation(from, type, to, opts?)` | Link, skipping the ACL deny |
-| `admin.delete_relation(from, type, to)` | Unlink, skipping the ACL deny |
+| `admin.delete_relation(from, type, to, opts?)` | Unlink, skipping the ACL deny |
 | `admin.delete_entity(id, cascade?)` | Remove, skipping the ACL deny |
 | `admin.get_entity(id)` | Read **raw** — full properties, no redaction |
 | `admin.list_entities(type)` | Every entity of `type`, ungated |
@@ -1178,7 +1173,7 @@ script runs in a specialized mode with extra context exposed:
 |--------------------------|---------|
 | `rela.mode`              | `"document"` in this context; absent elsewhere |
 | `rela.document.id`       | The key under `documents:` in `data-entry.yaml` |
-| `rela.document.entry_id` | The ID of the entity being rendered |
+| `rela.document.entry_id` | The address of the entity being rendered: its ID, or `ID@face` for a type that declares faces. Pass it to `rela.get_entity` to read that face. |
 
 **List renders** (a `lists.<id>.export_render` view export, see
 [Transforms](../../../docs/transforms.md#custom-per-list-rendering)) run in the

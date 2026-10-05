@@ -15,8 +15,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/dataentry"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -71,16 +69,9 @@ func TestRemoteMCPDeps_UsesGatedHandles(t *testing.T) {
 	}
 	defer svc.Close()
 
-	deps, err := remoteMCPDeps(svc, dataentry.MCPHost{ReadWorld: defaultWorldOnly})
+	deps, err := remoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
 		t.Fatalf("remoteMCPDeps: %v", err)
-	}
-
-	// Gating of each handle is asserted by behavior in
-	// TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld: the handles are
-	// world-bound wrappers, so a type assertion here would name the wrapper.
-	if deps.Store == svc.Store() {
-		t.Error("Store is the raw store")
 	}
 	if deps.Tracer == svc.Tracer() {
 		t.Error("Tracer is the raw tracer")
@@ -102,11 +93,9 @@ func assertNoLuaTools(t *testing.T, svc *appbuild.Services) {
 	t.Helper()
 	ctx := context.Background()
 
-	srv, err := newRemoteMCPServer(svc, dataentry.MCPHost{
-		AttachmentLocker:  lock.NewMemoryLocker(),
-		AttachmentUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
-		ReadWorld:         defaultWorldOnly,
-	})
+	host := testHost(t, svc)
+	host.AttachmentUploads = attachment.NewLimiter(attachment.DefaultMaxUploads)
+	srv, err := newRemoteMCPServer(svc, host)
 	if err != nil {
 		t.Fatalf("newRemoteMCPServer: %v", err)
 	}

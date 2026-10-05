@@ -33,12 +33,12 @@ func (s *Server) handleListEntities(
 	offset := args.GetInt("offset", 0)
 
 	d := snap.deps
-	ctx, refused := selectWorld(ctx, d.Worlds, args)
+	ctx, world, refused := selectWorld(ctx, d, args)
 	if refused != nil {
 		return refused, nil
 	}
 	types := snap.handlers.types
-	q := store.EntityQuery{}
+	q := store.EntityQuery{Faces: store.InWorld(world)}
 	if typeArg != "" {
 		resolved, _, err := types.resolveEntityType(typeArg)
 		if err != nil {
@@ -159,11 +159,11 @@ func (s *Server) handleShowEntity(
 	id = trimID(id)
 
 	d := snap.deps
-	ctx, refused := selectWorld(ctx, d.Worlds, args)
+	ctx, _, refused := selectWorld(ctx, d, args)
 	if refused != nil {
 		return refused, nil
 	}
-	e, getErr := d.Store.GetEntity(ctx, id)
+	e, getErr := d.Store.Resolve(ctx, id)
 	if getErr != nil {
 		return entityReadFailed("entity", id, getErr), nil
 	}
@@ -190,7 +190,12 @@ func (s *Server) handleSearchEntities(
 	entityType := args.GetString("type", "")
 	limit := limitArg(args, defaultSearchLimit)
 
-	q := search.Query{Text: query, Limit: limit}
+	d := snap.deps
+	ctx, world, refused := selectWorld(ctx, d, args)
+	if refused != nil {
+		return refused, nil
+	}
+	q := search.Query{Text: query, Limit: limit, World: world}
 	if entityType != "" {
 		resolved, _, resolveErr := snap.handlers.types.resolveEntityType(entityType)
 		if resolveErr != nil {
@@ -199,11 +204,6 @@ func (s *Server) handleSearchEntities(
 		q.Types = []string{resolved}
 	}
 
-	d := snap.deps
-	ctx, refused := selectWorld(ctx, d.Worlds, args)
-	if refused != nil {
-		return refused, nil
-	}
 	var hits []search.Hit
 	for hit, searchErr := range d.Searcher.Search(ctx, q) {
 		if searchErr != nil {
@@ -223,12 +223,6 @@ func (s *Server) handleSearchEntities(
 	return textResult(text), nil
 }
 
-// hitKey identifies one face of one entity.
-type hitKey struct {
-	id   string
-	face entity.Face
-}
-
 // hydrateHits builds the search summaries from the store, in hit order. The
 // hits are read in ONE query over every face, because a faced type has no
 // default row and a per-hit GetEntity would miss it. A hit the store does not
@@ -245,17 +239,17 @@ func hydrateHits(
 	for _, h := range hits {
 		ids = append(ids, h.ID)
 	}
-	found := make(map[hitKey]*entity.Entity, len(hits))
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: ids, AllStates: true}) {
+	found := make(map[entity.Ref]*entity.Entity, len(hits))
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: ids, Faces: store.AllFaces()}) {
 		if err != nil {
 			return nil, err
 		}
 		if e != nil {
-			found[hitKey{e.ID, e.Face}] = e
+			found[e.Ref()] = e
 		}
 	}
 	for _, h := range hits {
-		e, ok := found[hitKey{h.ID, h.Face}]
+		e, ok := found[entity.Ref{ID: h.ID, Face: h.Face}]
 		if !ok {
 			continue
 		}
@@ -275,6 +269,7 @@ func (s *Server) handleCreateEntity(
 	}
 	content := args.GetString("content", "")
 	customID := args.GetString("id", "")
+	face := entity.Face(args.GetString("face", ""))
 
 	// Resolve type
 	resolvedType, _, resolveErr := snap.handlers.types.resolveEntityType(typeName)
@@ -296,7 +291,7 @@ func (s *Server) handleCreateEntity(
 			Properties: properties,
 			Content:    content,
 		},
-		entity.CreateOptions{ID: customID},
+		entity.CreateOptions{ID: customID, Face: face},
 	)
 	if createErr != nil {
 		return errorResult(createErr.Error()), nil
@@ -304,7 +299,7 @@ func (s *Server) handleCreateEntity(
 	created := result.Entity
 
 	d := snap.deps
-	e, _ := d.Store.GetEntity(ctx, created.ID)
+	e, _ := d.Store.Resolve(ctx, created.Ref().String())
 	if e == nil {
 		// Fallback: return minimal info
 		return textResult(fmt.Sprintf("Created %s %s", resolvedType, created.ID)), nil
@@ -332,12 +327,16 @@ func (s *Server) handleUpdateEntity(
 
 	d := snap.deps
 	st := d.Store
-	e, getErr := st.GetEntity(ctx, id)
+	target, targetErr := st.WriteTarget(ctx, id)
+	if amb, ok := errors.AsType[*visibility.AmbiguousAddressError](targetErr); ok {
+		return errorResult(amb.Error()), nil
+	}
+	if targetErr != nil {
+		return errorResult("entity not found: " + id), nil
+	}
+	e, getErr := st.Resolve(ctx, target.String())
 	if getErr != nil {
 		return entityReadFailed("entity", id, getErr), nil
-	}
-	if refused := faceAddressRequired(id, e); refused != nil {
-		return refused, nil
 	}
 
 	properties := extractPropertiesAllowNil(request)
@@ -375,12 +374,13 @@ func (s *Server) handleUpdateEntity(
 		patch.Content = &content
 	}
 
-	updateResult, updateErr := snap.deps.EntityManager.PatchEntity(ctx, id, patch)
+	updateResult, updateErr := snap.deps.EntityManager.PatchEntity(ctx, target.String(), patch)
 	if updateErr != nil {
 		return errorResult(updateErr.Error()), nil
 	}
 
-	updated, _ := st.GetEntity(ctx, id)
+	// Re-read the face that was written, by its explicit address.
+	updated, _ := st.Resolve(ctx, e.Ref().String())
 	if updated == nil {
 		return textResult(prefixWarnings(updateResult.Warnings) + "Updated " + id), nil
 	}
@@ -432,31 +432,50 @@ func (s *Server) handleDeleteEntity(
 		return errorResult(err.Error()), nil
 	}
 	id = trimID(id)
-	if refused := wholeEntityRef(id); refused != nil {
-		return refused, nil
-	}
 	cascade := args.GetBool("cascade", false)
 
+	// The id resolves as every write does: a bare id deletes a faceless
+	// entity and names the faces of a faced one; `ID@face` deletes that face
+	// and the edges tailed at it (BUG-J3PBFN).
 	st := snap.deps.Store
-	if _, getErr := st.GetEntity(ctx, id); getErr != nil {
-		return entityReadFailed("entity", id, getErr), nil
+	ref, targetErr := st.WriteTarget(ctx, id)
+	if amb, ok := errors.AsType[*visibility.AmbiguousAddressError](targetErr); ok {
+		return errorResult(amb.Error()), nil
+	}
+	if targetErr != nil {
+		return errorResult("entity not found: " + id), nil
 	}
 
 	// Every count reported here is of the relations the caller can see. The
 	// manager's own counts include edges to hidden entities, so reporting
 	// them would disclose how many hidden neighbors the entity has.
-	visible := visibleRelationCount(ctx, st, id)
-	if !cascade && visible > 0 {
+	//
+	// cascade guards every delete that removes the entity: the family, or
+	// its last face (RR-2466U1). The edges tailed at a face that is not the
+	// last are that face's content, so such a delete always takes them,
+	// including any to a target the caller cannot see (the manager
+	// authorizes each). "Last" is judged on the faces the caller can read,
+	// so a hidden sibling only makes the check stricter, never an oracle;
+	// the manager applies the same rule to the stored family.
+	wholeEntity := wholeEntityDelete(ctx, st, ref)
+	visible := visibleDeleteScopeCount(ctx, st, ref, wholeEntity)
+	if !cascade && wholeEntity && visible > 0 {
 		return errorResult(
 			fmt.Sprintf("entity %s has %d relation(s); set cascade=true to delete them too", id, visible)), nil
 	}
 
-	if _, delErr := snap.deps.EntityManager.DeleteEntity(ctx, id, cascade); delErr != nil {
+	var delErr error
+	if ref.Face.IsImplicit() {
+		_, delErr = snap.deps.EntityManager.DeleteEntity(ctx, ref.ID, cascade)
+	} else {
+		_, delErr = snap.deps.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face, cascade)
+	}
+	if delErr != nil {
 		return errorResult(delErr.Error()), nil
 	}
 
 	msg := "Deleted " + id
-	if cascade && visible > 0 {
+	if (cascade || !wholeEntity) && visible > 0 {
 		msg += fmt.Sprintf(" and %d relation(s)", visible)
 	}
 	return textResult(msg), nil
@@ -486,7 +505,7 @@ func (s *Server) handleRenameEntity(
 
 	// Gate the source id first: the write path answers "forbidden" for an
 	// entity that exists but is hidden, which would confirm it exists.
-	if !visibility.Readable(ctx, snap.deps.Store, oldID) {
+	if !readable(ctx, snap.deps.Store, oldID) {
 		return errorResult("entity not found: " + oldID), nil
 	}
 
@@ -518,6 +537,36 @@ func (s *Server) handleRenameEntity(
 func visibleRelationCount(ctx context.Context, st GraphReader, id string) int {
 	n := 0
 	for _, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: id, Direction: store.DirectionBoth}) {
+		if err != nil {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// wholeEntityDelete reports whether a delete of ref removes the entity: a
+// bare id always does, a face does when it is the only face the caller can
+// read.
+func wholeEntityDelete(ctx context.Context, st GraphReader, ref entity.Ref) bool {
+	if ref.Face.IsImplicit() {
+		return true
+	}
+	fam, found, err := st.Family(ctx, ref.ID)
+	return err != nil || !found || len(fam.Faces) <= 1
+}
+
+// visibleDeleteScopeCount counts the visible edges a delete of ref removes:
+// every incident edge when the entity goes, the outgoing edges tailed at the
+// face otherwise.
+func visibleDeleteScopeCount(ctx context.Context, st GraphReader, ref entity.Ref, wholeEntity bool) int {
+	if wholeEntity {
+		return visibleRelationCount(ctx, st, ref.ID)
+	}
+	face := ref.Face
+	n := 0
+	q := store.RelationQuery{EntityID: ref.ID, Direction: store.DirectionOutgoing, FromFace: &face}
+	for _, err := range st.ListRelations(ctx, q) {
 		if err != nil {
 			break
 		}

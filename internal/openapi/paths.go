@@ -39,6 +39,7 @@ func (g *Generator) addSystemPaths(spec *Spec) {
 			Parameters: []Parameter{
 				{Name: "q", In: "query", Required: true, Description: "Search query", Schema: StringSchema()},
 				{Name: "type", In: "query", Description: "Filter by entity type", Schema: StringSchema()},
+				relationContextParam, directionContextParam,
 			},
 			Responses: map[string]Response{
 				"200": {
@@ -424,8 +425,23 @@ func (g *Generator) listParameters() []Parameter {
 		{Name: "filter[property]", In: "query", Description: "Filter by property value (e.g., filter[status]=active)", Schema: StringSchema()},
 		{Name: "filter[property][operator]", In: "query", Description: "Filter with operator: eq, ne, contains, in", Schema: StringSchema()},
 		{Name: "include_content", In: "query", Description: "Include each row's markdown body (default: false; collection rows are content-free)", Schema: BooleanSchema()},
+		relationContextParam, directionContextParam,
 	}
 }
+
+// relationContextParam and directionContextParam are the relation context of
+// a collection read: with both, every row carries `linkable`.
+var (
+	relationContextParam = Parameter{
+		Name: "relation", In: "query", Schema: StringSchema(),
+		Description: "Canonical relation type; with direction=incoming, each row carries " +
+			"`linkable`: whether the caller may create that relation from the row's face",
+	}
+	directionContextParam = Parameter{
+		Name: "direction", In: "query", Schema: StringSchema(),
+		Description: "Required with relation; only `incoming` is accepted",
+	}
+)
 
 // jsonContent creates a JSON media type map with the given schema.
 func jsonContent(schema *Schema) map[string]MediaType {

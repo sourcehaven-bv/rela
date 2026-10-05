@@ -88,7 +88,7 @@ func RunTxStressTest(t *testing.T, f Factory) {
 		wg.Go(func() {
 			for !stopping() {
 				err := s.Tx(ctx(), func(tx store.Store) error {
-					e, err := tx.GetEntity(ctx(), "STRS-CTR")
+					e, err := tx.GetEntity(ctx(), entity.Ref{ID: "STRS-CTR"})
 					if err != nil {
 						return err
 					}
@@ -174,7 +174,7 @@ func RunTxStressTest(t *testing.T, f Factory) {
 				fail(fmt.Errorf("plain update %s: %w", id, err))
 				return
 			}
-			_, derr := s.DeleteEntity(ctx(), id, false)
+			_, derr := s.DeleteFamily(ctx(), id, false)
 			if derr != nil && !errors.Is(derr, store.ErrNotFound) && !errors.Is(derr, store.ErrHasRelations) {
 				fail(fmt.Errorf("plain delete %s: %w", id, derr))
 				return
@@ -186,12 +186,12 @@ func RunTxStressTest(t *testing.T, f Factory) {
 	// Reader: never takes any write lock; must keep flowing throughout.
 	wg.Go(func() {
 		for !stopping() {
-			if _, err := s.GetEntity(ctx(), "STRS-CTR"); err != nil {
+			if _, err := s.GetEntity(ctx(), entity.Ref{ID: "STRS-CTR"}); err != nil {
 				fail(fmt.Errorf("reader: %w", err))
 				return
 			}
 			n := 0
-			for _, err := range s.ListEntities(ctx(), store.EntityQuery{Type: "feature"}) {
+			for _, err := range s.ListEntities(ctx(), store.EntityQuery{Type: "feature", Faces: store.InWorld(store.TrivialScope())}) {
 				if err != nil {
 					// Tolerated: fsstore loads entity files lazily during
 					// iteration, so a concurrent delete between the index
@@ -286,15 +286,15 @@ func RunTxStressTest(t *testing.T, f Factory) {
 	}
 
 	// Invariant: no lost counter updates.
-	got, err := s.GetEntity(ctx(), "STRS-CTR")
+	got, err := s.GetEntity(ctx(), entity.Ref{ID: "STRS-CTR"})
 	require.NoError(t, err)
 	require.Equal(t, strconv.FormatInt(commits.Load(), 10), got.GetString("n"),
 		"lost update: %s counter increments committed", got.GetString("n"))
 
 	// Invariant: every pair transaction left both entities or neither.
 	for i := int64(1); i <= pairSeq.Load(); i++ {
-		_, errA := s.GetEntity(ctx(), fmt.Sprintf("STRS-PA%d", i))
-		_, errB := s.GetEntity(ctx(), fmt.Sprintf("STRS-PB%d", i))
+		_, errA := s.GetEntity(ctx(), entity.Ref{ID: fmt.Sprintf("STRS-PA%d", i)})
+		_, errB := s.GetEntity(ctx(), entity.Ref{ID: fmt.Sprintf("STRS-PB%d", i)})
 		require.Equal(t, errA == nil, errB == nil,
 			"pair %d torn: A present=%v B present=%v", i, errA == nil, errB == nil)
 	}

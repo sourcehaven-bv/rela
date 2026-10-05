@@ -78,7 +78,7 @@ assignments:
 	}
 	seed("alice", "person")
 	seed("editors", "team")
-	if _, relErr := ms.CreateRelation(ctx, "alice", "member-of", "editors", nil); relErr != nil {
+	if _, relErr := ms.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "member-of", To: "editors"}, nil); relErr != nil {
 		b.Fatal(relErr)
 	}
 	for i := range 200 {
@@ -88,7 +88,7 @@ assignments:
 	for i := range 50 {
 		from := fmt.Sprintf("TKT-%03d", i)
 		to := fmt.Sprintf("TKT-%03d", i+100)
-		if _, relErr := ms.CreateRelation(ctx, from, "depends-on", to, nil); relErr != nil {
+		if _, relErr := ms.CreateRelation(ctx, entity.RelationKey{From: from, Type: "depends-on", To: to}, nil); relErr != nil {
 			b.Fatal(relErr)
 		}
 	}

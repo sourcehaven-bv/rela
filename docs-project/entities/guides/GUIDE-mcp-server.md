@@ -102,9 +102,9 @@ fetching each one. A summary of a faced entity also carries its `face`.
 | `list_worlds` | List the worlds the read tools accept, and which you may select | none |
 | `show_entity` | Get one entity with its relations, and `other_faces` for a faced entity | `id`, `content?` (default true), `world?` |
 | `search_entities` | Full-text search across entities | `query`, `type?`, `limit?` (default 20), `world?` |
-| `create_entity` | Create an entity | `type`, `properties`, `content?`, `id?` |
-| `update_entity` | Update named properties or the body | `id`, `properties?`, `content?` |
-| `delete_entity` | Delete an entity | `id`, `cascade?` |
+| `create_entity` | Create an entity; a faced type needs `face` | `type`, `properties`, `content?`, `id?`, `face?` |
+| `update_entity` | Update named properties or the body of one face | `id`, `properties?`, `content?` |
+| `delete_entity` | Delete an entity, or one face of it as `ID@face` | `id`, `cascade?` |
 | `rename_entity` | Change an entity's ID and its references | `id`, `new_id`, `dry_run?` |
 
 `list_entities` answers `{"total":…,"has_more":…,"entities":[…]}`. An unknown
@@ -132,10 +132,9 @@ string is ignored.
 An entity type can declare faces, such as `concept` and `adopted`. A world
 picks one face per entity, in the order its `select:` names them.
 
-- A bare id resolves through a world. Without `world`, the remote server uses
-  `app.default_world`; the stdio server uses the default world.
+- A bare id resolves through a world. Without `world`, both servers use the
+  schema's default world, named by `default_world`.
 - `ID@face`, such as `POL-001@concept`, reads that face in any world.
-  `update_entity` edits it.
 - `world` on `list_entities`, `search_entities` and `show_entity` reads in
   that world, so `world: "review"` lists what a `review` world selects.
   `list_worlds` names the worlds, their `select:` order, and whether you may
@@ -143,8 +142,13 @@ picks one face per entity, in the order its `select:` names them.
 - `show_entity` lists the entity's other faces you may read under
   `other_faces`, each with the `ref` that reads it.
 
-The stdio server does not resolve worlds. It accepts only `world: "default"`
-and has no `app.default_world`.
+The stdio server does not resolve other worlds. It accepts only the default
+world's name.
+
+`update_entity` writes one face. Its `id` may name it (`POL-1@draft`). A bare
+id writes the one face the default world admits that the agent may read; when
+there are several, the error lists them, for example
+`POL-1 has faces; address one: POL-1@draft, POL-1@published`.
 
 ### Relation Tools
 
@@ -196,7 +200,12 @@ The full raw metamodel is the `rela://metamodel` resource.
 
 ### Attachment Tools
 
-These tools work on the files held by `file`-type properties.
+These tools work on the files held by `file`-type properties. On a type with
+faces, `id` is an address such as `POL-1@draft`, and each tool works on that
+face only: a face lists and serves only its own files. A bare id reads the
+face the default world selects. `attach_file` and `delete_attachment` write to
+the one face the default world admits for a bare id; when it admits several,
+the error names them so the agent can address one.
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
@@ -259,7 +268,7 @@ Resources expose rela data as readable URIs.
 |-----|-------------|
 | `rela://metamodel` | Full metamodel schema (JSON) |
 | `rela://entity/{type}/{id}` | Single entity with properties and relations |
-| `rela://relation/{from}/{type}/{to}` | Single relation |
+| `rela://relation/{from}/{type}/{to}` | Single relation. `{from}` is `ID` for an identity edge or `ID@face` for an edge from that face |
 
 ## Prompts
 

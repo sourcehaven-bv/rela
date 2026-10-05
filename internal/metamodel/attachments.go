@@ -1,7 +1,11 @@
 package metamodel
 
 import (
+	"cmp"
 	"fmt"
+	"path"
+	"slices"
+	"sort"
 	"strings"
 )
 
@@ -172,6 +176,173 @@ func (p AttachmentPolicy) HasUnconfiguredScan() bool {
 				continue // explicitly opted out — a conscious choice
 			}
 			if len(prop.ScanCmd) == 0 && !globalCmd {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// FileRef is one entry of a `file` property value: the stamped path, the
+// display name the face serves it under, and the key its bytes have in the
+// store.
+type FileRef struct {
+	// Entry is the stored path, verbatim.
+	Entry string
+	// Name is the display name: the entry's base name. It is unique within
+	// one face's value, and is what listing, download and delete address.
+	Name string
+	// Key is the store key of the bytes, unique per (entity, property).
+	Key string
+}
+
+// FileTokenLen is the length of the storage token in a keyed entry.
+const FileTokenLen = 16
+
+// KeyedFileEntry is the value entry of a file uploaded with storage token
+// tok: "attachments/<id>/<property>/<tok>/<name>". Its key is
+// [FileKey](tok, name).
+func KeyedFileEntry(id, property, tok, name string) string {
+	return path.Join("attachments", id, property, tok, name)
+}
+
+// FileKey is the storage key of a file uploaded with token tok under the
+// display name name.
+func FileKey(tok, name string) string {
+	return tok + "-" + name
+}
+
+// IsFileToken reports whether s has the shape of a storage token:
+// [FileTokenLen] lowercase hex digits.
+func IsFileToken(s string) bool {
+	if len(s) != FileTokenLen {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// FileRefs returns the entries a `file` property value references, sorted by
+// name then key, without duplicates. The value may be a string, a []string
+// or a []any (a list loaded from YAML or JSON); anything else, and empty
+// entries, reference nothing.
+//
+// # Storage keys (BUG-CTUW2N)
+//
+// An entry of the shape "attachments/<id>/<property>/<token>/<name>", with
+// a token as [IsFileToken] defines it, has the key [FileKey](token, name).
+// Every upload gets a fresh token, so two faces holding a file of the same
+// name hold two keys, and an upload on one face never collides with, or
+// reveals, another face's file. Any other entry is a file stored before
+// tokens existed: its key is its base name, which is how those bytes are
+// stored, so existing values need no migration. A legacy bare name of the
+// shape "<token>-<name>" has the same key as a keyed entry; the attachment
+// service never mints such a key while it has bytes, and only trusted paths
+// (sync, data migration) could write the other entry.
+//
+// The rest of the prefix carries no authority. What grants a face the bytes
+// is the key in its OWN value, and only the attachment paths may write one
+// (see the file-property rule in entitymanager).
+func FileRefs(v any) []FileRef {
+	var raw []string
+	switch t := v.(type) {
+	case string:
+		raw = []string{t}
+	case []string:
+		raw = t
+	case []any:
+		for _, x := range t {
+			if s, ok := x.(string); ok {
+				raw = append(raw, s)
+			}
+		}
+	}
+	refs := make([]FileRef, 0, len(raw))
+	for _, s := range raw {
+		if s == "" {
+			continue
+		}
+		// Clean first, so "./", "//" or a leading "/" in a hand-edited or
+		// synced value cannot turn a keyed entry into a legacy one.
+		p := strings.TrimPrefix(path.Clean(strings.ReplaceAll(s, `\`, "/")), "/")
+		base := path.Base(p)
+		if base == "." || base == "/" || base == ".." {
+			continue
+		}
+		key := base
+		if segs := strings.Split(p, "/"); len(segs) == 5 && segs[0] == "attachments" && IsFileToken(segs[3]) {
+			key = FileKey(segs[3], base)
+		}
+		refs = append(refs, FileRef{Entry: s, Name: base, Key: key})
+	}
+	SortFileRefs(refs)
+	return slices.CompactFunc(refs, func(a, b FileRef) bool { return a.Name == b.Name && a.Key == b.Key })
+}
+
+// SortFileRefs orders refs by name, key, then entry, so the entry kept for a
+// duplicate (name, key) pair is the same on every read.
+func SortFileRefs(refs []FileRef) {
+	slices.SortFunc(refs, func(a, b FileRef) int {
+		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Key, b.Key), cmp.Compare(a.Entry, b.Entry))
+	})
+}
+
+// FileNames returns the sorted, de-duplicated display names a `file`
+// property value references; see [FileRefs].
+func FileNames(v any) []string {
+	refs := FileRefs(v)
+	names := make([]string, 0, len(refs))
+	for _, r := range refs {
+		names = append(names, r.Name)
+	}
+	return slices.Compact(names)
+}
+
+// FileKeys returns the sorted, de-duplicated storage keys a `file` property
+// value references; see [FileRefs].
+func FileKeys(v any) []string {
+	refs := FileRefs(v)
+	keys := make([]string, 0, len(refs))
+	for _, r := range refs {
+		keys = append(keys, r.Key)
+	}
+	sort.Strings(keys)
+	return slices.Compact(keys)
+}
+
+// FileProperties returns the sorted names of the `file` properties declared
+// on entityType, or nil when the type is unknown or declares none.
+func FileProperties(m *Metamodel, entityType string) []string {
+	if m == nil {
+		return nil
+	}
+	def, ok := m.GetEntityDef(entityType)
+	if !ok {
+		return nil
+	}
+	var names []string
+	for name, prop := range def.Properties {
+		if prop.Type == PropertyTypeFile {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// HasFileProperties reports whether any entity type declares a `file`
+// property.
+func HasFileProperties(m *Metamodel) bool {
+	if m == nil {
+		return false
+	}
+	for _, def := range m.Entities {
+		for _, prop := range def.Properties {
+			if prop.Type == PropertyTypeFile {
 				return true
 			}
 		}

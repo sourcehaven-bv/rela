@@ -12,6 +12,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // relHistoryStore is a canned relation-version-history service so the
@@ -43,7 +44,7 @@ func bareRelKey(from, relType, to string) string {
 func (h relHistoryStore) ListRelationVersions(
 	_ context.Context, q store.RelationHistoryQuery,
 ) ([]store.RelationVersionMeta, error) {
-	snaps := h.versions[relKey(q.From, q.FromFace, q.Type, q.To)]
+	snaps := h.versions[relKey(q.Key.From, q.Key.FromFace, q.Key.Type, q.Key.To)]
 	metas := make([]store.RelationVersionMeta, 0, len(snaps))
 	for _, s := range snaps {
 		metas = append(metas, s.RelationVersionMeta)
@@ -54,7 +55,7 @@ func (h relHistoryStore) ListRelationVersions(
 func (h relHistoryStore) GetRelationVersion(
 	_ context.Context, q store.RelationHistoryQuery, version int,
 ) (*store.RelationVersionSnapshot, error) {
-	snaps := h.versions[relKey(q.From, q.FromFace, q.Type, q.To)]
+	snaps := h.versions[relKey(q.Key.From, q.Key.FromFace, q.Key.Type, q.Key.To)]
 	if version < 1 || version > len(snaps) {
 		return nil, store.ErrNotFound
 	}
@@ -66,12 +67,12 @@ func (h relHistoryStore) GetRelationVersion(
 // versions — enough for the handler tests (which exercise the timeline/version
 // paths, not multi-lifetime enumeration; that is covered by the pgstore DB tests).
 func (h relHistoryStore) ListRelationLifetimes(
-	_ context.Context, from string, fromFace entity.Face, relType, to string,
+	_ context.Context, k entity.RelationKey,
 ) ([]store.RelationLifetime, error) {
-	if lts, ok := h.lifetimes[relKey(from, fromFace, relType, to)]; ok {
+	if lts, ok := h.lifetimes[relKey(k.From, k.FromFace, k.Type, k.To)]; ok {
 		return lts, nil
 	}
-	snaps := h.versions[relKey(from, fromFace, relType, to)]
+	snaps := h.versions[relKey(k.From, k.FromFace, k.Type, k.To)]
 	if len(snaps) == 0 {
 		return nil, nil
 	}
@@ -83,22 +84,25 @@ func (h relHistoryStore) ListRelationLifetimes(
 type perEndpointGate struct {
 	allow           map[string]bool
 	holdsPermission bool
+	// faces lists the readable faces per type; an absent type reads every
+	// face, as a bare grant does.
+	faces map[string][]entity.Face
 }
 
 func (g perEndpointGate) PermitsRead(_ context.Context, _, id string) (bool, error) {
 	return g.allow[id], nil
 }
 
-func (g perEndpointGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
+func (g perEndpointGate) permitsReadMany(_ context.Context, _ string, ids []string) map[string]bool {
 	m := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		m[id] = g.allow[id]
 	}
-	return m, nil
+	return m
 }
 
-func (g perEndpointGate) ReadQuery(context.Context, string) acl.ReadQueryResult {
-	return acl.ReadQueryResult{}
+func (g perEndpointGate) ReadQuery(_ context.Context, typ string) acl.ReadQueryResult {
+	return acl.ReadQueryResult{Faces: g.faces[typ]}
 }
 
 func (g perEndpointGate) SearchScope(context.Context, []string) map[string]search.TypeScope {
@@ -298,6 +302,11 @@ func TestRelationHistory_DeletedRelationRequiresPermission(t *testing.T) {
 func TestRelationHistory_FacedAddressReadsItsOwnTail(t *testing.T) {
 	f := &fixture{}
 	f.AddNode(entity.New("DEC-1", "decision"))
+	// The tail is live on its face, so the endpoint gate applies rather than
+	// the deleted-relation permission.
+	published := entity.New("DEC-1", "decision")
+	published.Face = "published"
+	f.AddNode(published)
 	f.AddNode(entity.New("REQ-1", "requirement"))
 
 	app := newAppFromParts(nil, testMeta(), f)
@@ -394,5 +403,184 @@ func TestRelationHistory_BareAddressReadsTheDefaultTail(t *testing.T) {
 	}
 	if got.Relation.Content != "default tail body" {
 		t.Fatalf("a bare address must read the default tail: got %q", got.Relation.Content)
+	}
+}
+
+// A content tail on a face the reader may not read is the uniform 404 on both
+// the list and the version route, never the history (design 8.2).
+func TestRelationHistory_DeniedTailFaceIsNotFound(t *testing.T) {
+	f := &fixture{}
+	published := entity.New("DEC-1", "decision")
+	published.Face = "published"
+	f.AddNode(published)
+	f.AddNode(entity.New("REQ-1", "requirement"))
+	app := newAppFromParts(nil, testMeta(), f)
+	app.versions = relHistoryStore{versions: map[string][]store.RelationVersionSnapshot{
+		relKey("DEC-1", entity.Face("published"), "addresses", "REQ-1"): {{
+			RelationVersionMeta: store.RelationVersionMeta{
+				Version: 1, Op: store.VersionOpCreate, From: "DEC-1", Type: "addresses", To: "REQ-1",
+			},
+			Content: "published tail body",
+		}},
+	}}
+	gate := perEndpointGate{
+		allow: map[string]bool{"DEC-1": true, "REQ-1": true},
+		faces: map[string][]entity.Face{"decision": {"draft"}},
+	}
+	for _, path := range []string{
+		"/api/v1/_relation_history/decision/DEC-1@published/addresses/REQ-1",
+		"/api/v1/_relation_history/decision/DEC-1@published/addresses/REQ-1/1",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		req = req.WithContext(withReadGate(context.Background(), gate))
+		rec := httptest.NewRecorder()
+		handleV1RelationHistory(app, rec, req)
+		if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "published tail body") {
+			t.Errorf("%s: denied tail face = %d %s, want 404", path, rec.Code, rec.Body)
+		}
+	}
+}
+
+// A version of a relation whose source is gone is served without meta: there
+// is no live row to redact against, so nothing is disclosed.
+func TestRelationHistory_GoneSourceServesNoMeta(t *testing.T) {
+	app := newAppFromParts(nil, testMeta(), &fixture{})
+	app.versions = relHistoryStore{versions: map[string][]store.RelationVersionSnapshot{
+		bareRelKey("GONE-A", "links", "GONE-B"): {{
+			RelationVersionMeta: store.RelationVersionMeta{
+				Version: 1, Op: store.VersionOpDelete, From: "GONE-A", Type: "links", To: "GONE-B",
+			},
+			Properties: map[string]any{"note": "SECRET NOTE"},
+		}},
+	}}
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/_relation_history/decision/GONE-A/links/GONE-B/1", http.NoBody)
+	req = req.WithContext(withReadGate(context.Background(), perEndpointGate{holdsPermission: true}))
+	rec := httptest.NewRecorder()
+	handleV1RelationHistory(app, rec, req)
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "SECRET NOTE") {
+		t.Errorf("gone source version = %d %s, want 200 without meta", rec.Code, rec.Body)
+	}
+}
+
+func (g perEndpointGate) ReadableFacesMany(ctx context.Context, typ string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, typ, ids), nil)
+}
+
+// TestRelationHistory_PartlyGoneChecksEveryRemainingEnd pins "both ends, as
+// far as they still exist": when part of a relation is gone, every end that
+// still exists keeps its live read check, and the global history permission
+// is required on top. Each denial is the uniform 404, on read and restore.
+//
+// Restore shares the gate. Past it, the write fails for reasons this test
+// does not exercise (a gone end is a 409 dangling_endpoint; the test schema
+// has no `addresses` relation, a 422), so an allowed case asserts only "not
+// 404".
+func TestRelationHistory_PartlyGoneChecksEveryRemainingEnd(t *testing.T) {
+	allFaces := []entity.Face{"draft", "published"}
+	publishedOnly := []entity.Face{"published"}
+
+	tests := []struct {
+		name string
+		// from is the address in the URL; the fixture holds DEC-1@published,
+		// REQ-1, and BARE-1 (an unfaced decision).
+		from, to string
+		gate     perEndpointGate
+		want     int
+	}{
+		// Tail face deleted (DEC-1@draft), entity and head alive.
+		{"deleted tail, published-only reader", "DEC-1@draft", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"DEC-1": true, "REQ-1": true}, holdsPermission: true,
+			faces: map[string][]entity.Face{"decision": publishedOnly},
+		}, http.StatusNotFound},
+		{"deleted tail, draft reader", "DEC-1@draft", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"DEC-1": true, "REQ-1": true}, holdsPermission: true,
+			faces: map[string][]entity.Face{"decision": allFaces},
+		}, http.StatusOK},
+		{"deleted tail, head unreadable", "DEC-1@draft", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"DEC-1": true}, holdsPermission: true,
+			faces: map[string][]entity.Face{"decision": allFaces},
+		}, http.StatusNotFound},
+		{"deleted tail, entity unreadable", "DEC-1@draft", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"REQ-1": true}, holdsPermission: true,
+			faces: map[string][]entity.Face{"decision": allFaces},
+		}, http.StatusNotFound},
+		{"deleted tail, no history permission", "DEC-1@draft", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"DEC-1": true, "REQ-1": true},
+			faces: map[string][]entity.Face{"decision": allFaces},
+		}, http.StatusNotFound},
+
+		// Tail entity wholly gone, head alive.
+		{"gone tail, head unreadable", "GONE-A", "REQ-1", perEndpointGate{
+			holdsPermission: true,
+		}, http.StatusNotFound},
+		{"gone tail, head readable", "GONE-A", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"REQ-1": true}, holdsPermission: true,
+		}, http.StatusOK},
+		{"gone tail, no history permission", "GONE-A", "REQ-1", perEndpointGate{
+			allow: map[string]bool{"REQ-1": true},
+		}, http.StatusNotFound},
+
+		// Head gone, tail alive.
+		{"gone head, tail unreadable", "BARE-1", "GONE-B", perEndpointGate{
+			holdsPermission: true,
+		}, http.StatusNotFound},
+		{"gone head, tail readable", "BARE-1", "GONE-B", perEndpointGate{
+			allow: map[string]bool{"BARE-1": true}, holdsPermission: true,
+		}, http.StatusOK},
+		{"gone head, no history permission", "BARE-1", "GONE-B", perEndpointGate{
+			allow: map[string]bool{"BARE-1": true},
+		}, http.StatusNotFound},
+	}
+
+	newApp := func(t *testing.T, from, to string) *App {
+		t.Helper()
+		f := &fixture{}
+		published := entity.New("DEC-1", "decision")
+		published.Face = "published"
+		f.AddNode(published)
+		f.AddNode(entity.New("BARE-1", "decision"))
+		f.AddNode(entity.New("REQ-1", "requirement"))
+		app := newAppFromParts(nil, testMeta(), f)
+		ref, err := entity.ParseRef(from)
+		if err != nil {
+			t.Fatalf("parse %q: %v", from, err)
+		}
+		app.versions = relHistoryStore{versions: map[string][]store.RelationVersionSnapshot{
+			relKey(ref.ID, ref.Face, "addresses", to): {{
+				RelationVersionMeta: store.RelationVersionMeta{
+					Version: 1, Op: store.VersionOpDelete, From: ref.ID, Type: "addresses", To: to,
+				},
+				Content: "hidden history body",
+			}},
+		}}
+		return app
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			base := "/api/v1/_relation_history/decision/" + tc.from + "/addresses/" + tc.to
+			app := newApp(t, tc.from, tc.to)
+			for _, path := range []string{base, base + "/1", base + "/_lifetimes"} {
+				req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+				req = req.WithContext(withReadGate(t.Context(), tc.gate))
+				rec := httptest.NewRecorder()
+				handleV1RelationHistory(app, rec, req)
+				if rec.Code != tc.want {
+					t.Errorf("GET %s = %d, want %d; body=%s", path, rec.Code, tc.want, rec.Body)
+				}
+				if tc.want == http.StatusNotFound && strings.Contains(rec.Body.String(), "hidden history body") {
+					t.Errorf("GET %s leaked the snapshot body", path)
+				}
+			}
+
+			req := httptest.NewRequest(http.MethodPost, base+"/1/restore", http.NoBody)
+			req = req.WithContext(withReadGate(t.Context(), tc.gate))
+			rec := httptest.NewRecorder()
+			handleV1RelationHistory(app, rec, req)
+			if gotNotFound := rec.Code == http.StatusNotFound; gotNotFound != (tc.want == http.StatusNotFound) {
+				t.Errorf("restore = %d, want the gate outcome of GET (%d); body=%s", rec.Code, tc.want, rec.Body)
+			}
+		})
 	}
 }

@@ -45,7 +45,7 @@ func (c *countingReader) ListEntities(
 	}
 }
 
-func (c *countingReader) GetEntity(context.Context, string) (*entity.Entity, error) {
+func (c *countingReader) GetAddress(context.Context, string) (*entity.Entity, error) {
 	return nil, errStubRead
 }
 

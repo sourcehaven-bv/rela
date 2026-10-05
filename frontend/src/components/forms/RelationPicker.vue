@@ -8,13 +8,16 @@ import type { FormFieldOrRelation, Entity, RelationEntry, RelationAffordance } f
 import InlineCreateFormModal from './InlineCreateFormModal.vue'
 import { useInlineCreate } from '@/composables/useInlineCreate'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
-import { useWorld } from '@/composables/useWorld'
+import { DEFAULT_WORLD, useWorld } from '@/composables/useWorld'
 import {
   missingIds,
   mergeResolvedLinks,
   indexKnownEntities,
   resolveSelected,
 } from './outOfPageLinks'
+import { faceCandidates, mergeFamilyCandidates, offersFace, widenWorlds } from './familyCandidates'
+import { addressedEntry } from './relationsPatch'
+import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 
 // Per-edge state emitted on the incoming-changed channel after
 // TKT-GFQK unified the save path. DynamicForm wraps this into a
@@ -62,11 +65,15 @@ const entitiesStore = useEntitiesStore()
 // world's faces (BUG-3). This is the prerequisite for the face badge below:
 // labelling rows that the query chose without regard to worlds would put a
 // truthful-looking badge on a row picked by the wrong rule.
-const { worldParam } = useWorld()
+const { world, worldParam } = useWorld()
 
 // State
 const loading = ref(false)
 const candidates = ref<Entity[]>([])
+// Candidates the ambient world does not serve, offered on a face some other
+// world serves (see familyCandidates.ts), mapped to that face's label, which
+// the row shows. Keyed by offWorldKey: two target types may share an id.
+const offWorldFaces = ref<Map<string, string>>(new Map())
 const searchQuery = ref('')
 const showDropdown = ref(false)
 const showCreateModal = ref(false)
@@ -91,9 +98,12 @@ const isIncoming = computed(() => props.field.direction === 'incoming')
 // affordances render unless explicitly denied.
 const canCreate = computed(() => props.verdict?.creatable !== false)
 const canRemove = computed(() => props.verdict?.removable !== false)
+// Incoming rows are keyed by address (addressedEntry): an incoming
+// content-scoped edge belongs to one face of its source, so `POL-1@draft` and
+// `POL-1@published` are two rows.
 const incomingValue = ref<string[]>([])
 const incomingOriginal = ref<string[]>([])
-// Snapshot of the loaded edges keyed by ID. Used by the new
+// Snapshot of the loaded edges keyed by address. Used by the new
 // emitIncomingDiff to construct a RelationEntry-shaped payload
 // without a second GET. Empty until loadIncomingValue succeeds.
 const incomingLoadedEntries = ref<RelationEntry[]>([])
@@ -153,6 +163,54 @@ const isMulti = computed(() => {
 
 const effectiveValue = computed(() => (isIncoming.value ? incomingValue.value : props.value))
 
+// Whether a source picks a face: an incoming content-scoped edge from a type
+// with faces. Its candidates are one row per face (faceCandidates).
+function picksFace(sourceType: string): boolean {
+  return isIncoming.value && relationType.value?.scope === 'content' && hasFaces(sourceType)
+}
+
+// The key a candidate is selected under: its address when it picks a face,
+// else its id.
+function candidateKey(e: Entity): string {
+  return picksFace(e.type) ? entityRef(e) : e.id
+}
+
+const candidatesByKey = computed(() => new Map(candidates.value.map((c) => [candidateKey(c), c])))
+
+// One chip of an incoming picker. `face` names the source face the edge
+// belongs to ('' for an identity edge); `editable` is false when the server
+// reports the principal may not remove it.
+interface IncomingChip {
+  key: string
+  entity: Entity
+  face: string
+  editable: boolean
+}
+
+const incomingChips = computed<IncomingChip[]>(() => {
+  const loaded = new Map(incomingLoadedEntries.value.map((e) => [e.id, e]))
+  return incomingValue.value.map((key) => {
+    const entry = loaded.get(key)
+    const entity =
+      candidatesByKey.value.get(key) ??
+      knownById.value.get(refBareId(key)) ??
+      ({ id: refBareId(key), type: entry?.type ?? '', properties: {} } as Entity)
+    return { key, entity, face: entry?.face ?? refFace(key), editable: entry?.editable !== false }
+  })
+})
+
+// The chips grouped by face, in first-seen order. A widget with no faced row
+// has one group with face ''.
+const incomingGroups = computed(() => {
+  const groups = new Map<string, IncomingChip[]>()
+  for (const chip of incomingChips.value) {
+    const g = groups.get(chip.face) ?? []
+    g.push(chip)
+    groups.set(chip.face, g)
+  }
+  return [...groups.entries()].map(([face, chips]) => ({ face, chips }))
+})
+
 const knownById = computed(() => indexKnownEntities(resolvedLinks.value, candidates.value))
 
 const selectedEntities = computed(() => resolveSelected(effectiveValue.value, knownById.value))
@@ -162,55 +220,117 @@ const selectedEntities = computed(() => resolveSelected(effectiveValue.value, kn
 // SEE and remove cannot be re-added from here. Making search hit the search
 // endpoint instead of the cached page is the real fix, and is its own change.
 const filteredCandidates = computed(() => {
-  if (!searchQuery.value) {
-    return candidates.value.filter((c) => !effectiveValue.value.includes(c.id))
-  }
+  const offered = candidates.value.filter(
+    (c) => !effectiveValue.value.includes(candidateKey(c)) && (!picksFace(c.type) || offersFace(c))
+  )
+  if (!searchQuery.value) return offered
   const query = searchQuery.value.toLowerCase()
-  return candidates.value.filter(
-    (c) =>
-      !effectiveValue.value.includes(c.id) &&
-      (c.id.toLowerCase().includes(query) || (c._title ?? '').toLowerCase().includes(query))
+  return offered.filter(
+    (c) => c.id.toLowerCase().includes(query) || (c._title ?? '').toLowerCase().includes(query)
   )
 })
 
 // Methods
+// Bumped per loadCandidates run, so a slower earlier run (a mount racing the
+// reload after an inline create) cannot overwrite a newer result.
+let candidatesGeneration = 0
+
 async function loadCandidates() {
+  const generation = ++candidatesGeneration
   loading.value = true
   try {
-    const allCandidates: Entity[] = []
-    for (const targetType of targetTypes.value) {
-      // fetchAllList, not fetchList: `candidates` is not just what the dropdown
-      // offers, it is also the ONLY source for `buildOutgoingTypes`, which must
-      // name the type of every ALREADY-LINKED target — including ones the user
-      // will never scroll to. One page left anything past the first 100
-      // unresolvable, so `reshapeLegacyToModern` returned null and the form's
-      // entire relations autosave aborted with "unknown types" (BUG-HOB9BR).
-      const result = await entitiesStore.fetchAllList(targetType, {
-        ...(worldParam.value ? { world: worldParam.value } : {}),
-      })
-      allCandidates.push(...result.data)
-      // has_more on a MERGED all-pages response means `listAllEntities` hit its
-      // 50-page cap, so the set is knowingly incomplete and BUG-HOB9BR is live
-      // again past that boundary. Worth a warning specifically because the
-      // user-facing message for that failure ("reload the form and try again")
-      // is advice that cannot work — a reload refetches the same 50 pages.
-      // Same reasoning as KanbanView's truncation banner.
-      if (result.meta.has_more) {
-        console.warn(
-          `RelationPicker: candidate list for "${targetType}" is truncated at the ` +
-            `page cap; relation saves may fail for targets beyond it (BUG-HOB9BR).`
-        )
-      }
-    }
-    candidates.value = allCandidates
+    // Target types load in parallel; Promise.all keeps their order.
+    const perType = await Promise.all(targetTypes.value.map(loadTypeCandidates))
+    if (generation !== candidatesGeneration) return
+    const hints = new Map<string, string>()
+    for (const { offWorld } of perType) offWorld.forEach((face, key) => hints.set(key, face))
+    candidates.value = perType.flatMap((t) => t.rows)
+    offWorldFaces.value = hints
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
     if (isCancelledFetch(err)) return
     console.error('Failed to load relation candidates:', err)
   } finally {
-    loading.value = false
+    if (generation === candidatesGeneration) loading.value = false
   }
+}
+
+// The candidates of one target type, and the face label of each row the
+// ambient world does not serve, keyed by offWorldKey.
+async function loadTypeCandidates(
+  targetType: string
+): Promise<{ rows: Entity[]; offWorld: Map<string, string> }> {
+  // fetchAllList, not fetchList: `candidates` is not just what the dropdown
+  // offers, it is also the ONLY source for `buildOutgoingTypes`, which must
+  // name the type of every ALREADY-LINKED target — including ones the user
+  // will never scroll to. One page left anything past the first 100
+  // unresolvable, so `reshapeLegacyToModern` returned null and the form's
+  // entire relations autosave aborted with "unknown types" (BUG-HOB9BR).
+  // A source that picks a face is read with the relation context, so each
+  // face row says whether this edge may be created from it (offersFace).
+  const perFace = picksFace(targetType)
+  const link = perFace ? { relation: props.field.relation, direction: 'incoming' as const } : {}
+  const ambient = entitiesStore.fetchAllList(targetType, {
+    ...(worldParam.value ? { world: worldParam.value } : {}),
+    ...link,
+  })
+  // A faced target is widened to every face the reader may read: the
+  // relation's head is the entity, so a face the ambient world excludes
+  // is still a valid target (DEC-NPZICR, BUG-FYEEVX). A faceless type
+  // resolves to its one row in every world, so it needs no second query.
+  const worlds = hasFaces(targetType) ? widenWorlds(schemaStore.worlds, ambientWorld()) : []
+  const widened = Promise.allSettled(
+    worlds.map((w) => entitiesStore.fetchAllList(targetType, { world: w, ...link }))
+  )
+  // The ambient list is the core of the picker, and its failure fails the load.
+  // A widened list is an extra: one that fails is logged and left out, so the
+  // rows the ambient world serves are still offered.
+  const result = await ambient
+  const others: Entity[][] = []
+  for (const [i, settled] of (await widened).entries()) {
+    if (settled.status === 'fulfilled') {
+      others.push(settled.value.data)
+      warnIfTruncated(targetType, settled.value.meta.has_more)
+    } else if (!isCancelledFetch(settled.reason)) {
+      console.error(
+        `RelationPicker: candidates for "${targetType}" in world "${worlds[i]}" failed:`,
+        settled.reason
+      )
+    }
+  }
+  warnIfTruncated(targetType, result.meta.has_more)
+  if (perFace) {
+    // Every row names its face: the face is what the user picks.
+    const rows = faceCandidates([result.data, ...others])
+    const labels = new Map<string, string>()
+    for (const e of rows) {
+      labels.set(offWorldKey(e), schemaStore.faceLabel(e.type, refFace(entityRef(e))))
+    }
+    return { rows, offWorld: labels }
+  }
+  const merged = mergeFamilyCandidates(result.data, others)
+  const offWorld = new Map<string, string>()
+  for (const e of merged.rows) {
+    if (merged.offWorld.has(e.id)) {
+      offWorld.set(offWorldKey(e), schemaStore.faceLabel(e.type, refFace(entityRef(e))))
+    }
+  }
+  return { rows: merged.rows, offWorld }
+}
+
+// has_more on a MERGED all-pages response means `listAllEntities` hit its
+// 50-page cap, so the set is knowingly incomplete and BUG-HOB9BR is live
+// again past that boundary. Worth a warning specifically because the
+// user-facing message for that failure ("reload the form and try again")
+// is advice that cannot work — a reload refetches the same 50 pages.
+// Same reasoning as KanbanView's truncation banner.
+function warnIfTruncated(targetType: string, hasMore: boolean | undefined) {
+  if (!hasMore) return
+  console.warn(
+    `RelationPicker: candidate list for "${targetType}" is truncated at the ` +
+      `page cap; relation saves may fail for targets beyond it (BUG-HOB9BR).`
+  )
 }
 
 // Resolve the type of every linked entity the candidate page omits
@@ -284,10 +404,11 @@ async function loadIncomingValue() {
       props.field.relation,
       'incoming'
     )
-    const ids = edges.map((e) => e.id)
+    const rows = edges.map(addressedEntry)
+    const ids = rows.map((e) => e.id)
     incomingValue.value = ids
     incomingOriginal.value = [...ids]
-    incomingLoadedEntries.value = edges
+    incomingLoadedEntries.value = rows
     incomingLoaded.value = true
   } catch (err) {
     if (isCancelledFetch(err)) return
@@ -324,8 +445,9 @@ function emitIncomingDiff() {
       currentEntries.push(fromLoaded)
       continue
     }
-    // Newly-added: look up the type from candidates.
-    const cand = candidates.value.find((c) => c.id === id)
+    // Newly-added: look up the type from candidates. The key already names
+    // the face a content-scoped edge from a faced peer hangs on.
+    const cand = candidatesByKey.value.get(id)
     if (cand) {
       currentEntries.push({ id, type: cand.type, direction: 'incoming' })
     }
@@ -354,7 +476,8 @@ function buildOutgoingTypes(ids: string[]): Map<string, string> {
 
 function selectEntity(entity: Entity) {
   if (isIncoming.value) {
-    incomingValue.value = isMulti.value ? [...incomingValue.value, entity.id] : [entity.id]
+    const key = candidateKey(entity)
+    incomingValue.value = isMulti.value ? [...incomingValue.value, key] : [key]
     emitIncomingDiff()
   } else {
     const next = isMulti.value ? [...props.value, entity.id] : [entity.id]
@@ -392,10 +515,34 @@ function removeEntity(entityId: string) {
  * disagree, WorldBadge wins: it renders nothing.
  */
 function showsFaceBadge(entity: Entity): boolean {
+  // An off-world row's `_world` describes the world that served it, not the
+  // ambient one, so its stand-in wording would mislead. It names its face
+  // instead (offWorldFace).
+  if (offWorldFaces.value.has(offWorldKey(entity))) return false
   const w = entity._world
   if (!w) return false
   if (w.via === 'fallback-default') return true
   return w.via === 'chain' && (w.chain_position ?? 0) > 0
+}
+
+function hasFaces(entityType: string): boolean {
+  return Object.keys(schemaStore.getEntityType(entityType)?.faces ?? {}).length > 0
+}
+
+// The world the candidate query reads in: the URL's, else the operator's
+// default. '' is the default world.
+function ambientWorld(): string {
+  return world.value || schemaStore.defaultWorld || DEFAULT_WORLD
+}
+
+function offWorldKey(entity: Entity): string {
+  return `${entity.type}/${entityRef(entity)}`
+}
+
+// The face label for a candidate the ambient world does not serve, so the
+// reader can tell a draft-only target from one the world shows. '' otherwise.
+function offWorldFace(entity: Entity): string {
+  return offWorldFaces.value.get(offWorldKey(entity)) ?? ''
 }
 
 function formatEntityLabel(entity: Entity): string {
@@ -480,8 +627,39 @@ onBeforeUnmount(() => {
       {{ label }}
     </label>
 
+    <!-- Incoming: grouped per source face; a row the principal may not
+         remove is locked. -->
+    <template v-if="isIncoming">
+      <div v-for="group in incomingGroups" :key="group.face" class="selected-group">
+        <span v-if="group.face" class="group-face">{{
+          schemaStore.faceLabel(group.chips[0].entity.type, group.face)
+        }}</span>
+        <div class="selected-entities">
+          <div v-for="chip in group.chips" :key="chip.key" class="selected-entity">
+            <span class="entity-type">{{ chip.entity.type }}</span>
+            <span class="entity-label">{{ formatEntityLabel(chip.entity) }}</span>
+            <span
+              v-if="!chip.editable"
+              class="lock"
+              title="You cannot change this face's relations"
+              aria-label="read-only"
+              >🔒</span
+            >
+            <button
+              v-else-if="canRemove"
+              type="button"
+              class="remove-btn"
+              @click="removeEntity(chip.key)"
+            >
+              &times;
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
+
     <!-- Selected entities -->
-    <div v-if="selectedEntities.length" class="selected-entities">
+    <div v-else-if="selectedEntities.length" class="selected-entities">
       <div v-for="entity in selectedEntities" :key="entity.id" class="selected-entity">
         <span class="entity-type">{{ entity.type }}</span>
         <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
@@ -489,7 +667,12 @@ onBeforeUnmount(() => {
           TRAILING, after the title: the type chip leads and the face badge
           follows, matching how the rest of the app orders the two.
         -->
-        <WorldBadge v-if="showsFaceBadge(entity)" :world="entity._world" :entity-type="entity.type" />
+        <WorldBadge
+          v-if="showsFaceBadge(entity)"
+          :world="entity._world"
+          :entity-type="entity.type"
+        />
+        <span v-if="offWorldFace(entity)" class="face-hint">{{ offWorldFace(entity) }}</span>
         <button v-if="canRemove" type="button" class="remove-btn" @click="removeEntity(entity.id)">
           &times;
         </button>
@@ -525,7 +708,12 @@ onBeforeUnmount(() => {
         >
           <span class="entity-type">{{ entity.type }}</span>
           <span class="entity-label">{{ formatEntityLabel(entity) }}</span>
-          <WorldBadge v-if="showsFaceBadge(entity)" :world="entity._world" :entity-type="entity.type" />
+          <WorldBadge
+            v-if="showsFaceBadge(entity)"
+            :world="entity._world"
+            :entity-type="entity.type"
+          />
+          <span v-if="offWorldFace(entity)" class="face-hint">{{ offWorldFace(entity) }}</span>
         </div>
         <div v-if="filteredCandidates.length > 10" class="dropdown-more">
           +{{ filteredCandidates.length - 10 }} more...
@@ -616,6 +804,27 @@ onBeforeUnmount(() => {
 
 .remove-btn:hover {
   color: var(--rl-color-danger, #ef4444);
+}
+
+.selected-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group-face {
+  font-size: 12px;
+  color: var(--rl-color-text-muted);
+}
+
+.lock {
+  font-size: 12px;
+}
+
+.face-hint {
+  margin-left: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--muted-text);
 }
 
 .search-wrapper {

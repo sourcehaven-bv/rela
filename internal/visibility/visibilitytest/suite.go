@@ -35,18 +35,35 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
+// ResolvingReader is a Reader that also exposes its single-entity read, as
+// [visibility.PolicyReader] and [visibility.AllowAllReader] do.
+type ResolvingReader interface {
+	visibility.Reader
+	Resolver() *visibility.Resolver
+}
+
 // ReaderMaker builds the Reader under test from the suite's collaborators.
 // Production impls compose exactly these three; a wiring under test (PR
 // 2/3) adapts its own construction to this shape.
 type ReaderMaker func(
-	t *testing.T, gate visibility.RowGate, redact visibility.FieldRedactor, get visibility.EntityGetter,
-) visibility.Reader
+	t *testing.T, gate visibility.RowGate, redact visibility.FieldRedactor, load visibility.Loader,
+) ResolvingReader
+
+// getOne reads one entity through r's resolver in the default world.
+func getOne(
+	ctx context.Context, t *testing.T, r ResolvingReader, typ, id string,
+) (*entity.Entity, bool, error) {
+	t.Helper()
+	res, found, err := r.Resolver().Address(ctx, visibility.WorldOf(store.TrivialScope()), typ, id)
+	return res.Entity, found, err
+}
 
 // TracerMaker builds the visibility-decorated tracer under test over the
-// suite's base tracer and collaborators.
+// suite's base tracer and collaborators. st is the store the base tracer
+// reads, for header and edge reads.
 type TracerMaker func(
 	t *testing.T, base tracer.Tracer,
-	gate visibility.RowGate, redact visibility.FieldRedactor, get visibility.EntityGetter,
+	gate visibility.RowGate, redact visibility.FieldRedactor, st store.Store,
 ) tracer.Tracer
 
 // world is the canonical fixture: a seeded memstore plus the real ACL
@@ -142,7 +159,7 @@ func newWorld(t *testing.T) *world {
 		{"SEC-3", "relates", "SEC-4"},
 		{"SEC-4", "relates", "SEC-3"},
 	} {
-		if _, err := st.CreateRelation(ctx, r[0], r[1], r[2], nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r[0], Type: r[1], To: r[2]}, nil); err != nil {
 			t.Fatalf("seed relation %v: %v", r, err)
 		}
 	}
@@ -159,7 +176,7 @@ func newWorld(t *testing.T) *world {
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("NewDeclarativeGate: %v", err)
 	}
@@ -167,7 +184,11 @@ func newWorld(t *testing.T) *world {
 	if err != nil {
 		t.Fatalf("NewPolicyRedactor: %v", err)
 	}
-	return &world{store: st, base: tracer.New(st), gate: gate, redact: redact}
+	base, err := tracer.New(st, store.TrivialScope())
+	if err != nil {
+		t.Fatalf("tracer.New: %v", err)
+	}
+	return &world{store: st, base: base, gate: gate, redact: redact}
 }
 
 // storeLookup implements affordances.RelationLookup over the store.
@@ -207,7 +228,7 @@ func ctxFor(user string) context.Context {
 // for parity and no-mutation assertions.
 func mustGet(t *testing.T, st store.Store, id string) *entity.Entity {
 	t.Helper()
-	e, err := st.GetEntity(context.Background(), id)
+	e, err := st.GetEntity(context.Background(), entity.Ref{ID: id})
 	if err != nil {
 		t.Fatalf("store.GetEntity(%s): %v", id, err)
 	}
@@ -238,8 +259,8 @@ func testHiddenEqualsMissing(t *testing.T, mk ReaderMaker) {
 	r := mk(t, w.gate, w.redact, w.store)
 	ctx := ctxFor("bob")
 
-	eHidden, okHidden, errHidden := r.Get(ctx, "secret", "SEC-1")
-	eMissing, okMissing, errMissing := r.Get(ctx, "secret", "SEC-404")
+	eHidden, okHidden, errHidden := getOne(ctx, t, r, "secret", "SEC-1")
+	eMissing, okMissing, errMissing := getOne(ctx, t, r, "secret", "SEC-404")
 	if eHidden != nil || okHidden || errHidden != nil {
 		t.Fatalf("hidden Get = (%v,%v,%v), want (nil,false,nil)", eHidden, okHidden, errHidden)
 	}
@@ -257,13 +278,13 @@ func testStoredTypeMismatch(t *testing.T, mk ReaderMaker) {
 	// CLAIM — the stored entity is a secret he cannot read. The in-package
 	// stored-type check must turn this into a miss (RR-SRZK6X, the
 	// BUG-ZWTDH9 read-side analog).
-	e, ok, err := r.Get(ctxFor("bob"), "project", "SEC-1")
+	e, ok, err := getOne(ctxFor("bob"), t, r, "project", "SEC-1")
 	if e != nil || ok || err != nil {
 		t.Fatalf("cross-type Get = (%v,%v,%v), want (nil,false,nil)", e, ok, err)
 	}
 	// Even a fully-privileged principal gets a miss on a wrong claim: the
 	// check is Reader semantics, not policy.
-	e, ok, err = r.Get(ctxFor("alice"), "project", "P-1")
+	e, ok, err = getOne(ctxFor("alice"), t, r, "project", "P-1")
 	if e != nil || ok || err != nil {
 		t.Fatalf("alice cross-type Get = (%v,%v,%v), want (nil,false,nil)", e, ok, err)
 	}
@@ -275,7 +296,7 @@ func testRedactsOnCopy(t *testing.T, mk ReaderMaker) {
 	r := mk(t, w.gate, w.redact, w.store)
 	beforeProps := maps.Clone(mustGet(t, w.store, "P-1").Properties)
 
-	e, ok, err := r.Get(ctxFor("bob"), "person", "P-1")
+	e, ok, err := getOne(ctxFor("bob"), t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("Get person P-1 = (ok=%v, err=%v)", ok, err)
 	}
@@ -296,7 +317,7 @@ func testHiddenTitleFallback(t *testing.T, mk ReaderMaker) {
 	w := newWorld(t)
 	r := mk(t, w.gate, w.redact, w.store)
 
-	e, ok, err := r.Get(ctxFor("carol"), "person", "P-1")
+	e, ok, err := getOne(ctxFor("carol"), t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("Get person P-1 = (ok=%v, err=%v)", ok, err)
 	}
@@ -371,10 +392,10 @@ func testFilterRelations(t *testing.T, mk ReaderMaker) {
 	if len(out) != 1 || out[0].From != "PRJ-1" || out[0].To != "P-1" {
 		t.Fatalf("FilterRelations = %v, want only PRJ-1→P-1", out)
 	}
-	// Batched endpoint gating: one PermitsReadMany per distinct endpoint
+	// Batched endpoint gating: one ReadableFacesMany per distinct endpoint
 	// type (project, secret, person = 3), not per endpoint.
 	if counting.many > 3 {
-		t.Fatalf("FilterRelations made %d PermitsReadMany calls, want ≤3 (one per distinct type)", counting.many)
+		t.Fatalf("FilterRelations made %d ReadableFacesMany calls, want ≤3 (one per distinct type)", counting.many)
 	}
 	if got := r.FilterRelations(ctxFor("bob"), nil); got != nil {
 		t.Fatalf("FilterRelations(nil) = %v, want nil", got)
@@ -410,7 +431,7 @@ func testBindScopesOperation(t *testing.T, mk ReaderMaker) {
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
-	e, ok, err := r.Get(bound, "person", "P-1")
+	e, ok, err := getOne(bound, t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("Get through bound ctx = (ok=%v, err=%v)", ok, err)
 	}
@@ -434,7 +455,7 @@ func testUnstampedPrincipal(t *testing.T, mk ReaderMaker) {
 	r := mk(t, w.gate, w.redact, w.store)
 
 	// No principal on ctx → ForPrincipal rejects → gate error → deny.
-	e, ok, err := r.Get(context.Background(), "project", "PRJ-1")
+	e, ok, err := getOne(context.Background(), t, r, "project", "PRJ-1")
 	if err == nil {
 		t.Fatalf("unstamped Get = (%v,%v,nil), want gate error (fail closed, never open)", e, ok)
 	}
@@ -451,7 +472,7 @@ func testHideEverythingRedactor(t *testing.T, mk ReaderMaker) {
 	w := newWorld(t)
 	r := mk(t, w.gate, hideAllRedactor{}, w.store)
 
-	e, ok, err := r.Get(ctxFor("alice"), "person", "P-1")
+	e, ok, err := getOne(ctxFor("alice"), t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("Get = (ok=%v, err=%v)", ok, err)
 	}
@@ -467,7 +488,7 @@ func testReaderNopParity(t *testing.T, mk ReaderMaker) {
 	ctx := context.Background() // parity must hold even without a principal
 
 	raw := mustGet(t, w.store, "P-1")
-	e, ok, err := r.Get(ctx, "person", "P-1")
+	e, ok, err := getOne(ctx, t, r, "person", "P-1")
 	if err != nil || !ok {
 		t.Fatalf("nop Get = (ok=%v, err=%v)", ok, err)
 	}
@@ -491,7 +512,7 @@ func testReaderRaceSmoke(t *testing.T, mk ReaderMaker) {
 		go func(user string) {
 			defer wg.Done()
 			ctx := ctxFor(user) // independent ctx per goroutine: fresh acl.Request per call
-			_, _, _ = r.Get(ctx, "person", "P-1")
+			_, _, _ = getOne(ctx, t, r, "person", "P-1")
 			_ = r.Filter(ctx, []*entity.Entity{mustGet(t, w.store, "PRJ-1")})
 		}([]string{"alice", "bob", "carol"}[i%3])
 	}
@@ -574,8 +595,15 @@ func testOrphansFiltered(t *testing.T, mk TracerMaker) {
 	if err != nil {
 		t.Fatalf("FindOrphans: %v", err)
 	}
-	if !reflect.DeepEqual(got, []string{"PRJ-3"}) {
-		t.Fatalf("orphans for bob = %v, want [PRJ-3] (SEC-2 hidden)", got)
+	ids := make([]string, 0, len(got))
+	for _, o := range got {
+		ids = append(ids, o.ID)
+	}
+	// Gate before fold (A4, RR-VN71BT): PRJ-2 and PRJ-4 are connected only
+	// through hidden secrets, so for bob they are orphans. Leaving them out
+	// would disclose that a hidden edge exists. SEC-2 is hidden itself.
+	if !reflect.DeepEqual(ids, []string{"PRJ-2", "PRJ-3", "PRJ-4"}) {
+		t.Fatalf("orphans for bob = %v, want [PRJ-2 PRJ-3 PRJ-4] (SEC-2 hidden)", got)
 	}
 }
 
@@ -680,7 +708,7 @@ func testTracerNopParity(t *testing.T, mk TracerMaker) {
 
 // --- suite stubs -----------------------------------------------------------
 
-// erroringGate fails PermitsRead/Many for one type and delegates the rest.
+// erroringGate fails the row gate for one type and delegates the rest.
 type erroringGate struct {
 	inner    visibility.RowGate
 	failType string
@@ -693,13 +721,13 @@ func (g *erroringGate) PermitsRead(ctx context.Context, entityType, id string) (
 	return g.inner.PermitsRead(ctx, entityType, id)
 }
 
-func (g *erroringGate) PermitsReadMany(
+func (g *erroringGate) ReadableFacesMany(
 	ctx context.Context, entityType string, ids []string,
-) (map[string]bool, error) {
+) (acl.FaceVerdicts, error) {
 	if entityType == g.failType {
-		return nil, errGate
+		return acl.FaceVerdicts{}, errGate
 	}
-	return g.inner.PermitsReadMany(ctx, entityType, ids)
+	return g.inner.ReadableFacesMany(ctx, entityType, ids)
 }
 
 var errGate = &gateError{}
@@ -708,7 +736,7 @@ type gateError struct{}
 
 func (*gateError) Error() string { return "visibilitytest: deliberate gate failure" }
 
-// countingGate counts PermitsReadMany calls (batching assertions).
+// countingGate counts ReadableFacesMany calls (batching assertions).
 type countingGate struct {
 	inner visibility.RowGate
 	many  int
@@ -718,11 +746,11 @@ func (g *countingGate) PermitsRead(ctx context.Context, entityType, id string) (
 	return g.inner.PermitsRead(ctx, entityType, id)
 }
 
-func (g *countingGate) PermitsReadMany(
+func (g *countingGate) ReadableFacesMany(
 	ctx context.Context, entityType string, ids []string,
-) (map[string]bool, error) {
+) (acl.FaceVerdicts, error) {
 	g.many++
-	return g.inner.PermitsReadMany(ctx, entityType, ids)
+	return g.inner.ReadableFacesMany(ctx, entityType, ids)
 }
 
 // hideAllRedactor hides every property — the FieldRedactor fail-closed
@@ -776,4 +804,20 @@ func keys(m map[string]bool) string {
 		out = append(out, k)
 	}
 	return strings.Join(out, ",")
+}
+
+// IDVerdicts adapts a face-blind test verdict to [visibility.RowGate]: each
+// permitted id reads every face, and every other id reads none. It is for
+// test doubles whose policy does not depend on the face.
+func IDVerdicts(permitted map[string]bool, err error) (acl.FaceVerdicts, error) {
+	if err != nil {
+		return acl.FaceVerdicts{}, err
+	}
+	byID := make(map[string]acl.FaceVerdict, len(permitted))
+	for id, ok := range permitted {
+		if ok {
+			byID[id] = acl.AllFacesVerdict()
+		}
+	}
+	return acl.PerEntityVerdicts(byID), nil
 }

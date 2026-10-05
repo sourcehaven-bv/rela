@@ -3,13 +3,16 @@ package analysis_test
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // newFSService builds an analysis.Service with a real (in-memory) filesystem,
@@ -31,10 +34,10 @@ func newFSService(t *testing.T, files map[string]string) *analysis.Service {
 
 	st := memstore.New()
 	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{}}
-	tr := tracer.New(st)
+	tr := tracertest.Must(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr, FS: fs, Paths: paths,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: st, Tracer: tr, Meta: meta},
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), Tracer: tr, Meta: meta, World: store.TrivialScope()},
 	})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)
@@ -213,10 +216,10 @@ func TestCheckRelationFilenames_NoFS(t *testing.T) {
 
 	st := memstore.New()
 	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{}}
-	tr := tracer.New(st)
+	tr := tracertest.Must(st, store.TrivialScope())
 	svc, err := analysis.New(analysis.Deps{
 		Store: st, Meta: meta, Tracer: tr,
-		LuaReadDeps: lua.ReadDeps{VisibleReader: st, Tracer: tr, Meta: meta},
+		LuaReadDeps: lua.ReadDeps{VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), Tracer: tr, Meta: meta, World: store.TrivialScope()},
 	})
 	if err != nil {
 		t.Fatalf("analysis.New: %v", err)

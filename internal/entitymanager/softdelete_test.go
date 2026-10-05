@@ -62,7 +62,7 @@ func newSoftDeleteFixture(t *testing.T) softDeleteFixture {
 	dec.SetString("title", "D")
 	decRes, err := mgr.CreateEntity(ctx, dec, entity.CreateOptions{})
 	require.NoError(t, err)
-	_, err = mgr.CreateRelation(ctx, decRes.Entity.ID, "addresses", reqRes.Entity.ID, entity.RelationOptions{})
+	_, err = mgr.CreateRelation(ctx, entity.RelationKey{From: decRes.Entity.ID, Type: "addresses", To: reqRes.Entity.ID}, entity.RelationOptions{})
 	require.NoError(t, err)
 	return softDeleteFixture{mgr: mgr, st: st, sink: sink, versions: versions,
 		reqID: reqRes.Entity.ID, decID: decRes.Entity.ID}
@@ -93,7 +93,7 @@ func TestSoftDelete_RestoreRoundTrip(t *testing.T) {
 		auditOps(f.sink, before))
 	assert.Empty(t, f.versions.recs, "a mark records no version; an undo must leave none behind")
 
-	_, err = f.st.GetEntity(ctx, f.reqID)
+	_, err = f.st.GetEntity(ctx, entity.Ref{ID: f.reqID})
 	require.ErrorIs(t, err, store.ErrNotFound)
 	found, ok, err := entitymanager.FindSoftDeleted(ctx, f.mgr, f.reqID)
 	require.NoError(t, err)
@@ -104,10 +104,10 @@ func TestSoftDelete_RestoreRoundTrip(t *testing.T) {
 	_, err = entitymanager.RestoreEntity(ctx, f.mgr, f.reqID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"create-relation restored", "restore-entity restored"}, auditOps(f.sink, before))
-	got, err := f.st.GetEntity(ctx, f.reqID)
+	got, err := f.st.GetEntity(ctx, entity.Ref{ID: f.reqID})
 	require.NoError(t, err)
 	assert.Equal(t, "R", got.GetString("title"))
-	_, err = f.st.GetRelation(ctx, f.decID, "addresses", f.reqID)
+	_, err = f.st.GetRelation(ctx, entity.RelationKey{From: f.decID, Type: "addresses", To: f.reqID})
 	require.NoError(t, err)
 
 	_, err = entitymanager.RestoreEntity(ctx, f.mgr, f.reqID)
@@ -256,7 +256,7 @@ role_relations:
 	}
 	tkt, err := seed.CreateEntity(ctx, entity.New("", "ticket"), entity.CreateOptions{})
 	require.NoError(t, err)
-	_, err = seed.CreateRelation(ctx, "alice", "assigned-to", tkt.Entity.ID, entity.RelationOptions{})
+	_, err = seed.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "assigned-to", To: tkt.Entity.ID}, entity.RelationOptions{})
 	require.NoError(t, err)
 
 	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
@@ -290,7 +290,7 @@ func TestSoftDelete_RestoreUsesLocalRolesThroughReveal(t *testing.T) {
 
 	_, err = entitymanager.RestoreEntity(userCtx("alice"), mgr, tktID)
 	require.NoError(t, err, "alice's role comes from the hidden assigned-to edge")
-	_, err = st.GetRelation(context.Background(), "alice", "assigned-to", tktID)
+	_, err = st.GetRelation(context.Background(), entity.RelationKey{From: "alice", Type: "assigned-to", To: tktID})
 	require.NoError(t, err)
 }
 
@@ -314,8 +314,8 @@ func TestSoftDelete_RestoreChecksRelationGrants(t *testing.T) {
 	_, found, err := entitymanager.FindSoftDeleted(context.Background(), mgr, tktID)
 	require.NoError(t, err)
 	assert.True(t, found, "a refused restore unmarks nothing")
-	_, err = st.GetEntity(context.Background(), tktID)
+	_, err = st.GetEntity(context.Background(), entity.Ref{ID: tktID})
 	require.ErrorIs(t, err, store.ErrNotFound)
-	_, err = st.GetRelation(context.Background(), "alice", "assigned-to", tktID)
+	_, err = st.GetRelation(context.Background(), entity.RelationKey{From: "alice", Type: "assigned-to", To: tktID})
 	require.ErrorIs(t, err, store.ErrNotFound)
 }

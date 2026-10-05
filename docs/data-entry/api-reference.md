@@ -87,6 +87,45 @@ GET /api/v1/_search?q=type:ticket,feature sort:modified:desc&limit=8
 
 The editor's `@` mention menu uses this form to list recently modified entities.
 
+## Relation context on collection reads
+
+A relation picker can ask `GET /api/v1/_search` or `GET /api/v1/{plural}`
+whether each row may be the source of the edge it is about to create. Pass
+both parameters:
+
+| Parameter | Meaning |
+|---|---|
+| `relation` | The canonical name of a declared relation type. An inverse name or an undeclared type is a `400 invalid_relation`. |
+| `direction` | Must be `incoming`: each row is a candidate source and the edited entity is the target. Any other value, or a missing one, is a `400 invalid_direction`. |
+
+With both present, every served row carries `linkable`. It is `true` when the caller
+may create the `relation` edge from that row's face. Without them, rows carry
+no `linkable`.
+
+```text
+GET /api/v1/_search?q=type:policy&world=draft&relation=implements&direction=incoming
+GET /api/v1/policies?world=draft&per_page=100&relation=implements&direction=incoming
+```
+
+On a list, only the served page is judged. The answer costs a fixed number of
+extra store reads per request, not per row.
+
+The server computes `linkable` with the checks the write runs: the relation
+affordance (`_relations[rel].creatable`) on the source row, and the ACL
+request that `CreateRelation` authorizes. For a `scope: content` relation the
+edge belongs to the row's face. For an identity relation from a faced type,
+the ACL must allow it on every face the type declares, and the affordance is
+judged on each face of the source the caller can read. A face hidden from the
+caller never changes the answer. The target is not a parameter,
+because neither check reads it. This is why `linkable` can differ from the
+row's `_actions.update`: a relation create needs the source type's `create`
+grant (or a `relation_grants` create permission plus update on the face), and
+roles conferred on the entity itself do not count.
+
+`linkable` is a hint, like `_actions`; the write re-authorizes. Outgoing
+edges are not supported: their source is the edited entity, so the answer
+would be the same on every row.
+
 ## Relations field
 
 Each value of the `relations` map is one of TWO shapes:
@@ -97,14 +136,71 @@ Each value of the `relations` map is one of TWO shapes:
 {"tagged": {"data": [{"type": "label", "id": "L-001", "meta": {"weight": 5}}]}}
 ```
 
-The wrapper has exactly one field, `data`, which is an array of resource
-identifiers. Three cases for `data`:
+A wrapper is either a **replace** (`data`) or a **delta** (`add` and/or
+`remove`). Sending `data` beside `add` or `remove` returns 400
+`wrapper_invalid`.
+
+Three cases for `data`:
 
 1. **Relation type absent from the map** → leave all edges of that type alone.
-2. **`data: []`** → remove all edges of that type from this entity.
+2. **`data: []`** → remove all edges of that type from this entity that the
+   caller can read.
 3. **`data: [{type, id, ...}, ...]`** → the array IS the new desired set. Edges
-   in the list are kept (or upserted with new meta/content); edges currently in
-   the graph but absent from the list are removed.
+   in the list are kept (or upserted with new meta/content); edges the caller
+   can read that are absent from the list are removed.
+
+A replace never touches an edge the caller cannot read. An incoming edge whose
+source face is hidden from the caller is left alone, so a client cannot delete
+what it was never shown.
+
+An upsert that names an entity the caller cannot read, at either end of the
+edge, returns 422 `target_not_found`, exactly as for an id that does not exist.
+So does an incoming `ID@face` whose face the caller cannot read. Nothing is
+written.
+
+### Delta: `add` and `remove`
+
+```json
+{"tagged": {"add": [{"type": "label", "id": "L-003"}], "remove": [{"id": "L-001"}]}}
+```
+
+- `add` upserts each listed edge: it creates a missing edge and merges
+  `meta`/`content` into an existing one.
+- `remove` deletes each listed edge. Removing an edge that does not exist is a
+  no-op, so a retried request succeeds. `type` is optional on a removal.
+- Every edge not listed is left alone.
+- Naming one edge in both `add` and `remove` returns 400 `shape_conflict`.
+
+The data-entry SPA sends deltas only. A replace computed from what one user can
+see is a delete of whatever changed since, and a delta is not.
+
+### Incoming edges and faces
+
+An incoming edge of a content-scoped relation type (`scope: content`) belongs
+to one face of its source. `POL-1@draft` and `POL-1@published` citing this
+entity are two edges. In an incoming wrapper (an inverse key), `id` may name
+the source face as `ID@face`:
+
+- `ID@face` names that face's edge.
+- A bare `ID` names the edges that source already has to this entity. `data`
+  and `add` keep all of them. `remove` needs exactly one, and otherwise returns
+  422 `face_required`.
+- A bare `ID` with no edge yet resolves as a single create does: the source's
+  one writable face, or 422 `face_required` when there are several.
+
+`GET /api/v1/{plural}/{id}/relations` and `.../relations/{rel}?direction=incoming`
+list the incoming edges whose source face the caller can read. The ACL decides
+this; the world does not. Each such row of a content-scoped type carries:
+
+| Field | Meaning |
+|---|---|
+| `face` | The source face the edge belongs to. Address the edge as `ID@face`. |
+| `editable` | `false` when the caller may not remove the edge. A hint; the write re-authorizes. |
+
+The single-edge routes (`PATCH`/`DELETE .../relations/{rel}/{target}?direction=incoming`)
+accept `ID@face` as the target. A bare target that matches edges from several
+faces returns 422 `face_required`; one that matches no edge the caller can read
+returns 404 `relation_not_found`.
 
 ### ⚠️ Data-loss footgun
 
@@ -120,6 +216,7 @@ first auto-save fire silently wipes the entity's tagged edges.
   GET before issuing the first PATCH that touches `relations`.
 - **Omit unsubmitted relations.** If the user hasn't touched the relation
   type, don't send it. Absent → leave alone is the safe default.
+- **Prefer a delta.** `add`/`remove` cannot delete an edge it does not name.
 - **`data` field is required when the wrapper appears.** `{"tagged": {}}`
   returns 400, not a silent empty array. This catches the most common
   malformed-request case where a client constructed the wrapper but forgot
@@ -127,7 +224,7 @@ first auto-save fire silently wipes the entity's tagged edges.
 
 ### Per-edge fields
 
-Each entry in `data` is a resource identifier with these fields:
+Each entry in `data` or `add` is a resource identifier with these fields:
 
 | Field | Required? | Semantics |
 |---|---|---|
@@ -166,7 +263,9 @@ Detectable without consulting the metamodel.
 - Non-string element in `meta_unset` array (`meta_unset_invalid`)
 - `data` field has unexpected type (string, scalar, etc.)
 - `data: null` on a wrapper (treated same as missing)
-- Unknown sibling key in modern wrapper (only `data` allowed)
+- Unknown sibling key in modern wrapper (only `data`, `add` and `remove` allowed)
+- `data` beside `add` or `remove` (`wrapper_invalid`)
+- One edge in both `add` and `remove` (`shape_conflict`)
 
 ### Hard 422 — structural impossibilities
 
@@ -174,6 +273,7 @@ The storage layer literally cannot persist this state.
 
 - Unknown relation type (`unknown_relation_type`) — no defined storage location
 - Writing `content` on a relation type without `content: true` (`content_not_supported`) — the file format has no body slot
+- A bare source id that names several faces' incoming edges where one edge is needed (`face_required`)
 
 ### 200 + warnings — soft conditions surfaced inline
 
@@ -343,6 +443,17 @@ The closed set of verbs in phase 1, matching `acl.Op` exactly:
 | `update` | per-item | `OpUpdate` |
 | `delete` | per-item | `OpDelete` |
 | `rename` | per-item | `OpRename` |
+
+For a type that declares faces, the collection map also carries one
+`create@<face>` key per declared face, and `create` is true when any of
+them is. A faced type has no implicit face to create on, so `create` alone
+cannot say where a create may land. The SPA's create form reads these keys
+to offer a face picker when the form's world declares no `create:` face.
+
+`rename` on a faced entity is true only when the principal holds a `rename:`
+grant on its type, the rule the rename itself applies. A rename moves the
+whole family, so update grants on the faces do not count, and the answer does
+not depend on which faces exist.
 
 `transition:<state>` and `relation:<type>:add/remove` will follow once
 the ACL layer learns to represent them (gated on a separate ACL v0.5
@@ -812,6 +923,21 @@ instead.
 A `file` property can hold one attachment (the default) or several, when
 its metamodel `max` is set above 1 (see `docs/metamodel.md`).
 
+On an entity type with faces, `{id}` in every route below is an address,
+such as `POL-1@draft`. The bytes are stored once per entity and shared by
+its faces, but each face lists and serves only the files its own property
+value names. A file uploaded on `POL-1@draft` is therefore not visible
+through `POL-1@published` until a copy carries the reference. A write with a
+bare id of a faced entity is refused with `422 face_required`. The ACL grant for the
+addressed face applies: `update` on `policy@draft` to upload or delete,
+`read` on it to download.
+
+Only the attachment endpoints change a file property's value. A `PATCH` or
+`PUT` of the entity that changes a file value, or clears it, fails with
+`422`. A save that sends the current value back unchanged, or leaves the
+property out, succeeds. The value is what grants a face its files, so an
+ordinary write could otherwise point one face at another face's file.
+
 ### Metadata on per-entity GET
 
 Per-entity responses carry an `_attachments` map keyed by property name.
@@ -873,10 +999,10 @@ GET <_attachments[property][i].href>
 Streams one attachment's bytes. **Access inherits the owning entity's read
 permission** — a caller who cannot read the entity gets `404` (never
 `403`, and byte-identical to a genuinely missing attachment, so existence
-is not leaked). The bytes resolve from `(id, property, fileName)` only; no
-caller-supplied path reaches the filesystem (the store rejects separators
-in the file name), so there is no path-traversal surface and a renamed
-entity resolves by its current id.
+is not leaked). `fileName` must be a name the addressed face's own file
+property holds; the bytes resolve through that value's storage key, never
+from a caller-supplied path, so there is no path-traversal surface and a
+renamed entity resolves by its current id.
 
 Response headers: `Content-Type` (inferred from the filename),
 `Content-Disposition: inline; filename="…"` (sanitized), plus
@@ -897,9 +1023,10 @@ on the property's `max`:
 
 - **`max == 1`** (default): the upload **replaces** the existing file.
 - **`max > 1`**: the upload **appends**, up to `max`. A file whose
-  (normalized) name already exists is **auto-suffixed** (`report.pdf` →
-  `report (1).pdf`) so it never overwrites a sibling. Uploading past the cap
-  returns `409 attachment_limit`.
+  (normalized) name the face already holds is **auto-suffixed**
+  (`report.pdf` → `report (1).pdf`) so it never overwrites a sibling. Only
+  the addressed face's names count: another face's file of the same name
+  has its own bytes. Uploading past the cap returns `409 attachment_limit`.
 
 Concurrent uploads and deletes to the same property take turns, so the cap
 and the replace hold under concurrency. The write permission is checked again
@@ -932,8 +1059,10 @@ when persisting the property.
 DELETE /api/v1/{plural}/{id}/_attachments/{property}/{fileName}
 ```
 
-Removes one file and re-stamps the property from the remaining files;
-returns `204`. Idempotent (deleting a missing file still re-stamps and
-succeeds). Same `update`-permission inheritance as upload. The bytes are
-removed, then the property is persisted, so a persist failure leaves
-orphaned bytes rather than a property pointing at a missing file.
+Removes one file from the addressed face's property and returns `204`.
+Idempotent: deleting a file the face does not reference changes nothing
+and succeeds. Same `update`-permission inheritance as upload. The property
+is persisted first. The bytes are removed afterwards, and only when no
+other face of the entity still references the file, so a failure leaves
+unreferenced bytes rather than a property pointing at a missing file.
+Deleting a whole face also removes the bytes no remaining face references.

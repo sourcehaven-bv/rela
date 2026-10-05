@@ -10,14 +10,14 @@ import (
 
 // ShowCmd prints an entity and its incoming/outgoing relations.
 type ShowCmd struct {
-	ID string `arg:"" help:"Entity ID (e.g. REQ-001)."`
+	ID string `arg:"" help:"Entity address: ID, or ID@face for a type with faces (e.g. REQ-001, DOC-1@draft)."`
 }
 
 // Run dispatches `rela show <id>`.
 func (c *ShowCmd) Run(ctx context.Context, svc *readServices) error {
 	st := svc.Store
 
-	e, err := store.GetEntityAt(ctx, st, c.ID)
+	e, err := readAddress(ctx, st, svc.Families, svc.World, c.ID)
 	if err != nil {
 		return classifyReadError(c.ID, err)
 	}
@@ -33,7 +33,7 @@ func (c *ShowCmd) Run(ctx context.Context, svc *readServices) error {
 		incoming = append(incoming, r)
 	}
 	outQ := store.RelationQuery{EntityID: e.ID, Direction: store.DirectionOutgoing}
-	if !e.Face.IsDefault() {
+	if !e.Face.IsImplicit() {
 		// An outgoing edge is tailed at one face; show that face's own.
 		outQ.FromFace = &e.Face
 	}
@@ -58,7 +58,7 @@ func (e *entityNotFoundError) Error() string {
 	return "entity not found: " + e.ID
 }
 
-// classifyReadError maps a store.GetEntity error onto a user-facing
+// classifyReadError maps a read error onto a user-facing
 // type. Today it only distinguishes ErrNotFound from every other
 // error shape, but the indirection stays so future classes plug in
 // without touching every caller.

@@ -6,7 +6,7 @@ import { useSchemaStore, useEntitiesStore, useUIStore } from '@/stores'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { readReturnTo } from '@/utils/returnPath'
 import { pageTabPath, readFromPage } from '@/utils/pageContext'
-import { useWorld, DEFAULT_WORLD } from '@/composables/useWorld'
+import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 import { worldText } from '@/utils/worldText'
@@ -17,6 +17,7 @@ import {
   optionVerdictsFor as optionVerdictsForVerdict,
 } from '@/utils/affordances'
 import { isClearedForType } from '@/utils/formValue'
+import { useCreateFace } from '@/composables/useCreateFace'
 import { useEntityIDControls } from '@/composables/useEntityIDControls'
 import { useConfirm } from '@/composables/useConfirm'
 import { useHiddenFieldPolicy, clearWhenHiddenOf } from '@/composables/useHiddenFieldPolicy'
@@ -40,7 +41,9 @@ import type { RelationCardState } from './RelationCards.vue'
 import type { RelationPickerIncomingState } from './RelationPicker.vue'
 import {
   buildRelationsPatch,
+  confirmRelations,
   reshapeLegacyToModern,
+  type ConfirmedEdges,
   OUTGOING_SUFFIX,
   INCOMING_SUFFIX,
 } from './relationsPatch'
@@ -99,6 +102,12 @@ const props = defineProps<{
   embeddedLink?: { relation: string; peer: string; linkAs: 'from' | 'to' }
   embeddedTemplate?: string
   embeddedWorld?: string
+  /**
+   * The face an embedded create lands on, named directly. Wins over
+   * `embeddedWorld`; the server refuses a body naming both. Duplicate sets it
+   * so a copy of a draft is a draft whatever world the page is in.
+   */
+  embeddedFace?: string
   /**
    * Offer "Create & add another" in an EMBEDDED form. Off by default: a host
    * that links the new entity (a relation picker) waits for exactly one. A
@@ -370,6 +379,24 @@ const mentionSelf = computed(() =>
 const formMode = computed(() => (isEdit.value ? 'edit' : 'create') as 'create' | 'edit')
 
 const idControls = useEntityIDControls(entityType, formMode)
+
+// The world a create is issued from. An embedded form takes it from its host,
+// explicitly; see the payload comment in handleSubmit.
+const createWorld = computed(() => (props.embedded ? props.embeddedWorld : worldParam.value))
+// A faced type created from a world without `create:` asks for a face.
+const createFace = useCreateFace(
+  computed(() => formConfig.value?.entity),
+  entityType,
+  computed(() => !isEdit.value && !(props.embedded && props.embeddedFace)),
+  createWorld
+)
+// Where a create lands: a pinned face, a picked face, or the world's `create:`.
+function createTargetFields(): { face?: string; world?: string } {
+  if (props.embedded && props.embeddedFace) return { face: props.embeddedFace }
+  if (createFace.needsFace.value)
+    return createFace.face.value ? { face: createFace.face.value } : {}
+  return createWorld.value ? { world: createWorld.value } : {}
+}
 const { showManualIDInput, showPrefixPicker, prefixOptions, manualId, selectedPrefix } = idControls
 
 const showReadOnlyID = computed(() => isEdit.value && entityType.value?.id_type === 'manual')
@@ -595,18 +622,10 @@ async function loadEntity(force = false) {
 
   try {
     // The entity id is an ADDRESS — `POL-1` or `POL-1@published` — and the
-    // form edits exactly the row it names: what you look at is what you edit
-    // is what you save. So the fetch is pinned to the DEFAULT world, where
-    // every address is literal. Fetching in the ambient world instead let a
-    // configured `default_world` resolve a bare id AWAY from the row the
-    // Edit button was pressed on, and the form then refused the served face
-    // "for permissions" (atlas worlds issue 7).
-    const entity = await entitiesStore.fetchEntity(
-      formConfig.value.entity,
-      props.entityId,
-      force,
-      DEFAULT_WORLD
-    )
+    // form edits exactly the row it names. An address with a face is
+    // literal in every world, so the fetch uses the default world. The Edit
+    // button must pass the face it was pressed on (atlas worlds issue 7).
+    const entity = await entitiesStore.fetchEntity(formConfig.value.entity, props.entityId, force)
     // Route-guard: if the server says this row is not updatable, render an
     // inline "not editable" message instead of the form. The EntityDetail
     // Edit button already hides for the same verdict, so this branch fires
@@ -629,6 +648,7 @@ async function loadEntity(force = false) {
     recordServerBaseline(entity)
     formData.value = { ...entity.properties }
     relations.value = entity.relations ? { ...entity.relations } : {}
+    resetConfirmedRelations(relations.value)
     content.value = entity.content || ''
     // TKT-G7N5: per-entity affordances from the server. The wire keys
     // are always present on per-entity GET (possibly empty); we
@@ -661,7 +681,8 @@ async function loadEntity(force = false) {
 }
 
 // uploadStagedFiles pushes every create-mode staged file to the attachment
-// endpoint against the just-created id, and returns the failures.
+// endpoint against the just-created row's address (face included, so a file
+// lands on the face that was created), and returns the failures.
 //
 // Continue-on-error (RR-Z7C3CY): every file is attempted even after one is
 // rejected, so the user is told about all of them at once rather than
@@ -947,7 +968,7 @@ async function refreshStagedAffordances() {
         properties: { ...formData.value },
         content: content.value || undefined,
         // Same face the submit will write, so the verdict matches the create.
-        world: worldParam.value || undefined,
+        ...createTargetFields(),
       },
       controller.signal
     )
@@ -994,6 +1015,12 @@ function scheduleStagedAffordances() {
     void refreshStagedAffordances()
   }, STAGED_DRYRUN_DEBOUNCE_MS)
 }
+
+// A picked face changes which face the verdicts are about.
+watch(
+  () => createFace.face.value,
+  () => scheduleStagedAffordances()
+)
 
 /**
  * Applies a template's properties, content and relations to the form.
@@ -1156,6 +1183,7 @@ function selectTemplate(name: string) {
     // Reset to defaults first
     formData.value = {}
     relations.value = {}
+    resetConfirmedRelations({})
     content.value = ''
     initializeDefaults()
     applyTemplate(template)
@@ -1221,6 +1249,7 @@ async function resetCreateForm() {
   // no field-level key to mark it.
   formData.value = {}
   relations.value = {}
+  resetConfirmedRelations({})
   content.value = ''
   errors.value = {}
   userTouched.value = new Set()
@@ -1689,8 +1718,17 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // card edits already carry per-edge meta. Incoming-suffix entries
     // become inverse-named body keys via the inverseByRelation lookup
     // (TKT-GFQK).
-    const modernRelations = buildRelationsPatch(pendingCardChanges.value, inverseByRelation)
-    const reshapedPickers = reshapeLegacyToModern(filteredRelations, pickerTypes.value)
+    const modernRelations = buildRelationsPatch(
+      pendingCardChanges.value,
+      inverseByRelation,
+      confirmedEdges
+    )
+    const reshapedPickers = reshapeLegacyToModern(
+      filteredRelations,
+      pickerTypes.value,
+      confirmedEdges,
+      loadedRelations
+    )
     if (!reshapedPickers) {
       // A target with no resolved type. Ownership filtering above removed the
       // common cause (an unrendered relation from the entity GET), leaving two
@@ -1727,9 +1765,9 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // fix it.
     if (linkParams.value?.as === 'to') {
       const rel = linkParams.value.relation
-      const carried = (relationsPayload[rel]?.data ?? []).some(
-        (r) => r.id === linkParams.value!.peer
-      )
+      const upd = relationsPayload[rel]
+      const sent = !upd ? [] : 'data' in upd ? upd.data : (upd.add ?? [])
+      const carried = sent.some((r) => r.id === linkParams.value!.peer)
       if (!carried) {
         uiStore.error(
           `Cannot pre-link this ${formConfig.value.entity} to ${linkParams.value.peer}: ` +
@@ -1745,6 +1783,7 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
       id?: string
       prefix?: string
       world?: string
+      face?: string
       properties: Record<string, unknown>
       relations: ModernRelationsField
       content?: string
@@ -1784,8 +1823,12 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // stated contract rather than a coincidence that a later refactor of
     // `embedded` could silently break, the way the empty-query rule would
     // otherwise suggest the world is dropped too.
-    const createWorld = props.embedded ? props.embeddedWorld : worldParam.value
-    if (createWorld) payload.world = createWorld
+    if (createFace.needsFace.value && !createFace.face.value) {
+      uiStore.error('Choose a face for the new entity.')
+      saving.value = false
+      return
+    }
+    Object.assign(payload, createTargetFields())
     Object.assign(payload, idControls.buildPayloadFields())
     const entity = await entitiesStore.create(formConfig.value.entity, payload)
     createdEntityId.value = entity.id
@@ -1825,7 +1868,8 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
         // lookup fails for a legitimately prefix-less id (the demo project's
         // category ids are `backend`, `devops`), so the old form of this call
         // could not link to one at all. The new entity's type is known outright.
-        await createRelation(entity.type, entity.id, relation, peer)
+        // By ADDRESS: a content-scoped edge belongs to the face just created.
+        await createRelation(entity.type, entityRef(entity), relation, peer)
       } catch (linkErr) {
         console.warn('Auto-link failed:', linkErr)
         // Surfaced on EVERY path, not just 'again'. The older reasoning — that
@@ -1846,7 +1890,7 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // toast, so that a failure can keep the form dirty, still reach the
     // inline-create host, and avoid claiming success it didn't achieve.
     const uploadFailures = hasStagedFiles()
-      ? await uploadStagedFiles(formConfig.value.entity, entity.id)
+      ? await uploadStagedFiles(formConfig.value.entity, entityRef(entity))
       : []
     // RR-4QO887: clear staged files and drop the dirty flag even when an
     // upload failed. Keeping them looks like it preserves a retry, but this
@@ -2207,14 +2251,27 @@ function recordServerBaseline(entity: Entity) {
 // from the top-level onBeforeUnmount.
 let unregisterDirtyForm: (() => void) | null = null
 
+// The relations the entity was loaded with, per relation name, and the
+// edges saved since (see ConfirmedEdges): every relations body is a delta
+// against them. Reset whenever the form takes a fresh entity.
+let loadedRelations: Record<string, string[]> = {}
+let confirmedEdges: ConfirmedEdges = new Map()
+
+function resetConfirmedRelations(loaded: Record<string, string[]>) {
+  loadedRelations = Object.fromEntries(Object.entries(loaded).map(([k, ids]) => [k, [...ids]]))
+  confirmedEdges = new Map()
+}
+
 function buildAutoSaveRelationsBody(): ModernRelationsField | null {
   // Mirror handleSubmit's body assembly. Two sources of relation
   // edits flow through autosave:
   //   - card-managed widgets (`pendingCardChanges`) — modern shape
   //     via buildRelationsPatch (per-edge meta + content).
   //   - legacy IDs-only widgets (`relations`) — non-card pickers
-  //     write IDs; reshapeLegacyToModern wraps them in {data:[{type,id}]}
+  //     write IDs; reshapeLegacyToModern turns them into {add, remove}
   //     so they ride the same modern PATCH.
+  //
+  // Both are deltas against `confirmedEdges`.
   //
   // Returns null when neither source is dirty.
   const inverseByRelation = new Map<string, string>()
@@ -2241,13 +2298,19 @@ function buildAutoSaveRelationsBody(): ModernRelationsField | null {
     if (cardRelations.has(rel)) continue
     filteredRelations[rel] = ids
   }
-  const modernCards = buildRelationsPatch(pendingCardChanges.value, inverseByRelation)
+  const modernCards = buildRelationsPatch(
+    pendingCardChanges.value,
+    inverseByRelation,
+    confirmedEdges
+  )
   const hasModernCards = Object.keys(modernCards).length > 0
   const hasLegacy = Object.keys(filteredRelations).length > 0
   if (!hasModernCards && !hasLegacy) return null
   // Reshape legacy IDs to modern shape (autosave always uses modern;
   // shape_mixed 400 otherwise).
-  const reshaped = hasLegacy ? reshapeLegacyToModern(filteredRelations, pickerTypes.value) : {}
+  const reshaped = hasLegacy
+    ? reshapeLegacyToModern(filteredRelations, pickerTypes.value, confirmedEdges, loadedRelations)
+    : {}
   if (reshaped === null) {
     // A rendered picker target without a known type. Surface and skip —
     // autosave is best-effort. Ownership filtering above already removed the
@@ -2414,6 +2477,7 @@ onMounted(async () => {
       ...(_pendingServerSnapshot ? { initialServerSnapshot: _pendingServerSnapshot } : {}),
       inverseToCanonical,
       buildRelationsBody: () => buildAutoSaveRelationsBody(),
+      onRelationsSaved: (body) => confirmRelations(confirmedEdges, body),
       applyServerProperty: (property, value) => {
         if (value === undefined) {
           delete formData.value[property]
@@ -2640,6 +2704,20 @@ defineExpose({
         <div v-if="showManualIDInput" class="form-field id-field">
           <label>ID <span class="required">*</span></label>
           <input v-model="manualId" type="text" required placeholder="Unique ID..." />
+        </div>
+        <div v-if="createFace.needsFace.value" class="form-field id-field">
+          <label for="create-face">Face <span class="required">*</span></label>
+          <select
+            id="create-face"
+            v-model="createFace.face.value"
+            data-testid="create-face"
+            required
+          >
+            <option value="" disabled>Choose a face...</option>
+            <option v-for="f in createFace.faces.value" :key="f" :value="f">
+              {{ entityType?.faces?.[f]?.label || f }}
+            </option>
+          </select>
         </div>
         <div v-if="showPrefixPicker" class="form-field id-field">
           <label>Prefix <span class="required">*</span></label>

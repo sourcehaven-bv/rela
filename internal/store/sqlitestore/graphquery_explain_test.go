@@ -38,7 +38,7 @@ func mustCreate(t *testing.T, s store.Store, e *entity.Entity) {
 
 func mustRelate(t *testing.T, s store.Store, from, typ, to string) {
 	t.Helper()
-	_, err := s.CreateRelation(context.Background(), from, typ, to, nil)
+	_, err := s.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: typ, To: to}, nil)
 	require.NoError(t, err)
 }
 
@@ -61,7 +61,8 @@ func reconcile(t *testing.T, s *sqlitestore.Store, specs []store.DerivedObjectSp
 }
 
 // The endpoint closure walks relations by from_id through the primary key,
-// once per step, rather than scanning the table each iteration.
+// once per step, rather than scanning the table each iteration. The step
+// follows identity edges only (from_face = ”), which the key also serves.
 func TestGraphQueryExplainClosureUsesRelationIndex(t *testing.T) {
 	s := open(t)
 	seed(t, s, func(v store.Store) {
@@ -82,8 +83,9 @@ func TestGraphQueryExplainClosureUsesRelationIndex(t *testing.T) {
 			Endpoints: []string{"alice"}, OfTypes: []string{"owns"},
 			InheritThrough: []string{"member-of"}, Depth: 5,
 		},
+		Faces: store.InWorld(store.TrivialScope()),
 	})
-	require.Contains(t, plan, "SEARCH r USING COVERING INDEX sqlite_autoindex_relations_1 (from_id=?)",
+	require.Contains(t, plan, "SEARCH r USING COVERING INDEX sqlite_autoindex_relations_1 (from_id=? AND from_face=?",
 		"the closure step does not walk relations by from_id")
 	requireNoTableScan(t, plan)
 }
@@ -103,6 +105,7 @@ func TestGraphQueryExplainUsesDerivedStaticQueryIndex(t *testing.T) {
 	plan := explain(t, s, store.GraphQuery{
 		EntityType: "task",
 		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+		Faces:      store.InWorld(store.TrivialScope()),
 	})
 	require.Contains(t, plan, "rela_derived_query__")
 }
@@ -127,9 +130,40 @@ func TestGraphQueryExplainPagedListUsesDerivedListIndex(t *testing.T) {
 		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
 		OrderBy:    []store.OrderSpec{{Property: "due"}},
 		Limit:      25,
+		Faces:      store.InWorld(store.TrivialScope()),
 	})
 	require.Contains(t, plan, "rela_derived_list__")
 	require.NotContains(t, plan, "TEMP B-TREE", "the page sorts instead of walking the index")
+}
+
+// A faced type in a world that ranks nothing for it reads one face, so its
+// page walks the same derived list index (TKT-7IZHP0 A9): no window, no sort.
+func TestGraphQueryExplainFlatWorldPageUsesDerivedListIndex(t *testing.T) {
+	s := open(t)
+	reconcile(t, s, []store.DerivedObjectSpec{{
+		Kind: store.DerivedListIndex, Type: "page", Properties: []string{"status"}, OrderBy: []string{"due"},
+	}})
+	seed(t, s, func(v store.Store) {
+		for i := range 2000 {
+			e := entity.New(fmt.Sprintf("PG-%06d", i), "page")
+			e.Face = []entity.Face{"draft", "published"}[i%2]
+			e.Properties["status"] = []string{"open", "done"}[(i/2)%2]
+			e.Properties["due"] = fmt.Sprintf("2026-%02d-%02d", 1+i%12, 1+i%28)
+			mustCreate(t, v, e)
+		}
+	})
+	world := store.NewWorldScope(map[string]store.TypeResolution{
+		"page": {Chain: []entity.Face{"published"}, Fallback: store.FallbackExclude},
+	})
+	plan := explain(t, s, store.GraphQuery{
+		EntityType: "page",
+		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+		OrderBy:    []store.OrderSpec{{Property: "due"}},
+		Limit:      25,
+		Faces:      store.InWorld(world),
+	})
+	require.Contains(t, plan, "rela_derived_list__")
+	require.NotContains(t, plan, "TEMP B-TREE", "a flat world still ranks or sorts")
 }
 
 // An enum-ranked sort reaches the list index too: the rank CASE is spelled the
@@ -152,6 +186,7 @@ func TestGraphQueryExplainRankedListUsesDerivedListIndex(t *testing.T) {
 		EntityType: "task",
 		OrderBy:    []store.OrderSpec{{Property: "stage", Values: values}},
 		Limit:      25,
+		Faces:      store.InWorld(store.TrivialScope()),
 	})
 	require.Contains(t, plan, "rela_derived_list__")
 	require.NotContains(t, plan, "TEMP B-TREE")
@@ -203,12 +238,13 @@ relations:
 				Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "rare", Scalar: true}},
 			},
 		},
+		Faces: store.InWorld(store.TrivialScope()),
 	})
 	requireNoTableScan(t, plan)
 }
 
 // The incoming-hop twin: the endpoint is the relation's FROM side. The
-// MatchingIDs statement a query scope issues for one page must not scan a
+// MatchingFaces statement a query scope issues for one page must not scan a
 // table either.
 func TestInboundEndpointMatchExplainIsIndexOnly(t *testing.T) {
 	s := open(t)
@@ -250,6 +286,7 @@ relations:
 				Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "rare", Scalar: true}},
 			},
 		},
+		Faces: store.InWorld(store.TrivialScope()),
 	}
 	requireNoTableScan(t, explain(t, s, q))
 
@@ -257,18 +294,18 @@ relations:
 	for i := range page {
 		page[i] = fmt.Sprintf("FEAT-%06d", i)
 	}
-	plan, err := s.ExplainMatchingIDs(context.Background(), q, page)
+	plan, err := s.ExplainMatchingFaces(context.Background(), q, page)
 	require.NoError(t, err)
-	t.Logf("MatchingIDs plan:\n%s", plan)
+	t.Logf("MatchingFaces plan:\n%s", plan)
 	requireNoTableScan(t, plan)
 	// A walk of the type index is a SEARCH, so the scan check alone misses it.
 	require.Contains(t, strings.SplitN(plan, "\n", 2)[0], "sqlite_autoindex_entities_1 (id=?",
-		"MatchingIDs is not driven by the page's id list")
+		"MatchingFaces is not driven by the page's id list")
 }
 
 // The related(entity, rel, { id = current_user.id }) shape (TKT-NXELMW): the
 // bound user id is an inbound Endpoints entry and the traversed type an
-// EndpointMatch. Neither the full query nor a page's MatchingIDs may scan a
+// EndpointMatch. Neither the full query nor a page's MatchingFaces may scan a
 // table, and no derived index is needed for it.
 func TestInboundNamedEndpointExplainIsIndexOnly(t *testing.T) {
 	s := open(t)
@@ -289,6 +326,7 @@ func TestInboundNamedEndpointExplainIsIndexOnly(t *testing.T) {
 			Endpoints:     []string{"PER-000007"},
 			EndpointMatch: &store.EndpointPredicate{EntityType: "persoon"},
 		},
+		Faces: store.InWorld(store.TrivialScope()),
 	}
 	requireNoTableScan(t, explain(t, s, q))
 
@@ -296,9 +334,9 @@ func TestInboundNamedEndpointExplainIsIndexOnly(t *testing.T) {
 	for i := range page {
 		page[i] = fmt.Sprintf("TAAK-%06d", i)
 	}
-	plan, err := s.ExplainMatchingIDs(context.Background(), q, page)
+	plan, err := s.ExplainMatchingFaces(context.Background(), q, page)
 	require.NoError(t, err)
-	t.Logf("MatchingIDs plan:\n%s", plan)
+	t.Logf("MatchingFaces plan:\n%s", plan)
 	requireNoTableScan(t, plan)
 }
 
@@ -328,7 +366,7 @@ func compileScope(t *testing.T, src string) *predicate.Program {
 
 // An entity-inheritance closure for one page starts from the page's ids, not
 // from every entity of the type.
-func TestMatchingIDsEntityClosureSeedsFromThePage(t *testing.T) {
+func TestMatchingFacesEntityClosureSeedsFromThePage(t *testing.T) {
 	s := open(t)
 	seed(t, s, func(v store.Store) {
 		mustCreate(t, v, entity.New("alice", "person"))
@@ -347,15 +385,16 @@ func TestMatchingIDsEntityClosureSeedsFromThePage(t *testing.T) {
 			Endpoints: []string{"alice"}, OfTypes: []string{"owns"},
 			EntityInheritThrough: []string{"partOf"}, EntityDepth: 5,
 		},
+		Faces: store.InWorld(store.TrivialScope()),
 	}
 	page := []string{"ITEM-000003", "ITEM-000009"}
-	plan, err := s.ExplainMatchingIDs(context.Background(), q, page)
+	plan, err := s.ExplainMatchingFaces(context.Background(), q, page)
 	require.NoError(t, err)
 	t.Logf("plan:\n%s", plan)
-	require.NotContains(t, plan, "entities_type_idx", "the closure seeds from the whole type")
+	require.NotContains(t, plan, "entities_type_id_face_idx (type=?)", "the closure seeds from the whole type")
 	requireNoTableScan(t, plan)
 
-	got, err := s.MatchingIDs(context.Background(), q, page)
+	got, err := store.MatchingIDs(context.Background(), s, q, page)
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{"ITEM-000003": true, "ITEM-000009": false}, got)
 }

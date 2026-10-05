@@ -106,13 +106,14 @@ func toolCreateEntity() *mcpgo.Tool {
 		withObject("properties", required(), description("Property map")),
 		withString("content", description("Markdown body")),
 		withString("id", description("Custom ID (only for types with id_type manual)")),
+		withString("face", description("Face to create; required for a type that declares faces")),
 	)
 }
 
 func toolUpdateEntity() *mcpgo.Tool {
 	return newTool("update_entity",
 		withDescription("Update an entity. Only the named properties change; null removes one."),
-		withString("id", required(), description("Entity ID, or ID@face to update one content state")),
+		withString("id", required(), description("Entity ID, or ID@face for one face of a faced type")),
 		withObject("properties", description("Properties to set; null removes")),
 		withString("content", description("New markdown body (replaces the old one)")),
 	)
@@ -120,9 +121,11 @@ func toolUpdateEntity() *mcpgo.Tool {
 
 func toolDeleteEntity() *mcpgo.Tool {
 	return newTool("delete_entity",
-		withDescription("Delete an entity"),
-		withString("id", required(), description("Entity ID; deletes every face")),
-		withBoolean("cascade", description("Also delete its relations (default false)")),
+		withDescription("Delete an entity, or one face of it"),
+		withString("id", required(), description("Entity ID; on a faced type name a face: ID@face deletes that face and its edges, "+
+			"and the last face deletes the entity")),
+		withBoolean("cascade", description("Also delete its relations (default false). "+
+			"An ID@face delete always removes the edges tailed at that face")),
 	)
 }
 
@@ -149,7 +152,7 @@ func toolListRelations() *mcpgo.Tool {
 func toolCreateRelation() *mcpgo.Tool {
 	return newTool("create_relation",
 		withDescription("Create a relation between two entities"),
-		withString("from", required(), description("Source entity ID")),
+		withString("from", required(), description("Source entity ID; ID@face for a content-scoped relation")),
 		withString("type", required(), description("Relation type")),
 		withString("to", required(), description("Target entity ID")),
 		withString("content", description("Markdown body")),
@@ -160,7 +163,7 @@ func toolCreateRelation() *mcpgo.Tool {
 func toolDeleteRelation() *mcpgo.Tool {
 	return newTool("delete_relation",
 		withDescription("Delete a relation between two entities"),
-		withString("from", required(), description("Source entity ID")),
+		withString("from", required(), description("Source entity ID; ID@face for a content-scoped relation")),
 		withString("type", required(), description("Relation type")),
 		withString("to", required(), description("Target entity ID")),
 	)

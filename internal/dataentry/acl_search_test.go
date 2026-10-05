@@ -184,7 +184,7 @@ func TestACLSearch_DenyAllShortCircuit(t *testing.T) {
 	}
 }
 
-// failingMatchingIDsStore makes every MatchingIDs call fail with a
+// failingMatchingIDsStore makes every MatchingFaces call fail with a
 // synthetic backend error, simulating an ACL scope-evaluation failure
 // inside the visible-search pipeline.
 type failingMatchingIDsStore struct {
@@ -192,17 +192,24 @@ type failingMatchingIDsStore struct {
 	err error
 }
 
-func (s failingMatchingIDsStore) MatchingIDs(context.Context, store.GraphQuery, []string) (map[string]bool, error) {
+func (s failingMatchingIDsStore) MatchingFaces(
+	context.Context, store.GraphQuery, []string,
+) (map[string][]entity.Face, error) {
 	return nil, s.err
 }
 
 // typedHitSearcher yields fully-typed hits so the visible wrapper has
-// something to probe MatchingIDs with.
+// something to probe MatchingFaces with.
 type typedHitSearcher struct{ hits []search.Hit }
 
-func (s typedHitSearcher) Search(context.Context, search.Query) iter.Seq2[search.Hit, error] {
+func (s typedHitSearcher) Search(_ context.Context, q search.Query) iter.Seq2[search.Hit, error] {
 	return func(yield func(search.Hit, error) bool) {
-		for _, h := range s.hits {
+		hits, err := admitHits(q, s.hits)
+		if err != nil {
+			yield(search.Hit{}, err)
+			return
+		}
+		for _, h := range hits {
 			if !yield(h, nil) {
 				return
 			}
@@ -212,7 +219,7 @@ func (s typedHitSearcher) Search(context.Context, search.Query) iter.Seq2[search
 
 // aclSearchQueryVerdictWorld builds the editor-of world where alice's
 // ticket verdict is a composed Query (not AllowAll), so the visible
-// wrapper must call MatchingIDs.
+// wrapper must call MatchingFaces.
 func aclSearchQueryVerdictWorld(t *testing.T, app *App) *acl.Declarative {
 	t.Helper()
 	seedEntity(app, &entity.Entity{ID: "alice", Type: "person", Properties: map[string]any{"title": "Alice"}})
@@ -232,7 +239,7 @@ func aclSearchQueryVerdictWorld(t *testing.T, app *App) *acl.Declarative {
 }
 
 // TestACLSearch_ScopeErrorMapping pins TKT-BA8BSX AC7 + AC7b for the
-// visibility-failure class: a MatchingIDs error surfaces as 500
+// visibility-failure class: a MatchingFaces error surfaces as 500
 // acl_query_failed with the constant detail — the raw backend string
 // (which can name tables/columns) never reaches the wire — and the
 // executeQuery error wraps errACLListQuery so the _position consumer

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -39,6 +40,7 @@ func RunVersionTests(t *testing.T, f Factory) {
 	t.Run("EntityHistory", func(t *testing.T) { runEntityHistoryTests(t, f) })
 	t.Run("Faces", func(t *testing.T) { runFaceHistoryTests(t, f) })
 	t.Run("Lineage", func(t *testing.T) { runLineageTests(t, f) })
+	t.Run("FaceLineage", func(t *testing.T) { runFaceLineageTests(t, f) })
 	t.Run("RelationHistory", func(t *testing.T) { runRelationHistoryTests(t, f) })
 	t.Run("RelationTails", func(t *testing.T) { runRelationTailTests(t, f) })
 	t.Run("Purge", func(t *testing.T) { runPurgeTests(t, f) })
@@ -72,7 +74,7 @@ func writeVersion(t *testing.T, v store.VersionService, in store.VersionInput) {
 func runEntityHistoryTests(t *testing.T, f Factory) {
 	t.Run("EmptyHistoryIsNotAnError", func(t *testing.T) {
 		v := versionsOf(t, f(t))
-		got, err := v.ListVersions(ctx(), "FEAT-404")
+		got, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-404"})
 		require.NoError(t, err, "an id with no history must read as empty, not error")
 		require.Empty(t, got)
 	})
@@ -85,7 +87,7 @@ func runEntityHistoryTests(t *testing.T, f Factory) {
 				Type: "feature", Content: c,
 			})
 		}
-		got, err := v.ListVersions(ctx(), "FEAT-1")
+		got, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1"})
 		require.NoError(t, err)
 		require.Len(t, got, 3)
 		// Ordinals are 1-based and assigned in lineage order, so a caller can
@@ -101,7 +103,7 @@ func runEntityHistoryTests(t *testing.T, f Factory) {
 			EntityID: "FEAT-1", Op: store.VersionOpUpdate, Type: "feature",
 			Content: "the old words", Properties: map[string]any{"title": "Old"},
 		})
-		snap, err := v.GetVersion(ctx(), "FEAT-1", 1)
+		snap, err := v.GetVersion(ctx(), entity.Ref{ID: "FEAT-1"}, 1)
 		require.NoError(t, err)
 		require.Equal(t, "the old words", snap.Content)
 		require.Equal(t, "Old", snap.Properties["title"])
@@ -114,7 +116,7 @@ func runEntityHistoryTests(t *testing.T, f Factory) {
 			EntityID: "FEAT-1", Op: store.VersionOpUpdate, Type: "feature",
 		})
 		for _, ord := range []int{0, -1, 2, 99} {
-			_, err := v.GetVersion(ctx(), "FEAT-1", ord)
+			_, err := v.GetVersion(ctx(), entity.Ref{ID: "FEAT-1"}, ord)
 			require.ErrorIs(t, err, store.ErrNotFound,
 				"ordinal %d is outside the lineage and must be ErrNotFound", ord)
 		}
@@ -131,12 +133,12 @@ func runEntityHistoryTests(t *testing.T, f Factory) {
 			EntityID: "FEAT-1", Op: store.VersionOpDelete, Type: "feature",
 			Content: "last words",
 		})
-		_, err := s.DeleteEntity(ctx(), "FEAT-1", true)
+		_, err := s.DeleteFamily(ctx(), "FEAT-1", true)
 		require.NoError(t, err)
 
 		// The whole point of a compliance history: the row is gone, the record
 		// of it is not.
-		got, err := v.ListVersions(ctx(), "FEAT-1")
+		got, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1"})
 		require.NoError(t, err)
 		require.Len(t, got, 1)
 		require.Equal(t, store.VersionOpDelete, got[0].Op)
@@ -148,7 +150,7 @@ func runEntityHistoryTests(t *testing.T, f Factory) {
 			EntityID: "FEAT-1", Op: store.VersionOpDelete, Type: "feature",
 			PrincipalUser: "alice", PrincipalTool: "cli", TriggeredBy: "manual",
 		})
-		got, err := v.ListVersions(ctx(), "FEAT-1")
+		got, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1"})
 		require.NoError(t, err)
 		require.Len(t, got, 1)
 		require.Equal(t, "alice", got[0].PrincipalUser)
@@ -171,17 +173,40 @@ func runFaceHistoryTests(t *testing.T, f Factory) {
 
 		// Version 1 of each face is a DIFFERENT snapshot. If faces shared a
 		// lineage, one of these would be the other's version 2.
-		def, err := v.GetStateVersion(ctx(), "FEAT-1", "", 1)
+		def, err := v.GetVersion(ctx(), entity.Ref{ID: "FEAT-1"}, 1)
 		require.NoError(t, err)
 		require.Equal(t, "default content", def.Content)
 
-		draft, err := v.GetStateVersion(ctx(), "FEAT-1", "draft", 1)
+		draft, err := v.GetVersion(ctx(), entity.Ref{ID: "FEAT-1", Face: "draft"}, 1)
 		require.NoError(t, err)
 		require.Equal(t, "draft content", draft.Content)
 
-		defList, err := v.ListStateVersions(ctx(), "FEAT-1", "")
+		defList, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1"})
 		require.NoError(t, err)
 		require.Len(t, defList, 1, "the draft face must not appear in the default face's history")
+	})
+
+	t.Run("VersionsRecordTheirFace", func(t *testing.T) {
+		v := versionsOf(t, f(t))
+		for _, face := range []entity.Face{"", "draft"} {
+			writeVersion(t, v, store.VersionInput{
+				EntityID: "FEAT-1", Face: face, Op: store.VersionOpDelete,
+				Type: "feature", Content: "last words at " + face.String(),
+			})
+		}
+
+		// A deleted face has no live row left to say where it lived, so the
+		// snapshot must: restoring it recreates the face it names (TKT-7R0ABK).
+		for _, face := range []entity.Face{"", "draft"} {
+			metas, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1", Face: face})
+			require.NoError(t, err)
+			require.Len(t, metas, 1)
+			require.Equal(t, face, metas[0].Face, "timeline row of face %q", face)
+
+			snap, err := v.GetVersion(ctx(), entity.Ref{ID: "FEAT-1", Face: face}, 1)
+			require.NoError(t, err)
+			require.Equal(t, face, snap.Face, "snapshot of face %q", face)
+		}
 	})
 
 	t.Run("ListVersionsIsTheDefaultFace", func(t *testing.T) {
@@ -190,7 +215,7 @@ func runFaceHistoryTests(t *testing.T, f Factory) {
 			EntityID: "FEAT-1", Face: "draft", Op: store.VersionOpUpdate,
 			Type: "feature", Content: "draft only",
 		})
-		got, err := v.ListVersions(ctx(), "FEAT-1")
+		got, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1"})
 		require.NoError(t, err)
 		require.Empty(t, got, "ListVersions must read the DEFAULT face, not any face")
 	})
@@ -210,10 +235,10 @@ func runFaceHistoryTests(t *testing.T, f Factory) {
 		// The content hash must fold in the face. If it did not, a dedup
 		// keyed on content would silently drop one face's capture — a MISSING
 		// version rather than a duplicate, which is the harder bug to notice.
-		def, err := v.ListStateVersions(ctx(), "FEAT-1", "")
+		def, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1"})
 		require.NoError(t, err)
 		require.Len(t, def, 1)
-		pub, err := v.ListStateVersions(ctx(), "FEAT-1", "published")
+		pub, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1", Face: "published"})
 		require.NoError(t, err)
 		require.Len(t, pub, 1)
 		require.NotEqual(t, def[0].ContentHash, pub[0].ContentHash,
@@ -234,7 +259,7 @@ func runLineageTests(t *testing.T, f Factory) {
 
 		// Reading B must include its life as A: a rename is a continuation, not
 		// a new entity.
-		got, err := v.ListVersions(ctx(), "FEAT-B")
+		got, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-B"})
 		require.NoError(t, err)
 		require.Len(t, got, 2, "history of B must include its pre-rename life as A")
 		require.Equal(t, store.VersionOpUpdate, got[0].Op)
@@ -259,18 +284,73 @@ func runLineageTests(t *testing.T, f Factory) {
 		// This is the fence. A flat `WHERE entity_id = 'FEAT-A'` returns both
 		// the original and the reuse, silently merging two unrelated entities
 		// into one timeline.
-		reused, err := v.ListVersions(ctx(), "FEAT-A")
+		reused, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-A"})
 		require.NoError(t, err)
 		require.Len(t, reused, 1,
 			"the reused id must see only its own history, not the entity that was renamed away")
-		snap, err := v.GetVersion(ctx(), "FEAT-A", 1)
+		snap, err := v.GetVersion(ctx(), entity.Ref{ID: "FEAT-A"}, 1)
 		require.NoError(t, err)
 		require.Equal(t, "reused A", snap.Content)
 
 		// And B keeps its full lineage, unaffected by the reuse.
-		bHist, err := v.ListVersions(ctx(), "FEAT-B")
+		bHist, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-B"})
 		require.NoError(t, err)
 		require.Len(t, bHist, 2, "B's lineage must not absorb the reused id's rows")
+	})
+}
+
+// runFaceLineageTests pins the lineage fence per face: a face's timeline
+// follows its own rename and never absorbs another face's rows or a reused
+// id's (TKT-KQXVF7).
+func runFaceLineageTests(t *testing.T, f Factory) {
+	t.Run("RenameAndReuseStayPerFace", func(t *testing.T) {
+		v := versionsOf(t, f(t))
+		for _, in := range []store.VersionInput{
+			{EntityID: "FEAT-A", Face: "draft", Op: store.VersionOpUpdate, Content: "A draft"},
+			{EntityID: "FEAT-A", Face: "published", Op: store.VersionOpUpdate, Content: "A published"},
+			{EntityID: "FEAT-B", Face: "draft", Op: store.VersionOpRename, PrevID: "FEAT-A", Content: "B draft"},
+			{EntityID: "FEAT-B", Face: "published", Op: store.VersionOpRename, PrevID: "FEAT-A", Content: "B published"},
+			{EntityID: "FEAT-A", Face: "draft", Op: store.VersionOpCreate, Content: "reused A draft"},
+		} {
+			in.Type = "feature"
+			writeVersion(t, v, in)
+		}
+
+		for _, tc := range []struct {
+			ref  entity.Ref
+			want []string
+		}{
+			{entity.Ref{ID: "FEAT-B", Face: "draft"}, []string{"A draft", "B draft"}},
+			{entity.Ref{ID: "FEAT-B", Face: "published"}, []string{"A published", "B published"}},
+			{entity.Ref{ID: "FEAT-A", Face: "draft"}, []string{"reused A draft"}},
+			{entity.Ref{ID: "FEAT-A", Face: "published"}, nil},
+			{entity.Ref{ID: "FEAT-B"}, nil},
+		} {
+			metas, err := v.ListVersions(ctx(), tc.ref)
+			require.NoError(t, err, "%s", tc.ref)
+			require.Len(t, metas, len(tc.want), "%s", tc.ref)
+			for i, m := range metas {
+				assert.Equal(t, tc.ref.Face, m.Face, "%s version %d names its face", tc.ref, i+1)
+				snap, err := v.GetVersion(ctx(), tc.ref, i+1)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want[i], snap.Content, "%s version %d", tc.ref, i+1)
+				assert.Equal(t, tc.ref.Face, snap.Face)
+			}
+		}
+	})
+
+	t.Run("UnaddressableRefHasNoHistory", func(t *testing.T) {
+		v := versionsOf(t, f(t))
+		writeVersion(t, v, store.VersionInput{
+			EntityID: "FEAT-A", Face: "draft", Op: store.VersionOpUpdate, Type: "feature", Content: "x",
+		})
+		for _, ref := range []entity.Ref{{}, {ID: "FEAT-A@draft"}, {ID: "FEAT-A", Face: "../x"}} {
+			metas, err := v.ListVersions(ctx(), ref)
+			require.NoError(t, err, "%q", ref)
+			assert.Empty(t, metas, "%q", ref)
+			_, err = v.GetVersion(ctx(), ref, 1)
+			assert.ErrorIs(t, err, store.ErrNotFound, "%q", ref)
+		}
 	})
 }
 
@@ -296,12 +376,12 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 		// the LIVE ROW (recordIDForKey), which is exactly what an in-place
 		// re-key preserves and what a delete+create would have replaced.
 		got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
-			From: seedTo, Type: seedType, To: seedFrom,
+			Key: entity.RelationKey{From: seedTo, Type: seedType, To: seedFrom},
 		})
 		require.NoError(t, err)
 		require.NotEmpty(t, got, "the pre-swap history must still be reachable")
 		require.Equal(t, "before the swap", contentOfRelationVersion(t, v,
-			store.RelationHistoryQuery{From: seedTo, Type: seedType, To: seedFrom}, 1),
+			store.RelationHistoryQuery{Key: entity.RelationKey{From: seedTo, Type: seedType, To: seedFrom}}, 1),
 			"the surviving version must be the one captured before the reversal")
 
 		// The pre-swap direction ALSO still reads, and that is not a leak: the
@@ -309,7 +389,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 		// the old key remains the "last known" address of the same lineage. Both
 		// keys therefore resolve to one history rather than to two.
 		stale, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
-			From: seedFrom, Type: seedType, To: seedTo,
+			Key: entity.RelationKey{From: seedFrom, Type: seedType, To: seedTo},
 		})
 		require.NoError(t, err)
 		require.Equal(t, len(got), len(stale),
@@ -328,7 +408,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 	t.Run("EmptyHistoryIsNotAnError", func(t *testing.T) {
 		v := versionsOf(t, f(t))
 		got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
-			From: "FEAT-1", Type: "rel", To: "FEAT-2",
+			Key: entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"},
 		})
 		require.NoError(t, err, "an unknown key must read as empty, not error")
 		require.Empty(t, got)
@@ -341,7 +421,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 		require.NotZero(t, rid)
 
 		got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
-			From: "FEAT-1", Type: "rel", To: "FEAT-2",
+			Key: entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"},
 		})
 		require.NoError(t, err)
 		require.Len(t, got, 2)
@@ -356,7 +436,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 		seedRelationLineage(t, s, v, "recorded body")
 
 		snap, err := v.GetRelationVersion(ctx(), store.RelationHistoryQuery{
-			From: "FEAT-1", Type: "rel", To: "FEAT-2",
+			Key: entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"},
 		}, 1)
 		require.NoError(t, err)
 		require.Equal(t, "recorded body", snap.Content)
@@ -371,7 +451,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 		// the composite key is the authorization boundary, so a caller cannot
 		// reach an arbitrary lineage by guessing a handle.
 		_, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
-			From: "FEAT-1", Type: "rel", To: "FEAT-2", RecordID: 999999,
+			Key: entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"}, RecordID: 999999,
 		})
 		require.ErrorIs(t, err, store.ErrNotFound)
 	})
@@ -381,7 +461,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 		v := versionsOf(t, s)
 		seedRelationLineage(t, s, v, "body")
 
-		lts, err := v.ListRelationLifetimes(ctx(), "FEAT-1", entity.Face(""), "rel", "FEAT-2")
+		lts, err := v.ListRelationLifetimes(ctx(), entity.RelationKey{From: "FEAT-1", FromFace: entity.Face(""), Type: "rel", To: "FEAT-2"})
 		require.NoError(t, err)
 		require.Len(t, lts, 1)
 		require.Equal(t, 1, lts[0].Lifetime)
@@ -391,7 +471,7 @@ func runRelationHistoryTests(t *testing.T, f Factory) {
 
 	t.Run("UnknownKeyHasNoLifetimes", func(t *testing.T) {
 		v := versionsOf(t, f(t))
-		lts, err := v.ListRelationLifetimes(ctx(), "NOPE-1", entity.Face(""), "rel", "NOPE-2")
+		lts, err := v.ListRelationLifetimes(ctx(), entity.RelationKey{From: "NOPE-1", FromFace: entity.Face(""), Type: "rel", To: "NOPE-2"})
 		require.NoError(t, err)
 		require.Empty(t, lts)
 	})
@@ -414,10 +494,9 @@ func runRelationTailTests(t *testing.T, f Factory) {
 			e.SetString("title", id)
 			require.NoError(t, s.CreateEntity(ctx(), e))
 		}
-		_, err := s.CreateRelation(ctx(), seedFrom, seedType, seedTo, &store.RelationData{})
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: seedFrom, Type: seedType, To: seedTo}, &store.RelationData{})
 		require.NoError(t, err)
-		_, err = s.CreateRelation(ctx(), seedFrom, seedType, seedTo,
-			&store.RelationData{FromFace: "draft"})
+		_, err = s.CreateRelation(ctx(), entity.RelationKey{From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo}, &store.RelationData{})
 		require.NoError(t, err)
 	}
 
@@ -430,22 +509,21 @@ func runRelationTailTests(t *testing.T, f Factory) {
 		// hook does: the store resolves the lineage from the composite key.
 		// The key includes the tail, so these must resolve differently.
 		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
-			From: seedFrom, Type: seedType, To: seedTo, Op: store.VersionOpDelete,
+			Key: entity.RelationKey{From: seedFrom, Type: seedType, To: seedTo}, Op: store.VersionOpDelete,
 			Content: "default tail body", SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
-			From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo,
-			Op: store.VersionOpDelete, Content: "draft tail body",
+			Key: entity.RelationKey{From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo}, Op: store.VersionOpDelete, Content: "draft tail body",
 			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 
 		// Each tail enumerates ONE lifetime — its own. Listing by triple alone
 		// would report the other tail's lineage here too, and the response
 		// carries no face to tell them apart.
-		defLts, err := v.ListRelationLifetimes(ctx(), seedFrom, entity.Face(""), seedType, seedTo)
+		defLts, err := v.ListRelationLifetimes(ctx(), entity.RelationKey{From: seedFrom, FromFace: entity.Face(""), Type: seedType, To: seedTo})
 		require.NoError(t, err)
 		require.Len(t, defLts, 1, "the draft tail must not appear in the default tail's lifetimes")
-		draftLts, err := v.ListRelationLifetimes(ctx(), seedFrom, entity.Face("draft"), seedType, seedTo)
+		draftLts, err := v.ListRelationLifetimes(ctx(), entity.RelationKey{From: seedFrom, FromFace: entity.Face("draft"), Type: seedType, To: seedTo})
 		require.NoError(t, err)
 		require.Len(t, draftLts, 1)
 		require.NotEqual(t, defLts[0].RecordID, draftLts[0].RecordID,
@@ -462,13 +540,13 @@ func runRelationTailTests(t *testing.T, f Factory) {
 			{"draft", "draft tail body"},
 		} {
 			got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
-				From: seedFrom, FromFace: tc.face, Type: seedType, To: seedTo,
+				Key: entity.RelationKey{From: seedFrom, FromFace: tc.face, Type: seedType, To: seedTo},
 			})
 			require.NoError(t, err)
 			require.Len(t, got, 1, "a tail's timeline must hold only its own capture")
 
 			snap, err := v.GetRelationVersion(ctx(), store.RelationHistoryQuery{
-				From: seedFrom, FromFace: tc.face, Type: seedType, To: seedTo,
+				Key: entity.RelationKey{From: seedFrom, FromFace: tc.face, Type: seedType, To: seedTo},
 			}, 1)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, snap.Content,
@@ -486,19 +564,18 @@ func runRelationTailTests(t *testing.T, f Factory) {
 		// than a duplicate, which is the harder bug to notice.
 		const same = "byte identical"
 		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
-			From: seedFrom, Type: seedType, To: seedTo, Op: store.VersionOpDelete,
+			Key: entity.RelationKey{From: seedFrom, Type: seedType, To: seedTo}, Op: store.VersionOpDelete,
 			Content: same, SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
-			From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo,
-			Op: store.VersionOpDelete, Content: same,
+			Key: entity.RelationKey{From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo}, Op: store.VersionOpDelete, Content: same,
 			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 
 		hashes := make([]string, 0, 2)
 		for _, face := range []entity.Face{"", "draft"} {
 			got, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
-				From: seedFrom, FromFace: face, Type: seedType, To: seedTo,
+				Key: entity.RelationKey{From: seedFrom, FromFace: face, Type: seedType, To: seedTo},
 			})
 			require.NoError(t, err)
 			require.Len(t, got, 1)
@@ -518,8 +595,7 @@ func runRelationTailTests(t *testing.T, f Factory) {
 		// be the silent corruption; refusing is the whole point of keying the
 		// resolution on the tail.
 		err := v.WriteRelationVersion(ctx(), store.RelationVersionInput{
-			From: seedFrom, FromFace: "no-such-face", Type: seedType, To: seedTo,
-			Op: store.VersionOpDelete, Content: "orphan",
+			Key: entity.RelationKey{From: seedFrom, FromFace: "no-such-face", Type: seedType, To: seedTo}, Op: store.VersionOpDelete, Content: "orphan",
 			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		})
 		require.ErrorIs(t, err, store.ErrNotFound)
@@ -560,13 +636,13 @@ func seedRelationLineage(
 ) int64 {
 	t.Helper()
 	for _, id := range []string{seedFrom, seedTo} {
-		if _, err := s.GetEntity(ctx(), id); err != nil {
+		if _, err := s.GetEntity(ctx(), entity.Ref{ID: id}); err != nil {
 			e := entity.New(id, "feature")
 			e.SetString("title", id)
 			require.NoError(t, s.CreateEntity(ctx(), e))
 		}
 	}
-	_, err := s.CreateRelation(ctx(), seedFrom, seedType, seedTo, &store.RelationData{})
+	_, err := s.CreateRelation(ctx(), entity.RelationKey{From: seedFrom, Type: seedType, To: seedTo}, &store.RelationData{})
 	require.NoError(t, err)
 
 	// Ask the LIVE ROW for its lineage, not history.
@@ -577,25 +653,24 @@ func seedRelationLineage(
 	// lifetime is the DEAD one. Seeding the new life's versions onto that id
 	// merges two histories that must stay apart — which is what made the
 	// multi-lifetime purge case unreachable on pgstore and skip silently.
-	rid := relationRecordID(t, s, v, seedFrom, seedType, seedTo)
+	rid := relationRecordID(t, s, v, entity.RelationKey{From: seedFrom, Type: seedType, To: seedTo})
 	if rid == 0 {
 		// The backend exposes no accessor. Fall back to capturing one version
 		// and resolving through history, which is correct for a first
 		// lifetime — the only case a backend without the accessor can reach.
 		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
-			From: seedFrom, Type: seedType, To: seedTo, Op: store.VersionOpUpdate,
+			Key: entity.RelationKey{From: seedFrom, Type: seedType, To: seedTo}, Op: store.VersionOpUpdate,
 			Content: bodies[0], SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 		bodies = bodies[1:]
-		lts, ltErr := v.ListRelationLifetimes(ctx(), seedFrom, entity.Face(""), seedType, seedTo)
+		lts, ltErr := v.ListRelationLifetimes(ctx(), entity.RelationKey{From: seedFrom, FromFace: entity.Face(""), Type: seedType, To: seedTo})
 		require.NoError(t, ltErr)
 		require.NotEmpty(t, lts)
 		rid = lts[0].RecordID
 	}
 	for _, b := range bodies {
 		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
-			RecordID: rid, From: seedFrom, Type: seedType, To: seedTo,
-			Op: store.VersionOpUpdate, Content: b,
+			RecordID: rid, Key: entity.RelationKey{From: seedFrom, Type: seedType, To: seedTo}, Op: store.VersionOpUpdate, Content: b,
 			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
 	}
@@ -606,7 +681,7 @@ func seedRelationLineage(
 // LIVE row belong to". Backends place it differently — sqlitestore on the
 // Store, pgstore on its VersionStore — so the lookup below tries both.
 type recordIDer interface {
-	RelationRecordID(ctx context.Context, from, relType, to string) (int64, error)
+	RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error)
 }
 
 // relationRecordID asks the backend for the live row's surrogate lineage id.
@@ -622,14 +697,14 @@ type recordIDer interface {
 // A backend that exposes it nowhere yields 0, the "unassigned" value every
 // implementation understands: the capture still lands, it simply starts its own
 // lineage.
-func relationRecordID(t *testing.T, s store.Store, v store.VersionService, from, relType, to string) int64 {
+func relationRecordID(t *testing.T, s store.Store, v store.VersionService, k entity.RelationKey) int64 {
 	t.Helper()
 	for _, candidate := range []any{s, v} {
 		r, ok := candidate.(recordIDer)
 		if !ok {
 			continue
 		}
-		id, err := r.RelationRecordID(ctx(), from, relType, to)
+		id, err := r.RelationRecordID(ctx(), k)
 		if err != nil {
 			return 0
 		}
@@ -645,13 +720,13 @@ func runPurgeTests(t *testing.T, f Factory) {
 			EntityID: "FEAT-1", Op: store.VersionOpUpdate, Type: "feature", Content: "secret",
 		})
 		res, err := v.PurgeVersions(ctx(), store.VersionPurgeRequest{
-			EntityID: "FEAT-1", Selector: store.PurgeSelector{All: true}, DryRun: true,
+			Ref: entity.Ref{ID: "FEAT-1"}, Selector: store.PurgeSelector{All: true}, DryRun: true,
 		})
 		require.NoError(t, err)
 		require.Len(t, res.Targets, 1, "a dry run must still resolve its targets")
 		require.Zero(t, res.Purged, "a dry run must delete nothing")
 
-		got, err := v.ListVersions(ctx(), "FEAT-1")
+		got, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1"})
 		require.NoError(t, err)
 		require.Len(t, got, 1, "the version must survive a dry run")
 	})
@@ -662,12 +737,12 @@ func runPurgeTests(t *testing.T, f Factory) {
 			EntityID: "FEAT-1", Op: store.VersionOpDelete, Type: "feature", Content: "secret",
 		})
 		res, err := v.PurgeVersions(ctx(), store.VersionPurgeRequest{
-			EntityID: "FEAT-1", Selector: store.PurgeSelector{All: true},
+			Ref: entity.Ref{ID: "FEAT-1"}, Selector: store.PurgeSelector{All: true},
 		})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Purged)
 
-		got, err := v.ListVersions(ctx(), "FEAT-1")
+		got, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1"})
 		require.NoError(t, err)
 		require.Empty(t, got, "purged history must be gone")
 	})
@@ -679,13 +754,13 @@ func runPurgeTests(t *testing.T, f Factory) {
 			Type: "feature", Content: "renamed",
 		})
 		res, err := v.PurgeVersions(ctx(), store.VersionPurgeRequest{
-			EntityID: "FEAT-B", Selector: store.PurgeSelector{All: true},
+			Ref: entity.Ref{ID: "FEAT-B"}, Selector: store.PurgeSelector{All: true},
 		})
 		require.NoError(t, err, "a refusal is a result, not an error")
 		require.True(t, res.RenameInTargets)
 		require.Zero(t, res.Purged, "purging a rename row would orphan the lineage walk")
 
-		got, err := v.ListVersions(ctx(), "FEAT-B")
+		got, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-B"})
 		require.NoError(t, err)
 		require.NotEmpty(t, got, "a refused purge must delete nothing")
 	})
@@ -702,7 +777,7 @@ func runPurgeTests(t *testing.T, f Factory) {
 			Content: e.Content, Properties: e.Properties,
 		})
 		res, err := v.PurgeVersions(ctx(), store.VersionPurgeRequest{
-			EntityID: "FEAT-1", Selector: store.PurgeSelector{All: true},
+			Ref: entity.Ref{ID: "FEAT-1"}, Selector: store.PurgeSelector{All: true},
 		})
 		require.NoError(t, err)
 		require.True(t, res.LiveRowExists)
@@ -722,7 +797,7 @@ func runPurgeTests(t *testing.T, f Factory) {
 			Content: e.Content, Properties: e.Properties,
 		})
 		res, err := v.PurgeVersions(ctx(), store.VersionPurgeRequest{
-			EntityID: "FEAT-1", Selector: store.PurgeSelector{All: true}, ForceLive: true,
+			Ref: entity.Ref{ID: "FEAT-1"}, Selector: store.PurgeSelector{All: true}, ForceLive: true,
 		})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Purged)
@@ -735,7 +810,7 @@ func runPurgeTests(t *testing.T, f Factory) {
 		writeVersion(t, v, store.VersionInput{
 			EntityID: "FEAT-1", Op: store.VersionOpDelete, Type: "feature",
 		})
-		_, err := v.PurgeVersions(ctx(), store.VersionPurgeRequest{EntityID: "FEAT-1"})
+		_, err := v.PurgeVersions(ctx(), store.VersionPurgeRequest{Ref: entity.Ref{ID: "FEAT-1"}})
 		require.Error(t, err,
 			"an empty selector must be refused rather than defaulting to erase everything")
 	})
@@ -752,12 +827,12 @@ func runPurgeTests(t *testing.T, f Factory) {
 			Type: "feature", Content: shared,
 		})
 
-		def, err := v.ListStateVersions(ctx(), "FEAT-1", "")
+		def, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1"})
 		require.NoError(t, err)
 		require.Len(t, def, 1)
 
 		res, err := v.PurgeVersions(ctx(), store.VersionPurgeRequest{
-			EntityID: "FEAT-1", Face: "",
+			Ref:      entity.Ref{ID: "FEAT-1", Face: ""},
 			Selector: store.PurgeSelector{ContentHash: def[0].ContentHash},
 		})
 		require.NoError(t, err)
@@ -766,9 +841,97 @@ func runPurgeTests(t *testing.T, f Factory) {
 		// The sibling face holds the same bytes and must be untouched: purge is
 		// scoped to one face, so erasing a sibling's history would destroy
 		// records the operator never asked about.
-		draft, err := v.ListStateVersions(ctx(), "FEAT-1", "draft")
+		draft, err := v.ListVersions(ctx(), entity.Ref{ID: "FEAT-1", Face: "draft"})
 		require.NoError(t, err)
 		require.Len(t, draft, 1, "a content-hash purge must not reach into a sibling face")
+	})
+
+	t.Run("RelationPurgeIsScopedToOneTail", func(t *testing.T) {
+		s := f(t)
+		v := versionsOf(t, s)
+		for _, e := range []*entity.Entity{
+			{ID: seedFrom, Type: "feature"},
+			{ID: seedFrom, Type: "feature", Face: "draft"},
+			{ID: seedTo, Type: "feature"},
+		} {
+			require.NoError(t, s.CreateEntity(ctx(), e))
+		}
+		// One edge per tail on the same triple, each captured once while its
+		// live row still names the lineage, then deleted so the purge meets
+		// no live content.
+		for _, face := range []entity.Face{"", "draft"} {
+			_, err := s.CreateRelation(ctx(), entity.RelationKey{From: seedFrom, FromFace: face, Type: seedType, To: seedTo}, &store.RelationData{})
+			require.NoError(t, err)
+			require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
+				Key: entity.RelationKey{From: seedFrom, FromFace: face, Type: seedType, To: seedTo}, Op: store.VersionOpDelete, Content: "tail " + face.String(),
+				SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+			}))
+			require.NoError(t, s.DeleteRelation(ctx(), entity.RelationKey{From: seedFrom, FromFace: face, Type: seedType, To: seedTo}))
+		}
+
+		res, err := v.PurgeRelationVersions(ctx(), store.RelationVersionPurgeRequest{
+			Key: entity.RelationKey{From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo}, Selector: store.PurgeSelector{All: true},
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, res.Purged)
+
+		draft, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+			Key: entity.RelationKey{From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo},
+		})
+		require.NoError(t, err)
+		require.Empty(t, draft, "the draft tail's history must be gone")
+
+		// The default tail is a different relation with its own lineage: a
+		// purge of the draft tail must not erase it (BUG-4SYAA6).
+		def, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+			Key: entity.RelationKey{From: seedFrom, Type: seedType, To: seedTo},
+		})
+		require.NoError(t, err)
+		require.Len(t, def, 1, "a tail-scoped purge must not reach the sibling tail")
+	})
+
+	t.Run("RelationRecordIDIsBoundToItsTail", func(t *testing.T) {
+		s := f(t)
+		v := versionsOf(t, s)
+		for _, e := range []*entity.Entity{
+			{ID: seedFrom, Type: "feature"},
+			{ID: seedFrom, Type: "feature", Face: "draft"},
+			{ID: seedTo, Type: "feature"},
+		} {
+			require.NoError(t, s.CreateEntity(ctx(), e))
+		}
+		for _, face := range []entity.Face{"", "draft"} {
+			_, err := s.CreateRelation(ctx(), entity.RelationKey{From: seedFrom, FromFace: face, Type: seedType, To: seedTo}, &store.RelationData{})
+			require.NoError(t, err)
+			require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
+				Key: entity.RelationKey{From: seedFrom, FromFace: face, Type: seedType, To: seedTo}, Op: store.VersionOpDelete, Content: "tail " + face.String(),
+				SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+			}))
+			require.NoError(t, s.DeleteRelation(ctx(), entity.RelationKey{From: seedFrom, FromFace: face, Type: seedType, To: seedTo}))
+		}
+		lts, err := v.ListRelationLifetimes(ctx(), entity.RelationKey{From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo})
+		require.NoError(t, err)
+		require.Len(t, lts, 1)
+		draftRID := lts[0].RecordID
+
+		// The draft tail's record id, presented under the default tail's key,
+		// is not a handle for that key: the tail is part of it.
+		_, err = v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+			Key: entity.RelationKey{From: seedFrom, Type: seedType, To: seedTo}, RecordID: draftRID,
+		})
+		require.ErrorIs(t, err, store.ErrNotFound, "a sibling tail's record id must not open its history")
+
+		_, err = v.PurgeRelationVersions(ctx(), store.RelationVersionPurgeRequest{
+			Key: entity.RelationKey{From: seedFrom, Type: seedType, To: seedTo}, RecordID: draftRID,
+			Selector: store.PurgeSelector{All: true},
+		})
+		require.ErrorIs(t, err, store.ErrNotFound, "a sibling tail's record id must not reach its lineage")
+
+		draft, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{
+			Key: entity.RelationKey{From: seedFrom, FromFace: "draft", Type: seedType, To: seedTo},
+		})
+		require.NoError(t, err)
+		require.Len(t, draft, 1, "the refused purge must leave the draft tail intact")
 	})
 
 	t.Run("RelationMultiLifetimeRequiresASelector", func(t *testing.T) {
@@ -778,23 +941,21 @@ func runPurgeTests(t *testing.T, f Factory) {
 		// Two lifetimes of the same triple: create, capture, delete, recreate.
 		rid1 := seedRelationLineage(t, s, v, "first life")
 		require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
-			RecordID: rid1, From: "FEAT-1", Type: "rel", To: "FEAT-2",
-			Op: store.VersionOpDelete, SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+			RecordID: rid1, Key: entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"}, Op: store.VersionOpDelete, SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
 		}))
-		require.NoError(t, s.DeleteRelation(ctx(), "FEAT-1", "rel", "FEAT-2"))
+		require.NoError(t, s.DeleteRelation(ctx(), entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"}))
 		rid2 := seedRelationLineage(t, s, v, "second life")
 
 		require.NotEqual(t, rid1, rid2,
 			"delete+recreate reused the lineage id; the new relation would inherit "+
 				"the deleted one's history")
 
-		lts, err := v.ListRelationLifetimes(ctx(), "FEAT-1", entity.Face(""), "rel", "FEAT-2")
+		lts, err := v.ListRelationLifetimes(ctx(), entity.RelationKey{From: "FEAT-1", FromFace: entity.Face(""), Type: "rel", To: "FEAT-2"})
 		require.NoError(t, err)
 		require.Len(t, lts, 2, "delete+recreate must mint a fresh lifetime, not resurrect the old one")
 
 		res, err := v.PurgeRelationVersions(ctx(), store.RelationVersionPurgeRequest{
-			From: "FEAT-1", Type: "rel", To: "FEAT-2",
-			Selector: store.PurgeSelector{All: true},
+			Key: entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"}, Selector: store.PurgeSelector{All: true},
 		})
 		require.NoError(t, err)
 		require.True(t, res.MultiLifetimeRefused,
@@ -809,8 +970,7 @@ func runPurgeTests(t *testing.T, f Factory) {
 		rid := seedRelationLineage(t, s, v, "body")
 
 		_, err := v.PurgeRelationVersions(ctx(), store.RelationVersionPurgeRequest{
-			From: "FEAT-1", Type: "rel", To: "FEAT-2",
-			RecordID: rid, AllLifetimes: true,
+			Key: entity.RelationKey{From: "FEAT-1", Type: "rel", To: "FEAT-2"}, RecordID: rid, AllLifetimes: true,
 			Selector: store.PurgeSelector{All: true},
 		})
 		require.Error(t, err,

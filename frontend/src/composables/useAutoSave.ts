@@ -23,7 +23,7 @@
 //   directly, which masked server-side automation drift.
 
 import { ref, computed, type Ref } from 'vue'
-import type { Entity } from '@/types'
+import type { Entity, ModernRelationsField } from '@/types'
 import type { EntityPatch } from '@/api/entities'
 import { ApiError, getErrorMessage } from '@/api/errors'
 import { useEntitiesStore } from '@/stores/entities'
@@ -107,7 +107,12 @@ export interface AutoSaveOptions {
   // next PATCH, or null/empty object when the relations Map is
   // pristine. Called once per fire that has `relationsDirty === true`.
   // Callers that disable the relations channel may pass a no-op (() => null).
-  buildRelationsBody: () => Record<string, { data: unknown[] }> | null
+  // Called when the PATCH is about to be sent, never earlier: the body is a
+  // delta against the edges saved so far, so it must see every earlier save.
+  buildRelationsBody: () => ModernRelationsField | null
+  // Called with a relations body the server accepted, so the form can
+  // advance the edges its next delta is computed against.
+  onRelationsSaved?: (body: ModernRelationsField) => void
   // Apply callbacks invoked by mergeServerResponse and revertField.
   // The form decides whether to mutate formData; the composable does not.
   // Callers that disable the corresponding channel may pass a no-op closure;
@@ -176,6 +181,10 @@ export function useAutoSave(opts: AutoSaveOptions) {
   // owns the Map; the composable just remembers "kick the queue on
   // next debounce fire."
   let relationsDirty = false
+  // Relations bodies sent and not yet answered. A body takes the dirty bit
+  // when it is built, so an edit made while it is in flight sets the bit
+  // again and is sent next, and a failed body hands the bit back.
+  let relationsSending = 0
   let relationsTimer: ReturnType<typeof setTimeout> | null = null
 
   const lastCommitAt: Record<string, number> = Object.create(null)
@@ -238,7 +247,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
   }
 
   function isRelationsDirty(): boolean {
-    return relationsDirty || relationsTimer !== null
+    return relationsDirty || relationsTimer !== null || relationsSending > 0
   }
 
   function recordServerSnapshot(entity: Entity) {
@@ -370,6 +379,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
       currentAbort = ac
       inFlightCount.value++
       setStatus('saving')
+      let sentRelations: ModernRelationsField | null = null
       try {
         const patch: EntityPatch = {}
         if (properties.length) {
@@ -379,7 +389,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
         }
         if (unsets.length) patch.properties_unset = unsets
         // Bundle relations if dirty (C2: relations bundling table).
-        attachRelations(patch)
+        sentRelations = attachRelations(patch)
         const response = await entitiesStore.update(
           opts.getEntityType(),
           opts.getEntityId(),
@@ -387,15 +397,13 @@ export function useAutoSave(opts: AutoSaveOptions) {
           undefined,
           ac.signal
         )
+        if (sentRelations) {
+          opts.onRelationsSaved?.(sentRelations)
+          relationsSending--
+          sentRelations = null
+        }
         mergeServerResponse(response)
         categorizeWarnings(response.warnings)
-        if (relationsDirty) {
-          relationsDirty = false
-          if (relationsTimer) {
-            clearTimeout(relationsTimer)
-            relationsTimer = null
-          }
-        }
         const now = Date.now()
         let nextErrors: Record<string, string> | null = null
         for (const key of keys) {
@@ -431,6 +439,11 @@ export function useAutoSave(opts: AutoSaveOptions) {
           })
         }
       } finally {
+        // A body still held here was not accepted: hand the bit back.
+        if (sentRelations) {
+          relationsSending--
+          relationsDirty = true
+        }
         inFlightCount.value--
         if (currentAbort === ac) currentAbort = null
       }
@@ -453,9 +466,10 @@ export function useAutoSave(opts: AutoSaveOptions) {
       currentAbort = ac
       inFlightCount.value++
       setStatus('saving')
+      let sentRelations: ModernRelationsField | null = null
       try {
         const patch: EntityPatch = { content: value }
-        attachRelations(patch)
+        sentRelations = attachRelations(patch)
         const response = await entitiesStore.update(
           opts.getEntityType(),
           opts.getEntityId(),
@@ -463,15 +477,13 @@ export function useAutoSave(opts: AutoSaveOptions) {
           undefined,
           ac.signal
         )
+        if (sentRelations) {
+          opts.onRelationsSaved?.(sentRelations)
+          relationsSending--
+          sentRelations = null
+        }
         mergeServerResponse(response)
         categorizeWarnings(response.warnings)
-        if (relationsDirty) {
-          relationsDirty = false
-          if (relationsTimer) {
-            clearTimeout(relationsTimer)
-            relationsTimer = null
-          }
-        }
         lastCommitAt['__content__'] = Date.now()
         contentError.value = null
         setStatus('saved')
@@ -483,6 +495,11 @@ export function useAutoSave(opts: AutoSaveOptions) {
           opts.onError(message, { status: getErrorStatus(err), channel: 'content' })
         }
       } finally {
+        // A body still held here was not accepted: hand the bit back.
+        if (sentRelations) {
+          relationsSending--
+          relationsDirty = true
+        }
         inFlightCount.value--
         if (currentAbort === ac) currentAbort = null
       }
@@ -495,23 +512,28 @@ export function useAutoSave(opts: AutoSaveOptions) {
       clearTimeout(relationsTimer)
       relationsTimer = null
     }
-    const body = opts.buildRelationsBody()
-    if (!body || Object.keys(body).length === 0) {
-      // Pristine — nothing to send. Clear the dirty bit; the form may
-      // have rolled back its own state.
-      relationsDirty = false
-      return
-    }
-
     queueTail = queueTail.then(runPatch, runPatch)
 
     async function runPatch() {
+      // Built here, after every earlier queued save has landed: the body is
+      // a delta against what those saves confirmed.
+      if (!relationsDirty) return
+      const body = opts.buildRelationsBody()
+      if (!body || Object.keys(body).length === 0) {
+        // Pristine — nothing to send. Clear the dirty bit; the form may
+        // have rolled back its own state.
+        relationsDirty = false
+        return
+      }
+      relationsDirty = false
+      relationsSending++
+      let held = true
       const ac = new AbortController()
       currentAbort = ac
       inFlightCount.value++
       setStatus('saving')
       try {
-        const patch: EntityPatch = { relations: body as unknown as EntityPatch['relations'] }
+        const patch: EntityPatch = { relations: body }
         const response = await entitiesStore.update(
           opts.getEntityType(),
           opts.getEntityId(),
@@ -519,9 +541,11 @@ export function useAutoSave(opts: AutoSaveOptions) {
           undefined,
           ac.signal
         )
+        opts.onRelationsSaved?.(body)
+        relationsSending--
+        held = false
         mergeServerResponse(response)
         categorizeWarnings(response.warnings)
-        relationsDirty = false
         lastCommitAt['__relations__'] = Date.now()
         setStatus('saved')
       } catch (err: unknown) {
@@ -529,6 +553,10 @@ export function useAutoSave(opts: AutoSaveOptions) {
         setStatus('error', message)
         opts.onError(message, { status: getErrorStatus(err), channel: 'relations' })
       } finally {
+        if (held) {
+          relationsSending--
+          relationsDirty = true
+        }
         inFlightCount.value--
         if (currentAbort === ac) currentAbort = null
       }
@@ -537,10 +565,10 @@ export function useAutoSave(opts: AutoSaveOptions) {
 
   // attachRelations is called from fireDue/fireContent to bundle
   // the relations body when relationsDirty is set. Mutates `patch` in
-  // place. Cleanup of `relationsDirty` happens in the runPatch caller
-  // after the response is processed.
-  function attachRelations(patch: EntityPatch) {
-    if (!relationsDirty) return
+  // place and takes the dirty bit (see relationsSending); the runPatch
+  // caller confirms the body or hands the bit back. Returns the attached body, or null.
+  function attachRelations(patch: EntityPatch): ModernRelationsField | null {
+    if (!relationsDirty) return null
     const body = opts.buildRelationsBody()
     if (!body || Object.keys(body).length === 0) {
       // Pristine — drop the dirty flag without emitting a key.
@@ -549,13 +577,16 @@ export function useAutoSave(opts: AutoSaveOptions) {
         clearTimeout(relationsTimer)
         relationsTimer = null
       }
-      return
+      return null
     }
-    patch.relations = body as unknown as EntityPatch['relations']
+    patch.relations = body
+    relationsDirty = false
+    relationsSending++
     if (relationsTimer) {
       clearTimeout(relationsTimer)
       relationsTimer = null
     }
+    return body
   }
 
   // categorizeWarnings consumes the server response's warnings and

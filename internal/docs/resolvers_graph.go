@@ -318,14 +318,18 @@ func (dr *docRuntime) luaResolution(ls *lua.LState) int {
 		return dr.luaFail(ls, "resolution: %v", err)
 	}
 
-	ids, err := dr.entityIDs(typ, store.WorldScope{})
+	defaultScope, err := dr.worldScope("")
+	if err != nil {
+		return dr.luaFail(ls, "resolution: %v", err)
+	}
+	ids, err := dr.entityIDs(typ, defaultScope)
 	if err != nil {
 		return dr.luaFail(ls, "resolution: %v", err)
 	}
 	// What the world answers with, per entity. An id absent here is one the
 	// projection dropped.
 	selected := map[string]entity.Face{}
-	for e, lerr := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, World: scope}) {
+	for e, lerr := range dr.store.ListEntities(dr.ctx, store.EntityQuery{Type: typ, Faces: store.InWorld(scope)}) {
 		if lerr != nil {
 			return dr.luaFail(ls, "resolution: %v", lerr)
 		}
@@ -443,21 +447,27 @@ func (dr *docRuntime) buildResolutionGraph(
 // facesOf lists the faces one entity actually has, bare-id row first.
 func (dr *docRuntime) facesOf(typ, id string) ([]entity.Face, error) {
 	var out []entity.Face
-	def, ok := dr.meta.GetEntityDef(typ)
-	if !ok {
+	if _, ok := dr.meta.GetEntityDef(typ); !ok {
 		return nil, fmt.Errorf("no such entity type %q", typ)
 	}
-	// The bare-id row, then each declared face that exists on this entity.
-	if _, err := dr.store.GetEntityState(dr.ctx, id, entity.Face("")); err == nil {
-		out = append(out, entity.Face(""))
+	// Every stored face in one header read, then the bare-id row first and
+	// each declared face that exists on this entity in declaration order.
+	headers, err := store.FamilyHeaders(dr.ctx, dr.store, id)
+	if err != nil {
+		return nil, err
 	}
-	for _, name := range sortedFaceNames(def) {
-		stored := entity.Face(name)
-		if stored.IsDefault() {
-			continue // already emitted as the bare-id row
-		}
-		if _, err := dr.store.GetEntityState(dr.ctx, id, stored); err == nil {
-			out = append(out, stored)
+	stored := map[entity.Face]bool{}
+	for _, h := range headers {
+		stored[h.Face] = true
+	}
+	var zero entity.Face
+	if stored[zero] {
+		out = append(out, zero)
+	}
+	for _, name := range metamodel.FaceOrderOf(dr.meta, typ) {
+		face := entity.Face(name)
+		if !face.IsImplicit() && stored[face] {
+			out = append(out, face)
 		}
 	}
 	return out, nil
@@ -508,7 +518,7 @@ func (dr *docRuntime) resolutionRelations(
 				}
 				edges = append(edges, mermaid.Edge{
 					FromKey: nodeKey(id, f), ToKey: to,
-					Label: r.Type, Dashed: tail.IsDefault(),
+					Label: r.Type, Dashed: tail.IsImplicit(),
 				})
 			}
 		}

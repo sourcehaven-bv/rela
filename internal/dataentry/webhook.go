@@ -85,7 +85,7 @@ func (a *App) SetWebhookReceiver(v webhookVerifier, actionID string) {
 // signed JWT body rather than trusting a proxy header or a session cookie. That
 // makes it CSRF-immune by construction (a browser cannot forge an ES256
 // signature), so it needs neither the same-origin gate nor the CSRF-exempt
-// heuristic the sync API relies on.
+// heuristic the calendar feeds and CalDAV rely on.
 func (a *App) registerWebhookRoutes(mux *http.ServeMux) {
 	if a.webhook == nil {
 		return

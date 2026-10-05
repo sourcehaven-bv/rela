@@ -60,25 +60,21 @@ type exportHandler struct {
 	// Same seam and same reason as the list path — see applyViewCondition.
 	redactForCondition func(ctx context.Context, e *entityPkg.Entity) *entityPkg.Entity
 
-	// visReader is the row-gating + field-redacting read seam (DEC-ZBI39P)
-	// for list-export rows (Filter), so a hidden field can never reach the
-	// markdown handed to a transform. redactor is the same field-verdict
-	// source exposed directly, for redacting the exported entity and its
-	// already-gated neighbors (visibility.Redact).
+	// visReader is the row-gating + field-redacting read seam (DEC-ZBI39P):
+	// list-export rows go through Filter, and entity export through resolver,
+	// which is built from the same gate and redactor and owns the stored-type
+	// check (RR-SRZK6X). The entity's neighbors are resolved through it too,
+	// so each is redacted exactly once, in one primed batch. A hidden field
+	// therefore never reaches the markdown handed to a transform.
 	visReader visibility.Reader
-	redactor  visibility.FieldRedactor
+	resolver  addressResolver
+	// redactor is the same field-verdict source, exposed for the list
+	// export, which redacts raw neighbor rows itself.
+	redactor visibility.FieldRedactor
 
-	// visibleReader resolves the exported address the way the entity GET
-	// does (getVisibleRef), and gates list-export neighbors
-	// (visibleRelationIDs).
+	// visibleReader remains for the batched neighbor-ID gate
+	// (visibleRelationIDs) shared with the serializer paths.
 	visibleReader visibleReader
-
-	// faceNeighbors returns the exported face's edges in both directions and
-	// its visible neighbor rows, resolved in the request's world
-	// ([servedFaceNeighbors]). Late-bound for the reason [newViewsHandler]
-	// gives: SetWorldNeighbors runs after this handler is built.
-	faceNeighbors func(ctx context.Context, e *entityPkg.Entity) (
-		outgoing, incoming []*entityPkg.Relation, neighbors map[string]*entityPkg.Entity, err error)
 
 	// loadBodies fills the bodies of already-gated rows, in place. The list
 	// read path is content-free (rowcontent.go), which is right for the
@@ -103,12 +99,19 @@ type exportHandler struct {
 	engine *transform.Engine
 }
 
+// addressResolver is the single-entity read the export handler needs.
+type addressResolver interface {
+	Address(ctx context.Context, w visibility.World, entityType, addr string) (visibility.Resolved, bool, error)
+	ResolveIDsErr(ctx context.Context, w visibility.World, ids []string) (map[string]store.EntityHeader, error)
+}
+
 // newExportHandler builds the export handler with closures over the App
 // collaborators it needs. Called from both NewApp and the test app builder so
 // the wiring lives in one place.
 func newExportHandler(app *App) (*exportHandler, error) {
 	redactor := appRedactor(app)
-	visReader, err := visibility.NewPolicyReader(ctxRowGate{}, redactor, app.store)
+	visReader, err := visibility.NewPolicyReader(ctxRowGate{}, redactor, app.store,
+		familiesOption(app))
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: newExportHandler: %w", err)
 	}
@@ -117,15 +120,11 @@ func newExportHandler(app *App) (*exportHandler, error) {
 		cfg:           func() *Config { return app.State().Cfg },
 		reader:        app.reader,
 		visibleReader: app.visibleReader,
-		faceNeighbors: func(ctx context.Context, e *entityPkg.Entity) (
-			outgoing, incoming []*entityPkg.Relation, neighbors map[string]*entityPkg.Entity, err error,
-		) {
-			return servedFaceNeighbors(ctx, app.reader, app.worldNeighbors, app.visibleReader, e)
-		},
 		loadBodies: func(ctx context.Context, rows []*entityPkg.Entity) error {
 			return loadRowContent(ctx, app.Services().Store, rows)
 		},
 		visReader:      visReader,
+		resolver:       visReader.Resolver(),
 		redactor:       redactor,
 		documents:      app.documents,
 		scopedEntities: app.scopedSortedEntities,
@@ -201,8 +200,8 @@ func (h *exportHandler) handleV1Transforms(w http.ResponseWriter, r *http.Reques
 // handleV1ExportEntity serves GET /api/v1/{plural}/{id}/_export?transform=<name>.
 //
 // It is a READ affordance downstream of the same ACL gate as the entity view:
-// the address is resolved via visibleReader.getVisibleRef (404 on deny,
-// indistinguishable from a real miss), redacted, then rendered to markdown and converted
+// the entity is resolved via the visibility resolver (404 on deny,
+// indistinguishable from a real miss), then rendered to markdown and converted
 // by the named transform. A request may only choose a registered transform name
 // — never a command, flag, or path. The response is hardened like an attachment
 // download (nosniff + sandbox CSP + no-store + sanitized filename) because a
@@ -220,33 +219,30 @@ func (h *exportHandler) handleV1ExportEntity(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// The id segment is an ADDRESS (`ID` or `ID@face`), resolved exactly as
-	// handleV1GetEntity resolves it (BUG-PLZDPR): a bare id through the
-	// request's world, an explicit face as addressed. The row gate, the face
-	// gate and a denied world all apply BEFORE any render, and every refusal
-	// is the not-found a missing entity gets, so an export cannot reveal
-	// which faces exist. The stored-type check is RR-SRZK6X.
-	ref, ok := parseEntityRef(entityID)
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return
-	}
-	served, found, err := h.visibleReader.getVisibleRef(ctx, typeName, ref)
+	// The id segment is an ADDRESS (`ID` or `ID@face`), and the export
+	// renders the face it addresses (BUG-CTUW2N). `_export` is not a
+	// world-capable path (refuseWorldIncapablePath 422s a named world
+	// first), so the world handed to the resolver is always the default one.
+	//
+	// ACL gate BEFORE any render (same as handleV1GetEntity): a deny is an
+	// indistinguishable 404, and the render never runs for a hidden entity or
+	// a hidden face. The resolver also owns the stored-type check (RR-SRZK6X)
+	// and returns a FIELD-REDACTED copy — the renderer below can never see a
+	// property the caller's `visible:` policy hides (the #1188 IB-review
+	// finding).
+	res, found, err := h.resolver.Address(ctx, worldFromContext(ctx).visibility(), typeName, entityID)
 	if err != nil {
 		writeGateError(w, r, err)
 		return
 	}
-	if !found || served.Type != typeName {
+	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
-	// Redact once, here: the renderer below must never see a property the
-	// caller's `visible:` policy hides (the #1188 IB-review finding).
-	entity := visibility.Redact(ctx, h.redactor, served)
-	// The override script and the download name get the address of the row
-	// that was read: under a world a bare id resolves to a face, and the
-	// script must read that face.
-	entityID = entityPkg.FormatStateRef(served.ID, served.Face)
+	entity := res.Entity
+	// Render and name the download after the row the gate admitted, not the
+	// request's spelling of it.
+	entityID = entityPkg.FormatStateRef(entity.ID, entity.Face)
 
 	// A per-type `export_render:` view config (RR-BM0KIJ: config-selected,
 	// never request-selected — no query param chooses the script) renders via
@@ -312,11 +308,11 @@ func (h *exportHandler) convertAndWrite(
 // document instead of the built-in property renderer. Otherwise the built-in
 // [transform.EntityRenderer] is used.
 //
-// The entity was already resolved through the ACL read gate (getVisibleRef on
-// typeName) in the caller, so the override runs only for an entity the caller
+// The entity was already resolved through the ACL read gate (the resolver on
+// typeName) in the caller, so the override runs only for a face the caller
 // may read; the script is a fixed config value (not request input) and receives
-// the served address, face included. On any failure it writes the response and
-// returns ok=false.
+// the face's address (`ID` or `ID@face`), which the document machinery reads
+// by address. On any failure it writes the response and returns ok=false.
 func (h *exportHandler) exportRenderer(
 	w http.ResponseWriter, r *http.Request, typeName, entityID string, entity *entityPkg.Entity,
 ) (transform.Renderer, bool) {
@@ -324,19 +320,18 @@ func (h *exportHandler) exportRenderer(
 	if script == "" {
 		groups, err := h.entityRelationGroups(r.Context(), entity)
 		if err != nil {
-			// A world-neighbor resolution fault is an outage, not an entity
-			// with no links; exporting it as one would hide it (RR-4TFZNL).
-			// The unwired fallback reader still logs and swallows its own
-			// errors, as it does for every other caller.
+			// A neighbor read fault is an outage, not an entity with no
+			// links; exporting it as one would hide it (RR-4TFZNL).
 			writeGateError(w, r, err)
 			return nil, false
 		}
 		return transform.EntityRenderer{Entity: entity, Meta: h.meta(), Relations: groups}, true
 	}
 
-	// Defense-in-depth: the entityID reaches the document cache filename. It is
-	// already the address of a stored row (getVisibleRef matched it), but
-	// validate it the same way resolveAnchoredDocument does before any render.
+	// Defense-in-depth: the address reaches the document cache filename and
+	// (for a future command override) an sh -c {id}. It was built from the
+	// stored row the resolver matched, but validate it the same way
+	// handleV1Documents does before any render.
 	if !isSafeStateRefSegment(entityID) {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_entity", "Invalid entity id", "")
 		return nil, false
@@ -387,17 +382,23 @@ func exportFilename(entityID, produces string) string {
 	return entityID
 }
 
-// entityRelationGroups resolves the relations of the exported FACE, both
-// directions, into display groups (relation label + VISIBLE neighbor titles)
-// for the entity renderer. The edges come from faceNeighbors, so a published
-// export never carries its draft's links. Neighbor visibility is gated by the
-// same seam, so a hidden neighbor's title never leaks into the export.
-// Grouped by relation display label, in label order.
+// entityRelationGroups resolves an entity's outgoing and incoming relations into
+// display groups (relation label + VISIBLE neighbor titles) for the entity
+// renderer. Each neighbor is read once, in the request's world, through the
+// row and face gates, so its title is the face the page would show and a
+// neighbor the caller may not read, or the world excludes, is not listed. The
+// title is derived after redaction. Grouped by relation display label, in
+// label order.
 func (h *exportHandler) entityRelationGroups(
 	ctx context.Context, e *entityPkg.Entity,
 ) ([]transform.RelationGroup, error) {
 	meta := h.meta()
-	outgoing, incoming, neighbors, err := h.faceNeighbors(ctx, e)
+	// Only the edges the exported face owns (BUG-ISJHML).
+	outgoing := edgesOwnedBy(meta, h.reader.outgoingRelations(ctx, e.ID), e.Face)
+	incoming := incomingOwnedAtZero(meta, h.reader.incomingRelations(ctx, e.ID), e)
+
+	rows, err := h.resolver.ResolveIDsErr(ctx, worldFromContext(ctx).visibility(),
+		neighborIDsOf(outgoing, incoming))
 	if err != nil {
 		return nil, err
 	}
@@ -405,14 +406,14 @@ func (h *exportHandler) entityRelationGroups(
 	// label -> ordered neighbor titles.
 	byLabel := map[string][]string{}
 	addNeighbor := func(label, neighborID string) {
-		node, ok := neighbors[neighborID]
+		row, ok := rows[neighborID]
 		if !ok {
 			return
 		}
-		// Redact BEFORE deriving the title: a visible neighbor whose display
-		// property is hidden must render as its ID, never the hidden value
+		// The resolver redacted row, so a visible neighbor whose display
+		// property is hidden renders as its ID, never the hidden value
 		// (the RR-5N4K35 title-leak class).
-		title := transform.DisplayTitle(meta, visibility.Redact(ctx, h.redactor, node))
+		title := transform.DisplayTitle(meta, &entityPkg.Entity{ID: row.ID, Type: row.Type, Properties: row.Properties})
 		byLabel[label] = append(byLabel[label], title)
 	}
 

@@ -142,7 +142,7 @@ func TestAliasHook_FiresOnFaceDelete(t *testing.T) {
 		t.Fatalf("seed draft face: %v", err)
 	}
 
-	if _, err := mgr.DeleteEntityFace(t.Context(), "TSK-1", "draft"); err != nil {
+	if _, err := mgr.DeleteEntityFace(t.Context(), "TSK-1", "draft", true); err != nil {
 		t.Fatalf("DeleteEntityFace: %v", err)
 	}
 	if len(rw.faceDeletes) != 1 || rw.faceDeletes[0] != "TSK-1@draft" {
@@ -176,7 +176,7 @@ func TestFaceDelete_DropsTheRealCommentThread(t *testing.T) {
 		}
 	}
 
-	if _, err := mgr.DeleteEntityFace(ctx, "TSK-1", "draft"); err != nil {
+	if _, err := mgr.DeleteEntityFace(ctx, "TSK-1", "draft", true); err != nil {
 		t.Fatalf("DeleteEntityFace: %v", err)
 	}
 
@@ -207,7 +207,7 @@ func TestAliasHook_ErrorDoesNotFailTheWrite(t *testing.T) {
 		t.Fatalf("a failing alias hook must not fail the rename: %v", err)
 	}
 	// And the rename really landed.
-	if _, err := st.GetEntity(t.Context(), "TSK-new"); err != nil {
+	if _, err := st.GetEntity(t.Context(), entity.Ref{ID: "TSK-new"}); err != nil {
 		t.Errorf("renamed entity is missing: %v", err)
 	}
 
@@ -225,7 +225,7 @@ func TestAliasHook_NilIsANoOp(t *testing.T) {
 	if _, err := mgr.RenameEntity(t.Context(), "TSK-old", "TSK-new", entity.RenameOptions{}); err != nil {
 		t.Fatalf("RenameEntity with no rewriter: %v", err)
 	}
-	if _, err := st.GetEntity(t.Context(), "TSK-new"); err != nil {
+	if _, err := st.GetEntity(t.Context(), entity.Ref{ID: "TSK-new"}); err != nil {
 		t.Errorf("rename did not land: %v", err)
 	}
 	if _, err := mgr.DeleteEntity(t.Context(), "TSK-new", false); err != nil {

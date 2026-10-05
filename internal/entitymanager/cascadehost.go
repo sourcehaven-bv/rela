@@ -128,10 +128,14 @@ func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity, set map
 	return err
 }
 
-// GetEntity satisfies [autocascade.Host.GetEntity] by forwarding to
-// the store.
-func (h *cascadeHost) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	return h.deps.Store.GetEntity(ctx, id)
+// EntityType satisfies [autocascade.Host.EntityType] by reading the family
+// of id, so a faced target is found (BUG-J3PBFN).
+func (h *cascadeHost) EntityType(ctx context.Context, id string) (string, error) {
+	fam, err := lookupFamily(ctx, h.deps.Store, id)
+	if err != nil {
+		return "", err
+	}
+	return fam.typ, nil
 }
 
 // WriteRelation satisfies [autocascade.Host.WriteRelation] by CREATING
@@ -151,7 +155,11 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 		// RelationsToCreate/trigger relations; never nil
 		return nil
 	}
-	if _, err := h.deps.Store.CreateRelation(ctx, r.From, r.Type, r.To, &store.RelationData{
+	// The Runner hands over the trigger row's face. A content-scoped edge
+	// belongs to that face; an identity-scoped one to the entity, whose only
+	// valid tail is the zero face (see requireRelationFaceFor).
+	r.FromFace = h.deps.cascadeTail(r.Type, r.FromFace)
+	if _, err := h.deps.Store.CreateRelation(ctx, r.Identity(), &store.RelationData{
 		Properties: r.Properties,
 		Content:    r.Content,
 	}); err != nil {
@@ -170,80 +178,36 @@ func (h *cascadeHost) ValidateRelation(relType, fromType, toType string) error {
 	return h.deps.Meta.ValidateRelation(relType, fromType, toType)
 }
 
-// DeleteEntity satisfies [autocascade.Host.DeleteEntity]. It mirrors
-// [Manager.DeleteEntity]'s incident-relation handling. The entityType
-// parameter is informational — the store looks up the type from the
-// entity itself.
+// DeleteEntity satisfies [autocascade.Host.DeleteEntity]. The entityType
+// parameter is informational.
 //
-// triggered_by attribution: invoked only from the IfExistsReplace
-// path. Stamp `cascade:delete-entity:<id>` on the ctx so the
-// cascaded relation deletes are attributed to the replacement
-// operation, matching the direct-DeleteEntity convention in Manager.
+// It delegates to [Manager.DeleteEntity], the family path, so an
+// if_exists: replace delete removes every face of a faced entity and records
+// one audit row and one version per face, plus a version for each cascaded
+// relation (BUG-J3PBFN). The reimplementation this replaces was face-blind:
+// it wrote one audit record and captured no version.
+//
+// The handle is a cascade writer: the automation that triggered the delete
+// authorized it, as it does every other cascadeHost write. The records carry
+// the `automation` label when the ctx names no automation, as recordCascade
+// stamps it, so an unnamed automation's delete does not read as the user's.
 func (h *cascadeHost) DeleteEntity(ctx context.Context, _, id string, cascade bool) error {
-	current, err := h.deps.Store.GetEntity(ctx, id)
-	if err != nil {
-		// Not an ACL bypass (the triggering automation is already
-		// authorized), but reporting a transient store error as "missing"
-		// would make a cascade silently skip a replacement it should have
-		// performed. Surface the real cause.
-		if !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
-		return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
+	if audit.TriggeredByFrom(ctx) == "" {
+		ctx = audit.WithTriggeredBy(ctx, "automation")
 	}
-
-	incoming, err := collectIncidentRelations(ctx, h.deps.Store, id, store.DirectionIncoming)
-	if err != nil {
-		return fmt.Errorf("collect incoming relations for %q: %w", id, err)
+	m := &Manager{deps: h.deps, cascadeWrite: true}
+	if _, err := m.DeleteEntity(ctx, id, cascade); err != nil {
+		return fmt.Errorf("delete entity: %w", err)
 	}
-	outgoing, err := collectIncidentRelations(ctx, h.deps.Store, id, store.DirectionOutgoing)
-	if err != nil {
-		return fmt.Errorf("collect outgoing relations for %q: %w", id, err)
-	}
-	if (len(incoming)+len(outgoing)) > 0 && !cascade {
-		return ErrHasRelations
-	}
-
-	// Delegate to the store's cascade (single lock, fail-secure on a
-	// relation-file error) and audit exactly what it reports deleting, the
-	// same way Manager.DeleteEntity does. A real error surfaces instead of
-	// being swallowed, so a replacement never leaves orphaned relations
-	// behind a deleted entity (issue #888).
-	res, delErr := h.deps.Store.DeleteEntity(ctx, id, cascade)
-	if delErr != nil {
-		// Same partial-cascade rule as Manager.DeleteEntity (issue #929): a
-		// non-transactional backend reports the relations it already removed,
-		// and those removals stick, so they must reach the log. Relations
-		// only — the entity survived. Kept in step with the manager's path
-		// deliberately: an if_exists:replace delete and a direct delete must
-		// not log differently for the same failure.
-		if res != nil {
-			for _, rel := range res.DeletedRelations {
-				h.recordCascade(
-					audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id),
-					audit.OpDeleteRelation, relationSubject(rel), "deleted")
-			}
-		}
-		return fmt.Errorf("delete entity: %w", delErr)
-	}
-
-	cascadeCtx := ctx
-	if cascade && len(res.DeletedRelations) > 0 {
-		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
-	}
-	for _, rel := range res.DeletedRelations {
-		h.recordCascade(cascadeCtx, audit.OpDeleteRelation, relationSubject(rel), "deleted")
-	}
-	h.recordCascade(ctx, audit.OpDeleteEntity, entitySubject(current), "deleted")
 	return nil
 }
 
 // FindExistingRelationTarget satisfies
 // [autocascade.Host.FindExistingRelationTarget].
 func (h *cascadeHost) FindExistingRelationTarget(
-	ctx context.Context, sourceID, relationType, targetType string,
+	ctx context.Context, source entity.Ref, relationType, targetType string,
 ) *entity.Entity {
-	return findExistingRelationTarget(ctx, h.deps.Store, sourceID, relationType, targetType)
+	return findExistingRelationTarget(ctx, h.deps, source, relationType, targetType)
 }
 
 // entitySubject builds the Subject for an entity-shaped audit record.

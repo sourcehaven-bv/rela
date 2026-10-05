@@ -1,15 +1,18 @@
 package mcp
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/lock"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // newTestDeps assembles the [Deps] the server consumes from an
@@ -29,7 +32,7 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 	t.Cleanup(func() { _ = svc.Close() })
 
 	return Deps{
-		Store:         svc.Store(),
+		Store:         svc.GatedReads().Reader,
 		Traversals:    svc.GatedReads().Traversals,
 		Meta:          meta,
 		Tracer:        svc.Tracer(),
@@ -46,6 +49,8 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 		// one ever does.
 		ProjectRoot: t.TempDir(),
 		Attachments: testAttachmentDeps(t, svc, meta, audit.Nop{}),
+		World:       store.TrivialScope(),
+		Families:    store.TrivialScope(),
 	}
 }
 
@@ -55,8 +60,11 @@ func testAttachmentDeps(
 	t *testing.T, svc *appbuild.Services, meta *metamodel.Metamodel, sink audit.Audit,
 ) AttachmentDeps {
 	t.Helper()
-	snap, err := NewAttachmentSnapshot(
-		svc.Store(), svc.EntityManager(), lock.NewMemoryLocker(), svc.ACL(), meta, nil, store.MaxAttachmentBytes)
+	owner, err := entitymanager.AttachmentsOf(svc.EntityManager())
+	if err != nil {
+		t.Fatalf("AttachmentsOf: %v", err)
+	}
+	snap, err := NewAttachmentSnapshot(svc.Store(), owner, svc.ACL(), meta, nil, store.MaxAttachmentBytes)
 	if err != nil {
 		t.Fatalf("NewAttachmentSnapshot: %v", err)
 	}
@@ -76,3 +84,31 @@ func (nopWatcher) Start(func()) error { return nil }
 func (nopWatcher) Stop()              {}
 func (nopWatcher) Pause()             {}
 func (nopWatcher) Resume()            {}
+
+// graphOf is the ungated [GraphReader] over st, as `rela mcp` wires it with
+// no acl.yaml: rows through [visibility.Unrestricted], counts and single
+// relations from the store.
+func graphOf(st store.Store) GraphReader {
+	return rawGraph{UnrestrictedReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())), st: st}
+}
+
+type rawGraph struct {
+	*visibility.UnrestrictedReader
+	st store.Store
+}
+
+func (g rawGraph) Resolve(ctx context.Context, addr string) (*entity.Entity, error) {
+	return g.GetAddress(ctx, addr)
+}
+
+func (g rawGraph) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error) {
+	return g.st.GetRelation(ctx, k)
+}
+
+func (g rawGraph) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
+	return g.st.CountEntities(ctx, q)
+}
+
+func (g rawGraph) CountRelations(ctx context.Context, q store.RelationQuery) (int, error) {
+	return g.st.CountRelations(ctx, q)
+}

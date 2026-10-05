@@ -70,8 +70,17 @@ var ErrTraversalUnsupported = errors.New("acl: traversal cannot be gated")
 // of candidateType: the predicate goes in the slot matching the first hop's
 // direction. Built fresh rather than folded into an existing query, whose
 // ACL predicate may already occupy that slot.
+//
+// It selects the candidates at every face (TKT-7IZHP0 A12). The callers ask
+// about rows they already read, at whatever face they read them, and a
+// traversal follows identity-scoped relations only (content-scoped hops are
+// refused at load), whose edges are the same for every face of an id. So
+// an id matches exactly when its subject row does. Narrowing the selection
+// to a world would turn a subject read at a face the world does not serve
+// into "no match", which `not related(...)` reads as a pass. The endpoint
+// side carries its own world (see [Request.GateTraversal]).
 func TraversalQuery(candidateType string, hop TraversalHop, p *store.RelationPredicate) store.GraphQuery {
-	q := store.GraphQuery{EntityType: candidateType}
+	q := store.GraphQuery{EntityType: candidateType, Faces: store.AllFaces()}
 	if hop.Incoming {
 		q.HasInbound = p
 	} else {
@@ -161,8 +170,18 @@ func lowerTraversal(
 // A denied read on ANY hop returns [ErrTraversalDenied]; a read the
 // predicate cannot express returns [ErrTraversalUnsupported]. Neither ever
 // widens.
+//
+// # The request's world
+//
+// Every gated hop reads its endpoint in world, the world of the request the
+// traversal serves, whatever selection the query that runs it carries
+// ([store.EndpointPredicate.Faces]; stage-2 design section 12, RR-QUXMAF).
+// The row gate folded into a hop was written for the rows a reader sees,
+// which are the rows of their world. Evaluated under an AllFaces or AtFaces
+// query instead, the hop would match when ANY face of the endpoint passes the
+// gate, and so could grant through a face the request's world never serves.
 func (r *Request) GateTraversal(
-	ctx context.Context, candidateType string, hop TraversalHop,
+	ctx context.Context, candidateType string, world store.WorldScope, hop TraversalHop,
 ) (*store.RelationPredicate, error) {
 	// An outgoing first hop reads edges owned by the CANDIDATE, and the
 	// store reads them from the default state's tail. That tail holds the
@@ -180,7 +199,12 @@ func (r *Request) GateTraversal(
 		}
 	}
 	return lowerTraversal(hop, func(h TraversalHop) (*store.EndpointPredicate, error) {
-		return r.gateHop(ctx, h)
+		m, err := r.gateHop(ctx, h)
+		if err != nil {
+			return nil, err
+		}
+		m.Faces = store.InWorld(world)
+		return m, nil
 	})
 }
 
@@ -223,8 +247,8 @@ func (r *Request) gateHop(ctx context.Context, hop TraversalHop) (*store.Endpoin
 		return nil, ErrTraversalDenied
 	}
 	// A face-restricted read means only SOME content states of the endpoint
-	// are readable, and [store.EndpointPredicate] has no face field — so the
-	// predicate cannot express the restriction. Checked before the query is
+	// are readable. The traversal stamps the request world on the endpoint,
+	// not a face ceiling, so it cannot express the restriction. Checked before the query is
 	// folded so the refusal cannot be reached with a half-built predicate.
 	if len(rq.Faces) > 0 {
 		return nil, fmt.Errorf("%w: read of %q is face-restricted", ErrTraversalUnsupported, hop.EntityType)

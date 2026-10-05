@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclaudit"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
@@ -58,6 +59,13 @@ func (c *ACLAuditCmd) Run(svc *readServices) error {
 			return nil
 		}
 		return fmt.Errorf("load acl.yaml: %w", err)
+	}
+
+	// A policy the server refuses to load is reported as that load error, not
+	// audited: every loader validates through the same call, so the audit
+	// cannot report clean on a policy rela-server would not boot with.
+	if vErr := appbuild.ValidateACLPolicy(policy, svc.Meta); vErr != nil {
+		return fmt.Errorf("acl.yaml invalid for this project: %w", vErr)
 	}
 
 	perms, permsErr := permissionConsumerFor(svc.Config, svc.Meta)
@@ -203,6 +211,16 @@ func (r *metamodelReader) HasWorld(name string) bool {
 	return ok
 }
 
+// DeclaresWorlds reports whether the metamodel declares any world.
+func (r *metamodelReader) DeclaresWorlds() bool {
+	return r.m != nil && len(r.m.Worlds) > 0
+}
+
+// DefaultWorld names the schema's default world.
+func (r *metamodelReader) DefaultWorld() string {
+	return metamodel.EffectiveDefaultWorld(r.m)
+}
+
 // HasFace reports whether entity type t declares the content state named
 // face. Resolves aliases via GetEntityDef, so a grant written against a
 // type alias answers about the canonical type. A type with no `faces:`
@@ -217,18 +235,6 @@ func (r *metamodelReader) HasFace(t, face string) bool {
 	}
 	_, declared := def.Faces[face]
 	return declared
-}
-
-// HasFaces reports whether entity type t declares any content states.
-func (r *metamodelReader) HasFaces(t string) bool {
-	if r.m == nil {
-		return false
-	}
-	def, ok := r.m.GetEntityDef(t)
-	if !ok {
-		return false
-	}
-	return len(def.Faces) > 0
 }
 
 func (r *metamodelReader) HasField(t, field string) bool {

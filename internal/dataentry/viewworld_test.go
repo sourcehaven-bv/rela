@@ -58,7 +58,7 @@ func seedViewGraph(t *testing.T, app *App) {
 	})
 
 	for _, to := range []string{"FEAT-PUB", "FEAT-DRAFT"} {
-		if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", to, nil); err != nil {
+		if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: to}, nil); err != nil {
 			t.Fatalf("seed edge to %s: %v", to, err)
 		}
 	}
@@ -98,7 +98,7 @@ func collectionIDs(result *viewResult) []string {
 // code can produce, whereas a reader who only checked the face would not
 // notice if the wrong row were returned.
 //
-// Mutation-checked: `viewWorld.isDefault() → true` fails this.
+// Mutation-checked: `viewWorld.ranksNothing() → true` fails this.
 func TestExecuteView_EntryResolvesToTheWorldsFace(t *testing.T) {
 	app := newTestAppV1(t)
 	seedViewGraph(t, app)
@@ -381,7 +381,7 @@ func TestViewEntry_ExcludedEntryIsNotFound(t *testing.T) {
 //
 // Every change in item 4b sits behind a default-world branch, and a branch
 // written the wrong way round would route ordinary traffic through the world
-// path — where a zero WorldScope resolves everything to its default face and
+// path — where the trivial scope resolves everything to its default face and
 // would LOOK correct while taking a different route with different error
 // handling and different batching.
 func TestExecuteView_DefaultWorldUnchanged(t *testing.T) {

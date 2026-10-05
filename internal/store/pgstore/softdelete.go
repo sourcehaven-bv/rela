@@ -250,16 +250,16 @@ func markedIDTaken(ctx context.Context, q DBTX, id, except string) (bool, error)
 	return held, err
 }
 
-// revealedRelation returns the hidden default-tail edge from→to when ctx
-// reveals one of its endpoints (see [store.WithRevealed]).
-func revealedRelation(ctx context.Context, s *Store, from, relType, to string) (*entity.Relation, error) {
-	id, ok := store.RevealedFor(ctx, from, to)
+// revealedRelation returns the hidden edge k when ctx reveals one of its
+// endpoints (see [store.WithRevealed]).
+func revealedRelation(ctx context.Context, s *Store, k entity.RelationKey) (*entity.Relation, error) {
+	id, ok := store.RevealedFor(ctx, k.From, k.To)
 	if !ok {
 		return nil, pgx.ErrNoRows
 	}
 	return scanRelation(s.db.QueryRow(ctx, markedRelationSelect+` WHERE m.owner_id = $1
-		AND m.from_id = $2 AND m.rel_type = $3 AND m.to_id = $4 AND m.from_face = ''`,
-		id, from, relType, to))
+		AND m.from_id = $2 AND m.rel_type = $3 AND m.to_id = $4 AND m.from_face = $5`,
+		id, k.From, k.Type, k.To, string(k.FromFace)))
 }
 
 // revealedRelations returns the hidden relations of the entity ctx reveals

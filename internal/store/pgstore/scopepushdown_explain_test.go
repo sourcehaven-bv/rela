@@ -84,7 +84,7 @@ relations:
 		e.Properties["status"] = status
 		e.Properties["title"] = fmt.Sprintf("Ticket %06d", i)
 		require.NoError(t, s.CreateEntity(ctx, e))
-		_, err = s.CreateRelation(ctx, id, "implements", fmt.Sprintf("FEAT-%06d", i%features), nil)
+		_, err = s.CreateRelation(ctx, entity.RelationKey{From: id, Type: "implements", To: fmt.Sprintf("FEAT-%06d", i%features)}, nil)
 		require.NoError(t, err)
 	}
 	_, err = pool.Exec(ctx, "ANALYZE entities; ANALYZE relations")
@@ -119,6 +119,7 @@ relations:
 		Related:    []store.DirectedRelation{{Incoming: hop.Incoming, Pred: *pred}},
 		OrderBy:    []store.OrderSpec{{Property: "title"}},
 		Limit:      50,
+		Faces:      store.InWorld(store.TrivialScope()),
 	}
 	for _, countOnly := range []bool{false, true} {
 		sqlText, args := pgstore.BuildGraphQuerySQLForTest(q, countOnly)

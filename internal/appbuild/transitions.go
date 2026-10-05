@@ -194,7 +194,7 @@ func (v copyVisibility) Get(
 			// a genuine miss, which is what every read gate here promises.
 			return nil, false, nil
 		}
-		e, err := v.st.GetEntityState(ctx, id, face)
+		e, err := v.st.GetEntity(ctx, entity.Ref{ID: id, Face: face})
 		if err != nil {
 			return nil, false, nil //nolint:nilerr // a miss is not-found, matching the gated path
 		}
@@ -207,7 +207,7 @@ func (v copyVisibility) Get(
 	if !permitted {
 		return nil, false, nil
 	}
-	e, err := v.st.GetEntityState(ctx, id, face)
+	e, err := v.st.GetEntity(ctx, entity.Ref{ID: id, Face: face})
 	if err != nil {
 		return nil, false, nil //nolint:nilerr // a miss is not-found
 	}

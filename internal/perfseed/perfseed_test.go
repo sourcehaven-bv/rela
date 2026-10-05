@@ -8,6 +8,8 @@ import (
 	"io"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/perfseed"
@@ -72,7 +74,7 @@ func TestGenerator_ShapeMatchesProfile(t *testing.T) {
 	ids := map[string]bool{}
 	demo := map[string]bool{}
 	for e := range g.Entities() {
-		if e.Face.IsDefault() {
+		if e.Face.IsImplicit() {
 			byType[e.Type]++ // one entity per default row; faces are counted below
 		} else {
 			faces[e.Type+"@"+e.Face.String()]++
@@ -134,7 +136,7 @@ func TestLoad_WritesEverythingIntoStore(t *testing.T) {
 	require.Positive(t, progress)
 
 	ctx := context.Background()
-	gotE, err := st.CountEntities(ctx, store.EntityQuery{AllStates: true})
+	gotE, err := st.CountEntities(ctx, store.EntityQuery{Faces: store.AllFaces()})
 	require.NoError(t, err)
 	require.Equal(t, wantE, gotE, "every row, faces included, must be in the store")
 	gotR, err := st.CountRelations(ctx, store.RelationQuery{})
@@ -145,10 +147,10 @@ func TestLoad_WritesEverythingIntoStore(t *testing.T) {
 	// edges hang off that face, not the draft.
 	pub := 0
 	for e := range g.Entities() {
-		if e.Type != "policy" || e.Face.IsDefault() {
+		if e.Type != "policy" || e.Face.IsImplicit() {
 			continue
 		}
-		got, err := st.GetEntityState(ctx, e.ID, e.Face)
+		got, err := st.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 		require.NoError(t, err)
 		require.Equal(t, e.GetString("title"), got.GetString("title"))
 		face := e.Face

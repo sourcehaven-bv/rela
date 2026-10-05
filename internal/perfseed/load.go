@@ -59,8 +59,8 @@ func Load(ctx context.Context, st store.Store, g *Generator, opts LoadOptions) (
 		return sum, err
 	}
 	err = inBatches(ctx, st, batch, g.Relations(), func(view store.Store, r Relation) error {
-		data := &store.RelationData{FromFace: r.FromFace}
-		if _, cerr := view.CreateRelation(ctx, r.From, r.Type, r.To, data); cerr != nil {
+		k := entity.RelationKey{From: r.From, FromFace: r.FromFace, Type: r.Type, To: r.To}
+		if _, cerr := view.CreateRelation(ctx, k, nil); cerr != nil {
 			return fmt.Errorf("create %s --%s--> %s: %w", r.From, r.Type, r.To, cerr)
 		}
 		return nil

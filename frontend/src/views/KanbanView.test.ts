@@ -8,13 +8,16 @@ import { _setEntityPluralForTest } from '@/api/entities'
 import type { Entity, ListResponse } from '@/types'
 
 // KanbanView fetches its board through the api layer (useQuery over
-// listAllEntities) and moves cards via updateEntity. Mock the api functions,
-// mirroring EntityList.test.ts.
+// listAllEntities) and moves cards via the entities store, which calls
+// updateEntity from '@/api/entities'. Mock both, mirroring EntityList.test.ts.
 const listAllEntitiesMock = vi.fn()
 const updateEntityMock = vi.fn()
 vi.mock('@/api', async (orig) => ({
   ...(await orig<typeof import('@/api')>()),
   listAllEntities: (...args: unknown[]) => listAllEntitiesMock(...args),
+}))
+vi.mock('@/api/entities', async (orig) => ({
+  ...(await orig<typeof import('@/api/entities')>()),
   updateEntity: (...args: unknown[]) => updateEntityMock(...args),
 }))
 
