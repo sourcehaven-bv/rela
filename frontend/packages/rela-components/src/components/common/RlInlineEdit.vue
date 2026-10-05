@@ -451,8 +451,9 @@ defineExpose({ start, cancel: () => stop('cancel') })
 /*
  * Explicit: the same box as the button trigger, but a div, so the content
  * inside keeps its own clicks. The box is not a click target, so it keeps
- * the content's cursor and, on hover, only outlines what the edit button
- * will edit; a filled background would promise a click that does nothing.
+ * the content's cursor and takes none of the trigger's hover treatment: a
+ * tint or outline would promise a click that does nothing. The edit button
+ * appearing is the whole signal.
  */
 .rl-inline-edit__read {
   /* The edit button's box, which the rail below has to match. */
@@ -465,7 +466,7 @@ defineExpose({ start, cancel: () => stop('cancel') })
 
 .rl-inline-edit__read:hover {
   background: transparent;
-  border-color: var(--rl-color-border);
+  border-color: transparent;
 }
 
 .rl-inline-edit__read .rl-inline-edit__placeholder { cursor: pointer; }
