@@ -92,6 +92,29 @@ describe('SectionEditForm', () => {
     expect(values.map((v) => v.props('writable'))).toEqual([true, false])
   })
 
+  it('fills each label with the label-affordance slot, writable or not', () => {
+    const fields = makeFields([{ verdict: { writable: true } }, { verdict: { writable: false } }])
+    makeStoreMock()
+    const wrapper = mount(SectionEditForm, {
+      props: {
+        entityType: 'ticket',
+        entityId: 'TKT-001',
+        initialValues: { title: 'Original', status: 'open' },
+        fields,
+        onPropertyApplied: vi.fn(),
+        onError: vi.fn(),
+        onVerdictFlip: vi.fn(),
+      },
+      slots: {
+        'label-affordance': `<template #label-affordance="{ property, index }">
+          <span class="affordance">{{ property }}:{{ index }}</span>
+        </template>`,
+      },
+    })
+    const rows = wrapper.findAll('.property-row')
+    expect(rows.map((r) => r.find('.affordance').text())).toEqual(['title:0', 'status:1'])
+  })
+
   it('scheduleFieldSave fires when an edit to a writable field is kept', async () => {
     const fields = makeFields([{ verdict: { writable: true } }])
     const updateMock = makeStoreMock()

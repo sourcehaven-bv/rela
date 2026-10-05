@@ -220,6 +220,29 @@ func TestValidateTraversals_ChainResolvesToTheFinalType(t *testing.T) {
 	}
 }
 
+// TestValidateTraversals_RefusesContentScopedHop pins TKT-7IZHP0 A13: a
+// content-scoped edge belongs to one face, and a traversal matches identity
+// edges only, so following one would silently match nothing. It must fail
+// the load instead, at the first hop and further down the path.
+func TestValidateTraversals_RefusesContentScopedHop(t *testing.T) {
+	meta := traversalMeta()
+	meta.Relations["cites"] = metamodel.RelationDef{
+		From: []string{"concept"}, To: []string{"person"}, Scope: metamodel.ScopeContent,
+	}
+	meta.Relations["derives"] = metamodel.RelationDef{From: []string{"ticket"}, To: []string{"concept"}}
+	for _, tc := range []struct{ name, from, src string }{
+		{"first hop", "concept", `related(entity, 'cites', { name = 'alice' })`},
+		{"later hop", "ticket", `related(entity, { 'derives', 'cites' }, { name = 'alice' })`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateTraversals(meta, tc.from, compileFor(t, tc.src))
+			if err == nil || !strings.Contains(err.Error(), `"cites"`) {
+				t.Fatalf("want a load error naming the relation, got %v", err)
+			}
+		})
+	}
+}
+
 // A nil metamodel or program must not panic: callers compile before they have
 // a schema in some paths.
 func TestValidateTraversals_NilInputs(t *testing.T) {

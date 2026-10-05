@@ -61,7 +61,7 @@ func seedOrderableFixture(t *testing.T, app *App, prop string) string {
 		if s.order != nil {
 			props[prop] = s.order
 		}
-		_, err := app.store.CreateRelation(t.Context(), recipeID, "has-step", s.id, &store.RelationData{Properties: props})
+		_, err := app.store.CreateRelation(t.Context(), entity.RelationKey{From: recipeID, Type: "has-step", To: s.id}, &store.RelationData{Properties: props})
 		if err != nil {
 			t.Fatalf("seed relation: %v", err)
 		}

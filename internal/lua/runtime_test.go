@@ -22,6 +22,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // testMeta returns the metamodel used for testing.
@@ -104,18 +106,19 @@ func (m *mockWorkspace) seedEntity(e *entity.Entity) {
 
 // seedRelation adds a relation to the mock's memstore.
 func (m *mockWorkspace) seedRelation(r *entity.Relation) {
-	_, _ = m.store.CreateRelation(context.Background(), r.From, r.Type, r.To, nil)
+	_, _ = m.store.CreateRelation(context.Background(), entity.RelationKey{From: r.From, Type: r.Type, To: r.To}, nil)
 }
 
 // services returns a lua.WriteDeps bound to the mock's store, with projectRoot set.
 func (m *mockWorkspace) services(projectRoot string) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
-			VisibleReader: m.store,
-			Tracer:        tracer.New(m.store),
+			VisibleReader: visibility.Unrestricted(m.store).WithWorld(visibility.WorldOf(store.TrivialScope())),
+			Tracer:        tracertest.Must(m.store, store.TrivialScope()),
 			Searcher:      &mockSearcher{ws: m},
 			Meta:          m.meta,
 			ProjectRoot:   projectRoot,
+			World:         store.TrivialScope(),
 		},
 		EntityManager: &mockManager{ws: m},
 	}
@@ -123,7 +126,7 @@ func (m *mockWorkspace) services(projectRoot string) WriteDeps {
 
 // GetEntity returns an entity from the underlying store (test helper).
 func (m *mockWorkspace) GetEntity(id string) (*entity.Entity, bool) {
-	e, err := m.store.GetEntity(context.Background(), id)
+	e, err := m.store.GetEntity(context.Background(), entity.Ref{ID: id})
 	if err != nil {
 		return nil, false
 	}
@@ -138,7 +141,7 @@ func (m *mockWorkspace) Meta() *metamodel.Metamodel {
 // entityCount returns the number of entities currently in the mock's store.
 func (m *mockWorkspace) entityCount(ctx context.Context) int {
 	n := 0
-	for _, err := range m.store.ListEntities(ctx, store.EntityQuery{}) {
+	for _, err := range m.store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			continue
 		}
@@ -169,6 +172,13 @@ type mockManager struct {
 	// test asserting only on the face would pass against that bug.
 	createCalls   int
 	relationCalls int
+	// The address the last delete reached the manager with, and which
+	// method took it.
+	deletedFace      entity.Face
+	faceDeleteCalls  int
+	familyDeletes    int
+	unlinkedFace     entity.Face
+	relationUnlinked int
 }
 
 var _ Mutator = (*mockManager)(nil)
@@ -218,7 +228,7 @@ func (m *mockManager) UpdateEntity(
 func (m *mockManager) PatchEntity(
 	ctx context.Context, id string, p entity.Patch,
 ) (*entity.UpdateResult, error) {
-	stored, err := m.ws.store.GetEntity(ctx, id)
+	stored, err := m.ws.store.GetEntity(ctx, entity.Ref{ID: id})
 	if err != nil {
 		// Structural marker, matching the production manager — the binding
 		// detects not-found via the interface, not the message.
@@ -242,11 +252,12 @@ func (e fakeNotFoundError) EntityNotFound() bool { return true }
 func (m *mockManager) DeleteEntity(
 	ctx context.Context, id string, cascade bool,
 ) (*entity.DeleteResult, error) {
-	current, err := m.ws.store.GetEntity(ctx, id)
+	m.familyDeletes++
+	current, err := m.ws.store.GetEntity(ctx, entity.Ref{ID: id})
 	if err != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
-	if _, err := m.ws.store.DeleteEntity(ctx, id, cascade); err != nil {
+	if _, err := m.ws.store.DeleteFamily(ctx, id, cascade); err != nil {
 		return nil, err
 	}
 	return &entity.DeleteResult{
@@ -255,27 +266,40 @@ func (m *mockManager) DeleteEntity(
 }
 
 func (m *mockManager) CreateRelation(
-	ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	content := ""
 	if opts.Content != nil {
 		content = *opts.Content
 	}
 	var data *store.RelationData
-	if len(opts.Properties) > 0 || content != "" || !opts.FromFace.IsDefault() {
+	if len(opts.Properties) > 0 || content != "" {
 		data = &store.RelationData{
 			Properties: opts.Properties,
 			Content:    content,
-			FromFace:   opts.FromFace,
 		}
 	}
-	m.lastRelationFace = opts.FromFace
+	m.lastRelationFace = key.FromFace
 	m.relationCalls++
-	return m.ws.store.CreateRelation(ctx, from, relType, to, data)
+	return m.ws.store.CreateRelation(ctx, key, data)
 }
 
-func (m *mockManager) DeleteRelation(ctx context.Context, from, relType, to string) error {
-	return m.ws.store.DeleteRelation(ctx, from, relType, to)
+func (m *mockManager) DeleteEntityFace(
+	ctx context.Context, id string, face entity.Face, _ bool,
+) (*entity.DeleteResult, error) {
+	m.deletedFace = face
+	m.faceDeleteCalls++
+	res, err := m.ws.store.DeleteFace(ctx, entity.Ref{ID: id, Face: face})
+	if err != nil {
+		return nil, err
+	}
+	return &entity.DeleteResult{DeletedEntities: res.DeletedEntities, DeletedRelations: res.DeletedRelations}, nil
+}
+
+func (m *mockManager) DeleteRelation(ctx context.Context, key entity.RelationKey) error {
+	m.unlinkedFace = key.FromFace
+	m.relationUnlinked++
+	return m.ws.store.DeleteRelation(ctx, key)
 }
 
 // mockSearcher is a naive title-substring searcher used by lua tests.
@@ -289,7 +313,7 @@ func (s *mockSearcher) Search(ctx context.Context, q search.Query) iter.Seq2[sea
 	return func(yield func(search.Hit, error) bool) {
 		query := strings.ToLower(q.Text)
 		count := 0
-		for e, err := range s.ws.store.ListEntities(ctx, store.EntityQuery{}) {
+		for e, err := range s.ws.store.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			if err != nil {
 				continue
 			}
@@ -2413,9 +2437,9 @@ type ctxSpyStore struct {
 	rec *ctxRecorder
 }
 
-func (s *ctxSpyStore) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	s.rec.record(ctx, "Store.GetEntity")
-	return s.Store.GetEntity(ctx, id)
+func (s *ctxSpyStore) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
+	s.rec.record(ctx, "Store.GetAddress")
+	return readAddress(ctx, s.Store, addr)
 }
 
 func (s *ctxSpyStore) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
@@ -2432,7 +2456,7 @@ func (s *ctxSpyStore) ListRelations(ctx context.Context, q store.RelationQuery) 
 // actually invoke today. ctxSpyStore must satisfy this so the test
 // declares which Store methods are recorded and tooling can flag drift.
 type readStore interface {
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	GetAddress(ctx context.Context, addr string) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
@@ -2471,7 +2495,7 @@ func (t *ctxSpyTracer) FindPath(ctx context.Context, fromID, toID string) []trac
 	return t.inner.FindPath(ctx, fromID, toID)
 }
 
-func (t *ctxSpyTracer) FindOrphans(ctx context.Context) ([]string, error) {
+func (t *ctxSpyTracer) FindOrphans(ctx context.Context) ([]tracer.Orphan, error) {
 	return t.inner.FindOrphans(ctx)
 }
 
@@ -2495,17 +2519,17 @@ func (s *ctxSpySearcher) Search(ctx context.Context, q search.Query) iter.Seq2[s
 }
 
 // spiedDeps wraps the real workspace's WriteDeps with ctx-recording spies.
-func spiedDeps(realDeps WriteDeps, rec *ctxRecorder) WriteDeps {
+// The spy reads the mock's raw store, so the calls it records are the store
+// calls the bindings make; these tests only read.
+func spiedDeps(ws *mockWorkspace, realDeps WriteDeps, rec *ctxRecorder) WriteDeps {
 	return WriteDeps{
 		ReadDeps: ReadDeps{
-			// The fixture's VisibleReader is backed by the mock store, so it
-			// satisfies store.Store; assert rather than carry a second raw
-			// handle just for the spy.
-			VisibleReader: &ctxSpyStore{Store: realDeps.VisibleReader.(store.Store), rec: rec},
+			VisibleReader: &ctxSpyStore{Store: ws.store, rec: rec},
 			Tracer:        &ctxSpyTracer{inner: realDeps.Tracer, rec: rec},
 			Searcher:      &ctxSpySearcher{inner: realDeps.Searcher, rec: rec},
 			Meta:          realDeps.Meta,
 			ProjectRoot:   realDeps.ProjectRoot,
+			World:         store.TrivialScope(),
 		},
 		EntityManager: realDeps.EntityManager,
 	}
@@ -2552,7 +2576,7 @@ func TestReadBindings_UseCallerContext(t *testing.T) {
 			}
 
 			rec := &ctxRecorder{}
-			deps := spiedDeps(ws.services(t.TempDir()), rec)
+			deps := spiedDeps(ws, ws.services(t.TempDir()), rec)
 
 			parent := context.WithValue(context.Background(), ctxMarkerKey{}, "parent-marker")
 
@@ -2589,7 +2613,7 @@ func TestReadBindings_FallbackWhenNoParentContext(t *testing.T) {
 	t.Parallel()
 	ws := newMockWorkspace(t)
 	rec := &ctxRecorder{}
-	deps := spiedDeps(ws.services(t.TempDir()), rec)
+	deps := spiedDeps(ws, ws.services(t.TempDir()), rec)
 
 	var buf bytes.Buffer
 	r := NewWriter(deps, &buf) // no WithContext
@@ -2781,7 +2805,7 @@ func TestNewWriter_PanicsOnNilEntityManager(t *testing.T) {
 
 	var buf bytes.Buffer
 	// EntityManager left nil — must panic.
-	_ = NewWriter(WriteDeps{ReadDeps: ReadDeps{ProjectRoot: "/tmp"}}, &buf)
+	_ = NewWriter(WriteDeps{ReadDeps: ReadDeps{ProjectRoot: "/tmp", World: store.TrivialScope()}}, &buf)
 }
 
 // TestWriterRuntime_MutationBindingsPresent is the positive counterpart:

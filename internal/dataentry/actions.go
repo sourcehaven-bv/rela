@@ -121,7 +121,7 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	deps.Capabilities = luaCapabilities(action.Capabilities)
 	var ent *entity.Entity
 	if payload.EntityID != "" && action.AvailableOn == nil {
-		if e, getErr := deps.VisibleReader.GetEntity(r.Context(), payload.EntityID); getErr == nil {
+		if e, getErr := deps.VisibleReader.GetAddress(r.Context(), payload.EntityID); getErr == nil {
 			ent = e
 		}
 	}
@@ -225,12 +225,12 @@ func (h *writeHandler) resolveDetailActionEntity(
 	if address == "" {
 		return notFound()
 	}
-	entityID, face, err := entity.ParseStateRef(address)
+	e, found, err := h.visible.untypedAddress(r.Context(), address)
 	if err != nil {
-		return notFound()
+		writeGateError(w, r, err)
+		return nil, false
 	}
-	e, err := h.store.GetEntityState(r.Context(), entityID, face)
-	if err != nil || !entityReadableInRequest(r.Context(), e) {
+	if !found {
 		return notFound()
 	}
 	check := h.affordances.newDetailActionCheck(r.Context(), s, e)

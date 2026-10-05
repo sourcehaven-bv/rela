@@ -117,7 +117,7 @@ func readActionPayload(r *http.Request, action dataentryconfig.Action) (actionPa
 // authorize against it: a caller-supplied type is forgeable, and gating on it
 // is a cross-type escalation (claim a type you may read, name an id of a type
 // you may not — BUG-ZWTDH9). The stored type is the only one that means
-// anything, and visibility.ScriptReader.GetEntity reads it from the row itself.
+// anything, and visibility.ScriptReader.GetAddress reads it from the row itself.
 // TestAction_EntityTypeIsIgnored pins that no claim can change the outcome.
 // Do not "notice it's missing" and wire it back in.
 func stringField(m map[string]any, key string) string {

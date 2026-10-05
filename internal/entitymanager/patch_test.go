@@ -79,7 +79,7 @@ func seedTask(t *testing.T, st store.Store, id string, props map[string]any, bod
 
 func mustGet(t *testing.T, st store.Store, id string) *entity.Entity {
 	t.Helper()
-	got, err := st.GetEntity(context.Background(), id)
+	got, err := st.GetEntity(context.Background(), entity.Ref{ID: id})
 	if err != nil {
 		t.Fatalf("GetEntity %s: %v", id, err)
 	}

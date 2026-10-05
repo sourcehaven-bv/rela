@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -260,7 +261,7 @@ func TestBuildEntityInput(t *testing.T) {
 	bindRepo(app, "/test/project")
 	seedRelation(app, entity.NewRelation(entities.ticket1.ID, "depends_on", entities.ticket2.ID))
 
-	input := app.commands.buildEntityInput(context.Background(), entities.ticket1)
+	input := mustEntityInput(context.Background(), t, app, entities.ticket1)
 
 	if input.Context != "entity" {
 		t.Errorf("expected entity context, got %s", input.Context)
@@ -324,7 +325,7 @@ func TestBuildViewInput(t *testing.T) {
 		t.Fatalf("executeView: %v", err)
 	}
 
-	input := app.commands.buildViewInput(context.Background(), "test_view", vr)
+	input := mustViewInput(context.Background(), t, app, "test_view", vr)
 
 	if input.Context != "view" {
 		t.Errorf("expected view context, got %s", input.Context)
@@ -368,7 +369,7 @@ func TestBuildCommandEnv(t *testing.T) {
 		Context: "entity",
 		Env:     map[string]string{"FORMAT": "pdf"},
 	}
-	input := app.commands.buildEntityInput(context.Background(), entities.ticket1)
+	input := mustEntityInput(context.Background(), t, app, entities.ticket1)
 	env := app.commands.buildCommandEnv(cmd, input)
 
 	envMap := envToMap(env)
@@ -426,7 +427,7 @@ func TestBuildCommandEnvFace(t *testing.T) {
 			// promises the variables in each and they are set in one shared
 			// `input.Entity != nil` block.
 			for _, ctxName := range []string{"entity", "view"} {
-				input := app.commands.buildEntityInput(context.Background(), &e)
+				input := mustEntityInput(context.Background(), t, app, &e)
 				input.Context = ctxName
 				ctxEnv := app.commands.buildCommandEnv(
 					CommandConfig{Script: "echo hi", Context: ctxName}, input)
@@ -436,7 +437,7 @@ func TestBuildCommandEnvFace(t *testing.T) {
 			}
 
 			cmd := CommandConfig{Script: "echo hi", Context: "entity"}
-			env := app.commands.buildCommandEnv(cmd, app.commands.buildEntityInput(context.Background(), &e))
+			env := app.commands.buildCommandEnv(cmd, mustEntityInput(context.Background(), t, app, &e))
 
 			envMap := envToMap(env)
 			if envMap["RELA_ENTITY_FACE"] != tc.wantFace {
@@ -709,6 +710,20 @@ func TestHandleCommandExec(t *testing.T) {
 		app.commands.handleCommandExec(w, r)
 		if w.Code != http.StatusNotFound {
 			t.Errorf("expected 404, got %d", w.Code)
+		}
+	})
+
+	// A gate fault keeps the command's 404, but is logged (ruling 7.2).
+	t.Run("gate error is logged", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPost, "/api/command/test-echo?entity_id=TKT-001", http.NoBody)
+		r = r.WithContext(withReadGate(r.Context(), fakeGate{permitsErr: errors.New("gate down")}))
+		w := httptest.NewRecorder()
+		logged := captureWarn(t, func() { app.commands.handleCommandExec(w, r) })
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", w.Code)
+		}
+		if !strings.Contains(logged, "gate failed") || !strings.Contains(logged, "gate down") {
+			t.Errorf("the gate error was not logged: %s", logged)
 		}
 	})
 
@@ -1391,7 +1406,7 @@ func TestBuildEntityInput_CarriesRedactedNames(t *testing.T) {
 	delete(e.Properties, "status")
 	e.Redacted = []string{"status"}
 
-	input := app.commands.buildEntityInput(context.Background(), e)
+	input := mustEntityInput(context.Background(), t, app, e)
 
 	data, err := json.Marshal(input)
 	if err != nil {

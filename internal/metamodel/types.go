@@ -56,12 +56,20 @@ type Metamodel struct {
 	// Worlds declares named resolution functions over content states
 	// (TKT-WAV8XP, design doc §4). Keyed by world name.
 	//
-	// ABSENT means the project has exactly the implicit DEFAULT world —
-	// every entity contributes its default state — which is today's
-	// graph, byte-identically. The name "default" is reserved
-	// ([DefaultWorldName]) because that world is implicit and total, so
-	// a declaration under that name could only shadow or contradict it.
+	// ABSENT means rela generates one world, [DefaultWorldName], that
+	// serves each faced type's faces in declaration order and every faceless
+	// type at its implicit face. When any world is declared, no `default`
+	// world exists. The name is reserved either way.
 	Worlds map[string]WorldDef `yaml:"worlds,omitempty"`
+
+	// DefaultWorld names the world a request uses when it names none
+	// (TKT-7IZHP0 design §21 D3). With worlds declared it must name one of
+	// them, and with more than one it is required: an order-derived default
+	// would change when someone sorts `worlds:`. With none declared it may
+	// only be [DefaultWorldName]. [EffectiveDefaultWorld] applies those
+	// rules. `app.default_world` in data-entry.yaml is a deprecated alias
+	// that must match the effective value.
+	DefaultWorld string `yaml:"default_world,omitempty"`
 
 	// Copies declares named copy definitions — mapped writes of one content
 	// state into another (TKT-C1XUA8). See [CopyDef]; a request invokes one
@@ -71,6 +79,7 @@ type Metamodel struct {
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
 	inverseOwners map[string]string // inverse name -> owning canonical relation name
+	worldOrder    []string          // world names in YAML order; see [WorldOrderOf]
 }
 
 // InverseOwner returns the canonical relation type that declares the
@@ -331,6 +340,9 @@ type EntityDef struct {
 	// needs no special handling — and why a project that never writes
 	// this key behaves byte-identically to the pre-worlds system.
 	Faces map[string]FaceDef `yaml:"faces,omitempty"`
+	// faceOrder is Faces' keys in YAML order, recorded at load; see
+	// [FaceOrderOf].
+	faceOrder []string
 
 	// QueryScopes declares named, reusable membership predicates over this
 	// type — the rule deciding whether a row belongs in a collection at all.
@@ -631,8 +643,9 @@ type WorldOnAbsent struct {
 	Redirect string `yaml:"redirect,omitempty"`
 }
 
-// DefaultWorldName is reserved: the default world is implicit and total,
-// so a declaration under this name could only shadow or contradict it.
+// DefaultWorldName is the name of the world rela generates when the schema
+// declares no worlds (TKT-7IZHP0). It is reserved: a world declared under it
+// is a load error, and when worlds are declared it names nothing.
 const DefaultWorldName = "default"
 
 // DefaultQueryScopeName is the query scope a presentation surface uses when
@@ -1190,6 +1203,26 @@ func (s RelationScope) IsContent() bool { return s == ScopeContent }
 // for any metamodel that writes it out — and passes every test written
 // against one that doesn't.
 func (s RelationScope) IsIdentity() bool { return !s.IsContent() }
+
+// IsContentScoped reports whether edges of relType attach to one state of
+// their source. It is the ONE place that answers this for a relation type
+// name; every consumer delegates here so the answer cannot drift between
+// surfaces (BUG-ISJHML). An undeclared type is identity-scoped, matching
+// the zero [RelationScope].
+//
+// A package-level function because Metamodel's exported API is capped.
+//
+// Nil: accepted — a nil m answers true. A content-scoped verdict only ever
+// withholds an edge from faces that do not own it, so an unknown schema
+// fails toward showing less, never toward presenting one state's edges as
+// another's.
+func IsContentScoped(m *Metamodel, relType string) bool {
+	if m == nil {
+		return true
+	}
+	def, ok := m.GetRelationDef(relType)
+	return ok && def.Scope.IsContent()
+}
 
 // OrderableMode controls which side(s) of a relation type are user-orderable.
 type OrderableMode string

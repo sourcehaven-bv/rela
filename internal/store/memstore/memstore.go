@@ -25,6 +25,7 @@ import (
 	"io"
 	"iter"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -54,14 +55,15 @@ import (
 // included — only to drop the body immediately, which is the cost the
 // capability exists to remove. Interface-driven like the Tx split above.
 //
-// (43 → 45 / 29 → 30 with content states, TKT-DOFYR1: GetEntityState
-// joined the mandated store.Store interface; rekeyFamily serves the
-// family-wide rename that contract requires.)
+// (43 → 45 / 29 → 30 with content states, TKT-DOFYR1: a per-face read
+// (GetEntity on a Ref since TKT-KQXVF7) joined the mandated store.Store
+// interface; rekeyFamily serves the family-wide rename that contract
+// requires.)
 //
 // (+2 methods / +2 exported with per-face delete, TKT-C1XUA8:
-// DeleteEntityState and DeleteRelationState joined the mandated
-// store.Store interface. Required-interface exception, not accreted
-// API — the counts ratchet only if store.Store itself narrows.)
+// DeleteFace and DeleteRelationState joined the mandated store.Store
+// interface. Required-interface exception, not accreted API — the counts
+// ratchet only if store.Store itself narrows.)
 //
 // +1 (TKT-9KZGJO): per-face index notification joined the observer
 // dispatch when indexers stopped skipping non-default faces. One
@@ -74,12 +76,15 @@ import (
 // CAS precondition has to be evaluated atomically with the write, so it
 // cannot live anywhere but on the type that owns the write.
 //
+// -2 exported (TKT-KQXVF7): UpdateRelationState and
+// DeleteRelationState folded into UpdateRelation and DeleteRelation, which
+// now take an entity.RelationKey that carries the tail.
 // +1 exported (soft delete): SoftDelete is the one-line accessor for the
 // optional store.SoftDeleteProvider capability, found by type assertion. The
 // capability's methods live on softDeleter, not here.
 //
-//plimsoll:max-methods=55
-//plimsoll:max-exported-methods=35
+//plimsoll:max-methods=49
+//plimsoll:max-exported-methods=31
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -226,7 +231,7 @@ func entityRemove(s []string, key string) []string {
 // worldKeep resolves a world over matched entities, returning only each
 // entity's prime. A no-op for the default world (TKT-WAV8XP).
 func worldKeep(w store.WorldScope, matched []*entity.Entity) []*entity.Entity {
-	if w.IsDefaultWorld() || len(matched) == 0 {
+	if w.IsTrivial() || len(matched) == 0 {
 		return matched
 	}
 	cands := make([]storeutil.WorldCandidate, len(matched))
@@ -286,20 +291,14 @@ type famEntry struct {
 
 // --- EntityReader ---
 
-func (m *MemStore) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	// The bare id IS the default state's key (entity.FormatStateRef with
-	// the zero face).
-	return m.GetEntityState(ctx, id, "")
-}
-
-func (m *MemStore) GetEntityState(_ context.Context, id string, p entity.Face) (*entity.Entity, error) {
-	if storeutil.IsStateRef(id) {
+func (m *MemStore) GetEntity(_ context.Context, ref entity.Ref) (*entity.Entity, error) {
+	if !storeutil.Addressable(ref) {
 		return nil, store.ErrNotFound
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	e, ok := m.entities[entity.FormatStateRef(id, p)]
+	e, ok := m.entities[entity.FormatStateRef(ref.ID, ref.Face)]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
@@ -323,7 +322,7 @@ func (m *MemStore) ListEntities(_ context.Context, q store.EntityQuery) iter.Seq
 	}
 	m.mu.RUnlock()
 
-	snapshot = worldKeep(q.World, snapshot)
+	snapshot = worldKeep(storeutil.RankingWorld(q), snapshot)
 
 	return func(yield func(*entity.Entity, error) bool) {
 		for _, e := range snapshot {
@@ -362,7 +361,7 @@ func (m *MemStore) ListEntityHeaders(
 	}
 	// Resolve BEFORE projecting: the world picks whole rows, and a
 	// header carries the face that identifies which face it is.
-	matched = worldKeep(q.World, matched)
+	matched = worldKeep(storeutil.RankingWorld(q), matched)
 
 	snapshot := make([]store.EntityHeader, 0, len(matched))
 	for _, e := range matched {
@@ -372,6 +371,10 @@ func (m *MemStore) ListEntityHeaders(
 			Face:       e.Face,
 			Properties: maps.Clone(e.Properties),
 			UpdatedAt:  e.UpdatedAt,
+			// Carried like every backend's header: a header must never look
+			// more complete than the entity it projects.
+			Redacted:     slices.Clone(e.Redacted),
+			Inaccessible: slices.Clone(e.Inaccessible),
 		})
 	}
 	m.mu.RUnlock()
@@ -401,14 +404,14 @@ func (m *MemStore) ListEntitiesPage(_ context.Context, q store.EntityQuery) (sto
 	matches := func(id string) bool { return matchEntityQuery(m.entities[id], q, idSet) }
 
 	var keys storeutil.PageKeys
-	if q.World.IsDefaultWorld() {
+	if storeutil.RankingWorld(q).IsTrivial() {
 		keys = storeutil.PaginateSortedKeysFunc(
 			m.entityOrder, cursorKey, q.Limit, matches, storeutil.CompareStateKeys)
 	} else {
 		// The world path buffers ONE family at a time and counts PRIMES
 		// against the limit — see storeutil.PaginateWorldPrimes.
 		keys = storeutil.PaginateWorldPrimes(
-			m.entityOrder, cursorKey, q.Limit, q.World, matches,
+			m.entityOrder, cursorKey, q.Limit, storeutil.RankingWorld(q), matches,
 			func(key string) (storeutil.WorldCandidate, bool) {
 				e, ok := m.entities[key]
 				if !ok {
@@ -468,7 +471,7 @@ func (m *MemStore) CountEntities(_ context.Context, q store.EntityQuery) (int, e
 	// The default world resolves every row to itself, so counting needs
 	// no buffer — and this is the common path for a project that never
 	// declares a face, which must stay allocation-free.
-	if q.World.IsDefaultWorld() {
+	if storeutil.RankingWorld(q).IsTrivial() {
 		n := 0
 		for _, e := range m.entities {
 			if matchEntityQuery(e, q, idSet) {
@@ -486,7 +489,7 @@ func (m *MemStore) CountEntities(_ context.Context, q store.EntityQuery) (int, e
 	}
 	// Counts must be world-scoped, not raw: an unscoped tally tells a
 	// published-world surface how many unpublished drafts exist.
-	return len(worldKeep(q.World, matched)), nil
+	return len(worldKeep(storeutil.RankingWorld(q), matched)), nil
 }
 
 func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {
@@ -521,26 +524,6 @@ func (m *MemStore) HighestID(_ context.Context, prefix string) (int, error) {
 	return highest, nil
 }
 
-func (m *MemStore) PropertyValues(_ context.Context, property string, limit int) ([]string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	counts := make(map[string]int)
-	for _, e := range m.entities {
-		if !e.Face.IsDefault() {
-			continue // suggestion counts stay default-world (TKT-DOFYR1)
-		}
-		if v, ok := e.Properties[property]; ok {
-			s := fmt.Sprintf("%v", v)
-			if s != "" {
-				counts[s]++
-			}
-		}
-	}
-
-	return storeutil.TopValues(counts, limit), nil
-}
-
 // --- EntityWriter ---
 
 func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
@@ -559,7 +542,7 @@ func (m *MemStore) createEntity(_ context.Context, e *entity.Entity) error {
 	if markedTaken(m.marked, e.ID, "") {
 		return store.ErrConflict
 	}
-	if e.Face.IsDefault() {
+	if e.Face.IsImplicit() {
 		// Case-folded so "ABC" conflicts with an existing "abc" — on fsstore
 		// they are one file, and the backends must agree on identity
 		// (BUG-3RCWNS).
@@ -632,7 +615,7 @@ func (m *MemStore) updateEntityIf(
 	}
 	// Row-family invariant: a non-default state cannot be re-typed away
 	// from its family (TKT-DOFYR1, design doc §6).
-	if !e.Face.IsDefault() && e.Type != existing.Type {
+	if !e.Face.IsImplicit() && e.Type != existing.Type {
 		return "", storeutil.StateTypeMismatchError(e.ID, e.Face, e.Type, existing.Type)
 	}
 
@@ -731,28 +714,33 @@ func (m *MemStore) deleteEntity(_ context.Context, id string, cascade bool) (*st
 	return result, nil
 }
 
-// deleteEntityState removes ONE face and only the edges that belong to it
+// deleteFace removes ONE face and only the edges that belong to it
 // (TKT-C1XUA8). Contrast deleteEntity above, which sweeps the whole family
 // and every incident edge on both sides — reusing that here would make
 // discarding a draft destroy the published face and its inbound links.
-func (m *MemStore) deleteEntityState(
-	_ context.Context, id string, p entity.Face,
-) (*store.DeleteResult, error) {
+// The last face is the exception: with no entity left, every incident edge
+// goes too (RR-2466U1, see store.EntityWriter.DeleteFace).
+func (m *MemStore) deleteFace(_ context.Context, ref entity.Ref) (*store.DeleteResult, error) {
+	if !storeutil.Addressable(ref) {
+		return nil, store.ErrNotFound
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	id, p := ref.ID, ref.Face
 	key := entity.FormatStateRef(id, p)
 	target, ok := m.entities[key]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
+	last := familySize(m.entities, id) == 1
 
-	// OUTGOING edges on this tail go with the face. INCOMING edges do NOT:
-	// heads are entity-level (§2.3), so an inbound edge points at the entity
-	// and survives its faces.
+	// OUTGOING edges on this tail go with the face. INCOMING edges do NOT
+	// while a face remains: heads are entity-level (§2.3), so an inbound
+	// edge points at the entity and survives its faces.
 	var owned []*entity.Relation
 	for _, r := range m.relations {
-		if r.From == id && r.FromFace == p {
+		if (r.From == id && r.FromFace == p) || (last && (r.From == id || r.To == id)) {
 			owned = append(owned, r)
 		}
 	}
@@ -765,7 +753,7 @@ func (m *MemStore) deleteEntityState(
 	// Attachments are keyed to the bare id, so they belong to the ENTITY.
 	// Only sweep them when this was the last face standing.
 	m.notifyFaceDelete(id, p)
-	if familySize(m.entities, id) == 0 {
+	if last {
 		for k, a := range m.attachments {
 			if a.entityID == id {
 				delete(m.attachments, k)
@@ -873,7 +861,7 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 	renamedStates := m.rekeyFamily(family, newID)
 	var renamedDefault *entity.Entity
 	for _, r := range renamedStates {
-		if r.Face.IsDefault() {
+		if r.Face.IsImplicit() {
 			renamedDefault = r
 		}
 	}
@@ -885,7 +873,7 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 		m.notifyRenamed(oldID, renamedDefault)
 	}
 	for _, r := range renamedStates {
-		if r.Face.IsDefault() {
+		if r.Face.IsImplicit() {
 			continue // already announced above
 		}
 		m.notifyRenamed(oldID, r)
@@ -948,29 +936,14 @@ func (m *MemStore) renameEntity(_ context.Context, oldID, newID string) (*store.
 
 // --- RelationReader ---
 
-// tailKey addresses the edge of a triple carrying EXACTLY tail p. The tail
-// is part of a relation's identity, so this is an address and not a filter:
-// two tails on one triple are two relations (TKT-C1XUA8).
-func tailKey(from string, p entity.Face, relType, to string) string {
-	return (&entity.Relation{From: from, FromFace: p, Type: relType, To: to}).Key()
-}
-
-// defaultTailKey addresses the DEFAULT-tail edge of a triple. Get and
-// update are default-tail-only (TKT-DOFYR1) — see
-// store.RelationData.FromFace. Delete has the general form
-// deleteRelationState since TKT-C1XUA8.
-func defaultTailKey(from, relType, to string) string {
-	return tailKey(from, "", relType, to)
-}
-
-func (m *MemStore) GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error) {
+func (m *MemStore) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	key := defaultTailKey(from, relType, to)
+	key := k.String()
 	r, ok := m.relations[key]
 	if !ok {
-		if _, revealed := store.RevealedFor(ctx, from, to); revealed {
+		if _, revealed := store.RevealedFor(ctx, k.From, k.To); revealed {
 			if hidden := revealedRelations(ctx, m, func(h *entity.Relation) bool {
 				return h.Key() == key
 			}); len(hidden) > 0 {
@@ -1047,14 +1020,14 @@ func (m *MemStore) CountRelations(_ context.Context, q store.RelationQuery) (int
 // --- RelationWriter ---
 
 func (m *MemStore) createRelation(
-	_ context.Context, from, relType, to string, data *store.RelationData,
+	_ context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
-	for _, id := range []string{from, to} {
+	for _, id := range []string{k.From, k.To} {
 		if err := validateID(id); err != nil {
 			return nil, err
 		}
 	}
-	if err := storeutil.ValidateRelationType(relType); err != nil {
+	if err := storeutil.ValidateRelationType(k.Type); err != nil {
 		return nil, err
 	}
 	if data != nil {
@@ -1066,15 +1039,15 @@ func (m *MemStore) createRelation(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	r := entity.NewRelation(from, relType, to)
+	r := entity.NewRelation(k.From, k.Type, k.To)
+	r.FromFace = k.FromFace // tail face is identity (TKT-DOFYR1)
 	r.UpdatedAt = time.Now()
 	if data != nil {
-		r.FromFace = data.FromFace // tail face is identity (TKT-DOFYR1)
 		r.Content = data.Content
 		if data.Properties != nil {
 			r.Properties = make(map[string]any, len(data.Properties))
-			for k, v := range data.Properties {
-				r.Properties[k] = entity.CloneValue(v)
+			for pk, v := range data.Properties {
+				r.Properties[pk] = entity.CloneValue(v)
 			}
 		}
 	}
@@ -1089,25 +1062,19 @@ func (m *MemStore) createRelation(
 
 	m.emit(store.Event{
 		Op:           store.EventRelationCreated,
-		RelationType: relType,
-		From:         from,
-		To:           to,
-		Face:         r.FromFace,
+		RelationType: k.Type,
+		From:         k.From,
+		To:           k.To,
+		Face:         k.FromFace,
 	})
 	return r.Clone(), nil
 }
 
+// updateRelation writes the edge with EXACTLY this key, tail included. The
+// tail is part of a relation's identity, so addressing the wrong one updates
+// a different edge rather than failing (BUG-64MU2Q).
 func (m *MemStore) updateRelation(
-	ctx context.Context, from, relType, to string, data store.RelationData,
-) (*entity.Relation, error) {
-	return m.updateRelationState(ctx, from, "", relType, to, data)
-}
-
-// updateRelationState writes the edge with EXACTLY this tail. The tail is
-// part of a relation's identity, so addressing the wrong one updates a
-// different edge rather than failing (BUG-64MU2Q).
-func (m *MemStore) updateRelationState(
-	_ context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
+	_ context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
 	if err := storeutil.ValidateProperties(data.Properties); err != nil {
 		return nil, err
@@ -1115,7 +1082,7 @@ func (m *MemStore) updateRelationState(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := tailKey(from, p, relType, to)
+	key := k.String()
 	r, ok := m.relations[key]
 	if !ok {
 		return nil, store.ErrNotFound
@@ -1125,8 +1092,8 @@ func (m *MemStore) updateRelationState(
 	updated.Content = data.Content
 	if data.Properties != nil {
 		updated.Properties = make(map[string]any, len(data.Properties))
-		for k, v := range data.Properties {
-			updated.Properties[k] = entity.CloneValue(v)
+		for pk, v := range data.Properties {
+			updated.Properties[pk] = entity.CloneValue(v)
 		}
 	} else {
 		updated.Properties = nil
@@ -1136,28 +1103,21 @@ func (m *MemStore) updateRelationState(
 
 	m.emit(store.Event{
 		Op:           store.EventRelationUpdated,
-		RelationType: relType,
-		From:         from,
-		To:           to,
-		Face:         p,
+		RelationType: k.Type,
+		From:         k.From,
+		To:           k.To,
+		Face:         k.FromFace,
 	})
 	return updated.Clone(), nil
 }
 
-func (m *MemStore) deleteRelation(ctx context.Context, from, relType, to string) error {
-	return m.deleteRelationState(ctx, from, "", relType, to)
-}
-
-// deleteRelationState removes the edge with EXACTLY this tail. The tail is
-// part of a relation's identity, so addressing the wrong one deletes a
-// different edge rather than failing (TKT-C1XUA8).
-func (m *MemStore) deleteRelationState(
-	_ context.Context, from string, p entity.Face, relType, to string,
-) error {
+// deleteRelation removes the edge with EXACTLY this key, tail included
+// (TKT-C1XUA8).
+func (m *MemStore) deleteRelation(_ context.Context, k entity.RelationKey) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	key := tailKey(from, p, relType, to)
+	key := k.String()
 	if _, ok := m.relations[key]; !ok {
 		return store.ErrNotFound
 	}
@@ -1166,10 +1126,10 @@ func (m *MemStore) deleteRelationState(
 
 	m.emit(store.Event{
 		Op:           store.EventRelationDeleted,
-		RelationType: relType,
-		From:         from,
-		To:           to,
-		Face:         p,
+		RelationType: k.Type,
+		From:         k.From,
+		To:           k.To,
+		Face:         k.FromFace,
 	})
 	return nil
 }
@@ -1200,7 +1160,9 @@ func (m *MemStore) attachFile(_ context.Context, entityID, property, fileName st
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.entities[entityID]; !ok {
+	// Bytes are keyed per bare id and shared by the family: any face of
+	// the id makes it exist (BUG-CTUW2N).
+	if familySize(m.entities, entityID) == 0 {
 		return store.ErrNotFound
 	}
 
@@ -1216,7 +1178,7 @@ func (m *MemStore) attachFile(_ context.Context, entityID, property, fileName st
 	return nil
 }
 
-func (m *MemStore) ReadAttachment(_ context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
+func (m *MemStore) ReadFamilyAttachment(_ context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -1239,11 +1201,11 @@ func (m *MemStore) deleteAttachment(_ context.Context, entityID, property, fileN
 	return nil
 }
 
-func (m *MemStore) ListAttachments(_ context.Context, entityID string) ([]store.AttachmentInfo, error) {
+func (m *MemStore) ListFamilyAttachments(_ context.Context, entityID string) ([]store.AttachmentInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if _, ok := m.entities[entityID]; !ok {
+	if familySize(m.entities, entityID) == 0 {
 		return nil, store.ErrNotFound
 	}
 

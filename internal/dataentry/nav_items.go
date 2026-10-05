@@ -224,20 +224,15 @@ func navItemNeighbors(
 // returns the initial of each one the principal may read, taken from its
 // redacted title.
 func navItemNeighborInitials(ctx context.Context, a *App, s *Schema, ids []string) (map[string]string, error) {
-	headers := make([]store.EntityHeader, 0, len(ids))
-	for h, err := range store.ListEntityHeaders(ctx, a.Services().Store, store.EntityQuery{IDs: ids}) {
-		if err != nil {
-			return nil, err
-		}
-		headers = append(headers, h)
+	// One gated batch read, each id resolved to the face the request's
+	// world selects.
+	headers, err := a.visibleReader.resolver.ResolveIDsErr(ctx, worldFromContext(ctx).visibility(), ids)
+	if err != nil {
+		return nil, err
 	}
-	visible := a.visibleReader.visibleHeaderIDs(ctx, headers)
 	red := appRedactor(a)
 	out := make(map[string]string, len(headers))
 	for _, h := range headers {
-		if !visible[h.ID] {
-			continue
-		}
 		rh := visibility.RedactHeader(ctx, red, h)
 		// A title that fell back to the id means the display property is
 		// unset or hidden, and a letter of the id says nothing about who

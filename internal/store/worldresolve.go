@@ -71,6 +71,9 @@ type WorldCandidate struct {
 	Face entity.Face
 }
 
+// Ref returns the address of the state row c describes.
+func (c WorldCandidate) Ref() entity.Ref { return entity.Ref{ID: c.ID, Face: c.Face} }
+
 // WorldResolved is the verdict for one entity: which face the world serves,
 // and the provenance a caller must be able to label it with. "The published
 // face" and "the default face, because no published face exists" are
@@ -108,8 +111,12 @@ type WorldResolved struct {
 // decision about ABSENCE, so an id whose candidates are only partly present
 // can resolve to the wrong prime rather than merely a stale one. Decisions
 // are made AFTER the whole candidate set is seen, never streaming per row.
+//
+// An unset w resolves nothing: the zero scope is a wiring bug, and reading
+// it as the trivial world would fail open once the default world is not
+// trivial.
 func ResolveWorldPrimes(w WorldScope, candidates []WorldCandidate) map[string]WorldResolved {
-	if len(candidates) == 0 {
+	if len(candidates) == 0 || !w.IsSet() {
 		return nil
 	}
 
@@ -133,7 +140,7 @@ func ResolveWorldPrimes(w WorldScope, candidates []WorldCandidate) map[string]Wo
 			f = &family{typ: c.Type}
 			fams[c.ID] = f
 		}
-		if c.Face.IsDefault() {
+		if c.Face.IsImplicit() {
 			f.haveDefault = true
 			f.typ = c.Type
 		}
@@ -167,15 +174,15 @@ func ResolveWorldPrimes(w WorldScope, candidates []WorldCandidate) map[string]Wo
 	return out
 }
 
-// ResolutionAt names the rule that produced a face stored at p for an entity
-// of entityType under scope, and its chain position when rule 2 applied. It
-// answers for a face ALREADY chosen (by a backend's ranking, say), where the
-// family is not in hand; it is a total mapping, not a walk.
+// RuleAt names the rule that produced a face stored at p for an entity of
+// entityType under w, and its chain position when rule 2 applied. It answers
+// for a face ALREADY chosen (by a backend's ranking, say), where the family
+// is not in hand; it is a total mapping, not a walk.
 //
 // entityType must be canonical: [WorldScope] is keyed on canonical names
 // only, and an alias reads as an unknown type, which is rule 1.
-func ResolutionAt(scope WorldScope, entityType string, p entity.Face) (rule ResolutionRule, position int) {
-	res, scoped := scope.For(entityType)
+func (w WorldScope) RuleAt(entityType string, p entity.Face) (rule ResolutionRule, position int) {
+	res, scoped := w.For(entityType)
 	if !scoped {
 		return ResolutionUnscoped, 0
 	}

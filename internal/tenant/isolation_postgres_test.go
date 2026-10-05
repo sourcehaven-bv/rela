@@ -238,7 +238,7 @@ func TestTenantIsolation_EvictionDoesNotDisturbSiblings(t *testing.T) {
 
 func assertVisible(t *testing.T, ctx context.Context, svc *appbuild.Services, id, wantTitle string) {
 	t.Helper()
-	got, err := svc.Store().GetEntity(ctx, id)
+	got, err := svc.Store().GetEntity(ctx, entity.Ref{ID: id})
 	if err != nil {
 		t.Fatalf("tenant cannot read its own entity %s: %v", id, err)
 	}
@@ -252,7 +252,7 @@ func assertVisible(t *testing.T, ctx context.Context, svc *appbuild.Services, id
 // the only thing standing between this design and a cross-tenant disclosure.
 func assertInvisible(t *testing.T, ctx context.Context, svc *appbuild.Services, id, asTenant string) {
 	t.Helper()
-	got, err := svc.Store().GetEntity(ctx, id)
+	got, err := svc.Store().GetEntity(ctx, entity.Ref{ID: id})
 	if err == nil {
 		t.Fatalf("CROSS-TENANT LEAK: tenant %s read foreign entity %s (%+v); "+
 			"search_path is not isolating these tenants", asTenant, id, got.Properties)
@@ -262,7 +262,7 @@ func assertInvisible(t *testing.T, ctx context.Context, svc *appbuild.Services, 
 func assertOnlyOwnEntities(t *testing.T, ctx context.Context, svc *appbuild.Services, wantID string) {
 	t.Helper()
 	var ids []string
-	for e, err := range svc.Store().ListEntities(ctx, store.EntityQuery{Type: "ticket"}) {
+	for e, err := range svc.Store().ListEntities(ctx, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}

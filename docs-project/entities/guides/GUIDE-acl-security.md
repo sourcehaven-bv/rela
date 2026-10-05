@@ -171,6 +171,17 @@ single-entity read, `?include=` neighbours, views, and search alike. A denied
 face produces the same not-found response as a face that does not exist, so a
 grant cannot be used to discover which faces an entity has.
 
+The gate judges each face on its own. For a conferred role, a face is readable
+only through a relation whose grant names that face. When a request reads an
+entity by its bare id, the gate first removes the faces the principal may not
+read, and the world then picks among the rest. A principal whose grant denies
+the face the world prefers is served the next readable face in the world's
+chain. The single-entity read, lists, `?include=` neighbours, the links in a
+response and search all resolve an entity this way, so they agree. An entity
+with no readable face is absent everywhere. Views that traverse from an entry
+still drop a neighbour whose preferred face is denied; they will switch to the
+same rule in a later release.
+
 **The default differs between reads and writes, deliberately.**
 
 | Grant | Covers |
@@ -206,10 +217,10 @@ policy:
 `POL-1@draft` and `POL-1@published` are the only rows that exist. The grants
 therefore behave as follows:
 
-| Grant | Reaches the draft face? |
+| Grant | Result |
 | --- | --- |
-| `update: [policy]` | **no**, it matches nothing and denies everything |
-| `update: [policy@draft]` | **yes**, this is the correct grant |
+| `update: [policy]` | **load error**: the grant would match nothing |
+| `update: [policy@draft]` | reaches the draft face; this is the correct grant |
 
 Name every face the role may write:
 
@@ -218,17 +229,118 @@ editor:
   update: [policy@draft]
 ```
 
-The bare form is the dangerous spelling because it reads like a permission. It
-fails closed, denying rather than over-permitting, so the symptom is an editor
-who cannot save with no error naming a face. `rela acl audit` reports it as
-`B12-bare-grant-on-faced-type` at severity High, with the fix spelled out.
+A bare type in `create`, `update` or `delete` that declares `faces:` is refused
+when `acl.yaml` loads. The server, every CLI command, `rela acl audit` and the
+docs builder refuse to start, and the error names the role, the verb, the grant
+and what to write instead:
+
+```text
+acl: roles.editor.update: "policy" names a type that declares faces; a write
+grant must name the face: "policy@draft", "policy@published"
+```
+
+A write grant on a faced type must also use the canonical type name, not an
+alias. Grant matching compares type names as written, so `update: [pol@draft]`
+for a type `policy` with alias `pol` would grant nothing. It is refused, and the
+error names `policy@draft` instead.
+
+Every offending grant is reported at once. Read grants are not affected: a bare
+`read: [policy]` covers every face.
 
 Note that `*` is a wildcard over **types**, never over faces. `update: ["*"]`
-grants each type's unnamed state, so it reaches faceless types only. A role
-that must write a faced type needs that type's faces listed explicitly, even if
-it already holds the wildcard. This is deliberate: the alternative would mean
-every existing admin grant silently acquiring authority over `published` the
-moment a type declared its first face.
+grants each type's unnamed state, so it reaches faceless types only. It names no
+type, so it is not refused. A role that must write a faced type needs that
+type's faces listed explicitly, even if it already holds the wildcard. When a
+refused grant sits in a list that also holds `*`, the error adds a note saying
+so. This is deliberate: the alternative would mean every existing admin grant
+silently acquiring authority over `published` the moment a type declared its
+first face.
+
+#### Users, groups and role relations must be faceless
+
+The resolver maps a principal to one user entity and walks relations between
+entity ids to find groups and local roles. Faces would break both. A faced user
+type lets two faces of one id carry different identity values, and a faced
+group lets an unpublished face confer a role. So these are load errors:
+
+- `user_entity_type` names a type that declares `faces:`.
+- The membership relation (`membership_relation`, default `member-of`)
+  connects a type that declares `faces:`, as member or as group.
+- A `role_relations` entry with `confers:` has a faced source type. The source
+  is the role holder, a user or a group.
+- The membership relation, a `role_relations` entry with `confers:`, or an
+  `inherit_roles_through` relation is declared `scope: content`. These edges
+  attach to the entity, not to one face.
+
+The resource a role is conferred on may declare faces. An `owns` relation from
+`person` to `policy` confers its role on the whole policy, and the role's
+face-named write grants decide which faces it may write. A relation the schema
+does not declare is not checked, since it can hold no edges.
+
+#### Whole-entity writes never consult a hidden face
+
+A few writes concern the whole entity rather than one face. Each is decided
+from grants and from the faces the caller can read, and never from the faces
+the entity happens to store. A decision that read the stored faces would
+answer differently when a face hidden from the caller existed, and so reveal
+it. The error text names no face for the same reason.
+
+**Renaming.** A rename changes the id of every face, hidden ones included. It
+is granted for the whole entity by a `rename:` grant on the type:
+
+```yaml
+editor:
+  read: [policy]
+  rename: [policy]        # or ["*"] for every type
+```
+
+Face grants do not grant a rename, even on every face. A face-qualified rename
+grant is refused when `acl.yaml` loads:
+
+```text
+roles.editor: rename: "policy@draft" names the face "draft"; a rename moves
+every face of an entity, so a rename grant names the type alone: "policy"
+```
+
+An alias in `rename:` is refused too, and the error names the canonical type.
+`rename:` must be covered by a read grant on the type, as `update:` is. On a
+faceless type, `update:` still grants a rename as well.
+
+Global roles count, and so do local roles. A local role is conferred through a
+`role_relations` entry, which must be identity-scoped (see below), so it
+belongs to the whole entity and may grant a rename of it. A client ceiling
+narrows `rename:` as it narrows `update:`.
+
+A caller with the grant who can read no face of the entity gets the same
+not-found response as for an entity that does not exist. Without the grant the
+answer is a `403` that names the type, whatever faces exist.
+
+**Identity-scoped relations.** An identity-scoped relation from a faced entity
+belongs to the whole entity. Writing one needs the verb on every face the type
+**declares**, whether or not this entity stores it. A `relation_grants:`
+permission is the alternative, as for any relation. The data-entry `linkable`
+flag asks the same question.
+
+An affordance relation grant must allow the write on every declared face too.
+A face the caller can read is judged on its row, so its `when:` is evaluated.
+A face the caller cannot read is judged on the policy alone: only a grant
+without `when:` allows it, because a `when:` could deny on content the caller
+cannot see. This applies whether or not the entity stores that face, so the
+answer never reveals a hidden face. A face the caller is granted read on
+without conditions, and that is not stored, needs no judgement.
+
+A relation write that names an entity the caller cannot read, or a face of it
+the caller cannot read, is refused as if the entity did not exist: `422
+target_not_found`. This holds for both ends of the edge.
+
+**Deleting a face.** Deleting a face deletes the entity when no other face the
+caller can read remains. The delete is then checked as an entity delete: it
+needs `cascade` when the entity has relations, and each identity-scoped and
+incoming edge must be deletable. If a face the caller cannot read still exists,
+rela keeps the entity, that face and those edges, and deletes only the named
+face and its own edges. It never deletes a hidden face or an edge tailed at
+one, and the caller gets the same answer in both cases. A bare-id delete of a
+faced entity is refused with `face_required`.
 
 #### World grants select a lens
 
@@ -239,8 +351,8 @@ resolution — but every face remains reachable there by addressing it directly
 as `POL-1@draft`, so only a face grant stands between that caller and a
 draft.
 
-A caller who omits `?world=` may still be in a world. `app.default_world` in
-`data-entry.yaml` sets the world a bare request lands in, and the server
+A caller who omits `?world=` may still be in a world. `default_world:` in
+`schema.yaml` sets the world a bare request lands in, and the server
 applies it to the API and the web app alike. It is still not a gate. It selects
 a face, and the `world:` grant is re-checked for it exactly as for an explicit
 `?world=`, so pointing the default at a world a role may not read yields that
@@ -421,7 +533,7 @@ Load-bearing details:
   resolved to no entity. A `--principal-header` deployment, and the
   CLI/MCP/scheduler entry points, are never subject to it — their
   principals legitimately don't resolve to a `persoon` either, and a
-  blanket rule would wrongly deny them. It gates writes (CRUD, sync, and
+  blanket rule would wrongly deny them. It gates writes (CRUD and
   Lua-action writes all funnel through the one write-authorization point);
   reads and non-`/api/` paths are untouched.
 - **`reject` and `provision` require the lookup.** Both need
@@ -633,18 +745,14 @@ nothing should be built as if it were. If you need a client kept away from
 content, say so with the grants: name the faces in `read:`, or use
 `deny_read`. Those run on every request path.
 
-**`deny_worlds: [default]` does nothing at all.** The request path resolves the
-default world before the ceiling is consulted, so the entry loads cleanly and
-is silently inert. Treat it as unimplemented rather than as a control you have
-configured. `rela acl audit` will not warn you, because `B10-undeclared-world`
-skips the default world and the entry produces no finding.
-
-The default world is not a special case here. It is the lens you get when you
-name none, and it applies no resolution at all. Denying it would not mean "deny
-the data" but "refuse to serve a request that picked no lens", and it would not
-even hide a face, since a face is addressable as `ID@face` under any lens. That
-is why nothing relies on it, and why the answer is to gate the faces rather
-than the lens.
+**`deny_worlds` cannot name the default world.** The default world is the
+schema's `default_world:`, which a schema with more than one world must set;
+with one world it is that world, and with none the generated `default`. Requests that name no world read in it, and so do
+the CLI, MCP, scripts and scheduled tasks. A ceiling that denied it would deny
+every read on those surfaces, so naming it in `deny_worlds` is a load error. A
+`worlds:` allowlist need not list it either: a ceiling narrows only the worlds
+it names. To keep a client away from content, name the faces in `read:` or use
+`deny_read`.
 
 ### Not a substitute for gating the client itself
 
@@ -1200,9 +1308,7 @@ side owns the grant), and redaction runs on every browser-reachable relation
 read shape — the `/relations` map, the single-relation-type GET, and both the
 outgoing and incoming direction (an incoming edge resolves its grant against
 the true source, not the entity being viewed). It also runs on relation
-history (see below). The machine-to-machine sync channel (`/api/sync/`) applies
-the **same** redaction by reading through `/api/v1` rather than a private channel
-(TKT-8P1TM7) — see "Sync is a client of the authorized API" below. The deny universe is the edge's actual
+history (see below). The deny universe is the edge's actual
 meta keys, so a free-form key never declared in the metamodel is redacted
 too — a caller cannot smuggle a secret past the closed-world by using an
 undeclared property name. Relations have no display-title channel, so there
@@ -1277,83 +1383,27 @@ other surfaces and how each counts hidden entities.
   - `delete_entity` without `cascade` on an entity whose only edges lead
     to hidden entities fails with "entity has relations". That shows some
     hidden edge exists, but not how many or to what. The counts that
-    `delete_entity` and `rename_entity` report cover visible edges only;
-  - `analyze` with `check: cardinality` or `check: orphans` uses structural
-    relation counts, the same rule the data-entry analyze view follows.
+    `delete_entity` and `rename_entity` report cover visible edges only.
+    So do the relation counts behind `analyze` with `check: cardinality`
+    or `check: orphans`, and in the data-entry analyze view (TKT-5LW875).
 - **Markdown body (`content`) is not field-redacted, on any read path.**
   `visible:` is a **property-values** guard: it omits hidden *property* and
   *relation-meta* values from the wire. It makes no claim over the markdown
   **body** — there are no body-level guards anywhere in rela (the web read
-  path, the sync fetch, and history all serve the full body). A deployment
+  path and history both serve the full body). A deployment
   that duplicates a hidden property's value into the body (e.g. a rendered
   "summary" line) discloses it to any principal who may row-read the entity.
   Covering the body would be a new cross-path mechanism; it is deliberately
   out of scope (RR-ATFNM1).
 
 For threat-modelling purposes today: per-entity GET, write, include,
-list, pagination, global-search, the SSE event stream, and the
-machine-to-machine sync channel are all read-gated (the SSE feed per-type,
-see above); `visible:` property/meta redaction applies to every data-entry
-HTTP read body — and **sync inherits it by reading through `/api/v1`**
-(TKT-8P1TM7); and `/_search`
-cannot be used as a hidden-field oracle. The remaining read-side gaps are
+list, pagination, global-search and the SSE event stream are all read-gated
+(the SSE feed per-type, see above); `visible:` property/meta redaction applies
+to every data-entry HTTP read body; and `/_search` cannot be used as a
+hidden-field oracle. The remaining read-side gaps are
 relation meta (TKT-0RBFN0) and the markdown body (never field-redacted,
 by design — see above); within the data-entry server every property/meta
-read channel a browser or a replica can reach is tight.
-
-### Sync is a client of the authorized API (a "fancy browser")
-
-The machine-to-machine sync channel (`/api/sync/`, FEAT-NJ9FEN) used to be a
-**second content channel** into the store — its own record GET/PUT/DELETE with
-its own row-level gate, bypassing `visible:` field redaction on reads and the
-field-write ACL on writes. TKT-8P1TM7 retired that channel: sync now reads AND
-writes through the **same authorized `/api/v1` API** the SPA uses, so there is
-one content channel with one authorization decision. A replica is a client with
-no authority of its own — the remote is always the authoritative primary.
-
-- The **feed** (`/api/sync/manifest`) is the only sync-specific surface that
-  remains — content-free and row-gated. It lists `{id, type, op, deleted}` per
-  changed row filtered by the same read verdict, carrying no property or meta
-  values. A row a principal cannot read is omitted (the cursor still advances
-  past it, so the client never re-polls a hidden tail forever). A row the
-  principal can read but is field-redacted on **still appears** — the feed has
-  no field-level decision because it carries no fields. It stays because a plain
-  GET cannot express a tombstone (absence-from-a-list is not an explicit delete).
-- **Reads** go through `/api/v1` GET, inheriting row-gating AND `visible:`
-  redaction — the field-redaction gap closes as a consequence of there being one
-  content channel, not a bolted-on step. A single-relation `/api/v1` read
-  (RR-SYNCR1) serves the relation body + a relation-level ETag, field-meta
-  redacted and **fail-closed** (empty meta if the source is gone), mirroring
-  relation history.
-- **Reads that feed a local write are safe** because the `/api/v1` response
-  carries `_redacted` — the *names* (never values) of the properties withheld by
-  field ACL (DEC-T0XIWQ). A replica applying a pulled change patches only the
-  fields it can see: a name present in `_redacted` is **hidden, not deleted**, so
-  the replica leaves its own local copy untouched; a field in neither
-  `properties` nor `_redacted` is a genuine delete. A redacted read therefore
-  drives a faithful replica without ever erasing hidden values the replica isn't
-  entitled to.
-- **Writes** go through the `/api/v1` write path, so a push is enforced by the
-  same field-write ACL (`validateFieldWrite`) as a human edit, and a redacted
-  replica pushes a PATCH of visible fields only — it never names (and so never
-  erases) the primary's hidden fields. Ids are the primary's to mint: a
-  locally-created record is pushed under a temporary id, the primary returns the
-  real id, and the replica renames its local doc to match.
-- **Conflict detection** uses the primary's ETag as an opaque `If-Match` token —
-  the replica stores what the primary returned and echoes it back, comparing only
-  for equality to detect "the primary moved." A conflict halts the record and is
-  surfaced to the operator to resolve (`--force`), not auto-reconciled.
-
-Two residual notes for a deployment. (1) The markdown **body** is not
-field-redacted on any path (see "What still leaks" above), so sync replicates
-full bodies — the same as a web GET. (2) A principal who **loses** row access
-keeps whatever it already replicated (the row simply stops appearing and its GET
-404s — it cannot refresh, but the last copy is not recalled; "you could have made
-a copy"). A manifest-listed id that 404s on fetch (access lost between feed and
-fetch) means *skip and advance* — the replica must NOT mirror a delete from a
-bare 404, only from an explicit feed tombstone (RR-SYNCR3). Scope: this is the
-CLI replica↔remote mode; a server↔server mode is deliberately deferred (see the
-ticket).
+read channel a browser or an API client can reach is tight.
 
 ## Version history read gating (`history:read`)
 
@@ -1384,6 +1434,12 @@ is read-gated on the same principles as everything else:
   access to. Grant it only to trusted audit/compliance roles. A **non-holder**
   requesting a deleted entity's history gets the same 404 as a nonexistent id,
   so the permission boundary does not itself leak which deleted entities exist.
+  On a type with faces the history is per face, and a deleted face also needs
+  the face half of the read grant: `history:read` plus `read: [policy@draft]`
+  opens the history of a deleted `POL-1@draft`, and `read: [policy@published]`
+  alone does not. When other faces of the entity still exist, the caller must
+  also be able to read one of them, as for any read of a live entity. A
+  deleted face with no recorded history is the same 404.
 
 ### Historical field redaction fails closed (`history:read-redacted`)
 
@@ -1548,16 +1604,16 @@ unknown one, so cancellation cannot be used to probe what else is running.
 
 ### What a command permission actually confers
 
-**Command payloads are not read-gate scoped, in any context.** A command's
-stdin JSON is assembled directly from the store, without the per-entity
-`PermitsRead` verdicts that gate an ordinary API read. Granting
-`command:<something>` therefore confers **read access to whatever that
-command's context assembles**, not merely the right to run a script:
+**Command payloads are read-gate scoped in the entity context only.** A
+command's stdin JSON leaves the process, so what it carries matters as much as
+who may run it. Granting `command:<something>` confers **read access to
+whatever that command's context assembles**, not merely the right to run a
+script:
 
 | context | what the script receives | scoped by |
 | ------- | ------------------------ | --------- |
-| `entity` | the entity at the caller-supplied `entity_id`, plus **every** incident relation | nothing — any id in the store |
-| `list` | every entity in the caller-supplied `list_id`, post-filter | nothing — any configured list |
+| `entity` | the entity at the caller-supplied `entity_id`, plus its incident relations | the row gate, the face gate and field redaction on the entity; a relation travels only when both endpoints are readable (a content-scoped tail at its own face), and an outgoing content-scoped edge only with the face the entity is served at |
+| `list` | every entity in the caller-supplied `list_id`, post-filter | nothing — any configured list (TKT-2FDTJE) |
 | `global` | project paths only | n/a |
 | `view` | the entry entity plus the entire traversal closure | *not grantable — see below* |
 
@@ -1575,9 +1631,10 @@ in advance. Deferred until the traversal is read-gate scoped.
 
 Restore (`POST /api/v1/_history/<type>/<id>/<version>/restore`) is a **write**,
 not a read: it is authorized as an ordinary update (or create, if the entity was
-deleted), runs the per-field write gate on exactly the fields that change (so it
-cannot set or clear a field the principal lacks write access to), and is audited
-and re-versioned like any edit.
+deleted) on the restored face (`type@face` on a type with faces), runs the
+per-field write gate on exactly the fields that change (so it cannot set or
+clear a field the principal lacks write access to), and is audited and
+re-versioned like any edit.
 
 Not point-in-time: history read uses the *current* ACL, not the ACL as-of each
 version. Reading a live entity's history exposes its **entire** history from
@@ -1605,8 +1662,21 @@ body too) is read-gated on **both** endpoints: a caller must be able to read the
 `from` AND the `to` entity. Gating on the `from` alone would make the `to`
 endpoint an existence/content oracle — a principal allowed to read `from` but
 denied `to` could enumerate `from`'s outgoing relation histories and learn about
-the hidden `to` endpoint. A deleted relation (endpoints gone) uses the same global
-`history:read`; a non-holder gets the same 404 as a nonexistent relation.
+the hidden `to` endpoint.
+
+When part of the relation is gone, the rule is "both endpoints, as far as they
+still exist". Every endpoint that still exists keeps its read check, and the
+caller must also hold the global `history:read`:
+
+- If the `from` entity lives on but the face the relation hung from was
+  deleted, the caller must be able to read the entity, and their read grants
+  must cover the deleted face. Entity history applies the same rule to a
+  deleted face.
+- An endpoint with no stored row at all adds no check of its own. Its type is
+  unknown, and the type segment in the URL is never trusted.
+
+Any denial is the same 404 as a nonexistent relation. Restore uses the same
+gate.
 
 Relations DO support field-level (`visible:`) redaction (TKT-B1F5Q1) — on the
 live relation GET and in history. Relation history exposes exactly what a live

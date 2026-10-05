@@ -51,7 +51,7 @@ func TestGitCrypt_GetEntityReturnsInaccessibleEntity(t *testing.T) {
 	s := openStore(t, fs)
 	defer s.Close()
 
-	got, err := s.GetEntity(ctx, "REQ-2")
+	got, err := s.GetEntity(ctx, entity.Ref{ID: "REQ-2"})
 	require.NoError(t, err, "encrypted file should load as an inaccessible entity, not error")
 	assert.Equal(t, "REQ-2", got.ID)
 	assert.Equal(t, "requirement", got.Type)
@@ -82,7 +82,7 @@ func TestGitCrypt_ListEntitiesIncludesInaccessibleAlongsideCleartext(t *testing.
 	defer s.Close()
 
 	var cleartext, encrypted []*entity.Entity
-	for got, err := range s.ListEntities(ctx, store.EntityQuery{}) {
+	for got, err := range s.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 		require.NoError(t, err, "encrypted file must not surface as iterator error")
 		if got.IsLocked() {
 			encrypted = append(encrypted, got)
@@ -105,7 +105,7 @@ func TestGitCrypt_GetRelationReturnsInaccessibleRelation(t *testing.T) {
 	seedAndClose(t, fs, func(s *fsstore.FSStore) {
 		require.NoError(t, s.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
 		require.NoError(t, s.CreateEntity(ctx, entity.New("SOL-1", "solution")))
-		_, err := s.CreateRelation(ctx, "SOL-1", "implements", "REQ-1", nil)
+		_, err := s.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"}, nil)
 		require.NoError(t, err)
 	})
 	writeEncrypted(t, fs, "/relations/SOL-1--implements--REQ-1.md")
@@ -113,7 +113,7 @@ func TestGitCrypt_GetRelationReturnsInaccessibleRelation(t *testing.T) {
 	s := openStore(t, fs)
 	defer s.Close()
 
-	got, err := s.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	got, err := s.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"})
 	require.NoError(t, err, "encrypted relation should load with Inaccessible populated, not error")
 	assert.Equal(t, "SOL-1", got.From)
 	assert.Equal(t, "implements", got.Type)
@@ -150,7 +150,7 @@ func TestGitCrypt_PropertylessEntityType_StillLocks(t *testing.T) {
 	require.NoError(t, err)
 	defer s.Close()
 
-	got, err := s.GetEntity(context.Background(), "B-1")
+	got, err := s.GetEntity(context.Background(), entity.Ref{ID: "B-1"})
 	require.NoError(t, err)
 	assert.True(t, got.IsLocked(), "encrypted entity with no schema properties must still be locked")
 	require.Len(t, got.Inaccessible, 1)
@@ -191,7 +191,7 @@ type: unknown
 	s := openStore(t, fs)
 	defer s.Close()
 
-	count, err := s.CountEntities(context.Background(), store.EntityQuery{})
+	count, err := s.CountEntities(context.Background(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})
 	require.NoError(t, err)
 	assert.Equal(t, 0, count, "entity in unknown-type directory should be skipped")
 }
@@ -206,7 +206,7 @@ func TestGitCrypt_HalfEncrypted_CleartextRelationToEncryptedEntity(t *testing.T)
 	seedAndClose(t, fs, func(s *fsstore.FSStore) {
 		require.NoError(t, s.CreateEntity(ctx, entity.New("REQ-1", "requirement")))
 		require.NoError(t, s.CreateEntity(ctx, entity.New("SOL-1", "solution")))
-		_, err := s.CreateRelation(ctx, "SOL-1", "implements", "REQ-1", nil)
+		_, err := s.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"}, nil)
 		require.NoError(t, err)
 	})
 	writeEncrypted(t, fs, "/entities/requirements/REQ-1.md")
@@ -214,11 +214,11 @@ func TestGitCrypt_HalfEncrypted_CleartextRelationToEncryptedEntity(t *testing.T)
 	s := openStore(t, fs)
 	defer s.Close()
 
-	rel, err := s.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+	rel, err := s.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"})
 	require.NoError(t, err)
 	assert.False(t, rel.IsLocked(), "cleartext relation file should be readable")
 
-	target, err := s.GetEntity(ctx, "REQ-1")
+	target, err := s.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err)
 	assert.True(t, target.IsLocked(), "encrypted target entity has Inaccessible populated")
 }

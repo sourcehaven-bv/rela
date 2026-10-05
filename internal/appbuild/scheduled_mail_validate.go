@@ -46,7 +46,9 @@ func (s *Services) ValidateScheduledMailRecipients(ctx context.Context) error {
 		def, _ := s.meta.GetEntityDef(task.ForEach.EntityType)
 		filters, _ := filter.ParseAll(task.ForEach.Where)
 		var invalid []string
-		for ent, listErr := range s.store.ListEntities(ctx, store.EntityQuery{Type: task.ForEach.EntityType}) {
+		for ent, listErr := range s.store.ListEntities(ctx, store.EntityQuery{
+			Type: task.ForEach.EntityType, Faces: store.InWorld(s.worlds.DefaultWorld()),
+		}) {
 			if listErr != nil {
 				return listErr
 			}

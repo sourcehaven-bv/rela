@@ -33,14 +33,14 @@ func RunHeaderTests(t *testing.T, f Factory) {
 		// re-deriving what it may rely on.
 		wantIDs := make([]string, 0)
 		wantProps := map[string]string{}
-		for e, err := range s.ListEntities(ctx(), store.EntityQuery{}) {
+		for e, err := range s.ListEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			wantIDs = append(wantIDs, e.ID)
 			wantProps[e.ID] = e.GetString("title")
 		}
 
 		gotIDs := make([]string, 0)
-		for h, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{}) {
+		for h, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			gotIDs = append(gotIDs, h.ID)
 			assert.Equal(t, typeOf(h.ID), h.Type, "header type for %s", h.ID)
@@ -65,7 +65,7 @@ func RunHeaderTests(t *testing.T, f Factory) {
 		}
 
 		got := make([]string, 0)
-		for h, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{Type: "atype"}) {
+		for h, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{Type: "atype", Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			got = append(got, h.ID)
 		}
@@ -80,7 +80,7 @@ func RunHeaderTests(t *testing.T, f Factory) {
 		}
 
 		got := make([]string, 0)
-		for h, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{IDs: []string{"A-002", "B-001"}}) {
+		for h, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{IDs: []string{"A-002", "B-001"}, Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			got = append(got, h.ID)
 		}
@@ -90,7 +90,7 @@ func RunHeaderTests(t *testing.T, f Factory) {
 	t.Run("EmptyStoreYieldsNothing", func(t *testing.T) {
 		s := f(t)
 		n := 0
-		for _, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{}) {
+		for _, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			n++
 		}
@@ -107,12 +107,12 @@ func RunHeaderTests(t *testing.T, f Factory) {
 		e.SetString("title", "original")
 		require.NoError(t, s.CreateEntity(ctx(), e))
 
-		for h, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{}) {
+		for h, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			h.Properties["title"] = "mutated"
 		}
 
-		got, err := s.GetEntity(ctx(), "A-001")
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: "A-001"})
 		require.NoError(t, err)
 		assert.Equal(t, "original", got.GetString("title"),
 			"mutating a header's Properties must not write through to the store")
@@ -129,7 +129,7 @@ func RunHeaderTests(t *testing.T, f Factory) {
 		}
 
 		seen := 0
-		for _, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{}) {
+		for _, err := range store.ListEntityHeaders(ctx(), s, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}) {
 			require.NoError(t, err)
 			seen++
 			break

@@ -25,7 +25,7 @@ func seedMarked(t *testing.T, fs *storage.MemFS) *fsstore.FSStore {
 	sol := entity.New("SOL-1", "solution")
 	sol.Properties["title"] = "Sol"
 	require.NoError(t, s.CreateEntity(ctx, sol))
-	_, err := s.CreateRelation(ctx, "SOL-1", "implements", "REQ-1", nil)
+	_, err := s.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"}, nil)
 	require.NoError(t, err)
 	_, err = s.SoftDelete().MarkDeleted(ctx, "REQ-1", "alice")
 	require.NoError(t, err)
@@ -35,7 +35,7 @@ func seedMarked(t *testing.T, fs *storage.MemFS) *fsstore.FSStore {
 func assertStillMarked(t *testing.T, s *fsstore.FSStore) {
 	t.Helper()
 	ctx := context.Background()
-	_, err := s.GetEntity(ctx, "REQ-1")
+	_, err := s.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 	n, err := s.CountRelations(ctx, store.RelationQuery{})
 	require.NoError(t, err)
@@ -75,7 +75,7 @@ func TestSoftDelete_SurvivesReopen(t *testing.T) {
 
 			s3 := openStore(t, fs)
 			defer s3.Close()
-			_, err = s3.GetEntity(ctx, "REQ-1")
+			_, err = s3.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 			require.NoError(t, err)
 			n, err := s3.CountRelations(ctx, store.RelationQuery{})
 			require.NoError(t, err)
@@ -101,7 +101,7 @@ func TestSoftDelete_PurgeAfterReopenRemovesFiles(t *testing.T) {
 
 	s3 := openStore(t, fs)
 	defer s3.Close()
-	_, err = s3.GetEntity(ctx, "REQ-1")
+	_, err = s3.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 	marked, err := s3.SoftDelete().ListMarked(ctx)
 	require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestSoftDelete_DroppedEdgeStaysDroppedAfterReopen(t *testing.T) {
 			ctx := context.Background()
 			fs := storage.NewMemFS()
 			s1 := seedMarked(t, fs)
-			_, err := s1.DeleteEntity(ctx, "SOL-1", true)
+			_, err := s1.DeleteFamily(ctx, "SOL-1", true)
 			require.NoError(t, err)
 			if tc.close {
 				require.NoError(t, s1.Close())
@@ -154,7 +154,7 @@ func TestSoftDelete_DroppedEdgeStaysDroppedAfterReopen(t *testing.T) {
 			require.NoError(t, s2.CreateEntity(ctx, sol))
 			_, err = s2.SoftDelete().Unmark(ctx, "REQ-1")
 			require.NoError(t, err)
-			_, err = s2.GetRelation(ctx, "SOL-1", "implements", "REQ-1")
+			_, err = s2.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-1"})
 			require.ErrorIs(t, err, store.ErrNotFound)
 		})
 	}

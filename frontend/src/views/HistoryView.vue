@@ -6,7 +6,7 @@ import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import { useUIStore, useSchemaStore } from '@/stores'
 import { useWorld } from '@/composables/useWorld'
-import { entityRef, refFace } from '@/utils/entityRef'
+import { entityRef } from '@/utils/entityRef'
 import { getErrorMessage, ApiError } from '@/api/errors'
 import { listVersions, getVersion, restoreVersion, type VersionMeta } from '@/api/history'
 import { getEntity as fetchEntity } from '@/api/entities'
@@ -92,16 +92,14 @@ function sideLabel(s: Side): string {
   return s === 'current' ? 'current' : `v${s}`
 }
 
-// Whether the current entity is writable (server-computed update affordance),
-// ANDed with "the timeline is the BARE face's": a restore is a write to the
-// bare id (the restore route takes no face), so while the timeline shows a
-// non-bare face's history — which is what a world resolves to — restoring
-// would land a different face's version on the bare one. Read off the
-// served row's address, never off the world: a world that resolved to the
-// bare face restores exactly what it shows.
-const canRestore = computed(
-  () => current.value?._actions?.update !== false && !refFace(entityRef(current.value ?? { id: '' })),
-)
+// Whether the current entity is writable (server-computed update affordance).
+const canRestore = computed(() => current.value?._actions?.update !== false)
+
+// The address a restore writes to: the served row's, never the route's bare
+// id. A restore takes no world, so under a world the bare id would name a
+// different face than the timeline shows (BUG-4SYAA6). A deleted face has no
+// served row; the route then names it explicitly.
+const restoreAddress = computed(() => (current.value ? entityRef(current.value) : entityId.value))
 
 // The entity type definition, for resolving property labels + badge styling.
 const typeDef = computed(() => schemaStore.getEntityType(entityType.value))
@@ -237,7 +235,7 @@ async function restore(v: number) {
   if (restoring.value) return
   restoring.value = true
   try {
-    await restoreVersion(entityType.value, entityId.value, v)
+    await restoreVersion(entityType.value, restoreAddress.value, v)
     uiStore.showToast('success', `Restored to version ${v}`)
     await load(false)
   } catch (err) {

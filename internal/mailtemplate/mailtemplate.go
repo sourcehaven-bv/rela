@@ -122,14 +122,17 @@ func Parse(data []byte, meta *metamodel.Metamodel) (*Config, error) {
 // because each style stores its content in a different field (Body for
 // detail/list, Rows for table), so a predicate over the rendered message
 // would need revisiting for every style added later.
+//
+// Every section lists its entities in world.
 func Build(
-	ctx context.Context, meta *metamodel.Metamodel, reader Reader, tmpl Template, now time.Time,
+	ctx context.Context, meta *metamodel.Metamodel, reader Reader, world store.WorldScope,
+	tmpl Template, now time.Time,
 ) (*mailrender.Message, int, error) {
 	msg := &mailrender.Message{Lang: tmpl.Lang}
 	count := 0
 	contributed := 0
 	for _, declared := range tmpl.Sections {
-		section, tally, err := buildSection(ctx, meta, reader, declared)
+		section, tally, err := buildSection(ctx, meta, reader, world, declared)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -150,7 +153,7 @@ type sectionTally struct {
 }
 
 func buildSection(
-	ctx context.Context, meta *metamodel.Metamodel, reader Reader, declared Section,
+	ctx context.Context, meta *metamodel.Metamodel, reader Reader, world store.WorldScope, declared Section,
 ) (mailrender.Section, sectionTally, error) {
 	def, _ := meta.GetEntityDef(declared.EntityType)
 	filters, _ := filter.ParseAll(declared.Where)
@@ -159,7 +162,8 @@ func buildSection(
 		section.Columns = append([]string(nil), declared.Columns...)
 	}
 	var tally sectionTally
-	for ent, err := range reader.ListEntities(ctx, store.EntityQuery{Type: declared.EntityType}) {
+	q := store.EntityQuery{Type: declared.EntityType, Faces: store.InWorld(world)}
+	for ent, err := range reader.ListEntities(ctx, q) {
 		if err != nil {
 			return mailrender.Section{}, sectionTally{}, err
 		}

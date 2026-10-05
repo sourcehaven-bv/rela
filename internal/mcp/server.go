@@ -41,6 +41,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // Deps is the focused bundle of backend services the MCP server needs.
@@ -63,9 +64,11 @@ type Deps struct {
 	// than merely discouraged (the TKT-80EWGM "make the mistake
 	// impossible" pattern, applied to reads).
 	//
-	// The wiring site decides what this is. `rela mcp` (stdio) passes the
-	// raw store — the filesystem is the trust boundary there, so a gate
-	// would defend nothing. A networked wiring passes a
+	// The wiring site decides what this is. Both wirings pass
+	// [appbuild.Services.GatedReads]' reader. Under `rela mcp` (stdio)
+	// with no acl.yaml that is [visibility.Unrestricted]: the filesystem
+	// is the trust boundary there, so a gate would defend nothing, but
+	// addresses still resolve the same way. Under a policy it is a
 	// visibility-wrapped reader that resolves the ctx principal per call.
 	// Either way the handlers are identical; gating is entirely a wiring
 	// decision (DEC-ZBI39P).
@@ -85,12 +88,22 @@ type Deps struct {
 	Watcher      Watcher
 	ProjectRoot  string
 	Attachments  AttachmentDeps
+	// World is the world the list and count surfaces (list_entities, the
+	// schema resource's counts, the overview prompt, search) read in when a
+	// call names none. It is required; wiring passes
+	// worlds.Compiled.DefaultWorld.
+	World store.WorldScope
+	// Families selects one row per entity whichever face it stores, for the
+	// schema analysis counts. It is required; wiring passes
+	// worlds.Compiled.Families. It is never a read world.
+	Families store.WorldScope
 
 	// Worlds lets a read tool name the world it reads in, and serves
 	// list_worlds.
 	//
 	// Nil: accepted. The stdio server does not resolve worlds, so a tool
-	// call naming a world other than `default` is refused there.
+	// call naming a world other than the generated `default` is refused
+	// there.
 	Worlds WorldSelector
 }
 
@@ -102,23 +115,51 @@ type Deps struct {
 // It is split deliberately. The three ENTITY/RELATION reads are the gated
 // surface: they return rows, so a wiring may substitute a decorator that
 // hides some. The two COUNTS are [GraphCounter], kept separate because a
-// count is structural — it discloses how many rows of a declared type exist,
-// not which ones — and `internal/dataentry` already draws this exact line
-// (`analyzeService.relCounts` is "raw (ungated) on purpose").
+// type-wide count is structural: it discloses how many rows of a declared type
+// exist, not which ones. A count about ONE entity is not structural, since it
+// reveals that entity's hidden neighbors, so cardinality analysis folds its
+// counts from ListRelationsStrict instead (TKT-5LW875).
 //
-// `store.Store` satisfies the whole thing structurally, so the stdio wiring
-// passes one unchanged; a visibility decorator satisfies the gated half,
-// which is the point.
+// A raw `store.Store` does NOT satisfy it: Resolve and Family are resolver
+// reads, which the visibility readers provide. That keeps a raw read of the
+// zero coordinate, which a faced type does not have, out of every handler.
 type GraphReader interface {
 	GraphCounter
 
-	// GetEntity takes an entity ADDRESS (`ID` or `ID@face`), as tool input
-	// may name a face. The visibility readers the wiring supplies parse it; a
-	// raw store.Store would take a bare id only.
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	// Resolve reads one face through the resolver
+	// ([visibility.Resolver.Address]). addr is an entity ADDRESS: `ID@face`
+	// reads that face, and a bare id reads the face the reader's world
+	// resolves it to. A faced type misses by bare id in the default world
+	// until TKT-7IZHP0. Every miss is [store.ErrNotFound].
+	Resolve(ctx context.Context, addr string) (*entity.Entity, error)
+
+	// Family reports which faces of the bare id the caller may read, from
+	// headers only ([visibility.Resolver.Family]). It answers entity-level
+	// questions: does the entity exist for this caller, before a write or a
+	// traversal names it.
+	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+
+	// WriteTarget resolves addr to the one face a face-level write edits
+	// ([visibility.Resolver.WriteTarget]). Every miss is
+	// [store.ErrNotFound]; a bare id that picks no single face is a
+	// [*visibility.AmbiguousAddressError] naming the readable faces.
+	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
+
+	// ResolveHeaders answers Resolve and Family for a batch of addresses,
+	// from headers only, in a cost that does not grow with len(refs)
+	// ([visibility.Resolver.ResolveHeaders]). A miss is absent.
+	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
-	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
+	// GetRelation reads the edge at k, tail included. It answers not-found
+	// unless the caller may read both endpoints and, for a content edge, the
+	// tail face itself.
+	GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+
+	// ListRelationsStrict is ListRelations with a gate fault returned as an
+	// error instead of hiding the edges it touches. Aggregates fold from it,
+	// so a fault never reads as a missing relation (TKT-5LW875).
+	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
 // TraversalBinder answers the `related(...)` calls of a list_entities filter
@@ -160,13 +201,14 @@ type EntityWriter interface {
 	CreateEntity(ctx context.Context, e *entity.Entity, opts entity.CreateOptions) (*entity.CreateResult, error)
 	PatchEntity(ctx context.Context, id string, p entity.Patch) (*entity.UpdateResult, error)
 	DeleteEntity(ctx context.Context, id string, cascade bool) (*entity.DeleteResult, error)
+	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
 	RenameEntity(
 		ctx context.Context, oldID, newID string, opts entity.RenameOptions,
 	) (*entity.RenameResult, error)
 	CreateRelation(
-		ctx context.Context, from, relType, to string, opts entity.RelationOptions,
+		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
-	DeleteRelation(ctx context.Context, from, relType, to string) error
+	DeleteRelation(ctx context.Context, key entity.RelationKey) error
 }
 
 // validate rejects a Deps missing any field whose zero value would
@@ -197,6 +239,10 @@ func (d Deps) validate() error {
 		return errors.New("mcp: Deps.Watcher is required")
 	case d.ProjectRoot == "":
 		return errors.New("mcp: Deps.ProjectRoot is required")
+	case !d.World.IsSet():
+		return errors.New("mcp: Deps.World is required (worlds.Compiled.DefaultWorld)")
+	case !d.Families.IsSet():
+		return errors.New("mcp: Deps.Families is required (worlds.Compiled.Families)")
 	}
 	return d.Attachments.validate()
 }
@@ -367,8 +413,8 @@ func (d Deps) handlers() handlerSet {
 		types:     types,
 		trace:     traceHandler{store: d.Store, tracer: d.Tracer, meta: d.Meta},
 		lua:       luaHandler{writeDeps: d.LuaWriteDeps, cache: d.LuaCache, projectRoot: d.ProjectRoot},
-		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta},
-		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types},
+		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta, world: d.World},
+		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types, world: d.World},
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
 	}
 }

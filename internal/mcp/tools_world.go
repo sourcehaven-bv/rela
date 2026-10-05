@@ -9,49 +9,52 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// defaultWorldName is the reserved name of the world every entity's default
-// state belongs to. It needs no grant.
-const defaultWorldName = "default"
-
 // worldArgDescription documents the `world` argument of the read tools.
-const worldArgDescription = "World to read in (see list_worlds). A world picks one content state " +
-	"per entity; `default` reads the default state. Omitted, the server's default world applies"
+const worldArgDescription = "World to read in (see list_worlds). A world picks one face (content state) " +
+	"per entity. Omitted, the server's default world applies"
 
-// WorldSelector binds a named world for the reads of one tool call. The
+// WorldSelector resolves a named world for the reads of one tool call. The
 // remote server supplies it; it applies the same lookup and world grant as
 // `?world=` on the data-entry API.
 type WorldSelector interface {
-	// SelectWorld returns ctx with name bound for every read on it. An
-	// unknown world, or one the ctx principal may not read, is an error
-	// whose message is safe to show the caller.
-	SelectWorld(ctx context.Context, name string) (context.Context, error)
+	// SelectWorld returns the world name selects. An unknown world, or one
+	// the ctx principal may not read, is an error whose message is safe to
+	// show the caller.
+	SelectWorld(ctx context.Context, name string) (store.WorldScope, error)
 	// WorldReadable reports whether the ctx principal may select name.
 	WorldReadable(ctx context.Context, name string) (bool, error)
 	// DefaultWorld names the world a call that names none reads in.
 	DefaultWorld() string
 }
 
-// selectWorld applies the tool call's `world` argument to ctx. It returns a
-// non-nil result when the call must be refused.
-func selectWorld(ctx context.Context, sel WorldSelector, args toolRequest) (context.Context, *mcpgo.CallToolResult) {
+// selectWorld applies the tool call's `world` argument. It returns the world
+// the call reads in, ctx carrying it for bare-id reads
+// ([visibility.WithReadWorld]), and a non-nil result when the call must be
+// refused. With no argument the call reads in d.World and ctx is unchanged.
+func selectWorld(
+	ctx context.Context, d Deps, args toolRequest,
+) (context.Context, store.WorldScope, *mcpgo.CallToolResult) {
 	name := args.GetString("world", "")
 	if name == "" {
-		return ctx, nil
+		return ctx, d.World, nil
 	}
-	if sel == nil {
-		if name == defaultWorldName {
-			return ctx, nil
+	if d.Worlds == nil {
+		// Without a selector the server reads in its default world only.
+		if name == metamodel.EffectiveDefaultWorld(d.Meta) {
+			return ctx, d.World, nil
 		}
-		return ctx, errorResult("this server does not resolve worlds; " +
-			"read a content state as ID@face with show_entity")
+		return ctx, store.WorldScope{}, errorResult("this server does not resolve worlds; " +
+			"read a face as ID@face with show_entity")
 	}
-	bound, err := sel.SelectWorld(ctx, name)
+	scope, err := d.Worlds.SelectWorld(ctx, name)
 	if err != nil {
-		return ctx, errorResult(err.Error())
+		return ctx, store.WorldScope{}, errorResult(err.Error())
 	}
-	return bound, nil
+	return visibility.WithReadWorld(ctx, visibility.WorldOf(scope)), scope, nil
 }
 
 func toolListWorlds() *mcpgo.Tool {
@@ -86,13 +89,14 @@ type worldListJSON struct {
 // logged and reported as not readable, so an outage never offers a world
 // whose grant could not be confirmed.
 func handleListWorlds(ctx context.Context, deps Deps) *mcpgo.CallToolResult {
-	out := worldListJSON{
-		DefaultWorld: defaultWorldName,
-		Worlds:       []worldJSON{{Name: defaultWorldName, Readable: true}},
+	out := worldListJSON{DefaultWorld: metamodel.EffectiveDefaultWorld(deps.Meta)}
+	if d := deps.Meta; d == nil || len(d.Worlds) == 0 {
+		// The generated world, which needs no grant.
+		out.Worlds = []worldJSON{{Name: out.DefaultWorld, Readable: true}}
 	}
 	sel := deps.Worlds
 	if sel == nil {
-		out.Note = "this server does not resolve worlds; only `default` can be selected"
+		out.Note = "this server does not resolve worlds; only `" + out.DefaultWorld + "` can be selected"
 	} else {
 		out.DefaultWorld = sel.DefaultWorld()
 	}
@@ -144,32 +148,25 @@ func copyOverrides(in map[string][]string) map[string][]string {
 	return out
 }
 
-// otherFaces lists the faces of e, other than the one served, that st
-// returns. st is the gated reader, so a face the caller's grant withholds is
-// not listed: naming it would disclose that it exists. Each face is read by
-// its explicit `ID@face` address, which no world re-resolves.
+// otherFaces lists the faces of e, other than the one served, that the
+// caller may read ([GraphReader.Family], headers only). A face the caller's
+// grant withholds is not listed: naming it would disclose that it exists.
+// Each comes with its explicit `ID@face` address, which no world re-resolves.
 func otherFaces(ctx context.Context, st GraphReader, meta *metamodel.Metamodel, e *entity.Entity) []faceJSON {
 	if meta == nil {
 		return nil
 	}
-	def, ok := meta.GetEntityDef(e.Type)
-	if !ok || len(def.Faces) == 0 {
+	fam, ok, err := st.Family(ctx, e.ID)
+	if err != nil || !ok {
 		return nil
 	}
-	names := make([]string, 0, len(def.Faces))
-	for name := range def.Faces {
-		if name != e.Face.String() {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
 	var out []faceJSON
-	for _, name := range names {
-		ref := e.ID + entity.StateRefSeparator + name
-		if _, err := st.GetEntity(ctx, ref); err != nil {
-			continue // absent, or not readable by the caller
+	for _, f := range fam.Faces {
+		if f == e.Face || f.IsImplicit() {
+			continue
 		}
-		out = append(out, faceJSON{Face: name, Label: faceLabel(meta, e.Type, name), Ref: ref})
+		ref := entity.FormatStateRef(e.ID, f)
+		out = append(out, faceJSON{Face: f.String(), Label: faceLabel(meta, e.Type, f.String()), Ref: ref})
 	}
 	return out
 }

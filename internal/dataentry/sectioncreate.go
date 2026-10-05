@@ -58,7 +58,7 @@ func (h *viewsHandler) creatableTargets(
 	s := h.schema()
 	var targets []SectionCreateTarget
 	for _, et := range candidateTypes {
-		formID := h.createFormForType(et)
+		formID := createFormForType(s.Cfg, et)
 		if formID == "" {
 			continue
 		}

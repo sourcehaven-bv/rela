@@ -456,7 +456,6 @@ func (a webhookVerifierAdapter) VerifyWebhook(ctx context.Context, raw string) (
 // Without either, the app serves the default world only and refuses any other
 // `?world=` — the right posture for a surface whose wiring never opted in.
 func wireWorlds(app *dataentry.App, svc *appbuild.Services) {
-	app.SetWorlds(appbuild.CompiledWorlds(svc))
 	if err := dataentry.SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
 		slog.Error("failed to wire world-scoped relations", "error", err)
 		os.Exit(1)
@@ -500,6 +499,7 @@ func main() {
 		svc.Audit(),
 		svc.State(),
 		commandAuthz,
+		appbuild.CompiledWorlds(svc),
 	)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError

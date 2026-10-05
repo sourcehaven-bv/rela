@@ -68,9 +68,9 @@ func TestScriptReader_FailsClosedOnGateFault(t *testing.T) {
 
 	// And it must actually refuse, with the diagnosable error rather than a
 	// not-found that reads as "no such entity".
-	got, err := reader.GetEntity(context.Background(), "TKT-001")
+	got, err := reader.GetAddress(context.Background(), "TKT-001")
 	if err == nil {
-		t.Fatalf("DenyReader.GetEntity returned no error (entity=%v)", got)
+		t.Fatalf("DenyReader.GetAddress returned no error (entity=%v)", got)
 	}
 	if !errors.Is(err, visibility.ErrReaderUnavailable) {
 		t.Errorf("want ErrReaderUnavailable, got %v", err)
@@ -139,7 +139,7 @@ func TestScriptReadSeam_PolicylessProjectStaysUnrestricted(t *testing.T) {
 	if _, isUngated := reader.(*visibility.UnrestrictedReader); !isUngated {
 		t.Errorf("policy-less scriptReader should be the ungated reader, got %T", reader)
 	}
-	got, err := reader.GetEntity(context.Background(), "TKT-001")
+	got, err := reader.GetAddress(context.Background(), "TKT-001")
 	if err != nil {
 		t.Fatalf("policy-less read failed: %v", err)
 	}

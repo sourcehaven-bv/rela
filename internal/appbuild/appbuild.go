@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +47,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
+	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -151,13 +153,17 @@ type Services struct {
 	visibleSearcher search.VisibleSearcher
 	userState       userstate.Store
 	entityManager   *entitymanager.Manager
-	tracer          tracer.Tracer
-	validator       validator.Validator
-	templater       templating.Templater
-	cfgLoader       config.Loader
-	stateKV         state.KV
-	migState        datamigration.StateStore
-	schedulerState  schedulerstate.Store
+	// attachLocker is the manager's attachment lock. A re-assembly reuses it
+	// (see [SharedBase.ForReassembly]) so writes under the old and the new
+	// schema still exclude each other.
+	attachLocker   lock.Locker
+	tracer         tracer.Tracer
+	validator      validator.Validator
+	templater      templating.Templater
+	cfgLoader      config.Loader
+	stateKV        state.KV
+	migState       datamigration.StateStore
+	schedulerState schedulerstate.Store
 	// jobQueue is the background-job seam (TKT-YOED3R). Its backend is a
 	// per-tier choice made by the recipe: ephemeral in-process on fs/mem,
 	// durable PostgreSQL on the postgres build. Torn down in Close.
@@ -299,9 +305,8 @@ func (s *Services) UserState() userstate.Store { return s.userState }
 // implementation, and handing out the concrete type lets each consumer
 // declare its own narrow write interface at its call site (CLAUDE.md
 // "interfaces at the call site") and be satisfied structurally, with no
-// wiring change here. It is also what lets internal/cli assert the
-// id-preserving sync applier against a concrete type rather than
-// interface-to-interface (TKT-IVSJV6).
+// wiring change here. It is also what lets internal/cli wrap it in
+// [entitymanager.Recreator] for history restore.
 func (s *Services) EntityManager() *entitymanager.Manager { return s.entityManager }
 
 // ACL returns the authorization gate wired into entitymanager. Exposed
@@ -416,11 +421,12 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 		root = s.paths.Root
 	}
 	return lua.ReadDeps{
-		VisibleReader: visibility.Unrestricted(s.store),
+		VisibleReader: unrestrictedReader(s.store, s.worlds),
 		Tracer:        s.tracer,
 		Searcher:      s.searcher,
 		Meta:          s.meta,
 		ProjectRoot:   root,
+		World:         s.worlds.DefaultWorld(),
 	}
 }
 
@@ -449,8 +455,8 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 // raw store.
 func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDeps {
 	deps := s.LuaReadDeps()
-	deps.VisibleReader = scriptEntityReader(s.store, s.aclDeclarative, redactor)
-	deps.Tracer = scriptTracer(s.tracer, s.store, s.aclDeclarative, redactor)
+	deps.VisibleReader = scriptEntityReader(s.store, s.aclDeclarative, redactor, s.worlds)
+	deps.Tracer = scriptTracer(s.tracer, s.store, s.aclDeclarative, redactor, s.worlds)
 	return deps
 }
 
@@ -467,10 +473,23 @@ func (s *Services) luaReadDepsFor(redactor visibility.FieldRedactor) lua.ReadDep
 // operator who configured a policy has stated intent; honoring it by
 // failing loudly beats ignoring it by failing open.
 func scriptEntityReader(
-	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
+	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
 ) lua.EntityReader {
-	reader, _ := scriptReads(st, d, redactor)
+	reader, _ := scriptReads(st, d, redactor, w)
 	return reader
+}
+
+// scriptEntityReaderFamily is the script read surface plus the entity-level
+// read the MCP write tools ask before they name an id, and the batch header
+// read MCP uses for neighbor titles. Every reader
+// [scriptReads] returns implements it: [visibility.ScriptReader],
+// [visibility.UnrestrictedReader] and [visibility.DenyReader].
+type scriptEntityReaderFamily interface {
+	lua.EntityReader
+	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
+	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
+	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
 // scriptReads returns the principal-bound script reader and the traversal gate
@@ -478,25 +497,27 @@ func scriptEntityReader(
 // [relresolve.Ungated], policy reads get the ctx principal's gate, and a
 // refused reader gets a gate that refuses too. Deriving both in one place is
 // what keeps a validation rule's traversal from seeing more than its reads.
+// w supplies the face order ([familiesOption]), so a Family lists faces in
+// declaration order on every tier, and the default world bare ids resolve in.
 func scriptReads(
-	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
-) (scriptReader lua.EntityReader, traversalGate relresolve.Gate) {
+	st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
+) (scriptReader scriptEntityReaderFamily, traversalGate relresolve.Gate) {
 	if d == nil {
 		// Named, not bare: this is the NopACL path and the single largest
 		// ungated read surface in the tree, so it must show up in
 		// `grep -rn visibility.Unrestricted` like every other one
 		// (TKT-1WV50C).
-		return visibility.Unrestricted(st), relresolve.Ungated
+		return unrestrictedReader(st, w), relresolve.Ungated
 	}
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, w.DefaultWorld())
 	if err != nil {
 		slog.Error("appbuild: ACL gate unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
 	}
-	reader, err := visibility.NewPolicyReader(gate, redactor, st)
+	reader, err := visibility.NewPolicyReader(gate, redactor, st, familiesOption(w))
 	if err != nil {
 		slog.Error("appbuild: policy reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
@@ -506,7 +527,7 @@ func scriptReads(
 		slog.Error("appbuild: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
 	}
-	return sr, gate.GateTraversal
+	return sr.WithWorld(visibility.WorldOf(w.DefaultWorld())), gate.GateTraversal
 }
 
 // refuseTraversal pairs with [visibility.DenyReader]: reads are refused, so
@@ -519,9 +540,10 @@ func refuseTraversal(context.Context, string, acl.TraversalHop) (*store.Relation
 // in the visibility decorator when a Declarative policy exists. The trace
 // bindings are identical either way — gating is entirely inside the
 // decorator (hidden nodes pruned with their subtrees, paths through hidden
-// intermediates withheld, titles falling back to IDs).
+// intermediates withheld, titles falling back to IDs). w's default world
+// selects a node's title face, as for the base tracer.
 func scriptTracer(
-	tr tracer.Tracer, st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor,
+	tr tracer.Tracer, st store.Store, d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
 ) tracer.Tracer {
 	if d == nil {
 		return tr
@@ -529,12 +551,22 @@ func scriptTracer(
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, w.DefaultWorld())
 	if err != nil {
 		slog.Error("appbuild: ACL gate unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
 	}
-	vt, err := visibility.NewVisibleTracer(tr, gate, redactor, st)
+	res, err := visibility.NewResolver(gate, redactor, st, familiesOption(w))
+	if err != nil {
+		slog.Error("appbuild: resolver unavailable; traversal REFUSED", "err", err)
+		return visibility.DenyTracer{}
+	}
+	gatable, ok := tr.(visibility.EdgeGatable)
+	if !ok {
+		slog.Error("appbuild: tracer cannot gate edges; traversal REFUSED", "tracer", fmt.Sprintf("%T", tr))
+		return visibility.DenyTracer{}
+	}
+	vt, err := visibility.NewVisibleTracer(gatable, res, st, w.DefaultWorld())
 	if err != nil {
 		slog.Error("appbuild: visible tracer unavailable; traversal REFUSED", "err", err)
 		return visibility.DenyTracer{}
@@ -618,13 +650,15 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // visibility.PolicyReader implements only FilterRelations, so a surviving edge
 // still carries all of its meta.
 func (s *Services) GatedReads() GatedReadBundle {
-	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldRedactor)
-	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor)
+	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldRedactor, s.worlds)
+	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor, s.worlds)
 
 	deps := s.LuaReadDeps()
 	deps.VisibleReader = reader
 	deps.Tracer = tr
-	deps.Searcher = gatedSearcher(s.searcher, s.visibleSearcher, s.aclDeclarative, s.fieldRedactor, s.meta)
+	deps.Searcher = gatedSearcher(
+		s.searcher, s.visibleSearcher, s.aclDeclarative, s.fieldRedactor, s.meta, s.worlds.DefaultWorld(),
+	)
 
 	b, err := relresolve.NewStoreBinder(s.meta, gate, s.store)
 	if err != nil { // coverage-ignore: invariant: meta, gate and store are non-nil here
@@ -670,7 +704,7 @@ type GatedReadBundle struct {
 // degrading to raw hits (RR-GKCZO5).
 func gatedSearcher(
 	raw search.Searcher, vs search.VisibleSearcher, d *acl.Declarative,
-	redactor visibility.FieldRedactor, meta *metamodel.Metamodel,
+	redactor visibility.FieldRedactor, meta *metamodel.Metamodel, world store.WorldScope,
 ) search.Searcher {
 	if d == nil {
 		return raw
@@ -678,7 +712,7 @@ func gatedSearcher(
 	if redactor == nil {
 		redactor = visibility.NopRedactor{}
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, world)
 	if err != nil {
 		slog.Error("appbuild: ACL gate unavailable; search REFUSED", "err", err)
 		return visibility.DenySearcher{}
@@ -698,11 +732,25 @@ func gatedSearcher(
 // GatedGraphReader is the row-and-tally read surface returned by
 // [Services.GatedReads]. Row reads are ACL-gated; the two counts are not —
 // see [gatedGraphReader] for why.
+//
+// Resolve takes an entity ADDRESS (`ID` or `ID@face`) and reads the face it
+// names, or the face the reader's world resolves a bare id to. Family answers
+// which faces of a bare id the caller may read, from headers only.
+// ResolveHeaders answers both questions for a batch of addresses.
 type GatedGraphReader interface {
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	Resolve(ctx context.Context, addr string) (*entity.Entity, error)
+	Family(ctx context.Context, id string) (visibility.Family, bool, error)
+	// WriteTarget resolves addr to the one face a face-level write edits
+	// ([visibility.Resolver.WriteTarget]).
+	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
+	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
-	GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error)
+	// GetRelation reads the edge at k, tail included. It answers not-found
+	// unless the caller may read both endpoints and, for a content edge, the
+	// tail face itself.
+	GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error)
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
 }
@@ -710,17 +758,22 @@ type GatedGraphReader interface {
 // gatedGraphReader composes the ACL-gated row reader with the raw store for
 // the two operations the gated reader does not provide.
 //
-// The split is deliberate, and matches the line `internal/dataentry` already
-// draws (`analyzeService.relCounts` is documented "raw (ungated) on purpose"):
+// The split is deliberate:
 //
-//   - GetEntity / ListEntities / ListRelations go through `rows`, so a hidden
+//   - Resolve / ListEntities / ListRelations go through `rows`, so a hidden
 //     entity is absent and a hidden edge is not listed.
 //   - CountEntities / CountRelations go to the raw store. A count is
 //     STRUCTURAL: it says how many rows of a declared type exist, never which.
 //     Entity *existence* is the secret the row gate protects; an aggregate
-//     tally of a type the metamodel already publishes is not.
-//   - GetRelation answers not-found unless both endpoints pass the row gate,
-//     then reads the raw store. Holding two ids is not the same as being
+//     tally of a type the metamodel already publishes is not. A count scoped
+//     to ONE entity is different, since it reveals that entity's hidden
+//     neighbors; cardinality analysis therefore folds its counts from
+//     ListRelationsStrict instead (TKT-5LW875).
+//   - GetRelation answers not-found unless both endpoints have a readable
+//     face ([visibility.Resolver.Family]), then reads the raw store. An edge
+//     at the zero tail is entity level, so the family check is the whole gate
+//     for it (RR-2IK76Z); a content edge belongs to its tail face, so that
+//     face must itself be readable (TKT-KQXVF7). Holding two ids is not the same as being
 //     allowed to read them: without the endpoint check, a caller could learn
 //     that a hidden entity exists and is linked (TKT-4QSZ8Y). The edge's meta
 //     VALUES are not redacted: relations carry no field-level redaction on
@@ -728,7 +781,7 @@ type GatedGraphReader interface {
 //
 // If either judgement changes, this is the one type to fix.
 type gatedGraphReader struct {
-	rows lua.EntityReader
+	rows scriptEntityReaderFamily
 	raw  store.Store
 
 	// gateEndpoints requires both endpoints of a GetRelation to be readable.
@@ -737,8 +790,22 @@ type gatedGraphReader struct {
 	gateEndpoints bool
 }
 
-func (g gatedGraphReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	return g.rows.GetEntity(ctx, id)
+func (g gatedGraphReader) Resolve(ctx context.Context, addr string) (*entity.Entity, error) {
+	return g.rows.GetAddress(ctx, addr)
+}
+
+func (g gatedGraphReader) Family(ctx context.Context, id string) (visibility.Family, bool, error) {
+	return g.rows.Family(ctx, id)
+}
+
+func (g gatedGraphReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
+	return g.rows.WriteTarget(ctx, addr)
+}
+
+func (g gatedGraphReader) ResolveHeaders(
+	ctx context.Context, refs []entity.Ref,
+) map[entity.Ref]visibility.ResolvedHeader {
+	return g.rows.ResolveHeaders(ctx, refs)
 }
 
 func (g gatedGraphReader) ListEntities(
@@ -753,13 +820,55 @@ func (g gatedGraphReader) ListRelations(
 	return g.rows.ListRelations(ctx, q)
 }
 
+// ListEntityHeaders forwards to the gated row reader's header path, so a
+// subject scan (cardinality analysis) reads no entity bodies.
+func (g gatedGraphReader) ListEntityHeaders(
+	ctx context.Context, q store.EntityQuery,
+) iter.Seq2[store.EntityHeader, error] {
+	return store.ListEntityHeaders(ctx, g.rows, q)
+}
+
+func (g gatedGraphReader) ListRelationsStrict(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return g.rows.ListRelationsStrict(ctx, q)
+}
+
 func (g gatedGraphReader) GetRelation(
-	ctx context.Context, from, relType, to string,
+	ctx context.Context, k entity.RelationKey,
 ) (*entity.Relation, error) {
-	if g.gateEndpoints && (!visibility.Readable(ctx, g.rows, from) || !visibility.Readable(ctx, g.rows, to)) {
+	if g.gateEndpoints && (!g.tailReadable(ctx, k.Tail()) || !g.familyReadable(ctx, k.To)) {
 		return nil, store.ErrNotFound
 	}
-	return g.raw.GetRelation(ctx, from, relType, to)
+	return g.raw.GetRelation(ctx, k)
+}
+
+// tailReadable reports whether the caller may read an edge's tail. The zero
+// face is an identity-scoped edge, which is entity level, so any readable
+// face admits it. A named face must itself be readable, since a
+// content-scoped edge belongs to its tail face.
+func (g gatedGraphReader) tailReadable(ctx context.Context, tail entity.Ref) bool {
+	faces, ok := g.readableFaces(ctx, tail.ID)
+	return ok && (tail.Face.IsImplicit() || slices.Contains(faces, tail.Face))
+}
+
+// familyReadable reports whether the caller may read any face of id. A head
+// is entity level, so this is its whole gate.
+func (g gatedGraphReader) familyReadable(ctx context.Context, id string) bool {
+	_, ok := g.readableFaces(ctx, id)
+	return ok
+}
+
+// readableFaces returns the faces of id the caller may read, and false when
+// there are none. A gate failure is logged and hides, like every other gated
+// read.
+func (g gatedGraphReader) readableFaces(ctx context.Context, id string) ([]entity.Face, bool) {
+	fam, ok, err := g.rows.Family(ctx, id)
+	if err != nil {
+		slog.Warn("appbuild: relation endpoint gate failed; answering not-found", "id", id, "err", err)
+		return nil, false
+	}
+	return fam.Faces, ok
 }
 
 func (g gatedGraphReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
@@ -1120,6 +1229,66 @@ func loadACLPolicy(projectRoot string) (*acl.Policy, error) {
 	return policy, nil
 }
 
+// ValidateACLPolicy enforces the schema-dependent invariants of an ACL policy
+// ([acl.Policy.ValidateAgainstMetamodel]): identity keys, declared relation
+// types, faced write grants, and the identity structure the resolver walks.
+//
+// It is the one entry point every loader uses — [prepare] for every recipe,
+// and the `rela acl` commands and the docs builder — so a policy that fails
+// here fails everywhere, and `rela acl audit` cannot report clean on a policy
+// the server refuses.
+//
+// Nil: rejected — a nil policy or metamodel returns an error.
+func ValidateACLPolicy(policy *acl.Policy, meta *metamodel.Metamodel) error {
+	if policy == nil || meta == nil {
+		return errors.New("appbuild: ValidateACLPolicy: policy and metamodel are required")
+	}
+	return policy.ValidateAgainstMetamodel(metamodelView{meta})
+}
+
+// metamodelView adapts *metamodel.Metamodel to acl.MetamodelView. The acl
+// package deliberately does not depend on internal/metamodel
+// (.go-arch-lint.yml), so it declares the narrow view it needs and this
+// adapter supplies it. Uniqueness is computed from the already-exported
+// EntityDef accessors, keeping it out of Metamodel's public API (plimsoll
+// load line).
+type metamodelView struct{ m *metamodel.Metamodel }
+
+func (v metamodelView) HasEntityType(entityType string) bool {
+	return v.m.HasEntityType(entityType)
+}
+
+func (v metamodelView) FaceNames(entityType string) (canonical string, faces []string) {
+	return v.m.ResolveAlias(entityType), metamodel.FaceOrderOf(v.m, entityType)
+}
+
+func (v metamodelView) DefaultWorld() string {
+	return metamodel.EffectiveDefaultWorld(v.m)
+}
+
+func (v metamodelView) RelationInfo(relationType string) acl.RelationInfo {
+	def, ok := v.m.GetRelationDef(relationType)
+	if !ok {
+		return acl.RelationInfo{}
+	}
+	return acl.RelationInfo{
+		Exists: true, Content: def.Scope.IsContent(),
+		From: def.From, To: def.To,
+	}
+}
+
+func (v metamodelView) PropertyInfo(entityType, property string) acl.PropertyInfo {
+	def, ok := v.m.GetEntityDef(entityType)
+	if !ok {
+		return acl.PropertyInfo{}
+	}
+	pd, ok := def.PropertyDefs()[property]
+	if !ok {
+		return acl.PropertyInfo{}
+	}
+	return acl.PropertyInfo{Exists: true, Unique: pd.Unique, List: pd.List}
+}
+
 // buildACL constructs the production ACL from a policy + a store. The
 // store backs the [acl.Graph] adapter the resolver needs for member-of
 // walks and ancestor probes. A nil policy yields [acl.NopACL]
@@ -1137,52 +1306,16 @@ func loadACLPolicy(projectRoot string) (*acl.Policy, error) {
 // An error from [acl.NewDeclarative] is propagated, not downgraded:
 // the operator wrote a policy and the resolver couldn't accept it; the
 // server must fail to boot rather than silently allow-all.
-// metamodelView adapts *metamodel.Metamodel to acl.MetamodelView. The acl
-// package deliberately does not depend on internal/metamodel
-// (.go-arch-lint.yml), so it declares the narrow view it needs and the
-// wiring site — which imports both — supplies this adapter. Uniqueness is
-// computed from the already-exported EntityDef accessors, keeping it out
-// of Metamodel's public API (plimsoll load line).
-type metamodelView struct{ m *metamodel.Metamodel }
-
-func (v metamodelView) HasEntityType(entityType string) bool {
-	return v.m.HasEntityType(entityType)
-}
-
-func (v metamodelView) HasRelationType(relationType string) bool {
-	_, ok := v.m.Relations[relationType]
-	return ok
-}
-
-func (v metamodelView) PropertyInfo(entityType, property string) acl.PropertyInfo {
-	def, ok := v.m.GetEntityDef(entityType)
-	if !ok {
-		return acl.PropertyInfo{}
-	}
-	pd, ok := def.PropertyDefs()[property]
-	if !ok {
-		return acl.PropertyInfo{}
-	}
-	return acl.PropertyInfo{Exists: true, Unique: pd.Unique, List: pd.List}
-}
-
-func buildACL(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (acl.ACL, *acl.Declarative, error) {
+func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, error) {
 	if policy == nil {
 		return acl.NopACL{}, nil, nil
 	}
-	// Schema-dependent policy validation (principal_property references a
-	// real, unique property; user_entity_type is a declared type). Run
-	// here rather than in acl.LoadPolicy because the acl package
-	// deliberately does not depend on metamodel; a mistake must fail the
-	// boot, not silently mis-resolve identities at runtime.
-	if err := policy.ValidateAgainstMetamodel(metamodelView{meta}); err != nil {
-		return nil, nil, fmt.Errorf("appbuild: validate acl policy against metamodel: %w", err)
-	}
+	// Schema-dependent validation already ran in prepare (validateResolvedPolicy).
 	warnUngatedMembership(policy)
 	// `st` is passed twice: once via NewStoreGraph (the Graph
 	// adapter the resolver uses for member-of / ancestor walks), and
-	// once as the GraphQueryer (executes store.MatchingIDs for
-	// Request.PermitsRead / PermitsReadMany). The store.Store
+	// once as the GraphQueryer (executes MatchingFaces for
+	// Request.PermitsRead / ReadableFacesMany). The store.Store
 	// interface embeds both — RR-U06D. A future backend or
 	// store-wrapping decorator (audit, metrics) MUST forward
 	// GraphQueryer or this compiles while the read gate silently uses
@@ -1248,12 +1381,12 @@ func warnUndeclaredFaces(st store.Store, meta *metamodel.Metamodel, projectRoot 
 		return
 	}
 	ctx := context.Background()
-	all, err := st.CountEntities(ctx, store.EntityQuery{AllStates: true})
+	all, err := st.CountEntities(ctx, store.EntityQuery{Faces: store.AllFaces()})
 	if err != nil {
 		slog.Debug("appbuild: content-state probe failed; skipping warning", "error", err)
 		return
 	}
-	defaults, err := st.CountEntities(ctx, store.EntityQuery{})
+	defaults, err := st.CountEntities(ctx, store.EntityQuery{Faces: store.AtFaces(entity.Face(""))})
 	if err != nil {
 		slog.Debug("appbuild: content-state probe failed; skipping warning", "error", err)
 		return
@@ -1457,6 +1590,18 @@ type SharedBase struct {
 	// store, so [assemble] skips the store-open-only steps. Set by
 	// [SharedBase.ForReassembly]; false for a base that will open its own store.
 	reassembly bool
+	// attachLocker is the predecessor's attachment lock, reused by a
+	// re-assembly. Nil for a first assembly, which takes lock.For(store).
+	attachLocker lock.Locker
+}
+
+// attachmentLocker is the predecessor's attachment lock on a re-assembly,
+// and a fresh lock for st otherwise.
+func (b *SharedBase) attachmentLocker(st store.Store) lock.Locker {
+	if b.attachLocker != nil {
+		return b.attachLocker
+	}
+	return lock.For(st)
 }
 
 // IsReassembly reports whether this base is marked to re-assemble against an
@@ -1473,9 +1618,17 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 //
 // Use it for EVERY assembly after the first against a given store. A base
 // used to open a store must not be marked.
-func (b *SharedBase) ForReassembly() *SharedBase {
+//
+// prev is the assembly being succeeded. The successor's entity manager reuses
+// its attachment lock: an in-memory lock only excludes holders of the same
+// instance, so a fresh one would let an upload under the old schema race a
+// face delete under the new one.
+//
+// Nil: rejected by use — prev is dereferenced.
+func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next := *b
 	next.reassembly = true
+	next.attachLocker = prev.attachLocker
 	return &next
 }
 
@@ -1486,7 +1639,7 @@ func (b *SharedBase) ForReassembly() *SharedBase {
 // compiled at boot so an invalid face name fails startup rather than the
 // first request that needs a world.
 //
-// Consumed through [CompiledWorlds], which the data-entry app's `SetWorlds`
+// Consumed through [CompiledWorlds], which the data-entry app's `NewApp`
 // uses to resolve a `?world=` name to its scope (TKT-WAV8XP PR-D).
 func (b *SharedBase) Worlds() worlds.Compiled { return b.worlds }
 
@@ -1557,6 +1710,12 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
 
+	// The policy is checked against the schema once per base, before any
+	// store opens, so every recipe fails the boot the same way.
+	if vErr := validateResolvedPolicy(resolvedACL, aclPolicy, meta); vErr != nil {
+		return nil, vErr
+	}
+
 	// Compile the declared worlds here, at assembly, so a bad face name is
 	// a startup failure rather than a lurking runtime one. The loader checks
 	// world STRUCTURE; the face GRAMMAR is checked here because metamodel
@@ -1590,6 +1749,27 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	}, nil
 }
 
+// validateResolvedPolicy runs [ValidateACLPolicy] on whichever policy prepare
+// settled on: the loaded acl.yaml, or the policy of an injected
+// *acl.Declarative ([WithACL]). Running it here, once per [SharedBase], is
+// what makes a policy the metamodel rejects a boot failure on every recipe.
+//
+// An injected ACL that is not a *acl.Declarative (NopACL, ReadOnlyACL, a test
+// double) carries no policy and is exempt.
+func validateResolvedPolicy(injected acl.ACL, loaded *acl.Policy, meta *metamodel.Metamodel) error {
+	policy := loaded
+	if d, ok := injected.(*acl.Declarative); ok {
+		policy = d.Policy()
+	}
+	if policy == nil {
+		return nil
+	}
+	if err := ValidateACLPolicy(policy, meta); err != nil {
+		return fmt.Errorf("appbuild: acl.yaml does not match the schema: %w", err)
+	}
+	return nil
+}
+
 // assemble runs the build-agnostic back half: it takes the opened store
 // + searcher (built by the per-scenario openBackend) and wires every
 // remaining collaborator — automation, tracer, templater, config loader,
@@ -1612,7 +1792,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 // parse would silently disable authorization.
 func resolveACL(base *SharedBase, st store.Store) (acl.ACL, *acl.Declarative, error) {
 	if base.acl == nil {
-		return buildACL(base.aclPolicy, base.meta, st)
+		return buildACL(base.aclPolicy, st)
 	}
 	// RR-36UL: when WithACL was passed a *acl.Declarative, surface it as the
 	// declarative value too so the affordance resolver path picks it up.
@@ -1652,18 +1832,19 @@ func buildEntityManager(
 	templater entitymanager.TemplateLoader, resolvedACL acl.ACL,
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, versions store.VersionService, tw TransitionWiring,
-	computedSet *computed.Set,
+	computedSet *computed.Set, attachLocker lock.Locker,
 ) (*entitymanager.Manager, error) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		AliasRewriter:           aliases,
-		Store:                   st,
-		Meta:                    base.meta,
-		Templater:               templater,
-		Audit:                   base.cfg.Audit,
-		ACL:                     resolvedACL,
-		Automations:             autoEngine,
-		Cascade:                 cascadeRunner,
-		ScriptRunner:            cascadeScriptRunner(base.cfg.ScriptEngine, readDeps, st, base.cfg.Audit),
+		AliasRewriter: aliases,
+		Store:         st,
+		Meta:          base.meta,
+		Templater:     templater,
+		Audit:         base.cfg.Audit,
+		ACL:           resolvedACL,
+		Automations:   autoEngine,
+		Cascade:       cascadeRunner,
+		ScriptRunner: cascadeScriptRunner(base.cfg.ScriptEngine, readDeps, st, base.cfg.Audit,
+			base.worlds),
 		VersionRecorder:         versionRecorderFor(versions),
 		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Computed:                computedSet,
@@ -1685,6 +1866,10 @@ func buildEntityManager(
 		CopyGuard:      tw.Guard,
 		CopyReadGate:   tw.ReadGate,
 		CopyVisibility: tw.Visibility,
+		// One lock instance shared with every attachment service built
+		// from this manager (entitymanager.AttachmentsOf), so the copy
+		// engine, face deletes and uploads exclude each other.
+		AttachmentLocker: attachLocker,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -1789,14 +1974,15 @@ func resolveACLAndRedactor(
 func cascadeReadDeps(
 	st store.Store, tr tracer.Tracer, searcher search.Searcher,
 	meta *metamodel.Metamodel, projectRoot string,
-	d *acl.Declarative, redactor visibility.FieldRedactor,
+	d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
 ) lua.ReadDeps {
 	return lua.ReadDeps{
-		VisibleReader: scriptEntityReader(st, d, redactor),
-		Tracer:        scriptTracer(tr, st, d, redactor),
+		VisibleReader: scriptEntityReader(st, d, redactor, w),
+		Tracer:        scriptTracer(tr, st, d, redactor, w),
 		Searcher:      searcher,
 		Meta:          meta,
 		ProjectRoot:   projectRoot,
+		World:         w.DefaultWorld(),
 	}
 }
 
@@ -1844,6 +2030,15 @@ type backendOverrides struct {
 	schedulerState schedulerstate.Store
 }
 
+// configLoader returns the recipe's config loader, or the filesystem loader
+// when the recipe supplies none.
+func (o backendOverrides) configLoader(cfg Config) config.Loader {
+	if o.projectConfig != nil {
+		return o.projectConfig
+	}
+	return config.NewFSLoader(cfg.FS, cfg.Paths.Root)
+}
+
 // assemble builds the services bundle from an opened store.
 //
 // Overrides are passed in rather than derived here because they come from a
@@ -1876,17 +2071,17 @@ func assemble(
 	}
 	// coverage-ignore-end
 
-	tr := tracer.New(st)
-	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
-	cfgLoader := overrides.projectConfig
-	if cfgLoader == nil {
-		cfgLoader = config.NewFSLoader(cfg.FS, cfg.Paths.Root)
+	tr, err := tracer.New(st, base.worlds.DefaultWorld())
+	if err != nil { // coverage-ignore: invariant: the store is built above and the default world is set
+		return nil, fmt.Errorf("appbuild: tracer: %w", err)
 	}
+	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
+	cfgLoader := overrides.configLoader(cfg)
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
 	readDeps := cascadeReadDeps(st, tr, searcher, base.meta, cfg.Paths.Root,
-		aclDeclarative, fieldRedactor)
+		aclDeclarative, fieldRedactor, base.worlds)
 
 	tw, err := CompileTransitions(base.meta, st, resolvedACL)
 	if err != nil {
@@ -1954,8 +2149,9 @@ func assemble(
 
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
+	attachLocker := base.attachmentLocker(st)
 	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc), templater, resolvedACL,
-		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet)
+		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet, attachLocker)
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
 	// fail — unreachable with valid inputs (see the scupper in buildStateKV)
@@ -2002,11 +2198,13 @@ func assemble(
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(base, st, stateKV, migState, cfgLoader, versions, mgr, jobQueue)
 
-	return newServices(
+	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, commentSvc, versions,
 		resolvedACL, aclDeclarative, fieldRedactor, schedState,
-	), nil
+	)
+	assembled.attachLocker = attachLocker
+	return assembled, nil
 }
 
 // newServices bundles the assembled collaborators into the Services value.
@@ -2122,10 +2320,7 @@ func (r relationVersionRecorder) RecordRelationVersion(
 	ctx context.Context, v entitymanager.RelationVersionRecord,
 ) error {
 	return r.w.WriteRelationVersion(ctx, store.RelationVersionInput{
-		From:          v.From,
-		FromFace:      v.FromFace,
-		Type:          v.Type,
-		To:            v.To,
+		Key:           entity.RelationKey{From: v.From, FromFace: v.FromFace, Type: v.Type, To: v.To},
 		Op:            v.Op,
 		PrevFrom:      v.PrevFrom,
 		PrevTo:        v.PrevTo,

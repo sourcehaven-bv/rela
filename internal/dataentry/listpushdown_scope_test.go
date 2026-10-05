@@ -198,7 +198,7 @@ func assertScopeMatchesGoPath(t *testing.T, app *App, d *acl.Declarative, counti
 						// served page came from the store. A lowerable scope
 						// for a principal who may read tickets must never
 						// answer its traversal over a candidate set.
-						if lowerableScopes[scope] && user != "erin" && calls["MatchingIDs"] != 0 {
+						if lowerableScopes[scope] && user != "erin" && calls["MatchingFaces"] != 0 {
 							t.Errorf("%s was not pushed down for %s: %s", scope, user, counting)
 						}
 						if !lowerableScopes[scope] && user != "erin" && calls["CountMatched"] != 0 {
@@ -351,7 +351,7 @@ func TestListPushdown_CurrentUserTraversal(t *testing.T) {
 			if strings.Join(got, ",") != strings.Join(tc.want, ",") || resp.Meta.Total != len(tc.want) {
 				t.Fatalf("got %v (total %d), want %v", got, resp.Meta.Total, tc.want)
 			}
-			if tc.user != "dave" && (counting.Calls()["CountMatched"] != 1 || counting.Calls()["MatchingIDs"] != 0) {
+			if tc.user != "dave" && (counting.Calls()["CountMatched"] != 1 || counting.Calls()["MatchingFaces"] != 0) {
 				t.Errorf("expected the pushed path: %s", counting)
 			}
 		})

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"iter"
-	"sort"
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
@@ -44,16 +43,12 @@ type SeedOp struct {
 // into update/delete without widening this interface first.
 type seedWriter interface {
 	CreateEntity(ctx context.Context, e *entity.Entity) error
-	CreateRelation(ctx context.Context, from, relType, to string, data *store.RelationData) (*entity.Relation, error)
-	// GetEntity reads back what seeding wrote. face() and edit() need it —
-	// face() to resolve the type of an id it is given, edit() to confirm the
-	// entity exists and to return the edited result.
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
-	// GetEntityState reads ONE face. Needed because a type declaring faces
-	// stores no row at the zero coordinate (BUG-HC6I2T), so GetEntity alone
-	// cannot find a seeded faced entity at all.
-	GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error)
-	// ListEntities backs the family lookup the two above cannot do: find any
+	CreateRelation(ctx context.Context, k entity.RelationKey, data *store.RelationData) (*entity.Relation, error)
+	// GetEntity reads back ONE face of what seeding wrote. face() and edit()
+	// need it — face() to resolve the type of an id it is given, edit() to
+	// confirm the entity exists and to return the edited result.
+	GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
+	// ListEntities backs the family lookup GetEntity cannot do: find any
 	// row of an id without knowing which face it was seeded at.
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 
@@ -153,8 +148,9 @@ func (s *seedBindings) luaLink(ls *lua.LState) int {
 		tail = entity.Face(fromFace)
 	}
 
-	if _, err := s.store.CreateRelation(s.ctx, from, relType, to,
-		&store.RelationData{FromFace: tail}); err != nil {
+	if _, err := s.store.CreateRelation(s.ctx, entity.RelationKey{
+		From: from, FromFace: tail, Type: relType, To: to,
+	}, &store.RelationData{}); err != nil {
 		return s.fail(ls, "link(%q,%q,%q): %v", from, relType, to, err)
 	}
 	s.ops = append(s.ops, SeedOp{
@@ -250,8 +246,9 @@ func ApplySeedWith(ctx context.Context, st store.Store, patcher SeedPatcher, ops
 		case "link":
 			// Face carries the edge's source tail, so a content-scoped edge
 			// replays onto the same face it was seeded on.
-			if _, err := st.CreateRelation(ctx, op.From, op.RelType, op.To,
-				&store.RelationData{FromFace: op.Face}); err != nil {
+			if _, err := st.CreateRelation(ctx, entity.RelationKey{
+				From: op.From, FromFace: op.Face, Type: op.RelType, To: op.To,
+			}, &store.RelationData{}); err != nil {
 				return err
 			}
 		}
@@ -264,8 +261,7 @@ func ApplySeedWith(ctx context.Context, st store.Store, patcher SeedPatcher, ops
 // the seed bindings can pass their own seedWriter-shaped handle rather than a
 // full store.Store.
 type seedEditStore interface {
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
-	GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error)
+	GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	UpdateEntity(ctx context.Context, e *entity.Entity) error
 }
@@ -294,7 +290,7 @@ func applyEdit(ctx context.Context, st seedEditStore, patcher SeedPatcher, op Se
 		return err
 	}
 
-	e, err := st.GetEntityState(ctx, op.ID, op.Face)
+	e, err := st.GetEntity(ctx, entity.Ref{ID: op.ID, Face: op.Face})
 	if err != nil {
 		return err
 	}
@@ -330,7 +326,7 @@ func (s *seedBindings) luaFace(ls *lua.LState) int {
 	if _, declared := def.Faces[coord]; !declared {
 		return s.fail(ls, "face(%q, %q, %q): %q is not a declared face of %q "+
 			"(schema.yaml declares: %s)", typ, id, coord, coord, typ,
-			strings.Join(sortedFaceNames(def), ", "))
+			strings.Join(metamodel.FaceOrderOf(s.meta, typ), ", "))
 	}
 
 	// face(type, id, coord, props?, body?) — the two optional arguments trail
@@ -431,16 +427,6 @@ func (s *seedBindings) typeOf(id string) string {
 	return e.Type
 }
 
-// sortedFaceNames lists a type's declared face names for a failure message.
-func sortedFaceNames(def *metamodel.EntityDef) []string {
-	out := make([]string, 0, len(def.Faces))
-	for name := range def.Faces {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // seedRowOf finds any stored row of a seeded id, whatever face it was seeded
 // at.
 //
@@ -450,26 +436,35 @@ func sortedFaceNames(def *metamodel.EntityDef) []string {
 // faces. The seed surfaces here (`link`, `edit`, `hidden`, the type lookup)
 // want the ENTITY, and the facts they read from it are the same at every face.
 //
-// Nil: returns (nil, store.ErrNotFound) when the id has no row at all.
+// An `ID@face` id reads that face and only that face: a claim about a face
+// that does not exist must not quietly hold of another one. A bare id reads
+// every face of the id in one query, and the zero face wins when present,
+// since it is a faceless type's only face.
+//
+// Nil: returns (nil, store.ErrNotFound) when the address names no row.
 func seedRowOf(ctx context.Context, st seedEditStore, id string) (*entity.Entity, error) {
-	if e, err := st.GetEntity(ctx, id); err == nil {
-		return e, nil
+	base := id
+	if addr, perr := entity.ParseAddress(id); perr == nil {
+		if ref, named := addr.Named(); named {
+			return st.GetEntity(ctx, ref)
+		}
+		base = addr.ID()
 	}
-	base, face, perr := entity.ParseStateRef(id)
-	if perr == nil && !face.IsDefault() {
-		if e, err := st.GetEntityState(ctx, base, face); err == nil {
+	family, err := store.Family(ctx, st, base)
+	if err != nil {
+		return nil, err
+	}
+	var first *entity.Entity
+	for _, e := range family {
+		if e.Face.IsImplicit() {
 			return e, nil
 		}
-	} else {
-		base = id
+		if first == nil {
+			first = e
+		}
 	}
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{IDs: []string{base}, AllStates: true}) {
-		if err != nil {
-			return nil, err
-		}
-		if e.ID == base {
-			return e, nil
-		}
+	if first != nil {
+		return first, nil
 	}
 	return nil, store.ErrNotFound
 }

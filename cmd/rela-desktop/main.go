@@ -449,8 +449,15 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 		// Wails asset server, no network listener: the server host IS the
 		// user's machine, so commands run ungated like any local desktop app.
 		dataentry.UngatedCommandAuthorizer(),
+		appbuild.CompiledWorlds(svc),
 	)
 	if err != nil {
+		return d.failLoad(err)
+	}
+	// The worlds give scripts, the validator and tracer titles the schema's
+	// default world, and world selection its links; wired together as in
+	// rela-server's wireWorlds.
+	if err := dataentry.SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
 		return d.failLoad(err)
 	}
 	handler := app.NewRouter()

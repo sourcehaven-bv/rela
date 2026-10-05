@@ -519,7 +519,7 @@ func mustCreate(t *testing.T, ms *memstore.MemStore, e *entity.Entity) {
 
 func mustCreateRelation(t *testing.T, ms *memstore.MemStore, from, typ, to string) {
 	t.Helper()
-	if _, err := ms.CreateRelation(context.Background(), from, typ, to, nil); err != nil {
+	if _, err := ms.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: typ, To: to}, nil); err != nil {
 		t.Fatalf("create relation %s --%s--> %s: %v", from, typ, to, err)
 	}
 }

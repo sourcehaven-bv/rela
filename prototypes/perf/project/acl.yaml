@@ -26,9 +26,13 @@ roles:
       Works on the portfolio and on drafts. Sees people but not what they earn: `visible:` is closed-world, so salary is redacted by omission.
 
     read: ["*", "world:published", "world:editorial", "world:site-nl"]
-    create: [task, project, document, policy, risk, control]
-    update: [task, project, document, policy, risk, control]
-    delete: [task, document]
+    # `policy` and `document` declare faces, so their write grants name the
+    # face: a bare faced type in a write grant is a load error (TKT-7IZHP0).
+    # The editor works on drafts and both languages; publishing stays with
+    # the `publish-policy` permission.
+    create: [task, project, "document@en", "document@nl", "policy@draft", risk, control]
+    update: [task, project, "document@en", "document@nl", "policy@draft", risk, control]
+    delete: [task, "document@en", "document@nl"]
     visible:
       person:
         - field: title

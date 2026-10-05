@@ -380,3 +380,49 @@ func TestForbidWebhookHeader_RegistersDeploymentPrincipalHeader(t *testing.T) {
 		t.Errorf("%q was accepted after ForbidWebhookHeader registered it", custom)
 	}
 }
+
+// TestValidateWebhooks_FindFace pins find.face (TKT-7IZHP0 §6): a faced find
+// type names the face the hook reads, writes and creates; a faceless one
+// names none; a create of another, faced type has no face to write at.
+func TestValidateWebhooks_FindFace(t *testing.T) {
+	meta := hookTestMeta()
+	meta.Entities["policy"] = metamodel.EntityDef{
+		Label:      "Policy",
+		Faces:      map[string]metamodel.FaceDef{"draft": {}, "published": {}},
+		Properties: map[string]metamodel.PropertyDef{"title": {Type: "string"}},
+	}
+	set := []WebhookStep{{Set: map[string]string{"title": "x"}}}
+	tests := []struct {
+		name    string
+		hook    Webhook
+		wantErr string
+	}{
+		{name: "faced with face", hook: Webhook{
+			Find: &WebhookFind{Type: "policy", Face: "draft", Match: []string{"title"}}, Then: set}},
+		{name: "faced without face", hook: Webhook{
+			Find: &WebhookFind{Type: "policy", Match: []string{"title"}}, Then: set},
+			wantErr: "find.face is required: one of draft, published"},
+		{name: "undeclared face", hook: Webhook{
+			Find: &WebhookFind{Type: "policy", Face: "review", Match: []string{"title"}}, Then: set},
+			wantErr: `find.face "review" is not a face of "policy"`},
+		{name: "faceless with face", hook: Webhook{
+			Find: &WebhookFind{Type: "incident", Face: "draft", Match: []string{"host"}}, Then: set},
+			wantErr: `type "incident" declares no faces`},
+		{name: "faced create of another type", hook: Webhook{
+			Find:            &WebhookFind{Type: "incident", Match: []string{"host"}},
+			CreateIfMissing: &WebhookCreate{Type: "policy", Properties: map[string]string{"title": "x"}}},
+			wantErr: `create type "policy" declares faces`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateWebhooks(&Config{Webhooks: map[string]Webhook{"h": tc.hook}}, meta)
+			joined := strings.Join(errs, "\n")
+			if tc.wantErr == "" && len(errs) > 0 {
+				t.Fatalf("expected the config to validate, got:\n%s", joined)
+			}
+			if !strings.Contains(joined, tc.wantErr) {
+				t.Fatalf("expected an error containing %q, got:\n%s", tc.wantErr, joined)
+			}
+		})
+	}
+}

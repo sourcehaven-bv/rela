@@ -87,7 +87,7 @@ entities:
 	_, found, err = entitymanager.FindSoftDeleted(ctx, mgr, id)
 	require.NoError(t, err)
 	assert.False(t, found)
-	_, err = st.GetEntity(ctx, id)
+	_, err = st.GetEntity(ctx, entity.Ref{ID: id})
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 

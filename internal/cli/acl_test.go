@@ -47,6 +47,32 @@ func aclTestMeta() *metamodel.Metamodel {
 	}
 }
 
+// TestACLAudit_FacedWriteGrantIsLoadError pins that `rela acl audit` and
+// `rela acl who-can` validate through appbuild.ValidateACLPolicy, like the
+// server: a bare write grant on a faced type is reported as the load error,
+// not audited as if the policy loaded (TKT-7IZHP0, G16).
+func TestACLAudit_FacedWriteGrantIsLoadError(t *testing.T) {
+	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"policy": {Label: "Policy", Faces: map[string]metamodel.FaceDef{"draft": {}}},
+	}}
+	const policy = `
+roles:
+  editor:
+    read: ["*"]
+    update: [policy]
+`
+	svc := aclTestServices(t, meta, policy)
+	withOutput(t, output.FormatTable)
+
+	err := (&ACLAuditCmd{}).Run(svc)
+	if err == nil || !strings.Contains(err.Error(), `roles.editor.update: "policy" names a type that declares faces`) {
+		t.Errorf("audit: want the faced-grant load error, got %v", err)
+	}
+	if _, err := buildACLEngine(svc); err == nil || !strings.Contains(err.Error(), `"policy@draft"`) {
+		t.Errorf("who-can: want the faced-grant load error, got %v", err)
+	}
+}
+
 // A policy with an un-gated member-of + privileged assignment produces an A1
 // high finding; --exit-code then returns a non-zero ExitError.
 func TestACLAudit_ExitCodeOnHigh(t *testing.T) {

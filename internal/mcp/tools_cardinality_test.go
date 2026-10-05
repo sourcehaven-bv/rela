@@ -17,7 +17,8 @@ import (
 )
 
 // failingCountReader wraps the server's GraphReader and fails every
-// CountRelations call, simulating a backend outage during the scan.
+// ListRelations call, simulating a backend outage while cardinality reads
+// its edges.
 //
 // GraphReader must be non-nil — every method this does not override
 // delegates to it, so a zero value panics at the first such call rather
@@ -35,8 +36,12 @@ func newFailingCountReader(t *testing.T, base GraphReader, err error) failingCou
 	return failingCountReader{GraphReader: base, err: err}
 }
 
-func (f failingCountReader) CountRelations(context.Context, store.RelationQuery) (int, error) {
-	return 0, f.err
+func (f failingCountReader) ListRelationsStrict(
+	context.Context, store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return func(yield func(*entity.Relation, error) bool) {
+		yield(nil, f.err)
+	}
 }
 
 // TestHandleAnalyzeCardinality_CountErrorFailsTheToolCall pins the reason

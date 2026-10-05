@@ -62,8 +62,7 @@ func TestRelationRedaction_LiveGet_SelectiveStrip(t *testing.T) {
 	app := buildPolicyApp(t, relationRedactionACL, nil)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "a"}})
 	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "b"}})
-	if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "depends_on", "TKT-002",
-		&store.RelationData{Properties: map[string]any{"reason": "blocked", "secret": "s3cr3t"}}); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-001", Type: "depends_on", To: "TKT-002"}, &store.RelationData{Properties: map[string]any{"reason": "blocked", "secret": "s3cr3t"}}); err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
 
@@ -89,13 +88,12 @@ func TestRelationRedaction_LiveIncoming_UsesSourceGrant(t *testing.T) {
 	app := buildPolicyApp(t, relationRedactionACL, nil)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "a"}})
 	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "b"}})
-	if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "depends_on", "TKT-002",
-		&store.RelationData{Properties: map[string]any{"reason": "blocked", "secret": "s3cr3t"}}); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-001", Type: "depends_on", To: "TKT-002"}, &store.RelationData{Properties: map[string]any{"reason": "blocked", "secret": "s3cr3t"}}); err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
 
 	// View from TKT-002 (the TO side): the incoming edge appears under the inverse
-	// key. The grant is keyed on TKT-001's type, resolved via relationSourceEntity.
+	// key. The grant is keyed on TKT-001's type, resolved against the edge's source.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-002/relations", http.NoBody)
 	req = req.WithContext(principal.With(req.Context(),
 		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
@@ -135,8 +133,7 @@ func TestRelationRedaction_NoBlock_Permissive(t *testing.T) {
 	app := buildPolicyApp(t, relationRedactionACL, nil)
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "a"}})
 	seedEntity(app, &entity.Entity{ID: "CMP-1", Type: "component", Properties: map[string]any{"name": "c"}})
-	if _, err := app.store.CreateRelation(context.Background(), "TKT-001", "belongs_to", "CMP-1",
-		&store.RelationData{Properties: map[string]any{"note": "keep me"}}); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-001", Type: "belongs_to", To: "CMP-1"}, &store.RelationData{Properties: map[string]any{"note": "keep me"}}); err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
 	rels := getRelations(t, app, "alice", "ticket", "TKT-001")
@@ -208,8 +205,7 @@ func seedLiveRelHistoryApp(t *testing.T, aclYAML string) *App {
 	app := buildPolicyApp(t, aclYAML, nil)
 	seedEntity(app, &entity.Entity{ID: "alice", Type: "ticket", Properties: map[string]any{"title": "alice"}})
 	seedEntity(app, &entity.Entity{ID: "acme", Type: "ticket", Properties: map[string]any{"title": "acme"}})
-	if _, err := app.store.CreateRelation(context.Background(), "alice", "depends_on", "acme",
-		&store.RelationData{Properties: map[string]any{"reason": "layoff", "secret": "flight risk"}}); err != nil {
+	if _, err := app.store.CreateRelation(context.Background(), entity.RelationKey{From: "alice", Type: "depends_on", To: "acme"}, &store.RelationData{Properties: map[string]any{"reason": "layoff", "secret": "flight risk"}}); err != nil {
 		t.Fatalf("CreateRelation depends_on: %v", err)
 	}
 	app.versions = relHistoryStore{
@@ -460,7 +456,7 @@ func TestRelHistoryRestore_ReadsRawMeta_PreservesHidden(t *testing.T) {
 		t.Fatalf("restore: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
-	live, err := app.store.GetRelation(context.Background(), "alice", "depends_on", "acme")
+	live, err := app.store.GetRelation(context.Background(), entity.RelationKey{From: "alice", Type: "depends_on", To: "acme"})
 	if err != nil {
 		t.Fatalf("GetRelation after restore: %v", err)
 	}
@@ -475,10 +471,10 @@ func TestRelHistoryRestore_ReadsRawMeta_PreservesHidden(t *testing.T) {
 func TestVisibleRelationMetaIncoming_SourceGone_FailsClosed(t *testing.T) {
 	app := buildPolicyApp(t, relationRedactionACL, nil)
 	svc := app.affordances
-	svc.getEntity = func(context.Context, string) (*entity.Entity, bool) { return nil, false }
+	svc.sourceRow = func(context.Context, entity.Ref) (*entity.Entity, bool) { return nil, false }
 
 	meta := map[string]any{"reason": "blocked", "secret": "s3cr3t"}
-	got := svc.visibleRelationMetaIncoming(context.Background(), "TKT-001", "depends_on", meta)
+	got := svc.visibleRelationMetaIncoming(context.Background(), entity.Ref{ID: "TKT-001"}, "depends_on", meta)
 	if len(got) != 0 {
 		t.Errorf("source gone must fail closed (empty meta), got %v", got)
 	}

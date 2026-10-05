@@ -5,11 +5,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 // getAttachmentAs invokes the per-file attachment download handler
@@ -19,7 +21,7 @@ func getAttachmentAs(ctx context.Context, t *testing.T, app *App, d *acl.Declara
 	typeName, plural, entityID, property, fileName string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	url := "/api/v1/" + plural + "/" + entityID + "/_attachments/" + property + "/" + fileName
+	url := "/api/v1/" + plural + "/" + entityID + "/_attachments/" + property + "/" + neturl.PathEscape(fileName)
 	req := httptest.NewRequest(http.MethodGet, url, http.NoBody)
 	req = req.WithContext(gateCtxFor(ctx, t, d))
 	rec := httptest.NewRecorder()
@@ -28,7 +30,9 @@ func getAttachmentAs(ctx context.Context, t *testing.T, app *App, d *acl.Declara
 }
 
 // seedAttachment writes attachment bytes for (entityID, "screenshot")
-// via the store, mirroring what `rela attach` does at the storage layer.
+// via the store and records the name on the entity's value, mirroring what
+// `rela attach` does at the storage layer. A face serves only the names its
+// own value references (BUG-CTUW2N), so bytes alone are not downloadable.
 // `screenshot` is the only file property the test fixture declares (see
 // newTestAppV1). entityID is kept explicit (not hardcoded) so seed calls
 // read alongside their matching getAttachmentAs(... entityID ...).
@@ -37,8 +41,27 @@ func getAttachmentAs(ctx context.Context, t *testing.T, app *App, d *acl.Declara
 func seedAttachment(t *testing.T, app *App, entityID, fileName string, data []byte) {
 	t.Helper()
 	const property = "screenshot"
-	if err := app.store.AttachFile(context.Background(), entityID, property, fileName, bytes.NewReader(data)); err != nil {
+	ctx := context.Background()
+	if err := app.store.AttachFamilyFile(ctx, entityID, property, fileName, bytes.NewReader(data)); err != nil {
 		t.Fatalf("AttachFile(%s, %s): %v", entityID, property, err)
+	}
+	e, err := app.store.GetEntity(ctx, entity.Ref{ID: entityID})
+	if err != nil {
+		t.Fatalf("GetEntity(%s): %v", entityID, err)
+	}
+	e = e.Clone()
+	names := append(metamodel.FileNames(e.Properties[property]), fileName)
+	paths := make([]any, 0, len(names))
+	for _, n := range names {
+		paths = append(paths, "attachments/"+entityID+"/"+property+"/"+n)
+	}
+	if len(paths) == 1 {
+		e.Properties[property] = paths[0]
+	} else {
+		e.Properties[property] = paths
+	}
+	if err := app.store.UpdateEntity(ctx, e); err != nil {
+		t.Fatalf("UpdateEntity(%s): %v", entityID, err)
 	}
 }
 
@@ -161,7 +184,7 @@ func TestAttachment_ResolvesByCurrentIDAfterRename(t *testing.T) {
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 	seedAttachment(t, app, "TKT-001", "shot.png", []byte("bytes"))
 
-	if _, err := app.store.RenameEntity(context.Background(), "TKT-001", "TKT-999"); err != nil {
+	if _, err := app.store.RenameFamily(context.Background(), "TKT-001", "TKT-999"); err != nil {
 		t.Fatalf("RenameEntity: %v", err)
 	}
 
@@ -219,7 +242,7 @@ func TestAttachment_MetadataOnEntityGET(t *testing.T) {
 // mustGet loads an entity or fails the test.
 func mustGet(t *testing.T, app *App, id string) *entity.Entity {
 	t.Helper()
-	e, ok := app.reader.getEntity(context.Background(), id)
+	e, ok := app.reader.writePrepRow(context.Background(), entity.Ref{ID: id})
 	if !ok {
 		t.Fatalf("getEntity(%s) not found", id)
 	}

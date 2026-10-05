@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // TestCapabilitiesConcurrentRuntimes pins the multi-request shape (TKT-YH52OM):
@@ -38,7 +39,7 @@ func TestCapabilitiesConcurrentRuntimes(t *testing.T) {
 			if i%2 == 0 {
 				caps = lua.Capabilities{}
 			}
-			rt := lua.NewReader(lua.ReadDeps{Capabilities: caps}, &buf,
+			rt := lua.NewReader(lua.ReadDeps{Capabilities: caps, World: store.TrivialScope()}, &buf,
 				lua.WithSecrets(secrets))
 			defer rt.Close()
 			if err := rt.RunString(

@@ -20,7 +20,9 @@ func (m *MemStore) GraphCount(ctx context.Context, q store.GraphQuery) (matched,
 	return graphquerynaive.Count(ctx, m, q)
 }
 
-// MatchingIDs delegates to the shared naive implementation.
-func (m *MemStore) MatchingIDs(ctx context.Context, q store.GraphQuery, ids []string) (map[string]bool, error) {
-	return graphquerynaive.MatchingIDs(ctx, m, q, ids)
+// MatchingFaces delegates to the shared naive implementation.
+func (m *MemStore) MatchingFaces(
+	ctx context.Context, q store.GraphQuery, ids []string,
+) (map[string][]entity.Face, error) {
+	return graphquerynaive.MatchingFaces(ctx, m, q, ids)
 }

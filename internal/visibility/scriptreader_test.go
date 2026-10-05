@@ -5,11 +5,13 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/visibility/visibilitytest"
 )
 
 // seedScriptWorld builds a small graph: two tickets and one secret, with a
@@ -27,10 +29,10 @@ func seedScriptWorld(t *testing.T) store.Store {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "TKT-1", "relates", "SEC-1", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "relates", To: "SEC-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, "TKT-1", "relates", "TKT-2", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "relates", To: "TKT-2"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 	return st
@@ -44,14 +46,19 @@ func (g typeGate) PermitsRead(_ context.Context, entityType, _ string) (bool, er
 	return entityType == g.allow, nil
 }
 
-func (g typeGate) PermitsReadMany(
+func (g typeGate) permitsReadMany(
 	_ context.Context, entityType string, ids []string,
-) (map[string]bool, error) {
+) map[string]bool {
 	out := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		out[id] = entityType == g.allow
 	}
-	return out, nil
+	return out
+}
+
+// ReadableFacesMany implements the row gate over permitsReadMany.
+func (g typeGate) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
+	return visibilitytest.IDVerdicts(g.permitsReadMany(ctx, entityType, ids), nil)
 }
 
 func newTicketOnlyScriptReader(t *testing.T, st store.Store) *visibility.ScriptReader {
@@ -64,21 +71,22 @@ func newTicketOnlyScriptReader(t *testing.T, st store.Store) *visibility.ScriptR
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
+	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
 	return sr
 }
 
-func TestScriptReader_GetEntityGatesOnStoredType(t *testing.T) {
+func TestScriptReader_GetAddressGatesOnStoredType(t *testing.T) {
 	st := seedScriptWorld(t)
 	sr := newTicketOnlyScriptReader(t, st)
 	ctx := context.Background()
 
-	if _, err := sr.GetEntity(ctx, "TKT-1"); err != nil {
+	if _, err := sr.GetAddress(ctx, "TKT-1"); err != nil {
 		t.Errorf("readable entity: %v", err)
 	}
 	// A denied entity is reported as not-found, indistinguishable from a
 	// genuine miss — the oracle-free contract.
-	_, denied := sr.GetEntity(ctx, "SEC-1")
-	_, missing := sr.GetEntity(ctx, "NOPE")
+	_, denied := sr.GetAddress(ctx, "SEC-1")
+	_, missing := sr.GetAddress(ctx, "NOPE")
 	if denied == nil {
 		t.Error("hidden entity was returned")
 	}
@@ -92,14 +100,14 @@ func TestScriptReader_ListEntitiesFilters(t *testing.T) {
 	sr := newTicketOnlyScriptReader(t, st)
 
 	var tickets, secrets int
-	for e, err := range sr.ListEntities(context.Background(), store.EntityQuery{Type: "ticket"}) {
+	for e, err := range sr.ListEntities(context.Background(), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatalf("list tickets: %v", err)
 		}
 		_ = e
 		tickets++
 	}
-	for range sr.ListEntities(context.Background(), store.EntityQuery{Type: "secret"}) {
+	for range sr.ListEntities(context.Background(), store.EntityQuery{Type: "secret", Faces: store.InWorld(store.TrivialScope())}) {
 		secrets++
 	}
 	if tickets != 2 {
@@ -117,7 +125,7 @@ func TestScriptReader_ListEntitiesEarlyReturn(t *testing.T) {
 	sr := newTicketOnlyScriptReader(t, st)
 
 	seen := 0
-	for range sr.ListEntities(context.Background(), store.EntityQuery{Type: "ticket"}) {
+	for range sr.ListEntities(context.Background(), store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}) {
 		seen++
 		break
 	}
@@ -165,14 +173,17 @@ func TestDenyReader_RefusesEverything(t *testing.T) {
 	var dr visibility.DenyReader
 	ctx := context.Background()
 
-	if _, err := dr.GetEntity(ctx, "TKT-1"); !errors.Is(err, visibility.ErrReaderUnavailable) {
-		t.Errorf("GetEntity err = %v, want ErrReaderUnavailable", err)
+	if _, err := dr.GetAddress(ctx, "TKT-1"); !errors.Is(err, visibility.ErrReaderUnavailable) {
+		t.Errorf("GetAddress err = %v, want ErrReaderUnavailable", err)
 	}
 	if errors.Is(visibility.ErrReaderUnavailable, store.ErrNotFound) {
 		t.Error("ErrReaderUnavailable must not be a not-found — a gate fault is not 'no such entity'")
 	}
 
-	for _, err := range dr.ListEntities(ctx, store.EntityQuery{Type: "ticket"}) {
+	if got := dr.ResolveHeaders(ctx, []entity.Ref{{ID: "TKT-1"}}); len(got) != 0 {
+		t.Errorf("ResolveHeaders = %v, want no hits", got)
+	}
+	for _, err := range dr.ListEntities(ctx, store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}) {
 		if !errors.Is(err, visibility.ErrReaderUnavailable) {
 			t.Errorf("ListEntities err = %v, want ErrReaderUnavailable", err)
 		}
@@ -206,4 +217,51 @@ func TestDenyTracer_RefusesEverything(t *testing.T) {
 	}
 	// It must satisfy the interface it substitutes for.
 	var _ tracer.Tracer = dt
+}
+
+// publishedOnlyGate reads every policy at its published face only.
+type publishedOnlyGate struct{}
+
+func (publishedOnlyGate) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
+
+func (publishedOnlyGate) ReadableFacesMany(context.Context, string, []string) (acl.FaceVerdicts, error) {
+	return acl.UniformVerdicts(acl.FacesVerdict("published")), nil
+}
+
+// TestScriptReader_UntypedListGatesBeforeRanking pins that a list with no type
+// trims the faces the caller may not read BEFORE the world picks one. Ranked
+// first, POL-1's draft would be picked and then dropped, and POL-1 would be
+// missing although its published face is readable.
+func TestScriptReader_UntypedListGatesBeforeRanking(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	for _, f := range []entity.Face{"draft", "published"} {
+		if err := st.CreateEntity(ctx, &entity.Entity{
+			ID: "POL-1", Type: "policy", Face: f, Properties: map[string]any{"title": string(f)},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader, err := visibility.NewPolicyReader(publishedOnlyGate{}, visibility.NopRedactor{}, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sr, err := visibility.NewScriptReader(reader, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	world := store.NewWorldScope(map[string]store.TypeResolution{
+		"policy": {Chain: []entity.Face{"draft", "published"}, Fallback: store.FallbackExclude},
+	})
+
+	var got []entity.Ref
+	for e, err := range sr.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(world)}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, e.Ref())
+	}
+	if len(got) != 1 || got[0] != (entity.Ref{ID: "POL-1", Face: "published"}) {
+		t.Errorf("want POL-1@published, got %v", got)
+	}
 }

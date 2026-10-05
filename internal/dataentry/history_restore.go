@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -23,10 +24,12 @@ import (
 // audited, and captured as a new version.
 //
 // Scope: entity content + properties only. The entity's relation set as-of the
-// version is NOT restored (relation history is a separate capability).
+// version is NOT restored (relation history is a separate capability), and
+// neither are file values: a restore keeps the live ones (BUG-CTUW2N), since
+// an old value may name bytes that are gone or that another face now owns.
 func restoreHistoryVersion(a *App,
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
-	typeName, entityID, versionStr string,
+	typeName string, subject historySubject, versionStr string,
 ) {
 	version, convErr := strconv.Atoi(versionStr)
 	if convErr != nil || version < 1 {
@@ -36,7 +39,7 @@ func restoreHistoryVersion(a *App,
 	}
 
 	ctx := r.Context()
-	snap, err := reader.GetVersion(ctx, entityID, version)
+	snap, err := reader.GetVersion(ctx, subject.ref, version)
 	if errors.Is(err, store.ErrNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -45,25 +48,22 @@ func restoreHistoryVersion(a *App,
 		writeGateError(w, r, err)
 		return
 	}
-	// The snapshot's type must match the URL type (see the cross-type leak note
-	// in history_handler.authorizeHistoryRead). A mismatch is an
-	// indistinguishable 404 — the caller must not learn that an entity of a
-	// different type holds this id.
-	if snap.Type != typeName {
+	// The snapshot's type must match the URL type: a lineage can span an id
+	// that once held another type. A mismatch is an indistinguishable 404, so
+	// the caller does not learn that an entity of a different type held this
+	// id. The face check is belt-and-braces: the reader is already scoped to
+	// the addressed face, and a snapshot of another face must never be
+	// written onto this one.
+	if snap.Type != typeName || snap.Face != subject.ref.Face {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
 
-	live, isLive := a.reader.getEntity(ctx, entityID)
-	if isLive {
-		if live.Type != typeName {
-			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-			return
-		}
-		restoreOntoLive(a, w, r, live, snap, typeName)
+	if subject.live != nil {
+		restoreOntoLive(a, w, r, subject.live, snap, typeName)
 		return
 	}
-	restoreRecreate(a, w, r, snap, entityID)
+	restoreRecreate(a, w, r, snap, subject.ref)
 }
 
 // restoreOntoLive applies the snapshot onto an existing entity as a
@@ -75,18 +75,19 @@ func restoreOntoLive(a *App,
 	w http.ResponseWriter, r *http.Request, live *entityPkg.Entity, snap *store.VersionSnapshot, typeName string,
 ) {
 	ctx := r.Context()
+	props := entitymanager.CarryFileValues(a.Meta(), typeName, snap.Properties, live)
 
 	// Property diff: keys the snapshot sets to a new/changed value, and keys the
 	// live entity has that the snapshot does not (to be unset).
 	setKeys := make(map[string]any)
-	for k, v := range snap.Properties {
+	for k, v := range props {
 		if cur, ok := live.Properties[k]; !ok || !reflect.DeepEqual(cur, v) {
 			setKeys[k] = v
 		}
 	}
 	var unsetKeys []string
 	for k := range live.Properties {
-		if _, ok := snap.Properties[k]; !ok {
+		if _, ok := props[k]; !ok {
 			unsetKeys = append(unsetKeys, k)
 		}
 	}
@@ -101,20 +102,12 @@ func restoreOntoLive(a *App,
 
 	// Build the target: live entity with the snapshot's content + properties.
 	target := entityPkg.New(live.ID, live.Type)
+	target.Face = live.Face
 	target.Content = snap.Content
-	target.Properties = cloneProps(snap.Properties)
+	target.Properties = props
 
 	if _, err := a.entityManager.UpdateEntity(ctx, target); err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
-			return
-		}
-		if errors.Is(err, store.ErrNotFound) {
-			writeV1Error(w, r, http.StatusConflict, "state_changed",
-				"Entity state changed during restore (deleted concurrently) — retry", "")
-			return
-		}
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
-			"Restore failed validation", err.Error())
+		writeRestoreWriteError(w, r, err)
 		return
 	}
 	writeRestoreResult(a, w, r, target, snap.Version, typeName)
@@ -128,12 +121,14 @@ func restoreOntoLive(a *App,
 // resurrection would launder a forbidden field write (RR-LH9RJ8). Type-level
 // create authorization + validation still run in the entitymanager.
 func restoreRecreate(a *App,
-	w http.ResponseWriter, r *http.Request, snap *store.VersionSnapshot, entityID string,
+	w http.ResponseWriter, r *http.Request, snap *store.VersionSnapshot, ref entityPkg.Ref,
 ) {
 	ctx := r.Context()
-	target := entityPkg.New(entityID, snap.Type)
+	target := entityPkg.New(ref.ID, snap.Type)
+	target.Face = ref.Face
 	target.Content = snap.Content
-	target.Properties = cloneProps(snap.Properties)
+	// No live value to keep: file values are left out, as on any create.
+	target.Properties = entitymanager.CarryFileValues(a.Meta(), snap.Type, snap.Properties, nil)
 
 	// Gate every snapshot property as a field write against the (would-be)
 	// entity, so a field the principal cannot write blocks the resurrection.
@@ -142,27 +137,40 @@ func restoreRecreate(a *App,
 		return
 	}
 
-	// No face: a version snapshot does not record which face it captured
-	// (store.VersionMeta has no Face), and this route addresses a bare id, so
-	// there is nothing to resurrect INTO for a faced type. The manager
-	// refuses with ErrFaceRequired, which is the fail-closed answer — the
-	// alternative is guessing a coordinate and resurrecting content into a
-	// state it never occupied. Capturing the face on a version snapshot, so a
-	// deleted face can be resurrected, is TKT-7R0ABK.
-	if _, err := a.entityManager.CreateEntity(ctx, target, entityPkg.CreateOptions{}); err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
-			return
-		}
-		if errors.Is(err, store.ErrConflict) {
-			writeV1Error(w, r, http.StatusConflict, "state_changed",
-				"Entity state changed during restore (re-created concurrently) — retry", "")
-			return
-		}
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
-			"Restore failed validation", err.Error())
+	// The row comes back at the address it was deleted from: the same id,
+	// and the face of the addressed lineage. CreateEntity cannot do that,
+	// because it mints a new id for any type without manual ids.
+	// RecreateEntity writes the named row, authorized as a create on
+	// `type@face`, validated and audited. It is create-only: a face
+	// recreated since resolveHistorySubject saw it deleted is a 409, never
+	// a whole-record overwrite of a live row. It runs no automation: a
+	// restore brings back content, it does not create a new record for
+	// on-create automations to react to.
+	if _, err := a.recreator.RecreateEntity(ctx, target); err != nil {
+		writeRestoreWriteError(w, r, err)
 		return
 	}
 	writeRestoreResult(a, w, r, target, snap.Version, snap.Type)
+}
+
+// writeRestoreWriteError maps a failed restore write. A row that appeared or
+// vanished since the restore read the address is a 409 the client retries; a
+// face error is about the address, as on a create; anything else is the
+// write path's 422, as on every other entity write.
+func writeRestoreWriteError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case writeForbiddenIfACLDenied(w, err):
+	case errors.Is(err, entitymanager.ErrEntityAlreadyExists),
+		errors.Is(err, entitymanager.ErrEntityNotFound),
+		errors.Is(err, store.ErrNotFound):
+		writeV1Error(w, r, http.StatusConflict, "state_changed",
+			"Entity state changed during restore; retry", "")
+	case errors.Is(err, entitymanager.ErrFaceRequired), errors.Is(err, entitymanager.ErrFaceNotDeclared):
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "face_required", err.Error(), "")
+	default:
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
+			"Restore failed validation", err.Error())
+	}
 }
 
 func writeRestoreResult(a *App,
@@ -173,7 +181,9 @@ func writeRestoreResult(a *App,
 	if def, ok := meta.GetEntityDef(e.Type); ok {
 		plural = def.GetPlural(e.Type)
 	}
-	wire := a.serializer.forWire(r.Context(), e, a.reader.outgoingRelations(r.Context(), e.ID), meta, plural)
+	// The restored face's own edges, not every face's (BUG-ISJHML).
+	rels := edgesOwnedBy(meta, a.reader.outgoingRelations(r.Context(), e.ID), e.Face)
+	wire := a.serializer.forWire(r.Context(), e, rels, meta, plural)
 	writeV1JSON(w, http.StatusOK, map[string]any{
 		"restored_from_version": restoredFrom,
 		"entity":                wire,

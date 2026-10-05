@@ -90,7 +90,7 @@ func TestReopenPreservesStateKeyOrdering(t *testing.T) {
 				cursor := ""
 				for range 10 { // bounded: 3 primes
 					page, err := s.ListEntitiesPage(ctx, store.EntityQuery{
-						Type: "thing", World: world, Limit: limit, Cursor: cursor,
+						Type: "thing", Faces: store.InWorld(world), Limit: limit, Cursor: cursor,
 					})
 					require.NoError(t, err)
 					for _, e := range page.Items {
@@ -110,10 +110,10 @@ func TestReopenPreservesStateKeyOrdering(t *testing.T) {
 
 			// The default-world delete path must not panic. This is the
 			// symptom that has nothing to do with worlds.
-			_, err := s.DeleteEntity(ctx, "PAGE-1", false)
+			_, err := s.DeleteFamily(ctx, "PAGE-1", false)
 			require.NoError(t, err, "delete after reopen")
 
-			n, err := s.CountEntities(ctx, store.EntityQuery{Type: "thing"})
+			n, err := s.CountEntities(ctx, store.EntityQuery{Type: "thing", Faces: store.InWorld(store.TrivialScope())})
 			require.NoError(t, err)
 			assert.Equal(t, 2, n, "default-state count after deleting one family")
 		})

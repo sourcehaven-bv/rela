@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -49,7 +50,11 @@ func (e *Engine) enumeratePrincipals(ctx context.Context) ([]string, error) {
 
 	// User-entity-type entities.
 	if ut := policy.UserEntityType; ut != "" {
-		for ent, err := range e.src.ListEntities(ctx, store.EntityQuery{Type: ut}) {
+		// The implicit face, as the principal lookup reads it: a faced user
+		// type is a load error, so this is the type's only row per id.
+		for ent, err := range e.src.ListEntities(ctx, store.EntityQuery{
+			Type: ut, Faces: store.AtFaces(entity.ImplicitFace),
+		}) {
 			if err != nil {
 				return nil, fmt.Errorf("aclmap: list %s entities: %w", ut, err)
 			}

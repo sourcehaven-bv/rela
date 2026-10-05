@@ -4,6 +4,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
 import CommandModal from './CommandModal.vue'
+import CommentsPanel from './CommentsPanel.vue'
+import DocumentsPanel from './DocumentsPanel.vue'
+import ExportMenu from './ExportMenu.vue'
+
 import EntityActionsMenu from './EntityActionsMenu.vue'
 import type { EntityAction } from './entityActions'
 import { useSchemaStore } from '@/stores/schema'
@@ -11,7 +15,11 @@ import { useUIStore } from '@/stores/ui'
 import type { Entity, CopyOffer, EntityWorld } from '@/types'
 import type { ViewEntity, ViewResponse, ViewSection } from '@/api'
 import type { CopyInvokeResult } from '@/api/copies'
-import { registerEntityPlurals } from '@/api/entities'
+import {
+  _setEntityPluralForTest,
+  _resetEntityPluralsForTest,
+  registerEntityPlurals,
+} from '@/api/entities'
 
 // The world-bound DETAIL surface (TKT-F2D5U5).
 //
@@ -848,7 +856,7 @@ describe('EntityDetail world binding', () => {
       expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: {} })
     })
 
-    it('spells the default world explicitly when landing there under a configured default', async () => {
+    it('drops the param when landing in the generated default world', async () => {
       useSchemaStore().defaultWorld = 'published'
       invokeCopyMock.mockResolvedValue(copyResult())
       mockRoute.query = {}
@@ -856,7 +864,7 @@ describe('EntityDetail world binding', () => {
         _copies: [promoteOffer({ onSuccess: { landing: { mode: 'world', world: 'default' } } })],
       }))
       await clickPromote(w)
-      expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: { world: 'default' } })
+      expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: {} })
     })
 
     it('reloads in place rather than navigating to `@undefined` for a face landing with no face', async () => {
@@ -1347,10 +1355,9 @@ describe('EntityDetail world binding', () => {
       })
     })
 
-    it('names the default world for a row with NO explicit address', async () => {
-      // A row at the zero coordinate — the single state of a type declaring
-      // no faces. Its bare address is literal only in the default world,
-      // spelled `default` when a configured default would otherwise apply.
+    it('keeps the world for a row with NO explicit address', async () => {
+      // A row at the implicit face, the single state of a type declaring no
+      // faces. Every world serves it, so the world stays.
       useSchemaStore().defaultWorld = 'published'
       mockRoute.query = { world: 'site-nl' }
       const w = await mountDetail(viewResponse({
@@ -1360,19 +1367,8 @@ describe('EntityDetail world binding', () => {
       const btn = w.findAll('button').find((b) => b.text().includes('View English'))
       await btn!.trigger('click')
       expect(routerPush).toHaveBeenCalledWith({
-        path: '/entity/policy/POL-1', query: { world: 'default' },
+        path: '/entity/policy/POL-1', query: { world: 'site-nl' },
       })
-    })
-
-    it('DROPS the param for such a bare face when no default world is configured', async () => {
-      mockRoute.query = { world: 'site-nl' }
-      const w = await mountDetail(viewResponse({
-        _faces: [{ face: '', label: 'English', ref: 'POL-1' }],
-      }))
-      rendersProof(w)
-      const btn = w.findAll('button').find((b) => b.text().includes('View English'))
-      await btn!.trigger('click')
-      expect(routerPush).toHaveBeenCalledWith({ path: '/entity/policy/POL-1', query: {} })
     })
 
     it('spells a non-bare address itself for an older server that sends no ref', async () => {
@@ -1384,6 +1380,38 @@ describe('EntityDetail world binding', () => {
       expect(routerPush).toHaveBeenCalledWith({
         path: '/entity/policy/POL-1@nl', query: { world: 'site-nl' },
       })
+    })
+  })
+
+  // BUG-FYEEVX: every sub-resource of the row on screen goes to its address.
+  // The route id is bare here and the world serves the `nl` face, so a
+  // sub-resource built from the route id would reach whichever face the
+  // server re-resolves, not the one on screen.
+  describe('sub-resources follow the served address (BUG-FYEEVX)', () => {
+    const onNl = () => viewResponse({ _self: '/api/v1/policys/POL-1@nl' })
+    afterEach(() => _resetEntityPluralsForTest())
+
+    it('addresses comments, documents, export and history by the served face', async () => {
+      useSchemaStore().historyEnabled = true
+      mockRoute.query = { world: 'site-nl' }
+      const w = await mountDetail(onNl())
+      rendersProof(w)
+
+      expect(w.findComponent(CommentsPanel).props('entityId')).toBe('POL-1@nl')
+      expect(w.findComponent(DocumentsPanel).props('entityId')).toBe('POL-1@nl')
+      _setEntityPluralForTest(entityType, 'policys')
+      const urlFor = w.findComponent(ExportMenu).props('urlFor') as (t: string) => string
+      expect(urlFor('markdown')).toContain('/POL-1%40nl/_export')
+      const history = button(w, 'History')!
+      const target = history.attributes('to') ?? history.attributes('href')
+      expect(target).toContain(`/history/${entityType}/POL-1@nl`)
+    })
+
+    it('addresses them by the bare id when the bare face is on screen', async () => {
+      const w = await mountDetail(viewResponse())
+      rendersProof(w)
+      expect(w.findComponent(CommentsPanel).props('entityId')).toBe('POL-1')
+      expect(w.findComponent(DocumentsPanel).props('entityId')).toBe('POL-1')
     })
   })
 })

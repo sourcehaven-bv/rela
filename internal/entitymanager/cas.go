@@ -63,7 +63,7 @@ func writeAutomationProperties(
 		return nil, err
 	}
 	for attempt := 1; ; attempt++ {
-		stored, err := deps.Store.GetEntityState(ctx, created.ID, created.Face)
+		stored, err := deps.Store.GetEntity(ctx, entity.Ref{ID: created.ID, Face: created.Face})
 		if err != nil {
 			return nil, fmt.Errorf("read entity after automation: %w", err)
 		}

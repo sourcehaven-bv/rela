@@ -142,7 +142,7 @@ func TestDiscover_LuaDepsDerivable(t *testing.T) {
 	// visibility.Unrestricted always returns a non-nil value, so a bundle
 	// built over a nil store would still pass it (TKT-1WV50C). Assert the
 	// reader actually reaches the store instead.
-	if _, err := read.VisibleReader.GetEntity(t.Context(), "does-not-exist"); err == nil {
+	if _, err := read.VisibleReader.GetAddress(t.Context(), "does-not-exist"); err == nil {
 		t.Error("LuaReadDeps.VisibleReader did not reach a real store: " +
 			"a missing entity should surface a not-found error")
 	}

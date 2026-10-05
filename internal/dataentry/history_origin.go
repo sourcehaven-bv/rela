@@ -3,6 +3,8 @@ package dataentry
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -54,7 +56,7 @@ func originWire(o store.Origin, visibleSource string) map[string]any {
 //
 // # Batched, not per row
 //
-// Probes are grouped by source type and issued through PermitsReadMany, so a
+// Probes are grouped by source type and issued through ReadableFacesMany, so a
 // long timeline costs one probe per distinct type rather than one per version.
 // A probe error is treated as DENY (the label is withheld) rather than
 // surfaced: failing closed here loses a decoration, while failing open leaks
@@ -71,9 +73,9 @@ func gateOriginSources(ctx context.Context, gate readGate, metas []store.Version
 		return nil
 	}
 
-	allowed := map[string]map[string]bool{}
+	allowed := map[string]acl.FaceVerdicts{}
 	for typ, ids := range byType {
-		verdicts, err := gate.PermitsReadMany(ctx, typ, ids)
+		verdicts, err := gate.ReadableFacesMany(ctx, typ, ids)
 		if err != nil {
 			// Fail closed: no verdicts for this type means no source labels
 			// for it. See the godoc.
@@ -88,9 +90,18 @@ func gateOriginSources(ctx context.Context, gate readGate, metas []store.Version
 		if o.Source == "" || o.SourceType == "" {
 			continue
 		}
-		if allowed[o.SourceType][o.Source] {
-			out[i] = o.SourceLabel()
+		// A label naming a face needs that face readable: `X@draft` would
+		// otherwise tell a published-only reader that the draft exists. A
+		// label naming the id alone needs some face readable.
+		verdicts, ok := allowed[o.SourceType]
+		if !ok {
+			continue
 		}
+		verdict := verdicts.For(o.Source)
+		if verdict.None() || (o.SourceFace != "" && !verdict.Contains(entityPkg.Face(o.SourceFace))) {
+			continue
+		}
+		out[i] = o.SourceLabel()
 	}
 	return out
 }

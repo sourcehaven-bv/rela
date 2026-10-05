@@ -232,7 +232,7 @@ func TestRemoteMCP_NonMCPPathKeepsDataEntryTool(t *testing.T) {
 }
 
 // The CSRF exemption must be conditioned on the request being provably
-// non-browser, exactly like the sync/feeds/caldav entries. A browser-shaped
+// non-browser, exactly like the feeds/caldav entries. A browser-shaped
 // request to the MCP endpoint must still face the same-origin check.
 func TestRemoteMCP_CSRFExemptionOnlyForNonBrowser(t *testing.T) {
 	tests := []struct {
@@ -405,7 +405,7 @@ type factoryTestError struct{}
 func (*factoryTestError) Error() string { return "test factory failure" }
 
 // TestRemoteMCP_HostSharesUploadPolicy pins what the MCP attachment tools get
-// from the App (TKT-R6U15C): the App's own attachment locker, its command runner,
+// from the App (TKT-R6U15C): the App's own attachment surface (stamp and lock), its command runner,
 // and the LIVE schema, so a policy reload reaches MCP uploads.
 func TestRemoteMCP_HostSharesUploadPolicy(t *testing.T) {
 	app := newTestAppV1(t)
@@ -415,8 +415,8 @@ func TestRemoteMCP_HostSharesUploadPolicy(t *testing.T) {
 		t.Fatalf("SetRemoteMCP: %v", err)
 	}
 
-	if f.host.AttachmentLocker != app.attachmentLocker || app.attachments.locker != app.attachmentLocker {
-		t.Error("MCP and web uploads do not share the App's attachment locker; their writes would not serialize")
+	if f.host.Attachments != app.attachmentOwner || app.attachments.owner != attachmentOwner(app.attachmentOwner) {
+		t.Error("MCP and web uploads do not share the App's attachment surface; their writes would not serialize")
 	}
 	if f.host.AttachmentRunner != app.attachmentRunner {
 		t.Error("AttachmentRunner is not the App's runner")

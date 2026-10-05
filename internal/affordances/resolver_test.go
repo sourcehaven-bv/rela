@@ -559,6 +559,48 @@ assignments:
 	}
 }
 
+// TestResolver_UnconditionalRelationVerdicts pins that the unconditional
+// verdict treats every `when:` as false, on the grant and on a meta field,
+// whatever the row holds, and keeps a grant without one.
+func TestResolver_UnconditionalRelationVerdicts(t *testing.T) {
+	t.Parallel()
+	p := policyFromYAML(t, `
+roles:
+  triager:
+    relations:
+      ticket:
+        - relation: has-planning
+          fields:
+            - field: note
+              when: "entity.status == 'open'"
+            - field: owner
+        - relation: blocks
+          when: "entity.status == 'open'"
+assignments:
+  alice: triager
+`)
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for _, status := range []string{"open", "done"} {
+		rv := r.UnconditionalRelationVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"status": status}))
+		if v := rv.Types["blocks"]; v.Creatable || v.Removable {
+			t.Errorf("status=%s: blocks = %+v, want neither creatable nor removable", status, v)
+		}
+		planning := rv.Types["has-planning"]
+		if !planning.Creatable || !planning.Removable {
+			t.Errorf("status=%s: has-planning = %+v, want creatable and removable", status, planning)
+		}
+		if w, ok := planning.Fields["note"]; !ok || w {
+			t.Errorf("status=%s: note writable = %v (present %v), want denied", status, w, ok)
+		}
+		if _, denied := planning.Fields["owner"]; denied {
+			t.Errorf("status=%s: owner denied, want writable", status)
+		}
+	}
+}
+
 // ctxKey is a private context key for the propagation test.
 type ctxKey struct{}
 

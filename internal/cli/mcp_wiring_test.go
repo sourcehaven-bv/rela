@@ -123,7 +123,7 @@ func TestNewMCPServices_WritesReachSearchIndex(t *testing.T) {
 	}))
 
 	hits := make([]string, 0, 1)
-	for hit, hitErr := range deps.Searcher.Search(ctx, search.Query{Text: "Synchronous"}) {
+	for hit, hitErr := range deps.Searcher.Search(ctx, search.Query{Text: "Synchronous", World: store.TrivialScope()}) {
 		require.NoError(t, hitErr)
 		hits = append(hits, hit.ID)
 	}
@@ -280,13 +280,13 @@ func TestMCPServices_ReloadReusesStoreAndSearcher(t *testing.T) {
 	assert.Same(t, before, svc.svc.Store(), "reload must reuse the open store, not reopen it")
 
 	// The store stays usable and keeps this session's writes.
-	got, err := svc.svc.Store().GetEntity(ctx, "ITEM-1")
+	got, err := svc.svc.Store().GetEntity(ctx, entity.Ref{ID: "ITEM-1"})
 	require.NoError(t, err, "store unusable after reload")
 	assert.Equal(t, "ITEM-1", got.ID)
 
 	// And the search index is the same one, still holding the pre-reload write.
 	hits := make([]string, 0, 1)
-	for hit, hitErr := range deps.Searcher.Search(ctx, search.Query{Text: "Written"}) {
+	for hit, hitErr := range deps.Searcher.Search(ctx, search.Query{Text: "Written", World: store.TrivialScope()}) {
 		require.NoError(t, hitErr)
 		hits = append(hits, hit.ID)
 	}

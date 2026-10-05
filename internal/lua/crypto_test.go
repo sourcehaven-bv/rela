@@ -11,12 +11,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 func newCryptoTestRuntime(t *testing.T) (*Runtime, *strings.Builder) {
 	t.Helper()
 	var sb strings.Builder
-	rt := NewReader(ReadDeps{}, &sb)
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &sb)
 	return rt, &sb
 }
 
@@ -240,7 +242,7 @@ func TestBase64EncodeRaisesOnNonString(t *testing.T) {
 func TestCryptoAlwaysRegistered(t *testing.T) {
 	t.Parallel()
 
-	rt := NewReader(ReadDeps{}, &strings.Builder{})
+	rt := NewReader(ReadDeps{World: store.TrivialScope()}, &strings.Builder{})
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`
 assert(crypto.base64_encode ~= nil)

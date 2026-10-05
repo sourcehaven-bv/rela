@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -48,7 +50,7 @@ func TestSyncCaptureCarriesOrigin(t *testing.T) {
 		Origin:     copyOrigin,
 	}))
 
-	versions, err := s.VersionStore().ListVersions(ctx, "POL-5")
+	versions, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "POL-5"})
 	require.NoError(t, err)
 	require.Len(t, versions, 1)
 	require.Equal(t, copyOrigin, versions[0].Origin)

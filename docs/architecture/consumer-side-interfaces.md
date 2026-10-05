@@ -77,13 +77,13 @@ directly. Returning the wide type is a soft leak.
 // Wrong: leaks the whole metamodel + store surface for two narrow uses.
 type Host interface {
     Meta() *metamodel.Metamodel  // only used for meta.ValidateRelation(...)
-    Store() store.Store          // only used for store.GetEntity(ctx, id)
+    Store() store.Store          // only used for store.GetEntity(ctx, ref)
 }
 
 // Right: declares the actual operations.
 type Host interface {
     ValidateRelation(relType, fromType, toType string) error
-    GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+    GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error)
 }
 ```
 

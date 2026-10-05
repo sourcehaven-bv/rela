@@ -5,7 +5,7 @@ title: Version snapshots do not record which face they captured
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: done
 ---
 
 ## Description

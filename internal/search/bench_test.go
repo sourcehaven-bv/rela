@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/bleveindex"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -39,7 +40,7 @@ func BenchmarkSearch(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		hits := 0
-		for _, err := range s.Search(ctx, search.Query{Text: "login", Limit: 20}) {
+		for _, err := range s.Search(ctx, search.Query{Text: "login", Limit: 20, World: store.TrivialScope()}) {
 			if err != nil {
 				b.Fatal(err)
 			}

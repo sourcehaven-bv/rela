@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/validation"
 	"github.com/Sourcehaven-BV/rela/internal/validationgraph"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // fixture builds a memstore holding A --r--> B and returns a Graph over it.
@@ -25,10 +26,10 @@ func fixture(t *testing.T) *validationgraph.Graph {
 			t.Fatalf("create %s: %v", e.ID, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "A", "has-review", "B", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "has-review", To: "B"}, nil); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
-	g, err := validationgraph.New(st)
+	g, err := validationgraph.New(visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -115,10 +116,10 @@ func TestRelatedEntities_UnreadableTargetSurvivesAsUnresolved(t *testing.T) {
 	}
 	// memstore permits an edge to an absent entity, which is exactly the
 	// dangling-reference case.
-	if _, err := st.CreateRelation(ctx, "A", "has-review", "GONE", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "has-review", To: "GONE"}, nil); err != nil {
 		t.Skipf("backend refuses a dangling edge (%v); nothing to assert here", err)
 	}
-	g, err := validationgraph.New(st)
+	g, err := validationgraph.New(visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -151,8 +152,8 @@ func TestNew_RejectsNilReader(t *testing.T) {
 // crash in whichever request happened to evaluate a gate, rather than the
 // wiring error it actually is.
 func TestNew_RejectsTypedNilReader(t *testing.T) {
-	var nilStore *memstore.MemStore
-	if _, err := validationgraph.New(nilStore); err == nil {
+	var nilReader *visibility.UnrestrictedReader
+	if _, err := validationgraph.New(nilReader); err == nil {
 		t.Fatal("New must reject a typed-nil reader")
 	}
 }
@@ -164,9 +165,9 @@ type countingReader struct {
 	gets  int
 }
 
-func (c *countingReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
+func (c *countingReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
 	c.gets++
-	return c.inner.GetEntity(ctx, id)
+	return c.inner.GetAddress(ctx, addr)
 }
 
 func (c *countingReader) ListRelations(
@@ -194,11 +195,11 @@ func TestRelatedEntities_NoFarReadsWhenNotRequested(t *testing.T) {
 		}
 	}
 	for _, to := range []string{"B", "C"} {
-		if _, err := st.CreateRelation(ctx, "A", "has-review", to, nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "A", Type: "has-review", To: to}, nil); err != nil {
 			t.Fatalf("create relation to %s: %v", to, err)
 		}
 	}
-	cr := &countingReader{inner: st}
+	cr := &countingReader{inner: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))}
 	g, err := validationgraph.New(cr)
 	if err != nil {
 		t.Fatalf("New: %v", err)

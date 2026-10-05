@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/docs"
 	"github.com/Sourcehaven-BV/rela/internal/docscapture"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -109,6 +110,11 @@ func (c *BuildCmd) Run(ctx context.Context, proj Project) error {
 	var policy *acl.Policy
 	policyPath := filepath.Join(proj.Paths().Root, "acl.yaml")
 	if p, perr := acl.LoadPolicy(policyPath); perr == nil {
+		// Validated like every other loader, so a manual cannot document a
+		// role model the server refuses to boot with.
+		if vErr := appbuild.ValidateACLPolicy(p, proj.Meta()); vErr != nil {
+			return fmt.Errorf("acl.yaml invalid for this project: %w", vErr)
+		}
 		policy = p
 	} else if !errors.Is(perr, os.ErrNotExist) {
 		return fmt.Errorf("load acl.yaml: %w", perr)

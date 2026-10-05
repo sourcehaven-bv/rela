@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // recordingScriptExecutor lets tests observe which method
@@ -67,7 +68,7 @@ type stubMutator struct{ autocascade.Mutator }
 // are a no-op.
 func TestLuaScriptRunner_DispatchByActionShape(t *testing.T) {
 	rec := &recordingScriptExecutor{}
-	r := NewLuaScriptRunner(rec, lua.ReadDeps{})
+	r := NewLuaScriptRunner(rec, lua.ReadDeps{World: store.TrivialScope()})
 
 	trigger := entity.New("REQ-001", "requirement")
 	if err := r.Run(context.Background(), autocascade.ScriptAction{Code: "print('hi')", NewEntity: trigger}, stubMutator{}); err != nil {
@@ -106,7 +107,7 @@ func TestLuaScriptRunner_PatchesScriptErrorPath(t *testing.T) {
 			LuaMessage: "boom",
 		},
 	}
-	r := NewLuaScriptRunner(exec, lua.ReadDeps{})
+	r := NewLuaScriptRunner(exec, lua.ReadDeps{World: store.TrivialScope()})
 
 	err := r.Run(context.Background(), autocascade.ScriptAction{
 		Code: "error('boom')",
@@ -138,7 +139,7 @@ func TestLuaScriptRunner_FilePathErrorNotPatched(t *testing.T) {
 			LuaMessage: "boom",
 		},
 	}
-	r := NewLuaScriptRunner(exec, lua.ReadDeps{})
+	r := NewLuaScriptRunner(exec, lua.ReadDeps{World: store.TrivialScope()})
 
 	err := r.Run(context.Background(), autocascade.ScriptAction{
 		FilePath: "foo.lua",
@@ -160,7 +161,7 @@ func TestLuaScriptRunner_FilePathErrorNotPatched(t *testing.T) {
 // when given a nil executor, so callers can pass the result to
 // autocascade.Request.Scripts safely.
 func TestLuaScriptRunner_NilOnNilExec(t *testing.T) {
-	if got := NewLuaScriptRunner(nil, lua.ReadDeps{}); got != nil {
+	if got := NewLuaScriptRunner(nil, lua.ReadDeps{World: store.TrivialScope()}); got != nil {
 		t.Errorf("expected nil ScriptRunner for nil executor, got %#v", got)
 	}
 }
@@ -169,7 +170,7 @@ func TestLuaScriptRunner_NilOnNilExec(t *testing.T) {
 // and nil mutator returns a typed error rather than letting the
 // executor nil-deref on the first rela.create_entity call.
 func TestLuaScriptRunner_RejectsNilMutator(t *testing.T) {
-	r := NewLuaScriptRunner(&recordingScriptExecutor{}, lua.ReadDeps{})
+	r := NewLuaScriptRunner(&recordingScriptExecutor{}, lua.ReadDeps{World: store.TrivialScope()})
 	err := r.Run(context.Background(),
 		autocascade.ScriptAction{Code: "print('hi')"}, nil)
 	if err == nil {
@@ -215,7 +216,7 @@ func TestLuaScriptRunner_CapabilitiesFlowFromAction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			rec := &recordingScriptExecutor{}
-			runner := NewLuaScriptRunner(rec, lua.ReadDeps{})
+			runner := NewLuaScriptRunner(rec, lua.ReadDeps{World: store.TrivialScope()})
 
 			err := runner.Run(context.Background(), autocascade.ScriptAction{
 				Code:         "return 1",

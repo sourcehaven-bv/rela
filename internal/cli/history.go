@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -17,11 +18,11 @@ import (
 // command reports that the active backend does not support history (fsstore
 // deployments use git for the same purpose).
 type HistoryCmd struct {
-	ID      string `arg:"" help:"Entity ID (e.g. REQ-001). May name a live or deleted entity."`
+	ID      string `arg:"" help:"Entity address: ID, or ID@face for a type with faces (e.g. REQ-001, DOC-1@draft). May name a live or deleted entity."`
 	Version int    `help:"Print the full snapshot for this 1-based version ordinal (for piping to a diff tool) instead of the timeline." default:"0"`
 }
 
-// Run dispatches `rela history <id> [--version N]`.
+// Run dispatches `rela history <address> [--version N]`.
 func (c *HistoryCmd) Run(ctx context.Context, svc *readServices) error {
 	if svc.Versions == nil {
 		out.WriteMessage("The active storage backend does not support version history " +
@@ -30,21 +31,25 @@ func (c *HistoryCmd) Run(ctx context.Context, svc *readServices) error {
 		return nil
 	}
 	var reader store.HistoryReader = svc.Versions
+	ref, err := historyAddress(ctx, svc.Store, svc.Meta, reader, c.ID)
+	if err != nil {
+		return err
+	}
 
 	if c.Version > 0 {
-		return c.printSnapshot(ctx, reader)
+		return c.printSnapshot(ctx, reader, ref)
 	}
-	return c.printTimeline(ctx, reader)
+	return c.printTimeline(ctx, reader, ref)
 }
 
 // printTimeline lists the version metadata rows oldest-first.
-func (c *HistoryCmd) printTimeline(ctx context.Context, reader store.HistoryReader) error {
-	metas, err := reader.ListVersions(ctx, c.ID)
+func (c *HistoryCmd) printTimeline(ctx context.Context, reader store.HistoryReader, ref entity.Ref) error {
+	metas, err := reader.ListVersions(ctx, ref)
 	if err != nil {
-		return fmt.Errorf("read history for %q: %w", c.ID, err)
+		return fmt.Errorf("read history for %q: %w", ref, err)
 	}
 	if len(metas) == 0 {
-		out.WriteMessage("No version history for %s.", c.ID)
+		out.WriteMessage("No version history for %s.", ref)
 		return nil
 	}
 	for _, m := range metas {
@@ -81,16 +86,17 @@ func (c *HistoryCmd) printTimeline(ctx context.Context, reader store.HistoryRead
 
 // printSnapshot writes one version's content + properties as JSON to stdout, so
 // two invocations can be diffed by an external tool.
-func (c *HistoryCmd) printSnapshot(ctx context.Context, reader store.HistoryReader) error {
-	snap, err := reader.GetVersion(ctx, c.ID, c.Version)
+func (c *HistoryCmd) printSnapshot(ctx context.Context, reader store.HistoryReader, ref entity.Ref) error {
+	snap, err := reader.GetVersion(ctx, ref, c.Version)
 	if errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("no version %d for %q", c.Version, c.ID)
+		return fmt.Errorf("no version %d for %q", c.Version, ref)
 	}
 	if err != nil {
-		return fmt.Errorf("read version %d for %q: %w", c.Version, c.ID, err)
+		return fmt.Errorf("read version %d for %q: %w", c.Version, ref, err)
 	}
 	payload := map[string]any{
-		"id":         c.ID,
+		"id":         ref.ID,
+		"face":       snap.Face.String(),
 		"version":    snap.Version,
 		"op":         snap.Op,
 		"type":       snap.Type,

@@ -53,10 +53,12 @@ type Host interface {
 	// the STORED row, so a concurrent writer's change is kept.
 	WriteEntity(ctx context.Context, e *entity.Entity, set map[string]string) error
 
-	// GetEntity reads an entity by ID. Runner uses it to verify that
-	// targets of automation-generated relations exist before
-	// validating the (from-type, type, to-type) tuple.
-	GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+	// EntityType returns the type of the entity id names, reading its
+	// family: a relation target is an entity, and a faced type stores no
+	// zero-face row. Runner uses it to verify that targets of
+	// automation-generated relations exist before validating the
+	// (from-type, type, to-type) tuple.
+	EntityType(ctx context.Context, id string) (string, error)
 
 	// WriteRelation creates the relation in the store, treating a
 	// pre-existing identical relation as a no-op success (create-then-
@@ -64,6 +66,10 @@ type Host interface {
 	// property-less, so there is nothing to overwrite). Runner uses it
 	// for entries in [automation.Result.RelationsToCreate] and for
 	// trigger relations attached to automation-created entities.
+	//
+	// Runner sets r.FromFace to the trigger row's face. The host keeps it
+	// for a `scope: content` relation type and drops it for an
+	// identity-scoped one, so the edge lands on the face that owns it.
 	WriteRelation(ctx context.Context, r *entity.Relation) error
 
 	// ValidateRelation checks whether a relation of the given type
@@ -82,10 +88,13 @@ type Host interface {
 	DeleteEntity(ctx context.Context, entityType, id string, cascade bool) error
 
 	// FindExistingRelationTarget returns the existing target entity
-	// of the given relation type from the source entity, if any.
+	// of the given relation type from the source row, if any.
 	// Returns nil if no such relation exists. Runner uses it to
 	// implement the IfExists behaviors (Skip / Error / Replace).
-	FindExistingRelationTarget(ctx context.Context, sourceID, relationType, targetType string) *entity.Entity
+	//
+	// source is the trigger row's address, so a content-scoped relation
+	// is looked up on the face the cascade would write it to.
+	FindExistingRelationTarget(ctx context.Context, source entity.Ref, relationType, targetType string) *entity.Entity
 }
 
 // CreateEntityOptions configures a [Host.CreateEntity] call.

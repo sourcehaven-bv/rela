@@ -198,7 +198,7 @@ func TestReadClaimCatchesAWidenedFaceGrant(t *testing.T) {
 	widened.Roles["reader"] = acl.RoleDef{Read: []string{"policy", "control"}}
 
 	t.Run("the write-side claim still passes, so it cannot catch this", func(t *testing.T) {
-		src := "```rela\n" + readSeed + `refuses{who="pub", op="update", type="policy"}` + "\n```\n"
+		src := "```rela\n" + readSeed + `refuses{who="pub", op="update", type="policy", face="draft"}` + "\n```\n"
 		if _, err := Build(context.Background(), src, Options{
 			Meta: worldFixtureMeta(t), Policy: widened,
 		}); err != nil {

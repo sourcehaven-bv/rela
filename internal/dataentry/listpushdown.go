@@ -127,7 +127,7 @@ func planListPushdown(
 	default:
 		return listPlan{}, false
 	}
-	gq.World = world
+	gq.Faces = store.InWorld(world)
 	gq.FaceIn = rqr.Faces
 	gq.Props = append(append([]store.PropPredicate(nil), gq.Props...), props...)
 	gq.OrderBy = order

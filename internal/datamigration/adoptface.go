@@ -59,12 +59,12 @@ type adoptionPlan struct {
 // this operates on.
 func (a faceAdoption) plan(ctx context.Context, st store.Store) (*adoptionPlan, error) {
 	p := &adoptionPlan{unmapped: map[string]int{}}
-	q := store.EntityQuery{Type: a.entityType, AllStates: true}
+	q := store.EntityQuery{Type: a.entityType, Faces: store.AllFaces()}
 	for e, err := range st.ListEntities(ctx, q) {
 		if err != nil {
 			return nil, err
 		}
-		if !e.Face.IsDefault() {
+		if !e.Face.IsImplicit() {
 			continue
 		}
 		v, ok := e.Properties[a.property].(string)

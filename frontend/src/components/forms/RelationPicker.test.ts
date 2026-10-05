@@ -222,12 +222,15 @@ describe('RelationPicker — incoming direction on create (BUG-10IPBP)', () => {
     setActivePinia(createPinia())
   })
 
-  function seedIncomingSchema(maxIncoming = 10) {
+  // faced: ticket has faces and `blocks` is content-scoped, so each face of
+  // a source is a separate incoming edge.
+  function seedIncomingSchema(maxIncoming = 10, faced = false) {
     const schemaStore = useSchemaStore()
     schemaStore.entityTypes.set('ticket', {
       name: 'ticket',
       label: 'Ticket',
       properties: {},
+      ...(faced ? { faces: { draft: { label: 'Draft' }, published: { label: 'Published' } } } : {}),
     } as never)
     // An incoming picker selects sources from the relation's `from` set.
     // `max_incoming` drives single- vs multi-select on the picker.
@@ -238,15 +241,17 @@ describe('RelationPicker — incoming direction on create (BUG-10IPBP)', () => {
       inverse: 'blockedBy',
       max_outgoing: 10,
       max_incoming: maxIncoming,
+      ...(faced ? { scope: 'content' } : {}),
     } as never)
   }
 
   async function mountIncoming(
     entityId: string | undefined,
     candidates: Entity[],
-    maxIncoming = 10
+    maxIncoming = 10,
+    faced = false
   ) {
-    seedIncomingSchema(maxIncoming)
+    seedIncomingSchema(maxIncoming, faced)
     seedCandidates(candidates)
     const field: FormFieldOrRelation = {
       relation: 'blocks',
@@ -284,6 +289,102 @@ describe('RelationPicker — incoming direction on create (BUG-10IPBP)', () => {
     expect(payload.currentEntries.map((e) => e.id)).toEqual(['TKT-900'])
     // The chip renders so the user sees the pending selection.
     expect(wrapper.find('.selected-entity').text()).toContain('TKT-900')
+    wrapper.unmount()
+  })
+
+  it('sends a new incoming peer by the face it was picked at', async () => {
+    // An incoming content-scoped edge hangs on one face of the peer, so the
+    // row is keyed by that address.
+    const peer = {
+      ...entity('TKT-901', 'A draft blocker'),
+      _self: '/api/v1/tickets/TKT-901@draft',
+      linkable: true,
+    }
+    const wrapper = await mountIncoming(undefined, [peer], 10, true)
+
+    await wrapper.find('input[role="combobox"]').trigger('focus')
+    await flushPromises()
+    await wrapper.find('.dropdown-item').trigger('click')
+    await flushPromises()
+
+    const events = wrapper.emitted('incoming-changed')!
+    const payload = events[events.length - 1][0] as {
+      added: Array<{ targetId: string }>
+      currentEntries: Array<{ id: string }>
+    }
+    expect(payload.currentEntries.map((e) => e.id)).toEqual(['TKT-901@draft'])
+    expect(payload.added).toEqual([{ targetId: 'TKT-901@draft' }])
+    wrapper.unmount()
+  })
+
+  it('offers each linkable face of a source as its own candidate', async () => {
+    // `linkable` decides, not the update hint: the write checks the relation
+    // create grant on the face.
+    const draft = {
+      ...entity('TKT-901', 'Blocker'),
+      _self: '/api/v1/tickets/TKT-901@draft',
+      _actions: { update: false },
+      linkable: true,
+    }
+    const published = {
+      ...entity('TKT-901', 'Blocker'),
+      _self: '/api/v1/tickets/TKT-901@published',
+      _actions: { update: true },
+      linkable: false,
+    }
+    const other = {
+      ...entity('TKT-902', 'Other'),
+      _self: '/api/v1/tickets/TKT-902@published',
+      linkable: true,
+    }
+    const wrapper = await mountIncoming('TKT-1', [draft, published, other], 10, true)
+
+    // Every candidate read names the relation context.
+    const calls = vi.mocked(useEntitiesStore().fetchAllList).mock.calls
+    expect(calls.length).toBeGreaterThan(0)
+    for (const call of calls) {
+      expect(call[1]).toMatchObject({ relation: 'blocks', direction: 'incoming' })
+    }
+
+    await wrapper.find('input[role="combobox"]').trigger('focus')
+    await flushPromises()
+
+    // TKT-901@published is not offered: the server says the edge may not be
+    // created from that face.
+    const items = wrapper.findAll('.dropdown-item').map((i) => i.text())
+    expect(items).toHaveLength(2)
+    expect(items[0]).toContain('TKT-901')
+    expect(items[0]).toContain('Draft')
+    expect(items[1]).toContain('TKT-902')
+    wrapper.unmount()
+  })
+
+  it('reads an unfaced source without the relation context', async () => {
+    const wrapper = await mountIncoming('TKT-1', [entity('TKT-901')], 10, false)
+    for (const call of vi.mocked(useEntitiesStore().fetchAllList).mock.calls) {
+      expect(call[1]).not.toHaveProperty('relation')
+    }
+    wrapper.unmount()
+  })
+
+  it('groups loaded edges per face and locks a read-only one', async () => {
+    vi.mocked(getEntityRelations).mockResolvedValue([
+      { id: 'TKT-901', type: 'ticket', face: 'draft', editable: true },
+      { id: 'TKT-901', type: 'ticket', face: 'published', editable: false },
+    ])
+    const wrapper = await mountIncoming('TKT-1', [], 10, true)
+
+    const groups = wrapper.findAll('.selected-group')
+    expect(groups.map((g) => g.find('.group-face').text())).toEqual(['Draft', 'Published'])
+    expect(groups[0].find('.remove-btn').exists()).toBe(true)
+    expect(groups[1].find('.remove-btn').exists()).toBe(false)
+    expect(groups[1].find('.lock').exists()).toBe(true)
+
+    // Removing the draft edge names that face only.
+    await groups[0].find('.remove-btn').trigger('click')
+    const events = wrapper.emitted('incoming-changed')!
+    const last = events[events.length - 1][0] as { removed: string[] }
+    expect(last.removed).toEqual(['TKT-901@draft'])
     wrapper.unmount()
   })
 
@@ -469,7 +570,10 @@ describe('RelationPicker incoming label resolution', () => {
 describe('RelationPicker — face badge (BUG-3)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    useSchemaStore().worlds.set('published', { readable: true, messages: { stand_in: 'stand-in' } } as never)
+    useSchemaStore().worlds.set('published', {
+      readable: true,
+      messages: { stand_in: 'stand-in' },
+    } as never)
   })
 
   function faced(id: string, world?: Entity['_world']): Entity {
@@ -559,6 +663,104 @@ describe('RelationPicker — face badge (BUG-3)', () => {
     expect(typeIdx).toBeGreaterThanOrEqual(0)
     expect(badgeIdx).toBeGreaterThan(labelIdx)
     expect(labelIdx).toBeGreaterThan(typeIdx)
+  })
+})
+
+// BUG-FYEEVX — a relation's head is the entity, not a face (DEC-NPZICR), so a
+// faced target the ambient world excludes is still a valid target. The picker
+// widens a faced target type to the other readable worlds and names the face
+// of each row the ambient world does not serve.
+describe('RelationPicker — faced targets span every readable world (BUG-FYEEVX)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  function seedFaced() {
+    seedSchema('policy')
+    const schema = useSchemaStore()
+    schema.entityTypes.set('policy', {
+      name: 'policy',
+      label: 'Policy',
+      properties: {},
+      faces: { draft: { label: 'Concept' }, published: { label: 'Published' } },
+    } as never)
+    schema.defaultWorld = 'published'
+    schema.worlds.set('published', { readable: true } as never)
+    schema.worlds.set('editorial', { readable: true } as never)
+    schema.worlds.set('hidden', { readable: false } as never)
+  }
+
+  function pol(id: string, face: string, title: string): Entity {
+    return {
+      id,
+      type: 'policy',
+      properties: {},
+      _title: title,
+      _self: `/api/v1/policies/${id}@${face}`,
+    }
+  }
+
+  async function mountFaced(failingWorld = '') {
+    seedFaced()
+    const entitiesStore = useEntitiesStore()
+    const byWorld: Record<string, Entity[]> = {
+      published: [pol('POL-1', 'published', 'Access')],
+      editorial: [pol('POL-1', 'draft', 'Access (draft)'), pol('POL-2', 'draft', 'Retention')],
+    }
+    entitiesStore.fetchAllList = vi.fn(async (_type: string, params?: { world?: string }) => {
+      if (params?.world === failingWorld) throw new Error('boom')
+      const data = byWorld[params?.world ?? ''] ?? []
+      return {
+        data,
+        meta: { total: data.length, page: 1, per_page: 100, has_more: false },
+        included: {},
+      }
+    }) as never
+    const field: FormFieldOrRelation = { relation: 'affects', label: 'Affects' }
+    const wrapper = mount(RelationPicker, {
+      props: { field, entityType: 'ticket', value: [] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    await wrapper.find('input[role="combobox"]').trigger('focus')
+    return { wrapper, entitiesStore }
+  }
+
+  it('offers a target only another world serves, naming its face', async () => {
+    const { wrapper, entitiesStore } = await mountFaced()
+    const items = wrapper.findAll('.dropdown-item')
+    expect(items.map((i) => i.find('.entity-label').text())).toEqual([
+      'Access (POL-1)',
+      'Retention (POL-2)',
+    ])
+    // The ambient world's row wins for POL-1, so it names no face.
+    expect(items[0].find('.face-hint').exists()).toBe(false)
+    expect(items[1].find('.face-hint').text()).toBe('Concept')
+    // A world the reader may not select is not queried.
+    const worlds = vi.mocked(entitiesStore.fetchAllList).mock.calls.map((c) => c[1]?.world)
+    expect(worlds).toEqual(['published', 'editorial'])
+  })
+
+  it('still offers the ambient rows when another world fails to load', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { wrapper } = await mountFaced('editorial')
+    const items = wrapper.findAll('.dropdown-item')
+    expect(items.map((i) => i.find('.entity-label').text())).toEqual(['Access (POL-1)'])
+    expect(error).toHaveBeenCalled()
+    error.mockRestore()
+  })
+
+  it('does not widen a faceless target type', async () => {
+    seedSchema()
+    useSchemaStore().worlds.set('editorial', { readable: true } as never)
+    seedCandidates([entity('TKT-1')])
+    const field: FormFieldOrRelation = { relation: 'affects', label: 'Affects' }
+    mount(RelationPicker, {
+      props: { field, entityType: 'ticket', value: [] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    expect(useEntitiesStore().fetchAllList).toHaveBeenCalledTimes(1)
   })
 })
 

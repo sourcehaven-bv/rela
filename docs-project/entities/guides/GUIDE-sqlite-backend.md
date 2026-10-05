@@ -75,7 +75,7 @@ file-sync filesystem (iCloud, Dropbox, SMB), where SQLite is not safe
 ```
 
 Keep the project on local storage. If you want it on more than one machine,
-that is what the PostgreSQL build and `rela sync` are for.
+that is what the PostgreSQL build is for.
 
 ## What you give up
 

@@ -112,6 +112,9 @@ type mdEntityRefs struct {
 	// correct if that order ever changes. (The execution timeout reaches
 	// Lua via L.SetContext, not through here.)
 	ctx func() context.Context
+	// world is [ReadDeps.World]: the entities are listed at the faces it
+	// serves.
+	world store.WorldScope
 }
 
 // registerMarkdownModule adds the rela.md submodule to the rela table.
@@ -119,7 +122,7 @@ type mdEntityRefs struct {
 // its own Runtime instance.
 func (r *Runtime) registerMarkdownModule(rela *lua.LTable) {
 	m := &mdHelpers{ls: r.L, conv: &mdASTConverter{ls: r.L}}
-	er := &mdEntityRefs{meta: r.deps.Meta, reader: r.deps.VisibleReader, ctx: r.callerCtx}
+	er := &mdEntityRefs{meta: r.deps.Meta, reader: r.deps.VisibleReader, ctx: r.callerCtx, world: r.deps.World}
 	md := r.L.NewTable()
 
 	// Core functions
@@ -2417,7 +2420,7 @@ func (er *mdEntityRefs) luaMdEntityRefs(ls *lua.LState) int {
 	// empty map for every user (RR-ZA452J).
 	ctx := er.ctx()
 	for _, t := range typeNames {
-		for e, listErr := range rd.ListEntities(ctx, store.EntityQuery{Type: t}) {
+		for e, listErr := range rd.ListEntities(ctx, store.EntityQuery{Type: t, Faces: store.InWorld(er.world)}) {
 			if listErr != nil {
 				ls.RaiseError(
 					"rela.md.entity_refs: list entities of type %q: %s", t, listErr.Error())

@@ -38,6 +38,10 @@ func (f fakeTransitionResolver) RelationVerdicts(context.Context, *entity.Entity
 	return RelationVerdicts{}
 }
 
+func (f fakeTransitionResolver) UnconditionalRelationVerdicts(context.Context, *entity.Entity) RelationVerdicts {
+	return RelationVerdicts{}
+}
+
 func (f fakeTransitionResolver) TransitionVerdicts(
 	_ context.Context, _ *entity.Entity,
 ) map[string][]statemachine.TransitionVerdict {

@@ -56,7 +56,7 @@ func TestV1Patch_UnnamedPropertiesSurvive(t *testing.T) {
 	rec := patchBody(app, `{"properties":{"title":"Renamed"}}`, nil)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body)
 
-	got, err := app.store.GetEntity(context.Background(), "TKT-001")
+	got, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-001"})
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed", got.GetString("title"))
 	assert.Equal(t, "open", got.GetString("status"),
@@ -80,7 +80,7 @@ func TestV1Patch_PropertiesUnsetStillRemoves(t *testing.T) {
 	rec := patchBody(app, `{"properties_unset":["status"]}`, nil)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body)
 
-	got, err := app.store.GetEntity(context.Background(), "TKT-001")
+	got, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-001"})
 	require.NoError(t, err)
 	assert.NotContains(t, got.Properties, "status", "the named key must be removed")
 	assert.Equal(t, "Test Ticket", got.GetString("title"))
@@ -100,7 +100,7 @@ func TestV1Patch_SetAndUnsetSameKeyEndsUnset(t *testing.T) {
 		`{"properties":{"status":"closed"},"properties_unset":["status"]}`, nil)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body)
 
-	got, err := app.store.GetEntity(context.Background(), "TKT-001")
+	got, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-001"})
 	require.NoError(t, err)
 	assert.NotContains(t, got.Properties, "status",
 		"unset is applied after the upsert, so the key ends removed")
@@ -124,7 +124,7 @@ func TestV1Patch_StoreRejectsWriteRacingTheHandlerRead(t *testing.T) {
 	})
 
 	// What the handler read at the top of the request.
-	base, err := app.store.GetEntity(ctx, "TKT-001")
+	base, err := app.store.GetEntity(ctx, entity.Ref{ID: "TKT-001"})
 	require.NoError(t, err)
 	staleVersion := store.VersionOf(base)
 
@@ -144,7 +144,7 @@ func TestV1Patch_StoreRejectsWriteRacingTheHandlerRead(t *testing.T) {
 	require.ErrorAs(t, err, &conflict,
 		"the handler maps this to 412 via errors.As, so it must stay matchable")
 
-	got, err := app.store.GetEntity(ctx, "TKT-001")
+	got, err := app.store.GetEntity(ctx, entity.Ref{ID: "TKT-001"})
 	require.NoError(t, err)
 	assert.Equal(t, "Written by another process", got.GetString("title"),
 		"the racing write must survive; the stale one must have applied nothing")
@@ -166,7 +166,7 @@ func TestV1Patch_IfMatchStillRejectsStaleHeader(t *testing.T) {
 		http.Header{"If-Match": []string{`"definitely-stale"`}})
 	assert.Equal(t, http.StatusPreconditionFailed, rec.Code, "body=%s", rec.Body)
 
-	got, err := app.store.GetEntity(context.Background(), "TKT-001")
+	got, err := app.store.GetEntity(context.Background(), entity.Ref{ID: "TKT-001"})
 	require.NoError(t, err)
 	assert.Equal(t, "Test Ticket", got.GetString("title"), "the rejected PATCH wrote nothing")
 }
@@ -182,7 +182,7 @@ func TestV1Patch_CurrentIfMatchSucceeds(t *testing.T) {
 		Properties: map[string]any{"title": "Test Ticket", "status": "open"},
 	})
 
-	current, err := app.store.GetEntity(ctx, "TKT-001")
+	current, err := app.store.GetEntity(ctx, entity.Ref{ID: "TKT-001"})
 	require.NoError(t, err)
 	etag := app.computeEntityETag(ctx, current)
 
@@ -190,7 +190,7 @@ func TestV1Patch_CurrentIfMatchSucceeds(t *testing.T) {
 		http.Header{"If-Match": []string{etag}})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body)
 
-	got, err := app.store.GetEntity(ctx, "TKT-001")
+	got, err := app.store.GetEntity(ctx, entity.Ref{ID: "TKT-001"})
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed", got.GetString("title"))
 }

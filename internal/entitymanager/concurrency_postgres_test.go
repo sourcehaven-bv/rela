@@ -118,15 +118,15 @@ func (s *alternatingStore) UpdateEntityIf(
 }
 
 func (s *alternatingStore) CreateRelation(
-	ctx context.Context, from, relType, to string, data *store.RelationData,
+	ctx context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
-	return s.pick().CreateRelation(ctx, from, relType, to, data)
+	return s.pick().CreateRelation(ctx, k, data)
 }
 
-func (s *alternatingStore) UpdateRelationState(
-	ctx context.Context, from string, face entity.Face, relType, to string, data store.RelationData,
+func (s *alternatingStore) UpdateRelation(
+	ctx context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
-	return s.pick().UpdateRelationState(ctx, from, face, relType, to, data)
+	return s.pick().UpdateRelation(ctx, k, data)
 }
 
 func openConcPGTwoProcesses(t *testing.T) store.Store {

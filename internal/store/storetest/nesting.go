@@ -87,16 +87,16 @@ func isSearchCase(name string) bool {
 
 func nestingCases() []iterCase {
 	scope := map[string]search.TypeScope{search.WildcardType: {AllowAll: true}}
-	gq := store.GraphQuery{EntityType: "feature"}
+	gq := store.GraphQuery{EntityType: "feature", Faces: store.InWorld(store.TrivialScope())}
 	byEntity := func(e *entity.Entity) string { return e.ID }
 	byHeader := func(h store.EntityHeader) string { return h.ID }
 	byHit := func(h search.Hit) string { return h.ID }
 	return []iterCase{
 		{"ListEntities", func(ctx context.Context, s store.Store, _ search.VisibleSearcher, _ func(string) error) iter.Seq2[string, error] {
-			return idSeq(s.ListEntities(ctx, store.EntityQuery{Type: "feature"}), byEntity)
+			return idSeq(s.ListEntities(ctx, store.EntityQuery{Type: "feature", Faces: store.InWorld(store.TrivialScope())}), byEntity)
 		}},
 		{"ListEntityHeaders", func(ctx context.Context, s store.Store, _ search.VisibleSearcher, _ func(string) error) iter.Seq2[string, error] {
-			return idSeq(store.ListEntityHeaders(ctx, s, store.EntityQuery{Type: "feature"}), byHeader)
+			return idSeq(store.ListEntityHeaders(ctx, s, store.EntityQuery{Type: "feature", Faces: store.InWorld(store.TrivialScope())}), byHeader)
 		}},
 		{"ListRelations", func(ctx context.Context, s store.Store, _ search.VisibleSearcher, _ func(string) error) iter.Seq2[string, error] {
 			return idSeq(s.ListRelations(ctx, store.RelationQuery{Type: "nest"}),
@@ -114,7 +114,7 @@ func nestingCases() []iterCase {
 			return idSeq(store.GraphQueryHeaders(ctx, s, gq), byHeader)
 		}},
 		{"SearchVisible", func(ctx context.Context, _ store.Store, vs search.VisibleSearcher, _ func(string) error) iter.Seq2[string, error] {
-			return idSeq(vs.SearchVisible(ctx, search.Query{Text: "nesting"}, scope), byHit)
+			return idSeq(vs.SearchVisible(ctx, search.Query{Text: "nesting", World: store.TrivialScope()}, scope), byHit)
 		}},
 		{"SearchVisibleFields", func(ctx context.Context, _ store.Store, vs search.VisibleSearcher, nested func(string) error) iter.Seq2[string, error] {
 			fvs, ok := vs.(search.FieldVisibleSearcher)
@@ -126,7 +126,7 @@ func nestingCases() []iterCase {
 			hidden := func(_ context.Context, h search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
 				return nil, nested(h.ID)
 			}
-			return idSeq(fvs.SearchVisibleFields(ctx, search.Query{Text: "nesting"}, scope, hidden), byHit)
+			return idSeq(fvs.SearchVisibleFields(ctx, search.Query{Text: "nesting", World: store.TrivialScope()}, scope, hidden), byHit)
 		}},
 	}
 }
@@ -166,7 +166,7 @@ func seedNesting(t *testing.T, s store.Store) {
 		require.NoError(t, s.CreateEntity(ctx, e))
 	}
 	for i := range 4 {
-		_, err := s.CreateRelation(ctx, fmt.Sprintf("NEST-%d", i), "nest", fmt.Sprintf("NEST-%d", i+1), nil)
+		_, err := s.CreateRelation(ctx, entity.RelationKey{From: fmt.Sprintf("NEST-%d", i), Type: "nest", To: fmt.Sprintf("NEST-%d", i+1)}, nil)
 		require.NoError(t, err)
 	}
 }
@@ -206,7 +206,7 @@ func runConcurrentNesting(t *testing.T, s store.Store, vs search.VisibleSearcher
 
 // nestedGet is the per-row store call redaction makes: an ACL edge check.
 func nestedGet(ctx context.Context, s store.Store, id string) error {
-	_, err := s.GetRelation(ctx, id, "nest", "NO-SUCH-TARGET")
+	_, err := s.GetRelation(ctx, entity.RelationKey{From: id, Type: "nest", To: "NO-SUCH-TARGET"})
 	if errors.Is(err, store.ErrNotFound) {
 		return nil
 	}

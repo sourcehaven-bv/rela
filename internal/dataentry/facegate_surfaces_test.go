@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -23,39 +25,30 @@ import (
 // positive control on the same fixture under an unrestricted principal, so an
 // absence is the gate's doing and not an empty fixture.
 
-// seedDraftAndPublishedTicket seeds TKT-1 with a zero-coordinate row and a
-// published face.
-//
-// Its callers run on `newTestAppV1`, whose `ticket` type declares NO faces —
-// so the zero coordinate is that type's single state, which is what makes the
-// unsuffixed row legitimate here. The `published` row beside it is an
-// UNDECLARED face, deliberately: the face gate keys on the coordinate the
-// store holds, never on the metamodel, and that is what these tests exercise.
-// A type that DOES declare faces stores nothing at the zero coordinate
-// (BUG-HC6I2T); see seedDeclaredFaceTicket for that shape.
-func seedDraftAndPublishedTicket(ctx context.Context, t *testing.T, app *App) {
+// facedTicketApp is the shared fixture with its `ticket` type declaring the
+// faces these tests use, so ticket rows live only at declared faces, as they
+// do in production (BUG-HC6I2T). A fixture that also seeds a zero-face row
+// lets a zero-face read pass by finding a row production never has.
+func facedTicketApp(t *testing.T) *App {
 	t.Helper()
-	if err := app.store.CreateEntity(ctx, &entity.Entity{
-		ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "SECRET DRAFT"},
-	}); err != nil {
-		t.Fatalf("seed draft face: %v", err)
-	}
-	if err := app.store.CreateEntity(ctx, &entity.Entity{
-		ID: "TKT-1", Type: "ticket", Face: "published",
-		Properties: map[string]any{"title": "published face"},
-	}); err != nil {
-		t.Fatalf("seed published face: %v", err)
-	}
+	app := newTestAppV1(t)
+	meta := app.State().Meta
+	td := meta.Entities["ticket"]
+	td.Faces = map[string]metamodel.FaceDef{"draft": {}, "published": {}, "review": {}}
+	meta.Entities["ticket"] = td
+	return app
 }
 
 // seedDeclaredFaceTicket seeds TKT-1 on a metamodel that DECLARES draft+published:
-// both rows sit at their declared coordinates and none at the zero one.
+// both rows sit at their declared coordinates and none at the zero one. The
+// draft's title is the secret the face-gate tests look for.
 func seedDeclaredFaceTicket(ctx context.Context, t *testing.T, app *App) {
 	t.Helper()
+	titles := map[entity.Face]string{"draft": "SECRET DRAFT", "published": "published face"}
 	for _, face := range []entity.Face{"draft", "published"} {
 		if err := app.store.CreateEntity(ctx, &entity.Entity{
 			ID: "TKT-1", Type: "ticket", Face: face,
-			Properties: map[string]any{"title": string(face) + " face"},
+			Properties: map[string]any{"title": titles[face]},
 		}); err != nil {
 			t.Fatalf("seed %s face: %v", face, err)
 		}
@@ -89,7 +82,7 @@ func TestFaceGrant_IncludedNeighboursAreFaceGated(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "SECRET FEATURE"},
 	})
-	if _, err := app.store.CreateRelation(ctx, "TKT-1", "implements", "FEAT-1", nil); err != nil {
+	if _, err := app.store.CreateRelation(ctx, entity.RelationKey{From: "TKT-1", Type: "implements", To: "FEAT-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 	viewer := mustNewACL(t, &acl.Policy{
@@ -121,22 +114,28 @@ func TestFaceGrant_IncludedNeighboursAreFaceGated(t *testing.T) {
 	}
 }
 
+// A file on the draft face is served through the draft address only, and
+// only to a principal who may read draft (BUG-CTUW2N).
 func TestFaceGrant_AttachmentDownloadIsFaceGated(t *testing.T) {
-	app := newTestAppV1(t)
 	ctx := context.Background()
-	seedDraftAndPublishedTicket(ctx, t, app)
-	if err := app.store.AttachFile(ctx, "TKT-1", "screenshot", "a.txt",
+	app := facedTicketApp(t)
+	seedDeclaredFaceTicket(ctx, t, app)
+	if err := app.store.AttachFamilyFile(ctx, "TKT-1", "screenshot", "a.txt",
 		strings.NewReader("draft bytes")); err != nil {
 		t.Fatalf("attach: %v", err)
+	}
+	if _, err := app.attachmentOwner.StampAttachments(principalCtx("bob"),
+		entity.Ref{ID: "TKT-1", Face: "draft"}, "screenshot", "attachments/TKT-1/screenshot/a.txt"); err != nil {
+		t.Fatalf("stamp draft: %v", err)
 	}
 	viewer, admin := publishedOnly(t, app)
 
 	download := func(ctx context.Context, d *acl.Declarative) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet,
-			"/api/v1/tickets/TKT-1/_attachments/screenshot/a.txt", http.NoBody)
+			"/api/v1/tickets/TKT-1@draft/_attachments/screenshot/a.txt", http.NoBody)
 		req = req.WithContext(gateCtxFor(ctx, t, d))
 		rec := httptest.NewRecorder()
-		app.attachments.handleV1GetAttachment(rec, req, "ticket", "TKT-1", "screenshot", "a.txt")
+		app.attachments.handleV1GetAttachment(rec, req, "ticket", "TKT-1@draft", "screenshot", "a.txt")
 		return rec
 	}
 
@@ -155,24 +154,9 @@ func TestFaceGrant_AttachmentDownloadIsFaceGated(t *testing.T) {
 }
 
 func TestFaceGrant_FacesAffordanceOmitsUnreadableFaces(t *testing.T) {
-	// `_faces` enumerates DECLARED faces, so this needs a metamodel that
-	// declares them — the shared fixture's ticket has none.
-	meta, err := metamodel.Parse([]byte(`
-version: "1"
-entities:
-  ticket:
-    label: Ticket
-    id_prefix: TKT
-    faces:
-      draft: {}
-      published: {}
-    properties:
-      title: {type: string}
-`))
-	if err != nil {
-		t.Fatalf("metamodel.Parse: %v", err)
-	}
-	app := newAppFromParts(&Config{App: AppConfig{Name: "Faces", Description: "x"}}, meta, newFixture())
+	// `_faces` enumerates the faces the entity HAS, so the declared but
+	// unseeded `review` face is not offered.
+	app := facedTicketApp(t)
 	ctx := context.Background()
 	seedDeclaredFaceTicket(ctx, t, app)
 	viewer, admin := publishedOnly(t, app)
@@ -207,13 +191,14 @@ entities:
 	}
 }
 
+// The history route addresses the draft face's lineage as `TKT-1@draft`
+// (BUG-4SYAA6), and serves it only to a principal who may read draft.
 func TestFaceGrant_HistoryIsFaceGatedUnderTheDefaultWorld(t *testing.T) {
-	app := newTestAppV1(t)
-	ctx := context.Background()
-	seedDraftAndPublishedTicket(ctx, t, app)
+	app := facedTicketApp(t)
+	seedDeclaredFaceTicket(context.Background(), t, app)
 	app.versions = historyStore{
 		versions: map[string][]store.VersionSnapshot{
-			"TKT-1": {snapshot("ticket", "SECRET DRAFT BODY", map[string]any{"title": "SECRET DRAFT"})},
+			"TKT-1@draft": {snapshot("ticket", "SECRET DRAFT BODY", map[string]any{"title": "SECRET DRAFT"})},
 		},
 	}
 	viewer, admin := publishedOnly(t, app)
@@ -227,14 +212,14 @@ func TestFaceGrant_HistoryIsFaceGatedUnderTheDefaultWorld(t *testing.T) {
 	}
 
 	app.acl = admin
-	if rec := history(principalCtx("bob"), admin, "TKT-1/1"); rec.Code != http.StatusOK ||
+	if rec := history(principalCtx("bob"), admin, "TKT-1@draft/1"); rec.Code != http.StatusOK ||
 		!strings.Contains(rec.Body.String(), "SECRET DRAFT BODY") {
 
 		t.Fatalf("precondition: an unrestricted principal reads the snapshot; got %d %s", rec.Code, rec.Body)
 	}
 
 	app.acl = viewer
-	for _, path := range []string{"TKT-1", "TKT-1/1"} {
+	for _, path := range []string{"TKT-1@draft", "TKT-1@draft/1", "TKT-1", "TKT-1/1"} {
 		rec := history(aliceCtx(), viewer, path)
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("%s: the DRAFT face's history served to a ticket@published principal: got %d; body=%s",
@@ -288,7 +273,7 @@ func TestEntityView_DeniedWorldIsIndistinguishableFromAnEmptyOne(t *testing.T) {
 		}, app.store)
 		// The world EXCLUDES everything (no resolveDefault), so for the
 		// granted principal TKT-1 genuinely has no face in it.
-		app.SetWorlds(stubWorlds{names: map[string]bool{"published": true}})
+		app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 		app.SetPrincipalResolver(func(*http.Request) principal.Principal {
 			return principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
 		})
@@ -325,9 +310,9 @@ func TestEntityView_DeniedWorldIsIndistinguishableFromAnEmptyOne(t *testing.T) {
 // 404'd when the prime was a face the grant withheld — so a listed row had no
 // readable GET. Both now carry the allowlist into the world query.
 func TestFaceGrant_GetFallsThroughToThePermittedFace(t *testing.T) {
-	app := newTestAppV1(t)
+	app := facedTicketApp(t)
 	ctx := context.Background()
-	seedDraftAndPublishedTicket(ctx, t, app)
+	seedDeclaredFaceTicket(ctx, t, app)
 	if err := app.store.CreateEntity(ctx, &entity.Entity{
 		ID: "TKT-1", Type: "ticket", Face: "review",
 		Properties: map[string]any{"title": "SECRET REVIEW"},
@@ -341,7 +326,7 @@ func TestFaceGrant_GetFallsThroughToThePermittedFace(t *testing.T) {
 	get := func(ctx context.Context, d *acl.Declarative) (*entity.Entity, bool) {
 		t.Helper()
 		gctx := withWorld(gateCtxFor(ctx, t, d), worldHandle{name: "editorial", scope: editorial})
-		e, found, err := app.visibleReader.getVisible(gctx, "ticket", "TKT-1")
+		e, found, err := app.visibleReader.inWorld(gctx, "ticket", "TKT-1")
 		if err != nil {
 			t.Fatalf("getVisible: %v", err)
 		}
@@ -366,21 +351,100 @@ func TestFaceGrant_GetFallsThroughToThePermittedFace(t *testing.T) {
 // the same fold as the GET that showed that face. Folding the world name made
 // every world-bound If-Match a permanent 412.
 func TestEntityETag_FoldsTheServedFaceNotTheWorld(t *testing.T) {
-	app := newTestAppV1(t)
+	app := facedTicketApp(t)
 	ctx := context.Background()
-	seedDraftAndPublishedTicket(ctx, t, app)
-	bare, _ := app.store.GetEntity(ctx, "TKT-1")
-	published, _ := app.store.GetEntityState(ctx, "TKT-1", "published")
+	seedDeclaredFaceTicket(ctx, t, app)
+	draft, _ := app.store.GetEntity(ctx, entity.Ref{ID: "TKT-1", Face: "draft"})
+	published, _ := app.store.GetEntity(ctx, entity.Ref{ID: "TKT-1", Face: "published"})
 	scope := store.NewWorldScope(map[string]store.TypeResolution{
 		"ticket": {Chain: []entity.Face{"published"}, Fallback: store.FallbackDefaultState},
 	})
 	wctx := withWorld(ctx, worldHandle{name: "published", scope: scope})
 
-	if a, b := app.computeEntityETag(ctx, bare), app.computeEntityETag(wctx, bare); a != b {
+	if a, b := app.computeEntityETag(ctx, draft), app.computeEntityETag(wctx, draft); a != b {
 		t.Errorf("the same face under two worlds must share a validator: %s vs %s", a, b)
 	}
-	if a, b := app.computeEntityETag(ctx, bare), app.computeEntityETag(ctx, published); a == b {
+	if a, b := app.computeEntityETag(ctx, draft), app.computeEntityETag(ctx, published); a == b {
 		t.Errorf("two faces must not share a validator")
+	}
+}
+
+// facedAppWithPolicy is facedTicketApp with TKT-1 seeded at draft and
+// published and role granted to alice, and the entity manager rebuilt over
+// the same store and ACL, so an affordance and the write it predicts are
+// decided by one policy, as in production.
+func facedAppWithPolicy(t *testing.T, role acl.RoleDef) (*App, *acl.Declarative, *appbuild.Services) {
+	t.Helper()
+	app := facedTicketApp(t)
+	seedDeclaredFaceTicket(context.Background(), t, app)
+	d := mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"r": role},
+		Assignments: map[string]string{"alice": "r"},
+	}, app.store)
+	svc := appbuildtest.New(app.State().Meta, appbuildtest.WithStore(app.store),
+		appbuildtest.WithFS(app.fs, app.paths), appbuildtest.WithACL(d))
+	rebindApp(app, app.fs, app.paths, svc)
+	app.acl = d
+	return app, d, svc
+}
+
+// TestFaceGrant_RenameAffordanceMatchesTheWrite pins that `_actions.rename`
+// on a faced type asks the manager's question: the family-level `rename:`
+// grant, never a grant on the served face or on each face. Each case checks
+// the affordance against a dry-run rename by the same principal.
+func TestFaceGrant_RenameAffordanceMatchesTheWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		role   acl.RoleDef
+		rename bool
+	}{
+		{"update on every face", acl.RoleDef{Read: []string{"*"}, Update: []string{"ticket@draft", "ticket@published"}}, false},
+		{"update on the served face", acl.RoleDef{Read: []string{"*"}, Update: []string{"ticket@published"}}, false},
+		{"rename on the type", acl.RoleDef{Read: []string{"*"}, Rename: []string{"ticket"}}, true},
+		{"rename on every type", acl.RoleDef{Read: []string{"*"}, Rename: []string{"*"}}, true},
+		{"rename, reading only the served face", acl.RoleDef{Read: []string{"ticket@published"}, Rename: []string{"ticket"}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, d, svc := facedAppWithPolicy(t, tc.role)
+			rec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-1@published", "")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET = %d", rec.Code)
+			}
+			var body struct {
+				Actions map[string]bool `json:"_actions"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			_, err := svc.EntityManager().RenameEntity(gateCtxFor(aliceCtx(), t, d), "TKT-1", "TKT-9",
+				entity.RenameOptions{DryRun: true})
+			if body.Actions["rename"] != tc.rename {
+				t.Errorf("_actions.rename = %v, want %v", body.Actions["rename"], tc.rename)
+			}
+			if (err == nil) != body.Actions["rename"] {
+				t.Errorf("_actions.rename = %v but the rename returned %v", body.Actions["rename"], err)
+			}
+		})
+	}
+}
+
+// TestFaceGrant_CollectionCreateIsPerFace pins the collection create verdict
+// of a faced type: one `create@<face>` key per declared face, and `create`
+// true when any face is creatable. A faced type has no implicit face, so
+// asking only about it hid the create button from every face-granted role.
+func TestFaceGrant_CollectionCreateIsPerFace(t *testing.T) {
+	app := facedTicketApp(t)
+	app.acl = mustNewACL(t, &acl.Policy{
+		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"*"}, Create: []string{"ticket@draft"}}},
+		Assignments: map[string]string{"alice": "editor"},
+	}, app.store)
+
+	got := app.affordances.computeCollectionActions(aliceCtx(), "ticket")
+	want := map[string]bool{"create": true, "create@draft": true, "create@published": false}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("_actions[%s] = %v, want %v (all: %v)", k, got[k], v, got)
+		}
 	}
 }
 

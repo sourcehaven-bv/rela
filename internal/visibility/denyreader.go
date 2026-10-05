@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -33,9 +34,29 @@ var ErrReaderUnavailable = errors.New("visibility: read gate unavailable; refusi
 // failure is diagnosable and never mistaken for "no such entity".
 type DenyReader struct{}
 
-// GetEntity implements the script read surface: always refuses.
-func (DenyReader) GetEntity(context.Context, string) (*entity.Entity, error) {
+// GetAddress implements the script read surface: always refuses.
+func (DenyReader) GetAddress(context.Context, string) (*entity.Entity, error) {
 	return nil, ErrReaderUnavailable
+}
+
+// WriteTarget implements the script read surface: always refuses.
+func (DenyReader) WriteTarget(context.Context, string) (entity.Ref, error) {
+	return entity.Ref{}, ErrReaderUnavailable
+}
+
+// Family implements the script read surface: always refuses.
+func (DenyReader) Family(context.Context, string) (Family, bool, error) {
+	return Family{}, false, ErrReaderUnavailable
+}
+
+// ResolveHeaders implements the script read surface: every address misses,
+// because the reader is unavailable. The batch has no error result, so the
+// refusal is logged instead of returned as [ErrReaderUnavailable].
+func (DenyReader) ResolveHeaders(_ context.Context, refs []entity.Ref) map[entity.Ref]ResolvedHeader {
+	if len(refs) > 0 {
+		slog.Warn("visibility: reader unavailable; answering every address as not-found", "refs", len(refs))
+	}
+	return nil
 }
 
 // ListEntities implements the script read surface: always refuses.
@@ -65,6 +86,13 @@ func (DenyReader) ListRelations(
 	return func(yield func(*entity.Relation, error) bool) {
 		yield(nil, ErrReaderUnavailable)
 	}
+}
+
+// ListRelationsStrict implements the script read surface: always refuses.
+func (d DenyReader) ListRelationsStrict(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return d.ListRelations(ctx, q)
 }
 
 // DenyTracer refuses every traversal, the [DenyReader] counterpart for the
@@ -100,7 +128,7 @@ func (DenyTracer) FindPath(context.Context, string, string) []tracer.PathStep { 
 
 // FindOrphans implements [tracer.Tracer]: refuses with an error, since this
 // one CAN report failure rather than looking like an empty graph.
-func (DenyTracer) FindOrphans(context.Context) ([]string, error) {
+func (DenyTracer) FindOrphans(context.Context) ([]tracer.Orphan, error) {
 	return nil, ErrReaderUnavailable
 }
 

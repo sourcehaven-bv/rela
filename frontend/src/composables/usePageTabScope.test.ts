@@ -52,6 +52,16 @@ describe('usePageTabScope', () => {
     expect(createRelationMock).toHaveBeenCalledWith('topic', 'TOP-1', 'bestaat_uit', 'TAAK-9', undefined, direction)
   })
 
+  it('links from the face on screen, and narrows by the bare anchor', async () => {
+    seedPage('outgoing')
+    createRelationMock.mockResolvedValue(undefined)
+    const faced: PageScope = { ...scope, ref: 'TOP-1@draft' }
+    const { params, linkCreated } = usePageTabScope(() => faced)
+    expect(params.value).toEqual({ scope_page: 'topic', scope_tab: 'tabel', anchor: 'TOP-1' })
+    await linkCreated(created)
+    expect(createRelationMock).toHaveBeenCalledWith('topic', 'TOP-1@draft', 'bestaat_uit', 'TAAK-9', undefined, 'outgoing')
+  })
+
   it('names the row to link by hand when the link fails', async () => {
     seedPage('outgoing')
     createRelationMock.mockRejectedValue(new Error('forbidden'))

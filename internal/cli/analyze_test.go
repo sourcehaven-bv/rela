@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"iter"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/analysis"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/errors"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
@@ -172,15 +174,17 @@ func TestAnalyzeGaps(t *testing.T) {
 	}
 }
 
-// failingCountStore wraps a store.Store and fails every CountRelations
-// call, simulating a backend outage during the cardinality scan.
+// failingCountStore wraps a store.Store and fails every ListRelations
+// call, simulating a backend outage while cardinality reads its edges.
 type failingCountStore struct {
 	store.Store
 	err error
 }
 
-func (f *failingCountStore) CountRelations(context.Context, store.RelationQuery) (int, error) {
-	return 0, f.err
+func (f *failingCountStore) ListRelations(context.Context, store.RelationQuery) iter.Seq2[*entity.Relation, error] {
+	return func(yield func(*entity.Relation, error) bool) {
+		yield(nil, f.err)
+	}
 }
 
 // TestAnalyzeCmds_CountErrorAborts pins the TKT-RNBLAC error policy at

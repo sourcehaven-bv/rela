@@ -29,6 +29,7 @@ import { provideInlineCreateDepth } from '@/composables/useInlineCreate'
 import { useConfirm } from '@/composables/useConfirm'
 import { useSchemaStore } from '@/stores'
 import { getAllEntityRelations } from '@/api/entities'
+import { entityRef, refFace } from '@/utils/entityRef'
 import {
   buildDuplicatePrefill,
   relationChoices,
@@ -56,9 +57,8 @@ const props = defineProps<{
   /** Create form id, from the sidebar `inline_create` map. */
   formId: string
   /**
-   * World the create is issued in. Decides which face the copy lands in; a
-   * faced type has no default row to fall back to, so dropping it is a refusal
-   * rather than a silent default.
+   * World the create is issued in, for a source on the bare face. A source on
+   * a named face creates the copy on that face instead (see `copyFace`).
    */
   world?: string
 }>()
@@ -91,6 +91,22 @@ const formRef = ref<{
   submit: () => void
 } | null>(null)
 
+
+// The address of the source row: its face, not the bare id, which a world
+// would re-resolve to a different face (BUG-FYEEVX).
+const sourceRef = computed(() => entityRef(props.source))
+
+// A copy of a face is a new entity on that same face: duplicating a draft
+// makes a draft. '' when the world decides instead: for the bare face, and
+// for a face the world served only as a stand-in for its own (a fallback, or
+// a later chain entry). Copying a stand-in onto its face would skip the
+// world's step, such as publishing a copy from an editorial world.
+const copyFace = computed(() => {
+  const w = props.source._world
+  const standIn =
+    w?.via === 'fallback-default' || (w?.via === 'chain' && (w.chain_position ?? 0) > 0)
+  return standIn ? '' : refFace(sourceRef.value)
+})
 
 const typeLabel = computed(
   () => schemaStore.getEntityType(props.source.type)?.label || props.source.type
@@ -143,7 +159,10 @@ async function loadRelations() {
   phase.value = 'loading'
   loadError.value = ''
   try {
-    const data = await getAllEntityRelations(props.source.type, props.source.id, props.world)
+    // By address, with no world: the relations sub-resource refuses `?world=`
+    // (422), and the address already names the face whose content-scoped
+    // edges are on screen.
+    const data = await getAllEntityRelations(props.source.type, sourceRef.value)
     relations.value = data ?? {}
     choices.value = relationChoices(relations.value)
     selected.value = defaultSelection(choices.value)
@@ -288,7 +307,8 @@ function handleKeydown(e: KeyboardEvent) {
         ref="formRef"
         :form-id="formId"
         embedded
-        :embedded-world="world"
+        :embedded-world="copyFace ? undefined : world"
+        :embedded-face="copyFace || undefined"
         :embedded-prefill="prefill"
         @inline-created="handleCreated"
         @inline-cancelled="requestClose"

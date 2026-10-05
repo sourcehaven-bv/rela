@@ -17,24 +17,29 @@ const feedUIDDomain = "rela"
 const feedUIDSep = "--"
 
 // feedUID builds a globally-unique, stable event UID from an entity's type and
-// id: "<type>--<id>@rela". The type prefix is defensive (robust even for a
+// address: "<type>--<address>@rela". The address is the row's [entity.Ref]
+// text, so a face of a faced type carries its face ("task--TSK-1@draft@rela")
+// and a write through the UID or its href names the face it edits. When a
+// world starts serving another face, the event's UID changes with it, which a
+// client sees as one event removed and one added. The type prefix is defensive (robust even for a
 // metamodel that reuses id-space across types) and lets splitFeedUID route a
 // CalDAV per-resource fetch back to the right source.
-func feedUID(entityType, id string) string {
-	return entityType + feedUIDSep + id + "@" + feedUIDDomain
+func feedUID(entityType, addr string) string {
+	return entityType + feedUIDSep + addr + "@" + feedUIDDomain
 }
 
-// splitFeedUID reverses feedUID, returning the entity type and id. ok is false
+// splitFeedUID reverses feedUID, returning the entity type and address. The
+// domain is cut at the LAST "@", since the address may carry a face. ok is false
 // if s is not a UID this package minted (wrong domain, or missing the
 // "<type>--<id>" shape).
-func splitFeedUID(s string) (entityType, id string, ok bool) {
-	local, domain, found := strings.Cut(s, "@")
-	if !found || domain != feedUIDDomain {
+func splitFeedUID(s string) (entityType, addr string, ok bool) {
+	at := strings.LastIndex(s, "@")
+	if at < 0 || s[at+1:] != feedUIDDomain {
 		return "", "", false
 	}
-	entityType, id, found = strings.Cut(local, feedUIDSep)
-	if !found || entityType == "" || id == "" {
+	entityType, addr, found := strings.Cut(s[:at], feedUIDSep)
+	if !found || entityType == "" || addr == "" {
 		return "", "", false
 	}
-	return entityType, id, true
+	return entityType, addr, true
 }

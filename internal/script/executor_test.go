@@ -9,20 +9,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager/entitymanagertest"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 func testWriteDeps(projectRoot string) lua.WriteDeps {
 	st := memstore.New()
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
-			VisibleReader: st,
-			Tracer:        tracer.New(st),
+			VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
+			Tracer:        tracertest.Must(st, store.TrivialScope()),
 			ProjectRoot:   projectRoot,
+			World:         store.TrivialScope(),
 		},
 		EntityManager: entitymanagertest.PanicOnUse{},
 	}
