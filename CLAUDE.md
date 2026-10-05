@@ -479,7 +479,10 @@ Known-unfixable vulns are filtered via `scripts/govulncheck-filtered.sh` — kee
 Read the `justfile` for the full set. The non-obvious ones: `just arch-lint`
 (package boundary check), `just ci` (full pipeline), `just dev` (data-entry
 server locally), `just coverage-check`. `go test -run TestName ./...` for a
-single test.
+single test. `just seqtrace-compare` traces ten demo requests on
+`origin/develop` and on your working tree, and reports how the cross-package
+call flows changed; use it to check that a change to a request path did what
+you intended (`tools/seqtrace/README.md`).
 
 ## Project files
 

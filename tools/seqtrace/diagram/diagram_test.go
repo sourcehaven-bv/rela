@@ -40,7 +40,7 @@ func TestRender(t *testing.T) {
 	}
 
 	var b strings.Builder
-	arrows, err := Render(&b, roots[0], Options{Collapse: regexp.MustCompile(`^internal/entity$`)})
+	arrows, err := render(&b, roots[0], Options{Collapse: regexp.MustCompile(`^internal/entity$`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestRenderValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	arrows, err := Render(&b, roots[0], Options{Values: true})
+	arrows, err := render(&b, roots[0], Options{Values: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestRenderValues(t *testing.T) {
 	roots[0].Children[0].Children[1].Args = roots[0].Children[0].Children[0].Args
 	roots[0].Children[0].Children[1].Results = roots[0].Children[0].Children[0].Results
 	b.Reset()
-	if _, err := Render(&b, roots[0], Options{Values: true}); err != nil {
+	if _, err := render(&b, roots[0], Options{Values: true}); err != nil {
 		t.Fatal(err)
 	}
 	if want := `store: Get(id="T-1")` + "\n        store-->>-dataentry: *entity.Entity{ID:T-1}\n"; !strings.Contains(b.String(), want) {
@@ -118,4 +118,10 @@ func TestCapLabel(t *testing.T) {
 	if capLabel("short") != "short" {
 		t.Error("short label changed")
 	}
+}
+
+// render draws root and returns the number of arrows.
+func render(w *strings.Builder, root *Call, opt Options) (int, error) {
+	d := Build(root, opt)
+	return d.Arrows(), d.Mermaid(w)
 }
