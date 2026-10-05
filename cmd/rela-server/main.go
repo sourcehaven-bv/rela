@@ -46,7 +46,7 @@ type serverFlags struct {
 	allowedOrigins    stringSliceFlag
 	verbose           bool
 	quiet             bool
-	accessLog         bool
+	accessLog         string
 	debugPprof        string
 	principalHeader   string
 	readOnly          bool
@@ -90,9 +90,9 @@ func parseFlags() *serverFlags {
 		"Extra origin permitted to call the API (repeatable). Used for dev servers like Vite on http://localhost:5173.")
 	flag.BoolVar(&f.verbose, "verbose", false, "Verbose (debug) logging")
 	flag.BoolVar(&f.quiet, "quiet", false, "Quiet (warn-only) logging")
-	flag.BoolVar(&f.accessLog, "access-log", false,
-		"Log one line per request at info level: method, path (no query string), status, "+
-			"wall_ms, queries, db_ms. Unlike --verbose it logs no SQL. Cannot be combined with --quiet.")
+	flag.StringVar(&f.accessLog, "access-log", "",
+		"Log one line per request: =stderr, or =syslog (tag "+accessLogTag+"). Fields: method, path (no query string), "+
+			"status, wall_ms, queries, db_ms. Independent of --verbose/--quiet; unlike --verbose it logs no SQL.")
 	flag.StringVar(&f.debugPprof, "debug-pprof", "",
 		"If set, serve net/http/pprof on this loopback address (e.g. 127.0.0.1:6060). "+
 			"Diagnostic only. Refuses to bind to non-loopback addresses.")
@@ -163,9 +163,8 @@ func parseFlags() *serverFlags {
 	if os.Getenv("RELA_READ_ONLY") == "1" {
 		f.readOnly = true
 	}
-	if f.accessLog && f.quiet {
-		// --quiet drops info records, so the access log would be silently empty.
-		fmt.Fprintln(os.Stderr, "rela-server: --access-log cannot be combined with --quiet")
+	if err := checkAccessLogDest(f.accessLog); err != nil {
+		fmt.Fprintln(os.Stderr, "rela-server:", err)
 		os.Exit(2)
 	}
 	return f
@@ -480,6 +479,7 @@ func main() {
 	f := parseFlags()
 
 	configureLogging(f.verbose, f.quiet)
+	accessLog := openAccessLog(f.accessLog)
 
 	if err := dataentry.CheckEmbeddedSPA(); err != nil {
 		slog.Error("embedded SPA check failed", "error", err)
@@ -561,7 +561,7 @@ func main() {
 	// so a conflicting config never reaches a running server.
 	wireIdentityAndMCP(app, svc, f)
 
-	app.SetAccessLog(f.accessLog)
+	app.SetAccessLog(accessLog)
 	srv := newHTTPServer(addr, app.NewRouter())
 
 	if !isLoopbackHost(f.bind) {
