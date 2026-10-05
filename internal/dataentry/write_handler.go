@@ -722,23 +722,6 @@ func (h *writeHandler) visibleStored(
 	return e, true
 }
 
-// servedAfterWrite picks the row a PATCH response describes, and reports
-// whether it may carry version tokens. It is the STORED row, not the entity
-// the manager handed back: fsstore reformats the body on write, so tokens of
-// the in-memory body would never match the next GET and every later save
-// would 412. Body and tokens come from this one read, so they describe one
-// state even when another node wrote in between. The read is gated like a
-// GET: a row the write (or a concurrent one) hid from this caller answers
-// with written and no tokens.
-func (h *writeHandler) servedAfterWrite(
-	ctx context.Context, typeName string, ref entityPkg.Ref, written *entityPkg.Entity,
-) (*entityPkg.Entity, bool) {
-	if stored, ok := h.visibleStored(ctx, typeName, ref); ok {
-		return stored, true
-	}
-	return written, false
-}
-
 // preconditionScope is the set of fields a PATCH writes.
 type preconditionScope struct {
 	props     map[string]any
@@ -1039,7 +1022,17 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		writeGateError(w, r, rerr)
 		return
 	}
-	served, versioned := h.servedAfterWrite(r.Context(), typeName, ref, entity)
+	// The response describes the STORED row, not the entity the manager
+	// handed back: fsstore reformats the body on write, so tokens of the
+	// in-memory body would never match the next GET and every later save
+	// would 412. Body and tokens come from this one read, so they describe one
+	// state even when another node wrote in between. The read is gated like a
+	// GET: a row the write (or a concurrent one) hid from this caller answers
+	// with the written entity and no tokens.
+	served, versioned := h.visibleStored(r.Context(), typeName, ref)
+	if !versioned {
+		served = entity
+	}
 	result := h.serializer.forWireScoped(r.Context(), served, rels, visibleNeighbors, h.schema().Meta, plural)
 	if len(warnings) > 0 {
 		result.Warnings = warnings

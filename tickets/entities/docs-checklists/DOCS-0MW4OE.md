@@ -9,7 +9,7 @@ status: done
 
 ## Code Documentation
 
-- [x] Comments where logic isn't obvious (base-tracking rules on propBase, queuedProps, Conflicts, mergeServerResponse; token design on fieldversions.go; gated re-read on servedAfterWrite / writeLostRace)
+- [x] Comments where logic isn't obvious (base-tracking rules on propBase, queuedProps, Conflicts, mergeServerResponse; token design on fieldversions.go; gated re-read on the PATCH response / writeLostRace)
 - [x] Function/type docs if public API (v1.FieldVersions, Preconditions, FieldConflicts, Conflict, EditState; frontend types in types/entity.ts)
 
 ## Project Documentation

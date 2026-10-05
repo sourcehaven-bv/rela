@@ -359,7 +359,9 @@ manager returns the in-memory entity (`manager.go:1129`), and fsstore reflows
 the body on write, so a token computed from the response entity would not match
 the stored body and every second content save would 412 on the file backend. The
 response BODY stays as today (the editor must not receive the reflowed text);
-only `_versions` is computed from the re-read.
+only `_versions` is computed from the re-read. The re-read is inline in the
+PATCH handler rather than a `writeHandler` method, which keeps `writeHandler`
+under its plimsoll method cap.
 - **Relations are outside the CAS** (`VersionOf` excludes them; they are
 written in a separate phase, `:847-854`). The relations token is checked under
 `writeMu`, which is single-process only. Accepted and documented: the
