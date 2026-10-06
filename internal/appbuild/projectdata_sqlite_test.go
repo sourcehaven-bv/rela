@@ -328,7 +328,8 @@ func TestSQLite_MarkdownProjectOpensOnItsFiles(t *testing.T) {
 	if !errors.Is(err, appbuild.ErrNoDatabase) {
 		t.Errorf("ExportMarkdownData err = %v, want ErrNoDatabase", err)
 	}
-	_, err = appbuild.LoadProjectConfig(ctx, osFS(), paths, root)
+	_, err = appbuild.LoadProjectConfig(ctx, osFS(), paths, root,
+		appbuild.ConfigImportOptions{Audit: audit.Nop{}})
 	if err == nil || !strings.Contains(err.Error(), "import the data first") {
 		t.Errorf("LoadProjectConfig err = %v, want a refusal", err)
 	}

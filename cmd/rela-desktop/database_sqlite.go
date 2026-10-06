@@ -61,7 +61,8 @@ func (d *Desktop) withProjectReleased(op databaseOp) (string, error) {
 // replacing the config it carried.
 func importConfig(dir string) databaseOp {
 	return func(ctx context.Context, fsys storage.FS, paths *project.Context) (string, error) {
-		names, err := appbuild.LoadProjectConfig(ctx, fsys, paths, dir)
+		names, err := appbuild.LoadProjectConfig(ctx, fsys, paths, dir,
+			appbuild.ConfigImportOptions{Audit: desktopAudit})
 		if err != nil {
 			return "", err
 		}
