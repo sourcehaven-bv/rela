@@ -183,6 +183,7 @@ forms:
   control:
     entity_type: control
     title: "Control"
+    body: true
     fields:
       - { property: title }
     relations:
