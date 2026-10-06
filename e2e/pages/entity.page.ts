@@ -161,6 +161,37 @@ export class EntityPage extends BasePage {
     await expect(this.sectionByHeading(heading).locator('.badge')).toHaveText(texts);
   }
 
+  /** Press a section's create button for one target type (its label). */
+  async clickSectionCreate(heading: string, targetLabel: string) {
+    await this.sectionByHeading(heading)
+      .getByRole('button', { name: targetLabel, exact: true })
+      .click();
+    await expect(this.createDialog).toBeVisible();
+  }
+
+  /** The create dialog a section create button opens. */
+  get createDialog(): Locator {
+    return this.page.getByRole('dialog');
+  }
+
+  async fillCreateDialogField(property: string, value: string) {
+    await this.createDialog.locator(`#field-${property}`).fill(value);
+  }
+
+  /** Press the dialog's Create, not "Create & add another". */
+  async submitCreateDialog() {
+    await this.createDialog.getByRole('button', { name: /^Create(?! &)/ }).click();
+  }
+
+  async expectCreateDialogClosed() {
+    await expect(this.createDialog).toHaveCount(0);
+  }
+
+  /** A row in a section, located by the text it shows. */
+  async expectSectionRow(heading: string, text: string) {
+    await expect(this.sectionByHeading(heading).getByText(text)).toBeVisible();
+  }
+
   /** A property's row in a section, marked by SectionEditForm. */
   private sectionFieldRow(heading: string, property: string) {
     return this.sectionByHeading(heading).locator(`.property-row[data-property="${property}"]`);

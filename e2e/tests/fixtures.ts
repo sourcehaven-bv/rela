@@ -1057,6 +1057,13 @@ relations:
     from: [task]
     to: [bug]
     inverse: fixedBy
+  # A container whose type has a dashed id_prefix (MOD-). The task form has no
+  # field for it, so a section create on the module page pre-links the module
+  # and the form must derive its type from the id (create-prelink.spec.ts).
+  contains:
+    from: [module]
+    to: [task]
+    inverse: contained_in
 
 # Commenting (TKT-FIO205). Enabled for every type so the comment specs can use
 # whichever seed entity is convenient; the ACL is untouched, so the default
@@ -1490,6 +1497,22 @@ views:
           - property: title
             link: detail
           - property: status
+
+  # create-prelink.spec.ts: a section create whose peer (the module) has a
+  # dashed id_prefix, opening a form with no field for the relation.
+  module:
+    title: "Module"
+    entry:
+      type: module
+    traverse:
+      - from: entry
+        follow: contains
+        collect_as: tasks
+    sections:
+      - heading: "Tasks"
+        source: tasks
+        display: list
+        create: {}
 
 kanbans:
   feature-board:

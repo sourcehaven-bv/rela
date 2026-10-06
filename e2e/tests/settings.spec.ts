@@ -174,7 +174,7 @@ test.describe('Settings', () => {
 
       await settingsPage.navigateToSettings();
 
-      await settingsPage.expectAppInfo('Relation Types', '4'); // blocks, tagged, implements, fixes
+      await settingsPage.expectAppInfo('Relation Types', '5'); // blocks, tagged, implements, fixes, contains
     });
 
     test('shows forms count', async ({ appPage }) => {
