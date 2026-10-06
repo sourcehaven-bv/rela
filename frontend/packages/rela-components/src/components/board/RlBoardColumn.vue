@@ -14,7 +14,11 @@ import RlSectionHeading from '../layout/RlSectionHeading.vue'
 import RlHeading from '../common/RlHeading.vue'
 import RlBoardCard from './RlBoardCard.vue'
 import RlEmptyState from '../feedback/RlEmptyState.vue'
-import { useDropTargetColumn, type BoardDragData } from '../../composables/useBoardDnd'
+import {
+  useDropTargetColumn,
+  type BoardDragData,
+  type BoardDropPosition,
+} from '../../composables/useBoardDnd'
 
 const props = withDefaults(
   defineProps<{
@@ -48,8 +52,11 @@ const props = withDefaults(
     grabbedId?: string
     /** Whether a keyboard move is in flight, so the column shows as a target. */
     keyboardTarget?: boolean
+    /** Whether a drop reports where among the cards it landed. See `RlBoard`. */
+    reorder?: boolean
   }>(),
   {
+    reorder: false,
     showAdd: true,
     canMove: undefined,
     grabbedId: undefined,
@@ -62,7 +69,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   add: [section: Section<T>]
   select: [item: T]
-  drop: [payload: { drag: BoardDragData; section: Section<T> }]
+  drop: [payload: { drag: BoardDragData; section: Section<T>; at?: BoardDropPosition }]
   grab: [item: T]
   release: []
 }>()
@@ -76,7 +83,8 @@ const element = ref<HTMLElement>()
 const { over } = useDropTargetColumn({
   element,
   data: computed(() => ({ sectionId: props.section.id })),
-  onDrop: (drag) => emit('drop', { drag, section: props.section }),
+  onDrop: (drag, at) => emit('drop', { drag, section: props.section, at }),
+  reorder: computed(() => props.reorder),
 })
 
 /** Whether the column is lit as a place the held card could land. */
@@ -122,6 +130,7 @@ function onRelease() {
           :section-title="section.title"
           :draggable="canMove?.(item) ?? false"
           :grabbed="item.id === grabbedId"
+          :reorder="reorder"
           @grab="onGrab"
           @release="onRelease"
         >

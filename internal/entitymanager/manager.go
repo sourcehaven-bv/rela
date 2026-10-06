@@ -2610,6 +2610,9 @@ func (m *Manager) UpdateRelation(
 	// HTTP wire validators already cover the dataentry path; this is
 	// the engine-level backstop for MCP/Lua/CLI write paths.
 	relDef, hasDef := m.deps.Meta.Relations[relType]
+	if opts.Position != nil {
+		return moveRelation(ctx, m, key, relDef, hasDef, opts)
+	}
 	touchedOut := hasDef && relDef.OutgoingOrderProperty() != "" && touchesOrderKey(opts, relDef.OutgoingOrderProperty())
 	touchedIn := hasDef && relDef.IncomingOrderProperty() != "" && touchesOrderKey(opts, relDef.IncomingOrderProperty())
 	if hasDef {

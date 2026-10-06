@@ -133,7 +133,7 @@ func navStatusRows(
 	if ctx, err = bindQueryIdentity(ctx, scope); err != nil {
 		return ctx, nil, err
 	}
-	rows, err := scopedSortedEntitiesScoped(ctx, a, typeName, navStatusListQuery(listCfg), scope)
+	rows, _, err := scopedSortedEntitiesScoped(ctx, a, typeName, navStatusListQuery(listCfg), scope)
 	if err != nil {
 		return ctx, nil, err
 	}
