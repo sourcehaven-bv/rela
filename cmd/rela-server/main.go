@@ -47,6 +47,7 @@ type serverFlags struct {
 	allowedOrigins    stringSliceFlag
 	verbose           bool
 	quiet             bool
+	accessLog         string
 	debugPprof        string
 	principalHeader   string
 	readOnly          bool
@@ -90,6 +91,9 @@ func parseFlags() *serverFlags {
 		"Extra origin permitted to call the API (repeatable). Used for dev servers like Vite on http://localhost:5173.")
 	flag.BoolVar(&f.verbose, "verbose", false, "Verbose (debug) logging")
 	flag.BoolVar(&f.quiet, "quiet", false, "Quiet (warn-only) logging")
+	flag.StringVar(&f.accessLog, "access-log", "",
+		"Log one line per request: =stderr, or =syslog (tag "+accessLogTag+"). Fields: method, path (no query string), "+
+			"status, wall_ms, queries, db_ms. Independent of --verbose/--quiet; unlike --verbose it logs no SQL.")
 	flag.StringVar(&f.debugPprof, "debug-pprof", "",
 		"If set, serve net/http/pprof on this loopback address (e.g. 127.0.0.1:6060). "+
 			"Diagnostic only. Refuses to bind to non-loopback addresses.")
@@ -159,6 +163,10 @@ func parseFlags() *serverFlags {
 	flag.Parse()
 	if os.Getenv("RELA_READ_ONLY") == "1" {
 		f.readOnly = true
+	}
+	if err := checkAccessLogDest(f.accessLog); err != nil {
+		fmt.Fprintln(os.Stderr, "rela-server:", err)
+		os.Exit(2)
 	}
 	return f
 }
@@ -451,6 +459,7 @@ func main() {
 	f := parseFlags()
 
 	configureLogging(f.verbose, f.quiet)
+	accessLog := openAccessLog(f.accessLog)
 
 	if err := dataentry.CheckEmbeddedSPA(); err != nil {
 		slog.Error("embedded SPA check failed", "error", err)
@@ -521,7 +530,7 @@ func main() {
 	// so a conflicting config never reaches a running server.
 	wireIdentityAndMCP(app, svc, f)
 
-	srv := newHTTPServer(addr, app.NewRouter())
+	srv := newHTTPServer(addr, app.NewRouter(dataentry.WithAccessLog(accessLog)))
 
 	if !isLoopbackHost(f.bind) {
 		slog.Warn("rela-server bound beyond loopback; see docs/server-security.md for threat model",

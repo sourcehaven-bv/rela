@@ -54,12 +54,31 @@ func CheckEmbeddedSPA() error {
 	return nil
 }
 
+// RouterOption configures [App.NewRouter].
+type RouterOption func(*routerConfig)
+
+type routerConfig struct {
+	// accessLog, when non-nil, receives one `request` record per request at
+	// Info (method, path, status, wall and database time). See requestStats
+	// for why it never adds a header.
+	accessLog *slog.Logger
+}
+
+// WithAccessLog sends the per-request access log to l; nil turns it off.
+func WithAccessLog(l *slog.Logger) RouterOption {
+	return func(c *routerConfig) { c.accessLog = l }
+}
+
 // NewRouter returns an http.Handler with all data entry routes registered.
 // The Vue SPA serves as the primary UI at the root path.
 //
 // When adding a route, add a probe to the route table in
 // router_walk_test.go so registration stays covered.
-func (a *App) NewRouter() http.Handler {
+func (a *App) NewRouter(opts ...RouterOption) http.Handler {
+	var cfg routerConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	mux := http.NewServeMux()
 
 	// Legacy /static/ mount. The Vue bundle is also reachable here as
@@ -266,7 +285,7 @@ func (a *App) NewRouter() http.Handler {
 	// Outermost of all: per-request query accounting must wrap the whole
 	// chain so the principal resolution and ACL compilation above (which
 	// read the store) are counted with the handler, not missed.
-	handler = requestStats(handler)
+	handler = requestStats(handler, cfg.accessLog)
 	return handler
 }
 
