@@ -8,6 +8,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -162,7 +163,7 @@ func readTarget(id, face string) string {
 // api{} instead, which goes over HTTP against a real server that has the
 // genuine redactor wired.
 func readerFor(dr *docRuntime) (*visibility.Resolver, error) {
-	d, err := acl.NewDeclarative(dr.policy, acl.NewStoreGraph(dr.store), dr.store)
+	d, err := acl.NewDeclarative(dr.policy, aclstore.NewGraph(dr.store), dr.store)
 	if err != nil {
 		return nil, fmt.Errorf("building the evaluator failed: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -98,7 +99,7 @@ func newRoleUnionWorld(t *testing.T, policyYAML string) roleUnionWorld {
 	for _, user := range []string{"alice", "rita", "vic"} {
 		mustCreateRelation(t, ms, user, "watches", "TKT-1")
 	}
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

@@ -18,6 +18,7 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
@@ -96,7 +97,7 @@ func newAttachFixture(t *testing.T, opts attachOpts) attachFixture {
 
 	buildOpts := []appbuildtest.Option{appbuildtest.WithStore(st)}
 	if opts.policy != nil {
-		d, err := acl.NewDeclarative(opts.policy, acl.NewStoreGraph(st), st)
+		d, err := acl.NewDeclarative(opts.policy, aclstore.NewGraph(st), st)
 		if err != nil {
 			t.Fatalf("acl.NewDeclarative: %v", err)
 		}

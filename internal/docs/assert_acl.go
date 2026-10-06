@@ -9,6 +9,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -113,7 +114,7 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	// The seeded memstore is both the graph (for role-relation membership) and
 	// the query backend, so a manual can seed the very edge that confers a role
 	// and then assert what it grants.
-	d, err := acl.NewDeclarative(a.policy, acl.NewStoreGraph(a.store), a.store)
+	d, err := acl.NewDeclarative(a.policy, aclstore.NewGraph(a.store), a.store)
 	if err != nil {
 		return a.luaFail(ls, "%s: building the evaluator failed: %v", verb, err)
 	}

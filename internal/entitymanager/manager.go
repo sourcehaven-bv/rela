@@ -1823,7 +1823,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// reason.
 	//
 	// Reads inside the callback go through the OUTER handle (that is what
-	// acl.StoreGraph holds). fsstore's readers never take txMu, so this does
+	// aclstore.Graph holds). fsstore's readers never take txMu, so this does
 	// not deadlock — pinned by TestTx_ReadsViaOuterHandleDoNotDeadlock.
 	// Writes must use the tx view, per the Tx contract.
 	//

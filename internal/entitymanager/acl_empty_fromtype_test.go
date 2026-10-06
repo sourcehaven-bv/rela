@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -194,7 +195,7 @@ func createRelationAllowed(t *testing.T, createGrants []string, seedSource bool)
 		// what this test is about.
 		Roles:       map[string]acl.RoleDef{"writer": {Read: []string{"*"}, Create: createGrants}},
 		Assignments: map[string]string{"alice": "writer"},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

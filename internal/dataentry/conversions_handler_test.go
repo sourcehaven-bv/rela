@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -117,7 +118,7 @@ func newConversionHandlerFixture(t *testing.T) conversionHandlerFixture {
 	require.NoError(t, st.CreateEntity(t.Context(), hidden))
 	policy, err := acl.LoadPolicyBytes([]byte(conversionHandlerPolicy))
 	require.NoError(t, err)
-	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(policy, aclstore.NewGraph(st), st)
 	require.NoError(t, err)
 	app := newAppFromParts(&Config{App: AppConfig{Name: "Conversion test"}}, meta, newFixture(),
 		appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d))

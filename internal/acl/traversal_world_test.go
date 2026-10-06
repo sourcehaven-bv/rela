@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -42,7 +43,7 @@ func TestGateTraversal_AllFacesQueryCannotSatisfyHopOutsideRequestWorld(t *testi
 	d, err := NewDeclarative(&Policy{
 		Roles:       map[string]RoleDef{"reader": {Read: []string{"ticket", "concept"}}},
 		Assignments: map[string]string{"alice": "reader"},
-	}, NewStoreGraph(st), st)
+	}, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}

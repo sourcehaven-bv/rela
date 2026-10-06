@@ -235,6 +235,7 @@ components:
   # per-request lifecycle today; the read gate, gated reader, write
   # authorization and affordance verdicts move here in later steps.
   access:           { in: internal/access }
+  aclstore:         { in: internal/aclstore }
   aclaudit:         { in: internal/aclaudit }
   aclmap:           { in: internal/aclmap }
   affordances:      { in: internal/affordances }
@@ -486,6 +487,7 @@ deps:
   cli:
     mayDependOn:
       - acl
+      - aclstore
       - aclaudit
       - aclmap
       # `rela acl audit` evaluates field visibility per role for the
@@ -773,6 +775,8 @@ deps:
   # any tag, so both backends' deps must be allow-listed here.
   appbuild:
     mayDependOn:
+      # aclstore: the store adapters handed to acl.NewDeclarative.
+      - aclstore
       - rootfs
       # Loads realtime.yaml at boot and holds the compiled config.
       - realtimecfg
@@ -1135,6 +1139,13 @@ deps:
     mayDependOn:
       - acl
       - principal
+  # Store-backed implementations of acl.Graph and acl.PrincipalLookup. It
+  # does not import acl: the interfaces are acl's, the store dependency is
+  # this package's, so acl itself names no concrete store.
+  aclstore:
+    mayDependOn:
+      - entity
+      - store
   aclaudit:
     mayDependOn:
       - acl
@@ -1206,6 +1217,7 @@ deps:
   docs:
     mayDependOn:
       - acl
+      - aclstore
       - entity
       - lua
       # worlds: shows{world=...} compiles a declared world NAME to the

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -49,8 +50,8 @@ func buildLookupACL(t *testing.T) *acl.Declarative {
 	if err != nil {
 		t.Fatalf("LoadPolicyBytes: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(ms), ms,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(ms)))
+	d, err := acl.NewDeclarative(p, aclstore.NewGraph(ms), ms,
+		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(ms)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

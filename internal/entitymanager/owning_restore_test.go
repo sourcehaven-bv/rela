@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -88,7 +89,7 @@ func TestRestore_OwnedGrantThroughOwner(t *testing.T) {
 
 			policy, err := acl.LoadPolicyBytes([]byte(grantViaOwnerPolicy))
 			require.NoError(t, err)
-			decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
+			decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(st), st)
 			require.NoError(t, err)
 			mgr, err := entitymanager.New(entitymanager.Deps{
 				Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: decl,

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -114,7 +115,7 @@ func TestMCPWorldCheck_UsesRequestOnContext(t *testing.T) {
 			"plain":  {Read: []string{"ticket"}},
 		},
 		Assignments: map[string]string{"granted": "drafts", "revoked": "plain"},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

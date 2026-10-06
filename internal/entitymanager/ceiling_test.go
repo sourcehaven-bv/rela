@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -53,7 +54,7 @@ func ceilingManager(t *testing.T) (mgr *entitymanager.Manager, seededID string) 
 		t.Fatalf("LoadPolicyBytes: %v", err)
 	}
 	st := memstore.New()
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
+	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

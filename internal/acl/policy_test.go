@@ -358,7 +358,7 @@ func TestLoadPolicy_RelationGrant_CreateRemoveFaces(t *testing.T) {
 }
 
 // RR-NIGK: a blank entry in inherit_roles_through is rejected at load.
-// A blank entry would otherwise reach StoreGraph with an empty
+// A blank entry would otherwise reach aclstore.Graph with an empty
 // RelationQuery.Type meaning "all relations" — silently widening
 // containment to every relation type in the workspace.
 func TestLoadPolicy_BlankInheritRolesThrough_Rejected(t *testing.T) {

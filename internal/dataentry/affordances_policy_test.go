@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -30,7 +31,7 @@ func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
 	if err := yaml.Unmarshal([]byte(aclYAML), &policy); err != nil {
 		t.Fatalf("unmarshal acl.yaml: %v", err)
 	}
-	declarative, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(app.store), app.store)
+	declarative, err := acl.NewDeclarative(&policy, aclstore.NewGraph(app.store), app.store)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

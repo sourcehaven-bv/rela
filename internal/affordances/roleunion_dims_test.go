@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -132,7 +133,7 @@ func newUnionWorld(t *testing.T, policyYAML string) unionWorld {
 	mustCreateRelation(t, ms, "cora", "member-of", "clerks")
 	mustCreateRelation(t, ms, "ulla", "member-of", "clerks")
 	mustCreateRelation(t, ms, "pia", "member-of", "policyclerks")
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -575,7 +576,7 @@ func newMonotonicWorld(tb testing.TB, extraPolicy string, users map[string]int) 
 			}
 		}
 	}
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
 	if err != nil {
 		tb.Fatalf("NewDeclarative: %v", err)
 	}

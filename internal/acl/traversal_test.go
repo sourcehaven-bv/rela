@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -26,7 +27,7 @@ func gateFixture(t *testing.T, p *Policy) (*Declarative, context.Context) {
 			t.Fatal(err)
 		}
 	}
-	d, err := NewDeclarative(p, NewStoreGraph(st), st)
+	d, err := NewDeclarative(p, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

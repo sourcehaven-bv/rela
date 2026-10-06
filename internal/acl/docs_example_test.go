@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -40,7 +41,7 @@ scope_grants:
 		t.Fatalf("the YAML in docs/acl-overview.md does not parse: %v", err)
 	}
 	st := memstore.New()
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +118,7 @@ asserted_role_assignments:
 		t.Fatalf("the YAML in docs/acl-overview.md does not parse: %v", err)
 	}
 	st := memstore.New()
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}

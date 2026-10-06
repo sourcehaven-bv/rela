@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -157,7 +158,7 @@ func (w *World) Build(t *testing.T) *World {
 	}
 	w.store = ms
 
-	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	d, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("World.Build: NewDeclarative: %v", err)
 	}
