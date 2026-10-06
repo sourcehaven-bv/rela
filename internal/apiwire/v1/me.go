@@ -26,6 +26,9 @@ type MeResponse struct {
 	// Links are the configured account links that apply to this principal.
 	// Absent when none do.
 	Links *MeLinks `json:"links,omitempty"`
+	// CanConfigure is true when the server offers the Configure space and
+	// the principal may use it (the config:edit permission).
+	CanConfigure bool `json:"can_configure,omitempty"`
 }
 
 // MeOrg is the principal's org. ID is always set; Slug and Name are omitted

@@ -28,7 +28,7 @@ const emit = defineEmits<{ toggleStar: []; menu: []; openNav: [] }>()
 </script>
 
 <template>
-  <header class="rl-page-header">
+  <header class="rl-page-header" :class="{ 'rl-page-header--bare': !$slots.tabs && !$slots.tools }">
     <div class="rl-page-header__title-row">
       <RlIconButton
         v-if="showNavToggle"
@@ -84,6 +84,10 @@ const emit = defineEmits<{ toggleStar: []; menu: []; openNav: [] }>()
   border-bottom: 1px solid var(--rl-color-border);
   background: var(--rl-color-bg);
 }
+
+/* The tab bar normally closes the header off; without one the title row
+ * needs its own room above the border. */
+.rl-page-header--bare { padding-bottom: var(--rl-space-4); }
 
 .rl-page-header__title-row {
   display: flex;

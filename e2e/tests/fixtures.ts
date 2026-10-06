@@ -268,6 +268,11 @@ export interface ApiHelpers {
 }
 
 export interface TestFixtures {
+  /**
+   * Extra environment for the spawned server, merged over the defaults. Set
+   * per file with `test.use({ serverEnv: { RELA_CONFIG_EDITING: "1" } })`.
+   */
+  serverEnv: Record<string, string>;
   testProject: string;
   serverUrl: string;
   appPage: Page;
@@ -508,6 +513,8 @@ async function spawnServer(
 }
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
+  serverEnv: [{}, { option: true }],
+
   serverBinary: [
     // eslint-disable-next-line no-empty-pattern
     async ({}, use) => {
@@ -530,13 +537,14 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     }
   },
 
-  serverUrl: async ({ testProject, serverBinary }, use, testInfo) => {
+  serverUrl: async ({ testProject, serverBinary, serverEnv }, use, testInfo) => {
     // A resolvable identity. Most specs do not care, but comments REFUSE an
     // unstamped principal rather than recording "unknown" (TKT-FIO205): a
     // comment nobody is recorded as writing can never satisfy an *-own
     // permission check, so it could be neither edited nor deleted.
     const { proc, url, logs } = await spawnServer(serverBinary, testProject, {
       RELA_DATAENTRY_USER: "e2e@example.com",
+      ...serverEnv,
     });
     try {
       await use(url);

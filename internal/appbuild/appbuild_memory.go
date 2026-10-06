@@ -49,3 +49,6 @@ func openBackend(_ context.Context, _ *SharedBase) (store.Store, search.Searcher
 type noopCloser struct{}
 
 func (noopCloser) Close() error { return nil }
+
+// DropStoreIndex is a no-op: this backend persists no file index.
+func DropStoreIndex(*Services) error { return nil }

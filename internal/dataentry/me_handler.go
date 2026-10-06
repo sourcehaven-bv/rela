@@ -59,7 +59,9 @@ func handleV1Me(a *App, w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	// Per principal; writeV1JSON marks every v1 response no-store.
-	writeV1JSON(w, http.StatusOK, buildMe(ctx, principal.From(ctx), deps))
+	me := buildMe(ctx, principal.From(ctx), deps)
+	me.CanConfigure = a.configure != nil && mayConfigure(a, r)
+	writeV1JSON(w, http.StatusOK, me)
 }
 
 // buildMe assembles the account response for p.

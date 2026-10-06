@@ -99,7 +99,13 @@ type permissionCeiling struct {
 	except []string // scope-granted carve-outs; see [verbCeiling.except]
 }
 
+// permits never passes [PermConfigEdit]: editing the configuration is not
+// something a user delegates to a client acting for them, whatever the
+// client's baseline or scopes say.
 func (p permissionCeiling) permits(name string) bool {
+	if name == PermConfigEdit {
+		return false
+	}
 	if slices.Contains(p.except, name) {
 		return true
 	}

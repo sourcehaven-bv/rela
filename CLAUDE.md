@@ -788,22 +788,60 @@ Rules when touching this:
   table in `rela.db` on sqlite (a shipped file must carry it). New backends
   pass `migstatetest.RunAll`.
 
-  **`Gate.Evaluate` classifies; `Gate.Persist` writes, and only the CLI calls
-  it.** A server writing a git-tracked file at boot would dirty a working tree
-  and need a writable project dir; it also removes the concurrent-start race
-  outright. A server may serve with an unrecorded ADDITIVE change — harmless by
-  construction. With no record AND migrations present the gate refuses
-  (`StatusUnbaselined`) rather than baselining over files that may still need
-  to run; `rela migrate baseline` is the explicit override.
+  **`Gate.Evaluate` classifies; `Gate.Persist` writes, and only the CLI and a
+  Configure save call it.** A server writing a git-tracked file at boot would
+  dirty a working tree and need a writable project dir; it also removes the
+  concurrent-start race outright. A server may serve with an unrecorded
+  ADDITIVE change — harmless by construction. With no record AND migrations
+  present the gate refuses (`StatusUnbaselined`) rather than baselining over
+  files that may still need to run; `rela migrate baseline` is the explicit
+  override.
+
+  The Configure save (TKT-F5NGMG, DEC-325POW) is the one server-side writer.
+  It is the CLI's flow run from the browser: it adopts the current shape
+  (`MigrationState.Adopt`), writes the generated migration file next to the
+  config, runs it, and persists — only on `rela-server --config-editing`, only
+  for a `config:edit` holder, only on the fs build, and audited as
+  `config-edit` plus the runner's `data-migration` records. Do not add a
+  second server-side writer, and never persist at boot or on a preview.
 
   Migration/GC writes are the third sanctioned raw-store exception (after
-  `db migrate` and `history-purge`): operator-shell trust, no ACL, explicit
+  `db migrate` and `history-purge`): operator-shell trust (or, for a
+  Configure save, the `config:edit` grant, which is admin-equivalent), no ACL, explicit
   audit records (`data-migration`/`data-gc`), `store.WithAttribution`, and
   synchronous pre-delete version capture on pg (the sweep cannot reconstruct
   deleted rows). **Steps must stay idempotent — with the applied list as the
   only double-apply guard, re-run IS the crash recovery.** The Lua step is a
   pure transform (patch in, patch out, engine applies); never hand it a write
   handle.
+- **Configure space** (TKT-F5NGMG, `internal/configedit`, mounted by
+  `cmd/rela-server`). Two rules carry its safety.
+
+  _The allowlist is per key and default-locked._ `editable` lists what the
+  browser may create or change; everything else is refused with 422, and
+  `TestAllowlist_ClassifiesEveryKey` fails on a config key that is in neither
+  `editable` nor `locked`. Removing a whole item is allowed because removal
+  takes code away, EXCEPT when the item holds a `protective` key (a guard, a
+  `permission:`, an upload `accept:`/`scan`): removing the item and re-adding
+  it without the key would loosen a restriction through two allowed steps.
+  For the same reason a guarded transition's `from`/`to` are `pinned`, as
+  are the trigger and scope keys of an item holding Lua or an ACL bypass. A
+  new locked key that restricts rather than runs code belongs in
+  `protective` too. The allowlist judges a tree, so `Apply` refuses to write
+  bytes that do not parse back to exactly that tree (a `<<` merge key was
+  the bypass that rule closes).
+
+  Only an interactive principal configures: `mayConfigure` refuses a
+  `principal_type` other than empty or `user`, because a client type no
+  baseline matches is unrestricted by the ceiling.
+
+  _A save replaces the server, it does not mutate it._ `cmd/rela-server`
+  builds a complete new generation (`appbuild.Discover` + the app) from the
+  written files, migrates it, swaps the root handler, and only then retires
+  the old one in the background (scheduler hand-over, bounded drain,
+  `svc.Close`). Do not make `App` fields swappable instead. dataentry takes
+  the Configure API as a plain `http.Handler` and must not import
+  `configedit` (arch-lint).
 - **Perf seeding** (TKT-1U8XYN, `internal/perfseed`, `rela dev seed`) is the
   fourth raw-store exception, under the same terms: operator shell, attributed
   (`perf-seed` tool), one `perf-seed` audit record, and it refuses a non-empty

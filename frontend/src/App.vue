@@ -23,6 +23,8 @@ import SpaceCreateMenu from '@/components/common/SpaceCreateMenu.vue'
 import { useSpaceStore } from '@/stores/space'
 import { SIDEBAR_DEFAULT_WIDTH } from '@/stores/ui'
 import Sidebar from '@/components/common/Sidebar.vue'
+import ConfigureSidebar from '@/components/configure/ConfigureSidebar.vue'
+import { isConfigurePath } from '@/configure/routes'
 import SidebarFlyout from '@/components/flyout/SidebarFlyout.vue'
 import RlToastHost from 'rela-components/components/feedback/RlToastHost.vue'
 import { useToasts } from 'rela-components/components/feedback/useToasts'
@@ -72,6 +74,8 @@ const showHamburger = computed(
 
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
+// The Configure space has its own sidebar and no space create menu.
+const configuring = computed(() => isConfigurePath(route.path))
 // The one toast host. Every toast, whether raised through uiStore or straight
 // on the library queue, lands in this queue.
 const { toasts, dismiss: dismissToast } = useToasts()
@@ -227,7 +231,10 @@ watch(
       :panel-mode="detailPanel.mode.value"
       @update:sidebar-width="uiStore.setSidebarWidth"
     >
-      <template #sidebar><Sidebar /></template>
+      <template #sidebar>
+        <ConfigureSidebar v-if="configuring" />
+        <Sidebar v-else />
+      </template>
 
       <!--
         The view supplies the title and the slot content; the shell decides how
@@ -256,9 +263,12 @@ watch(
               @update:model-value="pageTabs.select"
             />
           </template>
-          <template v-if="pageHeader.content.value?.actions || spaceStore.create.length" #actions>
+          <template
+            v-if="pageHeader.content.value?.actions || (spaceStore.create.length && !configuring)"
+            #actions
+          >
             <component :is="pageHeader.content.value.actions" v-if="pageHeader.content.value?.actions" />
-            <SpaceCreateMenu />
+            <SpaceCreateMenu v-if="!configuring" />
           </template>
           <template v-if="pageHeader.content.value?.tools" #tools>
             <component :is="pageHeader.content.value.tools" />

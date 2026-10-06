@@ -73,6 +73,9 @@ is that a server can serve with an unrecorded *additive* change, which by
 definition cannot invalidate stored content; the next `rela migrate` records
 it.
 
+A save from the in-app Configure space is the one exception (DEC-325POW). See
+[Migrations from the Configure space](#migrations-from-the-configure-space).
+
 **A store with no record.** With no migrations in the project, the live shape
 is adopted as the baseline silently — an existing project joins the system
 without ceremony.
@@ -461,6 +464,51 @@ automations, and ACL — the trust boundary is your shell, exactly like
 counts, never content. On PostgreSQL, migrated content appears in
 the version history attributed to the operator with the `data-migration`
 tool, and destructive steps capture pre-delete snapshots synchronously.
+
+## Migrations from the Configure space
+
+With `rela-server --config-editing`, an operator can change `schema.yaml` from
+the web app. See [the Configure space](data-entry.md#configure-space). When a
+change does not fit the stored records, the save generates the migration
+itself:
+
+| Change in the app | Generated step |
+|---|---|
+| Rename a property | `rename_property` |
+| Remove or rename a choice option that records use | `map_values`, to the target the user chose |
+| Some changes to a property's type | `convert` |
+
+The save writes `migrations/<timestamp>-<slug>.yaml`, runs it, records it in
+`migrations/applied.json`, and writes a `data-migration` audit record. This is
+the same as `rela migrate data --apply`. The file is an ordinary migration
+file: commit it with the changed `schema.yaml` and `applied.json`.
+
+**The save also writes the migration record.** Before it writes a migration
+file, it records the current shape when that shape changed compatibly. This is
+the same adoption `rela migrate` performs. It amends the rule in
+[The compatibility gate](#the-compatibility-gate) that only the CLI writes the
+record (decision DEC-325POW). A Configure save is the only server-side writer.
+Starting a server still writes nothing.
+
+A save is refused while the record is not ready:
+
+- stored records do not match the current schema;
+- a migration file has not run yet;
+- the store has no record and the project has migrations.
+
+Run `rela migrate status` and `rela migrate data` (or `rela migrate baseline`)
+on the server first.
+
+Some changes need a step the app cannot generate: relation changes, face
+changes, and changes to choice values a relation uses. The save refuses them.
+Use `rela migrate gen` and write the migration by hand.
+
+A save takes the same migration lock as `rela migrate data --apply`. While
+another migration or GC run holds it, the save is refused and nothing is
+written. If the migration fails after it started, the new configuration keeps
+serving and the save reports the migration as incomplete. Retrying runs the
+rest. This relies on every step being safe to re-run, as described in
+[Workflow](#workflow).
 
 ## Garbage collection
 

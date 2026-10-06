@@ -155,3 +155,6 @@ func (c bothCloser) Close() error {
 type noopSQLiteCloser struct{}
 
 func (noopSQLiteCloser) Close() error { return nil }
+
+// DropStoreIndex is a no-op: this backend persists no file index.
+func DropStoreIndex(*Services) error { return nil }

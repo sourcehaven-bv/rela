@@ -127,3 +127,6 @@ func searchTitles(meta *metamodel.Metamodel) pgstore.SearchTitles {
 	}
 	return titles
 }
+
+// DropStoreIndex is a no-op: this backend persists no file index.
+func DropStoreIndex(*Services) error { return nil }

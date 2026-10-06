@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 
@@ -427,6 +428,14 @@ type App struct {
 	// stopStoreWatch cancels the store-event -> SSE bridge subscription. Set by
 	// StartWatching; nil when watching is not active.
 	stopStoreWatch func()
+
+	// configure serves /api/v1/_configure; nil keeps the routes absent. Set
+	// once by [SetConfigure] before NewRouter.
+	configure http.Handler
+
+	// reloadPaused, while above zero, makes a data-entry.yaml change event a
+	// no-op. See [PauseConfigReload].
+	reloadPaused atomic.Int32
 
 	// security holds the configured Host/Origin allowlists. Set via
 	// SetSecurityConfig before NewRouter; nil disables the middlewares

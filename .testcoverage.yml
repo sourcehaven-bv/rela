@@ -45,6 +45,12 @@ override:
   - path: ^internal/classification$
     threshold: 85
 
+  # Configure space (TKT-F5NGMG): the editable-key allowlist is what keeps
+  # config:edit from reaching command and script settings, and the merge
+  # rewrites operator files, so pinned above the default floor.
+  - path: ^internal/configedit$
+    threshold: 70
+
   # Below the default floor — explicit lower floors so the gap is
   # visible. Raise these as tests are added; don't lower without reason.
   - path: ^internal/git$

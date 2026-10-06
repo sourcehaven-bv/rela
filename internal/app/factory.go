@@ -7,6 +7,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -69,10 +70,30 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 		EntitiesKey:    "entities",
 		RelationsKey:   "relations",
 		AttachmentsKey: "attachments",
-		CacheKey:       ".rela",
+		CacheKey:       storeCacheKey,
 		Schemas:        buildSchemas(meta),
 		Observers:      f.observers,
 	})
+}
+
+// storeCacheKey is the directory, relative to the project root, that holds
+// the store's persisted index.
+const storeCacheKey = ".rela"
+
+// DropStoreIndex removes the store's persisted index, so the next store
+// opened over the project scans the files. A store persists its index when
+// it closes, stamped with the folder times at that moment, so a store that
+// closes after another store wrote files it never saw leaves an index that
+// looks fresh and omits them.
+func (f *FSFactory) DropStoreIndex() error {
+	rooted, err := storage.NewRootedFS(f.FS, f.Paths.Root)
+	if err != nil {
+		return err
+	}
+	if err := rooted.Remove(fsstore.IndexKey(storeCacheKey)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // buildSchemas translates metamodel entity-type definitions into the

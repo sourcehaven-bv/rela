@@ -81,3 +81,9 @@ type noopCloser struct{}
 func (noopCloser) Close() error { return nil } // coverage-ignore: defensive: noopCloser is returned only on the
 // idx==nil path (bleveindex.NewMem failure), which is unreachable in tests, so this Close is never invoked in the fs
 // build
+
+// DropStoreIndex removes the persisted store index of a project that a
+// replaced generation has just closed over; see [app.FSFactory.DropStoreIndex].
+func DropStoreIndex(svc *Services) error {
+	return (&app.FSFactory{FS: svc.FS(), Paths: svc.Paths()}).DropStoreIndex()
+}

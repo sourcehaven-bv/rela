@@ -631,6 +631,44 @@ Two related gaps, both deliberate and tracked:
   handler fans a JSON-RPC batch across goroutines, so this is latent rather
   than live — but it constrains how batch dispatch may be implemented.
 
+### `--config-editing` lets a principal rewrite the configuration
+
+`--config-editing` turns on the in-app
+[Configure space](data-entry.md#configure-space). It is off by default. When it
+is on, `/api/v1/_configure` lets a principal holding `config:edit` do three
+things:
+
+- rewrite `schema.yaml` and `data-entry.yaml`;
+- run data migrations that rewrite stored records without per-record ACL
+  checks;
+- switch the running server to the new configuration.
+
+So a holder of `config:edit` is equal to an administrator. Grant it only to
+people you trust to administer the project.
+
+The server refuses to start the feature without two safeguards:
+
+- **An `acl.yaml`.** Without one, every principal holds every permission, so
+  anyone who can reach the server could edit the configuration.
+- **An identity source** (`-jwt-*`, `-principal-header`, or
+  `$RELA_DATAENTRY_USER`). The permission check needs to know who is asking.
+  The Configure API refuses an unknown principal.
+
+The permission must be granted by name; `*` does not grant it, and a client
+acting for a user never holds it. See
+[acl-security.md](acl-security.md#configuration-editing-configedit).
+
+What the feature does not expose:
+
+- Settings that run code or reach external commands stay locked: Lua,
+  `scan_cmd`, transforms, attachment policy, actions and commands. A principal
+  with `config:edit` cannot use the Configure space to run a command.
+- Settings that control access stay locked: transition guards and
+  `permission:` entries. `acl.yaml` cannot be edited in the app.
+- Every save and every refused save writes a `config-edit` audit record.
+
+Without the flag, every `/api/v1/_configure` endpoint returns 404.
+
 ### Future WebSocket endpoints need explicit Origin checks
 
 WebSockets are not currently used by `rela-server`. If a future feature
