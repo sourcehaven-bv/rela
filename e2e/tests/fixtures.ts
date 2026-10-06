@@ -1060,10 +1060,11 @@ relations:
   # A container whose type has a dashed id_prefix (MOD-). The task form has no
   # field for it, so a section create on the module page pre-links the module
   # and the form must derive its type from the id (create-prelink.spec.ts).
-  contains:
+  # Not named contains: space-create-page-link.spec.ts adds that relation.
+  groups:
     from: [module]
     to: [task]
-    inverse: contained_in
+    inverse: grouped_in
 
 # Commenting (TKT-FIO205). Enabled for every type so the comment specs can use
 # whichever seed entity is convenient; the ACL is untouched, so the default
@@ -1506,7 +1507,7 @@ views:
       type: module
     traverse:
       - from: entry
-        follow: contains
+        follow: groups
         collect_as: tasks
     sections:
       - heading: "Tasks"
