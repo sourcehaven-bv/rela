@@ -2,7 +2,10 @@
 
 package cli
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 // errDBNotAvailable is returned by `rela db` subcommands in builds with no
 // database to manage — the default (filesystem) and memorybackend builds.
@@ -20,3 +23,7 @@ func runDBMigrate() error { return errDBNotAvailable }
 func runDBStatus() error { return errDBNotAvailable }
 
 func runDBReconcile(_, _ bool) error { return errDBNotAvailable }
+
+func runDBLoad(context.Context, string, bool, bool) error { return errDBNotAvailable }
+
+func runDBDump(string, bool, bool) error { return errDBNotAvailable }

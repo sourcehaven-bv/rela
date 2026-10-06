@@ -11,12 +11,17 @@ import (
 
 // AttachmentsCmd lists all file attachments for an entity.
 type AttachmentsCmd struct {
-	EntityID string `arg:"" name:"entity-id" help:"Target entity ID."`
+	EntityID string `arg:"" name:"entity-id" help:"Target entity ID, or ID@face for a faced type."`
 }
 
-// Run dispatches `rela attachments <entity-id>`.
-func (c *AttachmentsCmd) Run(ctx context.Context, att *attachment.Service) error {
-	infos, err := att.List(ctx, c.EntityID)
+// Run dispatches `rela attachments <entity-id>`. A bare id reads in the
+// schema's default world, like `rela show`; `ID@face` names one face.
+func (c *AttachmentsCmd) Run(ctx context.Context, svc *readServices, att *attachment.Service) error {
+	e, err := readAddress(ctx, svc.Store, svc.Families, svc.World, c.EntityID)
+	if err != nil {
+		return classifyReadError(c.EntityID, err)
+	}
+	infos, err := att.List(ctx, e.Ref())
 	if err != nil {
 		return err
 	}

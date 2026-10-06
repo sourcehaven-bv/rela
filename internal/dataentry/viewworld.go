@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -42,21 +41,21 @@ import (
 // omission, and `TestExecuteViewCallersDeclareTheirWorld` fails if a new
 // caller appears that does not make one.
 //
-// # The zero value is the default world
+// # The zero value is unset
 //
-// A zero viewWorld is the default world, which is what makes a faceless
-// project and every pre-item-4b caller behave identically. That is safe
-// BECAUSE it is also inert: the zero scope resolves every entity to its
-// default state, exactly as `store.GetEntity` did.
+// A zero viewWorld carries an unset scope, which every read refuses with
+// store.ErrInvalidQuery (TKT-7IZHP0 design A4). Build one with
+// defaultViewWorld or from the request's world handle; the trivial scope
+// resolves every entity to its implicit face, as `store.GetEntity` did.
 type viewWorld struct {
 	// name is the declared world name, for provenance labeling. Empty means
 	// the default world.
 	name string
-	// scope is the compiled resolution this world applies. The zero scope is
-	// the default world.
+	// scope is the compiled resolution this world applies. It is always set;
+	// the default world's is the trivial scope.
 	scope store.WorldScope
 	// denied marks a declared world this principal may not read. The handle's
-	// scope is the ZERO scope, so without this bit a denied world would
+	// scope is the default world's, so without this bit a denied world would
 	// resolve as the default one and serve the default face's view — which
 	// both discloses the denial (a permitted empty world answers
 	// `_world_absent`) and shows content under a world the caller was refused.
@@ -71,7 +70,7 @@ type viewWorld struct {
 // says "this surface serves the default world"; `executeView(ctx, cfg, id,
 // viewWorld{})` says nothing, and a reader cannot tell whether the author
 // considered worlds at all.
-func defaultViewWorld() viewWorld { return viewWorld{} }
+func defaultViewWorld() viewWorld { return viewWorld(defaultWorldHandle()) }
 
 // viewWorldFromRequest builds the world for a world-capable view route.
 //
@@ -83,24 +82,23 @@ func viewWorldFromRequest(ctx context.Context) viewWorld {
 	return viewWorld(h)
 }
 
-// isDefault reports whether this is the default world. A denied world is
-// never the default one, whatever its (zero) scope says.
-func (w viewWorld) isDefault() bool { return !w.denied && w.scope.IsDefaultWorld() }
+// ranksNothing reports whether w reads every entity at its implicit face;
+// see worldHandle.ranksNothing.
+func (w viewWorld) ranksNothing() bool { return !w.denied && w.scope.IsTrivial() }
 
 // viewEntry resolves the view's ENTRY entity to its face in world w.
 //
-// Under the default world this is exactly the previous `store.GetEntity` call,
-// error text included, so every existing caller is byte-identical.
+// It reads through the same visibility.Resolver the entity GET uses, with
+// the view's world passed explicitly: an explicit address, or any address in
+// the default world, is read literally; a bare id in another world is
+// resolved by the backend, ACL trimming the candidate faces before the world
+// ranks what is left. One resolution site, not two, so a view cannot serve a
+// face the entity view would not. The entry is read as the view's type, so a
+// row of another type is the same miss as an absent one.
 //
-// Under a non-default world it goes through the same one-id ListEntities query
-// [visibleReader.getWorldEntity] uses, so the BACKEND resolves the chain and
-// the fallback verdict. One resolution site, not two — reimplementing the walk
-// here would be a second copy of the semantics deciding which face a reader
-// sees.
-//
-// The entry is NOT row-gated here, deliberately: the handler already gated it
-// (`views_handler.go`, TKT-BNX2PN) and re-gating could 404 an entry the caller
-// was just cleared to read. That reasoning is unchanged by worlds.
+// The resolver repeats the row gate the handler already ran
+// (`views_handler.go`, TKT-BNX2PN). The two are the same gate, so the repeat
+// cannot 404 an entry the handler cleared; it is what applies the face gate.
 //
 // # Two absences, not one
 //
@@ -131,75 +129,46 @@ func (w viewWorld) isDefault() bool { return !w.denied && w.scope.IsDefaultWorld
 // separates two states that are both already visible to this caller — it
 // cannot become an existence oracle, because existence was settled one layer up
 // by a check that does not consult the world.
-
 func (h *viewsHandler) viewEntry(
-	ctx context.Context, entry entityRef, w viewWorld,
+	ctx context.Context, entityType string, entry entityPkg.Ref, w viewWorld,
 ) (*entityPkg.Entity, error) {
-	entryID := entry.ID
 	if w.denied {
 		// Byte-identical to a permitted world in which the entity has no
 		// face: `_world_absent` over the default face. That is the only
 		// answer that does not disclose the denial.
 		//
 		// An EXPLICIT address gets the same answer: the world grant must not
-		// be bypassable by spelling the face (see visibleReader.getVisibleRef).
+		// be bypassable by spelling the face.
 		return nil, errNoFaceInWorld
 	}
-	if w.isDefault() || entry.Explicit {
-		// An explicit address (`ID@face`) is served literally under every
-		// world — the caller named the row, so there is nothing to resolve
-		// (see entityRef). Under the default world every address is literal.
-		e, err := h.store.GetEntityState(ctx, entry.ID, entry.Face)
+	world := worldHandle(w).visibility()
+	if w.ranksNothing() || !entry.Face.IsImplicit() {
+		// A denied face is reported as the ordinary not-found, so it stays
+		// indistinguishable from an absent one (TKT-O7R2A1).
+		e, ok, err := h.visible.refIn(ctx, world, entityType, entry)
 		if err != nil {
+			return nil, &gateFaultError{err: err}
+		}
+		if !ok {
 			return nil, errViewEntryNotFound(entry.String())
 		}
-		// The row gate one layer up cleared the ENTITY; it says nothing about
-		// which FACE this principal may read (TKT-O7R2A1). Without this the
-		// view surface served a draft body to a principal granted only
-		// `policy@published`, while the entity route 404'd the same face.
-		//
-		// Reported as the ordinary not-found so a denied face stays
-		// indistinguishable from an absent one, matching
-		// [visibleReader.getVisible].
-		if !faceReadable(ctx, e.Type, e.Face) {
-			return nil, errViewEntryNotFound(entryID)
-		}
 		return e, nil
 	}
-	for e, err := range h.store.ListEntities(ctx, store.EntityQuery{
-		IDs:   []string{entryID},
-		World: w.scope,
-	}) {
-		if err != nil {
-			// An infrastructure failure is NOT "this entity has no face in
-			// this world". Surfacing it keeps a backend outage from reading
-			// as a correctly-empty published view (RR-4TFZNL).
-			return nil, err
-		}
-		// A world chose this face, but a world is a VIEW, never a permission
-		// (guard rule 1) — so the grant still has to cover what it resolved to.
-		//
-		// Deliberately NOT errViewEntryNoFaceHere: that answers with a 200
-		// carrying the entity's other `_faces` so the page can offer one that
-		// exists, which for a DENIED face would disclose that it exists. A
-		// denial has to read as absence.
-		if !faceReadable(ctx, e.Type, e.Face) {
-			return nil, errViewEntryNotFound(entryID)
-		}
-		return e, nil
+	e, ok, err := h.visible.inWorldOf(ctx, world, entityType, entry.ID)
+	if err != nil {
+		return nil, &gateFaultError{err: err}
 	}
-	// The world resolved nothing. Whether that is a draft awaiting publication
-	// or a typo depends on whether the ENTITY exists at all — a question this
-	// function deliberately does not answer.
-	//
-	// Answering it here would mean probing the store and then probing it AGAIN
-	// in [viewsHandler.writeWorldAbsentView], which must load the default face
-	// to build the response anyway. Two probes can disagree (a delete landing
-	// between them) and the second is the one that decides, so the first is
-	// dead weight that reads as a guarantee. So this reports the world-absence
-	// unconditionally and the handler, which has to do the read regardless,
-	// makes the single existence decision.
-	return nil, errViewEntryNoFaceHere(entryID)
+	if !ok {
+		// The world resolved nothing the caller may read. Whether that is a
+		// draft awaiting publication or a typo depends on whether the ENTITY
+		// exists at all, a question this function deliberately does not
+		// answer: [viewsHandler.writeWorldAbsentView] must read a readable
+		// face to build its response anyway, so it makes the single
+		// existence decision. Two probes could disagree (a delete landing
+		// between them), and the second is the one that decides.
+		return nil, errViewEntryNoFaceHere(entry.ID)
+	}
+	return e, nil
 }
 
 // errViewEntryNoFaceHere marks an entry that EXISTS but has no face in the
@@ -262,7 +231,7 @@ func (h *viewsHandler) loadViewEntities(
 	byID := make(map[string]*entityPkg.Entity, len(ids))
 
 	// ONE batched read for every world, the default one included
-	// (TKT-1U8XYN): the default world's query carries a zero WorldScope, so
+	// (TKT-1U8XYN): the default world's query carries the trivial scope, so
 	// the store serves default rows exactly as the former per-id GetEntity
 	// loop did, without a round-trip per collected id. An id the store no
 	// longer has is simply absent, as the per-id not-found was.
@@ -280,7 +249,7 @@ func (h *viewsHandler) loadViewEntities(
 	// ([viewsHandler.loadViewBodies]).
 	for hdr, err := range store.ListEntityHeaders(ctx, h.store, store.EntityQuery{
 		IDs:   unique,
-		World: w.scope,
+		Faces: store.InWorld(w.scope),
 	}) {
 		if err != nil {
 			slog.Warn("dataentry: view traversal: loading collected entities failed; "+
@@ -328,10 +297,10 @@ func (h *viewsHandler) loadViewEntities(
 //
 // # Both halves of the verdict
 //
-// The row gate is face-BLIND, so it is paired with [faceReadable] — these
-// entities carry their resolved Face, and a principal granted only
-// `policy@published` must not be handed a draft row (TKT-O7R2A1). Same pairing
-// visibleHeaderIDs uses.
+// The row gate answers per face, and these entities carry their resolved
+// Face, so each is kept only when the verdict holds on that face's row. The
+// type-level face grant ([faceReadable]) is checked too: a principal granted
+// only `policy@published` must not be handed a draft row (TKT-O7R2A1).
 //
 // Grouping walks `ids` rather than ranging the map, so the per-type id slices
 // are deterministic across requests.
@@ -353,7 +322,7 @@ func (h *viewsHandler) gateLoadedEntities(
 	}
 	gate := readGateFromContext(ctx)
 	for typ, typeIDs := range idsByType {
-		verdicts, err := gate.PermitsReadMany(ctx, typ, typeIDs)
+		verdicts, err := gate.ReadableFacesMany(ctx, typ, typeIDs)
 		if err != nil {
 			slog.Warn("dataentry: view traversal: collection read gate failed; "+
 				"dropping type", "type", typ, "ids", len(typeIDs), "err", err)
@@ -367,7 +336,7 @@ func (h *viewsHandler) gateLoadedEntities(
 			if !ok {
 				continue
 			}
-			if !verdicts[id] || !faceReadable(ctx, e.Type, e.Face) {
+			if !verdicts.For(id).Contains(e.Face) || !faceReadable(ctx, e.Type, e.Face) {
 				delete(byID, id)
 			}
 		}
@@ -412,7 +381,7 @@ func (h *viewsHandler) gateLoadedEntities(
 //
 // e must be non-nil; callers hold a resolved entity by construction.
 func (w viewWorld) provenanceFor(e *entityPkg.Entity) *v1.EntityWorld {
-	if w.isDefault() || e == nil {
+	if w.ranksNothing() || e == nil {
 		return nil
 	}
 	rule, position := resolutionRuleAt(w.scope, e.Type, e.Face)
@@ -511,29 +480,37 @@ func (h *viewsHandler) writeWorldAbsentView(
 // "this entity has no such face" distinguishable by timing and by which error
 // came back, which is the disclosure the face grant withholds (TKT-O7R2A1).
 //
-// Faces are scanned in a stable order so two requests describe the same row.
+// Faces are chosen in a stable order so two requests describe the same row:
+// the implicit face first, then the declared faces in declaration order. The readable
+// set comes from visibility.Resolver.Family, which never lists a face the
+// principal may not read.
 //
 // Nil: returns (nil, store.ErrNotFound) when no row is readable.
 func (h *viewsHandler) readableFaceOf(
 	ctx context.Context, entityType, entityID string,
 ) (*entityPkg.Entity, error) {
-	if e, err := h.store.GetEntity(ctx, entityID); err == nil &&
-		e.Type == entityType && faceReadable(ctx, e.Type, e.Face) {
-
-		return e, nil
+	fam, ok, err := h.visible.family(ctx, entityType, entityID)
+	if err != nil {
+		return nil, err
 	}
-
-	var faces []string
-	for name := range h.schema().Meta.Entities[entityType].Faces {
-		faces = append(faces, name)
+	if !ok {
+		return nil, store.ErrNotFound
 	}
-	sort.Strings(faces)
-	for _, name := range faces {
-		e, err := h.store.GetEntityState(ctx, entityID, entityPkg.Face(name))
-		if err != nil || e == nil || e.Type != entityType {
+	declared := h.schema().Meta.Entities[entityType].Faces
+	// Ref reads the named face whatever the world, except that a denied world
+	// blocks it. This page must answer the same under a denied world as under
+	// an empty one, so it reads in the default world, never the request's.
+	world := defaultWorldHandle().visibility()
+	for _, face := range fam.Faces {
+		if _, isDeclared := declared[string(face)]; !face.IsImplicit() && !isDeclared {
 			continue
 		}
-		if faceReadable(ctx, e.Type, e.Face) {
+		e, found, rerr := h.visible.refIn(ctx, world, entityType,
+			entityPkg.Ref{ID: entityID, Face: face})
+		if rerr != nil {
+			return nil, rerr
+		}
+		if found {
 			return e, nil
 		}
 	}

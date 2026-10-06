@@ -19,6 +19,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // These tests pin the read-gating contract MCP must satisfy before it can be
@@ -79,7 +80,7 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, visibleID, "relates-to", hiddenID, nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: visibleID, Type: "relates-to", To: hiddenID}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
@@ -115,6 +116,8 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 		Watcher:       nopWatcher{},
 		ProjectRoot:   t.TempDir(),
 		Attachments:   testAttachmentDeps(t, svc, meta, audit.Nop{}),
+		World:         store.TrivialScope(),
+		Families:      store.TrivialScope(),
 	}
 
 	srv := &Server{logger: slog.New(slog.DiscardHandler)}
@@ -320,11 +323,11 @@ func TestACL_BuildStoreRelations_WithholdsUnreadableEdge(t *testing.T) {
 	if err := st.CreateEntity(ctx, newEntity(hiddenID, "feature", hiddenTitle)); err != nil {
 		t.Fatalf("seed hidden: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, visibleID, "relates-to", hiddenID, nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: visibleID, Type: "relates-to", To: hiddenID}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 
-	rels := buildStoreRelations(ctx, visibleID, "", denyEntityReader{raw: st, deny: hiddenID}, testMeta())
+	rels := buildStoreRelations(ctx, newEntity(visibleID, "ticket", "visible ticket"), denyEntityReader{raw: st, deny: hiddenID}, testMeta())
 	if rels == nil {
 		return // withheld entirely — correct
 	}
@@ -338,17 +341,43 @@ func TestACL_BuildStoreRelations_WithholdsUnreadableEdge(t *testing.T) {
 }
 
 // denyEntityReader lists every relation (as an ungated backend would) but
-// refuses GetEntity for one id, isolating buildStoreRelations' own check.
+// refuses every read of one id, isolating buildStoreRelations' own check.
 type denyEntityReader struct {
 	raw  *memstore.MemStore
 	deny string
 }
 
-func (d denyEntityReader) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	if id == d.deny {
+func (d denyEntityReader) Resolve(ctx context.Context, addr string) (*entity.Entity, error) {
+	if addr == d.deny {
 		return nil, errDenied
 	}
-	return d.raw.GetEntity(ctx, id)
+	return visibility.Unrestricted(d.raw).WithWorld(visibility.WorldOf(store.TrivialScope())).GetAddress(ctx, addr)
+}
+
+func (d denyEntityReader) Family(ctx context.Context, id string) (visibility.Family, bool, error) {
+	if id == d.deny {
+		return visibility.Family{}, false, nil
+	}
+	return visibility.Unrestricted(d.raw).WithWorld(visibility.WorldOf(store.TrivialScope())).Family(ctx, id)
+}
+
+func (d denyEntityReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
+	if addr == d.deny {
+		return entity.Ref{}, store.ErrNotFound
+	}
+	return visibility.Unrestricted(d.raw).WithWorld(visibility.WorldOf(store.TrivialScope())).WriteTarget(ctx, addr)
+}
+
+func (d denyEntityReader) ResolveHeaders(
+	ctx context.Context, refs []entity.Ref,
+) map[entity.Ref]visibility.ResolvedHeader {
+	out := visibility.Unrestricted(d.raw).WithWorld(visibility.WorldOf(store.TrivialScope())).ResolveHeaders(ctx, refs)
+	for ref := range out {
+		if ref.ID == d.deny {
+			delete(out, ref)
+		}
+	}
+	return out
 }
 
 func (d denyEntityReader) ListEntities(
@@ -363,10 +392,16 @@ func (d denyEntityReader) ListRelations(
 	return d.raw.ListRelations(ctx, q)
 }
 
+func (d denyEntityReader) ListRelationsStrict(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return d.raw.ListRelations(ctx, q)
+}
+
 func (d denyEntityReader) GetRelation(
-	ctx context.Context, from, relType, to string,
+	ctx context.Context, k entity.RelationKey,
 ) (*entity.Relation, error) {
-	return d.raw.GetRelation(ctx, from, relType, to)
+	return d.raw.GetRelation(ctx, k)
 }
 
 func (d denyEntityReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {

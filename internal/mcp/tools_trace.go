@@ -57,13 +57,14 @@ func (h traceHandler) handleTrace(
 
 	// Existence probe BEFORE traversal. This must go through h.store —
 	// the gated GraphReader — not a raw handle: under a networked wiring a
-	// hidden entity's GetEntity returns not-found, so "hidden" and "absent"
-	// produce the identical message and the probe is not an existence
-	// oracle (RR-FTJUUE). A raw probe here would defeat the gated tracer
-	// below, since it answers "is it in the store?" rather than "may this
-	// principal see it?".
-	if _, getErr := h.store.GetEntity(ctx, id); getErr != nil {
-		return entityReadFailed("entity", id, getErr), nil
+	// hidden entity has no readable face, so "hidden" and "absent" produce
+	// the identical message and the probe is not an existence oracle
+	// (RR-FTJUUE). A raw probe here would defeat the gated tracer below,
+	// since it answers "is it in the store?" rather than "may this
+	// principal see it?". A trace is entity level, so the probe asks for
+	// any readable face.
+	if !readable(ctx, h.store, id) {
+		return errorResult("entity not found: " + id), nil
 	}
 
 	result := traceFn(ctx, id, maxDepth)
@@ -99,11 +100,11 @@ func (h traceHandler) handleFindPath(
 	}
 
 	st := h.store
-	if _, fromErr := st.GetEntity(ctx, from); fromErr != nil {
-		return entityReadFailed("source entity", from, fromErr), nil
+	if !readable(ctx, st, from) {
+		return errorResult("source entity not found: " + from), nil
 	}
-	if _, toErr := st.GetEntity(ctx, to); toErr != nil {
-		return entityReadFailed("target entity", to, toErr), nil
+	if !readable(ctx, st, to) {
+		return errorResult("target entity not found: " + to), nil
 	}
 
 	path := h.tracer.FindPath(ctx, from, to)
@@ -116,7 +117,7 @@ func (h traceHandler) handleFindPath(
 	// also keeps the title honest: a step read through h.store carries only
 	// the properties the caller may see.
 	text, err := convertPathSteps(path, func(step tracer.PathStep) string {
-		e, getErr := st.GetEntity(ctx, step.ID)
+		e, getErr := st.Resolve(ctx, step.ID)
 		if getErr != nil {
 			return ""
 		}

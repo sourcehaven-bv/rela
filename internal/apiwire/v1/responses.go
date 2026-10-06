@@ -21,19 +21,7 @@ type Entity struct {
 	Self         string              `json:"_self,omitempty"`
 	Actions      map[string]bool     `json:"_actions,omitempty"`
 	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
-	// FieldAffordances carries per-field write affordances on per-entity
-	// GET responses. Sparse: only fields whose verdict deviates from the
-	// permissive default appear. Hidden fields are omitted from
-	// `Properties` AND from this map entirely. Pointer semantics
-	// distinguish "absent on the wire" (nil pointer; list / mutation
-	// responses) from "present and empty" (`{}`; per-entity GET with no
-	// deviations under nop resolver — closed-world signal matching the
-	// `_actions` precedent).
-	FieldAffordances *map[string]FieldAffordance `json:"_fields,omitempty"`
-	// RelationAffordances carries per-relation-type affordances on
-	// per-entity GET responses. Same face / closed-world semantics
-	// as FieldAffordances.
-	RelationAffordances *map[string]RelationAffordance `json:"_relations,omitempty"`
+	EditState
 	// Redacted names the properties withheld from `Properties` by
 	// field-level ACL (`visible:`) on THIS response (DEC-T0XIWQ). It is the
 	// field-level sibling of Inaccessible, which says the same thing
@@ -169,6 +157,71 @@ type Entity struct {
 	// leave it nil. Each warning has a stable `code`, an RFC 6901
 	// JSON Pointer `path`, and a human-readable `detail`.
 	Warnings []Warning `json:"warnings,omitempty"`
+}
+
+// EditState groups the per-entity fields an edit surface needs and a read
+// surface ignores. It is embedded in [Entity], so its fields serialize flat
+// beside the others. The grouping is by purpose and does not shrink the wire
+// shape: its fields are still promoted onto Entity. It also keeps Entity's
+// own exported field count under the plimsoll cap, which is why adding an
+// edit-only field here is preferred to adding it on Entity.
+type EditState struct {
+	// FieldAffordances carries per-field write affordances on per-entity
+	// GET responses. Sparse: only fields whose verdict deviates from the
+	// permissive default appear. Hidden fields are omitted from
+	// `Properties` AND from this map entirely. Pointer semantics
+	// distinguish "absent on the wire" (nil pointer; list / mutation
+	// responses) from "present and empty" (`{}`; per-entity GET with no
+	// deviations under nop resolver — closed-world signal matching the
+	// `_actions` precedent).
+	FieldAffordances *map[string]FieldAffordance `json:"_fields,omitempty"`
+	// RelationAffordances carries per-relation-type affordances on
+	// per-entity GET responses. Same face / closed-world semantics
+	// as FieldAffordances.
+	RelationAffordances *map[string]RelationAffordance `json:"_relations,omitempty"`
+	// Versions carries one opaque token per visible field, so an autosave can
+	// state which value it last saw (TKT-2VDVHF). The client echoes a token in
+	// [Preconditions]; the server recomputes it from the stored row and
+	// answers 412 when they differ. Tokens exist only for fields the caller
+	// can read: a redacted property has no token, because a token of a hidden
+	// value would let a caller test guesses against it. Present on the
+	// single-entity GET and PATCH responses and on a view's entry, nil
+	// elsewhere.
+	Versions *FieldVersions `json:"_versions,omitempty"`
+}
+
+// FieldVersions holds one version token per field of an entity. A token is
+// opaque: clients compare it for equality and echo it back, nothing else.
+type FieldVersions struct {
+	Properties map[string]string `json:"properties"`
+	Content    string            `json:"content"`
+	// Relations covers the entity's visible outgoing edges on its face as one
+	// set, because a PATCH replaces relation lists rather than single edges.
+	// Empty on a view's entry, whose edges are not the set a PATCH checks.
+	Relations string `json:"relations,omitempty"`
+}
+
+// Preconditions names, per field a PATCH writes, the version token the client
+// based its edit on. A field the PATCH does not write may not appear. Absent
+// fields are unchecked, so a PATCH without preconditions behaves as before.
+type Preconditions struct {
+	Properties map[string]string `json:"properties,omitempty"`
+	Content    *string           `json:"content,omitempty"`
+	Relations  *string           `json:"relations,omitempty"`
+}
+
+// FieldConflicts lists the preconditions that failed, per field.
+type FieldConflicts struct {
+	Properties map[string]Conflict `json:"properties,omitempty"`
+	Content    *Conflict           `json:"content,omitempty"`
+	Relations  *Conflict           `json:"relations,omitempty"`
+}
+
+// Conflict is one failed precondition: the token the client sent and the
+// token of the stored value.
+type Conflict struct {
+	Expected string `json:"expected"`
+	Actual   string `json:"actual"`
 }
 
 // FieldAffordance describes per-field write / option affordances on
@@ -320,6 +373,29 @@ type ListResponse struct {
 	Actions map[string]bool `json:"_actions,omitempty"`
 }
 
+// LinkListResponse is a collection response whose rows may carry a
+// relation-context answer: always the shape of `/_search`, and the shape of
+// `GET /{plural}` when that request names a relation context. Otherwise it
+// matches [ListResponse].
+type LinkListResponse struct {
+	Data     []LinkRow         `json:"data"`
+	Meta     ListMeta          `json:"meta"`
+	Included map[string]Entity `json:"included,omitempty"`
+	Actions  map[string]bool   `json:"_actions,omitempty"`
+}
+
+// LinkRow is one row of a [LinkListResponse].
+//
+// Linkable is present only when the request named a relation context
+// (`relation` and `direction=incoming`). It answers whether the principal
+// may create that relation from this row's face to the entity being edited,
+// computed by the gates the write runs. It is a hint; the write
+// re-authorizes. Nil on a request without relation context.
+type LinkRow struct {
+	Entity
+	Linkable *bool `json:"linkable,omitempty"`
+}
+
 // ListMeta contains pagination metadata.
 type ListMeta struct {
 	Total   int  `json:"total"`
@@ -341,6 +417,10 @@ type Schema struct {
 	// has no other worlds" from "this server is too old to tell me", and an
 	// omitted key cannot say the first.
 	Worlds map[string]World `json:"worlds,omitempty"`
+	// WorldOrder lists the declared worlds in schema.yaml order, which a JSON
+	// object cannot carry. A world switcher lists them in this order. Absent
+	// when the schema declares no worlds.
+	WorldOrder []string `json:"world_order,omitempty"`
 }
 
 // World is the JSON representation of one declared world — a named
@@ -415,6 +495,10 @@ type World struct {
 	// OnAbsent is the behavior for an entity with no face in this world.
 	// Mirrors metamodel.WorldOnAbsent.
 	OnAbsent *WorldOnAbsent `json:"on_absent,omitempty"`
+	// Create is the face a create issued from this world lands on
+	// (`worlds.<name>.create`). Empty when the world declares none; a create
+	// form on a faced type then asks for a face.
+	Create string `json:"create,omitempty"`
 	// Readable reports whether THIS caller may select the world via
 	// `?world=`. False means a request naming it is served an empty result
 	// rather than a 403 — so a client that respects this flag shows the user
@@ -430,10 +514,11 @@ type World struct {
 	// server too old to compute it. `default: false`, by contrast, is noise
 	// on every declared world.
 	Readable bool `json:"readable"`
-	// Default marks the implicit default world — today's graph, total by
-	// construction, always present and always selectable. Spelled as a flag
-	// rather than left for the client to infer from the reserved name, so a
-	// selector can label it without hardcoding the string.
+	// Default marks the default world: schema.yaml's `default_world:`, else
+	// the first declared world, else the generated `default` world. A
+	// request that names no world reads in it, and it is always selectable.
+	// Spelled as a flag so a selector can label it without knowing the
+	// name.
 	Default bool `json:"default,omitempty"`
 }
 
@@ -530,6 +615,7 @@ type FaceDef struct {
 
 // PropertyDef is the JSON representation of a property definition.
 type PropertyDef struct {
+	Label       string            `json:"label,omitempty"`
 	Type        string            `json:"type"`
 	Required    bool              `json:"required"`
 	Default     string            `json:"default,omitempty"`
@@ -556,6 +642,9 @@ type RelationType struct {
 	MinIncoming *int                   `json:"min_incoming,omitempty"`
 	MaxIncoming *int                   `json:"max_incoming,omitempty"`
 	Properties  map[string]PropertyDef `json:"properties,omitempty"`
+	// Scope is "content" for a relation type whose edges belong to one face
+	// of their source, and omitted for an identity-scoped one.
+	Scope string `json:"scope,omitempty"`
 	// Orderable, when set, declares that the frontend may offer drag-to-reorder
 	// controls on the corresponding side. The managed property names are
 	// always the reserved `_order_out` (outgoing) and `_order_in` (incoming).
@@ -641,12 +730,12 @@ type AppConfig struct {
 	// the on switch for ```plantuml diagram rendering.
 	PlantUMLServerURL string `json:"plantuml_server_url,omitempty"`
 	// DefaultWorld names the world a request lands in when no `?world=` is
-	// given. Empty means the default world (raw stored faces).
+	// given: schema.yaml's `default_world:`, else the first declared world.
+	// Empty when the schema declares no worlds, so the generated default
+	// world, which ranks nothing, serves every request.
 	//
-	// A browsing default, not a grant: the world's read permission is
-	// re-checked per request exactly as for an explicit `?world=`, so this
-	// can only change which face a bare URL resolves to, never who may see
-	// it. Validated at load against the declared worlds.
+	// The default world needs no world grant; the per-entity and per-face
+	// gates still decide what it shows.
 	DefaultWorld string `json:"default_world,omitempty"`
 	// HistoryEnabled reports whether THIS DEPLOYMENT can serve version
 	// history. Content versioning is a postgres-only, OPTIONAL store
@@ -674,6 +763,17 @@ type Error struct {
 	Detail   string       `json:"detail,omitempty"`
 	Instance string       `json:"instance,omitempty"`
 	Errors   []FieldError `json:"errors,omitempty"`
+	// Conflicts and Versions are set on the 412 a PATCH with preconditions
+	// receives (TKT-2VDVHF). Conflicts lists the fields whose stored token
+	// differs from the precondition; it may be empty when another write won
+	// the race without touching those fields. Versions carries the current
+	// tokens of every visible field, so the client can retry without a GET.
+	Conflicts *FieldConflicts `json:"conflicts,omitempty"`
+	Versions  *FieldVersions  `json:"versions,omitempty"`
+	// Faces lists the addresses (`ID@face`) a `face_required` refusal of a
+	// bare id offers: the faces of the entity the caller may read, in
+	// declaration order. A client retries with one of them.
+	Faces []string `json:"faces,omitempty"`
 }
 
 // FieldError represents a validation error on a specific field.
@@ -856,15 +956,29 @@ type SidebarPage struct {
 // "incoming", from the anchor's side), "root" when a gantt starts at the
 // anchor. The SPA uses Relation and Direction to link a new row to the
 // anchor; the server narrows the rows from its own config, never from these.
+//
+// Links names, per entity type, the relation a row created while the tab is
+// open is linked to the anchor over. The space's Create menu uses it, so a
+// row created there lands on the page it was created from.
 type SidebarPageTab struct {
-	ID        string `json:"id"`
-	Label     string `json:"label"`
-	Icon      string `json:"icon,omitempty"`
-	View      string `json:"view"`
-	Target    string `json:"target,omitempty"`
-	Scope     string `json:"scope,omitempty"`
-	Relation  string `json:"relation,omitempty"`
-	Direction string `json:"direction,omitempty"`
+	ID        string            `json:"id"`
+	Label     string            `json:"label"`
+	Icon      string            `json:"icon,omitempty"`
+	View      string            `json:"view"`
+	Target    string            `json:"target,omitempty"`
+	Scope     string            `json:"scope,omitempty"`
+	Relation  string            `json:"relation,omitempty"`
+	Direction string            `json:"direction,omitempty"`
+	Links     []SidebarPageLink `json:"links,omitempty"`
+}
+
+// SidebarPageLink is one entry of [SidebarPageTab.Links]: a row of Type is
+// linked to the page's anchor over Relation, in Direction from the anchor's
+// side ("outgoing" or "incoming").
+type SidebarPageLink struct {
+	Type      string `json:"type"`
+	Relation  string `json:"relation"`
+	Direction string `json:"direction"`
 }
 
 // SidebarCreate is one entry of a space's Create menu.

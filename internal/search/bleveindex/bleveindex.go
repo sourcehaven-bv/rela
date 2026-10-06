@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,6 +26,23 @@ import (
 // lastModifiedKey is the bleve internal-storage key under which we persist
 // the most recent entity mtime observed by this index.
 var lastModifiedKey = []byte("rela:last_modified")
+
+// formatKey is the bleve internal-storage key holding [indexFormat].
+var formatKey = []byte("rela:format")
+
+// indexFormat versions how documents are written. [New] empties an on-disk
+// index with any other value, including none, so the caller's backfill
+// rewrites it. Change it whenever a document written by an older build would
+// be read wrongly.
+//
+// Only a newer build checks the stamp. An older build that opens a stamped
+// index keeps the stamp and may write old-format documents; going back and
+// forth between versions therefore needs the index directory removed.
+//
+// Format 2: every document is keyed by [docKey], the face's state ref. Before
+// it, the backfill keyed faced entities by the bare id, which a world search
+// reads as the default face and drops (BUG-VYPK9N).
+const indexFormat = "2"
 
 // compile-time interface check.
 var _ search.Backend = (*Index)(nil)
@@ -77,14 +95,64 @@ func NewMem() (*Index, error) {
 		return nil, fmt.Errorf("bleveindex: create index: %w", err)
 	}
 	// coverage-ignore-end
+	// Stamped like an on-disk index, so every index answers the same way
+	// whatever the caller does with it.
+	return stampFormat(idx)
+}
+
+// stampFormat records [indexFormat] in an index that holds no document of
+// another format.
+func stampFormat(idx bleve.Index) (*Index, error) {
+	if err := idx.SetInternal(formatKey, []byte(indexFormat)); err != nil {
+		// coverage-ignore-start: defensive: SetInternal on a just-created index only fails on an OS fault
+		_ = idx.Close()
+		return nil, fmt.Errorf("bleveindex: record index format: %w", err)
+		// coverage-ignore-end
+	}
 	return &Index{index: idx}, nil
+}
+
+// clearPage is how many documents one pass of clearDocuments deletes.
+const clearPage = 1000
+
+// clearDocuments deletes every document of idx and its LastModified stamp.
+func clearDocuments(idx bleve.Index) error {
+	for {
+		req := bleve.NewSearchRequest(bleve.NewMatchAllQuery())
+		req.Size = clearPage
+		res, err := idx.Search(req)
+		if err != nil {
+			return err // coverage-ignore: defensive: a match-all search on an open index only fails on an OS fault
+		}
+		if len(res.Hits) == 0 {
+			break
+		}
+		batch := idx.NewBatch()
+		for _, h := range res.Hits {
+			batch.Delete(h.ID)
+		}
+		if err := idx.Batch(batch); err != nil {
+			return err // coverage-ignore: defensive: a delete batch on an open index only fails on an OS fault
+		}
+	}
+	return idx.DeleteInternal(lastModifiedKey)
+}
+
+// hasCurrentFormat reports whether idx was written in [indexFormat]. A read
+// error counts as no: rebuilding costs a backfill, trusting a stale index
+// serves wrong results until the next restart.
+func hasCurrentFormat(idx bleve.Index) bool {
+	v, err := idx.GetInternal(formatKey)
+	return err == nil && string(v) == indexFormat
 }
 
 // New creates (or reopens) a persistent on-disk bleve index at the given
 // path. If an index already exists there it is opened and its contents
 // reused — see [Index.LastModified], which lets the caller skip a backfill
 // entirely when the store has not changed since the index was written.
-// If the existing index is corrupted it is removed and recreated.
+// If the existing index is corrupted it is removed and recreated. If it was
+// written in another [indexFormat] it is emptied, so the caller's backfill
+// rewrites it.
 //
 // The on-disk form is what makes scorch's persister and merger run, which
 // is what bounds memory: segments produced by individual writes get merged
@@ -100,7 +168,21 @@ func NewMem() (*Index, error) {
 func New(path string) (*Index, error) {
 	idx, err := bleve.OpenUsing(path, indexRuntimeConfig())
 	if err == nil {
-		return &Index{index: idx}, nil
+		if hasCurrentFormat(idx) {
+			return &Index{index: idx}, nil
+		}
+		// Written by a build whose documents this one reads wrongly. Emptied
+		// in place, under the lock this process holds: closing it to remove
+		// the directory would let a second process open it in between, and
+		// one of the two would then delete the other's live index. An empty
+		// index fails the caller's "is current" check, so the backfill runs.
+		if clearErr := clearDocuments(idx); clearErr != nil {
+			// coverage-ignore-start: defensive: search and batch delete on an open index only fail on an OS fault
+			_ = idx.Close()
+			return nil, fmt.Errorf("bleveindex: empty outdated index at %s: %w", path, clearErr)
+			// coverage-ignore-end
+		}
+		return stampFormat(idx)
 	}
 	if errors.Is(err, ErrIndexLocked) || isLockTimeout(err) {
 		return nil, fmt.Errorf("bleveindex: index at %s is locked by another process: %w", path, err)
@@ -127,7 +209,7 @@ func New(path string) (*Index, error) {
 		return nil, fmt.Errorf("bleveindex: create index at %s: %w", path, err)
 	}
 	// coverage-ignore-end
-	return &Index{index: idx}, nil
+	return stampFormat(idx)
 }
 
 // ErrIndexLocked reports that another process holds the index directory.
@@ -194,6 +276,7 @@ func docKey(id string, p entity.Face) string { return entity.FormatStateRef(id, 
 // IndexBatch indexes every entity in a single Bleve batch and bumps
 // LastModified once at the end. Use this for initial backfill where
 // N round-trips through EntityPut would be O(N) Bleve transactions.
+// Each entity is one face, keyed exactly as [Index.EntityPut] keys it.
 // Returns the number of entities successfully written and the first
 // error (if any). Subsequent entities are not attempted on error.
 func (idx *Index) IndexBatch(entities []*entity.Entity) (int, error) {
@@ -205,7 +288,7 @@ func (idx *Index) IndexBatch(entities []*entity.Entity) (int, error) {
 	for _, e := range entities {
 		// coverage-ignore-start: defensive: batch.Index never errors on the always-marshalable bleveDoc; concrete batch
 		// has no failing-mock seam
-		if err := batch.Index(e.ID, entityToDoc(e)); err != nil {
+		if err := batch.Index(docKey(e.ID, e.Face), entityToDoc(e)); err != nil {
 			return 0, fmt.Errorf("bleveindex: batch index %s: %w", e.ID, err)
 		}
 		// coverage-ignore-end
@@ -438,8 +521,25 @@ var boostedFields = []struct {
 // like a family with no published face and resolve to the draft, which is
 // exactly the false hit this discards.
 //
-// The zero WorldScope skips all of that — see the fast path below.
+// The trivial scope skips all of that (see the fast path below); an unset
+// scope is refused.
 func (idx *Index) Search(text string, limit int, w store.WorldScope) ([]search.Face, error) {
+	return idx.SearchAdmitted(text, limit, w, nil)
+}
+
+// compile-time check: the bleve index admits faces before ranking.
+var _ search.AdmittingBackend = (*Index)(nil)
+
+// SearchAdmitted implements [search.AdmittingBackend]: [Index.Search] with
+// admit trimming each matched entity's family before the world ranks it.
+// The families of every matched id are admitted in ONE call, so the cost of
+// admission does not grow with the number of hits.
+func (idx *Index) SearchAdmitted(
+	text string, limit int, w store.WorldScope, admit search.AdmitFunc,
+) ([]search.Face, error) {
+	if !w.IsSet() {
+		return nil, fmt.Errorf("%w: search with an unset world", store.ErrInvalidQuery)
+	}
 	words := strings.Fields(text)
 	if len(words) == 0 {
 		return nil, nil
@@ -496,8 +596,13 @@ func (idx *Index) Search(text string, limit int, w store.WorldScope) ([]search.F
 	// collapse onto one entity and others are discarded as non-prime. Sizing
 	// to the caller's limit would then return short. The default world needs
 	// no headroom — one document per entity is already the prime.
-	if limit > 0 && !w.IsDefaultWorld() {
+	if limit > 0 && (!w.IsTrivial() || admit != nil) {
 		req.Size = limit * facesOverfetchFactor
+	}
+	if admit != nil {
+		// Admission needs each candidate's type. In the trivial world the
+		// hits are the whole candidate set, so they carry it themselves.
+		req.Fields = []string{"type", "face"}
 	}
 
 	result, err := idx.index.Search(req)
@@ -509,7 +614,12 @@ func (idx *Index) Search(text string, limit int, w store.WorldScope) ([]search.F
 	}
 	// coverage-ignore-end
 
-	faces, err := idx.resolveHits(result.Hits, w)
+	var faces []search.Face
+	if admit != nil {
+		faces, err = idx.resolveAdmittedHits(result.Hits, w, admit)
+	} else {
+		faces, err = idx.resolveHits(result.Hits, w)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -552,10 +662,10 @@ func (idx *Index) resolveHits(
 			continue
 		}
 
-		if w.IsDefaultWorld() {
+		if w.IsTrivial() {
 			// Rule 1 for everything: the default face, and nothing to
 			// resolve. Non-default faces are not primes in this world.
-			if !ptr.IsDefault() {
+			if !ptr.IsImplicit() {
 				continue
 			}
 			seen[id] = struct{}{}
@@ -585,33 +695,130 @@ func (idx *Index) resolveHits(
 	return out, nil
 }
 
+// resolveAdmittedHits is resolveHits with admit applied: the candidate
+// faces of every matched id are admitted in one call and ranked together;
+// a hit survives when its face is the prime of its admitted family.
+//
+// The cost does not grow with the hit count. In the trivial world only the
+// implicit face can be a prime, so the matched implicit faces are the
+// whole candidate set and no family is read. Otherwise every family is
+// read in one batched query (familiesCandidates).
+func (idx *Index) resolveAdmittedHits(
+	hits searchpkg.DocumentMatchCollection, w store.WorldScope, admit search.AdmitFunc,
+) ([]search.Face, error) {
+	type faceHit struct {
+		id   string
+		face entity.Face
+	}
+	parsed := make([]faceHit, 0, len(hits))
+	var ids []string
+	var cands []search.Candidate
+	seenID := make(map[string]bool, len(hits))
+	for _, hit := range hits {
+		id, ptr, err := entity.ParseStateRef(hit.ID)
+		if err != nil {
+			id, ptr = hit.ID, entity.Face("")
+		}
+		parsed = append(parsed, faceHit{id: id, face: ptr})
+		if w.IsTrivial() {
+			if ptr.IsImplicit() && !seenID[id] {
+				typ, _ := hit.Fields["type"].(string)
+				cands = append(cands, search.Candidate{ID: id, Type: typ, Face: ptr})
+			}
+		} else if !seenID[id] {
+			ids = append(ids, id)
+		}
+		seenID[id] = true
+	}
+	if !w.IsTrivial() {
+		var err error
+		if cands, err = idx.familiesCandidates(ids); err != nil {
+			return nil, err
+		}
+	}
+	admitted, err := admit(cands)
+	if err != nil {
+		return nil, err
+	}
+	primes := search.ResolvePrimes(w, admitted)
+	out := make([]search.Face, 0, len(primes))
+	seen := make(map[string]struct{}, len(primes))
+	for _, h := range parsed {
+		if _, dup := seen[h.id]; dup {
+			continue
+		}
+		res, ok := primes[h.id]
+		if !ok || res.Face != h.face {
+			// Excluded, not admitted, or a match on a face that is not the
+			// prime of the admitted family: absent, as in resolveHits.
+			continue
+		}
+		seen[h.id] = struct{}{}
+		out = append(out, search.Face{
+			ID:            h.id,
+			Face:          res.Face,
+			Via:           res.Via,
+			ChainPosition: res.ChainPosition,
+		})
+	}
+	return out, nil
+}
+
 // resolveFamily reads every indexed face of id and asks the world which one
 // is the prime. ok=false means this world excludes the entity.
 func (idx *Index) resolveFamily(
 	id string, w store.WorldScope,
 ) (res search.Resolved, ok bool, err error) {
-	q := bleve.NewTermQuery(id)
-	q.SetField("id")
-	req := bleve.NewSearchRequest(q)
-	req.Size = maxFacesPerEntity
-	req.Fields = []string{"type", "face"}
-	result, err := idx.index.Search(req)
+	cands, err := idx.familyCandidates(id)
 	if err != nil {
-		return search.Resolved{}, false, fmt.Errorf("bleveindex: family of %s: %w", id, err)
-	}
-
-	cands := make([]search.Candidate, 0, len(result.Hits))
-	for _, h := range result.Hits {
-		typ, _ := h.Fields["type"].(string)
-		ptr, _ := h.Fields["face"].(string)
-		cands = append(cands, search.Candidate{
-			ID: id, Type: typ, Face: entity.Face(ptr),
-		})
+		return search.Resolved{}, false, err
 	}
 	primes := search.ResolvePrimes(w, cands)
 	res, ok = primes[id]
 	return res, ok, nil
 }
+
+// familyCandidates reads every indexed face of id as resolution candidates.
+func (idx *Index) familyCandidates(id string) ([]search.Candidate, error) {
+	return idx.familiesCandidates([]string{id})
+}
+
+// familiesCandidates reads every indexed face of every id in ids as
+// resolution candidates: one query per familyBatch ids, so a search's
+// family reads do not grow one query per hit. Each id contributes at most
+// maxFacesPerEntity faces, as in faceKeys.
+func (idx *Index) familiesCandidates(ids []string) ([]search.Candidate, error) {
+	var cands []search.Candidate
+	for chunk := range slices.Chunk(ids, familyBatch) {
+		terms := make([]query.Query, 0, len(chunk))
+		for _, id := range chunk {
+			q := bleve.NewTermQuery(id)
+			q.SetField("id")
+			terms = append(terms, q)
+		}
+		req := bleve.NewSearchRequest(bleve.NewDisjunctionQuery(terms...))
+		req.Size = len(chunk) * maxFacesPerEntity
+		req.Fields = []string{"id", "type", "face"}
+		result, err := idx.index.Search(req)
+		if err != nil {
+			return nil, fmt.Errorf("bleveindex: families of %d ids: %w", len(chunk), err)
+		}
+		for _, h := range result.Hits {
+			id, _ := h.Fields["id"].(string)
+			typ, _ := h.Fields["type"].(string)
+			ptr, _ := h.Fields["face"].(string)
+			cands = append(cands, search.Candidate{
+				ID: id, Type: typ, Face: entity.Face(ptr),
+			})
+		}
+	}
+	return cands, nil
+}
+
+// familyBatch is how many ids one family query covers. It keeps a single
+// disjunction, and the result it may return, bounded when a search matches
+// thousands of entities.
+const familyBatch = 256
 
 // Close flushes anything still pending and releases resources held by the
 // index.

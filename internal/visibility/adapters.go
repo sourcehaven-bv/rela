@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // DeclarativeGate adapts *acl.Declarative to [RowGate]. The per-principal
@@ -27,6 +28,9 @@ import (
 // binding makes the operation a single consistent, amortized scope.
 type DeclarativeGate struct {
 	d *acl.Declarative
+	// world is the world a gated hop reads its endpoints in when the
+	// surface has no request world: the schema's default world.
+	world store.WorldScope
 }
 
 // Bind opens one acl.Request for the ctx principal and attaches it to
@@ -45,12 +49,16 @@ func (g DeclarativeGate) Bind(ctx context.Context) (context.Context, error) {
 	return acl.WithRequest(ctx, r), nil
 }
 
-// NewDeclarativeGate wraps d (required).
-func NewDeclarativeGate(d *acl.Declarative) (DeclarativeGate, error) {
+// NewDeclarativeGate wraps d (required). world (required) is the schema's
+// default world, in which [DeclarativeGate.GateTraversal] reads endpoints.
+func NewDeclarativeGate(d *acl.Declarative, world store.WorldScope) (DeclarativeGate, error) {
 	if d == nil {
 		return DeclarativeGate{}, errors.New("visibility: NewDeclarativeGate: declarative must be non-nil")
 	}
-	return DeclarativeGate{d: d}, nil
+	if !world.IsSet() {
+		return DeclarativeGate{}, errors.New("visibility: NewDeclarativeGate: world must be set")
+	}
+	return DeclarativeGate{d: d, world: world}, nil
 }
 
 // request resolves the acl.Request for this call: ctx-attached when
@@ -71,15 +79,15 @@ func (g DeclarativeGate) PermitsRead(ctx context.Context, entityType, id string)
 	return r.PermitsRead(ctx, entityType, id)
 }
 
-// PermitsReadMany implements [RowGate].
-func (g DeclarativeGate) PermitsReadMany(
+// ReadableFacesMany implements [RowGate].
+func (g DeclarativeGate) ReadableFacesMany(
 	ctx context.Context, entityType string, ids []string,
-) (map[string]bool, error) {
+) (acl.FaceVerdicts, error) {
 	r, err := g.request(ctx)
 	if err != nil {
-		return nil, err
+		return acl.FaceVerdicts{}, err
 	}
-	return r.PermitsReadMany(ctx, entityType, ids)
+	return r.ReadableFacesMany(ctx, entityType, ids)
 }
 
 // PolicyRedactor adapts *affordances.PolicyResolver to [FieldRedactor]:
@@ -127,13 +135,9 @@ type NopGate struct{}
 // PermitsRead implements [RowGate].
 func (NopGate) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
 
-// PermitsReadMany implements [RowGate].
-func (NopGate) PermitsReadMany(_ context.Context, _ string, ids []string) (map[string]bool, error) {
-	m := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		m[id] = true
-	}
-	return m, nil
+// ReadableFacesMany implements [RowGate]: every face of every id.
+func (NopGate) ReadableFacesMany(context.Context, string, []string) (acl.FaceVerdicts, error) {
+	return acl.UniformVerdicts(acl.AllFacesVerdict()), nil
 }
 
 // NopRedactor is the hide-nothing [FieldRedactor] for wirings without an

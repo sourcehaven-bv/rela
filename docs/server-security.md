@@ -396,6 +396,71 @@ so same-origin API writes are permitted. The JWT signature is the
 authentication; the Host/Origin allowlists remain the browser-CSRF
 defense.
 
+## Access log (`--access-log`)
+
+`--access-log` writes one line per request for operators who want request
+timing, for example to report slow routes:
+
+```text
+msg=request method=GET path=/api/v1/tickets status=200 wall_ms=41.2 queries=3 db_ms=12.8
+```
+
+| Value | Destination |
+|-------|-------------|
+| `syslog` | The local syslog socket (`/dev/log`) with tag `rela-access`. Under systemd, read it with `journalctl -t rela-access`. The line starts at `msg=`: syslog adds its own time and priority. |
+| `stderr` | Standard error, interleaved with the application log, with `time=` and `level=` like every other line. Meant for local use. |
+
+The access log is a separate logger from the application log. Its lines
+are always written at Info, so `--quiet` does not silence them. Under
+`--verbose` the record is also written to the application log at Debug,
+where it marks the end of the request's SQL lines.
+
+A destination that cannot be opened stops the server at startup, before
+the project is loaded, rather than leaving the log silently empty. After
+startup, a failed write is dropped without a warning: if the syslog socket
+goes away while the server runs, the access log stops until a restart.
+
+Some requests carry extra fields:
+
+- `panic=true`: the handler panicked. If that happened before a response
+  was written, `status` is 500. That status is recorded, not sent: the
+  connection is closed, so the client sees a reset and a proxy in front
+  reports 502.
+- `path_truncated=true`: the path was longer than 512 bytes and was cut.
+  A method longer than 32 bytes is logged as `OTHER`.
+
+The event streams (`/api/events`, `/api/v1/_events`) log one line when the
+stream closes. Their `wall_ms` is how long the tab kept the stream open,
+not how slow the server was. Leave them out of latency reports.
+
+What it records and what it leaves out:
+
+- The path is logged as received, decoded, without the query string. Query
+  strings can carry tokens. The path itself can still contain user data:
+  entity IDs, and attachment file names such as
+  `/api/v1/tickets/TKT-1/_attachments/file/ziekmelding.pdf`. Treat the log
+  as personal data where that applies.
+- No user, IP address, or request body.
+- No SQL. `--verbose` is not a substitute: it also logs every SQL
+  statement with its bound arguments.
+
+The query count is safe here but not in a response. The access log never
+sets the `Server-Timing` header that `--verbose` adds. A per-response
+statement count can vary with rows the caller may not see, so it is an
+existence side channel when sent to a client. In a log that only the
+operator reads, it is not.
+
+Operational limits:
+
+- **One rate limit for both logs.** journald rate-limits per unit, not per
+  tag. A flood of requests uses the same budget as the application log, so
+  once it is exhausted, warnings and errors are dropped too. The tag only
+  separates the logs when reading. If the server is reachable without
+  authentication, raise `LogRateLimitBurst=` on the unit or put an
+  authenticating proxy in front.
+- **Writes are synchronous.** Each line is written before the response is
+  finished. If journald stalls, requests stall with it.
+
 ## Access control (`acl.yaml`)
 
 rela-server enforces a declarative ACL at every write entry point, and — when

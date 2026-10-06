@@ -129,7 +129,9 @@ func backfillBleveInto(ctx context.Context, idx entityBatchIndexer, st store.Sto
 		chunk = chunk[:0]
 	}
 
-	for e, err := range st.ListEntities(ctx, store.EntityQuery{}) {
+	// Every face: the index holds one document per face row, as the
+	// observer indexes them on write.
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			listErrs = append(listErrs, err)
 			continue

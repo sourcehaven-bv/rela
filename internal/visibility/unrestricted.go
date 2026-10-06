@@ -12,29 +12,25 @@ import (
 // redaction: every read goes straight to the store. Build one with
 // [Unrestricted].
 //
-// Why this type exists at all, given it does nothing: the Lua read surface
-// (internal/lua's EntityReader) is satisfied STRUCTURALLY by store.Store,
-// so a gated wiring and an ungated one are indistinguishable when reading
-// a struct literal — `VisibleReader: st` and `VisibleReader: gatedReader`
-// look equally deliberate. Three production sites were silently ungated
-// through exactly that blind spot (RR-R0G3DF). Naming the ungated choice
-// makes it greppable:
+// Why this type exists at all, given it does nothing: an ungated wiring
+// must be spelled out. Three production sites were once silently ungated
+// because a bare store satisfied the Lua read surface, so `VisibleReader: st`
+// looked as deliberate as a gated reader (RR-R0G3DF). The Lua read surface
+// (internal/lua's EntityReader) now reads through GetAddress, which
+// store.Store does not have, so the compiler refuses a bare store and an
+// ungated path must name this type:
 //
 //	grep -rn "visibility.Unrestricted" --include=*.go
 //
 // enumerates every ungated script read path in the tree, in one command.
 //
-// This is LEGIBILITY, not enforcement. The type system still accepts a
-// bare store.Store wherever this is accepted; nothing stops a future
-// wiring from skipping it. What it buys is that an ungated path can no
-// longer be created by accident or survive review unnoticed — it has to be
-// spelled out.
-//
-// Deliberately NOT a store.Store: it exposes the three read methods and
-// nothing else, so it cannot be passed where a full store is wanted (a
-// write path, say) and cannot silently widen back into one.
+// Deliberately NOT a store.Store: it exposes read methods only, so it
+// cannot be passed where a full store is wanted (a write path, say) and
+// cannot silently widen back into one.
 type UnrestrictedReader struct {
-	st store.Store
+	st    store.Store
+	res   *Resolver
+	world World
 }
 
 // Unrestricted wraps a raw store as an explicitly ungated script read
@@ -45,7 +41,7 @@ type UnrestrictedReader struct {
 // actively dangerous: assigning a typed nil pointer into the
 // lua.EntityReader interface field produces a NON-nil interface, so lua's
 // `VisibleReader == nil` deny guard (runtime.go, RR-X9NVHI) is skipped and
-// the first read nil-derefs inside GetEntity. Nothing on the script paths
+// the first read nil-derefs inside GetAddress. Nothing on the script paths
 // recovers, so that panic takes the process down at request time rather
 // than raising the clean "no reader is configured" Lua error the deny path
 // produces. A nil store here is a wiring bug: failing loudly at
@@ -65,17 +61,54 @@ type UnrestrictedReader struct {
 //
 // If a new call site does not clearly fall into one of those, it probably
 // wants the ACL-bound reader instead — see [NewScriptReader].
-func Unrestricted(st store.Store) *UnrestrictedReader {
+//
+// opts configure its [Resolver]; a wiring site with a metamodel passes
+// [WithFamilies]. A bad option panics for the same reason a nil store does.
+func Unrestricted(st store.Store, opts ...ResolverOption) *UnrestrictedReader {
 	if st == nil {
 		panic("visibility.Unrestricted: store must be non-nil")
 	}
-	return &UnrestrictedReader{st: st}
+	res, err := NewAllowAllResolver(st, opts...)
+	if err != nil {
+		panic("visibility.Unrestricted: " + err.Error())
+	}
+	return &UnrestrictedReader{st: st, res: res}
 }
 
-// GetEntity implements the script read surface: a pass-through that accepts
-// an address (`ID` or `ID@face`), as the gated [ScriptReader] does.
-func (r *UnrestrictedReader) GetEntity(ctx context.Context, addr string) (*entity.Entity, error) {
-	return store.GetEntityAt(ctx, r.st, addr)
+// WithWorld returns a copy of r whose bare-id reads resolve in w. Until the
+// wiring sets it, the world is unset and a bare-id read fails closed.
+func (r *UnrestrictedReader) WithWorld(w World) *UnrestrictedReader {
+	c := *r
+	c.world = w
+	return &c
+}
+
+// GetAddress implements the script read surface. It resolves addr exactly as
+// the gated [ScriptReader.GetAddress] does, through the allow-all [Resolver]:
+// `ID@face` reads that face, a bare id resolves in the reader's world, and an
+// address the grammar refuses misses. Only the gate and the redaction are
+// absent.
+func (r *UnrestrictedReader) GetAddress(ctx context.Context, addr string) (*entity.Entity, error) {
+	return r.res.addressAny(ctx, worldIn(ctx, r.world), addr)
+}
+
+// WriteTarget resolves addr to the face a write edits, through the allow-all
+// resolver. Like [ScriptReader.WriteTarget] it ignores a per-operation read
+// world.
+func (r *UnrestrictedReader) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
+	return r.res.writeTargetAny(ctx, r.world, addr)
+}
+
+// Family reports every stored face of the entity id, reading headers only.
+// See [ScriptReader.Family].
+func (r *UnrestrictedReader) Family(ctx context.Context, id string) (Family, bool, error) {
+	return r.res.familyAny(ctx, id)
+}
+
+// ResolveHeaders answers a batch of addresses from headers only. See
+// [ScriptReader.ResolveHeaders].
+func (r *UnrestrictedReader) ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]ResolvedHeader {
+	return r.res.ResolveHeaders(ctx, worldIn(ctx, r.world), refs)
 }
 
 // ListEntities implements the script read surface: straight pass-through.
@@ -95,6 +128,13 @@ func (r *UnrestrictedReader) ListEntityHeaders(
 
 // ListRelations implements the script read surface: straight pass-through.
 func (r *UnrestrictedReader) ListRelations(
+	ctx context.Context, q store.RelationQuery,
+) iter.Seq2[*entity.Relation, error] {
+	return r.st.ListRelations(ctx, q)
+}
+
+// ListRelationsStrict is ListRelations: there is no gate to fault.
+func (r *UnrestrictedReader) ListRelationsStrict(
 	ctx context.Context, q store.RelationQuery,
 ) iter.Seq2[*entity.Relation, error] {
 	return r.st.ListRelations(ctx, q)

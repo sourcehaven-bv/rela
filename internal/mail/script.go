@@ -29,7 +29,8 @@ import (
 //
 // # The script has NO graph access, by construction
 //
-// The runtime is built with a ZERO [lua.ReadDeps] and is a READER, so:
+// The runtime is built by [lua.NewDetached], a READER with no graph
+// collaborators, so:
 //
 //   - rela.get_entity, rela.list_entities, rela.search and every traversal
 //     binding are registered against nil collaborators and raise rather than
@@ -64,9 +65,6 @@ type ScriptSender struct {
 	// [ScriptSender.buildRuntime] for why it is the script path and not the
 	// triggering principal.
 	secretsScope string
-
-	// relaDir is where secrets.yaml is read from.
-	relaDir string
 
 	// stdout receives anything the script prints. Discarded by default: a mail
 	// transport running on a background worker has no terminal, and print()
@@ -110,7 +108,6 @@ func NewScriptSender(cfg *Config, opts ...ScriptOption) (*ScriptSender, error) {
 		// scoping on the resolved absolute path would never match an override
 		// and the operator's per-script credential would be silently ignored.
 		secretsScope: cfg.Script,
-		relaDir:      cfg.relaDir,
 		stdout:       io.Discard,
 	}
 	s.scriptPath = cfg.resolveScriptPath()
@@ -225,7 +222,7 @@ func (s *ScriptSender) buildRuntime(ctx context.Context) (*lua.Runtime, error) {
 	// capability grant inside the runtime — so an operator who lists
 	// `secrets: [mailgun_key]` gets exactly that key even though secrets.yaml
 	// holds the database DSN too.
-	sec, err := secrets.Load(s.relaDir, s.secretsScope)
+	sec, err := s.cfg.loadSecrets(s.secretsScope)
 	switch {
 	case errors.Is(err, secrets.ErrNotFound):
 		// No secrets file. Not an error: a script may authenticate from an
@@ -236,11 +233,11 @@ func (s *ScriptSender) buildRuntime(ctx context.Context) (*lua.Runtime, error) {
 		opts = append(opts, lua.WithSecrets(sec))
 	}
 
-	// A ZERO ReadDeps: no store, no tracer, no searcher, no metamodel. The
+	// A DETACHED runtime: no store, no tracer, no searcher, no metamodel. The
 	// graph bindings are registered but have nothing behind them, so they
-	// raise. NewReader, never NewWriter — a writer would additionally register
+	// raise. It is a reader, never a writer, which would additionally register
 	// create/update/delete.
-	return lua.NewReader(lua.ReadDeps{}, s.stdout, opts...), nil
+	return lua.NewDetached(s.stdout, opts...), nil
 }
 
 // messageTable renders m as the Lua `message` global.
@@ -427,8 +424,7 @@ func (l *LuaSender) SendMail(ctx context.Context, msg lua.MailMessage) error {
 	return l.sender.Send(ctx, m)
 }
 
-// LoadLuaSender is the [lua.MailSenderLoader] for a project's .rela
-// directory: it reads mail.yaml, builds the configured transport, and adapts
+// LoadLuaSender is the [lua.MailSenderLoader]: it reads mail.yaml from src, builds the configured transport, and adapts
 // it for the mail.send binding.
 //
 // Returns (nil, nil) when mail is not configured — the absence is normal and
@@ -441,8 +437,8 @@ func (l *LuaSender) SendMail(ctx context.Context, msg lua.MailMessage) error {
 // Lua runtime per send. That is not a recursion hazard — the inner runtime has
 // no mail sender wired, so a send script calling mail.send gets
 // not_configured rather than an unbounded chain of runtimes.
-func LoadLuaSender(cacheDir string) (lua.MailSender, error) {
-	cfg, err := LoadConfig(cacheDir)
+func LoadLuaSender(src Source) (lua.MailSender, error) {
+	cfg, err := LoadConfigFrom(src)
 	switch {
 	case errors.Is(err, ErrConfigNotFound):
 		return nil, nil //nolint:nilnil // "not configured" is a normal absence; see the godoc.

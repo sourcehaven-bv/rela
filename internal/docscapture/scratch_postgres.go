@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 )
@@ -52,7 +53,13 @@ func scratchBackend(_ string) ([]appbuild.Option, func(), error) {
 	}
 
 	ctx := context.Background()
-	admin, err := pgx.Connect(ctx, base)
+	// pgxpool.ParseConfig, not pgx.Connect: the DSN may carry pool-only keys
+	// such as pool_max_conns, which pgx would send to the server (BUG-JQO2PH).
+	poolCfg, err := pgxpool.ParseConfig(base)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("parse RELA_DATABASE_URL: %w", err)
+	}
+	admin, err := pgx.ConnectConfig(ctx, poolCfg.ConnConfig)
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("connect to RELA_DATABASE_URL: %w", err)
 	}

@@ -304,10 +304,11 @@ relations:
     symmetric: true
 ```
 
-Sync to load the metamodel:
+rela reads `schema.yaml` on every run, so the new types are available
+immediately. Check that the schema loads:
 
 ```bash
-rela sync
+rela schema
 ```
 
 ---

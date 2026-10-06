@@ -72,6 +72,24 @@ const FORM = {
 
 const CREATED: Entity = { id: 'TKT-9', type: 'ticket', properties: { title: 'x' }, warnings: [] }
 
+// A section create on a feature page: feature --contains--> ticket. The new
+// ticket is the relation's TO (`link_as: to`), so the edge is INCOMING to it.
+function registerContains(opts: { inverse?: boolean; featurePrefix?: string } = {}) {
+  const schema = useSchemaStore()
+  schema.entityTypes.set('feature', {
+    name: 'feature',
+    label: 'Feature',
+    id_prefix: opts.featurePrefix ?? 'FEAT',
+    properties: {},
+  } as never)
+  schema.relationTypes.set('contains', {
+    label: 'Contains',
+    from: ['feature'],
+    to: ['ticket'],
+    ...(opts.inverse === false ? {} : { inverse: { id: 'contained_in' } }),
+  })
+}
+
 // BUG-2OXEW0: unmount every component, or its in-flight async work logs
 // after the file finishes and races vitest's worker teardown.
 const mounted: VueWrapper[] = []
@@ -95,6 +113,8 @@ async function mountCreate(
     embeddedLink?: { relation: string; peer: string; linkAs: 'from' | 'to' }
     embeddedTemplate?: string
     embeddedWorld?: string
+    embeddedFace?: string
+
     embeddedAddAnother?: boolean
   } = {}
 ) {
@@ -278,17 +298,11 @@ describe('DynamicForm — embedded pre-link props', () => {
     // The peer's type is resolved from its id prefix, so the schema has to know
     // the prefix — as it does in the real app. Without it the relation carries
     // an untypeable id and reshapeLegacyToModern aborts the whole create.
-    const schema = useSchemaStore()
-    schema.entityTypes.set('feature', {
-      name: 'feature',
-      label: 'Feature',
-      id_prefix: 'FEAT',
-      properties: {},
-    } as never)
+    registerContains()
 
     const { wrapper, create } = await mountCreate({
       embedded: true,
-      embeddedLink: { relation: 'implements', peer: 'FEAT-1', linkAs: 'to' },
+      embeddedLink: { relation: 'contains', peer: 'FEAT-1', linkAs: 'to' },
     })
 
     await wrapper.find('form').trigger('submit')
@@ -296,7 +310,7 @@ describe('DynamicForm — embedded pre-link props', () => {
 
     expect(create.mock.calls.length, 'create should have been called').toBe(1)
     const payload = create.mock.calls[0][1] as {
-      relations?: Record<string, { data: { type: string; id: string }[] }>
+      relations?: Record<string, { add: { type: string; id: string }[] }>
       properties?: Record<string, unknown>
     }
     // The edge rides the create payload for linkAs: 'to', in the modern
@@ -304,12 +318,91 @@ describe('DynamicForm — embedded pre-link props', () => {
     // an untypeable peer makes reshapeLegacyToModern return null, which aborts
     // the entire create — so a pre-linked relation with no picker field on the
     // form could not save at all until the prefill registered its type.
-    expect(payload.relations?.implements).toEqual({
-      data: [{ type: 'feature', id: 'FEAT-1' }],
+    //
+    // It rides under the INVERSE key: the new entity is the target, and the
+    // canonical key would write ticket --contains--> feature (BUG-80LVS8).
+    expect(payload.relations?.contained_in).toEqual({
+      add: [{ type: 'feature', id: 'FEAT-1' }],
     })
+    expect(payload.relations?.contains).toBeUndefined()
     // And the host page's `prop.title` is still ignored — the prop channel
     // supplies context, it does not re-enable the URL overlay.
     expect(payload.properties?.title).not.toBe('from-host-url')
+  })
+
+  it('types a peer whose id_prefix includes the dash (BUG-80LVS8)', async () => {
+    // `id_prefix: FEAT-` is the documented spelling. Splitting the id at its
+    // first dash and comparing to id_prefix never matched it.
+    registerContains({ featurePrefix: 'FEAT-' })
+
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'contains', peer: 'FEAT-1', linkAs: 'to' },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const payload = create.mock.calls[0][1] as { relations?: Record<string, unknown> }
+    expect(payload.relations?.contained_in).toEqual({
+      add: [{ type: 'feature', id: 'FEAT-1' }],
+    })
+  })
+
+  it('link_as=to without an inverse links after create, as the target', async () => {
+    // No inverse key, so the payload cannot express peer --contains--> new.
+    // The edge is created after submit, addressed from the new entity with
+    // direction incoming, which needs no peer type.
+    registerContains({ inverse: false })
+    const api = await import('@/api')
+    const createRelationMock = vi.mocked(api.createRelation)
+
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'contains', peer: 'FEAT-1', linkAs: 'to' },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const payload = create.mock.calls[0][1] as { relations?: Record<string, unknown> }
+    expect(payload.relations?.contains).toBeUndefined()
+    expect(createRelationMock).toHaveBeenCalledWith(
+      'ticket',
+      CREATED.id,
+      'contains',
+      'FEAT-1',
+      undefined,
+      'incoming'
+    )
+  })
+
+  it('link_as=to with an untypeable peer links after create, as the target', async () => {
+    // A manual id like `backend` reveals no type, so the edge cannot be typed
+    // in the payload. The incoming call after create needs no peer type.
+    registerContains()
+    const api = await import('@/api')
+    const createRelationMock = vi.mocked(api.createRelation)
+
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'contains', peer: 'backend', linkAs: 'to' },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(create).toHaveBeenCalledTimes(1)
+    const payload = create.mock.calls[0][1] as { relations?: Record<string, unknown> }
+    expect(payload.relations?.contained_in).toBeUndefined()
+    expect(createRelationMock).toHaveBeenCalledWith(
+      'ticket',
+      CREATED.id,
+      'contains',
+      'backend',
+      undefined,
+      'incoming'
+    )
   })
 
   it('link_as=from creates the edge FROM the new entity, not from the peer', async () => {
@@ -342,7 +435,33 @@ describe('DynamicForm — embedded pre-link props', () => {
     expect(payload.relations?.implements).toBeUndefined()
 
     // (type, entityId, relation, targetId) => entityId --relation--> targetId.
-    expect(createRelationMock).toHaveBeenCalledWith('ticket', CREATED.id, 'implements', 'no-prefix-id')
+    expect(createRelationMock).toHaveBeenCalledWith(
+      'ticket',
+      CREATED.id,
+      'implements',
+      'no-prefix-id'
+    )
+  })
+
+  // BUG-FYEEVX: a content-scoped edge belongs to the face just created.
+  it('links from the created face, addressed by its _self', async () => {
+    const api = await import('@/api')
+    const createRelationMock = vi.mocked(api.createRelation)
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedLink: { relation: 'implements', peer: 'no-prefix-id', linkAs: 'from' },
+    })
+    create.mockResolvedValue({ ...CREATED, _self: '/api/v1/tickets/TKT-9@draft' })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(createRelationMock).toHaveBeenCalledWith(
+      'ticket',
+      'TKT-9@draft',
+      'implements',
+      'no-prefix-id'
+    )
   })
 
   it('surfaces a link failure instead of silently creating an unlinked entity', async () => {
@@ -380,6 +499,22 @@ describe('DynamicForm — embedded pre-link props', () => {
     expect((create.mock.calls[0][1] as { world?: string }).world).toBe('published')
   })
 
+  // BUG-FYEEVX: a duplicate of a face is created on that face.
+  it('creates on the face the host named, and names no world', async () => {
+    const { wrapper, create } = await mountCreate({
+      embedded: true,
+      embeddedWorld: 'published',
+      embeddedFace: 'draft',
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const body = create.mock.calls[0][1] as { world?: string; face?: string }
+    expect(body.face).toBe('draft')
+    expect(body.world).toBeUndefined()
+  })
+
   it('carries no world when the host had none', async () => {
     const { wrapper, create } = await mountCreate({ embedded: true })
 
@@ -405,7 +540,18 @@ describe('DynamicForm — pre-link cannot be silently dropped', () => {
     // card edits are supposed to arrive via pendingCardChanges — which the
     // prefill does not write. Before the post-condition check the entity was
     // created unlinked, silently.
+    //
+    // Symmetric, because only then does a `to` pre-link ride the relation's own
+    // name; a directed relation rides its inverse key, which no cards widget
+    // excludes.
     const schema = useSchemaStore()
+    schema.relationTypes.set('implements', {
+      label: 'Implements',
+      from: ['ticket', 'feature'],
+      to: ['ticket', 'feature'],
+      symmetric: true,
+      inverse: { id: 'implements' },
+    })
     schema.forms.set('cards-form', {
       id: 'cards-form',
       entity: 'ticket',
@@ -414,7 +560,10 @@ describe('DynamicForm — pre-link cannot be silently dropped', () => {
     } as never)
     schema.entityTypes.set('ticket', ENTITY_TYPE as never)
     schema.entityTypes.set('feature', {
-      name: 'feature', label: 'Feature', id_prefix: 'FEAT', properties: {},
+      name: 'feature',
+      label: 'Feature',
+      id_prefix: 'FEAT',
+      properties: {},
     } as never)
     schema.loaded = true
 
@@ -429,8 +578,12 @@ describe('DynamicForm — pre-link cannot be silently dropped', () => {
       },
       global: {
         stubs: {
-          RouterLink: true, MarkdownEditor: true, RelationPicker: true,
-          RelationCards: true, AutoSaveIndicator: true, HelpModal: true,
+          RouterLink: true,
+          MarkdownEditor: true,
+          RelationPicker: true,
+          RelationCards: true,
+          AutoSaveIndicator: true,
+          HelpModal: true,
         },
       },
     })
@@ -451,7 +604,10 @@ describe('DynamicForm — pre-link cannot be silently dropped', () => {
     // The paired positive: the check must not refuse the ordinary case.
     const schema = useSchemaStore()
     schema.entityTypes.set('feature', {
-      name: 'feature', label: 'Feature', id_prefix: 'FEAT', properties: {},
+      name: 'feature',
+      label: 'Feature',
+      id_prefix: 'FEAT',
+      properties: {},
     } as never)
 
     const { wrapper, create } = await mountCreate({

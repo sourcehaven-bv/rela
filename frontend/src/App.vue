@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { navigationPending } from '@/router'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { getErrorMessage } from '@/api'
 import {
   useKeyboardShortcuts,
+  useShellCommands,
   shortcutsModalOpen,
   paletteOpen,
   useEvents,
@@ -15,6 +16,7 @@ import { useConfirmHost } from '@/composables/useConfirm'
 import { useDetailPanelOutlet } from '@/composables/useDetailPanel'
 import { usePageHeaderOutlet } from '@/composables/usePageHeader'
 import { useBackTarget } from '@/composables/useBackTarget'
+import { unknownWorldQuery } from '@/composables/useWorld'
 import ActivityBar from '@/components/common/ActivityBar.vue'
 import RlAppShell from 'rela-components/components/layout/RlAppShell.vue'
 import RlPageHeader from 'rela-components/components/layout/RlPageHeader.vue'
@@ -114,6 +116,9 @@ const error = ref<string | null>(null)
 // Initialize global keyboard shortcuts
 useKeyboardShortcuts()
 
+// Commands from a native shell's menu bar (the desktop app).
+useShellCommands()
+
 // Initialize SSE connection for real-time updates
 useEvents()
 
@@ -141,6 +146,19 @@ onMounted(async () => {
     loading.value = false
   }
 })
+
+// A `?world=` naming no served world is a 400 on every API route, so drop
+// it and land in the default world. See unknownWorldQuery.
+const router = useRouter()
+watch(
+  [() => schemaStore.loaded, () => route.query.world],
+  ([loaded]) => {
+    if (!loaded) return
+    const next = unknownWorldQuery(route.query, schemaStore.worlds)
+    if (next) router.replace({ query: next })
+  },
+  { immediate: true },
+)
 
 // Apply palette CSS variables when schema loads, theme toggles, or
 // the saved palette changes (e.g. after the user clicks Save Palette

@@ -641,28 +641,30 @@ func (s *documentService) renderScript(
 	return buf.String(), nil
 }
 
-// loadEntry reads the entry entity by its ADDRESS (`ID` or `ID@face`). The
-// entry id reaching this service is an address, because the anchored document
-// routes and the per-type export override both render a specific face;
-// store.GetEntity takes a bare id and would miss every faced row
-// (BUG-PLZDPR).
-func (s *documentService) loadEntry(ctx context.Context, entryID string) (*entity.Entity, error) {
-	id, face, err := entity.ParseStateRef(entryID)
-	if err != nil {
-		return nil, err
-	}
-	return s.store.GetEntityState(ctx, id, face)
-}
-
 // computeDocumentHash computes a content hash for cache validation.
 // Uses the entry entity for hashing. Returns the entities and their hash.
 func (s *documentService) computeDocumentHash(ctx context.Context, entryID string) ([]*entity.Entity, string, error) {
 	e, err := s.loadEntry(ctx, entryID)
 	if err != nil {
-		return nil, "", fmt.Errorf("entity %q not found", entryID)
+		return nil, "", fmt.Errorf("load entity %q: %w", entryID, err)
 	}
 	entities := []*entity.Entity{e}
 	return entities, hashEntities(entities), nil
+}
+
+// loadEntry reads the entry entity by its ADDRESS (`ID` or `ID@face`).
+//
+// The entry id is an address because the document route renders the row its
+// gates cleared, which for a faced type is never the zero face. GetEntity takes
+// a bare id and answers not-found for an address on every backend, so reading
+// through it turned each faced render into a 500 (BUG-8J3LSB). This performs
+// no ACL decision: the caller has already gated the address.
+func (s *documentService) loadEntry(ctx context.Context, addr string) (*entity.Entity, error) {
+	id, face, err := entity.ParseStateRef(addr)
+	if err != nil {
+		return nil, fmt.Errorf("parse entry address %q: %w", addr, err)
+	}
+	return s.store.GetEntity(ctx, entity.Ref{ID: id, Face: face})
 }
 
 // hashEntities computes a FNV-64a hash of the given entities' content.

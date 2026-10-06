@@ -49,19 +49,18 @@ func TestDeleteEntityFace_RemovesOnlyTheFaceAndItsTail(t *testing.T) {
 	}
 	// An edge tailed at the PUBLISHED face, one at the BARE face, and an
 	// INCOMING edge from DEC-1 to the entity.
-	if _, rErr := st.CreateRelation(ctx, "REQ-1", "addresses", "DEC-1",
-		&store.RelationData{FromFace: published}); rErr != nil {
+	if _, rErr := st.CreateRelation(ctx, entity.RelationKey{From: "REQ-1", FromFace: published, Type: "addresses", To: "DEC-1"}, &store.RelationData{}); rErr != nil {
 		t.Fatalf("seed published-tail edge: %v", rErr)
 	}
-	if _, rErr := st.CreateRelation(ctx, "REQ-1", "addresses", "DEC-1", nil); rErr != nil {
+	if _, rErr := st.CreateRelation(ctx, entity.RelationKey{From: "REQ-1", Type: "addresses", To: "DEC-1"}, nil); rErr != nil {
 		t.Fatalf("seed bare-tail edge: %v", rErr)
 	}
-	if _, rErr := st.CreateRelation(ctx, "DEC-1", "addresses", "REQ-1", nil); rErr != nil {
+	if _, rErr := st.CreateRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}, nil); rErr != nil {
 		t.Fatalf("seed incoming edge: %v", rErr)
 	}
 
 	before := len(mem.Records())
-	res, err := mgr.DeleteEntityFace(ctx, "REQ-1", published)
+	res, err := mgr.DeleteEntityFace(ctx, "REQ-1", published, true)
 	if err != nil {
 		t.Fatalf("DeleteEntityFace: %v", err)
 	}
@@ -72,10 +71,10 @@ func TestDeleteEntityFace_RemovesOnlyTheFaceAndItsTail(t *testing.T) {
 		t.Errorf("DeletedRelations = %+v, want the one edge tailed at the published face", res.DeletedRelations)
 	}
 
-	if _, gErr := st.GetEntityState(ctx, "REQ-1", published); gErr == nil {
+	if _, gErr := st.GetEntity(ctx, entity.Ref{ID: "REQ-1", Face: published}); gErr == nil {
 		t.Error("the published face must be gone")
 	}
-	if _, gErr := st.GetEntity(ctx, "REQ-1"); gErr != nil {
+	if _, gErr := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); gErr != nil {
 		t.Errorf("the bare face must survive: %v", gErr)
 	}
 	remaining := 0
@@ -133,13 +132,13 @@ func TestDeleteEntityFace_RefusesTheBareFace(t *testing.T) {
 	// "Delete the bare face" is either the whole entity or undefined; neither
 	// is what a caller who spelled a face meant, so it is refused rather than
 	// guessed — and nothing is removed.
-	if _, dErr := mgr.DeleteEntityFace(ctx, "REQ-1", ""); dErr == nil {
+	if _, dErr := mgr.DeleteEntityFace(ctx, "REQ-1", "", true); dErr == nil {
 		t.Fatal("deleting the bare face through DeleteEntityFace must be refused")
 	}
-	if _, gErr := st.GetEntity(ctx, "REQ-1"); gErr != nil {
+	if _, gErr := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); gErr != nil {
 		t.Errorf("a refused delete must leave the entity: %v", gErr)
 	}
-	if _, dErr := mgr.DeleteEntityFace(ctx, "REQ-1", "published"); dErr == nil {
+	if _, dErr := mgr.DeleteEntityFace(ctx, "REQ-1", "published", true); dErr == nil {
 		t.Fatal("a face the entity does not have must be not-found")
 	}
 }

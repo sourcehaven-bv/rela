@@ -36,6 +36,32 @@ formatting:
 | ----------------------- | ----------------------------------------- | ------- |
 | `formatting.line_width` | Maximum line width for paragraph wrapping | 80      |
 
+## Entity addresses
+
+A command that reads one entity takes an address. For a type without faces,
+the address is the entity ID, such as `REQ-001`. For a type with faces, write
+`ID@face`, such as `DOC-1@draft`, to name one face.
+
+A bare ID of an entity with faces reads the face the default world selects.
+Without declared worlds, the generated default world tries the type's faces
+in declaration order. When the default world selects none of the entity's
+faces, the command stops and lists the faces to choose from:
+
+```text
+$ rela show DOC-1
+address one face: DOC-1 has faces; name one: DOC-1@draft, DOC-1@published
+```
+
+A command that writes (`update`, `attach`, `detach`, `link`, `unlink` on a
+content-scoped relation) does not pick a face by rank. A bare ID writes the one
+face the default world admits; when it admits several, or none, the command
+stops and lists them. `rela create --face` names the face of a new entity, and
+a faced type requires it.
+
+The `acl can` and `acl who-can` reports answer per entity, so they take the
+bare ID of a faced entity and refuse `ID@face`. `acl can-relation --from`
+accepts `ID@face` for the tail of a content-scoped edge.
+
 ## Commands
 
 ### rela init
@@ -89,7 +115,7 @@ rela create <type> [flags]
 
 | Flag              | Description                                                                    |
 | ----------------- | ------------------------------------------------------------------------------ |
-| `-s, --status`    | Entity status (default: `draft`)                                               |
+| `-s, --status`    | Entity status (default: the schema's declared default, if any)                 |
 | `-p, --priority`  | Entity priority                                                                |
 | `--id`            | Custom entity ID (required for string ID types, auto-generated for sequential) |
 | `-P, --property`  | Set a property (format: key=value, can be repeated)                            |
@@ -332,15 +358,18 @@ rela show <id>
 
 **Arguments:**
 
-- `id` - Entity ID to show
+- `id` - Entity ID to show, or `ID@face` for a type with faces (see
+  [Entity addresses](#entity-addresses))
 
-Shows the entity's properties plus all incoming and outgoing relations.
+Shows the entity's properties plus all incoming and outgoing relations. For
+`ID@face`, the outgoing relations are the ones that face owns.
 
 **Examples:**
 
 ```bash
 rela show REQ-001
 rela show DEC-042 -o json
+rela show DOC-1@draft
 ```
 
 ---
@@ -458,12 +487,17 @@ purpose); on other builds this reports that the backend does not support
 history.
 
 ```bash
-rela history <id> [--version N]
+rela history <address> [--version N]
 ```
 
 **Arguments:**
 
-- `id` - Entity ID (may name a live or an already-deleted entity)
+- `address` - Entity ID, or `ID@face` for a type with faces. It may name a live
+  or an already-deleted entity.
+
+Each face of an entity has its own history, so on a type that declares
+`faces:` the address must name the face (`rela history POL-1@draft`). A bare id
+of a faced entity is refused, and the error lists the faces the id has.
 
 **Flags:**
 
@@ -490,18 +524,19 @@ diff <(rela history TKT-42 --version 3) <(rela history TKT-42 --version 5)
 ### rela restore
 
 Restore an entity's content and properties to a past version. **PostgreSQL
-build only.** The restore is applied as a normal write — authorized, validated,
+and SQLite builds.** The restore is applied as a normal write — authorized, validated,
 audited, and itself recorded as a new version (history is never rewritten). If
-the entity was deleted, it is re-created.
+the entity was deleted, it is re-created at the same id.
 
 ```bash
-rela restore <id> <version>
+rela restore <address> <version>
 ```
 
 **Arguments:**
 
-- `id` - Entity ID to restore
-- `version` - The version ordinal to restore to (see `rela history <id>`)
+- `address` - Entity ID, or `ID@face` for a type with faces. A restore writes
+  the named face only; a deleted face is re-created at that face.
+- `version` - The version ordinal to restore to (see `rela history <address>`)
 
 Only entity content and properties are restored; the entity's relations
 as-of that version are versioned separately (see `rela relation-history`).
@@ -585,12 +620,15 @@ history. **PostgreSQL and SQLite builds.** Operator-only: the trust boundary is
 shell access to the database (no ACL check), like `rela db migrate`.
 
 ```bash
-rela history-purge <id> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
+rela history-purge <address> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
 ```
 
 **Arguments / flags:**
 
-- `id` — the entity whose history to purge
+- `address` — the entity whose history to purge: its ID, or `ID@face` for a
+  type with faces. A purge reaches the history of ONE face; `--all` purges that
+  face's fenced lineage and leaves the other faces' histories intact. A bare id
+  of a faced entity is refused.
 - `--vseq N` — purge the single version row with this vseq (from `rela history`)
 - `--content-hash H` — purge every row in the lineage with this content hash
   (erase a value everywhere it was captured; verifiable afterward)
@@ -621,7 +659,9 @@ rela history-purge TKT-42 --content-hash abc123 --reason "erase SSN per DPO-42" 
 
 The relation analog of `rela history-purge`, addressing a relation by its
 three-part key. Same flags, guardrails, and irreversibility. **PostgreSQL and
-SQLite builds.**
+SQLite builds.** Write the `from` as `ID@face` to purge the edge whose tail is
+that face; a bare `from` addresses the default tail. The purge never reaches
+another tail's history.
 
 ```bash
 rela relation-history-purge <from> <type> <to> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
@@ -643,7 +683,11 @@ Attach file(s) to an entity.
 rela attach <entity-id> <file>... [flags]
 ```
 
-Each file is stored at `attachments/<entity-id>/<property>/<filename>`.
+Each file is recorded on the property as
+`attachments/<entity-id>/<property>/<token>/<filename>`. The token gives
+every upload its own storage key; values written before tokens existed keep
+the shorter `attachments/<entity-id>/<property>/<filename>` form. The
+recorded path is a reference, not the location of the bytes on disk.
 A file-type property holds one attachment by default; set `max` above 1 on
 the property (see the metamodel reference) to allow several.
 
@@ -654,8 +698,12 @@ the property (see the metamodel reference) to allow several.
 
 **Arguments:**
 
-- `entity-id` - Target entity ID
+- `entity-id` - Target entity ID, or `ID@face` for a type with faces
 - `file...` - One or more files to attach (supports glob patterns)
+
+On a type with faces, the file belongs to the addressed face; see
+[content-states.md](content-states.md#attachments-and-export-on-a-face). A bare
+id of a faced entity is refused, and the message names its faces.
 
 **Flags:**
 
@@ -687,7 +735,8 @@ Shows the property name, path, and size for each attachment.
 
 **Arguments:**
 
-- `entity-id` - Entity ID to list attachments for
+- `entity-id` - Entity ID to list attachments for, or `ID@face` for a type
+  with faces. A face lists only its own files.
 
 **Examples:**
 
@@ -706,15 +755,15 @@ Remove an attachment from an entity property.
 rela detach <entity-id> <property> [--file <name>]
 ```
 
-Deletes the underlying file from the attachment store and re-stamps the
-property. When the property holds a single attachment, `--file` may be
+Removes the file from the property and deletes the underlying bytes when no
+other face of the entity still references them. When the property holds a single attachment, `--file` may be
 omitted. When it holds several (a `file` property with `max > 1`), pass
 `--file` to select which one — `rela attachments <entity-id>` lists the
 names.
 
 **Arguments:**
 
-- `entity-id` - Entity ID
+- `entity-id` - Entity ID, or `ID@face` for a type with faces
 - `property` - Property name containing the attachment
 
 **Flags:**
@@ -783,61 +832,6 @@ rela unlink <from> <relation> <to>
 ```bash
 rela unlink DEC-001 addresses REQ-001
 ```
-
----
-
-### rela sync
-
-Two-way sync between a local project (fsstore) and a remote rela-server backed
-by PostgreSQL. `push` sends locally-changed records to the server; `pull` brings
-remote changes into the local project. Conflicts are surfaced for manual
-resolution — no automatic merge. See [Sync](sync.md) for the full design.
-
-```bash
-rela sync push [--remote <url>] [--token <token>] [--force <id>]
-rela sync pull [--remote <url>] [--token <token>] [--force <id>]
-```
-
-**Flags:**
-
-| Flag       | Description                                                      |
-| ---------- | ---------------------------------------------------------------- |
-| `--remote` | Remote rela-server base URL (proxy-fronted). Env: `RELA_REMOTE`. |
-| `--token`  | Bearer token for the OAuth proxy. Prefer env `RELA_SYNC_TOKEN`.  |
-| `--force`  | Resolve one record id: push = local wins, pull = remote wins.    |
-
-The sync state (a per-record content-hash index and an opaque server cursor)
-lives in `.rela/sync-state.json`. Dirty detection is local: a record whose
-canonical hash differs from the index is pushed; the index advances only past
-confirmed-applied records, so an interrupted run resumes on re-run.
-
-**Conflicts.** A record changed on both ends halts with a clear report and is
-NOT applied. Resolve it explicitly:
-
-- `rela sync push --force <id>` — overwrite the remote with the local copy.
-- `rela sync pull --force <id>` — overwrite the local copy with the remote.
-
-**Authentication.** In production rela-server sits behind an OAuth proxy and has
-no native auth — the CLI authenticates to the _proxy_ by presenting a JWT bearer
-(`Authorization: Bearer $RELA_SYNC_TOKEN`). The token is read from the env/flag
-and never logged. On loopback/dev with no proxy, sync works without a token. See
-[Sync](sync.md) for the proxy configuration.
-
-**Examples:**
-
-```bash
-export RELA_REMOTE=https://rela.example.com
-export RELA_SYNC_TOKEN=$(my-idp-get-token)
-
-rela sync push                 # send local changes
-rela sync pull                 # bring in remote changes
-rela sync push --force TKT-42  # resolve TKT-42: local wins
-rela sync pull --force TKT-42  # resolve TKT-42: remote wins
-```
-
-> Note: sync requires the remote to run the PostgreSQL backend. Against a
-> non-postgres server the manifest endpoint returns 501 and `pull` reports that
-> the server does not support sync.
 
 ---
 
@@ -1202,7 +1196,8 @@ rela import data.txt --format json
 **Behavior Notes:**
 
 - **Validation**: All entities are validated against the metamodel before import
-- **Auto-generated properties**: If `status` is not provided, the entity type's default is used
+- **Default status**: If `status` is not provided, the schema's declared default is used. Without one,
+  `status` stays unset (see [Default status](metamodel.md#default-status))
 - **Duplicate handling**: Without `--update`, importing an existing entity ID fails
 - **Update mode**: `--update` does a full replacement, not a merge (existing properties not in the import file are removed)
 - **Relations**: Relations referencing entities not in the graph (and not in the import) will fail
@@ -1223,6 +1218,23 @@ rela import backup.json
 ### rela analyze
 
 Run quality analysis checks.
+
+Every check reads every face of a faced type (see
+[content states](content-states.md)). Each report states its coverage, in
+the text output as a `Coverage:` line and in JSON as a `coverage` field:
+
+| Check         | Coverage                                                        |
+| ------------- | --------------------------------------------------------------- |
+| `orphans`     | Families: one finding per id, which lists the faces it has      |
+| `duplicates`  | Every face; only rows of different ids are compared             |
+| `unique`      | Per face: ids that share a value within one face                |
+| `gaps`        | Families: an id counts as used when any face of it exists       |
+| `cardinality` | Per face for outgoing content-scoped relations, else families   |
+| `properties`, `validations` | Every face, each row checked on its own        |
+
+In JSON, an orphan entry is an object with `id`, `type`, `title` and, for a
+faced type, `faces`. `trace` and `path` show one node per id, with the faces
+the reader can see.
 
 #### rela analyze orphans
 
@@ -1376,6 +1388,8 @@ Shows:
 - Relation types with no instances
 - Custom types (enums) not referenced by any property
 - Types with few instances (when `--threshold` is set)
+
+An entity counts once, however many faces it stores.
 
 **Flags:**
 
@@ -1540,13 +1554,12 @@ rela template init requirement decision --force
 
 **Generated Template Format:**
 
-Entity templates include all properties from the metamodel with their default values:
+Entity templates include the properties that declare a default in the metamodel, with that value.
+Properties without a declared default are left out:
 
 ```markdown
 ---
-title: ""
 status: draft
-priority: medium
 ---
 
 # Description

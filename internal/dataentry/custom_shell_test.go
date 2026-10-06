@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 )
 
 // TestTokensCSSNeverLayered pins DECISION 1 of TKT-3DBK6I: the `:root` token
@@ -85,6 +87,7 @@ func TestSPAShellInjection(t *testing.T) {
 			app.broker = newEventBroker()
 			root := t.TempDir()
 			app.paths.Root = root
+			app.assets = rootfs.New(root)
 			for _, f := range tt.files {
 				writeCustom(t, root, f, "/* x */")
 			}
@@ -134,6 +137,7 @@ func TestSPAShellInjection_ClientRouteAlsoInjected(t *testing.T) {
 	app.broker = newEventBroker()
 	root := t.TempDir()
 	app.paths.Root = root
+	app.assets = rootfs.New(root)
 	writeCustom(t, root, customCSSFile, "/* x */")
 
 	rec := httptest.NewRecorder()
@@ -157,6 +161,7 @@ func TestSPAAssetsNotInjected(t *testing.T) {
 	app.broker = newEventBroker()
 	root := t.TempDir()
 	app.paths.Root = root
+	app.assets = rootfs.New(root)
 	writeCustom(t, root, customCSSFile, "/* x */")
 
 	rec := httptest.NewRecorder()

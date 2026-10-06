@@ -36,6 +36,7 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"iter"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -79,7 +80,7 @@ func (s *Service) MatchedFields(e *entity.Entity, text string) map[string]struct
 }
 
 func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
-	if err := ValidateFilters(q.Filters); err != nil {
+	if err := ValidateQuery(q); err != nil {
 		return func(yield func(Hit, error) bool) {
 			yield(Hit{}, err)
 		}
@@ -94,7 +95,7 @@ func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 	// than pushed down because the type and property filters below can still
 	// reject a face, and a backend-side limit would silently shorten the
 	// page.
-	faces, err := s.backend.Search(q.Text, 0, q.World)
+	faces, err := s.backendSearch(q)
 	if err != nil {
 		return func(yield func(Hit, error) bool) {
 			yield(Hit{}, err)
@@ -115,7 +116,7 @@ func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 			// hit scored against a different face — the mismatch between what
 			// was searched and what is shown that world-scoped search exists
 			// to close.
-			e, err := s.reader.GetEntityState(ctx, f.ID, f.Face)
+			e, err := s.reader.GetEntity(ctx, entity.Ref{ID: f.ID, Face: f.Face})
 			if err != nil {
 				continue // face may have been deleted since indexing
 			}
@@ -144,12 +145,30 @@ func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 	}
 }
 
+// backendSearch runs the text query on the backend, with q.Admit applied
+// before the world ranks. A backend that cannot admit refuses an admitting
+// query: ranking unadmitted faces would pick a prime the reader may not see
+// and hide the entity instead of serving its readable face.
+func (s *Service) backendSearch(q Query) ([]Face, error) {
+	if q.Admit == nil {
+		return s.backend.Search(q.Text, 0, q.World)
+	}
+	ab, ok := s.backend.(AdmittingBackend)
+	if !ok {
+		return nil, fmt.Errorf("%w: search backend %T cannot admit faces before ranking", ErrScope, s.backend)
+	}
+	return ab.SearchAdmitted(q.Text, 0, q.World, q.Admit)
+}
+
 // listAll handles searches with no text query — returns all entities matching
 // type and property filters.
 func (s *Service) listAll(ctx context.Context, q Query) iter.Seq2[Hit, error] {
+	if q.Admit != nil {
+		return s.listAdmitted(ctx, q)
+	}
 	return func(yield func(Hit, error) bool) {
 		emitted := 0
-		for e, err := range s.reader.ListEntities(ctx, store.EntityQuery{}) {
+		for e, err := range s.reader.ListEntities(ctx, store.EntityQuery{Faces: store.InWorld(q.World)}) {
 			if err != nil {
 				if !yield(Hit{}, err) {
 					return
@@ -169,12 +188,90 @@ func (s *Service) listAll(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 				continue
 			}
 
-			if !yield(Hit{ID: e.ID, Type: e.Type, Title: e.Title()}, nil) {
+			if !yield(Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face}, nil) {
 				return
 			}
 			emitted++
 		}
 	}
+}
+
+// listAdmitted is listAll with q.Admit applied before the world ranks. It
+// reads every face in one scan, admits them in one call, resolves the
+// primes, and emits them in scan order.
+func (s *Service) listAdmitted(ctx context.Context, q Query) iter.Seq2[Hit, error] {
+	return func(yield func(Hit, error) bool) {
+		scan, err := s.scanFaces(ctx, toSet(q.Types))
+		if err != nil {
+			yield(Hit{}, err)
+			return
+		}
+		rows, order := scan.rows, scan.order
+		admitted, err := q.Admit(scan.cands)
+		if err != nil {
+			yield(Hit{}, err)
+			return
+		}
+		byID := make(map[string]string, len(admitted))
+		for _, c := range admitted {
+			byID[c.ID] = c.Type
+		}
+		primes := ResolvePrimes(q.World, admitted)
+		emitted := 0
+		for _, id := range order {
+			res, ok := primes[id]
+			if !ok {
+				continue
+			}
+			if q.Limit > 0 && emitted >= q.Limit {
+				return
+			}
+			e := rows[Candidate{ID: id, Type: byID[id], Face: res.Face}]
+			if e == nil || !MatchFilters(e, q.Filters) {
+				continue
+			}
+			hit := Hit{ID: e.ID, Type: e.Type, Title: e.Title(), Face: e.Face, Via: res.Via,
+				ChainPosition: res.ChainPosition}
+			if !yield(hit, nil) {
+				return
+			}
+			emitted++
+		}
+	}
+}
+
+// faceScan is every stored face row of the scanned types: rows by
+// candidate, candidates in scan order, and ids in first-seen order.
+type faceScan struct {
+	rows  map[store.WorldCandidate]*entity.Entity
+	cands []Candidate
+	order []string
+}
+
+// scanFaces reads every face of every entity whose type is in types (all
+// types when types is empty) in one scan.
+func (s *Service) scanFaces(ctx context.Context, types map[string]bool) (faceScan, error) {
+	scan := faceScan{rows: make(map[store.WorldCandidate]*entity.Entity)}
+	seenID := make(map[string]bool)
+	for e, err := range s.reader.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
+		if err != nil {
+			return faceScan{}, err
+		}
+		if len(types) > 0 && !types[e.Type] {
+			continue
+		}
+		c := Candidate{ID: e.ID, Type: e.Type, Face: e.Face}
+		if _, seen := scan.rows[c]; seen {
+			continue
+		}
+		if !seenID[e.ID] {
+			seenID[e.ID] = true
+			scan.order = append(scan.order, e.ID)
+		}
+		scan.rows[c] = e
+		scan.cands = append(scan.cands, c)
+	}
+	return scan, nil
 }
 
 func toSet(ss []string) map[string]bool {

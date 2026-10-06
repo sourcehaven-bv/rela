@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+	"github.com/Sourcehaven-BV/rela/internal/store/storetest"
 	"github.com/Sourcehaven-BV/rela/internal/testutil"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 )
@@ -82,7 +84,7 @@ func seedEntity(t *testing.T, st store.Store, e *entity.Entity) {
 // seedRelation creates a relation in the store.
 func seedRelation(t *testing.T, st store.Store, from, relType, to string) {
 	t.Helper()
-	if _, err := st.CreateRelation(context.Background(), from, relType, to, nil); err != nil {
+	if _, err := st.CreateRelation(context.Background(), entity.RelationKey{From: from, Type: relType, To: to}, nil); err != nil {
 		t.Fatalf("CreateRelation(%s--%s--%s): %v", from, relType, to, err)
 	}
 }
@@ -94,7 +96,7 @@ func TestConvertStoreEntity_WithoutRelations(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001").With("title", "Test requirement").WithContent("Some content"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(context.Background(), e, st, meta, entityView{content: true})
+	result, err := convertStoreEntity(context.Background(), e, graphOf(st), meta, entityView{content: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +133,7 @@ func TestConvertStoreEntity_WithRelations(t *testing.T) {
 	seedEntity(t, st, e2)
 	seedRelation(t, st, e2.ID, "addresses", e1.ID)
 
-	result, err := convertStoreEntity(context.Background(), e1, st, meta, entityView{relations: true})
+	result, err := convertStoreEntity(context.Background(), e1, graphOf(st), meta, entityView{relations: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -161,7 +163,7 @@ func TestConvertStoreEntity_NoRelationsPresent(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(context.Background(), e, st, meta, entityView{relations: true})
+	result, err := convertStoreEntity(context.Background(), e, graphOf(st), meta, entityView{relations: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -371,7 +373,7 @@ func TestBuildStoreRelations_NoEdges(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "requirement").ID("REQ-001"))
 	seedEntity(t, st, e)
 
-	rels := buildStoreRelations(context.Background(), e.ID, "", st, meta)
+	rels := buildStoreRelations(context.Background(), e, graphOf(st), meta)
 	if rels != nil {
 		t.Error("expected nil relations for entity with no edges")
 	}
@@ -387,7 +389,7 @@ func TestBuildStoreRelations_OutgoingOnly(t *testing.T) {
 	seedEntity(t, st, req)
 	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	rels := buildStoreRelations(context.Background(), sol.ID, "", st, meta)
+	rels := buildStoreRelations(context.Background(), sol, graphOf(st), meta)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -415,7 +417,7 @@ func TestBuildStoreRelations_IncomingOnly(t *testing.T) {
 	seedEntity(t, st, sol)
 	seedRelation(t, st, sol.ID, "addresses", req.ID)
 
-	rels := buildStoreRelations(context.Background(), req.ID, "", st, meta)
+	rels := buildStoreRelations(context.Background(), req, graphOf(st), meta)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -440,7 +442,7 @@ func TestBuildStoreRelations_BothDirections(t *testing.T) {
 	seedRelation(t, st, "SOL-001", "addresses", "REQ-001")
 	seedRelation(t, st, "REQ-001", "motivates", "DEC-001")
 
-	rels := buildStoreRelations(context.Background(), "REQ-001", "", st, meta)
+	rels := buildStoreRelations(context.Background(), &entity.Entity{ID: "REQ-001", Type: "requirement"}, graphOf(st), meta)
 	if rels == nil {
 		t.Fatal("expected non-nil relations")
 	}
@@ -456,6 +458,60 @@ func TestBuildStoreRelations_BothDirections(t *testing.T) {
 	if len(rels.Incoming["addresses"]) != 1 {
 		t.Errorf("expected 1 incoming addresses, got %d", len(rels.Incoming["addresses"]))
 	}
+}
+
+// TestBuildStoreRelations_FaceOwnership pins BUG-ISJHML on MCP: a
+// content-scoped edge is listed only with the face that owns it, an incoming
+// one names its tail face, and a faced neighbor without a default-world
+// face is still listed, by id alone.
+func TestBuildStoreRelations_FaceOwnership(t *testing.T) {
+	t.Parallel()
+	meta := testMeta()
+	meta.Relations["cites"] = metamodel.RelationDef{
+		Label: "Cites", From: []string{"solution"}, To: []string{"requirement"}, Scope: metamodel.ScopeContent,
+	}
+	ctx := context.Background()
+	st := memstore.New()
+	draft := &entity.Entity{ID: "SOL-1", Type: "solution", Face: "draft", Properties: map[string]any{"title": "D"}}
+	published := &entity.Entity{ID: "SOL-1", Type: "solution", Face: "published", Properties: map[string]any{"title": "P"}}
+	req := &entity.Entity{ID: "REQ-1", Type: "requirement", Properties: map[string]any{"title": "R"}}
+	for _, e := range []*entity.Entity{draft, published, req} {
+		seedEntity(t, st, e)
+	}
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "SOL-1", FromFace: "draft", Type: "cites", To: "REQ-1"}, &store.RelationData{}); err != nil {
+		t.Fatal(err)
+	}
+	seedRelation(t, st, "SOL-1", "addresses", "REQ-1")
+
+	t.Run("owning face lists the content edge", func(t *testing.T) {
+		t.Parallel()
+		rels := buildStoreRelations(ctx, draft, graphOf(st), meta)
+		if rels == nil || len(rels.Outgoing["cites"]) != 1 || len(rels.Outgoing["addresses"]) != 1 {
+			t.Fatalf("draft outgoing = %+v, want cites and addresses", rels)
+		}
+	})
+	t.Run("another face omits it", func(t *testing.T) {
+		t.Parallel()
+		rels := buildStoreRelations(ctx, published, graphOf(st), meta)
+		if rels == nil || len(rels.Outgoing["cites"]) != 0 || len(rels.Outgoing["addresses"]) != 1 {
+			t.Fatalf("published outgoing = %+v, want addresses only", rels)
+		}
+	})
+	t.Run("incoming edges name their tail", func(t *testing.T) {
+		t.Parallel()
+		rels := buildStoreRelations(ctx, req, graphOf(st), meta)
+		if rels == nil {
+			t.Fatal("no relations")
+		}
+		cites := rels.Incoming["cites"]
+		if len(cites) != 1 || cites[0].ID != "SOL-1@draft" || cites[0].Title != "D" {
+			t.Errorf("incoming cites = %+v, want SOL-1@draft titled D", cites)
+		}
+		addr := rels.Incoming["addresses"]
+		if len(addr) != 1 || addr[0].ID != "SOL-1" || addr[0].Title != "" {
+			t.Errorf("incoming addresses = %+v, want SOL-1 by id alone", addr)
+		}
+	})
 }
 
 func TestConvertStoreRelationsList(t *testing.T) {
@@ -606,7 +662,7 @@ func TestConvertStoreEntity_WithProperties(t *testing.T) {
 	e := buildEntity(testutil.EntityFor(meta, "decision").ID("DEC-001").With("title", "Use Go").With("status", "accepted").With("priority", "high"))
 	seedEntity(t, st, e)
 
-	result, err := convertStoreEntity(context.Background(), e, st, meta, entityView{content: true})
+	result, err := convertStoreEntity(context.Background(), e, graphOf(st), meta, entityView{content: true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -792,72 +848,35 @@ func TestExtractPropertiesAllowNil_JSONNullArg(t *testing.T) {
 	}
 }
 
-// A faced row names its face so an agent can address it as ID@face; a
-// default-state row carries no face key (BUG-6XTX0G).
-func TestConvertStoreEntity_NamesTheFace(t *testing.T) {
+// TestBuildStoreRelations_ReadBudget (RR-XD7YN9): the neighbor titles cost
+// the same store reads at 10 edges as at 50, and never load a body.
+func TestBuildStoreRelations_ReadBudget(t *testing.T) {
 	t.Parallel()
-	adopted, err := entity.ParseFace("adopted")
-	if err != nil {
-		t.Fatal(err)
-	}
-	faced := newEntity("POL-1", "policy", "retention")
-	faced.Face = adopted
-	plain := newEntity("TKT-1", "ticket", "a ticket")
-
-	meta := testMeta()
-	if got := convertStoreEntitySummary(meta, faced).Face; got != "adopted" {
-		t.Errorf("summary face = %v, want adopted", got)
-	}
-	if got := convertStoreEntitySummary(meta, plain).Face; got != "" {
-		t.Errorf("a default-state summary must carry no face, got %q", got)
-	}
-
-	for e, want := range map[*entity.Entity]string{faced: "adopted", plain: ""} {
-		out, err := convertStoreEntity(context.Background(), e, memstore.New(), meta, entityView{})
-		if err != nil {
-			t.Fatalf("convertStoreEntity(%s): %v", e.ID, err)
+	reads := func(n int) int {
+		base := memstore.New()
+		sol := &entity.Entity{ID: "SOL-1", Type: "solution", Properties: map[string]any{"title": "S"}}
+		seedEntity(t, base, sol)
+		for i := range n {
+			id := fmt.Sprintf("REQ-%03d", i)
+			seedEntity(t, base, &entity.Entity{ID: id, Type: "requirement", Properties: map[string]any{"title": "t" + id}})
+			seedRelation(t, base, "SOL-1", "addresses", id)
 		}
-		var parsed entityJSON
-		if err := json.Unmarshal([]byte(out), &parsed); err != nil {
-			t.Fatal(err)
+		st := storetest.NewCounting(base)
+		rels := buildStoreRelations(context.Background(), sol, graphOf(st), testMeta())
+		if rels == nil || len(rels.Outgoing["addresses"]) != n {
+			t.Fatalf("outgoing = %+v, want %d edges", rels, n)
 		}
-		if parsed.Face != want {
-			t.Errorf("%s face = %q, want %q", e.ID, parsed.Face, want)
+		for _, target := range rels.Outgoing["addresses"] {
+			if target.Title != "t"+target.ID {
+				t.Fatalf("target %+v lacks its title", target)
+			}
 		}
-	}
-}
-
-// A content-scoped edge belongs to one face of its source. show_entity serves
-// one face, so it must list that face's outgoing edges only, not the union of
-// every face's (BUG-VFHUWO on the data-entry GET; BUG-6XTX0G review).
-func TestBuildStoreRelations_OutgoingEdgesOfTheServedFaceOnly(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	st := memstore.New()
-	for _, e := range []*entity.Entity{
-		{ID: "SOL-001", Type: "solution", Face: "concept"},
-		{ID: "SOL-001", Type: "solution", Face: "adopted"},
-		{ID: "REQ-001", Type: "requirement"},
-		{ID: "REQ-002", Type: "requirement"},
-	} {
-		seedEntity(t, st, e)
-	}
-	for _, edge := range []struct {
-		to   string
-		face entity.Face
-	}{{"REQ-001", "concept"}, {"REQ-002", "adopted"}} {
-		if _, err := st.CreateRelation(ctx, "SOL-001", "addresses", edge.to,
-			&store.RelationData{FromFace: edge.face}); err != nil {
-			t.Fatalf("seed edge to %s: %v", edge.to, err)
+		if calls := st.Calls(); calls["ListEntities"]+calls["GetEntity"] != 0 {
+			t.Errorf("a neighbor title loaded a body: %s", st)
 		}
+		return st.Reads()
 	}
-
-	rels := buildStoreRelations(ctx, "SOL-001", "adopted", st, testMeta())
-	if rels == nil {
-		t.Fatal("expected the adopted face's edge")
-	}
-	got := rels.Outgoing["addresses"]
-	if len(got) != 1 || got[0].ID != "REQ-002" {
-		t.Errorf("outgoing addresses = %v, want only REQ-002 (the adopted face's edge)", got)
+	if at10, at50 := reads(10), reads(50); at10 != at50 {
+		t.Errorf("reads grow with edges: %d at 10, %d at 50", at10, at50)
 	}
 }

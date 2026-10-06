@@ -23,7 +23,6 @@ func tierB(p *acl.Policy, m MetamodelReader) []Finding {
 	f = append(f, checkCeilingsAgainstMetamodel(p, m)...) // B8 / B9
 	f = append(f, checkUndeclaredWorlds(p, m)...)         // B10
 	f = append(f, checkUndeclaredFaces(p, m)...)          // B11
-	f = append(f, checkBareGrantOnFacedType(p, m)...)     // B12
 	return f
 }
 
@@ -38,9 +37,10 @@ func tierB(p *acl.Policy, m MetamodelReader) []Finding {
 // means the failure mode is a silent denial rather than a leak: exactly the
 // shape an operator needs a linter to explain.
 //
-// The implicit DEFAULT world is accepted without being declared — it is
-// total, always exists, and `read: [world:default]` is a legal way to spell
-// what a bare read grant already means.
+// The generated DEFAULT world is accepted without being declared, but only
+// in a project that declares no world: there it is the only world. Beside
+// declared worlds it does not exist (TKT-7IZHP0 D11), so naming it is
+// flagged like any other unknown name.
 func checkUndeclaredWorlds(p *acl.Policy, m MetamodelReader) []Finding {
 	var f []Finding
 	for _, name := range sortedRoleNames(p) {
@@ -58,10 +58,21 @@ func checkUndeclaredWorlds(p *acl.Policy, m MetamodelReader) []Finding {
 			}
 		}
 		for _, world := range worlds {
-			if world == acl.DefaultWorldName || m.HasWorld(world) || seen[world] {
+			if seen[world] {
 				continue
 			}
 			seen[world] = true
+			if world == m.DefaultWorld() {
+				f = append(f, redundantDefaultWorldGrant(name, world))
+				continue
+			}
+			if worldExists(m, world) {
+				continue
+			}
+			if f2, isDefault := defaultBesideDeclared(name, world, m); isDefault {
+				f = append(f, f2)
+				continue
+			}
 			if f2, isCaseVariant := defaultWorldCaseVariant(name, world); isCaseVariant {
 				f = append(f, f2)
 				continue
@@ -77,6 +88,47 @@ func checkUndeclaredWorlds(p *acl.Policy, m MetamodelReader) []Finding {
 		}
 	}
 	return f
+}
+
+// redundantDefaultWorldGrant reports a world grant on the default world. Any
+// read grant already reads there (TKT-7IZHP0 D2), so the entry grants
+// nothing. Low: the policy behaves as written, but a reader may take the
+// entry as the reason other roles cannot read the default world.
+func redundantDefaultWorldGrant(role, world string) Finding {
+	return Finding{
+		Rule: "B10-redundant-default-world", Severity: Low, Subject: role,
+		Detail: fmt.Sprintf("role %q grants read on world %q, the default world; every read "+
+			"grant already reads the default world, so this entry grants nothing", role, world),
+		Fix: fmt.Sprintf("drop `world:%s` from the role's read list", world),
+	}
+}
+
+// worldExists reports whether world names a world of m. The generated
+// default world exists only while no world is declared (TKT-7IZHP0 D11).
+func worldExists(m MetamodelReader, world string) bool {
+	if world == acl.DefaultWorldName {
+		return !m.DeclaresWorlds()
+	}
+	return m.HasWorld(world)
+}
+
+// defaultBesideDeclared reports a reference to the default world in a project
+// that declares worlds, where it names nothing (TKT-7IZHP0 D11).
+//
+// Its own message for the same reason as defaultWorldCaseVariant: the
+// ordinary remedy, "declare it", is refused by the schema loader. The entry
+// fails closed at runtime, so the finding explains a denial, not a leak.
+func defaultBesideDeclared(subject, world string, m MetamodelReader) (Finding, bool) {
+	if world != acl.DefaultWorldName || !m.DeclaresWorlds() {
+		return Finding{}, false
+	}
+	return Finding{
+		Rule: "B10-undeclared-world", Severity: High, Subject: subject,
+		Detail: fmt.Sprintf("%q names world %q, which does not exist when worlds are declared; "+
+			"the entry matches nothing", subject, world),
+		Fix: "name a declared world instead; the default world is generated only for a " +
+			"project that declares none",
+	}, true
 }
 
 // defaultWorldCaseVariant reports a world grant that spells the default
@@ -102,52 +154,6 @@ func defaultWorldCaseVariant(role, world string) (Finding, bool) {
 			"— an ordinary read grant already covers the default world",
 			acl.DefaultWorldName),
 	}, true
-}
-
-// B12 — a BARE write grant names a type that declares faces, so it
-// addresses the zero coordinate, where a faced type stores no row.
-//
-// Replaces the old B12, which caught the mirror image: a grant naming the
-// face that `bare_face` mapped onto the zero coordinate. BUG-HC6I2T removed
-// that mapping, so the surprise now runs the other way. `update: [beleid]`
-// on a type declaring `concept` and `vastgesteld` looks like "may update
-// beleid" and reaches neither face.
-//
-// Fail-closed at runtime, like B11: no row will ever match, so the symptom
-// is a denial with no visible cause.
-//
-// Skips a type the metamodel does not declare — B1 reports that, and two
-// findings for one mistake would give it two different fixes.
-func checkBareGrantOnFacedType(p *acl.Policy, m MetamodelReader) []Finding {
-	var f []Finding
-	for _, name := range sortedRoleNames(p) {
-		role := p.Roles[name]
-		seen := map[string]bool{}
-		for _, verb := range []string{"create", "update", "delete"} {
-			for _, entry := range verbLists(role)[verb] {
-				if _, _, isState := splitStateGrant(entry); isState || seen[entry] {
-					continue
-				}
-				// `*` ranges over TYPES and grants each one's zero
-				// coordinate. Reporting it here would fire on every policy
-				// holding the admin wildcard the moment any type gains a
-				// face, naming a grant whose other types it still serves.
-				if entry == "*" || !m.HasEntityType(entry) || !m.HasFaces(entry) {
-					continue
-				}
-				seen[entry] = true
-				f = append(f, Finding{
-					Rule: "B12-bare-grant-on-faced-type", Severity: High, Subject: name,
-					Detail: fmt.Sprintf("role %q grants %s on %q, but %q declares content states "+
-						"and stores no row at the bare coordinate — the grant matches nothing",
-						name, verb, entry, entry),
-					Fix: fmt.Sprintf("name the face: `%s: [%s@<face>]` for each state this role "+
-						"may write", verb, entry),
-				})
-			}
-		}
-	}
-	return f
 }
 
 // B11 — a `type@face` write grant names a content state the type does
@@ -256,7 +262,7 @@ func checkUndeclaredEntityTypes(p *acl.Policy, m MetamodelReader) []Finding {
 				Fix: fmt.Sprintf("declare entity type %q, or fix the %s grant (check for a typo)", t, verb),
 			})
 		}
-		for _, verb := range []string{"create", "update", "delete", "read"} {
+		for _, verb := range []string{"create", "update", "delete", "rename", "read"} {
 			for _, t := range verbLists(role)[verb] {
 				flag(verb, t)
 			}

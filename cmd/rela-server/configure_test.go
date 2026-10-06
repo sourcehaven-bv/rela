@@ -19,6 +19,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/configedit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 const cfgSchema = `version: "1.0"
@@ -93,7 +94,7 @@ func configServer(t *testing.T) (srv *server, dir string) {
 	}
 	svc, err := discoverProject(f)
 	require.NoError(t, err)
-	srv, err = newServer(f, svc)
+	srv, err = newServer(f, svc, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		g := srv.cur.Load()
@@ -208,7 +209,7 @@ func TestConfigure_RenameSwitchesServer(t *testing.T) {
 	_, ok := next.svc.Meta().Entities["task"].Properties["remarks"]
 	require.True(t, ok, "the new generation serves the new schema")
 
-	e, err := next.svc.Store().GetEntity(context.Background(), "TSK-001")
+	e, err := next.svc.Store().GetEntity(context.Background(), entity.Ref{ID: "TSK-001"})
 	require.NoError(t, err)
 	require.Equal(t, "hello", e.Properties["remarks"])
 	require.NotContains(t, e.Properties, "notes")
@@ -383,7 +384,7 @@ func TestConfigure_RemoveUsedOptionMigrates(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(applied), res.Migration.File)
 
-	e, err := srv.cur.Load().svc.Store().GetEntity(context.Background(), "TSK-001")
+	e, err := srv.cur.Load().svc.Store().GetEntity(context.Background(), entity.Ref{ID: "TSK-001"})
 	require.NoError(t, err)
 	require.Equal(t, "done", e.Properties["state"])
 
@@ -428,7 +429,7 @@ func TestConfigure_NewTypeSurvivesRestart(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 	id := strings.TrimSuffix(filepath.Base(matches[0]), ".md")
-	e, err := svc.Store().GetEntity(context.Background(), id)
+	e, err := svc.Store().GetEntity(context.Background(), entity.Ref{ID: id})
 	require.NoError(t, err)
 	require.Equal(t, "Launch", e.Properties["title"])
 }

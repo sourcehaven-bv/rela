@@ -49,7 +49,9 @@ roles:
       Works on the Dutch site. May read the published and Dutch worlds and
       update guides, but has no editorial access to policies.
     read: ["*", "world:published", "world:site-nl"]
-    update: [guide]
+    # `guide` declares faces, so the grant names them: a bare faced type in
+    # a write grant is a load error (TKT-7IZHP0).
+    update: ["guide@en", "guide@nl"]
 
 assignments:
   edith@example.com: editor

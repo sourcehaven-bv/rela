@@ -78,8 +78,8 @@ func (h *commentsHandler) handleV1Comments(w http.ResponseWriter, r *http.Reques
 	// segment to a bare-id reader resolves on memstore/fsstore only because
 	// their index key is the same string, and matches nothing on the database
 	// backends or under a query-shaped read grant.
-	ref, refOK := parseEntityRef(entityID)
-	if !isSafePathSegment(typeName) || !isSafeStateRefSegment(entityID) || !refOK {
+	ref, refErr := entity.ParseRef(entityID)
+	if !isSafePathSegment(typeName) || !isSafeStateRefSegment(entityID) || refErr != nil {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_path",
 			"Invalid entity type or id", "")
 		return
@@ -194,7 +194,7 @@ func (h *commentsHandler) commentResolveCheck(
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
 	}
-	target, ent, ok := h.gateCommentTarget(w, r, addr)
+	target, ent, ok := h.gateCommentWriteTarget(w, r, addr)
 	if !ok {
 		return
 	}
@@ -369,7 +369,7 @@ func (h *commentsHandler) addComment(
 ) {
 	ctx := r.Context()
 
-	target, ent, ok := h.gateCommentTarget(w, r, addr)
+	target, ent, ok := h.gateCommentWriteTarget(w, r, addr)
 	if !ok {
 		return
 	}
@@ -496,7 +496,7 @@ func (h *commentsHandler) gateCommentMutation(
 ) (comments.Target, comments.Comment, bool) {
 	ctx := r.Context()
 
-	target, _, ok := h.gateCommentTarget(w, r, addr)
+	target, _, ok := h.gateCommentWriteTarget(w, r, addr)
 	if !ok {
 		return target, comments.Comment{}, false
 	}
@@ -532,11 +532,13 @@ func (h *commentsHandler) gateCommentMutation(
 // and its address, face included.
 type commentAddress struct {
 	typeName string
-	ref      entityRef
+	ref      entity.Ref
 }
 
-// gateCommentTarget resolves the target entity, reporting whether the request
-// may proceed.
+// gateCommentTarget resolves the target entity for a read of the thread,
+// reporting whether the request may proceed. A bare id resolves to the face
+// the request's world selects, as other reads do. Routes that write use
+// [commentsHandler.gateCommentWriteTarget].
 //
 // Both "you may not read this" and "this does not exist" answer with the same
 // 404. Checking EXISTENCE as well as the read verdict matters: the read gate
@@ -553,7 +555,9 @@ func (h *commentsHandler) gateCommentTarget(
 	w http.ResponseWriter, r *http.Request, addr commentAddress,
 ) (comments.Target, *entity.Entity, bool) {
 	target := comments.Target{Type: addr.typeName, ID: addr.ref.ID, Face: addr.ref.Face}
-	ent, found, err := h.visibleReader.getVisibleRef(r.Context(), addr.typeName, addr.ref)
+	// The resolver also checks the stored type against the route's, so a
+	// type mismatch is the same miss as an absent id (ruling 9.2).
+	ent, found, err := h.visibleReader.addressRef(r.Context(), addr.typeName, addr.ref)
 	if err != nil {
 		writeGateError(w, r, err)
 		return target, nil, false
@@ -569,6 +573,25 @@ func (h *commentsHandler) gateCommentTarget(
 	target.ID = ent.ID
 	target.Face = ent.Face
 	return target, ent, true
+}
+
+// gateCommentWriteTarget is [commentsHandler.gateCommentTarget] for a route
+// that writes the thread, or prepares a write to it.
+//
+// A thread is stored per face, so a write must land on the face the caller
+// names, never on the face a world ranks first. A named face is used as
+// given, subject to the read gate. A bare id resolves through
+// [visibility.Resolver.WriteTarget]: it names the implicit face of a faceless
+// type, and on a faced type it is a 422 `face_required` listing the readable
+// faces. Misses answer the same uniform 404 as the read gate.
+func (h *commentsHandler) gateCommentWriteTarget(
+	w http.ResponseWriter, r *http.Request, addr commentAddress,
+) (comments.Target, *entity.Entity, bool) {
+	ent, ok := writeTargetOr404(w, r, h.visibleReader, addr.typeName, addr.ref.String())
+	if !ok {
+		return comments.Target{Type: addr.typeName}, nil, false
+	}
+	return comments.Target{Type: addr.typeName, ID: ent.ID, Face: ent.Face}, ent, true
 }
 
 // refuseIfReadOnly denies a comment write on a read-only instance, reporting
@@ -800,7 +823,7 @@ func (h *commentsHandler) commentAccept(
 	r = h.withProvision(r)
 	ctx := r.Context()
 
-	target, visible, ok := h.gateCommentTarget(w, r, addr)
+	target, visible, ok := h.gateCommentWriteTarget(w, r, addr)
 	if !ok {
 		return
 	}
@@ -812,7 +835,7 @@ func (h *commentsHandler) commentAccept(
 	// The splice base and version token come from the RAW row at the face the
 	// gate resolved. The visible entity may have redacted properties, and a
 	// version token hashed over redacted properties never matches the store.
-	raw, found := h.reader.getEntityRef(ctx, entityRef{ID: target.ID, Face: target.Face})
+	raw, found := h.reader.writePrepRow(ctx, entity.Ref{ID: target.ID, Face: target.Face})
 	if !found {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return

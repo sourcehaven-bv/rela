@@ -43,6 +43,23 @@ func ValidateTraversals(meta *metamodel.Metamodel, fromType string, prog *predic
 	return nil
 }
 
+// refuseContentHops rejects a path that walks a content-scoped relation
+// (TKT-7IZHP0 A13). Such an edge belongs to one face of its source, and the
+// traversal matches identity edges only, so the hop would silently match
+// nothing. Following the served face's edges is a later feature; until then
+// the condition is a load error naming the relation.
+func refuseContentHops(meta *metamodel.Metamodel, fromType string, hops []ResolvedHop) error {
+	from := fromType
+	for _, h := range hops {
+		if metamodel.IsContentScoped(meta, h.Relation) {
+			return fmt.Errorf("related: relation %q from %q is content-scoped; a condition can follow "+
+				"identity-scoped relations only", h.Relation, from)
+		}
+		from = h.Target
+	}
+	return nil
+}
+
 // traversalSubject is the only identifier a traversal may start from. The
 // path resolves from the type of the row being evaluated, so any other record
 // (`current_user`, say) would be validated, indexed and answered as if it
@@ -50,6 +67,13 @@ func ValidateTraversals(meta *metamodel.Metamodel, fromType string, prog *predic
 const traversalSubject = "entity"
 
 func validateTraversal(meta *metamodel.Metamodel, fromType string, spec predicate.TraversalSpec) error {
+	hops, err := ResolveTraversal(meta, fromType, spec)
+	if err != nil {
+		return err
+	}
+	if refusal := refuseContentHops(meta, fromType, hops); refusal != nil {
+		return refusal
+	}
 	target, err := ResolveTraversalTarget(meta, fromType, spec)
 	if err != nil {
 		return err

@@ -26,11 +26,13 @@ type writeOpts struct {
 var (
 	createEntityOptKeys   = []string{"face"}
 	createRelationOptKeys = []string{"face", "content"}
+	deleteRelationOptKeys = []string{"face"}
 
 	// Prebuilt lookup sets, so the rejection path does not rebuild a map per
 	// write — these bindings run inside script loops.
 	createEntityOptSet   = optKeySet(createEntityOptKeys)
 	createRelationOptSet = optKeySet(createRelationOptKeys)
+	deleteRelationOptSet = optKeySet(deleteRelationOptKeys)
 )
 
 // optKeySet indexes an allowlist for membership testing.

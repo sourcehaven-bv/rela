@@ -40,7 +40,7 @@ func TestManager_Elevated_BypassesACLDenyAndAudits(t *testing.T) {
 		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
 
 	// Gated write is denied.
-	_, gErr := mgr.CreateRelation(ctx, "DEC-001", "addresses", "REQ-001", entity.RelationOptions{})
+	_, gErr := mgr.CreateRelation(ctx, entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}, entity.RelationOptions{})
 	if gErr == nil {
 		t.Fatal("gated CreateRelation: expected ACL denial, got nil")
 	}
@@ -57,7 +57,7 @@ func TestManager_Elevated_BypassesACLDenyAndAudits(t *testing.T) {
 		t.Fatal("Manager does not satisfy elevatedProvider — Elevated() missing")
 	}
 	elevated := em.Elevated()
-	if _, eErr := elevated.CreateRelation(ctx, "DEC-001", "addresses", "REQ-001", entity.RelationOptions{}); eErr != nil {
+	if _, eErr := elevated.CreateRelation(ctx, entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}, entity.RelationOptions{}); eErr != nil {
 		t.Fatalf("elevated CreateRelation: expected success, got %v", eErr)
 	}
 
@@ -103,7 +103,7 @@ func TestManager_Elevated_DoesNotMutateGatedManager(t *testing.T) {
 	em := any(mgr).(elevatedProvider)
 	_ = em.Elevated() // obtaining the handle must not affect mgr
 
-	if _, err := mgr.CreateRelation(ctx, "DEC-001", "addresses", "REQ-001", entity.RelationOptions{}); err == nil {
+	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}, entity.RelationOptions{}); err == nil {
 		t.Fatal("original Manager allowed a write after Elevated() was called — elevation leaked onto the gated handle")
 	}
 }
@@ -161,7 +161,7 @@ func TestManager_Elevated_DoesNotLeakIntoNestedCascade(t *testing.T) {
 
 	// CRITICAL: that Mutator must be GATED — a write through it is denied,
 	// proving elevation did not propagate into the nested cascade.
-	_, wErr := scripts.mutator.CreateRelation(ctx, "REQ-001", "addresses", "REQ-001", entity.RelationOptions{})
+	_, wErr := scripts.mutator.CreateRelation(ctx, entity.RelationKey{From: "REQ-001", Type: "addresses", To: "REQ-001"}, entity.RelationOptions{})
 	if wErr == nil {
 		t.Fatal("LEAK: the nested cascade's Mutator allowed a write — elevation propagated to descendants")
 	}
@@ -200,7 +200,7 @@ func TestManager_RelationWrite_AuthorizesBeforePeerExistence(t *testing.T) {
 		t.Parallel()
 		mgr, cs := newManagerWithACL(t, acl.ReadOnlyACL{}, audit.NewMemory())
 		seedEntity(t, cs, "decision", "From decision") // DEC-001 exists; REQ-999 does not
-		_, err := mgr.CreateRelation(denyCtx(), "DEC-001", "addresses", "REQ-999", entity.RelationOptions{})
+		_, err := mgr.CreateRelation(denyCtx(), entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-999"}, entity.RelationOptions{})
 		assertForbidden(t, err)
 	})
 
@@ -208,28 +208,28 @@ func TestManager_RelationWrite_AuthorizesBeforePeerExistence(t *testing.T) {
 		t.Parallel()
 		mgr, cs := newManagerWithACL(t, acl.ReadOnlyACL{}, audit.NewMemory())
 		seedEntity(t, cs, "requirement", "To requirement") // REQ-001 exists; DEC-999 does not
-		_, err := mgr.CreateRelation(denyCtx(), "DEC-999", "addresses", "REQ-001", entity.RelationOptions{})
+		_, err := mgr.CreateRelation(denyCtx(), entity.RelationKey{From: "DEC-999", Type: "addresses", To: "REQ-001"}, entity.RelationOptions{})
 		assertForbidden(t, err)
 	})
 
 	t.Run("create with both endpoints missing", func(t *testing.T) {
 		t.Parallel()
 		mgr, _ := newManagerWithACL(t, acl.ReadOnlyACL{}, audit.NewMemory())
-		_, err := mgr.CreateRelation(denyCtx(), "DEC-999", "addresses", "REQ-999", entity.RelationOptions{})
+		_, err := mgr.CreateRelation(denyCtx(), entity.RelationKey{From: "DEC-999", Type: "addresses", To: "REQ-999"}, entity.RelationOptions{})
 		assertForbidden(t, err)
 	})
 
 	t.Run("update missing relation", func(t *testing.T) {
 		t.Parallel()
 		mgr, _ := newManagerWithACL(t, acl.ReadOnlyACL{}, audit.NewMemory())
-		_, err := mgr.UpdateRelation(denyCtx(), "DEC-999", "addresses", "REQ-999", entity.RelationOptions{})
+		_, err := mgr.UpdateRelation(denyCtx(), entity.RelationKey{From: "DEC-999", Type: "addresses", To: "REQ-999"}, entity.RelationOptions{})
 		assertForbidden(t, err)
 	})
 
 	t.Run("delete missing relation", func(t *testing.T) {
 		t.Parallel()
 		mgr, _ := newManagerWithACL(t, acl.ReadOnlyACL{}, audit.NewMemory())
-		err := mgr.DeleteRelation(denyCtx(), "DEC-999", "addresses", "REQ-999")
+		err := mgr.DeleteRelation(denyCtx(), entity.RelationKey{From: "DEC-999", Type: "addresses", To: "REQ-999"})
 		assertForbidden(t, err)
 	})
 }

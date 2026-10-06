@@ -44,7 +44,7 @@ func TestAssertionsRenderEvidence(t *testing.T) {
 		},
 		{
 			name: "hidden states that the row exists but is concealed",
-			body: `hidden{ who = "pub", type = "policy", id = "POL-1" }`,
+			body: `hidden{ who = "pub", type = "policy", id = "POL-1", face = "draft" }`,
 			want: []string{"cannot see", "role `reader`", "identical to one for an id"},
 		},
 		{
@@ -54,12 +54,12 @@ func TestAssertionsRenderEvidence(t *testing.T) {
 		},
 		{
 			name: "permits renders the role, not just the principal",
-			body: `permits{ who = "ed", op = "update", type = "policy" }`,
-			want: []string{"✓ Verified", "`ed`", "role `editor`", "may", "update"},
+			body: `permits{ who = "ed", op = "update", type = "policy", face = "draft" }`,
+			want: []string{"✓ Verified", "`ed`", "role `editor`", "may", "update", "`policy@draft`"},
 		},
 		{
 			name: "refuses renders the deciding rule",
-			body: `refuses{ who = "pub", op = "update", type = "policy" }`,
+			body: `refuses{ who = "pub", op = "update", type = "policy", face = "draft" }`,
 			want: []string{"is **refused**", "Decided by"},
 		},
 		{

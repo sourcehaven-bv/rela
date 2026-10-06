@@ -122,7 +122,7 @@ endpoint does not exist.
 proxy-set header, not a session cookie. A browser cannot forge an ES256
 signature, so the endpoint is CSRF-immune by construction. It therefore lives
 outside `/api/` and needs neither the same-origin gate nor the CSRF-exempt
-heuristic the [sync API](sync.md) relies on. A forged or unsigned body is
+heuristic the calendar feeds and CalDAV rely on. A forged or unsigned body is
 rejected with 401 before any action runs.
 
 ## 5. Point the proxy's webhook at rela

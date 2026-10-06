@@ -91,6 +91,7 @@ func TestExplainScopedListUsesDerivedIndex(t *testing.T) {
 		}},
 		OrderBy: []store.OrderSpec{{Property: "title"}},
 		Limit:   50,
+		Faces:   store.InWorld(store.TrivialScope()),
 	})
 	t.Logf("plan:\n%s", plan)
 

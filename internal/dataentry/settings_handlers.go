@@ -37,7 +37,9 @@ type APIAnalysisResult struct {
 
 // APIIssue is the JSON representation of a single analysis issue.
 type APIIssue struct {
-	EntityID   string `json:"entityId"`
+	EntityID string `json:"entityId"`
+	// Face names the row for a per-face finding (BUG-95W7MV).
+	Face       string `json:"face,omitempty"`
 	EntityType string `json:"entityType"`
 	Title      string `json:"title,omitempty"`
 	Message    string `json:"message"`

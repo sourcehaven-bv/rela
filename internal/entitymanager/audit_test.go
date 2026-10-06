@@ -272,7 +272,7 @@ func TestAudit_AC2_RelationCreateRecordsWithRelationSubject(t *testing.T) {
 	startLen := len(mem.Records())
 
 	rel, err := mgr.CreateRelation(context.Background(),
-		dec.Entity.ID, "addresses", req.Entity.ID, entity.RelationOptions{})
+		entity.RelationKey{From: dec.Entity.ID, Type: "addresses", To: req.Entity.ID}, entity.RelationOptions{})
 	if err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
@@ -307,11 +307,11 @@ func TestAudit_AC2_RelationDeleteRecords(t *testing.T) {
 	dec, _ := mgr.CreateEntity(context.Background(),
 		entity.New("", "decision"), entity.CreateOptions{})
 	_, _ = mgr.CreateRelation(context.Background(),
-		dec.Entity.ID, "addresses", req.Entity.ID, entity.RelationOptions{})
+		entity.RelationKey{From: dec.Entity.ID, Type: "addresses", To: req.Entity.ID}, entity.RelationOptions{})
 
 	startLen := len(mem.Records())
 	if err := mgr.DeleteRelation(context.Background(),
-		dec.Entity.ID, "addresses", req.Entity.ID); err != nil {
+		entity.RelationKey{From: dec.Entity.ID, Type: "addresses", To: req.Entity.ID}); err != nil {
 		t.Fatalf("DeleteRelation: %v", err)
 	}
 
@@ -382,9 +382,9 @@ func TestAudit_AC7_DeleteCascadeProduces1PlusNRecords(t *testing.T) {
 		entity.New("", "decision"), entity.CreateOptions{})
 
 	_, _ = mgr.CreateRelation(context.Background(),
-		dec1.Entity.ID, "addresses", req.Entity.ID, entity.RelationOptions{})
+		entity.RelationKey{From: dec1.Entity.ID, Type: "addresses", To: req.Entity.ID}, entity.RelationOptions{})
 	_, _ = mgr.CreateRelation(context.Background(),
-		dec2.Entity.ID, "addresses", req.Entity.ID, entity.RelationOptions{})
+		entity.RelationKey{From: dec2.Entity.ID, Type: "addresses", To: req.Entity.ID}, entity.RelationOptions{})
 
 	startLen := len(mem.Records())
 
@@ -617,7 +617,7 @@ func TestAudit_IfExistsReplaceUsesCascadeLabel(t *testing.T) {
 		t.Fatalf("CreateEntity checklist: %v", err)
 	}
 	if _, err := mgr.CreateRelation(context.Background(),
-		req.Entity.ID, "has-checklist", cl.Entity.ID, entity.RelationOptions{}); err != nil {
+		entity.RelationKey{From: req.Entity.ID, Type: "has-checklist", To: cl.Entity.ID}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
 
@@ -1041,7 +1041,7 @@ func (p *partialCascadeStore) Tx(_ context.Context, fn func(store.Store) error) 
 	return fn(p)
 }
 
-func (p *partialCascadeStore) DeleteEntity(
+func (p *partialCascadeStore) DeleteFamily(
 	_ context.Context, _ string, _ bool,
 ) (*store.DeleteResult, error) {
 	// DeletedEntities deliberately empty: the entity survived.
@@ -1083,7 +1083,7 @@ func TestAudit_PartialCascadeDelete_AuditsWhatWasRemoved(t *testing.T) {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	rel, rerr := backing.CreateRelation(bg, "REQ-1", "has-checklist", "CL-1", nil)
+	rel, rerr := backing.CreateRelation(bg, entity.RelationKey{From: "REQ-1", Type: "has-checklist", To: "CL-1"}, nil)
 	if rerr != nil {
 		t.Fatalf("seed relation: %v", rerr)
 	}
@@ -1161,7 +1161,7 @@ func TestAudit_PartialCascadeDelete_ReplacePathAlsoAudits(t *testing.T) {
 		}
 	}
 	// The existing edge the replace action will find and supersede.
-	if _, err := backing.CreateRelation(bg, "REQ-1", "has-checklist", "CL-1", nil); err != nil {
+	if _, err := backing.CreateRelation(bg, entity.RelationKey{From: "REQ-1", Type: "has-checklist", To: "CL-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 

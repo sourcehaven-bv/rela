@@ -2,8 +2,8 @@
 import { ref, computed, watch, type Component } from 'vue'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
-import { useSchemaStore, useUIStore } from '@/stores'
-import { listAllEntities, updateEntity, getErrorMessage } from '@/api'
+import { useEntitiesStore, useSchemaStore, useUIStore } from '@/stores'
+import { listAllEntities, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
 import type {
@@ -31,6 +31,7 @@ import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { filterStateToApiParams } from '@/utils/filters'
 import { entityRef } from '@/utils/entityRef'
+import { editFormRoute } from '@/utils/entityRoute'
 import { fromPageQuery } from '@/utils/pageContext'
 import { worldText } from '@/utils/worldText'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
@@ -453,12 +454,16 @@ interface MoveCardVars {
   updates: Record<string, string>
 }
 
+const entitiesStore = useEntitiesStore()
+
 const { mutate: moveCard } = useMutation({
   mutation: ({ entity, updates }: MoveCardVars) => {
     const config = kanbanConfig.value
     if (!config) throw new Error(`unknown kanban view: ${props.id}`)
-    // To the card's ADDRESS, face included — see utils/entityRef.
-    return updateEntity(config.entity, entityRef(entity), { properties: updates })
+    // To the card's ADDRESS, face included — see utils/entityRef. Through the
+    // entities store so the edit form, which reads its cache, sees the move
+    // without waiting for the SSE invalidation.
+    return entitiesStore.update(config.entity, entityRef(entity), { properties: updates })
   },
   onMutate({ entity, updates }: MoveCardVars) {
     return beginOptimistic(
@@ -652,10 +657,10 @@ function cardTarget(entity: Entity): RouteLocationRaw {
   // Inside a page tab, Back and Cancel on the destination return to the tab.
   const fromPage = fromPageQuery(route)
   // The form opens on the card's ADDRESS, face included, so an edit from a
-  // world-bound board edits the face the card showed and not its bare id.
+  // world-bound board edits the face the card showed and not its bare id, in
+  // the board's world so the form loads the relations that world serves.
   if (kanbanConfig.value?.edit_form) {
-    const path = `/form/${kanbanConfig.value.edit_form}/${entityRef(entity)}`
-    return Object.keys(fromPage).length ? { path, query: fromPage } : path
+    return editFormRoute(kanbanConfig.value.edit_form, entityRef(entity), worldParam.value, fromPage)
   }
   // The world rides along so the detail resolves the face the card showed.
   const path = `/entity/${entity.type}/${entity.id}`

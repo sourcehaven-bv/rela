@@ -13,9 +13,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	rlua "github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // buildTimeout bounds a whole manual build (all islands together, via a child
@@ -87,6 +89,7 @@ type Options struct {
 //plimsoll:max-methods=29
 type docRuntime struct {
 	meta   *metamodel.Metamodel
+	worlds worlds.Compiled // compiled once from meta
 	policy *acl.Policy
 	store  *memstore.MemStore
 	tracer tracer.Tracer
@@ -183,12 +186,21 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 		defer func() { _ = opts.APIClient.Close() }()
 	}
 
+	compiledWorlds, err := worlds.Compile(opts.Meta)
+	if err != nil {
+		return "", fmt.Errorf("compiling worlds: %w", err)
+	}
 	st := memstore.New()
+	tr, err := tracer.New(st, compiledWorlds.DefaultWorld())
+	if err != nil { // coverage-ignore: invariant: a fresh store and a compiled world are both set
+		return "", fmt.Errorf("docs: tracer: %w", err)
+	}
 	dr := &docRuntime{
 		meta:   opts.Meta,
+		worlds: compiledWorlds,
 		policy: opts.Policy,
 		store:  st,
-		tracer: tracer.New(st),
+		tracer: tr,
 		strict: opts.Strict,
 		out:    &strings.Builder{},
 		ctx:    ctx,
@@ -237,9 +249,11 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	// build just seeded itself, and runs at the operator trust boundary
 	// (whoever builds the docs already has the project). No ACL applies.
 	readDeps := rlua.ReadDeps{
-		VisibleReader: visibility.Unrestricted(st),
-		Tracer:        dr.tracer,
-		Meta:          opts.Meta,
+		VisibleReader: visibility.Unrestricted(st, familiesOption(compiledWorlds)).
+			WithWorld(visibility.WorldOf(compiledWorlds.DefaultWorld())),
+		Tracer: dr.tracer,
+		Meta:   opts.Meta,
+		World:  compiledWorlds.DefaultWorld(),
 	}
 	// Use the BUILD's tier deadline, not the bare Tier-A buildTimeout, as the
 	// per-island cap. gopher-lua's SetContext aborts an island on its own
@@ -443,4 +457,11 @@ func (dr *docRuntime) luaFail(ls *lua.LState, format string, args ...any) int {
 	dr.pending = &BuildError{Kind: "resolve", Msg: fmt.Sprintf(format, args...)}
 	ls.RaiseError("%s", dr.pending.Msg)
 	return 0
+}
+
+// familiesOption is the resolver option that lists a type's faces in
+// declaration order, from w's families scope (TKT-7IZHP0 design §3.1, G18).
+func familiesOption(w worlds.Compiled) visibility.ResolverOption {
+	families := w.Families()
+	return visibility.WithFamilies(func() store.WorldScope { return families })
 }

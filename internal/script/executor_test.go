@@ -9,20 +9,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager/entitymanagertest"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 func testWriteDeps(projectRoot string) lua.WriteDeps {
 	st := memstore.New()
 	return lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
-			VisibleReader: st,
-			Tracer:        tracer.New(st),
+			VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
+			Tracer:        tracertest.Must(st, store.TrivialScope()),
 			ProjectRoot:   projectRoot,
+			World:         store.TrivialScope(),
 		},
 		EntityManager: entitymanagertest.PanicOnUse{},
 	}
@@ -67,8 +71,8 @@ func TestEngine_ExecuteFile_ValidPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing project directory")
 	}
-	if strings.Contains(err.Error(), "local") || strings.Contains(err.Error(), ".lua") {
-		t.Errorf("expected filesystem error, not validation error, got: %v", err)
+	if !strings.Contains(err.Error(), "script not found") {
+		t.Errorf("expected a not-found error, not a validation error, got: %v", err)
 	}
 }
 

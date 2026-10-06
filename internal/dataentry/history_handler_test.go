@@ -14,7 +14,8 @@ import (
 
 // historyStore is a canned version-history service, so the handler's
 // HistoryReader path can be exercised without a pgstore. Keyed by entity id; each
-// snapshot carries a type so cross-type checks can be tested. It embeds
+// snapshot carries a type so cross-type checks can be tested. A named face
+// keys as `ID@face`, the zero face by the bare id. It embeds
 // stubVersionService to satisfy the whole store.VersionService umbrella and
 // overrides only the two reader methods these tests exercise; assign it to
 // App.versions.
@@ -23,29 +24,30 @@ type historyStore struct {
 	versions map[string][]store.VersionSnapshot
 }
 
-func (h historyStore) ListVersions(_ context.Context, id string) ([]store.VersionMeta, error) {
-	snaps := h.versions[id]
+func (h historyStore) ListVersions(_ context.Context, ref entity.Ref) ([]store.VersionMeta, error) {
+	snaps := h.versions[entity.FormatStateRef(ref.ID, ref.Face)]
 	metas := make([]store.VersionMeta, 0, len(snaps))
 	for _, s := range snaps {
-		metas = append(metas, s.VersionMeta)
+		m := s.VersionMeta
+		m.Face = ref.Face // as every backend stamps it
+		metas = append(metas, m)
 	}
 	return metas, nil
 }
 
-func (h historyStore) GetVersion(_ context.Context, id string, version int) (*store.VersionSnapshot, error) {
-	snaps := h.versions[id]
+func (h historyStore) GetVersion(_ context.Context, ref entity.Ref, version int) (*store.VersionSnapshot, error) {
+	snaps := h.versions[entity.FormatStateRef(ref.ID, ref.Face)]
 	if version < 1 || version > len(snaps) {
 		return nil, store.ErrNotFound
 	}
 	s := snaps[version-1]
+	s.Face = ref.Face // as every backend stamps it
 	return &s, nil
 }
 
 // snapshot builds a version-1 create snapshot. Version is fixed at 1 (every
 // caller uses a single-version timeline); typ stays an explicit parameter to
 // document each case's entity type and keep the cross-type test readable.
-//
-//nolint:unparam // typ is intentionally explicit per-test
 func snapshot(typ, content string, props map[string]any) store.VersionSnapshot {
 	return store.VersionSnapshot{
 		VersionMeta: store.VersionMeta{Version: 1, Op: store.VersionOpCreate, Type: typ},
@@ -85,41 +87,34 @@ func TestHandleV1History_InvalidPath(t *testing.T) {
 	}
 }
 
-// TestAuthorizeHistoryRead_AbsentEntityNoPermissionIs404 pins the no-oracle
+// TestResolveHistorySubject_AbsentEntityNoPermissionIs404 pins the no-oracle
 // invariant: a caller without history:read asking for a non-existent (or
-// deleted) entity's history gets the SAME 404 as a nonexistent id — never a 403
-// that would confirm the entity exists. Exercised directly on authorizeHistoryRead
-// with a gate that grants no permission, so it doesn't depend on HistoryReader.
-func TestAuthorizeHistoryRead_AbsentEntityNoPermissionIs404(t *testing.T) {
+// deleted) entity's history gets the SAME 404 as a nonexistent id, never a
+// 403 that would confirm the entity exists.
+func TestResolveHistorySubject_AbsentEntityNoPermissionIs404(t *testing.T) {
 	app := newAppFromParts(nil, testMeta(), &fixture{})
-
+	app.versions = historyStore{}
+	// nopReadGate would GRANT the permission, so use a fake that withholds it
+	// to exercise the deny branch.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_history/ticket/GONE-1", http.NoBody)
-	// A gate that denies the permission and is not consulted for a live read
-	// (the entity is absent). nopReadGate would GRANT the permission, so use a
-	// fake that withholds it to exercise the deny branch.
 	req = req.WithContext(withReadGate(context.Background(), fakeGate{holdsPermission: false}))
 	rec := httptest.NewRecorder()
-
-	ok := authorizeHistoryRead(app, rec, req, "ticket", entityRef{ID: "GONE-1"})
-	if ok {
-		t.Fatal("authorizeHistoryRead should deny an absent entity when the caller lacks history:read")
-	}
+	handleV1History(app, rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("absent-entity history without permission: got %d, want 404 (no existence oracle)", rec.Code)
 	}
 }
 
-// TestAuthorizeHistoryRead_AbsentEntityWithPermissionAllowed confirms the holder
-// of history:read is allowed through for a deleted/absent entity (the auditor).
-func TestAuthorizeHistoryRead_AbsentEntityWithPermissionAllowed(t *testing.T) {
+// TestResolveHistorySubject_AbsentEntityWithPermissionAllowed confirms the
+// holder of history:read is allowed through for a deleted or absent entity
+// (the auditor).
+func TestResolveHistorySubject_AbsentEntityWithPermissionAllowed(t *testing.T) {
 	app := newAppFromParts(nil, testMeta(), &fixture{})
+	ctx := withReadGate(context.Background(), fakeGate{holdsPermission: true})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/_history/ticket/GONE-1", http.NoBody)
-	req = req.WithContext(withReadGate(context.Background(), fakeGate{holdsPermission: true}))
-	rec := httptest.NewRecorder()
-
-	if !authorizeHistoryRead(app, rec, req, "ticket", entityRef{ID: "GONE-1"}) {
-		t.Fatalf("history:read holder should be allowed to read deleted-entity history; body=%s", rec.Body.String())
+	subject, ok, err := resolveHistorySubject(ctx, app.visibleReader, "ticket", entity.Ref{ID: "GONE-1"})
+	if err != nil || !ok || subject.live != nil || subject.worldAbsent {
+		t.Fatalf("history:read holder = %+v ok %v err %v; want the deleted lineage", subject, ok, err)
 	}
 }
 

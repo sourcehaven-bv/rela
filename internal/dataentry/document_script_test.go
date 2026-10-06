@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/store"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager/entitymanagertest"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -18,7 +20,8 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/state"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // fakeScriptEngine is a test double for documentScriptEngine. Each call
@@ -439,9 +442,10 @@ print(got)
 	deps := func() lua.WriteDeps {
 		return lua.WriteDeps{
 			ReadDeps: lua.ReadDeps{
-				VisibleReader: st,
-				Tracer:        tracer.New(st),
+				VisibleReader: visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())),
+				Tracer:        tracertest.Must(st, store.TrivialScope()),
 				ProjectRoot:   projectRoot,
+				World:         store.TrivialScope(),
 			},
 			EntityManager: entitymanagertest.PanicOnUse{},
 		}

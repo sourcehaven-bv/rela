@@ -967,6 +967,18 @@ export interface SidebarPageTab {
   scope?: 'relation' | 'root'
   relation?: string
   direction?: 'outgoing' | 'incoming'
+  /**
+   * Per entity type, the relation a row created while this tab is open is
+   * linked to the page's entity over. The space's Create menu uses it.
+   */
+  links?: SidebarPageLink[]
+}
+
+/** A row of `type` is linked to the page's entity over `relation`, seen from the entity. */
+export interface SidebarPageLink {
+  type: string
+  relation: string
+  direction: 'outgoing' | 'incoming'
 }
 
 /** A page with the tabs this principal may see, in config order. */
@@ -985,12 +997,15 @@ export interface SidebarPage {
 
 /**
  * The entity page tab a view is shown in: the page and tab ids the server
- * resolves the scope from, and the anchor entity.
+ * resolves the scope from, and the anchor entity. `ref` is the address of
+ * the anchor's face on screen (`ID@face` on a faced type), which a write
+ * linking to the anchor names.
  */
 export interface PageScope {
   page: string
   tab: string
   entity: string
+  ref?: string
 }
 
 /** One entry of the space switcher. `home` is an unprefixed SPA path. */

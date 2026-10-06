@@ -41,6 +41,9 @@ type viewsHandler struct {
 	// passes through it, so a neighbor the principal cannot read is dropped
 	// and a survivor's hidden fields are redacted.
 	viewReader visibility.Reader
+	// visible resolves the single entity a view or side panel is anchored on,
+	// through the same resolver the entity GET uses.
+	visible visibleReader
 	// services returns the read bundle; view traversal and relation-column
 	// resolution read through it exactly as the App methods did.
 	services func() Services
@@ -88,29 +91,14 @@ func (h *viewsHandler) redactor() visibility.FieldRedactor {
 //
 // The id segment is an ADDRESS (`ID` or `ID@face`), the same grammar the
 // entity view accepts — the form that mounts this panel is opened on the
-// address of the row it edits. The row gate sees the bare id (ACL gate,
-// TKT-6N9O1Y: gated BEFORE any read so a denied principal gets a 404
-// indistinguishable from a missing id and the traversal never runs), and the
-// face half of a `type@face` grant is applied to the row that came back
-// (TKT-O7R2A1), with the same 404 so a denied face is indistinguishable from
-// an absent one.
+// address of the row it edits. The resolver runs the row gate on the bare id
+// and the face half of a `type@face` grant (TKT-6N9O1Y, TKT-O7R2A1) BEFORE the
+// traversal, so a denied principal, a denied face and a missing id all get
+// the same 404 and the traversal never runs.
 func (h *viewsHandler) sidePanelEntry(
 	w http.ResponseWriter, r *http.Request, entityType, entityID string,
 ) (*entityPkg.Entity, bool) {
-	ref, ok := parseEntityRef(entityID)
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
-		return nil, false
-	}
-	if !h.gateRead(w, r, entityType, ref.ID) {
-		return nil, false
-	}
-	entry, found := h.reader.getEntityRef(r.Context(), ref)
-	if !found || !faceReadable(r.Context(), entry.Type, entry.Face) {
-		writeV1Error(w, r, http.StatusNotFound, "entity_not_found", "Entity not found", "")
-		return nil, false
-	}
-	return entry, true
+	return readAddressedOr404(w, r, h.visible, entityType, entityID)
 }
 
 // handleV1SidePanel handles GET /api/v1/_sidepanel/{formId}/{entityId}.
@@ -429,7 +417,7 @@ func (h *viewsHandler) spaceCreate(ctx context.Context, sp *dataentryconfig.Spac
 // create the type.
 func (h *viewsHandler) createOffer(mayCreate func(string) bool, typ, formID string) *v1.SidebarCreate {
 	if formID == "" {
-		formID = h.createFormForType(typ)
+		formID = createFormForType(h.schema().Cfg, typ)
 	}
 	if formID == "" || !mayCreate(typ) {
 		return nil
@@ -531,6 +519,7 @@ func sidebarPages(
 				wire.Relation = sc.Relation
 				wire.Direction = string(sc.ResolvedDirection(page.EntityType, meta))
 			}
+			wire.Links = pageTabLinks(cfg, meta, page.EntityType, tab)
 			tabs = append(tabs, wire)
 		}
 		out[id] = v1.SidebarPage{
@@ -887,8 +876,8 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// The id segment is an ADDRESS (`ID` or `ID@face`), parsed once here so
 	// the row gate below sees the BARE id (it is face-blind by design and
 	// matches nothing on a suffixed string) and the engine sees the face.
-	ref, ok := parseEntityRef(entityID)
-	if !ok {
+	ref, refErr := entityPkg.ParseRef(entityID)
+	if refErr != nil {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
@@ -934,6 +923,11 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		h.writeWorldAbsentView(w, r, entityType, ref.ID)
 		return
 	}
+	var gerr *gateFaultError
+	if errors.As(err, &gerr) {
+		writeGateError(w, r, gerr.err)
+		return
+	}
 	if err != nil {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "view_execution_failed", "View execution failed", err.Error())
 		return
@@ -977,6 +971,13 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		Sections: make([]v1.ViewSection, 0, len(sections)),
 		Create:   sectionCreateMenuToV1(headerCreateMenu(sections)),
 	}
+	// The entity page autosaves the entry's body and properties, so the
+	// entry carries their version tokens (TKT-2VDVHF). It has no relations
+	// token: the entry is serialized without the face-scoped neighbor filter
+	// a PATCH checks against, and the page does not write the entry's
+	// relations.
+	resp.Entry.Versions = fieldVersionsOf(&resp.Entry, h.schema().Meta)
+	resp.Entry.Versions.Relations = ""
 
 	for _, sec := range sections {
 		v1Sec := v1.ViewSection{
@@ -1152,7 +1153,7 @@ func (h *viewsHandler) inlineCreateForms(ctx context.Context) map[string]string 
 	for name := range s.Meta.Entities {
 		// Form lookup first: it is a pure config read, so a type nothing can
 		// create never costs an authorization.
-		formID := h.createFormForType(name)
+		formID := createFormForType(h.schema().Cfg, name)
 		if formID == "" {
 			continue
 		}
@@ -1187,16 +1188,15 @@ func (h *viewsHandler) createAuthorizer(ctx context.Context) func(entityType str
 // createFormForType returns the first form ID that can be used to create an entity
 // of the given type. It prefers forms with mode "create" or unset, but falls back
 // to edit-mode forms (which work for creation when no entity ID is provided).
-func (h *viewsHandler) createFormForType(entityType string) string {
-	s := h.schema()
-	ids := make([]string, 0, len(s.Cfg.Forms))
-	for id := range s.Cfg.Forms {
+func createFormForType(cfg *dataentryconfig.Config, entityType string) string {
+	ids := make([]string, 0, len(cfg.Forms))
+	for id := range cfg.Forms {
 		ids = append(ids, id)
 	}
 	natsort.Strings(ids)
 	fallback := ""
 	for _, id := range ids {
-		f := s.Cfg.Forms[id]
+		f := cfg.Forms[id]
 		if f.EntityType != entityType {
 			continue
 		}
@@ -1295,8 +1295,10 @@ func (h *viewsHandler) relationColumnTargets(
 	ctx context.Context, svc Services, s *Schema, columns []dataentryconfig.ListColumn, rows []*entityPkg.Entity,
 ) (targets map[string]map[int][]string, targetIDs []string) {
 	byType := make(map[string][]string)
+	rowFace := make(map[string]entityPkg.Face, len(rows))
 	for _, e := range rows {
 		byType[e.Type] = append(byType[e.Type], e.ID)
+		rowFace[e.ID] = e.Face
 	}
 	targets = make(map[string]map[int][]string, len(rows))
 	seenTarget := make(map[string]struct{})
@@ -1316,8 +1318,16 @@ func (h *viewsHandler) relationColumnTargets(
 					break
 				}
 				rowID, targetID := r.From, r.To
+				// A content-scoped edge is served only with the face of its
+				// source that owns it (BUG-ISJHML): the row's face when the row
+				// is the source; see incomingOwnedAtZero for an incoming edge.
+				sourceFace := rowFace[rowID]
 				if dir.IsIncoming() {
 					rowID, targetID = r.To, r.From
+					sourceFace = incomingSourceFace(r, rowFace[rowID])
+				}
+				if !ownedByFace(s.Meta, r, sourceFace) {
+					continue
 				}
 				if targets[rowID] == nil {
 					targets[rowID] = make(map[int][]string)
@@ -1333,12 +1343,33 @@ func (h *viewsHandler) relationColumnTargets(
 	return targets, targetIDs
 }
 
+// idResolver is the batch bare-id read visibleTitles prefers: per id, the
+// redacted header of the face the world serves among the faces the principal
+// may read ([visibility.PolicyReader.ResolveIDs]).
+type idResolver interface {
+	ResolveIDs(ctx context.Context, w visibility.World, ids []string) map[string]store.EntityHeader
+}
+
 // visibleTitles resolves ids to display titles for the ids the principal may
 // read, in one header batch gated through the viewReader; ids the gate drops
 // (or the store no longer has) are absent from the result.
+//
+// When the viewReader can resolve bare ids, the ACL trims each id's faces
+// before the request's world ranks them, so a denied prime falls through to
+// a readable face. Otherwise the world picks the row first and the gate
+// checks that row's face.
 func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []string) map[string]string {
+	if r, ok := h.viewReader.(idResolver); ok {
+		served := r.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
+		titles := make(map[string]string, len(served))
+		for id, hd := range served {
+			titles[id] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
+		}
+		return titles
+	}
+	sel := store.InWorld(worldScopeFrom(ctx))
 	var headers []store.EntityHeader
-	for hd, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: ids}) {
+	for hd, err := range store.ListEntityHeaders(ctx, svc.Store, store.EntityQuery{IDs: ids, Faces: sel}) {
 		if err != nil {
 			slog.Warn("dataentry: view section relation titles dropped; header read failed",
 				"targets", len(ids), "err", err)
@@ -1352,7 +1383,7 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 	} else {
 		// No header capability: gate the same batch as whole entities.
 		ents := make([]*entityPkg.Entity, 0, len(headers))
-		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{IDs: ids}) {
+		for e, err := range svc.Store.ListEntities(ctx, store.EntityQuery{IDs: ids, Faces: sel}) {
 			if err != nil {
 				slog.Warn("dataentry: view section relation titles dropped; entity read failed",
 					"targets", len(ids), "err", err)

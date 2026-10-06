@@ -259,7 +259,9 @@ func dsn(opts Options) string {
 // silent no-op against an existing table of a different shape — carrying an
 // older database forward is migrate.go's job, and every change here needs a
 // matching step there.
-const schemaSQL = `
+//
+//nolint:gosec // G202: joins constant DDL only; no input reaches it
+var schemaSQL = `
 CREATE TABLE IF NOT EXISTS entities (
 	id          TEXT NOT NULL,
 	-- face is the content-state coordinate (TKT-DOFYR1); '' is the DEFAULT
@@ -294,7 +296,7 @@ CREATE TABLE IF NOT EXISTS entities (
 	origin_definition  TEXT,
 	PRIMARY KEY (id, face)
 ) STRICT;
-CREATE INDEX IF NOT EXISTS entities_type_idx ON entities(type);
+` + entitiesTypeIDFaceIndexDDL + `
 -- Entity IDs are case-insensitive IDENTITIES (BUG-3RCWNS): "abc" and "ABC"
 -- cannot coexist. Enforced as a unique index on lower(id) rather than by
 -- changing the column collation, exactly as pgstore does — the primary key
@@ -360,7 +362,7 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + migrationStateDDL + `
 ` + versionSchemaSQL + `
 ` + softDeleteDDL + `
-`
+` + searchDDL
 
 // softDeleteDDL holds soft-deleted entities and their hidden relations until
 // the undo window closes (sqlitestore/softdelete.go). A marked row is MOVED
@@ -371,7 +373,7 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 // mark itself; TestSoftDeleteTablesMatchLiveTables pins that, because a column
 // added to entities but not here would be lost on restore.
 //
-// Shared between schemaSQL and the v7→v8 migration, like the other DDL
+// Shared between schemaSQL and the v9→v10 migration, like the other DDL
 // constants, so a fresh database and a migrated one cannot differ.
 const softDeleteDDL = `
 CREATE TABLE IF NOT EXISTS marked_entities (
@@ -412,6 +414,18 @@ CREATE TABLE IF NOT EXISTS marked_relations (
 	PRIMARY KEY (from_id, from_face, rel_type, to_id)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS marked_relations_owner_idx ON marked_relations(owner_id);`
+
+// entitiesTypeIDFaceIndexDDL serves a type page in every face selection
+// (TKT-KQXVF7). Each list shape orders by (id, face), and a world picks one
+// row per id, so (type, id, face) lets a page walk the index in order: the
+// implicit-face page filters face inside it, and the all-faces, explicit-face
+// and world pages read it as is. It replaced entities_type_idx (type), which
+// made every type page sort the whole type.
+//
+// Shared between schemaSQL (fresh databases) and the v10→v11 migration
+// (existing ones), for the same reason projectFilesDDL is.
+const entitiesTypeIDFaceIndexDDL = `
+CREATE INDEX IF NOT EXISTS entities_type_id_face_idx ON entities(type, id, face);`
 
 // projectFilesDDL carries the operator-authored config — schema.yaml,
 // data-entry.yaml, acl.yaml, scripts/, templates/, custom/ — so a single
@@ -524,3 +538,40 @@ CREATE TABLE IF NOT EXISTS comments (
 -- Serves List: one target's thread in contract order (oldest first, id
 -- breaking ties), as an index range scan rather than a sort.
 CREATE INDEX IF NOT EXISTS comments_thread_idx ON comments(target_key, created_at, id);`
+
+// searchDDL is the full-text search index (DEC-10Z731): an FTS5 table with
+// the trigram tokenizer, which answers case-insensitive substring queries as
+// pgstore's LIKE over its trigram index does.
+//
+// Each row's rowid is the entities row's rowid, and triggers keep the index
+// in step inside the writing transaction. That makes it as current as the
+// table on every write path (store writes, renames, soft delete, purge, bulk
+// import) with no observer and no rebuild after a crash. The indexed text is
+// pgstore's search_text: the id, the string-valued top-level properties and
+// the body. The tokenizer folds case, so none of it is lowercased here.
+//
+// Writes use INSERT OR REPLACE: an entities rowid freed by a delete can be
+// reused, and a stale index row must never make that insert fail.
+var searchDDL = `
+CREATE VIRTUAL TABLE IF NOT EXISTS entity_search USING fts5(body, tokenize = 'trigram');
+CREATE TRIGGER IF NOT EXISTS entity_search_insert AFTER INSERT ON entities BEGIN
+	INSERT OR REPLACE INTO entity_search(rowid, body) VALUES (NEW.rowid, ` + searchBody("NEW") + `);
+END;
+CREATE TRIGGER IF NOT EXISTS entity_search_update AFTER UPDATE OF id, properties, content ON entities BEGIN
+	DELETE FROM entity_search WHERE rowid = OLD.rowid;
+	INSERT OR REPLACE INTO entity_search(rowid, body) VALUES (NEW.rowid, ` + searchBody("NEW") + `);
+END;
+CREATE TRIGGER IF NOT EXISTS entity_search_delete AFTER DELETE ON entities BEGIN
+	DELETE FROM entity_search WHERE rowid = OLD.rowid;
+END;`
+
+// searchBody is the SQL for the indexed text of the entities row named row.
+func searchBody(row string) string {
+	return row + `.id || char(10) || coalesce((SELECT group_concat(value, char(10)) FROM json_each(` + row +
+		`.properties) WHERE type = 'text'), '') || char(10) || ` + row + `.content`
+}
+
+// rebuildSearchSQL fills the search index from the entities table, for a
+// database that had rows before the index existed.
+var rebuildSearchSQL = `DELETE FROM entity_search;
+INSERT INTO entity_search(rowid, body) SELECT e.rowid, ` + searchBody("e") + ` FROM entities e;`

@@ -25,7 +25,7 @@ interface Harness {
 
 function makeHarness(
   initial: Record<string, unknown> = {},
-  overrides: Partial<AutoSaveOptions> = {},
+  overrides: Partial<AutoSaveOptions> = {}
 ): Harness {
   const formData = ref<Record<string, unknown>>({ ...initial })
   const contentRef = ref('')
@@ -98,10 +98,11 @@ describe('useAutoSave', () => {
     await vi.advanceTimersByTimeAsync(150)
     expect(h.updateMock).toHaveBeenCalledTimes(1)
     expect(h.updateMock).toHaveBeenCalledWith(
-      'ticket', 'TKT-001',
+      'ticket',
+      'TKT-001',
       { properties: { status: 'closed' } },
       undefined,
-      expect.any(AbortSignal),
+      expect.any(AbortSignal)
     )
   })
 
@@ -111,10 +112,11 @@ describe('useAutoSave', () => {
     await vi.advanceTimersByTimeAsync(150)
     expect(h.updateMock).toHaveBeenCalledTimes(1)
     expect(h.updateMock).toHaveBeenCalledWith(
-      'ticket', 'TKT-001',
+      'ticket',
+      'TKT-001',
       { properties_unset: ['title'] },
       undefined,
-      expect.any(AbortSignal),
+      expect.any(AbortSignal)
     )
   })
 
@@ -177,7 +179,9 @@ describe('useAutoSave', () => {
     h.autoSave.scheduleFieldSave('b', 'B')
     await vi.advanceTimersByTimeAsync(250)
     expect(h.updateMock).toHaveBeenCalledTimes(2)
-    const order = h.updateMock.mock.calls.map((c) => Object.keys((c[2] as { properties: object }).properties)[0])
+    const order = h.updateMock.mock.calls.map(
+      (c) => Object.keys((c[2] as { properties: object }).properties)[0]
+    )
     expect(order).toEqual(['a', 'b'])
   })
 
@@ -337,6 +341,44 @@ describe('useAutoSave', () => {
     })
   })
 
+  // A relations body is a delta against what earlier saves confirmed, so it
+  // is built when it is sent, and only an accepted body is confirmed.
+  it('confirms a relations body only once the server accepts it', async () => {
+    const onRelationsSaved = vi.fn()
+    const h = makeHarness({}, { onRelationsSaved })
+    const body = { tagged: { add: [{ type: 'label', id: 'L-1' }] } }
+    h.buildRelationsBody.mockReturnValue(body)
+    h.updateMock.mockRejectedValueOnce(new Error('offline'))
+    h.autoSave.scheduleRelationsChange()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(onRelationsSaved).not.toHaveBeenCalled()
+
+    h.autoSave.scheduleRelationsChange()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(onRelationsSaved).toHaveBeenCalledWith(body)
+  })
+
+  it('builds a queued relations body after the save ahead of it lands', async () => {
+    const h = makeHarness({ title: 'x' })
+    let release!: () => void
+    h.updateMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ id: 'TKT-001', type: 'ticket', properties: {} })
+        })
+    )
+    h.autoSave.scheduleFieldSave('title', 'y')
+    await vi.advanceTimersByTimeAsync(150)
+    h.buildRelationsBody.mockReturnValue({ tagged: { remove: [{ id: 'L-1' }] } })
+    h.autoSave.scheduleRelationsChange()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(h.buildRelationsBody).not.toHaveBeenCalled()
+
+    release()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(h.buildRelationsBody).toHaveBeenCalledTimes(1)
+  })
+
   it('AC-R2: pristine relations Map produces no PATCH', async () => {
     const h = makeHarness({})
     h.buildRelationsBody.mockReturnValue(null)
@@ -368,7 +410,9 @@ describe('useAutoSave', () => {
     }
     const h = makeHarness({ title: 'x' })
     h.updateMock.mockResolvedValue({
-      id: 'TKT-001', type: 'ticket', properties: {},
+      id: 'TKT-001',
+      type: 'ticket',
+      properties: {},
       warnings: [warning],
     } as Entity)
     h.autoSave.scheduleFieldSave('status', 'bogus')
@@ -386,7 +430,9 @@ describe('useAutoSave', () => {
     const inverseToCanonical = new Map([['blockedBy', 'blocks']])
     const h = makeHarness({}, { inverseToCanonical })
     h.updateMock.mockResolvedValue({
-      id: 'TKT-001', type: 'ticket', properties: {},
+      id: 'TKT-001',
+      type: 'ticket',
+      properties: {},
       warnings: [warning],
     } as Entity)
     h.buildRelationsBody.mockReturnValue({
@@ -445,7 +491,8 @@ describe('useAutoSave', () => {
     h.autoSave.scheduleFieldSave('title', 'user-typed')
     // SSE-style merge arrives while user is still typing.
     h.autoSave.mergeServerResponse({
-      id: 'TKT-001', type: 'ticket',
+      id: 'TKT-001',
+      type: 'ticket',
       properties: { title: 'server-changed', status: 'new' },
     } as Entity)
     // Dirty field is preserved.
@@ -457,10 +504,7 @@ describe('useAutoSave', () => {
   // ---- TKT-IHC7A ----------------------------------------------------------
 
   it('IHC7A AC1: fieldDebounceMs and contentDebounceMs fire independently', async () => {
-    const h = makeHarness(
-      { title: 'orig' },
-      { fieldDebounceMs: 800, contentDebounceMs: 100 },
-    )
+    const h = makeHarness({ title: 'orig' }, { fieldDebounceMs: 800, contentDebounceMs: 100 })
     h.autoSave.scheduleFieldSave('title', 'field-edit')
     h.autoSave.scheduleContentSave('content-edit')
     // Content fires first (100ms), field still pending.
@@ -474,10 +518,7 @@ describe('useAutoSave', () => {
   })
 
   it('IHC7A AC1: per-channel debounce overrides legacy debounceMs', async () => {
-    const h = makeHarness(
-      { title: 'orig' },
-      { debounceMs: 800, contentDebounceMs: 100 },
-    )
+    const h = makeHarness({ title: 'orig' }, { debounceMs: 800, contentDebounceMs: 100 })
     h.autoSave.scheduleFieldSave('title', 'A')
     h.autoSave.scheduleContentSave('B')
     // Only content fires at 150ms; field still bound to legacy 800ms.
@@ -493,7 +534,8 @@ describe('useAutoSave', () => {
     const contentRef = ref('')
     const apply = vi.fn()
     const seed = {
-      id: 'TKT-001', type: 'ticket',
+      id: 'TKT-001',
+      type: 'ticket',
       properties: { title: 'seeded' },
     } satisfies Partial<Entity>
     const opts: AutoSaveOptions = {
@@ -512,7 +554,9 @@ describe('useAutoSave', () => {
     }
     const store = useEntitiesStore()
     const updateMock = vi.spyOn(store, 'update').mockResolvedValue({
-      id: 'TKT-001', type: 'ticket', properties: {},
+      id: 'TKT-001',
+      type: 'ticket',
+      properties: {},
     } as Entity)
     const auto = useAutoSave(opts)
     // Same value as the seed — should be suppressed as a no-op.
@@ -524,7 +568,8 @@ describe('useAutoSave', () => {
   it('IHC7A AC2: later recordServerSnapshot fully replaces the initial seed', async () => {
     const formData = ref<Record<string, unknown>>({ title: 'seeded' })
     const seed = {
-      id: 'TKT-001', type: 'ticket',
+      id: 'TKT-001',
+      type: 'ticket',
       properties: { title: 'seeded', stale: 'gone-after-replace' },
     } satisfies Partial<Entity>
     const opts: AutoSaveOptions = {
@@ -542,12 +587,15 @@ describe('useAutoSave', () => {
     }
     const store = useEntitiesStore()
     const updateMock = vi.spyOn(store, 'update').mockResolvedValue({
-      id: 'TKT-001', type: 'ticket', properties: {},
+      id: 'TKT-001',
+      type: 'ticket',
+      properties: {},
     } as Entity)
     const auto = useAutoSave(opts)
     // Replace the seed entirely — `stale` is no longer the baseline.
     auto.recordServerSnapshot({
-      id: 'TKT-001', type: 'ticket',
+      id: 'TKT-001',
+      type: 'ticket',
       properties: { title: 'fresh' },
     } as Entity)
     // Writing 'gone-after-replace' to `stale` is NOT a no-op now that
@@ -599,11 +647,14 @@ describe('useAutoSave', () => {
     }
     const store = useEntitiesStore()
     vi.spyOn(store, 'update').mockResolvedValue({
-      id: 'TKT-001', type: 'ticket', properties: {},
+      id: 'TKT-001',
+      type: 'ticket',
+      properties: {},
     } as Entity)
     const auto = useAutoSave(opts)
     auto.mergeServerResponse({
-      id: 'TKT-001', type: 'ticket',
+      id: 'TKT-001',
+      type: 'ticket',
       properties: { title: 'server-set' },
       content: 'server-content',
     } as Entity)
@@ -631,7 +682,9 @@ describe('useAutoSave', () => {
     }
     const store = useEntitiesStore()
     const updateMock = vi.spyOn(store, 'update').mockResolvedValue({
-      id: 'TKT-001', type: 'ticket', properties: {},
+      id: 'TKT-001',
+      type: 'ticket',
+      properties: {},
     } as Entity)
     const auto = useAutoSave(opts)
     const result = await auto.commitImmediately(1000)
@@ -644,7 +697,7 @@ describe('useAutoSave', () => {
   it('IHC7B: onError receives { status, property, channel } on property-channel failure', async () => {
     const h = makeHarness({ title: 'x' })
     h.updateMock.mockRejectedValueOnce(
-      new ApiError('forbidden', { kind: 'http', status: 403, original: null }),
+      new ApiError('forbidden', { kind: 'http', status: 403, original: null })
     )
     h.autoSave.scheduleFieldSave('title', 'bad')
     await vi.advanceTimersByTimeAsync(150)
@@ -659,7 +712,7 @@ describe('useAutoSave', () => {
   it('IHC7B: onError carries channel:"content" on content-channel failure', async () => {
     const h = makeHarness({})
     h.updateMock.mockRejectedValueOnce(
-      new ApiError('too large', { kind: 'http', status: 413, original: null }),
+      new ApiError('too large', { kind: 'http', status: 413, original: null })
     )
     h.autoSave.scheduleContentSave('big body')
     await vi.advanceTimersByTimeAsync(150)
@@ -672,9 +725,11 @@ describe('useAutoSave', () => {
 
   it('IHC7B: onError carries channel:"relations" on relations-channel failure', async () => {
     const h = makeHarness({})
-    h.buildRelationsBody.mockReturnValueOnce({ blocks: { data: [{ id: 'TKT-002', type: 'ticket' }] } })
+    h.buildRelationsBody.mockReturnValueOnce({
+      blocks: { data: [{ id: 'TKT-002', type: 'ticket' }] },
+    })
     h.updateMock.mockRejectedValueOnce(
-      new ApiError('cycle', { kind: 'http', status: 409, original: null }),
+      new ApiError('cycle', { kind: 'http', status: 409, original: null })
     )
     h.autoSave.scheduleRelationsChange()
     await vi.advanceTimersByTimeAsync(150)

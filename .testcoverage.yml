@@ -104,6 +104,7 @@ exclude:
     - ^tools/seqtrace/[^/]+\.go$         # tracing runtime; only runs inside rewrite's TestDemo subprocess
     - ^tools/seqtrace/cmd      # diagnostic CLI entry point
     - ^internal/testutil       # test helpers
+    - ^internal/tracer/tracertest # test helper (tracer.New for fixtures)
     - ^internal/store/storetest # shared conformance test kit (exercised via backends)
     - ^internal/visibility/visibilitytest # shared conformance test kit (exercised via visibility + future wirings)
     - ^internal/state/statetest # shared conformance test kit (exercised via FSKV + pgstore's StateKV)

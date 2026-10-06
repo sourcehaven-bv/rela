@@ -1,8 +1,7 @@
 package main
 
 import (
-	"context"
-	"fmt"
+	"errors"
 	"net/http"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -69,14 +68,14 @@ func wireRemoteMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) e
 // remoteAttachmentDeps wires the MCP attachment tools onto the web upload
 // path's policy: the App's live schema (so an operator's edit to `accept:`,
 // `scan:` or `max_attachment_bytes` applies to MCP uploads immediately), its
-// command runner, and its attachment locker. The snapshot is rebuilt per tool
+// command runner, and the manager's attachment surface (stamp and lock). The snapshot is rebuilt per tool
 // call, which costs one struct allocation.
 func remoteAttachmentDeps(svc *appbuild.Services, host dataentry.MCPHost) relamcp.AttachmentDeps {
 	return relamcp.AttachmentDeps{
 		Snapshot: func() (relamcp.AttachmentSnapshot, error) {
 			meta, limit := host.AttachmentPolicy()
 			return relamcp.NewAttachmentSnapshot(
-				svc.Store(), svc.EntityManager(), host.AttachmentLocker, svc.ACL(), meta, host.AttachmentRunner, limit)
+				svc.Store(), host.Attachments, svc.ACL(), meta, host.AttachmentRunner, limit)
 		},
 		Uploads:    host.AttachmentUploads,
 		Authorizer: svc.ACL(),
@@ -103,14 +102,17 @@ func newRemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost) (*relamc
 // LuaWriteDeps and LuaCache stay zero because the remote server has no Lua
 // tools.
 //
-// Entity reads and searches resolve through the host's world source, the
-// operator's `app.default_world`, so a faced entity is visible to MCP exactly
-// as it is to the data-entry API (BUG-6XTX0G).
+// A bare id resolves in the compiled default world, as on the data-entry API
+// (BUG-6XTX0G), and a read tool's `world` argument selects another through
+// the host, which applies the world grant.
+//
+// Nil: the host's world functions are rejected, because without them a
+// `world` argument could not be authorized.
 func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps, error) {
-	reads, err := appbuild.WorldBound(svc.GatedReads(), host.ReadWorld)
-	if err != nil {
-		return relamcp.Deps{}, fmt.Errorf("binding MCP reads to a world: %w", err)
+	if host.SelectWorld == nil || host.WorldReadable == nil || host.DefaultWorld == nil {
+		return relamcp.Deps{}, errors.New("remote MCP: the host's world functions are required")
 	}
+	reads := svc.GatedReads()
 	deps := relamcp.Deps{
 		Store:         reads.Reader,
 		Meta:          svc.Meta(),
@@ -122,26 +124,15 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 		Watcher:       noopWatcher{},
 		ProjectRoot:   svc.Paths().Root,
 		Attachments:   remoteAttachmentDeps(svc, host),
-		Worlds:        hostWorlds{host},
+		World:         reads.LuaReads.World,
+		Families:      appbuild.CompiledWorlds(svc).Families(),
+		Worlds:        host.Worlds(),
 	}
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals
 	}
 	return deps, nil
 }
-
-// hostWorlds adapts the host's world functions to [relamcp.WorldSelector].
-type hostWorlds struct{ host dataentry.MCPHost }
-
-func (w hostWorlds) SelectWorld(ctx context.Context, name string) (context.Context, error) {
-	return w.host.SelectWorld(ctx, name)
-}
-
-func (w hostWorlds) WorldReadable(ctx context.Context, name string) (bool, error) {
-	return w.host.WorldReadable(ctx, name)
-}
-
-func (w hostWorlds) DefaultWorld() string { return w.host.DefaultWorld() }
 
 // noopWatcher satisfies [relamcp.Watcher] for the HTTP transport, which has
 // no use for file-change callbacks.

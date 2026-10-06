@@ -11,6 +11,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 )
 
 func TestParseActionResponse_Nil(t *testing.T) {
@@ -298,7 +299,7 @@ func TestCheckActionScriptExists_Missing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := CheckActionScriptExists(tmpDir, "missing.lua")
+	err := CheckActionScriptExists(context.Background(), rootfs.New(tmpDir), "missing.lua")
 	if err == nil {
 		t.Fatal("expected error for missing script")
 	}
@@ -314,7 +315,7 @@ func TestCheckActionScriptExists_Present(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := CheckActionScriptExists(tmpDir, "ok.lua"); err != nil {
+	if err := CheckActionScriptExists(context.Background(), rootfs.New(tmpDir), "ok.lua"); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

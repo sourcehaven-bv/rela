@@ -1,8 +1,11 @@
 package dataentry
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -27,9 +30,10 @@ import (
 // endpoints' read verdicts (FROM ∧ TO), each resolved against the endpoint's
 // LIVE type. The "FROM entity owns the history" UI decision governs placement
 // only — it must NOT become the authorization boundary, or the TO endpoint would
-// be an existence/content oracle for a principal who can read FROM but not TO. A
-// deleted relation (endpoints gone) requires the global acl.PermHistoryRead; a
-// non-holder gets the same 404 as a nonexistent relation (no existence oracle).
+// be an existence/content oracle for a principal who can read FROM but not TO.
+// When part of the relation is gone, every end that still exists keeps its
+// check and the global acl.PermHistoryRead is required on top; a denial is the
+// same 404 as a nonexistent relation (see relationHistoryReadable).
 //
 // Field redaction (TKT-B1F5Q1, IB-review #1): relation meta supports field-level
 // `visible:` redaction, on the live relation GET and here in history. History
@@ -54,8 +58,8 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 	// `ID@face` and the SPA passes it here verbatim, so it must be parsed rather
 	// than handed to the store (TKT-JAROC3). The face selects which TAIL's history
 	// this is; the bare id is what every ACL row gate keys on.
-	fromRef, refOK := parseEntityRef(parts[1])
-	if !refOK {
+	fromRef, refErr := entityPkg.ParseRef(parts[1])
+	if refErr != nil {
 		// An address the grammar rejects names no row. Same not-found a missing
 		// relation gives — a distinct 400 would only say which strings are worth
 		// probing.
@@ -96,7 +100,7 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !authorizeRelationHistoryRead(a, w, r, from, to) {
+	if !authorizeRelationHistoryRead(a, w, r, fromRef, to) {
 		return
 	}
 
@@ -122,7 +126,7 @@ func handleV1RelationHistory(a *App, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := store.RelationHistoryQuery{
-		From: from, FromFace: fromRef.Face, Type: relType, To: to, RecordID: recordID,
+		Key: entityPkg.RelationKey{From: from, FromFace: fromRef.Face, Type: relType, To: to}, RecordID: recordID,
 	}
 
 	if len(parts) >= 5 && parts[4] != "" {
@@ -148,59 +152,114 @@ func parseRecordID(r *http.Request) (int64, bool) {
 }
 
 // authorizeRelationHistoryRead returns true if the caller may read this
-// relation's history, writing an indistinguishable-404 otherwise.
-//
-// Dual-endpoint gating (RR-SDDYZO): BOTH endpoints must be readable. If both are
-// live, each must pass the per-type read verdict. Each endpoint's type is
-// resolved from its LIVE row — never from the URL: rela ids are globally unique,
-// so `getEntity(id)` yields the real type, and the URL `{fromType}` segment is
-// therefore never an ACL trust input (a caller could otherwise spoof a type whose
-// verdict is more favorable to them — IB-review #1). If either endpoint is not
-// live, the relation's endpoints are (at least partly) gone — treat it as
-// deleted-relation history and require the global PermHistoryRead, else the same
-// 404 as a nonexistent relation.
-func authorizeRelationHistoryRead(a *App, w http.ResponseWriter, r *http.Request, from, to string) bool {
-	ctx := r.Context()
-	gate := readGateFromContext(ctx)
-
-	fromEntity, fromLive := a.reader.getEntity(ctx, from)
-	toEntity, toLive := a.reader.getEntity(ctx, to)
-
-	if fromLive && toLive {
-		// Gate each endpoint on its REAL (live) type, not the URL segment.
-		fromOK, err := gate.PermitsRead(ctx, fromEntity.Type, from)
-		if err != nil {
-			writeGateError(w, r, err)
-			return false
-		}
-		toOK, err := gate.PermitsRead(ctx, toEntity.Type, to)
-		if err != nil {
-			writeGateError(w, r, err)
-			return false
-		}
-		if !fromOK || !toOK {
-			// Denied on EITHER endpoint → indistinguishable 404. Never reveal which.
-			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-			return false
-		}
-		return true
+// relation's history, writing an indistinguishable-404 otherwise. The rule
+// is [relationHistoryReadable]; read and restore both call this.
+func authorizeRelationHistoryRead(
+	a *App, w http.ResponseWriter, r *http.Request, from entityPkg.Ref, to string,
+) bool {
+	ok, err := relationHistoryReadable(r.Context(), a.visibleReader, from, to)
+	if err != nil {
+		writeGateError(w, r, err)
+		return false
 	}
-
-	// One or both endpoints gone: deleted-relation history. Global permission.
-	if !gate.HoldsPermission(ctx, acl.PermHistoryRead) {
+	if !ok {
+		// Denied on any end → indistinguishable 404. Never reveal which.
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return false
 	}
 	return true
 }
 
+// relationHistoryReadable decides whether the ctx principal may read the
+// history of the relation from → to. ok=false is the uniform not-found; an
+// error is a gate failure.
+//
+// The rule is "both ends, as far as they still exist" (RR-SDDYZO). Every end
+// that still exists must pass its live read check:
+//
+//   - A live tail is read as design 8.2 says: a named face as that face, a
+//     bare tail as the entity (some readable face of the id).
+//   - A named tail face that was deleted while the entity lives on must pass
+//     the entity's row gate on its remaining faces, and the principal's read
+//     grants must cover the deleted face. This mirrors the deleted-face rule
+//     of entity history ([resolveHistorySubject]).
+//   - A live head is an entity-level check.
+//
+// When any part of the relation is gone (a deleted tail face, or an end
+// with no stored row at all), the history is deleted-relation history and
+// additionally requires the global acl.PermHistoryRead. An end with no
+// stored row has no verdict left to evaluate and no trustworthy type, so it
+// adds no check of its own: unlike entity history, which takes the type from
+// the URL, the `{fromType}` segment here is never an ACL input.
+//
+// Each end's type is its STORED type, never the URL: rela ids are globally
+// unique, so the stored header yields the real type (IB-review #1). A failed
+// stored-faces read is an error, never "deleted", because the deleted rule
+// grants on a global permission.
+func relationHistoryReadable(
+	ctx context.Context, vr visibleReader, from entityPkg.Ref, to string,
+) (bool, error) {
+	fromType, fromFaces, err := loadStoredFaces(ctx, vr.store, from.ID)
+	if err != nil {
+		return false, err
+	}
+	toType, _, err := loadStoredFaces(ctx, vr.store, to)
+	if err != nil {
+		return false, err
+	}
+
+	partlyGone := false
+	deletedTailFace := false
+	var ok bool
+	switch {
+	case fromType == "":
+		partlyGone = true
+		ok = true
+	case from.Face.IsImplicit():
+		_, ok, err = vr.family(ctx, fromType, from.ID)
+	case slices.Contains(fromFaces, from.Face):
+		_, ok, err = vr.ref(ctx, fromType, from)
+	default:
+		partlyGone, deletedTailFace = true, true
+		_, ok, err = vr.family(ctx, fromType, from.ID)
+	}
+	if err != nil || !ok {
+		return false, err
+	}
+
+	if toType == "" {
+		partlyGone = true
+	} else if _, ok, err = vr.family(ctx, toType, to); err != nil || !ok {
+		return false, err
+	}
+
+	if !partlyGone {
+		return true, nil
+	}
+	if !readGateFromContext(ctx).HoldsPermission(ctx, acl.PermHistoryRead) {
+		return false, nil
+	}
+	if deletedTailFace {
+		// A named face in a denied world is refused, as the live face is.
+		if worldFromContext(ctx).blocksAllReads() {
+			return false, nil
+		}
+		if !faceReadable(ctx, fromType, from.Face) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // serveRelationLifetimes writes the list of a key's past lifetimes (newest-first),
 // so a UI can offer a lifetime picker for a deleted-and-recreated relation.
 func serveRelationLifetimes(
 	w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
-	fromRef entityRef, relType, to string,
+	fromRef entityPkg.Ref, relType, to string,
 ) {
-	lifetimes, err := reader.ListRelationLifetimes(r.Context(), fromRef.ID, fromRef.Face, relType, to)
+	lifetimes, err := reader.ListRelationLifetimes(r.Context(), entityPkg.RelationKey{
+		From: fromRef.ID, FromFace: fromRef.Face, Type: relType, To: to,
+	})
 	if err != nil {
 		writeGateError(w, r, err)
 		return
@@ -260,7 +319,7 @@ func serveRelationHistoryTimeline(
 		versions = append(versions, row)
 	}
 	writeV1JSON(w, http.StatusOK, map[string]any{
-		"from": q.From, "type": q.Type, "to": q.To, "versions": versions,
+		"from": q.Key.From, "type": q.Key.Type, "to": q.Key.To, "versions": versions,
 	})
 }
 
@@ -314,8 +373,19 @@ func serveRelationHistoryVersion(
 
 	// Live source → redact against today's policy; deleted source → no meta.
 	meta := map[string]any{}
-	if src, live := a.reader.getEntity(ctx, snap.From); live {
-		meta = a.affordances.visibleRelationMeta(ctx, src, snap.Type, cloneProps(snap.Properties))
+	// The source is the row at the tail this history is for. A miss (gone, or
+	// not readable) serves no meta, which fails closed.
+	vr := a.visibleReader
+	if srcType := vr.storedType(ctx, snap.From); srcType != "" {
+		srcRef := entityPkg.Ref{ID: snap.From, Face: q.Key.FromFace}
+		src, live, gateErr := vr.ref(ctx, srcType, srcRef)
+		if gateErr != nil {
+			writeGateError(w, r, gateErr)
+			return
+		}
+		if live {
+			meta = a.affordances.visibleRelationMeta(ctx, src, snap.Type, cloneProps(snap.Properties))
+		}
 	}
 
 	row := map[string]any{
@@ -323,9 +393,9 @@ func serveRelationHistoryVersion(
 		"content": snap.Content, "meta": meta,
 	}
 	writeV1JSON(w, http.StatusOK, map[string]any{
-		"from":       q.From,
-		"type":       q.Type,
-		"to":         q.To,
+		"from":       q.Key.From,
+		"type":       q.Key.Type,
+		"to":         q.Key.To,
 		"version":    snap.Version,
 		"op":         snap.Op,
 		"created_at": snap.CreatedAt,
@@ -340,12 +410,12 @@ func serveRelationHistoryVersion(
 // exists, the create maps ErrEntityNotFound → 409 dangling-edge (not 500).
 func restoreRelationHistoryVersion(a *App,
 	w http.ResponseWriter, r *http.Request, reader store.RelationHistoryReader,
-	fromRef entityRef, relType, to, versionStr string,
+	fromRef entityPkg.Ref, relType, to, versionStr string,
 ) {
 	from := fromRef.ID
 	// Restore is a write; gate reads first so a caller who can't even read the
 	// history can't probe it via restore.
-	if !authorizeRelationHistoryRead(a, w, r, from, to) {
+	if !authorizeRelationHistoryRead(a, w, r, fromRef, to) {
 		return
 	}
 	version, convErr := strconv.Atoi(versionStr)
@@ -358,7 +428,9 @@ func restoreRelationHistoryVersion(a *App,
 	ctx := r.Context()
 	// Restore reads from the newest lifetime (RecordID 0); the HTTP restore route
 	// does not expose an older-lifetime selector (the CLI does via --lifetime).
-	q := store.RelationHistoryQuery{From: from, FromFace: fromRef.Face, Type: relType, To: to}
+	q := store.RelationHistoryQuery{Key: entityPkg.RelationKey{
+		From: from, FromFace: fromRef.Face, Type: relType, To: to,
+	}}
 	snap, err := reader.GetRelationVersion(ctx, q, version)
 	if errors.Is(err, store.ErrNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
@@ -373,26 +445,32 @@ func restoreRelationHistoryVersion(a *App,
 	opts := entityPkg.RelationOptions{
 		Properties: cloneProps(snap.Properties),
 		Content:    &content,
-		// The restore writes back to the TAIL it read from. Without this a
-		// faced edge's history would restore onto the DEFAULT tail — a
-		// different relation — leaving the edge the caller addressed
-		// untouched and minting a second one beside it (TKT-JAROC3).
-		FromFace: fromRef.Face,
 	}
+	// The restore writes back to the TAIL it read from. Without it a faced
+	// edge's history would restore onto the DEFAULT tail, a different
+	// relation, leaving the edge the caller addressed untouched and minting
+	// a second one beside it (TKT-JAROC3).
+	key := entityPkg.RelationKey{From: from, FromFace: fromRef.Face, Type: relType, To: to}
 
 	// If the relation currently exists, update it; else re-create. Both go
 	// through the entitymanager, which authorizes, validates endpoints, and
 	// audits. A missing endpoint surfaces as ErrEntityNotFound → 409.
 	//
-	// Liveness is probed on the addressed tail for the same reason:
-	// store.GetRelation reads the default tail, so a live faced edge would
-	// look absent and take the create branch.
-	_, liveErr := edgeOnFace(ctx, a.store, from, fromRef.Face, relType, to)
+	// Liveness is probed on the addressed tail for the same reason: a probe
+	// of the default tail would find a live faced edge absent and take the
+	// create branch.
+	live, liveErr := a.store.GetRelation(ctx, key)
+	if liveErr != nil {
+		live = nil
+	}
+	if !restoreAffordanceOK(a, w, r, key, live, opts.Properties) {
+		return
+	}
 	var writeErr error
-	if liveErr == nil {
-		_, writeErr = a.entityManager.UpdateRelation(ctx, from, relType, to, opts)
+	if live != nil {
+		_, writeErr = a.entityManager.UpdateRelation(ctx, key, opts)
 	} else {
-		_, writeErr = a.entityManager.CreateRelation(ctx, from, relType, to, opts)
+		_, writeErr = a.entityManager.CreateRelation(ctx, key, opts)
 	}
 	if writeErr != nil {
 		if writeForbiddenIfACLDenied(w, writeErr) {
@@ -412,4 +490,44 @@ func restoreRelationHistoryVersion(a *App,
 		"restored_from_version": snap.Version,
 		"relation":              map[string]any{"from": fromRef.String(), "type": relType, "to": to},
 	})
+}
+
+// restoreAffordanceOK gates a restore as the PATCH that makes the same change
+// is gated: a re-create needs the edge to be creatable, and every meta value
+// the restore changes must be writable. Both are judged over the sources
+// [affordanceService.relationSources] returns for the edge's source at its
+// tail, so an identity edge from a faced source answers for every face. It
+// writes the answer itself when the restore may not proceed.
+//
+// live is the edge as stored, or nil when the restore re-creates it.
+func restoreAffordanceOK(
+	a *App, w http.ResponseWriter, r *http.Request,
+	key entityPkg.RelationKey, live *entityPkg.Relation, props map[string]any,
+) bool {
+	ctx := r.Context()
+	sources, err := a.affordances.relationSources(ctx, nil,
+		entityPkg.Ref{ID: key.From, Face: key.FromFace}, string(DirectionIncoming), key.Type)
+	if err != nil {
+		writeGateError(w, r, err)
+		return false
+	}
+	changed := props
+	if live == nil {
+		if src, denial := a.affordances.relationOpDenial(ctx, sources, key.Type, RelationOpCreate); denial != nil {
+			a.denyAffordance(ctx, w, src, *denial)
+			return false
+		}
+	} else {
+		changed = make(map[string]any)
+		for k, v := range props {
+			if cur, ok := live.Properties[k]; !ok || !reflect.DeepEqual(cur, v) {
+				changed[k] = v
+			}
+		}
+	}
+	if src, denial := a.affordances.relationMetaDenial(ctx, sources, key.Type, changed, nil); denial != nil {
+		a.denyAffordance(ctx, w, src, *denial)
+		return false
+	}
+	return true
 }

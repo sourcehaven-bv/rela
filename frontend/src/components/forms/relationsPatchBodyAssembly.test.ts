@@ -21,7 +21,7 @@ function assemble(
   pending: Map<string, RelationCardState>,
   legacy: Record<string, string[]>,
   pickerTypes: Record<string, Map<string, string>>,
-  inverseByRelation: Map<string, string> = new Map(),
+  inverseByRelation: Map<string, string> = new Map()
 ): { shape: 'modern' | 'legacy' | 'mixed-blocked'; body: unknown } {
   const modern = buildRelationsPatch(pending, inverseByRelation)
   const hasModern = Object.keys(modern).length > 0
@@ -36,7 +36,7 @@ describe('relations body assembly', () => {
     const result = assemble(
       new Map(),
       { 'depends-on': ['T-1'] },
-      { 'depends-on': new Map([['T-1', 'ticket']]) },
+      { 'depends-on': new Map([['T-1', 'ticket']]) }
     )
     expect(result.shape).toBe('legacy')
     expect(result.body).toEqual({ 'depends-on': ['T-1'] })
@@ -55,12 +55,12 @@ describe('relations body assembly', () => {
     const result = assemble(
       pending,
       { 'depends-on': ['T-1'] },
-      { 'depends-on': new Map([['T-1', 'ticket']]) },
+      { 'depends-on': new Map([['T-1', 'ticket']]) }
     )
     expect(result.shape).toBe('modern')
     expect(result.body).toEqual({
-      'depends-on': { data: [{ type: 'ticket', id: 'T-1' }] },
-      tagged: { data: [{ type: 'label', id: 'L-1' }] },
+      'depends-on': { add: [{ type: 'ticket', id: 'T-1' }] },
+      tagged: { add: [{ type: 'label', id: 'L-1' }] },
     })
   })
 
@@ -77,7 +77,7 @@ describe('relations body assembly', () => {
     const result = assemble(
       pending,
       { 'depends-on': ['T-1', 'C-unknown'] },
-      { 'depends-on': new Map([['T-1', 'ticket']]) },
+      { 'depends-on': new Map([['T-1', 'ticket']]) }
     )
     expect(result.shape).toBe('mixed-blocked')
   })
@@ -95,7 +95,7 @@ describe('relations body assembly', () => {
     const result = assemble(pending, {}, {})
     expect(result.shape).toBe('modern')
     expect(result.body).toEqual({
-      tagged: { data: [{ type: 'label', id: 'L-1' }] },
+      tagged: { add: [{ type: 'label', id: 'L-1' }] },
     })
   })
 
@@ -118,10 +118,10 @@ describe('relations body assembly', () => {
           ['BUG-1', 'bug'],
           ['FEAT-1', 'feature'],
         ]),
-      },
+      }
     )
     expect(result.shape).toBe('modern')
-    const body = result.body as Record<string, { data: { type: string; id: string }[] }>
-    expect(body['depends-on'].data.map((d) => d.type)).toEqual(['ticket', 'bug', 'feature'])
+    const body = result.body as Record<string, { add: { type: string; id: string }[] }>
+    expect(body['depends-on'].add.map((d) => d.type)).toEqual(['ticket', 'bug', 'feature'])
   })
 })

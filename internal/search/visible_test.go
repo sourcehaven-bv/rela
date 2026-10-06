@@ -119,7 +119,7 @@ func TestSearchVisibleFields_FailsClosedWithoutProvenance(t *testing.T) {
 	var streamErr error
 	hits := 0
 	for _, iterErr := range v.SearchVisibleFields(
-		context.Background(), search.Query{Text: "zeta777"}, scope, hide) {
+		context.Background(), search.Query{Text: "zeta777", World: store.TrivialScope()}, scope, hide) {
 		if iterErr != nil {
 			streamErr = iterErr
 			break

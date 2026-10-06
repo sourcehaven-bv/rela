@@ -2,7 +2,6 @@ version: "1.0"
 app:
   name: "Perf portfolio"
   description: "ISMS + delivery portfolio at scale, for measuring read paths"
-  default_world: published
 styles:
   task_status:
     todo: gray

@@ -14,9 +14,10 @@ import (
 // CreateCmd creates a new entity.
 type CreateCmd struct {
 	Type     string   `arg:"" help:"Entity type (alias allowed)."`
-	Status   string   `short:"s" help:"Entity status (defaults to entity type's default)."`
+	Status   string   `short:"s" help:"Entity status (defaults to the schema's declared default, if any)."`
 	Priority string   `short:"p" help:"Entity priority."`
 	ID       string   `name:"id" help:"Custom entity ID (auto-generated if not provided)."`
+	Face     string   `help:"Face to create; required for a type that declares faces."`
 	Property []string `short:"P" help:"Set a property (format: key=value, can be repeated)."`
 	Body     string   `short:"b" help:"Markdown body content for the entity."`
 	BodyFile string   `name:"body-file" short:"B" help:"Read body content from file (use - for stdin)."`
@@ -57,7 +58,7 @@ func (c *CreateCmd) Run(ctx context.Context, svc *writeServices) error {
 			Properties: props,
 			Content:    bodyContent,
 		},
-		entitypkg.CreateOptions{ID: c.ID},
+		entitypkg.CreateOptions{ID: c.ID, Face: entitypkg.Face(c.Face)},
 	)
 	if err != nil {
 		return err
@@ -77,7 +78,8 @@ func (c *CreateCmd) Run(ctx context.Context, svc *writeServices) error {
 
 	out.WriteSuccess("Created %s %s", resolvedType, entity.ID)
 	if outputFormat == "json" {
-		if e, err := svc.Store.GetEntity(ctx, entity.ID); err == nil {
+		// Re-read the row the create wrote, at its own face.
+		if e, err := svc.Store.GetEntity(ctx, entitypkg.Ref{ID: entity.ID, Face: entity.Face}); err == nil {
 			_ = out.WriteEntities([]*entitypkg.Entity{e})
 		}
 	}

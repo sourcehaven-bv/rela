@@ -144,6 +144,11 @@ func (NopFieldVerdictResolver) RelationVerdicts(context.Context, *entityPkg.Enti
 	return RelationVerdicts{}
 }
 
+// UnconditionalRelationVerdicts always returns the zero value.
+func (NopFieldVerdictResolver) UnconditionalRelationVerdicts(context.Context, *entityPkg.Entity) RelationVerdicts {
+	return RelationVerdicts{}
+}
+
 // DemoFieldVerdictResolver applies a fixed fixture against the
 // "ticket" entity type. The fixture is hand-picked to exercise every
 // affordance code path:
@@ -214,4 +219,12 @@ func (DemoFieldVerdictResolver) RelationVerdicts(_ context.Context, e *entityPkg
 			},
 		},
 	}
+}
+
+// UnconditionalRelationVerdicts is RelationVerdicts: the fixture depends on
+// the type only.
+func (d DemoFieldVerdictResolver) UnconditionalRelationVerdicts(
+	ctx context.Context, e *entityPkg.Entity,
+) RelationVerdicts {
+	return d.RelationVerdicts(ctx, e)
 }

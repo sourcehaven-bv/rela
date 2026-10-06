@@ -73,7 +73,7 @@ func TestRelationVersionHook_ExplicitDeleteCaptures(t *testing.T) {
 	dec, req := seedDecReq(ctx, t, mgr)
 
 	body := "why this addresses that"
-	_, err := mgr.CreateRelation(ctx, dec, "addresses", req,
+	_, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec, Type: "addresses", To: req},
 		entity.RelationOptions{Content: &body})
 	if err != nil {
 		t.Fatalf("CreateRelation: %v", err)
@@ -82,7 +82,7 @@ func TestRelationVersionHook_ExplicitDeleteCaptures(t *testing.T) {
 		t.Fatalf("create should not record a relation version (sweep handles it); got %d", len(rec.records))
 	}
 
-	if err := mgr.DeleteRelation(ctx, dec, "addresses", req); err != nil {
+	if err := mgr.DeleteRelation(ctx, entity.RelationKey{From: dec, Type: "addresses", To: req}); err != nil {
 		t.Fatalf("DeleteRelation: %v", err)
 	}
 	if len(rec.records) != 1 {
@@ -129,7 +129,7 @@ func TestRelationVersionHook_CascadeDeleteCapturesEveryEdge(t *testing.T) {
 			t.Fatalf("create requirement: %v", err)
 		}
 		reqs = append(reqs, rr.Entity.ID)
-		if _, err := mgr.CreateRelation(ctx, dec, "addresses", rr.Entity.ID, entity.RelationOptions{}); err != nil {
+		if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec, Type: "addresses", To: rr.Entity.ID}, entity.RelationOptions{}); err != nil {
 			t.Fatalf("CreateRelation: %v", err)
 		}
 	}
@@ -167,7 +167,7 @@ func TestRelationVersionHook_RenameStitchesEndpoints(t *testing.T) {
 	dec, req := seedDecReq(ctx, t, mgr)
 
 	note := "note"
-	if _, err := mgr.CreateRelation(ctx, dec, "addresses", req, entity.RelationOptions{Content: &note}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec, Type: "addresses", To: req}, entity.RelationOptions{Content: &note}); err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
 	rec.records = nil

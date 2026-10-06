@@ -276,7 +276,7 @@ func (dr *docRuntime) luaFaces(ls *lua.LState) int {
 
 	var b strings.Builder
 	b.WriteString("| Face | Label |\n|---|---|\n")
-	for _, name := range sortedFaceNames(def) {
+	for _, name := range metamodel.FaceOrderOf(dr.meta, typ) {
 		label := def.Faces[name].Label
 		if label == "" {
 			label = "—"

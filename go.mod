@@ -46,7 +46,9 @@ require (
 )
 
 require (
+	al.essio.dev/pkg/shellescape v1.6.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
+	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.3.0 // indirect
 	github.com/PuerkitoBio/goquery v1.12.0 // indirect
@@ -93,6 +95,7 @@ require (
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
+	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
@@ -151,6 +154,7 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
+	github.com/zalando/go-keyring v0.2.6 // indirect
 	go.etcd.io/bbolt v1.4.0 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
@@ -168,10 +172,17 @@ require (
 	modernc.org/memory v1.12.1 // indirect
 )
 
-// neoq's make-job-id-bigint migration hardcoded `public.neoq_jobs_id_seq`
-// while its tables are created through search_path, so the job queue could not
-// initialize against ANY schema-pinned DSN — which is how rela scopes a tenant
-// (docs/postgres-backend.md) and how the postgres e2e specs connect. The fork
-// resolves the sequence via pg_get_serial_sequence instead. Drop this once the
-// fix is upstream: https://github.com/acaloiaro/neoq/pull/149
-replace github.com/acaloiaro/neoq => github.com/sourcehaven-bv/neoq v0.72.2-0.20260825051739-c4c1564854aa
+// rela runs neoq from the `sourcehaven` branch of the sourcehaven-bv fork. Drop
+// the replace once all of these are upstream:
+//   - make-job-id-bigint hardcoded `public.neoq_jobs_id_seq`, so the queue could
+//     not initialize against a schema-pinned DSN, which is how rela scopes a
+//     tenant (docs/postgres-backend.md). https://github.com/acaloiaro/neoq/pull/149
+//   - JobTimeout did not cancel the handler's context and leaked its goroutine.
+//     https://code.adriano.fyi/me/neoq/pulls/10
+//   - Shutdown pg_notify'd a sentinel that stopped the listener of EVERY process
+//     on the database, so any rela-postgres CLI command silently stopped
+//     rela-server's job processing (BUG-YAMD6J). Shutdown also never closed
+//     the LISTEN connection. Not yet proposed upstream.
+//   - acquire leaked a goroutine after every error, and could leak a connection.
+//     Not yet proposed upstream.
+replace github.com/acaloiaro/neoq => github.com/sourcehaven-bv/neoq v0.72.2-0.20261003061725-05694be452ec

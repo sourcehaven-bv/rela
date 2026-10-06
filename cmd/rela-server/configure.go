@@ -105,7 +105,7 @@ func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel,
 		}
 	}
 	if policy := h.current().svc.ACLPolicy(); policy != nil {
-		if err := appbuild.CheckACLPolicy(policy, meta); err != nil {
+		if err := appbuild.ValidateACLPolicy(policy, meta); err != nil {
 			problems = append(problems, "acl.yaml: "+err.Error())
 		}
 	}

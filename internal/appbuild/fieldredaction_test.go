@@ -99,7 +99,7 @@ func TestGatedReads_RedactsHiddenField(t *testing.T) {
 	}
 	defer svc.Close()
 
-	got, err := svc.GatedReads().Reader.GetEntity(bobCtx(principal.ToolMCP), "PERS-1")
+	got, err := svc.GatedReads().Reader.Resolve(bobCtx(principal.ToolMCP), "PERS-1")
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -132,9 +132,9 @@ func TestScheduledLuaWriteDeps_RedactsHiddenField(t *testing.T) {
 	if deps.VisibleReader == nil {
 		t.Fatal("ScheduledLuaWriteDeps has no VisibleReader")
 	}
-	got, err := deps.VisibleReader.GetEntity(bobCtx(principal.ToolScheduler), "PERS-1")
+	got, err := deps.VisibleReader.GetAddress(bobCtx(principal.ToolScheduler), "PERS-1")
 	if err != nil {
-		t.Fatalf("GetEntity: %v", err)
+		t.Fatalf("GetAddress: %v", err)
 	}
 	if got == nil {
 		t.Fatal("entity is nil — the row gate hid a row the policy permits reading")
@@ -172,7 +172,7 @@ func TestNoPolicy_RedactorHidesNothing(t *testing.T) {
 	}
 	defer svc.Close()
 
-	got, err := svc.GatedReads().Reader.GetEntity(bobCtx(principal.ToolMCP), "PERS-1")
+	got, err := svc.GatedReads().Reader.Resolve(bobCtx(principal.ToolMCP), "PERS-1")
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -215,7 +215,7 @@ assignments:
 	}
 	defer svc.Close()
 
-	got, err := svc.GatedReads().Reader.GetEntity(bobCtx(principal.ToolMCP), "PERS-1")
+	got, err := svc.GatedReads().Reader.Resolve(bobCtx(principal.ToolMCP), "PERS-1")
 	if err != nil {
 		t.Fatalf("GetEntity: %v", err)
 	}
@@ -229,10 +229,10 @@ assignments:
 }
 
 // TestGatedReads_RedactsOnListPath pins the LIST surface, which is separate
-// code from GetEntity (internal/visibility/luareader.go has its own batching
+// code from GetAddress (internal/visibility/luareader.go has its own batching
 // path with a per-surviving-row redaction step). It is also the higher-volume
 // leak: a script calling list_entities is how bulk hidden data would escape,
-// not a single GetEntity.
+// not a single GetAddress.
 func TestGatedReads_RedactsOnListPath(t *testing.T) {
 	root := writeRedactionProject(t)
 	svc, err := appbuildOnDisk(t, root)
@@ -243,7 +243,7 @@ func TestGatedReads_RedactsOnListPath(t *testing.T) {
 
 	seen := 0
 	for e, err := range svc.GatedReads().Reader.ListEntities(
-		bobCtx(principal.ToolMCP), store.EntityQuery{Type: "person"},
+		bobCtx(principal.ToolMCP), store.EntityQuery{Type: "person", Faces: store.InWorld(store.TrivialScope())},
 	) {
 		if err != nil {
 			t.Fatalf("ListEntities: %v", err)
@@ -255,7 +255,7 @@ func TestGatedReads_RedactsOnListPath(t *testing.T) {
 		}
 		if v := e.GetString("salary"); v != "" {
 			t.Errorf("salary = %q, want redacted to empty — a `visible:`-hidden value "+
-				"escaped via the LIST path even though GetEntity redacts it", v)
+				"escaped via the LIST path even though GetAddress redacts it", v)
 		}
 	}
 	if seen != 1 {
@@ -371,7 +371,7 @@ assignments:
 	}
 
 	// Re-read the store: the cascade's write lands after the returned snapshot.
-	after, err := svc.Store().GetEntity(ctx, "TKT-1")
+	after, err := svc.Store().GetEntity(ctx, entity.Ref{ID: "TKT-1"})
 	if err != nil {
 		t.Fatalf("re-read: %v", err)
 	}
@@ -391,7 +391,7 @@ assignments:
 func searchIDs(ctx context.Context, t *testing.T, s search.Searcher, text string) []string {
 	t.Helper()
 	var ids []string
-	for h, err := range s.Search(ctx, search.Query{Text: text}) {
+	for h, err := range s.Search(ctx, search.Query{Text: text, World: store.TrivialScope()}) {
 		if err != nil {
 			t.Fatalf("Search(%q): %v", text, err)
 		}

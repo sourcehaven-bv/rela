@@ -22,7 +22,8 @@ vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {}, path: '/kanban/board' }),
   // Cards are real links since TKT-3CSZRG, so the component renders a
   // RouterLink; this mock replaces the whole module, so it must supply one.
-  RouterLink: { template: '<a><slot /></a>' },
+  // `to` is exposed as data-to so a test can assert where a card goes.
+  RouterLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' },
 }))
 
 vi.mock('@/composables/useBackTarget', () => ({
@@ -116,14 +117,18 @@ describe('KanbanView card keyboard operability', () => {
 
     // An <a> is focusable and Enter-activatable without any handler of ours.
     expect(card.element.tagName).toBe('A')
-    expect(card.attributes('to') ?? card.attributes('href')).toBe('/entity/ticket/T-1')
+    expect(JSON.parse(card.attributes('data-to') ?? 'null')).toBe('/entity/ticket/T-1')
   })
 
   it('points the card at the edit form when one is configured', async () => {
     const wrapper = await mountBoard([makeTicket('T-1')], { edit_form: 'ticket-form' })
     const card = wrapper.find('.kanban-card')
 
-    expect(card.attributes('to') ?? card.attributes('href')).toBe('/form/ticket-form/T-1')
+    expect(JSON.parse(card.attributes('data-to') ?? 'null')).toEqual({
+      name: 'form-edit',
+      params: { id: 'ticket-form', entityId: 'T-1' },
+      query: {},
+    })
   })
 
   // A plain click opens the card in the overlay panel; the link's own
@@ -214,7 +219,7 @@ describe('KanbanView accessible structure', () => {
     expect(wrapper.find('.rl-swimlane').text()).toContain('Alpha')
     const card = wrapper.find('.rl-swimlane .kanban-card')
     expect(card.element.tagName).toBe('A')
-    expect(card.attributes('to') ?? card.attributes('href')).toBe('/entity/ticket/T-1')
+    expect(JSON.parse(card.attributes('data-to') ?? 'null')).toBe('/entity/ticket/T-1')
   })
 
   it('makes the board card wrapper the drag source', async () => {

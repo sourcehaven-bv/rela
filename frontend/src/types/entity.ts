@@ -16,6 +16,11 @@ export interface Entity {
   relations?: Record<string, string[]>
   included?: Record<string, Entity>
   _self?: string
+  // Present only on rows of a `/_search` or list read made with a relation
+  // context (`relation` + `direction=incoming`): whether the principal may
+  // create that relation from this row's face. The server computes it with the gates the
+  // write runs; the write still re-authorizes.
+  linkable?: boolean
   // Per-resource verb-verdict map driven by the backend ACL. Keys are
   // verbs (phase 1: `update`, `delete`, `rename` per-item; `create`
   // on collection responses); values are booleans. Always present
@@ -98,6 +103,11 @@ export interface Entity {
   // `inaccessible` set and its ID as the title. Never derive a title another
   // way — that is what this map exists to prevent.
   mentions?: Record<string, Mention>
+  // One opaque token per visible field (TKT-2VDVHF). Autosave echoes a
+  // token back as a PATCH precondition to say which value its edit was
+  // based on. Redacted properties have no token. Present on per-entity GET
+  // and PATCH responses.
+  _versions?: FieldVersions
 }
 
 // Mention resolves one entity-ID code span to its display title. Mirrors the
@@ -294,11 +304,19 @@ export interface ResourceIdentifier {
 }
 
 // Modern relations field shape for the unified PATCH body. Keys are
-// relation names; each value's `data` is the desired set of edges.
-// Sending `data: []` clears all edges of that type — see the
-// data-loss footgun docs in docs/data-entry/api-reference.md.
+// relation names. A value is either the full set of edges (`data`; `data: []`
+// clears every edge of that type the caller can see, see
+// docs/data-entry/api-reference.md) or a delta: `add` upserts the named edges,
+// `remove` deletes them, and every other edge is left alone. The SPA sends
+// deltas only.
+export interface RelationsDelta {
+  add?: ResourceIdentifier[]
+  // `type` is optional here: the relation type already names the peer side.
+  remove?: Array<Pick<ResourceIdentifier, 'id'> & Partial<Pick<ResourceIdentifier, 'type'>>>
+}
+
 export interface ModernRelationsField {
-  [relationName: string]: { data: ResourceIdentifier[] }
+  [relationName: string]: { data: ResourceIdentifier[] } | RelationsDelta
 }
 
 // InaccessibleField marks a property whose value is known to exist but is
@@ -318,6 +336,9 @@ export interface CreateEntity {
   // it the create is refused. Rides the body because `?world=` is refused on
   // every write (a read chain can answer with a fallback).
   world?: string
+  // The face to create on, named directly. Mutually exclusive with `world`;
+  // the server refuses a body naming both.
+  face?: string
   properties: Record<string, unknown>
   content?: string
   // Modern JSON:API §9 wrapper shape only. The legacy IDs-only form
@@ -333,6 +354,11 @@ export interface RelationEntry {
   // TKT-ZEKO4; older servers omit it.
   type: string
   direction?: 'outgoing' | 'incoming'
+  // An incoming content-scoped edge belongs to one face of its source: `face`
+  // names it, and `id@face` addresses the edge. `editable` is false when the
+  // principal may not remove it. Both are absent on every other edge.
+  face?: string
+  editable?: boolean
   meta?: Record<string, unknown>
   // Plumbing-only — no widget exposes per-edge body editing yet, but
   // the wire shape carries it so a future ticket can wire UI without
@@ -403,6 +429,13 @@ export interface ListParams {
   scope_page?: string
   scope_tab?: string
   anchor?: string
+  /**
+   * The relation context of the read: the rows are candidate SOURCES of an
+   * incoming `relation` edge, and each carries `linkable`. Both or neither;
+   * the server accepts only `incoming`.
+   */
+  relation?: string
+  direction?: 'incoming'
   [key: `filter[${string}]`]: string | undefined
 }
 
@@ -456,4 +489,32 @@ export interface SidePanelSection {
   entities?: SidePanelEntity[]
   addInfo?: SidePanelAddInfo
   linkInfo?: SidePanelLinkInfo
+}
+
+// Per-field version tokens (TKT-2VDVHF). Opaque: compare for equality and
+// echo back, nothing else.
+export interface FieldVersions {
+  properties: Record<string, string>
+  content: string
+  // Absent on a view's entry.
+  relations?: string
+}
+
+// Per-field preconditions on a PATCH. Each names a field the same PATCH
+// writes; the server answers 412 when its stored token differs.
+export interface Preconditions {
+  properties?: Record<string, string>
+  content?: string
+  relations?: string
+}
+
+export interface FieldConflict {
+  expected: string
+  actual: string
+}
+
+export interface FieldConflicts {
+  properties?: Record<string, FieldConflict>
+  content?: FieldConflict
+  relations?: FieldConflict
 }

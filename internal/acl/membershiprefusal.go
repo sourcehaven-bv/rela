@@ -111,7 +111,7 @@ func (p *Policy) roleIsEscalationRelevant(role RoleDef) bool {
 		return true
 	}
 	for _, w := range role.Worlds {
-		if w != DefaultWorldName {
+		if w != p.DefaultWorld() {
 			return true
 		}
 	}

@@ -10,7 +10,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/comments/pgcomments"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration/pgmigstate"
-	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate/pgschedstate"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -85,7 +84,8 @@ func openBackend(
 		return nil, nil, backendOverrides{}, nil, fmt.Errorf("migrate database: %w", err)
 	}
 
-	st, searcher, err := pgstore.Open(ctx, pool, dsn, pgstore.WithSearchTitles(searchTitles(base.meta)))
+	titles := pgstore.SearchTitles(rankingTitles(base.meta))
+	st, searcher, err := pgstore.Open(ctx, pool, dsn, pgstore.WithSearchTitles(titles))
 	if err != nil {
 		_ = poolCloser.Close()
 		return nil, nil, backendOverrides{}, nil, err
@@ -111,21 +111,6 @@ func openBackend(
 		migState:       migState,
 		schedulerState: schedState,
 	}, poolCloser, nil
-}
-
-// searchTitles derives the type-to-title-property map pgstore ranks free-text
-// search by. It is built here because pgstore must not import the metamodel
-// (a store does not depend on an application package); what crosses the
-// boundary is plain strings, which pgstore binds as SQL parameters.
-func searchTitles(meta *metamodel.Metamodel) pgstore.SearchTitles {
-	titles := pgstore.SearchTitles{}
-	for name := range meta.Entities {
-		def := meta.Entities[name]
-		if prop := metamodel.RankingTitleProperty(&def); prop != "" {
-			titles[name] = prop
-		}
-	}
-	return titles
 }
 
 // DropStoreIndex is a no-op: this backend persists no file index.

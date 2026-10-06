@@ -24,6 +24,7 @@ type elevationBindings struct {
 	er       EntityReader           // nil: admin read methods present but raising
 	recorder ElevationRecorder      // nil: no post-closure read audit record
 	ctxFn    func() context.Context // the runtime's callerCtx
+	world    store.WorldScope       // ReadDeps.World: admin.list_entities lists in it
 }
 
 // luaBypassACL implements rela.bypass_acl(fn) (TKT-D8T148). It invokes fn with
@@ -59,7 +60,7 @@ func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 	// reads accumulates the distinct elevated read bindings this closure
 	// used, for the single post-closure audit record (TKT-ACSBSA).
 	reads := &readUsage{}
-	admin := newElevatedHandle(ls, b.em, b.er, &live, reads, b.ctxFn)
+	admin := newElevatedHandle(ls, b.em, b.er, &live, reads, b.ctxFn, b.world)
 
 	// Invalidate on every exit path (normal return or Lua error). pcall keeps
 	// the runtime alive so we can flip `live` before re-raising.
@@ -119,7 +120,7 @@ func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 // means misconfiguration".
 func newElevatedHandle(
 	ls *lua.LState, em Mutator, er EntityReader, live *bool, reads *readUsage,
-	ctxFn func() context.Context,
+	ctxFn func() context.Context, world store.WorldScope,
 ) *lua.LTable {
 	t := ls.NewTable()
 	guard := func(name string) bool {
@@ -163,9 +164,9 @@ func newElevatedHandle(
 	// rela.* write bindings (TKT-PX5YL7), so "this handle cannot bypass the
 	// ACL to write" is the claim — not "this surface cannot mutate".
 	if em != nil {
-		registerElevatedWrites(ls, t, em, guard, ctxFn)
+		registerElevatedWrites(ls, t, em, er, guard, ctxFn)
 	}
-	registerElevatedReads(ls, t, er, readGuard, ctxFn, reads)
+	registerElevatedReads(ls, t, er, readGuard, ctxFn, reads, world)
 	return t
 }
 
@@ -207,7 +208,7 @@ func recordElevatedReads(ctx context.Context, rec ElevationRecorder, u *readUsag
 // entity table and were deferred with their own tests as the follow-up noted
 // in newElevatedHandle's doc.
 func registerElevatedWrites(
-	ls *lua.LState, t *lua.LTable, em Mutator, guard func(string) bool,
+	ls *lua.LState, t *lua.LTable, em Mutator, er EntityReader, guard func(string) bool,
 	ctxFn func() context.Context,
 ) {
 	// create_relation takes the same trailing options table as the gated
@@ -229,8 +230,8 @@ func registerElevatedWrites(
 			s.RaiseError("bypass_acl create_relation error: %s", optErr.Error())
 			return 0
 		}
-		if _, err := em.CreateRelation(ctxFn(), from, relType, to,
-			entity.RelationOptions{FromFace: opts.Face, Content: opts.Content}); err != nil {
+		key := entity.RelationKey{From: from, FromFace: opts.Face, Type: relType, To: to}
+		if _, err := em.CreateRelation(ctxFn(), key, entity.RelationOptions{Content: opts.Content}); err != nil {
 			s.RaiseError("bypass_acl create_relation error: %s", err.Error())
 			return 0
 		}
@@ -242,7 +243,13 @@ func registerElevatedWrites(
 			return 0
 		}
 		from, relType, to := s.CheckString(1), s.CheckString(2), s.CheckString(3)
-		if err := em.DeleteRelation(ctxFn(), from, relType, to); err != nil {
+		opts, optErr := parseWriteOpts(s, argPosCreateRelationOpts, deleteRelationOptKeys, deleteRelationOptSet)
+		if optErr != nil {
+			s.RaiseError("bypass_acl delete_relation error: %s", optErr.Error())
+			return 0
+		}
+		key := entity.RelationKey{From: from, FromFace: opts.Face, Type: relType, To: to}
+		if err := em.DeleteRelation(ctxFn(), key); err != nil {
 			s.RaiseError("bypass_acl delete_relation error: %s", err.Error())
 			return 0
 		}
@@ -255,7 +262,14 @@ func registerElevatedWrites(
 		}
 		id := s.CheckString(1)
 		cascade := s.OptBool(2, false)
-		if _, err := em.DeleteEntity(ctxFn(), id, cascade); err != nil {
+		ctx := ctxFn()
+		// The elevated reader resolves the address: a bare id of a faced
+		// entity names its faces, as on the gated binding.
+		ref, ok := resolveWriteTarget(ctx, s, er, id)
+		if !ok {
+			return 0
+		}
+		if err := deleteRef(ctx, em, ref, cascade); err != nil {
 			s.RaiseError("bypass_acl delete_entity error: %s", err.Error())
 			return 0
 		}
@@ -276,10 +290,10 @@ func registerElevatedWrites(
 // small and it keeps the two read paths physically separate.
 func registerElevatedReads(
 	ls *lua.LState, t *lua.LTable, er EntityReader, readGuard func(string) bool,
-	ctxFn func() context.Context, reads *readUsage,
+	ctxFn func() context.Context, reads *readUsage, world store.WorldScope,
 ) {
 	ls.SetField(t, "get_entity", ls.NewFunction(elevatedGetEntity(er, readGuard, ctxFn, reads)))
-	ls.SetField(t, "list_entities", ls.NewFunction(elevatedListEntities(er, readGuard, ctxFn, reads)))
+	ls.SetField(t, "list_entities", ls.NewFunction(elevatedListEntities(er, readGuard, ctxFn, reads, world)))
 	ls.SetField(t, "get_relations", ls.NewFunction(elevatedGetRelations(er, readGuard, ctxFn, reads)))
 }
 
@@ -303,7 +317,7 @@ func elevatedGetEntity(
 			return 0
 		}
 		reads.mark("get_entity")
-		e, err := er.GetEntity(ctxFn(), id)
+		e, err := er.GetAddress(ctxFn(), id)
 		if err != nil {
 			// Only a genuine MISS is nil. Any other error (store down, driver
 			// failure) RAISES — masking it as nil would make the documented
@@ -334,7 +348,7 @@ func elevatedGetEntity(
 // (TKT-YWDGZD tracks paging for both).
 func elevatedListEntities(
 	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
-	reads *readUsage,
+	reads *readUsage, world store.WorldScope,
 ) func(*lua.LState) int {
 	return func(s *lua.LState) int {
 		if !readGuard("list_entities") {
@@ -348,7 +362,7 @@ func elevatedListEntities(
 		reads.mark("list_entities")
 		result := s.NewTable()
 		idx := 1
-		for e, err := range er.ListEntities(ctxFn(), store.EntityQuery{Type: entityType}) {
+		for e, err := range er.ListEntities(ctxFn(), store.EntityQuery{Type: entityType, Faces: store.InWorld(world)}) {
 			if err != nil {
 				s.RaiseError("bypass_acl list_entities error: %s", err.Error())
 				return 0

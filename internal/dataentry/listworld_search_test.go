@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -37,8 +38,12 @@ import (
 type searchWorlds struct{}
 
 func (searchWorlds) Lookup(name string) (store.WorldScope, bool) {
+	if name == metamodel.DefaultWorldName {
+		// The generated default world of a metamodel that declares none.
+		return store.TrivialScope(), true
+	}
 	if name != "published" {
-		return store.WorldScope{}, false
+		return store.TrivialScope(), false
 	}
 	return store.NewWorldScope(map[string]store.TypeResolution{
 		"ticket": {
@@ -72,7 +77,7 @@ func seedFacedTickets(t *testing.T, app *App) {
 		ID: "TKT-DRAFT", Type: "ticket",
 		Properties: map[string]any{"title": "sardine offboarding"},
 	})
-	app.SetWorlds(searchWorlds{})
+	app.setWorlds(searchWorlds{})
 }
 
 // searchIDs runs a list request through the real router and returns the ids.

@@ -48,11 +48,17 @@ seqtrace-diagram *args:
 seqtrace-demo:
     tools/seqtrace/demo/run.sh
 
+# Compare the demo's request flows between REF and the working tree (tools/seqtrace/README.md)
+seqtrace-compare ref="origin/develop":
+    SEQTRACE_REF={{quote(ref)}} SEQTRACE_LABEL=base SEQTRACE_OPEN=0 tools/seqtrace/demo/run.sh
+    SEQTRACE_LABEL=head SEQTRACE_OPEN=0 tools/seqtrace/demo/run.sh
+    go run ./tools/seqtrace/cmd/seqtrace diff .ignored/seqtrace-demo/base/diagrams .ignored/seqtrace-demo/head/diagrams | tee .ignored/seqtrace-demo/compare.md
+
 # Build the desktop app
 build-desktop: build-frontend
     @echo "Building rela-desktop..."
     @mkdir -p {{build_dir}}
-    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags production -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
+    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags production,sqlite -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
 
 # Build and install the desktop app into /Applications
 [macos]
@@ -91,7 +97,7 @@ install-desktop: build-frontend
     DEST="${LOCALAPPDATA:-$HOME/AppData/Local}/Rela Desktop"
     echo "Installing to $DEST..."
     mkdir -p "$DEST"
-    CGO_ENABLED=0 go build -tags production -trimpath -ldflags "-s -w" \
+    CGO_ENABLED=0 go build -tags production,sqlite -trimpath -ldflags "-s -w" \
         -o "$DEST/rela-desktop.exe" ./cmd/rela-desktop
     echo "Installed to $DEST/rela-desktop.exe"
     echo "File associations need the MSI (build/package/windows/rela-desktop.wxs)."
@@ -105,7 +111,7 @@ install-desktop:
 build-desktop-debug: build-frontend
     @echo "Building rela-desktop (debug)..."
     @mkdir -p {{build_dir}}
-    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
+    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags sqlite -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
 
 # Build the PostgreSQL-backed CLI binary (rela-postgres)
 build-cli-postgres:
@@ -221,7 +227,7 @@ test-verbose:
 test-postgres:
     @echo "Running postgres-tagged tests (needs RELA_TEST_DATABASE_URL)..."
     go test -race -tags postgres ./internal/store/pgstore/... ./internal/jobs/...
-    go test -race -tags postgres -run 'TestConcurrency_' ./internal/entitymanager/
+    go test -race -tags postgres -run 'TestConcurrency_|TestFamilyDelete_|TestFamilyRename_' ./internal/entitymanager/
     go test -race -tags postgres -run 'TestWebhookConflict' ./internal/dataentry/
 
 # Run the attachment scan tests against a REAL clamd (needs clamav-daemon

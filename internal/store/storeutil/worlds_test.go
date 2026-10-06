@@ -243,27 +243,25 @@ func TestPaginateWorldPrimes(t *testing.T) {
 	})
 }
 
-// TestValidateEntityQuery pins decision Q3: AllStates is raw storage
-// truth and a world resolves each entity to one state, so a query
-// setting both is refused rather than silently resolved.
+// TestValidateEntityQuery pins that a face selection is required: the zero
+// selection is refused, every constructed one is accepted (TKT-KQXVF7).
 func TestValidateEntityQuery(t *testing.T) {
 	world := pageScope(t, store.FallbackExclude, "published")
 
-	t.Run("the contradiction is rejected", func(t *testing.T) {
-		err := storeutil.ValidateEntityQuery(store.EntityQuery{AllStates: true, World: world})
+	t.Run("the zero selection is rejected", func(t *testing.T) {
+		err := storeutil.ValidateEntityQuery(store.EntityQuery{Type: "page"})
 		assert.ErrorIs(t, err, store.ErrInvalidQuery)
 	})
 
-	t.Run("either alone is fine", func(t *testing.T) {
-		// The zero WorldScope is the DEFAULT world, not "no world" — a
-		// check keyed on the wrong condition would reject every existing
-		// query in the codebase.
+	t.Run("every constructed selection is fine", func(t *testing.T) {
+		// The trivial scope is a world like any other; only an unset
+		// scope is refused.
 		for _, q := range []store.EntityQuery{
-			{},
-			{AllStates: true},
-			{World: world},
-			{World: store.DefaultWorld()},
-			{AllStates: true, World: store.DefaultWorld()},
+			{Faces: store.InWorld(store.TrivialScope())},
+			{Faces: store.InWorld(world)},
+			{Faces: store.AllFaces()},
+			{Faces: store.AtFaces()},
+			{Faces: store.AtFaces("draft")},
 		} {
 			assert.NoError(t, storeutil.ValidateEntityQuery(q), "%+v", q)
 		}
@@ -276,12 +274,12 @@ func TestMatchEntityQuery(t *testing.T) {
 	draft := ptr(t, "draft")
 	def := entity.Face("")
 
-	t.Run("default-only unless AllStates or a world", func(t *testing.T) {
-		assert.True(t, storeutil.MatchEntityQuery("page", "PAGE-1", def, store.EntityQuery{}, nil))
-		assert.False(t, storeutil.MatchEntityQuery("page", "PAGE-1", draft, store.EntityQuery{}, nil),
+	t.Run("default-only unless AllFaces or a world", func(t *testing.T) {
+		assert.True(t, storeutil.MatchEntityQuery("page", "PAGE-1", def, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}, nil))
+		assert.False(t, storeutil.MatchEntityQuery("page", "PAGE-1", draft, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())}, nil),
 			"a state row is not in the default world")
 		assert.True(t, storeutil.MatchEntityQuery(
-			"page", "PAGE-1", draft, store.EntityQuery{AllStates: true}, nil))
+			"page", "PAGE-1", draft, store.EntityQuery{Faces: store.AllFaces()}, nil))
 	})
 
 	t.Run("a non-default world WIDENS the face filter", func(t *testing.T) {
@@ -289,13 +287,13 @@ func TestMatchEntityQuery(t *testing.T) {
 		// reach it. Filtering to default rows first would leave a world
 		// able to return only default faces — and that reads as a
 		// correctly-empty published world rather than as an error.
-		q := store.EntityQuery{World: pageScope(t, store.FallbackExclude, "published")}
+		q := store.EntityQuery{Faces: store.InWorld(pageScope(t, store.FallbackExclude, "published"))}
 		assert.True(t, storeutil.MatchEntityQuery("page", "PAGE-1", draft, q, nil))
 		assert.True(t, storeutil.MatchEntityQuery("page", "PAGE-1", def, q, nil))
 	})
 
 	t.Run("type and id filters still apply", func(t *testing.T) {
-		q := store.EntityQuery{Type: "page"}
+		q := store.EntityQuery{Type: "page", Faces: store.InWorld(store.TrivialScope())}
 		assert.False(t, storeutil.MatchEntityQuery("ticket", "TKT-1", def, q, nil))
 
 		idSet := map[string]bool{"PAGE-1": true}

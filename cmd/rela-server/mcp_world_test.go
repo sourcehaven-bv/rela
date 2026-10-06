@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,7 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/worldreader"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // The shape of the BUG-6XTX0G report: a faced policy type whose entities have
@@ -74,12 +75,6 @@ assignments:
   alice: viewer
   carol: drafter
 `
-
-// defaultWorldOnly is the world source of a deployment with no
-// `app.default_world`.
-func defaultWorldOnly(context.Context) (store.WorldScope, error) {
-	return store.WorldScope{}, nil
-}
 
 // newWorldServices builds services over worldMetamodel and worldPolicy and
 // seeds POL-001 (adopted face only), TSK-001 and SEC-001, each titled with the
@@ -143,22 +138,29 @@ func newWorldServices(t *testing.T) *appbuild.Services {
 			t.Fatalf("seed POL-002@%s: %v", face, err)
 		}
 	}
-	if _, err := svc.Store().CreateRelation(context.Background(), "POL-002", "cites", "TSK-001",
-		&store.RelationData{FromFace: "concept"}); err != nil {
+	k := entity.RelationKey{From: "POL-002", FromFace: "concept", Type: "cites", To: "TSK-001"}
+	if _, err := svc.Store().CreateRelation(context.Background(), k, nil); err != nil {
 		t.Fatalf("seed concept-tailed edge: %v", err)
 	}
 	return svc
 }
 
-// worldSource binds the compiled world `current`, as mcpReadWorld does for a
-// deployment with `app.default_world: current`.
-func worldSource(t *testing.T, svc *appbuild.Services) worldreader.Source {
+// testHost is an MCP host whose world functions select only `current`, the
+// schema's one declared world.
+func testHost(t *testing.T, svc *appbuild.Services) dataentry.MCPHost {
 	t.Helper()
-	scope, ok := appbuild.CompiledWorlds(svc).Lookup("current")
-	if !ok {
-		t.Fatal("world current is not compiled")
+	compiled := appbuild.CompiledWorlds(svc)
+	return dataentry.MCPHost{
+		SelectWorld: func(_ context.Context, name string) (store.WorldScope, error) {
+			scope, ok := compiled.Lookup(name)
+			if !ok {
+				return store.WorldScope{}, errors.New("no such world")
+			}
+			return scope, nil
+		},
+		WorldReadable: func(_ context.Context, name string) (bool, error) { return name == "current", nil },
+		DefaultWorld:  compiled.DefaultWorldName,
 	}
-	return func(context.Context) (store.WorldScope, error) { return scope, nil }
 }
 
 func aliceCtx() context.Context {
@@ -178,10 +180,10 @@ func listIDs(t *testing.T, seq func(func(*entity.Entity, error) bool)) []string 
 	return ids
 }
 
-func searchIDs(t *testing.T, s search.Searcher) []string {
+func searchIDs(t *testing.T, svc *appbuild.Services, s search.Searcher) []string {
 	t.Helper()
 	var ids []string
-	for h, err := range s.Search(aliceCtx(), search.Query{Text: "retention"}) {
+	for h, err := range s.Search(aliceCtx(), search.Query{Text: "retention", World: appbuild.CompiledWorlds(svc).DefaultWorld()}) {
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -198,20 +200,20 @@ func searchIDs(t *testing.T, s search.Searcher) []string {
 // hide a type the role may not read.
 func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := remoteMCPDeps(svc, dataentry.MCPHost{ReadWorld: worldSource(t, svc)})
+	deps, err := remoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
 		t.Fatalf("remoteMCPDeps: %v", err)
 	}
 	ctx := aliceCtx()
 
 	readers := map[string]interface {
-		GetEntity(ctx context.Context, id string) (*entity.Entity, error)
+		Resolve(ctx context.Context, addr string) (*entity.Entity, error)
 	}{
 		"tools store": deps.Store,
 	}
 	for name, r := range readers {
 		t.Run(name+" resolves a bare id", func(t *testing.T) {
-			e, err := r.GetEntity(ctx, "POL-001")
+			e, err := r.Resolve(ctx, "POL-001")
 			if err != nil {
 				t.Fatalf("GetEntity(POL-001) = %v, want the adopted face", err)
 			}
@@ -220,12 +222,12 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 			}
 		})
 		t.Run(name+" serves an explicit face", func(t *testing.T) {
-			if _, err := r.GetEntity(ctx, "POL-001@adopted"); err != nil {
+			if _, err := r.Resolve(ctx, "POL-001@adopted"); err != nil {
 				t.Errorf("GetEntity(POL-001@adopted) = %v", err)
 			}
 		})
 		t.Run(name+" hides an unreadable type", func(t *testing.T) {
-			if _, err := r.GetEntity(ctx, "SEC-001"); err == nil {
+			if _, err := r.Resolve(ctx, "SEC-001"); err == nil {
 				t.Error("GetEntity(SEC-001) succeeded; the role may not read secret")
 			}
 		})
@@ -233,7 +235,7 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 
 	t.Run("tools store lists the faced type", func(t *testing.T) {
 		got := listIDs(t, func(yield func(*entity.Entity, error) bool) {
-			deps.Store.ListEntities(ctx, store.EntityQuery{Type: "policy"})(yield)
+			deps.Store.ListEntities(ctx, store.EntityQuery{Type: "policy", Faces: store.InWorld(deps.World)})(yield)
 		})
 		if want := []string{"POL-001@adopted", "POL-002@adopted"}; !slices.Equal(got, want) {
 			t.Errorf("list policy = %v, want %v", got, want)
@@ -245,7 +247,7 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 	for name, s := range searchers {
 		t.Run(name+" finds the faced entity and hides the unreadable one", func(t *testing.T) {
 			want := []string{"POL-001@adopted", "TSK-001"}
-			if got := searchIDs(t, s); !slices.Equal(got, want) {
+			if got := searchIDs(t, svc, s); !slices.Equal(got, want) {
 				t.Errorf("search = %v, want %v", got, want)
 			}
 		})
@@ -258,55 +260,48 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 // adopted face and then hide it, so the entity would vanish.
 func TestRemoteMCPDeps_FaceRestrictedReaderGetsTheFaceTheyMayRead(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := remoteMCPDeps(svc, dataentry.MCPHost{ReadWorld: worldSource(t, svc)})
+	deps, err := remoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
 		t.Fatalf("remoteMCPDeps: %v", err)
 	}
 	carol := principal.With(context.Background(), principal.Principal{User: "carol", Tool: principal.ToolMCP})
 
-	e, err := deps.Store.GetEntity(carol, "POL-002")
+	e, err := deps.Store.Resolve(carol, "POL-002")
 	if err != nil {
 		t.Fatalf("GetEntity(POL-002) = %v, want the concept face", err)
 	}
 	if e.Face.String() != "concept" {
 		t.Errorf("face = %q, want concept", e.Face)
 	}
-	if _, err := deps.Store.GetEntity(carol, "POL-001"); err == nil {
+	if _, err := deps.Store.Resolve(carol, "POL-001"); err == nil {
 		t.Error("GetEntity(POL-001) succeeded; its only face is adopted, which carol may not read")
 	}
-	if _, err := deps.Store.GetEntity(carol, "POL-002@adopted"); err == nil {
+	if _, err := deps.Store.Resolve(carol, "POL-002@adopted"); err == nil {
 		t.Error("GetEntity(POL-002@adopted) succeeded; carol may not read the adopted face")
 	}
 }
 
-func TestRemoteMCPDeps_RequiresAWorldSource(t *testing.T) {
+func TestRemoteMCPDeps_RequiresTheHostWorldFunctions(t *testing.T) {
 	svc := newWorldServices(t)
 	if _, err := remoteMCPDeps(svc, dataentry.MCPHost{}); err == nil {
-		t.Error("remoteMCPDeps accepted a host with no world source; MCP would read the default world only")
+		t.Error("remoteMCPDeps accepted a host with no world functions; a world argument could not be authorized")
 	}
 }
 
-// The remote server lets a tool name its world, through the host's selector.
+// The remote server lets a tool name its world, through the host's selector,
+// and a bare id read on the selected world's ctx resolves in that world.
 func TestRemoteMCPDeps_PassesTheHostWorldSelector(t *testing.T) {
 	svc := newWorldServices(t)
-	host := dataentry.MCPHost{
-		ReadWorld: worldSource(t, svc),
-		SelectWorld: func(ctx context.Context, name string) (context.Context, error) {
-			return context.WithValue(ctx, selectedKey{}, name), nil
-		},
-		WorldReadable: func(_ context.Context, name string) (bool, error) { return name == "current", nil },
-		DefaultWorld:  func() string { return "current" },
-	}
-	deps, err := remoteMCPDeps(svc, host)
+	deps, err := remoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
 		t.Fatalf("remoteMCPDeps: %v", err)
 	}
 	if deps.Worlds == nil {
 		t.Fatal("remoteMCPDeps left Worlds nil; the world argument would be refused remotely")
 	}
-	ctx, err := deps.Worlds.SelectWorld(context.Background(), "current")
-	if err != nil || ctx.Value(selectedKey{}) != "current" {
-		t.Errorf("SelectWorld did not reach the host: %v", err)
+	scope, err := deps.Worlds.SelectWorld(aliceCtx(), "current")
+	if err != nil || scope.IsTrivial() {
+		t.Fatalf("SelectWorld(current) = %+v, %v; want the compiled world", scope, err)
 	}
 	if ok, _ := deps.Worlds.WorldReadable(context.Background(), "current"); !ok {
 		t.Error("WorldReadable did not reach the host")
@@ -314,6 +309,14 @@ func TestRemoteMCPDeps_PassesTheHostWorldSelector(t *testing.T) {
 	if got := deps.Worlds.DefaultWorld(); got != "current" {
 		t.Errorf("DefaultWorld = %q, want current", got)
 	}
-}
 
-type selectedKey struct{}
+	// The trivial world selects no named face, so a bare id of a type whose
+	// rows are all faced resolves to nothing there.
+	trivial := visibility.WithReadWorld(aliceCtx(), visibility.WorldOf(store.TrivialScope()))
+	if _, err := deps.Store.Resolve(trivial, "POL-001"); err == nil {
+		t.Error("Resolve(POL-001) in the trivial world found a face; the ctx world was ignored")
+	}
+	if _, err := deps.Store.Resolve(visibility.WithReadWorld(aliceCtx(), visibility.WorldOf(scope)), "POL-001"); err != nil {
+		t.Errorf("Resolve(POL-001) in current = %v", err)
+	}
+}

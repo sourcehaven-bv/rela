@@ -45,6 +45,7 @@ type serverFlags struct {
 	allowedOrigins    stringSliceFlag
 	verbose           bool
 	quiet             bool
+	accessLog         string
 	debugPprof        string
 	principalHeader   string
 	readOnly          bool
@@ -92,6 +93,9 @@ func parseFlags() *serverFlags {
 		"Extra origin permitted to call the API (repeatable). Used for dev servers like Vite on http://localhost:5173.")
 	flag.BoolVar(&f.verbose, "verbose", false, "Verbose (debug) logging")
 	flag.BoolVar(&f.quiet, "quiet", false, "Quiet (warn-only) logging")
+	flag.StringVar(&f.accessLog, "access-log", "",
+		"Log one line per request: =stderr, or =syslog (tag "+accessLogTag+"). Fields: method, path (no query string), "+
+			"status, wall_ms, queries, db_ms. Independent of --verbose/--quiet; unlike --verbose it logs no SQL.")
 	flag.StringVar(&f.debugPprof, "debug-pprof", "",
 		"If set, serve net/http/pprof on this loopback address (e.g. 127.0.0.1:6060). "+
 			"Diagnostic only. Refuses to bind to non-loopback addresses.")
@@ -167,6 +171,10 @@ func parseFlags() *serverFlags {
 	flag.Parse()
 	if os.Getenv("RELA_READ_ONLY") == "1" {
 		f.readOnly = true
+	}
+	if err := checkAccessLogDest(f.accessLog); err != nil {
+		fmt.Fprintln(os.Stderr, "rela-server:", err)
+		os.Exit(2)
 	}
 	return f
 }
@@ -441,27 +449,6 @@ func (a webhookVerifierAdapter) VerifyWebhook(ctx context.Context, raw string) (
 	return dataentry.WebhookClaims{Event: c.Event, UserID: c.UserID, OrgID: c.OrgID, ID: c.ID}, nil
 }
 
-// coverage-ignore-func: startup wiring — exercised at startup, not in tests
-//
-// wireWorlds gives the app request-level world selection and the link
-// resolution that must accompany it.
-//
-// The two are wired TOGETHER and never separately: a surface that can SELECT a
-// world but cannot resolve that world's links renders every page with no
-// relations, which reads as a data problem rather than a wiring gap. Keeping
-// them in one function makes the pairing structural instead of a convention
-// someone has to notice.
-//
-// Without either, the app serves the default world only and refuses any other
-// `?world=` — the right posture for a surface whose wiring never opted in.
-func wireWorlds(app *dataentry.App, svc *appbuild.Services) error {
-	app.SetWorlds(appbuild.CompiledWorlds(svc))
-	if err := dataentry.SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
-		return fmt.Errorf("wire world-scoped relations: %w", err)
-	}
-	return nil
-}
-
 // coverage-ignore-func: main function - entry point
 // coverage-ignore-start: main-or-wiring: process entry point — discovers services, builds the app, binds a listener,
 // and calls ListenAndServe;
@@ -470,6 +457,7 @@ func main() {
 	f := parseFlags()
 
 	configureLogging(f.verbose, f.quiet)
+	accessLog := openAccessLog(f.accessLog)
 
 	if err := dataentry.CheckEmbeddedSPA(); err != nil {
 		slog.Error("embedded SPA check failed", "error", err)
@@ -496,7 +484,7 @@ func main() {
 		slog.Warn("rela-server is read-only; every write request will be refused")
 	}
 
-	srv, err := newServer(f, svc)
+	srv, err := newServer(f, svc, accessLog)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError
 		if errors.As(err, &configErr) {
@@ -770,37 +758,4 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
-}
-
-// wireConditionCompilers supplies the predicate compilers backing a
-// next-action source's `condition:`, a list's or kanban's `condition:`, and an
-// entity type's `query_scopes:`.
-//
-// All three live above internal/dataentry (arch-lint keeps the condition
-// engine there), so the composition root bridges them rather than dataentry
-// importing one. Extracted from main() to keep it inside the funlen budget.
-//
-// Every failure is returned: a silently absent compiler leaves conditions
-// unevaluated and scopes unapplied, which shows rows the operator explicitly
-// excluded — and nothing on screen would say so.
-//
-// The view halves need AdaptViewConditions / AdaptQueryScopes because appbuild
-// cannot name dataentry's types (dataentry's tests import appbuild, closing a
-// cycle), so each returns a structurally identical func under its own name.
-// This call is where the two meet: a drift between them fails to compile here.
-func wireConditionCompilers(app *dataentry.App) error {
-	if err := app.SetNextActionMatchers(appbuild.NextActionMatchers); err != nil {
-		return fmt.Errorf("wire next-action matchers: %w", err)
-	}
-	if err := app.SetViewConditions(
-		dataentry.AdaptViewConditions(appbuild.ViewConditions),
-	); err != nil {
-		return fmt.Errorf("wire view conditions: %w", err)
-	}
-	if err := app.SetQueryScopeResolver(
-		dataentry.AdaptQueryScopes(appbuild.QueryScopes),
-	); err != nil {
-		return fmt.Errorf("wire query scopes: %w", err)
-	}
-	return nil
 }

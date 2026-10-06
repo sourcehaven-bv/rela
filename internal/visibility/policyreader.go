@@ -2,76 +2,50 @@ package visibility
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"slices"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // PolicyReader is the policy-enforcing [Reader]: row-gate first, then
 // field-redact a copy. Semantics are hoisted from dataentry's
-// visibleReader/copyVisibleProperties (TKT-N26KLB) with one deliberate
-// strengthening: the stored-type check lives here, in the package, never
-// in consumers (RR-SRZK6X).
+// visibleReader/copyVisibleProperties (TKT-N26KLB). Its single-entity read
+// is the [Resolver] it holds, built from the same gate and redactor, so the
+// list half and the single-entity half cannot disagree about policy.
 type PolicyReader struct {
 	gate   RowGate
 	redact FieldRedactor
-	get    EntityGetter
+	res    *Resolver
 }
 
 // NewPolicyReader builds a PolicyReader. All collaborators are required
-// (constructors-reject-nil rule).
-func NewPolicyReader(gate RowGate, redact FieldRedactor, get EntityGetter) (*PolicyReader, error) {
-	if gate == nil {
-		return nil, errors.New("visibility: NewPolicyReader: gate must be non-nil")
+// (constructors-reject-nil rule); opts configure its [Resolver].
+func NewPolicyReader(gate RowGate, redact FieldRedactor, load Loader, opts ...ResolverOption) (*PolicyReader, error) {
+	res, err := NewResolver(gate, redact, load, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("visibility: NewPolicyReader: %w", err)
 	}
-	if redact == nil {
-		return nil, errors.New("visibility: NewPolicyReader: redact must be non-nil")
-	}
-	if get == nil {
-		return nil, errors.New("visibility: NewPolicyReader: get must be non-nil")
-	}
-	return &PolicyReader{gate: gate, redact: redact, get: get}, nil
+	return &PolicyReader{gate: gate, redact: redact, res: res}, nil
 }
 
-// Get implements [Reader]. Gate BEFORE load (hidden == missing, RR-NGMI),
-// then verify the stored type matches the caller's claim (RR-SRZK6X),
-// then redact a copy.
-func (r *PolicyReader) Get(ctx context.Context, entityType, addr string) (*entity.Entity, bool, error) {
-	id, face := parseAddress(addr)
-	ok, err := r.gate.PermitsRead(ctx, entityType, id)
-	if err != nil {
-		return nil, false, err
-	}
-	if !ok {
-		return nil, false, nil
-	}
-	e, gerr := r.get.GetEntityState(ctx, id, face)
-	if gerr != nil {
-		// Store miss == not-found; indistinguishable from a deny by design.
-		return nil, false, nil //nolint:nilerr // store miss == not-found, by design
-	}
-	if e.Type != entityType {
-		// The gate authorized the CLAIMED type; acting on a different
-		// stored type would be the BUG-ZWTDH9 escalation. Same
-		// indistinguishable miss.
-		return nil, false, nil
-	}
-	// The face gate, necessarily AFTER the load: an entity's face is not known
-	// until the row exists. Same indistinguishable miss, so a denied face
-	// cannot be used to discover which faces exist.
-	if !FaceAllowed(ctx, r.gate, entityType, e.Face) {
-		return nil, false, nil
-	}
-	return r.redacted(ctx, e), true, nil
+// Resolver returns the single-entity read over this reader's gate, redactor
+// and loader.
+func (r *PolicyReader) Resolver() *Resolver { return r.res }
+
+// ResolveIDs is [Resolver.ResolveIDs] over this reader's gate and redactor.
+func (r *PolicyReader) ResolveIDs(ctx context.Context, w World, ids []string) map[string]store.EntityHeader {
+	return r.res.ResolveIDs(ctx, w, ids)
 }
 
 // Filter implements [Reader]: batched row-gate per type (one
-// PermitsReadMany per distinct type, RR-FRK1 shape), fail-closed
-// type-drop on gate error, then redaction of every survivor. Order is
+// ReadableFacesMany per distinct type, RR-FRK1 shape), fail-closed
+// type-drop on gate error, then redaction of every survivor. A row survives
+// only when its own face passes the verdict. Order is
 // preserved and a fresh slice returned; nil for empty input.
 func (r *PolicyReader) Filter(ctx context.Context, candidates []*entity.Entity) []*entity.Entity {
 	if len(candidates) == 0 {
@@ -84,11 +58,11 @@ func (r *PolicyReader) Filter(ctx context.Context, candidates []*entity.Entity) 
 		}
 		byType[c.Type] = append(byType[c.Type], c.ID)
 	}
-	allowed := r.permittedIDs(ctx, byType)
+	allowed := r.permittedFaces(ctx, byType)
 
 	out := make([]*entity.Entity, 0, len(candidates))
 	for _, c := range candidates {
-		if c != nil && allowed[c.ID] && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
+		if c != nil && allowed[c.ID].Contains(c.Face) && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
 			out = append(out, c)
 		}
 	}
@@ -102,7 +76,7 @@ func (r *PolicyReader) Filter(ctx context.Context, candidates []*entity.Entity) 
 // FilterHeaders implements [HeaderFilterer]: the [PolicyReader.Filter] contract applied
 // to content-free headers.
 //
-// Identical gating — one PermitsReadMany per distinct type, order preserved,
+// Identical gating — one ReadableFacesMany per distinct type, order preserved,
 // fresh slice, fail-closed on gate error — because it is the SAME policy on
 // the same (id, type) pairs. The row gate never consults an entity's body,
 // so dropping the body cannot change a verdict.
@@ -122,12 +96,12 @@ func (r *PolicyReader) FilterHeaders(
 	for _, c := range candidates {
 		byType[c.Type] = append(byType[c.Type], c.ID)
 	}
-	allowed := r.permittedIDs(ctx, byType)
+	allowed := r.permittedFaces(ctx, byType)
 
 	out := make([]store.EntityHeader, 0, len(candidates))
 	probes := make([]*entity.Entity, 0, len(candidates))
 	for _, c := range candidates {
-		if allowed[c.ID] && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
+		if allowed[c.ID].Contains(c.Face) && FaceAllowed(ctx, r.gate, c.Type, c.Face) {
 			out = append(out, c)
 			probes = append(probes, headerProbe(c))
 		}
@@ -140,58 +114,63 @@ func (r *PolicyReader) FilterHeaders(
 }
 
 // FilterRelations implements [Reader]: a relation survives only when BOTH
-// endpoints are visible (FROM ∧ TO). Endpoint types are resolved with one
-// load per distinct endpoint id; visibility with one PermitsReadMany per
-// distinct type. A missing endpoint or a gate error hides fail-closed.
+// endpoints are readable (FROM ∧ TO), as [Resolver.EndpointsReadable]
+// decides. That reads headers in one query for the whole batch, so a faced
+// endpoint is found at its stored faces, and a content-scoped tail is gated
+// at the face it attaches to (RR-2IK76Z). A missing endpoint or a gate error
+// hides fail-closed.
 func (r *PolicyReader) FilterRelations(ctx context.Context, rels []*entity.Relation) []*entity.Relation {
 	if len(rels) == 0 {
 		return nil
 	}
-	byType := make(map[string][]string)
-	seen := make(map[string]bool)
-	for _, rel := range rels {
-		if rel == nil {
-			continue // fail-closed: a nil relation must not panic the filter
-		}
-		for _, id := range [2]string{rel.From, rel.To} {
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			e, err := r.get.GetEntityState(ctx, id, "")
-			if err != nil {
-				continue // missing endpoint: stays out of allowed → relation hidden
-			}
-			byType[e.Type] = append(byType[e.Type], id)
-		}
-	}
-	allowed := r.permittedIDs(ctx, byType)
-
+	readable := r.res.EndpointsReadable(ctx, rels)
 	out := make([]*entity.Relation, 0, len(rels))
-	for _, rel := range rels {
-		if rel != nil && allowed[rel.From] && allowed[rel.To] {
+	for i, rel := range rels {
+		if readable[i] {
 			out = append(out, rel)
 		}
 	}
 	return out
 }
 
-// permittedIDs runs one PermitsReadMany per distinct type and returns the
-// union allowed-id set. A gate error drops that whole type fail-closed —
-// a read-ACL failure must never widen visibility — and is logged loud so
+// FilterRelationsStrict implements [Reader] through
+// [Resolver.EndpointsReadableErr].
+func (r *PolicyReader) FilterRelationsStrict(
+	ctx context.Context, rels []*entity.Relation,
+) ([]*entity.Relation, error) {
+	if len(rels) == 0 {
+		return nil, nil
+	}
+	readable, err := r.res.EndpointsReadableErr(ctx, rels)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*entity.Relation, 0, len(rels))
+	for i, rel := range rels {
+		if readable[i] {
+			out = append(out, rel)
+		}
+	}
+	return out, nil
+}
+
+// permittedFaces runs one ReadableFacesMany per distinct type and returns,
+// per id, the faces whose row passes the verdict. An id absent from the
+// result reads no face. A gate error drops that whole type fail-closed — a
+// read-ACL failure must never widen visibility — and is logged loud so
 // operators see the cause rather than silently thinner results.
-func (r *PolicyReader) permittedIDs(ctx context.Context, byType map[string][]string) map[string]bool {
-	allowed := make(map[string]bool)
+func (r *PolicyReader) permittedFaces(ctx context.Context, byType map[string][]string) map[string]acl.FaceVerdict {
+	allowed := make(map[string]acl.FaceVerdict)
 	for typeName, ids := range byType {
-		perm, err := r.gate.PermitsReadMany(ctx, typeName, ids)
+		verdicts, err := r.gate.ReadableFacesMany(ctx, typeName, ids)
 		if err != nil {
-			slog.Warn("visibility: PermitsReadMany failed; dropping type fail-closed",
+			slog.Warn("visibility: ReadableFacesMany failed; dropping type fail-closed",
 				"type", typeName, "candidates", len(ids), "err", err)
 			continue
 		}
-		for id, ok := range perm {
-			if ok {
-				allowed[id] = true
+		for _, id := range ids {
+			if v := verdicts.For(id); !v.None() {
+				allowed[id] = v
 			}
 		}
 	}
@@ -231,7 +210,7 @@ func (r *PolicyReader) redacted(ctx context.Context, e *entity.Entity) *entity.E
 // godoc for the copy semantics and the body-redaction TODO).
 //
 // Exported for consumers that hold an already-ROW-GATED, already-loaded
-// entity where a type-claimed [Reader.Get] doesn't fit — e.g. redacting a
+// entity where a type-claimed [Resolver] read doesn't fit — e.g. redacting a
 // visible neighbor before deriving its display title (the RR-5N4K35
 // title-leak class). Redact performs NO row-gate of its own: callers own
 // that decision.

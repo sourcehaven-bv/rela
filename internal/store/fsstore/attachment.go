@@ -2,6 +2,8 @@ package fsstore
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"maps"
@@ -12,7 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
-// AttachFile streams r to `<attachKey>/<entityID>/<property>/<fileName>`.
+// AttachFamilyFile streams r to `<attachKey>/<entityID>/<property>/<fileName>`.
 //
 // The write goes through RootedFS so the path is validated before it
 // reaches the underlying FS. On OS-backed filesystems the data is
@@ -44,7 +46,9 @@ func (s *FSStore) attachFile(_ context.Context, entityID, property, fileName str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, ok := s.entities[entityID]; !ok {
+	// Bytes are keyed per bare id and shared by the family: any face of
+	// the id makes it exist (BUG-CTUW2N).
+	if s.familySize(entityID) == 0 {
 		return store.ErrNotFound
 	}
 
@@ -70,7 +74,10 @@ func (s *FSStore) attachFile(_ context.Context, entityID, property, fileName str
 	// trims leading dots — so this marker can never collide with a real
 	// upload, and the index loader skips it by that prefix. (A plain ".new"
 	// suffix would clash with a legitimate upload literally named "x.new".)
-	tmpKey := path.Join(dirKey, attachTempPrefix+fileName)
+	// The rest is a fixed-length digest of the name, not the name itself, so
+	// a name at the 255-byte limit still has a temp name that fits.
+	sum := sha256.Sum256([]byte(fileName))
+	tmpKey := path.Join(dirKey, attachTempPrefix+hex.EncodeToString(sum[:8]))
 	// Backstop size guard: cap reads at MaxAttachmentBytes so no caller can
 	// write an unbounded attachment (the API layer also caps at ingress).
 	n, err := s.writeAttachment(tmpKey, storeutil.LimitAttachmentReader(r))
@@ -96,7 +103,7 @@ func (s *FSStore) attachFile(_ context.Context, entityID, property, fileName str
 // it streams via RootedFS.OpenForWrite (constant memory); on MemFS it
 // buffers via WriteFile since MemFS has no streaming primitive.
 //
-// Parent directory creation is guaranteed by AttachFile's MkdirAll
+// Parent directory creation is guaranteed by AttachFamilyFile's MkdirAll
 // above.
 func (s *FSStore) writeAttachment(key string, r io.Reader) (int64, error) {
 	if s.streamingSupported {
@@ -119,9 +126,9 @@ func (s *FSStore) writeAttachment(key string, r io.Reader) (int64, error) {
 	return int64(len(data)), nil
 }
 
-// ReadAttachment returns a streaming reader over the attachment's
+// ReadFamilyAttachment returns a streaming reader over the attachment's
 // bytes. Callers MUST Close the returned reader.
-func (s *FSStore) ReadAttachment(_ context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
+func (s *FSStore) ReadFamilyAttachment(_ context.Context, entityID, property, fileName string) (io.ReadCloser, error) {
 	s.mu.RLock()
 	a, ok := s.attachments[attachmentKey(entityID, property, fileName)]
 	s.mu.RUnlock()
@@ -153,11 +160,11 @@ func (s *FSStore) deleteAttachment(_ context.Context, entityID, property, fileNa
 	return nil
 }
 
-func (s *FSStore) ListAttachments(_ context.Context, entityID string) ([]store.AttachmentInfo, error) {
+func (s *FSStore) ListFamilyAttachments(_ context.Context, entityID string) ([]store.AttachmentInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if _, ok := s.entities[entityID]; !ok {
+	if s.familySize(entityID) == 0 {
 		return nil, store.ErrNotFound
 	}
 
@@ -180,7 +187,7 @@ func (s *FSStore) ListAttachments(_ context.Context, entityID string) ([]store.A
 // regardless of whether the on-disk dir exists. Must be called with
 // s.mu held.
 //
-// Called from DeleteEntity and RenameEntity: under the per-entity
+// Called from DeleteFamily and RenameFamily: under the per-entity
 // layout, attachments are 1:1 owned by the entity.
 func (s *FSStore) removeAttachmentDir(entityID string) error {
 	// Prune in-memory index entries first — runs even when the

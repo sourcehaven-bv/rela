@@ -162,13 +162,14 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 	}
 
 	app, err := dataentry.NewApp( //nolint:contextcheck // app construction is not request-scoped
-		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(), svc.Versions(),
+		svc.FS(), svc.Paths(), svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		dataentry.NopFieldVerdictResolver{},
 		svc.Audit(),
 		svc.State(),
 		// In-process render harness, no network listener: loopback-equivalent.
 		dataentry.UngatedCommandAuthorizer(),
+		appbuild.CompiledWorlds(svc),
 	)
 	if err != nil {
 		svc.Close()
@@ -180,7 +181,6 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 	// temp App refuses every `?world=` as an undeclared world — correct for a
 	// deployment that never opted in, and exactly wrong for a screenshot of a
 	// world-scoped page, which is the thing a worlds manual most needs to show.
-	app.SetWorlds(appbuild.CompiledWorlds(svc))
 	if err := dataentry.SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
 		svc.Close()
 		scratchCleanup()

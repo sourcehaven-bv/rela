@@ -93,6 +93,7 @@ func openConcFSStore(t *testing.T) store.Store {
 		Schemas: map[string]store.EntityTypeSchema{
 			"note":   {Plural: "notes"},
 			"person": {Plural: "persons"},
+			"policy": {Plural: "policies"},
 		},
 	})
 	require.NoError(t, err)
@@ -196,7 +197,7 @@ func TestConcurrency_UniqueValueAdmitsOneCreate(t *testing.T) {
 			assert.Equal(t, 1, ok, "exactly one create may claim the value")
 
 			count := 0
-			for _, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person"}) {
+			for _, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "person", Faces: store.InWorld(store.TrivialScope())}) {
 				require.NoError(t, err)
 				count++
 			}
@@ -220,7 +221,7 @@ func TestConcurrency_DisjointPatchesAllLand(t *testing.T) {
 			for i, err := range errs {
 				require.NoError(t, err, "patch %d", i)
 			}
-			got, err := st.GetEntity(context.Background(), note.ID)
+			got, err := st.GetEntity(context.Background(), note.Ref())
 			require.NoError(t, err)
 			for i := range n {
 				assert.Equal(t, "set", got.GetString(fmt.Sprintf("p%d", i)), "patch %d was lost", i)
@@ -236,12 +237,12 @@ func TestConcurrency_RelationUpdatesToDisjointKeysAllLand(t *testing.T) {
 			ctx := context.Background()
 			a := mustCreateNote(t, mgr, "a")
 			b := mustCreateNote(t, mgr, "b")
-			_, err := mgr.CreateRelation(ctx, a.ID, "links", b.ID, entity.RelationOptions{})
+			_, err := mgr.CreateRelation(ctx, entity.RelationKey{From: a.ID, Type: "links", To: b.ID}, entity.RelationOptions{})
 			require.NoError(t, err)
 
 			const n = 8
 			errs := race(n, func(i int) error {
-				_, updErr := mgr.UpdateRelation(ctx, a.ID, "links", b.ID, entity.RelationOptions{
+				_, updErr := mgr.UpdateRelation(ctx, entity.RelationKey{From: a.ID, Type: "links", To: b.ID}, entity.RelationOptions{
 					Properties: map[string]any{fmt.Sprintf("k%d", i): "v"},
 				})
 				return updErr
@@ -249,7 +250,7 @@ func TestConcurrency_RelationUpdatesToDisjointKeysAllLand(t *testing.T) {
 			for i, err := range errs {
 				require.NoError(t, err, "update %d", i)
 			}
-			rel, err := st.GetRelation(ctx, a.ID, "links", b.ID)
+			rel, err := st.GetRelation(ctx, entity.RelationKey{From: a.ID, Type: "links", To: b.ID})
 			require.NoError(t, err)
 			for i := range n {
 				assert.Equal(t, "v", rel.Properties[fmt.Sprintf("k%d", i)], "update %d was lost", i)
@@ -274,7 +275,7 @@ func TestConcurrency_ManagedOrderIsDistinct(t *testing.T) {
 				targets[i] = mustCreateNote(t, mgr, fmt.Sprintf("item %d", i)).ID
 			}
 			errs := race(n, func(i int) error {
-				_, err := mgr.CreateRelation(ctx, owner, "lists", targets[i], entity.RelationOptions{})
+				_, err := mgr.CreateRelation(ctx, entity.RelationKey{From: owner, Type: "lists", To: targets[i]}, entity.RelationOptions{})
 				return err
 			})
 			for i, err := range errs {
@@ -319,7 +320,7 @@ func TestConcurrency_PostAutomationRewriteKeepsInterleavedWrite(t *testing.T) {
 	inner := memstore.New()
 	st := &interleavingStore{Store: inner}
 	st.afterCreate = func(ctx context.Context, e *entity.Entity) {
-		stored, err := inner.GetEntity(ctx, e.ID)
+		stored, err := inner.GetEntity(ctx, e.Ref())
 		require.NoError(t, err)
 		next := stored.Clone()
 		next.SetString("p0", "concurrent")
@@ -349,7 +350,7 @@ func TestConcurrency_PostAutomationRewriteKeepsInterleavedWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	created := mustCreateNote(t, mgr, "raced")
-	got, err := inner.GetEntity(context.Background(), created.ID)
+	got, err := inner.GetEntity(context.Background(), created.Ref())
 	require.NoError(t, err)
 	assert.Equal(t, "concurrent", got.GetString("p0"), "the interleaved write was overwritten")
 	assert.Equal(t, "automated", got.GetString("p7"), "the automation's property was not written")

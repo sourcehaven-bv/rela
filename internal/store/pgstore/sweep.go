@@ -500,10 +500,7 @@ func (s *sweep) captureRelation(
 	principalUser, principalTool := store.SweptPrincipal(c.editorUser, c.editorTool)
 	in := store.RelationVersionInput{
 		RecordID:      c.recordID,
-		FromFace:      entity.Face(c.fromFace),
-		From:          c.from,
-		Type:          c.relType,
-		To:            c.to,
+		Key:           entity.RelationKey{From: c.from, FromFace: entity.Face(c.fromFace), Type: c.relType, To: c.to},
 		Content:       c.content,
 		Properties:    props,
 		SchemaHash:    schemaHash,

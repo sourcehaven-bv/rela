@@ -3,9 +3,6 @@ version: "1.0"
 app:
   name: "Handbook"
   description: "Policies and guides, published through worlds"
-  # Browsing lands on what is IN FORCE. A draft is reached deliberately, by
-  # naming the editorial world, not by default.
-  default_world: published
 
 lists:
   policies:

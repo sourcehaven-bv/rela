@@ -104,13 +104,10 @@ func (d softDeleter) MarkDeleted(_ context.Context, id, by string) (*store.Delet
 	}
 	s.marked = next
 
-	for i, meta := range family {
+	for _, meta := range family {
 		key := stateKey(meta.ID, meta.Face)
 		delete(s.entities, key)
 		s.entityOrder = storeutil.SortedRemoveFunc(s.entityOrder, key, storeutil.CompareStateKeys)
-		if meta.Face.IsDefault() {
-			removeEntityFromCache(s.propCache, states[i])
-		}
 		s.notifyFaceDelete(meta.ID, meta.Face)
 	}
 	s.notifyLastFaceDelete(id)
@@ -159,9 +156,6 @@ func (d softDeleter) Unmark(_ context.Context, id string) (*store.DeleteResult, 
 			// now reports its error on the next read, as any other would.
 			slog.Warn("fsstore: restored entity could not be read", "entity", meta.ID, "error", err)
 			continue
-		}
-		if meta.Face.IsDefault() {
-			addEntityToCache(s.propCache, e)
 		}
 		s.notifyPut(e)
 		result.DeletedEntities = append(result.DeletedEntities, e)
@@ -299,8 +293,7 @@ func applyPendingDeletes(s *FSStore) error {
 		forgetRelations(s, related)
 		s.marked[pd.ID] = fam
 	}
-	// The cached property counts may include the hidden entities.
-	return s.rebuildPropCache()
+	return nil
 }
 
 func readPendingDeletes(s *FSStore) ([]pendingDelete, error) {

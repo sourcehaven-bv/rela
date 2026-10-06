@@ -9,12 +9,13 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -22,6 +23,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // translateVerb maps a wire-format verb to the [acl.WriteRequest] that
@@ -67,19 +69,43 @@ func translateVerb(verb, entityType, entityID string, face entityPkg.Face) acl.W
 	panic("dataentry.translateVerb: unknown verb: " + verb)
 }
 
-// translateRelationWrite maps a relation write to the [acl.WriteRequest]
-// that authorizes it, mirroring how entitymanager gates relation
-// updates: Op=update with a [acl.RelationSubject] evaluated against the
-// source entity's type. It lives here so the lint_test
-// single-construction-site invariant covers relation writes too; the
-// only caller today is the conflict-resolve handler, whose write is
-// file-level and cannot route through entitymanager.
-func translateRelationWrite(relType, fromType, fromID string) acl.WriteRequest {
-	return acl.WriteRequest{Op: acl.OpUpdate, Subject: acl.RelationSubject{
-		Type:     relType,
-		FromType: fromType,
-		FromID:   fromID,
-	}}
+// translateRelationWrite maps an update of a relType edge from fromID (type
+// fromType) at tail to the [acl.WriteRequest] [entitymanager.Manager.UpdateRelation]
+// authorizes it with, by delegating to [entitymanager.RelationUpdateRequest].
+// The only caller is the conflict-resolve handler, whose write is file-level
+// and cannot route through entitymanager, so it must ask the manager's
+// question rather than a copy of it.
+func translateRelationWrite(
+	meta *metamodel.Metamodel, relType, fromType, fromID string, tail entityPkg.Face,
+) acl.WriteRequest {
+	return entitymanager.RelationUpdateRequest(meta, relType, fromType, fromID, tail)
+}
+
+// translateRelationDelete maps the removal of a relType edge whose source is
+// fromID at tail to the [acl.WriteRequest] [entitymanager.Manager.DeleteRelation]
+// authorizes it with.
+func translateRelationDelete(
+	meta *metamodel.Metamodel, relType, fromType, fromID string, tail entityPkg.Face,
+) acl.WriteRequest {
+	return entitymanager.RelationDeleteRequest(meta, relType, fromType, fromID, tail)
+}
+
+// translateRelationCreate maps the creation of a relType edge from fromID
+// (type fromType) at tail to the [acl.WriteRequest] the manager authorizes it
+// with. It delegates to [entitymanager.RelationCreateRequest], which
+// [entitymanager.Manager.CreateRelation] itself calls, so a `linkable` hint and
+// the write cannot ask different questions.
+func translateRelationCreate(
+	meta *metamodel.Metamodel, relType, fromType, fromID string, tail entityPkg.Face,
+) acl.WriteRequest {
+	return entitymanager.RelationCreateRequest(meta, relType, fromType, fromID, tail)
+}
+
+// translateFamilyRename maps the rename of an entity of a faced type to the
+// [acl.WriteRequest] [entitymanager.Manager.RenameEntity] authorizes it with:
+// one family-level subject, never one per stored face.
+func translateFamilyRename(entityType, entityID string) acl.WriteRequest {
+	return acl.WriteRequest{Op: acl.OpRename, Subject: acl.NewFamilySubject(entityType, entityID)}
 }
 
 // affordanceService computes the read-time affordance maps (_actions,
@@ -91,7 +117,7 @@ func translateRelationWrite(relType, fromType, fromID string) acl.WriteRequest {
 // It holds the ACL and the field-verdict resolver, plus a per-request
 // metamodel accessor (meta) — the metamodel can change on reload, so it MUST
 // be fetched per call, never captured. The two relation-graph reads it needs
-// (getEntity, currentEdgesByPeer) are injected as callbacks rather than pulling
+// (getEntity, planEdges) are injected as callbacks rather than pulling
 // the relation plumbing in.
 //
 // IMPORTANT — two invariants this type must preserve:
@@ -100,7 +126,7 @@ func translateRelationWrite(relType, fromType, fromID string) acl.WriteRequest {
 //     "_actions[v]==false ⇒ 403 on the write" contract against that shared
 //     instance; a divergent ACL here silently breaks it.
 //   - acl.WriteRequest is constructed ONLY via the package-level translateVerb
-//     / translateRelationWrite in this file (affordances.go); lint_test.go
+//     / translateRelation* functions in this file (affordances.go); lint_test.go
 //     greps this exact filename. Do not methodize those constructors or move
 //     them to another file.
 type affordanceService struct {
@@ -113,19 +139,32 @@ type affordanceService struct {
 	resolver func() FieldVerdictResolver
 	store    store.Store
 	meta     func() *metamodel.Metamodel
-	// getEntity resolves an entity by ID for relation-source attribution.
-	getEntity func(ctx context.Context, id string) (*entityPkg.Entity, bool)
+	// family reads the faces of one entity the principal may read
+	// ([visibility.Resolver.Family]). `_faces` is built from it.
+	family func(ctx context.Context, entityType, id string) (visibility.Family, bool, error)
+	// sourceRow reads the raw row of a relation's source, at the edge's
+	// tail, for relation-source attribution. It is never served.
+	sourceRow func(ctx context.Context, ref entityPkg.Ref) (*entityPkg.Entity, bool)
+	// sourceFamily reads the raw row of every face of a relation's source
+	// that the principal may READ, for a write gate whose source has no row
+	// at the edge's tail. It is never served either. A hidden face is left
+	// out so that no gate evaluates a `when:` against it: the verdict would
+	// then depend on a row the caller cannot see. relationSources judges the
+	// hidden faces on the policy alone instead.
+	sourceFamily func(ctx context.Context, id string) ([]*entityPkg.Entity, error)
+	// readable keeps the rows of a batch the principal may read
+	// ([visibleReader.filterVisible]); linkablePage filters a page's source
+	// families through it in one pass.
+	readable func(ctx context.Context, rows []*entityPkg.Entity) []*entityPkg.Entity
 	// copies lists the copy affordances available from one face (RULING 9's
 	// promote / translate buttons). OPTIONAL, unlike the accessors above: nil
 	// when the entity manager does not expose the capability, in which case
 	// `_copies` is omitted rather than sent empty — see computeCopyOffers.
 	// Wired by wireCopies, in production and in the test rebind alike.
 	copies copyOffersFunc
-	// currentEdgesByPeer returns the current edges of entityID for a relation
-	// type/direction, keyed by peer ID. Used to diff desired-vs-current edges.
-	currentEdgesByPeer func(
-		ctx context.Context, entityID, canonical string, incoming bool,
-	) map[string]*entityPkg.Relation
+	// planEdges is edgeReader.plan: the edge writes one relation wrapper
+	// asks for, which this service authorizes one by one.
+	planEdges edgePlanner
 	// schema and actionConditions back the detail-action affordance
 	// (TKT-VVS16W). Live accessors because config reloads and the condition
 	// compiler is injected after construction (SetViewConditions). Nil
@@ -151,17 +190,49 @@ var perCollectionVerbs = []string{"create"}
 func (svc affordanceService) computeActions(ctx context.Context, e *entityPkg.Entity) map[string]bool {
 	out := make(map[string]bool, len(perItemVerbs))
 	for _, v := range perItemVerbs {
+		if v == "rename" {
+			out[v] = svc.renameAllowed(ctx, e)
+			continue
+		}
 		out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, e.Type, e.ID, e.Face)).Allow
 	}
 	return out
 }
 
+// renameAllowed is the rename verdict for e. A rename moves the whole
+// family, hidden faces included, so for a faced type the manager authorizes
+// it once at family level and so does this; the served face's own grant
+// would offer a rename the write refuses. The verdict reads no other face,
+// so it cannot disclose one. A faceless type keeps its per-row check.
+func (svc affordanceService) renameAllowed(ctx context.Context, e *entityPkg.Entity) bool {
+	if len(metamodel.FaceOrderOf(svc.meta(), e.Type)) == 0 {
+		return svc.acl().AuthorizeWrite(ctx, translateVerb("rename", e.Type, e.ID, e.Face)).Allow
+	}
+	return svc.acl().AuthorizeWrite(ctx, translateFamilyRename(e.Type, e.ID)).Allow
+}
+
 // computeCollectionActions returns the collection-scope verb verdict
-// map for an entity type — currently just `create`.
+// map for an entity type, currently just `create`.
+//
+// A faced type has no implicit face to create on, so its `create` is true
+// when any declared face is creatable, and each face gets its own
+// `create@<face>` key. A create form uses those keys to offer the faces the
+// principal may create when its world declares no `create:` face.
 func (svc affordanceService) computeCollectionActions(ctx context.Context, entityType string) map[string]bool {
 	out := make(map[string]bool, len(perCollectionVerbs))
+	faces := metamodel.FaceOrderOf(svc.meta(), entityType)
 	for _, v := range perCollectionVerbs {
-		out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, entityType, "", "")).Allow
+		if len(faces) == 0 {
+			out[v] = svc.acl().AuthorizeWrite(ctx, translateVerb(v, entityType, "", "")).Allow
+			continue
+		}
+		allowed := false
+		for _, f := range faces {
+			ok := svc.acl().AuthorizeWrite(ctx, translateVerb(v, entityType, "", entityPkg.Face(f))).Allow
+			out[v+"@"+f] = ok
+			allowed = allowed || ok
+		}
+		out[v] = allowed
 	}
 	return out
 }
@@ -186,6 +257,11 @@ func (svc affordanceService) computeCollectionActions(ctx context.Context, entit
 type FieldVerdictResolver interface {
 	FieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts
 	RelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts
+	// UnconditionalRelationVerdicts is RelationVerdicts as it holds for
+	// every face of e, whatever the face holds: a conditional grant does
+	// not allow. A write gate judges a face the caller cannot read by it;
+	// see [affordanceService.relationSources].
+	UnconditionalRelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts
 }
 
 // traversalPrimer is the OPTIONAL capability of a [FieldVerdictResolver]
@@ -596,26 +672,199 @@ const (
 	RelationOpRemove
 )
 
-// relationSourceEntity returns the entity whose verdict should gate a
-// per-relation write. For outgoing-direction operations the source IS
-// the path entity (the canonical case). For incoming-direction
-// operations the path entity is the TARGET; the source is the peer,
-// so the resolver must be asked about the peer's affordance, not the
-// path entity's.
+// relationSource is one judgement a per-relation write gate makes: the
+// verdicts of row, or, when unconditional is set, the verdicts that hold for
+// every face of row's entity whatever the face holds
+// ([FieldVerdictResolver.UnconditionalRelationVerdicts]). The second stands
+// for the faces the principal cannot read. row is the audit subject of a
+// denial either way.
+type relationSource struct {
+	row           *entityPkg.Entity
+	unconditional bool
+}
+
+// relationSources returns what gates a per-relation write of relType. The
+// gate reads the edge's source: the path entity for an outgoing edge, the
+// peer for an incoming one (the path entity is then the TARGET, so the
+// resolver must be asked about the peer's affordance, not the path entity's).
 //
-// Returns the path entity when the peer can't be found locally (404
-// upstream — should not happen in practice; safe-fail).
-func (svc affordanceService) relationSourceEntity(
-	ctx context.Context, pathEntity *entityPkg.Entity, peerID, direction string,
-) *entityPkg.Entity {
+// peer is the source at the edge's tail: the tail an existing edge carries, or
+// the tail a new incoming edge will get. It is read for an incoming edge only.
+//
+// An edge with no source row at its tail belongs to the whole source, and a
+// write passes only if every face the source's type declares permits it.
+// That is the case for a new or identity-scoped incoming edge from a faced
+// peer: its zero face holds no row (DEC-NPZICR), and falling back to the
+// path entity would judge the edge by the wrong type's policy. It is also
+// the case for an outgoing identity-scoped edge from a faced path entity: the
+// served face is one judgement among the family's, never the only one. An
+// outgoing content-scoped edge belongs to the served face and is judged on it
+// alone.
+//
+// Within a family, see [affordanceService.familySources].
+//
+// A peer with no readable row at all falls back to the path entity, so a
+// hidden peer is judged exactly as a missing one. The write refuses both as
+// a dangling peer.
+//
+// A read fault is returned: the caller must not write on a guess.
+func (svc affordanceService) relationSources(
+	ctx context.Context, pathEntity *entityPkg.Entity, peer entityPkg.Ref, direction, relType string,
+) ([]relationSource, error) {
 	if direction != string(DirectionIncoming) {
-		return pathEntity
+		if pathEntity == nil || metamodel.IsContentScoped(svc.meta(), relType) || !svc.faced(pathEntity) {
+			return []relationSource{{row: pathEntity}}, nil
+		}
+		return svc.ownFamilySources(ctx, pathEntity)
 	}
-	peer, ok := svc.getEntity(ctx, peerID)
-	if !ok {
-		return pathEntity
+	if src, ok := svc.sourceRow(ctx, peer); ok {
+		return []relationSource{{row: src}}, nil
 	}
-	return peer
+	family, err := svc.sourceFamily(ctx, peer.ID)
+	if err != nil {
+		return nil, fmt.Errorf("reading relation source %s: %w", peer.ID, err)
+	}
+	if len(family) == 0 {
+		return []relationSource{{row: pathEntity}}, nil
+	}
+	return svc.familySources(ctx, family), nil
+}
+
+// faced reports whether e's type declares faces.
+func (svc affordanceService) faced(e *entityPkg.Entity) bool {
+	return len(metamodel.FaceOrderOf(svc.meta(), e.Type)) > 0
+}
+
+// ownFamilySources is [affordanceService.familySources] for an identity edge
+// from e, a faced path entity. e is judged as the request holds it, which
+// for a create is the only row there is; its other faces are read.
+func (svc affordanceService) ownFamilySources(ctx context.Context, e *entityPkg.Entity) ([]relationSource, error) {
+	var family []*entityPkg.Entity
+	if e.ID != "" {
+		var err error
+		if family, err = svc.sourceFamily(ctx, e.ID); err != nil {
+			return nil, fmt.Errorf("reading relation source %s: %w", e.ID, err)
+		}
+	}
+	family = slices.DeleteFunc(family, func(f *entityPkg.Entity) bool { return f.Face == e.Face })
+	return svc.familySources(ctx, append([]*entityPkg.Entity{e}, family...)), nil
+}
+
+// familySources returns the judgements an edge owned by a whole faced entity
+// needs. family holds the rows of that entity the principal can read and is
+// not empty.
+//
+// A face is judged on its row when the principal can read the row. Every
+// other face is judged on the policy alone: one unconditional source stands
+// for them all. A face the principal reads unconditionally and that has no
+// row does not exist, so it needs no judgement. Which faces get the
+// unconditional judgement depends on the grants only, never on a row the
+// principal cannot read, so the verdict neither discloses a hidden face nor
+// skips a `when:` that would deny on it.
+func (svc affordanceService) familySources(ctx context.Context, family []*entityPkg.Entity) []relationSource {
+	out := make([]relationSource, 0, len(family)+1)
+	for _, e := range family {
+		out = append(out, relationSource{row: e})
+	}
+	if svc.hasUnreadFace(ctx, family) {
+		out = append(out, relationSource{row: family[0], unconditional: true})
+	}
+	return out
+}
+
+// hasUnreadFace reports whether the type of family declares a face that is
+// not in family and that the principal does not read unconditionally. Such a
+// face may hold a row the principal cannot see. family holds the readable
+// rows of one entity and is not empty.
+func (svc affordanceService) hasUnreadFace(ctx context.Context, family []*entityPkg.Entity) bool {
+	typ := family[0].Type
+	read := readGateFromContext(ctx).ReadQuery(ctx, typ)
+	for _, name := range metamodel.FaceOrderOf(svc.meta(), typ) {
+		face := entityPkg.Face(name)
+		if slices.ContainsFunc(family, func(e *entityPkg.Entity) bool { return e.Face == face }) {
+			continue
+		}
+		if read.AllowAll && (read.Faces == nil || slices.Contains(read.Faces, face)) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// verdictsOf resolves the relation verdicts src stands for.
+func (svc affordanceService) verdictsOf(ctx context.Context, src relationSource) RelationVerdicts {
+	if src.unconditional {
+		return svc.resolver().UnconditionalRelationVerdicts(ctx, src.row)
+	}
+	return svc.resolver().RelationVerdicts(ctx, src.row)
+}
+
+// linkableFrom reports whether the principal may create a relType edge from
+// row to the entity on the request path, which /_search does not know and
+// neither gate reads. It runs the two gates a PATCH runs for an incoming add,
+// through the same functions: the affordance gate over
+// [affordanceService.relationSources] and the ACL request of
+// [translateRelationCreate]. The write re-authorizes; this is a hint.
+//
+// row is a served row, which the principal may read. The tail is the one the
+// write gets. A content-scoped edge belongs to the row's face; an
+// identity-scoped edge has the zero tail, and from a faced source the ACL
+// then requires every face the type declares.
+//
+// Cost per row: the source read of relationSources (the readable family and
+// the type's read verdict, for an identity edge from a faced source), one
+// verdict call per source and one AuthorizeWrite.
+func (svc affordanceService) linkableFrom(
+	ctx context.Context, row *entityPkg.Entity, relType string, scope metamodel.RelationScope,
+) bool {
+	var tail entityPkg.Face
+	if scope.IsContent() {
+		tail = row.Face
+	}
+	sources, err := svc.relationSources(ctx, nil, entityPkg.Ref{ID: row.ID, Face: tail},
+		string(DirectionIncoming), relType)
+	if err != nil {
+		return false
+	}
+	for _, src := range sources {
+		if src.row == nil {
+			// The row's source is gone; the write would find no peer.
+			return false
+		}
+	}
+	if _, denial := svc.relationOpDenial(ctx, sources, relType, RelationOpCreate); denial != nil {
+		return false
+	}
+	req := translateRelationCreate(svc.meta(), relType, row.Type, row.ID, tail)
+	return svc.acl().AuthorizeWrite(ctx, req).Allow
+}
+
+// relationOpDenial is [affordanceService.validateRelationOp] over every
+// source [affordanceService.relationSources] returned. It reports the first
+// denial and the row that produced it, which is the write's audit subject.
+func (svc affordanceService) relationOpDenial(
+	ctx context.Context, sources []relationSource, relType string, op RelationOp,
+) (*entityPkg.Entity, *AffordanceDenialError) {
+	for _, src := range sources {
+		if denial := svc.validateRelationOp(ctx, src, relType, op); denial != nil {
+			return src.row, denial
+		}
+	}
+	return nil, nil
+}
+
+// relationMetaDenial is [affordanceService.validateRelationMetaWrite] over
+// every source, like [affordanceService.relationOpDenial].
+func (svc affordanceService) relationMetaDenial(
+	ctx context.Context, sources []relationSource, relType string, meta map[string]any, metaUnset []string,
+) (*entityPkg.Entity, *AffordanceDenialError) {
+	for _, src := range sources {
+		if denial := svc.validateRelationMetaWrite(ctx, src, relType, meta, metaUnset); denial != nil {
+			return src.row, denial
+		}
+	}
+	return nil, nil
 }
 
 // validateRelationOp reports the first AffordanceDenialError that the
@@ -624,12 +873,12 @@ func (svc affordanceService) relationSourceEntity(
 // create / remove. The verdict is per-relation-type uniform —
 // per-link affordances are predicate territory.
 func (svc affordanceService) validateRelationOp(
-	ctx context.Context, e *entityPkg.Entity, relType string, op RelationOp,
+	ctx context.Context, src relationSource, relType string, op RelationOp,
 ) *AffordanceDenialError {
-	if e == nil {
+	if src.row == nil {
 		return nil
 	}
-	v := svc.resolver().RelationVerdicts(ctx, e)
+	v := svc.verdictsOf(ctx, src)
 	rv, ok := v.Types[relType]
 	if !ok {
 		return nil // default-permissive
@@ -665,69 +914,87 @@ func (svc affordanceService) validateRelationOp(
 //
 // Called from the unified PATCH handler before
 // [writeHandler.applyRelationsModern]. Returns nil when every relation
-// operation is permitted.
-//
-//nolint:gocognit // walks every relation op against per-op ACL affordances; each branch is an independent verb check, not shared logic to extract.
+// operation is permitted, a *AffordanceDenialError for a denial, and any other
+// error when a source row cannot be read.
 func (svc affordanceService) validateRelationsModernAffordances(
 	ctx context.Context, entityID string, e *entityPkg.Entity,
 	desired map[string]v1.RelationsUpdate,
-) *AffordanceDenialError {
+) error {
 	if e == nil || len(desired) == 0 {
 		return nil
 	}
 	meta := svc.meta()
 	for bodyKey, upd := range desired {
-		if !upd.DataPresent {
+		if !upd.DataPresent && !upd.Delta {
 			continue
 		}
 		canonical, incoming, ok := resolveDirection(meta, bodyKey)
 		if !ok {
 			continue // structural error surfaces via the existing validator
 		}
-
-		desiredByID := make(map[string]v1.ResourceIdentifier, len(upd.Data))
-		for _, ref := range upd.Data {
-			desiredByID[ref.ID] = ref
-		}
-		current := svc.currentEdgesByPeer(ctx, entityID, canonical, incoming)
-
-		// For incoming-direction body keys the SOURCE of every edge is
-		// the peer entity, not the path entity. Verdicts are evaluated
-		// against the source — see [App.relationSourceEntity] for the
-		// rationale. Outgoing edges resolve to the path entity.
-		direction := ""
-		if incoming {
-			direction = string(DirectionIncoming)
-		}
-
-		// Adds: any desired edge whose peer isn't currently linked.
-		for _, ref := range upd.Data {
-			source := svc.relationSourceEntity(ctx, e, ref.ID, direction)
-			if _, exists := current[ref.ID]; exists {
-				// Upsert path: not a create, but the meta may change.
-				denial := svc.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset)
-				if denial != nil {
-					return denial
-				}
-				continue
-			}
-			if denial := svc.validateRelationOp(ctx, source, canonical, RelationOpCreate); denial != nil {
-				return denial
-			}
-			if denial := svc.validateRelationMetaWrite(ctx, source, canonical, ref.Meta, ref.MetaUnset); denial != nil {
-				return denial
+		var ops []edgeOp
+		if entityID == "" {
+			// A create has no current edges to match: every listed edge is new.
+			ops = newEdgeOps(upd, incoming)
+		} else {
+			var err error
+			ops, err = svc.planEdges(ctx, entityID, e.Face, canonical, incoming, upd,
+				"/relations/"+v1.JSONPointerEscape(bodyKey))
+			if err != nil {
+				return err
 			}
 		}
+		if err := svc.validateRelationOps(ctx, e, canonical, incoming, ops); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-		// Removes: any current edge not in the desired set.
-		for peerID := range current {
-			if _, kept := desiredByID[peerID]; kept {
-				continue
-			}
-			source := svc.relationSourceEntity(ctx, e, peerID, direction)
-			if denial := svc.validateRelationOp(ctx, source, canonical, RelationOpRemove); denial != nil {
+// newEdgeOps is the plan for a wrapper on an entity being created.
+func newEdgeOps(upd v1.RelationsUpdate, incoming bool) []edgeOp {
+	refs := upd.Upserts()
+	ops := make([]edgeOp, len(refs))
+	for i, ref := range refs {
+		peer := peerAddress(ref.ID, incoming)
+		s := edgeSlot{peer: peer.ID()}
+		if named, ok := peer.Named(); ok {
+			s.tail = named.Face
+		}
+		ops[i] = edgeOp{slot: s, ref: ref}
+	}
+	return ops
+}
+
+// validateRelationOps authorizes the planned writes of one relation type.
+// The source of an incoming edge is the peer at the edge's tail; see
+// [affordanceService.relationSources].
+func (svc affordanceService) validateRelationOps(
+	ctx context.Context, e *entityPkg.Entity, canonical string, incoming bool, ops []edgeOp,
+) error {
+	direction := ""
+	if incoming {
+		direction = string(DirectionIncoming)
+	}
+	for _, op := range ops {
+		sources, err := svc.relationSources(ctx, e, entityPkg.Ref{ID: op.slot.peer, Face: op.slot.tail},
+			direction, canonical)
+		if err != nil {
+			return err
+		}
+		switch {
+		case op.remove:
+			if _, denial := svc.relationOpDenial(ctx, sources, canonical, RelationOpRemove); denial != nil {
 				return denial
 			}
+			continue
+		case op.existing == nil:
+			if _, denial := svc.relationOpDenial(ctx, sources, canonical, RelationOpCreate); denial != nil {
+				return denial
+			}
+		}
+		if _, denial := svc.relationMetaDenial(ctx, sources, canonical, op.ref.Meta, op.ref.MetaUnset); denial != nil {
+			return denial
 		}
 	}
 	return nil
@@ -744,12 +1011,12 @@ func (svc affordanceService) validateRelationsModernAffordances(
 // relation validation. The affordance check focuses on rejecting
 // keys explicitly marked non-writable.
 func (svc affordanceService) validateRelationMetaWrite(
-	ctx context.Context, e *entityPkg.Entity, relType string, meta map[string]any, metaUnset []string,
+	ctx context.Context, src relationSource, relType string, meta map[string]any, metaUnset []string,
 ) *AffordanceDenialError {
-	if e == nil {
+	if src.row == nil {
 		return nil
 	}
-	v := svc.resolver().RelationVerdicts(ctx, e)
+	v := svc.verdictsOf(ctx, src)
 	rv, ok := v.Types[relType]
 	if !ok || rv.Fields == nil {
 		return nil
@@ -928,7 +1195,7 @@ func redactedPropertyNames(v FieldVerdicts) []string {
 func (svc affordanceService) computeRelationAffordances(
 	ctx context.Context, e *entityPkg.Entity,
 ) map[string]v1.RelationAffordance {
-	v := svc.resolver().RelationVerdicts(ctx, e)
+	v := svc.outgoingRelationVerdicts(ctx, e)
 	out := make(map[string]v1.RelationAffordance)
 	for relType, rv := range v.Types {
 		var entry v1.RelationAffordance
@@ -963,6 +1230,67 @@ func (svc affordanceService) computeRelationAffordances(
 		}
 	}
 	return out
+}
+
+// outgoingRelationVerdicts is the verdict per relation type for an edge
+// from e, as the write gate judges it ([affordanceService.relationSources]):
+// a content-scoped type on e alone, an identity-scoped type from a faced e
+// over every source of its family. A dimension is allowed only when every
+// source allows it. A family read fault denies every identity-scoped type,
+// as the write would fail.
+func (svc affordanceService) outgoingRelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts {
+	own := svc.resolver().RelationVerdicts(ctx, e)
+	if !svc.faced(e) {
+		return own
+	}
+	meta := svc.meta()
+	identity := func(relType string) bool { return !metamodel.IsContentScoped(meta, relType) }
+	out := RelationVerdicts{Types: map[string]RelationVerdict{}}
+	for relType, rv := range own.Types {
+		if !identity(relType) {
+			out.Types[relType] = rv
+		}
+	}
+	sources, err := svc.ownFamilySources(ctx, e)
+	if err != nil {
+		for relType := range meta.Relations {
+			if identity(relType) {
+				out.Types[relType] = RelationVerdict{}
+			}
+		}
+		return out
+	}
+	for _, src := range sources {
+		v := own
+		if src.row != e || src.unconditional {
+			v = svc.verdictsOf(ctx, src)
+		}
+		for relType, rv := range v.Types {
+			if !identity(relType) {
+				continue
+			}
+			acc, seen := out.Types[relType]
+			if !seen {
+				acc = RelationVerdict{Creatable: true, Removable: true}
+			}
+			out.Types[relType] = acc.and(rv)
+		}
+	}
+	return out
+}
+
+// and is v allowing a dimension only where o allows it too.
+func (v RelationVerdict) and(o RelationVerdict) RelationVerdict {
+	v.Creatable = v.Creatable && o.Creatable
+	v.Removable = v.Removable && o.Removable
+	for field, writable := range o.Fields {
+		if v.Fields == nil {
+			v.Fields = map[string]bool{}
+		}
+		prev, ok := v.Fields[field]
+		v.Fields[field] = writable && (!ok || prev)
+	}
+	return v
 }
 
 // copyVisibleProperties returns a fresh map of the entity's properties
@@ -1022,9 +1350,8 @@ func (svc affordanceService) stripHiddenProperties(ctx context.Context, e *entit
 // visibleRelationMeta returns a copy of a relation edge's property map with
 // hidden meta keys removed, honoring the relation `visible:` grants resolved for
 // the edge's SOURCE entity (TKT-B1F5Q1). meta is the raw edge property map; from
-// is the relation's source entity (use [affordanceService.relationSourceEntity]
-// to resolve it for incoming edges, where the source is the peer, not the path
-// entity); relType is the canonical relation type.
+// is the relation's source entity (for incoming edges the peer, not the path
+// entity; see [affordanceService.visibleRelationMetaIncoming]); relType is the canonical relation type.
 //
 // It NEVER mutates the argument: when at least one key is redacted it returns a
 // fresh copy with those keys removed; when nothing is redacted it returns the
@@ -1065,19 +1392,18 @@ func (svc affordanceService) visibleRelationMeta(
 }
 
 // visibleRelationMetaIncoming redacts an INCOMING edge's meta, resolving the
-// relation grant against the edge's true source (the peer, peerID) rather than
-// the entity being viewed (the TO side). It FAILS CLOSED if the peer cannot be
+// relation grant against the edge's true source (the peer's row at the edge's
+// tail) rather than the entity being viewed (the TO side). It FAILS CLOSED if the peer cannot be
 // fetched (RR-B1F5-N1): a peer deleted between the neighbor-visibility pass and
 // this read would otherwise leave the source unresolvable, and falling back to
 // the wrong-type path entity — whose type likely has no `visible:` block for this
 // relation — would silently emit the meta un-redacted. When the active resolver
 // can redact at all (implements [RelationVisibilityResolver]) and the source is
-// unresolvable, drop the whole meta map rather than leak it. (The analogous
-// fallback in relationSourceEntity is correct for the WRITE path, where a denied
-// write is the safe failure; the read/redaction consumer needs the opposite bias,
-// so it is handled here rather than by changing the shared helper.)
+// unresolvable, drop the whole meta map rather than leak it. The write gate,
+// [affordanceService.relationSources], resolves a missing tail row through the
+// family instead; this read keeps the stricter rule, which only ever hides meta.
 func (svc affordanceService) visibleRelationMetaIncoming(
-	ctx context.Context, peerID, relType string, meta map[string]any,
+	ctx context.Context, peer entityPkg.Ref, relType string, meta map[string]any,
 ) map[string]any {
 	if len(meta) == 0 {
 		return meta
@@ -1085,7 +1411,7 @@ func (svc affordanceService) visibleRelationMetaIncoming(
 	if _, canRedact := svc.resolver().(RelationVisibilityResolver); !canRedact {
 		return meta // Nop / Demo: no redaction at all, matching pre-B1F5Q1.
 	}
-	src, ok := svc.getEntity(ctx, peerID)
+	src, ok := svc.sourceRow(ctx, peer)
 	if !ok {
 		// Source gone mid-request → cannot resolve its grants → fail closed.
 		return map[string]any{}
@@ -1097,7 +1423,7 @@ func (svc affordanceService) visibleRelationMetaIncoming(
 // (TKT-B1F5Q1) — the shared relation-meta redaction chokepoint both live handlers
 // route through. The strip is the single source of truth for whether the edge is
 // incoming: an outgoing edge resolves the grant against pathEntity; an incoming
-// edge resolves against its peer (s.peerID), failing closed if the peer is gone
+// edge resolves against its peer (s.peer), failing closed if the peer is gone
 // ([affordanceService.visibleRelationMetaIncoming]). Do NOT reintroduce an
 // `incoming` parameter alongside s.incoming — a caller that disagreed with the
 // strip could route an incoming edge down the outgoing branch and silently
@@ -1108,7 +1434,7 @@ func (svc affordanceService) redactRelationMetaStrip(
 ) {
 	meta, _ := s.rel["meta"].(map[string]any)
 	if s.incoming {
-		s.rel["meta"] = svc.visibleRelationMetaIncoming(ctx, s.peerID, relType, meta)
+		s.rel["meta"] = svc.visibleRelationMetaIncoming(ctx, s.peer, relType, meta)
 		return
 	}
 	s.rel["meta"] = svc.visibleRelationMeta(ctx, pathEntity, relType, meta)
@@ -1247,10 +1573,9 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	// are omitted from `_attachments` — otherwise the hidden-field boundary
 	// the rest of the response maintains would leak the file's metadata and a
 	// working download href.
-	// Attachments hang off the ENTITY, not the face — every store keys them
-	// by bare id — so their hrefs are built from the bare address even when
-	// `_self` names a face. A faced href would 404 on the download route.
-	attachments := svc.computeAttachments(ctx, e, bareSelfHref(result.Self), verdicts)
+	// Bytes are keyed per entity, but a face lists only the names its own
+	// value references (BUG-CTUW2N), so the hrefs carry the face address.
+	attachments := svc.computeAttachments(ctx, e, result.Self, verdicts)
 	result.Attachments = &attachments
 }
 
@@ -1276,7 +1601,7 @@ func (svc affordanceService) computeAttachments(
 	if selfHref == "" {
 		return out
 	}
-	infos, err := svc.store.ListAttachments(ctx, e.ID)
+	infos, err := svc.store.ListFamilyAttachments(ctx, e.ID)
 	if err != nil {
 		// Treat a list failure as "no attachments" rather than failing the
 		// whole entity response — the bytes endpoint still gates and serves
@@ -1289,7 +1614,7 @@ func (svc affordanceService) computeAttachments(
 		}
 		return out
 	}
-	for _, info := range infos {
+	for _, info := range attachment.FaceAttachments(e, infos) {
 		// A property hidden from this viewer by field-visibility policy must
 		// not leak its files (metadata or a working download href) — mirror
 		// the hidden-field boundary the rest of the response maintains.
@@ -1310,37 +1635,23 @@ func (svc affordanceService) computeAttachments(
 // computeFaces lists the entity's OTHER content states — the input to a
 // "view the published face" / "go to draft" link.
 //
-// # Why this asks the store per declared face
-//
 // A face NAME is config (declared in schema.yaml, public). Whether THIS
-// entity has that face is data, and the store is the only thing that knows.
-// There is no bulk face-enumeration API on purpose: the answer rides the
-// entity response, which the caller was already cleared to read, so it
-// inherits that gate rather than needing one of its own.
+// entity has that face, and whether this principal may read it, is data. Both
+// come from [visibility.Resolver.Family], which runs the row gate and the
+// per-face verdict a GET of each face runs, so a listed face always opens.
+// Gating on the `type@face` grant alone is not enough: a face can be
+// readable by one entity's owner edge and not another's.
 //
-// Cost is bounded by the type's declared face count — two or three in
-// practice, and a miss is a map lookup in fs/mem. It runs on per-entity
-// responses only, never on list rows, so it cannot become an N+1 over a page.
-//
-// # Face readability IS checked; world readability is not
-//
-// These are two different grants and only one of them belongs here. A
-// `type@face` read grant is per-type and per-face, so whether the caller may
-// read the OTHER face is a real question with a per-entity answer — and
-// naming a face they may not read discloses that it exists, which is what
-// such a grant withholds. So each candidate face is gated below, before the
-// store is probed for it.
-//
-// World-read is the one deliberately absent. It is a GLOBAL, role-level grant
+// World-read is deliberately not checked. It is a GLOBAL, role-level grant
 // (acl.Request.PermitsWorld takes a world name and nothing else) that the
-// client already has from `/_schema`.worlds. Re-answering it per face would
-// be a per-instance check for a question with a per-principal answer.
+// client already has from `/_schema`.worlds.
 //
-// Returns an empty (non-nil) slice when the type declares no other faces,
-// which is a real answer: "this entity has no other faces". That differs from
-// the `_copies` convention, where nil means "capability not wired" — here
-// there is no capability to be unwired, since store and meta are always
-// present on this service.
+// It runs on per-entity responses only, never on list rows, so the one
+// family read cannot become an N+1 over a page.
+//
+// Returns an empty (non-nil) slice when the entity has no other readable
+// face, which is a real answer. That differs from the `_copies` convention,
+// where nil means "capability not wired".
 func (svc affordanceService) computeFaces(
 	ctx context.Context, e *entityPkg.Entity,
 ) []v1.Face {
@@ -1356,20 +1667,28 @@ func (svc affordanceService) computeFaces(
 	if !ok {
 		return out
 	}
-	current := e.Face.String()
-	for name := range def.Faces {
-		stored := name
-		if stored == current {
+	if svc.family == nil || !otherFaceGranted(ctx, def, e) {
+		return out
+	}
+	// The faces of e the principal may read: the resolver applies the row
+	// gate and the per-face verdict, the same gates a GET of each face
+	// runs. A face it withholds is not listed, so the menu never offers an
+	// address that answers 404.
+	fam, ok, err := svc.family(ctx, e.Type, e.ID)
+	if err != nil {
+		slog.Warn("dataentry: reading an entity's faces failed", "id", e.ID, "err", err)
+		return out
+	}
+	if !ok {
+		return out
+	}
+	for _, f := range fam.Faces {
+		stored := f.String()
+		if f == e.Face {
 			continue // the face being served is not somewhere else to go
 		}
-		// A face the principal may not read is not somewhere they can go
-		// either — and probing it would disclose its existence, which a
-		// `type@face` grant withholds. Checked BEFORE the store probe.
-		if !faceReadable(ctx, e.Type, entityPkg.Face(stored)) {
+		if _, declared := def.Faces[stored]; !declared {
 			continue
-		}
-		if _, err := svc.store.GetEntityState(ctx, e.ID, entityPkg.Face(stored)); err != nil {
-			continue // no such face on this entity — the common case
 		}
 		// The operator's `label:` when declared, else the coordinate name.
 		// Both are operator-authored config, so neither discloses anything
@@ -1394,11 +1713,17 @@ func (svc affordanceService) computeFaces(
 	return out
 }
 
-// bareSelfHref strips the face from a `_self` href (`.../POL-1@published` →
-// `.../POL-1`). Neither a plural nor an id may contain the separator, so the
-// first one is the face's.
-func bareSelfHref(self string) string {
-	return strings.SplitN(self, entityPkg.StateRefSeparator, 2)[0]
+// otherFaceGranted reports whether the principal's `type@face` grant admits
+// any declared face of e's type other than the one served. Without one there
+// is nothing to list, so computeFaces skips the family read: a faceless type,
+// or a principal confined to one face, costs no store read.
+func otherFaceGranted(ctx context.Context, def *metamodel.EntityDef, e *entityPkg.Entity) bool {
+	for name := range def.Faces {
+		if name != e.Face.String() && faceReadable(ctx, e.Type, entityPkg.Face(name)) {
+			return true
+		}
+	}
+	return false
 }
 
 // faceRef spells the explicit address of e's face at the stored coordinate:

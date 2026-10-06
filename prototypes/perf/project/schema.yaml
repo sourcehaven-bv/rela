@@ -141,6 +141,7 @@ types:
     values: [organizational, people, physical, technological]
   control_status:
     values: [missing, partial, implemented]
+    default: missing
   risk_level:
     values: [low, medium, high]
   risk_status:
@@ -202,6 +203,8 @@ relations:
     from: [document]
     to: [policy, control]
     scope: content
+
+default_world: published
 
 worlds:
   published:

@@ -12,22 +12,18 @@ import (
 
 // --- RelationReader ---
 
-// defaultTailKey addresses the DEFAULT-tail edge of a triple. Get,
-// update, and delete are default-tail-only in Step 1 (TKT-DOFYR1) —
-// see store.RelationData.FromFace; state-tailed edges are removed
-// via the entity cascades.
-func defaultTailKey(from, relType, to string) string {
-	return relKey(from, "", relType, to)
+// keyOf is the index key and filename stem of the edge at k, tail included.
+func keyOf(k entity.RelationKey) string {
+	return relKey(k.From, k.FromFace, k.Type, k.To)
 }
 
-func (s *FSStore) GetRelation(ctx context.Context, from, relType, to string) (*entity.Relation, error) {
+func (s *FSStore) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error) {
 	s.mu.RLock()
-	key := defaultTailKey(from, relType, to)
-	_, ok := s.relations[key]
+	rm, ok := s.relations[keyOf(k)]
 	if !ok {
-		if id, revealed := store.RevealedFor(ctx, from, to); revealed {
+		if id, revealed := store.RevealedFor(ctx, k.From, k.To); revealed {
 			if fam, marked := markedFamilyOf(s, id); marked {
-				_, ok = fam.relations[key]
+				rm, ok = fam.relations[keyOf(k)]
 			}
 		}
 	}
@@ -36,12 +32,7 @@ func (s *FSStore) GetRelation(ctx context.Context, from, relType, to string) (*e
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-
-	r, err := s.loadRelation(from, relType, to)
-	if err != nil {
-		return nil, err
-	}
-	return r, nil
+	return s.loadRelationMeta(rm)
 }
 
 func (s *FSStore) ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error] {
@@ -130,14 +121,14 @@ func (s *FSStore) CountRelations(_ context.Context, q store.RelationQuery) (int,
 // --- RelationWriter ---
 
 func (s *FSStore) createRelation(
-	_ context.Context, from, relType, to string, data *store.RelationData,
+	_ context.Context, k entity.RelationKey, data *store.RelationData,
 ) (*entity.Relation, error) {
-	for _, id := range []string{from, to} {
+	for _, id := range []string{k.From, k.To} {
 		if err := storeutil.ValidateID(id); err != nil {
 			return nil, err
 		}
 	}
-	if err := storeutil.ValidateRelationType(relType); err != nil {
+	if err := storeutil.ValidateRelationType(k.Type); err != nil {
 		return nil, err
 	}
 	if data != nil {
@@ -146,28 +137,23 @@ func (s *FSStore) createRelation(
 		}
 	}
 
-	var fp entity.Face
-	if data != nil {
-		fp = data.FromFace
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := relKey(from, fp, relType, to)
+	key := keyOf(k)
 	if _, exists := s.relations[key]; exists {
 		return nil, store.ErrConflict
 	}
 
-	r := entity.NewRelation(from, relType, to)
-	r.FromFace = fp
+	r := entity.NewRelation(k.From, k.Type, k.To)
+	r.FromFace = k.FromFace
 	r.UpdatedAt = time.Now()
 	if data != nil {
 		r.Content = data.Content
 		if data.Properties != nil {
 			r.Properties = make(map[string]any, len(data.Properties))
-			for k, v := range data.Properties {
-				r.Properties[k] = entity.CloneValue(v)
+			for pk, v := range data.Properties {
+				r.Properties[pk] = entity.CloneValue(v)
 			}
 		}
 	}
@@ -178,31 +164,24 @@ func (s *FSStore) createRelation(
 	}
 
 	// Update index.
-	s.relations[key] = relationMeta{From: from, Type: relType, To: to, FromFace: fp}
+	s.relations[key] = relationMeta{From: k.From, Type: k.Type, To: k.To, FromFace: k.FromFace}
 	s.relationOrder = storeutil.SortedInsert(s.relationOrder, key)
 
 	s.emit(store.Event{
 		Op:           store.EventRelationCreated,
-		RelationType: relType,
-		From:         from,
-		To:           to,
-		Face:         fp,
+		RelationType: k.Type,
+		From:         k.From,
+		To:           k.To,
+		Face:         k.FromFace,
 	})
 	return r.Clone(), nil
 }
 
+// updateRelation writes the edge with EXACTLY this key, tail included. The
+// tail is part of a relation's identity, so addressing the wrong one updates
+// a different edge rather than failing (BUG-64MU2Q).
 func (s *FSStore) updateRelation(
-	ctx context.Context, from, relType, to string, data store.RelationData,
-) (*entity.Relation, error) {
-	return s.updateRelationState(ctx, from, "", relType, to, data)
-}
-
-// updateRelationState writes the edge with EXACTLY this tail. The tail is
-// part of a relation's identity, so addressing the wrong one updates a
-// different edge rather than failing (BUG-64MU2Q) — the same reasoning
-// deleteRelationState is built on.
-func (s *FSStore) updateRelationState(
-	_ context.Context, from string, p entity.Face, relType, to string, data store.RelationData,
+	_ context.Context, k entity.RelationKey, data store.RelationData,
 ) (*entity.Relation, error) {
 	if err := storeutil.ValidateProperties(data.Properties); err != nil {
 		return nil, err
@@ -210,13 +189,13 @@ func (s *FSStore) updateRelationState(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rm, ok := s.relations[relKey(from, p, relType, to)]
+	rm, ok := s.relations[keyOf(k)]
 	if !ok {
 		return nil, store.ErrNotFound
 	}
 
 	// Load existing, then apply update. Via the index meta, so the loaded
-	// edge carries the tail it is stored under rather than the default.
+	// edge carries the tail it is stored under.
 	r, err := s.loadRelationMeta(rm)
 	if err != nil {
 		return nil, err
@@ -225,8 +204,8 @@ func (s *FSStore) updateRelationState(
 	r.Content = data.Content
 	if data.Properties != nil {
 		r.Properties = make(map[string]any, len(data.Properties))
-		for k, v := range data.Properties {
-			r.Properties[k] = entity.CloneValue(v)
+		for pk, v := range data.Properties {
+			r.Properties[pk] = entity.CloneValue(v)
 		}
 	} else {
 		r.Properties = nil
@@ -240,28 +219,21 @@ func (s *FSStore) updateRelationState(
 
 	s.emit(store.Event{
 		Op:           store.EventRelationUpdated,
-		RelationType: relType,
-		From:         from,
-		To:           to,
-		Face:         p,
+		RelationType: k.Type,
+		From:         k.From,
+		To:           k.To,
+		Face:         k.FromFace,
 	})
 	return r.Clone(), nil
 }
 
-func (s *FSStore) deleteRelation(ctx context.Context, from, relType, to string) error {
-	return s.deleteRelationState(ctx, from, "", relType, to)
-}
-
-// deleteRelationState removes the edge with EXACTLY this tail. The tail is
-// part of a relation's identity, so addressing the wrong one deletes a
-// different edge rather than failing (TKT-C1XUA8).
-func (s *FSStore) deleteRelationState(
-	_ context.Context, from string, p entity.Face, relType, to string,
-) error {
+// deleteRelation removes the edge with EXACTLY this key, tail included
+// (TKT-C1XUA8).
+func (s *FSStore) deleteRelation(_ context.Context, k entity.RelationKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := relKey(from, p, relType, to)
+	key := keyOf(k)
 	rm, ok := s.relations[key]
 	if !ok {
 		return store.ErrNotFound
@@ -280,10 +252,10 @@ func (s *FSStore) deleteRelationState(
 
 	s.emit(store.Event{
 		Op:           store.EventRelationDeleted,
-		RelationType: relType,
-		From:         from,
-		To:           to,
-		Face:         p,
+		RelationType: k.Type,
+		From:         k.From,
+		To:           k.To,
+		Face:         k.FromFace,
 	})
 	return nil
 }

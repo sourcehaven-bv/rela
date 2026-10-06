@@ -2,11 +2,8 @@ package validation
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,7 +42,7 @@ type luaRuleContext struct {
 	runtime      *lua.Runtime
 	code         string // already-loaded script source
 	envelopePath string // "validation:<rule-name>" or "validations/<file>"
-	sourceFS     fs.FS  // os.DirFS(projectRoot) for lua_file rules; nil for inline
+	sourceFS     fs.FS  // the project files for lua_file rules; the rule text for inline
 }
 
 // buildLuaRuleContext loads the rule's Lua source and constructs the
@@ -69,17 +66,15 @@ func (s *Service) buildLuaRuleContext(
 	envelopePath := "validation:" + rule.Name
 	var sourceFS fs.FS
 	if code == "" && rule.LuaFile != "" {
-		loaded, err := s.loadLuaScript(rule.LuaFile)
+		loaded, err := s.deps.ReadScript(ctx, validationsDir, rule.LuaFile)
 		if err != nil {
 			return nil, &LoadError{RuleName: rule.Name, Message: err.Error()}
 		}
 		code = loaded
 		envelopePath = "validations/" + filepath.ToSlash(rule.LuaFile)
-		// Source slice context is read from project root; readSourceSlice
-		// then opens "validations/<file>" relative to that root.
-		if s.deps.ProjectRoot != "" {
-			sourceFS = os.DirFS(s.deps.ProjectRoot)
-		}
+		// Source slice context is read from the project files;
+		// readSourceSlice then opens "validations/<file>" relative to them.
+		sourceFS = s.deps.SourceFS(ctx)
 	}
 	if code == "" {
 		return nil, nil
@@ -398,46 +393,4 @@ func sourceLinesAround(code string, failingLine, context int) []lua.SourceLine {
 		})
 	}
 	return out
-}
-
-// loadLuaScript loads a Lua script from the validations/ directory.
-// Uses os.OpenRoot for traversal-resistant file access.
-func (s *Service) loadLuaScript(scriptPath string) (string, error) {
-	// Security: Validate path is local (no "..", no absolute paths)
-	if !filepath.IsLocal(scriptPath) {
-		return "", fmt.Errorf(
-			"script path must be a local path (no '..' or absolute paths): %s", scriptPath)
-	}
-
-	// Security: Must have .lua extension
-	if !strings.HasSuffix(scriptPath, ".lua") {
-		return "", fmt.Errorf("script must have .lua extension: %s", scriptPath)
-	}
-
-	// Use os.OpenRoot for traversal-resistant access.
-	// Error messages intentionally omit system paths to prevent information leakage.
-	root, err := os.OpenRoot(s.deps.ProjectRoot)
-	if err != nil {
-		return "", errors.New("cannot access project directory")
-	}
-	defer root.Close()
-
-	validationsRoot, err := root.OpenRoot(validationsDir)
-	if err != nil {
-		return "", errors.New("cannot access validations directory")
-	}
-	defer validationsRoot.Close()
-
-	scriptFile, err := validationsRoot.Open(scriptPath)
-	if err != nil {
-		return "", fmt.Errorf("script not found: %s (must be in validations/ directory)", scriptPath)
-	}
-	defer scriptFile.Close()
-
-	content, err := io.ReadAll(scriptFile)
-	if err != nil {
-		return "", fmt.Errorf("cannot read script: %s", scriptPath)
-	}
-
-	return string(content), nil
 }

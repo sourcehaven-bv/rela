@@ -148,7 +148,8 @@ func TestListIndexNameAndDDL(t *testing.T) {
 		t.Error("name is not deterministic across equal specs")
 	}
 	ddl := createListIndexDDL("ix", a)
-	want := `CREATE INDEX IF NOT EXISTS "ix" ON entities (type, (properties->>'status'), ((properties->>'due') COLLATE "C"), id) WHERE face = ''`
+	want := `CREATE INDEX IF NOT EXISTS "ix" ON entities (type, face, (properties->>'status'), ` +
+		`((properties->>'due') COLLATE "C"), id) WHERE jsonb_typeof(properties->'status') = 'string'`
 	if ddl != want {
 		t.Errorf("DDL = %s\nwant %s", ddl, want)
 	}

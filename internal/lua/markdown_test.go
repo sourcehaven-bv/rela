@@ -13,13 +13,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // newMdTestRuntime creates a minimal runtime for markdown tests (no workspace needed).
 func newMdTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
 	var sb strings.Builder
-	return NewReader(ReadDeps{}, &sb)
+	return NewReader(ReadDeps{World: store.TrivialScope()}, &sb)
 }
 
 func TestMdParse(t *testing.T) {
@@ -1833,7 +1834,7 @@ fmt.Println("hi")
 func newMdTestRuntimeB(b *testing.B) *Runtime {
 	b.Helper()
 	var sb strings.Builder
-	return NewReader(ReadDeps{}, &sb)
+	return NewReader(ReadDeps{World: store.TrivialScope()}, &sb)
 }
 
 // --- resolve_refs / entity_refs (TKT-LXYHQ) ---

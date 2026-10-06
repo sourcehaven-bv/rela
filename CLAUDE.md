@@ -157,9 +157,8 @@ above rather than by a clean `analyze all`.
   `TestScriptReads_UpdatePreservesHiddenProperties`.
 
   `UpdateEntity` still exists for callers that legitimately own the whole entity
-  (a form save that renders every field). `ApplyEntity` is the whole-record
-  replace the sync channel needs. If you are writing a _subset_, you want
-  `PatchEntity`.
+  (a form save that renders every field). If you are writing a _subset_, you
+  want `PatchEntity`.
 - **Background jobs: the queue knows nothing about schedules, and never runs
   before a transaction closes.** External side effects (mail, HTTP, AI) belong
   on `jobs.Queue` rather than inline on a write path. Two rules keep the seam
@@ -206,12 +205,17 @@ above rather than by a clean `analyze all`.
   and neoq's insert trigger does `pg_notify(NEW.queue, ...)`, so tables shared
   across tenants would mean tenants consuming each other's jobs. neoq v0.72.1
   could not do this — one migration named `public.neoq_jobs_id_seq` while its
-  tables follow `search_path` — which is why `go.mod` carries a `replace` onto a
-  fork (BUG-YJEIFH, upstream acaloiaro/neoq#149). Drop the `replace` when that
-  lands, not before: `TestPostgresQueue_SchemaPinnedDSN` is what fails if it
-  goes early. **Test any new postgres-touching dependency through a
-  schema-pinned DSN**, not just the bare `RELA_TEST_DATABASE_URL` — the bare DSN
-  resolves to `public`, which is precisely the one case that worked.
+  tables follow `search_path` — which is why `go.mod` carries a `replace` onto
+  the `sourcehaven` branch of the sourcehaven-bv/neoq fork (BUG-YJEIFH, upstream
+  acaloiaro/neoq#149). That branch also carries the cross-process shutdown fix
+  (BUG-YAMD6J), the JobTimeout fix and the acquire fix; `go.mod` lists them.
+  Drop the `replace` only when all of them are upstream.
+  `TestPostgresQueue_SchemaPinnedDSN` and
+  `TestPostgresQueue_SurvivesAnotherProcessClosing` catch losing the schema
+  and shutdown fixes; the fork's own tests cover the rest.
+  **Test any new postgres-touching dependency through a schema-pinned DSN**,
+  not just the bare `RELA_TEST_DATABASE_URL` — the bare DSN resolves to
+  `public`, which is precisely the one case that worked.
 
 - **The configuration is not a secret; the data is.** `schema.yaml`,
   `data-entry.yaml`, `acl.yaml`, `schedules.yaml`, `scripts/`, `actions/`,
@@ -372,6 +376,20 @@ above rather than by a clean `analyze all`.
   single-subject evaluation the caller explicitly requested (e.g. performable
   transitions for one field on one entity). See
   `internal/entitymanager/CLAUDE.md`.
+- **Don't add a zero-face read.** Store reads and writes take an
+  `entity.Ref{ID, Face}`. A Ref with an id and no face names the zero-face
+  row, which a faced type does not have (DEC-NPZICR). Use the entity's own
+  `Ref()`, the face the resolver chose, or a parsed address.
+  `internal/archguard/bareref_test.go` pins every bare `entity.Ref` literal in
+  non-test code to an allowlist with a reason per file, and the list may only
+  shrink. In tests, seed faced types only at their declared faces.
+- **Don't pick a face for a bare-id write by rank.** A write that receives a
+  bare id resolves it through `visibility.Resolver.WriteTarget` (or a reader's
+  `WriteTarget`): exactly one readable face the world admits is the target,
+  otherwise `*visibility.AmbiguousAddressError` names the faces. A read may
+  take the face the world ranks first; a write may not, because the world's
+  first face is a presentation choice, not the author's intent. Rename and a
+  bare-id delete act on the whole family instead (`authorizeFamily`).
 
 ### Subsystem-specific rules (nested CLAUDE.md / godoc)
 
@@ -559,7 +577,7 @@ composition root has one `New` recipe per scenario over shared
 | _(none, default)_ | `fsstore`     | in-memory bleve                   | `rela`, `rela-server`                   |
 | `memorybackend`   | `memstore`    | `LinearSearch`                    | (tests / experiments; no bleve)         |
 | `postgres`        | `pgstore`     | PostgreSQL (`pg_trgm` + tsvector) | `rela-postgres`, `rela-server-postgres` |
-| `sqlite`          | `sqlitestore` | in-memory/on-disk bleve           | `rela-sqlite`, `rela-server-sqlite`     |
+| `sqlite`          | `sqlitestore` | SQLite FTS5 (`trigram`, in-DB)    | `rela-sqlite`, `rela-server-sqlite`     |
 
 `sqlitestore` is the **single-process** backend (DEC-LFSYNY): one embedded
 database file at `.rela/rela.db`, no server, and `Open` takes an exclusive
@@ -604,11 +622,22 @@ Rules when touching this:
   write leaks across tenants), and `Services.Close` must tear down only the
   store and search closer it was assembled with — never anything shared, or
   evicting one tenant breaks its siblings.
-- **The metamodel is always read from disk**, even in the postgres build —
-  `schema.yaml` and `templates/` stay on the filesystem, as does
-  operator-authored config generally; PostgreSQL backs
-  entities/relations/attachments/search. A postgres deployment still needs a
-  `--project` dir.
+- **The metamodel is read from disk on fs and postgres** — `schema.yaml`,
+  `templates/` and operator-authored config generally stay on the filesystem;
+  PostgreSQL backs entities/relations/attachments/search. A postgres
+  deployment still needs a `--project` dir.
+
+  **sqlite can carry the config in `rela.db`** (FEAT-UP14BT), so one file is a
+  shippable app. The `project_files` table is a FALLBACK layer behind disk
+  (`config.NewLayered(rootfs.New(root), configsql)`): a file on disk wins,
+  because a project with both is one being edited. Every reader of operator
+  files goes through that loader, never `os.ReadFile`: the schema and
+  `acl.yaml` (`Config.projectConfig`), scripts (`lua.ReadDeps.Files`),
+  `custom/` and `apps/` (`Services.ProjectFiles`), templates (`newTemplater`).
+  The disk layer is `internal/rootfs`, which nests an `os.Root` per directory
+  so a symlink cannot leave its directory; do not swap it for `FSLoader`.
+  `.rela/secrets.yaml` is never stored in the database. `rela db load` /
+  `rela db dump` and the desktop File menu move config and data in and out.
 
   The exception is **runtime-written state** (TKT-VC27L3): on the postgres build
   `state.KV` is database-backed (`pgstore.StateKV`, wired via `stateKVFor`), so
@@ -850,6 +879,16 @@ Rules when touching this:
   single `unique:` property unique by construction, every edge endpoint emitted
   by the same generator. Do not route it through entitymanager to "fix" that —
   20k automations per seed is the cost it exists to avoid.
+- **Markdown import into SQLite** (TKT-LWOCW9, `appbuild.ImportMarkdownData`,
+  `rela db load --data`) is the fifth raw-store exception, under the same
+  terms: operator shell, attributed (`fs-import` tool), one `fs-import` audit
+  record, and it refuses a store that already holds entities unless `--force`.
+  It copies what an fsstore over the source directory reads, so it carries
+  data that already passed (or predates) validation; running automations would
+  rewrite it on the way in. It runs as ONE `store.Tx`, not perf seeding's
+  batches: SQLite is single-process, so nothing waits on the lock, and a
+  rolled-back import can simply be re-run. `ExportMarkdownData` (`rela db dump
+  --data`) is the read-side counterpart and writes through a plain fsstore.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the `db`
@@ -997,7 +1036,10 @@ Known-unfixable vulns are filtered via `scripts/govulncheck-filtered.sh` — kee
 Read the `justfile` for the full set. The non-obvious ones: `just arch-lint`
 (package boundary check), `just ci` (full pipeline), `just dev` (data-entry
 server locally), `just coverage-check`. `go test -run TestName ./...` for a
-single test.
+single test. `just seqtrace-compare` traces ten demo requests on
+`origin/develop` and on your working tree, and reports how the cross-package
+call flows changed; use it to check that a change to a request path did what
+you intended (`tools/seqtrace/README.md`).
 
 ## Project files
 

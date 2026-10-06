@@ -20,6 +20,7 @@ import type {
   Entity,
   AttachmentInfo,
   TransitionOption,
+  FieldVersions,
 } from '@/types'
 import type { WidgetRoutingHint } from '@/widgets/types'
 import { defaultRegistry } from '@/widgets/registry'
@@ -72,6 +73,9 @@ const props = defineProps<{
   entityType: string
   entityId: string
   initialValues: Record<string, unknown>
+  // Version tokens served with initialValues (TKT-2VDVHF). When absent, the
+  // first save of each field goes out without a precondition.
+  initialVersions?: FieldVersions
   fields: SectionEditField[]
   // Per-`file`-property attachment LISTS for the entity, so the file
   // widget can show the current files and drive upload/remove on the
@@ -104,6 +108,7 @@ const initialSnapshot = {
   id: props.entityId,
   type: props.entityType,
   properties: { ...props.initialValues },
+  _versions: props.initialVersions,
 } satisfies Partial<Entity>
 
 // Adapter ref for AutoSaveOptions.formData — the composable only reads
@@ -312,7 +317,7 @@ defineExpose({
     -->
     <dl class="properties-list properties-list--rows">
       <RlDetailField
-        v-for="row in widgetRows"
+        v-for="(row, index) in widgetRows"
         :key="row.field.property"
         class="property-row"
         :data-property="row.field.property"
@@ -320,6 +325,12 @@ defineExpose({
         :field="{ id: row.field.property, label: row.field.label, type: 'text' }"
         :stacked="row.isLong || row.isBlock"
       >
+        <!-- Per-field affordances, as on PropertyDisplay: the host fills it
+             with the comment indicator. `index` is the row's position in
+             `fields`. -->
+        <template #label-trailing>
+          <slot name="label-affordance" :property="row.field.property" :index="index" />
+        </template>
         <template #value>
           <InlinePropertyValue
             :property="row.field.property"

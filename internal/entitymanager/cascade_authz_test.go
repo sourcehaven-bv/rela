@@ -87,7 +87,7 @@ func seedCascadeGraph(t *testing.T, st store.Store) {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
 	}
-	if _, err := st.CreateRelation(ctx, "DEC-1", "addresses", "REQ-1", nil); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
 }
@@ -138,10 +138,10 @@ func TestCascadeDelete_DeniedLeavesEverythingIntact(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if _, err := st.GetEntity(ctx, "REQ-1"); err != nil {
+	if _, err := st.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); err != nil {
 		t.Errorf("REQ-1 was deleted despite the denial: %v", err)
 	}
-	if _, err := st.GetRelation(ctx, "DEC-1", "addresses", "REQ-1"); err != nil {
+	if _, err := st.GetRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}); err != nil {
 		t.Errorf("the addresses edge was deleted despite the denial: %v", err)
 	}
 }
@@ -161,7 +161,7 @@ func TestCascadeDelete_AllowedWhenEveryRelationIsDeletable(t *testing.T) {
 	if len(res.DeletedRelations) != 1 {
 		t.Errorf("DeletedRelations = %d, want 1", len(res.DeletedRelations))
 	}
-	if _, gErr := st.GetEntity(context.Background(), "REQ-1"); gErr == nil {
+	if _, gErr := st.GetEntity(context.Background(), entity.Ref{ID: "REQ-1"}); gErr == nil {
 		t.Error("REQ-1 still exists after an allowed cascade")
 	}
 }
@@ -271,7 +271,7 @@ func TestCascadeDelete_ConcurrentWriterCannotEnterTheWindow(t *testing.T) {
 	go func() {
 		<-st.collected // the window, if there were one
 		writeStarted.Store(true)
-		_, err := inner.CreateRelation(ctx, "DEC-1", "addresses", "REQ-1", nil)
+		_, err := inner.CreateRelation(ctx, entity.RelationKey{From: "DEC-1", Type: "addresses", To: "REQ-1"}, nil)
 		landed <- err
 	}()
 

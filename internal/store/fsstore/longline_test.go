@@ -32,7 +32,7 @@ func TestLongLine_WriteThenReadBack(t *testing.T) {
 	require.NoError(t, s1.CreateEntity(ctx, e))
 
 	// Read back from the same store instance...
-	got, err := s1.GetEntity(ctx, "REQ-1")
+	got, err := s1.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err, "entity with a >64KB line must be readable")
 	assert.Contains(t, got.Content, bigLine, "the long line must survive the round-trip")
 	require.NoError(t, s1.Close())
@@ -40,7 +40,7 @@ func TestLongLine_WriteThenReadBack(t *testing.T) {
 	// ...and after reopening from disk (the cold-read path).
 	s2 := openStore(t, fs)
 	defer s2.Close()
-	got2, err := s2.GetEntity(ctx, "REQ-1")
+	got2, err := s2.GetEntity(ctx, entity.Ref{ID: "REQ-1"})
 	require.NoError(t, err, "entity with a >64KB line must be readable after reopen")
 	assert.Contains(t, got2.Content, bigLine)
 }

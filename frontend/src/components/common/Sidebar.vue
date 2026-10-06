@@ -16,6 +16,7 @@ import RlSidebar from 'rela-components/components/layout/RlSidebar.vue'
 import RlSidebarGroup from 'rela-components/components/layout/RlSidebarGroup.vue'
 import ProjectSwitcher from './ProjectSwitcher.vue'
 import SpaceSwitcher from './SpaceSwitcher.vue'
+import WorldSwitcher from './WorldSwitcher.vue'
 import AccountMenu from './AccountMenu.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { spaceOf, stripSpace, useSpaceStore, withSpace } from '@/stores/space'
@@ -330,7 +331,8 @@ async function handleAction(item: SidebarItem, ev?: Event) {
   >
     <!--
       The project picker fetches its own list and renders its own menu, so it
-      replaces the control and keeps the header's layout around it.
+      replaces the control and keeps the header's layout around it. Each
+      switcher renders only when there is more than one choice.
     -->
     <template #switcher>
       <ProjectSwitcher />
@@ -339,6 +341,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
           <img :src="apiUrl(logoUrl)" :alt="appName" class="logo-img" />
         </template>
       </SpaceSwitcher>
+      <WorldSwitcher />
     </template>
 
     <!--

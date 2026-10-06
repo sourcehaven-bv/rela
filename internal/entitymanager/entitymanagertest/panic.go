@@ -53,16 +53,21 @@ func (PanicOnUse) RenameEntity(context.Context, string, string,
 	panic("entitymanagertest.PanicOnUse.RenameEntity: not expected in this test")
 }
 
-func (PanicOnUse) CreateRelation(context.Context, string, string, string,
+func (PanicOnUse) CreateRelation(context.Context, entity.RelationKey,
 	entity.RelationOptions) (*entity.Relation, error) {
 	panic("entitymanagertest.PanicOnUse.CreateRelation: not expected in this test")
 }
 
-func (PanicOnUse) UpdateRelation(context.Context, string, string, string,
+func (PanicOnUse) UpdateRelation(context.Context, entity.RelationKey,
 	entity.RelationOptions) (*entity.Relation, error) {
 	panic("entitymanagertest.PanicOnUse.UpdateRelation: not expected in this test")
 }
 
-func (PanicOnUse) DeleteRelation(context.Context, string, string, string) error {
+func (PanicOnUse) DeleteRelation(context.Context, entity.RelationKey) error {
 	panic("entitymanagertest.PanicOnUse.DeleteRelation: not expected in this test")
+}
+
+// DeleteEntityFace panics.
+func (PanicOnUse) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
+	panic("entitymanagertest.PanicOnUse.DeleteEntityFace: not expected in this test")
 }

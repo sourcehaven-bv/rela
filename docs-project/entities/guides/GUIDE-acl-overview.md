@@ -189,11 +189,17 @@ a world. The face grant is what gates the draft on every read path.
 
 **A write grant on a faced type must name the face.** A type that declares
 `faces:` stores every row under a face name and nothing at the bare coordinate,
-so a bare `update: [policy]` matches no row and denies every face. Write
-`update: [policy@draft]` for each face the role may change. `rela acl audit`
-reports the bare form as `B12-bare-grant-on-faced-type`. The
+so a bare `update: [policy]` would match no row. It is therefore a load
+error that names the grant and its replacements. Write
+`update: [policy@draft]` for each face the role may change. The
 [ACL: Security Hardening guide](acl-security.md#scoping-a-grant-to-a-content-state)
 has the full table.
+
+**A rename names the type, never a face.** A rename moves every face of an
+entity, including faces the caller cannot read, so it is granted for the whole
+entity: `rename: [policy]` (or `rename: ["*"]`). Face grants do not grant it,
+and `rename: [policy@draft]` is a load error. On a faceless type `update:`
+grants a rename as well.
 
 **Reads and writes default differently, deliberately.** A bare `read: [policy]`
 covers *every* face. A bare `update: [policy]` covers only the unnamed state a
@@ -393,6 +399,10 @@ Rules and fallbacks:
   in the metamodel (enforced at boot). A non-unique key admits duplicates,
   which makes resolution ambiguous. See GUIDE-acl-security for how the
   uniqueness constraint is enforced on writes.
+- **`user_entity_type` must be faceless** (enforced at boot). Two faces of
+  one entity could carry different `principal_property` values, so a
+  principal would not resolve to one identity. Group types and the
+  membership relation have the same rule; see GUIDE-acl-security.
 - **No match** keeps the raw principal — so an assignment keyed on the raw
   UPN (`assignments: { jvloothuis@sourcehaven.nl: md }`) still works as a
   break-glass escape hatch for identities not yet in the graph.

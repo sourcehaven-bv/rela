@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -288,7 +290,7 @@ func TestImportDryRun(t *testing.T) {
 	}
 
 	// Check that store is empty (dry run)
-	n, _ := st.CountEntities(ctx(), store.EntityQuery{})
+	n, _ := st.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})
 	if n != 0 {
 		t.Errorf("Expected empty store in dry run, found %d entities", n)
 	}
@@ -316,12 +318,12 @@ func TestImportEntities(t *testing.T) {
 		t.Errorf("EntitiesCreated = %d, want 2", result.EntitiesCreated)
 	}
 
-	n, _ := st.CountEntities(ctx(), store.EntityQuery{})
+	n, _ := st.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})
 	if n != 2 {
 		t.Errorf("Store entities = %d, want 2", n)
 	}
 
-	e, err := st.GetEntity(ctx(), "REQ-001")
+	e, err := st.GetEntity(ctx(), entity.Ref{ID: "REQ-001"})
 	if err != nil {
 		t.Error("REQ-001 not found in store")
 	} else if e.Title() != "First requirement" {
@@ -357,7 +359,7 @@ func TestImportWithRelations(t *testing.T) {
 		t.Errorf("RelationsCreated = %d, want 1", result.RelationsCreated)
 	}
 
-	if _, err := st.GetRelation(ctx(), "DEC-001", "addresses", "REQ-001"); err != nil {
+	if _, err := st.GetRelation(ctx(), entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}); err != nil {
 		t.Error("Relation DEC-001 --addresses--> REQ-001 not found in store")
 	}
 }
@@ -456,7 +458,7 @@ func TestImportUpdate(t *testing.T) {
 	}
 
 	// Check title was updated
-	e, _ := st.GetEntity(ctx(), "REQ-001")
+	e, _ := st.GetEntity(ctx(), entity.Ref{ID: "REQ-001"})
 	if e.Title() != "Updated" {
 		t.Errorf("Title = %q, want %q", e.Title(), "Updated")
 	}
@@ -509,10 +511,93 @@ func TestImportDefaultStatus(t *testing.T) {
 		t.Fatalf("Import() error = %v", err)
 	}
 
-	e, _ := st.GetEntity(ctx(), "REQ-001")
+	e, _ := st.GetEntity(ctx(), entity.Ref{ID: "REQ-001"})
 	status := e.GetString("status")
 	if status != "draft" {
 		t.Errorf("Status = %q, want %q", status, "draft")
+	}
+}
+
+// TestImportStatusDefaultComesOnlyFromConfig pins that import sets a missing
+// status only when the schema declares a default (BUG-ZD4PIN). The dry run
+// must accept the same rows; the write path is checked on the stored rows.
+func TestImportStatusDefaultComesOnlyFromConfig(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(`
+version: "1.0"
+types:
+  declared:
+    values: [open, closed]
+    default: closed
+  undeclared:
+    values: [open, closed]
+entities:
+  note:
+    label: Note
+    id_prefix: "N-"
+    id_type: sequential
+    properties:
+      title: {type: string}
+  type_default:
+    label: TypeDefault
+    id_prefix: "TD-"
+    id_type: sequential
+    properties:
+      status: {type: declared}
+  prop_default:
+    label: PropDefault
+    id_prefix: "PD-"
+    id_type: sequential
+    properties:
+      status: {type: undeclared, default: open}
+  no_default:
+    label: NoDefault
+    id_prefix: "ND-"
+    id_type: sequential
+    properties:
+      status: {type: undeclared}
+relations: {}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		id, typ, want string // want "" means absent
+	}{
+		{"N-001", "note", ""},
+		{"TD-001", "type_default", "closed"},
+		{"PD-001", "prop_default", "open"},
+		{"ND-001", "no_default", ""},
+	}
+	data := &ImportData{}
+	for _, c := range cases {
+		data.Entities = append(data.Entities, EntityData{ID: c.id, Type: c.typ, Properties: map[string]any{}})
+	}
+
+	for _, dryRun := range []bool{true, false} {
+		st := newTestStore()
+		res, err := New(st, meta, Options{DryRun: dryRun}, newTestSource()).Import(data)
+		if err != nil {
+			t.Fatalf("Import(dryRun=%v) error = %v", dryRun, err)
+		}
+		if len(res.Errors) != 0 {
+			t.Fatalf("Import(dryRun=%v) errors = %v", dryRun, res.Errors)
+		}
+		if dryRun {
+			continue
+		}
+		for _, c := range cases {
+			e, err := st.GetEntity(ctx(), entity.Ref{ID: c.id})
+			if err != nil {
+				t.Fatalf("%s not imported: %v", c.id, err)
+			}
+			got, present := e.Properties["status"]
+			switch {
+			case c.want == "" && present:
+				t.Errorf("%s: status = %v, want absent", c.id, got)
+			case c.want != "" && got != c.want:
+				t.Errorf("%s: status = %v, want %q", c.id, got, c.want)
+			}
+		}
 	}
 }
 
@@ -536,7 +621,7 @@ func TestImportFile_JSON(t *testing.T) {
 	if result.EntitiesCreated != 1 {
 		t.Errorf("EntitiesCreated = %d, want 1", result.EntitiesCreated)
 	}
-	e, err := st.GetEntity(ctx(), "REQ-001")
+	e, err := st.GetEntity(ctx(), entity.Ref{ID: "REQ-001"})
 	if err != nil {
 		t.Fatalf("entity not created: %v", err)
 	}
@@ -589,7 +674,7 @@ func TestImportFile_CSVWithRelations(t *testing.T) {
 		t.Errorf("EntitiesCreated = %d (want 2), RelationsCreated = %d (want 1)",
 			result.EntitiesCreated, result.RelationsCreated)
 	}
-	if _, err := st.GetRelation(ctx(), "DEC-001", "addresses", "REQ-001"); err != nil {
+	if _, err := st.GetRelation(ctx(), entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}); err != nil {
 		t.Errorf("relation not created: %v", err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 )
@@ -34,21 +35,25 @@ type mailRuntime struct {
 }
 
 func startMail(paths *project.Context) (ob *mail.Outbox, stop func()) {
-	runtime, stop := startMailRuntime(paths)
+	var src mail.Source
+	if paths != nil {
+		src = hostconfig.Dir(paths.CacheDir)
+	}
+	runtime, stop := startMailRuntime(src)
 	if runtime == nil {
 		return nil, stop
 	}
 	return runtime.outbox, stop
 }
 
-func startMailRuntime(paths *project.Context) (runtime *mailRuntime, stop func()) {
+func startMailRuntime(src mail.Source) (runtime *mailRuntime, stop func()) {
 	noop := func() {}
 
-	if paths == nil {
+	if src == nil {
 		return nil, noop
 	}
 
-	cfg, err := mail.LoadConfig(paths.CacheDir)
+	cfg, err := mail.LoadConfigFrom(src)
 	switch {
 	case errors.Is(err, mail.ErrConfigNotFound):
 		// Mail is not configured. The overwhelmingly common case, and not

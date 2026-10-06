@@ -3,6 +3,7 @@ package mail
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
@@ -118,10 +120,14 @@ type Config struct {
 	// Mail is read outside the app, so a relative link is dead without it.
 	BaseURL string `yaml:"base_url"`
 
-	// relaDir is the .rela directory this config was loaded from, used to find
-	// secrets.yaml at send time. Set by LoadConfig; unexported so it cannot be
-	// supplied from YAML.
+	// relaDir is the .rela directory this config was loaded from; a relative
+	// send script resolves against its parent. Set by LoadConfigFrom;
+	// unexported so it cannot be supplied from YAML.
 	relaDir string `yaml:"-"`
+
+	// secrets returns the project's secrets for a scope, at send time. Set
+	// with relaDir; nil means the project has none.
+	secrets func(scope string) (map[string]string, error) `yaml:"-"`
 
 	// AccountID is the provider account the APIv2 endpoint is scoped to.
 	// Required for TransportHTTP; it is a path segment, not a credential.
@@ -405,24 +411,64 @@ func (c *Config) EffectivePort() int {
 //
 // Nil: never returns a nil Config with a nil error.
 func LoadConfig(relaDir string) (*Config, error) {
-	path := filepath.Join(relaDir, ConfigFile)
-	data, err := os.ReadFile(path)
+	return LoadConfigFrom(hostconfig.Dir(relaDir))
+}
+
+// Source is where mail reads its config and secrets: hostconfig.Dir for a
+// project's .rela directory, or the desktop's keychain-backed source.
+type Source interface {
+	// File returns mail.yaml; an error wrapping fs.ErrNotExist if absent.
+	File(name string) ([]byte, error)
+	// Secrets returns the secrets for a scope; secrets.ErrNotFound if none.
+	Secrets(scope string) (map[string]string, error)
+	// Path is the .rela directory a relative send script resolves against.
+	Path() string
+}
+
+// LoadConfigFrom reads mail.yaml from src, with the same results as
+// [LoadConfig].
+func LoadConfigFrom(src Source) (*Config, error) {
+	data, err := src.File(ConfigFile)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, ErrConfigNotFound
 		}
-		return nil, fmt.Errorf("read %s: %w", path, err)
+		return nil, fmt.Errorf("read %s: %w", ConfigFile, err)
 	}
+	origin := ConfigFile
+	if src.Path() != "" {
+		origin = filepath.Join(src.Path(), ConfigFile)
+	}
+	cfg, err := ParseConfig(data, origin)
+	if err != nil {
+		return nil, err
+	}
+	cfg.relaDir = src.Path()
+	cfg.secrets = src.Secrets
+	return cfg, nil
+}
 
+// ParseConfig parses and validates the contents of a mail.yaml. origin names
+// where the bytes came from, for error messages. The result has no secrets
+// source; [LoadConfigFrom] is what a sender is built from.
+func ParseConfig(data []byte, origin string) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", path, err)
+		return nil, fmt.Errorf("parse %s: %w", origin, err)
 	}
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid %s: %w", path, err)
+		return nil, fmt.Errorf("invalid %s: %w", origin, err)
 	}
-	cfg.relaDir = relaDir
 	return &cfg, nil
+}
+
+// loadSecrets returns the secrets for scope; secrets.ErrNotFound when the
+// config has no source for them.
+func (c *Config) loadSecrets(scope string) (map[string]string, error) {
+	if c.secrets == nil {
+		return nil, secrets.ErrNotFound
+	}
+	return c.secrets(scope)
 }
 
 // Validate checks the configuration.
@@ -510,6 +556,7 @@ func (c *Config) validateCommon() error {
 // construct a Config in code (tests, and any future wiring) set it explicitly.
 func (c *Config) WithRelaDir(dir string) *Config {
 	c.relaDir = dir
+	c.secrets = hostconfig.Dir(dir).Secrets
 	return c
 }
 
@@ -533,7 +580,7 @@ func (c *Config) hasPassword() bool {
 func (c *Config) resolvePassword() string {
 	// secrets.yaml first: it is where an operator keeps every other credential,
 	// so it is where they will look for this one.
-	sec, err := secrets.Load(c.relaDir, "")
+	sec, err := c.loadSecrets("")
 	switch {
 	case errors.Is(err, secrets.ErrNotFound):
 		// No secrets configured at all — the ordinary case for a deployment
@@ -570,7 +617,7 @@ func (c *Config) resolvePassword() string {
 // start cleanly with nothing configured, and the value must not sit in memory
 // for the lifetime of a command that has no use for it.
 func (c *Config) resolveAPIToken() string {
-	if sec, err := secrets.Load(c.relaDir, ""); err == nil {
+	if sec, err := c.loadSecrets(""); err == nil {
 		if v := sec[HTTPSenderSecretKey]; v != "" {
 			return v
 		}

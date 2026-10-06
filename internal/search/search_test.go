@@ -39,7 +39,7 @@ func TestSearchIndex_TextSearch(t *testing.T) {
 	require.NoError(t, s.CreateEntity(ctx, e2))
 
 	results := make([]search.Hit, 0)
-	for hit, err := range searcher.Search(ctx, search.Query{Text: "authentication"}) {
+	for hit, err := range searcher.Search(ctx, search.Query{Text: "authentication", World: store.TrivialScope()}) {
 		require.NoError(t, err)
 		results = append(results, hit)
 	}
@@ -61,7 +61,7 @@ func TestSearchIndex_TextWithTypeFilter(t *testing.T) {
 	require.NoError(t, s.CreateEntity(ctx, e2))
 
 	results := make([]search.Hit, 0)
-	for hit, err := range searcher.Search(ctx, search.Query{Text: "common", Types: []string{"ticket"}}) {
+	for hit, err := range searcher.Search(ctx, search.Query{Text: "common", Types: []string{"ticket"}, World: store.TrivialScope()}) {
 		require.NoError(t, err)
 		results = append(results, hit)
 	}
@@ -88,6 +88,7 @@ func TestSearchIndex_TextWithPropertyFilter(t *testing.T) {
 	for hit, err := range searcher.Search(ctx, search.Query{
 		Text:    "searchable",
 		Filters: []search.PropertyFilter{{Property: "status", Value: "open", Op: search.FilterEq}},
+		World:   store.TrivialScope(),
 	}) {
 		require.NoError(t, err)
 		results = append(results, hit)
@@ -110,7 +111,7 @@ func TestSearchIndex_UpdateReflectedInSearch(t *testing.T) {
 
 	// Old term should not match.
 	results := make([]search.Hit, 0)
-	for hit, err := range searcher.Search(ctx, search.Query{Text: "Original"}) {
+	for hit, err := range searcher.Search(ctx, search.Query{Text: "Original", World: store.TrivialScope()}) {
 		require.NoError(t, err)
 		results = append(results, hit)
 	}
@@ -118,7 +119,7 @@ func TestSearchIndex_UpdateReflectedInSearch(t *testing.T) {
 
 	// New term should match.
 	results = nil
-	for hit, err := range searcher.Search(ctx, search.Query{Text: "Replaced"}) {
+	for hit, err := range searcher.Search(ctx, search.Query{Text: "Replaced", World: store.TrivialScope()}) {
 		require.NoError(t, err)
 		results = append(results, hit)
 	}
@@ -133,11 +134,11 @@ func TestSearchIndex_DeleteRemovesFromSearch(t *testing.T) {
 	e.SetString("title", "Deletable thing")
 	require.NoError(t, s.CreateEntity(ctx, e))
 
-	_, err := s.DeleteEntity(ctx, "REQ-1", false)
+	_, err := s.DeleteFamily(ctx, "REQ-1", false)
 	require.NoError(t, err)
 
 	results := make([]search.Hit, 0)
-	for hit, err := range searcher.Search(ctx, search.Query{Text: "Deletable"}) {
+	for hit, err := range searcher.Search(ctx, search.Query{Text: "Deletable", World: store.TrivialScope()}) {
 		require.NoError(t, err)
 		results = append(results, hit)
 	}
@@ -152,11 +153,11 @@ func TestSearchIndex_RenameUpdatesSearch(t *testing.T) {
 	e.SetString("title", "Renameable entity")
 	require.NoError(t, s.CreateEntity(ctx, e))
 
-	_, err := s.RenameEntity(ctx, "REQ-OLD", "REQ-NEW")
+	_, err := s.RenameFamily(ctx, "REQ-OLD", "REQ-NEW")
 	require.NoError(t, err)
 
 	results := make([]search.Hit, 0)
-	for hit, err := range searcher.Search(ctx, search.Query{Text: "Renameable"}) {
+	for hit, err := range searcher.Search(ctx, search.Query{Text: "Renameable", World: store.TrivialScope()}) {
 		require.NoError(t, err)
 		results = append(results, hit)
 	}

@@ -15,7 +15,7 @@ import { entityKeys } from '@/queries/entities'
 import { beginOptimisticRemove } from '@/queries/optimisticList'
 import { filterStateToApiParams } from '@/utils/filters'
 import { groupedSort, listBaseParams, sortParam } from '@/utils/listParams'
-import { entityDetailHref } from '@/utils/entityRoute'
+import { editFormRoute, entityDetailHref } from '@/utils/entityRoute'
 import { entityRef } from '@/utils/entityRef'
 import { worldText } from '@/utils/worldText'
 import { safeInternalHref } from '@/utils/openIntent'
@@ -420,10 +420,11 @@ const { selectedIndex, clearSelection } = useListKeyboard({
   },
   onEdit: (index) => {
     // The form opens on the row's ADDRESS, face included, so an edit from a
-    // world-bound list edits the face the row showed and not its bare id.
+    // world-bound list edits the face the row showed and not its bare id, in
+    // the list's world so the form loads the relations that world serves.
     const entity = visibleRows.value[index]
     if (entity && listConfig.value?.edit_form) {
-      router.push(`/form/${listConfig.value.edit_form}/${entityRef(entity)}`)
+      router.push(editFormRoute(listConfig.value.edit_form, entityRef(entity), worldParam.value))
     }
   },
   onCreate: () => {

@@ -19,10 +19,11 @@
 //
 // Each consumer now declares its own narrow interface at its call site, naming
 // only what it invokes — [github.com/Sourcehaven-BV/rela/internal/lua.Mutator]
-// (6 methods), attachment.EntityPatcher (1), mcp.EntityWriter (6), and the
-// unexported ones in internal/cli and internal/dataentry. *Manager satisfies
-// each structurally, so adding a method here breaks nothing and a consumer
-// reaching for a new capability has to say so in its own interface.
+// (6 methods), mcp.EntityWriter (6), and the unexported ones in internal/cli
+// and internal/dataentry. *Manager satisfies each structurally, so adding a
+// method here breaks nothing and a consumer reaching for a new capability has
+// to say so in its own interface. attachment.Stamper (1) is the exception:
+// the file-property write it needs is held by [Attachments], not *Manager.
 //
 // A composition root that DISTRIBUTES the manager to sub-handlers (dataentry's
 // NewApp) takes the concrete *Manager rather than a narrowed value, so each

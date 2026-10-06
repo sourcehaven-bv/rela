@@ -53,34 +53,27 @@ func worldsMeta() *metamodel.Metamodel {
 				Overrides: map[string][]string{"policy": {"published"}},
 			},
 		},
+		DefaultWorld: "published",
 	}
 }
 
 // TestSchemaWorlds_EnumeratesDeclaredPlusDefault pins TKT-WRLDAPI item 1: a
 // client can discover every legal `?world=` value, including the implicit
 // default world it would otherwise have to know by convention.
-func TestSchemaWorlds_EnumeratesDeclaredPlusDefault(t *testing.T) {
-	got := schemaWorlds(context.Background(), worldsMeta())
+func TestSchemaWorlds_EnumeratesDeclared(t *testing.T) {
+	meta := worldsMeta()
+	meta.DefaultWorld = "published"
+	got := schemaWorlds(context.Background(), meta)
 
-	for _, name := range []string{"default", "published", "site-nl"} {
+	for _, name := range []string{"published", "site-nl"} {
 		if _, ok := got[name]; !ok {
 			t.Errorf("world %q missing from the enumeration; a client cannot "+
 				"select a world it cannot discover", name)
 		}
 	}
-	if len(got) != 3 {
-		t.Errorf("got %d worlds, want exactly the 2 declared + the default one: %v",
-			len(got), got)
-	}
-
-	def := got["default"]
-	if !def.Default || !def.Readable {
-		t.Errorf("the default world is always present and always selectable; got %+v", def)
-	}
-	if len(def.Select) != 0 || def.Otherwise != "" {
-		t.Errorf("the default world resolves every entity to its default state by "+
-			"construction and never reaches rule 3, so it carries no chain or "+
-			"otherwise; got %+v", def)
+	if len(got) != 2 {
+		t.Errorf("got %d worlds, want exactly the 2 declared; declaring worlds drops "+
+			"the generated default one: %v", len(got), got)
 	}
 
 	pub := got["published"]
@@ -92,8 +85,11 @@ func TestSchemaWorlds_EnumeratesDeclaredPlusDefault(t *testing.T) {
 			"a client that renders this wrong tells the user an unpublished entity "+
 			"is merely missing", pub.Otherwise, metamodel.OtherwiseExclude)
 	}
-	if pub.Default {
-		t.Error("only the implicit default world carries default=true")
+	if !pub.Default || !pub.Readable {
+		t.Errorf("the schema's default world is marked and always readable; got %+v", pub)
+	}
+	if got["site-nl"].Default {
+		t.Error("only the schema's default world carries default=true")
 	}
 
 	nl := got["site-nl"]
@@ -158,7 +154,9 @@ func TestSchemaWorlds_DeclaredSetIsPrincipalIndependent(t *testing.T) {
 // to `readable = true`, and again when the arm drops the world entirely.
 func TestSchemaWorlds_GateErrorFailsClosed(t *testing.T) {
 	ctx := withReadGate(context.Background(), worldGate{fail: true})
-	got := schemaWorlds(ctx, worldsMeta())
+	meta := worldsMeta()
+	meta.DefaultWorld = "site-nl"
+	got := schemaWorlds(ctx, meta)
 
 	if got["published"].Readable {
 		t.Error("PermitsWorld failed, so readability is UNKNOWN and must be " +
@@ -168,9 +166,9 @@ func TestSchemaWorlds_GateErrorFailsClosed(t *testing.T) {
 		t.Error("a gate failure must not drop the world from the enumeration — " +
 			"existence is config and does not depend on the gate")
 	}
-	if !got["default"].Readable {
+	if !got["site-nl"].Readable {
 		t.Error("the default world short-circuits the grant check entirely, so a " +
-			"gate outage must not make today's graph unselectable")
+			"gate outage must not make it unselectable")
 	}
 }
 
@@ -201,13 +199,13 @@ func TestSchemaWorlds_GateErrorFailsClosed(t *testing.T) {
 // too — not to weaken the assertion.
 func TestSchemaWorlds_DefaultWorldAgreesWithTheRequestPath(t *testing.T) {
 	denyAll := withReadGate(context.Background(), worldGate{permit: nil})
-	got := schemaWorlds(denyAll, worldsMeta())
+	meta := worldsMeta()
+	meta.DefaultWorld = "site-nl"
+	got := schemaWorlds(denyAll, meta)
 
-	if !got["default"].Readable {
-		t.Error("the request path short-circuits `default` before any grant " +
-			"check, so the enumeration must report it readable too — asking " +
-			"the gate here reports today's graph as unreadable while every " +
-			"request for it succeeds")
+	if !got["site-nl"].Readable {
+		t.Error("the request path needs no world grant for the default world, " +
+			"so the enumeration must report it readable too")
 	}
 	if got["published"].Readable {
 		t.Error("precondition: this gate denies every DECLARED world, so the " +
@@ -286,8 +284,8 @@ func TestSchemaEndpoint_ServesWorldsAndFaces(t *testing.T) {
 		t.Errorf("the schema handshake must enumerate declared worlds; got %v",
 			schema.Worlds)
 	}
-	if _, ok := schema.Worlds["default"]; !ok {
-		t.Error("the implicit default world must be enumerated too")
+	if _, ok := schema.Worlds["default"]; ok {
+		t.Error("declaring worlds drops the generated default world")
 	}
 	if got := schema.Entities["ticket"].Faces; len(got) != 2 {
 		t.Errorf("ticket declares draft+published; the schema served %v", got)
@@ -366,7 +364,7 @@ func TestResolutionRule(t *testing.T) {
 			// The zero scope applies no per-type resolution, so every entity
 			// arrives via its default state — matching worldreader.Rule,
 			// which reports the default world identically.
-			scope: store.DefaultWorld(), entityType: "blog-post", face: "",
+			scope: store.TrivialScope(), entityType: "blog-post", face: "",
 			want: ruleUnscoped,
 			why:  "the default world applies no resolution at all",
 		},
@@ -423,7 +421,7 @@ func TestResolutionRule(t *testing.T) {
 func TestWorldProvenance_NamesTheWorld(t *testing.T) {
 	e := &entity.Entity{ID: "POST-1", Type: "blog-post", Face: "nl"}
 
-	if got := worldProvenance(context.Background(), e); got.Name != defaultWorldName {
+	if got := worldProvenance(context.Background(), e); got.Name != metamodel.DefaultWorldName {
 		t.Errorf("an unstamped context is the default world; got name %q", got.Name)
 	}
 
@@ -487,7 +485,7 @@ func TestGetEntity_ProvenanceDistinguishesFallbackFromSelectedFace(t *testing.T)
 	// A world preferring `published` but falling back to the default state,
 	// so BOTH entities resolve — which is what makes the two verdicts
 	// comparable on the same wire shape.
-	app.SetWorlds(fixedWorlds{scope: store.NewWorldScope(
+	app.setWorlds(fixedWorlds{scope: store.NewWorldScope(
 		map[string]store.TypeResolution{
 			"ticket": {
 				Chain:    []entity.Face{"published"},
@@ -562,8 +560,8 @@ func TestGetEntity_ProvenanceInDefaultWorld(t *testing.T) {
 	if got.World == nil {
 		t.Fatal("a default-world GET still carries provenance")
 	}
-	if got.World.Name != defaultWorldName {
-		t.Errorf("name = %q, want %q", got.World.Name, defaultWorldName)
+	if got.World.Name != metamodel.DefaultWorldName {
+		t.Errorf("name = %q, want %q", got.World.Name, metamodel.DefaultWorldName)
 	}
 	if got.World.Face != "" || got.World.Via != ruleUnscoped {
 		t.Errorf("got %+v, want the default coordinate resolved unscoped", got.World)
@@ -589,8 +587,8 @@ func (g worldGate) PermitsWorld(_ context.Context, world string) (bool, error) {
 
 func (worldGate) PermitsRead(context.Context, string, string) (bool, error) { return true, nil }
 
-func (worldGate) PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error) {
-	return nopReadGate{}.PermitsReadMany(ctx, entityType, ids)
+func (worldGate) ReadableFacesMany(ctx context.Context, entityType string, ids []string) (acl.FaceVerdicts, error) {
+	return nopReadGate{}.ReadableFacesMany(ctx, entityType, ids)
 }
 
 func (worldGate) ReadQuery(ctx context.Context, entityType string) acl.ReadQueryResult {
@@ -778,7 +776,7 @@ func TestGetEntity_ChainFallbackIsLabelledOnTheWire(t *testing.T) {
 	}
 
 	// The ISMS demo world verbatim: published, else draft.
-	app.SetWorlds(fixedWorlds{scope: store.NewWorldScope(
+	app.setWorlds(fixedWorlds{scope: store.NewWorldScope(
 		map[string]store.TypeResolution{
 			"ticket": {
 				Chain:    []entity.Face{"published", "draft"},

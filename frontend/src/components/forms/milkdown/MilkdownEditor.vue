@@ -49,7 +49,7 @@ import {
   isResolutionTransaction,
   type ResolverHandle,
 } from './entityRefResolution'
-import { guardWriteBack, decideEmit } from './writeBackGuard'
+import { guardWriteBack, decideEmit, sameMeaning } from './writeBackGuard'
 import { useEditorMention } from './useEditorMention'
 import type { MentionSelf } from './useMentionMenu'
 import {
@@ -626,6 +626,13 @@ watch(
     if (!view) return
     const currentMarkdown = serialize()
     if (currentMarkdown === next) return
+    // A save echoes the stored body, which the store may have reformatted.
+    // Reloading on that would move the cursor to the end mid-edit, so a value
+    // with the same meaning as the document only becomes the new baseline.
+    if (sameMeaning(currentMarkdown, next)) {
+      originalValue = next
+      return
+    }
     // A genuinely new body from the parent: this is now the pristine baseline.
     originalValue = next
     settledValue = next

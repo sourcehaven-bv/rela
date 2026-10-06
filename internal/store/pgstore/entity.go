@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"iter"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,30 +19,24 @@ import (
 )
 
 // checkQueryScope rejects a query this backend cannot answer: the shared
-// AllStates+World contradiction rule (storeutil.ValidateEntityQuery).
-//
-// The transitional refusal of a non-default World is GONE as of PR-C —
-// world scoping is pushed into SQL (see worldSQL / buildEntitySelectSQL),
-// so there is nothing left to refuse.
+// no-selection rule (storeutil.ValidateEntityQuery).
 func checkQueryScope(q store.EntityQuery) error {
 	return storeutil.ValidateEntityQuery(q)
 }
 
 // --- EntityReader ---
 
-// GetEntity returns a single entity by ID, or store.ErrNotFound. The
-// bare id addresses the DEFAULT state (TKT-DOFYR1).
-func (s *Store) GetEntity(ctx context.Context, id string) (*entity.Entity, error) {
-	return s.GetEntityState(ctx, id, "")
-}
+// getEntitySQL reads one face row by its primary key (id, face).
+const getEntitySQL = `SELECT id, type, face, properties, content, updated_at
+	FROM entities WHERE id = $1 AND face = $2`
 
-// GetEntityState returns the content state addressed by (id, p); the
-// zero face is the default state. ErrNotFound covers a missing state
-// even when sibling states exist.
-func (s *Store) GetEntityState(ctx context.Context, id string, p entity.Face) (*entity.Entity, error) {
-	const q = `SELECT id, type, face, properties, content, updated_at
-	           FROM entities WHERE id = $1 AND face = $2`
-	e, err := scanEntity(s.db.QueryRow(ctx, q, id, p))
+// GetEntity returns the face row ref addresses, or store.ErrNotFound. A
+// missing face is ErrNotFound even when sibling faces exist.
+func (s *Store) GetEntity(ctx context.Context, ref entity.Ref) (*entity.Entity, error) {
+	if !storeutil.Addressable(ref) {
+		return nil, store.ErrNotFound
+	}
+	e, err := scanEntity(s.db.QueryRow(ctx, getEntitySQL, ref.ID, string(ref.Face)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -60,10 +53,10 @@ func (s *Store) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2
 	if err := checkQueryScope(q); err != nil {
 		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }
 	}
-	return pagedSeq(func(after *stateKey) ([]*entity.Entity, *stateKey, error) {
-		sql, args := buildEntityListSQL(q, after)
-		return queryPage(ctx, s.db, sql, args, scanEntity, func(e *entity.Entity) stateKey {
-			return stateKey{id: e.ID, face: e.Face}
+	return pagedSeq(func(after *entity.Ref) ([]*entity.Entity, *entity.Ref, error) {
+		sql, args := buildEntityListSQL(q, after, 0)
+		return queryPage(ctx, s.db, sql, args, scanEntity, func(e *entity.Entity) entity.Ref {
+			return entity.Ref{ID: e.ID, Face: e.Face}
 		})
 	})
 }
@@ -82,10 +75,10 @@ func (s *Store) ListEntityHeaders(
 	if err := checkQueryScope(q); err != nil {
 		return func(yield func(store.EntityHeader, error) bool) { yield(store.EntityHeader{}, err) }
 	}
-	return pagedSeq(func(after *stateKey) ([]store.EntityHeader, *stateKey, error) {
+	return pagedSeq(func(after *entity.Ref) ([]store.EntityHeader, *entity.Ref, error) {
 		sql, args := buildEntityHeaderListSQL(q, after)
-		return queryPage(ctx, s.db, sql, args, scanEntityHeader, func(h store.EntityHeader) stateKey {
-			return stateKey{id: h.ID, face: h.Face}
+		return queryPage(ctx, s.db, sql, args, scanEntityHeader, func(h store.EntityHeader) entity.Ref {
+			return entity.Ref{ID: h.ID, Face: h.Face}
 		})
 	})
 }
@@ -97,7 +90,7 @@ func (s *Store) ListEntityHeaders(
 // sorting below it, which a paging caller cannot tell from end-of-results.
 // Internal iterators never come through here; they carry the key typed
 // (see pagedSeq).
-func parseStateCursor(cursor string) *stateKey {
+func parseStateCursor(cursor string) *entity.Ref {
 	if cursor == "" {
 		return nil
 	}
@@ -105,7 +98,7 @@ func parseStateCursor(cursor string) *stateKey {
 	if err != nil {
 		return nil
 	}
-	return &stateKey{id: id, face: face}
+	return &entity.Ref{ID: id, Face: face}
 }
 
 // ListEntitiesPage returns a page of entities. A keyset cursor on id keeps
@@ -114,19 +107,9 @@ func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (stor
 	if err := checkQueryScope(q); err != nil {
 		return store.Page[*entity.Entity]{}, err
 	}
-	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
+	sql, args, err := entityPageSQL(q)
 	if err != nil {
 		return store.Page[*entity.Entity]{}, err
-	}
-
-	// Fetch limit+1 to detect whether a further page exists.
-	fetch := q.Limit
-	if fetch > 0 {
-		fetch++
-	}
-	sql, args := buildEntityListSQL(q, parseStateCursor(cursorKey))
-	if fetch > 0 {
-		sql += fmt.Sprintf(" LIMIT %d", fetch)
 	}
 
 	rows, err := s.db.Query(ctx, sql, args...)
@@ -151,7 +134,7 @@ func (s *Store) ListEntitiesPage(ctx context.Context, q store.EntityQuery) (stor
 	if q.Limit > 0 && len(items) > q.Limit {
 		last := items[q.Limit-1]
 		items = items[:q.Limit]
-		// The cursor is the STATE key so AllStates pagination resumes
+		// The cursor is the STATE key so AllFaces pagination resumes
 		// mid-family; for default-only queries it degenerates to the
 		// historical bare id.
 		next = storeutil.EncodeCursor(entity.FormatStateRef(last.ID, last.Face))
@@ -185,14 +168,49 @@ func (s *Store) CountEntities(ctx context.Context, q store.EntityQuery) (int, er
 // the publication bit, so an unscoped tally would tell a published-world
 // surface how many unpublished drafts exist.
 func buildEntityCountSQL(q store.EntityQuery) (sql string, args []any) {
-	q.World = effectiveWorld(q.World, q.Type)
-	if q.World.IsDefaultWorld() {
+	q.Faces = q.Faces.Lowered(q.Type)
+	w := storeutil.RankingWorld(q)
+	if w.IsTrivial() {
 		where, wargs := entityWhere(q, nil)
 		return "SELECT count(*) FROM entities" + where, wargs
 	}
-	_, candidate := worldSQL(q.World, "", &args)
+	_, candidate := worldSQL(w, "", &args)
 	scope := entityScopeWhere(q, candidate, &args)
 	return "SELECT count(DISTINCT id) FROM entities" + scope, args
+}
+
+// entityPageSQL is the query [Store.ListEntitiesPage] sends for q: the
+// cursor decoded and limit+1 rows fetched, the extra row telling whether a
+// further page exists.
+func entityPageSQL(q store.EntityQuery) (sql string, args []any, err error) {
+	cursorKey, err := storeutil.DecodeCursor(q.Cursor)
+	if err != nil {
+		return "", nil, err
+	}
+	fetch := q.Limit
+	if fetch > 0 {
+		fetch++
+	}
+	sql, args = buildEntityListSQL(q, parseStateCursor(cursorKey), fetch)
+	return sql, args, nil
+}
+
+// buildHighestIDSQL selects the ids that start with prefix + "-", as a range the
+// primary key serves (migration 0019).
+//
+// A range, not `id LIKE $1`: the planner turns LIKE into an index range only
+// when it sees the pattern, and pgx prepares statements, so after five
+// executions PostgreSQL plans them generically with the pattern unknown and
+// scans the table. entities.id is COLLATE "C", so >= and < compare bytes, the
+// primary key (id, face) is in that order, and the rows are exactly the ids
+// with prefix + "-" as a byte prefix. The exclusive upper bound is prefix +
+// ".", "." being the byte after "-".
+//
+// marked_entities is read too: a soft-deleted id may yet come back, so it
+// must not be minted again.
+func buildHighestIDSQL(prefix string) (sql string, args []any) {
+	return `SELECT id FROM entities WHERE id >= $1 AND id < $2
+	        UNION SELECT id FROM marked_entities WHERE id >= $1 AND id < $2`, []any{prefix + "-", prefix + "."}
 }
 
 // HighestID returns the highest numeric suffix among IDs of the form
@@ -206,10 +224,8 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 	// twice is harmless. The old `face = ''` predicate saw a faced type not
 	// at all, so the generator minted one id for every entity of it
 	// (BUG-HC6I2T).
-	// marked_entities too: a soft-deleted id may yet come back.
-	const q = `SELECT id FROM entities WHERE id LIKE $1
-	           UNION SELECT id FROM marked_entities WHERE id LIKE $1`
-	rows, err := s.db.Query(ctx, q, pfx+"%")
+	q, args := buildHighestIDSQL(prefix)
+	rows, err := s.db.Query(ctx, q, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -230,38 +246,6 @@ func (s *Store) HighestID(ctx context.Context, prefix string) (int, error) {
 		}
 	}
 	return highest, rows.Err()
-}
-
-// PropertyValues returns distinct values of a top-level property, ordered by
-// frequency (desc), then value (asc) for stable ties. Values are stringified
-// to match memstore's fmt.Sprintf("%v") behavior; empty strings are skipped.
-func (s *Store) PropertyValues(ctx context.Context, property string, limit int) ([]string, error) {
-	// face = '': DEFAULT-WORLD aggregate, deliberately un-worlded
-	// (TKT-WAV8XP PR-C). Suggestion counts are a default-world aggregate
-	// (TKT-DOFYR1) — a state row must not inflate its family's values.
-	const q = `SELECT properties -> $1 AS v FROM entities WHERE properties ? $1 AND face = ''`
-	rows, err := s.db.Query(ctx, q, property)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	counts := make(map[string]int)
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		val := stringifyJSONValue(raw)
-		if val != "" {
-			counts[val]++
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return storeutil.TopValues(counts, limit), nil
 }
 
 // --- EntityWriter ---
@@ -338,7 +322,7 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 		// answers the type question regardless of how many are locked.
 		//
 		// Runs for EVERY face including the zero coordinate. Gating it on
-		// `!e.Face.IsDefault()` was complete only while every family
+		// `!e.Face.IsImplicit()` was complete only while every family
 		// necessarily had a zero-coordinate row; a family created
 		// named-face-first would then take a zero-coordinate write with no
 		// type check at all.
@@ -452,7 +436,7 @@ func (s *Store) updateEntityIf(
 		}
 	}
 
-	if !e.Face.IsDefault() {
+	if !e.Face.IsImplicit() {
 		// Row-family invariant: a non-default state cannot be re-typed
 		// away from its family (TKT-DOFYR1, design doc §6).
 		var curType string
@@ -542,10 +526,11 @@ func (s *Store) UpdateEntityIf(
 	return s.updateEntityIf(ctx, e, cond)
 }
 
-// DeleteEntity removes an entity. Without cascade, returns store.ErrHasRelations
-// if any relation references it. With cascade, deletes referencing relations
-// and the entity's attachments in one transaction, returning the removed rows.
-func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
+// DeleteFamily removes every face of id. Without cascade, returns
+// store.ErrHasRelations if any relation references it. With cascade, deletes
+// referencing relations and the entity's attachments in one transaction,
+// returning the removed rows.
+func (s *Store) DeleteFamily(ctx context.Context, id string, cascade bool) (*store.DeleteResult, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -617,9 +602,9 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 			Face: r.FromFace,
 		})
 	}
-	// Record a tombstone for each deletion in the same tx, so the durable
-	// "what changed since cursor X" manifest can report removals that the live
-	// rows no longer reflect (FEAT-NJ9FEN).
+	// Record a tombstone for each deletion in the same tx, so the change-feed
+	// catch-up ("what changed since seq X") can report removals that the live
+	// rows no longer reflect.
 	if err := s.writeTombstonesForEvents(ctx, tx, evs); err != nil {
 		return nil, err
 	}
@@ -641,29 +626,34 @@ func (s *Store) DeleteEntity(ctx context.Context, id string, cascade bool) (*sto
 	return &store.DeleteResult{DeletedEntities: family, DeletedRelations: related}, nil
 }
 
-// DeleteEntityState removes ONE content state (face) and only the edges
-// belonging to it (TKT-C1XUA8).
+// DeleteFace removes ONE face row and only the edges belonging to it
+// (TKT-C1XUA8).
 //
-// Contrast DeleteEntity above, whose three statements are all `WHERE id =
+// Contrast DeleteFamily above, whose three statements are all `WHERE id =
 // $1` / `from_id = $1 OR to_id = $1` and sweep the entire family plus every
 // incident edge on both sides. Reusing that shape here would make
 // discarding a draft destroy the published face and cut every inbound link
 // unrelated entities hold on it — so this deletes by (id, face) and only
-// outgoing edges on the matching tail.
-func (s *Store) DeleteEntityState(
-	ctx context.Context, id string, p entity.Face,
-) (*store.DeleteResult, error) {
+// outgoing edges on the matching tail. The last face is the exception: with
+// no entity left, every incident edge goes too (RR-2466U1, see
+// store.EntityWriter.DeleteFace).
+func (s *Store) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteResult, error) {
+	if !storeutil.Addressable(ref) {
+		return nil, store.ErrNotFound
+	}
+	id, p := ref.ID, ref.Face
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
 
-	// Same lock as DeleteEntity, for the sibling count below: without it a
-	// state create (FOR SHARE) could commit between the count and the
-	// delete of the default row, leaving that new state headless.
-	if _, lockErr := tx.Exec(ctx,
-		`SELECT 1 FROM entities WHERE id = $1 AND face = '' FOR UPDATE`, id); lockErr != nil {
+	// Same family lock as DeleteFamily and CreateEntity, for the sibling
+	// count below. A faced type stores no bare row, so the row lock this
+	// replaces locked nothing (BUG-J3PBFN): a create of a new face could
+	// commit after the count saw zero siblings, and the attachment and
+	// last-face edge sweeps below then deleted what the new face serves.
+	if lockErr := lockFamily(ctx, tx, id); lockErr != nil {
 		return nil, lockErr
 	}
 	face, err := scanEntities(ctx, tx,
@@ -676,20 +666,30 @@ func (s *Store) DeleteEntityState(
 		return nil, store.ErrNotFound
 	}
 
-	// OUTGOING edges on this tail only. INCOMING edges are deliberately NOT
-	// matched: heads are entity-level (§2.3), so an inbound edge points at
-	// the entity and survives its faces.
+	var size int
+	if cerr := tx.QueryRow(ctx,
+		`SELECT count(*) FROM entities WHERE id = $1`, id).Scan(&size); cerr != nil {
+		return nil, cerr
+	}
+	last := size == 1
+
+	// OUTGOING edges on this tail only while a face remains. INCOMING edges
+	// are then deliberately NOT matched: heads are entity-level (§2.3), so
+	// an inbound edge points at the entity and survives its faces. The last
+	// face takes every incident edge, as DeleteFamily does.
+	ownedWhere, ownedArgs := `from_id = $1 AND from_face = $2`, []any{id, string(p)}
+	if last {
+		ownedWhere, ownedArgs = `from_id = $1 OR to_id = $1`, []any{id}
+	}
 	owned, err := scanRelations(ctx, tx,
 		`SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
-		 FROM relations WHERE from_id = $1 AND from_face = $2
-		 ORDER BY rel_type, to_id`, id, string(p))
+		 FROM relations WHERE `+ownedWhere+`
+		 ORDER BY from_id, from_face, rel_type, to_id`, ownedArgs...)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM relations WHERE from_id = $1 AND from_face = $2`,
-		id, string(p)); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM relations WHERE `+ownedWhere, ownedArgs...); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx,
@@ -700,12 +700,7 @@ func (s *Store) DeleteEntityState(
 	// Attachments are keyed to the bare id, so they belong to the ENTITY, not
 	// to a face: only sweep them once the last face is gone. A discarded
 	// draft must not destroy attachments the surviving faces serve.
-	var left int
-	if cerr := tx.QueryRow(ctx,
-		`SELECT count(*) FROM entities WHERE id = $1`, id).Scan(&left); cerr != nil {
-		return nil, cerr
-	}
-	if left == 0 {
+	if last {
 		if _, err := tx.Exec(ctx,
 			`DELETE FROM attachments WHERE entity_id = $1`, id); err != nil {
 			return nil, err
@@ -736,7 +731,7 @@ func (s *Store) DeleteEntityState(
 	// nothing until the family is empty, since a bare-id delete cannot
 	// address a face and acting on it would de-index a live entity.
 	notifyFaceDelete(s, id, p)
-	if left == 0 {
+	if last {
 		notifyLastFaceDelete(s, id)
 	}
 	s.emitAll(evs)
@@ -786,7 +781,7 @@ func rekeyStateFamily(
 			newID, st.Face, entitySearchText(st)); err != nil {
 			return nil, nil, err
 		}
-		if st.Face.IsDefault() {
+		if st.Face.IsImplicit() {
 			renamed = st
 		}
 	}
@@ -820,10 +815,10 @@ func renameTargetFree(ctx context.Context, tx pgx.Tx, newID, oldID string) error
 	return nil
 }
 
-// RenameEntity changes an entity's ID, rewriting every relation endpoint and
+// RenameFamily changes an entity's ID, rewriting every relation endpoint and
 // re-keying attachments atomically. Returns store.ErrNotFound if oldID is
 // absent, store.ErrConflict if newID exists.
-func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
+func (s *Store) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	if err := validateID(newID); err != nil {
 		return nil, err
 	}
@@ -861,9 +856,9 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 
 	// Capture the relation triples that reference oldID BEFORE re-keying them.
 	// A rename changes a relation's primary key (from_id/to_id), so to an
-	// id-keyed sync client the OLD triple is removed and the NEW one is created.
-	// We tombstone the old triples below so the manifest reports the removal —
-	// otherwise the client keeps a ghost edge forever (FEAT-NJ9FEN).
+	// id-keyed change-feed reader the OLD triple is removed and the NEW one is
+	// created. We tombstone the old triples below so the catch-up reports the
+	// removal — otherwise a peer keeps a ghost edge forever.
 	oldTriples, err := scanRelations(ctx, tx,
 		`SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
 		 FROM relations WHERE from_id = $1 OR to_id = $1
@@ -934,7 +929,7 @@ func (s *Store) RenameEntity(ctx context.Context, oldID, newID string) (*store.R
 		notifyRenamed(s, oldID, renamed)
 	}
 	for _, st := range renamedStates {
-		if st.Face.IsDefault() {
+		if st.Face.IsImplicit() {
 			continue
 		}
 		notifyRenamed(s, oldID, st)
@@ -1053,8 +1048,8 @@ func scanEntityHeader(row scanner) (store.EntityHeader, error) {
 // listings. after, when non-nil, resumes after that state key. Ordering is
 // ascending (id, face): for the default-only zero-value query that is
 // exactly the contract's historical ascending-id order (the face column is
-// constant ”); under AllStates the states of an id sort immediately after
-// its default row.
+// constant ”); under AllFaces the states of an id sort immediately after
+// its default row. limit, when positive, bounds the page in SQL.
 //
 // That contiguity is a SHARED contract, not a pgstore detail: fs/mem
 // match it via storeutil.CompareStateKeys, which orders their index by
@@ -1064,22 +1059,23 @@ func scanEntityHeader(row scanner) (store.EntityHeader, error) {
 // they key on the JOINED "id@face" string, and '@' (0x40) sorts after
 // the digits (0x30-0x39), so plain string order puts PAGE-10's family
 // inside PAGE-1's. Changing either side's ordering breaks the other.
-func buildEntityListSQL(q store.EntityQuery, after *stateKey) (sql string, args []any) {
-	return buildEntitySelectSQL(q, after, "id, type, face, properties, content, updated_at")
+func buildEntityListSQL(q store.EntityQuery, after *entity.Ref, limit int) (sql string, args []any) {
+	return buildEntitySelectSQL(q, after, "id, type, face, properties, content, updated_at", limit)
 }
 
 // buildEntityHeaderListSQL mirrors buildEntityListSQL WITHOUT the content
 // column. Column order must stay in sync with scanEntityHeader.
-func buildEntityHeaderListSQL(q store.EntityQuery, after *stateKey) (sql string, args []any) {
-	return buildEntitySelectSQL(q, after, "id, type, face, properties, updated_at")
+func buildEntityHeaderListSQL(q store.EntityQuery, after *entity.Ref) (sql string, args []any) {
+	return buildEntitySelectSQL(q, after, "id, type, face, properties, updated_at", 0)
 }
 
 // buildEntitySelectSQL is the shared body of the two list builders: the
-// same scope and ordering over a different column list.
+// same scope and ordering over a different column list. limit, when
+// positive, is the number of rows to return; zero returns every row.
 //
 // For the DEFAULT world it is the historical flat SELECT, allocating and
 // costing exactly what it did before worlds existed — a project that
-// never declares a face must pay nothing (store.WorldScope.IsDefaultWorld).
+// never declares a face must pay nothing (store.WorldScope.IsTrivial).
 //
 // For a real world it becomes DISTINCT ON (id) over the candidate rows,
 // ordered by (id, rank), which picks each family's prime in one pass.
@@ -1093,25 +1089,42 @@ func buildEntityHeaderListSQL(q store.EntityQuery, after *stateKey) (sql string,
 // storeutil.PaginateWorldPrimes exists to avoid). Comparing (id, face)
 // against the resolved prime instead would yield an entity twice when a
 // face it now prefers was written between two pages.
-func buildEntitySelectSQL(q store.EntityQuery, after *stateKey, columns string) (sql string, args []any) {
-	q.World = effectiveWorld(q.World, q.Type)
-	if q.World.IsDefaultWorld() {
+//
+// A page also bounds the DISTINCT ON itself (TKT-KQXVF7). Without that the
+// planner costs the subquery as if every prime were read, so it sorts the
+// whole type rather than walking entities_type_id_face_idx in id order and
+// stopping. The bound is exact: primes come out one per id in id order, and
+// the keyset already removed the families before the cursor.
+func buildEntitySelectSQL(q store.EntityQuery, after *entity.Ref, columns string, limit int) (sql string, args []any) {
+	q.Faces = q.Faces.Lowered(q.Type)
+	w := storeutil.RankingWorld(q)
+	if w.IsTrivial() {
 		where, wargs := entityWhere(q, after)
-		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id ASC, face ASC`, wargs
+		return `SELECT ` + columns + ` FROM entities` + where + ` ORDER BY id ASC, face ASC` + limitClause(limit), wargs
 	}
 
 	// ONE worldSQL call produces both expressions, so the coordinate
 	// parameters are bound exactly once and the rank's placeholders are
 	// the same ones the candidate predicate uses.
-	rank, candidate := worldSQL(q.World, "", &args)
+	rank, candidate := worldSQL(w, "", &args)
 	scope := entityScopeWhere(q, candidate, &args)
 	if after != nil {
-		args = append(args, after.id)
+		args = append(args, after.ID)
 		scope += fmt.Sprintf(" AND id > $%d", len(args))
 	}
 	inner := `SELECT DISTINCT ON (id) ` + columns + ` FROM entities` + scope +
-		` ORDER BY id ASC, (` + rank + `) ASC, face ASC`
-	return `SELECT ` + columns + ` FROM (` + inner + `) p ORDER BY id ASC, face ASC`, args
+		` ORDER BY id ASC, (` + rank + `) ASC, face ASC` + limitClause(limit)
+	return `SELECT ` + columns + ` FROM (` + inner + `) p ORDER BY id ASC, face ASC` + limitClause(limit), args
+}
+
+// limitClause is " LIMIT n" for a positive n and empty otherwise.
+// Interpolated rather than bound: n is an int the store computed, and a
+// literal lets the planner cost the page as the fraction it is.
+func limitClause(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" LIMIT %d", n)
 }
 
 // entityScopeWhere builds the WHERE clause for a WORLD-scoped listing:
@@ -1133,6 +1146,47 @@ func entityScopeWhere(q store.EntityQuery, candidate string, args *[]any) string
 	}
 	conds = appendFaceInCond(conds, q.FaceIn, args)
 	return " WHERE " + strings.Join(conds, " AND ")
+}
+
+// faceSelectionCond renders a selection that ranks nothing as a row
+// predicate on alias's face column (alias "" for an unqualified column): the
+// default world is `face = ”`, AtFaces is `face = ANY($n)` (an empty set is
+// `false`), AllFaces has no condition ("") and the zero selection is `false`.
+// A non-default InWorld selection is never passed here; it needs worldSQL's
+// rank as well.
+func faceSelectionCond(sel store.FaceSelection, alias string, args *[]any) string {
+	col := "face"
+	if alias != "" {
+		col = alias + ".face"
+	}
+	if faces, ok := sel.Faces(); ok {
+		switch len(faces) {
+		case 0:
+			return "false"
+		case 1:
+			// Equality, not = ANY: the hot single-face reads keep the plan
+			// the per-face index was built for. The implicit face is a
+			// literal so a partial index guarded on it still matches.
+			if faces[0] == entity.ImplicitFace {
+				return col + " = ''"
+			}
+			*args = append(*args, faces[0].String())
+			return fmt.Sprintf("%s = $%d", col, len(*args))
+		}
+		vals := make([]string, len(faces))
+		for i, f := range faces {
+			vals[i] = f.String()
+		}
+		*args = append(*args, vals)
+		return fmt.Sprintf("%s = ANY($%d)", col, len(*args))
+	}
+	if sel.IsAll() {
+		return ""
+	}
+	if sel.IsZero() {
+		return "false" // fail closed: a caller that skipped Validate reads nothing
+	}
+	return col + " = ''"
 }
 
 // appendFaceInCond ANDs the FaceIn set beside whatever scope predicate the
@@ -1159,17 +1213,16 @@ func appendFaceInCond(conds []string, faces []entity.Face, args *[]any) []string
 	return append(conds, fmt.Sprintf("face = ANY($%d)", len(*args)))
 }
 
-func entityWhere(q store.EntityQuery, after *stateKey) (where string, args []any) {
+func entityWhere(q store.EntityQuery, after *entity.Ref) (where string, args []any) {
 	var conds []string
-	// Default-world scope: the zero-value query returns default states
-	// only — byte-identical behavior for faceless projects. AllStates
-	// is the raw storage-truth escape hatch (see store.EntityQuery).
+	// A selection that ranks nothing: the default world (`face = ''`, the
+	// historical query for faceless projects), AllFaces or AtFaces.
 	//
-	// A non-default World does NOT come through here: it needs the
+	// A non-default world does NOT come through here: it needs the
 	// widened candidate predicate plus a rank, which only
 	// buildEntitySelectSQL can pair up — see entityScopeWhere.
-	if !q.AllStates {
-		conds = append(conds, "face = ''")
+	if c := faceSelectionCond(q.Faces, "", &args); c != "" {
+		conds = append(conds, c)
 	}
 	conds = appendFaceInCond(conds, q.FaceIn, &args)
 	if q.Type != "" {
@@ -1182,9 +1235,9 @@ func entityWhere(q store.EntityQuery, after *stateKey) (where string, args []any
 	}
 	if after != nil {
 		// Row-wise comparison matches the (id, face) ordering.
-		args = append(args, after.id)
+		args = append(args, after.ID)
 		idArg := len(args)
-		args = append(args, string(after.face))
+		args = append(args, string(after.Face))
 		conds = append(conds, fmt.Sprintf("(id, face) > ($%d, $%d)", idArg, len(args)))
 	}
 	if len(conds) == 0 {
@@ -1261,31 +1314,6 @@ func normalizeJSONMap(m map[string]any) map[string]any {
 		m[k] = normalizeJSONNumbers(v)
 	}
 	return m
-}
-
-// stringifyJSONValue renders a raw JSONB value the way memstore's
-// fmt.Sprintf("%v", v) would, so PropertyValues output matches across backends.
-// JSON strings render without quotes; numbers without scientific notation where
-// possible; everything else falls back to its JSON text.
-func stringifyJSONValue(raw []byte) string {
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return strings.TrimSpace(string(raw))
-	}
-	switch t := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return t
-	case float64:
-		// Match fmt %v for whole numbers (e.g. 5 not 5e+00).
-		if t == float64(int64(t)) {
-			return strconv.FormatInt(int64(t), 10)
-		}
-		return fmt.Sprintf("%v", t)
-	default:
-		return fmt.Sprintf("%v", t)
-	}
 }
 
 // entitySearchText builds the lowercased text the search Backend matches

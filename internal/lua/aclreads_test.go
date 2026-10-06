@@ -18,7 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
-	"github.com/Sourcehaven-BV/rela/internal/tracer"
+	"github.com/Sourcehaven-BV/rela/internal/tracer/tracertest"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
@@ -75,7 +75,7 @@ func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 		}
 	}
 	for _, r := range [][3]string{{"TKT-1", "owns", "P-1"}, {"TKT-1", "owns", "SEC-1"}} {
-		if _, err := st.CreateRelation(ctx, r[0], r[1], r[2], nil); err != nil {
+		if _, err := st.CreateRelation(ctx, entity.RelationKey{From: r[0], Type: r[1], To: r[2]}, nil); err != nil {
 			t.Fatalf("seed relation %v: %v", r, err)
 		}
 	}
@@ -92,7 +92,7 @@ func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}
-	gate, err := visibility.NewDeclarativeGate(d)
+	gate, err := visibility.NewDeclarativeGate(d, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("NewDeclarativeGate: %v", err)
 	}
@@ -108,7 +108,12 @@ func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 	if err != nil {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
-	visTracer, err := visibility.NewVisibleTracer(tracer.New(st), gate, redactor, st)
+	scriptReader = scriptReader.WithWorld(visibility.WorldOf(store.TrivialScope()))
+	visRes, err := visibility.NewResolver(gate, redactor, st)
+	if err != nil {
+		t.Fatalf("NewResolver: %v", err)
+	}
+	visTracer, err := visibility.NewVisibleTracer(tracertest.Must(st, store.TrivialScope()), visRes, st, store.TrivialScope())
 	if err != nil {
 		t.Fatalf("NewVisibleTracer: %v", err)
 	}
@@ -120,6 +125,7 @@ func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 			Tracer:      visTracer,
 			Meta:        aclWorldMeta(),
 			ProjectRoot: t.TempDir(),
+			World:       store.TrivialScope(),
 		},
 		EntityManager: entitymanagertest.PanicOnUse{},
 	}
@@ -261,7 +267,7 @@ func TestScriptReads_UpdatePreservesHiddenProperties(t *testing.T) {
 	// `salary` must survive untouched in the store.
 	runAsAlice(t, deps, `rela.update_entity("P-1", {name = "Ann Updated"})`)
 
-	after, err := st.GetEntity(context.Background(), "P-1")
+	after, err := st.GetEntity(context.Background(), entity.Ref{ID: "P-1"})
 	if err != nil {
 		t.Fatalf("load after update: %v", err)
 	}
@@ -293,7 +299,7 @@ func (m *storeMutator) UpdateEntity(ctx context.Context, e *entity.Entity) (*ent
 func (m *storeMutator) PatchEntity(
 	ctx context.Context, id string, p entity.Patch,
 ) (*entity.UpdateResult, error) {
-	stored, err := m.st.GetEntity(ctx, id)
+	stored, err := m.st.GetEntity(ctx, entity.Ref{ID: id})
 	if err != nil {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
@@ -316,12 +322,16 @@ func (m *storeMutator) DeleteEntity(context.Context, string, bool) (*entity.Dele
 }
 
 func (m *storeMutator) CreateRelation(
-	context.Context, string, string, string, entity.RelationOptions,
+	context.Context, entity.RelationKey, entity.RelationOptions,
 ) (*entity.Relation, error) {
 	return nil, errors.New("not used by this test")
 }
 
-func (m *storeMutator) DeleteRelation(context.Context, string, string, string) error {
+func (m *storeMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
+	return nil, errors.New("not used by this test")
+}
+
+func (m *storeMutator) DeleteRelation(context.Context, entity.RelationKey) error {
 	return errors.New("not used by this test")
 }
 
@@ -370,9 +380,10 @@ func TestScriptReads_NilReaderDenies(t *testing.T) {
 	deps := lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
 			VisibleReader: nil, // the wiring omission under test
-			Tracer:        tracer.New(st),
+			Tracer:        tracertest.Must(st, store.TrivialScope()),
 			Meta:          aclWorldMeta(),
 			ProjectRoot:   t.TempDir(),
+			World:         store.TrivialScope(),
 		},
 		EntityManager: entitymanagertest.PanicOnUse{},
 	}
@@ -487,7 +498,7 @@ end
 // A false here means "not withheld", never "withheld but unreported".
 func TestScriptReads_UngatedRuntimeReportsNothingRedacted(t *testing.T) {
 	st, deps := newACLWorld(t)
-	deps.VisibleReader = visibility.Unrestricted(st)
+	deps.VisibleReader = visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
 
 	out := runAsAlice(t, deps, `
 local p = rela.get_entity("P-1")
@@ -545,7 +556,7 @@ func TestScriptWrites_HiddenTargetIsNotFound(t *testing.T) {
 	if hidden, absent := run("SEC-1"), run("NOPE-1"); hidden != absent {
 		t.Errorf("hidden and absent are distinguishable:\n hidden: %s\n absent: %s", hidden, absent)
 	}
-	after, err := st.GetEntity(context.Background(), "SEC-1")
+	after, err := st.GetEntity(context.Background(), entity.Ref{ID: "SEC-1"})
 	if err != nil {
 		t.Fatalf("load SEC-1: %v", err)
 	}

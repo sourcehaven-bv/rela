@@ -16,6 +16,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 )
@@ -74,6 +75,9 @@ type server struct {
 	// configure is the Configure API, nil unless --config-editing is set.
 	// One handler for the process, so its save mutex spans rebuilds.
 	configure http.Handler
+	// accessLog is the --access-log destination, nil when off. Every
+	// generation's router logs to it.
+	accessLog *slog.Logger
 
 	cur atomic.Pointer[generation]
 	// retiring closes when the latest retirement has finished. Each
@@ -86,14 +90,14 @@ type server struct {
 
 // newServer builds the process-wide pieces and the first generation over
 // svc, and starts its scheduler.
-func newServer(f *serverFlags, svc *appbuild.Services) (*server, error) {
+func newServer(f *serverFlags, svc *appbuild.Services, accessLog *slog.Logger) (*server, error) {
 	// Identity sources are mutually exclusive — validate BEFORE building
 	// anything, so a conflicting config never reaches a running server.
 	mode, err := validateIdentityFlags(f, os.Getenv(dataentry.EnvDataEntryUserVar))
 	if err != nil {
 		return nil, fmt.Errorf("invalid identity configuration: %w", err)
 	}
-	s := &server{f: f, addr: net.JoinHostPort(f.bind, f.port), mode: mode}
+	s := &server{f: f, addr: net.JoinHostPort(f.bind, f.port), mode: mode, accessLog: accessLog}
 	// One verifier for the identity gate and the webhook receiver, so the
 	// JWKS is fetched a single time (nil when JWT identity is disabled).
 	s.idv = buildIdentityVerifier(context.Background(), f)
@@ -207,7 +211,7 @@ func (s *server) build(svc *appbuild.Services) (*generation, error) {
 	if err := app.StartWatching(); err != nil {
 		slog.Warn("file watcher not started", "error", err)
 	}
-	return &generation{svc: svc, app: app, handler: app.NewRouter()}, nil
+	return &generation{svc: svc, app: app, handler: app.NewRouter(dataentry.WithAccessLog(s.accessLog))}, nil
 }
 
 // buildApp builds the data-entry app over svc with the process's identity,
@@ -222,32 +226,20 @@ func (s *server) buildApp(svc *appbuild.Services) (*dataentry.App, error) {
 		return nil, err
 	}
 	app, err := dataentry.NewApp(
-		svc.FS(), svc.Paths(), svc.Meta(), svc.Store(), svc.Versions(),
+		svc.FS(), svc.Paths(), svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),
 		svc.State(),
 		commandAuthz,
+		appbuild.CompiledWorlds(svc),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// CalDAV needs the alias service to remember client-created resources;
-	// without it the routes are not registered at all.
-	app.SetCalDAVAliases(svc.CalDAVAliases())
-	app.SetComments(svc.Comments())
-	if err := wireWorlds(app, svc); err != nil {
-		return nil, err
-	}
-	// Next-action per-user state. The composition root picks the backend
-	// (durable over state.KV, or the store-native one on postgres); this only
-	// hands the app what it built.
-	if err := app.SetUserState(svc.UserState()); err != nil {
-		return nil, fmt.Errorf("wire next-action state: %w", err)
-	}
-	if err := wireConditionCompilers(app); err != nil {
-		return nil, err
+	if err := dataentrywire.Services(app, svc); err != nil {
+		return nil, fmt.Errorf("wire the data-entry app: %w", err)
 	}
 	if err := app.SetSecurityConfig(dataentry.SecurityConfig{
 		BindAddress:    s.addr,

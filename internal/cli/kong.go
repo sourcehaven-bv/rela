@@ -105,7 +105,7 @@ type CLI struct {
 	Migrate    MigrateCmd    `cmd:"" help:"Migrate project files to current schema."`
 	Completion CompletionCmd `cmd:"" help:"Generate shell completion scripts."`
 	Mcp        McpCmd        `cmd:"" name:"mcp" help:"Start the MCP server."`
-	Db         DBCmd         `cmd:"" name:"db" help:"Manage the PostgreSQL schema (postgres build)."`
+	Db         DBCmd         `cmd:"" name:"db" help:"Manage the project database (postgres and sqlite builds)."`
 	Dev        DevCmd        `cmd:"" help:"Developer tooling (seed generated data)."`
 	Flow       FlowCmd       `cmd:"" help:"Run an interactive Lua flow."`
 	Validate   ValidateCmd   `cmd:"" help:"Validate project configuration files."`
@@ -146,7 +146,6 @@ type CLI struct {
 	Script               ScriptCmd               `cmd:"" help:"Execute a Lua script against the graph."`
 	Scheduler            SchedulerCmd            `cmd:"" help:"Run scheduled Lua tasks."`
 	Renumber             RenumberCmd             `cmd:"" help:"Renumber managed order properties on orderable relations."`
-	Sync                 SyncCmd                 `cmd:"" help:"Sync local changes with a remote rela-server."`
 	Secrets              SecretsCmd              `cmd:"" help:"Inspect how project secrets are supplied."`
 }
 

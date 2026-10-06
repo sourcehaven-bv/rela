@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // UpdateCmd updates an existing entity.
@@ -90,7 +91,14 @@ func (c *UpdateCmd) Run(ctx context.Context, svc *writeServices) error {
 		return errors.New("no updates specified")
 	}
 
-	result, err := svc.EntityManager.PatchEntity(ctx, c.ID, patch)
+	ref, err := writeTarget(ctx, svc.Store, svc.Families, svc.World, c.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		return &entityNotFoundError{ID: c.ID}
+	}
+	if err != nil {
+		return err
+	}
+	result, err := svc.EntityManager.PatchEntity(ctx, entity.FormatStateRef(ref.ID, ref.Face), patch)
 	if err != nil {
 		if errors.Is(err, entitymanager.ErrEntityNotFound) {
 			return &entityNotFoundError{ID: c.ID}

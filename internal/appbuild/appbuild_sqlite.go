@@ -5,10 +5,13 @@ package appbuild
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
-	"log/slog"
+	"io/fs"
+	"os"
 	"path/filepath"
 
+	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -28,32 +31,60 @@ import (
 // operator just wrote must win over the copy baked in (FEAT-UP14BT).
 const dbFileName = "rela.db"
 
+// DatabasePath returns where the project's database lives: the document
+// file itself when the project was opened as one, else .rela/rela.db.
+func DatabasePath(paths *project.Context) string {
+	if paths.DatabaseFile != "" {
+		return paths.DatabaseFile
+	}
+	return filepath.Join(paths.CacheDir, dbFileName)
+}
+
 // New builds the services bundle for the sqlite build: a single-process
-// SQLite store plus an in-memory/on-disk bleve index wired as a write
-// observer.
+// SQLite store searched through FTS5 in the same database.
 //
 // This is the per-scenario recipe — it owns only the backend choice; [prepare]
 // and [assemble] do the build-agnostic work every build shares.
 //
-// Pairing SQLite with bleve rather than FTS5 is deliberate for now:
-// search.Visible wraps ANY Searcher, so a native FTS5 searcher is a later
-// optimization rather than a prerequisite (DEC-LFSYNY stage 3).
+// The database is opened BEFORE [prepare], unlike the other recipes, because
+// the database may carry the project's config, schema.yaml and acl.yaml
+// included (FEAT-UP14BT). The one handle then serves the config loader, the
+// store and the runtime-state overrides.
 func New(cfg Config, opts ...Option) (*Services, error) {
-	base, err := prepare(cfg, opts)
-	if err != nil {
+	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
+	if KeepsMarkdownData(cfg.Paths) {
+		// Opening a database here would show an empty project and keep
+		// every edit out of the files the operator versions.
+		return newFS(cfg, opts...)
+	}
 	ctx := context.Background()
-	db, st, searcher, closer, err := openBackend(ctx, base)
+	db, err := openDatabase(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	// Both overrides come from the one handle this recipe opened: the config
-	// the database carries (layered behind the files) and the runtime state it
-	// holds. Built here rather than in assemble because the handle is this
-	// recipe's, not the store's.
-	overrides, err := backendServices(cfg, db)
+	cfg.projectConfig, err = layerProjectConfig(cfg.Paths.Root, db)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	base, err := prepare(cfg, opts)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	st, searcher, closer, err := openBackend(base, db)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	// The runtime state the database holds. Built here rather than in
+	// assemble because the handle is this recipe's, not the store's.
+	overrides, err := backendServices(db)
 	if err != nil {
 		_ = closer.Close()
 		return nil, err
@@ -64,97 +95,96 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 	return assemble(base, st, searcher, nil, closer, overrides)
 }
 
-// openBackend opens the SQLite store and the bleve-backed searcher.
+// KeepsMarkdownData reports whether the project keeps its data in markdown
+// files rather than in a database: it has no database yet, and its entities/
+// or relations/ directory holds something. Such a project opens on the
+// filesystem store, as it would in the default build, until its data is
+// imported (`rela db load --data`, or the desktop's import), which creates
+// the database and from then on is what opens.
 //
-// Mirrors the filesystem recipe: the index is created first and installed as a
-// store observer at open time so it receives write events from the start, then
-// backfilled with whatever the database already holds (the observer is not
-// invoked for pre-existing rows).
-//
-// A nil index is non-fatal — the store still opens and the read/write paths
-// keep working with an error-Searcher, because losing search is much less bad
-// than refusing to start.
-func openBackend(
-	ctx context.Context, base *SharedBase,
-) (*sqlitedb.DB, store.Store, search.Searcher, io.Closer, error) {
-	if base.cfg.Paths.CacheDir == "" {
-		return nil, nil, nil, nil, errors.New("appbuild: sqlite backend requires a project cache directory")
+// "Holds something" means a file at any depth: a new project's empty
+// per-type directories are not data, and it opens on the database.
+func KeepsMarkdownData(paths *project.Context) bool {
+	if _, err := os.Lstat(DatabasePath(paths)); !errors.Is(err, os.ErrNotExist) {
+		return false
 	}
-
-	idx := openSearchIndex(base)
-
-	opts := []sqlitestore.Option{}
-	if idx != nil {
-		opts = append(opts, sqlitestore.WithObserver(idx))
-	}
-
-	// The DATABASE is opened here and owned here — not by the store. A rela
-	// database file holds two unrelated things, the entity graph and the
-	// operator's config, so neither owns the other or the file they share:
-	// this recipe opens once and hands the same handle to both.
-	db, err := sqlitedb.Open(ctx, sqlitedb.Options{
-		Path: filepath.Join(base.cfg.Paths.CacheDir, dbFileName),
-	})
-	if err != nil {
-		// Surfaced unchanged: Open's errors are the actionable ones — another
-		// process holds the single-writer lock, or WAL could not be enabled
-		// because the project sits on a network/sync filesystem. Wrapping them
-		// in "open store" would bury the part the operator needs.
-		return nil, nil, nil, nil, err
-	}
-
-	st, err := sqlitestore.New(db, opts...)
-	if err != nil {
-		_ = db.Close()
-		return nil, nil, nil, nil, err
-	}
-
-	if idx == nil {
-		return db, st, search.ErrSearcher(errors.New("search index not available")), dbCloser{db: db}, nil
-	}
-	if err := backfillBleve(ctx, idx, st); err != nil {
-		slog.Warn("appbuild: failed to index entities", "error", err)
-	}
-	return db, st, search.New(st, idx), bothCloser{db: db, idx: idx}, nil
+	return hasFile(paths.EntitiesDir) || hasFile(paths.RelationsDir)
 }
 
-// dbCloser releases the database when there is no search index to close too.
+// hasFile reports whether dir holds a non-directory entry at any depth.
+func hasFile(dir string) bool {
+	found := errors.New("found")
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return filepath.SkipDir
+		}
+		if !d.IsDir() {
+			return found
+		}
+		return nil
+	})
+	return errors.Is(err, found)
+}
+
+// openExistingDatabase opens the project's database, refusing with
+// [ErrNoDatabase] when there is none. Operations that only read it use this:
+// creating a database as a side effect would switch a markdown project over
+// to an empty one (see [KeepsMarkdownData]).
+func openExistingDatabase(ctx context.Context, paths *project.Context) (*sqlitedb.DB, error) {
+	if _, err := os.Lstat(DatabasePath(paths)); errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%s: %w", DatabasePath(paths), ErrNoDatabase)
+	}
+	return openDatabase(ctx, Config{Paths: paths})
+}
+
+// openDatabase opens the project's SQLite database.
+//
+// The DATABASE is opened here and owned by this recipe — not by the store. A
+// rela database file holds two unrelated things, the entity graph and the
+// operator's config, so neither owns the other or the file they share.
+func openDatabase(ctx context.Context, cfg Config) (*sqlitedb.DB, error) {
+	if cfg.Paths.CacheDir == "" {
+		return nil, errors.New("appbuild: sqlite backend requires a project cache directory")
+	}
+	// A project found by its schema.yaml need not have a .rela/ yet, and the
+	// database (with its lock file) is the first thing that lives there.
+	if err := os.MkdirAll(cfg.Paths.CacheDir, 0o755); err != nil {
+		return nil, fmt.Errorf("appbuild: create cache directory: %w", err)
+	}
+	// Open's errors are surfaced unchanged: they are the actionable ones —
+	// another process holds the single-writer lock, or WAL could not be
+	// enabled because the project sits on a network/sync filesystem.
+	// Wrapping them in "open store" would bury the part the operator needs.
+	return sqlitedb.Open(ctx, sqlitedb.Options{
+		Path: DatabasePath(cfg.Paths),
+	})
+}
+
+// openBackend builds the SQLite store and its FTS5 searcher (DEC-10Z731)
+// over an opened database. The search index lives in the database and the
+// database's triggers keep it current, so there is no index to open, backfill
+// or close. On success the returned closer owns db; on error the caller still
+// does.
+func openBackend(base *SharedBase, db *sqlitedb.DB) (store.Store, search.Searcher, io.Closer, error) {
+	backend, err := sqlitestore.NewSearchBackend(db)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	backend.RankByTitles(sqlitestore.SearchTitles(rankingTitles(base.meta)))
+	st, err := sqlitestore.New(db)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return st, search.New(st, backend), dbCloser{db: db}, nil
+}
+
+// dbCloser releases the database.
 //
 // The database needs a closer at all because the store only BORROWS it — the
 // file is this recipe's to own, so tearing it down is this recipe's job.
 type dbCloser struct{ db *sqlitedb.DB }
 
 func (c dbCloser) Close() error { return c.db.Close() }
-
-// bothCloser releases the search index and then the database.
-//
-// Index first: it holds no handle on the database, but closing the database
-// out from under a still-running index would be the harder failure to
-// diagnose of the two.
-type bothCloser struct {
-	db  *sqlitedb.DB
-	idx io.Closer
-}
-
-func (c bothCloser) Close() error {
-	err := c.idx.Close()
-	if dbErr := c.db.Close(); dbErr != nil && err == nil {
-		err = dbErr
-	}
-	return err
-}
-
-// noopSQLiteCloser is the io.Closer assemble tears down when there is no search
-// index to close.
-//
-// Declared here rather than in bleveindex_shared.go despite that file being
-// compiled into this build too: the fs recipe has its own noopCloser, so a
-// shared one would be unused on the default build — dead code the linter
-// rightly rejects. Sharing it would mean also removing the fs copy, which is
-// a change to the filesystem recipe that this ticket has no reason to make.
-type noopSQLiteCloser struct{}
-
-func (noopSQLiteCloser) Close() error { return nil }
 
 // DropStoreIndex is a no-op: this backend persists no file index.
 func DropStoreIndex(*Services) error { return nil }

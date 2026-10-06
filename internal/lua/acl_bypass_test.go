@@ -28,11 +28,18 @@ func (r *recordingMutator) PatchEntity(context.Context, string, entity.Patch) (*
 func (r *recordingMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteResult, error) {
 	return &entity.DeleteResult{}, nil
 }
-func (r *recordingMutator) CreateRelation(_ context.Context, from, relType, to string, _ entity.RelationOptions) (*entity.Relation, error) {
-	r.relations = append(r.relations, from+"--"+relType+"-->"+to)
-	return entity.NewRelation(from, relType, to), nil
+func (r *recordingMutator) CreateRelation(
+	_ context.Context, key entity.RelationKey, _ entity.RelationOptions,
+) (*entity.Relation, error) {
+	r.relations = append(r.relations, key.From+"--"+key.Type+"-->"+key.To)
+	return entity.NewRelation(key.From, key.Type, key.To), nil
 }
-func (r *recordingMutator) DeleteRelation(context.Context, string, string, string) error { return nil }
+func (r *recordingMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
+	return &entity.DeleteResult{}, nil
+}
+func (r *recordingMutator) DeleteRelation(context.Context, entity.RelationKey) error {
+	return nil
+}
 
 // writerWithElevated builds a writer runtime whose WriteDeps carry an
 // ElevatedManager (so rela.bypass_acl is registered).

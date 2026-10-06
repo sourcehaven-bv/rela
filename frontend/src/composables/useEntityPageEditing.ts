@@ -20,6 +20,7 @@ import { useSchemaStore } from '@/stores/schema'
 import { useSpaceStore } from '@/stores/space'
 import { isFieldWritable, isPropertyRedacted } from '@/utils/affordances'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
+import { entityRef, refFace } from '@/utils/entityRef'
 import { defaultRegistry } from '@/widgets/registry'
 import EntityDetailPanel from '@/components/entity/EntityDetailPanel.vue'
 import EntityPageMenu from '@/components/pages/EntityPageMenu.vue'
@@ -133,15 +134,22 @@ export function useEntityPageEditing(options: {
     const entity = options.entity.value
     const type = options.entityType.value
     if (!entity || !type) return
+    // Addressed to the row on screen: on a faced type that is one face, and
+    // the server refuses a bare id there. The last face takes the entity.
+    const ref = entityRef(entity)
+    const face = refFace(ref)
     const ok = await confirm({
       title: `Delete ${typeDef.value?.label ?? type}?`,
-      message: `Are you sure you want to delete '${entityDisplayTitle(entity)}'? This action cannot be undone.`,
+      message: face
+        ? `Are you sure you want to delete the ${schemaStore.faceLabel(type, face) || face} face of '${entityDisplayTitle(entity)}'? ` +
+          'Its other faces are kept. This action cannot be undone.'
+        : `Are you sure you want to delete '${entityDisplayTitle(entity)}'? This action cannot be undone.`,
       confirmLabel: 'Delete',
       danger: true,
     })
     if (!ok) return
     try {
-      await deleteEntity(type, entity.id)
+      await deleteEntity(type, ref)
     } catch (err) {
       uiStore.error(err instanceof Error ? err.message : 'Failed to delete')
       return

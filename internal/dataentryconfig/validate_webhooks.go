@@ -182,6 +182,8 @@ func validateWebhookFind(id string, hook Webhook, meta *metamodel.Metamodel) []s
 			"webhooks: %q find type %q is not a known entity type", id, find.Type))
 	}
 
+	errs = append(errs, validateWebhookFace(id, hook, meta, def)...)
+
 	// A match key is required only when a create can happen. Without one,
 	// find-or-create would create on every delivery: the find could not
 	// identify the entity the previous delivery made, so each alert would mint
@@ -207,6 +209,36 @@ func validateWebhookFind(id string, hook Webhook, meta *metamodel.Metamodel) []s
 		if !matched[prop] {
 			errs = append(errs, fmt.Sprintf(
 				"webhooks: %q find.values names %q which is not in find.match", id, prop))
+		}
+	}
+	return errs
+}
+
+// validateWebhookFace checks find.face against the find type's faces. A
+// create of another type has no face to write at, so it must not be faced.
+func validateWebhookFace(id string, hook Webhook, meta *metamodel.Metamodel, def *metamodel.EntityDef) []string {
+	find := hook.Find
+	var errs []string
+	switch {
+	case len(def.Faces) == 0 && find.Face != "":
+		errs = append(errs, fmt.Sprintf(
+			"webhooks: %q find.face %q: type %q declares no faces", id, find.Face, find.Type))
+	case len(def.Faces) > 0 && find.Face == "":
+		errs = append(errs, fmt.Sprintf(
+			"webhooks: %q find type %q declares faces, so find.face is required: one of %s",
+			id, find.Type, strings.Join(metamodel.FaceOrderOf(meta, find.Type), ", ")))
+	case len(def.Faces) > 0:
+		if _, declared := def.Faces[find.Face]; !declared {
+			errs = append(errs, fmt.Sprintf(
+				"webhooks: %q find.face %q is not a face of %q: one of %s",
+				id, find.Face, find.Type, strings.Join(metamodel.FaceOrderOf(meta, find.Type), ", ")))
+		}
+	}
+	if ct := hook.CreateType(); ct != "" && ct != find.Type {
+		if cdef, ok := metaEntityDef(meta, ct); ok && len(cdef.Faces) > 0 {
+			errs = append(errs, fmt.Sprintf(
+				"webhooks: %q create type %q declares faces; a webhook creates at find.face, "+
+					"so the create type must be the find type", id, ct))
 		}
 	}
 	return errs

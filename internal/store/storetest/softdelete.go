@@ -49,11 +49,11 @@ func seedSoftDelete(t *testing.T, s store.Store, attachments bool) {
 		{"FEAT-002", "depends-on", "FEAT-009"},
 		{"FEAT-002", "implements", "REQ-001"},
 	} {
-		_, err := s.CreateRelation(ctx(), r[0], r[1], r[2], &store.RelationData{Content: "edge"})
+		_, err := s.CreateRelation(ctx(), entity.RelationKey{From: r[0], Type: r[1], To: r[2]}, &store.RelationData{Content: "edge"})
 		require.NoError(t, err)
 	}
 	if attachments {
-		require.NoError(t, s.AttachFile(ctx(), "FEAT-009", "files", "a.txt", bytes.NewReader([]byte("hello"))))
+		require.NoError(t, s.AttachFamilyFile(ctx(), "FEAT-009", "files", "a.txt", bytes.NewReader([]byte("hello"))))
 	}
 }
 
@@ -85,46 +85,42 @@ func assertMarkedHidden(t *testing.T, s store.Store, attachments bool) {
 	t.Helper()
 	c := ctx()
 
-	_, err := s.GetEntity(c, "FEAT-009")
+	_, err := s.GetEntity(c, entity.Ref{ID: "FEAT-009"})
 	assert.ErrorIs(t, err, store.ErrNotFound, "GetEntity")
-	_, err = s.GetEntityState(c, "FEAT-009", "draft")
+	_, err = s.GetEntity(c, entity.Ref{ID: "FEAT-009", Face: "draft"})
 	assert.ErrorIs(t, err, store.ErrNotFound, "GetEntityState")
 
 	live := []string{"FEAT-002", "REQ-001"}
-	assert.Equal(t, live, entityIDs(t, s.ListEntities(c, store.EntityQuery{})), "ListEntities")
-	assert.Equal(t, live, entityIDs(t, s.ListEntities(c, store.EntityQuery{AllStates: true})),
+	assert.Equal(t, live, entityIDs(t, s.ListEntities(c, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})), "ListEntities")
+	assert.Equal(t, live, entityIDs(t, s.ListEntities(c, store.EntityQuery{Faces: store.AllFaces()})),
 		"ListEntities AllStates")
-	assert.Empty(t, entityIDs(t, s.ListEntities(c, store.EntityQuery{IDs: []string{"FEAT-009"}})),
+	assert.Empty(t, entityIDs(t, s.ListEntities(c, store.EntityQuery{IDs: []string{"FEAT-009"}, Faces: store.AllFaces()})),
 		"ListEntities by id")
 
-	page, err := s.ListEntitiesPage(c, store.EntityQuery{Limit: 10})
+	page, err := s.ListEntitiesPage(c, store.EntityQuery{Limit: 10, Faces: store.InWorld(store.TrivialScope())})
 	require.NoError(t, err)
 	assert.Len(t, page.Items, 2, "ListEntitiesPage")
 
-	n, err := s.CountEntities(c, store.EntityQuery{})
+	n, err := s.CountEntities(c, store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})
 	require.NoError(t, err)
 	assert.Equal(t, 2, n, "CountEntities")
-	n, err = s.CountEntities(c, store.EntityQuery{Type: "feature", AllStates: true})
+	n, err = s.CountEntities(c, store.EntityQuery{Type: "feature", Faces: store.AllFaces()})
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "CountEntities feature AllStates")
 
 	var headerIDs []string
-	for h, herr := range store.ListEntityHeaders(c, s, store.EntityQuery{AllStates: true}) {
+	for h, herr := range store.ListEntityHeaders(c, s, store.EntityQuery{Faces: store.AllFaces()}) {
 		require.NoError(t, herr)
 		headerIDs = append(headerIDs, h.ID)
 	}
 	sort.Strings(headerIDs)
 	assert.Equal(t, live, headerIDs, "ListEntityHeaders")
 
-	values, err := s.PropertyValues(c, "title", 10)
-	require.NoError(t, err)
-	assert.NotContains(t, values, "Marked", "PropertyValues")
-
 	high, err := s.HighestID(c, "FEAT")
 	require.NoError(t, err)
 	assert.Equal(t, 9, high, "HighestID must still count a marked id, or the next id would reuse it")
 
-	gq := store.GraphQuery{EntityType: "feature"}
+	gq := store.GraphQuery{EntityType: "feature", Faces: store.InWorld(store.TrivialScope())}
 	assert.Equal(t, []string{"FEAT-002"}, entityIDs(t, s.GraphQuery(c, gq)), "GraphQuery")
 	matched, total, err := s.GraphCount(c, gq)
 	require.NoError(t, err)
@@ -141,7 +137,7 @@ func assertMarkedHidden(t *testing.T, s store.Store, attachments bool) {
 		}
 		assert.Equal(t, []string{"FEAT-002"}, ids, "GraphQueryHeaders")
 	}
-	ids, err := s.MatchingIDs(c, gq, []string{"FEAT-009", "FEAT-002"})
+	ids, err := store.MatchingIDs(c, s, gq, []string{"FEAT-009", "FEAT-002"})
 	require.NoError(t, err)
 	assert.False(t, ids["FEAT-009"], "MatchingIDs")
 
@@ -149,13 +145,14 @@ func assertMarkedHidden(t *testing.T, s store.Store, attachments bool) {
 	// only live inbound edge is from FEAT-002.
 	viaHidden := store.GraphQuery{
 		EntityType: "requirement",
+		Faces:      store.InWorld(store.TrivialScope()),
 		HasInbound: &store.RelationPredicate{Endpoints: []string{"FEAT-009"}, OfTypes: []string{"implements"}},
 	}
 	assert.Empty(t, entityIDs(t, s.GraphQuery(c, viaHidden)), "GraphQuery through a hidden edge")
 
-	_, err = s.GetRelation(c, "FEAT-009", "implements", "REQ-001")
+	_, err = s.GetRelation(c, entity.RelationKey{From: "FEAT-009", Type: "implements", To: "REQ-001"})
 	assert.ErrorIs(t, err, store.ErrNotFound, "GetRelation outgoing")
-	_, err = s.GetRelation(c, "FEAT-002", "depends-on", "FEAT-009")
+	_, err = s.GetRelation(c, entity.RelationKey{From: "FEAT-002", Type: "depends-on", To: "FEAT-009"})
 	assert.ErrorIs(t, err, store.ErrNotFound, "GetRelation incoming")
 	liveRel := []string{"FEAT-002--implements--REQ-001"}
 	assert.Equal(t, liveRel, relationKeys(t, s.ListRelations(c, store.RelationQuery{})), "ListRelations")
@@ -171,7 +168,7 @@ func assertMarkedHidden(t *testing.T, s store.Store, attachments bool) {
 	assert.Equal(t, 1, rn, "CountRelations")
 
 	if attachments {
-		_, err = s.ListAttachments(c, "FEAT-009")
+		_, err = s.ListFamilyAttachments(c, "FEAT-009")
 		assert.ErrorIs(t, err, store.ErrNotFound, "ListAttachments")
 	}
 }
@@ -200,7 +197,7 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		assert.Equal(t, "alice", marked[0].DeletedBy)
 		assert.False(t, marked[0].DeletedAt.IsZero())
 		require.Len(t, marked[0].Entities, 2)
-		assert.True(t, marked[0].Entities[0].Face.IsDefault(), "default face first")
+		assert.True(t, marked[0].Entities[0].Face.IsImplicit(), "default face first")
 		assert.Equal(t, "Marked", marked[0].Entities[0].GetString("title"))
 	})
 
@@ -219,13 +216,13 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 			assert.ErrorIs(t, s.CreateEntity(ctx(), e), store.ErrConflict,
 				"create %s@%s over a marked id", e.ID, e.Face)
 		}
-		_, err = s.RenameEntity(ctx(), "FEAT-002", "FEAT-009")
+		_, err = s.RenameFamily(ctx(), "FEAT-002", "FEAT-009")
 		assert.ErrorIs(t, err, store.ErrConflict, "rename onto a marked id")
 
 		assert.ErrorIs(t, s.UpdateEntity(ctx(), entity.New("FEAT-009", "feature")), store.ErrNotFound)
-		_, err = s.RenameEntity(ctx(), "FEAT-009", "FEAT-100")
+		_, err = s.RenameFamily(ctx(), "FEAT-009", "FEAT-100")
 		assert.ErrorIs(t, err, store.ErrNotFound)
-		_, err = s.DeleteEntity(ctx(), "FEAT-009", true)
+		_, err = s.DeleteFamily(ctx(), "FEAT-009", true)
 		assert.ErrorIs(t, err, store.ErrNotFound)
 		_, err = sd.MarkDeleted(ctx(), "FEAT-009", "alice")
 		assert.ErrorIs(t, err, store.ErrNotFound, "a marked id cannot be marked twice")
@@ -237,7 +234,7 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		s := f(t)
 		seedSoftDelete(t, s, attachments)
 		sd := softDeleterOf(t, s)
-		before, err := s.GetEntity(ctx(), "FEAT-009")
+		before, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-009"})
 		require.NoError(t, err)
 
 		_, err = sd.MarkDeleted(ctx(), "FEAT-009", "alice")
@@ -247,24 +244,24 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		assert.Len(t, res.DeletedEntities, 2)
 		assert.Len(t, res.DeletedRelations, 2)
 
-		after, err := s.GetEntity(ctx(), "FEAT-009")
+		after, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-009"})
 		require.NoError(t, err)
 		assert.Equal(t, before.GetString("title"), after.GetString("title"))
 		assert.Equal(t, before.Content, after.Content)
-		draft, err := s.GetEntityState(ctx(), "FEAT-009", "draft")
+		draft, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-009", Face: "draft"})
 		require.NoError(t, err)
 		assert.Equal(t, "Marked draft", draft.GetString("title"))
 
-		rel, err := s.GetRelation(ctx(), "FEAT-009", "implements", "REQ-001")
+		rel, err := s.GetRelation(ctx(), entity.RelationKey{From: "FEAT-009", Type: "implements", To: "REQ-001"})
 		require.NoError(t, err)
 		assert.Equal(t, "edge", rel.Content, "a restored relation keeps its body")
-		_, err = s.GetRelation(ctx(), "FEAT-002", "depends-on", "FEAT-009")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "FEAT-002", Type: "depends-on", To: "FEAT-009"})
 		require.NoError(t, err)
-		n, err := s.CountEntities(ctx(), store.EntityQuery{})
+		n, err := s.CountEntities(ctx(), store.EntityQuery{Faces: store.InWorld(store.TrivialScope())})
 		require.NoError(t, err)
 		assert.Equal(t, 3, n)
 		if attachments {
-			infos, lerr := s.ListAttachments(ctx(), "FEAT-009")
+			infos, lerr := s.ListFamilyAttachments(ctx(), "FEAT-009")
 			require.NoError(t, lerr)
 			assert.Len(t, infos, 1, "attachments survive a mark")
 		}
@@ -300,7 +297,7 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		assert.Empty(t, relationKeys(t, s.ListRelations(ctx(), store.RelationQuery{EntityID: "FEAT-009"})),
 			"purged relations do not come back with a new entity of the same id")
 		if attachments {
-			infos, lerr := s.ListAttachments(ctx(), "FEAT-009")
+			infos, lerr := s.ListFamilyAttachments(ctx(), "FEAT-009")
 			require.NoError(t, lerr)
 			assert.Empty(t, infos, "purged attachments do not come back")
 		}
@@ -317,12 +314,12 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 
 		_, err = sd.Unmark(ctx(), "FEAT-009")
 		require.NoError(t, err)
-		_, err = s.GetRelation(ctx(), "FEAT-002", "depends-on", "FEAT-009")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "FEAT-002", Type: "depends-on", To: "FEAT-009"})
 		assert.ErrorIs(t, err, store.ErrNotFound, "an edge to a still-marked entity stays hidden")
 
 		_, err = sd.Unmark(ctx(), "FEAT-002")
 		require.NoError(t, err)
-		_, err = s.GetRelation(ctx(), "FEAT-002", "depends-on", "FEAT-009")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "FEAT-002", Type: "depends-on", To: "FEAT-009"})
 		assert.NoError(t, err, "the edge comes back with its last marked endpoint")
 	})
 
@@ -340,7 +337,7 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		require.NoError(t, err)
 		_, err = sd.Unmark(ctx(), "FEAT-002")
 		require.NoError(t, err)
-		_, err = s.GetRelation(ctx(), "FEAT-002", "depends-on", "FEAT-009")
+		_, err = s.GetRelation(ctx(), entity.RelationKey{From: "FEAT-002", Type: "depends-on", To: "FEAT-009"})
 		assert.ErrorIs(t, err, store.ErrNotFound, "an edge to a purged entity must not come back")
 	})
 
@@ -355,12 +352,12 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 	}{
 		{"HardDeleteOfOtherEndDropsHiddenEdge", func(t *testing.T, s store.Store) {
 			t.Helper()
-			_, err := s.DeleteEntity(ctx(), "REQ-001", true)
+			_, err := s.DeleteFamily(ctx(), "REQ-001", true)
 			require.NoError(t, err)
 		}, "REQ-001", "requirement"},
 		{"RenameOfOtherEndDropsHiddenEdge", func(t *testing.T, s store.Store) {
 			t.Helper()
-			_, err := s.RenameEntity(ctx(), "FEAT-002", "FEAT-003")
+			_, err := s.RenameFamily(ctx(), "FEAT-002", "FEAT-003")
 			require.NoError(t, err)
 		}, "FEAT-002", "feature"},
 	} {
@@ -385,7 +382,7 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 				{From: "FEAT-009", Type: "implements", To: tc.reuse},
 				{From: tc.reuse, Type: "depends-on", To: "FEAT-009"},
 			} {
-				_, err = s.GetRelation(ctx(), r.From, r.Type, r.To)
+				_, err = s.GetRelation(ctx(), entity.RelationKey{From: r.From, Type: r.Type, To: r.To})
 				assert.ErrorIs(t, err, store.ErrNotFound, "%s--%s--%s must not attach to the new %s",
 					r.From, r.Type, r.To, tc.reuse)
 			}
@@ -404,9 +401,9 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		rc := store.WithRevealed(ctx(), "FEAT-009")
 
 		// The two reads acl.StoreGraph makes see the marked entity's edges.
-		_, err = s.GetRelation(rc, "FEAT-009", "implements", "REQ-001")
+		_, err = s.GetRelation(rc, entity.RelationKey{From: "FEAT-009", Type: "implements", To: "REQ-001"})
 		require.NoError(t, err, "GetRelation from the revealed entity")
-		_, err = s.GetRelation(rc, "FEAT-002", "depends-on", "FEAT-009")
+		_, err = s.GetRelation(rc, entity.RelationKey{From: "FEAT-002", Type: "depends-on", To: "FEAT-009"})
 		require.NoError(t, err, "GetRelation to the revealed entity")
 		out := relationKeys(t, s.ListRelations(rc, store.RelationQuery{
 			EntityID: "FEAT-009", Direction: store.DirectionOutgoing, Type: "implements",
@@ -414,7 +411,7 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		assert.Equal(t, []string{"FEAT-009--implements--REQ-001"}, out)
 
 		// Nothing else does.
-		_, err = s.GetEntity(rc, "FEAT-009")
+		_, err = s.GetEntity(rc, entity.Ref{ID: "FEAT-009"})
 		assert.ErrorIs(t, err, store.ErrNotFound, "the entity itself stays hidden")
 		assert.Equal(t, []string{"FEAT-002--implements--REQ-001"},
 			relationKeys(t, s.ListRelations(rc, store.RelationQuery{})), "unscoped list")
@@ -427,7 +424,7 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		rpage, err := s.ListRelationsPage(rc, store.RelationQuery{EntityID: "FEAT-009", Limit: 10})
 		require.NoError(t, err)
 		assert.Empty(t, rpage.Items, "ListRelationsPage")
-		_, err = s.GetRelation(store.WithRevealed(ctx(), "REQ-001"), "FEAT-009", "implements", "REQ-001")
+		_, err = s.GetRelation(store.WithRevealed(ctx(), "REQ-001"), entity.RelationKey{From: "FEAT-009", Type: "implements", To: "REQ-001"})
 		assert.ErrorIs(t, err, store.ErrNotFound, "revealing a live entity reveals nothing")
 
 		// And an ordinary context never sees the marked edges.
@@ -446,7 +443,7 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 			_, err := softDeleterOf(t, tx).Unmark(ctx(), "FEAT-009")
 			return err
 		}))
-		_, err := s.GetEntity(ctx(), "FEAT-009")
+		_, err := s.GetEntity(ctx(), entity.Ref{ID: "FEAT-009"})
 		require.NoError(t, err)
 	})
 
@@ -472,7 +469,7 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 			sd := softDeleterOf(t, s)
 			hits := func() []string {
 				var ids []string
-				for _, h := range collectHits(t, searcher.Search(ctx(), search.Query{Text: "Marked"})) {
+				for _, h := range collectHits(t, searcher.Search(ctx(), search.Query{Text: "Marked", World: store.TrivialScope()})) {
 					ids = append(ids, h.ID)
 				}
 				return ids

@@ -48,13 +48,13 @@ func TestGraphQueryExplainUsesIndex(t *testing.T) {
 	// candidate entities, ~10% owned by the group.
 	require.NoError(t, s.CreateEntity(ctx, entity.New("alice", "person")))
 	require.NoError(t, s.CreateEntity(ctx, entity.New("engineering", "team")))
-	_, err = s.CreateRelation(ctx, "alice", "member-of", "engineering", nil)
+	_, err = s.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "member-of", To: "engineering"}, nil)
 	require.NoError(t, err)
 	for i := range n {
 		id := fmt.Sprintf("TKT-%06d", i)
 		require.NoError(t, s.CreateEntity(ctx, entity.New(id, "ticket")))
 		if i%10 == 0 {
-			_, err = s.CreateRelation(ctx, "engineering", "owns", id, nil)
+			_, err = s.CreateRelation(ctx, entity.RelationKey{From: "engineering", Type: "owns", To: id}, nil)
 			require.NoError(t, err)
 		}
 	}
@@ -72,6 +72,7 @@ func TestGraphQueryExplainUsesIndex(t *testing.T) {
 			InheritThrough: []string{"member-of"},
 			Depth:          5,
 		},
+		Faces: store.InWorld(store.TrivialScope()),
 	}
 
 	plan := explainGraphQuery(t, pool, q)
@@ -117,6 +118,7 @@ func TestGraphQueryExplainUsesDerivedStaticQueryIndex(t *testing.T) {
 		Props: []store.PropPredicate{{
 			Property: "status", Op: store.PropEqual, Value: "open", Scalar: true,
 		}},
+		Faces: store.InWorld(store.TrivialScope()),
 	})
 	t.Logf("plan:\n%s", plan)
 	if !strings.Contains(plan, "rela_derived_query__") {
@@ -171,6 +173,7 @@ func TestGraphQueryExplainPagedListUsesDerivedListIndex(t *testing.T) {
 		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
 		OrderBy:    []store.OrderSpec{{Property: "due"}},
 		Limit:      25,
+		Faces:      store.InWorld(store.TrivialScope()),
 	})
 	t.Logf("plan:\n%s", plan)
 	if !strings.Contains(plan, "rela_derived_list__") {
@@ -178,6 +181,50 @@ func TestGraphQueryExplainPagedListUsesDerivedListIndex(t *testing.T) {
 	}
 	if strings.Contains(plan, "Sort") {
 		t.Fatalf("page still sorts instead of walking the index:\n%s", plan)
+	}
+}
+
+// A faced type in a world that ranks nothing for it reads one face, so its
+// page is a range scan on the same derived list index (TKT-7IZHP0 A9): no
+// DISTINCT ON, no sort.
+func TestGraphQueryExplainFlatWorldPageUsesDerivedListIndex(t *testing.T) {
+	const n = 5000
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	ctx := context.Background()
+	spec := []store.DerivedObjectSpec{{
+		Kind: store.DerivedListIndex, Type: "page", Properties: []string{"status"}, OrderBy: []string{"due"},
+	}}
+	_, err = s.Reconcile(ctx, spec, store.ReconcileOptions{})
+	require.NoError(t, err)
+
+	for i := range n {
+		e := entity.New(fmt.Sprintf("PG-%06d", i), "page")
+		e.Face = []entity.Face{"draft", "published"}[i%2]
+		e.Properties["status"] = []string{"open", "done"}[(i/2)%2]
+		e.Properties["due"] = fmt.Sprintf("2026-%02d-%02d", 1+i%12, 1+i%28)
+		require.NoError(t, s.CreateEntity(ctx, e))
+	}
+	_, err = pool.Exec(ctx, "ANALYZE entities")
+	require.NoError(t, err)
+
+	world := store.NewWorldScope(map[string]store.TypeResolution{
+		"page": {Chain: []entity.Face{"published"}, Fallback: store.FallbackExclude},
+	})
+	plan := explainGraphQuery(t, pool, store.GraphQuery{
+		EntityType: "page",
+		Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+		OrderBy:    []store.OrderSpec{{Property: "due"}},
+		Limit:      25,
+		Faces:      store.InWorld(world),
+	})
+	t.Logf("plan:\n%s", plan)
+	if !strings.Contains(plan, "rela_derived_list__") {
+		t.Fatalf("derived list index is not used:\n%s", plan)
+	}
+	if strings.Contains(plan, "Sort") || strings.Contains(plan, "Unique") {
+		t.Fatalf("a flat world still ranks or sorts:\n%s", plan)
 	}
 }
 
@@ -231,7 +278,7 @@ func TestEndpointMatchExplainUsesDerivedIndex(t *testing.T) {
 	for i := range tickets {
 		id := fmt.Sprintf("TKT-%06d", i)
 		require.NoError(t, s.CreateEntity(ctx, entity.New(id, "ticket")))
-		_, err = s.CreateRelation(ctx, id, "caused-by", fmt.Sprintf("CON-%06d", i%concepts), nil)
+		_, err = s.CreateRelation(ctx, entity.RelationKey{From: id, Type: "caused-by", To: fmt.Sprintf("CON-%06d", i%concepts)}, nil)
 		require.NoError(t, err)
 	}
 	_, err = pool.Exec(ctx, "ANALYZE entities; ANALYZE relations")
@@ -248,6 +295,7 @@ func TestEndpointMatchExplainUsesDerivedIndex(t *testing.T) {
 				}},
 			},
 		},
+		Faces: store.InWorld(store.TrivialScope()),
 	})
 	t.Logf("plan:\n%s", plan)
 	if !strings.Contains(plan, "rela_derived_query__") {
@@ -288,7 +336,7 @@ func traversalExplainProgram(t *testing.T) *predicate.Program {
 // related(entity, rel, { id = current_user.id }) shape (TKT-NXELMW): the bound
 // user id is an inbound Endpoints entry and the traversed type an
 // EndpointMatch. It needs no derived index; the relation key serves it, so
-// neither the query nor a page's MatchingIDs may scan relations.
+// neither the query nor a page's MatchingFaces may scan relations.
 func TestInboundNamedEndpointExplainIsIndexed(t *testing.T) {
 	pool := newScopedPool(t)
 	s, err := pgstore.New(pool)
@@ -300,7 +348,7 @@ func TestInboundNamedEndpointExplainIsIndexed(t *testing.T) {
 	for i := range 5000 {
 		id := fmt.Sprintf("TAAK-%06d", i)
 		require.NoError(t, s.CreateEntity(ctx, entity.New(id, "taak")))
-		_, err = s.CreateRelation(ctx, fmt.Sprintf("PER-%06d", i%50), "verantwoordelijk_voor", id, nil)
+		_, err = s.CreateRelation(ctx, entity.RelationKey{From: fmt.Sprintf("PER-%06d", i%50), Type: "verantwoordelijk_voor", To: id}, nil)
 		require.NoError(t, err)
 	}
 	_, err = pool.Exec(ctx, "ANALYZE entities; ANALYZE relations")
@@ -313,6 +361,7 @@ func TestInboundNamedEndpointExplainIsIndexed(t *testing.T) {
 			Endpoints:     []string{"PER-000007"},
 			EndpointMatch: &store.EndpointPredicate{EntityType: "persoon"},
 		},
+		Faces: store.InWorld(store.TrivialScope()),
 	}
 	plan := explainGraphQuery(t, pool, q)
 	t.Logf("plan:\n%s", plan)
@@ -324,7 +373,7 @@ func TestInboundNamedEndpointExplainIsIndexed(t *testing.T) {
 	for i := range page {
 		page[i] = fmt.Sprintf("TAAK-%06d", i)
 	}
-	sqlText, args := pgstore.BuildMatchingIDsSQLForTest(q, page)
+	sqlText, args := pgstore.BuildMatchingFacesSQLForTest(q, page)
 	rows, err := pool.Query(ctx, "EXPLAIN "+sqlText, args...)
 	require.NoError(t, err)
 	var lines []string
@@ -336,9 +385,9 @@ func TestInboundNamedEndpointExplainIsIndexed(t *testing.T) {
 	rows.Close()
 	require.NoError(t, rows.Err())
 	idsPlan := strings.Join(lines, "\n")
-	t.Logf("MatchingIDs plan:\n%s", idsPlan)
+	t.Logf("MatchingFaces plan:\n%s", idsPlan)
 	if strings.Contains(idsPlan, "Seq Scan on entities") || strings.Contains(idsPlan, "Seq Scan on relations") {
-		t.Fatalf("MatchingIDs for a named inbound endpoint scans a table:\n%s", idsPlan)
+		t.Fatalf("MatchingFaces for a named inbound endpoint scans a table:\n%s", idsPlan)
 	}
 }
 
@@ -390,7 +439,7 @@ relations:
 		e := entity.New(id, "ticket")
 		e.Properties["status"] = status
 		require.NoError(t, s.CreateEntity(ctx, e))
-		_, err = s.CreateRelation(ctx, id, "implements", fmt.Sprintf("FEAT-%06d", i%features), nil)
+		_, err = s.CreateRelation(ctx, entity.RelationKey{From: id, Type: "implements", To: fmt.Sprintf("FEAT-%06d", i%features)}, nil)
 		require.NoError(t, err)
 	}
 	_, err = pool.Exec(ctx, "ANALYZE entities; ANALYZE relations")
@@ -407,6 +456,7 @@ relations:
 				}},
 			},
 		},
+		Faces: store.InWorld(store.TrivialScope()),
 	}
 	plan := explainGraphQuery(t, pool, q)
 	t.Logf("plan:\n%s", plan)
@@ -415,14 +465,14 @@ relations:
 			"traversed-FROM type:\n%s", plan)
 	}
 
-	// The data-entry query scope issues MatchingIDs for one page of
+	// The data-entry query scope issues MatchingFaces for one page of
 	// candidates, not the bare GraphQuery above. Whichever side the planner
 	// drives from, it must not scan every entity row to answer a page.
 	page := make([]string, 50)
 	for i := range page {
 		page[i] = fmt.Sprintf("FEAT-%06d", i)
 	}
-	sqlText, args := pgstore.BuildMatchingIDsSQLForTest(q, page)
+	sqlText, args := pgstore.BuildMatchingFacesSQLForTest(q, page)
 	rows, err := pool.Query(ctx, "EXPLAIN "+sqlText, args...)
 	require.NoError(t, err)
 	var lines []string
@@ -434,8 +484,8 @@ relations:
 	rows.Close()
 	require.NoError(t, rows.Err())
 	idsPlan := strings.Join(lines, "\n")
-	t.Logf("MatchingIDs plan:\n%s", idsPlan)
+	t.Logf("MatchingFaces plan:\n%s", idsPlan)
 	if strings.Contains(idsPlan, "Seq Scan on entities") || strings.Contains(idsPlan, "Seq Scan on relations") {
-		t.Fatalf("MatchingIDs for one page scans a whole table:\n%s", idsPlan)
+		t.Fatalf("MatchingFaces for one page scans a whole table:\n%s", idsPlan)
 	}
 }

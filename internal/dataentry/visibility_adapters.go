@@ -3,7 +3,9 @@ package dataentry
 import (
 	"context"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // ctxRowGate adapts the dataentry per-request read gate to
@@ -21,9 +23,11 @@ func (ctxRowGate) PermitsRead(ctx context.Context, entityType, id string) (bool,
 	return readGateFromContext(ctx).PermitsRead(ctx, entityType, id)
 }
 
-// PermitsReadMany implements [visibility.RowGate].
-func (ctxRowGate) PermitsReadMany(ctx context.Context, entityType string, ids []string) (map[string]bool, error) {
-	return readGateFromContext(ctx).PermitsReadMany(ctx, entityType, ids)
+// ReadableFacesMany implements [visibility.RowGate].
+func (ctxRowGate) ReadableFacesMany(
+	ctx context.Context, entityType string, ids []string,
+) (acl.FaceVerdicts, error) {
+	return readGateFromContext(ctx).ReadableFacesMany(ctx, entityType, ids)
 }
 
 // PermittedFaces implements [visibility.FaceGate], from the same ctx-resolved
@@ -34,6 +38,12 @@ func (ctxRowGate) PermitsReadMany(ctx context.Context, entityType string, ids []
 // principal granted only `policy@published` (TKT-O7R2A1).
 func (ctxRowGate) PermittedFaces(ctx context.Context, entityType string) ([]entityPkg.Face, error) {
 	return readGateFromContext(ctx).ReadQuery(ctx, entityType).Faces, nil
+}
+
+// ReadableFaces implements [visibility.FaceSetGate] from the same read scope,
+// so a type this principal may not read is the empty set, not every face.
+func (ctxRowGate) ReadableFaces(ctx context.Context, entityType string) (visibility.FaceSet, error) {
+	return visibility.FaceSetOf(readGateFromContext(ctx).ReadQuery(ctx, entityType)), nil
 }
 
 // affRedactor adapts the dataentry affordance service to

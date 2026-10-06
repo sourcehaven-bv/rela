@@ -29,6 +29,9 @@ var validTopLevelKeys = map[string]bool{
 	"worlds":      true,
 	"copies":      true,
 	"comments":    true,
+	// default_world names the world a request uses when it names none
+	// (TKT-7IZHP0).
+	"default_world": true,
 }
 
 // knownTypos maps common misspellings to the correct key name.
@@ -195,7 +198,8 @@ func parseRaw(data []byte) (*Metamodel, error) {
 
 // extractPropertyOrder parses the YAML using yaml.Node to extract property key order
 // for each entity definition. This allows WriteEntity to output properties in the
-// same order as defined in the metamodel.
+// same order as defined in the metamodel. The same pass records the declaration
+// order of each type's faces and of the worlds (declorder.go).
 func extractPropertyOrder(data []byte, m *Metamodel) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil { // coverage-ignore: defensive: same bytes already unmarshaled
@@ -212,14 +216,12 @@ func extractPropertyOrder(data []byte, m *Metamodel) error {
 		return nil
 	}
 
-	// Find the "entities" key
-	for i := 0; i < len(doc.Content)-1; i += 2 {
-		keyNode := doc.Content[i]
-		valueNode := doc.Content[i+1]
-		if keyNode.Value == "entities" && valueNode.Kind == yaml.MappingNode {
-			extractEntityPropertyOrder(valueNode, m)
-			break
-		}
+	if entitiesNode, ok := mappingValue(doc, "entities"); ok && entitiesNode.Kind == yaml.MappingNode {
+		extractEntityPropertyOrder(entitiesNode, m)
+		recordFaceOrder(entitiesNode, m.Entities)
+	}
+	if worldsNode, ok := mappingValue(doc, "worlds"); ok && worldsNode.Kind == yaml.MappingNode {
+		m.worldOrder = mappingKeys(worldsNode)
 	}
 	return nil
 }
@@ -280,6 +282,8 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateTransforms(m)...)
 	validationErrors = append(validationErrors, validateCopies(m)...)
 	validationErrors = append(validationErrors, validateWorlds(m)...)
+	validationErrors = append(validationErrors, validateDefaultWorld(m)...)
+	validationErrors = append(validationErrors, validateDeclOrder(m)...)
 	validationErrors = append(validationErrors, validateQueryScopes(m)...)
 	validationErrors = append(validationErrors, validateValidationFaces(m)...)
 	validationErrors = append(validationErrors, validateValidationRelations(m)...)
@@ -739,8 +743,8 @@ func validateWorlds(m *Metamodel) []string {
 			// and a `Default:` world that silently coexists with the implicit
 			// one is a confusion with no upside.
 			errs = append(errs, fmt.Sprintf(
-				"world %q: the name is reserved — the default world is implicit and total "+
-					"(every entity contributes its default state) and cannot be redeclared",
+				"world %q: the name is reserved — it names the world rela generates for a project "+
+					"that declares none, and cannot be declared",
 				worldName))
 		}
 		if err := ValidateSchemaName(worldName); err != nil {
@@ -791,28 +795,24 @@ func validateWorlds(m *Metamodel) []string {
 }
 
 // validateWorldOnAbsent checks that `on_absent.redirect` names a world a
-// reader can be sent to: a declared one, or the implicit default. A redirect
-// to an undeclared name would be a 400 on arrival, and a redirect chain that
-// returns to a world it has already visited would bounce the browser between
-// them for an entity absent from all of them — both are load errors, not
-// runtime surprises. The chain is walked from this world, so `a → b → a`
-// is reported on both `a` and `b`, naming the loop; `default` never
-// redirects, so it ends every chain.
+// reader can be sent to: a declared one. `default` is not one, because no
+// default world is generated beside declared worlds (TKT-7IZHP0 D11). A
+// redirect to an undeclared name would be a 400 on arrival, and a redirect
+// chain that returns to a world it has already visited would bounce the
+// browser between them for an entity absent from all of them — both are load
+// errors, not runtime surprises. The chain is walked from this world, so
+// `a → b → a` is reported on both `a` and `b`, naming the loop.
 func validateWorldOnAbsent(m *Metamodel, worldName string, world WorldDef) []string {
 	target := world.OnAbsent.Redirect
 	if target == "" {
 		return nil
 	}
-	if target != DefaultWorldName {
-		if _, ok := m.Worlds[target]; !ok {
-			return []string{fmt.Sprintf(
-				"world %q: `on_absent.redirect` names world %q, which is not declared (declare it, or use %q)",
-				worldName, target, DefaultWorldName)}
-		}
+	if err := CheckWorldName(m, target); err != nil {
+		return []string{fmt.Sprintf("world %q: `on_absent.redirect`: %v", worldName, err)}
 	}
 	chain := []string{worldName}
 	seen := map[string]bool{worldName: true}
-	for next := target; next != "" && next != DefaultWorldName; next = m.Worlds[next].OnAbsent.Redirect {
+	for next := target; next != ""; next = m.Worlds[next].OnAbsent.Redirect {
 		chain = append(chain, next)
 		if seen[next] {
 			return []string{fmt.Sprintf(

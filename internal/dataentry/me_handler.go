@@ -15,13 +15,25 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // personGetter is the gated single-entity read the account endpoint needs.
-// Satisfied by visibility.Reader: the row gate and field redaction are the
-// same ones every other read-out path goes through.
+// Satisfied by [worldPeople]: the row gate, face gate and field redaction
+// are the same ones every other read-out path goes through.
 type personGetter interface {
 	Get(ctx context.Context, entityType, id string) (*entityPkg.Entity, bool, error)
+}
+
+// worldPeople reads a person by bare id in the request's world.
+type worldPeople struct{ res *visibility.Resolver }
+
+func (p worldPeople) Get(ctx context.Context, entityType, id string) (*entityPkg.Entity, bool, error) {
+	got, ok, err := p.res.InWorld(ctx, worldFromContext(ctx).visibility(), entityType, id)
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	return got.Entity, true, nil
 }
 
 // meDeps is what [buildMe] reads. typeOf is an UNGATED type lookup: it only
@@ -49,7 +61,7 @@ func handleV1Me(a *App, w http.ResponseWriter, r *http.Request) {
 	deps := meDeps{
 		meta:    s.Meta,
 		account: s.Cfg.Account,
-		people:  a.viewReader,
+		people:  worldPeople{res: a.viewReader.Resolver()},
 		typeOf:  a.reader.entityType,
 	}
 	if d, ok := a.acl.(*acl.Declarative); ok {

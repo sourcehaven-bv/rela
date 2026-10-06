@@ -176,7 +176,7 @@ func (d detailApp) offered(t *testing.T, user, typeName, plural, address string)
 func (d detailApp) markers(t *testing.T) []string {
 	t.Helper()
 	var out []string
-	for e, err := range d.store.ListEntities(context.Background(), store.EntityQuery{Type: "note"}) {
+	for e, err := range d.store.ListEntities(context.Background(), store.EntityQuery{Type: "note", Faces: store.InWorld(store.TrivialScope())}) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -379,11 +379,11 @@ func TestDetailAction_WritesAuditedUnderInvoker(t *testing.T) {
 		t.Fatalf("response %s (err %v)", rec.Body, err)
 	}
 
-	concept, err := d.store.GetEntityState(context.Background(), "DOC-1", "concept")
+	concept, err := d.store.GetEntity(context.Background(), entity.Ref{ID: "DOC-1", Face: "concept"})
 	if err != nil || concept.Content != "regenerated" {
 		t.Fatalf("concept content = %q (err %v), want regenerated", concept.Content, err)
 	}
-	approved, err := d.store.GetEntityState(context.Background(), "DOC-1", "approved")
+	approved, err := d.store.GetEntity(context.Background(), entity.Ref{ID: "DOC-1", Face: "approved"})
 	if err != nil || approved.Content != "old" {
 		t.Errorf("approved face changed: %q (err %v)", approved.Content, err)
 	}
@@ -426,7 +426,7 @@ func TestDetailAction_NotOfferedOnHistoricalSubject(t *testing.T) {
 	a := regenerateSoA()
 	a.When, a.Permission = "", ""
 	d := newDetailActionApp(t, map[string]dataentryconfig.Action{"regenerate-soa": a})
-	e, err := d.store.GetEntityState(context.Background(), "DOC-1", "concept")
+	e, err := d.store.GetEntity(context.Background(), entity.Ref{ID: "DOC-1", Face: "concept"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -29,7 +29,7 @@ func RunCASTests(t *testing.T, f Factory) {
 		e.SetString("title", "Login")
 		require.NoError(t, s.CreateEntity(ctx(), e))
 
-		read, err := s.GetEntity(ctx(), e.ID)
+		read, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		v := store.VersionOf(read)
 
@@ -37,7 +37,7 @@ func RunCASTests(t *testing.T, f Factory) {
 		next, err := s.UpdateEntityIf(ctx(), read, store.UpdateCondition{ExpectedVersion: v})
 		require.NoError(t, err)
 
-		got, err := s.GetEntity(ctx(), e.ID)
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		assert.Equal(t, read.GetString("title"), got.GetString("title"))
 		assert.Equal(t, store.VersionOf(got), next,
@@ -51,12 +51,12 @@ func RunCASTests(t *testing.T, f Factory) {
 		e.SetString("title", "Login")
 		require.NoError(t, s.CreateEntity(ctx(), e))
 
-		read, err := s.GetEntity(ctx(), e.ID)
+		read, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		stale := store.VersionOf(read)
 
 		// Someone else writes in between, invalidating `stale`.
-		interloper, err := s.GetEntity(ctx(), e.ID)
+		interloper, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		interloper.SetString("title", "Written by someone else")
 		require.NoError(t, s.UpdateEntity(ctx(), interloper))
@@ -77,7 +77,7 @@ func RunCASTests(t *testing.T, f Factory) {
 			"errors.Is(err, ErrConflict) must keep working for callers that only need 'lost a race'")
 
 		// NOTHING was written.
-		got, err := s.GetEntity(ctx(), e.ID)
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		assert.Equal(t, interloper.GetString("title"), got.GetString("title"),
 			"a rejected conditional write must not have applied")
@@ -95,11 +95,11 @@ func RunCASTests(t *testing.T, f Factory) {
 		e.SetString("title", "Login")
 		require.NoError(t, s.CreateEntity(ctx(), e))
 
-		read, err := s.GetEntity(ctx(), e.ID)
+		read, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		stale := store.VersionOf(read)
 
-		other, err := s.GetEntity(ctx(), e.ID)
+		other, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		other.SetString("status", "open")
 		require.NoError(t, s.UpdateEntity(ctx(), other))
@@ -110,13 +110,13 @@ func RunCASTests(t *testing.T, f Factory) {
 		require.ErrorAs(t, err, &conflict)
 
 		// Re-read, re-apply the intent, retry with the reported version.
-		fresh, err := s.GetEntity(ctx(), e.ID)
+		fresh, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		fresh.SetString("title", "Login v2")
 		_, err = s.UpdateEntityIf(ctx(), fresh, store.UpdateCondition{ExpectedVersion: conflict.Actual})
 		require.NoError(t, err)
 
-		got, err := s.GetEntity(ctx(), e.ID)
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		assert.Equal(t, "Login v2", got.GetString("title"))
 		assert.Equal(t, "open", got.GetString("status"),
@@ -148,7 +148,7 @@ func RunCASTests(t *testing.T, f Factory) {
 		require.NoError(t, s.CreateEntity(ctx(), e))
 
 		// Move the stored state so any non-empty expectation would fail.
-		bump, err := s.GetEntity(ctx(), e.ID)
+		bump, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		bump.SetString("title", "Moved on")
 		require.NoError(t, s.UpdateEntity(ctx(), bump))
@@ -158,7 +158,7 @@ func RunCASTests(t *testing.T, f Factory) {
 		_, err = s.UpdateEntityIf(ctx(), writeThrough, store.UpdateCondition{})
 		require.NoError(t, err)
 
-		got, err := s.GetEntity(ctx(), e.ID)
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		assert.Equal(t, "Unconditional", got.GetString("title"))
 	})
@@ -172,14 +172,14 @@ func RunCASTests(t *testing.T, f Factory) {
 		e.SetString("title", "Login")
 		require.NoError(t, s.CreateEntity(ctx(), e))
 
-		read, err := s.GetEntity(ctx(), e.ID)
+		read, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		before := store.VersionOf(read)
 
 		// Re-save byte-identical content.
 		require.NoError(t, s.UpdateEntity(ctx(), read.Clone()))
 
-		after, err := s.GetEntity(ctx(), e.ID)
+		after, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		assert.Equal(t, before, store.VersionOf(after),
 			"an identical rewrite must not move the version (UpdatedAt must not be folded in)")
@@ -216,7 +216,7 @@ func RunCASTests(t *testing.T, f Factory) {
 			wg.Go(func() {
 				line := marker(i)
 				for range maxAttempts {
-					cur, err := s.GetEntity(ctx(), e.ID)
+					cur, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 					if err != nil {
 						errs[i] = err
 						return
@@ -242,7 +242,7 @@ func RunCASTests(t *testing.T, f Factory) {
 			require.NoErrorf(t, err, "appender %d", i)
 		}
 
-		got, err := s.GetEntity(ctx(), e.ID)
+		got, err := s.GetEntity(ctx(), entity.Ref{ID: e.ID})
 		require.NoError(t, err)
 		for i := range appenders {
 			assert.Containsf(t, got.Content, marker(i),

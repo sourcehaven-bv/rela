@@ -64,7 +64,7 @@ type redactingReader struct{ st *store.Store }
 func (r redactingReader) Get(
 	ctx context.Context, _, id string, face entity.Face,
 ) (*entity.Entity, bool, error) {
-	e, gerr := (*r.st).GetEntityState(ctx, id, face)
+	e, gerr := (*r.st).GetEntity(ctx, entity.Ref{ID: id, Face: face})
 	if gerr != nil {
 		// Missing and denied are indistinguishable here, matching the real
 		// gate's contract — whether an entity exists is a genuine secret.
@@ -159,7 +159,7 @@ func TestCopy_SameEntityIsElevated_HiddenFieldsSurvive(t *testing.T) {
 	require(err == nil, "promote: %v", err)
 	require(res.Created, "the published face did not exist and must be created")
 
-	published, err := st.GetEntityState(ctx, "PAGE-1", entity.Face("published"))
+	published, err := st.GetEntity(ctx, entity.Ref{ID: "PAGE-1", Face: entity.Face("published")})
 	require(err == nil, "read published face: %v", err)
 
 	if got := published.Properties["secret"]; got != "classified" {
@@ -204,7 +204,7 @@ func TestCopy_CrossEntityReadsThroughCallersGate_NoLaundering(t *testing.T) {
 		t.Fatalf("spawn: %v", err)
 	}
 
-	target, err := st.GetEntity(ctx, "TKT-2")
+	target, err := st.GetEntity(ctx, entity.Ref{ID: "TKT-2"})
 	if err != nil {
 		t.Fatalf("read target: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestCopy_GuardedFaceIsWritableOnlyViaDefinition(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("the copy definition must be the way in; got %v", err)
 	}
-	published, perr := st.GetEntityState(ctx, "PAGE-1", entity.Face("published"))
+	published, perr := st.GetEntity(ctx, entity.Ref{ID: "PAGE-1", Face: entity.Face("published")})
 	if perr != nil {
 		t.Fatalf("the promote did not produce a published face: %v", perr)
 	}
@@ -579,12 +579,10 @@ copies:
 	}); err != nil {
 		t.Fatalf("seed published: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, "PAGE-1", "cites", "SPEC-12",
-		&store.RelationData{FromFace: draft}); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "PAGE-1", FromFace: draft, Type: "cites", To: "SPEC-12"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed draft edge: %v", err)
 	}
-	if _, err := st.CreateRelation(ctx, "PAGE-1", "cites", "SPEC-9",
-		&store.RelationData{FromFace: published}); err != nil {
+	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "PAGE-1", FromFace: published, Type: "cites", To: "SPEC-9"}, &store.RelationData{}); err != nil {
 		t.Fatalf("seed published edge: %v", err)
 	}
 
@@ -605,7 +603,7 @@ copies:
 			atTarget++
 		case rel.FromFace == draft && rel.To == "SPEC-12":
 			stale++
-		case rel.FromFace.IsDefault():
+		case rel.FromFace.IsImplicit():
 			atZero++
 		}
 	}

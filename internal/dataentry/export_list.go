@@ -382,9 +382,9 @@ func (h *exportHandler) resolveListRelations(
 		return out
 	}
 
-	// ONE batched visibility gate for the whole export, and one title load per
-	// distinct visible neighbor (memoized in titleFor).
-	visible := visibleRelationIDs(ctx, h.reader, h.visibleReader, allPeerIDs)
+	// ONE batched visibility gate for the whole export, and ONE row load for
+	// every distinct visible neighbor (titles memoized in titleFor).
+	visible := visibleRelationIDs(ctx, h.visibleReader, allPeerIDs)
 	titleFor := h.memoNeighborTitle(ctx, meta, visible)
 
 	for _, pc := range perCell {
@@ -421,13 +421,15 @@ func (h *exportHandler) gatherListPeers(
 			needOut = true
 		}
 	}
+	meta := h.meta()
 	for _, e := range entities {
 		var outgoing, incoming []*entityPkg.Relation
+		// Only the edges this row's face owns (BUG-ISJHML).
 		if needOut {
-			outgoing = h.reader.outgoingRelations(ctx, e.ID)
+			outgoing = edgesOwnedBy(meta, h.reader.outgoingRelations(ctx, e.ID), e.Face)
 		}
 		if needIn {
-			incoming = h.reader.incomingRelations(ctx, e.ID)
+			incoming = incomingOwnedAtZero(meta, h.reader.incomingRelations(ctx, e.ID), e)
 		}
 		for _, c := range relCols {
 			inbound := c.Direction == dataentryconfig.DirectionIncoming
@@ -465,10 +467,18 @@ func relationPeers(rels []*entityPkg.Relation, relType string, inbound bool) []s
 
 // memoNeighborTitle returns a function that resolves a neighbor id to its display
 // title, once per distinct id, returning ok=false for hidden (not in visible) or
-// unloadable neighbors.
+// unloadable neighbors. Every visible neighbor's row is loaded in one query up
+// front.
 func (h *exportHandler) memoNeighborTitle(
 	ctx context.Context, meta *metamodel.Metamodel, visible map[string]bool,
 ) func(id string) (string, bool) {
+	ids := make([]string, 0, len(visible))
+	for id, ok := range visible {
+		if ok {
+			ids = append(ids, id)
+		}
+	}
+	rows := h.reader.defaultWorldHeaders(ctx, ids)
 	titleByID := map[string]string{}
 	return func(id string) (string, bool) {
 		if !visible[id] {
@@ -478,7 +488,7 @@ func (h *exportHandler) memoNeighborTitle(
 			return t, t != ""
 		}
 		t := ""
-		if node, ok := h.reader.getEntity(ctx, id); ok {
+		if node, ok := rows[id]; ok {
 			// Redact BEFORE deriving the title (RR-5N4K35 class): a visible
 			// neighbor with a hidden display property renders as its ID.
 			t = transform.DisplayTitle(meta, visibility.Redact(ctx, h.redactor, node))

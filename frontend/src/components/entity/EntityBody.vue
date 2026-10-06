@@ -3,9 +3,9 @@
  * An entity's markdown body, edited where it is read.
  *
  * The read view is the caller's rendered body (slot `read`), which holds
- * links, task checkboxes, comment highlights and diagrams. Those keep their
- * own clicks: the edit starts from a click on plain prose or from the edit
- * button, never from a click aimed at something inside the body.
+ * links, task checkboxes, comment highlights and diagrams. The body keeps
+ * every click, so selecting text never opens the editor; the edit starts
+ * from the edit button, which stays in view while a long body scrolls.
  *
  * There is no commit step. Every change the editor reports goes to `input`,
  * and the caller saves it debounced, so what is on screen is already saved.

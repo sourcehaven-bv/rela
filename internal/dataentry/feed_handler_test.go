@@ -247,3 +247,27 @@ func TestFeedHandler_EmptyFeedIsValidCalendar(t *testing.T) {
 		t.Error("empty feed contains an event")
 	}
 }
+
+func TestConfiguredFeed(t *testing.T) {
+	feeds := map[string]dataentryconfig.Feed{"tasks": {}, "events": {}}
+	tests := []struct {
+		name   string
+		lookup string
+		want   bool
+	}{
+		{name: "configured", lookup: "tasks", want: true},
+		{name: "unknown", lookup: "nope", want: false},
+		{name: "case differs", lookup: "Tasks", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			key, _, ok := configuredFeed(feeds, tc.lookup)
+			if ok != tc.want {
+				t.Fatalf("ok = %v, want %v", ok, tc.want)
+			}
+			if ok && key != tc.lookup {
+				t.Fatalf("key = %q, want %q", key, tc.lookup)
+			}
+		})
+	}
+}

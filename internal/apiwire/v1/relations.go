@@ -48,9 +48,28 @@ func (f RelationsField) IsEmpty() bool {
 // Sending `data: []` removes every edge of this relation type from the
 // entity. See docs/data-entry/api-reference.md for the full footgun
 // callout.
+//
+// `{"tagged": {"add": [...], "remove": [...]}}` is the delta form: it
+// names only the edges that change, so edges the caller cannot see are
+// never touched.
 type RelationsUpdate struct {
 	Data        []ResourceIdentifier
 	DataPresent bool
+	// Delta is set when the wrapper carried `add` and/or `remove` instead
+	// of `data`: Add upserts the named edges, Remove deletes them, and
+	// every other edge is left alone.
+	Delta  bool
+	Add    []ResourceIdentifier
+	Remove []ResourceIdentifier
+}
+
+// Upserts is the edges the wrapper creates or updates: Data for a full
+// set, Add for a delta.
+func (u RelationsUpdate) Upserts() []ResourceIdentifier {
+	if u.Delta {
+		return u.Add
+	}
+	return u.Data
 }
 
 // ResourceIdentifier is the per-edge resource identifier in a JSON:API
@@ -153,8 +172,9 @@ func (f *RelationsField) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// decodeRelationsUpdate handles the modern `{"data": [...]}` wrapper.
-// Returns a WireError on any malformed input.
+// decodeRelationsUpdate handles one relation type's wrapper: either
+// `{"data": [...]}`, the full desired set, or a delta of `add` and/or
+// `remove` arrays. Returns a WireError on any malformed input.
 func decodeRelationsUpdate(relType string, raw json.RawMessage) (RelationsUpdate, error) {
 	var fields map[string]json.RawMessage
 	// coverage-ignore-start: defensive: raw was verified to start with '{' and is well-formed JSON, so unmarshal into
@@ -164,50 +184,100 @@ func decodeRelationsUpdate(relType string, raw json.RawMessage) (RelationsUpdate
 		return RelationsUpdate{}, &WireError{
 			Code:   "wrapper_invalid",
 			Path:   "/relations/" + JSONPointerEscape(relType),
-			Detail: "wrapper must be a JSON object with a `data` array",
+			Detail: "wrapper must be a JSON object with a `data` array, or `add` and `remove` arrays",
 		}
 	}
 	// coverage-ignore-end
 
 	for k := range fields {
-		if k != "data" {
+		if k != "data" && k != "add" && k != "remove" {
 			return RelationsUpdate{}, &WireError{
 				Code:   "unknown_field",
 				Path:   "/relations/" + JSONPointerEscape(relType) + "/" + JSONPointerEscape(k),
-				Detail: fmt.Sprintf("unknown field %q on relation wrapper (only `data` is allowed)", k),
+				Detail: fmt.Sprintf("unknown field %q on relation wrapper (only `data`, `add` and `remove` are allowed)", k),
 			}
 		}
 	}
 
-	dataRaw, present := fields["data"]
-	if !present {
+	addRaw, hasAdd := fields["add"]
+	removeRaw, hasRemove := fields["remove"]
+	dataRaw, hasData := fields["data"]
+	if hasData && (hasAdd || hasRemove) {
+		return RelationsUpdate{}, &WireError{
+			Code:   "wrapper_invalid",
+			Path:   "/relations/" + JSONPointerEscape(relType),
+			Detail: "a relation wrapper takes either `data` (the full set) or `add`/`remove` (a delta), not both",
+		}
+	}
+	if hasAdd || hasRemove {
+		return decodeDelta(relType, addRaw, removeRaw)
+	}
+	if !hasData {
 		return RelationsUpdate{DataPresent: false}, nil
 	}
+	refs, err := decodeRefArray(relType, "data", dataRaw)
+	if err != nil {
+		return RelationsUpdate{}, err
+	}
+	return RelationsUpdate{Data: refs, DataPresent: true}, nil
+}
 
+// decodeDelta decodes the `add` and `remove` arrays of a delta wrapper. A
+// nil raw message is an absent key.
+func decodeDelta(relType string, addRaw, removeRaw json.RawMessage) (RelationsUpdate, error) {
+	u := RelationsUpdate{Delta: true}
+	var err error
+	if addRaw != nil {
+		if u.Add, err = decodeRefArray(relType, "add", addRaw); err != nil {
+			return RelationsUpdate{}, err
+		}
+	}
+	if removeRaw != nil {
+		if u.Remove, err = decodeRefArray(relType, "remove", removeRaw); err != nil {
+			return RelationsUpdate{}, err
+		}
+	}
+	return u, nil
+}
+
+// nullError is the error for a null `key` array. A null `data` is treated
+// as an absent one (per RR-UZ8LX).
+func nullError(key, base string) *WireError {
+	if key == "data" {
+		return &WireError{
+			Code: "data_required", Path: base,
+			Detail: "`data` cannot be null; use [] to clear all edges of this type",
+		}
+	}
+	return &WireError{
+		Code: "relation_value_invalid", Path: base,
+		Detail: "`" + key + "` cannot be null; omit it or send []",
+	}
+}
+
+// decodeRefArray decodes the resource-identifier array at `key` of a
+// relation wrapper.
+func decodeRefArray(relType, key string, dataRaw json.RawMessage) ([]ResourceIdentifier, error) {
+	base := "/relations/" + JSONPointerEscape(relType) + "/" + key
 	trimmed := bytes.TrimLeftFunc(dataRaw, unicode.IsSpace)
 	// coverage-ignore-start: unreachable: dataRaw is a json.RawMessage from a decoded object field, always a complete
 	// non-empty JSON token
 	if len(trimmed) == 0 {
-		return RelationsUpdate{}, &WireError{
+		return nil, &WireError{
 			Code:   "data_required",
-			Path:   "/relations/" + JSONPointerEscape(relType) + "/data",
-			Detail: "`data` must be an array",
+			Path:   base,
+			Detail: "`" + key + "` must be an array",
 		}
 	}
 	// coverage-ignore-end
 	if string(trimmed) == "null" {
-		// Treated identically to the data-absent case (per RR-UZ8LX).
-		return RelationsUpdate{}, &WireError{
-			Code:   "data_required",
-			Path:   "/relations/" + JSONPointerEscape(relType) + "/data",
-			Detail: "`data` cannot be null; use [] to clear all edges of this type",
-		}
+		return nil, nullError(key, base)
 	}
 	if trimmed[0] != '[' {
-		return RelationsUpdate{}, &WireError{
+		return nil, &WireError{
 			Code:   "data_invalid_type",
-			Path:   "/relations/" + JSONPointerEscape(relType) + "/data",
-			Detail: "`data` must be an array of resource identifiers",
+			Path:   base,
+			Detail: "`" + key + "` must be an array of resource identifiers",
 		}
 	}
 
@@ -215,35 +285,37 @@ func decodeRelationsUpdate(relType string, raw json.RawMessage) (RelationsUpdate
 	// struct unmarshal — Go's json.Unmarshal coerces `null` into the
 	// empty string when decoding `[]string`, masking what should be
 	// a wire-format error.
-	if err := validateMetaUnsetElements(relType, dataRaw); err != nil {
-		return RelationsUpdate{}, err
+	if err := validateMetaUnsetElements(base, dataRaw); err != nil {
+		return nil, err
 	}
 
 	var refs []ResourceIdentifier
 	dec := json.NewDecoder(bytes.NewReader(dataRaw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&refs); err != nil {
-		return RelationsUpdate{}, translateRefDecodeError(relType, dataRaw, err)
+		return nil, translateRefDecodeError(base, dataRaw, err)
 	}
 
 	for i, ref := range refs {
-		if ref.Type == "" {
-			return RelationsUpdate{}, &WireError{
+		// A removal names an edge, and the relation type already fixes the
+		// peer side, so `type` is required only on an edge being written.
+		if ref.Type == "" && key != "remove" {
+			return nil, &WireError{
 				Code:   "field_required",
-				Path:   fmt.Sprintf("/relations/%s/data/%d/type", JSONPointerEscape(relType), i),
+				Path:   fmt.Sprintf("%s/%d/type", base, i),
 				Detail: "`type` is required on each resource identifier",
 			}
 		}
 		if ref.ID == "" {
-			return RelationsUpdate{}, &WireError{
+			return nil, &WireError{
 				Code:   "field_required",
-				Path:   fmt.Sprintf("/relations/%s/data/%d/id", JSONPointerEscape(relType), i),
+				Path:   fmt.Sprintf("%s/%d/id", base, i),
 				Detail: "`id` is required on each resource identifier",
 			}
 		}
 	}
 
-	return RelationsUpdate{Data: refs, DataPresent: true}, nil
+	return refs, nil
 }
 
 // validateMetaUnsetElements scans the raw JSON for the data array and
@@ -251,7 +323,7 @@ func decodeRelationsUpdate(relType string, raw json.RawMessage) (RelationsUpdate
 // before the struct decode because json.Unmarshal silently coerces
 // `null` to the empty string when target type is string, and we want
 // to fail loudly on that case.
-func validateMetaUnsetElements(relType string, dataRaw json.RawMessage) error {
+func validateMetaUnsetElements(base string, dataRaw json.RawMessage) error {
 	var rawRefs []json.RawMessage
 	// coverage-ignore-start: defensive: caller only invokes this after verifying dataRaw starts with '[' and is well-
 	// formed JSON, so unmarshal
@@ -279,7 +351,7 @@ func validateMetaUnsetElements(relType string, dataRaw json.RawMessage) error {
 		if trimmed[0] != '[' {
 			return &WireError{
 				Code:   "meta_unset_invalid",
-				Path:   fmt.Sprintf("/relations/%s/data/%d/meta_unset", JSONPointerEscape(relType), i),
+				Path:   fmt.Sprintf("%s/%d/meta_unset", base, i),
 				Detail: "`meta_unset` must be an array of strings",
 			}
 		}
@@ -290,7 +362,7 @@ func validateMetaUnsetElements(relType string, dataRaw json.RawMessage) error {
 		if err := json.Unmarshal(muRaw, &elems); err != nil {
 			return &WireError{
 				Code:   "meta_unset_invalid",
-				Path:   fmt.Sprintf("/relations/%s/data/%d/meta_unset", JSONPointerEscape(relType), i),
+				Path:   fmt.Sprintf("%s/%d/meta_unset", base, i),
 				Detail: err.Error(),
 			}
 		}
@@ -299,9 +371,8 @@ func validateMetaUnsetElements(relType string, dataRaw json.RawMessage) error {
 			t := bytes.TrimLeftFunc(e, unicode.IsSpace)
 			if len(t) == 0 || t[0] != '"' {
 				return &WireError{
-					Code: "meta_unset_invalid",
-					Path: fmt.Sprintf("/relations/%s/data/%d/meta_unset/%d",
-						JSONPointerEscape(relType), i, j),
+					Code:   "meta_unset_invalid",
+					Path:   fmt.Sprintf("%s/%d/meta_unset/%d", base, i, j),
 					Detail: "`meta_unset` elements must be strings",
 				}
 			}
@@ -313,7 +384,7 @@ func validateMetaUnsetElements(relType string, dataRaw json.RawMessage) error {
 // translateRefDecodeError maps json.Decoder errors on a resource
 // identifier slice into a structured WireError. Covers unknown-field
 // rejection and the most common malformed-shape cases.
-func translateRefDecodeError(relType string, dataRaw json.RawMessage, err error) error {
+func translateRefDecodeError(base string, dataRaw json.RawMessage, err error) error {
 	msg := err.Error()
 	// Best-effort path inference: when DisallowUnknownFields rejects a
 	// field, the message names which one. We don't get a stable
@@ -321,7 +392,7 @@ func translateRefDecodeError(relType string, dataRaw json.RawMessage, err error)
 	if strings.Contains(msg, "unknown field") {
 		return &WireError{
 			Code:   "unknown_field",
-			Path:   "/relations/" + JSONPointerEscape(relType) + "/data",
+			Path:   base,
 			Detail: msg,
 		}
 	}
@@ -334,7 +405,7 @@ func translateRefDecodeError(relType string, dataRaw json.RawMessage, err error)
 	if strings.Contains(msg, ".meta_unset of type string") {
 		return &WireError{
 			Code:   "meta_unset_invalid",
-			Path:   "/relations/" + JSONPointerEscape(relType) + "/data",
+			Path:   base,
 			Detail: "`meta_unset` must contain only strings",
 		}
 	}
@@ -345,7 +416,7 @@ func translateRefDecodeError(relType string, dataRaw json.RawMessage, err error)
 	if errors.As(err, &jsonErr) {
 		return &WireError{
 			Code:   "field_invalid_type",
-			Path:   "/relations/" + JSONPointerEscape(relType) + "/data/" + jsonErr.Field,
+			Path:   base + "/" + jsonErr.Field,
 			Detail: msg,
 		}
 	}
@@ -354,7 +425,7 @@ func translateRefDecodeError(relType string, dataRaw json.RawMessage, err error)
 	// *json.UnmarshalTypeError caught above; no other error type reaches this generic branch
 	return &WireError{
 		Code:   "data_invalid",
-		Path:   "/relations/" + JSONPointerEscape(relType) + "/data",
+		Path:   base,
 		Detail: msg,
 	}
 	// coverage-ignore-end

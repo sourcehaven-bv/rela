@@ -159,7 +159,7 @@ describe('DynamicForm — duplicate prefill', () => {
     await flushPromises()
 
     expect(relationsBody(create).blocks).toEqual({
-      data: [{ type: 'ticket', id: 'TKT-2' }],
+      add: [{ type: 'ticket', id: 'TKT-2' }],
     })
   })
 
@@ -177,7 +177,7 @@ describe('DynamicForm — duplicate prefill', () => {
     await flushPromises()
 
     expect(relationsBody(create).blockedBy).toEqual({
-      data: [{ type: 'ticket', id: 'TKT-3' }],
+      add: [{ type: 'ticket', id: 'TKT-3' }],
     })
     expect(relationsBody(create).blocks).toBeUndefined()
   })
@@ -197,7 +197,7 @@ describe('DynamicForm — duplicate prefill', () => {
 
     expect(create).toHaveBeenCalled()
     expect(relationsBody(create).refs).toEqual({
-      data: [{ type: 'ticket', id: 'TKT-5' }],
+      add: [{ type: 'ticket', id: 'TKT-5' }],
     })
   })
 
@@ -280,7 +280,7 @@ describe('DynamicForm — duplicate prefill', () => {
 
     expect(create).toHaveBeenCalledTimes(1)
     expect(relationsBody(create).unrendered).toEqual({
-      data: [{ type: 'ticket', id: 'TKT-77' }],
+      add: [{ type: 'ticket', id: 'TKT-77' }],
     })
   })
 })

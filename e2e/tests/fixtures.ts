@@ -329,7 +329,7 @@ async function waitForServer(
 /** Wait for a child process to actually exit. SIGTERM is async; a bare
  *  proc.kill() returns immediately and the kernel may hold the socket past the
  *  next test start. See RR-17XTS. */
-async function waitForExit(
+export async function waitForExit(
   proc: ChildProcess,
   signal: NodeJS.Signals = "SIGTERM",
 ): Promise<void> {
@@ -444,7 +444,7 @@ function createTestProject(): string {
  *  listener Node re-raises it as an unhandled error out of band, which is how
  *  a failed startup came to be reported as a bare, and entirely misleading,
  *  `spawn ... ENOENT`. (BUG-YJEIFH) */
-async function spawnServer(
+export async function spawnServer(
   serverBinary: string,
   cwd: string,
   extraEnv: NodeJS.ProcessEnv = {},
@@ -893,6 +893,20 @@ types:
   priority:
     values: [low, medium, high]
     default: medium
+  # Enum types with display labels, used only by the task view's
+  # "Classification" section. Their names differ from the properties that use
+  # them (kind, areas), so a lookup by type name instead of property name
+  # cannot find the labels (view-enum-labels.spec.ts).
+  task_kind:
+    values: [internal_duty, external_obligation]
+    labels:
+      internal_duty: Internal duty
+      external_obligation: External obligation
+  work_area:
+    values: [software_development, operations]
+    labels:
+      software_development: Software development
+      operations: Operations
 
 entities:
   feature:
@@ -972,6 +986,11 @@ entities:
       # clear-policy one in a single pass.
       note:
         type: string
+      kind:
+        type: task_kind
+      areas:
+        type: work_area
+        list: true
 
   # TKT-E7NNM fixtures: covers manual-ID, multi-prefix, and the combinations
   # we want to exercise in forms.spec.ts. Keep names short and orthogonal
@@ -1046,6 +1065,14 @@ relations:
     from: [task]
     to: [bug]
     inverse: fixedBy
+  # A container whose type has a dashed id_prefix (MOD-). The task form has no
+  # field for it, so a section create on the module page pre-links the module
+  # and the form must derive its type from the id (create-prelink.spec.ts).
+  # Not named contains: space-create-page-link.spec.ts adds that relation.
+  groups:
+    from: [module]
+    to: [task]
+    inverse: grouped_in
 
 # Commenting (TKT-FIO205). Enabled for every type so the comment specs can use
 # whichever seed entity is convenient; the ACL is untouched, so the default
@@ -1441,6 +1468,14 @@ views:
             span: 4
           # Full width: the inline editor keeps its usual minimum width here.
           - property: note
+      # Display-only enum fields whose property names differ from their type
+      # names. view-enum-labels.spec.ts asserts they show the type's labels.
+      - heading: "Classification"
+        source: entry
+        display: properties
+        fields:
+          - property: kind
+          - property: areas
       # The entry's markdown body. Needed by the comment specs: a text-range
       # anchor has nothing to attach to unless the body actually renders.
       - source: entry
@@ -1471,6 +1506,22 @@ views:
           - property: title
             link: detail
           - property: status
+
+  # create-prelink.spec.ts: a section create whose peer (the module) has a
+  # dashed id_prefix, opening a form with no field for the relation.
+  module:
+    title: "Module"
+    entry:
+      type: module
+    traverse:
+      - from: entry
+        follow: groups
+        collect_as: tasks
+    sections:
+      - heading: "Tasks"
+        source: tasks
+        display: list
+        create: {}
 
 kanbans:
   feature-board:

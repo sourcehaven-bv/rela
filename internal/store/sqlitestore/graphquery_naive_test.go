@@ -56,21 +56,21 @@ func TestGraphSQL_MatchesNaive(t *testing.T) {
 		return store.PropPredicate{Property: p, Op: store.PropEqual, Value: v, Scalar: true}
 	}
 	queries := map[string]store.GraphQuery{
-		"type only":         {EntityType: "ticket"},
-		"eq":                {EntityType: "ticket", Props: []store.PropPredicate{eq("status", "open")}},
-		"eq on mixed key":   {EntityType: "ticket", Props: []store.PropPredicate{eq("key", "open")}},
-		"eq quoted value":   {EntityType: "ticket", Props: []store.PropPredicate{eq("key", `it's "quoted"`)}},
-		"eq number text":    {EntityType: "ticket", Props: []store.PropPredicate{eq("key", "7")}},
-		"order asc":         {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "key"}}},
-		"order desc":        {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "key", Descending: true}}},
-		"order two keys":    {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "status", Descending: true}, {Property: "title"}}},
-		"page":              {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "title"}}, Limit: 4, Offset: 3},
-		"offset only":       {EntityType: "ticket", Offset: 5},
-		"limit only":        {EntityType: "ticket", Limit: 3},
-		"world":             {EntityType: "ticket", World: world, OrderBy: []store.OrderSpec{{Property: "key"}}},
-		"world eq on prime": {EntityType: "ticket", World: world, Props: []store.PropPredicate{eq("key", "aaa-draft")}},
-		"face allowlist":    {EntityType: "ticket", World: world, FaceIn: []entity.Face{entity.Face("")}},
-		"empty type":        {EntityType: "nothing"},
+		"type only":         {EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())},
+		"eq":                {EntityType: "ticket", Props: []store.PropPredicate{eq("status", "open")}, Faces: store.InWorld(store.TrivialScope())},
+		"eq on mixed key":   {EntityType: "ticket", Props: []store.PropPredicate{eq("key", "open")}, Faces: store.InWorld(store.TrivialScope())},
+		"eq quoted value":   {EntityType: "ticket", Props: []store.PropPredicate{eq("key", `it's "quoted"`)}, Faces: store.InWorld(store.TrivialScope())},
+		"eq number text":    {EntityType: "ticket", Props: []store.PropPredicate{eq("key", "7")}, Faces: store.InWorld(store.TrivialScope())},
+		"order asc":         {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "key"}}, Faces: store.InWorld(store.TrivialScope())},
+		"order desc":        {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "key", Descending: true}}, Faces: store.InWorld(store.TrivialScope())},
+		"order two keys":    {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "status", Descending: true}, {Property: "title"}}, Faces: store.InWorld(store.TrivialScope())},
+		"page":              {EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "title"}}, Limit: 4, Offset: 3, Faces: store.InWorld(store.TrivialScope())},
+		"offset only":       {EntityType: "ticket", Offset: 5, Faces: store.InWorld(store.TrivialScope())},
+		"limit only":        {EntityType: "ticket", Limit: 3, Faces: store.InWorld(store.TrivialScope())},
+		"world":             {EntityType: "ticket", Faces: store.InWorld(world), OrderBy: []store.OrderSpec{{Property: "key"}}},
+		"world eq on prime": {EntityType: "ticket", Faces: store.InWorld(world), Props: []store.PropPredicate{eq("key", "aaa-draft")}},
+		"face allowlist":    {EntityType: "ticket", Faces: store.InWorld(world), FaceIn: []entity.Face{entity.Face("")}},
+		"empty type":        {EntityType: "nothing", Faces: store.InWorld(store.TrivialScope())},
 	}
 	for name, q := range queries {
 		t.Run(name, func(t *testing.T) {
@@ -83,7 +83,7 @@ func TestGraphSQL_MatchesNaive(t *testing.T) {
 			for e, err := range s.GraphQuery(ctx, q) {
 				require.NoError(t, err)
 				got = append(got, e.ID+"@"+string(e.Face))
-				require.Equal(t, e.Content != "" || e.Face != "" || e.Type == "note", true, "rows keep their body")
+				require.True(t, e.Content != "" || e.Face != "" || e.Type == "note", "rows keep their body")
 			}
 			for h, err := range store.GraphQueryHeaders(ctx, s, q) {
 				require.NoError(t, err)
@@ -116,7 +116,7 @@ func TestGraphSQL_OrdersExactScalarsInSQL(t *testing.T) {
 		require.NoError(t, s.CreateEntity(ctx, e))
 	}
 	for _, desc := range []bool{false, true} {
-		q := store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "key", Descending: desc}}, Limit: 8, Offset: 1}
+		q := store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "key", Descending: desc}}, Limit: 8, Offset: 1, Faces: store.InWorld(store.TrivialScope())}
 		var want, got []string
 		for e, err := range graphquerynaive.Run(ctx, s, q) {
 			require.NoError(t, err)

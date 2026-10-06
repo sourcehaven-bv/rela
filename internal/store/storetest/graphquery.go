@@ -49,6 +49,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				Endpoints: []string{"alice"},
 				OfTypes:   []string{"owns"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1", "TKT-3"}, got)
 	})
@@ -64,6 +65,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			Props: []store.PropPredicate{
 				{Property: "status", Op: store.PropEqual, Value: "doing"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"T-1", "T-3"}, got)
 	})
@@ -80,6 +82,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				{Property: "status", Op: store.PropEqual, Value: "doing"},
 				{Property: "effort", Op: store.PropEqual, Value: "xs"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"T-1"}, got)
 	})
@@ -99,6 +102,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			Props: []store.PropPredicate{
 				{Property: "billing_email", Op: store.PropEqual},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"C-absent", "C-blank"}, isEmpty,
 			"absent and present-but-empty must both count as empty")
@@ -108,6 +112,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			Props: []store.PropPredicate{
 				{Property: "billing_email", Op: store.PropNotEqual},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"C-set"}, notEmpty)
 	})
@@ -125,6 +130,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			Props: []store.PropPredicate{
 				{Property: "status", Op: store.PropNotEqual, Value: "doing"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"T-todo"}, got,
 			"an entity with no status is not in the 'status != doing' population")
@@ -153,6 +159,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			Props: []store.PropPredicate{
 				{Property: "status", Op: store.PropNotEqualOrEmpty, Value: "doing"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"T-blank", "T-todo", "T-unset"}, got,
 			"Lua `status ~= doing` is true for an unset or blank status")
@@ -165,6 +172,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			Props: []store.PropPredicate{
 				{Property: "status", Op: store.PropNotEqual, Value: "doing"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"T-todo"}, narrow,
 			"PropNotEqual keeps its filter-DSL meaning: empty is not in the population")
@@ -198,6 +206,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				{Props: []store.PropPredicate{{Property: "owner", Op: store.PropEqual, Value: "me"}}},
 				{Props: []store.PropPredicate{{Property: "owner", Op: store.PropEqual, Value: "nobody"}}},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"T-open-mine"}, got,
 			"a narrowing branch must not admit a row the rest of the query excludes")
@@ -212,12 +221,13 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				}},
 				{Props: []store.PropPredicate{{Property: "owner", Op: store.PropEqual, Value: "you"}}},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"T-done-mine", "T-open-yours"}, both,
 			"branches are ORed; props within a branch are ANDed")
 
 		// No branches is no constraint, not an empty result.
-		none := runGraphQuery(t, s, store.GraphQuery{EntityType: "task"})
+		none := runGraphQuery(t, s, store.GraphQuery{EntityType: "task", Faces: store.InWorld(store.TrivialScope())})
 		require.Len(t, none, 3, "an absent Narrowing constrains nothing")
 	})
 
@@ -255,6 +265,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 					Props: []store.PropPredicate{
 						{Property: "due", Op: tc.op, Value: "2026-09-11"},
 					},
+					Faces: store.InWorld(store.TrivialScope()),
 				})
 				require.Equal(t, tc.want, got,
 					"empty, unset and list values are outside every ordered range")
@@ -331,6 +342,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				got := runGraphQuery(t, s, store.GraphQuery{
 					EntityType: "doc",
 					Props:      []store.PropPredicate{tc.pred},
+					Faces:      store.InWorld(store.TrivialScope()),
 				})
 				require.Equal(t, tc.want, got)
 			})
@@ -354,6 +366,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				Endpoints: []string{"alice"},
 				OfTypes:   []string{"owns"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1"}, got)
 	})
@@ -373,6 +386,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				OfTypes: []string{"implements"},
 				Negate:  true,
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-2", "TKT-3"}, got)
 	})
@@ -389,6 +403,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				OfTypes: []string{"owns"},
 				Negate:  true,
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-2"}, got)
 	})
@@ -409,6 +424,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				OfTypes:   []string{"owns"},
 				Negate:    true,
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-2"}, got)
 	})
@@ -427,6 +443,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			HasOutbound: &store.RelationPredicate{
 				OfTypes: []string{"implements"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1"}, got)
 	})
@@ -442,6 +459,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 			Props: []store.PropPredicate{
 				{Property: "status", Op: store.PropEqual, Value: "doing"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.NoError(t, err)
 		require.Equal(t, 2, matched)
@@ -453,11 +471,12 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		seedEntityWithProps(t, s, "task", "T-1", map[string]any{"status": "doing"})
 		seedEntityWithProps(t, s, "task", "T-2", map[string]any{"status": "todo"})
 
-		got, err := s.MatchingIDs(context.Background(), store.GraphQuery{
+		got, err := store.MatchingIDs(context.Background(), s, store.GraphQuery{
 			EntityType: "task",
 			Props: []store.PropPredicate{
 				{Property: "status", Op: store.PropEqual, Value: "doing"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		}, []string{"T-1", "T-2"})
 		require.NoError(t, err)
 		require.Equal(t, map[string]bool{"T-1": true, "T-2": false}, got)
@@ -475,6 +494,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				Endpoints: []string{"FEAT-1"},
 				OfTypes:   []string{"implements"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1"}, got)
 	})
@@ -496,6 +516,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				Endpoints: []string{"alice"},
 				OfTypes:   []string{"owns"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Empty(t, got, "without InheritThrough, no expansion")
 
@@ -508,6 +529,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				InheritThrough: []string{"member-of"},
 				Depth:          3,
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1"}, got)
 	})
@@ -531,6 +553,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				EntityInheritThrough: []string{"belongs-to"},
 				EntityDepth:          3,
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"D-secret"}, got)
 	})
@@ -556,6 +579,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				EntityInheritThrough: []string{"belongs-to"},
 				EntityDepth:          3,
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"D-secret"}, got)
 	})
@@ -573,6 +597,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				Endpoints: []string{"alice"},
 				OfTypes:   []string{"owns"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1"}, got, "watches must not match")
 	})
@@ -593,6 +618,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				InheritThrough: []string{"member-of"},
 				Depth:          5,
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1"}, got)
 	})
@@ -616,6 +642,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				InheritThrough: []string{"member-of"},
 				Depth:          5,
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Equal(t, []string{"TKT-1"}, got)
 	})
@@ -638,6 +665,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				InheritThrough: []string{"member-of"},
 				Depth:          0,
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.Empty(t, got, "Depth=0 must not expand")
 	})
@@ -655,6 +683,7 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 				Endpoints: []string{"alice"},
 				OfTypes:   []string{"owns"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		})
 		require.NoError(t, err)
 		require.Equal(t, 2, matched, "2 of 3 tickets are alice-owned")
@@ -668,12 +697,13 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		mustRel(t, s, "alice", "owns", "TKT-1")
 		mustRel(t, s, "alice", "owns", "TKT-2")
 
-		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+		got, err := store.MatchingIDs(ctx(), s, store.GraphQuery{
 			EntityType: "ticket",
 			HasInbound: &store.RelationPredicate{
 				Endpoints: []string{"alice"},
 				OfTypes:   []string{"owns"},
 			},
+			Faces: store.InWorld(store.TrivialScope()),
 		}, []string{"TKT-1", "TKT-2", "TKT-3"})
 		require.NoError(t, err)
 		require.Equal(t, map[string]bool{"TKT-1": true, "TKT-2": true, "TKT-3": false}, got)
@@ -688,8 +718,9 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		s := f(t)
 		seedGraphQueryEntities(t, s, "ticket", "TKT-1")
 
-		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+		got, err := store.MatchingIDs(ctx(), s, store.GraphQuery{
 			EntityType: "ticket",
+			Faces:      store.InWorld(store.TrivialScope()),
 		}, []string{"TKT-1", "nonexistent"})
 		require.NoError(t, err)
 		require.Equal(t, map[string]bool{"TKT-1": true, "nonexistent": false}, got)
@@ -699,8 +730,9 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		s := f(t)
 		seedGraphQueryEntities(t, s, "ticket", "TKT-1", "TKT-2")
 
-		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+		got, err := store.MatchingIDs(ctx(), s, store.GraphQuery{
 			EntityType: "ticket",
+			Faces:      store.InWorld(store.TrivialScope()),
 		}, nil)
 		require.NoError(t, err)
 		require.Empty(t, got)
@@ -713,8 +745,9 @@ func RunGraphQueryTests(t *testing.T, f Factory) {
 		seedGraphQueryEntities(t, s, "ticket", "TKT-1")
 		seedGraphQueryEntities(t, s, "feature", "FEAT-1")
 
-		got, err := s.MatchingIDs(ctx(), store.GraphQuery{
+		got, err := store.MatchingIDs(ctx(), s, store.GraphQuery{
 			EntityType: "ticket",
+			Faces:      store.InWorld(store.TrivialScope()),
 		}, []string{"TKT-1", "FEAT-1"})
 		require.NoError(t, err)
 		require.Equal(t, map[string]bool{"TKT-1": true, "FEAT-1": false}, got)
@@ -787,11 +820,11 @@ func RunGraphPagingTests(t *testing.T, f Factory) {
 	t.Run("OrderMissingLastTiebreakID", func(t *testing.T) {
 		s := f(t)
 		seed(t, s)
-		asc := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due"}}})
+		asc := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due"}}, Faces: store.InWorld(store.TrivialScope())})
 		require.Equal(t, []string{"T-5", "T-2", "T-0", "T-3", "T-1", "T-4", "T-6"}, asc)
 		// Descending: the absent value is the largest, so the rows without
 		// `due` lead (SQL's default null placement; one index, both ways).
-		desc := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due", Descending: true}}})
+		desc := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due", Descending: true}}, Faces: store.InWorld(store.TrivialScope())})
 		require.Equal(t, []string{"T-1", "T-4", "T-6", "T-0", "T-3", "T-2", "T-5"}, desc)
 	})
 
@@ -799,9 +832,9 @@ func RunGraphPagingTests(t *testing.T, f Factory) {
 		s := f(t)
 		seed(t, s)
 		order := []store.OrderSpec{{Property: "due"}}
-		full := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: order})
+		full := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: order, Faces: store.InWorld(store.TrivialScope())})
 		for _, w := range []struct{ off, lim int }{{0, 2}, {2, 2}, {4, 10}, {6, 2}, {1, 0}} {
-			got := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: order, Offset: w.off, Limit: w.lim})
+			got := ids(t, s, store.GraphQuery{EntityType: "ticket", OrderBy: order, Offset: w.off, Limit: w.lim, Faces: store.InWorld(store.TrivialScope())})
 			end := len(full)
 			if w.lim > 0 && w.off+w.lim < end {
 				end = w.off + w.lim
@@ -821,6 +854,7 @@ func RunGraphPagingTests(t *testing.T, f Factory) {
 			EntityType: "ticket",
 			Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open"}},
 			OrderBy:    []store.OrderSpec{{Property: "due"}}, Limit: 1, Offset: 1,
+			Faces: store.InWorld(store.TrivialScope()),
 		}
 		matched, _, err := s.GraphCount(ctx(), q)
 		require.NoError(t, err)
@@ -835,6 +869,7 @@ func RunGraphPagingTests(t *testing.T, f Factory) {
 			EntityType: "ticket",
 			Props:      []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "done"}},
 			OrderBy:    []store.OrderSpec{{Property: "due"}}, Limit: 1,
+			Faces: store.InWorld(store.TrivialScope()),
 		}
 		matched, _, err := s.GraphCount(ctx(), q)
 		require.NoError(t, err)
@@ -847,7 +882,7 @@ func RunGraphPagingTests(t *testing.T, f Factory) {
 	t.Run("HeadersPageTheSame", func(t *testing.T) {
 		s := f(t)
 		seed(t, s)
-		q := store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due", Descending: true}}, Limit: 3}
+		q := store.GraphQuery{EntityType: "ticket", OrderBy: []store.OrderSpec{{Property: "due", Descending: true}}, Limit: 3, Faces: store.InWorld(store.TrivialScope())}
 		want := ids(t, s, q)
 		var got []string
 		for h, err := range store.GraphQueryHeaders(ctx(), s, q) {
@@ -878,9 +913,9 @@ func RunGraphHeaderTests(t *testing.T, f Factory) {
 		mustRel(t, s, "T-3", "implements", "F-1")
 
 		queries := []store.GraphQuery{
-			{EntityType: "ticket"},
-			{EntityType: "ticket", Props: []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open"}}},
-			{EntityType: "ticket", HasOutbound: &store.RelationPredicate{OfTypes: []string{"implements"}}},
+			{EntityType: "ticket", Faces: store.InWorld(store.TrivialScope())},
+			{EntityType: "ticket", Props: []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open"}}, Faces: store.InWorld(store.TrivialScope())},
+			{EntityType: "ticket", HasOutbound: &store.RelationPredicate{OfTypes: []string{"implements"}}, Faces: store.InWorld(store.TrivialScope())},
 		}
 		for i, q := range queries {
 			var want []store.EntityHeader
@@ -908,7 +943,7 @@ func RunGraphHeaderTests(t *testing.T, f Factory) {
 // mustRel creates a relation; fails the test on error.
 func mustRel(t *testing.T, s store.Store, from, relType, to string) {
 	t.Helper()
-	_, err := s.CreateRelation(ctx(), from, relType, to, nil)
+	_, err := s.CreateRelation(ctx(), entity.RelationKey{From: from, Type: relType, To: to}, nil)
 	require.NoError(t, err, "%s --%s--> %s", from, relType, to)
 }
 

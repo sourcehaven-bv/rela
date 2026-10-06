@@ -92,7 +92,6 @@ go build -o rela ./cmd/rela
 | [PostgreSQL Backend](docs/postgres-backend.md) | Run rela-server and the CLI against PostgreSQL instead of markdown files |
 | [Attachment Security: Scanning, MIME Allowlist & Transforms](docs/attachment-security.md) | Virus scanning, a sniffed MIME allowlist, and byte transforms for uploaded attachments |
 | [SQLite Backend](docs/sqlite-backend.md) | Run rela against an embedded SQLite database — one file, no server, single process |
-| [Sync](docs/sync.md) | Two-way sync between a local fsstore project and a remote pgstore rela-server |
 | [Security model for rela-server](docs/server-security.md) | Threat model, HTTP defenses, audit attribution, and residual risks for the rela-server data-entry app; how its read-side ACL coverage stands today. |
 | [ACL: Authorization Overview](docs/acl-overview.md) | How rela's role-based authorization works end-to-end: from acl.yaml + the graph to a write decision and its audit attribution |
 | [ACL: Security Hardening](docs/acl-security.md) | Operator's hardening guide for rela's ACL system: group membership trust, fail-loud boot, audit-isolation invariants |
@@ -102,6 +101,7 @@ go build -o rela ./cmd/rela
 | [Data Classification](docs/classification.md) | Label what data each field holds in classification.yaml, lint and sync it, and see what each role can read of it |
 | [Data Migration](docs/data-migration.md) | Detect schema shape changes and migrate stored content with generated, reviewable migrations |
 | [Comments: Annotating Entities, Fields and Text](docs/comments.md) | Enable commenting, control who may comment, and understand how anchors survive edits |
+| [Rela Desktop: Documents, Menus and Notifications](docs/desktop.md) | Open projects and single-file .rela documents in the desktop app, and send notifications with desktop.yaml |
 
 ### Tutorials
 

@@ -71,7 +71,7 @@ func (a *App) nextActionCandidates(
 		// REPLACES whatever world the request carried. See
 		// nextActionSourceWorld for why the caller's `?world=` must not reach
 		// a candidate query.
-		ctx, ok, err := nextActionSourceWorld(ctx, a.worlds, src)
+		ctx, ok, err := nextActionSourceWorld(ctx, a.worlds, effectiveDefaultWorld(a), src)
 		if err != nil {
 			return nil, err
 		}
@@ -199,20 +199,21 @@ func nextActionPrefilters(
 // its plimsoll method cap because it has accreted for years — adding to it is
 // the habit that got it there.
 func nextActionSourceWorld(
-	ctx context.Context, lookup WorldLookup, src dataentryconfig.NextActionSource,
+	ctx context.Context, lookup WorldLookup, defaultName string, src dataentryconfig.NextActionSource,
 ) (context.Context, bool, error) {
 	name := src.SourceWorld
-	if name == "" || name == defaultWorldName {
-		// The default world is today's graph and needs no grant beyond the
-		// per-entity gates that already run. Bind the zero handle explicitly
-		// so a request that arrived with `?world=published` cannot leak its
-		// scope into a source that never named one.
-		return withWorld(ctx, worldHandle{}), true, nil
+	if name == "" {
+		// A source that names no world reads in the default world, bound
+		// explicitly so a request that arrived with `?world=published`
+		// cannot leak its scope into a source that never named one.
+		name = defaultName
 	}
 	if lookup == nil {
-		// Worlds were never wired, so no name can resolve. Skip rather than
-		// silently querying the default world under a source that asked for
-		// something else.
+		if name == defaultName {
+			return withWorld(ctx, worldHandle{name: name, scope: defaultWorldHandle().scope}), true, nil
+		}
+		// Worlds were never wired, so no other name can resolve. Skip
+		// rather than silently querying the default world.
 		return ctx, false, nil
 	}
 	scope, known := lookup.Lookup(name)
@@ -221,6 +222,10 @@ func nextActionSourceWorld(
 		// means config and metamodel disagree at runtime; skip rather than
 		// widening to the default world.
 		return ctx, false, nil
+	}
+	if name == defaultName {
+		// The default world needs no grant beyond the per-entity gates.
+		return withWorld(ctx, worldHandle{name: name, scope: scope}), true, nil
 	}
 	permitted, err := readGateFromContext(ctx).PermitsWorld(ctx, name)
 	if err != nil {
@@ -247,7 +252,7 @@ func (a *App) nextActionOptions() nextaction.OptionFunc {
 		// candidates. An option list resolved in a different world than the
 		// suggestion it belongs to would offer the user entities that do not
 		// exist from where the suggestion was computed.
-		ctx, ok, err := nextActionSourceWorld(ctx, a.worlds, src)
+		ctx, ok, err := nextActionSourceWorld(ctx, a.worlds, effectiveDefaultWorld(a), src)
 		if err != nil {
 			return nil, err
 		}
@@ -364,7 +369,11 @@ func (a *App) countCandidates(
 // countIsZero reports whether the caller sees no entities of entityType.
 func (a *App) countIsZero(ctx context.Context, entityType string, ungated bool) (bool, error) {
 	if ungated {
-		_, total, err := a.Services().Store.GraphCount(ctx, store.GraphQuery{EntityType: entityType})
+		// Every face: the operator question is "does anything exist?", and a
+		// type stored only at named faces must not look empty.
+		_, total, err := a.Services().Store.GraphCount(ctx, store.GraphQuery{
+			EntityType: entityType, Faces: store.AllFaces(),
+		})
 		if err != nil {
 			return false, fmt.Errorf("next-action count for %q: %w", entityType, err)
 		}

@@ -49,7 +49,7 @@ func (c *DevSeedCmd) Run(ctx context.Context, write *writeServices) error {
 	if c.Batch <= 0 {
 		return errors.New("--batch must be positive")
 	}
-	existing, err := write.Store.CountEntities(ctx, store.EntityQuery{})
+	existing, err := write.Store.CountEntities(ctx, store.EntityQuery{Faces: store.AllFaces()})
 	if err != nil {
 		return fmt.Errorf("count entities: %w", err)
 	}

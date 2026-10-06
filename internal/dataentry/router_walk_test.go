@@ -102,11 +102,6 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/tickets/TKT-001", http.StatusOK},
 		{http.MethodGet, "/api/v1/tickets/TKT-001/relations", 0},
 
-		// Sync API (sync.go) — only the manifest remains (501 on the non-pg test
-		// backend); the record read/write routes were retired in TKT-8P1TM7 (sync
-		// uses /api/v1 now).
-		{http.MethodGet, "/api/sync/manifest", http.StatusNotImplemented},
-
 		// Attachment download route. Probe with POST so the handler answers
 		// 405 (a JSON error) rather than a 404 — a GET against the fixture
 		// (no attachment seeded) would emit a handler http.NotFound that the
