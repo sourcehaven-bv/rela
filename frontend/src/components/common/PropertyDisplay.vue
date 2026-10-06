@@ -4,7 +4,7 @@ import type { Component } from 'vue'
 import InaccessibleField from './InaccessibleField.vue'
 import { defaultRegistry } from '@/widgets/registry'
 import { fieldSpanStyle } from '@/utils/fieldSpan'
-import type { AttachmentInfo, EntityType, PropertyDef } from '@/types'
+import type { AttachmentInfo, PropertyDef } from '@/types'
 
 export interface PropertyItem {
   name: string
@@ -12,7 +12,10 @@ export interface PropertyItem {
   value: unknown
   type?: string
   values?: string[] // For enum type detection
-  propType?: string // For badge styling lookup (used by CustomView)
+  // The property's declared type (wire `propType`). Only routes a field
+  // without a schema def to the enum-list widget. Never a lookup key: labels
+  // and styles resolve from the property name plus the entity type.
+  propType?: string
   // Pre-resolved schema def for the property -- supplied by callers
   // (EntityDetail's mapFieldsToProperties) so PropertyDisplay does not
   // do a schema lookup per row (RR-UD1H).
@@ -33,9 +36,9 @@ export interface PropertyItem {
 
 const props = defineProps<{
   properties: PropertyItem[]
-  // entityType is kept on the props signature for backward compatibility
-  // with CustomView, which used it for badge style lookup.
-  entityType?: EntityType
+  // Owning entity type. Forwarded to the widgets so enum labels and badge
+  // styles resolve against this type's property defs.
+  entityType?: string
 }>()
 
 interface PropertyRow {
@@ -55,7 +58,10 @@ interface PropertyRow {
 // WidgetRoutingHint derived from the wire-level shape (RR-UD2B).
 const rows = computed<PropertyRow[]>(() =>
   props.properties.map((prop, index) => {
-    const propertyName = prop.propType ?? prop.name
+    // The property name, not its type name: enum labels are looked up per
+    // property (an inline enum keeps them on the property def), and
+    // stylesForProperty maps a property to its type for the colour.
+    const propertyName = prop.name
     if (prop.propertyDef) {
       return {
         prop,
@@ -115,6 +121,7 @@ function isLong(prop: PropertyItem): boolean {
           :mode="'display'"
           :property-def="row.propertyDef"
           :property-name="row.propertyName"
+          :entity-type="entityType"
           :attachments="row.prop.attachments"
           :max="row.prop.max"
         />

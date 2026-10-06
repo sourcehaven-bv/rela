@@ -14,9 +14,11 @@ describe('viewFieldRoutingHint', () => {
       propType: 'concept_status',
       values: ['stable'],
     }
+    // propertyName is the property, not its type: labels resolve per
+    // property, so the type name would show raw values.
     expect(viewFieldRoutingHint(field)).toEqual({
       kind: 'enum-list',
-      propertyName: 'concept_status',
+      propertyName: 'status',
     })
   })
 
