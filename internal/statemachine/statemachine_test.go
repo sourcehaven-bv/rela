@@ -190,6 +190,25 @@ func TestCompile_RejectsTransitionsOnListProperty(t *testing.T) {
 	}
 }
 
+// TestCompile_RejectsPropertyDefaultOffEntry pins that a property default the
+// machine cannot enter at fails at boot instead of failing every defaulted
+// create (BUG-ZD4PIN). A default equal to the entry value is fine.
+func TestCompile_RejectsPropertyDefaultOffEntry(t *testing.T) {
+	for _, tc := range []struct {
+		def     string
+		wantErr bool
+	}{{"approved", true}, {"in-review", false}} {
+		m := snapshotMeta()
+		et := m.Entities["snapshot"]
+		et.Properties["status"] = metamodel.PropertyDef{Type: "snapshot-status", Default: tc.def}
+		m.Entities["snapshot"] = et
+		_, err := Compile(m)
+		if tc.wantErr != (err != nil) || (err != nil && !strings.Contains(err.Error(), "is not the entry value")) {
+			t.Errorf("default %q: err = %v, wantErr %v", tc.def, err, tc.wantErr)
+		}
+	}
+}
+
 func TestCompile_NoTransitions_Empty(t *testing.T) {
 	m := &metamodel.Metamodel{
 		Types:    map[string]metamodel.CustomType{"plain": {Values: []string{"a", "b"}}},
