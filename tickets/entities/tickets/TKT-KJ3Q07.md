@@ -36,7 +36,8 @@ prefilled, plus the anchor link `scope` already adds.
 - Cards whose target is not offered by the anchor, or that have no target,
 appear in a trailing "Other" column that is shown only when it is not empty. No
 card is hidden silently.
-- Column header colour from the target, when a colour source exists.
+- Column header label and colour from relation paths on the target
+  (`has_status.titel`, `has_status.kleur`, TKT-DA9C0L).
 - Swimlanes from a relation are out of scope.
 
 ## Acceptance criteria

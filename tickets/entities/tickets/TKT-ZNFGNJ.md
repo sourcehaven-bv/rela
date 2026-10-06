@@ -42,11 +42,7 @@ sort key), `category` (an enum such as open, active, waiting or done) and
 - An orderable relation `parent --offers_status--> status` (parent being an
 initiative, project and so on) that selects and orders the columns for that
 parent. A template is then just a preset of these edges.
-- Recommended: keep a plain enum `category` on the task, kept in sync from
-the linked status. Validations, CalDAV completion, `condition:` expressions and
-scripts then keep working on a property. Decide whether rela should offer this
-as a feature ("derived property from a relation target") instead of leaving it
-to an automation.
+- Properties of the status are read through the relation (relation paths, RES-8CKUNJ). Nothing is copied onto the task, and compatibility with enum-based logic is not a goal.
 
 ### Interaction with existing features
 
@@ -64,13 +60,13 @@ Survey of develop at `2f7579199`. "Today" is the enum-property behaviour.
 | Form picker | `RelationPicker` is single-select at `max_outgoing: 1`; candidates are every entity of the type; `FormRelation` has no Go `default` key (the SPA reads one that is silently dropped) | Scoped candidates (only what the parent offers), a working default (the parent's first status) |
 | Cardinality | `max_outgoing`/`min_outgoing` are analysis-only (`cardinality.go:216`) | Enforce single-valued at write time, or define what a board does with 0 or 2 targets |
 | Styles and badges | `styles:` keyed by enum type; page `badge:` must be a property | Colour from the target entity; depends on a colour property type (TKT-28FRME, FEAT-8OTJVW) |
-| Transitions | state machines only on enum custom types (`statemachine/`); `_transitions` only for those | Decide whether transitions apply to relation re-targeting, or stay on the derived `category` |
+| Transitions | state machines only on enum custom types (`statemachine/`); `_transitions` only for those | Open: allowed moves as edges between statuses, checked on `replace`, or no transitions in the first iteration |
 | Automations | `relation_created`/`relation_removed` triggers; a re-point fires remove plus create | A "relation re-targeted from X to Y" trigger, or document the pair |
 | Validations, `condition:` | `related()` works in `when_condition`, list and sidebar conditions, next actions and MCP | Mostly covered by `related()`; `key_props` in next actions is property-only |
 | Dashboard and search | breakdown counts `properties[group_by]`; query syntax has no relation predicates | Relation-aware breakdown and query predicate; compare TKT-AIEGHU |
 | Gantt, calendar | tooltips refuse relations; `filter_controls` are validated but not rendered | Low priority; note only |
-| CalDAV | completion is a property (`caldav_mapping.go`) | Keep it on the derived `category` |
-| Computed properties | cannot read relations (`computed.go:119`) | Needed if the derived `category` should be a computed property rather than an automation |
+| CalDAV | completion is a property (`caldav_mapping.go`) | Read `has_status.categorie` through a relation path |
+| Computed properties | cannot read relations (`computed.go:119`) | Not needed: relation paths are read at request time |
 
 ### Missing capabilities, in order of importance
 
@@ -102,15 +98,13 @@ not offer? Hiding it silently is not acceptable; an "Other" column or a
 validation warning is.
 - A task under two parents: which parent's column set applies? (Likely the
 page's anchor; the status itself is global, so no conflict.)
-- Should rela support "derived property from relation target" generically,
-so the existing property machinery (styles, state machines, CalDAV, search)
-keeps working unchanged?
+- Settled in RES-8CKUNJ: no derived or copied property. Views read the status through relation paths.
 - Is the generic name `column_relation` right, or should the kanban accept a
 `columns_from: {relation, anchor_relation, order_by}` block?
 
 ### Scope
 
-In scope: the design, a decision on the derived-category approach, and a set of
+In scope: the design, a decision on how views read status properties, and a set of
 follow-up tickets (one per missing capability) with acceptance criteria.
 
 Out of scope: implementation, and multi-valued relations on boards (tags).

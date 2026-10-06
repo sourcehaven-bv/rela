@@ -2,6 +2,7 @@
 id: RES-8CKUNJ
 type: research
 title: 'Relation-backed status: how should boards and views use a single-valued status relation?'
+summary: Status as an entity with typed relation paths (has_status.kleur) read at request time; boards and lists take columns from the relation. Copying status properties onto the task was rejected.
 status: in-progress
 ---
 
@@ -41,8 +42,13 @@ operation.
 Automations can `set` a property on `relation_created`, but nothing updates the
 tasks when the status entity itself changes.
 - Prior art: the future concept `extended-property-system` (validated) lists
-  "property inheritance from related entities" next to rollups (IDEA-001).
-  Option C below is the narrowest form of that inheritance.
+"property inheritance from related entities" next to rollups (IDEA-001).
+- `related(entity, path, {constraints})` (FEAT-RELTRV, RES-RELTRV) gives
+EXISTS predicates with SQL pushdown. Value access (`related(...).prop`) was
+rejected there for two reasons: host functions may not return records (RR-93UN),
+and a third of the relations are multi-target, so a property through them has no
+single type. Neither reason applies to a relation that is single-valued
+(`max_outgoing: 1`) and single-target (`to: [status]`).
 - `RelationPicker` offers every entity of the target type. `FormRelation`
 has no Go `default` key, although the SPA reads one.
 
@@ -60,7 +66,7 @@ is a schema change and a deploy. The "enabled" list is UI-only, so nothing stops
 a task from holding a value its parent does not show.
 - Effort: S to M (a kanban `columns_from_property` on the anchor).
 
-### B. Status entity, every feature made relation-aware
+### B. Status entity, each feature made relation-aware separately
 
 Status becomes an entity. Each feature in the Context list gains a
 relation-backed variant: `group_by` relation, sort by related property, colour
@@ -72,93 +78,103 @@ needing a join at read time. Sorting and filtering by a related property need
 SQL pushdown on postgres (FEAT-R012DX) or they degrade to in-memory work.
 - Effort: XL.
 
-### C. Status entity plus materialised lookup properties (recommended)
+### C. Status entity plus materialised lookup properties (rejected)
 
-Status becomes an entity, as in B. rela gains one generic metamodel feature, a
-**lookup property**: a read-only property whose value is copied from the target
-of a single-valued relation and kept in sync on write.
+Copy selected properties of the status (for example `categorie`) onto the task
+and keep them in sync, so that property-driven features keep working unchanged.
+
+Rejected. A status carries more than one value (name, colour, order, category,
+description, WIP limit), and views need several of them at once. Copying a
+subset duplicates data and still leaves the rest unreachable. Compatibility with
+existing property-based logic (`status == 'gereed'`) is not a goal: config that
+uses the new model is written for the new model.
+
+### D. Status entity plus relation paths (recommended)
+
+Status becomes an entity. rela gains one generic, read-time primitive: a
+**relation path** `<relation>.<property>`, allowed only when the relation is
+single-valued (`max_outgoing: 1`) and single-target. The path is typed
+statically from the target property, which avoids the soundness problems
+RES-RELTRV found for multi-target relations.
+
+A path is accepted wherever view config takes a property name:
 
 ```yaml
-taak:
-  properties:
-    status_categorie:
-      type: lookup
-      relation: has_status       # must be max_outgoing: 1
-      property: categorie        # enum on the status type; type is inherited
-    status_volgorde:
-      type: lookup
-      relation: has_status
-      property: volgorde
+sort:
+  - property: has_status.volgorde
+group_by:
+  relation: has_status            # sections are the target entities
+card:
+  fields:
+    - property: has_status.titel
+styles_from: has_status.kleur     # badge colour from the target
 ```
 
-Because the value is stored on the task, every property-driven feature works
-unchanged: `styles:`, state machines, CalDAV completion, `condition:`, search
-`prop:`, sort, dashboard breakdown, `key_props`, validations and scripts.
-
-Only the features that must see the status *entity* need new work:
+The server resolves a path with a join to the target, pushed down to SQL on
+postgres in the same way as `related()`. The relation-backed board and list
+build on the same resolution:
 
 1. **Kanban columns from a relation.** A kanban `columns_from` block names
 the relation (`has_status`) and, optionally, the anchor relation that offers and
-orders the columns (`offers_status`, read in `_order_out` order). Without an
-anchor, columns are all targets ordered by a target property.
-2. **Drag re-targets the relation.** A drop sends one `replace` operation
-for the single-valued relation instead of a properties PATCH.
-3. **Per-column create** prefills the relation (`rel.has_status=<id>`, which
-already works through query params).
-4. **"Other" column.** Tasks whose status the anchor does not offer appear
-in a trailing column, shown only when it is not empty.
-5. **List `group_by` relation**, with section order and label taken from
-the target. This is the same mechanism as point 1.
-6. **Scoped picker candidates and a working relation `default`**, so the
-form offers only the anchor's statuses and preselects the first.
+orders the columns (`offers_status`, in `_order_out` order). Without an anchor,
+the columns are all targets, ordered by a path.
+2. **Drag re-targets the relation** with one `replace` operation.
+3. **Per-column create** prefills the relation (`rel.has_status=<id>`).
+4. **"Other" column** for tasks whose status the anchor does not offer,
+shown only when it is not empty.
+5. **List `group_by` relation**, with the same column resolution.
+6. **Scoped picker candidates and a working relation `default`.**
 7. **Relation filter controls by id**, not title.
 
-Write-time enforcement of `max_outgoing: 1` and an atomic `replace` operation
-are prerequisites for both the lookup and the board.
+Places that today need a property value read the path instead: CalDAV completion
+(`has_status.categorie`), dashboard breakdown, search `prop:`, gantt tooltip
+fields and next-action `key_props`.
 
-- Pros: most of rela keeps working with no changes. The new surface is
-small and generic (lookup properties also help other models, such as an owner's
-department). Postgres can index and sort lookup values like any property.
-- Cons: write amplification. Editing a status entity's `categorie` rewrites
-every linked task, in one transaction on the status write. Lookup values are
-denormalised, so a store edited outside rela (a file-backed project edited by
-hand) can drift until `rela migrate` or `analyze` repairs it. A lookup also
-copies data across an ACL boundary: a reader who may see the task but not the
-status entity still sees the copied value. Either a lookup is visible only
-when the source property is visible to that reader, or lookups are limited to
-targets that every reader of the source may read.
+- Pros: no duplicated data. Every property of the status is reachable. One
+typed primitive replaces the per-feature work of option B.
+- Cons: every read that uses a path costs a join. ACL applies to the target:
+when a reader may not read the status entity, the path resolves to empty, and
+grouping puts the task under "Other" for that reader.
 - Effort: L in total, in independent tickets.
 
 ## Recommendation
 
-Option C. It turns roughly ten view changes into one metamodel feature and a
-handful of kanban and list changes. Option A remains a fallback when per-status
-metadata is not needed.
+Option D.
 
-Settled within option C:
+Settled within option D:
 
 - **Global status set, per-parent selection.** Statuses are global entities.
 A parent selects and orders them through an orderable relation. A template is a
 preset of those edges. Private statuses per parent are out of scope, because a
 global `volgorde` keeps sorting meaningful across parents.
-- **Category drives behaviour.** State machines, CalDAV, validations and
-scripts read the lookup `categorie` (open, active, waiting, done). They never
-read the status entity's title.
-- **Transitions stay on the category.** No transition model for relation
-re-targeting in the first iteration.
+- **No compatibility layer.** Config that adopts relation-backed status reads
+the relation or a path. Nothing keeps an enum `status` in sync.
 - **A re-point is one `replace` operation.** With write-time enforcement of
 `max_outgoing: 1`, a second `add` is rejected rather than silently kept.
 - **Column order:** the anchor's `_order_out` when an anchor relation is
-configured, otherwise the target's order property.
+configured, otherwise a path on the target.
+
+Open:
+
+- **Transitions.** State machines are defined on enum types. For status
+entities, allowed moves could be edges between statuses (for example `status
+--may_move_to--> status`), checked on `replace`. Alternatively there are no
+transitions in the first iteration.
+- **Paths in conditions.** `entity.has_status.categorie == 'gereed'` would be
+sound for single-valued single-target relations. `related()` already covers it
+as a predicate, so this is not needed for the first iteration.
 
 Follow-up tickets, in dependency order:
 
-1. Write-time `max_outgoing` enforcement plus a `replace` operation.
-2. Lookup properties.
-3. Kanban `columns_from` relation (drag, per-column create, Other column).
-4. List `group_by` on a relation.
-5. Scoped relation picker candidates and `FormRelation.default`.
-6. Relation filter controls by id.
+1. TKT-65LVAK: write-time `max_outgoing` enforcement plus a `replace`
+operation.
+2. TKT-DA9C0L: relation paths in view config.
+3. TKT-KJ3Q07: kanban `columns_from` relation (drag, per-column create,
+Other column).
+4. TKT-JO8PN3: list `group_by` on a relation.
+5. TKT-2EN0G5: scoped relation picker candidates and `FormRelation.default`.
+6. TKT-ZKPA1E: relation filter controls by id.
 
-Colour from the status entity depends on a colour property type (TKT-28FRME).
-Until then, a lookup of an enum `kleur` property with `styles:` covers it.
+Colour from the status entity uses `has_status.kleur`. A real colour property
+type (TKT-28FRME) is needed for free colours; until then `kleur` is an enum
+mapped through `styles:`.

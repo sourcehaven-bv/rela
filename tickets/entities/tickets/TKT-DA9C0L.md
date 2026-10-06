@@ -1,7 +1,7 @@
 ---
 id: TKT-DA9C0L
 type: ticket
-title: 'Lookup properties: copy a property from a single-valued relation target'
+title: 'Relation paths: read a property of a single-valued relation target in view config'
 kind: enhancement
 priority: high
 effort: l
@@ -10,45 +10,52 @@ status: backlog
 
 ## Description
 
-Add **lookup properties**: a read-only property whose value is copied from a
-property of the target of a single-valued relation, stored and indexed like any
-other property. Part of RES-8CKUNJ.
+Add **relation paths**: `<relation>.<property>` as a value reference in view
+config, allowed only when the relation is single-valued (`max_outgoing: 1`)
+and single-target. Part of RES-8CKUNJ (option D).
+
+The path is typed statically from the target property. RES-RELTRV rejected
+value access through relations because multi-target relations have no single
+property type and host functions may not return records. A single-valued,
+single-target relation has neither problem, and the path lives in view config,
+not in the condition language.
 
 ```yaml
-taak:
-  properties:
-    status_categorie:
-      type: lookup
-      relation: has_status   # must have max_outgoing: 1
-      property: categorie    # type is inherited from the target property
+sort:
+  - property: has_status.volgorde
+card:
+  fields:
+    - property: has_status.titel
+columns:
+  - property: has_status.categorie
 ```
 
-Because the value is stored on the source entity, every property-driven feature
-keeps working unchanged: `styles:`, state machines, CalDAV completion,
-`condition:`, search `prop:`, sort, dashboard breakdown, next-action
-`key_props`, validations and scripts.
-
-This extends FEAT-IB6S20 (computed properties over the same entity) to one
-relation hop. It is the narrowest form of "property inheritance from related
-entities" in the `extended-property-system` future concept.
+Values are read at request time through a join to the target. Nothing is
+copied onto the source entity: a status has several properties (name, colour,
+order, category, description) and views need several of them at once.
 
 ## Scope
 
-- Schema load validates that the relation is single-valued (depends on the
-write-time cardinality ticket) and that the target property exists.
-- Recompute on: relation add, remove and `replace` on the source; and an
-update of the looked-up property on any target, which rewrites every source
-entity in the same transaction.
-- Lookups are never user-editable on any write path.
-- ACL: decide whether a lookup is visible only when the reader may read the
-source property on the target, or whether lookups are restricted to targets
-every reader of the source may read. Do not leak target data by copying it.
-- `rela analyze` (or `rela migrate`) detects and repairs drift in stores edited
-outside rela.
+- Config load accepts a path wherever a property name is accepted in: list
+  columns, `sort` / `default_sort`, kanban card fields, view section fields,
+  gantt tooltip fields, calendar event fields, dashboard `group_by`, CalDAV
+  `completion.status_property` and next-action `key_props`. Load rejects a
+  path over a multi-valued or multi-target relation, and an unknown target
+  property.
+- Badge colour from a path (`styles_from: has_status.kleur` or similar) for
+  enum-typed target properties.
+- Search syntax: `prop:has_status.categorie=gereed`.
+- Postgres: sort and filter on a path push down as a join. Count queries per
+  request stay bounded (FEAT-R012DX).
+- ACL: the target is read through the reader's visibility. A hidden target
+  resolves to empty.
+- Out of scope: paths in the Lua condition language (`related()` covers
+  predicates), and paths of more than one hop.
 
 ## Acceptance criteria
 
-- Changing a task's status updates its lookup values in the same write.
-- Changing a status entity's `categorie` updates all linked tasks.
-- A lookup can be used as `column_property`, `group_by`, sort key, style key
-and state-machine property, with no other config change.
+- A task list sorts by `has_status.volgorde` and shows `has_status.titel` as a
+  column, on both file and postgres backends.
+- Renaming a status changes what every view shows, with no write to tasks.
+- A path over a relation without `max_outgoing: 1` fails config load with a
+  message naming the relation.
