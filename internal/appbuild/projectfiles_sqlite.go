@@ -11,9 +11,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config/configsql"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -221,18 +224,39 @@ func relativeConfigPath(dir, abs string) (string, error) {
 	return filepath.ToSlash(rel), nil
 }
 
+// ConfigImportOptions tunes [StoreProjectConfig] and [LoadProjectConfig].
+type ConfigImportOptions struct {
+	// Source names where the files came from. It is used for the audit
+	// record only.
+	Source string
+	// Audit receives the run's single audit record.
+	//
+	// Nil: rejected. Storing config bypasses the entitymanager, so this
+	// record is the only trace of it in the audit log.
+	Audit audit.Audit
+}
+
 // LoadProjectConfig replaces the config the project's database carries
-// with the config collected from dir, and returns the stored paths.
+// with the config collected from dir, and returns the stored paths. An
+// empty opts.Source defaults to dir.
 //
-// It opens the database, so it fails while another process — a server or
-// the desktop app — has the project open. A running instance would not see
+// It opens the database, so it fails while another process (a server or
+// the desktop app) has the project open. A running instance would not see
 // the new config until it reloads anyway.
-func LoadProjectConfig(ctx context.Context, fsys storage.FS, paths *project.Context, dir string) ([]string, error) {
+func LoadProjectConfig(
+	ctx context.Context, fsys storage.FS, paths *project.Context, dir string, opts ConfigImportOptions,
+) ([]string, error) {
+	if opts.Audit == nil {
+		return nil, errors.New("appbuild: LoadProjectConfig requires an audit sink")
+	}
 	files, err := CollectProjectConfig(fsys, dir)
 	if err != nil {
 		return nil, err
 	}
-	return StoreProjectConfig(ctx, paths, files)
+	if opts.Source == "" {
+		opts.Source = dir
+	}
+	return StoreProjectConfig(ctx, paths, files, opts)
 }
 
 // StoreProjectConfig replaces the config the project's database carries
@@ -242,7 +266,16 @@ func LoadProjectConfig(ctx context.Context, fsys storage.FS, paths *project.Cont
 //
 // It refuses a project that keeps its data in markdown files: creating its
 // database would switch it to an empty one. Import the data first.
-func StoreProjectConfig(ctx context.Context, paths *project.Context, files map[string][]byte) ([]string, error) {
+//
+// Like [ImportMarkdownData] it is an operator-shell raw write, so every run
+// that reaches the database leaves one audit record. The record carries the
+// source and the file count, never file names or contents.
+func StoreProjectConfig(
+	ctx context.Context, paths *project.Context, files map[string][]byte, opts ConfigImportOptions,
+) ([]string, error) {
+	if opts.Audit == nil {
+		return nil, errors.New("appbuild: StoreProjectConfig requires an audit sink")
+	}
 	if KeepsMarkdownData(paths) {
 		return nil, errors.New("the project keeps its data in markdown files and has no database; " +
 			"import the data first (rela db load --data) so the database does not open empty")
@@ -256,7 +289,9 @@ func StoreProjectConfig(ctx context.Context, paths *project.Context, files map[s
 	if err != nil {
 		return nil, err
 	}
-	if err := loader.Replace(ctx, files); err != nil {
+	err = loader.Replace(ctx, files)
+	recordConfigImport(ctx, opts, len(files), err)
+	if err != nil {
 		return nil, err
 	}
 	names := make([]string, 0, len(files))
@@ -265,6 +300,27 @@ func StoreProjectConfig(ctx context.Context, paths *project.Context, files map[s
 	}
 	slices.Sort(names)
 	return names, nil
+}
+
+// recordConfigImport writes the audit record of one config import. The
+// replace is one transaction, so a failed run wrote nothing. The principal
+// is the caller's, as for [ImportMarkdownData]; an unstamped ctx shows up as
+// unknown rather than as an invented identity.
+func recordConfigImport(ctx context.Context, opts ConfigImportOptions, count int, err error) {
+	source := opts.Source
+	if source == "" {
+		source = "an unnamed source"
+	}
+	summary := fmt.Sprintf("config import from %s: %d files", source, count)
+	if err != nil {
+		summary = fmt.Sprintf("config import from %s FAILED, nothing written: %s", source, err)
+	}
+	opts.Audit.Record(audit.Record{
+		Time:      time.Now().UTC(),
+		Op:        audit.OpConfigImport,
+		Principal: principal.From(ctx),
+		Summary:   summary,
+	})
 }
 
 // PutProjectConfigFile stores one config file in the project's database,

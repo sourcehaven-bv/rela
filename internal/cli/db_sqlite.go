@@ -132,11 +132,11 @@ func runDBLoad(ctx context.Context, from string, data, force bool) error {
 	if err != nil {
 		return err
 	}
+	sink, err := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
+	if err != nil {
+		return fmt.Errorf("build audit sink: %w", err)
+	}
 	if data {
-		sink, sinkErr := audit.NewFilesystem(filepath.Join(paths.CacheDir, "audit"))
-		if sinkErr != nil {
-			return fmt.Errorf("build audit sink: %w", sinkErr)
-		}
 		sum, importErr := appbuild.ImportMarkdownData(ctx, fs, paths, from,
 			appbuild.DataImportOptions{Force: force, Audit: sink})
 		if importErr != nil {
@@ -144,7 +144,8 @@ func runDBLoad(ctx context.Context, from string, data, force bool) error {
 		}
 		fmt.Printf("Imported %s.\n", sum)
 	}
-	names, err := appbuild.StoreProjectConfig(ctx, paths, files)
+	names, err := appbuild.StoreProjectConfig(ctx, paths, files,
+		appbuild.ConfigImportOptions{Source: from, Audit: sink})
 	if err != nil {
 		return err
 	}
