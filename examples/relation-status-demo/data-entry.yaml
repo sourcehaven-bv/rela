@@ -69,6 +69,9 @@ pages:
     tabs:
       - { id: bord, label: Bord, kanban: initiatief_bord, scope: { relation: bestaat_uit, direction: outgoing } }
 navigation:
-  - list: initiatieven
-  - kanban: alle_taken
-  - list: statussen
+  - label: Initiatieven
+    list: initiatieven
+  - label: Alle taken
+    kanban: alle_taken
+  - label: Statussen
+    list: statussen

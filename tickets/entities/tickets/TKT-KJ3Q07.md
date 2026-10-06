@@ -46,3 +46,11 @@ card is hidden silently.
 columns in that order, plus "Other" when needed.
 - Dragging a card changes its status edge and nothing else.
 - Reordering the anchor's `offers_status` reorders the columns.
+
+## Demo
+
+Branch `demo/relation-backed-status` has a prototype: `columns_from` config
+and validation (`validateKanbanColumnsFrom`), `useRelationColumns.ts`, the
+Other column and drag via a full-linkage PATCH. Project:
+`examples/relation-status-demo`. Not in the demo: per-column create, write-time
+cardinality, and scoped picker candidates.
