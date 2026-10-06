@@ -84,16 +84,16 @@ function switchTo(p: ProjectSummary) {
   gap: 4px;
   width: 100%;
   padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius, 6px);
-  background: var(--bg-card);
-  color: var(--text);
+  border: 1px solid var(--rl-color-border);
+  border-radius: var(--radius-md);
+  background: var(--rl-color-bg);
+  color: var(--rl-color-text);
   font-size: 12px;
   cursor: pointer;
 }
 
 .switcher-btn:hover {
-  border-color: var(--primary);
+  border-color: var(--rl-color-accent);
 }
 
 .switcher-name {
@@ -116,10 +116,10 @@ function switchTo(p: ProjectSummary) {
   margin: 0;
   padding: 4px;
   list-style: none;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius, 6px);
-  box-shadow: var(--shadow, 0 2px 8px rgba(0, 0, 0, 0.15));
+  background: var(--rl-color-bg-raised);
+  border: 1px solid var(--rl-color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
 }
 
 .switcher-item {
@@ -130,13 +130,13 @@ function switchTo(p: ProjectSummary) {
   border: none;
   border-radius: 4px;
   background: none;
-  color: var(--text);
+  color: var(--rl-color-text);
   text-align: left;
   cursor: pointer;
 }
 
 .switcher-item:hover {
-  background: var(--primary-light);
+  background: var(--rl-color-bg-hover);
 }
 
 .switcher-item.active {
@@ -149,7 +149,7 @@ function switchTo(p: ProjectSummary) {
 
 .item-root {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--rl-color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

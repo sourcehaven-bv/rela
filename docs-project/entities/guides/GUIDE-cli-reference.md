@@ -121,7 +121,7 @@ rela create <type> [flags]
 
 | Flag              | Description                                                                    |
 | ----------------- | ------------------------------------------------------------------------------ |
-| `-s, --status`    | Entity status (default: `draft`)                                               |
+| `-s, --status`    | Entity status (default: the schema's declared default, if any)                 |
 | `-p, --priority`  | Entity priority                                                                |
 | `--id`            | Custom entity ID (required for string ID types, auto-generated for sequential) |
 | `-P, --property`  | Set a property (format: key=value, can be repeated)                            |
@@ -1202,7 +1202,8 @@ rela import data.txt --format json
 **Behavior Notes:**
 
 - **Validation**: All entities are validated against the metamodel before import
-- **Auto-generated properties**: If `status` is not provided, the entity type's default is used
+- **Default status**: If `status` is not provided, the schema's declared default is used. Without one,
+  `status` stays unset (see [Default status](metamodel.md#default-status))
 - **Duplicate handling**: Without `--update`, importing an existing entity ID fails
 - **Update mode**: `--update` does a full replacement, not a merge (existing properties not in the import file are removed)
 - **Relations**: Relations referencing entities not in the graph (and not in the import) will fail
@@ -1559,13 +1560,12 @@ rela template init requirement decision --force
 
 **Generated Template Format:**
 
-Entity templates include all properties from the metamodel with their default values:
+Entity templates include the properties that declare a default in the metamodel, with that value.
+Properties without a declared default are left out:
 
 ```markdown
 ---
-title: ""
 status: draft
-priority: medium
 ---
 
 # Description

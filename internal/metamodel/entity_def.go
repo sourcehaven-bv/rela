@@ -101,40 +101,40 @@ func (e *EntityDef) GetPlural(typeName string) string {
 	return typeName + "s"
 }
 
-// GetDefaultStatus returns the default status value for this entity type.
-// It checks the entity's status property definition for a custom type or inline values.
-// If no explicit default exists, returns the first valid value, or "draft" as final fallback.
+// GetDefaultStatus returns the status a new entity of this type starts in,
+// as declared by the schema, or "" when the schema declares none. See
+// [DeclaredDefault]: rela never invents a status, so a type with no status
+// property, or one with no declared default, gets "" and the caller leaves
+// the property unset (BUG-ZD4PIN).
 func (e *EntityDef) GetDefaultStatus(m *Metamodel) string {
 	statusProp, ok := e.Properties["status"]
 	if !ok {
-		// No status property defined, use standard default
-		return "draft"
+		return ""
 	}
+	return DeclaredDefault(statusProp, m)
+}
 
-	// Check for explicit default in property definition
-	if statusProp.Default != "" {
-		return statusProp.Default
+// DeclaredDefault returns the value the schema declares for a new entity's
+// property, or "" when it declares none. Only config counts, in this order:
+// the property's `default:`, else its named type's `initial:` (a state
+// machine's entry value), else that type's `default:`. The type order
+// matches the state machine's entry value; statemachine.Compile rejects a
+// property default that differs from it, so a defaulted create is a legal
+// entry. There is no fallback to a first enum value or a zero value.
+func DeclaredDefault(prop PropertyDef, m *Metamodel) string {
+	if prop.Default != "" {
+		return prop.Default
 	}
-
-	// Check for inline enum values
-	if len(statusProp.Values) > 0 {
-		return statusProp.Values[0]
+	if m == nil {
+		return ""
 	}
-
-	// Check for custom type
-	if statusProp.Type != "" && statusProp.Type != "status" && statusProp.Type != "string" {
-		if customType, ok := m.Types[statusProp.Type]; ok {
-			if customType.Default != "" {
-				return customType.Default
-			}
-			if len(customType.Values) > 0 {
-				return customType.Values[0]
-			}
+	if customType, ok := m.Types[prop.Type]; ok {
+		if customType.Initial != "" {
+			return customType.Initial
 		}
+		return customType.Default
 	}
-
-	// Standard "status" type - use "draft" as default
-	return "draft"
+	return ""
 }
 
 // RankingTitleProperty names the property search ranking may treat as e's

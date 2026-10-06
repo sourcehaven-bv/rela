@@ -171,6 +171,57 @@ func TestGenerateEntityTemplate(t *testing.T) {
 	}
 }
 
+// TestGenerateEntityTemplate_OnlyDeclaredDefaults pins that a generated
+// template carries only defaults the schema declares. A template's values are
+// applied to every create, so an invented value (first enum value, false, 0,
+// "") would reach entities the operator never configured (BUG-ZD4PIN).
+func TestGenerateEntityTemplate_OnlyDeclaredDefaults(t *testing.T) {
+	paths := setupTestPaths(t)
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"task": {
+				Label: "Task",
+				Properties: map[string]metamodel.PropertyDef{
+					"title":    {Type: "string", Required: true},
+					"status":   {Type: "wf"},
+					"phase":    {Type: "machine"},
+					"kind":     {Type: "enum", Values: []string{"a", "b"}},
+					"size":     {Type: "enum", Values: []string{"s", "m"}, Default: "m"},
+					"done":     {Type: "boolean"},
+					"estimate": {Type: "integer"},
+					"tier":     {Type: "undeclared"},
+				},
+			},
+		},
+		Types: map[string]metamodel.CustomType{
+			"wf":         {Values: []string{"open", "closed"}, Default: "closed"},
+			"machine":    {Values: []string{"x", "y"}, Default: "y", Initial: "x"},
+			"undeclared": {Values: []string{"gold", "silver"}},
+		},
+	}
+	templatePath := paths.entityTemplatePath("task")
+	if _, err := generateEntityTemplate(testFS(), templatePath, meta, "task", false); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	content, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := markdown.ParseDocument(string(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"status": "closed", "phase": "x", "size": "m"}
+	if len(doc.Frontmatter) != len(want) {
+		t.Errorf("frontmatter = %v, want exactly %v", doc.Frontmatter, want)
+	}
+	for k, v := range want {
+		if doc.Frontmatter[k] != v {
+			t.Errorf("%s = %v, want %v", k, doc.Frontmatter[k], v)
+		}
+	}
+}
+
 func TestGenerateEntityTemplate_NoOverwrite(t *testing.T) {
 	paths := setupTestPaths(t)
 

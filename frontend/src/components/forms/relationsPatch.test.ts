@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  mergeRelationsFields,
   addressedEntry,
   buildRelationsPatch as buildRelationsPatchRaw,
   confirmRelations,
@@ -368,5 +369,28 @@ describe('confirmed edges across saves', () => {
     const first = reshapeLegacyToModern(legacy, types, confirmed, {})
     // The save failed: nothing is confirmed, so the retry carries it again.
     expect(reshapeLegacyToModern(legacy, types, confirmed, {})).toEqual(first)
+  })
+})
+
+describe('mergeRelationsFields', () => {
+  const feat1 = { type: 'feature', id: 'FEAT-1' }
+  const feat2 = { type: 'feature', id: 'FEAT-2' }
+
+  it('keeps both deltas when the two bodies share a key', () => {
+    const merged = mergeRelationsFields(
+      { contained_in: { add: [feat1] } },
+      { contained_in: { add: [feat2], remove: [{ id: 'FEAT-3' }] } }
+    )
+    expect(merged.contained_in).toEqual({ add: [feat1, feat2], remove: [{ id: 'FEAT-3' }] })
+  })
+
+  it('keeps keys only one side names', () => {
+    const merged = mergeRelationsFields({ a: { add: [feat1] } }, { b: { add: [feat2] } })
+    expect(merged).toEqual({ a: { add: [feat1] }, b: { add: [feat2] } })
+  })
+
+  it('lets a full replacement win', () => {
+    const merged = mergeRelationsFields({ a: { add: [feat1] } }, { a: { data: [feat2] } })
+    expect(merged.a).toEqual({ data: [feat2] })
   })
 })

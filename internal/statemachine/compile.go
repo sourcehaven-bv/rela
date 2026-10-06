@@ -69,6 +69,14 @@ func Compile(meta *metamodel.Metamodel, opts ...Option) (*Set, error) {
 						"state machines require a single-valued property", etName, propName, pd.Type))
 				continue
 			}
+			// A property default that is not the machine's entry value can
+			// never be used: every create it fills in fails EnforceCreate.
+			// Reject at boot, as for a missing entry value (BUG-ZD4PIN).
+			if entry := set.machines[pd.Type].entry; pd.Default != "" && entry != "" && pd.Default != entry {
+				problems = append(problems, fmt.Sprintf(
+					"entity %q property %q: default %q is not the entry value %q of state machine %q; "+
+						"creates must enter at the entry value", etName, propName, pd.Default, entry, pd.Type))
+			}
 			if set.propType[etName] == nil {
 				set.propType[etName] = map[string]string{}
 			}

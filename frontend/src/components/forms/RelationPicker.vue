@@ -824,7 +824,7 @@ onBeforeUnmount(() => {
 .face-hint {
   margin-left: 0.35rem;
   font-size: 0.72rem;
-  color: var(--muted-text);
+  color: var(--rl-color-text-muted);
 }
 
 .search-wrapper {
