@@ -147,6 +147,13 @@ export class EntityPage extends BasePage {
       .first();
   }
 
+  /** Assert the enum badges in a display section read exactly `texts`, in
+   *  order. Badge text is the schema label when one is configured, else the
+   *  raw value. */
+  async expectSectionBadges(heading: string, texts: string[]) {
+    await expect(this.sectionByHeading(heading).locator('.badge')).toHaveText(texts);
+  }
+
   /** A property's row in a section, marked by SectionEditForm. */
   private sectionFieldRow(heading: string, property: string) {
     return this.sectionByHeading(heading).locator(`.property-row[data-property="${property}"]`);

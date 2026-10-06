@@ -2255,6 +2255,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           <PropertyDisplay
             v-else-if="section.display === 'properties'"
             :properties="mapFieldsToProperties(section.fields)"
+            :entity-type="entry.type"
           >
             <!-- Comment affordance per field (TKT-FIO205). Filled only here:
                  the same component renders list cells and kanban cards, where
@@ -2465,6 +2466,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     :model-value="rowDisplayValue(ent, row.field)"
                     :mode="'display'"
                     :property-name="row.hint.propertyName"
+                    :entity-type="ent.type"
                     class="field-value"
                   />
                 </div>
@@ -2524,6 +2526,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     :model-value="rowDisplayValue(ent, row.field)"
                     :mode="'display'"
                     :property-name="row.hint.propertyName"
+                    :entity-type="ent.type"
                   />
                 </template>
               </span>
@@ -2720,6 +2723,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         :model-value="cell.value"
                         :mode="'display'"
                         :property-name="cell.propertyName"
+                        :entity-type="child.entity.type"
                       />
                     </span>
                   </div>
