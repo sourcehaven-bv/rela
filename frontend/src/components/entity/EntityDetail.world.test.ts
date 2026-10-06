@@ -555,8 +555,11 @@ describe('EntityDetail world binding', () => {
       rendersProof(w)
       expect(button(w, 'Edit')).toBeDefined()
       await pressE(w)
+      // The world rides along: the form loads the entity's relations in it.
       expect(routerPush).toHaveBeenCalledWith({
-        name: 'form-edit', params: { id: 'policy-edit', entityId: 'POL-1@nl' },
+        name: 'form-edit',
+        params: { id: 'policy-edit', entityId: 'POL-1@nl' },
+        query: { world: 'site-nl' },
       })
     })
 
@@ -566,7 +569,9 @@ describe('EntityDetail world binding', () => {
       rendersProof(w)
       await pressE(w)
       expect(routerPush).toHaveBeenCalledWith({
-        name: 'form-edit', params: { id: 'policy-edit', entityId: 'POL-1' },
+        name: 'form-edit',
+        params: { id: 'policy-edit', entityId: 'POL-1' },
+        query: { world: 'published' },
       })
     })
 
@@ -653,7 +658,9 @@ describe('EntityDetail world binding', () => {
       expect(edit.exists()).toBe(true)
       await edit.trigger('click')
       expect(routerPush).toHaveBeenCalledWith({
-        name: 'form-edit', params: { id: 'control-edit', entityId: 'CTL-1@published' },
+        name: 'form-edit',
+        params: { id: 'control-edit', entityId: 'CTL-1@published' },
+        query: { world: 'published' },
       })
     })
 

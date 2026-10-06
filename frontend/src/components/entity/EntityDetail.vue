@@ -21,7 +21,7 @@ import { useAutoSave } from '@/composables/useAutoSave'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { ActionConfig, Command } from '@/types'
 import { getEditFormId } from '@/types'
-import { entityDetailHref } from '@/utils/entityRoute'
+import { editFormRoute, entityDetailHref } from '@/utils/entityRoute'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
 import { computeActionAllowed } from '@/utils/affordancesWarning'
 import { isInputFocused } from '@/utils/dom'
@@ -335,13 +335,13 @@ function handleDuplicated(created: { id: string; type: string; _self?: string })
 // screen). The template then renders nothing rather than a link to a page
 // that would refuse the write, and before the entry loads.
 //
-// The form opens on the ADDRESS of the row on screen, face included, so
-// what you look at is what you edit is what you save.
+// The form opens on the ADDRESS of the row on screen, face included, and in
+// the page's world, so what you look at is what you edit is what you save.
 const editTarget = computed<RouteLocationRaw | undefined>(() => {
   const address = servedRef.value
   if (address === null || !editFormId.value || isInaccessible.value || !canUpdate.value)
     return undefined
-  return { name: 'form-edit', params: { id: editFormId.value, entityId: address } }
+  return editFormRoute(editFormId.value, address, worldParam.value)
 })
 
 // The entry's content section gets a custom renderer (mermaid + interactive
@@ -968,7 +968,7 @@ function editEntity() {
   }
   const address = servedRef.value
   if (address === null) return
-  router.push({ name: 'form-edit', params: { id: editFormId.value, entityId: address } })
+  router.push(editFormRoute(editFormId.value, address, worldParam.value))
 }
 
 async function requestDelete() {
@@ -1428,7 +1428,7 @@ function onCellLinkClick(
 // neighbour's RESOLVED face, and its bare id would edit a state the page is
 // not showing.
 function navigateToEdit(formId: string, row: { id: string; _self?: string }) {
-  router.push({ name: 'form-edit', params: { id: formId, entityId: entityRef(row) } })
+  router.push(editFormRoute(formId, entityRef(row), worldParam.value))
 }
 
 // Look up a schema PropertyDef for an entity type's property. Returns

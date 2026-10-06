@@ -62,6 +62,11 @@ export interface FacedApi {
     id: string,
     relation: string,
   ): Promise<Array<{ id: string; face?: string; editable?: boolean }>>;
+  /** Link `plural/id` to `to` through `relation`, outgoing. */
+  link(plural: string, id: string, relation: string, to: string): Promise<void>;
+  /** The peer ids of `relation` on `plural/id` as `world` serves them. The
+   *  relations route serves the default world only, so this reads the entity. */
+  outgoingIds(plural: string, id: string, relation: string, world: string): Promise<string[]>;
 }
 
 function readFacedApi(request: APIRequestContext, serverUrl: string): FacedApi {
@@ -106,6 +111,15 @@ function readFacedApi(request: APIRequestContext, serverUrl: string): FacedApi {
     },
     async listIncoming(plural, id, relation) {
       return (await call("GET", `${plural}/${id}/relations/${relation}?direction=incoming`)).json();
+    },
+    async link(plural, id, relation, to) {
+      await call("POST", `${plural}/${id}/relations/${relation}`, { id: to });
+    },
+    async outgoingIds(plural, id, relation, world) {
+      const entity: { relations?: Record<string, string[]> } = await (
+        await call("GET", withWorld(`${plural}/${id}`, world))
+      ).json();
+      return [...(entity.relations?.[relation] ?? [])].sort();
     },
   };
 }
