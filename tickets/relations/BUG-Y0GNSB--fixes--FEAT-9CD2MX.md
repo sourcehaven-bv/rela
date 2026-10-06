@@ -1,6 +1,6 @@
 ---
 from: BUG-Y0GNSB
-type: fixes
+relation: fixes
 to: FEAT-9CD2MX
 ---
 

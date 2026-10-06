@@ -1,5 +1,5 @@
 ---
 from: BUG-DFLTCHAIN
-type: adds-measure
+relation: adds-measure
 to: AM-world-default-face-name-resolves
 ---

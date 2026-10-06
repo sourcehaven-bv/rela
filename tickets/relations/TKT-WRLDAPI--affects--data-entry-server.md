@@ -1,5 +1,5 @@
 ---
 from: TKT-WRLDAPI
-type: affects
+relation: affects
 to: data-entry-server
 ---

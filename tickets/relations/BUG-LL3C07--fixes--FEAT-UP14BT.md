@@ -1,6 +1,6 @@
 ---
 from: BUG-LL3C07
-type: fixes
+relation: fixes
 to: FEAT-UP14BT
 ---
 

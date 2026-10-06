@@ -1,5 +1,5 @@
 ---
 from: TKT-STATSQL
-type: affects
+relation: affects
 to: store-backends
 ---
