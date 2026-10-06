@@ -111,6 +111,24 @@ describe('MilkdownEditor', () => {
     w.unmount()
   })
 
+  it('keeps the cursor when the parent echoes a reformatted but equal body', async () => {
+    // A save echoes the stored body, which the store may reformat. Reloading on
+    // that used to move the cursor to the end of the document mid-edit.
+    const w = await mountEditor({ modelValue: 'one\n\ntwo\n\nthree\n' })
+    const view = (
+      w.vm as unknown as {
+        editorViewForTest: { state: EditorState; dispatch: (tr: unknown) => void }
+      }
+    ).editorViewForTest
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 7)))
+    const before = view.state.doc
+    await w.setProps({ modelValue: 'one\n\ntwo\n\nthree' })
+    await flushPromises()
+    expect(view.state.doc).toBe(before)
+    expect(view.state.selection.from).toBe(7)
+    w.unmount()
+  })
+
   it('mounts the mention menu hidden', async () => {
     const w = await mountEditor()
     expect(w.find('.mention-menu').exists()).toBe(true)

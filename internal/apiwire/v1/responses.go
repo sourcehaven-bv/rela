@@ -21,19 +21,7 @@ type Entity struct {
 	Self         string              `json:"_self,omitempty"`
 	Actions      map[string]bool     `json:"_actions,omitempty"`
 	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
-	// FieldAffordances carries per-field write affordances on per-entity
-	// GET responses. Sparse: only fields whose verdict deviates from the
-	// permissive default appear. Hidden fields are omitted from
-	// `Properties` AND from this map entirely. Pointer semantics
-	// distinguish "absent on the wire" (nil pointer; list / mutation
-	// responses) from "present and empty" (`{}`; per-entity GET with no
-	// deviations under nop resolver — closed-world signal matching the
-	// `_actions` precedent).
-	FieldAffordances *map[string]FieldAffordance `json:"_fields,omitempty"`
-	// RelationAffordances carries per-relation-type affordances on
-	// per-entity GET responses. Same face / closed-world semantics
-	// as FieldAffordances.
-	RelationAffordances *map[string]RelationAffordance `json:"_relations,omitempty"`
+	EditState
 	// Redacted names the properties withheld from `Properties` by
 	// field-level ACL (`visible:`) on THIS response (DEC-T0XIWQ). It is the
 	// field-level sibling of Inaccessible, which says the same thing
@@ -169,6 +157,71 @@ type Entity struct {
 	// leave it nil. Each warning has a stable `code`, an RFC 6901
 	// JSON Pointer `path`, and a human-readable `detail`.
 	Warnings []Warning `json:"warnings,omitempty"`
+}
+
+// EditState groups the per-entity fields an edit surface needs and a read
+// surface ignores. It is embedded in [Entity], so its fields serialize flat
+// beside the others. The grouping is by purpose and does not shrink the wire
+// shape: its fields are still promoted onto Entity. It also keeps Entity's
+// own exported field count under the plimsoll cap, which is why adding an
+// edit-only field here is preferred to adding it on Entity.
+type EditState struct {
+	// FieldAffordances carries per-field write affordances on per-entity
+	// GET responses. Sparse: only fields whose verdict deviates from the
+	// permissive default appear. Hidden fields are omitted from
+	// `Properties` AND from this map entirely. Pointer semantics
+	// distinguish "absent on the wire" (nil pointer; list / mutation
+	// responses) from "present and empty" (`{}`; per-entity GET with no
+	// deviations under nop resolver — closed-world signal matching the
+	// `_actions` precedent).
+	FieldAffordances *map[string]FieldAffordance `json:"_fields,omitempty"`
+	// RelationAffordances carries per-relation-type affordances on
+	// per-entity GET responses. Same face / closed-world semantics
+	// as FieldAffordances.
+	RelationAffordances *map[string]RelationAffordance `json:"_relations,omitempty"`
+	// Versions carries one opaque token per visible field, so an autosave can
+	// state which value it last saw (TKT-2VDVHF). The client echoes a token in
+	// [Preconditions]; the server recomputes it from the stored row and
+	// answers 412 when they differ. Tokens exist only for fields the caller
+	// can read: a redacted property has no token, because a token of a hidden
+	// value would let a caller test guesses against it. Present on the
+	// single-entity GET and PATCH responses and on a view's entry, nil
+	// elsewhere.
+	Versions *FieldVersions `json:"_versions,omitempty"`
+}
+
+// FieldVersions holds one version token per field of an entity. A token is
+// opaque: clients compare it for equality and echo it back, nothing else.
+type FieldVersions struct {
+	Properties map[string]string `json:"properties"`
+	Content    string            `json:"content"`
+	// Relations covers the entity's visible outgoing edges on its face as one
+	// set, because a PATCH replaces relation lists rather than single edges.
+	// Empty on a view's entry, whose edges are not the set a PATCH checks.
+	Relations string `json:"relations,omitempty"`
+}
+
+// Preconditions names, per field a PATCH writes, the version token the client
+// based its edit on. A field the PATCH does not write may not appear. Absent
+// fields are unchecked, so a PATCH without preconditions behaves as before.
+type Preconditions struct {
+	Properties map[string]string `json:"properties,omitempty"`
+	Content    *string           `json:"content,omitempty"`
+	Relations  *string           `json:"relations,omitempty"`
+}
+
+// FieldConflicts lists the preconditions that failed, per field.
+type FieldConflicts struct {
+	Properties map[string]Conflict `json:"properties,omitempty"`
+	Content    *Conflict           `json:"content,omitempty"`
+	Relations  *Conflict           `json:"relations,omitempty"`
+}
+
+// Conflict is one failed precondition: the token the client sent and the
+// token of the stored value.
+type Conflict struct {
+	Expected string `json:"expected"`
+	Actual   string `json:"actual"`
 }
 
 // FieldAffordance describes per-field write / option affordances on
@@ -710,6 +763,13 @@ type Error struct {
 	Detail   string       `json:"detail,omitempty"`
 	Instance string       `json:"instance,omitempty"`
 	Errors   []FieldError `json:"errors,omitempty"`
+	// Conflicts and Versions are set on the 412 a PATCH with preconditions
+	// receives (TKT-2VDVHF). Conflicts lists the fields whose stored token
+	// differs from the precondition; it may be empty when another write won
+	// the race without touching those fields. Versions carries the current
+	// tokens of every visible field, so the client can retry without a GET.
+	Conflicts *FieldConflicts `json:"conflicts,omitempty"`
+	Versions  *FieldVersions  `json:"versions,omitempty"`
 	// Faces lists the addresses (`ID@face`) a `face_required` refusal of a
 	// bare id offers: the faces of the entity the caller may read, in
 	// declaration order. A client retries with one of them.

@@ -306,6 +306,9 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
 			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
 		},
+		readVisible: func(ctx context.Context, typeName string, ref entity.Ref) (*entity.Entity, bool, error) {
+			return app.visibleReader.addressRef(ctx, typeName, ref)
+		},
 		planEdges: edgeReader{
 			meta:    func() *metamodel.Metamodel { return app.State().Meta },
 			reader:  app.reader,
