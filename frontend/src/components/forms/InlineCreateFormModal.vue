@@ -73,7 +73,10 @@ const props = defineProps<{
    * a value the form cannot write is refused by the server rather than
    * dropped without a word (see `embeddedPrefill` on DynamicForm).
    */
-  prefill?: { properties: Record<string, unknown> }
+  prefill?: {
+    properties: Record<string, unknown>
+    relations?: Record<string, { id: string; type: string }[]>
+  }
 }>()
 
 const emit = defineEmits<{

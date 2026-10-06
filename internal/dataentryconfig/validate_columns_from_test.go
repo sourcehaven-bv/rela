@@ -81,3 +81,32 @@ func TestValidateConfig_KanbanColumnsFrom(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateListGroupBy_Relation(t *testing.T) {
+	tests := []struct {
+		name    string
+		groupBy ListGroupBy
+		wantErr string
+	}{
+		{name: "valid", groupBy: ListGroupBy{Relation: "in-category", OfferedBy: "offers-category", OrderBy: "name"}},
+		{name: "multi-valued", groupBy: ListGroupBy{Relation: "belongs-to"}, wantErr: "must declare max_outgoing: 1"},
+		{name: "with property", groupBy: ListGroupBy{Relation: "in-category", Property: "status"}, wantErr: "mutually exclusive"},
+		{name: "order_by without relation", groupBy: ListGroupBy{Property: "status", OrderBy: "name"}, wantErr: "need relation"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := tt.groupBy
+			cfg := &Config{Lists: map[string]List{"tasks": {EntityType: "ticket", GroupBy: &g}}}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, columnsFromMetamodel())
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}

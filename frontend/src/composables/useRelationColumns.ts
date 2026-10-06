@@ -5,7 +5,14 @@ import { useSchemaStore } from '@/stores'
 import { usePageStore } from '@/stores/pages'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { ORDER_PROPERTY_OUT } from '@/types/schema'
-import type { Entity, KanbanColumnsFrom, PageScope } from '@/types'
+import type { Entity, PageScope } from '@/types'
+
+/** Where columns or sections come from: a kanban's `columns_from`, or a relation `group_by`. */
+export interface RelationColumnsSource {
+  relation?: string
+  offered_by?: string
+  order_by?: string
+}
 
 /** The column for cards whose target is not among the board's columns. */
 export const OTHER_COLUMN = '__other__'
@@ -30,7 +37,7 @@ function orderValue(v: unknown): number {
  * every entity of the target type, ordered by `order_by` and then by title.
  */
 export function useRelationColumns(
-  columnsFrom: Ref<KanbanColumnsFrom | undefined>,
+  columnsFrom: Ref<RelationColumnsSource | undefined>,
   pageScope: Ref<PageScope | undefined>,
   worldParam: Ref<string | undefined>,
 ) {

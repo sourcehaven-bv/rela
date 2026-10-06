@@ -284,7 +284,14 @@ export type DateBucket = 'overdue' | 'today' | 'tomorrow' | 'next_7_days' | 'lat
  * `max_rows` already defaulted, so the SPA holds no copy of the default.
  */
 export interface ListGroupBy {
-  property: string
+  /** The property to group on. Absent when grouping on `relation`. */
+  property?: string
+  /** Groups on a single-valued relation: one section per target (TKT-JO8PN3). */
+  relation?: string
+  /** Relation from the page anchor that selects and orders the sections. */
+  offered_by?: string
+  /** Target property that orders the sections when there is no anchor. */
+  order_by?: string
   /** Restyles enum values. Every declared value still gets a section. */
   groups?: ListGroup[]
   /** Sorts a date property into relative sections. Exclusive with `groups`. */

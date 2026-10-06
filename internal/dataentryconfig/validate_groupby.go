@@ -81,8 +81,20 @@ func validateListGroupBy(
 		}
 	}
 
+	if g.Relation != "" {
+		if g.Property != "" {
+			errs = append(errs, prefix+": property and relation are mutually exclusive")
+		}
+		if len(g.Groups) > 0 || g.Buckets != "" {
+			errs = append(errs, prefix+": groups and buckets do not apply to a relation")
+		}
+		return append(errs, validateRelationColumns(prefix, entityType, g.Relation, g.OfferedBy, g.OrderBy, meta)...)
+	}
+	if g.OfferedBy != "" || g.OrderBy != "" {
+		errs = append(errs, prefix+": offered_by and order_by need relation")
+	}
 	if g.Property == "" {
-		return append(errs, prefix+": property is required")
+		return append(errs, prefix+": property or relation is required")
 	}
 	propDef, ok := entDef.Properties[g.Property]
 	if !ok {

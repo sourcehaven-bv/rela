@@ -27,8 +27,14 @@ import (
 //     (overdue, today, tomorrow, and so on). The SPA computes them in the
 //     reader's display time zone, because "today" is the reader's today.
 type ListGroupBy struct {
-	Property string      `yaml:"property" json:"property"`
-	Groups   []ListGroup `yaml:"groups,omitempty" json:"groups,omitempty"`
+	Property string `yaml:"property,omitempty" json:"property,omitempty"`
+	// Relation groups on a single-valued relation instead of a property:
+	// one section per target (TKT-JO8PN3). OfferedBy and OrderBy pick and
+	// order the sections exactly as on a kanban's `columns_from`.
+	Relation  string      `yaml:"relation,omitempty" json:"relation,omitempty"`
+	OfferedBy string      `yaml:"offered_by,omitempty" json:"offered_by,omitempty"`
+	OrderBy   string      `yaml:"order_by,omitempty" json:"order_by,omitempty"`
+	Groups    []ListGroup `yaml:"groups,omitempty" json:"groups,omitempty"`
 	// Buckets names the bucketing scheme. Only "relative" exists today.
 	Buckets string `yaml:"buckets,omitempty" json:"buckets,omitempty"`
 	// Labels overrides bucket titles by bucket key (see DateBucketKeys). A
@@ -54,6 +60,7 @@ type ListGroup struct {
 // a feature working badly rather than a key being ignored.
 var listGroupByKeys = map[string]bool{
 	"property": true, "groups": true, "buckets": true, "labels": true, "max_rows": true,
+	"relation": true, "offered_by": true, "order_by": true,
 }
 
 // UnmarshalYAML accepts the short form (a property name) and the mapping.

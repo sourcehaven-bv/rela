@@ -70,7 +70,7 @@ func TestValidateListGroupBy(t *testing.T) {
 			groupBy: &ListGroupBy{Property: "due", Buckets: "relative", Labels: map[string]string{"overdue": "Te laat", "today": "Vandaag"}},
 		},
 		{name: "datetime buckets", groupBy: &ListGroupBy{Property: "at", Buckets: "relative"}},
-		{name: "missing property", groupBy: &ListGroupBy{}, wantErr: "property is required"},
+		{name: "missing property", groupBy: &ListGroupBy{}, wantErr: "property or relation is required"},
 		{name: "unknown property", groupBy: &ListGroupBy{Property: "nope"}, wantErr: `property "nope" not in metamodel`},
 		{name: "list property", groupBy: &ListGroupBy{Property: "tags"}, wantErr: "is a list"},
 		{

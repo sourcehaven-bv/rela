@@ -2179,9 +2179,7 @@ func suggestRelation(name string, meta *metamodel.Metamodel) string {
 	return ""
 }
 
-// validateKanbanColumnsFrom checks a relation-backed board (TKT-KJ3Q07). The
-// relation must be single-valued and single-target, so a card sits in exactly
-// one column and the column type is known at load time.
+// validateKanbanColumnsFrom checks a relation-backed board (TKT-KJ3Q07).
 func validateKanbanColumnsFrom(kanbanID string, kanban Kanban, meta *metamodel.Metamodel) []string {
 	var errs []string
 	cf := kanban.ColumnsFrom
@@ -2194,40 +2192,46 @@ func validateKanbanColumnsFrom(kanbanID string, kanban Kanban, meta *metamodel.M
 	if kanban.SwimlaneProperty != "" {
 		errs = append(errs, fmt.Sprintf("kanban %q: swimlanes are not supported with columns_from", kanbanID))
 	}
-	rel, ok := meta.GetRelationDef(cf.Relation)
+	prefix := fmt.Sprintf("kanban %q: columns_from", kanbanID)
+	return append(errs, validateRelationColumns(prefix, kanban.EntityType, cf.Relation, cf.OfferedBy, cf.OrderBy, meta)...)
+}
+
+// validateRelationColumns checks the relation that a board's columns or a
+// list's sections come from. It must be single-valued and single-target, so a
+// row sits in exactly one column and the column type is known at load time.
+// offeredBy, when set, must point at that target type; orderBy must be one of
+// its properties.
+func validateRelationColumns(
+	prefix, entityType, relation, offeredBy, orderBy string, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	rel, ok := meta.GetRelationDef(relation)
 	if !ok {
-		return append(errs, fmt.Sprintf("kanban %q: columns_from.relation %q is not a relation type", kanbanID, cf.Relation))
+		return append(errs, fmt.Sprintf("%s: relation %q is not a relation type", prefix, relation))
 	}
-	if !slices.Contains(rel.From, kanban.EntityType) {
-		errs = append(errs, fmt.Sprintf("kanban %q: columns_from.relation %q does not start at %q",
-			kanbanID, cf.Relation, kanban.EntityType))
+	if !slices.Contains(rel.From, entityType) {
+		errs = append(errs, fmt.Sprintf("%s: relation %q does not start at %q", prefix, relation, entityType))
 	}
 	if maxOut := rel.GetMaxOutgoing(); maxOut == nil || *maxOut != 1 {
-		errs = append(errs, fmt.Sprintf("kanban %q: columns_from.relation %q must declare max_outgoing: 1",
-			kanbanID, cf.Relation))
+		errs = append(errs, fmt.Sprintf("%s: relation %q must declare max_outgoing: 1", prefix, relation))
 	}
 	if len(rel.To) != 1 {
-		return append(errs, fmt.Sprintf("kanban %q: columns_from.relation %q must have exactly one target type",
-			kanbanID, cf.Relation))
+		return append(errs, fmt.Sprintf("%s: relation %q must have exactly one target type", prefix, relation))
 	}
 	target := rel.To[0]
-	if cf.OfferedBy != "" {
-		offered, ok := meta.GetRelationDef(cf.OfferedBy)
+	if offeredBy != "" {
+		offered, ok := meta.GetRelationDef(offeredBy)
 		switch {
 		case !ok:
-			errs = append(errs, fmt.Sprintf("kanban %q: columns_from.offered_by %q is not a relation type",
-				kanbanID, cf.OfferedBy))
+			errs = append(errs, fmt.Sprintf("%s: offered_by %q is not a relation type", prefix, offeredBy))
 		case !slices.Contains(offered.To, target):
-			errs = append(errs, fmt.Sprintf("kanban %q: columns_from.offered_by %q does not point to %q",
-				kanbanID, cf.OfferedBy, target))
+			errs = append(errs, fmt.Sprintf("%s: offered_by %q does not point to %q", prefix, offeredBy, target))
 		}
 	}
-	if cf.OrderBy != "" {
-		targetDef, ok := meta.GetEntityDef(target)
-		if ok {
-			if _, has := targetDef.Properties[cf.OrderBy]; !has {
-				errs = append(errs, fmt.Sprintf("kanban %q: columns_from.order_by %q is not a property of %q",
-					kanbanID, cf.OrderBy, target))
+	if orderBy != "" {
+		if targetDef, ok := meta.GetEntityDef(target); ok {
+			if _, has := targetDef.Properties[orderBy]; !has {
+				errs = append(errs, fmt.Sprintf("%s: order_by %q is not a property of %q", prefix, orderBy, target))
 			}
 		}
 	}

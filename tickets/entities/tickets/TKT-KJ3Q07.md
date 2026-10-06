@@ -52,5 +52,7 @@ columns in that order, plus "Other" when needed.
 Branch `demo/relation-backed-status` has a prototype: `columns_from` config
 and validation (`validateKanbanColumnsFrom`), `useRelationColumns.ts`, the
 Other column and drag via a full-linkage PATCH. Project:
-`examples/relation-status-demo`. Not in the demo: per-column create, write-time
-cardinality, and scoped picker candidates.
+`examples/relation-status-demo`. The demo also broadcasts relation writes as `entity:changed` for both end
+types (`pumpStoreEvents`), and `EntityDetail` reloads on that event, so an
+open detail panel follows a move. Not in the demo: per-column create,
+write-time cardinality, and scoped picker candidates.

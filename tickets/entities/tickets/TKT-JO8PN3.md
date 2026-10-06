@@ -32,3 +32,10 @@ and boards agree on order and on the "Other" section.
 - A grouped list and the kanban for the same anchor show the same sections
 in the same order.
 - Creating from a section links the new entity to that section's target.
+
+## Demo
+
+Branch `demo/relation-backed-status`: `group_by: {relation, offered_by,
+order_by}` with validation shared with the kanban (`validateRelationColumns`).
+Sections come from `useRelationColumns`; Add from a section prefills the
+relation. Demo lists: `taken` and the `lijst` tab on the initiative page.

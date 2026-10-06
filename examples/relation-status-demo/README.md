@@ -14,4 +14,6 @@ rela-server -project . -port 8957
   ISO-audit offer different sets. A task whose status the initiative does not
   offer appears under "Other".
 - `/kanban/alle_taken`: every status, ordered by `volgorde`.
+- `/list/taken` and the initiative's `lijst` tab: tasks grouped by status
+  (`group_by: {relation: heeft_status}`). Add in a section prefills the status.
 - Moving a card replaces its `heeft_status` edge.

@@ -41,6 +41,32 @@ lists:
       - property: categorie
     default_sort:
       - property: volgorde
+  taken:
+    entity_type: taak
+    title: Taken per status
+    columns:
+      - property: titel
+      - relation: heeft_status
+        label: Status
+      - relation: bestaat_uit
+        direction: incoming
+        label: Initiatief
+    group_by:
+      relation: heeft_status
+      order_by: volgorde
+    create_form: taak
+    edit_form: taak
+  initiatief_taken:
+    entity_type: taak
+    title: Taken
+    columns:
+      - property: titel
+    group_by:
+      relation: heeft_status
+      offered_by: biedt_status
+      order_by: volgorde
+    create_form: taak
+    edit_form: taak
 kanbans:
   initiatief_bord:
     entity_type: taak
@@ -68,10 +94,13 @@ pages:
     label: Initiatief
     tabs:
       - { id: bord, label: Bord, kanban: initiatief_bord, scope: { relation: bestaat_uit, direction: outgoing } }
+      - { id: lijst, label: Lijst, list: initiatief_taken, scope: { relation: bestaat_uit, direction: outgoing } }
 navigation:
   - label: Initiatieven
     list: initiatieven
   - label: Alle taken
     kanban: alle_taken
+  - label: Taken per status
+    list: taken
   - label: Statussen
     list: statussen
