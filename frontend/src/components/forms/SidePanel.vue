@@ -141,8 +141,9 @@ onMounted(() => loadSidePanel())
             </dl>
           </template>
 
-          <!-- List display -->
-          <template v-else-if="section.display === 'list'">
+          <!-- List display. `related` (TKT-QO14GB) shows the same compact list
+               here: the panel is too narrow for trailing field values. -->
+          <template v-else-if="section.display === 'list' || section.display === 'related'">
             <ul class="entity-list">
               <li v-for="entity in section.entities" :key="entity.id">
                 <RouterLink class="entity-list-item" :to="entityTarget(entity)">

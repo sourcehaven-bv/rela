@@ -739,6 +739,15 @@ func queryGet(query map[string][]string, key string) string {
 	return ""
 }
 
+// setListHeaders sets the pagination headers of a list response: the Link
+// header (RFC 5988) and the X-Total-Count, X-Page and X-Per-Page counts.
+func setListHeaders(w http.ResponseWriter, r *http.Request, page, perPage, total int, plural string) {
+	addPaginationLinks(w, r, page, perPage, total, plural)
+	w.Header().Set("X-Total-Count", strconv.Itoa(total))
+	w.Header().Set("X-Page", strconv.Itoa(page))
+	w.Header().Set("X-Per-Page", strconv.Itoa(perPage))
+}
+
 func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	query := r.URL.Query()
 	page, perPage := parseV1Pagination(query)
@@ -763,8 +772,8 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 	// Bodies are opt-in for a collection (rowcontent.go): one read per
 	// distinct face on the page, never for the rows that were paged out.
 	if wantContent(query) {
-		if err := loadRowContent(r.Context(), a.Services().Store, entities); err != nil {
-			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, err))
+		if cErr := loadRowContent(r.Context(), a.Services().Store, entities); cErr != nil {
+			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, cErr))
 			return
 		}
 	}
@@ -824,6 +833,10 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
+	if !serveOwners(w, r, a, entities, data) {
+		return
+	}
+
 	resp := v1.ListResponse{
 		Data: data,
 		Meta: v1.ListMeta{
@@ -835,12 +848,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		Actions: a.affordances.computeCollectionActions(r.Context(), typeName),
 	}
 
-	// Add Link header for pagination (RFC 5988)
-	addPaginationLinks(w, r, page, perPage, total, plural)
-
-	w.Header().Set("X-Total-Count", strconv.Itoa(total))
-	w.Header().Set("X-Page", strconv.Itoa(page))
-	w.Header().Set("X-Per-Page", strconv.Itoa(perPage))
+	setListHeaders(w, r, page, perPage, total, plural)
 
 	if linkable != nil {
 		writeV1JSON(w, http.StatusOK, v1.LinkListResponse{
@@ -1483,6 +1491,7 @@ func (a *App) handleV1Schema(w http.ResponseWriter, r *http.Request) {
 			From:        def.From,
 			To:          def.To,
 			Symmetric:   def.Symmetric,
+			Owning:      def.Owning,
 			MinOutgoing: def.MinOutgoing,
 			MaxOutgoing: def.MaxOutgoing,
 			MinIncoming: def.MinIncoming,
@@ -1884,8 +1893,8 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	// Search rows are content-free (rowcontent.go); bodies are opt-in and
 	// bounded by the search result cap.
 	if wantContent(r.URL.Query()) {
-		if err := loadRowContent(r.Context(), a.Services().Store, entities); err != nil {
-			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, err))
+		if cErr := loadRowContent(r.Context(), a.Services().Store, entities); cErr != nil {
+			writeListPipelineError(w, r, fmt.Errorf("%w: %w", errListLoad, cErr))
 			return
 		}
 	}
@@ -1913,6 +1922,9 @@ func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 			row.World = worldProvenance(r.Context(), e)
 		}
 		data = append(data, row)
+	}
+	if !serveOwners(w, r, a, entities, data) {
+		return
 	}
 
 	resp := v1.LinkListResponse{

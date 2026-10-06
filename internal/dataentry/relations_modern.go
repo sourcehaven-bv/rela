@@ -512,6 +512,9 @@ func (h *writeHandler) writeCreateRelation(
 	if isMissingPeerCondition(err) {
 		return danglingPeerError(relType, ref.ID)
 	}
+	if errors.Is(err, entitymanager.ErrOwningRule) {
+		return owningRuleError(relType, err)
+	}
 	if !isSoftCondition(err) {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
@@ -522,7 +525,24 @@ func (h *writeHandler) writeCreateRelation(
 	// the store, skipping the workspace's pre-write validation. Safe
 	// because the EntityManager already ran the ACL above.
 	data := &store.RelationData{Properties: finalProps, Content: finalContent}
-	if _, sErr := h.store.CreateRelation(ctx, k, data); sErr != nil {
+	var sErr error
+	if meta := h.schema().Meta; metamodel.IsOwning(meta, relType) {
+		// The owning rules read other edges, so the check and the write share
+		// one transaction. Other types skip the store's write lock.
+		sErr = h.store.Tx(ctx, func(st store.Store) error {
+			if oErr := entitymanager.CheckOwningEdge(ctx, meta, st, k); oErr != nil {
+				return oErr
+			}
+			_, cErr := st.CreateRelation(ctx, k, data)
+			return cErr
+		})
+	} else {
+		_, sErr = h.store.CreateRelation(ctx, k, data)
+	}
+	if errors.Is(sErr, entitymanager.ErrOwningRule) {
+		return owningRuleError(relType, sErr)
+	}
+	if sErr != nil {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
 			Reason: "create_failed", Err: sErr,
@@ -674,6 +694,16 @@ func isSoftCondition(err error) bool {
 	}
 	// metamodel.ValidateRelation rejects type-allowlist failures.
 	return strings.Contains(err.Error(), "invalid relation:")
+}
+
+// owningRuleError builds the 422 for an edge that would break ownership
+// (TKT-QO14GB): the edge was not stored.
+func owningRuleError(relType string, err error) *structuralError {
+	return &structuralError{
+		Code:   "owning_rule",
+		Path:   "/relations/" + v1.JSONPointerEscape(relType) + "/data",
+		Detail: err.Error(),
+	}
 }
 
 // danglingPeerError builds the hard 422 returned when a relation write

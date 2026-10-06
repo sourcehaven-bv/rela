@@ -22,7 +22,7 @@ import { useSchemaStore } from '@/stores'
 import { useModalStack } from '@/composables/modalStack'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { useWorld } from '@/composables/useWorld'
-import { entityDetailHref } from '@/utils/entityRoute'
+import { ownedEntityHref } from '@/utils/entityRoute'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
 import type { Entity } from '@/types'
 import RlSpinner from 'rela-components/components/common/RlSpinner.vue'
@@ -160,12 +160,14 @@ function entityTypeLabel(type: string): string {
   return schemaStore.entityTypes.get(type)?.label || type
 }
 
+// An owned entity (TKT-QO14GB) opens on its owner's page, anchored at it.
+//
 // A modifier/middle click is the browser's to handle: it opens a tab from the
 // anchor's own href, and the palette deliberately STAYS OPEN so the user can
 // collect several entities into tabs without reopening it each time.
 function selectEntity(entity: Entity, event?: MouseEvent): void {
   if (event && shouldDeferToBrowser(event)) return
-  const href = entityDetailHref(entity)
+  const href = ownedEntityHref(entity)
   if (!href) return
   router.push(href)
   emit('close')
@@ -310,14 +312,17 @@ const showNoMatches = computed(
                  still counted by the arrow-key highlight, and nameless to a
                  screen reader. -->
             <RouterLink
-              v-if="entityDetailHref(entity)"
+              v-if="ownedEntityHref(entity)"
               class="cmdk-option-link"
-              :to="entityDetailHref(entity)"
+              :to="ownedEntityHref(entity)"
               tabindex="-1"
               @click="selectEntity(entity, $event)"
             >
               <span class="cmdk-type">{{ entityTypeLabel(entity.type) }}</span>
-              <span class="cmdk-title">{{ entityLabel(entity) }}</span>
+              <span class="cmdk-title"
+                >{{ entityLabel(entity)
+                }}<span v-if="entity._owner" class="cmdk-owner">in {{ entity._owner.title }}</span></span
+              >
               <span class="cmdk-id">{{ entity.id }}</span>
             </RouterLink>
             <span v-else class="cmdk-option-link">
@@ -444,6 +449,12 @@ const showNoMatches = computed(
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.cmdk-owner {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--rl-color-text-muted);
 }
 
 .cmdk-id {

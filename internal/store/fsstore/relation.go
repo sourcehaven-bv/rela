@@ -21,11 +21,7 @@ func (s *FSStore) GetRelation(ctx context.Context, k entity.RelationKey) (*entit
 	s.mu.RLock()
 	rm, ok := s.relations[keyOf(k)]
 	if !ok {
-		if id, revealed := store.RevealedFor(ctx, k.From, k.To); revealed {
-			if fam, marked := markedFamilyOf(s, id); marked {
-				rm, ok = fam.relations[keyOf(k)]
-			}
-		}
+		rm, ok = revealedRelation(ctx, s, k)
 	}
 	s.mu.RUnlock()
 
@@ -46,7 +42,7 @@ func (s *FSStore) ListRelations(ctx context.Context, q store.RelationQuery) iter
 		}
 		matches = append(matches, s.relations[key])
 	}
-	if q.EntityID != "" && q.EntityID == store.RevealedID(ctx) {
+	if store.Reveals(ctx, q.EntityID) {
 		matches = append(matches, revealedRelations(ctx, s, match)...)
 	}
 	s.mu.RUnlock()

@@ -6,6 +6,7 @@ import { useSchemaStore } from '@/stores'
 import { parseFilterQueryParams } from '@/utils/filters'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { isInputFocused } from '@/utils/dom'
+import { ownedEntityHref } from '@/utils/entityRoute'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useWorld } from '@/composables/useWorld'
 import { useDetailPanel } from '@/composables/useDetailPanel'
@@ -269,7 +270,12 @@ function focusInput() {
 // origin in useScopeNavigation; `q` is the *full* query string (including any
 // type:/prop: chips), so the backend's executeQuery reproduces the identical
 // ordered, possibly-mixed-type result.
+//
+// An owned hit (TKT-QO14GB) goes to its owner's page, anchored at the hit. It
+// carries no search scope: the owner is not one of the results, so prev/next
+// across them would start from a page outside the set.
 function resultTarget(entity: Entity): RouteLocationRaw {
+  if (entity._owner) return ownedEntityHref(entity)
   const scopeQuery: Record<string, string> = { from: 'search' }
   const full = fullSearchQuery.value
   if (full) scopeQuery.q = full
@@ -550,7 +556,10 @@ watch(
           >
             <span class="result-type">{{ getEntityTypeLabel(entity.type) }}</span>
             <span class="result-id">{{ entity.id }}</span>
-            <span class="result-title">{{ getEntityLabel(entity) }}</span>
+            <span class="result-title"
+              >{{ getEntityLabel(entity)
+              }}<span v-if="entity._owner" class="result-owner">in {{ entity._owner.title }}</span></span
+            >
           </RouterLink>
         </li>
       </ul>
@@ -825,6 +834,12 @@ watch(
   flex: 1;
   font-size: 15px;
   color: var(--rl-color-text);
+}
+
+.result-owner {
+  margin-left: 6px;
+  font-size: 13px;
+  color: var(--rl-color-text-muted);
 }
 
 @media (max-width: 768px) {

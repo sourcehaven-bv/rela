@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -159,10 +160,28 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	// belongs to that face; an identity-scoped one to the entity, whose only
 	// valid tail is the zero face (see requireRelationFaceFor).
 	r.FromFace = h.deps.cascadeTail(r.Type, r.FromFace)
-	if _, err := h.deps.Store.CreateRelation(ctx, r.Identity(), &store.RelationData{
-		Properties: r.Properties,
-		Content:    r.Content,
-	}); err != nil {
+	// This path writes the store directly, so it applies the owning rules
+	// itself (TKT-QO14GB), in one Tx with the write. Re-creating the
+	// identical owning edge passes the check and is the idempotent no-op
+	// below.
+	owning := metamodel.IsOwning(h.deps.Meta, r.Type)
+	write := func(st store.Store) error {
+		if err := CheckOwningEdge(ctx, h.deps.Meta, st, r.Identity()); err != nil {
+			return err
+		}
+		_, err := st.CreateRelation(ctx, r.Identity(), &store.RelationData{
+			Properties: r.Properties,
+			Content:    r.Content,
+		})
+		return err
+	}
+	var err error
+	if owning {
+		err = h.deps.Store.Tx(ctx, write)
+	} else {
+		err = write(h.deps.Store)
+	}
+	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return nil
 		}

@@ -9,8 +9,22 @@ import (
 // mutation responses (DEC-HWZHA write-with-warnings).
 type Warning = entity.Warning
 
+// EntityLinks says where a client links for an entity. [Entity] embeds it, so
+// its fields stay top-level on the wire.
+type EntityLinks struct {
+	// Self is the API address of the entity.
+	Self string `json:"_self,omitempty"`
+	// Owner names the entity this one is shown as part of, when it is owned
+	// through an `owning:` relation (TKT-QO14GB). A client links to the
+	// owner's page, anchored at this entity, instead of to its own page.
+	// Set on detail views, list rows and search rows only; omitted
+	// elsewhere and when there is no readable owner.
+	Owner *EntityOwner `json:"_owner,omitempty"`
+}
+
 // Entity is the JSON representation of an entity for API v1.
 type Entity struct {
+	EntityLinks
 	ID           string              `json:"id"`
 	Type         string              `json:"type"`
 	Title        string              `json:"_title,omitempty"`
@@ -18,7 +32,6 @@ type Entity struct {
 	Content      string              `json:"content,omitempty"`
 	Relations    map[string][]string `json:"relations,omitempty"`
 	Included     map[string]Entity   `json:"included,omitempty"`
-	Self         string              `json:"_self,omitempty"`
 	Actions      map[string]bool     `json:"_actions,omitempty"`
 	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
 	// FieldAffordances carries per-field write affordances on per-entity
@@ -313,6 +326,15 @@ type EntityWorld struct {
 	ChainPosition *int `json:"chain_position,omitempty"`
 }
 
+// EntityOwner is the owner an [Entity] is shown as part of. Title is the
+// owner's title as this principal may read it.
+type EntityOwner struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Title    string `json:"title"`
+	Relation string `json:"relation"`
+}
+
 // ListResponse is the response for listing entities.
 type ListResponse struct {
 	Data    []Entity        `json:"data"`
@@ -578,12 +600,15 @@ type PropertyDef struct {
 
 // RelationType is the JSON representation of a relation type.
 type RelationType struct {
-	Label       string                 `json:"label"`
-	Description string                 `json:"description,omitempty"`
-	From        []string               `json:"from"`
-	To          []string               `json:"to"`
-	Inverse     *InverseDef            `json:"inverse,omitempty"`
-	Symmetric   bool                   `json:"symmetric,omitempty"`
+	Label       string      `json:"label"`
+	Description string      `json:"description,omitempty"`
+	From        []string    `json:"from"`
+	To          []string    `json:"to"`
+	Inverse     *InverseDef `json:"inverse,omitempty"`
+	Symmetric   bool        `json:"symmetric,omitempty"`
+	// Owning marks a relation whose targets are shown as part of their
+	// source (TKT-QO14GB).
+	Owning      bool                   `json:"owning,omitempty"`
 	MinOutgoing *int                   `json:"min_outgoing,omitempty"`
 	MaxOutgoing *int                   `json:"max_outgoing,omitempty"`
 	MinIncoming *int                   `json:"min_incoming,omitempty"`
@@ -1279,11 +1304,15 @@ type ViewEntity struct {
 	// block would be noise on every row of every existing view.
 	World *EntityWorld `json:"_world,omitempty"`
 	// Self addresses the ROW this collection entity is, face included — the
-	// same contract as [Entity.Self]. Under a world a collection entity is a
+	// same contract as [EntityLinks.Self]. Under a world a collection entity is a
 	// neighbour's RESOLVED face, so a client that edits it in place (a row's
 	// inline edit, its Edit button) must write to this address and not to
 	// the bare id, or it edits a state the page is not showing.
 	Self string `json:"_self,omitempty"`
+	// Owner is the entity this row is shown as part of (TKT-QO14GB), set on
+	// the rows of a `display: related` section only. A client links the row
+	// to its owner's page, anchored at the row; see [EntityLinks.Owner].
+	Owner *EntityOwner `json:"_owner,omitempty"`
 }
 
 // ViewColumn represents a column definition.
@@ -1302,7 +1331,7 @@ type ViewRow struct {
 	Cells      []ViewCell `json:"cells"`
 	Content    string     `json:"content,omitempty"`
 	// Self addresses the ROW this entry describes, face included — the same
-	// contract as [Entity.Self]. See [ViewEntity.Self].
+	// contract as [EntityLinks.Self]. See [ViewEntity.Self].
 	Self string `json:"_self,omitempty"`
 }
 
