@@ -519,6 +519,7 @@ func sidebarPages(
 				wire.Relation = sc.Relation
 				wire.Direction = string(sc.ResolvedDirection(page.EntityType, meta))
 			}
+			wire.Links = pageTabLinks(cfg, meta, page.EntityType, tab)
 			tabs = append(tabs, wire)
 		}
 		out[id] = v1.SidebarPage{
@@ -977,6 +978,13 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		Create:   sectionCreateMenuToV1(headerCreateMenu(sections)),
 	}
 	resp.Entry.Owner = owner[result.Entry.ID]
+	// The entity page autosaves the entry's body and properties, so the
+	// entry carries their version tokens (TKT-2VDVHF). It has no relations
+	// token: the entry is serialized without the face-scoped neighbor filter
+	// a PATCH checks against, and the page does not write the entry's
+	// relations.
+	resp.Entry.Versions = fieldVersionsOf(&resp.Entry, h.schema().Meta)
+	resp.Entry.Versions.Relations = ""
 
 	for _, sec := range sections {
 		v1Sec := v1.ViewSection{

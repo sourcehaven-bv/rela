@@ -31,6 +31,11 @@ function parse(markdown: string): { type: string } {
   return parser.runSync(parser.parse(markdown)) as { type: string }
 }
 
+/** Reports whether two markdown strings mean the same document. */
+export function sameMeaning(a: string, b: string): boolean {
+  return a === b || isSemanticallyEqual(parse(a), parse(b))
+}
+
 /** What `guardWriteBack` decided, so a caller can report or count it. */
 export type WriteBackVerdict =
   /** The editor's output is byte-identical to what it was given. */

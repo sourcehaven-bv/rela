@@ -71,6 +71,10 @@ linters:
             - '!**/internal/mcp/server.go'
           allow:
             - log/slog
+            # Only as an io.Writer sink behind slog (rela-server
+            # --access-log=syslog), not as a logger; the reasons below do
+            # not apply to it. The longer allow wins over the `log` deny.
+            - log/syslog
           deny:
             - pkg: log
               desc: use log/slog instead of stdlib log; the stdlib log package is global mutable state with no levels and races with parallel tests

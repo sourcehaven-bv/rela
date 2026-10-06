@@ -66,6 +66,7 @@ function seed() {
       tabs: [{
         id: 'board', label: 'Board', view: 'kanban', target: 'taken_bord',
         scope: 'relation', relation: 'bestaat_uit', direction: 'outgoing',
+        links: [{ type: 'taak', relation: 'bestaat_uit', direction: 'outgoing' }],
       }],
     },
   })

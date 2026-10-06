@@ -138,7 +138,10 @@ body { font-family: var(--font); background: var(--bg); color: var(--text);
 .recent-item .name { font-weight: 500; font-size: 14px; }
 .recent-item .path { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);
   margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.theme-toggle { position: fixed; top: 16px; right: 16px; width: 36px; height: 36px;
+/* The page runs under a transparent macOS title bar; this strip is where
+   the window can be dragged. */
+.titlebar { position: fixed; top: 0; left: 0; right: 0; height: 28px; --wails-draggable: drag; }
+.theme-toggle { position: fixed; top: 36px; right: 16px; z-index: 1; width: 36px; height: 36px;
   border-radius: 50%%; border: 1px solid var(--border); background: var(--bg-card);
   color: var(--text); cursor: pointer; display: flex; align-items: center;
   justify-content: center; font-size: 16px; box-shadow: var(--shadow); transition: all 0.2s; }
@@ -153,6 +156,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text);
 </style>
 </head>
 <body>
+<div class="titlebar"></div>
 <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
   <span class="icon-sun">&#9788;</span>
   <span class="icon-moon">&#9790;</span>
@@ -233,9 +237,20 @@ body { font-family: var(--font); background: var(--bg); color: var(--text);
   %s
 </div>
 <!-- Wails v3 serves its runtime at /wails/runtime.js but, unlike v2, does NOT
-     inject it: a page that never requests it has no window.wails at all. The
-     shim below depends on it, so it must load first (no defer/module). -->
-<script src="/wails/runtime.js"></script>
+     inject it: a page that never requests it has no window.wails at all. -->
+<script>
+// The runtime is an ES module (it ends in an export statement), so a plain
+// <script src> throws a SyntaxError and window.wails is never set. A module
+// script runs after the classic scripts below, so they wait for this event.
+window.relaWailsReady = window.relaWailsReady || new Promise(function (resolve) {
+  if (window.wails && window.wails.Call) { resolve(); return; }
+  window.addEventListener("rela:wails-ready", function () { resolve(); }, { once: true });
+});
+</script>
+<script type="module">
+import "/wails/runtime.js";
+window.dispatchEvent(new Event("rela:wails-ready"));
+</script>
 <script>
 // --- Wails v3 compatibility shim -------------------------------------------
 // v2 injected window.go.main.Desktop.<Method> and window.runtime.EventsOn.
@@ -260,15 +275,25 @@ body { font-family: var(--font); background: var(--bg); color: var(--text);
   // The compiled v3 runtime assigns the whole @wailsio/runtime namespace to
   // window.wails, so Call.ByName is reachable as window.wails.Call.ByName.
   // (window._wails is a different, lower-level object: flags + invoke only.)
-  function rt() { return window.wails && window.wails.Call ? window.wails.Call : null; }
+  // Calls made at page load arrive before the runtime module has run, so
+  // each one waits for it, and gives up if it never loads.
+  function rt() {
+    var timeout = new Promise(function (_, reject) {
+      setTimeout(function () { reject(new Error("Wails runtime unavailable")); }, 5000);
+    });
+    return Promise.race([window.relaWailsReady, timeout]).then(function () {
+      if (!window.wails || !window.wails.Call) throw new Error("Wails runtime unavailable");
+      return window.wails.Call;
+    });
+  }
 
   var Desktop = {};
   METHODS.forEach(function (name) {
     Desktop[name] = function () {
-      var call = rt();
-      if (!call) return Promise.reject(new Error("Wails runtime unavailable"));
       var args = Array.prototype.slice.call(arguments);
-      return call.ByName.apply(call, ["main.Desktop." + name].concat(args));
+      return rt().then(function (call) {
+        return call.ByName.apply(call, ["main.Desktop." + name].concat(args));
+      });
     };
   });
 
@@ -281,9 +306,11 @@ body { font-family: var(--font); background: var(--bg); color: var(--text);
 function wailsEventsOn(name, handler) {
   if (window.runtime && window.runtime.EventsOn) {   // v2
     window.runtime.EventsOn(name, handler);
-  } else if (window.wails && window.wails.Events) {  // v3
-    window.wails.Events.On(name, handler);
+    return;
   }
+  window.relaWailsReady.then(function () {           // v3
+    if (window.wails && window.wails.Events) window.wails.Events.On(name, handler);
+  });
 }
 
 function toggleTheme() {

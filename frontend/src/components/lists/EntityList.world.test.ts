@@ -225,7 +225,7 @@ describe('EntityList world binding', () => {
 
     it('opens the edit form in the default world (the control)', async () => {
       await pressJThenE(await mountList())
-      expect(routerPush).toHaveBeenCalledWith('/form/policy-edit/POL-1')
+      expect(routerPush).toHaveBeenCalledWith({ name: 'form-edit', params: { id: 'policy-edit', entityId: 'POL-1' }, query: {} })
     })
 
     it('opens the edit form at the row\'s ADDRESS under a world', async () => {
@@ -242,7 +242,12 @@ describe('EntityList world binding', () => {
       mounted.push(wrapper)
       await flushPromises()
       await pressJThenE(wrapper)
-      expect(routerPush).toHaveBeenCalledWith('/form/policy-edit/POL-1@published')
+      // The world rides along: the form loads the row's relations in it.
+      expect(routerPush).toHaveBeenCalledWith({
+        name: 'form-edit',
+        params: { id: 'policy-edit', entityId: 'POL-1@published' },
+        query: { world: 'published' },
+      })
     })
   })
 

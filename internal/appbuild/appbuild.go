@@ -46,12 +46,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/datamigration/memmigstate"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate/kvstate"
 	"github.com/Sourcehaven-BV/rela/internal/scopes"
@@ -130,7 +132,7 @@ import (
 // method. The run-state backend is chosen here to match the job queue's reach,
 // the same per-recipe choice as [Services.MigState].
 //
-//plimsoll:max-exported-methods=35
+//plimsoll:max-exported-methods=36
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -174,6 +176,9 @@ type Services struct {
 	// exist, and the data-entry app serves no comment routes.
 	comments     *comments.Service
 	scriptEngine *script.Engine
+	// host is where writer runtimes read secrets and the AI and mail
+	// settings; see [SharedBase.hostConfigFor].
+	host         lua.HostConfig
 	searchCloser io.Closer
 	acl          acl.ACL
 	// aclDeclarative is set when buildACL constructs a Declarative; nil
@@ -357,6 +362,23 @@ func (s *Services) ScriptEngine() *script.Engine { return s.scriptEngine }
 // Config returns the project's data-entry config loader.
 func (s *Services) Config() config.Loader { return s.cfgLoader }
 
+// ProjectFiles returns the loader for the project's operator-authored files:
+// data-entry.yaml and the other root config, scripts/, actions/,
+// validations/, custom/ and apps/. Unlike [Services.Config] it always reads
+// the disk with os.Root containment, and on the sqlite build it also serves
+// the files the project's database carries (FEAT-UP14BT).
+func (s *Services) ProjectFiles() config.Loader {
+	if s.base != nil {
+		return s.base.cfg.projectFiles()
+	}
+	// A bundle built without SharedBase (tests) has no database config.
+	root := ""
+	if s.paths != nil {
+		root = s.paths.Root
+	}
+	return rootfs.New(root)
+}
+
 // State returns the .rela cache-directory KV (or a sentinel error-KV
 // when no cache dir is available).
 func (s *Services) State() state.KV { return s.stateKV }
@@ -420,14 +442,19 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 	if s.paths != nil {
 		root = s.paths.Root
 	}
-	return lua.ReadDeps{
+	deps := lua.ReadDeps{
 		VisibleReader: unrestrictedReader(s.store, s.worlds),
 		Tracer:        s.tracer,
 		Searcher:      s.searcher,
 		Meta:          s.meta,
 		ProjectRoot:   root,
+		Host:          s.host,
 		World:         s.worlds.DefaultWorld(),
 	}
+	if s.base != nil && s.base.cfg.projectConfig != nil {
+		deps.Files = s.base.cfg.projectConfig
+	}
+	return deps
 }
 
 // LuaReadDepsFor materializes a read bundle whose reads are ACL-bound to
@@ -1139,6 +1166,20 @@ type options struct {
 	// [New] takes the DSN from [Config.DatabaseURL], because a caller
 	// building a Config already decides where the data lives.
 	databaseURL string
+
+	// hostConfig builds where secrets and the AI and mail settings come
+	// from, given the assembled store's state. Nil means the project's .rela
+	// directory.
+	hostConfig func(state.KV) (HostConfig, error)
+}
+
+// HostConfig is where a project's secrets and AI and mail settings come
+// from. It is lua.HostConfig, restated so a caller of [WithHostConfig] need
+// not import the Lua runtime.
+type HostConfig interface {
+	File(name string) ([]byte, error)
+	Secrets(scriptPath string) (map[string]string, error)
+	Path() string
 }
 
 // WithACL overrides the auto-loaded ACL with the supplied
@@ -1175,6 +1216,14 @@ func WithDatabaseURL(dsn string) Option {
 	return func(o *options) { o.databaseURL = dsn }
 }
 
+// WithHostConfig replaces the .rela directory as the source of secrets and
+// the AI and mail settings. build runs once per assembled store, with that
+// store's state, so a source may keep settings in the project's database.
+// The desktop uses it to read secrets from the OS keychain.
+func WithHostConfig(build func(state.KV) (HostConfig, error)) Option {
+	return func(o *options) { o.hostConfig = build }
+}
+
 // resolveDatabaseURL decides which DSN [Discover] hands to [New]: an explicit
 // [WithDatabaseURL] wins, otherwise $RELA_DATABASE_URL. getenv is injected so
 // the precedence is testable without mutating process environment — which is
@@ -1207,8 +1256,8 @@ func resolveDatabaseURL(opts []Option, getenv func(string) string) string {
 // Separated from [buildACL] so the caller can open the store between
 // the two phases — v1's [acl.Declarative] needs a [acl.Graph] backed
 // by the store.
-func loadACLPolicy(projectRoot string) (*acl.Policy, error) {
-	policy, err := acl.LoadPolicy(filepath.Join(projectRoot, "acl.yaml"))
+func loadACLPolicy(cfg Config) (*acl.Policy, error) {
+	policy, err := readACLPolicy(cfg)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// File genuinely absent → caller falls back to NopACL by
@@ -1459,6 +1508,36 @@ type Config struct {
 	// Consumed only by the postgres build; empty (and ignored) in the
 	// FS/memory builds.
 	DatabaseURL string
+
+	// projectConfig is the source operator-authored config is read from:
+	// schema.yaml and its includes, acl.yaml, and every file [Services.Config]
+	// serves. nil means the files under Paths.Root.
+	//
+	// Unexported because only a recipe sets it, from a handle it opened: the
+	// sqlite recipe layers the project's files in front of the config its
+	// database carries (FEAT-UP14BT). It lives on Config rather than on
+	// [SharedBase] so a successor base built from [SharedBase.Config] — the
+	// schema hot-reload path — reads through the same source.
+	projectConfig config.Loader
+}
+
+// configLoader returns the loader project config is read through.
+func (c Config) configLoader() config.Loader {
+	if c.projectConfig != nil {
+		return c.projectConfig
+	}
+	return config.NewFSLoader(c.FS, c.Paths.Root)
+}
+
+// projectFiles returns the loader for operator-authored project files read
+// with containment: scripts, actions, validations, custom/ and apps/. It
+// differs from configLoader only without projectConfig, where it
+// reads the disk through os.Root rather than through c.FS.
+func (c Config) projectFiles() config.Loader {
+	if c.projectConfig != nil {
+		return c.projectConfig
+	}
+	return rootfs.New(c.Paths.Root)
 }
 
 // validate nil-checks the four build-agnostic collaborators. Each build's
@@ -1547,6 +1626,39 @@ func buildAt(
 		Audit:        auditSink,
 		DatabaseURL:  resolveDatabaseURL(opts, os.Getenv),
 	}, opts...)
+}
+
+// readACLPolicy reads acl.yaml from the project's config source: straight
+// from disk when the project has no other source, so the fs, memory and
+// postgres builds keep their exact behavior, and through the config loader
+// when a recipe supplied one.
+func readACLPolicy(cfg Config) (*acl.Policy, error) {
+	const name = "acl.yaml"
+	if cfg.projectConfig == nil {
+		return acl.LoadPolicy(filepath.Join(cfg.Paths.Root, name))
+	}
+	data, err := cfg.projectConfig.Load(context.Background(), name)
+	if err != nil {
+		return nil, err // preserves os.ErrNotExist for errors.Is
+	}
+	return acl.ParsePolicy(data, name)
+}
+
+// loadMetamodel loads schema.yaml, its includes and the migration check
+// from the project's config source. With a recipe-supplied loader the
+// metamodel is read through a read-only view of it, so a schema carried
+// only in the database loads like one on disk.
+func loadMetamodel(ctx context.Context, cfg Config) (*metamodel.Metamodel, error) {
+	fsys := cfg.FS
+	if cfg.projectConfig != nil {
+		view, err := config.NewStorageFS(ctx, cfg.projectConfig, cfg.Paths.Root)
+		if err != nil {
+			return nil, err
+		}
+		fsys = view
+	}
+	meta, _, err := metamodel.NewFSLoader(fsys, cfg.Paths.SchemaPath).Load(ctx)
+	return meta, err
 }
 
 // SharedBase holds the build-agnostic inputs resolved by [prepare] and
@@ -1682,6 +1794,19 @@ func NewSharedBase(cfg Config, opts ...Option) (*SharedBase, error) {
 // the project has no acl.yaml" — both end up NopACL, but only the
 // latter triggers the "consider adding an acl.yaml" warning an entry
 // point may render.
+// hostConfigFor returns the host config for one assembled store: the
+// [WithHostConfig] source, else the project's .rela directory.
+func (b *SharedBase) hostConfigFor(stateKV state.KV) (lua.HostConfig, error) {
+	if b.opts.hostConfig != nil {
+		host, err := b.opts.hostConfig(stateKV)
+		if err != nil {
+			return nil, fmt.Errorf("host config: %w", err)
+		}
+		return host, nil
+	}
+	return hostconfig.Dir(b.cfg.Paths.CacheDir), nil
+}
+
 func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -1699,13 +1824,13 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		// store-backed [acl.Graph] adapter and the store isn't open
 		// yet at this point in the build.
 		var err error
-		aclPolicy, err = loadACLPolicy(cfg.Paths.Root)
+		aclPolicy, err = loadACLPolicy(cfg)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	meta, _, err := metamodel.NewFSLoader(cfg.FS, cfg.Paths.SchemaPath).Load(context.Background())
+	meta, err := loadMetamodel(context.Background(), cfg)
 	if err != nil {
 		return nil, fmt.Errorf("load metamodel: %w", err)
 	}
@@ -1902,6 +2027,9 @@ type backgroundServices struct {
 	softDeleteStop func()
 	mailStop       func()
 	mail           *mailRuntime
+	// host is the host config the mail runtime was built from, kept for the
+	// writer runtimes Services builds later.
+	host lua.HostConfig
 }
 
 // startBackgroundServices launches the optional per-store subsystems: the
@@ -1913,6 +2041,7 @@ type backgroundServices struct {
 func startBackgroundServices(
 	base *SharedBase, st store.Store, stateKV state.KV, migState datamigration.StateStore,
 	cfgLoader config.Loader, versions store.VersionService, mgr *entitymanager.Manager, q jobs.Client,
+	host lua.HostConfig,
 ) backgroundServices {
 	cfg := base.cfg
 
@@ -1929,13 +2058,14 @@ func startBackgroundServices(
 	// here: nothing can enqueue until the declarative layer (TKT-U2R7GU)
 	// lands, and storing a handle no code reads would look wired when it is
 	// not. Only the stop function is retained, because Close genuinely uses it.
-	mailRuntime, mailStop := startMailRuntime(cfg.Paths)
+	mailRuntime, mailStop := startMailRuntime(host)
 
 	return backgroundServices{
 		gcStop:         gcStop,
 		softDeleteStop: softDeleteStop,
 		mailStop:       mailStop,
 		mail:           mailRuntime,
+		host:           host,
 	}
 }
 
@@ -1971,19 +2101,25 @@ func resolveACLAndRedactor(
 // Field-level `visible:` redaction applies here too (TKT-BUYEW1) — a Lua action
 // can send what it reads onward exactly as a scheduled job can, so it must not
 // see property values the same principal has redacted everywhere else.
-func cascadeReadDeps(
-	st store.Store, tr tracer.Tracer, searcher search.Searcher,
-	meta *metamodel.Metamodel, projectRoot string,
-	d *acl.Declarative, redactor visibility.FieldRedactor, w worlds.Compiled,
-) lua.ReadDeps {
+func (b *SharedBase) cascadeReadDeps(
+	st store.Store, tr tracer.Tracer, searcher search.Searcher, stateKV state.KV,
+	d *acl.Declarative, redactor visibility.FieldRedactor,
+) (lua.ReadDeps, error) {
+	host, err := b.hostConfigFor(stateKV)
+	if err != nil {
+		return lua.ReadDeps{}, err
+	}
+	w := b.worlds
 	return lua.ReadDeps{
 		VisibleReader: scriptEntityReader(st, d, redactor, w),
 		Tracer:        scriptTracer(tr, st, d, redactor, w),
 		Searcher:      searcher,
-		Meta:          meta,
-		ProjectRoot:   projectRoot,
+		Meta:          b.meta,
+		ProjectRoot:   b.cfg.Paths.Root,
+		Files:         b.cfg.projectFiles(),
+		Host:          host,
 		World:         w.DefaultWorld(),
-	}
+	}, nil
 }
 
 // backendOverrides are the services a recipe supplies because they come from
@@ -1995,11 +2131,6 @@ func cascadeReadDeps(
 // The zero value means "derive everything from the filesystem", which is what
 // the fs, memory and postgres recipes pass.
 type backendOverrides struct {
-	// projectConfig replaces the filesystem config loader. The sqlite recipe
-	// supplies one because its database may CARRY the project's config, which
-	// it layers behind the files.
-	projectConfig config.Loader
-
 	// migState replaces the file-backed migration record (TKT-XCJ0Y2).
 	// Supplied by the database recipes so a tenant's position lives with its
 	// data; nil selects the committed-file backend.
@@ -2030,13 +2161,20 @@ type backendOverrides struct {
 	schedulerState schedulerstate.Store
 }
 
-// configLoader returns the recipe's config loader, or the filesystem loader
-// when the recipe supplies none.
-func (o backendOverrides) configLoader(cfg Config) config.Loader {
-	if o.projectConfig != nil {
-		return o.projectConfig
+// tracerAndTemplater builds the tracer over st, titling nodes in world, and
+// the project's templater.
+func tracerAndTemplater(
+	st store.Store, world store.WorldScope, cfg Config,
+) (tracer.Tracer, templating.Templater, error) {
+	tr, err := tracer.New(st, world)
+	if err != nil { // coverage-ignore: invariant: the store is built and the default world is set
+		return nil, nil, fmt.Errorf("appbuild: tracer: %w", err)
 	}
-	return config.NewFSLoader(cfg.FS, cfg.Paths.Root)
+	templater, err := newTemplater(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return tr, templater, nil
 }
 
 // assemble builds the services bundle from an opened store.
@@ -2071,18 +2209,11 @@ func assemble(
 	}
 	// coverage-ignore-end
 
-	tr, err := tracer.New(st, base.worlds.DefaultWorld())
-	if err != nil { // coverage-ignore: invariant: the store is built above and the default world is set
-		return nil, fmt.Errorf("appbuild: tracer: %w", err)
+	tr, templater, err := tracerAndTemplater(st, base.worlds.DefaultWorld(), cfg)
+	if err != nil {
+		return nil, err
 	}
-	templater := templating.NewFSTemplater(cfg.FS, cfg.Paths)
-	cfgLoader := overrides.configLoader(cfg)
-
-	// Build the static lua read deps once — the ScriptRunner (automation
-	// cascades) is constructed with these.
-	readDeps := cascadeReadDeps(st, tr, searcher, base.meta, cfg.Paths.Root,
-		aclDeclarative, fieldRedactor, base.worlds)
-
+	cfgLoader := cfg.configLoader()
 	tw, err := CompileTransitions(base.meta, st, resolvedACL)
 	if err != nil {
 		return nil, fmt.Errorf("compile transitions: %w", err)
@@ -2129,6 +2260,13 @@ func assemble(
 			closeJobQueue(jobQueue)
 		}
 	}()
+
+	// Build the static lua read deps once — the ScriptRunner (automation
+	// cascades) is constructed with these.
+	readDeps, err := base.cascadeReadDeps(st, tr, searcher, stateKV, aclDeclarative, fieldRedactor)
+	if err != nil {
+		return nil, err
+	}
 
 	// Comments are keyed by target entity id, so the service must learn about
 	// renames and deletes. It rides the AliasRewriter hook rather than
@@ -2196,7 +2334,8 @@ func assemble(
 	// changes, warn on incompatible ones) and start the drift GC sweep
 	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
 	// per-assembled, like the search closer.
-	background := startBackgroundServices(base, st, stateKV, migState, cfgLoader, versions, mgr, jobQueue)
+	background := startBackgroundServices(
+		base, st, stateKV, migState, cfgLoader, versions, mgr, jobQueue, readDeps.Host)
 
 	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
@@ -2227,6 +2366,7 @@ func newServices(
 		softDeleteStop:  background.softDeleteStop,
 		mailStop:        background.mailStop,
 		mail:            background.mail,
+		host:            background.host,
 		fs:              cfg.FS,
 		paths:           cfg.Paths,
 		meta:            base.meta,

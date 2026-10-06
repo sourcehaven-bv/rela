@@ -33,6 +33,8 @@ import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useModalStack } from '@/composables/modalStack'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
+import { editFormRoute } from '@/utils/entityRoute'
+import { useWorld } from '@/composables/useWorld'
 import EntityDetail from '@/components/entity/EntityDetail.vue'
 import RlModal from 'rela-components/components/overlay/RlModal.vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'
@@ -62,8 +64,9 @@ function close() {
 // and the modal deliberately STAYS OPEN — closing it would drop the preview the
 // user was reading. A plain click still closes and routes in place.
 const fullPageTarget = computed(() => `/entity/${props.entityType}/${props.entityId}`)
+const { worldParam } = useWorld()
 const editFormTarget = computed(() =>
-  props.editForm ? `/form/${props.editForm}/${props.entityId}` : undefined
+  props.editForm ? editFormRoute(props.editForm, props.entityId, worldParam.value) : undefined
 )
 
 function onNavigate(event: MouseEvent) {

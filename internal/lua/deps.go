@@ -1,12 +1,20 @@
 package lua
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"iter"
+	"path"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
@@ -79,6 +87,24 @@ type ReadDeps struct {
 	Meta        *metamodel.Metamodel
 	ProjectRoot string
 
+	// Files serves the project's operator-authored script files — scripts/,
+	// actions/, validations/ — by slash path relative to the project root.
+	// Read them through [ReadDeps.ReadProjectFile], never from disk directly:
+	// on the sqlite build they may live in the project's database
+	// (FEAT-UP14BT), layered behind the files on disk.
+	//
+	// Nil: accepted — files are read from ProjectRoot on disk with os.Root
+	// containment, which is what every build did before the database could
+	// carry them.
+	Files ProjectFiles
+
+	// Host supplies secrets and the AI and mail settings to writer runtimes
+	// (see [LoadContextOptions]).
+	//
+	// Nil: accepted — they are read from ProjectRoot/.rela, which is what
+	// every build did before the desktop kept them elsewhere.
+	Host HostConfig
+
 	// Capabilities declares the ambient, non-graph capabilities a runtime
 	// built from these deps may reach — outbound HTTP, the AI provider, named
 	// secrets, and rela.write_file (TKT-YH52OM).
@@ -107,6 +133,108 @@ type ReadDeps struct {
 	// store.ErrInvalidQuery rather than reading the trivial world.
 	World store.WorldScope
 }
+
+// ProjectFiles reads operator-authored project files by slash path relative
+// to the project root. config.Loader and rootfs.Dir satisfy it. An absent file
+// is reported as fs.ErrNotExist.
+type ProjectFiles interface {
+	Load(ctx context.Context, name string) ([]byte, error)
+}
+
+// ReadProjectFile returns the project file at name through [ReadDeps.Files],
+// or from ProjectRoot with os.Root containment when Files is nil.
+func (d ReadDeps) ReadProjectFile(ctx context.Context, name string) ([]byte, error) {
+	return d.projectFiles().Load(ctx, name)
+}
+
+func (d ReadDeps) projectFiles() ProjectFiles {
+	if d.Files == nil {
+		return rootfs.New(d.ProjectRoot)
+	}
+	return d.Files
+}
+
+// ReadScript returns the source of the Lua script at name under the project
+// directory dir (scripts, actions or validations).
+//
+// name must be a local path ending in .lua. A backslash separates path
+// elements on every platform, so a name reads the same file on Windows as on
+// the Unix server or in the database. Errors name the script but never a
+// filesystem path, so they are safe to return to an HTTP or MCP caller.
+func (d ReadDeps) ReadScript(ctx context.Context, dir, name string) (string, error) {
+	return ReadScript(ctx, d.projectFiles(), dir, name)
+}
+
+// ReadScript is [ReadDeps.ReadScript] over files, for callers that read a
+// script without running it and so hold no read bundle.
+//
+// Nil: files is rejected.
+func ReadScript(ctx context.Context, files ProjectFiles, dir, name string) (string, error) {
+	if files == nil {
+		return "", errors.New("no project files to read the script from")
+	}
+	if name == "" {
+		return "", errors.New("script path is empty")
+	}
+	slashed := strings.ReplaceAll(name, `\`, "/")
+	if !fs.ValidPath(slashed) || filepath.VolumeName(name) != "" {
+		return "", fmt.Errorf("script path must be a local path (no '..' or absolute paths): %s", name)
+	}
+	if !strings.HasSuffix(name, ".lua") {
+		return "", fmt.Errorf("script must have .lua extension: %s", name)
+	}
+	data, err := files.Load(ctx, dir+"/"+slashed)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("script not found: %s (must be in %s/ directory)", name, dir)
+	}
+	if err != nil {
+		return "", fmt.Errorf("cannot read script: %s", name)
+	}
+	return string(data), nil
+}
+
+// SourceFS returns the project files as an fs.FS, for reading the source
+// excerpt of a script error ([BuildInput.SourceFS]).
+func (d ReadDeps) SourceFS(ctx context.Context) fs.FS {
+	return projectFilesFS{ctx: ctx, files: d.projectFiles()}
+}
+
+// projectFilesFS adapts ProjectFiles to fs.FS. Only files can be opened.
+type projectFilesFS struct {
+	ctx   context.Context //nolint:containedctx // fs.FS's Open takes no ctx.
+	files ProjectFiles
+}
+
+func (f projectFilesFS) Open(name string) (fs.File, error) {
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+	}
+	data, err := f.files.Load(f.ctx, name)
+	if err != nil {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: err}
+	}
+	return &projectFile{name: path.Base(name), Reader: bytes.NewReader(data), size: int64(len(data))}, nil
+}
+
+// projectFile is an open, in-memory [projectFilesFS] file.
+type projectFile struct {
+	*bytes.Reader
+	name string
+	size int64
+}
+
+func (f *projectFile) Stat() (fs.FileInfo, error) { return f, nil }
+func (f *projectFile) Close() error               { return nil }
+func (f *projectFile) Name() string               { return f.name }
+func (f *projectFile) Size() int64                { return f.size }
+func (f *projectFile) Mode() fs.FileMode          { return projectFileMode }
+func (f *projectFile) ModTime() time.Time         { return time.Time{} }
+func (f *projectFile) IsDir() bool                { return false }
+func (f *projectFile) Sys() any                   { return nil }
+
+// projectFileMode is the mode a [projectFile] reports: readable, never
+// writable through this view.
+const projectFileMode fs.FileMode = 0o444
 
 // Mutator is the consumer-side write surface Lua bindings call into
 // from rela.create_entity / rela.update_entity / rela.delete_entity /

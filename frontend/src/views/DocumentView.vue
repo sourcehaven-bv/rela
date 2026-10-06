@@ -13,6 +13,8 @@ import {
   wrapTablesForScroll,
 } from '@/utils/markdown'
 import { buildReturnTo } from '@/utils/returnPath'
+import { editFormRoute } from '@/utils/entityRoute'
+import { useWorld } from '@/composables/useWorld'
 import { getErrorMessage, getScriptError, shouldDropHeldContent } from '@/api/errors'
 import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
@@ -32,6 +34,7 @@ const props = defineProps<{
 
 const route = useRoute()
 const router = useRouter()
+const { worldParam } = useWorld()
 const schemaStore = useSchemaStore()
 const uiStore = useUIStore()
 const scriptErrorStore = useScriptErrorStore()
@@ -107,12 +110,11 @@ const editConfig = computed(() => (props.entityId ? docConfig.value?.edit : unde
 // Caller-side: the button is gated `v-if="editConfig"`, so editConfig.value
 // is non-null when this fires.
 function editEntity() {
+  if (!props.entityId) return
   const cfg = editConfig.value!
   const returnTo = buildReturnTo(route.fullPath, ['refresh'])
-  router.push({
-    path: `/form/${cfg.form}/${props.entityId}`,
-    query: returnTo ? { return_to: returnTo } : {},
-  })
+  const query: Record<string, string> = returnTo ? { return_to: returnTo } : {}
+  router.push(editFormRoute(cfg.form, props.entityId, worldParam.value, query))
 }
 
 // Builds the export URL for a chosen transform. Passed to ExportMenu, which

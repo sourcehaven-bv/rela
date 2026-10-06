@@ -58,7 +58,7 @@ seqtrace-compare ref="origin/develop":
 build-desktop: build-frontend
     @echo "Building rela-desktop..."
     @mkdir -p {{build_dir}}
-    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags production -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
+    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags production,sqlite -trimpath -ldflags "-s -w" -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
 
 # Build and install the desktop app into /Applications
 [macos]
@@ -97,7 +97,7 @@ install-desktop: build-frontend
     DEST="${LOCALAPPDATA:-$HOME/AppData/Local}/Rela Desktop"
     echo "Installing to $DEST..."
     mkdir -p "$DEST"
-    CGO_ENABLED=0 go build -tags production -trimpath -ldflags "-s -w" \
+    CGO_ENABLED=0 go build -tags production,sqlite -trimpath -ldflags "-s -w" \
         -o "$DEST/rela-desktop.exe" ./cmd/rela-desktop
     echo "Installed to $DEST/rela-desktop.exe"
     echo "File associations need the MSI (build/package/windows/rela-desktop.wxs)."
@@ -111,7 +111,7 @@ install-desktop:
 build-desktop-debug: build-frontend
     @echo "Building rela-desktop (debug)..."
     @mkdir -p {{build_dir}}
-    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
+    CGO_ENABLED=1 CGO_LDFLAGS="-framework UniformTypeIdentifiers" go build -tags sqlite -o {{build_dir}}/rela-desktop ./cmd/rela-desktop
 
 # Build the PostgreSQL-backed CLI binary (rela-postgres)
 build-cli-postgres:

@@ -29,6 +29,14 @@ func open(t *testing.T, opts ...sqlitestore.Option) *sqlitestore.Store {
 
 func openAt(t *testing.T, path string, opts ...sqlitestore.Option) *sqlitestore.Store {
 	t.Helper()
+	s, _ := openWithDB(t, path, opts...)
+	return s
+}
+
+// openWithDB opens a store at path and also returns its database, for the
+// search backend that reads the database directly.
+func openWithDB(t *testing.T, path string, opts ...sqlitestore.Option) (*sqlitestore.Store, *sqlitedb.DB) {
+	t.Helper()
 	db, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	if err != nil {
 		t.Fatalf("open database: %v", err)
@@ -40,7 +48,7 @@ func openAt(t *testing.T, path string, opts ...sqlitestore.Option) *sqlitestore.
 		t.Fatalf("new store: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	return s
+	return s, db
 }
 
 func factory(t *testing.T) store.Store {
@@ -48,19 +56,16 @@ func factory(t *testing.T) store.Store {
 	return open(t)
 }
 
-// searchFactory pairs the store with the generic linear searcher. SQLite has
-// FTS5 available, but a native searcher is deliberately out of scope here
-// (DEC-LFSYNY stage 3): search.Visible wraps ANY Searcher, so bleve/linear is
-// a valid pairing and FTS5 is a later optimization rather than an entry
-// requirement.
+// searchFactory pairs the store with its FTS5 search backend (DEC-10Z731),
+// which is what the sqlite build ships.
 func searchFactory(t *testing.T) (store.Store, search.Searcher) {
 	t.Helper()
-	idx := search.NewLinearSearch()
-	// The index must be an OBSERVER, not a Subscribe consumer: observer
-	// callbacks are synchronous and carry the entity, whereas events may be
-	// dropped when a subscriber is slow.
-	s := open(t, sqlitestore.WithObserver(idx))
-	return s, search.New(s, idx)
+	s, db := openWithDB(t, filepath.Join(t.TempDir(), "conformance.db"))
+	backend, err := sqlitestore.NewSearchBackend(db)
+	if err != nil {
+		t.Fatalf("NewSearchBackend: %v", err)
+	}
+	return s, search.New(s, backend)
 }
 
 func visibleSearchFactory(t *testing.T) (store.Store, search.Searcher, search.VisibleSearcher) {

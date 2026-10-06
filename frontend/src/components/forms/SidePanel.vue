@@ -5,6 +5,8 @@ import { api } from '@/api/client'
 import { isCancelledFetch } from '@/composables/usePageData'
 import type { SidePanelSection, SidePanelEntity, SidePanelAddTarget } from '@/types'
 import { buildCreateLinkQuery } from '@/utils/createLink'
+import { editFormRoute } from '@/utils/entityRoute'
+import { useWorld } from '@/composables/useWorld'
 import Badge from '@/components/common/Badge.vue'
 import RlAddButton from 'rela-components/components/common/RlAddButton.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
@@ -15,6 +17,7 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const { worldParam } = useWorld()
 
 const sections = ref<SidePanelSection[]>([])
 const loading = ref(false)
@@ -66,7 +69,7 @@ function isCollapsed(sectionId: string): boolean {
 // exactly so a cmd-clicked tab matches a plain click.
 function entityTarget(entity: SidePanelEntity): RouteLocationRaw {
   if (entity.editFormId) {
-    return `/form/${entity.editFormId}/${entity.id}`
+    return editFormRoute(entity.editFormId, entity.id, worldParam.value)
   }
   return `/entity/${entity.type}/${entity.id}`
 }

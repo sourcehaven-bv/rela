@@ -64,7 +64,7 @@ func (e *Engine) runDocumentScript(
 	subject string,
 	timeout time.Duration,
 ) error {
-	scriptCode, err := loadScript(deps.ProjectRoot, path)
+	scriptCode, err := deps.ReadScript(ctx, scriptsDir, path)
 	if err != nil {
 		return err
 	}
@@ -94,7 +94,7 @@ func (e *Engine) runDocumentScript(
 	//nolint:contextcheck // ctx threaded via WithContext above
 	if runErr := runtime.RunFileContent(path, []byte(scriptCode), nil); runErr != nil {
 		return wrapScriptError(lua.SurfaceDocument, scriptsDir, path, subject,
-			runtime.ErrorFrames(), nil, runErr, deps.ProjectRoot)
+			runtime.ErrorFrames(), nil, runErr, deps.SourceFS(ctx))
 	}
 	return nil
 }

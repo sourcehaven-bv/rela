@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { entityDetailHref, ownedEntityHref } from './entityRoute'
+import { editFormRoute, entityDetailHref, ownedEntityHref } from './entityRoute'
 
 describe('entityDetailHref', () => {
   it('returns /entity/:type/:id when no cellLink', () => {
@@ -58,5 +58,31 @@ describe('ownedEntityHref', () => {
     expect(
       ownedEntityHref({ id: 'TASK-2', type: 'task', _owner: { id: 'TASK-1', type: '' } })
     ).toBe('')
+  })
+})
+
+describe('editFormRoute', () => {
+  it('carries the world so the form loads the relations the page showed', () => {
+    expect(editFormRoute('control', 'CTL-1', 'editorial')).toEqual({
+      name: 'form-edit',
+      params: { id: 'control', entityId: 'CTL-1' },
+      query: { world: 'editorial' },
+    })
+  })
+
+  it('omits the world for the default world', () => {
+    expect(editFormRoute('policy', 'POL-1@draft', undefined)).toEqual({
+      name: 'form-edit',
+      params: { id: 'policy', entityId: 'POL-1@draft' },
+      query: {},
+    })
+  })
+
+  it('keeps the other query params', () => {
+    expect(editFormRoute('control', 'CTL-1', 'editorial', { return_to: '/x' })).toEqual({
+      name: 'form-edit',
+      params: { id: 'control', entityId: 'CTL-1' },
+      query: { return_to: '/x', world: 'editorial' },
+    })
   })
 })

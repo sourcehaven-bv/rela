@@ -15,18 +15,21 @@
 //   `inverseToCanonical` map.
 // * `commitImmediately` returns a typed `CommitResult` and honors a
 //   timeout. In-flight saves are aborted on timeout via AbortController.
-// * No `If-Match` on PATCH — the FIFO chain already serializes per
-//   composable instance; cross-tab conflicts resolve through the SSE
-//   merge path.
+// * No `If-Match` on PATCH. The entity ETag covers every field, so it
+//   would refuse a save after ANY other edit. Each PATCH instead carries
+//   per-field preconditions (TKT-2VDVHF): the version token of each field
+//   it writes, as last seen from the server. On a 412 the composable merges
+//   the conflicting fields three-way and retries; see `sendPatch`.
 // * `lastSeenServer` is only updated from server responses
 //   (via `mergeServerResponse`). The WIP wrote client-sent values
 //   directly, which masked server-side automation drift.
 
 import { ref, computed, type Ref } from 'vue'
-import type { Entity, ModernRelationsField } from '@/types'
-import type { EntityPatch } from '@/api/entities'
+import type { Entity, FieldConflicts, ModernRelationsField, Preconditions } from '@/types'
+import { getEntity, type EntityPatch } from '@/api/entities'
 import { ApiError, getErrorMessage } from '@/api/errors'
 import { useEntitiesStore } from '@/stores/entities'
+import { mergeProperty, mergeRelations, mergeText } from './autoSaveMerge'
 
 // Sentinel for "unset this property" pending entries. Distinct from
 // undefined so we can tell apart "delete the key" from "set to
@@ -38,6 +41,59 @@ const SAVED_INDICATOR_MS = 1200
 // resolves in 50ms, the indicator holds 'saving' for this long so the
 // user perceives a smooth idle → saving → saved transition.
 const MIN_SAVING_VISIBLE_MS = 600
+// PATCH attempts per save when preconditions fail. Each failed attempt
+// either merges (someone else changed a field this save writes) or resends
+// unchanged (someone else changed another field between the check and the
+// write). Three is enough for a few concurrent editors; beyond it the save
+// fails like any other error and the next edit tries again.
+const MAX_CONFLICT_ATTEMPTS = 3
+
+export const CONFLICT_MESSAGE =
+  'Someone else changed this field while you were editing. Your change was not saved. ' +
+  'Edit it again to overwrite their value.'
+export const CONTENT_CONFLICT_MESSAGE =
+  'Someone else changed the same lines of the body. Your change was not saved. ' +
+  'Edit it again to overwrite their version.'
+export const RELATIONS_CONFLICT_MESSAGE =
+  'Someone else changed these relations and the changes could not be combined. ' +
+  'Your relation change was not saved.'
+
+// A merge base: the server value the local state derives from, and the
+// version token the server issued for it. `token` is undefined when the
+// server sent none, which disables the precondition for that field.
+interface Base<T> {
+  value: T
+  token: string | undefined
+}
+
+// What one PATCH round wrote and what the conflict handling did to it.
+interface SendResult {
+  response: Entity
+  written: { props: Set<string>; content: boolean; relations: boolean }
+  // The relations body written, after any merge; undefined when the save
+  // wrote none, including when the conflict handling dropped it.
+  sentRelations: ModernRelationsField | undefined
+  // The content or relations written differ from the local edit, because
+  // they were merged with someone else's change.
+  mergedContent: boolean
+  mergedRelations: boolean
+  conflicts: Conflicts
+}
+
+// Fields a save could not write, with the bases they move to once the
+// save's response is merged. Bases move there and not while resolving, so
+// a save that finally fails leaves every base where the form still is.
+interface Conflicts {
+  props: string[]
+  content: boolean
+  relations: boolean
+  // Per conflicting property: the other side's value and token.
+  propBases: Record<string, Base<unknown>>
+  // For a conflicting body: the other side's body and token, and the text
+  // the editor shows (their clean hunks, our side of each conflict).
+  contentBase?: Base<string>
+  contentShown?: string
+}
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
@@ -172,6 +228,14 @@ export function useAutoSave(opts: AutoSaveOptions) {
   const lastSeenServer: Record<string, unknown> = {}
   let lastSeenContent = ''
 
+  // Merge bases (TKT-2VDVHF). Unlike lastSeenServer, a base moves only when
+  // the local state moves with it: when the form takes the server value, or
+  // when a save of that field succeeds. A base that ran ahead of the form
+  // would let the next save overwrite a change the user never saw.
+  const propBase: Record<string, Base<unknown>> = Object.create(null)
+  let contentBase: Base<string> = { value: '', token: undefined }
+  let relationsBase: Base<Record<string, string[]>> = { value: {}, token: undefined }
+
   const pending: Record<string, PendingEntry> = Object.create(null)
   let pendingContent: { value: string; enqueuedAt: number } | null = null
   const timers: Record<string, ReturnType<typeof setTimeout>> = Object.create(null)
@@ -186,6 +250,13 @@ export function useAutoSave(opts: AutoSaveOptions) {
   // again and is sent next, and a failed body hands the bit back.
   let relationsSending = 0
   let relationsTimer: ReturnType<typeof setTimeout> | null = null
+
+  // Writes already taken off `pending` / `pendingContent` that are queued
+  // behind another save or in flight. They are still unsaved local state,
+  // so a response to an EARLIER save, or a fresh snapshot, must neither
+  // apply over them nor move their base.
+  const queuedProps: Record<string, number> = Object.create(null)
+  let queuedContent = 0
 
   const lastCommitAt: Record<string, number> = Object.create(null)
   let queueTail: Promise<void> = Promise.resolve()
@@ -250,6 +321,15 @@ export function useAutoSave(opts: AutoSaveOptions) {
     return relationsDirty || relationsTimer !== null || relationsSending > 0
   }
 
+  // holds* report unsaved local state: scheduled, debouncing, or queued.
+  function holdsProp(property: string): boolean {
+    return property in pending || property in timers || (queuedProps[property] ?? 0) > 0
+  }
+
+  function holdsContent(): boolean {
+    return pendingContent !== null || contentTimer !== null || queuedContent > 0
+  }
+
   function recordServerSnapshot(entity: Entity) {
     for (const k of Object.keys(lastSeenServer)) delete lastSeenServer[k]
     if (entity.properties) {
@@ -258,6 +338,18 @@ export function useAutoSave(opts: AutoSaveOptions) {
       }
     }
     lastSeenContent = entity.content ?? ''
+
+    // A field with unsaved local state keeps its base: that state derives
+    // from the old one, not from whatever this snapshot carries.
+    const versions = entity._versions
+    for (const k of Object.keys(propBase)) if (!holdsProp(k)) delete propBase[k]
+    for (const [k, token] of Object.entries(versions?.properties ?? {})) {
+      if (!holdsProp(k)) propBase[k] = { value: entity.properties?.[k], token }
+    }
+    if (!holdsContent()) contentBase = { value: entity.content ?? '', token: versions?.content }
+    if (!isRelationsDirty()) {
+      relationsBase = { value: { ...(entity.relations ?? {}) }, token: versions?.relations }
+    }
   }
 
   if (opts.initialServerSnapshot) {
@@ -371,6 +463,13 @@ export function useAutoSave(opts: AutoSaveOptions) {
     const unsets = live.filter(({ entry }) => entry.value === UNSET).map((e) => e.property)
     const enqueuedAtOf = new Map(live.map(({ property: key, entry }) => [key, entry.enqueuedAt]))
     const keys = live.map((e) => e.property)
+    for (const key of keys) queuedProps[key] = (queuedProps[key] ?? 0) + 1
+    let released = false
+    const release = () => {
+      if (released) return
+      released = true
+      for (const key of keys) if (--queuedProps[key] <= 0) delete queuedProps[key]
+    }
 
     queueTail = queueTail.then(runPatch, runPatch)
 
@@ -390,19 +489,17 @@ export function useAutoSave(opts: AutoSaveOptions) {
         if (unsets.length) patch.properties_unset = unsets
         // Bundle relations if dirty (C2: relations bundling table).
         sentRelations = attachRelations(patch)
-        const response = await entitiesStore.update(
-          opts.getEntityType(),
-          opts.getEntityId(),
-          patch,
-          undefined,
-          ac.signal
-        )
-        if (sentRelations) {
-          opts.onRelationsSaved?.(sentRelations)
+        const result = await sendPatch(patch, ac.signal)
+        release()
+        // A relations body the conflict handling dropped was not written:
+        // it stays held, and the finally block hands the bit back.
+        if (sentRelations && result.sentRelations) {
+          opts.onRelationsSaved?.(result.sentRelations)
           relationsSending--
           sentRelations = null
         }
-        mergeServerResponse(response)
+        const response = result.response
+        mergeServerResponse(response, result)
         categorizeWarnings(response.warnings)
         const now = Date.now()
         let nextErrors: Record<string, string> | null = null
@@ -414,7 +511,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
           }
         }
         if (nextErrors) fieldErrors.value = nextErrors
-        setStatus('saved')
+        if (!reportConflicts(result, 'property')) setStatus('saved')
       } catch (err: unknown) {
         const message = getErrorMessage(err, 'Save failed')
         // Attribute to every property in the batch whose intent is still the
@@ -439,6 +536,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
           })
         }
       } finally {
+        release()
         // A body still held here was not accepted: hand the bit back.
         if (sentRelations) {
           relationsSending--
@@ -458,6 +556,12 @@ export function useAutoSave(opts: AutoSaveOptions) {
     pendingCount.value = Math.max(0, pendingCount.value - 1)
 
     if (value === lastSeenContent) return
+    queuedContent++
+    let released = false
+    const release = () => {
+      if (!released) queuedContent--
+      released = true
+    }
 
     queueTail = queueTail.then(runPatch, runPatch)
 
@@ -470,23 +574,21 @@ export function useAutoSave(opts: AutoSaveOptions) {
       try {
         const patch: EntityPatch = { content: value }
         sentRelations = attachRelations(patch)
-        const response = await entitiesStore.update(
-          opts.getEntityType(),
-          opts.getEntityId(),
-          patch,
-          undefined,
-          ac.signal
-        )
-        if (sentRelations) {
-          opts.onRelationsSaved?.(sentRelations)
+        const result = await sendPatch(patch, ac.signal)
+        release()
+        // A relations body the conflict handling dropped was not written:
+        // it stays held, and the finally block hands the bit back.
+        if (sentRelations && result.sentRelations) {
+          opts.onRelationsSaved?.(result.sentRelations)
           relationsSending--
           sentRelations = null
         }
-        mergeServerResponse(response)
+        const response = result.response
+        mergeServerResponse(response, result)
         categorizeWarnings(response.warnings)
         lastCommitAt['__content__'] = Date.now()
         contentError.value = null
-        setStatus('saved')
+        if (!reportConflicts(result, 'content')) setStatus('saved')
       } catch (err: unknown) {
         const message = getErrorMessage(err, 'Save failed')
         if (pendingContent === null) {
@@ -495,6 +597,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
           opts.onError(message, { status: getErrorStatus(err), channel: 'content' })
         }
       } finally {
+        release()
         // A body still held here was not accepted: hand the bit back.
         if (sentRelations) {
           relationsSending--
@@ -534,20 +637,17 @@ export function useAutoSave(opts: AutoSaveOptions) {
       setStatus('saving')
       try {
         const patch: EntityPatch = { relations: body }
-        const response = await entitiesStore.update(
-          opts.getEntityType(),
-          opts.getEntityId(),
-          patch,
-          undefined,
-          ac.signal
-        )
-        opts.onRelationsSaved?.(body)
-        relationsSending--
-        held = false
-        mergeServerResponse(response)
+        const result = await sendPatch(patch, ac.signal)
+        if (result.sentRelations) {
+          opts.onRelationsSaved?.(result.sentRelations)
+          relationsSending--
+          held = false
+        }
+        const response = result.response
+        mergeServerResponse(response, result)
         categorizeWarnings(response.warnings)
         lastCommitAt['__relations__'] = Date.now()
-        setStatus('saved')
+        if (!reportConflicts(result, 'relations')) setStatus('saved')
       } catch (err: unknown) {
         const message = getErrorMessage(err, 'Save failed')
         setStatus('error', message)
@@ -561,6 +661,228 @@ export function useAutoSave(opts: AutoSaveOptions) {
         if (currentAbort === ac) currentAbort = null
       }
     }
+  }
+
+  // preconditionsFor names, for each field the patch writes, the token of
+  // its merge base. A field without a token (older server, or a snapshot
+  // taken from a response that carries none) is sent unchecked.
+  function preconditionsFor(patch: EntityPatch): Preconditions | undefined {
+    const pre: Preconditions = {}
+    const keys = [...Object.keys(patch.properties ?? {}), ...(patch.properties_unset ?? [])]
+    for (const k of keys) {
+      const token = propBase[k]?.token
+      if (token !== undefined) (pre.properties ??= {})[k] = token
+    }
+    if (patch.content !== undefined && contentBase.token !== undefined)
+      pre.content = contentBase.token
+    if (patch.relations && relationsBase.token !== undefined) pre.relations = relationsBase.token
+    return Object.keys(pre).length ? pre : undefined
+  }
+
+  /**
+   * Send one save, resolving precondition failures (TKT-2VDVHF).
+   *
+   * A 412 with an EMPTY `conflicts` means another write landed between the
+   * server's check and its write without touching the fields this save
+   * names; the same request is resent. A 412 naming fields means someone
+   * else changed them: the current entity is fetched and each named field
+   * is merged against its base (see autoSaveMerge.ts). Fields that merge
+   * cleanly are resent with fresh tokens; fields that cannot are dropped
+   * from the request and reported, and nothing is written for them.
+   *
+   * The server never retries on the client's behalf, because only the
+   * client holds the base needed to merge.
+   */
+  async function sendPatch(initial: EntityPatch, signal: AbortSignal): Promise<SendResult> {
+    let patch: EntityPatch = { ...initial }
+    let pre = preconditionsFor(patch)
+    const conflicts: Conflicts = { props: [], content: false, relations: false, propBases: {} }
+    let mergedContent = false
+    let mergedRelations = false
+    let fresh: Entity | null = null
+    for (let attempt = 1; ; attempt++) {
+      if (fresh && isEmptyPatch(patch)) {
+        // Every field resolved to "nothing to write". Answer with the state
+        // just fetched so the form still takes the other side's values.
+        return {
+          response: fresh,
+          written: writtenBy({}),
+          sentRelations: undefined,
+          mergedContent,
+          mergedRelations,
+          conflicts,
+        }
+      }
+      try {
+        const body = pre ? { ...patch, preconditions: pre } : patch
+        const response = await entitiesStore.update(
+          opts.getEntityType(),
+          opts.getEntityId(),
+          body,
+          undefined,
+          signal
+        )
+        return {
+          response,
+          written: writtenBy(patch),
+          sentRelations: patch.relations,
+          mergedContent,
+          mergedRelations,
+          conflicts,
+        }
+      } catch (err: unknown) {
+        const failed = preconditionConflicts(err)
+        if (!failed || !pre || attempt >= MAX_CONFLICT_ATTEMPTS) throw err
+        await backoff(attempt, signal)
+        if (isEmptyConflicts(failed)) continue
+        fresh = await fetchCurrent(patch, signal)
+        const next = resolveConflicts(patch, pre, fresh, failed, conflicts)
+        patch = next.patch
+        pre = next.pre
+        mergedContent ||= next.mergedContent
+        mergedRelations ||= next.mergedRelations
+      }
+    }
+  }
+
+  // fetchCurrent reads the entity as it is now, bypassing the store cache.
+  // It includes the outgoing relation targets the patch writes, because a
+  // merged relations entry needs each target's type and the relations map
+  // carries ids only.
+  //
+  // No `?world=`: the server then reads in its default world, which is the
+  // view a PATCH computes its tokens in. Naming `default` instead is refused
+  // with a 400 on a schema that declares worlds.
+  async function fetchCurrent(patch: EntityPatch, signal: AbortSignal): Promise<Entity> {
+    const outgoing = Object.keys(patch.relations ?? {}).filter(
+      (k) => !opts.inverseToCanonical.has(k)
+    )
+    return getEntity(
+      opts.getEntityType(),
+      opts.getEntityId(),
+      outgoing.length ? { include: outgoing.join(',') } : {},
+      signal
+    )
+  }
+
+  function resolveConflicts(
+    patch: EntityPatch,
+    pre: Preconditions,
+    fresh: Entity,
+    failed: FieldConflicts,
+    conflicts: Conflicts
+  ): {
+    patch: EntityPatch
+    pre: Preconditions | undefined
+    mergedContent: boolean
+    mergedRelations: boolean
+  } {
+    const next: EntityPatch = { ...patch }
+    if (patch.properties) next.properties = { ...patch.properties }
+    if (patch.properties_unset) next.properties_unset = [...patch.properties_unset]
+    const preProps: Record<string, string> = { ...(pre.properties ?? {}) }
+    const nextPre: Preconditions = { ...pre }
+    const tokens = fresh._versions
+    let mergedContent = false
+    let mergedRelations = false
+
+    for (const k of Object.keys(failed.properties ?? {})) {
+      const ours = next.properties && k in next.properties ? next.properties[k] : undefined
+      const theirs = fresh.properties?.[k]
+      const token = tokens?.properties[k]
+      const decision = mergeProperty(propBase[k]?.value, ours, theirs, deepEqual)
+      if (decision.kind === 'write' && token !== undefined) {
+        preProps[k] = token
+        continue
+      }
+      if (next.properties) delete next.properties[k]
+      if (next.properties_unset)
+        next.properties_unset = next.properties_unset.filter((u) => u !== k)
+      delete preProps[k]
+      // 'same' needs no base here: the response carries their value, which
+      // the form takes like any other server value.
+      if (decision.kind === 'conflict') {
+        conflicts.props.push(k)
+        conflicts.propBases[k] = { value: theirs, token }
+      }
+    }
+    if (next.properties && !Object.keys(next.properties).length) delete next.properties
+    if (next.properties_unset && !next.properties_unset.length) delete next.properties_unset
+
+    if (failed.content && next.content !== undefined) {
+      const theirs = fresh.content ?? ''
+      const m = mergeText(contentBase.value, next.content, theirs)
+      delete next.content
+      delete nextPre.content
+      if (m.ok && m.merged === theirs) {
+        // Their body already holds our edit: nothing to write.
+        mergedContent = true
+      } else if (m.ok && tokens) {
+        mergedContent = m.merged !== patch.content
+        next.content = m.merged
+        nextPre.content = tokens.content
+      } else {
+        // Unmergeable, or merged without a token to guard the resend.
+        conflicts.content = true
+        conflicts.contentBase = { value: theirs, token: tokens?.content }
+        conflicts.contentShown = m.ok ? patch.content : m.oursInConflicts
+      }
+    }
+
+    if (failed.relations && next.relations) {
+      const merged = tokens
+        ? mergeRelations(
+            relationsBase.value,
+            next.relations,
+            fresh.relations ?? {},
+            (key) => opts.inverseToCanonical.has(key),
+            (id) => fresh.included?.[id]?.type
+          )
+        : null
+      if (merged && tokens) {
+        next.relations = merged
+        nextPre.relations = tokens.relations
+        mergedRelations = true
+      } else {
+        delete next.relations
+        delete nextPre.relations
+        conflicts.relations = true
+      }
+    }
+
+    if (Object.keys(preProps).length) nextPre.properties = preProps
+    else delete nextPre.properties
+    return {
+      patch: next,
+      pre: Object.keys(nextPre).length ? nextPre : undefined,
+      mergedContent,
+      mergedRelations,
+    }
+  }
+
+  // reportConflicts surfaces fields a save could not write. Returns true when
+  // there were any, so the caller shows the error state instead of 'saved'.
+  function reportConflicts(result: SendResult, channel: AutoSaveErrorInfo['channel']): boolean {
+    const { props, content, relations } = result.conflicts
+    if (!props.length && !content && !relations) return false
+    if (props.length) {
+      const next = { ...fieldErrors.value }
+      for (const k of props) next[k] = CONFLICT_MESSAGE
+      fieldErrors.value = next
+    }
+    if (content) contentError.value = CONTENT_CONFLICT_MESSAGE
+    const message = content
+      ? CONTENT_CONFLICT_MESSAGE
+      : props.length
+        ? CONFLICT_MESSAGE
+        : RELATIONS_CONFLICT_MESSAGE
+    setStatus('error', message)
+    opts.onError(message, {
+      status: 412,
+      property: props[0],
+      channel: content ? 'content' : props.length ? 'property' : relations ? 'relations' : channel,
+    })
+    return true
   }
 
   // attachRelations is called from fireDue/fireContent to bundle
@@ -625,7 +947,9 @@ export function useAutoSave(opts: AutoSaveOptions) {
     }
   }
 
-  function mergeServerResponse(entity: Entity) {
+  // `sent` describes the save this response answers, when there was one; it
+  // decides which merge bases may move (see propBase).
+  function mergeServerResponse(entity: Entity, sent?: SendResult) {
     // Defence in depth: a disabled channel must not have any pending
     // state. If it does, schedule* slipped past the throw guard or a
     // previous call mutated this instance directly. Either way, fail
@@ -644,6 +968,24 @@ export function useAutoSave(opts: AutoSaveOptions) {
       throw new Error('useAutoSave: relations channel disabled but pending state observed')
     }
 
+    const versions = entity._versions
+    const conflicted = new Set(sent?.conflicts.props ?? [])
+    // A field's base follows the form: it moves when the form takes the
+    // server value, or when this response answers a save of that field.
+    const moveBase = (k: string, value: unknown, applied: boolean) => {
+      if (conflicted.has(k)) {
+        // "Edit it again to overwrite": the next save of k is checked
+        // against their value, which the user has now been told about.
+        const theirs = sent?.conflicts.propBases[k]
+        if (theirs) propBase[k] = theirs
+        return
+      }
+      if (!versions) return
+      if (applied || sent?.written.props.has(k)) {
+        propBase[k] = { value, token: versions.properties[k] }
+      }
+    }
+
     if (entity.properties) {
       for (const [k, v] of Object.entries(entity.properties)) {
         // S5: always update lastSeenServer from server, regardless of dirty.
@@ -652,27 +994,57 @@ export function useAutoSave(opts: AutoSaveOptions) {
         lastSeenServer[k] = v
         // Only mutate formData for non-dirty fields. Skip entirely
         // when the property channel is disabled — the caller doesn't
-        // own a writable formData ref for properties in that case.
-        if (!propertyChannelEnabled) continue
-        if (k in pending) continue
-        if (k in timers) continue
-        opts.applyServerProperty(k, v)
+        // own a writable formData ref for properties in that case. A
+        // conflicting field keeps the user's value on screen.
+        const apply = propertyChannelEnabled && !holdsProp(k) && !conflicted.has(k)
+        if (apply) opts.applyServerProperty(k, v)
+        moveBase(k, v, apply)
       }
       // Properties that disappeared from the server response (server-
       // side unset by automation): clear them locally too, but only
       // when the field isn't dirty and the channel is enabled.
       for (const k of Object.keys(lastSeenServer)) {
-        if (!(k in entity.properties) && !(k in pending) && !(k in timers)) {
-          if (propertyChannelEnabled) opts.applyServerProperty(k, undefined)
+        if (!(k in entity.properties) && !holdsProp(k)) {
+          const apply = propertyChannelEnabled && !conflicted.has(k)
+          if (apply) opts.applyServerProperty(k, undefined)
           delete lastSeenServer[k]
+          moveBase(k, undefined, apply)
         }
       }
+      // Declared properties that are unset on both sides carry a token too.
+      for (const k of Object.keys(versions?.properties ?? {})) {
+        if (k in entity.properties || k in propBase) continue
+        moveBase(k, undefined, !holdsProp(k))
+      }
     }
-    if (entity.content !== undefined && pendingContent === null && contentTimer === null) {
-      // Baseline always updates; apply callback skipped when the
-      // content channel is disabled.
-      lastSeenContent = entity.content
-      if (contentChannelEnabled) opts.applyServerContent(entity.content)
+    if (entity.content !== undefined) {
+      if (!holdsContent()) {
+        // Baseline always updates; apply callback skipped when the
+        // content channel is disabled.
+        lastSeenContent = entity.content
+        const conflict = sent?.conflicts.contentBase
+        if (conflict) {
+          // The editor shows their clean hunks with our side of each
+          // conflict, and the base is their body: the next save overwrites
+          // only the regions that conflicted.
+          if (contentChannelEnabled)
+            opts.applyServerContent(sent?.conflicts.contentShown ?? entity.content)
+          contentBase = conflict
+        } else {
+          if (contentChannelEnabled) opts.applyServerContent(entity.content)
+          if (versions) contentBase = { value: entity.content, token: versions.content }
+        }
+      } else if (sent?.written.content && !sent.mergedContent && versions) {
+        // The user kept typing while this save was in flight; their text
+        // derives from what was saved, so that is the base.
+        contentBase = { value: entity.content, token: versions.content }
+      }
+    }
+    // The form never takes relations from a response, so the base moves
+    // only when this response answers an unmerged relations save: then the
+    // form's lists are exactly what the server stores.
+    if (sent?.written.relations && !sent.mergedRelations && versions && entity.relations) {
+      relationsBase = { value: { ...entity.relations }, token: versions.relations }
     }
   }
 
@@ -816,6 +1188,52 @@ export function useAutoSave(opts: AutoSaveOptions) {
 // for the host's 401/403 dispatch.
 function getErrorStatus(err: unknown): number | undefined {
   return err instanceof ApiError ? err.status : undefined
+}
+
+// preconditionConflicts returns the failed fields of a 412 answering a PATCH
+// with preconditions, or null for any other error.
+function preconditionConflicts(err: unknown): FieldConflicts | null {
+  if (!(err instanceof ApiError) || err.status !== 412) return null
+  return err.problem?.conflicts ?? null
+}
+
+function isEmptyConflicts(c: FieldConflicts): boolean {
+  return !Object.keys(c.properties ?? {}).length && !c.content && !c.relations
+}
+
+function isEmptyPatch(p: EntityPatch): boolean {
+  return (
+    !Object.keys(p.properties ?? {}).length &&
+    !(p.properties_unset ?? []).length &&
+    p.content === undefined &&
+    !p.relations
+  )
+}
+
+function writtenBy(p: EntityPatch): SendResult['written'] {
+  return {
+    props: new Set([...Object.keys(p.properties ?? {}), ...(p.properties_unset ?? [])]),
+    content: p.content !== undefined,
+    relations: !!p.relations,
+  }
+}
+
+// Spread concurrent retries apart so two tabs that lost the same race do
+// not collide again on the resend.
+function backoff(attempt: number, signal: AbortSignal): Promise<void> {
+  const ms = 50 * attempt + Math.random() * 100
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason)
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        reject(signal.reason)
+      },
+      { once: true }
+    )
+  })
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {

@@ -10,6 +10,7 @@ import type {
   ModernRelationsField,
   NextActionResponse,
   NextActionFeedbackKind,
+  Preconditions,
 } from '@/types'
 import { warnIfMissingActions } from '@/utils/affordancesWarning'
 
@@ -142,10 +143,11 @@ export async function listAllEntities(
 export async function getEntity(
   type: string,
   id: string,
-  params?: { include?: string; fields?: string; world?: string }
+  params?: { include?: string; fields?: string; world?: string },
+  signal?: AbortSignal
 ): Promise<Entity> {
   const path = `/${getPlural(type)}/${id}`
-  const res = await api.get<Entity>(path, params)
+  const res = await api.get<Entity>(path, params, signal)
   warnIfMissingActions(res, path)
   return res
 }
@@ -186,6 +188,7 @@ export async function dryRunCreateEntity(
 export type EntityPatch = Omit<Partial<Entity>, 'relations'> & {
   properties_unset?: string[]
   relations?: ModernRelationsField
+  preconditions?: Preconditions
 }
 
 export async function updateEntity(

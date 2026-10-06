@@ -3,12 +3,14 @@ package pgstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -62,12 +64,26 @@ func init() { catchUpInterval.Store(int64(defaultCatchUpInterval)) }
 // startListener spawns it, Store.Close stops it.
 type listener struct {
 	store    *Store
-	dsn      string
+	connCfg  *pgx.ConnConfig // parsed once; pgx.ConnectConfig copies it per connect
 	schema   string
 	originID string
 
 	cancel context.CancelFunc
 	done   chan struct{}
+}
+
+// listenerConnConfig parses dsn the way the pool does. The DSN is the one the
+// pool was built from, so it may carry pgxpool-only keys such as
+// pool_max_conns. pgx.ParseConfig would send those to the server as runtime
+// parameters, and the server refuses the connection (BUG-JQO2PH);
+// pgxpool.ParseConfig removes them.
+func listenerConnConfig(dsn string) (*pgx.ConnConfig, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		// pgx redacts the password in parse errors, so this is safe to wrap.
+		return nil, fmt.Errorf("parse listener DSN: %w", err)
+	}
+	return cfg.ConnConfig, nil
 }
 
 // startListener builds and starts a listener for s against dsn. It resolves the
@@ -76,7 +92,11 @@ type listener struct {
 // caller can degrade with a warning (the store stays usable; cross-process
 // events are simply unavailable).
 func startListener(ctx context.Context, s *Store, dsn string) (*listener, error) {
-	conn, err := pgx.Connect(ctx, dsn)
+	connCfg, err := listenerConnConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := pgx.ConnectConfig(ctx, connCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +115,7 @@ func startListener(ctx context.Context, s *Store, dsn string) (*listener, error)
 	lctx, cancel := context.WithCancel(context.Background())
 	l := &listener{
 		store:    s,
-		dsn:      dsn,
+		connCfg:  connCfg,
 		schema:   schema,
 		originID: s.originID,
 		cancel:   cancel,
@@ -379,7 +399,7 @@ func (l *listener) reconnect(ctx context.Context) (*pgx.Conn, error) {
 	const warnAfterFailures = 5 // ~10s of failures before escalating to Warn
 	failures := 0
 	for {
-		conn, err := pgx.Connect(ctx, l.dsn)
+		conn, err := pgx.ConnectConfig(ctx, l.connCfg)
 		if err == nil {
 			if failures >= warnAfterFailures {
 				slog.Warn("pgstore listener: reconnected; cross-process change feed restored",

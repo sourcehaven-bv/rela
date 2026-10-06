@@ -25,9 +25,15 @@ import type { Entity } from '@/types'
 
 // DynamicForm and its composables (useFormWizard) call useRoute/useRouter
 // directly, so `global.mocks` doesn't reach them — mock the module instead.
+// `query` is mutable so a test can open the form in a world.
+const mockRoute = vi.hoisted(() => ({
+  query: {} as Record<string, string>,
+  params: {},
+  path: '/form/ticket-form',
+}))
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  useRoute: () => ({ query: {}, params: {}, path: '/form/ticket-form' }),
+  useRoute: () => mockRoute,
   onBeforeRouteLeave: vi.fn(),
 }))
 
@@ -183,6 +189,21 @@ describe('DynamicForm edit-mode affordance filter', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    mockRoute.query = {}
+  })
+
+  // The server leaves out a relation to a peer with no face in the world it
+  // reads in. Read in the default world, the form would miss a relation the
+  // page showed, so it reads in the world the edit route carries.
+  it('loads the entity in the world the route names', async () => {
+    mockRoute.query = { world: 'editorial' }
+    await mountEdit(FLAT_FORM, { properties: { title: 'Original' } })
+    expect(useEntitiesStore().fetchEntity).toHaveBeenCalledWith(
+      'ticket',
+      'TKT-001',
+      false,
+      'editorial'
+    )
   })
 
   describe('flat form', () => {

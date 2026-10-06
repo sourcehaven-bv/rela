@@ -376,10 +376,18 @@ func decodeChatResponse(respBody []byte, apiKey string) (*ChatResponse, *Error) 
 	return out, nil
 }
 
-// resolveAPIKey reads the API key from the configured env var. Returns
-// ("", nil) when no auth is configured. Returns ("", *Error) when auth
-// is configured but the env var is missing/empty.
+// resolveAPIKey reads the API key from the project's secrets, then from the
+// configured env var. Returns ("", nil) when no auth is configured. Returns
+// ("", *Error) when only the env var is configured and it is missing/empty.
 func (p *openAICompatProvider) resolveAPIKey() (string, *Error) {
+	if p.cfg.secrets != nil {
+		// An unreadable secrets source falls through to the env var, as
+		// mail's password lookup does: the error names a path, and refusing
+		// to call the model over it is worse than trying the other source.
+		if sec, err := p.cfg.secrets(); err == nil && sec[SecretKey] != "" {
+			return sec[SecretKey], nil
+		}
+	}
 	if p.cfg.APIKeyEnv == "" {
 		return "", nil
 	}

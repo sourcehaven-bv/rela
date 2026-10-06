@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -29,6 +30,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/git"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -80,6 +82,12 @@ var Version = "dev"
 // For development, use a test client ID.
 const GitHubClientID = "" // Set via build flags or environment
 
+// desktopAudit is the audit sink of every project the desktop opens: none.
+// The audit log answers "who changed what" for the operators of a shared
+// server; on the desktop there is one user, and the version history in the
+// database already answers it. The CLI and rela-server keep their sinks.
+var desktopAudit audit.Audit = audit.Nop{}
+
 // Desktop is the backend bound to the Wails frontend.
 // It manages project lifecycle: opening a directory picker, loading a project,
 // and persisting recent projects in user preferences.
@@ -94,20 +102,24 @@ type Desktop struct {
 	// registry holds every loaded project. The single-project fields below
 	// still track the active one; they are the "no project loaded" path and
 	// the welcome page's view of the world.
-	registry          *projectRegistry
-	app               *dataentry.App
-	svc               *appbuild.Services // per-project services; closed on next LoadProject
-	handler           http.Handler
-	loadErr           string
-	prefs             *desktop.Preferences
-	cloneAuth         *cloneAuthState
-	lastCloneDir      string           // tracks the most recent clone for project selection
-	pendingSetupDir   string           // project dir awaiting data-entry.yaml setup
-	pendingSetupFS    storage.FS       // fs for pending setup
-	pendingSetupPaths *project.Context // project paths for pending setup
-	pendingProject    string           // project to load once the instance lock is held
-	menuReady         atomic.Bool      // true once the native menu exists (post-Run)
-	stopScheduler     context.CancelFunc
+	registry         *projectRegistry
+	app              *dataentry.App
+	svc              *appbuild.Services // per-project services; closed on next LoadProject
+	handler          http.Handler
+	loadErr          string
+	prefs            *desktop.Preferences
+	cloneAuth        *cloneAuthState
+	lastCloneDir     string               // tracks the most recent clone for project selection
+	pendingSetupDir  string               // project dir awaiting data-entry.yaml setup
+	pendingSetupMeta *metamodel.Metamodel // schema of the project pending setup
+	pendingProject   string               // project to load once the instance lock is held
+	keychain         *keychainSecrets     // project secrets; nil reads them from .rela only
+	activePath       string               // what the active project was opened from: a folder or a .rela file
+	menuReady        atomic.Bool          // true once the native menu exists (post-Run)
+	menu             *menuBar             // the menu bar; nil until main builds it
+	settings         *ProjectSettings     // the Project Settings service; nil until main builds it
+	notify           *notifyHub           // notifications and Dock badge; nil in tests
+	stopScheduler    context.CancelFunc
 }
 
 // cloneAuthState tracks an in-progress OAuth device flow.
@@ -235,12 +247,10 @@ func (d *Desktop) saveWindowState() {
 	}
 }
 
-// onOpenedWithFile handles a .rela project bundle opened from Finder (double
-// click, drop on the Dock icon, or "Open With"). macOS delivers this as an
-// Apple Event rather than argv, so it arrives here and not through -project.
-//
-// A .rela bundle is a DIRECTORY declared as a package in Info.plist, so the
-// path is already the project root and needs no adjustment.
+// onOpenedWithFile handles a .rela document or a project folder opened from
+// Finder (double click, drop on the Dock icon, or "Open With"). macOS
+// delivers this as an Apple Event rather than argv, so it arrives here and
+// not through -project.
 // coverage-ignore-func: requires Finder
 func (d *Desktop) onOpenedWithFile(path string) {
 	if path == "" {
@@ -248,7 +258,7 @@ func (d *Desktop) onOpenedWithFile(path string) {
 	}
 	if !isRelaProject(path) {
 		d.errorDialog("Not a rela project",
-			filepath.Base(path)+" does not contain a schema.yaml or .rela directory.")
+			filepath.Base(path)+" is not a .rela document and does not contain a schema.yaml or .rela directory.")
 		return
 	}
 	if errMsg := d.LoadProject(path); errMsg != "" {
@@ -273,17 +283,27 @@ func (d *Desktop) pickDirectory(title, defaultDir string) (string, error) {
 	return d.wails.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
 		Title:     title,
 		Directory: defaultDir, // v3's name for v2 DefaultDirectory
-		// A .rela bundle is declared as a package in Info.plist, so the panel
-		// classifies it as a FILE, not a directory. With CanChooseFiles false
-		// it would be greyed out and unselectable — the very projects this
-		// picker exists to open. Allowing both keeps plain project folders
-		// selectable too.
-		//
-		// TreatsFilePackagesAsDirectories is deliberately NOT set: it makes the
-		// panel descend INTO the bundle instead of selecting it.
+		// Both, because a project is either a folder or a .rela document
+		// file.
 		CanChooseDirectories: true,
 		CanChooseFiles:       true,
 	}).PromptForSingleSelection()
+}
+
+// confirmDialog asks a question in a native dialog and waits for the answer.
+// Page script cannot click a native dialog, so an approval made here comes
+// from the user. Cancel is the default button.
+// coverage-ignore-func: requires Wails runtime
+func (d *Desktop) confirmDialog(title, message, approve string) bool {
+	if d.wails == nil {
+		return false
+	}
+	answer := make(chan bool, 1)
+	q := d.wails.Dialog.Question().SetTitle(title).SetMessage(message)
+	q.AddButton(approve).OnClick(func() { answer <- true })
+	q.AddButton("Cancel").SetAsDefault().SetAsCancel().OnClick(func() { answer <- false })
+	q.Show()
+	return <-answer
 }
 
 // errorDialog shows a native error dialog. Replaces v2's runtime.MessageDialog.
@@ -391,22 +411,9 @@ func (d *Desktop) LoadProject(dir string) string {
 // is left running, which is what opening a second window needs; otherwise it
 // is released first — the ordering that matters, see releaseLoadedProject.
 func (d *Desktop) loadProject(dir string, keepExisting bool) string {
-	fs, projCtx, err := discoverProject(dir)
+	fsys, projCtx, err := discoverProject(dir)
 	if err != nil {
 		return d.failLoad(err)
-	}
-
-	// Check if data-entry.yaml exists
-	configPath := filepath.Join(dir, dataentry.ConfigFile)
-	if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
-		// Store pending setup state
-		d.mu.Lock()
-		d.pendingSetupDir = dir
-		d.pendingSetupFS = fs
-		d.pendingSetupPaths = projCtx
-		d.loadErr = ""
-		d.mu.Unlock()
-		return "needs_setup"
 	}
 
 	// Opening a project in a NEW window must not close the one already open;
@@ -415,24 +422,40 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 		d.releaseLoadedProject()
 	}
 
-	auditSink, auditErr := audit.NewFilesystem(filepath.Join(projCtx.CacheDir, "audit"))
-	if auditErr != nil {
-		d.mu.Lock()
-		d.loadErr = auditErr.Error()
-		d.mu.Unlock()
-		return auditErr.Error()
-	}
 	svc, svcErr := appbuild.New(appbuild.Config{
-		FS:           fs,
+		FS:           fsys,
 		Paths:        projCtx,
 		ScriptEngine: script.NewEngine(),
-		Audit:        auditSink,
-	})
+		Audit:        desktopAudit,
+	}, projectOptions(projCtx.CacheDir, d.keychain)...)
 	if svcErr != nil {
+		return d.failLoad(svcErr)
+	}
+	// Closed on every path that does not hand svc to the registry. On the
+	// sqlite build an open svc holds the database's exclusive lock, and a
+	// leaked one would refuse every later open of this project.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			_ = svc.Close()
+		}
+	}()
+
+	// data-entry.yaml is read through the project's loader, not looked up on
+	// disk: a project may carry it in its database. Checked after the
+	// services open because that loader is theirs; the schema is kept for
+	// setup for the same reason.
+	_, cfgErr := svc.ProjectFiles().Load(context.Background(), dataentry.ConfigFile)
+	if errors.Is(cfgErr, fs.ErrNotExist) {
 		d.mu.Lock()
-		d.loadErr = svcErr.Error()
+		d.pendingSetupDir = dir
+		d.pendingSetupMeta = svc.Meta()
+		d.loadErr = ""
 		d.mu.Unlock()
-		return svcErr.Error()
+		return "needs_setup"
+	}
+	if cfgErr != nil {
+		return d.failLoad(cfgErr)
 	}
 
 	fieldResolver, err := dataentry.ResolverFromServices(svc)
@@ -441,7 +464,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	}
 
 	app, err := dataentry.NewApp(
-		fs, projCtx, svc.Meta(), svc.Store(), svc.Versions(),
+		fsys, projCtx, svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), svc.Versions(),
 		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
 		fieldResolver,
 		svc.Audit(),
@@ -454,13 +477,12 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	if err != nil {
 		return d.failLoad(err)
 	}
-	// The worlds give scripts, the validator and tracer titles the schema's
-	// default world, and world selection its links; wired together as in
-	// rela-server's wireWorlds.
-	if err := dataentry.SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
+	if err := dataentrywire.Services(app, svc); err != nil {
 		return d.failLoad(err)
 	}
+	app.SetPrincipalResolver(desktopPrincipalResolver())
 	handler := app.NewRouter()
+	opened, name := openedAs(projCtx, app.ProjectRoot(), app.ProjectName())
 
 	// Start background scheduler for the new project.
 	schedCtx, schedCancel := context.WithCancel(context.Background())
@@ -471,19 +493,20 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	d.svc = svc
 	d.app = app
 	d.handler = handler
+	d.activePath = opened
 	d.loadErr = ""
 	d.pendingSetupDir = ""
-	d.pendingSetupFS = nil
-	d.pendingSetupPaths = nil
+	d.pendingSetupMeta = nil
 	d.stopScheduler = schedCancel
 	d.mu.Unlock()
+	handedOff = true
 
 	// Register it so /p/<id>/ can reach it, and so a later Open Project on the
 	// same directory can focus this project rather than loading a second copy.
 	d.registry.add(&loadedProject{
 		id:            projectID(app.ProjectRoot()),
-		root:          app.ProjectRoot(),
-		name:          app.ProjectName(),
+		root:          opened,
+		name:          name,
 		app:           app,
 		svc:           svc,
 		handler:       handler,
@@ -491,19 +514,35 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	})
 
 	scheduler.StartBackground(schedCtx, svc, slog.Default())
+	d.startNotifier(schedCtx, projectID(app.ProjectRoot()), svc, appbuild.CompiledWorlds(svc).DefaultWorld())
 
 	if d.win != nil {
-		d.win.SetTitle(app.ProjectName())
+		d.win.SetTitle(name)
 	}
 
-	// Update preferences with successfully opened project.
-	d.prefs.AddRecentProject(app.ProjectRoot(), app.ProjectName())
-	if saveErr := d.prefs.Save(); saveErr != nil {
-		slog.Warn("could not save preferences", "error", saveErr)
-	}
+	rememberRecent(d.prefs, opened, name)
 	d.refreshMenu()
 
 	return ""
+}
+
+// openedAs is the path and name a project is known by: for a document, its
+// file rather than its private workspace. That is what Open Recent reopens
+// and what the title shows.
+func openedAs(paths *project.Context, root, name string) (opened, shown string) {
+	if paths.DatabaseFile != "" {
+		return paths.DatabaseFile, documentName(paths.DatabaseFile)
+	}
+	return root, name
+}
+
+// rememberRecent puts a successfully opened project at the top of Open
+// Recent.
+func rememberRecent(prefs *desktop.Preferences, path, name string) {
+	prefs.AddRecentProject(path, name)
+	if err := prefs.Save(); err != nil {
+		slog.Warn("could not save preferences", "error", err)
+	}
 }
 
 // NeedsSetup returns true if a project needs data-entry.yaml setup.
@@ -518,14 +557,9 @@ func (d *Desktop) GetSetupInfo() map[string]any {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	if d.pendingSetupPaths == nil {
+	meta := d.pendingSetupMeta
+	if meta == nil {
 		return map[string]any{"error": "No project pending setup"}
-	}
-
-	loader := metamodel.NewFSLoader(d.pendingSetupFS, d.pendingSetupPaths.SchemaPath)
-	meta, _, err := loader.Load(context.Background())
-	if err != nil {
-		return map[string]any{"error": fmt.Sprintf("Failed to load metamodel: %v", err)}
 	}
 
 	entityTypes := make([]string, 0, len(meta.Entities))
@@ -542,32 +576,30 @@ func (d *Desktop) GetSetupInfo() map[string]any {
 // GenerateDataEntryConfig creates a data-entry.yaml from the metamodel.
 func (d *Desktop) GenerateDataEntryConfig(appName string) string {
 	d.mu.Lock()
-	fs := d.pendingSetupFS
-	paths := d.pendingSetupPaths
+	meta := d.pendingSetupMeta
 	dir := d.pendingSetupDir
 	d.mu.Unlock()
 
-	if paths == nil {
+	if meta == nil {
 		return "No project pending setup"
 	}
 
-	meta, _, err := metamodel.NewFSLoader(fs, paths.SchemaPath).Load(context.Background())
-	if err != nil {
-		return fmt.Sprintf("Failed to load metamodel: %v", err)
+	config := []byte(generateDataEntryConfig(appName, meta))
+	var err error
+	if isRelaDocument(dir) {
+		// A document carries its config; a file beside it would not travel.
+		err = storeDocumentConfig(context.Background(), dir, dataentry.ConfigFile, config)
+	} else {
+		err = os.WriteFile(filepath.Join(dir, dataentry.ConfigFile), config, 0o644)
 	}
-
-	config := generateDataEntryConfig(appName, meta)
-	configPath := filepath.Join(dir, dataentry.ConfigFile)
-
-	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+	if err != nil {
 		return fmt.Sprintf("Failed to write config: %v", err)
 	}
 
 	// Now load the project
 	d.mu.Lock()
 	d.pendingSetupDir = ""
-	d.pendingSetupFS = nil
-	d.pendingSetupPaths = nil
+	d.pendingSetupMeta = nil
 	d.mu.Unlock()
 
 	return d.LoadProject(dir)
@@ -903,6 +935,10 @@ func (d *Desktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		d.serveProjects(w, r)
 		return
 	}
+	if r.URL.Path == settingsPath {
+		serveSettingsPage(w)
+		return
+	}
 
 	// A /p/<id>/ request names its project explicitly; anything else is served
 	// by the active one, which is what the welcome page and any window opened
@@ -1008,79 +1044,6 @@ func (d *Desktop) showAbout(_ *application.Context) {
 		Show()
 }
 
-// buildAppMenu constructs the application menu bar including recent projects.
-//
-// Wails v3 supplies cross-platform roles (AppMenu/EditMenu carry the
-// platform-correct items), so the v2 GOOS branching is no longer needed:
-// on non-macOS the role expands to nothing. Accelerator "CmdOrCtrl+o"
-// maps to Command on macOS and Control elsewhere.
-func (d *Desktop) buildAppMenu() *application.Menu {
-	appMenu := application.NewMenu()
-
-	if goruntime.GOOS == "darwin" {
-		appMenu.AddRole(application.AppMenu)
-	}
-
-	fileMenu := appMenu.AddSubmenu("File")
-	fileMenu.Add("New Window").SetAccelerator("CmdOrCtrl+n").OnClick(func(*application.Context) {
-		if errMsg := d.OpenWindow("/", ""); errMsg != "" {
-			slog.Warn("could not open window", "error", errMsg)
-		}
-	})
-	fileMenu.AddSeparator()
-	fileMenu.Add("Open Project...").SetAccelerator("CmdOrCtrl+o").OnClick(d.openProjectFromMenu)
-	fileMenu.Add("Clone from Git...").SetAccelerator("CmdOrCtrl+shift+o").OnClick(d.cloneFromGitMenu)
-	fileMenu.AddSeparator()
-
-	// Recent Projects submenu
-	if len(d.prefs.RecentProjects) > 0 {
-		recentMenu := fileMenu.AddSubmenu("Recent Projects")
-		for _, rp := range d.prefs.RecentProjects {
-			proj := rp // capture for closure
-			label := proj.Name
-			if label == "" {
-				label = filepath.Base(proj.Path)
-			}
-			recentMenu.Add(label).OnClick(func(_ *application.Context) {
-				if errMsg := d.LoadProject(proj.Path); errMsg != "" {
-					d.errorDialog("Failed to open project", errMsg)
-					return
-				}
-				d.reloadWindow()
-			})
-		}
-		recentMenu.AddSeparator()
-		recentMenu.Add("Clear Recent Projects").OnClick(func(_ *application.Context) {
-			d.prefs.ClearRecentProjects()
-			if err := d.prefs.Save(); err != nil {
-				slog.Warn("could not save preferences", "error", err)
-			}
-			d.refreshMenu()
-		})
-		fileMenu.AddSeparator()
-	}
-
-	if goruntime.GOOS == "darwin" {
-		// Close the window rather than quitting, matching v2's Cmd+W.
-		fileMenu.Add("Close Window").SetAccelerator("CmdOrCtrl+w").OnClick(func(_ *application.Context) {
-			if d.win != nil {
-				d.win.Close()
-			}
-		})
-		appMenu.AddRole(application.EditMenu)
-	} else {
-		fileMenu.Add("Quit").SetAccelerator("CmdOrCtrl+q").OnClick(func(_ *application.Context) {
-			if d.wails != nil {
-				d.wails.Quit()
-			}
-		})
-		helpMenu := appMenu.AddSubmenu("Help")
-		helpMenu.Add("About Rela Desktop").OnClick(d.showAbout)
-	}
-
-	return appMenu
-}
-
 // refreshMenu rebuilds and applies the application menu.
 func (d *Desktop) refreshMenu() {
 	// The native menu does not exist until app.Run() has built it. Setting it
@@ -1094,7 +1057,7 @@ func (d *Desktop) refreshMenu() {
 	// coverage-ignore-start: os-fs-event: runtime.MenuSet/UpdateApplicationMenu need the live Wails runtime; only
 	// reachable once d.ctx is a real
 	// Wails context
-	m := d.buildAppMenu()
+	m := d.menu.build()
 	d.wails.Menu.Set(m)
 	m.Update()
 	// coverage-ignore-end
@@ -1125,7 +1088,29 @@ func main() {
 		prefs = &desktop.Preferences{}
 	}
 
-	d := &Desktop{prefs: prefs, registry: newProjectRegistry()}
+	d := &Desktop{prefs: prefs, registry: newProjectRegistry(), notify: newNotifyHub()}
+	d.menu = &menuBar{d: d}
+	kc, err := newKeychainSecrets(osKeychain{})
+	if err != nil {
+		slog.Error("could not start", "error", err)
+		os.Exit(1)
+	}
+	d.keychain = kc
+	downloads, err := newDownloads(Downloads{
+		handler: d,
+		baseCtx: func() context.Context { return d.ctx },
+		prompt:  func(name string) (string, error) { return promptSave(d.wails)(name) },
+		alert:   d.errorDialog,
+	})
+	if err != nil {
+		slog.Error("could not start", "error", err)
+		os.Exit(1)
+	}
+	d.notify.notes.OnNotificationResponse(d.onNotificationClicked)
+	if d.settings, err = newProjectSettings(d, d.confirmDialog); err != nil { // coverage-ignore: d is never nil here
+		slog.Error("could not start", "error", err)
+		os.Exit(1)
+	}
 
 	// Which project to open — resolved now, but NOT loaded yet. Opening the
 	// store here would mean a redundant second instance takes the sqlite and
@@ -1143,9 +1128,9 @@ func main() {
 		// The whole Go API + SPA is served through this one handler, exactly
 		// as under v2. Verified streaming (SSE) works through it.
 		Assets: application.AssetOptions{Handler: d},
-		Services: []application.Service{
-			application.NewService(d),
-		},
+		Services: append([]application.Service{application.NewService(d), application.NewService(downloads),
+			application.NewService(d.settings)},
+			d.notify.services()...),
 		// v2 had no shutdown hook, so the scheduler and services leaked on
 		// quit. ServiceShutdown now releases them.
 		OnShutdown: func() { slog.Info("shutting down") },
@@ -1164,6 +1149,7 @@ func main() {
 		Title:  title,
 		Width:  defaultWindowWidth,
 		Height: defaultWindowHeight,
+		Mac:    macWindow(),
 	}
 	// Restore the previous geometry when we have usable saved state. X/Y are
 	// only honored with InitialPosition set; the default centers the window.
@@ -1173,6 +1159,8 @@ func main() {
 		winOpts.InitialPosition = application.WindowXY
 	}
 	d.win = app.Window.NewWithOptions(winOpts)
+	d.menu.trackWindow(d.win, "")
+	registerContextMenus(d.wails, d.OpenWindow)
 
 	// Finder handing us a .rela bundle. Registered before Run so a cold launch
 	// (where the event arrives during startup) is not missed.
@@ -1198,7 +1186,7 @@ func main() {
 		d.refreshMenu()
 	})
 
-	app.Menu.Set(d.buildAppMenu())
+	app.Menu.Set(d.menu.build())
 
 	if err := app.Run(); err != nil {
 		slog.Error("wails error", "error", err)
@@ -1253,16 +1241,24 @@ func projectRootOf(path string) string {
 	return path
 }
 
-// isRelaProject checks if the directory looks like a rela project, accepting
-// either schema file name.
+// isRelaProject checks if the directory looks like a rela project: it has a
+// schema file under either name, or a project database that may carry the
+// schema itself.
 func isRelaProject(dir string) bool {
 	_, _, found := project.SchemaFileAt(dir, storage.NewSafeFS(storage.NewOsFS()))
-	return found
+	return found || hasProjectDatabase(dir) || isRelaDocument(dir)
 }
 
 // discoverProject returns the filesystem and project context for the
 // project rooted at projectDir.
 func discoverProject(projectDir string) (storage.FS, *project.Context, error) {
+	if isRelaDocument(projectDir) {
+		paths, err := documentContext(projectDir)
+		if err != nil {
+			return nil, nil, err
+		}
+		return storage.NewSafeFS(storage.NewOsFS()), paths, nil
+	}
 	absDir, err := filepath.Abs(projectDir)
 	if err != nil {
 		return nil, nil, err
@@ -1390,4 +1386,19 @@ func appendMapEntry(m *yaml.Node, key string, value any) {
 		_ = valNode.Encode(value)
 	}
 	m.Content = append(m.Content, keyNode, valNode)
+}
+
+// desktopPrincipalResolver attributes every request to the logged-in OS user,
+// so the audit log names who made an edit.
+//
+// The server's default stamps "unknown", which is right for a web server
+// whose process owner is not its users, but here the process owner IS the
+// only user. $RELA_DATAENTRY_USER still wins.
+func desktopPrincipalResolver() dataentry.PrincipalResolver {
+	return dataentry.ChainResolvers(
+		dataentry.EnvPrincipalResolver(),
+		func(*http.Request) principal.Principal {
+			return principal.Principal{User: principal.SystemUser(), Tool: principal.ToolDesktop}
+		},
+	)
 }

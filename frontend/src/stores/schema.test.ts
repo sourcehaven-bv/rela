@@ -673,6 +673,20 @@ describe('Schema Store', () => {
       expect(store.getEnumLabel('x', 'status', 'ticket')).toBe('Ticket X')
     })
 
+    it("does not borrow another type's labels when the given type declares the property", () => {
+      const store = useSchemaStore()
+      // ticket.status is a plain string; bug.status is a labelled enum. A
+      // ticket card must show the raw value, not bug's label.
+      store.entityTypes = new Map([
+        [
+          'bug',
+          { label: 'Bug', properties: { status: { type: 'enum', values: ['x'], labels: { x: 'Bug X' } } } },
+        ],
+        ['ticket', { label: 'Ticket', properties: { status: { type: 'string' } } }],
+      ]) as never
+      expect(store.getEnumLabel('x', 'status', 'ticket')).toBeUndefined()
+    })
+
     it('falls back to first-inserted type on collision when no entity type given', () => {
       const store = useSchemaStore()
       // Insertion order fixes the tie-break: `bug` first, so `bug`'s label wins
@@ -717,7 +731,7 @@ describe('Schema Store', () => {
       expect(store.stylesForProperty('status')).toEqual({ todo: 'badge-yellow' })
     })
 
-    it('resolves a TYPE name passed as the property (EntityDetail view sections pass PropType)', () => {
+    it('resolves a TYPE name passed as the property (direct-key fallback)', () => {
       const store = useSchemaStore()
       store.entityTypes = new Map([
         ['ticket', { label: 'Ticket', properties: { status: { type: 'ticket-status' } } }],

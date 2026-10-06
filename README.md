@@ -101,6 +101,7 @@ go build -o rela ./cmd/rela
 | [Data Classification](docs/classification.md) | Label what data each field holds in classification.yaml, lint and sync it, and see what each role can read of it |
 | [Data Migration](docs/data-migration.md) | Detect schema shape changes and migrate stored content with generated, reviewable migrations |
 | [Comments: Annotating Entities, Fields and Text](docs/comments.md) | Enable commenting, control who may comment, and understand how anchors survive edits |
+| [Rela Desktop: Documents, Menus and Notifications](docs/desktop.md) | Open projects and single-file .rela documents in the desktop app, and send notifications with desktop.yaml |
 
 ### Tutorials
 

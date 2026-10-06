@@ -178,6 +178,8 @@ func TestLoader_RejectsUnsafeNames(t *testing.T) {
 		{"dot segment", "./file.yaml"},
 		{"empty segment", "sub//file.yaml"},
 		{"drive letter", "C:secret.yaml"},
+		{"hidden file", ".env"},
+		{"hidden directory", ".rela/secrets.yaml"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := l.Load(ctx, tc.input); err == nil {
@@ -190,5 +192,89 @@ func TestLoader_RejectsUnsafeNames(t *testing.T) {
 				t.Errorf("Put(%q) should be rejected", tc.input)
 			}
 		})
+	}
+}
+
+// Replace makes the given files the whole stored set, atomically: a name
+// not in the new set is gone, and an invalid name changes nothing.
+func TestLoader_Replace(t *testing.T) {
+	l, ctx := newLoader(t)
+	if err := l.Put(ctx, "scripts/old.lua", []byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Replace(ctx, map[string][]byte{
+		"schema.yaml":     []byte("s"),
+		"scripts/new.lua": []byte("n"),
+	}); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	paths, err := l.Paths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"schema.yaml", "scripts/new.lua"}; !slices.Equal(paths, want) {
+		t.Fatalf("Paths = %v, want %v", paths, want)
+	}
+
+	if err := l.Replace(ctx, map[string][]byte{"ok.yaml": nil, "../bad": nil}); err == nil {
+		t.Fatal("Replace accepted a traversal name")
+	}
+	if after, _ := l.Paths(ctx); !slices.Equal(after, paths) {
+		t.Fatalf("a rejected Replace changed the set: %v", after)
+	}
+}
+
+func TestLoader_StatAndDirs(t *testing.T) {
+	l, ctx := newLoader(t)
+	for name, body := range map[string]string{
+		"apps/b/index.html":  "b",
+		"apps/a/index.html":  "aa",
+		"apps/a/sub/x.js":    "x",
+		"apps/top.txt":       "t",
+		"custom/theme.css":   "css",
+		"appsx/c/index.html": "c",
+	} {
+		if err := l.Put(ctx, name, []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	info, err := l.Stat(ctx, "apps/a/index.html")
+	if err != nil || info.Size() != 2 || info.Name() != "index.html" || info.IsDir() || info.ModTime().IsZero() {
+		t.Fatalf("Stat = %+v, %v", info, err)
+	}
+	if _, absentErr := l.Stat(ctx, "apps/absent"); !errors.Is(absentErr, fs.ErrNotExist) {
+		t.Fatalf("Stat(absent) err = %v, want ErrNotExist", absentErr)
+	}
+	if _, travErr := l.Stat(ctx, "../x"); travErr == nil {
+		t.Fatal("Stat accepted a traversal name")
+	}
+
+	dirs, err := l.Dirs(ctx, "apps")
+	if err != nil || !slices.Equal(dirs, []string{"a", "b"}) {
+		t.Fatalf("Dirs(apps) = %v, %v; want [a b]", dirs, err)
+	}
+	if absent, absentErr := l.Dirs(ctx, "absent"); absentErr != nil || len(absent) != 0 {
+		t.Fatalf("Dirs(absent) = %v, %v", absent, absentErr)
+	}
+	if _, travErr := l.Dirs(ctx, "../x"); travErr == nil {
+		t.Fatal("Dirs accepted a traversal name")
+	}
+}
+
+// A directory name with non-ASCII characters lists its files and
+// subdirectories: the prefix is compared as bytes, not characters.
+func TestLoader_ListNonASCIIDirectory(t *testing.T) {
+	l, ctx := newLoader(t)
+	for _, name := range []string{"apps/café/index.html", "apps/café/sub/x.js"} {
+		if err := l.Put(ctx, name, []byte("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if files, err := l.List(ctx, "apps/café"); err != nil || len(files) != 1 || files[0] != "index.html" {
+		t.Fatalf("List = %v, %v; want [index.html]", files, err)
+	}
+	if dirs, err := l.Dirs(ctx, "apps/café"); err != nil || len(dirs) != 1 || dirs[0] != "sub" {
+		t.Fatalf("Dirs = %v, %v; want [sub]", dirs, err)
 	}
 }

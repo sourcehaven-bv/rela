@@ -281,8 +281,11 @@ export const useSchemaStore = defineStore('schema', () => {
   ): T | undefined {
     if (entityType) {
       const et = typeof entityType === 'string' ? entityTypes.value.get(entityType) : entityType
-      const hit = fromDef(et?.properties?.[property])
-      if (hit) return hit
+      // When the given type declares the property, its def is the answer even
+      // if it yields nothing: another type's same-named enum must not lend
+      // its labels or styles to, say, a plain string field.
+      const own = et?.properties?.[property]
+      if (own) return fromDef(own)
     }
     for (const [, def] of entityTypes.value) {
       const hit = fromDef(def.properties?.[property])
@@ -309,11 +312,9 @@ export const useSchemaStore = defineStore('schema', () => {
   // Resolve the badge style map (value → badge class) for a property. The
   // server keys `styles` by CUSTOM-TYPE name (buildStyleMap; validateStyles
   // rejects other keys), so resolve the property to its custom type first.
-  // The direct-key fallback is load-bearing, not defensive: EntityDetail's
-  // view sections pass the property's TYPE name as `property` (sections.go
-  // populates PropType from the def), which is already the styles key and
-  // matches no property def — the fallback is the only path that resolves
-  // it. It also covers a property whose name coincides with its type.
+  // The direct-key fallback covers a property whose name coincides with its
+  // type. Callers pass the property name, not the type name: labels resolve
+  // per property, so a type name would find the style but not the label.
   const stylesForProperty = computed(
     () =>
       (

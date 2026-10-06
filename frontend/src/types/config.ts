@@ -967,6 +967,18 @@ export interface SidebarPageTab {
   scope?: 'relation' | 'root'
   relation?: string
   direction?: 'outgoing' | 'incoming'
+  /**
+   * Per entity type, the relation a row created while this tab is open is
+   * linked to the page's entity over. The space's Create menu uses it.
+   */
+  links?: SidebarPageLink[]
+}
+
+/** A row of `type` is linked to the page's entity over `relation`, seen from the entity. */
+export interface SidebarPageLink {
+  type: string
+  relation: string
+  direction: 'outgoing' | 'incoming'
 }
 
 /** A page with the tabs this principal may see, in config order. */

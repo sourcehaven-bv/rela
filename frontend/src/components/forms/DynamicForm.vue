@@ -51,7 +51,6 @@ import { ownedRelationKeys, filterOwnedRelations, untypedRelationKeys } from './
 import { useAutoSave } from '@/composables/useAutoSave'
 import { useFormWizard } from '@/composables/useFormWizard'
 import type { Bindings } from '@/utils/conditions'
-import { registerForm } from './dirtyFormRegistry'
 import { adoptLockedFieldValues } from './stagedEntity'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
 import FormFieldList from './FormFieldList.vue'
@@ -380,22 +379,23 @@ const formMode = computed(() => (isEdit.value ? 'edit' : 'create') as 'create' |
 
 const idControls = useEntityIDControls(entityType, formMode)
 
-// The world a create is issued from. An embedded form takes it from its host,
-// explicitly; see the payload comment in handleSubmit.
-const createWorld = computed(() => (props.embedded ? props.embeddedWorld : worldParam.value))
+// The world the form works in: a create is issued from it and an edit reads
+// the entity in it. An embedded form takes it from its host, explicitly; see
+// the payload comment in handleSubmit.
+const formWorld = computed(() => (props.embedded ? props.embeddedWorld : worldParam.value))
 // A faced type created from a world without `create:` asks for a face.
 const createFace = useCreateFace(
   computed(() => formConfig.value?.entity),
   entityType,
   computed(() => !isEdit.value && !(props.embedded && props.embeddedFace)),
-  createWorld
+  formWorld
 )
 // Where a create lands: a pinned face, a picked face, or the world's `create:`.
 function createTargetFields(): { face?: string; world?: string } {
   if (props.embedded && props.embeddedFace) return { face: props.embeddedFace }
   if (createFace.needsFace.value)
     return createFace.face.value ? { face: createFace.face.value } : {}
-  return createWorld.value ? { world: createWorld.value } : {}
+  return formWorld.value ? { world: formWorld.value } : {}
 }
 const { showManualIDInput, showPrefixPicker, prefixOptions, manualId, selectedPrefix } = idControls
 
@@ -622,10 +622,19 @@ async function loadEntity(force = false) {
 
   try {
     // The entity id is an ADDRESS — `POL-1` or `POL-1@published` — and the
-    // form edits exactly the row it names. An address with a face is
-    // literal in every world, so the fetch uses the default world. The Edit
-    // button must pass the face it was pressed on (atlas worlds issue 7).
-    const entity = await entitiesStore.fetchEntity(formConfig.value.entity, props.entityId, force)
+    // form edits exactly the row it names. An address with a face is literal
+    // in every world, so the world does not pick the row. It does pick the
+    // row's RELATIONS: the server leaves out a peer with no face in the world
+    // it reads in. So the form reads in the world the page was showing, which
+    // every edit entry point carries (editFormRoute). In the default world a
+    // relation the page showed would be missing from the form, where the user
+    // can neither see nor remove it.
+    const entity = await entitiesStore.fetchEntity(
+      formConfig.value.entity,
+      props.entityId,
+      force,
+      formWorld.value
+    )
     // Route-guard: if the server says this row is not updatable, render an
     // inline "not editable" message instead of the form. The EntityDetail
     // Edit button already hides for the same verdict, so this branch fires
@@ -733,6 +742,21 @@ function stagedFailureMessage(failures: { file: string; message: string }[]): st
 async function onAttachmentChanged() {
   await loadEntity(true)
 }
+
+// The world switcher stays on screen while a form is open, and a world change
+// only edits the query, so the form is not remounted. Reload in the new world,
+// or the form keeps the old world's relations while the picker searches the
+// new one. Pending edits are committed first, because the reload replaces the
+// form state.
+watch(formWorld, async () => {
+  if (!isEdit.value || props.embedded) return
+  if (autoSave.value) {
+    flushEditor()
+    await nextTick()
+    await autoSave.value.commitImmediately()
+  }
+  await loadEntity(true)
+})
 
 // Read return_to from the query eagerly — needed in both create and
 // edit modes. initializeDefaults below handles create-only pre-fills
@@ -2229,6 +2253,15 @@ function snapshotServerState(entity: Entity): Entity {
     properties: { ...(entity.properties ?? {}) },
     relations: entity.relations ? { ...entity.relations } : entity.relations,
   }
+  // The relations token hashes the relations as the read's world serves them,
+  // and a PATCH checks it against the default world's view (a write takes no
+  // world). Read in another world, the token can never match, so every
+  // relations save would be refused as a conflict. Drop it: the relations
+  // body is a delta, and the first save's response brings a token in the
+  // write's own view.
+  if (entity._versions && (formWorld.value ?? '') !== schemaStore.defaultWorld) {
+    snap._versions = { ...entity._versions, relations: undefined }
+  }
   // Freeze the properties bag so an accidental write to the baseline fails
   // loudly in dev instead of silently corrupting the merge base.
   Object.freeze(snap.properties)
@@ -2247,9 +2280,6 @@ function recordServerBaseline(entity: Entity) {
     _pendingServerSnapshot = snap
   }
 }
-// Dirty-registry cleanup, assigned in onMounted (after awaits) and run
-// from the top-level onBeforeUnmount.
-let unregisterDirtyForm: (() => void) | null = null
 
 // The relations the entity was loaded with, per relation name, and the
 // edges saved since (see ConfirmedEdges): every relations body is a delta
@@ -2503,15 +2533,6 @@ onMounted(async () => {
     // Consumed by the constructor above; later loads go through
     // `recordServerSnapshot` on the live instance instead.
     _pendingServerSnapshot = null
-    // Register with the dirty registry so SSE-driven re-fetches in
-    // other forms on the same entity preserve this form's dirty state.
-    // The cleanup runs from the top-level onBeforeUnmount below —
-    // registering a lifecycle hook after an `await` has no active
-    // instance, so Vue would silently drop it and leak the registration.
-    unregisterDirtyForm = registerForm(
-      props.entityId,
-      (property) => _autoSaveInstance.value?.isDirty(property) ?? false
-    )
   }
 
   // TKT-GFQK pre-flight: a `direction: incoming` widget on a relation
@@ -2536,8 +2557,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('keydown', handleKeydown)
-  unregisterDirtyForm?.()
-  unregisterDirtyForm = null
   // TKT-3I5U: cancel any pending / in-flight staged dry-run, and mark
   // the component as gone so a response that has already arrived (but
   // is awaiting the microtask queue) doesn't write to dead refs
@@ -2687,7 +2706,10 @@ defineExpose({
           v-if="formConfig && entityId"
           :as="RouterLink"
           variant="secondary"
-          :to="`/entity/${formConfig.entity}/${entityId}`"
+          :to="{
+            path: `/entity/${formConfig.entity}/${entityId}`,
+            query: formWorld ? { world: formWorld } : {},
+          }"
         >
           ← Back to entity
         </RlButton>
