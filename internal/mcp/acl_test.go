@@ -11,6 +11,7 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -94,7 +95,7 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 			"editor": {Read: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"}},
 		},
 		Assignments: map[string]string{"alice": "viewer", "carol": "editor"},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

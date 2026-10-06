@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -431,7 +432,7 @@ assignments:
 	// Switch to the production ACL: Declarative with a store-backed
 	// Graph. This is the exact wiring shape appbuild produces.
 	sink := audit.NewMemory()
-	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(store), store)
+	declarative, err := acl.NewDeclarative(policy, aclstore.NewGraph(store), store)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -589,7 +590,7 @@ assignments:
 	tktID := tktRes.Entity.ID
 
 	sink := audit.NewMemory()
-	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(store), store)
+	declarative, err := acl.NewDeclarative(policy, aclstore.NewGraph(store), store)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

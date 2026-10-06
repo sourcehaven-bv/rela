@@ -15,6 +15,7 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
@@ -179,7 +180,7 @@ func newLeaseEnv(t *testing.T) *leaseEnv {
 			"noter":  {Read: []string{"note"}, Update: []string{"note"}},
 		},
 		Assignments: map[string]string{"editors": "editor", "noters": "noter"},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

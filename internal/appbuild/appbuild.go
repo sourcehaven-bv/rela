@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
@@ -1586,7 +1587,7 @@ func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, er
 	}
 	// Schema-dependent validation already ran in prepare (validateResolvedPolicy).
 	warnUngatedMembership(policy)
-	// `st` is passed twice: once via NewStoreGraph (the Graph
+	// `st` is passed twice: once via aclstore.NewGraph (the Graph
 	// adapter the resolver uses for member-of / ancestor walks), and
 	// once as the GraphQueryer (executes MatchingFaces for
 	// Request.PermitsRead / ReadableFacesMany). The store.Store
@@ -1598,11 +1599,11 @@ func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, er
 	// WithPrincipalLookup supplies the store-backed resolver for the
 	// `principal_property` substitution; NewDeclarative requires it iff
 	// the policy enables that lookup (else it is an inert dependency).
-	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(st)))
+	d, err := acl.NewDeclarative(policy, aclstore.NewGraph(st), st,
+		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(st)))
 	// coverage-ignore-start: defensive: NewDeclarative only errors on nil policy/graph/queryer or a missing principal
-	// lookup; policy is non-nil
-	// (guarded above), graph and queryer are non-nil (NewStoreGraph(st)/st), and WithPrincipalLookup is always supplied
+	// lookup; policy is non-nil (guarded above), graph and queryer are non-nil (aclstore.NewGraph(st)/st), and
+	// WithPrincipalLookup is always supplied
 	if err != nil {
 		return nil, nil, fmt.Errorf("appbuild: build acl.Declarative: %w", err)
 	}

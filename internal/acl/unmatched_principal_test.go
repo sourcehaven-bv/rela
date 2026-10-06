@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -90,8 +91,8 @@ func rejectWorld(t *testing.T, mode string) *acl.Declarative {
 		t.Fatalf("LoadPolicyBytes: %v", err)
 	}
 	st := memstore.New()
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(st)))
+	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st,
+		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(st)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

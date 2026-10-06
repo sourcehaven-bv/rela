@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager/entitymanagertest"
@@ -89,7 +90,7 @@ func newACLWorldOn(t *testing.T, st store.Store) (store.Store, lua.WriteDeps) {
 	if err := yaml.Unmarshal([]byte(aclWorldPolicy), &policy); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -60,7 +61,7 @@ func facedGatedServer(t *testing.T, read []string, extra ...*entity.Entity) (*Se
 	d, err := acl.NewDeclarative(&acl.Policy{
 		Roles:       map[string]acl.RoleDef{"reader": {Read: read}},
 		Assignments: map[string]string{"alice": "reader"},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

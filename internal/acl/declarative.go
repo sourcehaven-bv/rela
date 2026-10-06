@@ -53,7 +53,7 @@ type DeclarativeOption func(*Declarative)
 // WithPrincipalLookup supplies the [PrincipalLookup] used to resolve the
 // raw principal to a user entity ID when the policy sets both
 // `user_entity_type` and `principal_property`. Wiring (appbuild) passes
-// [NewStorePrincipalLookup] over the store. When the policy enables the
+// aclstore.PrincipalLookup over the store. When the policy enables the
 // lookup but no PrincipalLookup was supplied, [NewDeclarative] fails — a
 // silent no-op would degrade every authenticated user to the raw
 // principal without any signal (constructors-reject-nil rule).
@@ -77,7 +77,7 @@ func WithPrincipalLookup(l PrincipalLookup) DeclarativeOption {
 // Tests that don't exercise group expansion can pass [NullGraph];
 // tests that don't exercise read gating can pass [NullGraphQueryer]
 // (matches no row). Production wiring (appbuild) passes the store as both
-// Graph (via [NewStoreGraph]) and as the FaceMatcher, and supplies
+// Graph (via aclstore.Graph) and as the FaceMatcher, and supplies
 // [WithPrincipalLookup].
 func NewDeclarative(p *Policy, g Graph, fm FaceMatcher, opts ...DeclarativeOption) (*Declarative, error) {
 	if p == nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -61,7 +62,7 @@ func newRelatedUserApp(t *testing.T) (*App, *acl.Declarative, *storetest.Countin
 		UserEntityType:    "persoon",
 		PrincipalProperty: "pratique_sub",
 		Roles:             map[string]acl.RoleDef{"everyone": {Read: []string{"*"}}},
-	}, acl.NewStoreGraph(counting), counting, acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(counting)))
+	}, aclstore.NewGraph(counting), counting, acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(counting)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -260,7 +261,7 @@ func TestQueryScope_RelatedToCurrentUserUnreadableUserType(t *testing.T) {
 		PrincipalProperty: "pratique_sub",
 		Roles:             map[string]acl.RoleDef{"everyone": {Read: []string{"taak"}}},
 		Assignments:       map[string]string{"*": "everyone"},
-	}, acl.NewStoreGraph(counting), counting, acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(counting)))
+	}, aclstore.NewGraph(counting), counting, acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(counting)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

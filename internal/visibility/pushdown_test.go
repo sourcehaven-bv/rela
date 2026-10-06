@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -278,7 +279,7 @@ func TestListPushdown_AllFacesScopedPrincipalGetsGrantedFaceRowsOnly(t *testing.
 	d, err := acl.NewDeclarative(&acl.Policy{
 		Roles:         map[string]acl.RoleDef{"reviewer": {Read: []string{"policy@published"}}},
 		RoleRelations: map[string]acl.RoleRelationDef{"reviews": {Confers: "reviewer"}},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +360,7 @@ func assertCountMatchesList(t *testing.T, st store.Store) {
 		},
 		Assignments:   map[string]string{"bob": "readers", "carol": "publishedreaders"},
 		RoleRelations: map[string]acl.RoleRelationDef{"reviews": {Confers: "reviewer"}},
-	}, acl.NewStoreGraph(st), st)
+	}, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -72,7 +73,7 @@ func buildWorld(t *testing.T, policyYAML string, ents []ent, rels []rel) *world 
 			t.Fatalf("create relation %s--%s-->%s: %v", r.from, r.typ, r.to, cErr)
 		}
 	}
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -132,8 +133,8 @@ func buildWorldWithMeta(t *testing.T, meta *metamodel.Metamodel, policyYAML stri
 			t.Fatalf("create relation %s--%s-->%s: %v", r.from, r.typ, r.to, cErr)
 		}
 	}
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(ms)))
+	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms,
+		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(ms)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

@@ -1214,7 +1214,7 @@ func (g RelationWriteGrant) validate(relType string) error {
 //
 //   - InheritRolesThrough entries must be non-empty and non-whitespace.
 //     A blank entry would expand ancestor sets through every relation
-//     type (StoreGraph treats RelationQuery.Type=="" as "all relations"),
+//     type (aclstore.Graph treats RelationQuery.Type=="" as "all relations"),
 //     silently turning a typo into a containment widening.
 //
 //   - RoleRelations keys must be non-empty and non-whitespace, for the

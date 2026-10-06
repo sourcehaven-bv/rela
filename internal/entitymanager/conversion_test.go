@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -143,7 +144,7 @@ func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixtur
 		if pErr != nil {
 			t.Fatalf("load policy: %v", pErr)
 		}
-		decl, dErr := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
+		decl, dErr := acl.NewDeclarative(policy, aclstore.NewGraph(st), st)
 		if dErr != nil {
 			t.Fatalf("NewDeclarative: %v", dErr)
 		}

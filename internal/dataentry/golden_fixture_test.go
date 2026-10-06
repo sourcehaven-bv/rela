@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
@@ -238,8 +239,8 @@ func goldenDeclarativeACL(t *testing.T, meta *metamodel.Metamodel, st store.Stor
 	if vErr := appbuild.ValidateACLPolicy(policy, meta); vErr != nil {
 		t.Fatalf("validate acl.yaml: %v", vErr)
 	}
-	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(st)))
+	d, err := acl.NewDeclarative(policy, aclstore.NewGraph(st), st,
+		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(st)))
 	if err != nil {
 		t.Fatalf("build acl: %v", err)
 	}

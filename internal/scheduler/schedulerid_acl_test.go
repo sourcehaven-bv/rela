@@ -8,6 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -39,7 +40,7 @@ func schedulerReader(t *testing.T, policyYAML string) *visibility.ScriptReader {
 	if err := yaml.Unmarshal([]byte(policyYAML), &policy); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -122,7 +123,7 @@ func TestSchedulerIdentity_IsAcceptedByACL(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	st := memstore.New()
-	d, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 
 	"gopkg.in/yaml.v3"
@@ -37,7 +38,7 @@ func mustDeclarative(t *testing.T, st *memstore.MemStore) *acl.Declarative {
 	if err := yaml.Unmarshal([]byte(cascadePolicy), &policy); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

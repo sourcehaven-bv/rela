@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -199,8 +200,8 @@ func buildACLEngineWithPolicy(svc *readServices) (*aclmap.Engine, *acl.Policy, e
 
 // newACLEngine wires an aclmap.Engine over the store for a validated policy.
 func newACLEngine(svc *readServices, policy *acl.Policy) (*aclmap.Engine, error) {
-	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(svc.Store), svc.Store,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(svc.Store)))
+	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(svc.Store), svc.Store,
+		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(svc.Store)))
 	if err != nil {
 		return nil, fmt.Errorf("build ACL resolver: %w", err)
 	}

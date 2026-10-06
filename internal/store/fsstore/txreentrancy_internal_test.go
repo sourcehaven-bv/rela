@@ -14,7 +14,7 @@ import (
 // asserted: "Readers never take it [txMu]" (fsstore.go).
 //
 // The cascade-delete gate authorizes INSIDE Tx, and the ACL evaluator reaches
-// the graph through acl.StoreGraph — which holds the OUTER store handle and
+// the graph through aclstore.Graph — which holds the OUTER store handle and
 // calls GetRelation / ListRelations on it. The tx.go note that "calling a
 // write on the OUTER store from inside fn deadlocks" makes the read case worth
 // pinning explicitly: if a future change gave readers txMu, authorization
@@ -37,7 +37,7 @@ func TestTx_ReadsViaOuterHandleDoNotDeadlock(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- s.Tx(ctx, func(tx store.Store) error {
-			// Exactly what acl.StoreGraph does: reads against the OUTER
+			// Exactly what aclstore.Graph does: reads against the OUTER
 			// handle, not the tx view.
 			if _, err := s.GetEntity(ctx, entity.Ref{ID: "REQ-1"}); err != nil {
 				return err

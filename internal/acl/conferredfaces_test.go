@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -42,7 +43,7 @@ func TestReadQuery_ConferredRolesKeepTheirOwnFaces(t *testing.T) {
 			"reviews": {Confers: "reviewer"},
 		},
 	}
-	d, err := NewDeclarative(p, NewStoreGraph(st), st)
+	d, err := NewDeclarative(p, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -103,7 +104,7 @@ func TestPermitsReadFace_ScopedVerdictReadsTheFaceRow(t *testing.T) {
 	d, err := NewDeclarative(&Policy{
 		Roles:         map[string]RoleDef{"author": {Read: []string{"policy"}}},
 		RoleRelations: map[string]RoleRelationDef{"owns": {Confers: "author"}},
-	}, NewStoreGraph(st), st)
+	}, aclstore.NewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

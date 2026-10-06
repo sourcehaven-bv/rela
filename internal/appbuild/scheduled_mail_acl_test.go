@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
@@ -96,7 +97,7 @@ func mustScheduledMailACL(t *testing.T, st store.Store, meta *metamodel.Metamode
 	t.Helper()
 	var p acl.Policy
 	require.NoError(t, yaml.Unmarshal([]byte(scheduledMailACL), &p))
-	d, err := acl.NewDeclarative(&p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&p, aclstore.NewGraph(st), st)
 	require.NoError(t, err)
 	resolver, err := affordances.New(meta, aclRelationLookup{st}, d)
 	require.NoError(t, err)
@@ -231,7 +232,7 @@ assignments:
 `
 	var p acl.Policy
 	require.NoError(t, yaml.Unmarshal([]byte(policyYAML), &p))
-	d, err := acl.NewDeclarative(&p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&p, aclstore.NewGraph(st), st)
 	require.NoError(t, err)
 	resolver, err := affordances.New(meta, aclRelationLookup{st}, d)
 	require.NoError(t, err)
@@ -424,7 +425,7 @@ assignments:
 `
 	var p acl.Policy
 	require.NoError(t, yaml.Unmarshal([]byte(partialPolicy), &p))
-	d, err := acl.NewDeclarative(&p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&p, aclstore.NewGraph(st), st)
 	require.NoError(t, err)
 	resolver, err := affordances.New(meta, aclRelationLookup{st}, d)
 	require.NoError(t, err)

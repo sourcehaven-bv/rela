@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 )
 
 // `unmatched_principal: reject` only takes effect when a JWT gate is wired:
@@ -156,8 +157,8 @@ func newRejectApp(t *testing.T) *App {
 		UserEntityType:     "person",
 		PrincipalProperty:  "email",
 		UnmatchedPrincipal: acl.UnmatchedReject,
-	}, acl.NewStoreGraph(app.store), app.store,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(app.store)))
+	}, aclstore.NewGraph(app.store), app.store,
+		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(app.store)))
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

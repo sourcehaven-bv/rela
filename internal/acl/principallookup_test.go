@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -79,7 +80,7 @@ func buildPrincipalLookupWorld(
 	if err != nil {
 		t.Fatalf("LoadPolicyBytes: %v", err)
 	}
-	d, err := NewDeclarative(policy, NewStoreGraph(ms), ms, WithPrincipalLookup(NewStorePrincipalLookup(ms)))
+	d, err := NewDeclarative(policy, aclstore.NewGraph(ms), ms, WithPrincipalLookup(aclstore.NewPrincipalLookup(ms)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

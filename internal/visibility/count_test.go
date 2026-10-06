@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -104,7 +105,7 @@ func TestScriptReader_CountEntitiesPushesDown(t *testing.T) {
 			"publishedreaders": {Read: []string{"policy@published"}},
 		},
 		Assignments: map[string]string{"bob": "readers", "carol": "publishedreaders"},
-	}, acl.NewStoreGraph(base), base)
+	}, aclstore.NewGraph(base), base)
 	if err != nil {
 		t.Fatal(err)
 	}

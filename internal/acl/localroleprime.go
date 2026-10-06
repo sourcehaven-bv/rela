@@ -5,14 +5,11 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-
-	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // edgeBatcher is the batch read a [Graph] may offer so [PrimeLocalRoles] can
 // answer a whole page of local-role probes in a fixed number of queries.
-// [StoreGraph] implements it; a Graph without it is never primed and keeps
+// aclstore.Graph implements it; a Graph without it is never primed and keeps
 // the per-entity probes.
 type edgeBatcher interface {
 	// EdgesBetween returns the zero-tail relType edges from one of fromIDs
@@ -251,56 +248,4 @@ func loadOutgoing(
 		}
 	}
 	return nil
-}
-
-// EdgesBetween implements [edgeBatcher] with ONE store query. Both ends are
-// filtered: a shared ancestor (a project every task is in) may hold edges
-// from thousands of non-members, and those must not be read.
-func (g *StoreGraph) EdgesBetween(
-	ctx context.Context, relType string, fromIDs, toIDs []string,
-) (map[string]map[string]bool, error) {
-	out := map[string]map[string]bool{}
-	if len(fromIDs) == 0 || len(toIDs) == 0 {
-		return out, nil
-	}
-	// The zero tail, as HasEdge reads it: membership edges are identity-scoped.
-	zero := entity.Face("")
-	for rel, err := range g.S.ListRelations(ctx, store.RelationQuery{
-		Type:      relType,
-		EntityIDs: toIDs,
-		PeerIDs:   fromIDs,
-		Direction: store.DirectionIncoming,
-		FromFace:  &zero,
-	}) {
-		if err != nil {
-			return nil, err
-		}
-		if out[rel.From] == nil {
-			out[rel.From] = map[string]bool{}
-		}
-		out[rel.From][rel.To] = true
-	}
-	return out, nil
-}
-
-// OutgoingFrom implements [edgeBatcher] with ONE store query. Like
-// [StoreGraph.OutgoingRelations] it reads every tail.
-func (g *StoreGraph) OutgoingFrom(
-	ctx context.Context, relType string, fromIDs []string,
-) (map[string][]string, error) {
-	out := map[string][]string{}
-	if len(fromIDs) == 0 {
-		return out, nil
-	}
-	for rel, err := range g.S.ListRelations(ctx, store.RelationQuery{
-		Type:      relType,
-		EntityIDs: fromIDs,
-		Direction: store.DirectionOutgoing,
-	}) {
-		if err != nil {
-			return nil, err
-		}
-		out[rel.From] = append(out[rel.From], rel.To)
-	}
-	return out, nil
 }
