@@ -18,4 +18,5 @@ rela-server -project . -port 8957
   (`group_by: {relation: heeft_status}`). Add in a section prefills the status.
 - Moving a card replaces its `heeft_status` edge.
 - A task's detail page and the board's side panel: Status is a field among
-  the properties (`fields: - relation: heeft_status`), changed with a menu.
+  the properties (`fields: - relation: heeft_status`), changed with a menu. `style_from: categorie` colours it by the
+  status category.

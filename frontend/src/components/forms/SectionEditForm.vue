@@ -65,7 +65,7 @@ export type SectionEditField = {
   | { kind: 'hint'; routingHint: WidgetRoutingHint }
   // A relation field (TKT-CADCFX). `property` is then `relation:<name>`, a row
   // key only: InlineRelationValue saves the edges itself, outside autosave.
-  | { kind: 'relation'; relation: string; targets: RelationTarget[] }
+  | { kind: 'relation'; relation: string; targets: RelationTarget[]; styleFrom?: string }
 )
 
 const props = defineProps<{
@@ -348,6 +348,7 @@ defineExpose({
             :relation="row.field.relation"
             :label="row.field.label"
             :targets="row.field.targets"
+            :style-from="row.field.styleFrom"
             :writable="row.writable"
             @changed="onRelationChanged?.()"
             @error="(msg: string) => onError(msg)"

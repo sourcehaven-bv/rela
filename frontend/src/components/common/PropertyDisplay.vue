@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { Component } from 'vue'
 import InaccessibleField from './InaccessibleField.vue'
+import InlineRelationValue, { type RelationTarget } from '@/components/forms/InlineRelationValue.vue'
 import { defaultRegistry } from '@/widgets/registry'
 import { fieldSpanStyle } from '@/utils/fieldSpan'
 import type { AttachmentInfo, PropertyDef } from '@/types'
@@ -32,6 +33,8 @@ export interface PropertyItem {
   // to the file widget.
   attachments?: AttachmentInfo[]
   max?: number
+  // A relation field (TKT-CADCFX): rendered by InlineRelationValue, read-only.
+  relation?: { name: string; targets: RelationTarget[]; styleFrom?: string }
 }
 
 const props = defineProps<{
@@ -113,6 +116,16 @@ function isLong(prop: PropertyItem): boolean {
         <InaccessibleField
           v-if="row.prop.inaccessible"
           :reason="row.prop.inaccessibleReason"
+        />
+        <InlineRelationValue
+          v-else-if="row.prop.relation"
+          :entity-type="entityType ?? ''"
+          entity-id=""
+          :relation="row.prop.relation.name"
+          :label="row.prop.label"
+          :targets="row.prop.relation.targets"
+          :style-from="row.prop.relation.styleFrom"
+          :writable="false"
         />
         <component
           :is="row.widget"

@@ -9,7 +9,9 @@ export interface ViewSectionField {
   // A relation field (TKT-CADCFX) names its relation instead of a property,
   // and carries the entry's readable targets of it.
   relation?: string
-  targets?: { id: string; title: string }[]
+  targets?: { id: string; title: string; style?: string }[]
+  // Target enum property whose styles colour each target (`style_from`).
+  styleFrom?: string
   label: string
   values?: string[]
   propType?: string

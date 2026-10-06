@@ -71,6 +71,7 @@ export function buildSectionEditFields(
         kind: 'relation',
         relation: f.relation,
         targets: f.targets ?? [],
+        styleFrom: f.styleFrom,
       })
       continue
     }

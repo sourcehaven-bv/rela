@@ -1359,13 +1359,19 @@ type idResolver interface {
 // a readable face. Otherwise the world picks the row first and the gate
 // checks that row's face.
 func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []string) map[string]string {
+	served := h.visibleHeaders(ctx, svc, ids)
+	titles := make(map[string]string, len(served))
+	for id, hd := range served {
+		titles[id] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
+	}
+	return titles
+}
+
+// visibleHeaders is [viewsHandler.visibleTitles] returning the redacted
+// headers, for a caller that needs more of the target than its title.
+func (h *viewsHandler) visibleHeaders(ctx context.Context, svc Services, ids []string) map[string]store.EntityHeader {
 	if r, ok := h.viewReader.(idResolver); ok {
-		served := r.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
-		titles := make(map[string]string, len(served))
-		for id, hd := range served {
-			titles[id] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
-		}
-		return titles
+		return r.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
 	}
 	sel := store.InWorld(worldScopeFrom(ctx))
 	var headers []store.EntityHeader
@@ -1373,7 +1379,7 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 		if err != nil {
 			slog.Warn("dataentry: view section relation titles dropped; header read failed",
 				"targets", len(ids), "err", err)
-			return map[string]string{}
+			return map[string]store.EntityHeader{}
 		}
 		headers = append(headers, hd)
 	}
@@ -1387,7 +1393,7 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 			if err != nil {
 				slog.Warn("dataentry: view section relation titles dropped; entity read failed",
 					"targets", len(ids), "err", err)
-				return map[string]string{}
+				return map[string]store.EntityHeader{}
 			}
 			ents = append(ents, e)
 		}
@@ -1395,9 +1401,9 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 			visible = append(visible, store.HeaderOf(e))
 		}
 	}
-	titles := make(map[string]string, len(visible))
+	out := make(map[string]store.EntityHeader, len(visible))
 	for _, hd := range visible {
-		titles[hd.ID] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
+		out[hd.ID] = hd
 	}
-	return titles
+	return out
 }

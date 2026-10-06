@@ -1489,6 +1489,9 @@ function mapFieldsToProperties(fields: ViewSectionField[] | undefined): Property
       inaccessibleReason: field.property ? inaccessibleByName.value.get(field.property) : undefined,
       attachments: field.property ? entry.value?._attachments?.[field.property] : undefined,
       max: def?.max,
+      relation: field.relation
+        ? { name: field.relation, targets: field.targets ?? [], styleFrom: field.styleFrom }
+        : undefined,
     }
   })
 }

@@ -11,6 +11,7 @@ import { computed, ref, watch } from 'vue'
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 import RlMenuSeparator from 'rela-components/components/overlay/RlMenuSeparator.vue'
+import Badge from '@/components/common/Badge.vue'
 import { listAllEntities } from '@/api'
 import { useEntitiesStore, useSchemaStore } from '@/stores'
 import { useWorld } from '@/composables/useWorld'
@@ -20,6 +21,8 @@ import type { Entity, ModernRelationsField } from '@/types'
 export interface RelationTarget {
   id: string
   title: string
+  /** The target's `style_from` value, an enum value that picks the colour. */
+  style?: string
 }
 
 const props = defineProps<{
@@ -29,6 +32,8 @@ const props = defineProps<{
   label: string
   targets: RelationTarget[]
   writable: boolean
+  /** Enum property of the target whose styles colour each target. */
+  styleFrom?: string
 }>()
 
 const emit = defineEmits<{
@@ -81,6 +86,11 @@ async function loadCandidates() {
   }
 }
 
+function styleOf(c: Entity): string | undefined {
+  const v = props.styleFrom ? c.properties[props.styleFrom] : undefined
+  return typeof v === 'string' && v !== '' ? v : undefined
+}
+
 function typeOf(id: string): string {
   return candidates.value?.find((c) => c.id === id)?.type ?? targetType.value ?? ''
 }
@@ -103,7 +113,7 @@ async function save(next: RelationTarget[], body: ModernRelationsField[string]) 
 }
 
 function pick(c: Entity) {
-  const target = { id: c.id, title: entityDisplayTitle(c) }
+  const target = { id: c.id, title: entityDisplayTitle(c), style: styleOf(c) }
   if (single.value) {
     if (selected.value.has(c.id)) return
     // A full linkage replaces the edge set, so the old target goes as the new
@@ -137,7 +147,16 @@ function clear() {
     <template v-if="!writable">
       <template v-for="(t, i) in shown" :key="t.id">
         <span v-if="i > 0" class="inline-relation-sep">, </span>
-        <router-link v-if="targetType" :to="`/entity/${targetType}/${t.id}`">{{ t.title }}</router-link>
+        <router-link v-if="targetType" :to="`/entity/${targetType}/${t.id}`">
+          <Badge
+            v-if="styleFrom && t.style"
+            :value="t.style"
+            :property="styleFrom"
+            :entity-type="targetType"
+            :text="t.title"
+          />
+          <template v-else>{{ t.title }}</template>
+        </router-link>
         <span v-else>{{ t.title }}</span>
       </template>
     </template>
@@ -158,6 +177,16 @@ function clear() {
           "
         >
           <span v-if="shown.length === 0" class="inline-relation-empty">—</span>
+          <template v-else-if="styleFrom">
+            <Badge
+              v-for="t in shown"
+              :key="t.id"
+              :value="t.style ?? ''"
+              :property="styleFrom"
+              :entity-type="targetType"
+              :text="t.title"
+            />
+          </template>
           <span v-else>{{ shown.map((t) => t.title).join(', ') }}</span>
         </button>
       </template>
@@ -170,7 +199,14 @@ function clear() {
           :current="selected.has(c.id)"
           @click="pick(c)"
         >
-          {{ entityDisplayTitle(c) }}
+          <Badge
+            v-if="styleFrom"
+            :value="styleOf(c) ?? ''"
+            :property="styleFrom"
+            :entity-type="c.type"
+            :text="entityDisplayTitle(c)"
+          />
+          <template v-else>{{ entityDisplayTitle(c) }}</template>
         </RlMenuItem>
         <template v-if="shown.length > 0">
           <RlMenuSeparator />
@@ -190,6 +226,9 @@ function clear() {
 }
 
 .inline-relation-trigger {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
   font: inherit;
   color: inherit;
   background: none;

@@ -1,5 +1,12 @@
 app:
   title: Status-demo
+styles:
+  statuscategorie:
+    open: gray
+    actief: blue
+    wachten: orange
+    gereed: green
+
 forms:
   taak:
     entity_type: taak
@@ -82,6 +89,7 @@ views:
         fields:
           - relation: heeft_status
             label: Status
+            style_from: categorie
             span: 6
           - property: deadline
             label: Deadline

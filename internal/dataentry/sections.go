@@ -103,8 +103,9 @@ type SectionFieldData struct {
 	Widget string
 	// Relation and Targets describe a relation field (TKT-CADCFX); see
 	// [viewsHandler.resolveRelationFields].
-	Relation string
-	Targets  []v1.SectionFieldTarget
+	Relation  string
+	Targets   []v1.SectionFieldTarget
+	StyleFrom string
 }
 
 // buildSectionFieldData resolves one configured field against an entity.
@@ -137,8 +138,9 @@ func buildSectionFieldData(
 		// The targets and the relation's own label are filled in by
 		// resolveRelationFields, which has the store and the metamodel.
 		return SectionFieldData{
-			Relation: f.Relation,
-			Label:    f.Label,
+			Relation:  f.Relation,
+			StyleFrom: f.StyleFrom,
+			Label:     f.Label,
 			Span:     int(f.Span),
 			Render:   resolveFieldRender(sectionRender, f.Render),
 		}
@@ -587,12 +589,21 @@ func (h *viewsHandler) resolveRelationFields(
 	if len(ids) == 0 {
 		return
 	}
-	titles := h.visibleTitles(ctx, svc, ids)
-	for i := range fields {
+	headers := h.visibleHeaders(ctx, svc, ids)
+	for i, f := range fields {
 		for _, id := range targets[e.ID][i] {
-			if title, ok := titles[id]; ok {
-				fields[i].Targets = append(fields[i].Targets, v1.SectionFieldTarget{ID: id, Title: title})
+			hd, ok := headers[id]
+			if !ok {
+				continue
 			}
+			t := v1.SectionFieldTarget{ID: id, Title: svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)}
+			// Headers are redacted, so a hidden style property is simply absent.
+			if f.StyleFrom != "" {
+				if v, ok := hd.Properties[f.StyleFrom].(string); ok {
+					t.Style = v
+				}
+			}
+			fields[i].Targets = append(fields[i].Targets, t)
 		}
 	}
 }

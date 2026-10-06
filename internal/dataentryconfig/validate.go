@@ -3183,6 +3183,37 @@ func validateSectionRelationFields(
 			errs = append(errs, fmt.Sprintf(
 				"%s: relation %q does not start at entity type %q", prefix, f.Relation, entryType))
 		}
+		if f.StyleFrom != "" {
+			errs = append(errs, validateStyleFrom(prefix, f.StyleFrom, def.To, meta)...)
+		}
+	}
+	for j, f := range s.Fields {
+		if f.StyleFrom != "" && f.Relation == "" {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] field[%d]: style_from applies only to a relation field", viewID, i, j))
+		}
+	}
+	return errs
+}
+
+// validateStyleFrom checks that every target type of a relation field has
+// styleFrom as an enum property, so each target can be coloured.
+func validateStyleFrom(prefix, styleFrom string, targets []string, meta *metamodel.Metamodel) []string {
+	var errs []string
+	for _, t := range targets {
+		def, ok := meta.GetEntityDef(t)
+		if !ok {
+			continue
+		}
+		pd, ok := def.Properties[styleFrom]
+		if !ok {
+			errs = append(errs, fmt.Sprintf("%s: style_from %q is not a property of %q", prefix, styleFrom, t))
+			continue
+		}
+		if len(pd.Values) == 0 && !meta.IsEnumType(pd.Type) {
+			errs = append(errs, fmt.Sprintf(
+				"%s: style_from %q on %q is not an enum property", prefix, styleFrom, t))
+		}
 	}
 	return errs
 }

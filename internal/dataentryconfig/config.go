@@ -2222,10 +2222,13 @@ func (c *SectionCreate) UnmarshalYAML(value *yaml.Node) error {
 type ViewSectionField struct {
 	Property string `yaml:"property,omitempty" json:"property,omitempty"`
 	Relation string `yaml:"relation,omitempty" json:"relation,omitempty"`
-	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
-	Span     Span   `yaml:"span,omitempty" json:"span,omitempty"`
-	Render   string `yaml:"render,omitempty" json:"render,omitempty"`
-	Widget   string `yaml:"widget,omitempty" json:"widget,omitempty"`
+	// StyleFrom names an enum property of a relation field's target; each
+	// target shows as a badge coloured by that enum's `styles` (TKT-CADCFX).
+	StyleFrom string `yaml:"style_from,omitempty" json:"style_from,omitempty"`
+	Label     string `yaml:"label,omitempty" json:"label,omitempty"`
+	Span      Span   `yaml:"span,omitempty" json:"span,omitempty"`
+	Render    string `yaml:"render,omitempty" json:"render,omitempty"`
+	Widget    string `yaml:"widget,omitempty" json:"widget,omitempty"`
 }
 
 // ResolveFieldRender returns the effective render mode for a field within a

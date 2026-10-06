@@ -21,8 +21,8 @@ vi.mock('vue-router', () => ({
 import { listAllEntities } from '@/api'
 
 const statuses: Entity[] = [
-  { id: 'ST-1', type: 'status', _title: 'Backlog', properties: { titel: 'Backlog' } },
-  { id: 'ST-2', type: 'status', _title: 'Gereed', properties: { titel: 'Gereed' } },
+  { id: 'ST-1', type: 'status', _title: 'Backlog', properties: { titel: 'Backlog', categorie: 'open' } },
+  { id: 'ST-2', type: 'status', _title: 'Gereed', properties: { titel: 'Gereed', categorie: 'gereed' } },
 ] as Entity[]
 
 function seed(maxOutgoing?: number) {
@@ -31,8 +31,10 @@ function seed(maxOutgoing?: number) {
     name: 'status',
     label: 'Status',
     primary_property: 'titel',
-    properties: { titel: { type: 'string' } },
+    properties: { titel: { type: 'string' }, categorie: { type: 'statuscategorie' } },
   } as never)
+  schema.customTypes.set('statuscategorie', { values: ['open', 'gereed'] } as never)
+  schema.styles = { statuscategorie: { open: 'badge-blue', gereed: 'badge-green' } }
   schema.relationTypes.set('heeft_status', {
     name: 'heeft_status',
     from: ['taak'],
@@ -42,7 +44,11 @@ function seed(maxOutgoing?: number) {
   ;(listAllEntities as ReturnType<typeof vi.fn>).mockResolvedValue({ data: statuses })
 }
 
-async function mountField(targets: { id: string; title: string }[], writable = true) {
+async function mountField(
+  targets: { id: string; title: string; style?: string }[],
+  writable = true,
+  styleFrom?: string
+) {
   const wrapper = mount(InlineRelationValue, {
     props: {
       entityType: 'taak',
@@ -51,6 +57,7 @@ async function mountField(targets: { id: string; title: string }[], writable = t
       label: 'Status',
       targets,
       writable,
+      styleFrom,
     },
     global: { stubs: { 'router-link': { props: ['to'], template: '<a :href="to"><slot /></a>' } } },
     attachTo: document.body,
@@ -119,5 +126,18 @@ describe('InlineRelationValue', () => {
     await openAndPick(wrapper, 'Gereed')
     expect(wrapper.find('.inline-relation-trigger').text()).toBe('Backlog')
     expect(wrapper.emitted('error')?.[0]).toEqual(['denied'])
+  })
+
+  it('shows each target as a badge coloured by style_from', async () => {
+    seed(1)
+    vi.spyOn(useEntitiesStore(), 'update').mockResolvedValue({} as Entity)
+    const wrapper = await mountField([{ id: 'ST-1', title: 'Backlog', style: 'open' }], true, 'categorie')
+    const badge = wrapper.find('.inline-relation-trigger .badge')
+    expect(badge.text()).toBe('Backlog')
+    expect(badge.classes()).toContain('badge--blue')
+    await openAndPick(wrapper, 'Gereed')
+    const picked = wrapper.find('.inline-relation-trigger .badge')
+    expect(picked.text()).toBe('Gereed')
+    expect(picked.classes()).toContain('badge--green')
   })
 })

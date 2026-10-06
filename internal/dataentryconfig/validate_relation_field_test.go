@@ -3,6 +3,8 @@ package dataentryconfig
 import (
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 func TestValidateSectionRelationFields(t *testing.T) {
@@ -53,6 +55,43 @@ func TestValidateSectionRelationFields(t *testing.T) {
 			wantErr: "widget does not apply to a relation field",
 		},
 	}
+	// style_from needs an enum property on the target; testMetamodel's ticket
+	// has `status`, and offers-category's target is category (no enum).
+	tests = append(tests,
+		struct {
+			name    string
+			section ViewSection
+			wantErr string
+		}{
+			name: "style_from on a non-enum property",
+			section: ViewSection{Source: "entry", Display: "properties", Fields: []ViewSectionField{
+				{Relation: "in-category", StyleFrom: "name"},
+			}},
+			wantErr: `style_from "name" on "category" is not an enum property`,
+		},
+		struct {
+			name    string
+			section ViewSection
+			wantErr string
+		}{
+			name: "style_from unknown property",
+			section: ViewSection{Source: "entry", Display: "properties", Fields: []ViewSectionField{
+				{Relation: "in-category", StyleFrom: "colour"},
+			}},
+			wantErr: `style_from "colour" is not a property of "category"`,
+		},
+		struct {
+			name    string
+			section ViewSection
+			wantErr string
+		}{
+			name: "style_from on a property field",
+			section: ViewSection{Source: "entry", Display: "properties", Fields: []ViewSectionField{
+				{Property: "title", StyleFrom: "status"},
+			}},
+			wantErr: "style_from applies only to a relation field",
+		},
+	)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			errs := validateSectionRelationFields("v", 0, tt.section, "ticket", columnsFromMetamodel())
@@ -85,5 +124,18 @@ func TestValidateConfig_ViewRelationField(t *testing.T) {
 	cfg.Views["ticket"].Sections[0].Fields[1].Relation = "nope"
 	if got := strings.Join(validateViews(cfg, columnsFromMetamodel()), "\n"); !strings.Contains(got, `unknown relation "nope"`) {
 		t.Errorf("ValidateConfig did not report the unknown relation: %s", got)
+	}
+}
+
+func TestValidateSectionRelationFields_StyleFromEnum(t *testing.T) {
+	m := columnsFromMetamodel()
+	cat := m.Entities["category"]
+	cat.Properties["state"] = metamodel.PropertyDef{Type: "status"}
+	m.Entities["category"] = cat
+	s := ViewSection{Source: "entry", Display: "properties", Fields: []ViewSectionField{
+		{Relation: "in-category", StyleFrom: "state"},
+	}}
+	if errs := validateSectionRelationFields("v", 0, s, "ticket", m); len(errs) > 0 {
+		t.Errorf("unexpected errors: %v", errs)
 	}
 }

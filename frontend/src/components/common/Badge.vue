@@ -10,6 +10,10 @@ const props = defineProps<{
   // store's resolution API — widget call sites hold the name, list/kanban
   // call sites hold the object.
   entityType?: string | EntityType
+  // Text to show instead of the value's label, keeping the value's colour: a
+  // relation field shows the target's title coloured by its status category
+  // (TKT-CADCFX).
+  text?: string
 }>()
 
 const schemaStore = useSchemaStore()
@@ -53,14 +57,14 @@ const badgeClass = computed(() => {
 const label = computed(() =>
   schemaStore.getEnumLabel(props.value, props.property, props.entityType),
 )
-const displayText = computed(() => label.value ?? props.value)
+const displayText = computed(() => props.text ?? label.value ?? props.value)
 </script>
 
 <template>
   <!-- When the metamodel supplies a label the author already chose the display
        form, so we suppress CSS capitalize; label text is interpolated (escaped),
        never v-html. -->
-  <span class="badge" :class="[badgeClass, { 'badge--labeled': label !== undefined }]">
+  <span class="badge" :class="[badgeClass, { 'badge--labeled': label !== undefined || text !== undefined }]">
     {{ displayText }}
     <!-- Optional trailing adornment (e.g. a dropdown caret when the badge is an
          interactive control). Empty for the common read-only badge. -->

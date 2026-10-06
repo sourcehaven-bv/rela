@@ -39,3 +39,7 @@ without config.
 Branch `demo/relation-backed-status`: the demo's `taak` view shows Status as a
 field next to Deadline. Candidates are listed by title; an `order_by` on the
 field (as on `columns_from`) would list statuses in their own order.
+
+`style_from: <target enum property>` shows each target as a badge with its
+title, coloured by that property's `styles`. The demo colours statuses by
+`categorie`.

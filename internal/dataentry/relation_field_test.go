@@ -78,3 +78,23 @@ func TestRelationField_DropsUnreadableTarget(t *testing.T) {
 		t.Errorf("unreadable target leaked into relation field: %+v", got)
 	}
 }
+
+func TestRelationField_CarriesStyleValue(t *testing.T) {
+	app := newTestAppV1(t)
+	tkt := &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "ticket"}}
+	seedEntity(app, tkt)
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature",
+		Properties: map[string]any{"title": "Search", "status": "active"}})
+	seedRelation(app, entity.NewRelation("TKT-001", "implements", "FEAT-001"))
+
+	secs := relationFieldSection("Feature")
+	secs[0].Fields[1].StyleFrom = "status"
+	sections := app.views.buildSections(t.Context(), secs, &viewResult{Entry: tkt})
+	f := sections[0].Fields[1]
+	if f.StyleFrom != "status" {
+		t.Errorf("styleFrom = %q, want status", f.StyleFrom)
+	}
+	if len(f.Targets) != 1 || f.Targets[0].Style != "active" {
+		t.Errorf("targets = %+v, want style active", f.Targets)
+	}
+}

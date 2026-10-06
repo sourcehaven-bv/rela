@@ -1983,6 +1983,7 @@ Each entry under `fields:` takes:
 | ---------- | ------ | ------------------------------------------------------------ |
 | `property` | string | Property name                                                |
 | `relation` | string | Relation to show as a field, instead of `property` (see below) |
+| `style_from` | string | Relation fields only: enum property of the target that colours each target (see below) |
 | `label`    | string | Display label (defaults to the raw property name, or the relation's label) |
 | `span`     | int    | Width on the 12-column grid (1-12; omit for full width)      |
 | `render`   | string | `display` or `input`; overrides the section's `render`        |
@@ -2010,6 +2011,23 @@ sections:
         span: 6
       - property: deadline
         span: 6
+```
+
+With `style_from: <property>`, each target shows as a badge with the target's
+title, coloured by that property's value under `styles:`. The property must be
+an enum on every target type. For example, statuses with a `categorie` enum:
+
+```yaml
+styles:
+  statuscategorie:
+    actief: blue
+    gereed: green
+
+# in the view section
+fields:
+  - relation: heeft_status
+    label: Status
+    style_from: categorie
 ```
 
 A relation field is valid only in a `source: entry` section with
