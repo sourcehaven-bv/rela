@@ -851,6 +851,18 @@ Rules when touching this:
   batches: SQLite is single-process, so nothing waits on the lock, and a
   rolled-back import can simply be re-run. `ExportMarkdownData` (`rela db dump
   --data`) is the read-side counterpart and writes through a plain fsstore.
+- **fs-to-sqlite import** (TKT-YNKKRQ, `internal/fsimport`,
+  `rela-sqlite db import-fs`) is the sixth, on the same terms: operator
+  shell, attributed (`fs-import` tool), one `fs-import` audit record in the
+  target. It copies what the source store READ, then walks the source files
+  and accounts for every one (copied, listed with a reason, or an error),
+  because fsstore skips what it cannot read without a word. The target
+  judges: any row the database refuses fails the whole run, and the run
+  stages beside the target and renames only after every write landed. The
+  source is opened through `storage.ReadOnlyFS` with the fsstore index cache
+  off, so the import cannot write to it. A new sqlite table must be listed in
+  `TestDBImportFS_SQLiteTablesAreAccounted`, which forces the decision whether
+  the import copies it.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the `db`

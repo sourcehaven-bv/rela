@@ -170,6 +170,7 @@ components:
   # store contract: it emits entities/relations and loads them through
   # store.Store, and must never learn about entitymanager or the metamodel.
   perfseed:         { in: internal/perfseed }
+  fsimport:         { in: internal/fsimport }
 
   # Infrastructure
   acl:              { in: internal/acl }
@@ -430,6 +431,7 @@ deps:
       - metamodel
       - output
       - perfseed
+      - fsimport
       - pgstore
       - sqlitestore
       - predicate
@@ -1563,6 +1565,23 @@ deps:
   state:
     mayDependOn:
       - storage
+  fsimport:
+    mayDependOn:
+      - app
+      - audit
+      - canonical
+      - comments
+      - filecomments
+      - datamigration
+      - filemigstate
+      - entity
+      - frontmatter
+      - metamodel
+      - principal
+      - project
+      - state
+      - storage
+      - store
   perfseed:
     mayDependOn:
       - store

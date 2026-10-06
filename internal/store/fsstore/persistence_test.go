@@ -3,6 +3,7 @@ package fsstore_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -378,4 +379,47 @@ func TestPersistence_RenameSurvivedReopen(t *testing.T) {
 	rel, err := s2.GetRelation(ctx, entity.RelationKey{From: "SOL-1", Type: "implements", To: "REQ-NEW"})
 	require.NoError(t, err)
 	assert.Equal(t, "REQ-NEW", rel.To)
+}
+
+// TestPersistence_IgnoreIndexCache pins that IgnoreIndexCache scans the
+// directories instead of trusting a cache whose mtimes still match, and that
+// closing such a store does not rewrite the cache.
+func TestPersistence_IgnoreIndexCache(t *testing.T) {
+	fs := storage.NewMemFS()
+	ctx := context.Background()
+
+	s1 := openStore(t, fs)
+	for _, id := range []string{"REQ-1", "REQ-2"} {
+		e := entity.New(id, "requirement")
+		e.Properties["status"] = "open"
+		require.NoError(t, s1.CreateEntity(ctx, e))
+	}
+	require.NoError(t, s1.Close())
+
+	// Make the cache lie: drop REQ-2 but keep the directory mtimes.
+	raw, err := fs.ReadFile("/.rela/fsstore-index.json")
+	require.NoError(t, err)
+	var cache map[string]any
+	require.NoError(t, json.Unmarshal(raw, &cache))
+	delete(cache["entities"].(map[string]any), "REQ-2")
+	stale, err := json.Marshal(cache)
+	require.NoError(t, err)
+	require.NoError(t, fs.WriteFile("/.rela/fsstore-index.json", stale, 0o644))
+
+	trusting := openStore(t, fs)
+	_, err = trusting.GetEntity(ctx, entity.Ref{ID: "REQ-2"})
+	require.ErrorIs(t, err, store.ErrNotFound, "precondition: the default open trusts the stale cache")
+	trusting.StopWatching()
+
+	cfg := newConfig(fs)
+	cfg.IgnoreIndexCache = true
+	scanning, err := fsstore.New(cfg)
+	require.NoError(t, err)
+	_, err = scanning.GetEntity(ctx, entity.Ref{ID: "REQ-2"})
+	require.NoError(t, err)
+	require.NoError(t, scanning.Close())
+
+	after, err := fs.ReadFile("/.rela/fsstore-index.json")
+	require.NoError(t, err)
+	assert.Equal(t, string(stale), string(after), "IgnoreIndexCache must not rewrite the cache")
 }
