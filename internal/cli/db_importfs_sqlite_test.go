@@ -188,6 +188,12 @@ func TestDBImportFS_SQLiteTablesAreAccounted(t *testing.T) {
 		"marked_relations":  "soft deletes; pending deletes are not copied",
 		"project_files":     "config stays on disk, which wins over a copy in the database",
 	}
+	// The full-text index and FTS5's shadow tables are filled by triggers on
+	// entities, so the entity copy fills them.
+	for _, name := range []string{"entity_search", "entity_search_config", "entity_search_content",
+		"entity_search_data", "entity_search_docsize", "entity_search_idx"} {
+		accounted[name] = "derived from entities by trigger"
+	}
 	data, err := appbuild.OpenSQLiteData(context.Background(), filepath.Join(t.TempDir(), "x.db"))
 	require.NoError(t, err)
 	defer func() { _ = data.Close() }()

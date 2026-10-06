@@ -841,28 +841,28 @@ Rules when touching this:
   single `unique:` property unique by construction, every edge endpoint emitted
   by the same generator. Do not route it through entitymanager to "fix" that —
   20k automations per seed is the cost it exists to avoid.
-- **Markdown import into SQLite** (TKT-LWOCW9, `appbuild.ImportMarkdownData`,
-  `rela db load --data`) is the fifth raw-store exception, under the same
-  terms: operator shell, attributed (`fs-import` tool), one `fs-import` audit
-  record, and it refuses a store that already holds entities unless `--force`.
-  It copies what an fsstore over the source directory reads, so it carries
-  data that already passed (or predates) validation; running automations would
-  rewrite it on the way in. It runs as ONE `store.Tx`, not perf seeding's
-  batches: SQLite is single-process, so nothing waits on the lock, and a
-  rolled-back import can simply be re-run. `ExportMarkdownData` (`rela db dump
-  --data`) is the read-side counterpart and writes through a plain fsstore.
-- **fs-to-sqlite import** (TKT-YNKKRQ, `internal/fsimport`,
-  `rela-sqlite db import-fs`) is the sixth, on the same terms: operator
-  shell, attributed (`fs-import` tool), one `fs-import` audit record in the
-  target. It copies what the source store READ, then walks the source files
+- **Markdown import into SQLite** (TKT-LWOCW9, TKT-YNKKRQ, `internal/fsimport`)
+  is the fifth, on the same terms: operator shell, attributed (`fs-import`
+  tool), one `fs-import` audit record. Two commands share ONE engine,
+  `fsimport.Copy`: `rela db load --data` (`appbuild.ImportMarkdownData`, also
+  the desktop app) fills the project's own database, and `rela-sqlite db
+  import-fs` builds a new project directory. Do not grow a second copy loop;
+  both get the same refusals, date normalization and report. The engine
+  copies what an fsstore over the source READ, then walks the source files
   and accounts for every one (copied, listed with a reason, or an error),
-  because fsstore skips what it cannot read without a word. The target
-  judges: any row the database refuses fails the whole run, and the run
-  stages beside the target and renames only after every write landed. The
-  source is opened through `storage.ReadOnlyFS` with the fsstore index cache
-  off, so the import cannot write to it. A new sqlite table must be listed in
+  because fsstore skips what it cannot read without a word. The source is
+  opened through `storage.ReadOnlyFS` with the fsstore index cache off, so the
+  import cannot write to it. The target judges: any row the database refuses
+  fails the whole run. `db load --data` runs as ONE `store.Tx`, and the state,
+  comment and migration stores write on that transaction's connection
+  (`sqlitestore.TxConn`), so a failed import leaves nothing behind and can
+  simply be re-run; it refuses a database holding entities unless `--force`,
+  and keeps a setting or migration record the database already has.
+  `import-fs` stages beside the target and renames only after every write
+  landed. A new sqlite table must be listed in
   `TestDBImportFS_SQLiteTablesAreAccounted`, which forces the decision whether
-  the import copies it.
+  the import copies it. `ExportMarkdownData` (`rela db dump --data`) is the
+  read-side counterpart and writes through a plain fsstore.
 - DSN is read from the `RELA_DATABASE_URL` env var **only** — there is no
   `--database-url` flag, so the credential never lands in `ps`/shell history.
   `appbuild.Discover` reads the env into `appbuild.Config.DatabaseURL`; the `db`

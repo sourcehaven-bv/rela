@@ -363,6 +363,8 @@ deps:
       - dataentry
       - config
       - dataentrywire
+      # fsimport.Report: the import dialog lists the problems it found.
+      - fsimport
       - desktop
       - desktopnotify
       - git
@@ -698,6 +700,9 @@ deps:
       # comment backends: the recipe owns the handle each one needs, and the
       # file backend is the filesystem tier's default (TKT-XCJ0Y2).
       - filemigstate
+      # `rela db load --data` and the desktop import run the fs-to-sqlite
+      # copy inside the transaction the sqlite recipe opens (TKT-YNKKRQ).
+      - fsimport
       - memmigstate
       - pgmigstate
       - sqlitemigstate

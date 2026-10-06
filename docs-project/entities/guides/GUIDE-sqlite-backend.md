@@ -206,7 +206,8 @@ build:
 rela db load --data
 ```
 
-It imports every entity, relation and attachment, then stores the
+It imports every entity, relation, attachment and comment thread, the runtime
+state under `.rela/` and the applied-migration record, then stores the
 configuration as above. IDs, properties, bodies and relation properties are
 kept. Timestamps are not: each row gets the time of the import. The import
 writes the rows as they are, without running automations or validation, and
@@ -214,8 +215,11 @@ records one `fs-import` entry in the audit log. Every row is attributed to the
 `fs-import` tool.
 
 The import refuses a database that already holds entities. `--force` imports
-anyway, but an ID that is already stored still stops it. The import is one
-transaction, so a failed import writes nothing and you can run it again. Use
+anyway, but an ID that is already stored still stops it, and a setting or
+migration record the database already holds is kept and listed. The import is
+one transaction, so a failed import writes nothing and you can run it again.
+It runs the same checks as `db import-fs` below and prints the same list of
+problems and of files it did not copy. Use
 `--from <dir>` to read the configuration and data from another directory.
 
 Once the import has succeeded, the `entities/`, `relations/` and `attachments/`
@@ -270,11 +274,11 @@ What is not copied:
 - **Caches**: the search index and the rendered-document cache rebuild
   themselves.
 
-The command refuses to write anything when it finds a problem: an id used in
+Both commands refuse to write anything when they find a problem: an id used in
 two type folders, two ids that differ only in case (the database treats them as
 one), a relation file whose frontmatter disagrees with its file name, a value
-the database cannot store, or a file still encrypted by git-crypt. It reports
-every problem it found in one run, so you can fix them all and run it again.
+the database cannot store, or a file still encrypted by git-crypt. They report
+every problem found in one run, so you can fix them all and run it again.
 
 Dates and times written without quotes in YAML are stored as text in their
 standard form (`2026-03-04`, or RFC 3339 for a datetime), which is how the

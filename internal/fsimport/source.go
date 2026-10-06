@@ -34,18 +34,27 @@ type source struct {
 
 // openSource opens every reader the import needs over a read-only view of
 // root, so no code path in them can write to the source.
-func openSource(ctx context.Context, root string) (*source, error) {
+//
+// meta, when non-nil, is the schema to read the data by; otherwise the
+// source's own schema file is loaded.
+func openSource(ctx context.Context, root string, meta *metamodel.Metamodel) (*source, error) {
 	ro, err := storage.NewReadOnlyFS(storage.NewOsFS())
 	if err != nil {
 		return nil, err
 	}
 	paths, err := project.At(root, ro)
-	if err != nil {
+	switch {
+	case err != nil && meta != nil:
+		// A data directory without a schema of its own, read by the
+		// schema the caller supplied.
+		paths = &project.Context{Root: root, CacheDir: filepath.Join(root, project.CacheDir)}
+	case err != nil:
 		return nil, fmt.Errorf("source: %w", err)
 	}
-	meta, _, err := metamodel.NewFSLoader(ro, paths.SchemaPath).Load(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("source schema: %w", err)
+	if meta == nil {
+		if meta, _, err = metamodel.NewFSLoader(ro, paths.SchemaPath).Load(ctx); err != nil {
+			return nil, fmt.Errorf("source schema: %w", err)
+		}
 	}
 	if len(meta.Entities) == 0 {
 		return nil, errors.New("source schema declares no entity types")

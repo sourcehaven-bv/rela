@@ -45,7 +45,15 @@ type dbServices struct {
 }
 
 func openDBServices(db *sqlitedb.DB) (dbServices, error) {
-	raw, err := statesql.New(db.DB())
+	return openDBServicesOn(db.DB())
+}
+
+// openDBServicesOn builds the stores over h: the pool, or the connection of
+// an open transaction (sqlitestore.TxConn) when the caller writes these
+// stores and the entity graph as one unit. The comment store asks the most
+// of the handle, so its interface names what h must offer.
+func openDBServicesOn(h sqlitecomments.DBTX) (dbServices, error) {
+	raw, err := statesql.New(h)
 	if err != nil {
 		return dbServices{}, err
 	}
@@ -61,7 +69,7 @@ func openDBServices(db *sqlitedb.DB) (dbServices, error) {
 	// (TKT-4NU9ZD), not state_kv's: it describes the CONTENT, so a record
 	// beside the file would be left behind when rela.db is shipped and the
 	// receiving copy would replay every migration (TKT-XCJ0Y2).
-	migState, err := sqlitemigstate.New(db.DB())
+	migState, err := sqlitemigstate.New(h)
 	if err != nil {
 		return dbServices{}, err
 	}
@@ -71,7 +79,7 @@ func openDBServices(db *sqlitedb.DB) (dbServices, error) {
 	// state.KV's: a comment is content ABOUT content, so it must travel with
 	// the rows it annotates — an operator shipping rela.db would otherwise hand
 	// over every entity and leave every remark behind.
-	commentStore, err := sqlitecomments.New(db.DB())
+	commentStore, err := sqlitecomments.New(h)
 	if err != nil {
 		return dbServices{}, err
 	}

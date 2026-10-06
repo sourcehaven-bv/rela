@@ -2,12 +2,14 @@ package sqlitestore_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/sqlitestore"
 )
 
@@ -79,5 +81,47 @@ func TestNewRejectsNilDB(t *testing.T) {
 	}
 	if st != nil {
 		t.Errorf("New returned %v alongside an error, want nil", st)
+	}
+}
+
+func TestTxConn(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlitedb.Open(ctx, sqlitedb.Options{Path: filepath.Join(t.TempDir(), "tx.db")})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	s, err := sqlitestore.New(db)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	if _, ok := sqlitestore.TxConn(s); ok {
+		t.Fatal("the root store is not a transaction view")
+	}
+	err = s.Tx(ctx, func(view store.Store) error {
+		conn, ok := sqlitestore.TxConn(view)
+		if !ok || conn == nil {
+			t.Fatal("a transaction view has a connection")
+		}
+		// A write on that connection is part of the transaction: rolled
+		// back with it.
+		_, execErr := conn.ExecContext(ctx,
+			`INSERT INTO state_kv (key, value, updated_at) VALUES ('k', x'00', '')`)
+		if execErr != nil {
+			t.Fatalf("write on the transaction's connection: %v", execErr)
+		}
+		return errors.New("roll back")
+	})
+	if err == nil {
+		t.Fatal("Tx returned nil for a failing fn")
+	}
+	var n int
+	if err := db.DB().QueryRowContext(ctx, `SELECT count(*) FROM state_kv`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("the write survived the rollback: %d rows", n)
 	}
 }

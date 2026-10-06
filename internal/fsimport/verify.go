@@ -27,9 +27,9 @@ import (
 // it hashes Go types and the two backends decode values into different ones.
 //
 // Every mismatch is recorded; any one fails the run.
-func verifyTarget(ctx context.Context, src *source, dst Target, rep *Report) error {
+func verifyTarget(ctx context.Context, src *source, dst Target, kept importedSet, rep *Report) error {
 	before := len(rep.Errors)
-	v := verifier{src: src, dst: dst, rep: rep}
+	v := verifier{src: src, dst: dst, kept: kept, rep: rep}
 	v.entities(ctx)
 	v.relations(ctx)
 	v.attachments(ctx)
@@ -43,9 +43,10 @@ func verifyTarget(ctx context.Context, src *source, dst Target, rep *Report) err
 }
 
 type verifier struct {
-	src *source
-	dst Target
-	rep *Report
+	src  *source
+	dst  Target
+	kept importedSet
+	rep  *Report
 }
 
 func (v verifier) entities(ctx context.Context) {
@@ -193,6 +194,9 @@ func (v verifier) comments(ctx context.Context) {
 }
 
 func (v verifier) migrations(ctx context.Context) {
+	if v.kept.keptMigrations {
+		return
+	}
 	want, err := v.src.migState.Load(ctx)
 	if err != nil {
 		v.rep.fail("verify: read the applied-migration record: %v", err)
@@ -216,6 +220,9 @@ func (v verifier) stateKeys(ctx context.Context) {
 		return
 	}
 	for _, key := range keys {
+		if v.kept.keptState[key] {
+			continue
+		}
 		want, err := v.src.state.Get(ctx, key)
 		if err == nil && key == schedulerStateKey {
 			want, err = filterSchedulerState(want)
@@ -288,7 +295,11 @@ func sameJSON(a, b any) bool {
 // size, mode and modification time. Two equal fingerprints mean nothing in
 // the tree was written in between; it is how the import detects a source
 // edited during the run.
-func treeFingerprint(root string) (string, error) {
+//
+// exclude lists slash-separated paths below root, each matched as a prefix,
+// that the run itself writes: the database of an import into the project
+// it reads.
+func treeFingerprint(root string, exclude ...string) (string, error) {
 	h := sha256.New()
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -297,6 +308,12 @@ func treeFingerprint(root string) (string, error) {
 		rel, _ := filepath.Rel(root, p)
 		if rel == ".git" {
 			return fs.SkipDir
+		}
+		slashed := filepath.ToSlash(rel)
+		for _, x := range exclude {
+			if strings.HasPrefix(slashed, x) {
+				return nil
+			}
 		}
 		info, err := d.Info()
 		if err != nil {

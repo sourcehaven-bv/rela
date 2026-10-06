@@ -25,6 +25,10 @@ type copier struct {
 	// imported records what reached the target, for the file
 	// reconciliation and the comment copy.
 	imported importedSet
+
+	// inPlace is set by [Copy]: no project files are copied, so the
+	// .rela configuration files are listed as left where they are.
+	inPlace bool
 }
 
 // importedSet is what the copy wrote, keyed the way the source files are
@@ -41,6 +45,11 @@ type importedSet struct {
 
 	readEntities  map[string][]string // state key -> types it was read as
 	readRelations map[string]bool     // relation file stem
+
+	// keptState and keptMigrations name what the target already held and
+	// kept instead of the source's value; verification skips them.
+	keptState      map[string]bool
+	keptMigrations bool
 }
 
 func (c *copier) copyAll(ctx context.Context) error {
@@ -52,6 +61,7 @@ func (c *copier) copyAll(ctx context.Context) error {
 
 		readEntities:  map[string][]string{},
 		readRelations: map[string]bool{},
+		keptState:     map[string]bool{},
 	}
 	steps := []func(context.Context) error{
 		c.copyEntities,
@@ -246,7 +256,8 @@ func (c *copier) copyComments(ctx context.Context) error {
 }
 
 // copyMigrations carries the applied-migration record across whole, so the
-// target does not replay migrations the source already ran.
+// target does not replay migrations the source already ran. A record the
+// target already holds is kept: it describes the data already there.
 func (c *copier) copyMigrations(ctx context.Context) error {
 	st, err := c.src.migState.Load(ctx)
 	if err != nil {
@@ -254,6 +265,18 @@ func (c *copier) copyMigrations(ctx context.Context) error {
 		return nil
 	}
 	if st == nil {
+		return nil
+	}
+	have, err := c.dst.Migrations.Load(ctx)
+	if err != nil {
+		c.rep.fail("read the database's applied-migration record: %v", err)
+		return nil
+	}
+	if have != nil {
+		c.imported.keptMigrations = true
+		if !sameJSON(utcState(have), utcState(st)) {
+			c.rep.warn("the database already has an applied-migration record; kept it, not the source's")
+		}
 		return nil
 	}
 	if err := c.dst.Migrations.Save(ctx, st); err != nil {

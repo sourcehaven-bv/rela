@@ -32,3 +32,15 @@ desktop users could not use integrations.
 audit record.
 - Must not break `go list -deps` rules: only the `sqlite` build links
 `modernc.org/sqlite`.
+
+## One engine with `db load --data`
+
+develop added `rela db load --data` (TKT-FGIWPE), a second markdown-to-SQLite
+import. Both now run `fsimport.Copy`. `appbuild.ImportMarkdownData` keeps its
+in-place, one-transaction model and `--force`, and builds the state, comment and
+migration stores on the transaction's connection (`sqlitestore.TxConn`), so a
+failed import rolls back all of them. In place, a setting or migration record
+the database already holds is kept and listed, and the database files are
+excluded from the source-changed check. Verified on a copy of `tickets/`: 6325
+entities and 7784 relations, matching the files; a forced re-run fails on every
+collision and leaves the database unchanged.

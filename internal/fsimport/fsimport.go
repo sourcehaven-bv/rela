@@ -133,11 +133,12 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 
 // run holds the state of one import.
 type run struct {
-	opts    Options
-	paths   resolvedPaths
-	rep     *Report
-	staging string // set once the staging directory exists
-	renamed bool   // set once staging became the target
+	opts     Options
+	paths    resolvedPaths
+	rep      *Report
+	staging  string // set once the staging directory exists
+	renamed  bool   // set once staging became the target
+	imported importedSet
 }
 
 func (r *run) progress(format string, args ...any) {
@@ -157,7 +158,7 @@ func (r *run) execute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	src, err := openSource(ctx, r.paths.source)
+	src, err := openSource(ctx, r.paths.source, nil)
 	if err != nil {
 		return err
 	}
@@ -197,8 +198,7 @@ func (r *run) execute(ctx context.Context) error {
 		return err
 	}
 	if after != before {
-		return errors.New("the source project changed during the import; run it again " +
-			"while nothing else writes to the source")
+		return errSourceChanged
 	}
 
 	// rename(2) replaces an empty directory, so a target created since
@@ -234,7 +234,9 @@ func (r *run) writeData(ctx context.Context, src *source) (err error) {
 
 	ctx = store.WithAttribution(ctx, store.Attribution{User: r.user(), Tool: Tool})
 	c := &copier{src: src, dst: db.Target, rep: r.rep}
-	return c.copyAll(ctx)
+	err = c.copyAll(ctx)
+	r.imported = c.imported
+	return err
 }
 
 // verify reopens the renamed target and compares it with the source.
@@ -246,7 +248,7 @@ func (r *run) verify(ctx context.Context, src *source) (err error) {
 	defer func() {
 		err = errors.Join(err, db.Close(ctx))
 	}()
-	return verifyTarget(ctx, src, db.Target, r.rep)
+	return verifyTarget(ctx, src, db.Target, r.imported, r.rep)
 }
 
 // open calls Backend.Open and rejects an incomplete result, which would
@@ -266,12 +268,7 @@ func (r *run) open(ctx context.Context, root string) (*Opened, error) {
 	return db, nil
 }
 
-func (r *run) user() string {
-	if u := r.opts.Principal.User; u != "" {
-		return u
-	}
-	return principal.ReservedPrefix + Tool
-}
+func (r *run) user() string { return importUser(r.opts.Principal) }
 
 // recordAudit writes the run's single audit record into the target.
 //

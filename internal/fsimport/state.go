@@ -43,6 +43,10 @@ var relaSkipped = map[string]string{
 	"pending-deletes.json":    "undoable deletes are not imported",
 	"migration.lock":          "lock file",
 	"scheduler-run-children/": "progress of scheduler runs in flight; not resumed",
+	"rela.db":                 "SQLite database",
+	"rela.db-wal":             "SQLite database",
+	"rela.db-shm":             "SQLite database",
+	"rela.db.lock":            "SQLite database lock",
 }
 
 // classifyRela returns what the import does with the .rela-relative path p,
@@ -90,6 +94,13 @@ func (c *copier) copyState(ctx context.Context) error {
 		class, reason := classifyRela(p)
 		switch class {
 		case relaConfig:
+			if c.inPlace {
+				why := "configuration, not data; left where it is"
+				if strings.HasPrefix(p, relaAuditDir+"/") {
+					why = "audit log; stays on disk, where the import adds its own record"
+				}
+				c.skipRela(full, p, why, listed)
+			}
 			return nil
 		case relaSkip:
 			c.skipRela(full, p, reason, listed)
@@ -131,6 +142,16 @@ func (c *copier) skipRela(full, p, reason string, listed map[string]bool) {
 
 // copyStateKey copies one state file into the target's state.KV.
 func (c *copier) copyStateKey(ctx context.Context, full, key string) {
+	// A key the target already holds is kept: it is that project's own
+	// setting, and the import adds data rather than replacing settings.
+	if _, err := c.dst.State.Get(ctx, key); err == nil {
+		c.imported.keptState[key] = true
+		c.rep.skip(full, "the database already has this setting; kept it")
+		return
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		c.rep.fail("read state %s in the database: %v", full, err)
+		return
+	}
 	data, err := c.src.state.Get(ctx, key)
 	if err != nil {
 		c.rep.fail("read state %s: %v", full, err)
