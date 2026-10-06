@@ -6,7 +6,13 @@
 // the SFC's router / pinia / schema-store wiring (TKT-IHC7B).
 
 import type { ViewEntity, ViewSectionField } from '@/api'
-import type { Entity, FieldAffordance, PropertyDef, TransitionOption } from '@/types'
+import type {
+  Entity,
+  FieldAffordance,
+  PropertyDef,
+  RelationAffordance,
+  TransitionOption,
+} from '@/types'
 import { defaultRegistry } from '@/widgets/registry'
 import { viewFieldRoutingHint } from '@/widgets/viewRouting'
 import { isFieldWritable } from '@/utils/affordances'
@@ -30,6 +36,9 @@ export interface FieldVerdictSource {
   // and routes to the StatusControl (TKT-3G93B8); rows have no `_transitions`,
   // so they keep the ordinary widget.
   _transitions?: Record<string, TransitionOption[]>
+  // Per-relation verdicts; read for relation fields (TKT-CADCFX). Sparse:
+  // an absent relation or flag means allowed.
+  _relations?: Record<string, RelationAffordance>
 }
 
 // buildSectionEditFields shapes a properties section's fields for
@@ -49,6 +58,22 @@ export function buildSectionEditFields(
   if (!fields) return []
   const out: SectionEditField[] = []
   for (const f of fields) {
+    if (f.relation) {
+      // A relation field (TKT-CADCFX). Changing it removes one edge and adds
+      // another, so it needs both verdicts.
+      const rv = source._relations?.[f.relation]
+      out.push({
+        property: `relation:${f.relation}`,
+        label: f.label,
+        verdict: { writable: rv?.creatable !== false && rv?.removable !== false },
+        span: f.span,
+        render: f.render,
+        kind: 'relation',
+        relation: f.relation,
+        targets: f.targets ?? [],
+      })
+      continue
+    }
     if (!f.property) continue
     const def = getPropertyDef(source.type, f.property)
     const verdict = source._fields?.[f.property]

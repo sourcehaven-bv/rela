@@ -67,6 +67,31 @@ lists:
       order_by: volgorde
     create_form: taak
     edit_form: taak
+views:
+  # Status as a field among the properties (TKT-CADCFX), not a cards section.
+  taak:
+    title: Taak
+    entry: { type: taak }
+    traverse:
+      - { from: entry, follow_incoming: bestaat_uit, collect_as: initiatieven }
+    sections:
+      - heading: Details
+        source: entry
+        display: properties
+        render: input
+        fields:
+          - relation: heeft_status
+            label: Status
+            span: 6
+          - property: deadline
+            label: Deadline
+            span: 6
+      - source: entry
+        display: content
+      - heading: Initiatief
+        source: initiatieven
+        display: cards
+
 kanbans:
   initiatief_bord:
     entity_type: taak

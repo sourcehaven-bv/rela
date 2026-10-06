@@ -6,6 +6,10 @@ export interface ViewSectionField {
   // Raw property name (e.g. "title") — used to correlate with the entry's
   // inaccessible[] for tooltip reasons.
   property?: string
+  // A relation field (TKT-CADCFX) names its relation instead of a property,
+  // and carries the entry's readable targets of it.
+  relation?: string
+  targets?: { id: string; title: string }[]
   label: string
   values?: string[]
   propType?: string

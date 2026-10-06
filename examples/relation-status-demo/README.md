@@ -17,3 +17,5 @@ rela-server -project . -port 8957
 - `/list/taken` and the initiative's `lijst` tab: tasks grouped by status
   (`group_by: {relation: heeft_status}`). Add in a section prefills the status.
 - Moving a card replaces its `heeft_status` edge.
+- A task's detail page and the board's side panel: Status is a field among
+  the properties (`fields: - relation: heeft_status`), changed with a menu.

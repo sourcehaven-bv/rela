@@ -24,6 +24,7 @@ entities:
     id_type: short
     properties:
       titel: { type: string, required: true }
+      deadline: { type: date }
 relations:
   heeft_status:
     label: heeft status

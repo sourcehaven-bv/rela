@@ -101,6 +101,10 @@ type SectionFieldData struct {
 	// SPA's job (its registry owns the type→widget default), and the server
 	// has already rejected a name/type mismatch at config load (TKT-3R7RF3).
 	Widget string
+	// Relation and Targets describe a relation field (TKT-CADCFX); see
+	// [viewsHandler.resolveRelationFields].
+	Relation string
+	Targets  []v1.SectionFieldTarget
 }
 
 // buildSectionFieldData resolves one configured field against an entity.
@@ -128,6 +132,16 @@ func buildSectionFieldData(
 	label := f.Label
 	if label == "" {
 		label = f.Property
+	}
+	if f.Relation != "" {
+		// The targets and the relation's own label are filled in by
+		// resolveRelationFields, which has the store and the metamodel.
+		return SectionFieldData{
+			Relation: f.Relation,
+			Label:    f.Label,
+			Span:     int(f.Span),
+			Render:   resolveFieldRender(sectionRender, f.Render),
+		}
 	}
 	return SectionFieldData{
 		Property:     f.Property,
@@ -354,6 +368,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 				for _, f := range sec.Fields {
 					sd.Fields = append(sd.Fields, buildSectionFieldData(f, e, entDef, sec.Render))
 				}
+				h.resolveRelationFields(ctx, s, sd.Fields, e)
 			case "content":
 				sd.Content = e.Content
 				sd.HasContent = e.Content != ""
@@ -535,6 +550,49 @@ func (h *viewsHandler) resolveSectionButtonsWithTraverse(
 				}
 			}
 			break
+		}
+	}
+}
+
+// resolveRelationFields fills each relation field of an entry properties
+// section (TKT-CADCFX) with the entry's targets of that relation and, when
+// the author set no label, the relation's label.
+//
+// The targets go through the same read as a relation column: edges owned by
+// the entry's face, then the principal's read gate on the targets, so a
+// target the principal may not read is left out rather than shown by id.
+func (h *viewsHandler) resolveRelationFields(
+	ctx context.Context, s *Schema, fields []SectionFieldData, e *entity.Entity,
+) {
+	columns := make([]dataentryconfig.ListColumn, len(fields))
+	has := false
+	for i, f := range fields {
+		if f.Relation == "" {
+			continue
+		}
+		has = true
+		columns[i] = dataentryconfig.ListColumn{Relation: f.Relation}
+		if f.Label == "" {
+			fields[i].Label = f.Relation
+			if def, ok := s.Meta.GetRelationDef(f.Relation); ok && def.Label != "" {
+				fields[i].Label = def.Label
+			}
+		}
+	}
+	if !has {
+		return
+	}
+	svc := h.services()
+	targets, ids := h.relationColumnTargets(ctx, svc, s, columns, []*entity.Entity{e})
+	if len(ids) == 0 {
+		return
+	}
+	titles := h.visibleTitles(ctx, svc, ids)
+	for i := range fields {
+		for _, id := range targets[e.ID][i] {
+			if title, ok := titles[id]; ok {
+				fields[i].Targets = append(fields[i].Targets, v1.SectionFieldTarget{ID: id, Title: title})
+			}
 		}
 	}
 }

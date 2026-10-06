@@ -1778,6 +1778,10 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			// also never see the section-level value.
 			errs = append(errs, validateSectionRender(viewID, i, s)...)
 
+			// Relation fields (TKT-CADCFX) need only the entry type, which is
+			// known whatever the section's source resolves to.
+			errs = append(errs, validateSectionRelationFields(viewID, i, s, view.Entry.Type, meta)...)
+
 			// Validate widget overrides (TKT-3R7RF3), outside the guard for the
 			// same reason: an unregistered widget name is checkable without the
 			// metamodel. The type-compatibility half needs the entity def, so
@@ -3143,4 +3147,42 @@ func checkQueryScopeRef(
 	return []string{fmt.Sprintf(
 		"%s %q: query_scope %q is not declared on entity type %q (declared: %s, plus the implicit %q)",
 		kind, id, scope, entityType, strings.Join(declared, ", "), metamodel.AllQueryScopeName)}
+}
+
+// validateSectionRelationFields checks `relation:` fields (TKT-CADCFX). A
+// relation field stands for the entry's outgoing edges, so it is valid only in
+// an entry properties section, on a relation the entry type can start.
+func validateSectionRelationFields(
+	viewID string, i int, s ViewSection, entryType string, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	for j, f := range s.Fields {
+		if f.Relation == "" {
+			continue
+		}
+		prefix := fmt.Sprintf("view %q: section[%d] field[%d]", viewID, i, j)
+		if f.Property != "" {
+			errs = append(errs, fmt.Sprintf("%s sets both property and relation; set one", prefix))
+			continue
+		}
+		if s.Source != "entry" || s.Display != "properties" {
+			errs = append(errs, fmt.Sprintf(
+				"%s: a relation field is only valid in a section with source: entry and display: properties",
+				prefix))
+			continue
+		}
+		if f.Widget != "" {
+			errs = append(errs, fmt.Sprintf("%s: widget does not apply to a relation field", prefix))
+		}
+		def, ok := meta.GetRelationDef(f.Relation)
+		if !ok {
+			errs = append(errs, fmt.Sprintf("%s references unknown relation %q", prefix, f.Relation))
+			continue
+		}
+		if !slices.Contains(def.From, entryType) {
+			errs = append(errs, fmt.Sprintf(
+				"%s: relation %q does not start at entity type %q", prefix, f.Relation, entryType))
+		}
+	}
+	return errs
 }

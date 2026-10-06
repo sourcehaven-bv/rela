@@ -1454,6 +1454,7 @@ function getPropertyDef(entityType: string, propertyName: string): PropertyDef |
 // display section would show last-loadView's string forever. Same bug class
 // as RR-FC1C, same fix.
 function entryDisplayValue(field: ViewSectionField): unknown {
+  if (field.relation) return (field.targets ?? []).map((t) => t.title)
   const props = entry.value?.properties
   if (field.property && props && field.property in props) {
     return props[field.property]
@@ -1473,7 +1474,9 @@ function mapFieldsToProperties(fields: ViewSectionField[] | undefined): Property
     // PropertyDisplay's `name` is used as a vue list key; favor the raw
     // property name when available and fall back to a slugged label so
     // older shapes still render.
-    const name = field.property ?? field.label.toLowerCase().replace(/\s+/g, '_')
+    const name = field.relation
+      ? `relation:${field.relation}`
+      : (field.property ?? field.label.toLowerCase().replace(/\s+/g, '_'))
     const def = entryType && field.property ? getPropertyDef(entryType, field.property) : undefined
     return {
       name,
@@ -2274,9 +2277,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             :on-error="handleSectionEditError"
             :on-verdict-flip="handleVerdictFlip"
             :on-attachment-changed="loadView"
+            :on-relation-changed="loadView"
           >
             <template v-if="commentsEnabled" #label-affordance="{ property, index }">
+              <!-- A relation row's key is not a property a comment can anchor to. -->
               <CommentIndicator
+                v-if="!property.startsWith('relation:')"
                 :entity-type="entityType"
                 :entity-id="entityRef(entry)"
                 :anchor="{ kind: 'property', ref: property }"

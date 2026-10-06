@@ -831,6 +831,17 @@ type SectionField struct {
 	Span         int      `json:"span,omitempty"`
 	Render       string   `json:"render,omitempty"`
 	Widget       string   `json:"widget,omitempty"`
+	// Relation names the relation a relation field shows (TKT-CADCFX); then
+	// Property is empty and Targets holds the entry's readable targets.
+	Relation string               `json:"relation,omitempty"`
+	Targets  []SectionFieldTarget `json:"targets,omitempty"`
+}
+
+// SectionFieldTarget is one target of a relation field: an entity the
+// principal may read, with its display title.
+type SectionFieldTarget struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
 // SidePanelEntity represents an entity in a side panel section.

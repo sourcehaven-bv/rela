@@ -2213,8 +2213,15 @@ func (c *SectionCreate) UnmarshalYAML(value *yaml.Node) error {
 // authored line into N errors the operator must override back field by field.
 // Validating one would also need each field's property type — exactly the
 // metamodel-dependent context RR-4ICH8M moved the field-level check out of.
+//
+// Relation shows the entry's outgoing edges of that relation as a field
+// instead of a property: the targets' titles, changed in place with a picker.
+// It replaces Property (exactly one of the two is set) and is only valid in a
+// `source: entry` / `display: properties` section, where the entry type is
+// known and the field sits among the entry's own properties.
 type ViewSectionField struct {
-	Property string `yaml:"property" json:"property"`
+	Property string `yaml:"property,omitempty" json:"property,omitempty"`
+	Relation string `yaml:"relation,omitempty" json:"relation,omitempty"`
 	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
 	Span     Span   `yaml:"span,omitempty" json:"span,omitempty"`
 	Render   string `yaml:"render,omitempty" json:"render,omitempty"`
