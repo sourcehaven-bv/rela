@@ -60,7 +60,7 @@ Survey of develop at `2f7579199`. "Today" is the enum-property behaviour.
 | Form picker | `RelationPicker` is single-select at `max_outgoing: 1`; candidates are every entity of the type; `FormRelation` has no Go `default` key (the SPA reads one that is silently dropped) | Scoped candidates (only what the parent offers), a working default (the parent's first status) |
 | Cardinality | `max_outgoing`/`min_outgoing` are analysis-only (`cardinality.go:216`) | Enforce single-valued at write time, or define what a board does with 0 or 2 targets |
 | Styles and badges | `styles:` keyed by enum type; page `badge:` must be a property | Colour from the target entity; depends on a colour property type (TKT-28FRME, FEAT-8OTJVW) |
-| Transitions | state machines only on enum custom types (`statemachine/`); `_transitions` only for those | Open: allowed moves as edges between statuses, checked on `replace`, or no transitions in the first iteration |
+| Transitions | state machines only on enum custom types (`statemachine/`); `_transitions` only for those | None. Operators choose per use case: enum with transitions, or relation without |
 | Automations | `relation_created`/`relation_removed` triggers; a re-point fires remove plus create | A "relation re-targeted from X to Y" trigger, or document the pair |
 | Validations, `condition:` | `related()` works in `when_condition`, list and sidebar conditions, next actions and MCP | Mostly covered by `related()`; `key_props` in next actions is property-only |
 | Dashboard and search | breakdown counts `properties[group_by]`; query syntax has no relation predicates | Relation-aware breakdown and query predicate; compare TKT-AIEGHU |

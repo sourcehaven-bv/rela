@@ -154,15 +154,12 @@ the relation or a path. Nothing keeps an enum `status` in sync.
 - **Column order:** the anchor's `_order_out` when an anchor relation is
 configured, otherwise a path on the target.
 
-Open:
-
-- **Transitions.** State machines are defined on enum types. For status
-entities, allowed moves could be edges between statuses (for example `status
---may_move_to--> status`), checked on `replace`. Alternatively there are no
-transitions in the first iteration.
-- **Paths in conditions.** `entity.has_status.categorie == 'gereed'` would be
-sound for single-valued single-target relations. `related()` already covers it
-as a predicate, so this is not needed for the first iteration.
+- **No transitions on relation-backed status.** State machines stay an
+  enum feature. An operator chooses per use case: an enum status with
+  transitions, or a relation-backed status with per-parent columns and no
+  transitions. The docs must state this trade-off.
+- **No paths in conditions.** Conditions use `related()`
+  (`related(entity, 'has_status', {categorie = 'gereed'})`).
 
 Follow-up tickets, in dependency order:
 
