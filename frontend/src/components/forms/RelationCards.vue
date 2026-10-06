@@ -1275,7 +1275,7 @@ function onDragEnd() {
   padding: 6px 10px;
   border-radius: 6px;
   background: var(--rl-color-bg-hover);
-  color: var(--text-secondary);
+  color: var(--rl-color-text-muted);
   font-size: 13px;
 }
 
