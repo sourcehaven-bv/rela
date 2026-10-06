@@ -4028,20 +4028,20 @@ Each tab names exactly one view:
 
 ### Entity pages
 
-An entity page shows one entity, for example one topic with a board, a table
+An entity page shows one entity, for example one project with a board, a table
 and a timeline of its work. Set `entity_type:` to the type of that entity. Each
 tab then shows only what belongs to it.
 
 ```yaml
 pages:
-  topic:
-    entity_type: topic
-    label: Topic
-    badge: gezondheid
+  project:
+    entity_type: project
+    label: Project
+    badge: health
     tabs:
-      - { id: board, label: Board, kanban: taken_bord, scope: { relation: bestaat_uit, direction: outgoing } }
-      - { id: tabel, label: Tabel, list: openstaande_taken, scope: { relation: bestaat_uit, direction: outgoing } }
-      - { id: tijdlijn, label: Tijdlijn, gantt: portfolio, scope: root }
+      - { id: board, label: Board, kanban: task_board, scope: { relation: contains, direction: outgoing } }
+      - { id: table, label: Table, list: open_tasks, scope: { relation: contains, direction: outgoing } }
+      - { id: timeline, label: Timeline, gantt: portfolio, scope: root }
 ```
 
 The header shows the entity's title. `label:` is the page's name in error
@@ -4073,6 +4073,27 @@ Every tab of an entity page needs a `scope:`:
 A row created from a list or board tab, with New or a section's Add, is linked
 to the page's entity over the tab's relation, so it appears in the tab. When
 that link fails, a message names the new row so it can be linked by hand.
+
+An item created from the space's Create menu while an entity page is open is
+linked the same way. This also works on a timeline tab, which has no New
+button. There, the link is a `hierarchy:` relation of the timeline that starts
+at the page's entity type and ends at the created type, and that type must be
+one of the timeline's `sources:`. In the example above, if the `portfolio`
+timeline has `hierarchy: [contains]` and draws tasks, Create > Task on any tab
+of a project page links the new task with `contains`.
+
+The relation for a created type is chosen as follows:
+
+1. When the open tab has one relation for the type, it is used. When it has
+   two, no link is made.
+2. When the open tab has none, the page's single relation for that type is
+   used, from any tab.
+3. When the page has two different relations for the type, or none, no link
+   is made. rela does not guess which one the author meant. The same relation
+   in two directions counts as two.
+
+The relation is chosen when the create dialog opens. Each item made with
+"Create & add another" is linked too.
 
 An entity page is not a navigation destination: a `page:` entry or a space's
 `home:` that names one is a config error. It opens from an entity, by URL.
@@ -4155,21 +4176,28 @@ holds every page, keyed by id, with the tabs this user can see in config order:
 
 An entity page also has `entity_type` and, when set, `badge`. Each of its tabs
 has `scope`: `"relation"` with the `relation` and the resolved `direction`, or
-`"root"`:
+`"root"`. `links` lists, per entity type, the relation a new item of that type
+is linked over. A list or board tab has at most one entry. A timeline tab has
+one per hierarchy relation and child type. A tab without links leaves it out. The Create menu reads these to link a new
+item:
 
 ```json
 {
   "pages": {
-    "topic": {
-      "label": "Topic",
-      "entity_type": "topic",
-      "badge": "gezondheid",
+    "project": {
+      "label": "Project",
+      "entity_type": "project",
+      "badge": "health",
       "tabs": [
         {
-          "id": "board", "label": "Board", "view": "kanban", "target": "taken_bord",
-          "scope": "relation", "relation": "bestaat_uit", "direction": "outgoing"
+          "id": "board", "label": "Board", "view": "kanban", "target": "task_board",
+          "scope": "relation", "relation": "contains", "direction": "outgoing",
+          "links": [{ "type": "task", "relation": "contains", "direction": "outgoing" }]
         },
-        { "id": "tijdlijn", "label": "Tijdlijn", "view": "gantt", "target": "portfolio", "scope": "root" }
+        {
+          "id": "timeline", "label": "Timeline", "view": "gantt", "target": "portfolio", "scope": "root",
+          "links": [{ "type": "task", "relation": "contains", "direction": "outgoing" }]
+        }
       ]
     }
   }
