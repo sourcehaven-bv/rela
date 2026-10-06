@@ -2179,6 +2179,61 @@ func suggestRelation(name string, meta *metamodel.Metamodel) string {
 	return ""
 }
 
+// validateKanbanColumnsFrom checks a relation-backed board (TKT-KJ3Q07). The
+// relation must be single-valued and single-target, so a card sits in exactly
+// one column and the column type is known at load time.
+func validateKanbanColumnsFrom(kanbanID string, kanban Kanban, meta *metamodel.Metamodel) []string {
+	var errs []string
+	cf := kanban.ColumnsFrom
+	if kanban.ColumnProperty != "" {
+		errs = append(errs, fmt.Sprintf("kanban %q: column_property and columns_from are mutually exclusive", kanbanID))
+	}
+	if len(kanban.Columns) > 0 {
+		errs = append(errs, fmt.Sprintf("kanban %q: columns cannot be combined with columns_from", kanbanID))
+	}
+	if kanban.SwimlaneProperty != "" {
+		errs = append(errs, fmt.Sprintf("kanban %q: swimlanes are not supported with columns_from", kanbanID))
+	}
+	rel, ok := meta.GetRelationDef(cf.Relation)
+	if !ok {
+		return append(errs, fmt.Sprintf("kanban %q: columns_from.relation %q is not a relation type", kanbanID, cf.Relation))
+	}
+	if !slices.Contains(rel.From, kanban.EntityType) {
+		errs = append(errs, fmt.Sprintf("kanban %q: columns_from.relation %q does not start at %q",
+			kanbanID, cf.Relation, kanban.EntityType))
+	}
+	if maxOut := rel.GetMaxOutgoing(); maxOut == nil || *maxOut != 1 {
+		errs = append(errs, fmt.Sprintf("kanban %q: columns_from.relation %q must declare max_outgoing: 1",
+			kanbanID, cf.Relation))
+	}
+	if len(rel.To) != 1 {
+		return append(errs, fmt.Sprintf("kanban %q: columns_from.relation %q must have exactly one target type",
+			kanbanID, cf.Relation))
+	}
+	target := rel.To[0]
+	if cf.OfferedBy != "" {
+		offered, ok := meta.GetRelationDef(cf.OfferedBy)
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf("kanban %q: columns_from.offered_by %q is not a relation type",
+				kanbanID, cf.OfferedBy))
+		case !slices.Contains(offered.To, target):
+			errs = append(errs, fmt.Sprintf("kanban %q: columns_from.offered_by %q does not point to %q",
+				kanbanID, cf.OfferedBy, target))
+		}
+	}
+	if cf.OrderBy != "" {
+		targetDef, ok := meta.GetEntityDef(target)
+		if ok {
+			if _, has := targetDef.Properties[cf.OrderBy]; !has {
+				errs = append(errs, fmt.Sprintf("kanban %q: columns_from.order_by %q is not a property of %q",
+					kanbanID, cf.OrderBy, target))
+			}
+		}
+	}
+	return errs
+}
+
 // validateKanbans validates kanban board definitions.
 //
 //nolint:gocognit,gocyclo,funlen // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
@@ -2194,7 +2249,9 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 
 		// Validate column_property exists and is enum type
-		if kanban.ColumnProperty == "" { //nolint:nestif // nested guards each check a distinct optional field of the kanban config.
+		if kanban.ColumnsFrom != nil {
+			errs = append(errs, validateKanbanColumnsFrom(kanbanID, kanban, meta)...)
+		} else if kanban.ColumnProperty == "" { //nolint:nestif // nested guards each check a distinct optional field of the kanban config.
 			errs = append(errs, fmt.Sprintf("kanban %q: column_property is required", kanbanID))
 		} else {
 			propDef, ok := entDef.Properties[kanban.ColumnProperty]

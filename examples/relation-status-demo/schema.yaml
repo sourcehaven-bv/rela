@@ -1,0 +1,41 @@
+version: 1
+types:
+  statuscategorie:
+    values: [open, actief, wachten, gereed]
+entities:
+  status:
+    label: Status
+    id_prefix: "ST-"
+    id_type: short
+    properties:
+      titel: { type: string, required: true }
+      volgorde: { type: integer }
+      categorie: { type: statuscategorie }
+      beschrijving: { type: string }
+  initiatief:
+    label: Initiatief
+    id_prefix: "INIT-"
+    id_type: short
+    properties:
+      titel: { type: string, required: true }
+  taak:
+    label: Taak
+    id_prefix: "TASK-"
+    id_type: short
+    properties:
+      titel: { type: string, required: true }
+relations:
+  heeft_status:
+    label: heeft status
+    from: [taak]
+    to: [status]
+    max_outgoing: 1
+  biedt_status:
+    label: biedt status
+    from: [initiatief]
+    to: [status]
+    orderable: outgoing
+  bestaat_uit:
+    label: bestaat uit
+    from: [initiatief]
+    to: [taak]

@@ -427,6 +427,8 @@ export interface KanbanConfig {
   // which types alone cannot guarantee at runtime.
   column_property: string
   columns?: KanbanColumn[]
+  /** Columns from a single-valued relation instead of an enum (TKT-KJ3Q07). */
+  columns_from?: KanbanColumnsFrom
   swimlane_property?: string
   swimlanes?: KanbanSwimlane[]
   card: KanbanCard
@@ -436,6 +438,14 @@ export interface KanbanConfig {
   filter_controls?: FilterControl[]
   /** Named query scope; see the field of the same name on ListConfig. */
   query_scope?: string
+}
+
+export interface KanbanColumnsFrom {
+  relation: string
+  /** Relation from the page anchor that selects and orders the columns. */
+  offered_by?: string
+  /** Target property that orders the columns when there is no anchor. */
+  order_by?: string
 }
 
 export interface KanbanColumn {

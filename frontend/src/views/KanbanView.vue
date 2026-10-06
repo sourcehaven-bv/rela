@@ -24,6 +24,7 @@ import EntityDetailPanel from '@/components/entity/EntityDetailPanel.vue'
 import { useDetailPanel } from '@/composables/useDetailPanel'
 import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
+import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
@@ -138,7 +139,18 @@ const { filters, writeToQuery } = useUrlFilterSync({
 // so we can resolve those IDs to titles. Property-only boards fetch without
 // includes, exactly as before.
 const hasRelationFields = computed(
-  () => kanbanConfig.value?.card.fields?.some((f) => !!f.relation) ?? false
+  () =>
+    !!kanbanConfig.value?.columns_from ||
+    (kanbanConfig.value?.card.fields?.some((f) => !!f.relation) ?? false)
+)
+
+// A relation-backed board (`columns_from`) takes its columns from the
+// targets of a single-valued relation instead of an enum (TKT-KJ3Q07).
+const columnsFrom = computed(() => kanbanConfig.value?.columns_from)
+const relationColumns = useRelationColumns(
+  columnsFrom,
+  computed(() => props.pageScope),
+  computed(() => worldParam.value)
 )
 
 // A tab of an entity page narrows the board to the anchor's cards.
@@ -236,6 +248,20 @@ const entityType = computed(() => {
 
 const columns = computed(() => {
   if (!kanbanConfig.value) return []
+
+  // Relation-backed: the targets, then an Other column for cards whose
+  // target is not offered here, shown only when a card lands in it.
+  if (columnsFrom.value) {
+    const cols: KanbanColumn[] = relationColumns.columns.value.map((c) => ({
+      value: c.value,
+      label: c.label,
+    }))
+    const hasOther = entities.value.some(
+      (e) => relationColumns.columnOf(e) === OTHER_COLUMN
+    )
+    if (hasOther) cols.push({ value: OTHER_COLUMN, label: 'Other' })
+    return cols
+  }
 
   // Use defined columns or generate from unique values
   if (kanbanConfig.value.columns?.length) {
@@ -342,6 +368,7 @@ const boardLabel = computed(() => `${kanbanConfig.value?.title || 'Kanban'} boar
 // via Badge). `column.label` defaults to the value for auto-generated columns
 // (see the columns computed), so treat label===value as "no explicit label".
 function columnTitle(column: { value: string; label?: string }): string {
+  if (columnsFrom.value) return column.label ?? column.value
   if (column.label && column.label !== column.value) return column.label
   const property = kanbanConfig.value?.column_property
   const entityTypeName = kanbanConfig.value?.entity
@@ -361,7 +388,9 @@ const entitiesByColumn = computed(() => {
   }
 
   for (const entity of filteredEntities.value) {
-    const val = String(entity.properties[property] || '')
+    const val = columnsFrom.value
+      ? relationColumns.columnOf(entity)
+      : String(entity.properties[property] || '')
     if (grouped[val]) {
       grouped[val].push(entity)
     }
@@ -452,25 +481,36 @@ function toggleLane(lane: Swimlane<BoardCard>) {
 interface MoveCardVars {
   entity: Entity
   updates: Record<string, string>
+  /** Relation-backed board: the card's single edge is re-pointed at `target`. */
+  relation?: { name: string; target: { type: string; id: string } }
 }
 
 const entitiesStore = useEntitiesStore()
 
 const { mutate: moveCard } = useMutation({
-  mutation: ({ entity, updates }: MoveCardVars) => {
+  mutation: ({ entity, updates, relation }: MoveCardVars) => {
     const config = kanbanConfig.value
     if (!config) throw new Error(`unknown kanban view: ${props.id}`)
+    // A full linkage (`data`) replaces the edge set in one PATCH, so the card
+    // leaves its old column as it enters the new one.
+    if (relation) {
+      return entitiesStore.update(config.entity, entityRef(entity), {
+        relations: { [relation.name]: { data: [relation.target] } },
+      })
+    }
     // To the card's ADDRESS, face included — see utils/entityRef. Through the
     // entities store so the edit form, which reads its cache, sees the move
     // without waiting for the SSE invalidation.
     return entitiesStore.update(config.entity, entityRef(entity), { properties: updates })
   },
-  onMutate({ entity, updates }: MoveCardVars) {
+  onMutate({ entity, updates, relation }: MoveCardVars) {
     return beginOptimistic(
       queryCache,
       entityKeys.list(kanbanConfig.value?.entity ?? ''),
       entity.id,
-      (e) => ({ ...e, properties: { ...e.properties, ...updates } })
+      relation
+        ? (e) => ({ ...e, relations: { ...e.relations, [relation.name]: [relation.target.id] } })
+        : (e) => ({ ...e, properties: { ...e.properties, ...updates } })
     )
   },
   onError(err, _vars, context) {
@@ -627,6 +667,20 @@ function onMove({ item, to, lane }: { item: BoardCard; to: Section<BoardCard>; l
   const config = kanbanConfig.value
   const entity = item.entity
   if (!config || !canUpdate(entity)) return
+
+  if (config.columns_from) {
+    const target = relationColumns.targetType.value
+    // Other is where unoffered cards wait; dropping into it would mean
+    // "some status this page does not offer", which names no target.
+    if (!target || to.id === OTHER_COLUMN) return
+    if (relationColumns.columnOf(entity) === to.id) return
+    moveCard({
+      entity,
+      updates: {},
+      relation: { name: config.columns_from.relation, target: { type: target, id: to.id } },
+    })
+    return
+  }
 
   const colProp = config.column_property
   const swimProp = config.swimlane_property

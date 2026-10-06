@@ -1083,19 +1083,22 @@ func (c *Config) HasPropertyFilterControl(entityType, property string) bool {
 // exists only because List.Description predated the feature and was already
 // present in configs, and a Kanban has no such legacy field to accommodate.
 type Kanban struct {
-	EntityType       string           `yaml:"entity_type" json:"entity"`
-	Title            string           `yaml:"title" json:"title"`
-	Header           string           `yaml:"header" json:"header,omitempty"`
-	Footer           string           `yaml:"footer" json:"footer,omitempty"`
-	ColumnProperty   string           `yaml:"column_property" json:"column_property"`
-	Columns          []KanbanColumn   `yaml:"columns,omitempty" json:"columns,omitempty"`
-	SwimlaneProperty string           `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
-	Swimlanes        []KanbanSwimlane `yaml:"swimlanes,omitempty" json:"swimlanes,omitempty"`
-	Card             KanbanCard       `yaml:"card" json:"card"`
-	EditForm         string           `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
-	CreateForm       string           `yaml:"create_form,omitempty" json:"create_form,omitempty"`
-	Filters          []FilterConfig   `yaml:"filters,omitempty" json:"filters,omitempty"`
-	FilterControls   []FilterControl  `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
+	EntityType     string `yaml:"entity_type" json:"entity"`
+	Title          string `yaml:"title" json:"title"`
+	Header         string `yaml:"header" json:"header,omitempty"`
+	Footer         string `yaml:"footer" json:"footer,omitempty"`
+	ColumnProperty string `yaml:"column_property" json:"column_property"`
+	// ColumnsFrom takes the columns from a single-valued relation instead of
+	// an enum property (TKT-KJ3Q07). Exclusive with ColumnProperty.
+	ColumnsFrom      *KanbanColumnsFrom `yaml:"columns_from,omitempty" json:"columns_from,omitempty"`
+	Columns          []KanbanColumn     `yaml:"columns,omitempty" json:"columns,omitempty"`
+	SwimlaneProperty string             `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
+	Swimlanes        []KanbanSwimlane   `yaml:"swimlanes,omitempty" json:"swimlanes,omitempty"`
+	Card             KanbanCard         `yaml:"card" json:"card"`
+	EditForm         string             `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
+	CreateForm       string             `yaml:"create_form,omitempty" json:"create_form,omitempty"`
+	Filters          []FilterConfig     `yaml:"filters,omitempty" json:"filters,omitempty"`
+	FilterControls   []FilterControl    `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
 	// Condition mirrors [List.Condition], but is NOT YET SUPPORTED on a
 	// kanban and is refused at config load.
 	//
@@ -1115,6 +1118,19 @@ type Kanban struct {
 	// fallback to unfiltered — that is the difference between a typo showing
 	// nothing and a typo showing archived records to everyone.
 	QueryScope string `yaml:"query_scope,omitempty" json:"query_scope,omitempty"`
+}
+
+// KanbanColumnsFrom declares a board whose columns are the targets of a
+// single-valued relation on the card type.
+//
+// OfferedBy names a relation from the page anchor to the same target type.
+// On a page tab, the columns are the anchor's targets in `_order_out` order.
+// Off a page, or without OfferedBy, the columns are every target, ordered by
+// OrderBy (a property of the target type) and then by title.
+type KanbanColumnsFrom struct {
+	Relation  string `yaml:"relation" json:"relation"`
+	OfferedBy string `yaml:"offered_by,omitempty" json:"offered_by,omitempty"`
+	OrderBy   string `yaml:"order_by,omitempty" json:"order_by,omitempty"`
 }
 
 // KanbanColumn defines a column in the kanban board.

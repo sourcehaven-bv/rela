@@ -1,0 +1,74 @@
+app:
+  title: Status-demo
+forms:
+  taak:
+    entity_type: taak
+    title: Taak
+    fields:
+      - property: titel
+    relations:
+      - relation: heeft_status
+        label: Status
+  initiatief:
+    entity_type: initiatief
+    title: Initiatief
+    fields:
+      - property: titel
+    relations:
+      - relation: biedt_status
+        label: Kolommen
+        widget: cards
+  status:
+    entity_type: status
+    title: Status
+    fields:
+      - property: titel
+      - property: volgorde
+      - property: categorie
+      - property: beschrijving
+lists:
+  initiatieven:
+    entity_type: initiatief
+    title: Initiatieven
+    columns:
+      - property: titel
+  statussen:
+    entity_type: status
+    title: Statussen
+    columns:
+      - property: titel
+      - property: volgorde
+      - property: categorie
+    default_sort:
+      - property: volgorde
+kanbans:
+  initiatief_bord:
+    entity_type: taak
+    title: Bord
+    columns_from:
+      relation: heeft_status
+      offered_by: biedt_status
+      order_by: volgorde
+    card:
+      title: titel
+    create_form: taak
+    edit_form: taak
+  alle_taken:
+    entity_type: taak
+    title: Alle taken
+    columns_from:
+      relation: heeft_status
+      order_by: volgorde
+    card:
+      title: titel
+    edit_form: taak
+pages:
+  initiatief:
+    entity_type: initiatief
+    label: Initiatief
+    tabs:
+      - { id: bord, label: Bord, kanban: initiatief_bord, scope: { relation: bestaat_uit, direction: outgoing } }
+navigation:
+  - list: initiatieven
+  - kanban: alle_taken
+  - list: statussen
