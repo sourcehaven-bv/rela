@@ -174,38 +174,29 @@ func TestDir_Subscribe(t *testing.T) {
 // in its database has no file at subscribe time. A change to a sibling is
 // not reported.
 func TestDir_SubscribeFollowsTheName(t *testing.T) {
+	writeTo := func(name string) func(string) error {
+		return func(root string) error { return os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644) }
+	}
 	tests := []struct {
-		name   string
-		setup  func(t *testing.T, root string)
-		change func(t *testing.T, root string)
-		want   bool
+		name     string
+		existing bool
+		change   func(root string) error
+		want     bool
 	}{
+		{name: "file created after subscribe", change: writeTo("data-entry.yaml"), want: true},
 		{
-			name:   "file created after subscribe",
-			change: func(t *testing.T, root string) { write(t, root, "data-entry.yaml", "new") },
-			want:   true,
+			name:     "file removed after subscribe",
+			existing: true,
+			change:   func(root string) error { return os.Remove(filepath.Join(root, "data-entry.yaml")) },
+			want:     true,
 		},
-		{
-			name:  "file removed after subscribe",
-			setup: func(t *testing.T, root string) { write(t, root, "data-entry.yaml", "old") },
-			change: func(t *testing.T, root string) {
-				if err := os.Remove(filepath.Join(root, "data-entry.yaml")); err != nil {
-					t.Fatal(err)
-				}
-			},
-			want: true,
-		},
-		{
-			name:   "sibling file changed",
-			change: func(t *testing.T, root string) { write(t, root, "acl.yaml", "other") },
-			want:   false,
-		},
+		{name: "sibling file changed", change: writeTo("acl.yaml"), want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			root := project(t)
-			if tc.setup != nil {
-				tc.setup(t, root)
+			if tc.existing {
+				write(t, root, "data-entry.yaml", "old")
 			}
 			changed := make(chan struct{}, 1)
 			stop, err := rootfs.New(root).Subscribe(context.Background(), "data-entry.yaml", func() {
@@ -218,7 +209,9 @@ func TestDir_SubscribeFollowsTheName(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer stop()
-			tc.change(t, root)
+			if err := tc.change(root); err != nil {
+				t.Fatal(err)
+			}
 			wait := 5 * time.Second
 			if !tc.want {
 				wait = time.Second

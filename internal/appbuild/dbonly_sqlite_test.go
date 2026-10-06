@@ -4,7 +4,6 @@ package appbuild_test
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"testing"
 	"time"
@@ -96,8 +95,8 @@ func TestSQLite_DatabaseOnlyProjectRunsItsConfig(t *testing.T) {
 		if len(res.LoadErrors) > 0 || len(res.ScriptErrors) > 0 {
 			t.Fatalf("rule did not run: load errors %v, script errors %v", res.LoadErrors, res.ScriptErrors)
 		}
-		if len(res.Violations) != 1 || res.Violations[0].EntityID != "ITEM-900" ||
-			res.Violations[0].Message != "bad title" {
+		want := []string{"ITEM-900", "bad title"}
+		if len(res.Violations) != 1 || res.Violations[0].EntityID != want[0] || res.Violations[0].Message != want[1] {
 			t.Fatalf("violations = %+v, want ITEM-900 with the script's message", res.Violations)
 		}
 	})
@@ -105,11 +104,11 @@ func TestSQLite_DatabaseOnlyProjectRunsItsConfig(t *testing.T) {
 	t.Run("scheduled task", func(t *testing.T) {
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		scheduler.StartBackground(runCtx, svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		scheduler.StartBackground(runCtx, svc, slog.New(slog.DiscardHandler))
 
 		deadline := time.Now().Add(10 * time.Second)
 		for {
-			if scheduledItemExists(t, svc.Store()) {
+			if scheduledItemExists(ctx, t, svc.Store()) {
 				return
 			}
 			if time.Now().After(deadline) {
@@ -121,9 +120,9 @@ func TestSQLite_DatabaseOnlyProjectRunsItsConfig(t *testing.T) {
 }
 
 // scheduledItemExists reports whether the scheduled task's entity exists.
-func scheduledItemExists(t *testing.T, st store.Store) bool {
+func scheduledItemExists(ctx context.Context, t *testing.T, st store.Store) bool {
 	t.Helper()
-	for e, err := range st.ListEntities(context.Background(), store.EntityQuery{Type: "item", Faces: store.AllFaces()}) {
+	for e, err := range st.ListEntities(ctx, store.EntityQuery{Type: "item", Faces: store.AllFaces()}) {
 		if err != nil {
 			t.Fatal(err)
 		}
