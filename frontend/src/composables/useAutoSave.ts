@@ -29,7 +29,6 @@ import type { Entity, FieldConflicts, ModernRelationsField, Preconditions } from
 import { getEntity, type EntityPatch } from '@/api/entities'
 import { ApiError, getErrorMessage } from '@/api/errors'
 import { useEntitiesStore } from '@/stores/entities'
-import { DEFAULT_WORLD } from '@/composables/useWorld'
 import { mergeProperty, mergeRelations, mergeText } from './autoSaveMerge'
 
 // Sentinel for "unset this property" pending entries. Distinct from
@@ -750,6 +749,10 @@ export function useAutoSave(opts: AutoSaveOptions) {
   // It includes the outgoing relation targets the patch writes, because a
   // merged relations entry needs each target's type and the relations map
   // carries ids only.
+  //
+  // No `?world=`: the server then reads in its default world, which is the
+  // view a PATCH computes its tokens in. Naming `default` instead is refused
+  // with a 400 on a schema that declares worlds.
   async function fetchCurrent(patch: EntityPatch, signal: AbortSignal): Promise<Entity> {
     const outgoing = Object.keys(patch.relations ?? {}).filter(
       (k) => !opts.inverseToCanonical.has(k)
@@ -757,7 +760,7 @@ export function useAutoSave(opts: AutoSaveOptions) {
     return getEntity(
       opts.getEntityType(),
       opts.getEntityId(),
-      { world: DEFAULT_WORLD, ...(outgoing.length ? { include: outgoing.join(',') } : {}) },
+      outgoing.length ? { include: outgoing.join(',') } : {},
       signal
     )
   }

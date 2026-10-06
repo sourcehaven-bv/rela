@@ -54,6 +54,17 @@ Every edit entry point builds its route with `editFormRoute`, which carries the
 page's `?world=`. `DynamicForm` loads the entity in that world. The form then
 shows the relations the page showed, and the picker searches the same world.
 
+### Interaction with per-field versions (#1759)
+
+The relations version token hashes the relations as the read's world serves
+them, and a PATCH checks it against the default world's view. A form read in
+another world therefore got a 412 on every relations save. The conflict path
+then refetched with `?world=default`, which a schema that declares worlds
+refuses with a 400. The form now drops the relations token when it read in a
+non-default world (the relations body is a delta, and the save's response
+brings a token in the write's view), and the refetch omits `?world=` so the
+server reads in its default world.
+
 ## Follow-up
 
 The cards relation widget reads `/relations/{rel}`, which serves the default

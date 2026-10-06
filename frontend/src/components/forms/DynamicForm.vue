@@ -2253,6 +2253,15 @@ function snapshotServerState(entity: Entity): Entity {
     properties: { ...(entity.properties ?? {}) },
     relations: entity.relations ? { ...entity.relations } : entity.relations,
   }
+  // The relations token hashes the relations as the read's world serves them,
+  // and a PATCH checks it against the default world's view (a write takes no
+  // world). Read in another world, the token can never match, so every
+  // relations save would be refused as a conflict. Drop it: the relations
+  // body is a delta, and the first save's response brings a token in the
+  // write's own view.
+  if (entity._versions && (formWorld.value ?? '') !== schemaStore.defaultWorld) {
+    snap._versions = { ...entity._versions, relations: undefined }
+  }
   // Freeze the properties bag so an accidental write to the baseline fails
   // loudly in dev instead of silently corrupting the merge base.
   Object.freeze(snap.properties)
