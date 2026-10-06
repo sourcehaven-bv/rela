@@ -79,6 +79,49 @@ func tagged() {
 	}
 }
 
+func TestFile_WrapsYield(t *testing.T) {
+	src := []byte(`package p
+
+import "iter"
+
+func Seq() iter.Seq2[int, error] {
+	return func(yield func(int,
+		error) bool) {
+		yield(1, nil)
+	}
+}
+
+func emit[T any](yield func(v T) bool, v T) { yield(v) }
+
+func notYield(f func(int) bool) {}
+
+func variadic(yield func(...int) bool) {}
+
+func notBool(yield func(int)) {}
+`)
+	out, _, err := File("p.go", src, "internal/p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	if a, b := strings.Count(string(src), "\n"), strings.Count(got, "\n"); a != b {
+		t.Errorf("line count changed from %d to %d:\n%s", a, b, got)
+	}
+	for _, want := range []string{
+		"{ seqtrace__y := yield; yield = func(seqtrace__y0 int, seqtrace__y1 error) bool { " +
+			"defer seqtrace__rt.Suspend(seqtrace__f).Resume(); return seqtrace__y(seqtrace__y0, seqtrace__y1) } };",
+		"{ seqtrace__y := yield; yield = func(seqtrace__y0 T) bool { " +
+			"defer seqtrace__rt.Suspend(seqtrace__f).Resume(); return seqtrace__y(seqtrace__y0) } };",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "seqtrace__y :="); n != 2 {
+		t.Errorf("wrapped %d yields, want 2 (not notYield, variadic or notBool):\n%s", n, got)
+	}
+}
+
 func TestFile_SkipsCgoAndEmptyFiles(t *testing.T) {
 	for name, src := range map[string]string{
 		"cgo":   "package p\n\nimport \"C\"\n\nfunc F() {}\n",
@@ -163,6 +206,14 @@ func TestDemo(t *testing.T) {
 		"run.func2": {"run", "closure"},
 		"worker":    {"run", "go"},
 		"handle":    {"run", "ctx"},
+		// Loop bodies over iterators belong to the function with the loop.
+		"bodySimple":  {"iterate", ""},
+		"bodyHelper":  {"iterate", ""},     // the iterator hands yield to emit
+		"bodyAdapter": {"iterate", ""},     // adapt yields from its own loop
+		"adapterBody": {"adapt.func1", ""}, // adapt's own loop body over nums
+		"afterBreak":  {"iterate", ""},
+		// After an early break, the iterator's own calls stay under it.
+		"producerTail": {"nums.func1", ""},
 	}
 	seen := map[string]bool{}
 	for _, c := range calls {
