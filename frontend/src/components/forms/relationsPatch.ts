@@ -227,3 +227,29 @@ export function reshapeLegacyToModern(
   }
   return out
 }
+
+// Merges the picker body into the card/incoming-picker body. Both can name the
+// same key: a `link_as: to` pre-link rides a relation's inverse key, which is
+// also where an incoming picker for that relation emits. Spreading one over the
+// other would drop the pre-link. Two deltas merge their `add` and `remove`
+// lists; a full `data` replacement on either side wins as before.
+export function mergeRelationsFields(
+  pickers: ModernRelationsField,
+  cards: ModernRelationsField
+): ModernRelationsField {
+  const out: ModernRelationsField = { ...pickers }
+  for (const [key, upd] of Object.entries(cards)) {
+    const prev = out[key]
+    if (!prev || 'data' in prev || 'data' in upd) {
+      out[key] = upd
+      continue
+    }
+    const add = [...(prev.add ?? []), ...(upd.add ?? [])]
+    const remove = [...(prev.remove ?? []), ...(upd.remove ?? [])]
+    out[key] = {
+      ...(add.length > 0 ? { add } : {}),
+      ...(remove.length > 0 ? { remove } : {}),
+    }
+  }
+  return out
+}

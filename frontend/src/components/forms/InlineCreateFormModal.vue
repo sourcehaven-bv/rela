@@ -51,8 +51,8 @@ const props = defineProps<{
    * page, and honouring that page's params would pre-fill the new entity from
    * whatever the host happened to be showing.
    *
-   * Only `linkAs: 'to'` is applied here (the form carries the edge in its create
-   * payload). The reverse direction is the host's job, after the id exists.
+   * The form applies both directions: `linkAs: 'to'` in its create payload
+   * when it can (otherwise after create), `linkAs: 'from'` after create.
    */
   link?: { relation: string; peer: string; linkAs: 'from' | 'to' }
   /**
