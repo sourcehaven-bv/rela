@@ -170,21 +170,21 @@ jobs:
             goarch: arm64
             ext: ""
             cgo_ldflags: "-framework UniformTypeIdentifiers"
-            build_tags: "production"
+            build_tags: "production,sqlite"
           - runner: macos-latest
             os_name: darwin
             arch: amd64
             goarch: amd64
             ext: ""
             cgo_ldflags: "-framework UniformTypeIdentifiers"
-            build_tags: "production"
+            build_tags: "production,sqlite"
           - runner: windows-latest
             os_name: windows
             arch: amd64
             goarch: amd64
             ext: ".exe"
             cgo_ldflags: ""
-            build_tags: "production"
+            build_tags: "production,sqlite"
     steps:
       - uses: actions/checkout@v7
 

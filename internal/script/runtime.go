@@ -5,14 +5,16 @@ import (
 	"io"
 	"path/filepath"
 
+	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 )
 
 // NewWriterRuntime builds a read-write lua.Runtime wired with AI provider,
-// per-script secrets and the mail transport loaded from the project's .rela/
-// directory (derived from deps.ProjectRoot). scriptPath is used to locate
+// per-script secrets and the mail transport, read from deps.Host or, when
+// that is nil, from the project's .rela/ directory (derived from
+// deps.ProjectRoot). scriptPath is used to locate
 // per-script secrets; pass "" for inline code. The caller owns the returned
 // runtime and must call Close.
 //
@@ -27,13 +29,22 @@ func NewWriterRuntime(deps lua.WriteDeps, scriptPath string,
 	// already depends on both, so it is the natural place for the one-line
 	// adapter — and it keeps LoadContextOptions the single load point rather
 	// than adding a parallel mail-loading call site.
-	ctxOpts, err := lua.LoadContextOptions(cacheDirFor(deps.ProjectRoot), scriptPath, mail.LoadLuaSender)
+	host := deps.Host
+	if host == nil {
+		host = hostconfig.Dir(cacheDirFor(deps.ProjectRoot))
+	}
+	ctxOpts, err := lua.LoadContextOptions(host, scriptPath, loadMailSender)
 	if err != nil {
 		return nil, fmt.Errorf("lua context: %w", err)
 	}
 	all := append([]lua.Option{}, opts...)
 	all = append(all, ctxOpts...)
 	return lua.NewWriter(deps, stdout, all...), nil
+}
+
+// loadMailSender adapts mail.LoadLuaSender to lua.MailSenderLoader.
+func loadMailSender(host lua.HostConfig) (lua.MailSender, error) {
+	return mail.LoadLuaSender(host)
 }
 
 // cacheDirFor returns the absolute path to the project's .rela directory.

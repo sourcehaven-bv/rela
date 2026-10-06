@@ -345,7 +345,7 @@ composition root has one `New` recipe per scenario over shared
 | _(none, default)_ | `fsstore`     | in-memory bleve                   | `rela`, `rela-server`                   |
 | `memorybackend`   | `memstore`    | `LinearSearch`                    | (tests / experiments; no bleve)         |
 | `postgres`        | `pgstore`     | PostgreSQL (`pg_trgm` + tsvector) | `rela-postgres`, `rela-server-postgres` |
-| `sqlite`          | `sqlitestore` | in-memory/on-disk bleve           | `rela-sqlite`, `rela-server-sqlite`     |
+| `sqlite`          | `sqlitestore` | SQLite FTS5 (`trigram`, in-DB)    | `rela-sqlite`, `rela-server-sqlite`     |
 
 `sqlitestore` is the **single-process** backend (DEC-LFSYNY): one embedded
 database file at `.rela/rela.db`, no server, and `Open` takes an exclusive

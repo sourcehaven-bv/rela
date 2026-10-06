@@ -226,20 +226,29 @@ describe('KanbanView write affordances under a world', () => {
   })
 
   // A card with `edit_form` opens the form on the card's ADDRESS, so an edit
-  // from a world-bound board edits the face the card showed.
+  // from a world-bound board edits the face the card showed, and in the
+  // board's world, so the form loads the relations that world serves.
   it('sends a card to the edit form at its address under a world', async () => {
     mockRoute.query = { world: 'site-nl' }
     const c = card('PRC-1', 'Herstellen')
     c._self = '/api/v1/procedures/PRC-1@nl'
     const wrapper = await mountBoard([c], { editForm: 'edit_procedure' })
     const to = JSON.parse(wrapper.find('.kanban-card').attributes('data-to') ?? 'null')
-    expect(to).toBe('/form/edit_procedure/PRC-1@nl')
+    expect(to).toEqual({
+      name: 'form-edit',
+      params: { id: 'edit_procedure', entityId: 'PRC-1@nl' },
+      query: { world: 'site-nl' },
+    })
   })
 
   it('sends the SAME card to the edit form in the default world', async () => {
     const wrapper = await mountBoard([card('PRC-1', 'Restore')], { editForm: 'edit_procedure' })
     const to = JSON.parse(wrapper.find('.kanban-card').attributes('data-to') ?? 'null')
-    expect(to).toBe('/form/edit_procedure/PRC-1')
+    expect(to).toEqual({
+      name: 'form-edit',
+      params: { id: 'edit_procedure', entityId: 'PRC-1' },
+      query: {},
+    })
   })
 
   it('sends a card without an edit form to the detail page, carrying the world', async () => {

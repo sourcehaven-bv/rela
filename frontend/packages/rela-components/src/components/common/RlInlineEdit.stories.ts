@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
+import { expect, userEvent, within } from 'storybook/test'
 import { ref } from 'vue'
 import RlInlineEdit from './RlInlineEdit.vue'
 import RlTag from './RlTag.vue'
@@ -99,19 +100,13 @@ export const Disabled: Story = {
  * of which a wrapping button would swallow, and which nesting inside one
  * would make invalid HTML.
  *
- * The content renders plainly. A click on it still starts the edit, but not
- * when it lands on something interactive, and not when it ends a text
- * selection — dragging across the prose to select it is reading, not editing.
- * The edit button beside it is the reliable way in and stays in the tab
- * order, so a keyboard user is never left without one.
+ * The content renders plainly and keeps every click, so it reads like any
+ * page: a double-click selects a word rather than opening the editor. The edit
+ * button in the corner is the only way in, and stays in the tab order, so a
+ * keyboard user is never left without one.
  *
- * A click the content has already handled is left alone too: the highlight
- * below opens a comment thread through a delegated handler that calls
- * `preventDefault`, and no selector or marker names it. Whatever the content
- * did with the click, it was not a request to edit.
- *
- * Try it: follow the link, tick the checkbox, open the highlight, select a
- * sentence, then click the plain text or press the edit button.
+ * Try it: follow the link, tick the checkbox, open the highlight, double-click
+ * a word, then press the edit button.
  */
 export const ExplicitTrigger: Story = {
   render: () => ({
@@ -125,15 +120,11 @@ export const ExplicitTrigger: Story = {
       )
       const draft = ref(body.value)
 
-      /*
-       * Delegated, the way a body full of comment highlights is handled: one
-       * listener on the content rather than one per mark. Calling
-       * `preventDefault` is what tells the inline edit the click was spent.
-       */
+      // Delegated, the way a body full of comment highlights is handled: one
+      // listener on the content rather than one per mark.
       function onBodyClick(event: MouseEvent) {
         const mark = (event.target as Element | null)?.closest('mark[data-comment-id]')
         if (!mark) return
-        event.preventDefault()
         thread.value = mark.getAttribute('data-comment-id') ?? ''
       }
 
@@ -179,6 +170,73 @@ export const ExplicitTrigger: Story = {
       </div>
     `,
   }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const prose = canvas.getByText(/that reads as a document/)
+
+    // Looked up each time: leaving the edit remounts the read view.
+    const button = () => canvas.getByRole('button', { name: 'Description, edit' })
+
+    // No handler on the content opens the editor. Whether the browser then
+    // selects text is checked end to end, where the events are real.
+    await userEvent.click(prose)
+    await userEvent.dblClick(prose)
+    await expect(canvas.queryByRole('textbox')).toBeNull()
+
+    await userEvent.click(button())
+    await expect(canvas.getByRole('textbox')).toHaveFocus()
+
+    // Leaving puts focus back on the button that started the edit, and the
+    // keyboard can start it again from there.
+    await userEvent.keyboard('{Escape}')
+    await expect(button()).toHaveFocus()
+    await userEvent.keyboard('{Enter}')
+    await expect(canvas.getByRole('textbox')).toHaveFocus()
+  },
+}
+
+/**
+ * Content taller than its viewport. The edit button sticks to the top of
+ * the visible part, so it is in reach wherever the reader has scrolled to.
+ */
+export const LongContent: Story = {
+  render: () => ({
+    components: { RlInlineEdit },
+    setup() {
+      const paragraphs = Array.from(
+        { length: 12 },
+        (_, i) =>
+          `Paragraph ${i + 1}. The edit button stays at the top right of the ` +
+          'visible part of this text while it scrolls under it.',
+      )
+      return { paragraphs }
+    },
+    template: `
+      <div data-testid="scroller" style="max-width:420px; height:240px; overflow-y:auto">
+        <RlInlineEdit block trigger="explicit" label="Body">
+          <template #read>
+            <div><p v-for="p in paragraphs" :key="p">{{ p }}</p></div>
+          </template>
+          <template #edit>
+            <textarea rows="8" class="rl-control" aria-label="Body" style="width:100%"></textarea>
+          </template>
+        </RlInlineEdit>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const scroller = canvas.getByTestId('scroller')
+    const button = canvas.getByRole('button', { name: 'Body, edit' })
+
+    scroller.scrollTop = scroller.scrollHeight / 2
+    await new Promise(requestAnimationFrame)
+
+    const view = scroller.getBoundingClientRect()
+    const box = button.getBoundingClientRect()
+    await expect(box.top).toBeGreaterThanOrEqual(view.top)
+    await expect(box.bottom).toBeLessThanOrEqual(view.bottom)
+  },
 }
 
 /**

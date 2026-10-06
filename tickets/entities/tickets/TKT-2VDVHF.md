@@ -5,7 +5,7 @@ title: 'Autosave conflict resolution: per-field version preconditions, three-way
 kind: enhancement
 priority: high
 effort: l
-status: backlog
+status: done
 ---
 
 ## Problem
@@ -32,8 +32,8 @@ forwards one, and only if a hosted app supplies it.
 claims *"cross-tab conflicts resolve through the SSE merge path."* SSE
 `entity:changed` carries `{"type": "..."}` ONLY — no id, no payload
 (`watcher.go`), deliberately, to avoid a per-entity existence oracle
-(TKT-POT9GQ). No edit-form component subscribes. `mergeServerResponse` is
-called only from useAutoSave's own PATCH-response handlers, so it never sees a
+(TKT-POT9GQ). No edit-form component subscribes. `mergeServerResponse` is called
+only from useAutoSave's own PATCH-response handlers, so it never sees a
 server-pushed change. **Cross-tab edits are silently lost too.**
    - The comment's FIRST clause ("the FIFO chain already serializes per
 composable instance") is **true and load-bearing** — see RR-DBL90Y. Only the
@@ -80,21 +80,21 @@ whole-entity semantics are correct.
 ### Why this design (it dissolves findings rather than working around them)
 
 - **RR-X52UBP** (critical — hidden-field churn made the entity permanently
-  unwritable): a precondition on `title` is blind to a Lua task writing
-  `salary`. No 412, no retry loop, no unresolvable conflict UI. The finding's own
-  proposed fix — falling back to PATCHing *without* `If-Match` — was a retreat to
-  last-write-wins, i.e. the bug this ticket exists to fix.
+unwritable): a precondition on `title` is blind to a Lua task writing `salary`.
+No 412, no retry loop, no unresolvable conflict UI. The finding's own proposed
+fix — falling back to PATCHing *without* `If-Match` — was a retreat to
+last-write-wins, i.e. the bug this ticket exists to fix.
 - **RR-R2A2T5** (critical — ACL-redacted properties erased): preconditions are
-  built from the keys the client is actually **writing**, so a redacted field can
-  never enter the precondition set and can never be unset by the merge. The
-  invariant becomes structural rather than a rule to remember. Today this is safe
-  only by accident (server-side `maps.Copy`).
+built from the keys the client is actually **writing**, so a redacted field can
+never enter the precondition set and can never be unset by the merge. The
+invariant becomes structural rather than a rule to remember. Today this is safe
+only by accident (server-side `maps.Copy`).
 - **RR-DBL90Y** (significant — three channels share one ETag, self-inflicted
-  412s): disjoint precondition sets do not collide. A content PATCH and a
-  property PATCH no longer invalidate each other.
+412s): disjoint precondition sets do not collide. A content PATCH and a property
+PATCH no longer invalidate each other.
 - **RR-VQQQ60** (critical): still needs the DynamicForm merge-base fix (shipped
-  separately as TKT-52OFC9), but an absent base now degrades to a single-field
-  conflict rather than a whole-document one.
+separately as TKT-52OFC9), but an absent base now degrades to a single-field
+conflict rather than a whole-document one.
 
 ### Cost: verified acceptable
 
@@ -102,22 +102,22 @@ The concern was that per-field tokens make every GET more expensive. They do
 not.
 
 - **It is the same fold, not collapsed.** `computeEntityETag` already sorts
-  property keys and writes `k=%v;` per property. A per-field token is that same
-  per-key write, hashed per key instead of accumulated into one digest. Same
-  number of `fmt.Fprintf` calls; N small hashes instead of one large one.
+property keys and writes `k=%v;` per property. A per-field token is that same
+per-key write, hashed per key instead of accumulated into one digest. Same
+number of `fmt.Fprintf` calls; N small hashes instead of one large one.
 - **Relations cost nothing extra.** The worry was that folding
-  `outgoingRelations` per-field would multiply store round-trips. It does not,
-  for two reasons: (a) relations get **one** token for the whole edge set, not
-  one per edge — the autosave relations channel writes the set as a unit, so
-  per-edge granularity buys nothing; and (b) **the GET handler already calls
-  `outgoingRelations` twice** — once at `api_v1.go:764` for serialization and
-  once inside `computeEntityETag` at `:772`. Threading the already-fetched slice
-  into the token computation removes a redundant store query, so this path gets
-  *cheaper*, not more expensive.
+`outgoingRelations` per-field would multiply store round-trips. It does not, for
+two reasons: (a) relations get **one** token for the whole edge set, not one per
+edge — the autosave relations channel writes the set as a unit, so per-edge
+granularity buys nothing; and (b) **the GET handler already calls
+`outgoingRelations` twice** — once at `api_v1.go:764` for serialization and once
+inside `computeEntityETag` at `:772`. Threading the already-fetched slice into
+the token computation removes a redundant store query, so this path gets
+*cheaper*, not more expensive.
 - **No storage schema change.** Tokens start as derived hashes computed from
-  data already in hand. No new column, no migration, nothing to backfill. If
-  contention ever warrants stored per-field version counters, that is a later
-  optimization behind an unchanged wire shape.
+data already in hand. No new column, no migration, nothing to backfill. If
+contention ever warrants stored per-field version counters, that is a later
+optimization behind an unchanged wire shape.
 
 ### Wire shape
 
@@ -139,12 +139,12 @@ Each token is the first 4 bytes of `sha256(entityID | type | fieldKey | value)`,
 hex-encoded (the existing whole-entity ETag truncates to 8 bytes; 4 is proposed
 per field because a token guards one field over one edit session rather than the
 whole entity, and the failure mode is benign — see the collision note below.
-Widen to 8 if review prefers uniformity, the cost is 4 bytes per property) — the same per-key material the ETag already folds, salted with the
-key so two fields holding the same value get different tokens. Only
-**non-redacted** keys appear: `_versions.properties` is built from the same
-post-redaction map the wire entity carries, so a client cannot learn that a
-hidden field exists, let alone that it changed. The whole-entity `ETag` header is
-unchanged.
+Widen to 8 if review prefers uniformity, the cost is 4 bytes per property) — the
+same per-key material the ETag already folds, salted with the key so two fields
+holding the same value get different tokens. Only **non-redacted** keys appear:
+`_versions.properties` is built from the same post-redaction map the wire entity
+carries, so a client cannot learn that a hidden field exists, let alone that it
+changed. The whole-entity `ETag` header is unchanged.
 
 **PATCH** accepts an optional `preconditions` object, parallel in shape to the
 write itself:
@@ -159,19 +159,19 @@ write itself:
 Rules, all of which are refusals rather than best-effort behaviour:
 
 - A precondition key **not** present in `properties` / `properties_unset` is a
-  **400**, not a silently-ignored hint. Accepting it would let a client
-  precondition on a field it is not writing — reintroducing whole-entity
-  semantics through the back door, and (for a field it cannot read) turning the
-  endpoint into a change-detection oracle for redacted data.
+**400**, not a silently-ignored hint. Accepting it would let a client
+precondition on a field it is not writing — reintroducing whole-entity semantics
+through the back door, and (for a field it cannot read) turning the endpoint
+into a change-detection oracle for redacted data.
 - Preconditions are **optional and per-field**. Omitting them entirely is
-  today's behaviour, so MCP, CLI, Lua and any other client are unaffected.
-  Making preconditions mandatory is explicitly out of scope.
+today's behaviour, so MCP, CLI, Lua and any other client are unaffected. Making
+preconditions mandatory is explicitly out of scope.
 - `content` and `relations` preconditions are scalars, checked only when the
-  PATCH writes content / relations respectively.
+PATCH writes content / relations respectively.
 - Checking happens where the `If-Match` check lives now
-  (`write_handler.go:375-384`), against the same ungated `h.reader.getEntity`
-  seam, before any mutation. `If-Match` and `preconditions` compose: both are
-  checked, either can 412.
+(`write_handler.go:375-384`), against the same ungated `h.reader.getEntity`
+seam, before any mutation. `If-Match` and `preconditions` compose: both are
+checked, either can 412.
 
 **412 response** names the losers, so the client knows what to merge:
 
@@ -207,44 +207,44 @@ when it is absent. No `/api/v2`, no negotiated header, no deprecation window.
 ## Client work
 
 1. **Capture `_versions` on the read path.** It rides in the JSON body, not a
-   header — so unlike the original plan, **no axios envelope refactor is needed**.
-   `client.ts`'s `.data` unwrap stays as it is.
+header — so unlike the original plan, **no axios envelope refactor is needed**.
+`client.ts`'s `.data` unwrap stays as it is.
 2. **Autosave sends preconditions for exactly the keys it writes.** The three
-   channels each build their own precondition set from their own body, so they
-   cannot collide (RR-DBL90Y). The retained versions map is a **single mutable
-   ref updated inside the then-handler** from every PATCH response — never
-   captured at enqueue time.
+channels each build their own precondition set from their own body, so they
+cannot collide (RR-DBL90Y). The retained versions map is a **single mutable ref
+updated inside the then-handler** from every PATCH response — never captured at
+enqueue time.
 3. **On 412: merge the named conflicting fields → re-PATCH** with the fresh
-   tokens from the error body. Per field: base = `lastSeenServer[k]`, ours = the
-   attempted value, theirs = the server value.
+tokens from the error body. Per field: base = `lastSeenServer[k]`, ours = the
+attempted value, theirs = the server value.
    - `theirs === base` → only we changed it → keep ours
    - `ours === base` → only they changed it → take theirs
    - both differ and differ from each other → genuine conflict
 4. **Bounded auto-retry: 3 attempts, jittered backoff.** Surface UI only after
-   the bound is exhausted or a genuine conflict is found.
+the bound is exhausted or a genuine conflict is found.
 5. **Markdown body: real diff3 text merge.** Base is `lastSeenContent`; content
-   is line-oriented so disjoint hunks auto-merge. Use an existing library.
-   **Never write git-style conflict markers into the entity** — in git a
-   developer resolves markers in a working tree; here they would persist to the
-   entity, land in `entity_versions` (append-only; the audited purge path
-   refuses while a live row holds the content) and render in the SPA.
+is line-oriented so disjoint hunks auto-merge. Use an existing library. **Never
+write git-style conflict markers into the entity** — in git a developer resolves
+markers in a working tree; here they would persist to the entity, land in
+`entity_versions` (append-only; the audited purge path refuses while a live row
+holds the content) and render in the SPA.
 
 ## Merge domain (RR-P6ZFSV, RR-R2A2T5 — specified, not left to the implementer)
 
 - The merge domain is **the keys named in the 412's `conflicts` block** — which
-  by construction is a subset of the keys we are writing.
+by construction is a subset of the keys we are writing.
 - A key the patch omits is **UNCHANGED**, never absent-and-therefore-deleted. An
-  automation-managed field (`updated_at`, `{{today}}`, status transitions —
-  `manager.go` runs automations that mutate the entity before persisting) is
-  therefore *incapable* of conflicting: we never precondition on it, so it never
-  enters the domain.
+automation-managed field (`updated_at`, `{{today}}`, status transitions —
+`manager.go` runs automations that mutate the entity before persisting) is
+therefore *incapable* of conflicting: we never precondition on it, so it never
+enters the domain.
 - **`properties_unset` is NEVER emitted from theirs-absence.** Deletion is
-  expressible only via the local UNSET sentinel — an explicit user act. A
-  redacted property is simply absent from the wire
-  (`affordances.go` `stripHiddenProperties` deletes the key; the `Inaccessible`
-  marker is populated only for git-crypt-locked entities), so absence must never
-  be read as intent to delete. The original plan's edge case ("deletion-vs-edit
-  is a genuine conflict") was **stated backwards** and is corrected here.
+expressible only via the local UNSET sentinel — an explicit user act. A redacted
+property is simply absent from the wire (`affordances.go`
+`stripHiddenProperties` deletes the key; the `Inaccessible` marker is populated
+only for git-crypt-locked entities), so absence must never be read as intent to
+delete. The original plan's edge case ("deletion-vs-edit is a genuine conflict")
+was **stated backwards** and is corrected here.
 
 ## Control-flow invariant (RR-U68IVA)
 
@@ -259,48 +259,47 @@ addition to asserting the output is marker-free.
 ## Decisions taken here
 
 - **`dirtyFormRegistry` is DELETED, not wired** (RR-QSO6HF). `anyFormDirty`
-  answers "is ANY registered form dirty for this property", unioning across
-  every form registered for the entity. The merge needs *this* instance's dirty
-  state, which `useAutoSave` already has precisely (`isDirty`, and
-  `mergeServerResponse`'s `k in pending` / `k in timers` checks). Wiring the
-  union in would let a side panel's dirty `status` preserve the *main* form's
-  stale `status`, clobbering the server value from a form the user is not
-  editing. `anyFormDirty` has **zero production consumers** (only
-  `dirtyFormRegistry.test.ts`); `registerForm` is called from `DynamicForm` but
-  feeds nothing. The SSE-refetch path it was built for does not exist.
-  Deleting removes `dirtyFormRegistry.ts`, its test, and the `DynamicForm`
-  registration.
+answers "is ANY registered form dirty for this property", unioning across every
+form registered for the entity. The merge needs *this* instance's dirty state,
+which `useAutoSave` already has precisely (`isDirty`, and
+`mergeServerResponse`'s `k in pending` / `k in timers` checks). Wiring the union
+in would let a side panel's dirty `status` preserve the *main* form's stale
+`status`, clobbering the server value from a form the user is not editing.
+`anyFormDirty` has **zero production consumers** (only
+`dirtyFormRegistry.test.ts`); `registerForm` is called from `DynamicForm` but
+feeds nothing. The SSE-refetch path it was built for does not exist. Deleting
+removes `dirtyFormRegistry.ts`, its test, and the `DynamicForm` registration.
 - **The explicit DynamicForm save is narrowed to a dirty-field delta before it
-  sends preconditions** (RR-U3ZF9A). It currently sends the entire `formData` —
-  every property loaded at `loadEntity`, not a delta. Preconditioning a full
-  hour-old snapshot would either conflict on fields the user never touched or,
-  resolved toward ours, overwrite a concurrent edit with stale values. Sending
-  preconditions only for genuinely-changed fields also keeps the write itself
-  smaller.
+sends preconditions** (RR-U3ZF9A). It currently sends the entire `formData` —
+every property loaded at `loadEntity`, not a delta. Preconditioning a full
+hour-old snapshot would either conflict on fields the user never touched or,
+resolved toward ours, overwrite a concurrent edit with stale values. Sending
+preconditions only for genuinely-changed fields also keeps the write itself
+smaller.
 - **`baseRecorded` sentinel** (RR-VQQQ60). `undefined` is ambiguous between
-  "never seen the server" and "genuinely absent server-side". The merge
-  **refuses to run and falls back to current behaviour** when no base was
-  recorded. TKT-52OFC9 already seeds the base in `DynamicForm`; the sentinel is
-  the guard that keeps the merge honest if a future surface forgets.
+"never seen the server" and "genuinely absent server-side". The merge **refuses
+to run and falls back to current behaviour** when no base was recorded.
+TKT-52OFC9 already seeds the base in `DynamicForm`; the sentinel is the guard
+that keeps the merge honest if a future surface forgets.
 - **The 412 retry never reads through the TTL cache** (RR-PP9UEF). The error
-  body carries current tokens, so the common path needs no refetch at all. Where
-  a refetch *is* needed, it must bypass the 60s TTL — a cached entity has no
-  meaningful version tokens, and `update()` rewrites that cache entry on every
-  PATCH, so during an active autosave session the entry is continuously renewed
-  and effectively always "valid". Long-term this dissolves into FEAT-XY2D1L (see
-  below).
+body carries current tokens, so the common path needs no refetch at all. Where a
+refetch *is* needed, it must bypass the 60s TTL — a cached entity has no
+meaningful version tokens, and `update()` rewrites that cache entry on every
+PATCH, so during an active autosave session the entry is continuously renewed
+and effectively always "valid". Long-term this dissolves into FEAT-XY2D1L (see
+below).
 
 ## Out of scope
 
 - **CRDT / concurrent collaborative editing.** User was explicit: simultaneous
-  edit is not the common case.
+edit is not the common case.
 - **Mandatory preconditions server-side.** Breaks every other client and 412s
-  the disjoint-field case the design already handles.
+the disjoint-field case the design already handles.
 - **Stored per-field version counters.** Derived hashes first; storage only if
-  measurement demands it.
+measurement demands it.
 - **Reviving SSE-into-open-form** (payload is type-only by security design).
 - **Migrating `DynamicForm` to the Pinia Colada query layer** — FEAT-XY2D1L. This
-  ticket is NOT blocked on it.
+ticket is NOT blocked on it.
 
 ## Alternative weighed
 
@@ -314,15 +313,86 @@ types. Per-field preconditions reduce the contention that would motivate it.
 ## Relationship to other tickets
 
 - **TKT-52OFC9** — the DynamicForm merge base + dead `EntityCache.etag`. Shipped
-  independently; a prerequisite for the merge, valuable on its own.
+independently; a prerequisite for the merge, valuable on its own.
 - **FEAT-XY2D1L** (Pinia Colada query cache) — the strategic home for the cache
-  problem behind RR-PP9UEF. `frontend/src/queries/entities.ts` already has
-  hierarchical keys (`['entities', type, 'detail', id]`) that SSE invalidates by
-  prefix, and its own comment says it "replaces the entities-store TTL cache view
-  by view". `fetchEntity` has only TWO consumers outside the store
-  (`DynamicForm.vue`, `HistoryView.vue`). Near-term this ticket bypasses the TTL
-  on the version-bearing path; long-term the migration dissolves the problem.
-  **Not a blocker.**
+problem behind RR-PP9UEF. `frontend/src/queries/entities.ts` already has
+hierarchical keys (`['entities', type, 'detail', id]`) that SSE invalidates by
+prefix, and its own comment says it "replaces the entities-store TTL cache view
+by view". `fetchEntity` has only TWO consumers outside the store
+(`DynamicForm.vue`, `HistoryView.vue`). Near-term this ticket bypasses the TTL
+on the version-bearing path; long-term the migration dissolves the problem.
+**Not a blocker.**
 - **TKT-0IGI4V** (flush-on-author-change) — complementary, not an alternative:
-  this ticket PREVENTS the silent overwrite; the flush makes the pre-overwrite
-  state recoverable in version history if one happens anyway.
+this ticket PREVENTS the silent overwrite; the flush makes the pre-overwrite
+state recoverable in version history if one happens anyway.
+
+## Re-verification 2026-09-26 (against fa09ecf9)
+
+Frontend claims still hold, with small line shifts (`mergeServerResponse` skip
+is now `useAutoSave.ts:594-595`; the misleading comment is still at `:18-20`;
+`dirtyFormRegistry` still has zero production consumers). The changes below
+override the sections above where they conflict.
+
+### Server: PATCH is already a store compare-and-swap (TKT-34XS2R)
+
+There is no handler read-modify-write any more. `write_handler.go:815-820`
+builds an `entity.Patch` with `ExpectedVersion: store.VersionOf(entity)`, where
+`entity` is the handler's own raw read (`getEntityRef`, after `gateRead` and the
+face gate), and the manager merges against the raw stored row. Consequences:
+
+- **Per-field preconditions are checked in the handler against that same
+read.** Because the write is conditional on the row still equalling that read,
+the check and the write are atomic, exactly as the If-Match comment at
+`:804-814` argues. No new store API is needed.
+- **A CAS loss is not a field conflict, and the CLIENT retries it.** A
+concurrent write to a different field between the read and the write fails the
+store condition (`writePatchError`, `:643-654`). The handler does NOT retry
+internally (decided 2026-09-27): one retry mechanism, in the client, which has
+the edit context. On a CAS loss the handler re-reads the row and answers 412
+with an empty `conflicts` and the current `versions`; the client's per-field
+merge sees `theirs === base` for every key it writes and re-sends at once,
+within the same 3-attempt bound. Writers that send no preconditions (Kanban,
+bulk-set, calendar drag, bridge apps) keep today's behaviour; fixing their
+spurious 412s is TKT-TBGFP2.
+- **Tokens returned by PATCH come from a re-read of the stored row.** The
+manager returns the in-memory entity (`manager.go:1129`), and fsstore reflows
+the body on write, so a token computed from the response entity would not match
+the stored body and every second content save would 412 on the file backend. The
+response BODY stays as today (the editor must not receive the reflowed text);
+only `_versions` is computed from the re-read. The re-read is inline in the
+PATCH handler rather than a `writeHandler` method, which keeps `writeHandler`
+under its plimsoll method cap.
+- **Relations are outside the CAS** (`VersionOf` excludes them; they are
+written in a separate phase, `:847-854`). The relations token is checked under
+`writeMu`, which is single-process only. Accepted and documented: the
+cross-process gap for relations is the same as today's.
+- The whole-entity ETag now also folds the served face. Per-field tokens are
+**not** salted by face: a token identifies a field value, and a hidden field
+never gets a token.
+
+### Wire shapes
+
+- **GET**: `_versions` is built in `forWireScoped`
+(`entityserializer.go:134-145`) from `result.Properties` **after**
+`stripHiddenProperties`, beside `_fields` and the new `_redacted`. PATCH
+responses use the same function, so they carry fresh tokens too.
+- **412**: errors are RFC 9457 `application/problem+json` (`writeV1Error`,
+`api_v1.go:2455`), not JSON:API. `conflicts` and `versions` become top-level
+extension members of the problem object: `v1.Error` gains two optional,
+`omitempty` fields, and the TS `ProblemDetail` gains the matching optional
+members. A new `precondition_failed` problem type distinguishes a field conflict
+from the existing ETag mismatch.
+
+### Client
+
+- **RR-U3ZF9A is moot.** Edit mode has no explicit save
+(`DynamicForm.vue:1603-1612` returns early, since TKT-CHLAJ); autosave is the
+only PATCH path. The whole-`formData` payload is create-only.
+- The merge base is seeded (`recordServerBaseline`, `DynamicForm.vue:600`,
+TKT-DPBQ7S). The `baseRecorded` sentinel is still to be added.
+- The store's `fetchEntity` has one consumer (DynamicForm). The 412 retry
+uses the tokens in the problem body, so it needs no refetch.
+- More etag-less writers: CalendarView drag (`:474`). Kanban, list bulk-set
+and calendar drag stay without preconditions in this ticket (single-field,
+user-initiated writes; they keep today's semantics).
+- No diff3 library is present. Add `node-diff3` for the body merge.

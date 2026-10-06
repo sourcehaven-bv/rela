@@ -444,8 +444,10 @@ function canUpdate(entity: Entity): boolean {
  */
 const preview = ref<{ type: string; id: string } | null>(null)
 
+// By ADDRESS, face included, so the preview and its Edit open the face the
+// calendar showed rather than a bare id.
 function openEvent(ev: CalendarEvent) {
-  preview.value = { type: ev.entityType, id: ev.entity.id }
+  preview.value = { type: ev.entityType, id: entityRef(ev.entity) }
 }
 
 function closePreview() {

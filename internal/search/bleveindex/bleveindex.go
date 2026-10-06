@@ -27,6 +27,23 @@ import (
 // the most recent entity mtime observed by this index.
 var lastModifiedKey = []byte("rela:last_modified")
 
+// formatKey is the bleve internal-storage key holding [indexFormat].
+var formatKey = []byte("rela:format")
+
+// indexFormat versions how documents are written. [New] empties an on-disk
+// index with any other value, including none, so the caller's backfill
+// rewrites it. Change it whenever a document written by an older build would
+// be read wrongly.
+//
+// Only a newer build checks the stamp. An older build that opens a stamped
+// index keeps the stamp and may write old-format documents; going back and
+// forth between versions therefore needs the index directory removed.
+//
+// Format 2: every document is keyed by [docKey], the face's state ref. Before
+// it, the backfill keyed faced entities by the bare id, which a world search
+// reads as the default face and drops (BUG-VYPK9N).
+const indexFormat = "2"
+
 // compile-time interface check.
 var _ search.Backend = (*Index)(nil)
 
@@ -78,14 +95,64 @@ func NewMem() (*Index, error) {
 		return nil, fmt.Errorf("bleveindex: create index: %w", err)
 	}
 	// coverage-ignore-end
+	// Stamped like an on-disk index, so every index answers the same way
+	// whatever the caller does with it.
+	return stampFormat(idx)
+}
+
+// stampFormat records [indexFormat] in an index that holds no document of
+// another format.
+func stampFormat(idx bleve.Index) (*Index, error) {
+	if err := idx.SetInternal(formatKey, []byte(indexFormat)); err != nil {
+		// coverage-ignore-start: defensive: SetInternal on a just-created index only fails on an OS fault
+		_ = idx.Close()
+		return nil, fmt.Errorf("bleveindex: record index format: %w", err)
+		// coverage-ignore-end
+	}
 	return &Index{index: idx}, nil
+}
+
+// clearPage is how many documents one pass of clearDocuments deletes.
+const clearPage = 1000
+
+// clearDocuments deletes every document of idx and its LastModified stamp.
+func clearDocuments(idx bleve.Index) error {
+	for {
+		req := bleve.NewSearchRequest(bleve.NewMatchAllQuery())
+		req.Size = clearPage
+		res, err := idx.Search(req)
+		if err != nil {
+			return err // coverage-ignore: defensive: a match-all search on an open index only fails on an OS fault
+		}
+		if len(res.Hits) == 0 {
+			break
+		}
+		batch := idx.NewBatch()
+		for _, h := range res.Hits {
+			batch.Delete(h.ID)
+		}
+		if err := idx.Batch(batch); err != nil {
+			return err // coverage-ignore: defensive: a delete batch on an open index only fails on an OS fault
+		}
+	}
+	return idx.DeleteInternal(lastModifiedKey)
+}
+
+// hasCurrentFormat reports whether idx was written in [indexFormat]. A read
+// error counts as no: rebuilding costs a backfill, trusting a stale index
+// serves wrong results until the next restart.
+func hasCurrentFormat(idx bleve.Index) bool {
+	v, err := idx.GetInternal(formatKey)
+	return err == nil && string(v) == indexFormat
 }
 
 // New creates (or reopens) a persistent on-disk bleve index at the given
 // path. If an index already exists there it is opened and its contents
 // reused — see [Index.LastModified], which lets the caller skip a backfill
 // entirely when the store has not changed since the index was written.
-// If the existing index is corrupted it is removed and recreated.
+// If the existing index is corrupted it is removed and recreated. If it was
+// written in another [indexFormat] it is emptied, so the caller's backfill
+// rewrites it.
 //
 // The on-disk form is what makes scorch's persister and merger run, which
 // is what bounds memory: segments produced by individual writes get merged
@@ -101,7 +168,21 @@ func NewMem() (*Index, error) {
 func New(path string) (*Index, error) {
 	idx, err := bleve.OpenUsing(path, indexRuntimeConfig())
 	if err == nil {
-		return &Index{index: idx}, nil
+		if hasCurrentFormat(idx) {
+			return &Index{index: idx}, nil
+		}
+		// Written by a build whose documents this one reads wrongly. Emptied
+		// in place, under the lock this process holds: closing it to remove
+		// the directory would let a second process open it in between, and
+		// one of the two would then delete the other's live index. An empty
+		// index fails the caller's "is current" check, so the backfill runs.
+		if clearErr := clearDocuments(idx); clearErr != nil {
+			// coverage-ignore-start: defensive: search and batch delete on an open index only fail on an OS fault
+			_ = idx.Close()
+			return nil, fmt.Errorf("bleveindex: empty outdated index at %s: %w", path, clearErr)
+			// coverage-ignore-end
+		}
+		return stampFormat(idx)
 	}
 	if errors.Is(err, ErrIndexLocked) || isLockTimeout(err) {
 		return nil, fmt.Errorf("bleveindex: index at %s is locked by another process: %w", path, err)
@@ -128,7 +209,7 @@ func New(path string) (*Index, error) {
 		return nil, fmt.Errorf("bleveindex: create index at %s: %w", path, err)
 	}
 	// coverage-ignore-end
-	return &Index{index: idx}, nil
+	return stampFormat(idx)
 }
 
 // ErrIndexLocked reports that another process holds the index directory.
@@ -195,6 +276,7 @@ func docKey(id string, p entity.Face) string { return entity.FormatStateRef(id, 
 // IndexBatch indexes every entity in a single Bleve batch and bumps
 // LastModified once at the end. Use this for initial backfill where
 // N round-trips through EntityPut would be O(N) Bleve transactions.
+// Each entity is one face, keyed exactly as [Index.EntityPut] keys it.
 // Returns the number of entities successfully written and the first
 // error (if any). Subsequent entities are not attempted on error.
 func (idx *Index) IndexBatch(entities []*entity.Entity) (int, error) {
@@ -206,7 +288,7 @@ func (idx *Index) IndexBatch(entities []*entity.Entity) (int, error) {
 	for _, e := range entities {
 		// coverage-ignore-start: defensive: batch.Index never errors on the always-marshalable bleveDoc; concrete batch
 		// has no failing-mock seam
-		if err := batch.Index(e.ID, entityToDoc(e)); err != nil {
+		if err := batch.Index(docKey(e.ID, e.Face), entityToDoc(e)); err != nil {
 			return 0, fmt.Errorf("bleveindex: batch index %s: %w", e.ID, err)
 		}
 		// coverage-ignore-end

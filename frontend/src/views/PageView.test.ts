@@ -119,6 +119,22 @@ describe('PageView on an entity page', () => {
     expect(viewProps(gantt, 'GanttView')).toEqual({ id: 'portfolio', root: 'TOP-1' })
   })
 
+  it('publishes the tab on screen for the Create menu, and clears it on leave', async () => {
+    getEntityMock.mockResolvedValue({
+      id: 'TOP-1', type: 'topic', properties: {}, _self: '/api/v1/topics/TOP-1@draft',
+    })
+    const wrapper = await mountPage({ page: 'topic', entity: 'TOP-1', tab: 'tijdlijn' })
+    expect(usePageStore().current).toEqual({ page: 'topic', tab: 'tijdlijn', entity: 'TOP-1', ref: 'TOP-1@draft' })
+    wrapper.unmount()
+    expect(usePageStore().current).toBeUndefined()
+  })
+
+  it('publishes no tab while the anchor is hidden or missing', async () => {
+    getEntityMock.mockRejectedValue(new ApiError('Entity not found', { kind: 'http', status: 404, original: null }))
+    await mountPage({ page: 'topic', entity: 'TOP-X', tab: 'board' })
+    expect(usePageStore().current).toBeUndefined()
+  })
+
   it('shows an empty state when the anchor is hidden or missing', async () => {
     getEntityMock.mockRejectedValue(new ApiError('Entity not found', { kind: 'http', status: 404, original: null }))
     const wrapper = await mountPage({ page: 'topic', entity: 'TOP-X', tab: 'board' })

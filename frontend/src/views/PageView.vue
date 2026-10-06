@@ -17,7 +17,7 @@
  * the anchor reaches over the tab's relation, a timeline to the anchor's
  * subtree. The two-segment form `/p/<page>/<entity>` opens the first tab.
  */
-import { computed, defineAsyncComponent, watchEffect, type Component } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, watchEffect, type Component } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useQuery } from '@pinia/colada'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
@@ -189,6 +189,22 @@ const viewProps = computed((): Record<string, unknown> => {
 
 /* An entity page with no entity to show: none named, or none this reader can see. */
 const anchorMissing = computed(() => !!anchorType.value && (!anchorId.value || anchorGone.value))
+
+/*
+ * The tab on screen, published for the space's Create menu, which sits
+ * outside the page and links a new row to the anchor. Only once the anchor
+ * has loaded: a link names the face on screen.
+ */
+watchEffect(() => {
+  const tab = activeTab.value
+  pageStore.current =
+    anchorId.value && anchor.value && tab
+      ? { page: props.page, tab: tab.id, entity: anchorId.value, ref: entityRef(anchor.value) }
+      : undefined
+})
+onBeforeUnmount(() => {
+  pageStore.current = undefined
+})
 </script>
 
 <template>

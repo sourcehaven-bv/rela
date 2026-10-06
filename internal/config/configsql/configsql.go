@@ -15,11 +15,14 @@
 package configsql
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -41,7 +44,11 @@ type Loader struct {
 	db *sql.DB
 }
 
-var _ config.Loader = (*Loader)(nil)
+var (
+	_ config.Loader    = (*Loader)(nil)
+	_ config.Stater    = (*Loader)(nil)
+	_ config.DirLister = (*Loader)(nil)
+)
 
 // New returns a Loader over db.
 //
@@ -96,7 +103,8 @@ func (l *Loader) List(ctx context.Context, dir string) ([]string, error) {
 	}
 	prefix := dir + "/"
 	rows, err := l.db.QueryContext(ctx,
-		`SELECT path FROM project_files WHERE substr(path, 1, ?) = ?`,
+		// Compared as bytes: substr on TEXT counts characters, len counts bytes.
+		`SELECT path FROM project_files WHERE substr(CAST(path AS BLOB), 1, ?) = CAST(? AS BLOB)`,
 		len(prefix), prefix)
 	if err != nil {
 		return nil, fmt.Errorf("configsql: list project files under %q: %w", dir, err)
@@ -125,9 +133,113 @@ func (l *Loader) List(ctx context.Context, dir string) ([]string, error) {
 	return names, nil
 }
 
+// Stat reports the size and last write time of the file stored at name. An
+// absent row is an [fs.ErrNotExist]-compatible error, as for [Loader.Load].
+func (l *Loader) Stat(ctx context.Context, name string) (fs.FileInfo, error) {
+	if err := validatePath(name); err != nil {
+		return nil, err
+	}
+	var (
+		size    int64
+		updated string
+	)
+	err := l.db.QueryRowContext(ctx,
+		`SELECT length(content), updated_at FROM project_files WHERE path = ?`, name,
+	).Scan(&size, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, &fs.PathError{Op: "stat", Path: name, Err: fs.ErrNotExist}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("configsql: stat project file %q: %w", name, err)
+	}
+	// An unparseable time is the zero time: it only feeds cache validators,
+	// and a file that is otherwise readable must not fail over it.
+	modTime, _ := time.Parse(timeFmt, updated)
+	return fileInfo{name: path.Base(name), size: size, modTime: modTime}, nil
+}
+
+// Open returns name as an in-memory file. The content is read whole: a row
+// is one value, so there is nothing to stream from.
+func (l *Loader) Open(ctx context.Context, name string) (fs.File, error) {
+	info, err := l.Stat(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	data, err := l.Load(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	fi, ok := info.(fileInfo)
+	if !ok {
+		return nil, fmt.Errorf("configsql: unexpected file info %T", info)
+	}
+	fi.size = int64(len(data))
+	return &memFile{Reader: bytes.NewReader(data), info: fi}, nil
+}
+
+// memFile is a stored file opened for reading.
+type memFile struct {
+	*bytes.Reader
+	info fileInfo
+}
+
+func (f *memFile) Stat() (fs.FileInfo, error) { return f.info, nil }
+func (f *memFile) Close() error               { return nil }
+
+// Dirs returns the sorted names of the directories directly under dir: the
+// next path segment of every stored path below dir that has one. An absent
+// directory lists empty with a nil error.
+func (l *Loader) Dirs(ctx context.Context, dir string) ([]string, error) {
+	if err := validatePath(dir); err != nil {
+		return nil, err
+	}
+	prefix := dir + "/"
+	rows, err := l.db.QueryContext(ctx,
+		// Compared as bytes: substr on TEXT counts characters, len counts bytes.
+		`SELECT path FROM project_files WHERE substr(CAST(path AS BLOB), 1, ?) = CAST(? AS BLOB)`,
+		len(prefix), prefix)
+	if err != nil {
+		return nil, fmt.Errorf("configsql: list directories under %q: %w", dir, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	seen := map[string]bool{}
+	for rows.Next() {
+		var p string
+		if scanErr := rows.Scan(&p); scanErr != nil {
+			return nil, fmt.Errorf("configsql: list directories under %q: %w", dir, scanErr)
+		}
+		if sub, _, deeper := strings.Cut(p[len(prefix):], "/"); deeper {
+			seen[sub] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("configsql: list directories under %q: %w", dir, err)
+	}
+	return slices.Sorted(maps.Keys(seen)), nil
+}
+
+// fileInfo is the fs.FileInfo [Loader.Stat] reports.
+type fileInfo struct {
+	name    string
+	size    int64
+	modTime time.Time
+}
+
+func (f fileInfo) Name() string       { return f.name }
+func (f fileInfo) Size() int64        { return f.size }
+func (f fileInfo) Mode() fs.FileMode  { return readOnlyFileMode }
+func (f fileInfo) ModTime() time.Time { return f.modTime }
+func (f fileInfo) IsDir() bool        { return false }
+func (f fileInfo) Sys() any           { return nil }
+
+// readOnlyFileMode is the mode a stored file reports: it is never written
+// through a Loader.
+const readOnlyFileMode fs.FileMode = 0o444
+
 // Put stores content at name, replacing whatever was there.
 //
-// This is the write half `rela db load` needs. There is deliberately no
+// `rela db load` uses [Loader.Replace] instead. There is deliberately no
 // richer editing API: config is loaded as a set and dumped as a set, never
 // edited row by row — that is what keeps the files on disk the thing an
 // operator actually edits.
@@ -146,6 +258,53 @@ func (l *Loader) Put(ctx context.Context, name string, content []byte) error {
 		name, content, time.Now().UTC().Format(timeFmt))
 	if err != nil {
 		return fmt.Errorf("configsql: write project file %q: %w", name, err)
+	}
+	return nil
+}
+
+// Replace makes files the complete stored set, in one transaction: every
+// path not in files is removed and every path in it is written. It backs
+// `rela db load`.
+//
+// A set replace rather than a sequence of [Loader.Put] calls, because config
+// is loaded as a set: a script deleted on disk must not live on in the
+// database, where the layered loader would keep serving it. One transaction,
+// because a half-replaced set would pair a new schema with old scripts.
+//
+// Every name is validated before anything is written, so an invalid name
+// leaves the stored set untouched.
+func (l *Loader) Replace(ctx context.Context, files map[string][]byte) (err error) {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		if vErr := validatePath(name); vErr != nil {
+			return fmt.Errorf("%w: %q", vErr, name)
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("configsql: replace project files: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM project_files`); err != nil {
+		return fmt.Errorf("configsql: replace project files: %w", err)
+	}
+	now := time.Now().UTC().Format(timeFmt)
+	for _, name := range names {
+		if _, err = tx.ExecContext(ctx,
+			`INSERT INTO project_files (path, content, updated_at) VALUES (?, ?, ?)`,
+			name, files[name], now); err != nil {
+			return fmt.Errorf("configsql: write project file %q: %w", name, err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("configsql: replace project files: %w", err)
 	}
 	return nil
 }
@@ -198,6 +357,11 @@ func validatePath(name string) error {
 	for seg := range strings.SplitSeq(name, "/") {
 		if seg == "" || seg == "." || seg == ".." {
 			return errors.New("configsql: traversal or empty segment not allowed")
+		}
+		if strings.HasPrefix(seg, ".") {
+			// No config file is hidden; refusing them keeps .rela/ and .git/
+			// out of a database that may be shipped.
+			return errors.New("configsql: hidden file or directory not allowed")
 		}
 	}
 	if len(name) >= 2 && name[1] == ':' {

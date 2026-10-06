@@ -387,6 +387,79 @@ compare and the second could overwrite the first. A write that loses that race
 now returns 412 as well — the same status, and the same remedy for the client:
 re-read, re-apply, retry.
 
+## Per-field preconditions (`_versions`, `preconditions`)
+
+The ETag covers the whole entity, so a client that saves one field at a time
+would have every save refused after any unrelated edit. Per-field version
+tokens let the server refuse only a write whose own field changed (TKT-2VDVHF).
+
+The single-entity GET, the PATCH response and a view's `entry` carry
+`_versions`: one opaque token per visible field.
+
+```json
+"_versions": {
+  "properties": {"status": "5f0c2a91", "title": "c3d1e7b0", "effort": "0a4e9d12"},
+  "content": "9b77e0c4",
+  "relations": "e41f08aa"
+}
+```
+
+- `properties` has a token for every property on the wire and for every
+  declared property that is unset. A redacted property has no token, because
+  a token of a hidden value would let a caller test guesses against it.
+- `content` covers the body.
+- `relations` covers the entity's visible outgoing edges as one set, because a
+  PATCH replaces relation lists rather than single edges. A view's `entry` has
+  no `relations` token. Incoming edges have no token, so a PATCH that
+  replaces an incoming list is not guarded.
+
+Tokens are opaque. Compare them for equality and send them back; do not parse
+them.
+
+A PATCH may name, for each field it writes, the token it based the edit on:
+
+```json
+{
+  "properties": {"status": "done"},
+  "preconditions": {"properties": {"status": "5f0c2a91"}}
+}
+```
+
+- A precondition on a field the PATCH does not write is a 400
+  `invalid_precondition`.
+- A field without a precondition is unchecked. A PATCH without
+  `preconditions` behaves as before.
+- When a token differs from the stored value's, the PATCH writes nothing and
+  answers 412 with two extension members: `conflicts` (per failed field, the
+  `expected` and `actual` token) and `versions` (the current tokens).
+
+```json
+{
+  "type": "https://rela.dev/errors/precondition_failed",
+  "title": "Entity has been modified",
+  "status": 412,
+  "conflicts": {"properties": {"status": {"expected": "5f0c2a91", "actual": "77aa0e3c"}}},
+  "versions": {"properties": {"status": "77aa0e3c", "...": "..."}, "content": "9b77e0c4", "relations": "e41f08aa"}
+}
+```
+
+`conflicts` can be empty. That means another write landed between the check
+and this write without touching the named fields; resend the same request.
+The server does not retry on the client's behalf, because only the client
+holds the value its edit started from and so only the client can merge.
+
+The property and content checks are atomic with the write on every backend.
+The relations check holds only within one `rela-server` process.
+
+The SPA's autosave sends a precondition for every field it writes. On a 412
+naming fields, it fetches the entity and merges each field three-way: a
+property is written only if the stored value still equals the one the user
+started from; a body is merged by line; relation lists are merged as sets. A
+field that cannot be merged is reported to the user and not written. For a
+body, the editor then shows the other side's text with the user's lines in
+each conflicting region, so the user's next edit overwrites only those
+regions.
+
 ## MCP and Lua content semantics
 
 `entitymanager.RelationOptions.Content` is `*string` — pointer-vs-string

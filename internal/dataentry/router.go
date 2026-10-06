@@ -54,12 +54,31 @@ func CheckEmbeddedSPA() error {
 	return nil
 }
 
+// RouterOption configures [App.NewRouter].
+type RouterOption func(*routerConfig)
+
+type routerConfig struct {
+	// accessLog, when non-nil, receives one `request` record per request at
+	// Info (method, path, status, wall and database time). See requestStats
+	// for why it never adds a header.
+	accessLog *slog.Logger
+}
+
+// WithAccessLog sends the per-request access log to l; nil turns it off.
+func WithAccessLog(l *slog.Logger) RouterOption {
+	return func(c *routerConfig) { c.accessLog = l }
+}
+
 // NewRouter returns an http.Handler with all data entry routes registered.
 // The Vue SPA serves as the primary UI at the root path.
 //
 // When adding a route, add a probe to the route table in
 // router_walk_test.go so registration stays covered.
-func (a *App) NewRouter() http.Handler {
+func (a *App) NewRouter(opts ...RouterOption) http.Handler {
+	var cfg routerConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	mux := http.NewServeMux()
 
 	// Legacy /static/ mount. The Vue bundle is also reachable here as
@@ -146,7 +165,7 @@ func (a *App) NewRouter() http.Handler {
 	// disable_custom_injection) must not stop /_custom/ from serving, so the
 	// route is registered unconditionally and only the shell rewrite degrades.
 	shell, shellErr := fs.ReadFile(spaFS, spaIndexFile)
-	custom := newCustomAssets(a.paths.Root, shell, func() bool {
+	custom := newCustomAssets(a.assets, shell, func() bool {
 		return shellErr == nil && !a.State().Cfg.App.DisableCustomInjection
 	})
 	mux.HandleFunc(customURLPrefix, custom.serveAsset)
@@ -266,7 +285,7 @@ func (a *App) NewRouter() http.Handler {
 	// Outermost of all: per-request query accounting must wrap the whole
 	// chain so the principal resolution and ACL compilation above (which
 	// read the store) are counted with the handler, not missed.
-	handler = requestStats(handler)
+	handler = requestStats(handler, cfg.accessLog)
 	return handler
 }
 
@@ -967,7 +986,7 @@ func spaHandlerWithCustom(fsys fs.FS, custom *customAssets) http.Handler {
 	fallback := spaHandler(fsys)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body := custom.shell()
+		body := custom.shell(r.Context())
 		// A non-shell path, or an unreadable shell (nil body): delegate to the
 		// plain file server exactly as before.
 		if body == nil || !servesSPAShell(fsys, r.URL.Path) {

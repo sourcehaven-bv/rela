@@ -5,6 +5,8 @@ paths:
   - "internal/state/**"
   - "internal/userstate/**"
   - "internal/queryplan/**"
+  - "internal/config/**"
+  - "internal/rootfs/**"
   - "internal/dataentry/listpushdown.go"
   - "internal/dataentry/settings_service.go"
   - "internal/dataentry/logo_store.go"
@@ -46,11 +48,22 @@ Rules when touching storage backends:
   store and search closer it was assembled with — never anything shared, or
   evicting one tenant breaks its siblings.
 
-- **The metamodel is always read from disk**, even in the postgres build —
-  `schema.yaml` and `templates/` stay on the filesystem, as does
-  operator-authored config generally; PostgreSQL backs
-  entities/relations/attachments/search. A postgres deployment still needs a
-  `--project` dir.
+- **The metamodel is read from disk on fs and postgres** — `schema.yaml`,
+  `templates/` and operator-authored config generally stay on the filesystem;
+  PostgreSQL backs entities/relations/attachments/search. A postgres
+  deployment still needs a `--project` dir.
+
+  **sqlite can carry the config in `rela.db`** (FEAT-UP14BT), so one file is a
+  shippable app. The `project_files` table is a FALLBACK layer behind disk
+  (`config.NewLayered(rootfs.New(root), configsql)`): a file on disk wins,
+  because a project with both is one being edited. Every reader of operator
+  files goes through that loader, never `os.ReadFile`: the schema and
+  `acl.yaml` (`Config.projectConfig`), scripts (`lua.ReadDeps.Files`),
+  `custom/` and `apps/` (`Services.ProjectFiles`), templates (`newTemplater`).
+  The disk layer is `internal/rootfs`, which nests an `os.Root` per directory
+  so a symlink cannot leave its directory; do not swap it for `FSLoader`.
+  `.rela/secrets.yaml` is never stored in the database. `rela db load` /
+  `rela db dump` and the desktop File menu move config and data in and out.
 
   The exception is **runtime-written state** (TKT-VC27L3): on the postgres build
   `state.KV` is database-backed (`pgstore.StateKV`, wired via `stateKVFor`), so

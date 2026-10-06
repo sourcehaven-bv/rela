@@ -59,6 +59,13 @@ type Context struct {
 	TemplatesDir         string // Path to templates directory
 	EntityTemplatesDir   string // Path to templates/entities directory
 	RelationTemplatesDir string // Path to templates/relations directory
+
+	// DatabaseFile is the project's database when the project IS that file:
+	// a desktop document such as Budget.rela, opened from wherever the user
+	// keeps it. Root and CacheDir then point at a private workspace holding
+	// what must not travel with the file (secrets, the search index, the
+	// audit log). Empty means the database is CacheDir/rela.db.
+	DatabaseFile string
 }
 
 // Discover finds the project root by searching for the schema file using the

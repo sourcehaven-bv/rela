@@ -103,6 +103,11 @@ export interface Entity {
   // `inaccessible` set and its ID as the title. Never derive a title another
   // way — that is what this map exists to prevent.
   mentions?: Record<string, Mention>
+  // One opaque token per visible field (TKT-2VDVHF). Autosave echoes a
+  // token back as a PATCH precondition to say which value its edit was
+  // based on. Redacted properties have no token. Present on per-entity GET
+  // and PATCH responses.
+  _versions?: FieldVersions
 }
 
 // Mention resolves one entity-ID code span to its display title. Mirrors the
@@ -484,4 +489,32 @@ export interface SidePanelSection {
   entities?: SidePanelEntity[]
   addInfo?: SidePanelAddInfo
   linkInfo?: SidePanelLinkInfo
+}
+
+// Per-field version tokens (TKT-2VDVHF). Opaque: compare for equality and
+// echo back, nothing else.
+export interface FieldVersions {
+  properties: Record<string, string>
+  content: string
+  // Absent on a view's entry.
+  relations?: string
+}
+
+// Per-field preconditions on a PATCH. Each names a field the same PATCH
+// writes; the server answers 412 when its stored token differs.
+export interface Preconditions {
+  properties?: Record<string, string>
+  content?: string
+  relations?: string
+}
+
+export interface FieldConflict {
+  expected: string
+  actual: string
+}
+
+export interface FieldConflicts {
+  properties?: Record<string, FieldConflict>
+  content?: FieldConflict
+  relations?: FieldConflict
 }

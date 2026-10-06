@@ -230,7 +230,13 @@ func buildCandidateEntity(
 	}
 
 	if e.GetString("status") == "" {
-		e.SetString("status", entityDef.GetDefaultStatus(deps.Meta))
+		// Only a declared default fills an empty status. Without one, an
+		// explicit "" is dropped rather than stored (BUG-ZD4PIN).
+		if status := entityDef.GetDefaultStatus(deps.Meta); status != "" {
+			e.SetString("status", status)
+		} else if v, ok := e.Properties["status"]; ok && v == "" {
+			delete(e.Properties, "status")
+		}
 	}
 	if err := deps.Computed.Evaluate(ctx, e); err != nil {
 		return nil, nil, err

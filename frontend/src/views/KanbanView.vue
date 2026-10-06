@@ -31,6 +31,7 @@ import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
 import { filterStateToApiParams } from '@/utils/filters'
 import { entityRef } from '@/utils/entityRef'
+import { editFormRoute } from '@/utils/entityRoute'
 import { fromPageQuery } from '@/utils/pageContext'
 import { worldText } from '@/utils/worldText'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
@@ -656,10 +657,10 @@ function cardTarget(entity: Entity): RouteLocationRaw {
   // Inside a page tab, Back and Cancel on the destination return to the tab.
   const fromPage = fromPageQuery(route)
   // The form opens on the card's ADDRESS, face included, so an edit from a
-  // world-bound board edits the face the card showed and not its bare id.
+  // world-bound board edits the face the card showed and not its bare id, in
+  // the board's world so the form loads the relations that world serves.
   if (kanbanConfig.value?.edit_form) {
-    const path = `/form/${kanbanConfig.value.edit_form}/${entityRef(entity)}`
-    return Object.keys(fromPage).length ? { path, query: fromPage } : path
+    return editFormRoute(kanbanConfig.value.edit_form, entityRef(entity), worldParam.value, fromPage)
   }
   // The world rides along so the detail resolves the face the card showed.
   const path = `/entity/${entity.type}/${entity.id}`

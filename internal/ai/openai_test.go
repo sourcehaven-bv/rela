@@ -913,3 +913,53 @@ func TestChatRequestWire_OmitEmpty(t *testing.T) {
 		t.Errorf("temperature=0 should be sent as 0, got %s", body2)
 	}
 }
+
+func TestProvider_Chat_APIKeyFromSecrets(t *testing.T) {
+	var receivedAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(canonicalSuccessBody))
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AI_SECRET_TEST_ENV_KEY", "from-env")
+
+	tests := []struct {
+		name    string
+		secrets map[string]string
+		err     error
+		want    string
+	}{
+		{name: "secret wins over env", secrets: map[string]string{SecretKey: "from-secret"}, want: "Bearer from-secret"},
+		{name: "no secret falls back to env", secrets: map[string]string{"other": "x"}, want: "Bearer from-env"},
+		{name: "unreadable secrets fall back to env", err: errors.New("broken"), want: "Bearer from-env"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{BaseURL: server.URL + "/v1", Model: "test-model", APIKeyEnv: "AI_SECRET_TEST_ENV_KEY"}
+			cfg.WithSecrets(func() (map[string]string, error) { return tc.secrets, tc.err })
+			p, err := NewOpenAICompatProvider(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := p.Chat(context.Background(), ChatRequest{Messages: hiMessages()}); err != nil {
+				t.Fatalf("Chat: %v", err)
+			}
+			if receivedAuth != tc.want {
+				t.Errorf("Authorization = %q, want %q", receivedAuth, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseConfig(t *testing.T) {
+	if _, err := ParseConfig([]byte("base_url: http://x\nmodel: m\n"), "ai.yaml"); err != nil {
+		t.Fatalf("valid config: %v", err)
+	}
+	if _, err := ParseConfig([]byte("model: m\n"), "ai.yaml"); err == nil {
+		t.Fatal("config without base_url accepted")
+	}
+	if _, err := ParseConfig([]byte("model: [\n"), "ai.yaml"); err == nil {
+		t.Fatal("malformed yaml accepted")
+	}
+}

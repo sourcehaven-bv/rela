@@ -1,6 +1,7 @@
 package bleveindex_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -337,3 +338,118 @@ func searchIDs(t *testing.T, idx *bleveindex.Index, text string, limit int) []st
 	}
 	return ids
 }
+
+// faceOf builds one face of a procedure, as a store hands it to the index.
+func faceOf(id string, face entity.Face, title string) *entity.Entity {
+	e := entity.New(id, "procedure")
+	e.Face = face
+	e.SetString("title", title)
+	return e
+}
+
+// currentWorld serves the adopted face of a procedure, else its concept.
+var currentWorld = store.NewWorldScope(map[string]store.TypeResolution{
+	"procedure": {Chain: []entity.Face{"adopted", "concept"}, Fallback: store.FallbackDefaultState},
+})
+
+// A batch is what the startup backfill writes. It must key each face as
+// EntityPut does, or a world search drops every faced hit until the entity is
+// written again (BUG-VYPK9N).
+func TestIndex_IndexBatch_KeysEachFace(t *testing.T) {
+	batch := []*entity.Entity{
+		faceOf("PROC-1", "concept", "Offboarding revised"),
+		faceOf("PROC-1", "adopted", "Offboarding"),
+		faceOf("PROC-2", "concept", "Onboarding"),
+	}
+	type hit struct {
+		id   string
+		face entity.Face
+	}
+	search := func(t *testing.T, idx *bleveindex.Index, text string) []hit {
+		t.Helper()
+		faces, err := idx.Search(text, 10, currentWorld)
+		require.NoError(t, err)
+		out := make([]hit, 0, len(faces))
+		for _, f := range faces {
+			out = append(out, hit{f.ID, f.Face})
+		}
+		return out
+	}
+
+	batched := newTestIndex(t)
+	n, err := batched.IndexBatch(batch)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+
+	put := newTestIndex(t)
+	for _, e := range batch {
+		require.NoError(t, put.EntityPut(e))
+	}
+
+	for _, tc := range []struct {
+		text string
+		want []hit
+	}{
+		{"Offboarding", []hit{{"PROC-1", "adopted"}}},
+		{"revised", nil},
+		{"Onboarding", []hit{{"PROC-2", "concept"}}},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			want := tc.want
+			if want == nil {
+				want = []hit{}
+			}
+			assert.Equal(t, want, search(t, batched, tc.text), "batch-indexed")
+			assert.Equal(t, want, search(t, put, tc.text), "put-indexed")
+		})
+	}
+}
+
+// An index written in another document format is emptied on open, so the
+// caller's backfill rewrites it rather than trusting stale keys.
+func TestNew_EmptiesAnIndexOfAnotherFormat(t *testing.T) {
+	for _, tc := range []struct{ name, format string }{
+		{"unversioned", ""},
+		{"older version", "1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "search.bleve")
+
+			idx, err := bleveindex.New(path)
+			require.NoError(t, err)
+			stale := make([]*entity.Entity, 0, clearPageOverflow)
+			for i := range clearPageOverflow {
+				e := entity.New(fmt.Sprintf("REQ-%d", i), "requirement")
+				e.SetString("title", "Stale document")
+				stale = append(stale, e)
+			}
+			_, err = idx.IndexBatch(stale)
+			require.NoError(t, err)
+			require.NoError(t, bleveindex.SetFormat(idx, tc.format))
+			require.NoError(t, idx.Close())
+
+			idx2, err := bleveindex.New(path)
+			require.NoError(t, err)
+			count, err := idx2.DocCount()
+			require.NoError(t, err)
+			assert.Zero(t, count, "an index of another format is emptied")
+			assert.True(t, idx2.LastModified().IsZero(), "its LastModified is cleared")
+
+			// The emptied index carries the current format, so its new
+			// documents survive a reopen.
+			e := entity.New("REQ-NEW", "requirement")
+			e.SetString("title", "Fresh document")
+			require.NoError(t, idx2.EntityPut(e))
+			require.NoError(t, idx2.Close())
+
+			idx3, err := bleveindex.New(path)
+			require.NoError(t, err)
+			t.Cleanup(func() { idx3.Close() })
+			assert.Equal(t, []string{"REQ-NEW"}, searchIDs(t, idx3, "fresh", 10))
+		})
+	}
+}
+
+// clearPageOverflow is more documents than one clearing pass deletes, so the
+// test covers the loop.
+const clearPageOverflow = 1001

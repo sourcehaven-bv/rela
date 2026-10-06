@@ -71,8 +71,8 @@ func TestEngine_ExecuteFile_ValidPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing project directory")
 	}
-	if strings.Contains(err.Error(), "local") || strings.Contains(err.Error(), ".lua") {
-		t.Errorf("expected filesystem error, not validation error, got: %v", err)
+	if !strings.Contains(err.Error(), "script not found") {
+		t.Errorf("expected a not-found error, not a validation error, got: %v", err)
 	}
 }
 

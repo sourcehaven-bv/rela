@@ -54,6 +54,7 @@ if e then print("TITLE: " .. e.properties.title) else print("NO ENTITY") end
 	deps := func() lua.WriteDeps {
 		wd := app.luaWriteDeps()
 		wd.ProjectRoot = root
+		wd.Files = nil // read scripts from root, not the app's project loader
 		return wd
 	}
 	app.documents = newDocumentService(app.store, app.kv, root, script.NewEngine(), deps, nil)

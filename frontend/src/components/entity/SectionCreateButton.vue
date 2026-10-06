@@ -112,7 +112,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick, tru
   min-width: 160px;
   margin-top: var(--space-xs);
   padding: var(--space-xs);
-  background: var(--bg-primary);
+  background: var(--rl-color-bg-raised);
   border: 1px solid var(--rl-color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
@@ -123,7 +123,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick, tru
   width: 100%;
   padding: var(--space-xs) var(--space-sm);
   font-size: var(--font-size-sm);
-  color: var(--text-primary);
+  color: var(--rl-color-text);
   text-align: left;
   background: none;
   border: none;
@@ -132,7 +132,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick, tru
 }
 
 .create-menu-item:hover {
-  background: var(--bg-secondary);
+  background: var(--rl-color-bg-hover);
 }
 
 .create-menu-item:focus-visible {

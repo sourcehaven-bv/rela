@@ -179,6 +179,12 @@ const (
 	// profile, scale, seed and counts — never the content, which is
 	// reproducible from those anyway.
 	OpPerfSeed = "perf-seed"
+
+	// OpFSImport records a `rela db load --data` run: a raw-store copy of a
+	// markdown project's entities, relations and attachments into a SQLite
+	// database. One record per run with the source and counts, never the
+	// content, which is still in the source files.
+	OpFSImport = "fs-import"
 )
 
 // Subject identifies what an op acted on. Exactly one of {Type, ID}

@@ -81,7 +81,9 @@ func (d *Desktop) OpenWindow(path, title string, base ...string) string {
 			URL:    route,
 			Width:  defaultSecondaryWidth,
 			Height: defaultSecondaryHeight,
+			Mac:    macWindow(),
 		})
+		d.menu.trackWindow(win, projectOfBase(route))
 		// Secondary windows are deliberately NOT persisted: only the main
 		// window's geometry is restored, so a stack of detail windows does
 		// not reopen on next launch.
@@ -134,12 +136,25 @@ func (d *Desktop) projectTitle() string {
 // in a webview does nothing at all.
 const multiWindowScript = `
 <!-- v3 serves its runtime at /wails/runtime.js but does not inject it, so a
-     page that never requests it has no window.wails. Must load before the
-     script below, which depends on it. -->
-<script src="/wails/runtime.js"></script>
+     page that never requests it has no window.wails. -->
 <script>
-(function () {
-  if (!window.wails || !window.wails.Call) return; // browser: leave as-is
+// The runtime is an ES module (it ends in an export statement), so a plain
+// <script src> throws a SyntaxError and window.wails is never set. A module
+// script runs after the classic scripts below, so they wait for this event.
+window.relaWailsReady = window.relaWailsReady || new Promise(function (resolve) {
+  if (window.wails && window.wails.Call) { resolve(); return; }
+  window.addEventListener("rela:wails-ready", function () { resolve(); }, { once: true });
+});
+</script>
+<script type="module">
+import "/wails/runtime.js";
+window.dispatchEvent(new Event("rela:wails-ready"));
+</script>
+<script>
+// In a browser the runtime never loads, the promise never settles, and the
+// page is left as it is.
+window.relaWailsReady.then(function () {
+  if (!window.wails || !window.wails.Call) return;
 
   // The base this page is served under ("/p/<id>/", or "/" at the root).
   // A link in the document is origin-relative ("/form/x"), so the window we
@@ -167,8 +182,27 @@ const multiWindowScript = `
     return url.pathname + url.search;
   }
 
+  // An /api/ link is a download (an export, an attachment, a command's
+  // result): a browser would save it, a webview does nothing. Hand it to the
+  // shell, which fetches it and shows a save panel.
+  function isDownload(a, path) {
+    return a.hasAttribute("download") || /^(\/p\/[^/]+)?\/api\//.test(path);
+  }
+
   // Capture phase, so this runs before vue-router's own handler.
   document.addEventListener("click", function (e) {
+    if (e.button === 0) {
+      var link = e.target.closest && e.target.closest("a");
+      var linkPath = internalPath(link);
+      if (linkPath && isDownload(link, linkPath)) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.wails.Call.ByName("main.Downloads.Save", linkPath)
+          .catch(function (err) { console.error("download failed:", err); });
+        return;
+      }
+    }
+
     // Middle-click (button 1) and cmd/ctrl-click are the two conventional
     // "open elsewhere" gestures. Shift/alt are left alone: the SPA uses them
     // for range-select.
@@ -184,6 +218,24 @@ const multiWindowScript = `
     openWindow(path, a.textContent ? a.textContent.trim().slice(0, 80) : "");
   }, true);
 
+  // Right-click on an internal link offers the native link menu. The runtime
+  // picks a menu by reading a CSS custom property off the clicked element,
+  // so set it on the link (descendants inherit it) before the runtime's own
+  // bubble-phase handler runs. Anything else keeps the default behavior.
+  document.addEventListener("contextmenu", function (e) {
+    var a = e.target.closest && e.target.closest("a");
+    var path = internalPath(a);
+    if (!path) return;
+    var data = encodeURIComponent(JSON.stringify({
+      path: path,
+      base: relaBase(),
+      title: (a.textContent || "").trim().slice(0, 200)
+    }));
+    var menu = /\/entity\/[^/]+\/[^/?#]+(?:[?#]|$)/.test(path) ? "rela-entity-link" : "rela-link";
+    a.style.setProperty("--custom-contextmenu", menu);
+    a.style.setProperty("--custom-contextmenu-data", data);
+  }, true);
+
   // Middle-click fires auxclick, not click, in some engines.
   document.addEventListener("auxclick", function (e) {
     if (e.button !== 1) return;
@@ -194,7 +246,7 @@ const multiWindowScript = `
     e.stopPropagation();
     openWindow(path, a.textContent ? a.textContent.trim().slice(0, 80) : "");
   }, true);
-})();
+});
 </script>
 `
 
@@ -215,9 +267,10 @@ func injectMultiWindow(body []byte, base string) []byte {
 	if base != "" {
 		meta = `<meta name="rela-base" content="` + html.EscapeString(base) + `/">`
 	}
-	out := make([]byte, 0, len(body)+len(multiWindowScript)+len(meta))
+	out := make([]byte, 0, len(body)+len(multiWindowScript)+len(meta)+len(chromeStyle))
 	out = append(out, body[:idx]...)
 	out = append(out, meta...)
+	out = append(out, chromeStyle...)
 	out = append(out, multiWindowScript...)
 	out = append(out, body[idx:]...)
 	return out

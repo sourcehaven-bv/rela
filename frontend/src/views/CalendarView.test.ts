@@ -610,6 +610,18 @@ describe('CalendarView event click', () => {
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
   })
 
+  it('opens the preview on the event ADDRESS, face included', async () => {
+    const draft = { ...task('T-1', '2026-08-22'), _self: '/api/v1/tasks/T-1@draft' }
+    const wrapper = setup({ responses: { task: [draft] }, editForm: 'edit_task' })
+    await flushPromises()
+
+    await wrapper.find('.calendar-chip').trigger('click')
+    await flushPromises()
+
+    const modal = wrapper.findComponent({ name: 'EntityPreviewModal' })
+    expect(modal.props('entityId')).toBe('T-1@draft')
+  })
+
   it('shows no edit, history or delete toolbar in the preview', async () => {
     // A preview is a read surface. EntityDetail brings its own toolbar, which
     // would put a destructive Delete one click from a calendar chip and a

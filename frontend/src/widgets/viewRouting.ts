@@ -17,10 +17,12 @@ import type { WidgetRoutingHint, WidgetHintKind } from './types'
 //   propType empty +   -> 'text'        (renders via TextWidget as a
 //   single value          plain span)
 //
-// propertyName is forwarded into the widget as :propertyName so Badge
-// looks up styles deterministically (RR-UD2D).
+// propertyName is the PROPERTY name, forwarded into the widget as
+// :propertyName (with the row's entity type) so Badge resolves the enum
+// label and the style deterministically (RR-UD2D). Not propType: that is
+// the type name, which matches no property def, so labels would not resolve.
 export function viewFieldRoutingHint(field: ViewSectionField): WidgetRoutingHint {
-  const propertyName = field.propType ?? field.property ?? ''
+  const propertyName = field.property ?? ''
   if (field.propType) {
     return { kind: 'enum-list', propertyName }
   }

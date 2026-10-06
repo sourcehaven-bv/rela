@@ -21,7 +21,7 @@ import { useAutoSave } from '@/composables/useAutoSave'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { ActionConfig, Command } from '@/types'
 import { getEditFormId } from '@/types'
-import { entityDetailHref } from '@/utils/entityRoute'
+import { editFormRoute, entityDetailHref } from '@/utils/entityRoute'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
 import { computeActionAllowed } from '@/utils/affordancesWarning'
 import { isInputFocused } from '@/utils/dom'
@@ -86,6 +86,7 @@ import type { AutoSaveErrorInfo } from '@/composables/useAutoSave'
 import { useConfirm, withConfirmError } from '@/composables/useConfirm'
 import { useDelayedPending } from '@/composables/useDelayedPending'
 import { beginRouteLoad } from '@/composables/useNavigationPending'
+import { useStickyHeight } from '@/composables/useStickyHeight'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 import { recordRecentEntity } from '@/utils/recentEntities'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
@@ -254,6 +255,19 @@ const historyTarget = computed<RouteLocationRaw | undefined>(() => {
 
 const contentRef = ref<HTMLElement | null>(null)
 
+/*
+ * The back/scope bar sticks to the top of the pane on a phone. The body's
+ * edit button sticks too, so it is moved down by the bar's height to stay
+ * tappable rather than slide underneath it.
+ */
+const topbarRef = ref<HTMLElement | null>(null)
+const topbarHeight = useStickyHeight(topbarRef)
+const stickyOffsetStyle = computed(() =>
+  topbarHeight.value > 0
+    ? { '--rl-inline-edit-sticky-top': `calc(${topbarHeight.value}px + var(--rl-space-1))` }
+    : undefined
+)
+
 // Computed
 const typeDef = computed(() => schemaStore.getEntityType(props.entityType))
 const editFormId = computed(() => getEditFormId(schemaStore, props.entityType))
@@ -321,13 +335,13 @@ function handleDuplicated(created: { id: string; type: string; _self?: string })
 // screen). The template then renders nothing rather than a link to a page
 // that would refuse the write, and before the entry loads.
 //
-// The form opens on the ADDRESS of the row on screen, face included, so
-// what you look at is what you edit is what you save.
+// The form opens on the ADDRESS of the row on screen, face included, and in
+// the page's world, so what you look at is what you edit is what you save.
 const editTarget = computed<RouteLocationRaw | undefined>(() => {
   const address = servedRef.value
   if (address === null || !editFormId.value || isInaccessible.value || !canUpdate.value)
     return undefined
-  return { name: 'form-edit', params: { id: editFormId.value, entityId: address } }
+  return editFormRoute(editFormId.value, address, worldParam.value)
 })
 
 // The entry's content section gets a custom renderer (mermaid + interactive
@@ -954,7 +968,7 @@ function editEntity() {
   }
   const address = servedRef.value
   if (address === null) return
-  router.push({ name: 'form-edit', params: { id: editFormId.value, entityId: address } })
+  router.push(editFormRoute(editFormId.value, address, worldParam.value))
 }
 
 async function requestDelete() {
@@ -1414,7 +1428,7 @@ function onCellLinkClick(
 // neighbour's RESOLVED face, and its bare id would edit a state the page is
 // not showing.
 function navigateToEdit(formId: string, row: { id: string; _self?: string }) {
-  router.push({ name: 'form-edit', params: { id: formId, entityId: entityRef(row) } })
+  router.push(editFormRoute(formId, entityRef(row), worldParam.value))
 }
 
 // Look up a schema PropertyDef for an entity type's property. Returns
@@ -1895,7 +1909,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 </script>
 
 <template>
-  <div class="entity-detail" :data-testid="`page-state-${pageState}`">
+  <div
+    class="entity-detail"
+    :data-testid="`page-state-${pageState}`"
+    :style="stickyOffsetStyle"
+  >
     <!-- Deliberately empty while loading below the threshold: no spinner,
          no reserved block, no layout spring. The ActivityBar carries the
          navigation case; this only paints for a slow cold load. -->
@@ -1916,7 +1934,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
            renders when either a back target exists (?return_to or ?from)
            or the user is in a list-scoped context (?from drives scopeNav).
            Both can be present simultaneously. -->
-      <div v-if="backTarget || scopeNav" class="scope-nav mobile-topbar">
+      <div v-if="backTarget || scopeNav" ref="topbarRef" class="scope-nav mobile-topbar">
         <BackButton v-if="backTarget" :target="backTarget" />
         <template v-if="scopeNav">
           <!--
@@ -2234,6 +2252,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             :entity-type="entry.type"
             :entity-id="entityRef(entry)"
             :initial-values="entry.properties"
+            :initial-versions="entry._versions"
             :attachments="entry._attachments"
             :fields="memoBuildSectionEditFields(section, entry)"
             :on-property-applied="handlePropertyApplied"
@@ -2255,6 +2274,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           <PropertyDisplay
             v-else-if="section.display === 'properties'"
             :properties="mapFieldsToProperties(section.fields)"
+            :entity-type="entry.type"
           >
             <!-- Comment affordance per field (TKT-FIO205). Filled only here:
                  the same component renders list cells and kanban cards, where
@@ -2465,6 +2485,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     :model-value="rowDisplayValue(ent, row.field)"
                     :mode="'display'"
                     :property-name="row.hint.propertyName"
+                    :entity-type="ent.type"
                     class="field-value"
                   />
                 </div>
@@ -2524,6 +2545,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     :model-value="rowDisplayValue(ent, row.field)"
                     :mode="'display'"
                     :property-name="row.hint.propertyName"
+                    :entity-type="ent.type"
                   />
                 </template>
               </span>
@@ -2720,6 +2742,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         :model-value="cell.value"
                         :mode="'display'"
                         :property-name="cell.propertyName"
+                        :entity-type="child.entity.type"
                       />
                     </span>
                   </div>

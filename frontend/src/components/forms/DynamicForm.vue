@@ -8,6 +8,7 @@ import { readReturnTo } from '@/utils/returnPath'
 import { pageTabPath, readFromPage } from '@/utils/pageContext'
 import { useWorld } from '@/composables/useWorld'
 import { actionAllowed } from '@/utils/affordancesWarning'
+import { entityTypeForId } from '@/utils/entityIdType'
 import { entityRef, refBareId, refFace } from '@/utils/entityRef'
 import { worldText } from '@/utils/worldText'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
@@ -46,12 +47,12 @@ import {
   type ConfirmedEdges,
   OUTGOING_SUFFIX,
   INCOMING_SUFFIX,
+  mergeRelationsFields,
 } from './relationsPatch'
 import { ownedRelationKeys, filterOwnedRelations, untypedRelationKeys } from './ownedRelations'
 import { useAutoSave } from '@/composables/useAutoSave'
 import { useFormWizard } from '@/composables/useFormWizard'
 import type { Bindings } from '@/utils/conditions'
-import { registerForm } from './dirtyFormRegistry'
 import { adoptLockedFieldValues } from './stagedEntity'
 import AutoSaveIndicator from './AutoSaveIndicator.vue'
 import FormFieldList from './FormFieldList.vue'
@@ -380,22 +381,23 @@ const formMode = computed(() => (isEdit.value ? 'edit' : 'create') as 'create' |
 
 const idControls = useEntityIDControls(entityType, formMode)
 
-// The world a create is issued from. An embedded form takes it from its host,
-// explicitly; see the payload comment in handleSubmit.
-const createWorld = computed(() => (props.embedded ? props.embeddedWorld : worldParam.value))
+// The world the form works in: a create is issued from it and an edit reads
+// the entity in it. An embedded form takes it from its host, explicitly; see
+// the payload comment in handleSubmit.
+const formWorld = computed(() => (props.embedded ? props.embeddedWorld : worldParam.value))
 // A faced type created from a world without `create:` asks for a face.
 const createFace = useCreateFace(
   computed(() => formConfig.value?.entity),
   entityType,
   computed(() => !isEdit.value && !(props.embedded && props.embeddedFace)),
-  createWorld
+  formWorld
 )
 // Where a create lands: a pinned face, a picked face, or the world's `create:`.
 function createTargetFields(): { face?: string; world?: string } {
   if (props.embedded && props.embeddedFace) return { face: props.embeddedFace }
   if (createFace.needsFace.value)
     return createFace.face.value ? { face: createFace.face.value } : {}
-  return createWorld.value ? { world: createWorld.value } : {}
+  return formWorld.value ? { world: formWorld.value } : {}
 }
 const { showManualIDInput, showPrefixPicker, prefixOptions, manualId, selectedPrefix } = idControls
 
@@ -603,17 +605,9 @@ function visibleWritablePropertiesForCommit(): Record<string, unknown> {
   return out
 }
 
-// Helper to look up entity type from ID prefix (e.g., "TKT-001" -> "ticket")
+// Entity type of an id, from its ID prefix (e.g., "TKT-001" -> "ticket").
 function getTypeFromId(entityId: string): string | undefined {
-  const prefix = entityId.split('-')[0]
-  if (!prefix) return undefined
-
-  for (const [typeName, typeDef] of schemaStore.entityTypes) {
-    if (typeDef.id_prefix?.toUpperCase() === prefix.toUpperCase()) {
-      return typeName
-    }
-  }
-  return undefined
+  return entityTypeForId(entityId, schemaStore.entityTypes)
 }
 
 // Methods
@@ -622,10 +616,19 @@ async function loadEntity(force = false) {
 
   try {
     // The entity id is an ADDRESS — `POL-1` or `POL-1@published` — and the
-    // form edits exactly the row it names. An address with a face is
-    // literal in every world, so the fetch uses the default world. The Edit
-    // button must pass the face it was pressed on (atlas worlds issue 7).
-    const entity = await entitiesStore.fetchEntity(formConfig.value.entity, props.entityId, force)
+    // form edits exactly the row it names. An address with a face is literal
+    // in every world, so the world does not pick the row. It does pick the
+    // row's RELATIONS: the server leaves out a peer with no face in the world
+    // it reads in. So the form reads in the world the page was showing, which
+    // every edit entry point carries (editFormRoute). In the default world a
+    // relation the page showed would be missing from the form, where the user
+    // can neither see nor remove it.
+    const entity = await entitiesStore.fetchEntity(
+      formConfig.value.entity,
+      props.entityId,
+      force,
+      formWorld.value
+    )
     // Route-guard: if the server says this row is not updatable, render an
     // inline "not editable" message instead of the form. The EntityDetail
     // Edit button already hides for the same verdict, so this branch fires
@@ -733,6 +736,21 @@ function stagedFailureMessage(failures: { file: string; message: string }[]): st
 async function onAttachmentChanged() {
   await loadEntity(true)
 }
+
+// The world switcher stays on screen while a form is open, and a world change
+// only edits the query, so the form is not remounted. Reload in the new world,
+// or the form keeps the old world's relations while the picker searches the
+// new one. Pending edits are committed first, because the reload replaces the
+// form state.
+watch(formWorld, async () => {
+  if (!isEdit.value || props.embedded) return
+  if (autoSave.value) {
+    flushEditor()
+    await nextTick()
+    await autoSave.value.commitImmediately()
+  }
+  await loadEntity(true)
+})
 
 // Read return_to from the query eagerly — needed in both create and
 // edit modes. initializeDefaults below handles create-only pre-fills
@@ -850,20 +868,20 @@ function initializeDefaults() {
 
   // Pre-fill the relation from link params.
   //
-  // ONLY for `link_as=to`, where the new entity is the relation's TO: the
-  // create payload expresses `new --relation--> peer`, which is exactly that
-  // edge. For `link_as=from` the edge runs the other way and the payload cannot
-  // say so, so it is created by the second call after submit — putting the peer
-  // in the payload there would write a BACKWARDS edge in addition to the
-  // correct one.
-  if (linkParams.value && linkParams.value.as === 'to') {
-    const rel = linkParams.value.relation
+  // ONLY for `link_as=to`, where the new entity is the relation's TO, so the
+  // edge is `peer --relation--> new`. Seen from the new entity that edge is
+  // INCOMING, so it rides the create payload under the relation's inverse key
+  // (`linkBodyKey`); the canonical key would write `new --relation--> peer`,
+  // a backwards edge. For `link_as=from` the edge is created by the second
+  // call after submit.
+  const linkKey = linkBodyKey()
+  if (linkParams.value && linkKey) {
     const peer = linkParams.value.peer
-    if (!relations.value[rel]) {
-      relations.value[rel] = []
+    if (!relations.value[linkKey]) {
+      relations.value[linkKey] = []
     }
-    if (!relations.value[rel].includes(peer)) {
-      relations.value[rel].push(peer)
+    if (!relations.value[linkKey].includes(peer)) {
+      relations.value[linkKey].push(peer)
     }
     // Register the peer's TYPE as well as its id (BUG found in TKT-R4BMJM).
     //
@@ -876,16 +894,14 @@ function initializeDefaults() {
     // So a create button for a relation the form does not also render as a
     // field could not save at all.
     //
-    // A prefix-less peer id (the demo project's categories are `backend`,
-    // `devops`) yields no type here. That is survivable on THIS path and only
-    // here: a form that renders the relation as a picker has already registered
-    // the type, and one that does not will fail loudly at submit rather than
-    // write a mistyped edge.
+    // linkBodyKey only returns a key when the peer's type resolves, so a
+    // prefix-less peer id (the demo project's categories are `backend`,
+    // `devops`) never gets here: it is linked after create instead.
     const peerType = getTypeFromId(peer)
     if (peerType) {
-      const types = pickerTypes.value[rel] ?? new Map<string, string>()
+      const types = pickerTypes.value[linkKey] ?? new Map<string, string>()
       types.set(peer, peerType)
-      pickerTypes.value[rel] = types
+      pickerTypes.value[linkKey] = types
     }
   }
 
@@ -1516,8 +1532,30 @@ function pruneWizardHiddenRelations(rels: Record<string, string[]>): Record<stri
  */
 function prefilledRelationKeys(): Set<string> | undefined {
   const keys = new Set(prefilledRelations.value)
-  if (linkParams.value?.as === 'to') keys.add(linkParams.value.relation)
+  const linkKey = linkBodyKey()
+  if (linkKey) keys.add(linkKey)
   return keys.size > 0 ? keys : undefined
+}
+
+/**
+ * The create-payload key a `link_as=to` pre-link rides under, or undefined
+ * when it does not ride the payload.
+ *
+ * The new entity is the edge's TARGET, so the key is the relation's inverse
+ * name: the server reads an inverse key as "this entity is the target"
+ * (resolveDirection). A symmetric relation has no direction, so its own name
+ * serves.
+ *
+ * The edge rides the payload only when it can be fully typed. A relation
+ * without an inverse, or a peer whose type its id does not reveal, is linked
+ * after create instead (`direction: incoming`), which needs neither.
+ */
+function linkBodyKey(): string | undefined {
+  const link = linkParams.value
+  if (!link || link.as !== 'to') return undefined
+  if (!getTypeFromId(link.peer)) return undefined
+  if (schemaStore.getRelationType(link.relation)?.symmetric) return link.relation
+  return schemaStore.getInverseName(link.relation)
 }
 
 // Error text for a relations payload that cannot be typed.
@@ -1745,15 +1783,18 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
       saving.value = false
       return
     }
-    const relationsPayload: ModernRelationsField = { ...reshapedPickers, ...modernRelations }
+    const relationsPayload = mergeRelationsFields(reshapedPickers, modernRelations)
 
     // POST-CONDITION: a `link_as: to` pre-link must actually be in the payload.
     //
-    // `relations.value` is NOT the payload. Two filters sit between them —
+    // `relations.value` is NOT the payload. Filters sit between them —
     // `pruneWizardHiddenRelations` (drops a relation on an inactive wizard step)
     // and the `cardRelations` exclusion (card-managed edges are supposed to
     // arrive via `pendingCardChanges`, which the prefill does not write) — and
-    // either one silently eats a prefilled edge. The create then succeeds with
+    // either one silently eats a prefilled edge. Both match canonical relation
+    // names, so they reach a pre-link only on a symmetric relation; a directed
+    // one rides its inverse key. An incoming field's full `data` replacement
+    // under that key can still drop it. The create would then succeed with
     // no relation and no error: the user returns to the originating entity and
     // the section is still empty, which looks exactly like a stale page.
     //
@@ -1763,15 +1804,15 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // override an author's `visible_when`. Failing loudly puts the problem in
     // front of the operator who configured it, which is the only person who can
     // fix it.
-    if (linkParams.value?.as === 'to') {
-      const rel = linkParams.value.relation
-      const upd = relationsPayload[rel]
+    const linkKey = linkBodyKey()
+    if (linkParams.value && linkKey) {
+      const upd = relationsPayload[linkKey]
       const sent = !upd ? [] : 'data' in upd ? upd.data : (upd.add ?? [])
       const carried = sent.some((r) => r.id === linkParams.value!.peer)
       if (!carried) {
         uiStore.error(
           `Cannot pre-link this ${formConfig.value.entity} to ${linkParams.value.peer}: ` +
-            `the form's "${rel}" field cannot carry it. Ask your operator to check the ` +
+            `the form's "${linkParams.value.relation}" field cannot carry it. Ask your operator to check the ` +
             `create button's section config against this form.`
         )
         saving.value = false
@@ -1843,12 +1884,12 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // definition (internal/dataentry/sections.go) and the only one that lets a
     // caller express both directions:
     //
-    //   link_as=to    new entity is the relation's TO. The create payload
-    //                 already carries `relation: [peer]`, which the server
-    //                 writes as new --relation--> peer. Nothing to do here.
-    //   link_as=from  new entity is the relation's FROM, so the edge runs
-    //                 new --relation--> peer in the OTHER direction from what
-    //                 the payload can express. Needs a second call.
+    //   link_as=to    new entity is the relation's TO: peer --relation--> new.
+    //                 The create payload already carries it under the
+    //                 relation's inverse key (linkBodyKey). Nothing to do here,
+    //                 unless the relation has no inverse.
+    //   link_as=from  new entity is the relation's FROM: new --relation--> peer.
+    //                 Created by a second call.
     //
     // This comment previously read the flag the opposite way ("for link_as=from
     // we need peer --relation--> new_entity"), which was untestable while the
@@ -1856,10 +1897,13 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
     // names were fixed, an incoming section produced a REDUNDANT reverse call
     // whose peer-type lookup then failed on a prefix-less id like `backend` —
     // reporting a link failure for an edge the payload had already written.
-    if (linkParams.value && linkParams.value.as === 'from') {
+    if (linkParams.value && (linkParams.value.as === 'from' || !linkKey)) {
       try {
-        const { relation, peer } = linkParams.value
-        // new --relation--> peer, addressed from the NEW entity.
+        const { relation, peer, as } = linkParams.value
+        // Addressed from the NEW entity: new --relation--> peer for `from`. A
+        // `link_as=to` pre-link lands here only when its relation has no
+        // inverse key to ride the payload; `incoming` then writes
+        // peer --relation--> new.
         //
         // The endpoint is `/{plural}/{from}/relations/{rel}` with the TO in the
         // body, so the source entity is the one in the path. Addressing it from
@@ -1869,7 +1913,18 @@ async function handleSubmit(mode: SubmitMode = 'navigate') {
         // category ids are `backend`, `devops`), so the old form of this call
         // could not link to one at all. The new entity's type is known outright.
         // By ADDRESS: a content-scoped edge belongs to the face just created.
-        await createRelation(entity.type, entityRef(entity), relation, peer)
+        if (as === 'to') {
+          await createRelation(
+            entity.type,
+            entityRef(entity),
+            relation,
+            peer,
+            undefined,
+            'incoming'
+          )
+        } else {
+          await createRelation(entity.type, entityRef(entity), relation, peer)
+        }
       } catch (linkErr) {
         console.warn('Auto-link failed:', linkErr)
         // Surfaced on EVERY path, not just 'again'. The older reasoning — that
@@ -2229,6 +2284,15 @@ function snapshotServerState(entity: Entity): Entity {
     properties: { ...(entity.properties ?? {}) },
     relations: entity.relations ? { ...entity.relations } : entity.relations,
   }
+  // The relations token hashes the relations as the read's world serves them,
+  // and a PATCH checks it against the default world's view (a write takes no
+  // world). Read in another world, the token can never match, so every
+  // relations save would be refused as a conflict. Drop it: the relations
+  // body is a delta, and the first save's response brings a token in the
+  // write's own view.
+  if (entity._versions && (formWorld.value ?? '') !== schemaStore.defaultWorld) {
+    snap._versions = { ...entity._versions, relations: undefined }
+  }
   // Freeze the properties bag so an accidental write to the baseline fails
   // loudly in dev instead of silently corrupting the merge base.
   Object.freeze(snap.properties)
@@ -2247,9 +2311,6 @@ function recordServerBaseline(entity: Entity) {
     _pendingServerSnapshot = snap
   }
 }
-// Dirty-registry cleanup, assigned in onMounted (after awaits) and run
-// from the top-level onBeforeUnmount.
-let unregisterDirtyForm: (() => void) | null = null
 
 // The relations the entity was loaded with, per relation name, and the
 // edges saved since (see ConfirmedEdges): every relations body is a delta
@@ -2503,15 +2564,6 @@ onMounted(async () => {
     // Consumed by the constructor above; later loads go through
     // `recordServerSnapshot` on the live instance instead.
     _pendingServerSnapshot = null
-    // Register with the dirty registry so SSE-driven re-fetches in
-    // other forms on the same entity preserve this form's dirty state.
-    // The cleanup runs from the top-level onBeforeUnmount below —
-    // registering a lifecycle hook after an `await` has no active
-    // instance, so Vue would silently drop it and leak the registration.
-    unregisterDirtyForm = registerForm(
-      props.entityId,
-      (property) => _autoSaveInstance.value?.isDirty(property) ?? false
-    )
   }
 
   // TKT-GFQK pre-flight: a `direction: incoming` widget on a relation
@@ -2536,8 +2588,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', handleBeforeUnload)
   document.removeEventListener('keydown', handleKeydown)
-  unregisterDirtyForm?.()
-  unregisterDirtyForm = null
   // TKT-3I5U: cancel any pending / in-flight staged dry-run, and mark
   // the component as gone so a response that has already arrived (but
   // is awaiting the microtask queue) doesn't write to dead refs
@@ -2687,7 +2737,10 @@ defineExpose({
           v-if="formConfig && entityId"
           :as="RouterLink"
           variant="secondary"
-          :to="`/entity/${formConfig.entity}/${entityId}`"
+          :to="{
+            path: `/entity/${formConfig.entity}/${entityId}`,
+            query: formWorld ? { world: formWorld } : {},
+          }"
         >
           ← Back to entity
         </RlButton>

@@ -6,11 +6,13 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // mapLoader is a Loader over an in-memory name→bytes map, standing in for
@@ -265,3 +267,82 @@ func (c *countingSubscriber) Subscribe(
 	c.calls++
 	return func() {}, nil
 }
+
+// memLoader returns an FSLoader over a MemFS holding files, rooted at /p.
+func memLoader(t *testing.T, files map[string]string) config.Loader {
+	t.Helper()
+	fsys := storage.NewMemFS()
+	for name, body := range files {
+		p := "/p/" + name
+		if err := fsys.MkdirAll(path.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := fsys.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return config.NewFSLoader(fsys, "/p")
+}
+
+func TestLayered_StatAndDirs(t *testing.T) {
+	ctx := context.Background()
+	l := mustLayered(t,
+		memLoader(t, map[string]string{"apps/a/index.html": "disk", "apps/c/index.html": "c"}),
+		memLoader(t, map[string]string{"apps/a/index.html": "baked!", "apps/b/index.html": "b"}),
+	)
+	stater, ok := l.(config.Stater)
+	if !ok {
+		t.Fatal("layered loader is not a Stater")
+	}
+	if info, err := stater.Stat(ctx, "apps/a/index.html"); err != nil || info.Size() != int64(len("disk")) {
+		t.Fatalf("Stat(apps/a) = %v, %v; want the primary's file", info, err)
+	}
+	if info, err := stater.Stat(ctx, "apps/b/index.html"); err != nil || info.Size() != 1 {
+		t.Fatalf("Stat(apps/b) = %v, %v; want the secondary's file", info, err)
+	}
+	if _, err := stater.Stat(ctx, "apps/z/index.html"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat(absent) err = %v", err)
+	}
+
+	lister, ok := l.(config.DirLister)
+	if !ok {
+		t.Fatal("layered loader is not a DirLister")
+	}
+	dirs, err := lister.Dirs(ctx, "apps")
+	if err != nil || !slices.Equal(dirs, []string{"a", "b", "c"}) {
+		t.Fatalf("Dirs = %v, %v; want [a b c]", dirs, err)
+	}
+	if dirs, err := lister.Dirs(ctx, "absent"); err != nil || len(dirs) != 0 {
+		t.Fatalf("Dirs(absent) = %v, %v", dirs, err)
+	}
+}
+
+// A layer without the capability makes the operation fail rather than
+// silently answer from the other layer alone.
+func TestLayered_StatAndDirs_RequireCapableLayers(t *testing.T) {
+	ctx := context.Background()
+	capable := memLoader(t, map[string]string{"a/x": "x"})
+	for name, l := range map[string]config.Loader{
+		"primary lacks":   mustLayered(t, mapLoader{}, capable),
+		"secondary lacks": mustLayered(t, capable, mapLoader{}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := l.(config.Stater).Stat(ctx, "absent"); err == nil {
+				t.Error("Stat succeeded without a capable layer")
+			}
+			if _, err := l.(config.DirLister).Dirs(ctx, "a"); err == nil {
+				t.Error("Dirs succeeded without a capable layer")
+			}
+		})
+	}
+	failing := mustLayered(t, capable, errLoaderWithCaps{errLoader{err: errors.New("boom")}})
+	if _, err := failing.(config.DirLister).Dirs(ctx, "a"); err == nil {
+		t.Error("Dirs swallowed a layer error")
+	}
+}
+
+// errLoaderWithCaps is an errLoader that also claims Stat and Dirs.
+type errLoaderWithCaps struct{ errLoader }
+
+func (e errLoaderWithCaps) Stat(context.Context, string) (fs.FileInfo, error) { return nil, e.err }
+func (e errLoaderWithCaps) Dirs(context.Context, string) ([]string, error)    { return nil, e.err }

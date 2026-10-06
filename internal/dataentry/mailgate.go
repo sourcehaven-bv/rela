@@ -15,12 +15,14 @@
 package dataentry
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
@@ -103,8 +105,10 @@ func warnUngatedMailActions(
 		"docs", "docs/lua-scripting.md")
 }
 
-// warnUngatedMailActionsFromDisk is the production wiring: the same scan over
-// the project's actions/ directory.
-func warnUngatedMailActionsFromDisk(actions map[string]dataentryconfig.Action, projectRoot string) {
-	warnUngatedMailActions(actions, projectRoot, script.ReadActionScript)
+// warnUngatedMailActionsFromFiles is the production wiring: the same scan over
+// the project's actions/ files.
+func warnUngatedMailActionsFromFiles(actions map[string]dataentryconfig.Action, files lua.ProjectFiles) {
+	warnUngatedMailActions(actions, "", func(_, scriptPath string) (string, error) {
+		return script.ReadActionScript(context.Background(), files, scriptPath)
+	})
 }
