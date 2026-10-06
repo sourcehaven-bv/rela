@@ -54,6 +54,11 @@ func TestEntityDef_GetPlural(t *testing.T) {
 }
 
 func TestEntityDef_GetDefaultStatus(t *testing.T) {
+	// rela never invents a status: every non-empty result below comes from a
+	// value the schema declares. No status property, or no declared default,
+	// yields "" (BUG-ZD4PIN).
+	withTypes := func(types map[string]CustomType) *Metamodel { return &Metamodel{Types: types} }
+	status := func(p PropertyDef) EntityDef { return EntityDef{Properties: map[string]PropertyDef{"status": p}} }
 	tests := []struct {
 		name string
 		def  EntityDef
@@ -61,73 +66,82 @@ func TestEntityDef_GetDefaultStatus(t *testing.T) {
 		want string
 	}{
 		{
-			name: "no status property uses draft",
-			def:  EntityDef{Properties: map[string]PropertyDef{}},
+			name: "no status property yields nothing",
+			def:  EntityDef{Properties: map[string]PropertyDef{"title": {Type: "string"}}},
 			meta: &Metamodel{},
-			want: "draft",
+			want: "",
 		},
 		{
-			name: "standard status type uses draft",
-			def: EntityDef{
-				Properties: map[string]PropertyDef{
-					"status": {Type: "status"},
-				},
-			},
+			name: "legacy status type without a declared type yields nothing",
+			def:  status(PropertyDef{Type: "status"}),
 			meta: &Metamodel{},
-			want: "draft",
+			want: "",
+		},
+		{
+			name: "string status yields nothing",
+			def:  status(PropertyDef{Type: "string"}),
+			meta: &Metamodel{},
+			want: "",
 		},
 		{
 			name: "explicit default in property",
-			def: EntityDef{
-				Properties: map[string]PropertyDef{
-					"status": {Type: "status", Default: "proposed"},
-				},
-			},
+			def:  status(PropertyDef{Type: "status", Default: "proposed"}),
 			meta: &Metamodel{},
 			want: "proposed",
 		},
 		{
-			name: "inline enum values uses first value",
-			def: EntityDef{
-				Properties: map[string]PropertyDef{
-					"status": {Type: "enum", Values: []string{"open", "closed", "resolved"}},
-				},
-			},
+			name: "inline enum without default yields nothing",
+			def:  status(PropertyDef{Type: "enum", Values: []string{"open", "closed", "resolved"}}),
 			meta: &Metamodel{},
-			want: "open",
+			want: "",
+		},
+		{
+			name: "inline enum with default uses it",
+			def:  status(PropertyDef{Type: "enum", Values: []string{"open", "closed"}, Default: "closed"}),
+			meta: &Metamodel{},
+			want: "closed",
 		},
 		{
 			name: "custom type uses its default",
-			def: EntityDef{
-				Properties: map[string]PropertyDef{
-					"status": {Type: "nc_status"},
-				},
-			},
-			meta: &Metamodel{
-				Types: map[string]CustomType{
-					"nc_status": {
-						Values:  []string{"open", "investigating", "correcting", "closed"},
-						Default: "open",
-					},
-				},
-			},
-			want: "open",
+			def:  status(PropertyDef{Type: "nc_status"}),
+			meta: withTypes(map[string]CustomType{
+				"nc_status": {Values: []string{"open", "investigating", "closed"}, Default: "investigating"},
+			}),
+			want: "investigating",
 		},
 		{
-			name: "custom type without default uses first value",
-			def: EntityDef{
-				Properties: map[string]PropertyDef{
-					"status": {Type: "issue_status"},
-				},
-			},
-			meta: &Metamodel{
-				Types: map[string]CustomType{
-					"issue_status": {
-						Values: []string{"new", "triaged", "fixed", "wontfix"},
-					},
-				},
-			},
-			want: "new",
+			name: "custom type named status uses its default",
+			def:  status(PropertyDef{Type: "status"}),
+			meta: withTypes(map[string]CustomType{
+				"status": {Values: []string{"draft", "accepted"}, Default: "accepted"},
+			}),
+			want: "accepted",
+		},
+		{
+			name: "custom type without default yields nothing",
+			def:  status(PropertyDef{Type: "issue_status"}),
+			meta: withTypes(map[string]CustomType{
+				"issue_status": {Values: []string{"new", "triaged", "fixed"}},
+			}),
+			want: "",
+		},
+		{
+			name: "state machine initial wins over type default",
+			def:  status(PropertyDef{Type: "wf"}),
+			meta: withTypes(map[string]CustomType{
+				"wf": {Values: []string{"a", "b", "c"}, Default: "c", Initial: "b"},
+			}),
+			want: "b",
+		},
+		{
+			// Only valid when "wf" is not a state machine: statemachine.Compile
+			// rejects a property default other than the entry value at boot.
+			name: "property default wins over type",
+			def:  status(PropertyDef{Type: "wf", Default: "c"}),
+			meta: withTypes(map[string]CustomType{
+				"wf": {Values: []string{"a", "b", "c"}, Default: "a", Initial: "b"},
+			}),
+			want: "c",
 		},
 	}
 

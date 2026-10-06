@@ -176,6 +176,26 @@ types:
     values: [critical, high, medium, low]
 ```
 
+#### Default status
+
+When an entity is created without a `status`, rela sets one only if the schema
+declares it. It looks, in order, at:
+
+1. the `status` property's own `default:`;
+2. the property's named type's `initial:` (a state machine's entry value);
+3. that type's `default:`.
+
+If none is declared, `status` stays unset. rela does not pick the first value
+of an enum, and it does not add a `status` to a type that has no `status`
+property. A `required: true` status without a default is reported by
+validation like any other missing property.
+
+Older rela versions added `status: draft` to every new entity, including types
+without a `status` property, and picked the first enum value when no default
+was declared. To keep that behaviour for a type, declare the default. To remove
+a stray `status` from a type that does not declare one, use a
+[`drop_property`](data-migration.md) data migration step.
+
 **The ORDER of `values:` is load-bearing, not just the set.** Lists, views and
 sections sort an enum property by each value's position in this list, so
 writing the values in workflow order — `todo` before `done`, `critical` before

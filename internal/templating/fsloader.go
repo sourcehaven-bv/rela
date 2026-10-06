@@ -209,8 +209,11 @@ func generateEntityTemplate(
 	}
 	natsort.Strings(propNames)
 	for _, name := range propNames {
-		prop := entityDef.Properties[name]
-		frontmatter[name] = propertyDefault(prop, meta)
+		// Only declared defaults: a template applies to every create, so an
+		// invented value would reach entities the operator never configured.
+		if v := metamodel.DeclaredDefault(entityDef.Properties[name], meta); v != "" {
+			frontmatter[name] = v
+		}
 	}
 
 	label := entityDef.Label
@@ -220,7 +223,7 @@ func generateEntityTemplate(
 	content := fmt.Sprintf("# Description\n\nDescribe your %s here.\n", strings.ToLower(label))
 
 	output, err := markdown.FormatDocument(frontmatter, content)
-	// coverage-ignore-start: defensive: frontmatter holds only scalar property defaults (string/bool/int), yaml.Marshal
+	// coverage-ignore-start: defensive: frontmatter holds only declared string defaults, yaml.Marshal
 	// of these cannot fail
 	if err != nil {
 		return false, fmt.Errorf("failed to format template: %w", err)
@@ -279,30 +282,4 @@ func generateRelationTemplate(
 		return false, fmt.Errorf("failed to write template: %w", err)
 	}
 	return true, nil
-}
-
-// propertyDefault returns the default value for a property based on
-// its type.
-func propertyDefault(prop metamodel.PropertyDef, meta *metamodel.Metamodel) any {
-	if prop.Default != "" {
-		return prop.Default
-	}
-	switch prop.Type {
-	case metamodel.PropertyTypeBoolean:
-		return false
-	case metamodel.PropertyTypeInteger:
-		return 0
-	}
-	if len(prop.Values) > 0 {
-		return prop.Values[0]
-	}
-	if customType, ok := meta.Types[prop.Type]; ok {
-		if customType.Default != "" {
-			return customType.Default
-		}
-		if len(customType.Values) > 0 {
-			return customType.Values[0]
-		}
-	}
-	return ""
 }

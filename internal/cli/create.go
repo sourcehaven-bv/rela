@@ -14,7 +14,7 @@ import (
 // CreateCmd creates a new entity.
 type CreateCmd struct {
 	Type     string   `arg:"" help:"Entity type (alias allowed)."`
-	Status   string   `short:"s" help:"Entity status (defaults to entity type's default)."`
+	Status   string   `short:"s" help:"Entity status (defaults to the schema's declared default, if any)."`
 	Priority string   `short:"p" help:"Entity priority."`
 	ID       string   `name:"id" help:"Custom entity ID (auto-generated if not provided)."`
 	Face     string   `help:"Face to create; required for a type that declares faces."`
