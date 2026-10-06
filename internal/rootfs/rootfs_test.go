@@ -169,6 +169,74 @@ func TestDir_Subscribe(t *testing.T) {
 	}
 }
 
+// A subscription reports a file that appears or disappears after it began,
+// which a watch on the file itself cannot do. A project whose config lives
+// in its database has no file at subscribe time. A change to a sibling is
+// not reported.
+func TestDir_SubscribeFollowsTheName(t *testing.T) {
+	tests := []struct {
+		name   string
+		setup  func(t *testing.T, root string)
+		change func(t *testing.T, root string)
+		want   bool
+	}{
+		{
+			name:   "file created after subscribe",
+			change: func(t *testing.T, root string) { write(t, root, "data-entry.yaml", "new") },
+			want:   true,
+		},
+		{
+			name:  "file removed after subscribe",
+			setup: func(t *testing.T, root string) { write(t, root, "data-entry.yaml", "old") },
+			change: func(t *testing.T, root string) {
+				if err := os.Remove(filepath.Join(root, "data-entry.yaml")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: true,
+		},
+		{
+			name:   "sibling file changed",
+			change: func(t *testing.T, root string) { write(t, root, "acl.yaml", "other") },
+			want:   false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := project(t)
+			if tc.setup != nil {
+				tc.setup(t, root)
+			}
+			changed := make(chan struct{}, 1)
+			stop, err := rootfs.New(root).Subscribe(context.Background(), "data-entry.yaml", func() {
+				select {
+				case changed <- struct{}{}:
+				default:
+				}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stop()
+			tc.change(t, root)
+			wait := 5 * time.Second
+			if !tc.want {
+				wait = time.Second
+			}
+			select {
+			case <-changed:
+				if !tc.want {
+					t.Fatal("notified for a file the subscription does not name")
+				}
+			case <-time.After(wait):
+				if tc.want {
+					t.Fatal("no change notification")
+				}
+			}
+		})
+	}
+}
+
 // Containment is per area, as the readers had it before the loader seam: a
 // symlink between subdirectories of scripts/ resolves, a top-level file may
 // be a symlink anywhere, and a symlinked area directory is refused.
