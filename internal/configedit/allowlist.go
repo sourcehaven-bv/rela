@@ -73,6 +73,7 @@ var editable = map[File][]string{
 		"entities.*.plural",
 		"entities.*.properties.*.default",
 		"entities.*.properties.*.description",
+		"entities.*.properties.*.label",
 		"entities.*.properties.*.format",
 		"entities.*.properties.*.labels.*",
 		"entities.*.properties.*.list",
@@ -98,6 +99,7 @@ var editable = map[File][]string{
 		"relations.*.symmetric",
 		"relations.*.properties.*.default",
 		"relations.*.properties.*.description",
+		"relations.*.properties.*.label",
 		"relations.*.properties.*.format",
 		"relations.*.properties.*.labels.*",
 		"relations.*.properties.*.list",
@@ -271,7 +273,7 @@ var locked = map[File][]string{
 		// Access control: a transition guard names an ACL permission.
 		"types.*.transitions.[].guard",
 		// Not in the Configure space yet.
-		"copies.**", "worlds.**", "entities.*.faces.**",
+		"copies.**", "default_world", "worlds.**", "entities.*.faces.**",
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
 		"relations.*.scope",
 		"validations.[].faces.**", "automations.[].on.faces.**",

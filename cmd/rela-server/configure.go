@@ -117,7 +117,8 @@ func (h configureHost) Validate(schema, dataEntry []byte) (*metamodel.Metamodel,
 
 // Count counts the records of entityType whose property holds value, or any
 // value when value is empty. It reads the raw store: the Configure API only
-// serves config:edit holders, and returns counts, never records.
+// serves config:edit holders, and returns counts, never records. It counts
+// every face row, because a migration rewrites every one of them.
 func (h configureHost) Count(ctx context.Context, entityType, property, value string) (int, error) {
 	pred := store.PropPredicate{Property: property, Op: store.PropEqual, Value: value}
 	if value == "" {
@@ -125,7 +126,9 @@ func (h configureHost) Count(ctx context.Context, entityType, property, value st
 		pred.Op = store.PropNotEqual
 	}
 	st := h.current().svc.Store()
-	return store.CountMatched(ctx, st, store.GraphQuery{EntityType: entityType, Props: []store.PropPredicate{pred}})
+	return store.CountMatched(ctx, st, store.GraphQuery{
+		EntityType: entityType, Faces: store.AllFaces(), Props: []store.PropPredicate{pred},
+	})
 }
 
 // Ready reports whether the store's migration record allows a new migration.
