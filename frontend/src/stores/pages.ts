@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { SidebarPage } from '@/types'
+import type { PageScope, SidebarPage } from '@/types'
 
 /**
  * The pages of `pages:`, each with the tabs this principal may see
@@ -15,10 +15,19 @@ export const usePageStore = defineStore('pages', () => {
   const pages = ref<Record<string, SidebarPage>>({})
   const loaded = ref(false)
 
+  /**
+   * The entity page tab on screen, set by PageView while it shows an anchor.
+   * The space's Create menu sits outside the page and reads it to link a new
+   * row to the anchor. PageView clears it on unmount, which holds while
+   * RouterView has no KeepAlive or leave Transition around it; with either, a
+   * page off screen could still be published here.
+   */
+  const current = ref<PageScope>()
+
   function set(next: Record<string, SidebarPage> | undefined) {
     pages.value = next ?? {}
     loaded.value = true
   }
 
-  return { pages, loaded, set }
+  return { pages, loaded, current, set }
 })

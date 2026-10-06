@@ -182,6 +182,7 @@ describe('EntityList grouped by a property', () => {
           tabs: [{
             id: 'tabel', label: 'Tabel', view: 'list', target: listId,
             scope: 'relation', relation: 'bestaat_uit', direction: 'outgoing',
+            links: [{ type: entityType, relation: 'bestaat_uit', direction: 'outgoing' }],
           }],
         },
       })

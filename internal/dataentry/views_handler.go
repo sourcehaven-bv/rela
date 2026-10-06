@@ -519,6 +519,7 @@ func sidebarPages(
 				wire.Relation = sc.Relation
 				wire.Direction = string(sc.ResolvedDirection(page.EntityType, meta))
 			}
+			wire.Links = pageTabLinks(cfg, meta, page.EntityType, tab)
 			tabs = append(tabs, wire)
 		}
 		out[id] = v1.SidebarPage{

@@ -896,15 +896,29 @@ type SidebarPage struct {
 // "incoming", from the anchor's side), "root" when a gantt starts at the
 // anchor. The SPA uses Relation and Direction to link a new row to the
 // anchor; the server narrows the rows from its own config, never from these.
+//
+// Links names, per entity type, the relation a row created while the tab is
+// open is linked to the anchor over. The space's Create menu uses it, so a
+// row created there lands on the page it was created from.
 type SidebarPageTab struct {
-	ID        string `json:"id"`
-	Label     string `json:"label"`
-	Icon      string `json:"icon,omitempty"`
-	View      string `json:"view"`
-	Target    string `json:"target,omitempty"`
-	Scope     string `json:"scope,omitempty"`
-	Relation  string `json:"relation,omitempty"`
-	Direction string `json:"direction,omitempty"`
+	ID        string            `json:"id"`
+	Label     string            `json:"label"`
+	Icon      string            `json:"icon,omitempty"`
+	View      string            `json:"view"`
+	Target    string            `json:"target,omitempty"`
+	Scope     string            `json:"scope,omitempty"`
+	Relation  string            `json:"relation,omitempty"`
+	Direction string            `json:"direction,omitempty"`
+	Links     []SidebarPageLink `json:"links,omitempty"`
+}
+
+// SidebarPageLink is one entry of [SidebarPageTab.Links]: a row of Type is
+// linked to the page's anchor over Relation, in Direction from the anchor's
+// side ("outgoing" or "incoming").
+type SidebarPageLink struct {
+	Type      string `json:"type"`
+	Relation  string `json:"relation"`
+	Direction string `json:"direction"`
 }
 
 // SidebarCreate is one entry of a space's Create menu.
