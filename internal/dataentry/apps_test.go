@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 )
 
 func TestAppCSP_PathScopedNoEgress(t *testing.T) {
@@ -381,7 +383,7 @@ func TestScanApps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	apps, err := scanApps(root)
+	apps, err := scanApps(context.Background(), rootfs.New(root))
 	if err != nil {
 		t.Fatalf("scanApps: %v", err)
 	}
@@ -413,7 +415,7 @@ func TestScanApps(t *testing.T) {
 }
 
 func TestScanApps_NoDir(t *testing.T) {
-	apps, err := scanApps(t.TempDir())
+	apps, err := scanApps(context.Background(), rootfs.New(t.TempDir()))
 	if err != nil {
 		t.Fatalf("scanApps: %v", err)
 	}
@@ -437,26 +439,26 @@ func TestOpenAppEntry_Traversal(t *testing.T) {
 	}
 
 	t.Run("valid entry loads", func(t *testing.T) {
-		b, err := openAppEntry(root, "dash", "index.html")
+		b, err := openAppEntry(context.Background(), rootfs.New(root), "dash", "index.html")
 		if err != nil || string(b) != "<html></html>" {
 			t.Fatalf("got (%q, %v), want the file", b, err)
 		}
 	})
 	t.Run("nested entry loads", func(t *testing.T) {
-		b, err := openAppEntry(root, "dash", "sub/asset.js")
+		b, err := openAppEntry(context.Background(), rootfs.New(root), "dash", "sub/asset.js")
 		if err != nil || string(b) != "ok" {
 			t.Fatalf("got (%q, %v), want nested file", b, err)
 		}
 	})
 	for _, bad := range []string{"../secret.txt", "../appssecret.txt", "../../etc/passwd", "/etc/passwd", "sub/../../secret.txt", ""} {
 		t.Run("rejects "+bad, func(t *testing.T) {
-			if _, err := openAppEntry(root, "dash", bad); err == nil {
-				t.Errorf("openAppEntry(%q) = nil error, want rejection", bad)
+			if _, err := openAppEntry(context.Background(), rootfs.New(root), "dash", bad); err == nil {
+				t.Errorf("openAppEntry(context.Background(), rootfs.New(%q)) = nil error, want rejection", bad)
 			}
 		})
 	}
 	t.Run("missing entry errors", func(t *testing.T) {
-		if _, err := openAppEntry(root, "dash", "nope.js"); err == nil {
+		if _, err := openAppEntry(context.Background(), rootfs.New(root), "dash", "nope.js"); err == nil {
 			t.Error("expected error for missing entry")
 		}
 	})
@@ -474,6 +476,7 @@ func TestHandleV1App(t *testing.T) {
 		"style.css": `body{color:red}`,
 	})
 	app.paths = &project.Context{Root: root, CacheDir: filepath.Join(root, ".rela")}
+	app.assets = rootfs.New(root)
 
 	t.Run("serves index.html with path-scoped CSP header + nosniff", func(t *testing.T) {
 		w := doRequest(t, app, http.MethodGet, "/api/v1/_apps/demo/")

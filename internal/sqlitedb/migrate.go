@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 11
+const schemaVersion = 12
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -149,6 +149,13 @@ var migrations = []migration{
 			`DROP INDEX IF EXISTS entities_type_idx`,
 			entitiesTypeIDFaceIndexDDL,
 		),
+	},
+	{
+		// v11 → v12: the FTS5 search index (DEC-10Z731). schemaSQL has
+		// already created the table and its triggers; this fills it from the
+		// rows that predate them.
+		to:    12,
+		apply: sqlSteps(searchDDL, rebuildSearchSQL),
 	},
 }
 

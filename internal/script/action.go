@@ -5,12 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"math"
 	"mime"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -136,7 +134,7 @@ func (e *Engine) ExecuteActionRequest(
 ) (*ActionResponse, error) {
 	triggerEntity, params, correlationID := inv.TriggerEntity, inv.Params, inv.CorrelationID
 
-	scriptCode, err := loadActionScript(deps.ProjectRoot, scriptPath)
+	scriptCode, err := deps.ReadScript(ctx, actionsDir, scriptPath)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +196,7 @@ func (e *Engine) ExecuteActionRequest(
 			CapturedOutput: output.Bytes(),
 			Err:            err,
 			CorrelationID:  correlationID,
-			SourceFS:       os.DirFS(deps.ProjectRoot),
+			SourceFS:       deps.SourceFS(ctx),
 		})
 	}
 
@@ -226,88 +224,26 @@ func stringMapToAny(m map[string]string) map[string]any {
 	return out
 }
 
-// loadActionScript loads a script from the project's actions/ directory using
-// os.OpenRoot for traversal-resistant access.
-func loadActionScript(projectRoot, scriptPath string) (string, error) {
-	root, scriptCode, err := openLocalScript(projectRoot, actionsDir, scriptPath)
-	if err != nil {
-		return "", err
-	}
-	root.Close()
-	return scriptCode, nil
-}
-
 // CheckActionScriptExists verifies that an action script can be loaded.
 // Used at config-load time to fail fast on missing or invalid script paths.
-func CheckActionScriptExists(projectRoot, scriptPath string) error {
-	_, _, err := openLocalScript(projectRoot, actionsDir, scriptPath)
+func CheckActionScriptExists(ctx context.Context, files lua.ProjectFiles, scriptPath string) error {
+	_, err := ReadActionScript(ctx, files, scriptPath)
 	return err
 }
 
 // ReadActionScript returns an action script's source, for callers that want to
 // INSPECT it at config-load time rather than run it.
 //
-// Same load as [CheckActionScriptExists] — which already reads the whole body
-// and throws it away — differing only in handing the bytes back. Two functions
-// rather than one because the two callers want different things from a
-// failure: existence-checking is fatal at boot, whereas a lint that cannot read
-// a script should stay quiet rather than block startup over a file it was only
-// going to look at.
+// Same load as [CheckActionScriptExists], differing only in handing the bytes
+// back. Two functions rather than one because the two callers want different
+// things from a failure: existence-checking is fatal at boot, whereas a lint
+// that cannot read a script should stay quiet rather than block startup over a
+// file it was only going to look at.
 //
 // Nil: never returns a nil error with an empty body for a readable script; an
 // empty script file yields ("", nil).
-func ReadActionScript(projectRoot, scriptPath string) (string, error) {
-	return loadActionScript(projectRoot, scriptPath)
-}
-
-// openLocalScript loads a script file from {projectRoot}/{subdir}/{scriptPath}
-// using os.OpenRoot for traversal-resistant access. Returns the opened root
-// (which the caller must Close), the script content, and any error.
-func openLocalScript(projectRoot, subdir, scriptPath string) (io.Closer, string, error) {
-	if scriptPath == "" {
-		return nil, "", errors.New("script path is empty")
-	}
-	if !strings.HasSuffix(scriptPath, ".lua") {
-		return nil, "", fmt.Errorf("script must have .lua extension: %s", scriptPath)
-	}
-	// Reject absolute paths and ".." segments via filepath.IsLocal.
-	// (os.OpenRoot would also catch these, but earlier rejection gives better errors.)
-	if !isLocalPath(scriptPath) {
-		return nil, "", fmt.Errorf(
-			"script path must be a local path (no '..' or absolute paths): %s", scriptPath)
-	}
-
-	root, err := os.OpenRoot(projectRoot)
-	if err != nil {
-		return nil, "", errors.New("cannot access project directory")
-	}
-
-	scriptsRoot, err := root.OpenRoot(subdir)
-	if err != nil {
-		root.Close()
-		return nil, "", fmt.Errorf("cannot access %s directory", subdir)
-	}
-	defer scriptsRoot.Close()
-
-	scriptFile, err := scriptsRoot.Open(scriptPath)
-	if err != nil {
-		root.Close()
-		return nil, "", fmt.Errorf("script not found: %s (must be in %s/ directory)", scriptPath, subdir)
-	}
-	defer scriptFile.Close()
-
-	content, err := io.ReadAll(scriptFile)
-	if err != nil {
-		root.Close()
-		return nil, "", fmt.Errorf("cannot read script: %s", scriptPath)
-	}
-
-	return root, string(content), nil
-}
-
-// isLocalPath returns true if the path is local (no ".." segments, not absolute).
-func isLocalPath(p string) bool {
-	return filepath.IsLocal(p)
+func ReadActionScript(ctx context.Context, files lua.ProjectFiles, scriptPath string) (string, error) {
+	return lua.ReadScript(ctx, files, actionsDir, scriptPath)
 }
 
 // parseActionResponse converts a Lua return value (already converted to Go

@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/mail/mailtest"
@@ -826,7 +827,7 @@ func TestLoadLuaSender(t *testing.T) {
 
 	t.Run("not configured is not an error", func(t *testing.T) {
 		t.Parallel()
-		sender, err := mail.LoadLuaSender(t.TempDir())
+		sender, err := mail.LoadLuaSender(hostconfig.Dir(t.TempDir()))
 		require.NoError(t, err)
 		require.Nil(t, sender, "absent mail.yaml must yield a nil sender, not an error")
 	})
@@ -837,7 +838,7 @@ func TestLoadLuaSender(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(relaDir, "mail.yaml"),
 			[]byte("transport: pigeon\nfrom: f@e.com\n"), 0o600))
 
-		_, err := mail.LoadLuaSender(relaDir)
+		_, err := mail.LoadLuaSender(hostconfig.Dir(relaDir))
 		require.ErrorContains(t, err, "pigeon")
 	})
 
@@ -847,7 +848,7 @@ func TestLoadLuaSender(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(relaDir, "mail.yaml"),
 			[]byte("transport: memory\nfrom: f@e.com\n"), 0o600))
 
-		sender, err := mail.LoadLuaSender(relaDir)
+		sender, err := mail.LoadLuaSender(hostconfig.Dir(relaDir))
 		require.NoError(t, err)
 		require.NotNil(t, sender)
 	})

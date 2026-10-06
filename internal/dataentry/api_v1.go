@@ -1794,7 +1794,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Spaces:           s.Cfg.Spaces,
 		Pages:            s.Cfg.Pages,
 		Documents:        s.Cfg.Documents,
-		Apps:             appsToV1(a.scanAppsOrLog()),
+		Apps:             appsToV1(a.scanAppsOrLog(r.Context())),
 		Palette:          a.palette.Resolved(),
 	}
 

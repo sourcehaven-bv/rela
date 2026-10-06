@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 )
 
 // writeCustom drops a file inside the project's custom/ directory, creating
@@ -45,19 +47,19 @@ func TestOpenCustomEntry(t *testing.T) {
 	writeCustom(t, root, "secret.txt", "TOPSECRET")
 
 	t.Run("css loads", func(t *testing.T) {
-		b, err := openCustomEntry(root, customCSSFile)
+		b, err := openCustomEntry(context.Background(), rootfs.New(root), customCSSFile)
 		if err != nil || string(b) != ".a{color:red}" {
 			t.Fatalf("got (%q, %v), want the stylesheet", b, err)
 		}
 	})
 	t.Run("js loads", func(t *testing.T) {
-		b, err := openCustomEntry(root, customJSFile)
+		b, err := openCustomEntry(context.Background(), rootfs.New(root), customJSFile)
 		if err != nil || string(b) != "console.log(1)" {
 			t.Fatalf("got (%q, %v), want the script", b, err)
 		}
 	})
 	t.Run("missing file errors", func(t *testing.T) {
-		if _, err := openCustomEntry(t.TempDir(), customCSSFile); err == nil {
+		if _, err := openCustomEntry(context.Background(), rootfs.New(t.TempDir()), customCSSFile); err == nil {
 			t.Error("expected error for missing custom.css")
 		}
 	})
@@ -79,8 +81,8 @@ func TestOpenCustomEntry(t *testing.T) {
 	}
 	for _, name := range bad {
 		t.Run("rejects "+strconv.Quote(name), func(t *testing.T) {
-			if _, err := openCustomEntry(root, name); err == nil {
-				t.Errorf("openCustomEntry(%q) = nil error, want rejection", name)
+			if _, err := openCustomEntry(context.Background(), rootfs.New(root), name); err == nil {
+				t.Errorf("openCustomEntry(context.Background(), rootfs.New(%q)) = nil error, want rejection", name)
 			}
 		})
 	}
@@ -93,21 +95,21 @@ func TestOpenCustomEntry(t *testing.T) {
 	// must now be SERVED, because they live inside custom/.
 	t.Run("arbitrary name inside custom/ is served", func(t *testing.T) {
 		writeCustom(t, root, "secret.txt", "operator content")
-		b, err := openCustomEntry(root, "secret.txt")
+		b, err := openCustomEntry(context.Background(), rootfs.New(root), "secret.txt")
 		if err != nil || string(b) != "operator content" {
 			t.Fatalf("got (%q, %v), want the file to be served", b, err)
 		}
 	})
 	t.Run("nested asset is served", func(t *testing.T) {
 		writeCustom(t, root, "fonts/brand.woff2", "FONT")
-		b, err := openCustomEntry(root, "fonts/brand.woff2")
+		b, err := openCustomEntry(context.Background(), rootfs.New(root), "fonts/brand.woff2")
 		if err != nil || string(b) != "FONT" {
 			t.Fatalf("got (%q, %v), want the nested asset", b, err)
 		}
 	})
 	t.Run("unknown extension is served, not 404 (AC7)", func(t *testing.T) {
 		writeCustom(t, root, "data.avif", "AVIF")
-		if _, err := openCustomEntry(root, "data.avif"); err != nil {
+		if _, err := openCustomEntry(context.Background(), rootfs.New(root), "data.avif"); err != nil {
 			t.Errorf("unknown extension must still serve: %v", err)
 		}
 		if got := appEntryContentType("data.avif"); got != "application/octet-stream" {
@@ -121,7 +123,7 @@ func TestOpenCustomEntry_Directory(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, customCSSFile), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openCustomEntry(root, customCSSFile); err == nil {
+	if _, err := openCustomEntry(context.Background(), rootfs.New(root), customCSSFile); err == nil {
 		t.Error("a directory named custom.css must not be served")
 	}
 }
@@ -129,7 +131,7 @@ func TestOpenCustomEntry_Directory(t *testing.T) {
 func TestOpenCustomEntry_Oversize(t *testing.T) {
 	root := t.TempDir()
 	writeCustom(t, root, customCSSFile, strings.Repeat("a", maxCustomFileBytes+1))
-	if _, err := openCustomEntry(root, customCSSFile); err == nil {
+	if _, err := openCustomEntry(context.Background(), rootfs.New(root), customCSSFile); err == nil {
 		t.Error("an oversize custom.css must be rejected")
 	}
 }
@@ -139,7 +141,7 @@ func TestOpenCustomEntry_EmptyFileIsServed(t *testing.T) {
 	// TestSelectShell, still inject). "Present" is not "non-empty".
 	root := t.TempDir()
 	writeCustom(t, root, customCSSFile, "")
-	b, err := openCustomEntry(root, customCSSFile)
+	b, err := openCustomEntry(context.Background(), rootfs.New(root), customCSSFile)
 	if err != nil || len(b) != 0 {
 		t.Fatalf("got (%q, %v), want empty content and no error", b, err)
 	}
@@ -158,7 +160,7 @@ func TestOpenCustomEntry_SymlinkEscape(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(root, customCSSFile)); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, err := openCustomEntry(root, customCSSFile); err == nil {
+	if _, err := openCustomEntry(context.Background(), rootfs.New(root), customCSSFile); err == nil {
 		t.Error("a symlink escaping the project root must be rejected")
 	}
 }
@@ -192,7 +194,7 @@ func TestBuildShellVariants_NoInjectionWhenAbsent(t *testing.T) {
 	// The strongest form of "no injection": a stock deployment's HTML is
 	// byte-identical to the embedded shell.
 	v := buildShellVariants([]byte(testShell))
-	got := v.selectShell(t.TempDir())
+	got := v.selectShell(context.Background(), rootfs.New(t.TempDir()))
 	if string(got) != testShell {
 		t.Errorf("shell was modified with no customisation files present:\ngot  %q\nwant %q", got, testShell)
 	}
@@ -226,8 +228,8 @@ func TestSelectShell(t *testing.T) {
 			for _, f := range tt.files {
 				writeCustom(t, root, f, "")
 			}
-			custom := newCustomAssets(root, []byte(testShell), func() bool { return !tt.disableInject })
-			got := string(custom.shell())
+			custom := newCustomAssets(rootfs.New(root), []byte(testShell), func() bool { return !tt.disableInject })
+			got := string(custom.shell(context.Background()))
 
 			if gotCSS := strings.Contains(got, customCSSTag); gotCSS != tt.wantCSS {
 				t.Errorf("css tag present = %v, want %v", gotCSS, tt.wantCSS)
@@ -282,7 +284,7 @@ func TestHandleCustomAsset(t *testing.T) {
 	writeCustom(t, root, customCSSFile, ".a{color:red}")
 	writeCustom(t, root, "secret.txt", "TOPSECRET")
 	writeCustom(t, root, ".env", "SECRET=1")
-	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+	custom := newCustomAssets(rootfs.New(root), []byte(testShell), func() bool { return true })
 
 	tests := []struct {
 		name            string
@@ -390,12 +392,12 @@ func TestCustomAssetExists_MatchesOpen(t *testing.T) {
 	t.Run("present file", func(t *testing.T) {
 		root := t.TempDir()
 		writeCustom(t, root, customCSSFile, ".a{}")
-		if !customAssetExists(root, customCSSFile) {
+		if !customAssetExists(context.Background(), rootfs.New(root), customCSSFile) {
 			t.Error("exists=false for a readable file")
 		}
 	})
 	t.Run("absent file", func(t *testing.T) {
-		if customAssetExists(t.TempDir(), customCSSFile) {
+		if customAssetExists(context.Background(), rootfs.New(t.TempDir()), customCSSFile) {
 			t.Error("exists=true for a missing file")
 		}
 	})
@@ -404,21 +406,21 @@ func TestCustomAssetExists_MatchesOpen(t *testing.T) {
 		if err := os.Mkdir(filepath.Join(root, customCSSFile), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if customAssetExists(root, customCSSFile) {
+		if customAssetExists(context.Background(), rootfs.New(root), customCSSFile) {
 			t.Error("exists=true for a directory")
 		}
 	})
 	t.Run("arbitrary name inside custom/ exists (inverted)", func(t *testing.T) {
 		root := t.TempDir()
 		writeCustom(t, root, "secret.txt", "x")
-		if !customAssetExists(root, "secret.txt") {
+		if !customAssetExists(context.Background(), rootfs.New(root), "secret.txt") {
 			t.Error("exists=false for a real file inside custom/")
 		}
 	})
 	t.Run("dot-prefixed name does not exist", func(t *testing.T) {
 		root := t.TempDir()
 		writeCustom(t, root, ".env", "x")
-		if customAssetExists(root, ".env") {
+		if customAssetExists(context.Background(), rootfs.New(root), ".env") {
 			t.Error("exists=true for a dot-prefixed entry")
 		}
 	})
@@ -428,8 +430,8 @@ func TestCustomAssetExists_MatchesOpen(t *testing.T) {
 		// on this test claimed to pin exactly that and did not.
 		root := t.TempDir()
 		writeCustom(t, root, customCSSFile, strings.Repeat("a", maxCustomFileBytes+1))
-		gotExists := customAssetExists(root, customCSSFile)
-		_, openErr := openCustomEntry(root, customCSSFile)
+		gotExists := customAssetExists(context.Background(), rootfs.New(root), customCSSFile)
+		_, openErr := openCustomEntry(context.Background(), rootfs.New(root), customCSSFile)
 		if gotExists != (openErr == nil) {
 			t.Errorf("exists=%v but open-succeeds=%v — the shell would reference a 404",
 				gotExists, openErr == nil)
@@ -444,8 +446,8 @@ func TestCustomAssetExists_MatchesOpen(t *testing.T) {
 			t.Skipf("chmod unavailable: %v", err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(p, 0o644) })
-		gotExists := customAssetExists(root, customCSSFile)
-		_, openErr := openCustomEntry(root, customCSSFile)
+		gotExists := customAssetExists(context.Background(), rootfs.New(root), customCSSFile)
+		_, openErr := openCustomEntry(context.Background(), rootfs.New(root), customCSSFile)
 		if gotExists != (openErr == nil) {
 			t.Errorf("exists=%v but open-succeeds=%v — the shell would reference a 404",
 				gotExists, openErr == nil)
@@ -464,8 +466,8 @@ func TestCustomAssetExists_MatchesOpen(t *testing.T) {
 		if err := os.Symlink(target, filepath.Join(root, customCSSFile)); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
-		gotExists := customAssetExists(root, customCSSFile)
-		_, openErr := openCustomEntry(root, customCSSFile)
+		gotExists := customAssetExists(context.Background(), rootfs.New(root), customCSSFile)
+		_, openErr := openCustomEntry(context.Background(), rootfs.New(root), customCSSFile)
 		gotOpen := openErr == nil
 		if gotExists != gotOpen {
 			t.Errorf("exists=%v but open-succeeds=%v — the two checks must agree", gotExists, gotOpen)
@@ -485,17 +487,17 @@ func TestCustomAssets_EnabledIsReadPerRequest(t *testing.T) {
 	writeCustom(t, root, customCSSFile, ".a{}")
 
 	enabled := true
-	custom := newCustomAssets(root, []byte(testShell), func() bool { return enabled })
+	custom := newCustomAssets(rootfs.New(root), []byte(testShell), func() bool { return enabled })
 
-	if !strings.Contains(string(custom.shell()), customCSSTag) {
+	if !strings.Contains(string(custom.shell(context.Background())), customCSSTag) {
 		t.Fatal("expected the stylesheet reference while enabled")
 	}
 	enabled = false
-	if strings.Contains(string(custom.shell()), customCSSTag) {
+	if strings.Contains(string(custom.shell(context.Background())), customCSSTag) {
 		t.Error("shell still references custom.css after the flag flipped to disabled")
 	}
 	enabled = true
-	if !strings.Contains(string(custom.shell()), customCSSTag) {
+	if !strings.Contains(string(custom.shell(context.Background())), customCSSTag) {
 		t.Error("shell did not pick the reference back up after re-enabling")
 	}
 }
@@ -507,7 +509,7 @@ func TestCustomAssets_EnabledIsReadPerRequest(t *testing.T) {
 func TestCustomAssets_ServingIgnoresInjectionFlag(t *testing.T) {
 	root := t.TempDir()
 	writeCustom(t, root, customCSSFile, ".a{color:red}")
-	custom := newCustomAssets(root, []byte(testShell), func() bool { return false })
+	custom := newCustomAssets(rootfs.New(root), []byte(testShell), func() bool { return false })
 
 	rec := httptest.NewRecorder()
 	custom.serveAsset(rec, httptest.NewRequest(http.MethodGet, customURLPrefix+customCSSFile, http.NoBody))
@@ -515,7 +517,7 @@ func TestCustomAssets_ServingIgnoresInjectionFlag(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200: the file must stay fetchable when injection is disabled", rec.Code)
 	}
-	if strings.Contains(string(custom.shell()), customCSSTag) {
+	if strings.Contains(string(custom.shell(context.Background())), customCSSTag) {
 		t.Error("shell must not reference custom.css while injection is disabled")
 	}
 }
@@ -526,9 +528,9 @@ func TestCustomAssets_ServingIgnoresInjectionFlag(t *testing.T) {
 func TestCustomAssets_UnreadableShellDegrades(t *testing.T) {
 	root := t.TempDir()
 	writeCustom(t, root, customCSSFile, ".a{}")
-	custom := newCustomAssets(root, nil, func() bool { return true })
+	custom := newCustomAssets(rootfs.New(root), nil, func() bool { return true })
 
-	if custom.shell() != nil {
+	if custom.shell(context.Background()) != nil {
 		t.Error("expected nil shell so the caller delegates to the plain SPA handler")
 	}
 }
@@ -551,7 +553,7 @@ func TestOpenCustomEntry_SymlinkInsideProject(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
-	b, err := openCustomEntry(root, "leak.yaml")
+	b, err := openCustomEntry(context.Background(), rootfs.New(root), "leak.yaml")
 	if err == nil {
 		t.Fatalf("symlink to an in-project file outside custom/ was SERVED: %q", b)
 	}
@@ -571,7 +573,7 @@ func TestRootLevelCustomNotServed(t *testing.T) {
 	writeProjectRoot(t, root, customCSSFile, "ROOT-VERSION")
 	writeCustom(t, root, customCSSFile, "FOLDER-VERSION")
 
-	b, err := openCustomEntry(root, customCSSFile)
+	b, err := openCustomEntry(context.Background(), rootfs.New(root), customCSSFile)
 	if err != nil {
 		t.Fatalf("custom/custom.css should serve: %v", err)
 	}
@@ -590,8 +592,8 @@ func TestRootLevelCustomNotInjected(t *testing.T) {
 	writeProjectRoot(t, root, customCSSFile, "ROOT-VERSION")
 	writeProjectRoot(t, root, customJSFile, "console.log(1)")
 
-	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
-	got := string(custom.shell())
+	custom := newCustomAssets(rootfs.New(root), []byte(testShell), func() bool { return true })
+	got := string(custom.shell(context.Background()))
 
 	if strings.Contains(got, customCSSTag) || strings.Contains(got, customJSTag) {
 		t.Error("root-level files were injected; the old layout is still live")
@@ -619,7 +621,7 @@ func TestOpenCustomEntry_Directories(t *testing.T) {
 
 	for _, entry := range []string{"fonts", "fonts/"} {
 		t.Run("dir request "+strconv.Quote(entry), func(t *testing.T) {
-			if _, err := openCustomEntry(root, entry); err == nil {
+			if _, err := openCustomEntry(context.Background(), rootfs.New(root), entry); err == nil {
 				t.Errorf("directory request %q must 404", entry)
 			}
 		})
@@ -634,7 +636,7 @@ func TestOpenCustomEntry_Directories(t *testing.T) {
 	})
 	t.Run("no index resolution", func(t *testing.T) {
 		// The file itself is still addressable by its explicit path...
-		if _, err := openCustomEntry(root, "fonts/index.html"); err != nil {
+		if _, err := openCustomEntry(context.Background(), rootfs.New(root), "fonts/index.html"); err != nil {
 			t.Errorf("explicit index.html path should serve: %v", err)
 		}
 	})
@@ -709,7 +711,7 @@ func TestOpenCustomEntry_NeverEscapes(t *testing.T) {
 	}
 	for _, v := range vectors {
 		t.Run(strconv.Quote(v), func(t *testing.T) {
-			b, err := openCustomEntry(root, v)
+			b, err := openCustomEntry(context.Background(), rootfs.New(root), v)
 			if err == nil && strings.Contains(string(b), "LEAKED") {
 				t.Errorf("LEAK: %q served %q from outside custom/", v, b)
 			}
@@ -724,7 +726,7 @@ func TestOpenCustomEntry_NeverEscapes(t *testing.T) {
 func TestServeAsset_ConditionalRequests(t *testing.T) {
 	root := t.TempDir()
 	writeCustom(t, root, "logo.svg", "<svg/>")
-	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+	custom := newCustomAssets(rootfs.New(root), []byte(testShell), func() bool { return true })
 
 	// First request: full body plus a validator.
 	rec := httptest.NewRecorder()
@@ -760,7 +762,7 @@ func TestServeAsset_ConditionalRequests(t *testing.T) {
 func TestServeAsset_ETagChangesOnEdit(t *testing.T) {
 	root := t.TempDir()
 	writeCustom(t, root, "custom.css", ".a{color:red}")
-	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+	custom := newCustomAssets(rootfs.New(root), []byte(testShell), func() bool { return true })
 
 	get := func() (string, string) {
 		rec := httptest.NewRecorder()
@@ -794,7 +796,7 @@ func TestServeAsset_ETagChangesOnEdit(t *testing.T) {
 func TestServeAsset_RangeAndHEAD(t *testing.T) {
 	root := t.TempDir()
 	writeCustom(t, root, "fonts/brand.woff2", "0123456789")
-	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+	custom := newCustomAssets(rootfs.New(root), []byte(testShell), func() bool { return true })
 	const path = customURLPrefix + "fonts/brand.woff2"
 
 	t.Run("range yields 206 and the requested bytes", func(t *testing.T) {
@@ -836,7 +838,7 @@ func TestServeAsset_HeadersSurviveServeContent(t *testing.T) {
 	// .avif is NOT in appContentTypes, so it must come back as octet-stream
 	// rather than whatever content sniffing would guess.
 	writeCustom(t, root, "data.avif", "<html>not really avif</html>")
-	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+	custom := newCustomAssets(rootfs.New(root), []byte(testShell), func() bool { return true })
 
 	rec := httptest.NewRecorder()
 	custom.serveAsset(rec, httptest.NewRequest(http.MethodGet, customURLPrefix+"data.avif", http.NoBody))
@@ -870,11 +872,8 @@ func TestOpenCustomEntryFile_MatchesOpenCustomEntry(t *testing.T) {
 	}
 	for _, e := range entries {
 		t.Run(strconv.Quote(e), func(t *testing.T) {
-			_, byteErr := openCustomEntry(root, e)
-			fh, fileErr := openCustomEntryFile(root, e)
-			if fileErr == nil {
-				fh.Close()
-			}
+			_, byteErr := openCustomEntry(context.Background(), rootfs.New(root), e)
+			_, fileErr := openCustomEntryFile(context.Background(), rootfs.New(root), e)
 			if (byteErr == nil) != (fileErr == nil) {
 				t.Errorf("openCustomEntry err=%v but openCustomEntryFile err=%v — the two openers must agree",
 					byteErr, fileErr)
@@ -913,12 +912,11 @@ func TestOpenCustomEntryFile_NeverEscapes(t *testing.T) {
 	}
 	for _, v := range vectors {
 		t.Run(strconv.Quote(v), func(t *testing.T) {
-			fh, err := openCustomEntryFile(root, v)
+			fh, err := openCustomEntryFile(context.Background(), rootfs.New(root), v)
 			if err != nil {
 				return // refused outright
 			}
-			defer fh.Close()
-			b, _ := io.ReadAll(fh.File)
+			b, _ := io.ReadAll(fh.Content)
 			if strings.Contains(string(b), "LEAKED") {
 				t.Errorf("LEAK: %q streamed %q from outside custom/", v, b)
 			}
@@ -937,7 +935,7 @@ func TestOpenCustomEntryFile_NeverEscapes(t *testing.T) {
 func TestServeAsset_OversizeNotStreamed(t *testing.T) {
 	root := t.TempDir()
 	writeCustom(t, root, "huge.png", strings.Repeat("x", maxCustomFileBytes+1))
-	custom := newCustomAssets(root, []byte(testShell), func() bool { return true })
+	custom := newCustomAssets(rootfs.New(root), []byte(testShell), func() bool { return true })
 
 	rec := httptest.NewRecorder()
 	custom.serveAsset(rec, httptest.NewRequest(http.MethodGet, customURLPrefix+"huge.png", http.NoBody))

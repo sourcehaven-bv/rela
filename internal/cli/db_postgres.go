@@ -170,3 +170,14 @@ func loadDerivedSpecs() (specs []store.DerivedObjectSpec, schemaPath string, ok 
 	specs = append(specs, querySpecs...)
 	return specs, paths.SchemaPath, true
 }
+
+// errDBConfigSQLiteOnly is returned by the config commands on the postgres
+// build: carrying config in the database is a SQLite feature (FEAT-UP14BT);
+// the postgres counterpart is TKT-9VYDPY.
+var errDBConfigSQLiteOnly = errors.New(
+	"'db load' and 'db dump' carry project config in a SQLite database; " +
+		"use the SQLite build (rela-sqlite)")
+
+func runDBLoad(context.Context, string, bool, bool) error { return errDBConfigSQLiteOnly }
+
+func runDBDump(string, bool, bool) error { return errDBConfigSQLiteOnly }

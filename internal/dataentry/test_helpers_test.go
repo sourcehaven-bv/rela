@@ -17,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/rootfs"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -161,6 +162,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.analyze = analyzeService{reads: gatedReader, tracer: lateGatedTracer{app: app}, validator: app.validator}
 	app.templater = svc.Templater()
 	app.cfgLoader = svc.Config()
+	app.assets = rootfs.New(paths.Root)
 	app.kv = svc.State()
 	// logo + palette stores over the same kv; fresh fixtures have nothing on
 	// disk so the loads can't error (nil-returns match production's clean-boot

@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -120,7 +121,7 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !appExists(a.paths.Root, id) {
+	if !appExists(r.Context(), a.assets, id) {
 		writeV1Error(w, r, http.StatusNotFound, "app_not_found", "App not found", "")
 		return
 	}
@@ -169,7 +170,7 @@ func (a *App) handleV1App(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := openAppEntry(a.paths.Root, id, entry)
+	body, err := openAppEntry(r.Context(), a.assets, id, entry)
 	if err != nil {
 		writeV1Error(w, r, http.StatusNotFound, "app_entry_not_found", "Not found", "")
 		return
@@ -211,8 +212,8 @@ func appsToV1(apps []appInfo) map[string]v1.App {
 // scanAppsOrLog scans the project's apps/ directory, logging (not failing) on
 // error so a transient scan problem degrades to "no apps" rather than breaking
 // the whole config response.
-func (a *App) scanAppsOrLog() []appInfo {
-	apps, err := scanApps(a.paths.Root)
+func (a *App) scanAppsOrLog(ctx context.Context) []appInfo {
+	apps, err := scanApps(ctx, a.assets)
 	if err != nil {
 		slog.Warn("scanning apps directory failed", "error", err)
 		return nil

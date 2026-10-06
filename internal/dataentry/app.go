@@ -385,8 +385,11 @@ type App struct {
 	gantt     *ganttHandler
 	templater templating.Templater
 	cfgLoader config.Loader
-	kv        state.KV
-	acl       acl.ACL
+	// assets is cfgLoader seen as the custom/ and apps/ reader; NewApp
+	// requires the loader to support it.
+	assets projectAssets
+	kv     state.KV
+	acl    acl.ACL
 
 	// attachmentOwner is the manager's attachment surface: the one write
 	// that may change a file value, and the lock serializing writers to one
@@ -555,6 +558,7 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 			Searcher:      a.searcher,
 			Meta:          a.Meta(),
 			ProjectRoot:   a.paths.Root,
+			Files:         a.cfgLoader,
 			World:         defaultWorldScope(a.worlds),
 		},
 		EntityManager: a.entityManager,
@@ -968,6 +972,8 @@ func (a *App) SetJWTGate(cfg JWTGateConfig) error {
 func NewApp(
 	fs storage.FS,
 	paths *project.Context,
+	files config.Loader,
+	templater templating.Templater,
 	meta *metamodel.Metamodel,
 	st store.Store,
 	versions store.VersionService,
@@ -986,6 +992,16 @@ func NewApp(
 	// fs and paths can also be nil in tests that take a different code path
 	// (newAppFromParts wires them post-construction), so they're checked
 	// only when they participate in the construction below.
+	if files == nil {
+		return nil, errors.New("dataentry.NewApp: files is required (wire appbuild's Services.ProjectFiles())")
+	}
+	if templater == nil {
+		return nil, errors.New("dataentry.NewApp: templater is required (wire appbuild's Services.Templater())")
+	}
+	assets, ok := files.(projectAssets)
+	if !ok {
+		return nil, fmt.Errorf("dataentry.NewApp: files (%T) must support Stat and Dirs to serve custom/ and apps/", files)
+	}
 	for _, req := range []struct {
 		missing bool
 		msg     string
@@ -1018,8 +1034,11 @@ func NewApp(
 	if ownerErr != nil && metamodel.HasFileProperties(meta) {
 		return nil, fmt.Errorf("dataentry.NewApp: %w", ownerErr)
 	}
-	// Construct reconstructible services from the primitives.
-	cfgLoader := config.NewFSLoader(fs, paths.Root)
+	// Operator-authored files — data-entry.yaml, scripts, custom/, apps/ —
+	// come from the caller's loader rather than a filesystem loader built
+	// here: on the sqlite build they may live in the project's database
+	// (FEAT-UP14BT), layered behind the files on disk.
+	cfgLoader := files
 	// The state store comes from the caller (appbuild's Services.State()) rather
 	// than being rebuilt here: on the postgres build it is database-backed, so
 	// the render cache, user settings and the operator logo are shared by every
@@ -1032,7 +1051,6 @@ func NewApp(
 	if err != nil {
 		return nil, fmt.Errorf("dataentry: tracer: %w", err)
 	}
-	templater := templating.NewFSTemplater(fs, paths)
 	// The validator (val) is built AFTER app.affordances below — its reader is
 	// now GATED (TKT-3FL2S6, superseding DEC-O59WM4), which needs the redactor
 	// that closes over app.affordances.
@@ -1042,7 +1060,7 @@ func NewApp(
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", ConfigFile, err)
 	}
-	cfg, err := loadConfig(cfgData, meta, paths.Root)
+	cfg, err := loadConfig(cfgData, meta, paths.Root, cfgLoader)
 	if err != nil {
 		return nil, err
 	}
@@ -1078,6 +1096,7 @@ func NewApp(
 		tracer:          trc,
 		templater:       templater,
 		cfgLoader:       cfgLoader,
+		assets:          assets,
 		kv:              kv,
 		acl:             aclImpl,
 		broker:          newEventBroker(),
@@ -1375,7 +1394,7 @@ func NewApp(
 // is refused on reload too (TKT-IMBOK). It logs non-fatal config warnings.
 //
 // Nil: never returned with a nil error.
-func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config, error) {
+func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string, files lua.ProjectFiles) (*Config, error) {
 	// Check for deprecated syntax that needs migration
 	configPath := filepath.Join(root, ConfigFile)
 	detections := migration.DetectBytes(cfgData, migration.FileTypeDataEntry)
@@ -1409,16 +1428,16 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config
 		if action.Script == "" {
 			continue
 		}
-		if err := script.CheckActionScriptExists(root, action.Script); err != nil {
+		if err := script.CheckActionScriptExists(context.Background(), files, action.Script); err != nil {
 			return nil, fmt.Errorf("invalid %s: action %q: %w", ConfigFile, id, err)
 		}
 	}
 
-	if err := checkDocumentScripts(cfg.Documents, root); err != nil {
+	if err := checkDocumentScripts(cfg.Documents, files); err != nil {
 		return nil, err
 	}
 
-	if err := checkExportRenderScripts(&cfg, root); err != nil {
+	if err := checkExportRenderScripts(&cfg, files); err != nil {
 		return nil, err
 	}
 
@@ -1436,7 +1455,7 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config
 	// existence checks, so a project with a missing script fails on that
 	// rather than on a lint that could not read it. See mailgate.go for why
 	// this is a hint rather than a check.
-	warnUngatedMailActionsFromDisk(cfg.Actions, root)
+	warnUngatedMailActionsFromFiles(cfg.Actions, files)
 	return &cfg, nil
 }
 
@@ -1448,12 +1467,12 @@ func loadConfig(cfgData []byte, meta *metamodel.Metamodel, root string) (*Config
 // Both override kinds are checked. The per-type one (views.<type>.export_render)
 // went unverified until the per-list one was added, which was an oversight
 // rather than a decision.
-func checkExportRenderScripts(cfg *Config, root string) error {
+func checkExportRenderScripts(cfg *Config, files lua.ProjectFiles) error {
 	for id, list := range cfg.Lists {
 		if list.ExportRender == "" {
 			continue
 		}
-		if err := script.CheckDocumentScriptExists(root, list.ExportRender); err != nil {
+		if err := script.CheckDocumentScriptExists(context.Background(), files, list.ExportRender); err != nil {
 			return fmt.Errorf("invalid %s: list %q: export_render: %w", ConfigFile, id, err)
 		}
 	}
@@ -1461,7 +1480,7 @@ func checkExportRenderScripts(cfg *Config, root string) error {
 		if view.ExportRender == "" {
 			continue
 		}
-		if err := script.CheckDocumentScriptExists(root, view.ExportRender); err != nil {
+		if err := script.CheckDocumentScriptExists(context.Background(), files, view.ExportRender); err != nil {
 			return fmt.Errorf("invalid %s: view %q: export_render: %w", ConfigFile, id, err)
 		}
 	}
@@ -1603,6 +1622,7 @@ func wireValidation(app *App, meta *metamodel.Metamodel, world store.WorldScope)
 		Searcher:      app.searcher,
 		Meta:          meta,
 		ProjectRoot:   app.paths.Root,
+		Files:         app.cfgLoader,
 		World:         world,
 	}
 	val, err := newGatedValidator(gatedReader, scriptTraversalGate(app), meta, readDeps, app.store)
@@ -1637,16 +1657,16 @@ func newGatedValidator(
 	return val, nil
 }
 
-// checkDocumentScripts verifies document scripts exist on disk. Shell-command
+// checkDocumentScripts verifies document scripts can be read. Shell-command
 // documents are not checkable this way (the binary may be on PATH at render
 // time but unavailable now); Lua scripts live in scripts/ under the project
 // root so existence can be verified upfront.
-func checkDocumentScripts(docs map[string]DocumentConfig, root string) error {
+func checkDocumentScripts(docs map[string]DocumentConfig, files lua.ProjectFiles) error {
 	for id, doc := range docs {
 		if doc.Script == "" {
 			continue
 		}
-		if err := script.CheckDocumentScriptExists(root, doc.Script); err != nil {
+		if err := script.CheckDocumentScriptExists(context.Background(), files, doc.Script); err != nil {
 			return fmt.Errorf("invalid %s: document %q: %w", ConfigFile, id, err)
 		}
 	}

@@ -161,6 +161,11 @@ defineExpose({ close: () => hide() })
       Teleported so an ancestor with `overflow: hidden` — a scrolling table,
       a card — cannot clip the panel. `focusout` still fires on the root
       because focus moves are tracked by the focus tree, not the DOM tree.
+
+      mousedown is cancelled so pressing an item keeps focus where it is.
+      WebKit (Safari, the desktop app) does not focus a link or button on
+      press, so focus left the menu with no relatedTarget, onFocusout closed
+      it, and the item was gone before the click fired: no item worked.
     -->
     <Teleport to="body">
       <div
@@ -171,6 +176,7 @@ defineExpose({ close: () => hide() })
         role="menu"
         @keydown="onPanelKeydown"
         @focusout="onFocusout"
+        @mousedown.prevent
         @click="hide()"
       >
         <slot />

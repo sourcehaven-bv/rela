@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"maps"
 	"os"
 	"slices"
@@ -15,7 +16,12 @@ type layered struct {
 	secondary Loader
 }
 
-var _ Loader = (*layered)(nil)
+var (
+	_ Loader    = (*layered)(nil)
+	_ Stater    = (*layered)(nil)
+	_ Opener    = (*layered)(nil)
+	_ DirLister = (*layered)(nil)
+)
 
 // NewLayered returns a Loader that serves each name from primary when
 // present and from secondary otherwise.
@@ -106,6 +112,10 @@ func (l *layered) List(ctx context.Context, dir string) ([]string, error) {
 // test failure — an operator editing data-entry.yaml would simply see
 // nothing happen. That directly undercuts the disk-first premise, which
 // exists so an operator's edit is the one that takes effect.
+//
+// Watching only the primary is enough for a disk-over-database stack: the
+// stored copy changes only through an import, which needs the database's
+// exclusive lock and so reopens the project, rereading every file.
 func (l *layered) Subscribe(ctx context.Context, name string, onChange func()) (func(), error) {
 	for _, candidate := range []Loader{l.primary, l.secondary} {
 		if sub, ok := candidate.(Subscriber); ok {
@@ -113,4 +123,63 @@ func (l *layered) Subscribe(ctx context.Context, name string, onChange func()) (
 		}
 	}
 	return nil, errors.New("config: no layer supports change notification")
+}
+
+// errNoCapability is returned when a layer lacks an optional capability.
+var errNoCapability = errors.New("config: layer does not support this operation")
+
+// Stat reports the primary's file info, or the secondary's when the primary
+// does not have the file. The fall-through rule is [layered.Load]'s, so Stat
+// and Load always agree on which layer serves a name.
+func (l *layered) Stat(ctx context.Context, name string) (fs.FileInfo, error) {
+	primary, ok := l.primary.(Stater)
+	if !ok {
+		return nil, errNoCapability
+	}
+	info, err := primary.Stat(ctx, name)
+	if err == nil || !errors.Is(err, os.ErrNotExist) {
+		return info, err
+	}
+	secondary, ok := l.secondary.(Stater)
+	if !ok {
+		return nil, errNoCapability
+	}
+	return secondary.Stat(ctx, name)
+}
+
+// Dirs returns the union of both layers' subdirectories of dir.
+func (l *layered) Dirs(ctx context.Context, dir string) ([]string, error) {
+	seen := map[string]struct{}{}
+	for _, layer := range []Loader{l.primary, l.secondary} {
+		lister, ok := layer.(DirLister)
+		if !ok {
+			return nil, errNoCapability
+		}
+		names, err := lister.Dirs(ctx, dir)
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range names {
+			seen[n] = struct{}{}
+		}
+	}
+	return slices.Sorted(maps.Keys(seen)), nil
+}
+
+// Open opens the primary's file, or the secondary's when the primary does
+// not have it. The fall-through rule is [layered.Load]'s.
+func (l *layered) Open(ctx context.Context, name string) (fs.File, error) {
+	primary, ok := l.primary.(Opener)
+	if !ok {
+		return nil, errNoCapability
+	}
+	f, err := primary.Open(ctx, name)
+	if !errors.Is(err, fs.ErrNotExist) {
+		return f, err
+	}
+	secondary, ok := l.secondary.(Opener)
+	if !ok {
+		return nil, errNoCapability
+	}
+	return secondary.Open(ctx, name)
 }

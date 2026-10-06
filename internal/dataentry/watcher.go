@@ -353,7 +353,7 @@ func (a *App) reloadConfig() error {
 	if err != nil {
 		return reject(&configError{public: configReadFailedMessage, err: err})
 	}
-	cfg, err := loadConfig(cfgData, meta, a.paths.Root)
+	cfg, err := loadConfig(cfgData, meta, a.paths.Root, a.cfgLoader)
 	if err != nil {
 		return reject(&configError{public: publicConfigErrorMessage(err, a.paths.Root), err: err})
 	}
