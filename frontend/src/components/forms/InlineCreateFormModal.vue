@@ -196,12 +196,12 @@ function handleKeydown(e: KeyboardEvent) {
   font-size: var(--font-size-xl);
   line-height: 1;
   cursor: pointer;
-  color: var(--text-secondary);
+  color: var(--rl-color-text-muted);
   padding: 0 var(--space-xs);
 }
 
 .close-btn:hover {
-  color: var(--text-primary);
+  color: var(--rl-color-text);
 }
 
 .inline-create-body {
