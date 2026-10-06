@@ -70,8 +70,13 @@ func pinSearchPath(base, schema string) (string, error) {
 // the way pgstore.Open does in production but pinned to an isolated test schema.
 func openWriter(t *testing.T, schema string) store.Store {
 	t.Helper()
+	return openWriterDSN(t, dsnForSchema(t, schema))
+}
+
+// openWriterDSN is [openWriter] against an explicit DSN.
+func openWriterDSN(t *testing.T, dsn string) store.Store {
+	t.Helper()
 	ctx := context.Background()
-	dsn := dsnForSchema(t, schema)
 	// The caller owns the pool (TKT-OGTVJW), so the test builds one and closes
 	// it — the same shape the postgres recipe uses.
 	pool, poolCloser, err := pgstore.NewPool(ctx, dsn)
@@ -157,6 +162,29 @@ func TestCrossProcessPropagation(t *testing.T) {
 		ev.Op,
 		"expected Created (live NOTIFY) or Updated (initial catch-up); both satisfy the propagation contract")
 	require.Equal(t, "FEAT-1", ev.EntityID)
+}
+
+// TestCrossProcessPropagation_PoolTunedDSN pins that the listener's own
+// connection accepts a DSN carrying pgxpool-only parameters. pgx.Connect would
+// forward pool_max_conns to the server as a runtime parameter, the server
+// refuses the startup, and the store silently runs without a change feed
+// (BUG-JQO2PH).
+//
+// The catch-up stays on, unlike in TestCrossProcessPropagation: both the live
+// feed and the catch-up run in the listener, so either delivery proves it
+// connected, and the catch-up covers a write that lands before b listens.
+func TestCrossProcessPropagation_PoolTunedDSN(t *testing.T) {
+	schema := freshFeedSchema(t)
+	pgstore.SetCatchUpIntervalForTest(t, 200*time.Millisecond)
+	dsn := dsnForSchema(t, schema) + " pool_max_conns=4 pool_min_conns=0"
+	a := openWriterDSN(t, dsn)
+	b := openWriterDSN(t, dsn)
+
+	ch, cancel := b.Subscribe(16)
+	defer cancel()
+
+	require.NoError(t, a.CreateEntity(context.Background(), entity.New("FEAT-1", "feature")))
+	waitForEntityEvent(t, ch, "FEAT-1", 5*time.Second)
 }
 
 // TestCatchUpRecoversMissedEvents (AC2): an ORDINARY committed write whose live
