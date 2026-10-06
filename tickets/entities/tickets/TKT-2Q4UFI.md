@@ -5,7 +5,7 @@ title: Automation action that enqueues a Lua script as a background job
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: backlog
 ---
 
 ## Description
