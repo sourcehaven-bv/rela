@@ -1,5 +1,5 @@
 ---
 from: BUG-DFLTCHAIN
-type: affects
+relation: affects
 to: metamodel-types
 ---

@@ -1,5 +1,5 @@
 ---
 from: BUG-TIMEFLAKE
-type: fixes
+relation: fixes
 to: FEAT-9CD2MX
 ---

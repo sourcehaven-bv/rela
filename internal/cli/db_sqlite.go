@@ -137,12 +137,14 @@ func runDBLoad(ctx context.Context, from string, data, force bool) error {
 		return fmt.Errorf("build audit sink: %w", err)
 	}
 	if data {
-		sum, importErr := appbuild.ImportMarkdownData(ctx, fs, paths, from,
+		rep, importErr := appbuild.ImportMarkdownData(ctx, fs, paths, from,
 			appbuild.DataImportOptions{Force: force, Audit: sink})
+		printImportFindings(os.Stdout, rep)
 		if importErr != nil {
 			return importErr
 		}
-		fmt.Printf("Imported %s.\n", sum)
+		fmt.Printf("Imported %s.\n", importedCounts(rep))
+		fmt.Println("Run 'rela analyze': the import copies rows as they are and does not validate them.")
 	}
 	names, err := appbuild.StoreProjectConfig(ctx, paths, files,
 		appbuild.ConfigImportOptions{Source: from, Audit: sink})

@@ -2,6 +2,7 @@ package sqlitestore
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -115,4 +116,18 @@ func (p *pendingEvents) drain() []func(*Store) {
 	notes := p.notes
 	p.notes = nil
 	return notes
+}
+
+// TxConn returns the connection the transaction view s runs on, so a store
+// kept in the same database file (state, comments, the migration record) can
+// write inside that transaction. A write on any other connection would wait
+// on the transaction's lock until it timed out.
+//
+// ok is false when s is not a transaction view of this package.
+func TxConn(s store.Store) (conn *sql.Conn, ok bool) {
+	view, isView := s.(*Store)
+	if !isView || view.conn == nil {
+		return nil, false
+	}
+	return view.conn, true
 }

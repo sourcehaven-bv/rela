@@ -22,12 +22,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 )
 
+// DBTX is the database handle this store runs on: the *sql.DB owned by
+// sqlitedb.DB in production, or the connection of an open transaction when
+// the caller writes this store and the entity store as one unit.
+type DBTX interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // Store is a SQLite-backed [datamigration.StateStore].
 //
 // One row, pinned by the table's id CHECK: there is exactly one store per
 // database file, so the record has no key to vary on.
 type Store struct {
-	db *sql.DB
+	db DBTX
 }
 
 // New returns a Store over db.
@@ -36,7 +44,7 @@ type Store struct {
 //
 // Nil: rejected. A no-op store would report every migration un-run and replay
 // the chain on each start.
-func New(db *sql.DB) (*Store, error) {
+func New(db DBTX) (*Store, error) {
 	if db == nil {
 		return nil, errors.New("sqlitemigstate: a non-nil database handle is required")
 	}

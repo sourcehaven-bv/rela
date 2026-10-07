@@ -279,6 +279,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateRelationInverses(m)...)
 	validationErrors = append(validationErrors, validateRelationOrderable(m)...)
 	validationErrors = append(validationErrors, validateRelationScope(m)...)
+	validationErrors = append(validationErrors, validateRelationOwning(m)...)
 	validationErrors = append(validationErrors, validateTransforms(m)...)
 	validationErrors = append(validationErrors, validateCopies(m)...)
 	validationErrors = append(validationErrors, validateWorlds(m)...)
@@ -720,6 +721,45 @@ func validateRelationScope(m *Metamodel) []string {
 			errs = append(errs, fmt.Sprintf(
 				"relation %q: invalid scope value %q (allowed: identity, content)",
 				name, string(rel.Scope)))
+		}
+	}
+	return errs
+}
+
+// validateRelationOwning rejects `owning:` combinations that have no single
+// owner to resolve (TKT-QO14GB). A symmetric edge has no direction, so no side
+// is the owner. `max_incoming` above one would admit a second owner. A faced
+// type is refused on either end in this first version: an owner's cascade and
+// an owned entity's redirect would each have to choose a face, and neither
+// has a rule for that yet.
+func validateRelationOwning(m *Metamodel) []string {
+	var errs []string
+	for _, name := range sortedKeys(m.Relations) {
+		rel := m.Relations[name]
+		if !rel.Owning {
+			continue
+		}
+		if rel.Symmetric {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: owning cannot be combined with symmetric — a symmetric relation has no owning side",
+				name))
+		}
+		if rel.MaxIncoming != nil && *rel.MaxIncoming > 1 {
+			errs = append(errs, fmt.Sprintf(
+				"relation %q: owning allows one owner, but max_incoming is %d",
+				name, *rel.MaxIncoming))
+		}
+		seen := make(map[string]bool)
+		for _, typeName := range append(append([]string{}, rel.From...), rel.To...) {
+			if seen[typeName] {
+				continue
+			}
+			seen[typeName] = true
+			if def, ok := m.Entities[typeName]; ok && len(def.Faces) > 0 {
+				errs = append(errs, fmt.Sprintf(
+					"relation %q: owning is not supported on type %q, which declares faces",
+					name, typeName))
+			}
 		}
 	}
 	return errs

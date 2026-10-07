@@ -1,5 +1,5 @@
 ---
 from: TKT-WRLDGAPS
-type: affects
+relation: affects
 to: rest-api
 ---

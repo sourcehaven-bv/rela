@@ -10,6 +10,9 @@
  * The header's action buttons are hidden (`hideActions`): stacked inside a
  * 720px column they crowd the title. The same actions, from the same checks,
  * are the toolbar's "⋯" menu instead.
+ *
+ * An owned row is shown here as itself, with a link to its owner: following
+ * the owner would navigate away from the list the panel belongs to.
  */
 import RlDetailPanel from 'rela-components/components/task/RlDetailPanel.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
@@ -62,6 +65,7 @@ const actions = ref<EntityAction[]>([])
       :entity-type="entityType"
       :entity-id="entityId"
       hide-actions
+      :follow-owner="false"
       @actions="actions = $event"
     />
   </RlDetailPanel>

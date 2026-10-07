@@ -1,5 +1,5 @@
 ---
 from: BUG-LL3C07
-type: affects
+relation: affects
 to: store-backends
 ---

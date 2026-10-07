@@ -1935,6 +1935,27 @@ scale 1 loads in well under a minute.
 
 ---
 
+### rela db import-fs
+
+Copy a filesystem project into a new SQLite project directory. SQLite build
+only (`rela-sqlite`); other builds refuse it.
+
+```bash
+rela-sqlite db import-fs SOURCE TARGET
+```
+
+SOURCE is read and never written. TARGET must not exist; its parent must. The
+command builds the project beside TARGET and renames it into place only after
+every row is written, then reads it back to verify. On any problem it writes
+nothing and lists every problem it found. Files it does not copy are listed
+with a reason. See the SQLite backend guide for what is and is not copied.
+
+Like `rela dev seed`, this is a raw store write: no automations, validations or
+ACL run. Writes are attributed to the operator with tool `fs-import`, and the
+new project's audit log gets one `fs-import` record.
+
+---
+
 ### rela validate
 
 Validate project configuration files.

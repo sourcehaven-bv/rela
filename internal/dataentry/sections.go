@@ -375,7 +375,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			ctx = primeVerdicts(ctx, h.affordances.resolver(), entities)
 
 			switch sec.Display {
-			case "properties", "list":
+			case "properties", "list", dataentryconfig.DisplayRelated:
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
 					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render, result.World)

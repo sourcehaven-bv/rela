@@ -156,6 +156,9 @@ export interface RelationType {
   // 'content' when each edge belongs to one face of its source; absent for
   // an identity-scoped relation, whose edges belong to the entity.
   scope?: 'content'
+  // The target of an edge is part of its source (TKT-QO14GB): it is shown on
+  // the source's page and deleted with it.
+  owning?: boolean
 }
 
 export interface RelationOrderable {

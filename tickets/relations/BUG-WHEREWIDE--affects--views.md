@@ -1,5 +1,5 @@
 ---
 from: BUG-WHEREWIDE
-type: affects
+relation: affects
 to: views
 ---
