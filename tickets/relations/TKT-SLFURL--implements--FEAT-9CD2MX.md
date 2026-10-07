@@ -1,5 +1,5 @@
 ---
 from: TKT-SLFURL
-type: implements
+relation: implements
 to: FEAT-9CD2MX
 ---

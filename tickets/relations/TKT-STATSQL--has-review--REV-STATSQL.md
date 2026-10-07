@@ -1,5 +1,5 @@
 ---
 from: TKT-STATSQL
-type: has-review
+relation: has-review
 to: REV-STATSQL
 ---

@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/app"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/fsimport"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -22,11 +23,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/sqlitestore"
 )
-
-// fsImportTool is the attribution tool stamped on every imported row and
-// the op of the run's audit record, so imported data is distinguishable
-// from edits made afterwards.
-const fsImportTool = "fs-import"
 
 // markdownDataDirs are the directories a markdown project keeps its data
 // in. [ExportMarkdownData] refuses a target that already has any of them.
@@ -55,8 +51,12 @@ type DataImportOptions struct {
 	Audit audit.Audit
 }
 
-// ImportMarkdownData copies every entity, relation and attachment of the
-// markdown project in fromDir into the project's SQLite database.
+// ImportMarkdownData copies the data of the markdown project in fromDir
+// into the project's SQLite database: every entity, relation and
+// attachment, the comment threads, the applied-migration record and the
+// runtime state. The copy itself is [fsimport.Copy], the engine behind
+// `rela db import-fs`, so both imports refuse, normalize, report and verify
+// alike; this function adds the in-place parts.
 //
 // This is a raw-store write, sanctioned on the same terms as perf seeding:
 // the trust boundary is the operator shell, every row is attributed to the
@@ -65,69 +65,78 @@ type DataImportOptions struct {
 // automation, validation or ACL runs, so the data arrives exactly as the
 // files hold it.
 //
-// The copy is ONE transaction. SQLite rolls it back on any error, so a
-// failed import leaves the database as it was and can simply be re-run.
-// The database admits one process, so nothing else waits on that lock.
+// The copy is ONE transaction, and the state, comment and migration stores
+// write on that transaction's connection. SQLite rolls it back on any error,
+// so a failed import leaves the database as it was and can simply be
+// re-run. The database admits one process, so nothing else waits on that
+// lock.
 //
 // The schema is read from fromDir, falling back to the copy the database
 // carries. Ids, properties, bodies, faces and relation tails are kept.
 // Timestamps are not: the store stamps its own write time.
+//
+// The report is returned on failure too, as far as the run got, so the
+// caller can list every problem.
 func ImportMarkdownData(
 	ctx context.Context, fsys storage.FS, paths *project.Context, fromDir string, opts DataImportOptions,
-) (DataSummary, error) {
+) (*fsimport.Report, error) {
 	if opts.Audit == nil {
-		return DataSummary{}, errors.New("appbuild: ImportMarkdownData requires an audit sink")
+		return nil, errors.New("appbuild: ImportMarkdownData requires an audit sink")
 	}
 	db, err := openDatabase(ctx, Config{Paths: paths})
 	if err != nil {
-		return DataSummary{}, err
+		return nil, err
 	}
 	defer func() { _ = db.Close() }()
 
 	meta, err := dataMetamodel(ctx, fsys, paths, fromDir, db)
 	if err != nil {
-		return DataSummary{}, err
+		return nil, err
 	}
-	src, err := (&app.FSFactory{FS: fsys, Paths: &project.Context{Root: fromDir}}).OpenStore(meta)
-	if err != nil {
-		return DataSummary{}, fmt.Errorf("open markdown data in %s: %w", fromDir, err)
-	}
-	defer func() { _ = src.Close() }()
 	dst, err := sqlitestore.New(db)
 	if err != nil {
-		return DataSummary{}, err
+		return nil, err
 	}
 	defer func() { _ = dst.Close() }()
 
 	existing, err := dst.CountEntities(ctx, store.EntityQuery{Faces: store.AllFaces()})
 	if err != nil {
-		return DataSummary{}, fmt.Errorf("count entities: %w", err)
+		return nil, fmt.Errorf("count entities: %w", err)
 	}
 	if existing > 0 && !opts.Force {
-		return DataSummary{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"the database already holds %d entities; importing needs an empty database (or --force)", existing)
 	}
 
 	p := principal.From(ctx)
-	user := p.User
-	if user == "" {
-		user = principal.ReservedPrefix + fsImportTool
-	}
-	ctx = store.WithAttribution(ctx, store.Attribution{User: user, Tool: fsImportTool})
-
 	start := time.Now()
-	var sum DataSummary
+	var rep *fsimport.Report
 	err = dst.Tx(ctx, func(view store.Store) error {
+		conn, ok := sqlitestore.TxConn(view)
+		if !ok {
+			return errors.New("appbuild: the import transaction has no connection")
+		}
+		svc, svcErr := openDBServicesOn(conn)
+		if svcErr != nil {
+			return svcErr
+		}
 		var copyErr error
-		sum, copyErr = copyData(ctx, src, view)
+		rep, copyErr = fsimport.Copy(ctx, fsimport.CopyOptions{
+			Source: fromDir,
+			Meta:   meta,
+			Target: fsimport.Target{
+				Store: view, State: svc.kv, Comments: svc.comments, Migrations: svc.migState,
+			},
+			Exclude:   databaseFilesBelow(fromDir, paths),
+			Principal: p,
+		})
 		return copyErr
 	})
 	summary := fmt.Sprintf("markdown import from %s: %s in %s",
-		fromDir, sum, time.Since(start).Round(time.Millisecond))
+		fromDir, importCounts(rep), time.Since(start).Round(time.Millisecond))
 	if err != nil {
 		// The transaction rolled back, so nothing was written.
 		summary = fmt.Sprintf("markdown import from %s FAILED, nothing written: %s", fromDir, err)
-		sum = DataSummary{}
 	}
 	opts.Audit.Record(audit.Record{
 		Time:      time.Now().UTC(),
@@ -136,9 +145,30 @@ func ImportMarkdownData(
 		Summary:   summary,
 	})
 	if err != nil {
-		return DataSummary{}, fmt.Errorf("import: %w", err)
+		return rep, fmt.Errorf("import: %w", err)
 	}
-	return sum, nil
+	return rep, nil
+}
+
+// importCounts summarizes what a report says was copied.
+func importCounts(rep *fsimport.Report) string {
+	if rep == nil {
+		return "nothing"
+	}
+	return fmt.Sprintf("%d entities, %d relations, %d attachments, %d comments, %d state keys",
+		rep.Entities, rep.Relations, rep.Attachments, rep.Comments, rep.StateKeys)
+}
+
+// databaseFilesBelow returns the database's path relative to dir when the
+// database lies inside dir: an import of a project's own markdown files
+// writes there while it reads, and the check that the source did not
+// change must not count that.
+func databaseFilesBelow(dir string, paths *project.Context) []string {
+	rel, err := filepath.Rel(dir, DatabasePath(paths))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil
+	}
+	return []string{filepath.ToSlash(rel)}
 }
 
 // ExportMarkdownData writes every entity, relation and attachment in the

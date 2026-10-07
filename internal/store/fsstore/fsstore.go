@@ -65,6 +65,13 @@ type Config struct {
 	RelationsKey   string
 	AttachmentsKey string
 	CacheKey       string // for fsstore-index.json
+	// IgnoreIndexCache scans the entity and relation directories on open
+	// instead of trusting fsstore-index.json. The cache is trusted when the
+	// directory mtimes match, which a copied or hand-edited tree can satisfy
+	// while its files differ; a caller that must see exactly what is on disk
+	// (`rela db import-fs`) sets this. The cache is then neither read nor
+	// written; CacheKey still locates the pending-deletes list.
+	IgnoreIndexCache bool
 	// Schemas maps every entity type the metamodel declares to its
 	// storage-relevant configuration (plural directory name + property
 	// order). fsstore relies on this map being complete: directories
@@ -213,8 +220,9 @@ type FSStore struct {
 	codec mdCodec
 
 	// Keys (root-relative forward-slash) for the non-layout subtrees.
-	attachKey string
-	cacheKey  string
+	attachKey        string
+	cacheKey         string
+	ignoreIndexCache bool
 
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it
@@ -314,6 +322,7 @@ func New(cfg Config) (*FSStore, error) {
 		codec:              mdCodec{rooted: cfg.Rooted, layout: layout},
 		attachKey:          cfg.AttachmentsKey,
 		cacheKey:           cfg.CacheKey,
+		ignoreIndexCache:   cfg.IgnoreIndexCache,
 		observers:          cfg.Observers,
 		entities:           make(map[string]entityMeta),
 		relations:          make(map[string]relationMeta),

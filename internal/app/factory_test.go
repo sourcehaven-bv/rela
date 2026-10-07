@@ -256,3 +256,28 @@ func TestFSFactoryWatcherSuppressesSelfEcho(t *testing.T) {
 	assert.Equal(t, []string{"POL-1", "POL-2"}, rec.putIDs(),
 		"observers must see each entity exactly once")
 }
+
+func TestFSFactoryReadOnlyRefusesWrites(t *testing.T) {
+	root := t.TempDir()
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths := &project.Context{Root: root, CacheDir: filepath.Join(root, ".rela")}
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{"policy": {Plural: "policies"}},
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "entities", "policies"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "entities", "policies", "POL-1.md"),
+		[]byte("---\nid: POL-1\ntype: policy\n---\n"), 0o644))
+
+	factory := &app.FSFactory{FS: fs, Paths: paths, ReadOnly: true}
+	s, err := factory.OpenStore(meta)
+	require.NoError(t, err)
+
+	_, err = s.GetEntity(context.Background(), entity.Ref{ID: "POL-1"})
+	require.NoError(t, err)
+	err = s.CreateEntity(context.Background(), &entity.Entity{ID: "POL-2", Type: "policy"})
+	require.ErrorIs(t, err, storage.ErrReadOnly)
+	require.NoError(t, s.Close())
+
+	_, err = os.Stat(filepath.Join(root, ".rela"))
+	assert.ErrorIs(t, err, os.ErrNotExist, "a read-only open must not create the cache directory")
+}
