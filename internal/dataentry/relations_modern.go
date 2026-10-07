@@ -337,85 +337,132 @@ func (e *gateFaultError) Unwrap() error { return e.err }
 func (h *writeHandler) applyRelationsModern(
 	ctx context.Context, addr entity.Ref, desired map[string]v1.RelationsUpdate,
 ) ([]Warning, error) {
-	entityID := addr.ID
-	if len(desired) == 0 {
-		return nil, nil
-	}
-	meta := h.schema().Meta
-	em := h.manager
 	var warnings []Warning
-
 	for bodyKey, upd := range desired {
-		canonical, incoming, ok := resolveDirection(meta, bodyKey)
-		if !ok {
-			// validateRelationsModern already screened this; defensive.
-			return warnings, &structuralError{
-				Code:   "unknown_relation_type",
-				Path:   "/relations/" + v1.JSONPointerEscape(bodyKey),
-				Detail: fmt.Sprintf("relation type %q is not defined in the metamodel", bodyKey),
-			}
-		}
-		relDef := meta.Relations[canonical]
-		direction := directionLabel(incoming)
-		dataPath := "/relations/" + v1.JSONPointerEscape(bodyKey)
-
-		ops, err := h.planEdges(ctx, entityID, addr.Face, canonical, incoming, upd, dataPath)
+		ws, err := h.applyRelationWrapper(ctx, addr, bodyKey, upd)
+		warnings = append(warnings, ws...)
 		if err != nil {
 			return warnings, err
 		}
-		if err := h.requireReadablePeers(ctx, canonical, ops); err != nil {
-			return warnings, err
+	}
+	return warnings, nil
+}
+
+// applyRelationWrapper is applyRelationsModern for one relation wrapper.
+func (h *writeHandler) applyRelationWrapper(
+	ctx context.Context, addr entity.Ref, bodyKey string, upd v1.RelationsUpdate,
+) ([]Warning, error) {
+	meta := h.schema().Meta
+	canonical, incoming, ok := resolveDirection(meta, bodyKey)
+	if !ok {
+		// validateRelationsModern already screened this; defensive.
+		return nil, &structuralError{
+			Code:   "unknown_relation_type",
+			Path:   "/relations/" + v1.JSONPointerEscape(bodyKey),
+			Detail: fmt.Sprintf("relation type %q is not defined in the metamodel", bodyKey),
 		}
-		if err := checkFullLinkageSize(&relDef, canonical, incoming, upd, dataPath); err != nil {
-			return warnings, err
+	}
+	w := &wrapperWrite{
+		h: h, addr: addr, bodyKey: bodyKey, relType: canonical, incoming: incoming, upd: upd,
+		relDef: meta.Relations[canonical], path: "/relations/" + v1.JSONPointerEscape(bodyKey),
+	}
+	ops, planErr := w.plan(ctx)
+	if planErr != nil {
+		return nil, planErr
+	}
+	var warnings []Warning
+	if w.relDef.MaxOutgoing != nil || w.relDef.MaxIncoming != nil {
+		// A bounded relation writes its creates and removes as one atomic
+		// replace, so re-pointing it (with `data`, or `add` and `remove`, on
+		// either side) never trips the bound on the edge it is leaving
+		// (TKT-65LVAK). Meta updates of kept edges stay on applyEdgeOps.
+		var boundErr error
+		ops, warnings, boundErr = w.applyBounded(ctx, ops)
+		if boundErr != nil {
+			return warnings, boundErr
 		}
-		if relDef.MaxOutgoing != nil || relDef.MaxIncoming != nil {
-			// A bounded relation writes its creates and removes as one
-			// atomic replace, so re-pointing it (with `data`, or `add` and
-			// `remove`, on either side) never trips the bound on the edge
-			// it is leaving (TKT-65LVAK). Meta updates of kept edges stay
-			// on the loop below.
-			var rest []edgeOp
-			var rw []Warning
-			rest, rw, err = h.writeBoundedOps(ctx, entityID, bodyKey, canonical, &relDef, incoming, upd, ops)
-			warnings = append(warnings, rw...)
+	}
+	return w.applyEdgeOps(ctx, ops, warnings)
+}
+
+// wrapperWrite is one relation wrapper of a PATCH, resolved, and the
+// handler that writes it.
+type wrapperWrite struct {
+	h                *writeHandler
+	addr             entity.Ref
+	bodyKey, relType string // the name as sent; the canonical name
+	incoming         bool
+	upd              v1.RelationsUpdate
+	relDef           metamodel.RelationDef
+	path             string // the wrapper's JSON pointer
+}
+
+// planWrapper plans w and runs the checks that need no write.
+func (w *wrapperWrite) plan(ctx context.Context) ([]edgeOp, error) {
+	ops, err := w.h.planEdges(ctx, w.addr.ID, w.addr.Face, w.relType, w.incoming, w.upd, w.path)
+	if err != nil {
+		return nil, err
+	}
+	if err := w.h.requireReadablePeers(ctx, w.relType, ops); err != nil {
+		return nil, err
+	}
+	if err := checkFullLinkageSize(&w.relDef, w.relType, w.incoming, w.upd, w.path); err != nil {
+		return nil, err
+	}
+	return ops, nil
+}
+
+// applyBounded runs writeBoundedOps, planning once more when a create finds
+// its edge already there: a concurrent request made it after the plan was
+// read, so the fresh plan holds it as an existing edge to update.
+func (w *wrapperWrite) applyBounded(ctx context.Context, ops []edgeOp) ([]edgeOp, []Warning, error) {
+	rest, warnings, err := w.writeBoundedOps(ctx, ops)
+	if !errors.Is(err, entitymanager.ErrRelationAlreadyExists) {
+		return rest, warnings, err
+	}
+	ops, err = w.plan(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return w.writeBoundedOps(ctx, ops)
+}
+
+// applyEdgeOps writes ops edge by edge, appending its warnings to warnings.
+func (w *wrapperWrite) applyEdgeOps(
+	ctx context.Context, ops []edgeOp, warnings []Warning,
+) ([]Warning, error) {
+	direction := directionLabel(w.incoming)
+	for _, op := range ops {
+		k := edgeKeyOf(w.addr.ID, w.relType, op.slot, w.incoming)
+		if op.remove {
+			err := w.h.manager.DeleteRelation(ctx, k)
+			if errors.Is(err, store.ErrNotFound) {
+				continue // a concurrent request deleted it first
+			}
 			if err != nil {
-				return warnings, err
+				return warnings, &relationError{
+					RelType: w.relType, Target: op.slot.peer, Op: "delete",
+					Reason: "delete_failed", Err: err,
+				}
 			}
-			ops = rest
+			continue
 		}
-		for _, op := range ops {
-			k := edgeKeyOf(entityID, canonical, op.slot, incoming)
-			if op.remove {
-				err := em.DeleteRelation(ctx, k)
-				if errors.Is(err, store.ErrNotFound) {
-					continue // a concurrent request deleted it first
-				}
-				if err != nil {
-					return warnings, &relationError{
-						RelType: canonical, Target: op.slot.peer, Op: "delete",
-						Reason: "delete_failed", Err: err,
-					}
-				}
-				continue
-			}
-			finalProps, finalContent, contentSet := mergeEdgeMeta(op.existing, op.ref)
-			warnings = append(warnings, requiredMetaWarnings(canonical, &relDef, op.ref, finalProps,
-				dataPath+upsertKey(upd), direction)...)
-			exists := op.existing != nil
-			if exists && isEdgeNoOp(op.existing, finalProps, finalContent, contentSet, op.ref) {
-				continue // value-based no-op suppression
-			}
-			// An existing edge is addressed by the tail it carries, never one
-			// recomputed from the request: the store treats the tail as
-			// identity, so a recomputed one would modify a different edge.
-			if err := h.upsertEdge(ctx, edgeWrite{
-				from: k.From, to: k.To, relType: canonical, bodyKey: bodyKey, ref: op.ref,
-				exists: exists, existingTail: op.slot.tail, newTail: op.slot.tail,
-				props: finalProps, content: finalContent,
-			}); err != nil {
-				return warnings, err
-			}
+		finalProps, finalContent, contentSet := mergeEdgeMeta(op.existing, op.ref)
+		warnings = append(warnings, requiredMetaWarnings(w.relType, &w.relDef, op.ref, finalProps,
+			w.path+upsertKey(w.upd), direction)...)
+		exists := op.existing != nil
+		if exists && isEdgeNoOp(op.existing, finalProps, finalContent, contentSet, op.ref) {
+			continue // value-based no-op suppression
+		}
+		// An existing edge is addressed by the tail it carries, never one
+		// recomputed from the request: the store treats the tail as
+		// identity, so a recomputed one would modify a different edge.
+		if err := w.h.upsertEdge(ctx, edgeWrite{
+			from: k.From, to: k.To, relType: w.relType, bodyKey: w.bodyKey, ref: op.ref,
+			exists: exists, existingTail: op.slot.tail, newTail: op.slot.tail,
+			props: finalProps, content: finalContent,
+		}); err != nil {
+			return warnings, err
 		}
 	}
 	return warnings, nil
@@ -547,7 +594,7 @@ func (h *writeHandler) writeCreateRelation(
 	// because the EntityManager already ran the ACL above.
 	data := &store.RelationData{Properties: finalProps, Content: finalContent}
 	sErr := h.store.Tx(ctx, func(view store.Store) error {
-		if err := entitymanager.CheckRelationCapacity(ctx, view, h.schema().Meta, k, nil); err != nil {
+		if err := entitymanager.CheckRelationCapacity(ctx, view, h.schema().Meta, k, nil, nil); err != nil {
 			return err
 		}
 		_, err := view.CreateRelation(ctx, k, data)
@@ -692,22 +739,13 @@ func isMissingPeerCondition(err error) bool {
 		strings.Contains(msg, "source entity not found")
 }
 
-// isSoftCondition returns true when the error from EntityManager
-// indicates a DEC-HWZHA "soft" condition that should be treated as a
-// warning rather than blocking the write. The current workspace
-// implementation surfaces these as plain fmt.Errorf strings; we match
-// on substrings, which is fragile but acceptable for the current
-// implementation surface.
-//
-// A missing peer is NOT a soft condition here (see isMissingPeerCondition);
-// only the type-allowlist mismatch remains soft, because both endpoints
-// exist and a hand-editor could produce that state.
+// isSoftCondition reports whether the EntityManager error is a DEC-HWZHA
+// "soft" condition, written anyway with a warning: the type allowlist refused
+// the relation while both endpoints exist, which a hand-editor could produce.
+// A missing peer is NOT a soft condition (see isMissingPeerCondition).
 func isSoftCondition(err error) bool {
-	if err == nil {
-		return false
-	}
-	// metamodel.ValidateRelation rejects type-allowlist failures.
-	return strings.Contains(err.Error(), "invalid relation:")
+	_, ok := errors.AsType[*entitymanager.InvalidRelationError](err)
+	return ok
 }
 
 // danglingPeerError builds the hard 422 returned when a relation write
@@ -902,126 +940,159 @@ func cardinalityError(err error, bodyKey string) *structuralError {
 	}
 }
 
-// writeBoundedOps writes the creates and removes of ops, the plan of one
-// wrapper on a bounded relation, with one [entitymanager.Manager.ReplaceRelations]
-// call. It returns the ops left for the edge-by-edge loop: the upserts of
-// edges that exist already.
+// boundedPlan is the creates and removes of one wrapper on a bounded
+// relation, for one ReplaceRelations call.
+type boundedPlan struct {
+	creates []entitymanager.RelationCreate
+	refs    map[entity.RelationKey]v1.ResourceIdentifier // the ref each create came from
+	removes []entity.RelationKey
+}
+
+// writeBoundedOps writes the creates and removes of ops, the plan of w on a
+// bounded relation, with one [entitymanager.Manager.ReplaceRelations] call.
+// It returns the ops left for applyEdgeOps: the upserts of edges that exist
+// already.
 //
 // Only the plan's removals are passed on: the plan holds the edges the caller
 // may see, so an edge to an unreadable peer stays.
-func (h *writeHandler) writeBoundedOps(
-	ctx context.Context, entityID, bodyKey, relType string, relDef *metamodel.RelationDef, incoming bool,
-	upd v1.RelationsUpdate, ops []edgeOp,
+func (w *wrapperWrite) writeBoundedOps(
+	ctx context.Context, ops []edgeOp,
 ) ([]edgeOp, []Warning, error) {
 	var (
 		rest     []edgeOp
 		warnings []Warning
-		creates  []entitymanager.RelationCreate
-		createOp []edgeOp
-		props    []map[string]any
-		removes  []entity.RelationKey
 	)
-	path := "/relations/" + v1.JSONPointerEscape(bodyKey)
+	p := boundedPlan{refs: map[entity.RelationKey]v1.ResourceIdentifier{}}
 	for _, op := range ops {
-		k := edgeKeyOf(entityID, relType, op.slot, incoming)
+		k := edgeKeyOf(w.addr.ID, w.relType, op.slot, w.incoming)
 		switch {
 		case op.remove:
-			removes = append(removes, k)
+			p.removes = append(p.removes, k)
 		case op.existing == nil:
 			finalProps, _, _ := mergeEdgeMeta(nil, op.ref)
-			warnings = append(warnings, requiredMetaWarnings(relType, relDef, op.ref, finalProps,
-				path+upsertKey(upd), directionLabel(incoming))...)
-			creates = append(creates, entitymanager.RelationCreate{
+			warnings = append(warnings, requiredMetaWarnings(w.relType, &w.relDef, op.ref, finalProps,
+				w.path+upsertKey(w.upd), directionLabel(w.incoming))...)
+			p.creates = append(p.creates, entitymanager.RelationCreate{
 				Key: k, Opts: entity.RelationOptions{Properties: finalProps, Content: op.ref.Content},
 			})
-			createOp = append(createOp, op)
-			props = append(props, finalProps)
+			p.refs[k] = op.ref
 		default:
 			rest = append(rest, op)
 		}
 	}
-	if len(creates) == 0 && len(removes) == 0 {
+	if len(p.creates) == 0 && len(p.removes) == 0 {
 		return rest, warnings, nil
 	}
-	_, err := h.manager.ReplaceRelations(ctx, creates, removes)
-	if err == nil {
-		return rest, warnings, nil
+	_, err := w.h.manager.ReplaceRelations(ctx, p.creates, p.removes)
+	if isSoftCondition(err) {
+		err = w.writeBoundedFallback(ctx, p)
 	}
-	// The create the error names, for the error's target; the first when
-	// none matches.
-	target := ""
-	for i, op := range createOp {
-		if i == 0 || strings.Contains(err.Error(), op.slot.peer) {
-			target = op.ref.ID
-		}
-	}
-	if isMissingPeerCondition(err) {
-		return nil, warnings, danglingPeerError(relType, target)
-	}
-	if ce := cardinalityError(err, bodyKey); ce != nil {
-		return nil, warnings, ce
-	}
-	if !isSoftCondition(err) {
-		return nil, warnings, &relationError{RelType: relType, Target: target, Op: "replace",
-			Reason: "replace_failed", Err: err}
-	}
-	if err := h.writeBoundedFallback(ctx, bodyKey, relType, creates, createOp, props, removes); err != nil {
-		return nil, warnings, err
+	if err != nil {
+		return nil, warnings, boundedError(w, p, err)
 	}
 	return rest, warnings, nil
 }
 
-// writeBoundedFallback is the soft-condition fallback of writeBoundedOps: a
+// boundedError maps a ReplaceRelations error the way writeCreateRelation maps
+// a create's. The edge an error names picks the ref it reports.
+func boundedError(w *wrapperWrite, p boundedPlan, err error) error {
+	target := ""
+	if len(p.creates) > 0 {
+		target = p.refs[p.creates[0].Key].ID
+	}
+	if ce, ok := errors.AsType[*entitymanager.RelationCreateError](err); ok {
+		if ref, named := p.refs[ce.Key]; named {
+			target = ref.ID
+		}
+	}
+	if isMissingPeerCondition(err) {
+		return danglingPeerError(w.relType, target)
+	}
+	if ce := cardinalityError(err, w.bodyKey); ce != nil {
+		return ce
+	}
+	if _, isStructural := asStructuralError(err); isStructural {
+		return err
+	}
+	return &relationError{RelType: w.relType, Target: target, Op: "replace", Reason: "replace_failed", Err: err}
+}
+
+// writeBoundedFallback is the soft-condition fallback of writeBoundedOps. A
 // create the type allowlist refuses (DEC-HWZHA) is written anyway, with the
 // warning validateRelationsModern already reported, as writeCreateRelation
 // does for a single edge.
 //
-// The creates go straight to the store, in one Tx that checks each against
-// the bounds, not counting the edges in removes. That is safe because
-// ReplaceRelations authorized every create and remove before it returned the
-// soft condition. The removes then go through the manager, edge by edge.
+// ReplaceRelations returned the soft condition only after it authorized every
+// create and every remove, so writing the refused creates around the manager
+// skips no ACL decision. They go straight to the store first, in one Tx that
+// checks each against the bounds, counting the other creates and not the
+// removed edges. Like writeCreateRelation's fallback, they get no template,
+// managed order or write audit. The other creates and the removes then go
+// through ReplaceRelations as usual.
 //
-// Unlike ReplaceRelations this is not atomic: a remove that fails after the
-// creates leaves an extra edge, which `analyze` reports.
-func (h *writeHandler) writeBoundedFallback(
-	ctx context.Context, bodyKey, relType string, creates []entitymanager.RelationCreate, createOp []edgeOp,
-	props []map[string]any, removes []entity.RelationKey,
-) error {
-	leaving := make(map[entity.RelationKey]bool, len(removes))
-	for _, k := range removes {
+// So the fallback is not atomic: when the second step fails, the refused
+// creates stay, as an extra edge that `analyze` reports, never a missing one.
+func (w *wrapperWrite) writeBoundedFallback(ctx context.Context, p boundedPlan) error {
+	soft, rest, err := w.splitDisallowed(ctx, p.creates)
+	if err != nil {
+		return err
+	}
+	leaving := make(map[entity.RelationKey]bool, len(p.removes))
+	for _, k := range p.removes {
 		leaving[k] = true
 	}
-	meta := h.schema().Meta
-	sErr := h.store.Tx(ctx, func(view store.Store) error {
-		for i, c := range creates {
-			if err := entitymanager.CheckRelationCapacity(ctx, view, meta, c.Key, leaving); err != nil {
-				return err
+	pending := make([]entity.RelationKey, len(rest))
+	for i, c := range rest {
+		pending[i] = c.Key
+	}
+	meta := w.h.schema().Meta
+	sErr := w.h.store.Tx(ctx, func(view store.Store) error {
+		for _, c := range soft {
+			if capErr := entitymanager.CheckRelationCapacity(ctx, view, meta, c.Key, leaving, pending); capErr != nil {
+				return &entitymanager.RelationCreateError{Key: c.Key, Err: capErr}
 			}
 			content := ""
-			if createOp[i].ref.Content != nil {
-				content = *createOp[i].ref.Content
+			if c.Opts.Content != nil {
+				content = *c.Opts.Content
 			}
-			if _, err := view.CreateRelation(ctx, c.Key,
-				&store.RelationData{Properties: props[i], Content: content}); err != nil {
-				return err
+			if _, cErr := view.CreateRelation(ctx, c.Key,
+				&store.RelationData{Properties: c.Opts.Properties, Content: content}); cErr != nil {
+				return cErr
 			}
 		}
 		return nil
 	})
-	if ce := cardinalityError(sErr, bodyKey); ce != nil {
-		return ce
-	}
 	if errors.Is(sErr, store.ErrConflict) {
 		return fmt.Errorf("%w: %w", entitymanager.ErrRelationAlreadyExists, sErr)
 	}
 	if sErr != nil {
-		return &relationError{RelType: relType, Op: "create", Reason: "create_failed", Err: sErr}
+		return sErr
 	}
-	for _, k := range removes {
-		err := h.manager.DeleteRelation(ctx, k)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return &relationError{RelType: relType, Target: k.To, Op: "delete", Reason: "delete_failed", Err: err}
+	_, err = w.h.manager.ReplaceRelations(ctx, rest, p.removes)
+	return err
+}
+
+// splitDisallowed splits creates into those the metamodel's type allowlist
+// refuses and the rest. The endpoints' types are read through the read gate:
+// planning already required every peer to be readable.
+func (w *wrapperWrite) splitDisallowed(
+	ctx context.Context, creates []entitymanager.RelationCreate,
+) (soft, rest []entitymanager.RelationCreate, err error) {
+	ids := make([]string, 0, 2*len(creates))
+	for _, c := range creates {
+		ids = append(ids, c.Key.From, c.Key.To)
+	}
+	types, err := w.h.visible.readableTypes(ctx, ids)
+	if err != nil {
+		return nil, nil, &gateFaultError{err: err}
+	}
+	meta := w.h.schema().Meta
+	for _, c := range creates {
+		if meta.ValidateRelation(c.Key.Type, types[c.Key.From], types[c.Key.To]) != nil {
+			soft = append(soft, c)
+		} else {
+			rest = append(rest, c)
 		}
 	}
-	return nil
+	return soft, rest, nil
 }

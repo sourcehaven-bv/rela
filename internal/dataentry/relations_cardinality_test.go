@@ -1,12 +1,16 @@
 package dataentry
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -146,7 +150,7 @@ func TestCreateRelation_OverMaxOutgoingIs422(t *testing.T) {
 // newCardinalityApp is parsed, not built literally, so the inverse names
 // resolve as body keys. `owns` gives a category one owning ticket
 // (max_incoming: 1); `pair` gives a ticket two categories.
-func newCardinalityApp(t *testing.T) *App {
+func newCardinalityApp(t *testing.T, opts ...appbuildtest.Option) *App {
 	t.Helper()
 	meta, err := metamodel.Parse([]byte(`version: "1.0"
 entities:
@@ -160,7 +164,16 @@ entities:
     id_prefix: "C-"
     properties:
       title: {type: string, required: true}
+  tag:
+    label: Tag
+    id_prefix: "G-"
+    properties:
+      title: {type: string, required: true}
 relations:
+  single:
+    from: [ticket]
+    to: [category]
+    max_outgoing: 1
   owns:
     from: [ticket]
     to: [category]
@@ -180,8 +193,9 @@ relations:
 		Views: map[string]dataentryconfig.ViewConfig{}, Kanbans: map[string]dataentryconfig.Kanban{},
 		Navigation: []dataentryconfig.NavigationEntry{},
 	}
-	app := newAppFromParts(cfg, meta, newFixture())
+	app := newAppFromParts(cfg, meta, newFixture(), opts...)
 	app.broker = newEventBroker()
+	seedEntity(app, &entity.Entity{ID: "G-1", Type: "tag", Properties: map[string]any{"title": "G-1"}})
 	for _, id := range []string{"TKT-1", "TKT-2"} {
 		seedEntity(app, &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"title": id}})
 	}
@@ -260,5 +274,54 @@ func TestPatchRelations_FullLinkageReplacesTwoOfTwo(t *testing.T) {
 	}
 	if got := edgesOf(t, app, store.RelationQuery{From: "TKT-1", Type: "pair"}); !slices.Equal(got, []string{"TKT-1>C-3", "TKT-1>C-4"}) {
 		t.Errorf("edges = %v, want [TKT-1>C-3 TKT-1>C-4]", got)
+	}
+}
+
+// denyRelationDeleteACL allows everything but deleting a relation.
+type denyRelationDeleteACL struct{ acl.NopACL }
+
+func (denyRelationDeleteACL) AuthorizeWrite(_ context.Context, req acl.WriteRequest) acl.Decision {
+	if _, rel := req.Subject.(acl.RelationSubject); rel && req.Op == acl.OpDelete {
+		return acl.Decision{Allow: false, RuleKind: "test", Reason: "no relation deletes"}
+	}
+	return acl.Decision{Allow: true}
+}
+
+// A re-point to a disallowed type whose remove is denied writes nothing: the
+// soft-condition fallback runs only after every remove is authorized.
+func TestPatchRelations_DisallowedTypeWithDeniedRemoveWritesNothing(t *testing.T) {
+	app := newCardinalityApp(t, appbuildtest.WithACL(denyRelationDeleteACL{}))
+	seedRelation(app, entity.NewRelation("TKT-1", "single", "C-1"))
+	rec := patchEntity(t, app, "ticket", "tickets", "TKT-1",
+		`{"relations":{"single":{"data":[{"type":"tag","id":"G-1"}]}}}`)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("PATCH = %d %s, want 403", rec.Code, rec.Body)
+	}
+	if got := edgesOf(t, app, store.RelationQuery{From: "TKT-1", Type: "single"}); !slices.Equal(got, []string{"TKT-1>C-1"}) {
+		t.Errorf("edges = %v, want [TKT-1>C-1] unchanged", got)
+	}
+}
+
+// The fallback writes only the disallowed create around the manager; the
+// allowed one in the same wrapper still goes through it.
+func TestPatchRelations_DisallowedTypeFallbackKeepsAllowedCreateOnManager(t *testing.T) {
+	aud := &audit.Memory{}
+	app := newCardinalityApp(t, appbuildtest.WithAudit(aud))
+	rec := patchEntity(t, app, "ticket", "tickets", "TKT-1",
+		`{"relations":{"pair":{"data":[{"type":"tag","id":"G-1"},{"type":"category","id":"C-1"}]}}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH = %d %s", rec.Code, rec.Body)
+	}
+	if got := edgesOf(t, app, store.RelationQuery{From: "TKT-1", Type: "pair"}); !slices.Equal(got, []string{"TKT-1>C-1", "TKT-1>G-1"}) {
+		t.Errorf("edges = %v, want [TKT-1>C-1 TKT-1>G-1]", got)
+	}
+	var created []string
+	for _, r := range aud.Records() {
+		if r.Op == audit.OpCreateRelation && r.Subject != nil {
+			created = append(created, r.Subject.ToID)
+		}
+	}
+	if !slices.Equal(created, []string{"C-1"}) {
+		t.Errorf("audited creates = %v, want [C-1]: only the allowed edge goes through the manager", created)
 	}
 }
