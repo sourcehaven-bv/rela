@@ -165,7 +165,7 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	// identical owning edge passes the check and is the idempotent no-op
 	// below.
 	owning := metamodel.IsOwning(h.deps.Meta, r.Type)
-	write := func(st store.Store) error {
+	write := func(ctx context.Context, st store.Store) error {
 		if err := CheckOwningEdge(ctx, h.deps.Meta, st, r.Identity()); err != nil {
 			return err
 		}
@@ -177,9 +177,9 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	}
 	var err error
 	if owning {
-		err = h.deps.Store.Tx(ctx, write)
+		err = h.deps.Store.Tx(ctx, func(st store.Store) error { return write(store.ContextInTx(ctx), st) })
 	} else {
-		err = write(h.deps.Store)
+		err = write(ctx, h.deps.Store)
 	}
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {

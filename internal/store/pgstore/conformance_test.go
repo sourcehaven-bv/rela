@@ -42,7 +42,8 @@ func TestConformance(t *testing.T) {
 		// Declaring it here is the point of that move: the suite now states
 		// what a caller may rely on, and BOTH backends answer to it rather
 		// than each describing whatever it happens to do.
-		Versioning: true,
+		Versioning:  true,
+		VersionTags: true,
 		SweepNow: func(t *testing.T, s store.Store) {
 			t.Helper()
 			require.NoError(t, s.(*pgstore.Store).SweepNow(t.Context(),

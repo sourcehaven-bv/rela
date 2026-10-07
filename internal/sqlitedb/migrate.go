@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 14
+const schemaVersion = 15
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -175,6 +175,12 @@ var migrations = []migration{
 		// ladder; see contentHashDDL.
 		to:    14,
 		apply: addColumns(contentHashColumns),
+	},
+	{
+		// v14 → v15: version tags (TKT-VO6VG9). Pure CREATE IF NOT EXISTS,
+		// a no-op where schemaSQL already made the table.
+		to:    15,
+		apply: sqlSteps(versionTagsDDL),
 	},
 }
 

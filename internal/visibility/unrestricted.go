@@ -34,6 +34,9 @@ type UnrestrictedReader struct {
 
 	// history: see [UnrestrictedReader.WithHistory].
 	history store.HistoryReader
+
+	// tags: see [UnrestrictedReader.WithVersionTags].
+	tags VersionTagReader
 }
 
 // Unrestricted wraps a raw store as an explicitly ungated script read

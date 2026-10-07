@@ -97,8 +97,9 @@ func inBatches[T any](ctx context.Context, dst store.Store, items []T,
 	for start := 0; start < len(items); start += batchSize {
 		batch := items[start:min(start+batchSize, len(items))]
 		err := dst.Tx(ctx, func(tx store.Store) error {
+			txCtx := store.ContextInTx(ctx)
 			for _, item := range batch {
-				write(ctx, tx, item)
+				write(txCtx, tx, item)
 			}
 			return nil
 		})

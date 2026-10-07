@@ -350,6 +350,16 @@ type WriteDeps struct {
 	// refusing to run automations because of that would be a worse failure
 	// than an unrecorded read.
 	ElevationRecorder ElevationRecorder
+
+	// VersionTags backs rela.tag_version and rela.untag_version
+	// (TKT-VO6VG9). It is the gated write path: it authorizes the tag
+	// for the ctx principal and audits it.
+	//
+	// Nil: accepted, and the two bindings are then absent. Set it only where
+	// a principal deliberately runs a script, such as a data-entry action or
+	// a scheduled script. The synchronous automation cascade, document
+	// renders, export_render and the data-entry webhook leave it nil.
+	VersionTags VersionTagWriter
 }
 
 // ElevationRecorder receives a notification when a rela.bypass_acl closure

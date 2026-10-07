@@ -21,7 +21,7 @@ import (
 )
 
 // Services wires app to the services in svc: CalDAV aliases, comments,
-// the worlds' relation scopes, next-action user state, and the
+// the worlds' relation scopes, version tags, next-action user state, and the
 // predicate compilers behind next-action sources, list and kanban
 // `condition:`, and `query_scopes:`.
 //
@@ -39,6 +39,9 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	if err := dataentry.SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
 		return fmt.Errorf("wire world-scoped relations: %w", err)
 	}
+
+	// Version tags for action scripts (TKT-VO6VG9).
+	dataentry.SetVersionTags(app, appbuild.ScriptVersionTags(svc), appbuild.VersionTagReader(svc))
 
 	if err := app.SetUserState(svc.UserState()); err != nil {
 		return fmt.Errorf("wire next-action state: %w", err)

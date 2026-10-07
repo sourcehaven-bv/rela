@@ -86,7 +86,8 @@ func SoftDeleteEntity(ctx context.Context, m *Manager, id string) (*entity.Delet
 	// would go without authorization.
 	var marked familyChange
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
-		return softDeleteInTx(ctx, m, tx, id, authorized, &marked)
+		txCtx := store.ContextInTx(ctx)
+		return softDeleteInTx(txCtx, m, tx, id, authorized, &marked)
 	})
 	if txErr != nil {
 		// fs and mem cannot roll back, so a failure on a later mark leaves
@@ -271,7 +272,8 @@ func RestoreEntity(ctx context.Context, m *Manager, id string) (*entity.DeleteRe
 	}
 	var restored familyChange
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
-		return restoreInTx(ctx, m, tx, id, &restored)
+		txCtx := store.ContextInTx(ctx)
+		return restoreInTx(txCtx, m, tx, id, &restored)
 	})
 	if txErr != nil {
 		// As in SoftDeleteEntity: fs and mem keep an unmark that a later

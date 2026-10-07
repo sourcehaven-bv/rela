@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 // WriteVersion implements store.VersionWriter: it persists one synchronously
@@ -24,7 +25,7 @@ func (v *VersionStore) WriteVersion(ctx context.Context, in store.VersionInput) 
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is a no-op
-	if err := insertVersion(ctx, tx, in, contentHashOf(in)); err != nil {
+	if _, err := insertVersion(ctx, tx, in, contentHashOf(in)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -40,15 +41,16 @@ func ensureSchemaVersion(ctx context.Context, q DBTX, hash string, projection []
 	return err
 }
 
-// insertVersion writes one entity_versions row within q (a pool conn or tx).
-// The caller supplies the content hash; vseq/created_at default in SQL.
-func insertVersion(ctx context.Context, q DBTX, in store.VersionInput, contentHash string) error {
+// insertVersion writes one entity_versions row within q (a pool conn or tx)
+// and returns its vseq. The caller supplies the content hash; vseq/created_at
+// default in SQL.
+func insertVersion(ctx context.Context, q DBTX, in store.VersionInput, contentHash string) (int64, error) {
 	props, err := marshalProps(in.Properties)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err = ensureSchemaVersion(ctx, q, in.SchemaHash, in.Projection); err != nil {
-		return fmt.Errorf("pgstore: ensure schema_version: %w", err)
+		return 0, fmt.Errorf("pgstore: ensure schema_version: %w", err)
 	}
 	var prev *string
 	if in.Op == store.VersionOpRename && in.PrevID != "" {
@@ -61,13 +63,15 @@ func insertVersion(ctx context.Context, q DBTX, in store.VersionInput, contentHa
 		     schema_hash, principal_user, principal_tool, triggered_by,
 		     origin_kind, origin_source, origin_source_face, origin_source_type,
 		     origin_definition)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
-	_, err = q.Exec(ctx, ins,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		RETURNING vseq`
+	var vseq int64
+	err = q.QueryRow(ctx, ins,
 		in.EntityID, string(in.Face), string(in.Op), prev, in.Type, in.Content,
 		props, contentHash,
 		in.SchemaHash, in.PrincipalUser, in.PrincipalTool, in.TriggeredBy,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition)
-	return err
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition).Scan(&vseq)
+	return vseq, err
 }
 
 // originCols is a store.Origin as nullable SQL values. Grouped in a struct
@@ -243,39 +247,85 @@ func lineageWhere() string {
 }
 
 // ListVersions implements store.HistoryReader: the fenced lineage walk of
-// one face. Ref{ID: id} is the implicit face of a faceless type.
+// one face. Ref{ID: id} is the implicit face of a faceless type. Each row
+// carries the current lifecycle's version tags.
 func (v *VersionStore) ListVersions(ctx context.Context, ref entity.Ref) ([]store.VersionMeta, error) {
-	id, p := ref.ID, ref.Face
-	sel := lineageCTE + `
-		SELECT DISTINCT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
+	rows, err := listLineage(ctx, v.db, ref)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	tags, err := readTags(ctx, v.db, storeutil.LineageVseqs(rows))
+	if err != nil {
+		return nil, err
+	}
+	storeutil.ApplyTags(rows, tags)
+	return storeutil.Metas(rows), nil
+}
+
+// listLineage reads the fenced lineage of one face through q, oldest first,
+// with ordinals assigned. Each row also carries its vseq, the id it was
+// captured under and its segment's upper fence, which the tag lifecycle rule
+// needs.
+func listLineage(ctx context.Context, q DBTX, ref entity.Ref) ([]storeutil.LineageRow, error) {
+	// seg dedups the rename diamond by row identity. A row matched by two
+	// segments gets the smaller fence; DISTINCT over (vseq, hi) would return
+	// it twice with different fences and leave the choice to sort order.
+	sel := lineageCTE + `,
+		seg AS (
+		    SELECT ev.vseq, min(lin.hi) AS hi
+		    FROM entity_versions ev` + lineageWhere() + `
+		    GROUP BY ev.vseq
+		)
+		SELECT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
 		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.face,
 		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
 		       ev.origin_source_type, ev.origin_definition,
-		       ev.created_at
-		FROM entity_versions ev` + lineageWhere() + `
+		       ev.created_at, ev.entity_id, seg.hi
+		FROM seg JOIN entity_versions ev ON ev.vseq = seg.vseq
 		ORDER BY ev.vseq ASC`
-	rows, err := v.db.Query(ctx, sel, id, string(p))
+	rows, err := q.Query(ctx, sel, ref.ID, string(ref.Face))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var metas []store.VersionMeta
+	var out []storeutil.LineageRow
 	for rows.Next() {
-		m, err := scanVersionMeta(rows)
+		r, err := scanLineageRow(rows)
 		if err != nil {
 			return nil, err
 		}
-		metas = append(metas, m)
+		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Assign 1-based ordinals in lineage order (metas already ordered by vseq).
-	for i := range metas {
-		metas[i].Version = i + 1
+	return storeutil.FinishLineage(out), nil
+}
+
+// readTags returns the tag rows on any of vseqs.
+func readTags(ctx context.Context, q DBTX, vseqs []int64) ([]storeutil.TagRow, error) {
+	if len(vseqs) == 0 {
+		return nil, nil
 	}
-	return metas, nil
+	rows, err := q.Query(ctx,
+		`SELECT vseq, name FROM version_tags WHERE vseq = ANY($1) ORDER BY vseq, name`, vseqs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []storeutil.TagRow
+	for rows.Next() {
+		var t storeutil.TagRow
+		if err := rows.Scan(&t.Vseq, &t.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // GetVersion implements store.HistoryReader. version is a 1-based ordinal over
@@ -338,26 +388,26 @@ func (v *VersionStore) GetVersion(
 	return &snap, nil
 }
 
-// scanVersionMeta scans a version-metadata row. The leading column is vseq,
-// which is not surfaced (the read-time Version ordinal replaces it); it is
-// scanned into a throwaway.
-func scanVersionMeta(row scanner) (store.VersionMeta, error) {
+// scanLineageRow scans one row of listLineage: the version metadata, then the
+// row's entity id and its segment's upper fence (NULL for the head).
+func scanLineageRow(row scanner) (storeutil.LineageRow, error) {
 	var (
-		m       store.VersionMeta
-		vseq    int64
+		r       storeutil.LineageRow
 		op      string
 		prev    *string
 		face    string
 		oc      originCols
 		created time.Time
+		hi      *int64
 	)
-	scanArgs := make([]any, 0, 11+originColumnCount)
-	scanArgs = append(scanArgs, &vseq, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
+	m := &r.Meta
+	scanArgs := make([]any, 0, 13+originColumnCount)
+	scanArgs = append(scanArgs, &r.Vseq, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
 		&m.PrincipalUser, &m.PrincipalTool, &m.TriggeredBy, &face)
 	scanArgs = append(scanArgs, oc.scanTargets()...)
-	scanArgs = append(scanArgs, &created)
+	scanArgs = append(scanArgs, &created, &r.EntityID, &hi)
 	if err := row.Scan(scanArgs...); err != nil {
-		return store.VersionMeta{}, err
+		return storeutil.LineageRow{}, err
 	}
 	m.Op = store.VersionOp(op)
 	m.Face = entity.Face(face)
@@ -366,5 +416,8 @@ func scanVersionMeta(row scanner) (store.VersionMeta, error) {
 		m.PrevID = *prev
 	}
 	m.CreatedAt = created
-	return m, nil
+	if hi != nil {
+		r.Hi = *hi
+	}
+	return r, nil
 }

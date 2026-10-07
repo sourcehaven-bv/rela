@@ -76,6 +76,9 @@ type writeServices struct {
 	// MigState is the per-store migration record. Distinct from State: that
 	// is node-local cache, this describes what the CONTENT conforms to.
 	MigState datamigration.StateStore
+	// VersionTags writes version tags through the entitymanager
+	// (TKT-VO6VG9). Nil when no Services was assembled.
+	VersionTags versionTagWriter
 }
 
 // entityWriter is the write surface the CLI's mutating subcommands call. See
@@ -182,6 +185,9 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		LuaWriteDeps:  svc.LuaWriteDeps(),
 		State:         svc.State(),
 		MigState:      svc.MigState(),
+	}
+	if tags := appbuild.VersionTags(svc); tags != nil {
+		write.VersionTags = tags
 	}
 	return &cliBundles{
 		read:       &read,

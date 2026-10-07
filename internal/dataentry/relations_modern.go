@@ -530,10 +530,11 @@ func (h *writeHandler) writeCreateRelation(
 		// The owning rules read other edges, so the check and the write share
 		// one transaction. Other types skip the store's write lock.
 		sErr = h.store.Tx(ctx, func(st store.Store) error {
-			if oErr := entitymanager.CheckOwningEdge(ctx, meta, st, k); oErr != nil {
+			txCtx := store.ContextInTx(ctx)
+			if oErr := entitymanager.CheckOwningEdge(txCtx, meta, st, k); oErr != nil {
 				return oErr
 			}
-			_, cErr := st.CreateRelation(ctx, k, data)
+			_, cErr := st.CreateRelation(txCtx, k, data)
 			return cErr
 		})
 	} else {
@@ -590,13 +591,15 @@ func (h *writeHandler) writeUpdateRelation(
 	// UpdateRelation, so a concurrent update cannot land in between and be
 	// overwritten by the merge of the row read before it.
 	txErr := h.store.Tx(ctx, func(view store.Store) error {
-		current, readErr := view.GetRelation(ctx, entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to})
+		txCtx := store.ContextInTx(ctx)
+		key := entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}
+		current, readErr := view.GetRelation(txCtx, key)
 		if readErr != nil && !errors.Is(readErr, store.ErrNotFound) {
 			return readErr
 		}
 		finalProps, finalContent, _ := mergeEdgeMeta(current, ref)
 		data := store.RelationData{Properties: finalProps, Content: finalContent}
-		_, sErr := view.UpdateRelation(ctx, entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}, data)
+		_, sErr := view.UpdateRelation(txCtx, key, data)
 		return sErr
 	})
 	if txErr != nil {

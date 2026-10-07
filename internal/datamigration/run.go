@@ -264,8 +264,9 @@ func (x *Exec) forEachEntity(
 	for start := 0; start < len(changed); start += updateBatchSize {
 		batch := changed[start:min(start+updateBatchSize, len(changed))]
 		err := x.Store.Tx(ctx, func(s store.Store) error {
+			txCtx := store.ContextInTx(ctx)
 			for _, e := range batch {
-				if err := s.UpdateEntity(ctx, e); err != nil {
+				if err := s.UpdateEntity(txCtx, e); err != nil {
 					return fmt.Errorf("%s: %w", e.ID, err)
 				}
 			}

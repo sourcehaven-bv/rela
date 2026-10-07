@@ -542,8 +542,9 @@ func applyMoves(ctx context.Context, st store.Store, moves []faceMove, scopes re
 	for start := 0; start < len(moves); start += updateBatchSize {
 		batch := moves[start:min(start+updateBatchSize, len(moves))]
 		err := st.Tx(ctx, func(s store.Store) error {
+			txCtx := store.ContextInTx(ctx)
 			for _, m := range batch {
-				if err := applyFaceMove(ctx, s, m.e, m.to, scopes); err != nil {
+				if err := applyFaceMove(txCtx, s, m.e, m.to, scopes); err != nil {
 					return err
 				}
 			}

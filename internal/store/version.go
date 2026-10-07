@@ -106,9 +106,16 @@ func (e *VersionConflictError) Is(target error) bool {
 //   - UpdatedAt: a wall-clock stamp the store sets on write. Including it
 //     would make the token change on a no-op re-save and, worse, differ
 //     between two backends holding identical content.
-//   - Redacted / Inaccessible: per-reader artifacts, not stored content. A
-//     redacted read must produce the SAME token as an unredacted one, or a
-//     principal who cannot see every field could never satisfy a CAS.
+//   - Redacted / Inaccessible: per-reader markers, not stored content.
+//
+// A token is therefore a function of the entity value it is computed over,
+// and redaction removes the hidden properties' values from that value. A
+// redacted read yields a different token than the stored row: it covers the
+// fields that reader sees and nothing else. A compare-and-set offered to such
+// a reader compares the token against the SAME reader's read and then pins
+// the store write to the raw row's own token (entitymanager.VersionTags does
+// this for version tags). Comparing a reader's token against the raw row
+// directly would let a caller test guesses of hidden values.
 //   - Relations: see [EntityVersion].
 func VersionOf(e *entity.Entity) EntityVersion {
 	if e == nil {

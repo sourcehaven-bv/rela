@@ -901,6 +901,7 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 
 	// Version history (database backends; raises elsewhere)
 	registerHistoryBindings(r, rela)
+	registerVersionTagReadBindings(r, rela)
 
 	// Graph traversal
 	r.L.SetField(rela, "trace_from", r.L.NewFunction(r.luaTraceFrom))
@@ -947,6 +948,7 @@ func (r *Runtime) registerWriteBindings(rela *lua.LTable) {
 	r.L.SetField(rela, "delete_entity", r.L.NewFunction(r.luaDeleteEntity))
 	r.L.SetField(rela, "create_relation", r.L.NewFunction(r.luaCreateRelation))
 	r.L.SetField(rela, "delete_relation", r.L.NewFunction(r.luaDeleteRelation))
+	registerVersionTagWriteBindings(r, rela)
 	// write_file is additionally capability-gated (TKT-YH52OM): a writer
 	// runtime may mutate the graph without being entitled to touch the disk.
 	if r.caps.WriteFile {

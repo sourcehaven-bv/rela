@@ -227,8 +227,9 @@ func (m *Manager) runRenumberAfterUpdate(ctx context.Context, from, to, relType 
 	renumber := func(q store.RelationQuery, prop string) error {
 		var updated []*entity.Relation
 		err := m.deps.Store.Tx(ctx, func(view store.Store) error {
+			txCtx := store.ContextInTx(ctx)
 			var rErr error
-			updated, rErr = maybeRenumberSide(ctx, view, q, prop)
+			updated, rErr = maybeRenumberSide(txCtx, view, q, prop)
 			return rErr
 		})
 		if err != nil {

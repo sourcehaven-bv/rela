@@ -317,6 +317,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		}.plan,
 		engine:           func() *script.Engine { return app.scriptEngine },
 		luaDeps:          app.luaWriteDeps,
+		versionTags:      func() lua.VersionTagWriter { return app.versionTags.writer },
 		fullScriptDetail: app.allowFullScriptDetail,
 		paths:            paths,
 		provision:        newProvisionSeam(app),
