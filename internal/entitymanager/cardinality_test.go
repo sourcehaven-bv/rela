@@ -3,6 +3,7 @@ package entitymanager_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -29,6 +30,14 @@ func cardinalityManagerWith(
 	t *testing.T, aud audit.Audit, rec entitymanager.RelationVersionRecorder,
 ) (*entitymanager.Manager, store.Store) {
 	t.Helper()
+	return cardinalityManagerACL(t, aud, rec, acl.NopACL{})
+}
+
+// cardinalityManagerACL is cardinalityManagerWith under the given ACL.
+func cardinalityManagerACL(
+	t *testing.T, aud audit.Audit, rec entitymanager.RelationVersionRecorder, a acl.ACL,
+) (*entitymanager.Manager, store.Store) {
+	t.Helper()
 	meta, err := metamodel.Parse([]byte(`
 entities:
   task:
@@ -39,6 +48,14 @@ entities:
   status:
     label: Status
     id_prefix: S
+    properties:
+      title: {type: string}
+  doc:
+    label: Doc
+    id_prefix: D
+    faces:
+      draft: {}
+      published: {}
     properties:
       title: {type: string}
 relations:
@@ -58,6 +75,11 @@ relations:
     from: [task]
     to: [status]
     max_outgoing: 2
+  cites:
+    scope: content
+    from: [doc]
+    to: [status]
+    max_outgoing: 1
 `))
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)
@@ -65,7 +87,7 @@ relations:
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: aud,
-		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		ACL: a, Transitions: statemachine.EmptySet(),
 		FieldGate: entitymanager.AllowAllFieldGate{}, RelationVersionRecorder: rec,
 	})
 	if err != nil {
@@ -76,6 +98,7 @@ relations:
 		{ID: "T-1", Type: "task"}, {ID: "T-2", Type: "task"},
 		{ID: "S-1", Type: "status"}, {ID: "S-2", Type: "status"},
 		{ID: "S-3", Type: "status"}, {ID: "S-4", Type: "status"},
+		{ID: "D-1", Type: "doc", Face: "draft"}, {ID: "D-1", Type: "doc", Face: "published"},
 	} {
 		if err := st.CreateEntity(ctx, e); err != nil {
 			t.Fatalf("seed %s: %v", e.ID, err)
@@ -374,5 +397,92 @@ func TestCascadeWriteRelation_RefusedOverMaxOutgoing(t *testing.T) {
 	}
 	if err := entitymanager.CascadeHostWriteRelation(ctx, mgr, entity.NewRelation("T-1", "tagged", "S-2")); err != nil {
 		t.Fatalf("unbounded write: %v", err)
+	}
+}
+
+// lineageRecorder is a fakeRelationRecorder that also answers lineage ids,
+// as the postgres and sqlite recorders do.
+type lineageRecorder struct {
+	fakeRelationRecorder
+	ids map[entity.RelationKey]int64
+}
+
+func (r *lineageRecorder) RelationRecordID(_ context.Context, k entity.RelationKey) (int64, error) {
+	return r.ids[k], nil
+}
+
+// The lineage id is read before the delete and reaches the recorder, so the
+// delete version lands on the edge's own lineage.
+func TestReplaceRelations_PassesLineageIDToRecorder(t *testing.T) {
+	rec := &lineageRecorder{ids: map[entity.RelationKey]int64{key("T-1", "has_status", "S-1"): 42}}
+	mgr, _ := cardinalityManagerWith(t, audit.Nop{}, rec)
+	ctx := context.Background()
+	if _, err := mgr.CreateRelation(ctx, key("T-1", "has_status", "S-1"), entity.RelationOptions{}); err != nil {
+		t.Fatalf("seed edge: %v", err)
+	}
+	if err := replace(ctx, mgr, key("T-1", "has_status", "S-2"), key("T-1", "has_status", "S-1")); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	if len(rec.records) != 1 || rec.records[0].RecordID != 42 {
+		t.Errorf("versions = %+v, want one with RecordID 42", rec.records)
+	}
+}
+
+// denyDeleteACL allows every write but a delete.
+type denyDeleteACL struct{ acl.NopACL }
+
+func (denyDeleteACL) AuthorizeWrite(_ context.Context, req acl.WriteRequest) acl.Decision {
+	if req.Op == acl.OpDelete {
+		return acl.Decision{Allow: false, RuleKind: "test", Reason: "no deletes"}
+	}
+	return acl.Decision{Allow: true}
+}
+
+// A denied remove refuses the whole replace before anything is written.
+func TestReplaceRelations_DeniedRemoveWritesNothing(t *testing.T) {
+	mgr, st := cardinalityManagerACL(t, audit.Nop{}, nil, denyDeleteACL{})
+	ctx := context.Background()
+	if _, err := st.CreateRelation(ctx, key("T-1", "has_status", "S-1"), nil); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	err := replace(ctx, mgr, key("T-1", "has_status", "S-2"), key("T-1", "has_status", "S-1"))
+	if _, denied := errors.AsType[*acl.ForbiddenError](err); !denied {
+		t.Fatalf("err = %v, want a ForbiddenError", err)
+	}
+	if got := edgesFrom(t, st, "T-1", "has_status"); len(got) != 1 || got[0] != "S-1" {
+		t.Errorf("edges = %v, want [S-1] unchanged", got)
+	}
+}
+
+// A content-scoped bound counts per face: the published face has room while
+// the draft face is full, and a replace on the draft face frees its slot.
+func TestReplaceRelations_ContentScopeCountsPerFace(t *testing.T) {
+	mgr, st := cardinalityManager(t)
+	ctx := context.Background()
+	draft := entity.RelationKey{From: "D-1", FromFace: "draft", Type: "cites", To: "S-1"}
+	if _, err := mgr.CreateRelation(ctx, draft, entity.RelationOptions{}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	published := entity.RelationKey{From: "D-1", FromFace: "published", Type: "cites", To: "S-2"}
+	if err := replace(ctx, mgr, published); err != nil {
+		t.Fatalf("create on the other face: %v", err)
+	}
+	draft2 := entity.RelationKey{From: "D-1", FromFace: "draft", Type: "cites", To: "S-3"}
+	if err := replace(ctx, mgr, draft2); !errors.Is(err, entitymanager.ErrCardinalityExceeded) {
+		t.Fatalf("second draft edge: err = %v, want ErrCardinalityExceeded", err)
+	}
+	if err := replace(ctx, mgr, draft2, draft); err != nil {
+		t.Fatalf("re-point the draft face: %v", err)
+	}
+	var got []string
+	for r, err := range st.ListRelations(ctx, store.RelationQuery{From: "D-1", Type: "cites"}) {
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		got = append(got, string(r.FromFace)+">"+r.To)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"draft>S-3", "published>S-2"}) {
+		t.Errorf("edges = %v, want [draft>S-3 published>S-2]", got)
 	}
 }

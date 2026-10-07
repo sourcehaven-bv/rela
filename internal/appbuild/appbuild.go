@@ -2476,6 +2476,18 @@ func (r relationVersionRecorder) RecordRelationVersion(
 	})
 }
 
+// RelationRecordID satisfies entitymanager.RelationLineageReader through the
+// version store's own accessor, when it has one (pgstore and sqlitestore do).
+func (r relationVersionRecorder) RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error) {
+	ids, ok := r.w.(interface {
+		RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error)
+	})
+	if !ok {
+		return 0, nil
+	}
+	return ids.RelationRecordID(ctx, k)
+}
+
 // coverage-ignore-end
 
 // relationVersionRecorderFor mirrors versionRecorderFor for relation versions.

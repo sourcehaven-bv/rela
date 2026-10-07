@@ -1650,10 +1650,10 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	if captured != nil {
 		cascadeTB := "cascade:delete-entity:" + id
 		for _, rel := range captured.incoming {
-			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", cascadeTB)
 		}
 		for _, rel := range captured.outgoing {
-			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", cascadeTB)
 		}
 	}
 
@@ -1919,7 +1919,7 @@ func (m *Manager) recordPartialCascade(
 		if s, ok := snapshots[relationKey(rel)]; ok {
 			snap = s
 		}
-		m.recordRelationVersion(ctx, store.VersionOpDelete, snap, "", "", cascadeTB)
+		m.recordRelationVersion(ctx, store.VersionOpDelete, snap, 0, "", "", cascadeTB)
 	}
 }
 
@@ -2075,7 +2075,7 @@ func (m *Manager) DeleteEntityFace(
 		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-face:"+ref)
 	}
 	for _, rel := range res.DeletedRelations {
-		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", "cascade:delete-face:"+ref)
+		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", "cascade:delete-face:"+ref)
 		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
 	}
 	summary := fmt.Sprintf("deleted face %s", face)
@@ -2395,7 +2395,7 @@ func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
 				From: newFrom, Type: rel.Type, To: newTo,
 				Properties: rel.Properties, Content: rel.Content,
 			}
-			m.recordRelationVersion(ctx, store.VersionOpRename, after, rel.From, rel.To, renameTB)
+			m.recordRelationVersion(ctx, store.VersionOpRename, after, 0, rel.From, rel.To, renameTB)
 		}
 	}
 }
@@ -2431,7 +2431,7 @@ func (m *Manager) CreateRelation(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	ctx = withStoreAttribution(ctx)
-	rel, _, err := m.prepareRelationCreate(ctx, key, opts)
+	rel, err := m.prepareRelationCreate(ctx, key, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -2478,11 +2478,10 @@ func (m *Manager) CreateRelation(
 
 // prepareRelationCreate runs everything a relation create checks before it
 // writes: the face, the ACL, both endpoints and the relation-type tuple. It
-// returns the relation to write, with the template and opts applied, and the
-// source's entity type.
+// returns the relation to write, with the template and opts applied.
 func (m *Manager) prepareRelationCreate(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
-) (*entity.Relation, string, error) {
+) (*entity.Relation, error) {
 	from, relType, to := key.From, key.Type, key.To
 	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
 	// peer must never let a write skip the ACL: if authz is deferred until
@@ -2499,11 +2498,11 @@ func (m *Manager) prepareRelationCreate(
 	// bypassACL path, where authorizeAndAudit returns without consulting
 	// any grant.
 	if fErr := m.deps.requireRelationFaceFor(relType, source.typ, key.FromFace); fErr != nil {
-		return nil, "", fErr
+		return nil, fErr
 	}
 	if aclErr := m.authorizeAndAudit(ctx,
 		RelationCreateRequest(m.deps.Meta, relType, source.typ, from, key.FromFace)); aclErr != nil {
-		return nil, "", aclErr
+		return nil, aclErr
 	}
 
 	// By family, not GetEntity: an endpoint is an ENTITY and only its type is
@@ -2514,19 +2513,19 @@ func (m *Manager) prepareRelationCreate(
 	// missing endpoint, which would read as an ordinary validation refusal.
 	if srcErr != nil {
 		if !errors.Is(srcErr, store.ErrNotFound) {
-			return nil, "", srcErr
+			return nil, srcErr
 		}
-		return nil, "", fmt.Errorf("source %w: %s", ErrEntityNotFound, from)
+		return nil, fmt.Errorf("source %w: %s", ErrEntityNotFound, from)
 	}
 	target, err := lookupFamily(ctx, m.deps.Store, to)
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
-			return nil, "", err
+			return nil, err
 		}
-		return nil, "", fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
+		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, source.typ, target.typ); vErr != nil {
-		return nil, "", &invalidRelationError{err: fmt.Errorf("invalid relation: %w", vErr)}
+		return nil, &InvalidRelationError{Key: key, err: fmt.Errorf("invalid relation: %w", vErr)}
 	}
 
 	rel := entity.NewRelation(from, relType, to)
@@ -2534,7 +2533,7 @@ func (m *Manager) prepareRelationCreate(
 
 	tmpl, err := m.deps.Templater.RelationTemplate(ctx, relType)
 	if err != nil {
-		return nil, "", fmt.Errorf("load relation template: %w", err)
+		return nil, fmt.Errorf("load relation template: %w", err)
 	}
 	if tmpl != nil {
 		rel.Properties = templating.ApplyRelation(rel.Properties, tmpl)
@@ -2547,7 +2546,7 @@ func (m *Manager) prepareRelationCreate(
 	if opts.Content != nil {
 		rel.Content = *opts.Content
 	}
-	return rel, source.typ, nil
+	return rel, nil
 }
 
 // writeRelationCreate is the write half of a relation create, on st: the
@@ -2698,7 +2697,7 @@ func (m *Manager) DeleteRelation(ctx context.Context, key entity.RelationKey) er
 	// live row (and its rel_record_id) still exists — the same order-before
 	// rationale as entity delete. Skipped if the relation was already gone.
 	if getErr == nil {
-		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", "")
+		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", "")
 	}
 	if err := m.deps.Store.DeleteRelation(ctx, key); err != nil {
 		return fmt.Errorf("delete relation: %w", err)

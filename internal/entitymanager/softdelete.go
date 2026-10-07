@@ -328,7 +328,7 @@ func recordPurge(ctx context.Context, m *Manager, id string, res *store.DeleteRe
 	m.notifyAliasesOfDelete(ctx, id)
 	cascadeTB := "cascade:delete-entity:" + id
 	for _, rel := range res.DeletedRelations {
-		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", cascadeTB)
 	}
 	m.recordEntityAudit(ctx, audit.OpPurgeDeletedEntity, head,
 		fmt.Sprintf("purged after soft delete (%d relations)", len(res.DeletedRelations)))

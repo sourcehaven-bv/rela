@@ -1234,19 +1234,6 @@ type RelationVersionInput struct {
 	TriggeredBy   string
 }
 
-// RelationRecordIDReader reads the surrogate lineage id (rel_record_id) of a
-// live relation row. An optional capability of the stores that version
-// relations (pgstore, sqlitestore); a Tx view of those stores has it too.
-//
-// A caller that deletes an edge inside a Tx and records its delete version
-// after the Tx reads the id here first. Once the row is gone, a version
-// written with RecordID 0 can no longer resolve the edge's own lineage.
-type RelationRecordIDReader interface {
-	// RelationRecordID returns the id of the live edge k names, tail
-	// included, or ErrNotFound.
-	RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error)
-}
-
 // RelationVersionWriter persists a captured relation version. An optional,
 // backend-specific capability (pgstore only), type-asserted independently of the
 // entity VersionWriter. The entitymanager's synchronous version hook dispatches
