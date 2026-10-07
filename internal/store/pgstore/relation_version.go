@@ -13,6 +13,19 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
+// RelationRecordID implements store.RelationRecordIDReader. On a Tx view it
+// reads through the open transaction.
+func (s *Store) RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error) {
+	const q = `SELECT rel_record_id FROM relations
+	           WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = $4`
+	var id int64
+	err := s.db.QueryRow(ctx, q, k.From, k.Type, k.To, string(k.FromFace)).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, store.ErrNotFound
+	}
+	return id, err
+}
+
 // WriteRelationVersion implements store.RelationVersionWriter: it persists one
 // synchronously captured relation version (delete/rename). The schema-dedup
 // INSERT and the relation_versions INSERT run in one transaction so the row is

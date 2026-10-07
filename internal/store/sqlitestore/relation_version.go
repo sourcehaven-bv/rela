@@ -34,6 +34,19 @@ import (
 
 // --- Write ----------------------------------------------------------------
 
+// RelationRecordID implements [store.RelationRecordIDReader]. On a Tx view
+// it reads through the open transaction.
+func (s *Store) RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error) {
+	const q = `SELECT rel_record_id FROM relations
+	           WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`
+	var id int64
+	err := s.q().QueryRowContext(ctx, q, k.From, k.Type, k.To, string(k.FromFace)).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, store.ErrNotFound
+	}
+	return id, err
+}
+
 // WriteRelationVersion implements [store.RelationVersionWriter]: it persists one
 // synchronously captured relation version (rename or delete).
 //

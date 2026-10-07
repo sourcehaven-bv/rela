@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -25,6 +26,11 @@ func applyCopy(
 	// The plan's unique check ran outside the transaction; this one is the
 	// check that holds, because it runs on the view with the write.
 	if err := checkUniqueProperties(ctx, meta, view, plan.entity, plan.entity.ID); err != nil {
+		return nil, err
+	}
+	// Before any write, as the unique check: the file and memory stores do
+	// not roll a failed Tx back.
+	if err := checkCopyCapacity(ctx, meta, view, plan); err != nil {
 		return nil, err
 	}
 	if plan.created {
@@ -112,6 +118,52 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 			return fmt.Errorf("entitymanager: copy %q: create edge %s->%s: %w",
 				plan.name, e.relType, e.to, err)
 		}
+	}
+	return nil
+}
+
+// checkCopyCapacity refuses a copy whose new edges would give the target
+// face, or a target entity, more edges of a bounded relation than its
+// max_outgoing or max_incoming allows (TKT-65LVAK). The edges a `replace`
+// removes do not count; an edge that `merge` finds present is not new.
+func checkCopyCapacity(ctx context.Context, meta *metamodel.Metamodel, view store.Store, plan *copyPlan) error {
+	tail := plan.targetTail
+	leaving := map[entity.RelationKey]bool{}
+	listed := map[string]bool{}
+	for _, e := range plan.edges {
+		if !e.replace || listed[e.relType] || !relTypeHasMax(meta, e.relType) {
+			continue
+		}
+		listed[e.relType] = true
+		for rel, err := range view.ListRelations(ctx, store.RelationQuery{
+			From: plan.targetID, Type: e.relType, FromFace: &tail,
+		}) {
+			if err != nil {
+				return fmt.Errorf("entitymanager: copy %q: list target edges: %w", plan.name, err)
+			}
+			if plan.removable[copyEdgeKey{rel.Type, rel.To}] {
+				leaving[rel.Identity()] = true
+			}
+		}
+	}
+	var pending []entity.RelationKey
+	for _, e := range plan.edges {
+		if !relTypeHasMax(meta, e.relType) {
+			continue
+		}
+		k := entity.RelationKey{From: plan.targetID, FromFace: tail, Type: e.relType, To: e.to}
+		if slices.Contains(pending, k) {
+			continue
+		}
+		if !leaving[k] {
+			if _, err := view.GetRelation(ctx, k); err == nil {
+				continue // merge: already present
+			}
+		}
+		if err := checkRelationCapacity(ctx, view, meta, k, leaving, pending); err != nil {
+			return fmt.Errorf("entitymanager: copy %q: %w", plan.name, err)
+		}
+		pending = append(pending, k)
 	}
 	return nil
 }

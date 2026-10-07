@@ -240,7 +240,20 @@ func (b *caldavBackend) attachToDriver(ctx context.Context, collection string, m
 		return nil // static collection: membership needs no edge
 	}
 	key := b.membershipKey(dyn, driverID, member)
-	_, err := b.app.entityManager.CreateRelation(ctx, key, entitypkg.RelationOptions{})
+	others, err := b.singleMemberships(ctx, dyn, key)
+	if err != nil {
+		return err
+	}
+	if len(others) > 0 {
+		// A single-valued membership: joining this collection leaves the
+		// other, in one atomic replace (TKT-65LVAK). A client move is a PUT
+		// here and then a DELETE against the old collection; the create
+		// alone would be refused by the bound before that DELETE arrives.
+		_, err = b.app.entityManager.ReplaceRelations(ctx,
+			[]entitymanager.RelationCreate{{Key: key}}, others)
+	} else {
+		_, err = b.app.entityManager.CreateRelation(ctx, key, entitypkg.RelationOptions{})
+	}
 	// Already a member: the normal case on every edit, since an ordinary
 	// check-off re-asserts the membership it already has. Idempotent, never an
 	// error.
@@ -248,6 +261,56 @@ func (b *caldavBackend) attachToDriver(ctx context.Context, collection string, m
 		return nil
 	}
 	return err
+}
+
+// singleMemberships returns the member's other membership edges that joining
+// the collection key names must remove: those of a relation that allows the
+// member one edge (max_outgoing: 1 when the member is the source,
+// max_incoming: 1 when it is the target). For any other relation it returns
+// none, and joining is additive. Only edges whose endpoints the principal may
+// read are returned, as the relations PATCH plans them; the manager then
+// authorizes each delete. An edge the caller cannot see stays, and the bound
+// refuses the join.
+func (b *caldavBackend) singleMemberships(
+	ctx context.Context, dyn dataentryconfig.CalDAVDynamicCollection, key entitypkg.RelationKey,
+) ([]entitypkg.RelationKey, error) {
+	def, ok := b.app.State().Meta.Relations[dyn.Relation]
+	if !ok {
+		return nil, nil
+	}
+	incoming := dyn.Direction.IsIncoming()
+	bound := def.MaxOutgoing
+	q := store.RelationQuery{From: key.From, Type: key.Type}
+	if incoming {
+		bound = def.MaxIncoming
+		q = store.RelationQuery{To: key.To, Type: key.Type}
+	}
+	if bound == nil || *bound != 1 {
+		return nil, nil
+	}
+	var edges []*entitypkg.Relation
+	for rel, err := range b.app.Services().Store.ListRelations(ctx, q) {
+		if err != nil {
+			return nil, fmt.Errorf("caldav: list memberships: %w", err)
+		}
+		if rel.Identity() == key {
+			continue
+		}
+		// An outgoing bound of a content-scoped relation counts per face.
+		if !incoming && rel.FromFace != key.FromFace {
+			continue
+		}
+		edges = append(edges, rel)
+	}
+	edges, err := b.app.visibleReader.readableRelations(ctx, edges)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]entitypkg.RelationKey, len(edges))
+	for i, rel := range edges {
+		out[i] = rel.Identity()
+	}
+	return out, nil
 }
 
 // membershipKey is the edge that makes member part of a dynamic collection.
@@ -624,6 +687,14 @@ func (b *caldavBackend) unlinkFromDriver(
 	}
 	key := b.membershipKey(dyn, driverID, member)
 	if delErr := b.app.entityManager.DeleteRelation(ctx, key); delErr != nil {
+		if errors.Is(delErr, store.ErrNotFound) {
+			// The membership is gone already. That is the second half of a
+			// client move into a single-valued membership's other collection:
+			// the PUT there replaced this edge (attachToDriver). The DELETE
+			// asked for exactly this state, so it succeeds, and it must not
+			// count as removing the entity's last membership.
+			return true, false, nil
+		}
 		return false, false, caldavWriteError(delErr)
 	}
 	if !last || !b.disposeOnLastUnlink(dyn) {

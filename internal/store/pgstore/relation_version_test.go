@@ -302,3 +302,41 @@ func TestSweepCapturesSettledRelations(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, metas, 1, "unchanged relation content must not duplicate versions")
 }
+
+// TestRelationRecordIDInTx pins the read ReplaceRelations relies on
+// (TKT-65LVAK): the lineage id is read through the Tx view before the delete,
+// and a delete version written after the Tx with that id lands on the
+// edge's own lineage, although the row is gone and no version existed yet.
+func TestRelationRecordIDInTx(t *testing.T) {
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	k := entity.RelationKey{From: "TKT-1", Type: "blocks", To: "TKT-2"}
+	_, err = s.CreateRelation(ctx, k, &store.RelationData{Content: "body"})
+	require.NoError(t, err)
+	want := relRecordID(ctx, t, pool, "TKT-1", "blocks", "TKT-2")
+
+	var got int64
+	require.NoError(t, s.Tx(ctx, func(view store.Store) error {
+		var rErr error
+		got, rErr = view.(store.RelationRecordIDReader).RelationRecordID(ctx, k)
+		if rErr != nil {
+			return rErr
+		}
+		return view.DeleteRelation(ctx, k)
+	}))
+	require.Equal(t, want, got)
+
+	_, err = s.RelationRecordID(ctx, k)
+	require.ErrorIs(t, err, store.ErrNotFound)
+
+	d := newRelVersionInput(got, "TKT-1", "blocks", "TKT-2", "body")
+	d.Op = store.VersionOpDelete
+	require.NoError(t, s.VersionStore().WriteRelationVersion(ctx, d))
+	metas, err := s.VersionStore().ListRelationVersions(ctx, store.RelationHistoryQuery{Key: k})
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	require.Equal(t, store.VersionOpDelete, metas[0].Op)
+}

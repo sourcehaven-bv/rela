@@ -20,6 +20,15 @@ import (
 // on the incoming side.
 func cardinalityManager(t *testing.T) (*entitymanager.Manager, store.Store) {
 	t.Helper()
+	return cardinalityManagerWith(t, audit.Nop{}, nil)
+}
+
+// cardinalityManagerWith is cardinalityManager with the audit sink and
+// relation version recorder given.
+func cardinalityManagerWith(
+	t *testing.T, aud audit.Audit, rec entitymanager.RelationVersionRecorder,
+) (*entitymanager.Manager, store.Store) {
+	t.Helper()
 	meta, err := metamodel.Parse([]byte(`
 entities:
   task:
@@ -45,15 +54,19 @@ relations:
   tagged:
     from: [task]
     to: [status]
+  two_statuses:
+    from: [task]
+    to: [status]
+    max_outgoing: 2
 `))
 	if err != nil {
 		t.Fatalf("metamodel.Parse: %v", err)
 	}
 	st := memstore.New()
 	mgr, err := entitymanager.New(entitymanager.Deps{
-		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
+		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: aud,
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
-		FieldGate: entitymanager.AllowAllFieldGate{},
+		FieldGate: entitymanager.AllowAllFieldGate{}, RelationVersionRecorder: rec,
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -62,6 +75,7 @@ relations:
 	for _, e := range []*entity.Entity{
 		{ID: "T-1", Type: "task"}, {ID: "T-2", Type: "task"},
 		{ID: "S-1", Type: "status"}, {ID: "S-2", Type: "status"},
+		{ID: "S-3", Type: "status"}, {ID: "S-4", Type: "status"},
 	} {
 		if err := st.CreateEntity(ctx, e); err != nil {
 			t.Fatalf("seed %s: %v", e.ID, err)
@@ -128,14 +142,21 @@ func TestCreateRelation_UnboundedRelationAllowsMany(t *testing.T) {
 	}
 }
 
-func TestReplaceOutgoing_RepointsToExactlyOneEdge(t *testing.T) {
+// replace runs ReplaceRelations with one create and the given removes.
+func replace(
+	ctx context.Context, mgr *entitymanager.Manager, create entity.RelationKey, removes ...entity.RelationKey,
+) error {
+	_, err := mgr.ReplaceRelations(ctx, []entitymanager.RelationCreate{{Key: create}}, removes)
+	return err
+}
+
+func TestReplaceRelations_RepointsToExactlyOneEdge(t *testing.T) {
 	mgr, st := cardinalityManager(t)
 	ctx := context.Background()
 	if _, err := mgr.CreateRelation(ctx, key("T-1", "has_status", "S-1"), entity.RelationOptions{}); err != nil {
 		t.Fatalf("seed edge: %v", err)
 	}
-	if _, err := mgr.ReplaceOutgoing(ctx, key("T-1", "has_status", "S-2"),
-		[]entity.RelationKey{key("T-1", "has_status", "S-1")}, entity.RelationOptions{}); err != nil {
+	if err := replace(ctx, mgr, key("T-1", "has_status", "S-2"), key("T-1", "has_status", "S-1")); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 	if got := edgesFrom(t, st, "T-1", "has_status"); len(got) != 1 || got[0] != "S-2" {
@@ -143,10 +164,10 @@ func TestReplaceOutgoing_RepointsToExactlyOneEdge(t *testing.T) {
 	}
 }
 
-func TestReplaceOutgoing_CreatesWhenNoEdge(t *testing.T) {
+func TestReplaceRelations_CreatesWhenRemovedEdgeIsGone(t *testing.T) {
 	mgr, st := cardinalityManager(t)
-	if _, err := mgr.ReplaceOutgoing(context.Background(), key("T-1", "has_status", "S-1"),
-		[]entity.RelationKey{key("T-1", "has_status", "S-2")}, entity.RelationOptions{}); err != nil {
+	if err := replace(context.Background(), mgr, key("T-1", "has_status", "S-1"),
+		key("T-1", "has_status", "S-2")); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 	if got := edgesFrom(t, st, "T-1", "has_status"); len(got) != 1 || got[0] != "S-1" {
@@ -154,35 +175,51 @@ func TestReplaceOutgoing_CreatesWhenNoEdge(t *testing.T) {
 	}
 }
 
-func TestReplaceOutgoing_KeepsExistingTargetAndDropsOthers(t *testing.T) {
+// A create whose edge exists already fails, so the caller's 409 and retry
+// path runs instead of the request's properties being dropped.
+func TestReplaceRelations_ExistingCreateIsAlreadyExists(t *testing.T) {
 	mgr, st := cardinalityManager(t)
 	ctx := context.Background()
-	// Data over the bound (written around the manager, as a loaded file can
-	// be) is repaired by a replace rather than refused.
+	if _, err := mgr.CreateRelation(ctx, key("T-1", "has_status", "S-1"), entity.RelationOptions{}); err != nil {
+		t.Fatalf("seed edge: %v", err)
+	}
+	err := replace(ctx, mgr, key("T-1", "has_status", "S-1"))
+	if !errors.Is(err, entitymanager.ErrRelationAlreadyExists) {
+		t.Fatalf("err = %v, want ErrRelationAlreadyExists", err)
+	}
+	if got := edgesFrom(t, st, "T-1", "has_status"); len(got) != 1 || got[0] != "S-1" {
+		t.Errorf("edges = %v, want [S-1]", got)
+	}
+}
+
+// Data over the bound (written around the manager, as a loaded file can be)
+// is repaired by a replace rather than refused.
+func TestReplaceRelations_RepairsDataOverTheBound(t *testing.T) {
+	mgr, st := cardinalityManager(t)
+	ctx := context.Background()
 	for _, to := range []string{"S-1", "S-2"} {
 		if _, err := st.CreateRelation(ctx, key("T-1", "has_status", to), nil); err != nil {
 			t.Fatalf("seed %s: %v", to, err)
 		}
 	}
-	if _, err := mgr.ReplaceOutgoing(ctx, key("T-1", "has_status", "S-2"),
-		[]entity.RelationKey{key("T-1", "has_status", "S-1"), key("T-1", "has_status", "S-2")},
-		entity.RelationOptions{}); err != nil {
+	if err := replace(ctx, mgr, key("T-1", "has_status", "S-3"),
+		key("T-1", "has_status", "S-1"), key("T-1", "has_status", "S-2")); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
-	if got := edgesFrom(t, st, "T-1", "has_status"); len(got) != 1 || got[0] != "S-2" {
-		t.Errorf("edges = %v, want [S-2]", got)
+	if got := edgesFrom(t, st, "T-1", "has_status"); len(got) != 1 || got[0] != "S-3" {
+		t.Errorf("edges = %v, want [S-3]", got)
 	}
 }
 
 // An edge the caller does not name is not removed: the caller, not the
 // manager, knows which edges the user may see.
-func TestReplaceOutgoing_LeavesUnnamedEdges(t *testing.T) {
+func TestReplaceRelations_LeavesUnnamedEdges(t *testing.T) {
 	mgr, st := cardinalityManager(t)
 	ctx := context.Background()
 	if _, err := st.CreateRelation(ctx, key("T-1", "tagged", "S-1"), nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, err := mgr.ReplaceOutgoing(ctx, key("T-1", "tagged", "S-2"), nil, entity.RelationOptions{}); err != nil {
+	if err := replace(ctx, mgr, key("T-1", "tagged", "S-2")); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 	if got := edgesFrom(t, st, "T-1", "tagged"); len(got) != 2 {
@@ -190,17 +227,70 @@ func TestReplaceOutgoing_LeavesUnnamedEdges(t *testing.T) {
 	}
 }
 
-func TestReplaceOutgoing_RefusesForeignEdge(t *testing.T) {
-	mgr, _ := cardinalityManager(t)
-	_, err := mgr.ReplaceOutgoing(context.Background(), key("T-1", "has_status", "S-1"),
-		[]entity.RelationKey{key("T-2", "has_status", "S-2")}, entity.RelationOptions{})
-	if err == nil {
-		t.Fatal("replace removing another entity's edge succeeded")
+// Two new targets replace two old ones on a max_outgoing: 2 side: the
+// removed edges do not count, and the first create counts against the
+// second.
+func TestReplaceRelations_TwoCreatesWithinMaxTwo(t *testing.T) {
+	mgr, st := cardinalityManager(t)
+	ctx := context.Background()
+	for _, to := range []string{"S-1", "S-2"} {
+		if _, err := mgr.CreateRelation(ctx, key("T-1", "two_statuses", to), entity.RelationOptions{}); err != nil {
+			t.Fatalf("seed %s: %v", to, err)
+		}
+	}
+	_, err := mgr.ReplaceRelations(ctx,
+		[]entitymanager.RelationCreate{{Key: key("T-1", "two_statuses", "S-3")}, {Key: key("T-1", "two_statuses", "S-4")}},
+		[]entity.RelationKey{key("T-1", "two_statuses", "S-1"), key("T-1", "two_statuses", "S-2")})
+	if err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	if got := edgesFrom(t, st, "T-1", "two_statuses"); len(got) != 2 || got[0] != "S-3" || got[1] != "S-4" {
+		t.Errorf("edges = %v, want [S-3 S-4]", got)
+	}
+	// Removing only one of the two leaves no room for two new edges.
+	_, err = mgr.ReplaceRelations(ctx,
+		[]entitymanager.RelationCreate{{Key: key("T-1", "two_statuses", "S-1")}, {Key: key("T-1", "two_statuses", "S-2")}},
+		[]entity.RelationKey{key("T-1", "two_statuses", "S-3")})
+	if !errors.Is(err, entitymanager.ErrCardinalityExceeded) {
+		t.Fatalf("err = %v, want ErrCardinalityExceeded", err)
+	}
+	if got := edgesFrom(t, st, "T-1", "two_statuses"); len(got) != 2 || got[0] != "S-3" || got[1] != "S-4" {
+		t.Errorf("edges = %v, want [S-3 S-4] unchanged", got)
 	}
 }
 
-func TestReplaceOutgoing_FailedCreateKeepsOriginalEdge(t *testing.T) {
+// A max_incoming bound is re-pointed from the target side: the removed edge
+// has another source than the created one.
+func TestReplaceRelations_RepointsIncomingSide(t *testing.T) {
 	mgr, st := cardinalityManager(t)
+	ctx := context.Background()
+	if _, err := mgr.CreateRelation(ctx, key("T-1", "exclusive_status", "S-1"), entity.RelationOptions{}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := replace(ctx, mgr, key("T-2", "exclusive_status", "S-1"), key("T-1", "exclusive_status", "S-1")); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	if got := edgesFrom(t, st, "T-1", "exclusive_status"); len(got) != 0 {
+		t.Errorf("T-1 edges = %v, want none", got)
+	}
+	if got := edgesFrom(t, st, "T-2", "exclusive_status"); len(got) != 1 || got[0] != "S-1" {
+		t.Errorf("T-2 edges = %v, want [S-1]", got)
+	}
+}
+
+func TestReplaceRelations_RefusesKeyNamedTwice(t *testing.T) {
+	mgr, _ := cardinalityManager(t)
+	err := replace(context.Background(), mgr, key("T-1", "has_status", "S-1"), key("T-1", "has_status", "S-1"))
+	if err == nil {
+		t.Fatal("replace creating and removing one edge succeeded")
+	}
+}
+
+// A refused replace changes no edge and records no version and no audit.
+func TestReplaceRelations_RefusedCreateKeepsOriginalEdge(t *testing.T) {
+	aud := &recordingAudit{}
+	rec := &fakeRelationRecorder{}
+	mgr, st := cardinalityManagerWith(t, aud, rec)
 	ctx := context.Background()
 	for _, k := range []entity.RelationKey{
 		key("T-1", "exclusive_status", "S-1"), key("T-2", "exclusive_status", "S-2"),
@@ -209,29 +299,80 @@ func TestReplaceOutgoing_FailedCreateKeepsOriginalEdge(t *testing.T) {
 			t.Fatalf("seed %v: %v", k, err)
 		}
 	}
+	audits := aud.count()
 	// S-2 already holds its one incoming edge, so the create half is refused.
-	_, err := mgr.ReplaceOutgoing(ctx, key("T-1", "exclusive_status", "S-2"),
-		[]entity.RelationKey{key("T-1", "exclusive_status", "S-1")}, entity.RelationOptions{})
+	err := replace(ctx, mgr, key("T-1", "exclusive_status", "S-2"), key("T-1", "exclusive_status", "S-1"))
 	if !errors.Is(err, entitymanager.ErrCardinalityExceeded) {
 		t.Fatalf("err = %v, want ErrCardinalityExceeded", err)
 	}
 	if got := edgesFrom(t, st, "T-1", "exclusive_status"); len(got) != 1 || got[0] != "S-1" {
 		t.Errorf("edges = %v, want the original [S-1]", got)
 	}
+	if len(rec.records) != 0 {
+		t.Errorf("versions = %+v, want none", rec.records)
+	}
+	if got := aud.ops()[audits:]; len(got) != 0 {
+		t.Errorf("audit = %v, want none", got)
+	}
 }
 
-func TestReplaceOutgoing_MissingTargetChangesNothing(t *testing.T) {
+// A successful replace records the removed edge's delete version and audits
+// both halves.
+func TestReplaceRelations_RecordsVersionAndAudit(t *testing.T) {
+	aud := &recordingAudit{}
+	rec := &fakeRelationRecorder{}
+	mgr, _ := cardinalityManagerWith(t, aud, rec)
+	ctx := context.Background()
+	if _, err := mgr.CreateRelation(ctx, key("T-1", "has_status", "S-1"), entity.RelationOptions{}); err != nil {
+		t.Fatalf("seed edge: %v", err)
+	}
+	audits := aud.count()
+	if err := replace(ctx, mgr, key("T-1", "has_status", "S-2"), key("T-1", "has_status", "S-1")); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	if len(rec.records) != 1 || rec.records[0].Op != store.VersionOpDelete || rec.records[0].To != "S-1" {
+		t.Errorf("versions = %+v, want one delete of T-1 -> S-1", rec.records)
+	}
+	got := aud.ops()[audits:]
+	if len(got) != 2 || got[0] != audit.OpDeleteRelation || got[1] != audit.OpCreateRelation {
+		t.Errorf("audit = %v, want delete then create", got)
+	}
+}
+
+func TestReplaceRelations_MissingTargetChangesNothing(t *testing.T) {
 	mgr, st := cardinalityManager(t)
 	ctx := context.Background()
 	if _, err := mgr.CreateRelation(ctx, key("T-1", "has_status", "S-1"), entity.RelationOptions{}); err != nil {
 		t.Fatalf("seed edge: %v", err)
 	}
-	_, err := mgr.ReplaceOutgoing(ctx, key("T-1", "has_status", "S-9"),
-		[]entity.RelationKey{key("T-1", "has_status", "S-1")}, entity.RelationOptions{})
+	err := replace(ctx, mgr, key("T-1", "has_status", "S-9"), key("T-1", "has_status", "S-1"))
 	if !errors.Is(err, entitymanager.ErrEntityNotFound) {
 		t.Fatalf("err = %v, want ErrEntityNotFound", err)
 	}
 	if got := edgesFrom(t, st, "T-1", "has_status"); len(got) != 1 || got[0] != "S-1" {
 		t.Errorf("edges = %v, want [S-1]", got)
+	}
+}
+
+// An automation's create_relation is refused over the bound too; an edge it
+// finds present is still the idempotent no-op.
+func TestCascadeWriteRelation_RefusedOverMaxOutgoing(t *testing.T) {
+	mgr, st := cardinalityManager(t)
+	ctx := context.Background()
+	if _, err := mgr.CreateRelation(ctx, key("T-1", "has_status", "S-1"), entity.RelationOptions{}); err != nil {
+		t.Fatalf("seed edge: %v", err)
+	}
+	if err := entitymanager.CascadeHostWriteRelation(ctx, mgr, entity.NewRelation("T-1", "has_status", "S-1")); err != nil {
+		t.Fatalf("re-writing the present edge: %v", err)
+	}
+	err := entitymanager.CascadeHostWriteRelation(ctx, mgr, entity.NewRelation("T-1", "has_status", "S-2"))
+	if !errors.Is(err, entitymanager.ErrCardinalityExceeded) {
+		t.Fatalf("err = %v, want ErrCardinalityExceeded", err)
+	}
+	if got := edgesFrom(t, st, "T-1", "has_status"); len(got) != 1 || got[0] != "S-1" {
+		t.Errorf("edges = %v, want [S-1]", got)
+	}
+	if err := entitymanager.CascadeHostWriteRelation(ctx, mgr, entity.NewRelation("T-1", "tagged", "S-2")); err != nil {
+		t.Fatalf("unbounded write: %v", err)
 	}
 }

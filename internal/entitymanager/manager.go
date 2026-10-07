@@ -2526,7 +2526,7 @@ func (m *Manager) prepareRelationCreate(
 		return nil, "", fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, source.typ, target.typ); vErr != nil {
-		return nil, "", fmt.Errorf("invalid relation: %w", vErr)
+		return nil, "", &invalidRelationError{err: fmt.Errorf("invalid relation: %w", vErr)}
 	}
 
 	rel := entity.NewRelation(from, relType, to)
@@ -2553,12 +2553,12 @@ func (m *Manager) prepareRelationCreate(
 // writeRelationCreate is the write half of a relation create, on st: the
 // cardinality bound, the managed order, then the store create.
 //
-// Edges in leaving are not counted against the bounds (ReplaceOutgoing).
+// Edges in leaving are not counted against the bounds (ReplaceRelations).
 func (m *Manager) writeRelationCreate(
 	ctx context.Context, st store.Store, key entity.RelationKey, rel *entity.Relation,
 	leaving map[entity.RelationKey]bool,
 ) error {
-	if err := checkRelationCapacity(ctx, st, m.deps.Meta, key, leaving); err != nil {
+	if err := checkRelationCapacity(ctx, st, m.deps.Meta, key, leaving, nil); err != nil {
 		return err
 	}
 	if err := m.assignManagedOrder(ctx, st, rel, key.Type); err != nil {

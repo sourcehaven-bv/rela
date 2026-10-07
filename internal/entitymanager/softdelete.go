@@ -207,6 +207,8 @@ func RestoreEntity(ctx context.Context, m *Manager, id string) (*entity.DeleteRe
 		if authErr := authorizeRestore(store.WithRevealed(ctx, id), m, tx, marked); authErr != nil {
 			return authErr
 		}
+		// Unbounded: the edges coming back are grandfathered data, so no
+		// max_outgoing / max_incoming is checked (TKT-65LVAK).
 		res, err = sd.SoftDelete().Unmark(ctx, id)
 		if errors.Is(err, store.ErrNotFound) {
 			return fmt.Errorf("%w: %s", ErrEntityNotFound, id)

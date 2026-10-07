@@ -159,10 +159,31 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	// belongs to that face; an identity-scoped one to the entity, whose only
 	// valid tail is the zero face (see requireRelationFaceFor).
 	r.FromFace = h.deps.cascadeTail(r.Type, r.FromFace)
-	if _, err := h.deps.Store.CreateRelation(ctx, r.Identity(), &store.RelationData{
-		Properties: r.Properties,
-		Content:    r.Content,
-	}); err != nil {
+	create := func(st store.Store) error {
+		_, err := st.CreateRelation(ctx, r.Identity(), &store.RelationData{
+			Properties: r.Properties,
+			Content:    r.Content,
+		})
+		return err
+	}
+	var err error
+	if relTypeHasMax(h.deps.Meta, r.Type) {
+		// An automation may not grow a bounded relation past its bound
+		// either (TKT-65LVAK). The count and the create share a Tx. An edge
+		// that exists already is the idempotent no-op below, not a refusal.
+		err = h.deps.Store.Tx(ctx, func(view store.Store) error {
+			if _, gErr := view.GetRelation(ctx, r.Identity()); gErr == nil {
+				return store.ErrConflict
+			}
+			if cErr := checkRelationCapacity(ctx, view, h.deps.Meta, r.Identity(), nil, nil); cErr != nil {
+				return cErr
+			}
+			return create(view)
+		})
+	} else {
+		err = create(h.deps.Store)
+	}
+	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return nil
 		}

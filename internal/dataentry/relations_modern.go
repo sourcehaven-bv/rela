@@ -369,16 +369,20 @@ func (h *writeHandler) applyRelationsModern(
 		if err := checkFullLinkageSize(&relDef, canonical, incoming, upd, dataPath); err != nil {
 			return warnings, err
 		}
-		if create, ok := replaceCreate(&relDef, incoming, upd, ops); ok {
-			// Re-pointing a single-valued relation: one atomic replace
-			// instead of a delete and a create (TKT-65LVAK).
-			finalProps, _, _ := mergeEdgeMeta(nil, create.ref)
-			warnings = append(warnings, requiredMetaWarnings(canonical, &relDef, create.ref, finalProps,
-				dataPath+upsertKey(upd), direction)...)
-			if err := h.writeReplaceRelation(ctx, entityID, create, ops, canonical, finalProps); err != nil {
+		if relDef.MaxOutgoing != nil || relDef.MaxIncoming != nil {
+			// A bounded relation writes its creates and removes as one
+			// atomic replace, so re-pointing it (with `data`, or `add` and
+			// `remove`, on either side) never trips the bound on the edge
+			// it is leaving (TKT-65LVAK). Meta updates of kept edges stay
+			// on the loop below.
+			var rest []edgeOp
+			var rw []Warning
+			rest, rw, err = h.writeBoundedOps(ctx, entityID, bodyKey, canonical, &relDef, incoming, upd, ops)
+			warnings = append(warnings, rw...)
+			if err != nil {
 				return warnings, err
 			}
-			continue
+			ops = rest
 		}
 		for _, op := range ops {
 			k := edgeKeyOf(entityID, canonical, op.slot, incoming)
@@ -406,7 +410,7 @@ func (h *writeHandler) applyRelationsModern(
 			// recomputed from the request: the store treats the tail as
 			// identity, so a recomputed one would modify a different edge.
 			if err := h.upsertEdge(ctx, edgeWrite{
-				from: k.From, to: k.To, relType: canonical, ref: op.ref,
+				from: k.From, to: k.To, relType: canonical, bodyKey: bodyKey, ref: op.ref,
 				exists: exists, existingTail: op.slot.tail, newTail: op.slot.tail,
 				props: finalProps, content: finalContent,
 			}); err != nil {
@@ -449,6 +453,7 @@ func (h *writeHandler) requireReadablePeers(ctx context.Context, relType string,
 // edgeWrite is one desired edge for upsertEdge.
 type edgeWrite struct {
 	from, to, relType     string
+	bodyKey               string // the relation's name as the request sent it
 	ref                   v1.ResourceIdentifier
 	exists                bool // the edge existed when the reconciler read it
 	existingTail, newTail entity.Face
@@ -472,7 +477,7 @@ func (h *writeHandler) upsertEdge(ctx context.Context, w edgeWrite) error {
 				return err
 			}
 		} else {
-			err = h.writeCreateRelation(ctx, w.from, w.newTail, w.to, w.relType, w.ref, w.props, w.content)
+			err = h.writeCreateRelation(ctx, w.from, w.newTail, w.to, w.relType, w.bodyKey, w.ref, w.props, w.content)
 			if !errors.Is(err, entitymanager.ErrRelationAlreadyExists) {
 				return err
 			}
@@ -509,9 +514,11 @@ const upsertEdgeAttempts = 8
 //
 // `from` and `to` are pre-resolved by the caller via edgeEndpoints —
 // this function does not consult direction. `ref.ID` is the peer ID
-// (which is `to` for outgoing edges and `from` for incoming).
+// (which is `to` for outgoing edges and `from` for incoming). bodyKey is
+// the relation's name as the request sent it (canonical or inverse), for the
+// path of a cardinality error.
 func (h *writeHandler) writeCreateRelation(
-	ctx context.Context, from string, tail entity.Face, to, relType string, ref v1.ResourceIdentifier,
+	ctx context.Context, from string, tail entity.Face, to, relType, bodyKey string, ref v1.ResourceIdentifier,
 	finalProps map[string]any, finalContent string,
 ) error {
 	opts := entity.RelationOptions{
@@ -526,7 +533,7 @@ func (h *writeHandler) writeCreateRelation(
 	if isMissingPeerCondition(err) {
 		return danglingPeerError(relType, ref.ID)
 	}
-	if ce := cardinalityError(err, relType); ce != nil {
+	if ce := cardinalityError(err, bodyKey); ce != nil {
 		return ce
 	}
 	if !isSoftCondition(err) {
@@ -540,13 +547,13 @@ func (h *writeHandler) writeCreateRelation(
 	// because the EntityManager already ran the ACL above.
 	data := &store.RelationData{Properties: finalProps, Content: finalContent}
 	sErr := h.store.Tx(ctx, func(view store.Store) error {
-		if err := entitymanager.CheckRelationCapacity(ctx, view, h.schema().Meta, k); err != nil {
+		if err := entitymanager.CheckRelationCapacity(ctx, view, h.schema().Meta, k, nil); err != nil {
 			return err
 		}
 		_, err := view.CreateRelation(ctx, k, data)
 		return err
 	})
-	if ce := cardinalityError(sErr, relType); ce != nil {
+	if ce := cardinalityError(sErr, bodyKey); ce != nil {
 		return ce
 	}
 	if sErr != nil {
@@ -860,32 +867,6 @@ func asStructuralError(err error) (*structuralError, bool) {
 	return nil, false
 }
 
-// replaceCreate reports whether a relation wrapper re-points a single-valued
-// relation (TKT-65LVAK): a full linkage (`data`) on an outgoing relation with
-// `max_outgoing: 1` whose plan is one create plus removals. It returns the
-// create. Any other plan (a no-op, a meta update of the kept edge, a delta)
-// goes through the edge-by-edge loop, which cannot exceed the bound there.
-func replaceCreate(
-	relDef *metamodel.RelationDef, incoming bool, upd v1.RelationsUpdate, ops []edgeOp,
-) (edgeOp, bool) {
-	if incoming || upd.Delta || !upd.DataPresent || relDef.MaxOutgoing == nil || *relDef.MaxOutgoing != 1 {
-		return edgeOp{}, false
-	}
-	var create edgeOp
-	creates := 0
-	for _, op := range ops {
-		switch {
-		case op.remove:
-		case op.existing == nil:
-			create = op
-			creates++
-		default:
-			return edgeOp{}, false
-		}
-	}
-	return create, creates == 1
-}
-
 // checkFullLinkageSize refuses a full linkage naming more targets than the
 // relation's max_outgoing allows, before any edge is written.
 func checkFullLinkageSize(
@@ -907,46 +888,140 @@ func checkFullLinkageSize(
 
 // cardinalityError maps a refused create (entitymanager.ErrCardinalityExceeded)
 // to a 422 naming the relation and its bound; nil for any other error.
-func cardinalityError(err error, relType string) *structuralError {
+// bodyKey is the relation's name as the request sent it, canonical or
+// inverse, so the path points at the request's own wrapper.
+func cardinalityError(err error, bodyKey string) *structuralError {
 	var ce *entitymanager.CardinalityError
 	if !errors.As(err, &ce) {
 		return nil
 	}
 	return &structuralError{
 		Code:   "cardinality_exceeded",
-		Path:   "/relations/" + v1.JSONPointerEscape(relType),
+		Path:   "/relations/" + v1.JSONPointerEscape(bodyKey),
 		Detail: ce.Error(),
 	}
 }
 
-// writeReplaceRelation applies a replaceCreate plan through
-// [entitymanager.Manager.ReplaceOutgoing], mapping its errors the way
-// writeCreateRelation maps a create's.
+// writeBoundedOps writes the creates and removes of ops, the plan of one
+// wrapper on a bounded relation, with one [entitymanager.Manager.ReplaceRelations]
+// call. It returns the ops left for the edge-by-edge loop: the upserts of
+// edges that exist already.
 //
 // Only the plan's removals are passed on: the plan holds the edges the caller
-// may see, so an edge to an unreadable target stays.
-func (h *writeHandler) writeReplaceRelation(
-	ctx context.Context, entityID string, create edgeOp, ops []edgeOp, relType string, props map[string]any,
-) error {
-	k := entity.RelationKey{From: entityID, FromFace: create.slot.tail, Type: relType, To: create.slot.peer}
-	var remove []entity.RelationKey
+// may see, so an edge to an unreadable peer stays.
+func (h *writeHandler) writeBoundedOps(
+	ctx context.Context, entityID, bodyKey, relType string, relDef *metamodel.RelationDef, incoming bool,
+	upd v1.RelationsUpdate, ops []edgeOp,
+) ([]edgeOp, []Warning, error) {
+	var (
+		rest     []edgeOp
+		warnings []Warning
+		creates  []entitymanager.RelationCreate
+		createOp []edgeOp
+		props    []map[string]any
+		removes  []entity.RelationKey
+	)
+	path := "/relations/" + v1.JSONPointerEscape(bodyKey)
 	for _, op := range ops {
-		if op.remove {
-			remove = append(remove, entity.RelationKey{
-				From: entityID, FromFace: op.slot.tail, Type: relType, To: op.slot.peer,
+		k := edgeKeyOf(entityID, relType, op.slot, incoming)
+		switch {
+		case op.remove:
+			removes = append(removes, k)
+		case op.existing == nil:
+			finalProps, _, _ := mergeEdgeMeta(nil, op.ref)
+			warnings = append(warnings, requiredMetaWarnings(relType, relDef, op.ref, finalProps,
+				path+upsertKey(upd), directionLabel(incoming))...)
+			creates = append(creates, entitymanager.RelationCreate{
+				Key: k, Opts: entity.RelationOptions{Properties: finalProps, Content: op.ref.Content},
 			})
+			createOp = append(createOp, op)
+			props = append(props, finalProps)
+		default:
+			rest = append(rest, op)
 		}
 	}
-	_, err := h.manager.ReplaceOutgoing(ctx, k, remove,
-		entity.RelationOptions{Properties: props, Content: create.ref.Content})
+	if len(creates) == 0 && len(removes) == 0 {
+		return rest, warnings, nil
+	}
+	_, err := h.manager.ReplaceRelations(ctx, creates, removes)
 	if err == nil {
-		return nil
+		return rest, warnings, nil
+	}
+	// The create the error names, for the error's target; the first when
+	// none matches.
+	target := ""
+	for i, op := range createOp {
+		if i == 0 || strings.Contains(err.Error(), op.slot.peer) {
+			target = op.ref.ID
+		}
 	}
 	if isMissingPeerCondition(err) {
-		return danglingPeerError(relType, create.ref.ID)
+		return nil, warnings, danglingPeerError(relType, target)
 	}
-	if ce := cardinalityError(err, relType); ce != nil {
+	if ce := cardinalityError(err, bodyKey); ce != nil {
+		return nil, warnings, ce
+	}
+	if !isSoftCondition(err) {
+		return nil, warnings, &relationError{RelType: relType, Target: target, Op: "replace",
+			Reason: "replace_failed", Err: err}
+	}
+	if err := h.writeBoundedFallback(ctx, bodyKey, relType, creates, createOp, props, removes); err != nil {
+		return nil, warnings, err
+	}
+	return rest, warnings, nil
+}
+
+// writeBoundedFallback is the soft-condition fallback of writeBoundedOps: a
+// create the type allowlist refuses (DEC-HWZHA) is written anyway, with the
+// warning validateRelationsModern already reported, as writeCreateRelation
+// does for a single edge.
+//
+// The creates go straight to the store, in one Tx that checks each against
+// the bounds, not counting the edges in removes. That is safe because
+// ReplaceRelations authorized every create and remove before it returned the
+// soft condition. The removes then go through the manager, edge by edge.
+//
+// Unlike ReplaceRelations this is not atomic: a remove that fails after the
+// creates leaves an extra edge, which `analyze` reports.
+func (h *writeHandler) writeBoundedFallback(
+	ctx context.Context, bodyKey, relType string, creates []entitymanager.RelationCreate, createOp []edgeOp,
+	props []map[string]any, removes []entity.RelationKey,
+) error {
+	leaving := make(map[entity.RelationKey]bool, len(removes))
+	for _, k := range removes {
+		leaving[k] = true
+	}
+	meta := h.schema().Meta
+	sErr := h.store.Tx(ctx, func(view store.Store) error {
+		for i, c := range creates {
+			if err := entitymanager.CheckRelationCapacity(ctx, view, meta, c.Key, leaving); err != nil {
+				return err
+			}
+			content := ""
+			if createOp[i].ref.Content != nil {
+				content = *createOp[i].ref.Content
+			}
+			if _, err := view.CreateRelation(ctx, c.Key,
+				&store.RelationData{Properties: props[i], Content: content}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if ce := cardinalityError(sErr, bodyKey); ce != nil {
 		return ce
 	}
-	return &relationError{RelType: relType, Target: create.ref.ID, Op: "replace", Reason: "replace_failed", Err: err}
+	if errors.Is(sErr, store.ErrConflict) {
+		return fmt.Errorf("%w: %w", entitymanager.ErrRelationAlreadyExists, sErr)
+	}
+	if sErr != nil {
+		return &relationError{RelType: relType, Op: "create", Reason: "create_failed", Err: sErr}
+	}
+	for _, k := range removes {
+		err := h.manager.DeleteRelation(ctx, k)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return &relationError{RelType: relType, Target: k.To, Op: "delete", Reason: "delete_failed", Err: err}
+		}
+	}
+	return nil
 }
