@@ -326,7 +326,7 @@ func (s *renameFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	for _, e := range moving {
 		moves = append(moves, faceMove{e: e, to: s.toStored})
 	}
-	return res, applyMoves(ctx, x.Store, moves)
+	return res, applyMoves(ctx, x.Store, x.comments, moves)
 }
 
 // sameContent reports whether two rows carry the same type, properties and
@@ -489,7 +489,7 @@ func (s *migrateFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) 
 	if !x.Apply {
 		return res, nil
 	}
-	return res, plan.apply(ctx, x.Store)
+	return res, plan.apply(ctx, x.Store, x.comments)
 }
 
 // faceMove is one row and the face it is headed for. Shared by everything that
@@ -525,9 +525,23 @@ type faceMove struct {
 //
 // Takes the store rather than the *Exec the steps hold: `adopt-face` runs the
 // same moves outside a migration and so has no Exec to hand over.
-func applyMoves(ctx context.Context, st store.Store, moves []faceMove) error {
+func applyMoves(ctx context.Context, st store.Store, threads CommentThreads, moves []faceMove) error {
 	for start := 0; start < len(moves); start += updateBatchSize {
 		batch := moves[start:min(start+updateBatchSize, len(moves))]
+		// Refuse a collision before any thread moves: FaceMoved would merge
+		// the thread into the thread of a DIFFERENT row at the destination,
+		// whose readers would then see remarks about content they may not be
+		// allowed to read. applyFaceMove checks again inside the transaction.
+		if threads != nil {
+			for _, m := range batch {
+				if _, err := destinationHolds(ctx, st, m.e, m.to); err != nil {
+					return err
+				}
+			}
+		}
+		if err := moveThreads(ctx, threads, batch); err != nil {
+			return err
+		}
 		err := st.Tx(ctx, func(s store.Store) error {
 			for _, m := range batch {
 				if err := applyFaceMove(ctx, s, m.e, m.to); err != nil {
@@ -537,10 +551,70 @@ func applyMoves(ctx context.Context, st store.Store, moves []faceMove) error {
 			return nil
 		})
 		if err != nil {
+			if threads != nil {
+				return fmt.Errorf("%w (the comment threads of this batch already moved; "+
+					"re-run to move the rows after them)", err)
+			}
+			return err
+		}
+		// Again after the commit, for a comment posted at the old face while
+		// the batch ran. A re-run no longer lists these rows, so this is the
+		// last chance to move it. FaceMoved finds an empty source otherwise.
+		if err := moveThreads(ctx, threads, batch); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// moveThreads moves the comment threads of a batch of rows to the faces those
+// rows are about to move to (BUG-6OZBP9). No-op without a comment service.
+//
+// Runs BEFORE the batch's row transaction, never after it. A re-run finds its
+// work by listing rows still at the source face, so once a row has moved it is
+// never listed again: a crash between a committed row move and a later thread
+// move would strand the thread for good. Moving the thread first means a
+// re-run that redoes the rows also redoes the threads, and FaceMoved is
+// idempotent. The thread is outside the store transaction either way, because
+// comments are a separate store; if the row move then fails, the thread waits
+// at the destination face until the re-run puts the row there.
+//
+// The collision pre-check in applyMoves runs outside the row transaction, so
+// a user creating the destination face between the check and the move can
+// still receive the thread. The window is one read; the check inside the
+// transaction then refuses the row move and the error names it.
+func moveThreads(ctx context.Context, threads CommentThreads, batch []faceMove) error {
+	if threads == nil {
+		return nil
+	}
+	for _, m := range batch {
+		if err := threads.FaceMoved(ctx, m.e.Type, m.e.ID, m.e.Face, entity.Face(m.to)); err != nil {
+			return fmt.Errorf("%s: move comment thread from face %q to %q: %w", m.e.ID, m.e.Face, m.to, err)
+		}
+	}
+	return nil
+}
+
+// destinationHolds reports whether the row's copy already sits at face `to`,
+// which means a previous run finished this move. A destination row with
+// different content is a genuine collision and is refused with the id named.
+func destinationHolds(ctx context.Context, s store.Store, e *entity.Entity, to string) (bool, error) {
+	existing, err := s.GetEntity(ctx, entity.Ref{ID: e.ID, Face: entity.Face(to)})
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		// Not "absent": the pre-check in applyMoves relies on this answer to
+		// keep a thread out of another row's thread.
+		return false, fmt.Errorf("%s: read the destination row at face %q: %w", e.ID, to, err)
+	}
+	if !sameContent(existing, e) {
+		return false, fmt.Errorf(
+			"%s: cannot move face %q to %q — a row already exists at the destination with "+
+				"different content; drop or merge it first, or this move would destroy one "+
+				"of the two", e.ID, e.Face, to)
+	}
+	return true, nil
 }
 
 // applyFaceMove relocates one row from its current face to `to`.
@@ -556,21 +630,15 @@ func applyMoves(ctx context.Context, st store.Store, moves []faceMove) error {
 // outer store from inside Tx deadlocks on fs/mem and bypasses the transaction
 // on pg.
 func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to string) error {
-	var alreadyMoved bool
-	if existing, err := s.GetEntity(ctx, entity.Ref{ID: e.ID, Face: entity.Face(to)}); err == nil && existing != nil {
-		alreadyMoved = sameContent(existing, e)
-		if !alreadyMoved {
-			return fmt.Errorf(
-				"%s: cannot move face %q to %q — a row already exists at the destination with "+
-					"different content; drop or merge it first, or this move would destroy one "+
-					"of the two", e.ID, e.Face, to)
-		}
+	alreadyMoved, err := destinationHolds(ctx, s, e, to)
+	if err != nil {
+		return err
 	}
 	if !alreadyMoved {
 		moved := *e
 		moved.Face = entity.Face(to)
-		if err := s.CreateEntity(ctx, &moved); err != nil {
-			return fmt.Errorf("%s: create at face %q: %w", e.ID, to, err)
+		if cErr := s.CreateEntity(ctx, &moved); cErr != nil {
+			return fmt.Errorf("%s: create at face %q: %w", e.ID, to, cErr)
 		}
 	}
 	// Deleting a face takes its OUTGOING edges with it — they were written
@@ -1113,6 +1181,12 @@ func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error)
 				return res, capErr
 			}
 		}
+		// Before the delete, like the capture above: once the rows are gone a
+		// re-run no longer lists this id, so a thread left behind by a crash
+		// here could never be found again.
+		if tErr := x.dropThreads(ctx, id); tErr != nil {
+			return res, tErr
+		}
 		del, err := x.Store.DeleteFamily(ctx, id, true)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
@@ -1128,6 +1202,13 @@ func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error)
 			return res, err
 		}
 		captureCascaded(ctx, x, del, &res)
+		// Again after the delete: the migration lock does not hold off a
+		// live comment write, and one posted while the row was still
+		// readable would otherwise outlive it and pass to the next entity
+		// that takes this id.
+		if tErr := x.dropThreads(ctx, id); tErr != nil {
+			return res, tErr
+		}
 	}
 	return res, nil
 }

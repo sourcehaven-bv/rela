@@ -108,8 +108,8 @@ func (p *adoptionPlan) notes(property string) []string {
 // create-then-delete pair, and carrying the source row's outgoing edges across
 // so the delete does not destroy them (BUG-TOX8U4) — are not ones this path
 // may quietly do without.
-func (p *adoptionPlan) apply(ctx context.Context, st store.Store) error {
-	return applyMoves(ctx, st, p.moves)
+func (p *adoptionPlan) apply(ctx context.Context, st store.Store, threads CommentThreads) error {
+	return applyMoves(ctx, st, threads, p.moves)
 }
 
 // AdoptDeps are the collaborators [Adopt] needs.
@@ -118,6 +118,7 @@ type AdoptDeps struct {
 	Meta     *metamodel.Metamodel
 	Audit    audit.Audit
 	Versions VersionCapture
+	Comments CommentThreads
 	Lock     MigrationLock
 }
 
@@ -201,7 +202,7 @@ func Adopt(ctx context.Context, deps AdoptDeps, req AdoptRequest) (*AdoptResult,
 			}
 		}
 	}
-	if err := plan.apply(ctx, deps.Store); err != nil {
+	if err := plan.apply(ctx, deps.Store, deps.Comments); err != nil {
 		return res, err
 	}
 	auditAdopt(deps.Audit, p, req, res.Affected)

@@ -181,7 +181,7 @@ func TestMigrateFace_BatchesAtTheDocumentedBoundary(t *testing.T) {
 			}
 			moves = append(moves, faceMove{e: e, to: "draft"})
 		}
-		if err := applyMoves(t.Context(), probe, moves); err != nil {
+		if err := applyMoves(t.Context(), probe, nil, moves); err != nil {
 			t.Fatalf("%d moves: %v", tc.moves, err)
 		}
 		if probe.txCalls != tc.wantTx {
