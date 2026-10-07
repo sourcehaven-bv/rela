@@ -1127,10 +1127,15 @@ type Kanban struct {
 // On a page tab, the columns are the anchor's targets in `_order_out` order.
 // Off a page, or without OfferedBy, the columns are every target, ordered by
 // OrderBy (a property of the target type) and then by title.
+//
+// StyleFrom names an enum property of the target type. Each column takes its
+// colour from its target's value of that property, through the app styles,
+// the same way a relation field's `style_from` colours its badge.
 type KanbanColumnsFrom struct {
 	Relation  string `yaml:"relation" json:"relation"`
 	OfferedBy string `yaml:"offered_by,omitempty" json:"offered_by,omitempty"`
 	OrderBy   string `yaml:"order_by,omitempty" json:"order_by,omitempty"`
+	StyleFrom string `yaml:"style_from,omitempty" json:"style_from,omitempty"`
 }
 
 // KanbanColumn defines a column in the kanban board.

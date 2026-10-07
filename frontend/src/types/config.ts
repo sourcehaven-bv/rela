@@ -292,6 +292,8 @@ export interface ListGroupBy {
   offered_by?: string
   /** Target property that orders the sections when there is no anchor. */
   order_by?: string
+  /** Enum property of the target that colours each section through `styles:`. */
+  style_from?: string
   /** Restyles enum values. Every declared value still gets a section. */
   groups?: ListGroup[]
   /** Sorts a date property into relative sections. Exclusive with `groups`. */
@@ -453,6 +455,8 @@ export interface KanbanColumnsFrom {
   offered_by?: string
   /** Target property that orders the columns when there is no anchor. */
   order_by?: string
+  /** Enum property of the target that colours each column through `styles:`. */
+  style_from?: string
 }
 
 export interface KanbanColumn {

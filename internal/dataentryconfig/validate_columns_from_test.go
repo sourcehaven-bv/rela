@@ -11,6 +11,14 @@ import (
 // ticket→category relation, the shape a relation-backed board needs.
 func columnsFromMetamodel() *metamodel.Metamodel {
 	m := testMetamodel()
+	category := m.Entities["category"]
+	category.Properties = map[string]metamodel.PropertyDef{
+		"name":        {Type: "string", Required: true},
+		"description": {Type: "string"},
+		"kind":        {Type: "status"},
+		"tone":        {Type: "string", Values: []string{"warm", "cold"}},
+	}
+	m.Entities["category"] = category
 	one := 1
 	m.Relations["in-category"] = metamodel.RelationDef{
 		Label: "in category", From: []string{"ticket"}, To: []string{"category"}, MaxOutgoing: &one,
@@ -64,6 +72,32 @@ func TestValidateConfig_KanbanColumnsFrom(t *testing.T) {
 			}},
 			wantErr: `offered_by "lists-ticket" does not point to "category"`,
 		},
+		{
+			name: "style_from enum type",
+			kanban: Kanban{EntityType: "ticket", ColumnsFrom: &KanbanColumnsFrom{
+				Relation: "in-category", StyleFrom: "kind",
+			}},
+		},
+		{
+			name: "style_from declared values",
+			kanban: Kanban{EntityType: "ticket", ColumnsFrom: &KanbanColumnsFrom{
+				Relation: "in-category", StyleFrom: "tone",
+			}},
+		},
+		{
+			name: "style_from unknown property",
+			kanban: Kanban{EntityType: "ticket", ColumnsFrom: &KanbanColumnsFrom{
+				Relation: "in-category", StyleFrom: "colour",
+			}},
+			wantErr: `columns_from: style_from "colour" is not a property of "category"`,
+		},
+		{
+			name: "style_from not an enum",
+			kanban: Kanban{EntityType: "ticket", ColumnsFrom: &KanbanColumnsFrom{
+				Relation: "in-category", StyleFrom: "description",
+			}},
+			wantErr: `columns_from: style_from "description" on "category" is not an enum property`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -92,6 +126,9 @@ func TestValidateListGroupBy_Relation(t *testing.T) {
 		{name: "multi-valued", groupBy: ListGroupBy{Relation: "belongs-to"}, wantErr: "must declare max_outgoing: 1"},
 		{name: "with property", groupBy: ListGroupBy{Relation: "in-category", Property: "status"}, wantErr: "mutually exclusive"},
 		{name: "order_by without relation", groupBy: ListGroupBy{Property: "status", OrderBy: "name"}, wantErr: "need relation"},
+		{name: "style_from", groupBy: ListGroupBy{Relation: "in-category", StyleFrom: "kind"}},
+		{name: "style_from not an enum", groupBy: ListGroupBy{Relation: "in-category", StyleFrom: "name"}, wantErr: `style_from "name" on "category" is not an enum property`},
+		{name: "style_from without relation", groupBy: ListGroupBy{Property: "status", StyleFrom: "kind"}, wantErr: "need relation"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

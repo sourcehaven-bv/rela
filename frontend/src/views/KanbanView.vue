@@ -47,7 +47,7 @@ import type { DenseRoutingHint } from '@/widgets/viewRouting'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlBoard from 'rela-components/components/board/RlBoard.vue'
 import RlSwimlaneBoard from 'rela-components/components/board/RlSwimlaneBoard.vue'
-import type { Section, Swimlane } from 'rela-components/types'
+import type { Section, StatusColor, Swimlane } from 'rela-components/types'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
 const props = defineProps<{
@@ -443,11 +443,19 @@ function iconFor(name?: string) {
   return hasIcon(name) ? resolveIcon(name) : undefined
 }
 
+// A relation-backed column's colour, from its target's `style_from` value.
+const relationColumnColors = computed(() => {
+  const colors = new Map<string, StatusColor>()
+  for (const c of relationColumns.columns.value) if (c.color) colors.set(c.value, c.color)
+  return colors
+})
+
 const boardSections = computed((): Section<BoardCard>[] =>
   columns.value.map((column) => ({
     id: column.value,
     title: columnTitle(column),
     icon: iconFor(column.icon),
+    color: columnsFrom.value ? relationColumnColors.value.get(column.value) : undefined,
     items: (entitiesByColumn.value[column.value] ?? []).map(toCard),
   }))
 )
@@ -801,6 +809,31 @@ const createModal = useCreateModal(async (entity) => {
   refreshAfterCreate()
 })
 
+// A relation-backed board offers Add in each column. The new card starts with
+// an edge to the column's target, so it lands in the column it was added
+// from; on a page tab it is linked to the anchor as well (linkCreated above).
+// The Other column names no target, so its Add opens the plain form.
+const showColumnAdd = computed(
+  () => !!columnsFrom.value && !!kanbanConfig.value?.create_form && canCreate()
+)
+const createPrefill = ref<{
+  properties: Record<string, unknown>
+  relations?: Record<string, { id: string; type: string }[]>
+}>()
+function onColumnAdd(section: Section<BoardCard>) {
+  const relation = columnsFrom.value?.relation
+  const target = relationColumns.targetType.value
+  createPrefill.value =
+    relation && target && section.id !== OTHER_COLUMN
+      ? { properties: {}, relations: { [relation]: [{ id: section.id, type: target }] } }
+      : undefined
+  createModal.show()
+}
+// A column's prefill belongs to the one dialog it opened; New opens without.
+watch(createModal.open, (open) => {
+  if (!open) createPrefill.value = undefined
+})
+
 // No lifecycle plumbing: the query fetches on mount, re-keys when
 // props.id switches boards, and refetches in the background when
 // useEvents invalidates ['entities', <type>] on SSE entity events.
@@ -909,11 +942,12 @@ const createModal = useCreateModal(async (entity) => {
       role="group"
       :aria-label="boardLabel"
       :sections="boardSections"
-      :show-add="false"
+      :show-add="showColumnAdd"
       :show-add-section="false"
       :can-move="canMoveCard"
       :selected-id="selectedEntityId ?? undefined"
       @move="onMove"
+      @add="onColumnAdd"
     >
           <template #card="{ item }">
             <RouterLink
@@ -951,7 +985,8 @@ const createModal = useCreateModal(async (entity) => {
       :form-id="kanbanConfig.create_form"
       :entity-type="kanbanConfig.entity"
       :world="worldParam"
-      add-another
+      :prefill="createPrefill"
+      :add-another="!createPrefill"
       @close="createModal.close"
       @created="createModal.created"
       @created-another="createModal.createdAnother"

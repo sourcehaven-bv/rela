@@ -2197,17 +2197,26 @@ func validateKanbanColumnsFrom(kanbanID string, kanban Kanban, meta *metamodel.M
 		errs = append(errs, fmt.Sprintf("kanban %q: swimlanes are not supported with columns_from", kanbanID))
 	}
 	prefix := fmt.Sprintf("kanban %q: columns_from", kanbanID)
-	return append(errs, validateRelationColumns(prefix, kanban.EntityType, cf.Relation, cf.OfferedBy, cf.OrderBy, meta)...)
+	return append(errs, validateRelationColumns(prefix, kanban.EntityType, relationColumnsSource{
+		Relation: cf.Relation, OfferedBy: cf.OfferedBy, OrderBy: cf.OrderBy, StyleFrom: cf.StyleFrom,
+	}, meta)...)
+}
+
+// relationColumnsSource is the part a kanban's `columns_from` and a list's
+// relation `group_by` share.
+type relationColumnsSource struct {
+	Relation, OfferedBy, OrderBy, StyleFrom string
 }
 
 // validateRelationColumns checks the relation that a board's columns or a
 // list's sections come from. It must be single-valued and single-target, so a
 // row sits in exactly one column and the column type is known at load time.
-// offeredBy, when set, must point at that target type; orderBy must be one of
-// its properties.
+// OfferedBy, when set, must point at that target type; OrderBy must be one of
+// its properties; StyleFrom must be one of its enum properties.
 func validateRelationColumns(
-	prefix, entityType, relation, offeredBy, orderBy string, meta *metamodel.Metamodel,
+	prefix, entityType string, src relationColumnsSource, meta *metamodel.Metamodel,
 ) []string {
+	relation, offeredBy, orderBy := src.Relation, src.OfferedBy, src.OrderBy
 	var errs []string
 	rel, ok := meta.GetRelationDef(relation)
 	if !ok {
@@ -2238,6 +2247,9 @@ func validateRelationColumns(
 				errs = append(errs, fmt.Sprintf("%s: order_by %q is not a property of %q", prefix, orderBy, target))
 			}
 		}
+	}
+	if src.StyleFrom != "" {
+		errs = append(errs, validateStyleFrom(prefix, src.StyleFrom, rel.To, meta)...)
 	}
 	return errs
 }

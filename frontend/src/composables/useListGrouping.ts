@@ -264,6 +264,7 @@ export function useListGrouping(options: {
         {
           id: `rel:${c.value}`,
           title: c.label,
+          color: c.color,
           prefillRelations: { [relation]: [{ id: c.value, type: targetType }] },
           items: [],
         },

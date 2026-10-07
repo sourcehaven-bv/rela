@@ -6,12 +6,15 @@ import { usePageStore } from '@/stores/pages'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { ORDER_PROPERTY_OUT } from '@/types/schema'
 import type { Entity, PageScope } from '@/types'
+import type { StatusColor } from 'rela-components/types'
 
 /** Where columns or sections come from: a kanban's `columns_from`, or a relation `group_by`. */
 export interface RelationColumnsSource {
   relation?: string
   offered_by?: string
   order_by?: string
+  /** Enum property of the target whose value, through `styles:`, colours the column. */
+  style_from?: string
 }
 
 /** The column for cards whose target is not among the board's columns. */
@@ -22,6 +25,37 @@ export interface RelationColumn {
   label: string
   /** The target entity; absent for the Other column. */
   entity?: Entity
+  /** From the target's `style_from` value; absent without one or without a style. */
+  color?: StatusColor
+}
+
+/**
+ * The status colour for an app style class (`badge-<colour>`, see Badge.vue).
+ * The board's status palette has no purple or yellow, so those fold into the
+ * nearest status colour.
+ */
+const STYLE_STATUS_COLORS: Record<string, StatusColor> = {
+  'badge-blue': 'blue',
+  'badge-purple': 'blue',
+  'badge-green': 'green',
+  'badge-gray': 'grey',
+  'badge-red': 'red',
+  'badge-orange': 'amber',
+  'badge-yellow': 'amber',
+}
+
+/**
+ * The colour a target's `styleFrom` value maps to through the app styles,
+ * keyed the way Badge.vue keys them.
+ */
+export function styleColor(
+  styles: Record<string, string> | undefined,
+  value: unknown,
+): StatusColor | undefined {
+  if (!styles || value === undefined || value === null || value === '') return undefined
+  const key = String(value).toLowerCase().replace(/\s/g, '_')
+  const cls = styles[key]
+  return cls ? STYLE_STATUS_COLORS[cls] : undefined
 }
 
 function orderValue(v: unknown): number {
@@ -83,11 +117,19 @@ export function useRelationColumns(
     const data = query.data.value
     if (!data) return []
     const byId = new Map(data.targets.map((e) => [e.id, e]))
-    const toColumn = (e: Entity): RelationColumn => ({
-      value: e.id,
-      label: entityDisplayTitle(e),
-      entity: e,
-    })
+    const styleFrom = columnsFrom.value?.style_from
+    const styles = styleFrom
+      ? schemaStore.stylesForProperty(styleFrom, targetType.value)
+      : undefined
+    const toColumn = (e: Entity): RelationColumn => {
+      const color = styleFrom ? styleColor(styles, e.properties[styleFrom]) : undefined
+      return {
+        value: e.id,
+        label: entityDisplayTitle(e),
+        entity: e,
+        ...(color ? { color } : {}),
+      }
+    }
 
     if (data.offered) {
       return data.offered

@@ -88,10 +88,12 @@ func validateListGroupBy(
 		if len(g.Groups) > 0 || g.Buckets != "" {
 			errs = append(errs, prefix+": groups and buckets do not apply to a relation")
 		}
-		return append(errs, validateRelationColumns(prefix, entityType, g.Relation, g.OfferedBy, g.OrderBy, meta)...)
+		return append(errs, validateRelationColumns(prefix, entityType, relationColumnsSource{
+			Relation: g.Relation, OfferedBy: g.OfferedBy, OrderBy: g.OrderBy, StyleFrom: g.StyleFrom,
+		}, meta)...)
 	}
-	if g.OfferedBy != "" || g.OrderBy != "" {
-		errs = append(errs, prefix+": offered_by and order_by need relation")
+	if g.OfferedBy != "" || g.OrderBy != "" || g.StyleFrom != "" {
+		errs = append(errs, prefix+": offered_by, order_by and style_from need relation")
 	}
 	if g.Property == "" {
 		return append(errs, prefix+": property or relation is required")

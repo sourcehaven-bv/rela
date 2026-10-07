@@ -3008,6 +3008,7 @@ kanbans:
 | `header`           | string | Markdown rendered above the board (info/help; see below)   |
 | `footer`           | string | Markdown rendered below the board                          |
 | `column_property`  | string | Property to group by for columns (must be enum/custom type)|
+| `columns_from`     | object | Columns from a relation's targets instead of an enum (see below) |
 | `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`)     |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
@@ -3104,6 +3105,50 @@ kanbans:
 | `label` | string | Display label (defaults to the raw enum value)  |
 
 Entities with column property values not in the explicit list are hidden from the board.
+
+### Columns from a relation (`columns_from`)
+
+`columns_from` takes the columns from the targets of a relation instead of
+from an enum. Each target, such as a status entity, is one column:
+
+```yaml
+kanbans:
+  initiative_board:
+    entity_type: task
+    columns_from:
+      relation: has_status
+      offered_by: offers_status
+      order_by: rank
+      style_from: category
+    card:
+      title: title
+    create_form: task
+```
+
+| Key          | Type   | Description |
+|--------------|--------|-------------|
+| `relation`   | string | Required. A relation from the card type with `max_outgoing: 1` and exactly one target type. |
+| `offered_by` | string | Optional. A relation from the page's entity to the same target type. On a page tab, the columns are the targets the page's entity offers, in that relation's order. |
+| `order_by`   | string | Optional. A property of the target type that orders the columns when there is no `offered_by` or no page. Ties sort by title. |
+| `style_from` | string | Optional. An enum property of the target type. Each column heading takes its colour from its target's value, through the app `styles:`, the same way a relation field's `style_from` colours its badge. |
+
+`columns_from` cannot be combined with `column_property`, `columns` or
+swimlanes. A card whose target is not one of the columns goes in an
+**Other** column, shown only when a card needs it.
+
+Dragging a card to another column replaces its edge with one to the new
+column's target, in a single write. A card cannot be dropped on **Other**.
+
+With a `create_form`, each column has an **Add** button. A card created from
+it starts with an edge to that column's target, so it lands in the column it
+was added from. On a page tab, the card is also linked to the page's entity,
+as with **New**. **Add** on the **Other** column opens the form without a
+target. **Create & add another** is not offered from a column, for the same
+reason as from a list section.
+
+A list can group on a relation the same way: `group_by` takes `relation`,
+`offered_by`, `order_by` and `style_from` with the same meaning, one section
+per target.
 
 ### Swimlanes
 

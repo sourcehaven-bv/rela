@@ -108,6 +108,7 @@ kanbans:
       relation: heeft_status
       offered_by: biedt_status
       order_by: volgorde
+      style_from: categorie
     card:
       title: titel
     create_form: taak
@@ -118,6 +119,7 @@ kanbans:
     columns_from:
       relation: heeft_status
       order_by: volgorde
+      style_from: categorie
     card:
       title: titel
     edit_form: taak
