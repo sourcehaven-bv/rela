@@ -1,5 +1,5 @@
 ---
 from: TKT-SLFURL
-type: affects
+relation: affects
 to: rest-api
 ---

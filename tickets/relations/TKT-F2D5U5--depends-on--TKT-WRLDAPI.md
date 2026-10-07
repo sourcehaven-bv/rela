@@ -1,5 +1,5 @@
 ---
 from: TKT-F2D5U5
-type: depends-on
+relation: depends-on
 to: TKT-WRLDAPI
 ---

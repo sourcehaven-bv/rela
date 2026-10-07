@@ -944,6 +944,7 @@ Relations define how entity types can be connected:
 | `min_incoming` | Minimum incoming relations per to-side entity   |
 | `max_incoming` | Maximum incoming relations per to-side entity   |
 | `scope`        | `identity` (default) or `content` — what the relation attaches to under content states (see below) |
+| `owning`       | `true` if the source owns the target, which is then shown as part of it (see below) |
 
 ### Relation scope (`scope:`)
 
@@ -1089,6 +1090,48 @@ relations:
     to: [requirement, decision]
     symmetric: true
 ```
+
+### Owned Items (`owning:`)
+
+An owning relation makes the target part of the source. A task's subtasks
+are the typical case: each subtask is a full entity, with its own properties,
+relations and access rules, but people see it on its task's page rather than
+on a page of its own.
+
+```yaml
+relations:
+  subtask:
+    label: subtask
+    from: [task]
+    to: [task]
+    owning: true
+```
+
+What `owning: true` changes:
+
+- **Navigation.** Opening an owned entity opens its owner's page, scrolled to
+  the entity. Search results and the command palette show "in" and the owner's
+  title next to an owned hit, and link there.
+- **Delete.** Deleting the owner with cascade deletes the entities it owns, in
+  the same transaction. If the principal may not delete one of them, nothing
+  is deleted. Soft delete and restore take the owned entities along too.
+- **Write rules.** An entity has at most one owner, an owner cannot itself be
+  owned, and an entity cannot own itself. A write that breaks one of these is
+  refused. This covers relations a copy writes. It also covers a restore: if
+  an owned entity was restored on its own and then given a new owner, a later
+  restore of its old owner is refused.
+
+Owned entities still appear everywhere else: in lists, kanbans, calendars and
+search. Nothing hides them.
+
+The loader refuses `owning: true` together with `symmetric: true`, with
+`max_incoming` above 1, and on a type that declares faces.
+
+Data written outside rela, such as hand edits or imports, can still break the
+write rules. `rela analyze owning` reports those entities. The detail page
+then shows such an entity on its own page, because it has no single owner to
+show it under. Only owners the principal can read count, so an owner the
+principal cannot see is never revealed.
 
 ## Query Scopes
 

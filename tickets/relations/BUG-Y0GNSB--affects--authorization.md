@@ -1,6 +1,6 @@
 ---
 from: BUG-Y0GNSB
-type: affects
+relation: affects
 to: authorization
 ---
 

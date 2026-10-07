@@ -1022,7 +1022,33 @@ entities:
         type: string
         required: true
 
+  # TKT-QO14GB: a plan owns its steps. Separate types, so the owning
+  # relation changes nothing the other specs read.
+  plan:
+    label: Plan
+    id_type: sequential
+    id_prefix: PLAN
+    properties:
+      title:
+        type: string
+        required: true
+
+  step:
+    label: Step
+    id_type: sequential
+    id_prefix: STEP
+    properties:
+      title:
+        type: string
+        required: true
+      assignee:
+        type: string
+
 relations:
+  has_step:
+    from: [plan]
+    to: [step]
+    owning: true
   blocks:
     from: [feature, bug, task]
     to: [feature, bug, task]
@@ -1407,6 +1433,20 @@ lists:
 # type so it doesn't override the default feature detail rendering that
 # other specs (e.g. git-crypt.spec.ts) assert against.
 views:
+  plan:
+    title: "Plan"
+    entry:
+      type: plan
+    traverse:
+      - from: entry
+        follow: has_step
+        collect_as: steps
+    sections:
+      - heading: "Steps"
+        source: steps
+        display: related
+        fields:
+          - property: assignee
   task:
     title: "Task"
     entry:

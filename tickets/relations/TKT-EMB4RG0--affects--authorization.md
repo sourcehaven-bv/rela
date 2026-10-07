@@ -1,5 +1,5 @@
 ---
 from: TKT-EMB4RG0
-type: affects
+relation: affects
 to: authorization
 ---
