@@ -134,7 +134,8 @@ func TestReplaceOutgoing_RepointsToExactlyOneEdge(t *testing.T) {
 	if _, err := mgr.CreateRelation(ctx, key("T-1", "has_status", "S-1"), entity.RelationOptions{}); err != nil {
 		t.Fatalf("seed edge: %v", err)
 	}
-	if _, err := mgr.ReplaceOutgoing(ctx, key("T-1", "has_status", "S-2"), entity.RelationOptions{}); err != nil {
+	if _, err := mgr.ReplaceOutgoing(ctx, key("T-1", "has_status", "S-2"),
+		[]entity.RelationKey{key("T-1", "has_status", "S-1")}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 	if got := edgesFrom(t, st, "T-1", "has_status"); len(got) != 1 || got[0] != "S-2" {
@@ -144,7 +145,8 @@ func TestReplaceOutgoing_RepointsToExactlyOneEdge(t *testing.T) {
 
 func TestReplaceOutgoing_CreatesWhenNoEdge(t *testing.T) {
 	mgr, st := cardinalityManager(t)
-	if _, err := mgr.ReplaceOutgoing(context.Background(), key("T-1", "has_status", "S-1"), entity.RelationOptions{}); err != nil {
+	if _, err := mgr.ReplaceOutgoing(context.Background(), key("T-1", "has_status", "S-1"),
+		[]entity.RelationKey{key("T-1", "has_status", "S-2")}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 	if got := edgesFrom(t, st, "T-1", "has_status"); len(got) != 1 || got[0] != "S-1" {
@@ -162,11 +164,38 @@ func TestReplaceOutgoing_KeepsExistingTargetAndDropsOthers(t *testing.T) {
 			t.Fatalf("seed %s: %v", to, err)
 		}
 	}
-	if _, err := mgr.ReplaceOutgoing(ctx, key("T-1", "has_status", "S-2"), entity.RelationOptions{}); err != nil {
+	if _, err := mgr.ReplaceOutgoing(ctx, key("T-1", "has_status", "S-2"),
+		[]entity.RelationKey{key("T-1", "has_status", "S-1"), key("T-1", "has_status", "S-2")},
+		entity.RelationOptions{}); err != nil {
 		t.Fatalf("replace: %v", err)
 	}
 	if got := edgesFrom(t, st, "T-1", "has_status"); len(got) != 1 || got[0] != "S-2" {
 		t.Errorf("edges = %v, want [S-2]", got)
+	}
+}
+
+// An edge the caller does not name is not removed: the caller, not the
+// manager, knows which edges the user may see.
+func TestReplaceOutgoing_LeavesUnnamedEdges(t *testing.T) {
+	mgr, st := cardinalityManager(t)
+	ctx := context.Background()
+	if _, err := st.CreateRelation(ctx, key("T-1", "tagged", "S-1"), nil); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := mgr.ReplaceOutgoing(ctx, key("T-1", "tagged", "S-2"), nil, entity.RelationOptions{}); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	if got := edgesFrom(t, st, "T-1", "tagged"); len(got) != 2 {
+		t.Errorf("edges = %v, want both S-1 and S-2", got)
+	}
+}
+
+func TestReplaceOutgoing_RefusesForeignEdge(t *testing.T) {
+	mgr, _ := cardinalityManager(t)
+	_, err := mgr.ReplaceOutgoing(context.Background(), key("T-1", "has_status", "S-1"),
+		[]entity.RelationKey{key("T-2", "has_status", "S-2")}, entity.RelationOptions{})
+	if err == nil {
+		t.Fatal("replace removing another entity's edge succeeded")
 	}
 }
 
@@ -181,7 +210,8 @@ func TestReplaceOutgoing_FailedCreateKeepsOriginalEdge(t *testing.T) {
 		}
 	}
 	// S-2 already holds its one incoming edge, so the create half is refused.
-	_, err := mgr.ReplaceOutgoing(ctx, key("T-1", "exclusive_status", "S-2"), entity.RelationOptions{})
+	_, err := mgr.ReplaceOutgoing(ctx, key("T-1", "exclusive_status", "S-2"),
+		[]entity.RelationKey{key("T-1", "exclusive_status", "S-1")}, entity.RelationOptions{})
 	if !errors.Is(err, entitymanager.ErrCardinalityExceeded) {
 		t.Fatalf("err = %v, want ErrCardinalityExceeded", err)
 	}
@@ -196,7 +226,8 @@ func TestReplaceOutgoing_MissingTargetChangesNothing(t *testing.T) {
 	if _, err := mgr.CreateRelation(ctx, key("T-1", "has_status", "S-1"), entity.RelationOptions{}); err != nil {
 		t.Fatalf("seed edge: %v", err)
 	}
-	_, err := mgr.ReplaceOutgoing(ctx, key("T-1", "has_status", "S-9"), entity.RelationOptions{})
+	_, err := mgr.ReplaceOutgoing(ctx, key("T-1", "has_status", "S-9"),
+		[]entity.RelationKey{key("T-1", "has_status", "S-1")}, entity.RelationOptions{})
 	if !errors.Is(err, entitymanager.ErrEntityNotFound) {
 		t.Fatalf("err = %v, want ErrEntityNotFound", err)
 	}

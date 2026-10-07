@@ -2458,7 +2458,7 @@ func (m *Manager) CreateRelation(
 	// The GetRelation pre-check above is advisory; the store's atomic
 	// create is the real guard, and a conflict surfaces as
 	// ErrRelationAlreadyExists (BUG-ZWTDH9).
-	create := func(st store.Store) error { return m.writeRelationCreate(ctx, st, key, rel, true) }
+	create := func(st store.Store) error { return m.writeRelationCreate(ctx, st, key, rel, nil) }
 	var createErr error
 	if relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) {
 		createErr = m.deps.Store.Tx(ctx, create)
@@ -2553,11 +2553,12 @@ func (m *Manager) prepareRelationCreate(
 // writeRelationCreate is the write half of a relation create, on st: the
 // cardinality bound, the managed order, then the store create.
 //
-// checkOutgoing false skips the source's max_outgoing, for ReplaceOutgoing.
+// Edges in leaving are not counted against the bounds (ReplaceOutgoing).
 func (m *Manager) writeRelationCreate(
-	ctx context.Context, st store.Store, key entity.RelationKey, rel *entity.Relation, checkOutgoing bool,
+	ctx context.Context, st store.Store, key entity.RelationKey, rel *entity.Relation,
+	leaving map[entity.RelationKey]bool,
 ) error {
-	if err := checkRelationCapacity(ctx, st, m.deps.Meta, key, checkOutgoing); err != nil {
+	if err := checkRelationCapacity(ctx, st, m.deps.Meta, key, leaving); err != nil {
 		return err
 	}
 	if err := m.assignManagedOrder(ctx, st, rel, key.Type); err != nil {

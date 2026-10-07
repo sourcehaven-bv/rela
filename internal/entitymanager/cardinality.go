@@ -26,22 +26,22 @@ type CardinalityError struct {
 }
 
 func (e *CardinalityError) Error() string {
-	return fmt.Sprintf("relation %q allows at most %d edge(s) per entity (%s); %s already has %d",
-		e.Relation, e.Limit, e.Constraint, e.Entity, e.Limit)
+	return fmt.Sprintf("relation %q allows at most %d edge(s) per entity (%s), and %s has no room for another",
+		e.Relation, e.Limit, e.Constraint, e.Entity)
 }
 
 func (e *CardinalityError) Unwrap() error { return ErrCardinalityExceeded }
 
-// relTypeHasMax reports whether relType bounds its edges on either side, so
-// creating one counts the existing edges.
 // CheckRelationCapacity is checkRelationCapacity for a write that bypasses
 // the manager, such as the dataentry soft-condition fallback.
 func CheckRelationCapacity(
 	ctx context.Context, st store.Store, meta *metamodel.Metamodel, key entity.RelationKey,
 ) error {
-	return checkRelationCapacity(ctx, st, meta, key, true)
+	return checkRelationCapacity(ctx, st, meta, key, nil)
 }
 
+// relTypeHasMax reports whether relType bounds its edges on either side, so
+// creating one counts the existing edges.
 func relTypeHasMax(meta *metamodel.Metamodel, relType string) bool {
 	def, ok := meta.Relations[relType]
 	return ok && (def.MaxOutgoing != nil || def.MaxIncoming != nil)
@@ -58,21 +58,22 @@ func relTypeHasMax(meta *metamodel.Metamodel, relType string) bool {
 // source, as `analyze` counts them: each face is its own set of links.
 //
 // st must be the Tx view the create runs in, so the count and the create see
-// the same rows.
-//
-// checkOutgoing false skips the source's bound, for a replace that removes the
-// source's other edges in the same Tx.
+// the same rows. Edges in leaving are not counted: a replace deletes them in
+// the same Tx.
 func checkRelationCapacity(
 	ctx context.Context, st store.Store, meta *metamodel.Metamodel, key entity.RelationKey,
-	checkOutgoing bool,
+	leaving map[entity.RelationKey]bool,
 ) error {
 	def, ok := meta.Relations[key.Type]
 	if !ok {
 		return nil
 	}
-	if checkOutgoing && def.MaxOutgoing != nil {
+	staying := func(r *entity.Relation) bool { return !leaving[r.Identity()] }
+	if def.MaxOutgoing != nil {
 		n, err := countEdges(ctx, st, store.RelationQuery{From: key.From, Type: key.Type},
-			func(r *entity.Relation) bool { return !def.Scope.IsContent() || r.FromFace == key.FromFace })
+			func(r *entity.Relation) bool {
+				return (!def.Scope.IsContent() || r.FromFace == key.FromFace) && staying(r)
+			})
 		if err != nil {
 			return err
 		}
@@ -82,7 +83,7 @@ func checkRelationCapacity(
 		}
 	}
 	if def.MaxIncoming != nil {
-		n, err := countEdges(ctx, st, store.RelationQuery{To: key.To, Type: key.Type}, nil)
+		n, err := countEdges(ctx, st, store.RelationQuery{To: key.To, Type: key.Type}, staying)
 		if err != nil {
 			return err
 		}
@@ -107,67 +108,72 @@ func countEdges(ctx context.Context, st store.Store, q store.RelationQuery, keep
 	return n, nil
 }
 
-// ReplaceOutgoing makes key the only outgoing edge of key.Type on key.From's
-// tail (key.FromFace): it deletes every other such edge and creates key when
-// it is missing, in one store transaction (TKT-65LVAK). A refused or failed
-// create leaves the edges as they were, on every store; see the Tx body for
-// the order that makes this hold without rollback.
+// ReplaceOutgoing deletes the edges in remove and creates key when it is
+// missing, in one store transaction (TKT-65LVAK). It is how a single-valued
+// relation is re-pointed, such as moving a task to another status. Doing that
+// as a separate delete and create could leave zero edges when the create
+// fails, or two when the delete does.
 //
-// It is how a single-valued relation is re-pointed, such as moving a task to
-// another status. Doing that as a delete and a create could leave zero edges
-// when the create fails, or two when the delete does.
+// The caller names the edges to remove, rather than ReplaceOutgoing taking
+// every edge on the tail, so it decides what the user may see and touch: an
+// edge to a target the caller cannot read stays, as it does on the
+// edge-by-edge path. Every edge in remove must be an outgoing key.Type edge
+// of key.From on key.FromFace; one already gone is skipped. Edges in remove
+// do not count against the bounds, since they go in the same Tx.
 //
-// The caller needs both grants: delete on the relation (when there is an edge
-// to remove) and create. The edge kept or created is returned.
+// The caller needs the create grant, and the delete grant when remove is not
+// empty. Both are decided before the Tx from remove, which the Tx cannot
+// widen. A refused or failed create leaves the edges as they were, on every
+// store; see the Tx body for the order that makes this hold without rollback.
+// The edge kept or created is returned.
 func (m *Manager) ReplaceOutgoing(
-	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
+	ctx context.Context, key entity.RelationKey, remove []entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	ctx = withStoreAttribution(ctx)
 	if err := validTail(key.FromFace); err != nil {
 		return nil, err
 	}
+	leaving := make(map[entity.RelationKey]bool, len(remove))
+	for _, r := range remove {
+		if r.From != key.From || r.FromFace != key.FromFace || r.Type != key.Type {
+			return nil, fmt.Errorf("replace %s: %s --%s--> %s is not an edge of the same tail",
+				key.Type, entity.FormatStateRef(r.From, r.FromFace), r.Type, r.To)
+		}
+		if r.To != key.To {
+			leaving[r] = true
+		}
+	}
 	rel, sourceType, err := m.prepareRelationCreate(ctx, key, opts)
 	if err != nil {
 		return nil, err
 	}
-
-	sameTail := func(r *entity.Relation) bool { return r.FromFace == key.FromFace }
-	before, err := m.outgoingOnTail(ctx, m.deps.Store, key, sameTail)
-	if err != nil {
-		return nil, err
-	}
-	var doomed []*entity.Relation
-	for _, r := range before {
-		if r.To != key.To {
-			doomed = append(doomed, r)
-		}
-	}
-	if len(doomed) > 0 {
+	if len(leaving) > 0 {
 		if aclErr := m.authorizeAndAudit(ctx,
 			RelationDeleteRequest(m.deps.Meta, key.Type, sourceType, key.From, key.FromFace)); aclErr != nil {
 			return nil, aclErr
 		}
 	}
+
 	// Versions are written through the outer store, which a Tx body may not
 	// use, so the pre-delete snapshots are taken first, while the rows still
-	// exist (as DeleteRelation does). Should the Tx then fail, the snapshot
+	// exist (as DeleteRelation does). Should the Tx then fail, a snapshot
 	// records a state that is still current, which is harmless.
-	for _, r := range doomed {
-		m.recordRelationVersion(ctx, store.VersionOpDelete, r, "", "", "")
+	for k := range leaving {
+		if r, gErr := m.deps.Store.GetRelation(ctx, k); gErr == nil {
+			m.recordRelationVersion(ctx, store.VersionOpDelete, r, "", "", "")
+		}
 	}
 
 	var kept *entity.Relation
 	var deleted []*entity.Relation
 	err = m.deps.Store.Tx(ctx, func(view store.Store) error {
 		kept, deleted = nil, nil
-		current, err := m.outgoingOnTail(ctx, view, key, sameTail)
-		if err != nil {
-			return err
-		}
-		for _, r := range current {
-			if r.To == key.To {
-				kept = r
-			}
+		existing, gErr := view.GetRelation(ctx, key)
+		switch {
+		case gErr == nil:
+			kept = existing
+		case !errors.Is(gErr, store.ErrNotFound):
+			return gErr
 		}
 		// Create before delete. Only pgstore rolls a failed Tx back; on the
 		// file and memory stores a Tx only serializes. Creating first means a
@@ -175,15 +181,19 @@ func (m *Manager) ReplaceOutgoing(
 		// failing after it leaves an extra edge that `analyze` reports, never
 		// a task without a status.
 		if kept == nil {
-			if err := m.writeRelationCreate(ctx, view, key, rel, false); err != nil {
+			if err := m.writeRelationCreate(ctx, view, key, rel, leaving); err != nil {
 				return err
 			}
 		}
-		for _, r := range current {
-			if r.To == key.To {
+		for k := range leaving {
+			r, gErr := view.GetRelation(ctx, k)
+			if errors.Is(gErr, store.ErrNotFound) {
 				continue
 			}
-			if err := view.DeleteRelation(ctx, r.Identity()); err != nil {
+			if gErr != nil {
+				return gErr
+			}
+			if err := view.DeleteRelation(ctx, k); err != nil {
 				return fmt.Errorf("delete relation: %w", err)
 			}
 			deleted = append(deleted, r)
@@ -205,19 +215,4 @@ func (m *Manager) ReplaceOutgoing(
 	}
 	m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
 	return rel, nil
-}
-
-func (m *Manager) outgoingOnTail(
-	ctx context.Context, st store.Store, key entity.RelationKey, keep func(*entity.Relation) bool,
-) ([]*entity.Relation, error) {
-	var out []*entity.Relation
-	for r, err := range st.ListRelations(ctx, store.RelationQuery{From: key.From, Type: key.Type}) {
-		if err != nil {
-			return nil, fmt.Errorf("list %s edges: %w", key.Type, err)
-		}
-		if keep(r) {
-			out = append(out, r)
-		}
-	}
-	return out, nil
 }

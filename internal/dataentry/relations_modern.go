@@ -375,7 +375,7 @@ func (h *writeHandler) applyRelationsModern(
 			finalProps, _, _ := mergeEdgeMeta(nil, create.ref)
 			warnings = append(warnings, requiredMetaWarnings(canonical, &relDef, create.ref, finalProps,
 				dataPath+upsertKey(upd), direction)...)
-			if err := h.writeReplaceRelation(ctx, entityID, create, canonical, finalProps); err != nil {
+			if err := h.writeReplaceRelation(ctx, entityID, create, ops, canonical, finalProps); err != nil {
 				return warnings, err
 			}
 			continue
@@ -922,11 +922,23 @@ func cardinalityError(err error, relType string) *structuralError {
 // writeReplaceRelation applies a replaceCreate plan through
 // [entitymanager.Manager.ReplaceOutgoing], mapping its errors the way
 // writeCreateRelation maps a create's.
+//
+// Only the plan's removals are passed on: the plan holds the edges the caller
+// may see, so an edge to an unreadable target stays.
 func (h *writeHandler) writeReplaceRelation(
-	ctx context.Context, entityID string, create edgeOp, relType string, props map[string]any,
+	ctx context.Context, entityID string, create edgeOp, ops []edgeOp, relType string, props map[string]any,
 ) error {
 	k := entity.RelationKey{From: entityID, FromFace: create.slot.tail, Type: relType, To: create.slot.peer}
-	_, err := h.manager.ReplaceOutgoing(ctx, k, entity.RelationOptions{Properties: props, Content: create.ref.Content})
+	var remove []entity.RelationKey
+	for _, op := range ops {
+		if op.remove {
+			remove = append(remove, entity.RelationKey{
+				From: entityID, FromFace: op.slot.tail, Type: relType, To: op.slot.peer,
+			})
+		}
+	}
+	_, err := h.manager.ReplaceOutgoing(ctx, k, remove,
+		entity.RelationOptions{Properties: props, Content: create.ref.Content})
 	if err == nil {
 		return nil
 	}
