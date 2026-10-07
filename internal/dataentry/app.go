@@ -608,7 +608,7 @@ func appRedactor(a *App) visibility.FieldRedactor {
 // appbuild's guard: it would convert a caught bug into a silent downgrade,
 // and delete the fault path failclosed_test.go exercises.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
-	return gatedScriptReader(a.acl, a.store, redactor, familiesOption(a), defaultWorldScope(a.worlds))
+	return gatedScriptReader(a.acl, a.store, a.versions, redactor, familiesOption(a), defaultWorldScope(a.worlds))
 }
 
 // familiesOption is the resolver option every App-wired resolver takes, so a
@@ -738,6 +738,28 @@ func (r lateGatedReader) Family(ctx context.Context, id string) (visibility.Fami
 	return fr.Family(ctx, id)
 }
 
+// EntityVersions forwards to the live gated reader, so a validation rule
+// reads history as an action does. A reader without history answers
+// store.ErrHistoryUnsupported, which the binding raises.
+func (r lateGatedReader) EntityVersions(ctx context.Context, addr string) ([]store.VersionMeta, error) {
+	hr, ok := r.reader().(lua.EntityVersionReader)
+	if !ok {
+		return nil, store.ErrHistoryUnsupported
+	}
+	return hr.EntityVersions(ctx, addr)
+}
+
+// EntityVersion forwards like [lateGatedReader.EntityVersions].
+func (r lateGatedReader) EntityVersion(
+	ctx context.Context, addr string, n int,
+) (*entity.Entity, store.VersionMeta, error) {
+	hr, ok := r.reader().(lua.EntityVersionReader)
+	if !ok {
+		return nil, store.VersionMeta{}, store.ErrHistoryUnsupported
+	}
+	return hr.EntityVersion(ctx, addr, n)
+}
+
 // lateGatedTracer is the tracer.Tracer counterpart of lateGatedReader: it
 // resolves the gated tracer (scriptTracer, which prunes hidden nodes and fails
 // closed) from the LIVE App per call, so a rule's rela.trace_from/trace_to/
@@ -797,16 +819,17 @@ func elevationRecorder(sink audit.Audit) lua.ElevationRecorder {
 // NopACL it degrades to the raw store (byte-identical to pre-ACL); under a
 // Declarative policy it row-gates + field-redacts, resolving the principal from
 // ctx per call; a construction fault REFUSES (DenyReader) rather than reading
-// ungated. Same policy the per-request App.scriptReader wraps.
+// ungated. Same policy the per-request App.scriptReader wraps. history serves
+// rela.history and rela.get_version; nil leaves scripts without it.
 func gatedScriptReader(
-	aclImpl acl.ACL, store store.Store, redactor visibility.FieldRedactor, order visibility.ResolverOption,
-	world store.WorldScope,
+	aclImpl acl.ACL, store store.Store, history store.HistoryReader,
+	redactor visibility.FieldRedactor, order visibility.ResolverOption, world store.WorldScope,
 ) lua.EntityReader {
 	d, ok := aclImpl.(*acl.Declarative)
 	if !ok || d == nil {
 		// Named so the NopACL path is greppable alongside every other
 		// ungated read site (TKT-1WV50C).
-		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world))
+		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world)).WithHistory(history)
 	}
 	gate, err := visibility.NewDeclarativeGate(d, world)
 	if err != nil {
@@ -823,7 +846,7 @@ func gatedScriptReader(
 		slog.Error("dataentry: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	return sr.WithWorld(visibility.WorldOf(world))
+	return sr.WithWorld(visibility.WorldOf(world)).WithHistory(history)
 }
 
 // scriptTraversalGate authorizes a validation rule's traversal under the same

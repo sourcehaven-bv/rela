@@ -31,6 +31,9 @@ type UnrestrictedReader struct {
 	st    store.Store
 	res   *Resolver
 	world World
+
+	// history: see [UnrestrictedReader.WithHistory].
+	history store.HistoryReader
 }
 
 // Unrestricted wraps a raw store as an explicitly ungated script read
