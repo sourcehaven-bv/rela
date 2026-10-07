@@ -1,5 +1,5 @@
 ---
 from: TKT-CFGSQL
-type: affects
+relation: affects
 to: store-backends
 ---

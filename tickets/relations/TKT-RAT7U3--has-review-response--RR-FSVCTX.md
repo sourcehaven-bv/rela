@@ -1,5 +1,5 @@
 ---
 from: TKT-RAT7U3
-type: has-review-response
+relation: has-review-response
 to: RR-FSVCTX
 ---

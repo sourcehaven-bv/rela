@@ -28,6 +28,7 @@ type AnalyzeCmd struct {
 	Cardinality   AnalyzeCardinalityCmd   `cmd:"" help:"Check relation cardinality constraints."`
 	RelationOrder AnalyzeRelationOrderCmd `cmd:"" name:"relation-order" help:"Find duplicate or missing values on managed relation order properties."`
 	RelationFiles AnalyzeRelationFilesCmd `cmd:"" name:"relation-files" help:"Find relation files whose filename disagrees with their content."`
+	Owning        AnalyzeOwningCmd        `cmd:"" help:"Find ownership the write path refuses: self, multiple owners, nesting."`
 	Properties    AnalyzePropertiesCmd    `cmd:"" help:"Validate entity property values against metamodel."`
 	Validations   AnalyzeValidationsCmd   `cmd:"" help:"Run custom validation rules from metamodel."`
 	States        AnalyzeStatesCmd        `cmd:"" help:"Find content-state integrity issues (undeclared faces, rows stranded at the bare id)."`
@@ -375,6 +376,34 @@ func (c *AnalyzeRelationOrderCmd) Run(ctx context.Context, analyzer *analysis.Se
 		out.WriteSuccess("All orderable relations have consistent order values")
 	} else {
 		out.WriteWarning("Found %d relation-order issue(s)", len(issues))
+	}
+	return nil
+}
+
+// AnalyzeOwningCmd finds owning edges that break the one-owner, one-level
+// rule (TKT-QO14GB).
+type AnalyzeOwningCmd struct{}
+
+// Run dispatches `rela analyze owning`.
+func (c *AnalyzeOwningCmd) Run(ctx context.Context, analyzer *analysis.Service) error {
+	opts, err := resolveAnalyzeOpts()
+	if err != nil {
+		return err
+	}
+	issues, err := analyzer.CheckOwning(ctx, *opts)
+	if err != nil {
+		return err
+	}
+	if writeAnalysisJSON(len(issues), issues, "All owned entities have one owner", "Found %d ownership issue(s)") {
+		return nil
+	}
+	for _, iss := range issues {
+		out.WriteWarning("%s: %s (owners: %s)", iss.EntityID, iss.Kind, strings.Join(iss.Owners, ", "))
+	}
+	if len(issues) == 0 {
+		out.WriteSuccess("All owned entities have one owner")
+	} else {
+		out.WriteWarning("Found %d ownership issue(s)", len(issues))
 	}
 	return nil
 }

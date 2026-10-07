@@ -92,6 +92,7 @@ function onNavigate(event: MouseEvent) {
       :entity-type="entityType"
       :entity-id="entityId"
       hide-actions
+      :follow-owner="false"
     />
 
     <template #actions>

@@ -33,6 +33,11 @@ type FSFactory struct {
 	FS    storage.FS
 	Paths *project.Context
 
+	// ReadOnly opens the store over a [storage.ReadOnlyFS] and ignores the
+	// persisted index cache, so opening, reading and closing leave the
+	// project directory byte-identical. Every write through the store fails.
+	ReadOnly bool
+
 	observers []store.EntityObserver
 }
 
@@ -60,19 +65,28 @@ func (f *FSFactory) OpenStore(meta *metamodel.Metamodel) (store.Store, error) {
 	if meta == nil {
 		return nil, errors.New("app: FSFactory.OpenStore requires a non-nil metamodel")
 	}
-	rooted, err := storage.NewRootedFS(f.FS, f.Paths.Root)
+	fsys := f.FS
+	if f.ReadOnly {
+		ro, err := storage.NewReadOnlyFS(fsys)
+		if err != nil {
+			return nil, fmt.Errorf("app: read-only fs for fsstore: %w", err)
+		}
+		fsys = ro
+	}
+	rooted, err := storage.NewRootedFS(fsys, f.Paths.Root)
 	if err != nil {
 		return nil, fmt.Errorf("app: rooted fs for fsstore: %w", err)
 	}
 	return fsstore.New(fsstore.Config{
-		FS:             f.FS,
-		Rooted:         rooted,
-		EntitiesKey:    "entities",
-		RelationsKey:   "relations",
-		AttachmentsKey: "attachments",
-		CacheKey:       storeCacheKey,
-		Schemas:        buildSchemas(meta),
-		Observers:      f.observers,
+		FS:               fsys,
+		Rooted:           rooted,
+		EntitiesKey:      "entities",
+		RelationsKey:     "relations",
+		AttachmentsKey:   "attachments",
+		CacheKey:         storeCacheKey,
+		IgnoreIndexCache: f.ReadOnly,
+		Schemas:          buildSchemas(meta),
+		Observers:        f.observers,
 	})
 }
 

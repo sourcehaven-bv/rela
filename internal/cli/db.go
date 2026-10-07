@@ -17,6 +17,7 @@ type DBCmd struct {
 	Reconcile DBReconcileCmd `cmd:"" help:"Converge derived-schema objects (unique and query indexes) with the configuration."`
 	Load      DBLoadCmd      `cmd:"" help:"Store the project's config files (schema, data-entry, ACL, scripts, templates) and, with --data, its markdown data in the database (SQLite)."`
 	Dump      DBDumpCmd      `cmd:"" help:"Write the config files and, with --data, the data stored in the database to a directory (SQLite)."`
+	ImportFS  DBImportFSCmd  `cmd:"" name:"import-fs" help:"Copy a filesystem project into a new SQLite project directory (SQLite build only)."`
 }
 
 // DBLoadCmd bakes a project's operator-authored config into its SQLite
@@ -110,4 +111,22 @@ type DBReconcileCmd struct {
 // Run executes `rela db reconcile`.
 func (c *DBReconcileCmd) Run() error {
 	return runDBReconcile(c.DryRun, c.ShowValues)
+}
+
+// DBImportFSCmd copies a filesystem project into a new project directory
+// whose data lives in a SQLite database (TKT-YNKKRQ). The source is left
+// unchanged and the target must not exist yet. Only the SQLite build
+// implements it; see internal/fsimport for what is copied.
+//
+// Like the other db commands it takes no project from the working directory:
+// both directories are named on the command line, so running it inside the
+// source can never open a database there.
+type DBImportFSCmd struct {
+	Source string `arg:"" help:"The filesystem project to copy." type:"path"`
+	Target string `arg:"" help:"The directory to create for the SQLite project. Must not exist." type:"path"`
+}
+
+// Run executes `rela db import-fs`.
+func (c *DBImportFSCmd) Run(ctx context.Context) error {
+	return runDBImportFS(ctx, c.Source, c.Target)
 }

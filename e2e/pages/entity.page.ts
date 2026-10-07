@@ -705,4 +705,20 @@ export class EntityPage extends BasePage {
   async submitDuplicateForm() {
     await this.duplicateModal.locator('button[type="submit"]').first().click();
   }
+
+  /** Owned items (TKT-QO14GB): the row of a `display: related` section, which
+   *  carries the owned entity's id as its anchor. */
+  relatedRow(id: string): Locator {
+    return this.page.locator(`.related-rows [id="${id}"]`);
+  }
+
+  /** The page is the owner's, anchored at the owned entity. */
+  async expectShownAsPartOf(ownerType: string, ownerId: string, ownedId: string) {
+    await expect(this.page).toHaveURL(new RegExp(`/entity/${ownerType}/${ownerId}#${ownedId}$`));
+    await expect(this.relatedRow(ownedId)).toBeVisible();
+  }
+
+  async expectRelatedRowText(id: string, text: string) {
+    await expect(this.relatedRow(id)).toContainText(text);
+  }
 }

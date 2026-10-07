@@ -275,7 +275,7 @@ var locked = map[File][]string{
 		// Not in the Configure space yet.
 		"copies.**", "default_world", "worlds.**", "entities.*.faces.**",
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
-		"relations.*.scope",
+		"relations.*.scope", "relations.*.owning",
 		"validations.[].faces.**", "automations.[].on.faces.**",
 	},
 	DataEntryFile: {

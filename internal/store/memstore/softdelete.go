@@ -228,21 +228,19 @@ func (d softDeleter) PurgeMarked(_ context.Context, id string) (*store.DeleteRes
 	return result, nil
 }
 
-// revealedRelations returns the hidden relations of the entity ctx reveals
+// revealedRelations returns the hidden relations of the entities ctx reveals
 // (see [store.WithRevealed]) that satisfy match. Caller holds mu.
 func revealedRelations(ctx context.Context, m *MemStore, match func(*entity.Relation) bool) []*entity.Relation {
-	id := store.RevealedID(ctx)
-	if id == "" {
-		return nil
-	}
-	fam, ok := m.marked[id]
-	if !ok {
-		return nil
-	}
 	var out []*entity.Relation
-	for _, r := range sortedRelations(fam.relations) {
-		if match(r) {
-			out = append(out, r.Clone())
+	for _, id := range store.RevealedIDs(ctx) {
+		fam, ok := m.marked[id]
+		if !ok {
+			continue
+		}
+		for _, r := range sortedRelations(fam.relations) {
+			if match(r) {
+				out = append(out, r.Clone())
+			}
 		}
 	}
 	return out

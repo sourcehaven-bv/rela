@@ -10,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -52,10 +53,20 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 		return fmt.Errorf("entity %s has %d relation(s); use --cascade to delete them too", c.ID, totalRelations)
 	}
 
+	owned := 0
+	if wholeEntity {
+		if owned, err = countOwned(ctx, svc.Store, svc.Meta, ref.ID); err != nil {
+			return fmt.Errorf("count entities owned by %s: %w", c.ID, err)
+		}
+	}
+
 	if !c.Force {
 		fmt.Printf("Delete %s '%s'", target.Type, svc.Meta.DisplayTitle(target.ID, target.Type, target.Properties))
 		if !ref.Face.IsImplicit() {
 			fmt.Printf(" at face %s", ref.Face)
+		}
+		if owned > 0 {
+			fmt.Printf(", the %d entit(ies) it owns", owned)
 		}
 		if totalRelations > 0 {
 			fmt.Printf(" and %d relation(s)", totalRelations)
@@ -88,6 +99,9 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 	}
 
 	out.WriteSuccess("Deleted %s", c.ID)
+	if n := otherEntities(result, ref.ID); n > 0 {
+		out.WriteMessage("  Also deleted %d owned entit(ies)", n)
+	}
 	if len(result.DeletedRelations) > 0 {
 		out.WriteMessage("  Also deleted %d relation(s)", len(result.DeletedRelations))
 	}
@@ -135,4 +149,32 @@ func deleteScope(ref entity.Ref, wholeEntity bool) store.RelationQuery {
 	}
 	face := ref.Face
 	return store.RelationQuery{EntityID: ref.ID, Direction: store.DirectionOutgoing, FromFace: &face}
+}
+
+// countOwned counts the entities id owns through an `owning:` relation
+// (TKT-QO14GB). Deleting id deletes them too.
+func countOwned(ctx context.Context, st store.Store, meta *metamodel.Metamodel, id string) (int, error) {
+	n := 0
+	q := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
+	for r, err := range st.ListRelations(ctx, q) {
+		if err != nil {
+			return 0, err
+		}
+		if metamodel.IsOwning(meta, r.Type) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// otherEntities counts the distinct entities in result other than id: the
+// owned entities a delete of id took along.
+func otherEntities(result *entity.DeleteResult, id string) int {
+	seen := map[string]bool{}
+	for _, e := range result.DeletedEntities {
+		if e.ID != id {
+			seen[e.ID] = true
+		}
+	}
+	return len(seen)
 }

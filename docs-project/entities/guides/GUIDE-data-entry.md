@@ -2172,10 +2172,45 @@ Rules worth knowing:
 | `cards`      | Card layout showing each entity with selected property badges   |
 | `list`       | Simple bulleted list of entity titles with optional fields      |
 | `nested`     | Two-level parent→child tree; each row expands to its children   |
+| `related`    | One row per entity: its title, then its fields as plain text    |
 
 **`properties`** is best for the entry entity's metadata. **`content`** renders the markdown body.
 **`table`** works well for collections with many items. **`cards`** provides a visual layout for
 smaller collections. **`list`** is the most compact.
+
+#### `related` — rows of linked records
+
+`related` shows each entity as one line: the title, then the section's
+`fields` as plain text at the end of the line. It suits records that belong to
+the entry, such as owned subtasks (see "Owned Items" in
+[metamodel.md](metamodel.md)).
+
+```yaml
+views:
+  task:
+    entry:
+      type: task
+    traverse:
+      - from: entry
+        follow: subtask
+        collect_as: subtasks
+    sections:
+      - heading: Subtasks
+        source: subtasks
+        display: related
+        fields:
+          - property: assignee
+          - property: due
+```
+
+Each row's anchor is the entity id, so `/entity/task/TASK-1#TASK-7` scrolls
+to the row. A row owned by an entity links to its owner's page, anchored at
+the row. On the owner's own page that link jumps to the row. Other rows link
+to their own page. Empty values and values the principal cannot read are left
+out. In a side panel, `related` renders like `list`.
+
+Rows in `list`, `cards`, `table` and `nested` sections carry the same id
+anchors.
 
 #### `nested` — parent→child trees
 

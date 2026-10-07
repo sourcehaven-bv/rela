@@ -93,15 +93,22 @@ var validSortDirections = map[string]bool{
 // and one wire value should not be spelled twice across a package boundary.
 const DisplayNested = "nested"
 
+// DisplayRelated is the section display mode that renders each entity as one
+// row: its title and its fields as trailing values. It suits records shown as
+// part of the entry, such as owned subtasks (TKT-QO14GB). The server builds it
+// like `list`; only the SPA renders it differently.
+const DisplayRelated = "related"
+
 // Valid display modes for view sections
 var validSectionDisplayModes = map[string]bool{
-	"properties":  true,
-	"content":     true,
-	"table":       true,
-	"list":        true,
-	"cards":       true,
-	"breakdown":   true,
-	DisplayNested: true,
+	"properties":   true,
+	"content":      true,
+	"table":        true,
+	"list":         true,
+	"cards":        true,
+	"breakdown":    true,
+	DisplayNested:  true,
+	DisplayRelated: true,
 }
 
 // Valid render modes for a view section and its fields (TKT-HOIX1). Empty is
@@ -125,9 +132,10 @@ var validSectionRenderModes = map[string]bool{
 // mismatch by adding `content` here; that would suppress a warning the
 // operator needs.
 var sectionDisplayModesRenderingFields = map[string]bool{
-	"properties": true,
-	"list":       true,
-	"cards":      true,
+	"properties":   true,
+	"list":         true,
+	"cards":        true,
+	DisplayRelated: true,
 }
 
 // sectionFieldWidgetTypes is the widget → accepted-property-types table for a

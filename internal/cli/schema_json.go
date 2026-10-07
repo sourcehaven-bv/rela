@@ -42,6 +42,7 @@ type schemaRelationDef interface {
 	GetDescription() string
 	GetInverse() any
 	IsSymmetric() bool
+	IsOwning() bool
 	GetMinOutgoing() *int
 	GetMaxOutgoing() *int
 	GetMinIncoming() *int
@@ -123,6 +124,9 @@ func (w schemaJSONWriter) writeRelationDetail(name string, def schemaRelationDef
 	}
 	if def.IsSymmetric() {
 		data["symmetric"] = true
+	}
+	if def.IsOwning() {
+		data["owning"] = true
 	}
 	if minOut := def.GetMinOutgoing(); minOut != nil {
 		data["min_outgoing"] = *minOut

@@ -109,7 +109,9 @@ func allViewBodies() viewBodies { return viewBodies{all: true} }
 // It is coupled to buildSections' display switch (sections.go): these modes
 // build their rows from properties alone, while `content` and `cards` copy
 // the entity's body. Change one, check the other.
-var contentFreeDisplays = map[string]bool{"table": true, "properties": true, "list": true, "nested": true}
+var contentFreeDisplays = map[string]bool{
+	"table": true, "properties": true, "list": true, "nested": true, "related": true,
+}
 
 // viewBodyCollections derives the body-carrying collections from the
 // sections that will render the result.

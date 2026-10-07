@@ -88,6 +88,7 @@ type relationTypeDetail struct {
 	To          []string                  `json:"to"`
 	Inverse     string                    `json:"inverse,omitempty"`
 	Symmetric   bool                      `json:"symmetric,omitempty"`
+	Owning      bool                      `json:"owning,omitempty"`
 	MinOutgoing *int                      `json:"min_outgoing,omitempty"`
 	MaxOutgoing *int                      `json:"max_outgoing,omitempty"`
 	MinIncoming *int                      `json:"min_incoming,omitempty"`
@@ -231,6 +232,7 @@ func (h schemaResourceHandler) relationDetail(
 		From:        def.GetFrom(),
 		To:          def.GetTo(),
 		Symmetric:   def.IsSymmetric(),
+		Owning:      def.Owning,
 		MinOutgoing: def.GetMinOutgoing(),
 		MaxOutgoing: def.GetMaxOutgoing(),
 		MinIncoming: def.GetMinIncoming(),

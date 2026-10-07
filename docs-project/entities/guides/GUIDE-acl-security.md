@@ -1386,6 +1386,13 @@ other surfaces and how each counts hidden entities.
     `delete_entity` and `rename_entity` report cover visible edges only.
     So do the relation counts behind `analyze` with `check: cardinality`
     or `check: orphans`, and in the data-entry analyze view (TKT-5LW875).
+  - an edge of an `owning:` relation that clashes with an owning edge to a
+    hidden entity is refused with `owning_rule` (TKT-QO14GB). That shows some
+    hidden owning edge exists. The message is the same for all three clashes,
+    so it does not say which one;
+  - deleting an owner that owns an entity the caller may not delete fails
+    with a 403, on every write path. The denial names the owned entity's type
+    but not its id. Nothing is deleted.
 - **Markdown body (`content`) is not field-redacted, on any read path.**
   `visible:` is a **property-values** guard: it omits hidden *property* and
   *relation-meta* values from the wire. It makes no claim over the markdown

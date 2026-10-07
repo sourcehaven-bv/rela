@@ -43,6 +43,7 @@ func (r *mockSchemaRelationDef) GetDescription() string {
 }
 func (r *mockSchemaRelationDef) GetInverse() any      { return r.inverse }
 func (r *mockSchemaRelationDef) IsSymmetric() bool    { return r.symmetric }
+func (r *mockSchemaRelationDef) IsOwning() bool       { return false }
 func (r *mockSchemaRelationDef) GetMinOutgoing() *int { return r.srcMin }
 func (r *mockSchemaRelationDef) GetMaxOutgoing() *int { return r.srcMax }
 func (r *mockSchemaRelationDef) GetMinIncoming() *int { return r.tgtMin }

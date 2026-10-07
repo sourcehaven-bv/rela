@@ -214,6 +214,11 @@ func (r *RelationDef) IsSymmetric() bool {
 	return r.Symmetric
 }
 
+// IsOwning returns whether the relation's targets are owned by its source.
+func (r *RelationDef) IsOwning() bool {
+	return r.Owning
+}
+
 // GetMinOutgoing returns the minimum outgoing cardinality (from-side constraint)
 func (r *RelationDef) GetMinOutgoing() *int {
 	return r.MinOutgoing
