@@ -464,6 +464,12 @@ func (s *Server) handleDeleteEntity(
 			fmt.Sprintf("entity %s has %d relation(s); set cascade=true to delete them too", id, visible)), nil
 	}
 
+	// Counted before the delete, which takes the owned entities along.
+	owned := 0
+	if wholeEntity {
+		owned = visibleOwnedCount(ctx, st, snap.deps.Meta, ref.ID)
+	}
+
 	var delErr error
 	if ref.Face.IsImplicit() {
 		_, delErr = snap.deps.EntityManager.DeleteEntity(ctx, ref.ID, cascade)
@@ -475,6 +481,9 @@ func (s *Server) handleDeleteEntity(
 	}
 
 	msg := "Deleted " + id
+	if owned > 0 {
+		msg += fmt.Sprintf(", the %d entit(ies) it owns", owned)
+	}
 	if (cascade || !wholeEntity) && visible > 0 {
 		msg += fmt.Sprintf(" and %d relation(s)", visible)
 	}
@@ -571,6 +580,22 @@ func visibleDeleteScopeCount(ctx context.Context, st GraphReader, ref entity.Ref
 			break
 		}
 		n++
+	}
+	return n
+}
+
+// visibleOwnedCount counts the entities id owns through an `owning:`
+// relation (TKT-QO14GB) that the caller can see.
+func visibleOwnedCount(ctx context.Context, st GraphReader, meta *metamodel.Metamodel, id string) int {
+	n := 0
+	q := store.RelationQuery{EntityID: id, Direction: store.DirectionOutgoing}
+	for r, err := range st.ListRelations(ctx, q) {
+		if err != nil {
+			break
+		}
+		if metamodel.IsOwning(meta, r.Type) {
+			n++
+		}
 	}
 	return n
 }

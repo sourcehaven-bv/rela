@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -78,61 +80,133 @@ func SoftDeleteEntity(ctx context.Context, m *Manager, id string) (*entity.Delet
 	if aclErr := m.authorizeFamily(ctx, acl.OpDelete, id, family, authorized); aclErr != nil {
 		return nil, aclErr
 	}
-	current := family[0]
 
 	// Collect, authorize and mark under one serialization, for the reason
 	// DeleteEntity gives: an edge added between an outside check and the mark
 	// would go without authorization.
-	var res *store.DeleteResult
+	var marked familyChange
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
-		// The family is re-read and re-authorized inside the serialization,
-		// for the reason DeleteEntity gives.
-		inTx, fErr := familyRows(ctx, tx, id)
-		if fErr != nil {
-			return fErr
-		}
-		if len(inTx) == 0 {
-			return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
-		}
-		if aErr := m.authorizeFamily(ctx, acl.OpDelete, id, inTx, authorized); aErr != nil {
-			return aErr
-		}
-		incoming, cErr := collectIncidentRelations(ctx, tx, id, store.DirectionIncoming)
-		if cErr != nil {
-			return fmt.Errorf("collect incoming relations for %q: %w", id, cErr)
-		}
-		outgoing, cErr := collectIncidentRelations(ctx, tx, id, store.DirectionOutgoing)
-		if cErr != nil {
-			return fmt.Errorf("collect outgoing relations for %q: %w", id, cErr)
-		}
-		if aErr := m.authorizeCascadeRelations(ctx, tx, id, incoming, outgoing); aErr != nil {
-			return aErr
-		}
-		sd, ok := tx.(store.SoftDeleteProvider)
-		if !ok { // unreachable: every in-tree Tx view carries the capability of its store
-			return ErrSoftDeleteUnsupported
-		}
-		var mErr error
-		res, mErr = sd.SoftDelete().MarkDeleted(ctx, id, deleterOf(ctx))
-		return mErr
+		return softDeleteInTx(ctx, m, tx, id, authorized, &marked)
 	})
 	if txErr != nil {
+		// fs and mem cannot roll back, so a failure on a later mark leaves
+		// the earlier ones in place. Record those, as DeleteEntity records a
+		// partial cascade (issue #929); a mark that was rolled back left its
+		// faces live and is recorded as nothing.
+		marked.keep(func(r *store.DeleteResult) bool {
+			return !facesStillStored(ctx, m.deps.Store, r.DeletedEntities)
+		})
+		recordSoftDelete(ctx, m, id, family[0], marked)
 		return nil, txErr
 	}
+	return recordSoftDelete(ctx, m, id, family[0], marked), nil
+}
 
-	cascadeCtx := ctx
-	if len(res.DeletedRelations) > 0 {
-		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
-	}
-	for _, rel := range res.DeletedRelations {
-		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted (undoable)")
-	}
-	m.recordEntityAudit(ctx, audit.OpDeleteEntity, current, "deleted (undoable)")
+// familyChange is what one soft delete or restore changed: the entity named
+// in the call, and the owned entities that went or came back with it. Either
+// part may be missing when the operation failed partway.
+type familyChange struct {
+	main  *store.DeleteResult
+	owned []*store.DeleteResult
+}
 
-	return &entity.DeleteResult{
-		DeletedEntities:  []*entity.Entity{current},
-		DeletedRelations: res.DeletedRelations,
-	}, nil
+// keep drops every result that ok rejects.
+func (c *familyChange) keep(ok func(*store.DeleteResult) bool) {
+	if c.main != nil && !ok(c.main) {
+		c.main = nil
+	}
+	kept := c.owned[:0]
+	for _, r := range c.owned {
+		if ok(r) {
+			kept = append(kept, r)
+		}
+	}
+	c.owned = kept
+}
+
+// softDeleteInTx is SoftDeleteEntity's critical section. It fills done as it
+// marks, so a failure partway still reports what was marked.
+func softDeleteInTx(
+	ctx context.Context, m *Manager, tx store.Store, id string, authorized familyAuthorization, done *familyChange,
+) error {
+	// The family is re-read and re-authorized inside the serialization, for
+	// the reason DeleteEntity gives.
+	inTx, err := familyRows(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if len(inTx) == 0 {
+		return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
+	}
+	if aErr := m.authorizeFamily(ctx, acl.OpDelete, id, inTx, authorized); aErr != nil {
+		return aErr
+	}
+	incoming, err := collectIncidentRelations(ctx, tx, id, store.DirectionIncoming)
+	if err != nil {
+		return fmt.Errorf("collect incoming relations for %q: %w", id, err)
+	}
+	outgoing, err := collectIncidentRelations(ctx, tx, id, store.DirectionOutgoing)
+	if err != nil {
+		return fmt.Errorf("collect outgoing relations for %q: %w", id, err)
+	}
+	if aErr := m.authorizeCascadeRelations(ctx, tx, id, incoming, outgoing); aErr != nil {
+		return aErr
+	}
+	owned, err := prepareOwnedDeletes(ctx, m, tx, id, outgoing)
+	if err != nil {
+		return err
+	}
+	sd, ok := tx.(store.SoftDeleteProvider)
+	if !ok { // unreachable: every in-tree Tx view carries the capability of its store
+		return ErrSoftDeleteUnsupported
+	}
+	// The owner is marked FIRST, so the owning edges are hidden with it.
+	// That is how RestoreEntity finds the owned entities again: from the
+	// owner's hidden edges, see markedWithOwner.
+	if done.main, err = sd.SoftDelete().MarkDeleted(ctx, id, deleterOf(ctx)); err != nil {
+		return err
+	}
+	for _, o := range owned {
+		r, mErr := sd.SoftDelete().MarkDeleted(ctx, o.id, deleterOf(ctx))
+		if mErr != nil {
+			return ownedDeleteError(id, mErr)
+		}
+		done.owned = append(done.owned, r)
+	}
+	return nil
+}
+
+// recordSoftDelete writes the audit records for what a soft delete marked
+// and returns the result the caller reports. current is the face read before
+// the transaction, which the entity's own record names.
+func recordSoftDelete(
+	ctx context.Context, m *Manager, id string, current *entity.Entity, marked familyChange,
+) *entity.DeleteResult {
+	out := &entity.DeleteResult{}
+	if res := marked.main; res != nil {
+		cascadeCtx := ctx
+		if len(res.DeletedRelations) > 0 {
+			cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-entity:"+id)
+		}
+		for _, rel := range res.DeletedRelations {
+			m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted (undoable)")
+		}
+		m.recordEntityAudit(ctx, audit.OpDeleteEntity, current, "deleted (undoable)")
+		out.DeletedEntities = append(out.DeletedEntities, current)
+		out.DeletedRelations = append(out.DeletedRelations, res.DeletedRelations...)
+	}
+	ownedCtx := audit.WithTriggeredBy(ctx, ownerDeleteTrigger(id))
+	for _, r := range marked.owned {
+		for _, rel := range r.DeletedRelations {
+			m.recordRelationAudit(ownedCtx, audit.OpDeleteRelation, rel, "deleted (undoable)")
+		}
+		if len(r.DeletedEntities) > 0 {
+			m.recordEntityAudit(ownedCtx, audit.OpDeleteEntity, r.DeletedEntities[0], "deleted (undoable)")
+			out.DeletedEntities = append(out.DeletedEntities, r.DeletedEntities[0])
+		}
+		out.DeletedRelations = append(out.DeletedRelations, r.DeletedRelations...)
+	}
+	return out
 }
 
 // SoftDeleted describes one soft-deleted entity, for the restore read gate.
@@ -185,82 +259,184 @@ func findMarked(ctx context.Context, sd store.SoftDeleteProvider, id string) (st
 // cascade check has to see them. They run in the same transaction as the
 // unmark, for the reason SoftDeleteEntity collects and marks in one.
 //
+// The owned entities the delete took along come back with it, under the same
+// checks (TKT-QO14GB). A restore that would bring back an owning edge the live
+// graph no longer admits is refused with [ErrOwningRule].
+//
 // The caller is responsible for the read gate: whether this principal may
 // learn that id exists at all. See the data-entry restore handler.
 func RestoreEntity(ctx context.Context, m *Manager, id string) (*entity.DeleteResult, error) {
-	if _, ok := m.deps.Store.(store.SoftDeleteProvider); !ok {
+	if !SupportsSoftDelete(m) {
 		return nil, ErrSoftDeleteUnsupported
 	}
-	var res *store.DeleteResult
+	var restored familyChange
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
-		sd, ok := tx.(store.SoftDeleteProvider)
-		if !ok { // unreachable: every in-tree Tx view carries the capability of its store
-			return ErrSoftDeleteUnsupported
-		}
-		marked, ok, err := findMarked(ctx, sd, id)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
-		}
-		if authErr := authorizeRestore(store.WithRevealed(ctx, id), m, tx, marked); authErr != nil {
-			return authErr
-		}
-		// Unbounded: the edges coming back are grandfathered data, so no
-		// max_outgoing / max_incoming is checked (TKT-65LVAK).
-		res, err = sd.SoftDelete().Unmark(ctx, id)
-		if errors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
-		}
-		return err
+		return restoreInTx(ctx, m, tx, id, &restored)
 	})
 	if txErr != nil {
+		// As in SoftDeleteEntity: fs and mem keep an unmark that a later
+		// failure did not undo, so record what is really back. A unique
+		// conflict needs no pre-check for this: a mark holds its unique
+		// values, so only a backend that rolls back reports one.
+		restored.keep(func(r *store.DeleteResult) bool {
+			return facesStored(ctx, m.deps.Store, r.DeletedEntities)
+		})
+		recordRestore(ctx, m, id, restored)
 		if ok, mapped := mapUniquePropertyConflict(txErr); ok {
 			return nil, mapped
 		}
 		return nil, txErr
 	}
+	return recordRestore(ctx, m, id, restored), nil
+}
 
+// restoreInTx is RestoreEntity's critical section. It fills done as it
+// unmarks, so a failure partway still reports what came back.
+func restoreInTx(ctx context.Context, m *Manager, tx store.Store, id string, done *familyChange) error {
+	sd, ok := tx.(store.SoftDeleteProvider)
+	if !ok { // unreachable: every in-tree Tx view carries the capability of its store
+		return ErrSoftDeleteUnsupported
+	}
+	all, err := sd.SoftDelete().ListMarked(ctx)
+	if err != nil {
+		return err
+	}
+	marked := make(map[string]store.MarkedEntity, len(all))
+	for _, me := range all {
+		marked[me.ID] = me
+	}
+	main, ok := marked[id]
+	if !ok || len(main.Entities) == 0 {
+		return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
+	}
+	owned, err := markedWithOwner(ctx, m, tx, main, marked)
+	if err != nil {
+		return err
+	}
+
+	// Every family in the restore is revealed for every check. An owned
+	// entity's local roles may come through its owner (inherit_roles_through
+	// along an edge the owner's mark holds), and its edge to the owner may be
+	// held by either mark.
+	ids := []string{id}
+	faces := slices.Clone(main.Entities)
+	for _, o := range owned {
+		ids = append(ids, o.ID)
+		faces = append(faces, o.Entities...)
+	}
+	revealed := store.WithRevealed(ctx, ids...)
+	src := markedSource{Store: tx, family: faces}
+	if authErr := authorizeRestore(revealed, m, src, main); authErr != nil {
+		return authErr
+	}
+	for _, o := range owned {
+		if authErr := authorizeRestore(revealed, m, src, o); authErr != nil {
+			return ownedRestoreError(id, authErr)
+		}
+	}
+	for _, o := range owned {
+		delete(marked, o.ID)
+	}
+	delete(marked, id)
+	if oErr := checkRestoredOwning(ctx, m, tx, ids, marked); oErr != nil {
+		return oErr
+	}
+
+	// Owned entities first: the owning edges are hidden with the owner, and
+	// Unmark brings an edge back only when its other end is live. Unbounded:
+	// the edges coming back are grandfathered data, so no max_outgoing /
+	// max_incoming is checked (TKT-65LVAK).
+	for _, o := range owned {
+		r, uErr := sd.SoftDelete().Unmark(ctx, o.ID)
+		if uErr != nil {
+			return ownedRestoreError(id, uErr)
+		}
+		done.owned = append(done.owned, r)
+	}
+	res, err := sd.SoftDelete().Unmark(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
+	}
+	if err != nil {
+		return err
+	}
+	done.main = res
+	return nil
+}
+
+// recordRestore writes the audit records for what a restore brought back and
+// returns the result the caller reports.
+func recordRestore(ctx context.Context, m *Manager, id string, restored familyChange) *entity.DeleteResult {
 	restoreCtx := audit.WithTriggeredBy(ctx, "restore-entity:"+id)
-	for _, rel := range res.DeletedRelations {
-		m.recordRelationAudit(restoreCtx, audit.OpCreateRelation, rel, "restored")
+	out := &entity.DeleteResult{}
+	if res := restored.main; res != nil {
+		out.DeletedEntities = append(out.DeletedEntities, res.DeletedEntities...)
+		out.DeletedRelations = append(out.DeletedRelations, res.DeletedRelations...)
 	}
-	for _, e := range res.DeletedEntities {
-		m.recordEntityAudit(ctx, audit.OpRestoreEntity, e, "restored")
+	for _, r := range restored.owned {
+		for _, rel := range r.DeletedRelations {
+			m.recordRelationAudit(restoreCtx, audit.OpCreateRelation, rel, "restored")
+		}
+		for _, e := range r.DeletedEntities {
+			m.recordEntityAudit(restoreCtx, audit.OpRestoreEntity, e, "restored")
+		}
+		out.DeletedEntities = append(out.DeletedEntities, r.DeletedEntities...)
+		out.DeletedRelations = append(out.DeletedRelations, r.DeletedRelations...)
 	}
-	return &entity.DeleteResult{DeletedEntities: res.DeletedEntities, DeletedRelations: res.DeletedRelations}, nil
+	if res := restored.main; res != nil {
+		for _, rel := range res.DeletedRelations {
+			m.recordRelationAudit(restoreCtx, audit.OpCreateRelation, rel, "restored")
+		}
+		for _, e := range res.DeletedEntities {
+			m.recordEntityAudit(ctx, audit.OpRestoreEntity, e, "restored")
+		}
+	}
+	return out
+}
+
+// facesStored reports whether every face is live in st. A read error counts
+// as not live, so a restore that cannot be confirmed is not recorded.
+func facesStored(ctx context.Context, st store.Store, faces []*entity.Entity) bool {
+	for _, e := range faces {
+		if _, err := st.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face}); err != nil {
+			return false
+		}
+	}
+	return len(faces) > 0
 }
 
 // authorizeRestore runs the delete checks for a restore of marked. ctx must
-// reveal marked.ID.
-func authorizeRestore(ctx context.Context, m *Manager, tx store.Store, marked store.MarkedEntity) error {
+// reveal marked.ID, and src must answer for its faces.
+func authorizeRestore(ctx context.Context, m *Manager, src markedSource, marked store.MarkedEntity) error {
 	// Every face comes back, so every face needs the grant, as for the
 	// delete.
 	if err := m.authorizeFamily(ctx, acl.OpDelete, marked.ID, marked.Entities,
 		make(familyAuthorization, len(marked.Entities))); err != nil {
 		return err
 	}
-	incoming, err := collectIncidentRelations(ctx, tx, marked.ID, store.DirectionIncoming)
+	incoming, err := collectIncidentRelations(ctx, src, marked.ID, store.DirectionIncoming)
 	if err != nil {
 		return fmt.Errorf("collect incoming relations for %q: %w", marked.ID, err)
 	}
-	outgoing, err := collectIncidentRelations(ctx, tx, marked.ID, store.DirectionOutgoing)
+	outgoing, err := collectIncidentRelations(ctx, src, marked.ID, store.DirectionOutgoing)
 	if err != nil {
 		return fmt.Errorf("collect outgoing relations for %q: %w", marked.ID, err)
 	}
-	// The cascade check resolves each edge's source type with GetEntity. The
-	// marked faces are not readable, so an outgoing edge would resolve to no
-	// type and be refused; markedSource answers for them.
-	src := markedSource{Store: tx, family: marked.Entities}
 	if err := m.authorizeCascadeRelations(ctx, src, marked.ID, incoming, outgoing); err != nil {
 		return fmt.Errorf("cannot restore %s: %w", marked.ID, err)
 	}
 	return nil
 }
 
-// markedSource answers GetEntity for the faces of one marked entity and
-// passes every other call through.
+// markedSource answers for the faces of the marked entities a restore brings
+// back, and passes every other call through. The cascade check resolves each
+// edge's source type from the family's headers (lookupFamily), and a marked
+// face is not readable, so an edge from one would resolve to no type and be
+// refused.
+//
+// It embeds the [store.Store] interface, so a backend's [store.HeaderReader]
+// is not visible through it and [store.ListEntityHeaders] falls back to
+// ListEntities, which is the method that adds the marked faces.
 type markedSource struct {
 	store.Store
 	family []*entity.Entity
@@ -273,6 +449,25 @@ func (s markedSource) GetEntity(ctx context.Context, ref entity.Ref) (*entity.En
 		}
 	}
 	return s.Store.GetEntity(ctx, ref)
+}
+
+// ListEntities adds the marked faces whose id the query names to the live
+// rows. Only an id-scoped query gets them; it is what a family lookup sends.
+// A marked face is never also live, so nothing is listed twice.
+func (s markedSource) ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error] {
+	live := s.Store.ListEntities(ctx, q)
+	return func(yield func(*entity.Entity, error) bool) {
+		for e, err := range live {
+			if !yield(e, err) || err != nil {
+				return
+			}
+		}
+		for _, e := range s.family {
+			if slices.Contains(q.IDs, e.ID) && !yield(e, nil) {
+				return
+			}
+		}
+	}
 }
 
 // PurgeSoftDeleted removes, for real, every soft-deleted entity marked before

@@ -431,6 +431,37 @@ func RunSoftDeleteTests(t *testing.T, f Factory, sf SearchFactory, attachments b
 		assertMarkedHidden(t, s, attachments)
 	})
 
+	// A restore of several marked entities reveals all of them, so an edge
+	// held by one mark is visible from the other end too.
+	t.Run("RevealSeveralMarks", func(t *testing.T) {
+		s := f(t)
+		seedSoftDelete(t, s, attachments)
+		sd := softDeleterOf(t, s)
+		// FEAT-002 first, so the shared edge is held by FEAT-002's mark.
+		_, err := sd.MarkDeleted(ctx(), "FEAT-002", "alice")
+		require.NoError(t, err)
+		_, err = sd.MarkDeleted(ctx(), "FEAT-009", "alice")
+		require.NoError(t, err)
+		shared := entity.RelationKey{From: "FEAT-002", Type: "depends-on", To: "FEAT-009"}
+		incoming := store.RelationQuery{EntityID: "FEAT-009", Direction: store.DirectionIncoming}
+
+		only := store.WithRevealed(ctx(), "FEAT-009")
+		_, err = s.GetRelation(only, shared)
+		assert.ErrorIs(t, err, store.ErrNotFound, "the edge is held by a mark that is not revealed")
+		assert.Empty(t, relationKeys(t, s.ListRelations(only, incoming)))
+
+		both := store.WithRevealed(ctx(), "FEAT-009", "FEAT-002")
+		_, err = s.GetRelation(both, shared)
+		require.NoError(t, err, "GetRelation with both marks revealed")
+		assert.Equal(t, []string{"FEAT-002--depends-on--FEAT-009"},
+			relationKeys(t, s.ListRelations(both, incoming)))
+		assert.ElementsMatch(t, []string{"FEAT-002--depends-on--FEAT-009", "FEAT-009--implements--REQ-001"},
+			relationKeys(t, s.ListRelations(both, store.RelationQuery{EntityID: "FEAT-009"})),
+			"each hidden edge is listed once")
+		assert.Empty(t, relationKeys(t, s.ListRelations(both, store.RelationQuery{EntityID: "REQ-001"})),
+			"a list scoped to an entity that is not revealed")
+	})
+
 	t.Run("InsideTx", func(t *testing.T) {
 		s := f(t)
 		seedSoftDelete(t, s, attachments)

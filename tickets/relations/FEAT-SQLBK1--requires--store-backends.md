@@ -1,5 +1,5 @@
 ---
 from: FEAT-SQLBK1
-type: requires
+relation: requires
 to: store-backends
 ---

@@ -48,7 +48,7 @@ func applyCopy(
 			plan.name, err)
 	}
 
-	if err := applyCopyEdges(ctx, view, plan); err != nil {
+	if err := applyCopyEdges(ctx, meta, view, plan); err != nil {
 		return nil, err
 	}
 	return &CopyResult{
@@ -63,7 +63,7 @@ func applyCopy(
 // Heads stay entity-level (§2.3), so a copied edge needs no rewriting on the
 // far side — the world a reader stands in resolves the head. That is what
 // made promote's "does it copy relations" question answerable at all.
-func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error {
+func applyCopyEdges(ctx context.Context, meta *metamodel.Metamodel, view store.Store, plan *copyPlan) error {
 	tail := plan.targetTail
 
 	// `replace` removes the target face's existing edges of that type first.
@@ -109,9 +109,15 @@ func applyCopyEdges(ctx context.Context, view store.Store, plan *copyPlan) error
 	}
 
 	for _, e := range plan.edges {
-		_, err := view.CreateRelation(ctx, entity.RelationKey{
-			From: plan.targetID, FromFace: tail, Type: e.relType, To: e.to,
-		}, &store.RelationData{})
+		key := entity.RelationKey{From: plan.targetID, FromFace: tail, Type: e.relType, To: e.to}
+		// A copied edge of an owning type would give its target a second
+		// owner, so it is held to the owning rules like any other write
+		// (TKT-QO14GB). The identical edge already present passes, and is
+		// the merge case below.
+		if err := CheckOwningEdge(ctx, meta, view, key); err != nil {
+			return fmt.Errorf("entitymanager: copy %q: %w", plan.name, err)
+		}
+		_, err := view.CreateRelation(ctx, key, &store.RelationData{})
 		if err != nil && !errors.Is(err, store.ErrConflict) {
 			// A conflict is `merge` finding the edge already present, which is
 			// exactly what merge means.

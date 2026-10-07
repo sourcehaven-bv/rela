@@ -1465,6 +1465,9 @@ func (m *Manager) authorizeCascadeRelations(
 type cascadeCapture struct {
 	incoming []*entity.Relation
 	outgoing []*entity.Relation
+	// owned lists the owned entities deleted with this one; their relations
+	// are recorded with them, not in incoming/outgoing.
+	owned []ownedDeletion
 }
 
 // deleteEntityInTx is DeleteEntity's critical section: collect the incident
@@ -1517,6 +1520,22 @@ func (m *Manager) deleteEntityInTx(
 		}
 	}
 
+	// Entities the owner owns go with it (TKT-QO14GB). All of them are
+	// authorized here, before the first write, for the reason the edge check
+	// above gives.
+	capture := &cascadeCapture{incoming: incoming, outgoing: outgoing}
+	if cascade {
+		owned, oErr := prepareOwnedDeletes(ctx, m, tx, id, outgoing)
+		if oErr != nil {
+			return nil, nil, oErr
+		}
+		capture.owned = owned
+		if dErr := deleteOwned(ctx, m, tx, id, owned); dErr != nil {
+			return nil, capture, dErr
+		}
+		withoutRelationsOf(capture, owned)
+	}
+
 	// Delegate the actual deletion to the store's cascade, which removes
 	// the relation files and the entity file under a single lock and aborts
 	// fail-secure if any relation file cannot be removed — so the entity is
@@ -1528,8 +1547,7 @@ func (m *Manager) deleteEntityInTx(
 		// needs both to record them — audit AND version history (issue #929).
 		// Capturing only one leaves the two logs contradicting each other.
 		// res is nil on a transactional backend, which the caller handles.
-		return res, &cascadeCapture{incoming: incoming, outgoing: outgoing},
-			fmt.Errorf("delete entity: %w", delErr)
+		return res, capture, fmt.Errorf("delete entity: %w", delErr)
 	}
 	// The store's own scan is the final word on what went. A face it removed
 	// that the re-read above did not see is authorized now. On pg/sqlite a
@@ -1537,7 +1555,6 @@ func (m *Manager) deleteEntityInTx(
 	// file edit without taking the Tx lock, so a face can land between the
 	// re-read and the delete, and fs cannot roll back: res is returned with
 	// the error so the caller can record what really went (issue #929).
-	capture := &cascadeCapture{incoming: incoming, outgoing: outgoing}
 	if aErr := m.authorizeFamily(ctx, acl.OpDelete, id, res.DeletedEntities, authorized); aErr != nil {
 		return res, capture, aErr
 	}
@@ -1620,7 +1637,13 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		// how many rows they produced. A delete-entity record is written only
 		// for a face the store reports removing and that is really gone; a
 		// face that survived gets none.
-		m.recordPartialCascade(ctx, id, res, captured)
+		m.recordPartialCascade(ctx, "cascade:delete-entity:"+id, res, captured)
+		if captured != nil {
+			ownedTB := ownerDeleteTrigger(id)
+			for _, o := range captured.owned {
+				m.recordPartialCascade(audit.WithTriggeredBy(ctx, ownedTB), ownedTB, o.res, o.capture)
+			}
+		}
 		return nil, txErr
 	}
 
@@ -1674,10 +1697,18 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	}
 	m.recordFamilyDeleteAudit(ctx, res.DeletedEntities, cascaded)
 
-	return &entity.DeleteResult{
+	out := &entity.DeleteResult{
 		DeletedEntities:  res.DeletedEntities,
 		DeletedRelations: res.DeletedRelations,
-	}, nil
+	}
+	if captured != nil {
+		recordOwnedDeletes(ctx, m, id, captured.owned)
+		for _, o := range captured.owned {
+			out.DeletedEntities = append(out.DeletedEntities, o.res.DeletedEntities...)
+			out.DeletedRelations = append(out.DeletedRelations, o.res.DeletedRelations...)
+		}
+	}
+	return out, nil
 }
 
 // familyRows returns every stored face of the entity family id, in the
@@ -1879,10 +1910,14 @@ func facesStillStored(ctx context.Context, st store.Store, deleted []*entity.Ent
 // incident set: only the rows the store actually removed may be recorded. The capture supplies
 // the pre-delete snapshots those ids need.
 //
+// cascadeTB is the triggered_by label on the relation records, the one the
+// success path uses for the same rows: "cascade:delete-entity:<id>" for the
+// deleted entity's own relations, [ownerDeleteTrigger] for an owned entity's.
+//
 // Nil-safe throughout: a transactional backend returns nil on error, and a
 // failure on the first relation removes nothing. Either way this is a no-op.
 func (m *Manager) recordPartialCascade(
-	ctx context.Context, id string, res *store.DeleteResult, captured *cascadeCapture,
+	ctx context.Context, cascadeTB string, res *store.DeleteResult, captured *cascadeCapture,
 ) {
 	if res == nil {
 		return
@@ -1900,7 +1935,6 @@ func (m *Manager) recordPartialCascade(
 	if len(res.DeletedRelations) == 0 {
 		return
 	}
-	cascadeTB := "cascade:delete-entity:" + id
 	cascadeCtx := audit.WithTriggeredBy(ctx, cascadeTB)
 
 	// Index the captured pre-delete snapshots so each removed relation is
@@ -2057,7 +2091,7 @@ func (m *Manager) DeleteEntityFace(
 	if txErr != nil {
 		// A non-transactional backend can fail part-way with some relation
 		// files already gone (TKT-A23L87); record those, as DeleteEntity does.
-		m.recordPartialCascade(ctx, id, res, &cascadeCapture{incoming: incoming, outgoing: outgoing})
+		m.recordPartialCascade(ctx, "cascade:delete-entity:"+id, res, &cascadeCapture{incoming: incoming, outgoing: outgoing})
 		return nil, txErr
 	}
 
@@ -2460,7 +2494,11 @@ func (m *Manager) CreateRelation(
 	// ErrRelationAlreadyExists (BUG-ZWTDH9).
 	create := func(st store.Store) error { return writeRelationCreate(ctx, st, m.deps.Meta, key, rel, nil) }
 	var createErr error
-	if relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) {
+	// An owning edge reads its neighbors' edges to decide whether it may
+	// exist, so the reads and the write share one Tx for the same reason.
+	inTx := relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) ||
+		metamodel.IsOwning(m.deps.Meta, key.Type)
+	if inTx {
 		createErr = m.deps.Store.Tx(ctx, create)
 	} else {
 		createErr = create(m.deps.Store)
@@ -2550,7 +2588,8 @@ func prepareRelationCreate(
 }
 
 // writeRelationCreate is the write half of a relation create, on st: the
-// cardinality bound, the managed order, then the store create.
+// cardinality bound, the owning rules, the managed order, then the store
+// create.
 //
 // Edges in leaving are not counted against the bounds (ReplaceRelations).
 func writeRelationCreate(
@@ -2558,6 +2597,9 @@ func writeRelationCreate(
 	leaving map[entity.RelationKey]bool,
 ) error {
 	if err := checkRelationCapacity(ctx, st, meta, key, leaving, nil); err != nil {
+		return err
+	}
+	if err := CheckOwningEdgeLeaving(ctx, meta, st, key, leaving); err != nil {
 		return err
 	}
 	if err := assignManagedOrder(ctx, st, meta, rel, key.Type); err != nil {

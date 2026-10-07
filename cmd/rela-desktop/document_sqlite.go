@@ -124,8 +124,10 @@ func newDocumentFromTemplate(ctx context.Context, templateDir, dest string) (err
 		}
 	}()
 	if hasMarkdownData(templateDir) {
-		if _, err = appbuild.ImportMarkdownData(ctx, fsys, paths, templateDir,
-			appbuild.DataImportOptions{Audit: desktopAudit}); err != nil {
+		rep, importErr := appbuild.ImportMarkdownData(ctx, fsys, paths, templateDir,
+			appbuild.DataImportOptions{Audit: desktopAudit})
+		if importErr != nil {
+			err = importError(rep, importErr)
 			return err
 		}
 	}

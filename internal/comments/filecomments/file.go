@@ -214,6 +214,17 @@ func (s *Store) DeleteAllFaces(_ context.Context, entityID string) error {
 	return nil
 }
 
+// ThreadKeys lists every stored thread key, sorted. A key is a
+// [comments.Target.Key]: the bare entity id, or "id@face".
+//
+// It exists for `rela db import-fs`, which copies every thread into a database
+// backend and so has to enumerate them without knowing which entities exist.
+func (s *Store) ThreadKeys(_ context.Context) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.allThreadKeys()
+}
+
 // threadKeysFor lists the stored thread keys belonging to an entity id — the
 // bare id plus any "id@face".
 //
@@ -223,6 +234,23 @@ func (s *Store) DeleteAllFaces(_ context.Context, entityID string) error {
 //
 // Callers must hold s.mu.
 func (s *Store) threadKeysFor(entityID string) ([]string, error) {
+	all, err := s.allThreadKeys()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, key := range all {
+		if key == entityID || strings.HasPrefix(key, entityID+entity.StateRefSeparator) {
+			out = append(out, key)
+		}
+	}
+	return out, nil
+}
+
+// allThreadKeys lists every stored thread key, sorted.
+//
+// Callers must hold s.mu.
+func (s *Store) allThreadKeys() ([]string, error) {
 	// WalkAll rather than ReadDir("."): the rooted FS refuses "." as a key
 	// (it reads as an empty/traversal segment), and WalkAll is the method that
 	// exists for walking the root itself.
@@ -234,11 +262,7 @@ func (s *Store) threadKeysFor(entityID string) ([]string, error) {
 		if d.IsDir() {
 			return nil
 		}
-		key, ok := strings.CutSuffix(path, ".yaml")
-		if !ok {
-			return nil
-		}
-		if key == entityID || strings.HasPrefix(key, entityID+entity.StateRefSeparator) {
+		if key, ok := strings.CutSuffix(path, ".yaml"); ok {
 			out = append(out, key)
 		}
 		return nil

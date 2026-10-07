@@ -943,7 +943,7 @@ func (m *MemStore) GetRelation(ctx context.Context, k entity.RelationKey) (*enti
 	key := k.String()
 	r, ok := m.relations[key]
 	if !ok {
-		if _, revealed := store.RevealedFor(ctx, k.From, k.To); revealed {
+		if store.RevealedFor(ctx, k.From, k.To) {
 			if hidden := revealedRelations(ctx, m, func(h *entity.Relation) bool {
 				return h.Key() == key
 			}); len(hidden) > 0 {
@@ -966,7 +966,7 @@ func (m *MemStore) ListRelations(ctx context.Context, q store.RelationQuery) ite
 		}
 		snapshot = append(snapshot, r.Clone())
 	}
-	if q.EntityID != "" && q.EntityID == store.RevealedID(ctx) {
+	if store.Reveals(ctx, q.EntityID) {
 		snapshot = append(snapshot, revealedRelations(ctx, m, match)...)
 	}
 	m.mu.RUnlock()

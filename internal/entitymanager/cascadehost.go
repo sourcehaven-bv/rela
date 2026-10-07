@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -159,7 +160,25 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	// belongs to that face; an identity-scoped one to the entity, whose only
 	// valid tail is the zero face (see requireRelationFaceFor).
 	r.FromFace = h.deps.cascadeTail(r.Type, r.FromFace)
-	create := func(st store.Store) error {
+	// This path writes the store directly, so it applies the owning rules
+	// itself (TKT-QO14GB), in one Tx with the write. Re-creating the
+	// identical owning edge passes the check and is the idempotent no-op
+	// below. An automation may not grow a bounded relation past its bound
+	// either (TKT-65LVAK): the count shares the Tx too, and an edge that
+	// exists already is the same no-op, not a refusal.
+	bounded := relTypeHasMax(h.deps.Meta, r.Type)
+	write := func(st store.Store) error {
+		if bounded {
+			if _, gErr := st.GetRelation(ctx, r.Identity()); gErr == nil {
+				return store.ErrConflict
+			}
+			if cErr := checkRelationCapacity(ctx, st, h.deps.Meta, r.Identity(), nil, nil); cErr != nil {
+				return cErr
+			}
+		}
+		if err := CheckOwningEdge(ctx, h.deps.Meta, st, r.Identity()); err != nil {
+			return err
+		}
 		_, err := st.CreateRelation(ctx, r.Identity(), &store.RelationData{
 			Properties: r.Properties,
 			Content:    r.Content,
@@ -167,21 +186,10 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 		return err
 	}
 	var err error
-	if relTypeHasMax(h.deps.Meta, r.Type) {
-		// An automation may not grow a bounded relation past its bound
-		// either (TKT-65LVAK). The count and the create share a Tx. An edge
-		// that exists already is the idempotent no-op below, not a refusal.
-		err = h.deps.Store.Tx(ctx, func(view store.Store) error {
-			if _, gErr := view.GetRelation(ctx, r.Identity()); gErr == nil {
-				return store.ErrConflict
-			}
-			if cErr := checkRelationCapacity(ctx, view, h.deps.Meta, r.Identity(), nil, nil); cErr != nil {
-				return cErr
-			}
-			return create(view)
-		})
+	if bounded || metamodel.IsOwning(h.deps.Meta, r.Type) {
+		err = h.deps.Store.Tx(ctx, write)
 	} else {
-		err = create(h.deps.Store)
+		err = write(h.deps.Store)
 	}
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {

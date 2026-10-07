@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -249,24 +250,25 @@ func markedIDTaken(ctx context.Context, s *Store, id, except string) (bool, erro
 // revealedRelation returns the hidden edge k when ctx reveals one of its
 // endpoints (see [store.WithRevealed]).
 func revealedRelation(ctx context.Context, s *Store, k entity.RelationKey) (*entity.Relation, error) {
-	id, ok := store.RevealedFor(ctx, k.From, k.To)
-	if !ok {
+	if !store.RevealedFor(ctx, k.From, k.To) {
 		return nil, sql.ErrNoRows
 	}
+	in, args := revealedOwners(ctx)
+	args = append(args, k.From, k.Type, k.To, string(k.FromFace))
 	return scanRelation(s.q().QueryRowContext(ctx, `SELECT `+relationColumns+` FROM marked_relations
-		WHERE owner_id = ? AND from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`,
-		id, k.From, k.Type, k.To, string(k.FromFace)))
+		WHERE owner_id IN (`+in+`) AND from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`,
+		args...))
 }
 
-// revealedRelations returns the hidden relations of the entity ctx reveals
+// revealedRelations returns the hidden relations of the entities ctx reveals
 // that satisfy q, for ListRelations.
 func revealedRelations(ctx context.Context, s *Store, q store.RelationQuery) ([]*entity.Relation, error) {
-	id := store.RevealedID(ctx)
-	if id == "" || q.EntityID != id {
+	if !store.Reveals(ctx, q.EntityID) {
 		return nil, nil
 	}
+	in, args := revealedOwners(ctx)
 	all, err := scanRelationRows(ctx, s, `SELECT `+relationColumns+` FROM marked_relations
-		WHERE owner_id = ? ORDER BY from_id, from_face, rel_type, to_id`, id)
+		WHERE owner_id IN (`+in+`) ORDER BY from_id, from_face, rel_type, to_id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -278,6 +280,17 @@ func revealedRelations(ctx context.Context, s *Store, q store.RelationQuery) ([]
 		}
 	}
 	return out, nil
+}
+
+// revealedOwners returns the placeholder list and arguments for the ids ctx
+// reveals. Callers check that at least one is revealed.
+func revealedOwners(ctx context.Context) (placeholders string, args []any) {
+	ids := store.RevealedIDs(ctx)
+	args = make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return strings.TrimSuffix(strings.Repeat("?,", len(ids)), ","), args
 }
 
 // scanRelationRows runs a query selecting [relationColumns].

@@ -15,7 +15,7 @@
     "tool": "create_entity",
     "args": "{\"type\":\"requirement\",\"properties\":{\"title\":\"Created via dispatch\"}}",
     "isError": false,
-    "text": "Created requirement REQ-XXXX\n\n{\"id\":\"REQ-XXXX\",\"type\":\"requirement\",\"properties\":{\"status\":\"draft\",\"title\":\"Created via dispatch\"}}"
+    "text": "Created requirement REQ-XXXX\n\n{\"id\":\"REQ-XXXX\",\"type\":\"requirement\",\"properties\":{\"title\":\"Created via dispatch\"}}"
   },
   {
     "tool": "create_relation",

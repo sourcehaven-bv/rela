@@ -518,6 +518,89 @@ func TestImportDefaultStatus(t *testing.T) {
 	}
 }
 
+// TestImportStatusDefaultComesOnlyFromConfig pins that import sets a missing
+// status only when the schema declares a default (BUG-ZD4PIN). The dry run
+// must accept the same rows; the write path is checked on the stored rows.
+func TestImportStatusDefaultComesOnlyFromConfig(t *testing.T) {
+	meta, err := metamodel.Parse([]byte(`
+version: "1.0"
+types:
+  declared:
+    values: [open, closed]
+    default: closed
+  undeclared:
+    values: [open, closed]
+entities:
+  note:
+    label: Note
+    id_prefix: "N-"
+    id_type: sequential
+    properties:
+      title: {type: string}
+  type_default:
+    label: TypeDefault
+    id_prefix: "TD-"
+    id_type: sequential
+    properties:
+      status: {type: declared}
+  prop_default:
+    label: PropDefault
+    id_prefix: "PD-"
+    id_type: sequential
+    properties:
+      status: {type: undeclared, default: open}
+  no_default:
+    label: NoDefault
+    id_prefix: "ND-"
+    id_type: sequential
+    properties:
+      status: {type: undeclared}
+relations: {}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		id, typ, want string // want "" means absent
+	}{
+		{"N-001", "note", ""},
+		{"TD-001", "type_default", "closed"},
+		{"PD-001", "prop_default", "open"},
+		{"ND-001", "no_default", ""},
+	}
+	data := &ImportData{}
+	for _, c := range cases {
+		data.Entities = append(data.Entities, EntityData{ID: c.id, Type: c.typ, Properties: map[string]any{}})
+	}
+
+	for _, dryRun := range []bool{true, false} {
+		st := newTestStore()
+		res, err := New(st, meta, Options{DryRun: dryRun}, newTestSource()).Import(data)
+		if err != nil {
+			t.Fatalf("Import(dryRun=%v) error = %v", dryRun, err)
+		}
+		if len(res.Errors) != 0 {
+			t.Fatalf("Import(dryRun=%v) errors = %v", dryRun, res.Errors)
+		}
+		if dryRun {
+			continue
+		}
+		for _, c := range cases {
+			e, err := st.GetEntity(ctx(), entity.Ref{ID: c.id})
+			if err != nil {
+				t.Fatalf("%s not imported: %v", c.id, err)
+			}
+			got, present := e.Properties["status"]
+			switch {
+			case c.want == "" && present:
+				t.Errorf("%s: status = %v, want absent", c.id, got)
+			case c.want != "" && got != c.want:
+				t.Errorf("%s: status = %v, want %q", c.id, got, c.want)
+			}
+		}
+	}
+}
+
 func TestImportFile_JSON(t *testing.T) {
 	fs := storage.NewMemFS()
 	jsonData := `{

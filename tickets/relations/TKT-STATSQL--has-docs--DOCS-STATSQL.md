@@ -1,5 +1,5 @@
 ---
 from: TKT-STATSQL
-type: has-docs
+relation: has-docs
 to: DOCS-STATSQL
 ---

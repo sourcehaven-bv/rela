@@ -22,7 +22,8 @@ import { useAutoSave } from '@/composables/useAutoSave'
 import { toggleCheckboxInSource } from '@/utils/checkboxToggle'
 import type { ActionConfig, Command } from '@/types'
 import { getEditFormId } from '@/types'
-import { editFormRoute, entityDetailHref } from '@/utils/entityRoute'
+import { anchorSections } from '@/utils/rowAnchors'
+import { editFormRoute, entityDetailHref, ownedEntityHref } from '@/utils/entityRoute'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
 import { computeActionAllowed } from '@/utils/affordancesWarning'
 import { isInputFocused } from '@/utils/dom'
@@ -75,6 +76,7 @@ import SectionEditForm, { type SectionEditField } from '@/components/forms/Secti
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
 import EntityTitle from './EntityTitle.vue'
 import EntityBody from './EntityBody.vue'
+import RelatedSectionRows from './RelatedSectionRows.vue'
 import { isFieldWritable, isPropertyRedacted } from '@/utils/affordances'
 import {
   buildSectionEditFields as buildSectionEditFieldsPure,
@@ -109,8 +111,14 @@ const props = withDefaults(
      * principal may do.
      */
     hideActions?: boolean
+    /**
+     * Replace the route with the owner's page when this entity is owned
+     * (TKT-QO14GB). Off for an embedded preview, which shows the owned
+     * entity itself with a link to its owner instead of navigating the host.
+     */
+    followOwner?: boolean
   }>(),
-  { hideActions: false }
+  { hideActions: false, followOwner: true }
 )
 
 const emit = defineEmits<{
@@ -145,6 +153,13 @@ const { world, isWorldBound, worldParam, setWorld } = useWorld()
 // bare id, so the ordinary world banner (which announces read-only-ness)
 // must not render alongside it.
 const worldAbsent = computed(() => viewData.value?._world_absent === true)
+
+// Shown only when this page did not follow the owner (an embedded preview):
+// the owned entity is rendered alone, so say what it is part of.
+const ownerHref = computed(() => {
+  const entry = viewData.value?.entry
+  return entry?._owner ? ownedEntityHref(entry) : ''
+})
 
 // --- The address of the row on screen -------------------------------------
 //
@@ -931,7 +946,22 @@ async function loadView() {
     // neighbour (TKT-WRLDAPI item 4b). Without it this page rendered draft
     // content while the selector said "published" — the API was correct and
     // the page simply never asked.
-    viewData.value = await fetchView(props.entityType, props.entityId, worldParam.value)
+    const view = await fetchView(props.entityType, props.entityId, worldParam.value)
+    // An owned entity is shown as part of its owner. Redirect before
+    // rendering anything, so the page does not flash this entity's own view.
+    const owner = view?.entry?._owner
+    if (owner && props.followOwner) {
+      // Only the world carries over: a list scope from the owned entity's
+      // list would give the owner's page prev/next outside that set.
+      const world = route.query.world
+      await router.replace({
+        path: entityDetailHref(owner),
+        query: world ? { world } : {},
+        hash: `#${encodeURIComponent(props.entityId)}`,
+      })
+      return
+    }
+    viewData.value = view
     if (viewData.value?.entry) {
       // Seed the autosave baseline so the first toggle's no-op
       // suppression can compare against server state without waiting
@@ -972,6 +1002,20 @@ function editEntity() {
   router.push(editFormRoute(editFormId.value, address, worldParam.value))
 }
 
+// Each entity's `#<id>` anchor sits on its first row on the page; see
+// anchorSections.
+const anchorOwners = computed(() => anchorSections(viewData.value?.sections ?? []))
+function anchorId(sectionId: string, id: string): string | undefined {
+  return anchorOwners.value.get(id) === sectionId ? id : undefined
+}
+
+// Whether this type is the source of an owning relation, so a delete takes
+// owned entities along. Said in the confirm without a count, which would
+// need a read.
+const ownsEntities = computed(() =>
+  [...schemaStore.relationTypes.values()].some((rt) => rt.owning && rt.from.includes(props.entityType)),
+)
+
 async function requestDelete() {
   const address = servedRef.value
   if (address === null) return
@@ -985,7 +1029,9 @@ async function requestDelete() {
     message: face
       ? `Are you sure you want to delete the ${faceLabel(face)} face of '${bareEntityId.value}'? ` +
         'Its other faces are kept. This action cannot be undone.'
-      : `Are you sure you want to delete '${bareEntityId.value}'? This action cannot be undone.`,
+      : `Are you sure you want to delete '${bareEntityId.value}'? ` +
+        (ownsEntities.value ? 'The entities it owns are deleted with it. ' : '') +
+        'This action cannot be undone.',
     confirmLabel: 'Delete',
     danger: true,
     onConfirm: withConfirmError(
@@ -2072,6 +2118,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
       <header class="detail-header">
         <div class="header-info">
           <span class="entity-type-badge">{{ typeDef?.label || entityType }}</span>
+          <RouterLink v-if="ownerHref" :to="ownerHref" class="owner-link">
+            Part of {{ viewData?.entry?._owner?.title }}
+          </RouterLink>
           <EntityTitle
             :title="entryTitle"
             :value="titleValue"
@@ -2424,6 +2473,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           >
             <article
               v-for="ent in section.entities"
+              :id="anchorId(section.sectionId, ent.id)"
               :key="ent.id"
               :data-entity-id="ent.id"
               class="content-card"
@@ -2462,6 +2512,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           <div v-else-if="section.display === 'cards'" class="cards-grid">
             <article
               v-for="ent in section.entities"
+              :id="anchorId(section.sectionId, ent.id)"
               :key="ent.id"
               :data-entity-id="ent.id"
               class="entity-card"
@@ -2542,6 +2593,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           <ul v-else-if="section.display === 'list'" class="entity-list">
             <li
               v-for="ent in section.entities"
+              :id="anchorId(section.sectionId, ent.id)"
               :key="ent.id"
               :data-entity-id="ent.id"
               class="list-item"
@@ -2598,6 +2650,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             </li>
           </ul>
 
+          <RelatedSectionRows
+            v-else-if="section.display === 'related'"
+            :entities="section.entities ?? []"
+            :anchor="(id: string) => anchorId(section.sectionId, id)"
+            :world="worldParam"
+          />
+
           <div v-else-if="section.display === 'table'" class="table-wrapper">
             <template v-if="section.isGrouped && section.groups?.length">
               <div v-for="group in section.groups" :key="group.groupName" class="table-group">
@@ -2612,7 +2671,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="row in group.rows" :key="row.entityId">
+                    <tr v-for="row in group.rows" :id="anchorId(section.sectionId, row.entityId)" :key="row.entityId">
                       <td v-for="(cell, idx) in row.cells" :key="idx">
                         <a
                           v-if="cell.link"
@@ -2670,7 +2729,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in section.rows" :key="row.entityId">
+                <tr v-for="row in section.rows" :id="anchorId(section.sectionId, row.entityId)" :key="row.entityId">
                   <td v-for="(cell, idx) in row.cells" :key="idx">
                     <a
                       v-if="cell.link"
@@ -2733,7 +2792,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                    exists to show, and the node budget already bounds how much
                    arrives. Native <details> keeps keyboard support,
                    find-in-page expansion and the right ARIA for free. -->
-              <details v-for="node in section.tree" :key="node.entity.id" class="nested-node" open>
+              <details
+                v-for="node in section.tree"
+                :id="anchorId(section.sectionId, node.entity.id)"
+                :key="node.entity.id"
+                class="nested-node"
+                open
+              >
                 <summary class="nested-row">
                   <ChevronRight class="nested-twisty" :size="18" aria-hidden="true" />
                   <!-- .stop so following the link does not ALSO toggle the
@@ -2767,6 +2832,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 <div v-if="node.children?.length" class="nested-children">
                   <div
                     v-for="child in node.children"
+                    :id="anchorId(section.sectionId, child.entity.id)"
                     :key="child.entity.id"
                     :data-entity-id="child.entity.id"
                     class="nested-child"
@@ -3571,5 +3637,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
     border-bottom: 1px solid var(--rl-color-border);
     padding-bottom: 16px;
   }
+}
+
+.owner-link {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--rl-color-text-muted);
 }
 </style>

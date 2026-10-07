@@ -37,6 +37,14 @@ const maxValueBytes = 32 << 20 // 32 MiB
 // column is only read back, never compared in SQL, so its width does not matter.
 const timeFmt = time.RFC3339Nano
 
+// DBTX is the database handle this store runs on: the *sql.DB owned by
+// sqlitedb.DB in production, or the connection of an open transaction when
+// the caller writes this store and the entity store as one unit.
+type DBTX interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // KV is the SQL-backed durable key/value store.
 //
 // It implements state.KV, but does NOT name that interface here: importing
@@ -55,13 +63,13 @@ const timeFmt = time.RFC3339Nano
 //
 // Nil: [New] rejects a nil handle.
 type KV struct {
-	db *sql.DB
+	db DBTX
 }
 
 // New returns a KV over db.
 //
 // The caller owns db: this borrows the handle and never closes it.
-func New(db *sql.DB) (*KV, error) {
+func New(db DBTX) (*KV, error) {
 	if db == nil {
 		return nil, errors.New("statesql: a non-nil database handle is required")
 	}

@@ -583,6 +583,9 @@ func (h *writeHandler) writeCreateRelation(
 	if ce := cardinalityError(err, bodyKey); ce != nil {
 		return ce
 	}
+	if errors.Is(err, entitymanager.ErrOwningRule) {
+		return owningRuleError(relType, err)
+	}
 	if !isSoftCondition(err) {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
@@ -593,15 +596,24 @@ func (h *writeHandler) writeCreateRelation(
 	// the store, skipping the workspace's pre-write validation. Safe
 	// because the EntityManager already ran the ACL above.
 	data := &store.RelationData{Properties: finalProps, Content: finalContent}
+	// The bound and the owning rules read other edges, so the checks and the
+	// write share one transaction.
+	meta := h.schema().Meta
 	sErr := h.store.Tx(ctx, func(view store.Store) error {
-		if err := entitymanager.CheckRelationCapacity(ctx, view, h.schema().Meta, k, nil, nil); err != nil {
-			return err
+		if cErr := entitymanager.CheckRelationCapacity(ctx, view, meta, k, nil, nil); cErr != nil {
+			return cErr
 		}
-		_, err := view.CreateRelation(ctx, k, data)
-		return err
+		if oErr := entitymanager.CheckOwningEdge(ctx, meta, view, k); oErr != nil {
+			return oErr
+		}
+		_, cErr := view.CreateRelation(ctx, k, data)
+		return cErr
 	})
 	if ce := cardinalityError(sErr, bodyKey); ce != nil {
 		return ce
+	}
+	if errors.Is(sErr, entitymanager.ErrOwningRule) {
+		return owningRuleError(relType, sErr)
 	}
 	if sErr != nil {
 		return &relationError{
@@ -746,6 +758,16 @@ func isMissingPeerCondition(err error) bool {
 func isSoftCondition(err error) bool {
 	_, ok := errors.AsType[*entitymanager.InvalidRelationError](err)
 	return ok
+}
+
+// owningRuleError builds the 422 for an edge that would break ownership
+// (TKT-QO14GB): the edge was not stored.
+func owningRuleError(relType string, err error) *structuralError {
+	return &structuralError{
+		Code:   "owning_rule",
+		Path:   "/relations/" + v1.JSONPointerEscape(relType) + "/data",
+		Detail: err.Error(),
+	}
 }
 
 // danglingPeerError builds the hard 422 returned when a relation write
@@ -1011,6 +1033,9 @@ func boundedError(w *wrapperWrite, p boundedPlan, err error) error {
 	if ce := cardinalityError(err, w.bodyKey); ce != nil {
 		return ce
 	}
+	if errors.Is(err, entitymanager.ErrOwningRule) {
+		return owningRuleError(w.relType, err)
+	}
 	if _, isStructural := asStructuralError(err); isStructural {
 		return err
 	}
@@ -1050,6 +1075,9 @@ func (w *wrapperWrite) writeBoundedFallback(ctx context.Context, p boundedPlan) 
 		for _, c := range soft {
 			if capErr := entitymanager.CheckRelationCapacity(ctx, view, meta, c.Key, leaving, pending); capErr != nil {
 				return &entitymanager.RelationCreateError{Key: c.Key, Err: capErr}
+			}
+			if oErr := entitymanager.CheckOwningEdgeLeaving(ctx, meta, view, c.Key, leaving); oErr != nil {
+				return &entitymanager.RelationCreateError{Key: c.Key, Err: oErr}
 			}
 			content := ""
 			if c.Opts.Content != nil {

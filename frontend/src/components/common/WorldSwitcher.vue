@@ -56,17 +56,17 @@ function onChange(event: Event) {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--rl-color-text-muted);
 }
 
 .world-select {
   flex: 1;
   min-width: 0;
   padding: 4px 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius, 6px);
-  background: var(--bg-card);
-  color: var(--text);
+  border: 1px solid var(--rl-color-border);
+  border-radius: var(--radius-md);
+  background: var(--rl-color-bg);
+  color: var(--rl-color-text);
   font-size: 12px;
 }
 </style>

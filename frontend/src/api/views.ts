@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Entity, EntityWorld, FieldAffordance, Mention } from '@/types'
+import type { Entity, EntityOwner, EntityWorld, FieldAffordance, Mention } from '@/types'
 
 // Field data for view sections
 export interface ViewSectionField {
@@ -81,6 +81,10 @@ export interface ViewEntity {
   // the bare id: under a world the row is a neighbour's RESOLVED face, and the
   // bare id would edit a state the page is not showing. See utils/entityRef.
   _self?: string
+  // The entity this row is shown as part of (TKT-QO14GB). Set on the rows of
+  // a `display: related` section only; the row links to its owner's page,
+  // anchored at the row.
+  _owner?: EntityOwner
 }
 
 // Table cell data
@@ -147,7 +151,7 @@ export interface ViewTreeNode {
 export interface ViewSection {
   heading: string
   sectionId: string
-  display: 'properties' | 'content' | 'table' | 'cards' | 'list' | 'nested'
+  display: 'properties' | 'content' | 'table' | 'cards' | 'list' | 'nested' | 'related'
   isEmpty: boolean
   emptyMessage?: string
   fields?: ViewSectionField[]

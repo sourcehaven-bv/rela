@@ -163,3 +163,25 @@ func TestPreSuggestionThreadLoadsUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `replacement: ""`)
 }
+
+func TestThreadKeys(t *testing.T) {
+	s, root := newStore(t)
+	ctx := context.Background()
+
+	keys, err := s.ThreadKeys(ctx)
+	require.NoError(t, err)
+	require.Empty(t, keys, "no directory yet means no threads")
+
+	for _, tgt := range []comments.Target{
+		{Type: "ticket", ID: "TKT-2"},
+		{Type: "ticket", ID: "TKT-1", Face: "draft"},
+		{Type: "ticket", ID: "TKT-1"},
+	} {
+		require.NoError(t, s.Add(ctx, tgt, comments.Comment{ID: "c1", Author: "a", Body: "b"}))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "notes.txt"), []byte("x"), 0o644))
+
+	keys, err = s.ThreadKeys(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"TKT-1", "TKT-1@draft", "TKT-2"}, keys)
+}

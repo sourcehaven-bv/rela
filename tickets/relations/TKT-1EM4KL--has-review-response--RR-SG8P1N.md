@@ -1,5 +1,5 @@
 ---
 from: TKT-1EM4KL
-type: has-review-response
+relation: has-review-response
 to: RR-SG8P1N
 ---

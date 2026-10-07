@@ -1,5 +1,5 @@
 ---
 from: TKT-CFGSQL
-type: has-docs
+relation: has-docs
 to: DOCS-CFGSQL
 ---

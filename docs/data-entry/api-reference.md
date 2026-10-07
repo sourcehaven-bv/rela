@@ -274,6 +274,12 @@ The storage layer literally cannot persist this state.
 - Unknown relation type (`unknown_relation_type`) — no defined storage location
 - Writing `content` on a relation type without `content: true` (`content_not_supported`) — the file format has no body slot
 - A bare source id that names several faces' incoming edges where one edge is needed (`face_required`)
+- An `owning:` relation edge that would give an entity a second owner, own an
+  entity that owns others, or make an entity own itself (`owning_rule`). A
+  hand editor can produce these states, so this is the one 422 that is not a
+  storage impossibility. It is a 422 because the delete cascade and the
+  owner's page both assume one owner and one level; `rela analyze owning`
+  reports data that breaks the rules anyway.
 
 ### 200 + warnings — soft conditions surfaced inline
 
@@ -362,6 +368,25 @@ the automation runs during Phase 2. Phase 3 (relation reconcile) computes its
 diff against the pre-automation graph state — **automation-created relations
 that conflict with the desired set may be deleted and recreated**. This is
 the same hazard the legacy reconciler has today.
+
+## Owned items (`_owner`)
+
+An entity reached through an `owning:` relation (see "Owned Items" in
+`docs/metamodel.md`) carries `_owner` on list rows, search hits and the
+`_views` entry:
+
+```json
+"_owner": { "id": "TASK-1", "type": "task", "title": "Plan launch", "relation": "subtask" }
+```
+
+Rows of a `display: related` view section carry it too. A client links the
+entity to `/entity/<owner type>/<owner id>#<entity id>` instead of to its own
+page.
+
+`_owner` is present only when the principal can read exactly one owner, and
+that owner has no readable owner of its own. An owner the principal cannot
+read is never named, and an entity with irregular ownership has no `_owner`.
+The `title` is the owner's display title as this principal may read it.
 
 ## SSE events
 

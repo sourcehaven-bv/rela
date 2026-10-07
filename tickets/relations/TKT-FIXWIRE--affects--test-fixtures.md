@@ -1,5 +1,5 @@
 ---
 from: TKT-FIXWIRE
-type: affects
+relation: affects
 to: test-fixtures
 ---

@@ -121,7 +121,7 @@ rela create <type> [flags]
 
 | Flag              | Description                                                                    |
 | ----------------- | ------------------------------------------------------------------------------ |
-| `-s, --status`    | Entity status (default: `draft`)                                               |
+| `-s, --status`    | Entity status (default: the schema's declared default, if any)                 |
 | `-p, --priority`  | Entity priority                                                                |
 | `--id`            | Custom entity ID (required for string ID types, auto-generated for sequential) |
 | `-P, --property`  | Set a property (format: key=value, can be repeated)                            |
@@ -1202,7 +1202,8 @@ rela import data.txt --format json
 **Behavior Notes:**
 
 - **Validation**: All entities are validated against the metamodel before import
-- **Auto-generated properties**: If `status` is not provided, the entity type's default is used
+- **Default status**: If `status` is not provided, the schema's declared default is used. Without one,
+  `status` stays unset (see [Default status](metamodel.md#default-status))
 - **Duplicate handling**: Without `--update`, importing an existing entity ID fails
 - **Update mode**: `--update` does a full replacement, not a merge (existing properties not in the import file are removed)
 - **Relations**: Relations referencing entities not in the graph (and not in the import) will fail
@@ -1559,13 +1560,12 @@ rela template init requirement decision --force
 
 **Generated Template Format:**
 
-Entity templates include all properties from the metamodel with their default values:
+Entity templates include the properties that declare a default in the metamodel, with that value.
+Properties without a declared default are left out:
 
 ```markdown
 ---
-title: ""
 status: draft
-priority: medium
 ---
 
 # Description
@@ -1938,6 +1938,27 @@ rela-postgres dev seed --project prototypes/perf/project --scale 1
 The filesystem backend writes one file per row and indexes each for search,
 so keep the scale small there; the full graph is meant for PostgreSQL, where
 scale 1 loads in well under a minute.
+
+---
+
+### rela db import-fs
+
+Copy a filesystem project into a new SQLite project directory. SQLite build
+only (`rela-sqlite`); other builds refuse it.
+
+```bash
+rela-sqlite db import-fs SOURCE TARGET
+```
+
+SOURCE is read and never written. TARGET must not exist; its parent must. The
+command builds the project beside TARGET and renames it into place only after
+every row is written, then reads it back to verify. On any problem it writes
+nothing and lists every problem it found. Files it does not copy are listed
+with a reason. See the SQLite backend guide for what is and is not copied.
+
+Like `rela dev seed`, this is a raw store write: no automations, validations or
+ACL run. Writes are attributed to the operator with tool `fs-import`, and the
+new project's audit log gets one `fs-import` record.
 
 ---
 

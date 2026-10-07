@@ -1022,7 +1022,33 @@ entities:
         type: string
         required: true
 
+  # TKT-QO14GB: a plan owns its steps. Separate types, so the owning
+  # relation changes nothing the other specs read.
+  plan:
+    label: Plan
+    id_type: sequential
+    id_prefix: PLAN
+    properties:
+      title:
+        type: string
+        required: true
+
+  step:
+    label: Step
+    id_type: sequential
+    id_prefix: STEP
+    properties:
+      title:
+        type: string
+        required: true
+      assignee:
+        type: string
+
 relations:
+  has_step:
+    from: [plan]
+    to: [step]
+    owning: true
   blocks:
     from: [feature, bug, task]
     to: [feature, bug, task]
@@ -1057,6 +1083,14 @@ relations:
     from: [task]
     to: [bug]
     inverse: fixedBy
+  # A container whose type has a dashed id_prefix (MOD-). The task form has no
+  # field for it, so a section create on the module page pre-links the module
+  # and the form must derive its type from the id (create-prelink.spec.ts).
+  # Not named contains: space-create-page-link.spec.ts adds that relation.
+  groups:
+    from: [module]
+    to: [task]
+    inverse: grouped_in
 
 # Commenting (TKT-FIO205). Enabled for every type so the comment specs can use
 # whichever seed entity is convenient; the ACL is untouched, so the default
@@ -1399,6 +1433,20 @@ lists:
 # type so it doesn't override the default feature detail rendering that
 # other specs (e.g. git-crypt.spec.ts) assert against.
 views:
+  plan:
+    title: "Plan"
+    entry:
+      type: plan
+    traverse:
+      - from: entry
+        follow: has_step
+        collect_as: steps
+    sections:
+      - heading: "Steps"
+        source: steps
+        display: related
+        fields:
+          - property: assignee
   task:
     title: "Task"
     entry:
@@ -1490,6 +1538,22 @@ views:
           - property: title
             link: detail
           - property: status
+
+  # create-prelink.spec.ts: a section create whose peer (the module) has a
+  # dashed id_prefix, opening a form with no field for the relation.
+  module:
+    title: "Module"
+    entry:
+      type: module
+    traverse:
+      - from: entry
+        follow: groups
+        collect_as: tasks
+    sections:
+      - heading: "Tasks"
+        source: tasks
+        display: list
+        create: {}
 
 kanbans:
   feature-board:

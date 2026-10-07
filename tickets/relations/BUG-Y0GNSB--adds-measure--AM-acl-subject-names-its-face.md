@@ -1,6 +1,6 @@
 ---
 from: BUG-Y0GNSB
-type: adds-measure
+relation: adds-measure
 to: AM-acl-subject-names-its-face
 ---
 
