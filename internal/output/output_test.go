@@ -231,7 +231,7 @@ func TestWriteEntity(t *testing.T) {
 		{From: "REQ-001", Type: "depends_on", To: "REQ-002"},
 	}
 
-	err := w.WriteEntity(e, incoming, outgoing)
+	err := w.WriteEntity(e, incoming, outgoing, MentionedBy{})
 	if err != nil {
 		t.Fatalf("WriteEntity failed: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestWriteEntity(t *testing.T) {
 		Type:       "requirement",
 		Properties: map[string]any{},
 	}
-	err = w2.WriteEntity(entity2, nil, nil)
+	err = w2.WriteEntity(entity2, nil, nil, MentionedBy{})
 	if err != nil {
 		t.Fatalf("WriteEntity minimal failed: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestWriteEntityJSON(t *testing.T) {
 		Type: "requirement",
 	}
 
-	err := w.WriteEntity(e, nil, nil)
+	err := w.WriteEntity(e, nil, nil, MentionedBy{})
 	if err != nil {
 		t.Fatalf("WriteEntity failed: %v", err)
 	}
@@ -993,6 +993,30 @@ func TestPropertyText_ExternalRef(t *testing.T) {
 	for _, tc := range tests {
 		if got := propertyText(tc.in); got != tc.want {
 			t.Errorf("propertyText(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestWriteEntityMentionedBy covers the backlinks block: a faced source is
+// shown by its address, and a cut-short list says so.
+func TestWriteEntityMentionedBy(t *testing.T) {
+	buf := &bytes.Buffer{}
+	w := NewWithWriter(buf, FormatTable)
+	w.NoColor = true
+	backlinks := MentionedBy{
+		Items: []MentionSource{
+			{ID: "DEC-1", Type: "decision", Title: "Pick a store"},
+			{ID: "DOC-1", Face: "draft", Type: "document", Title: "Design"},
+		},
+		Truncated: true,
+	}
+	if err := w.WriteEntity(&entity.Entity{ID: "REQ-001", Type: "requirement"}, nil, nil, backlinks); err != nil {
+		t.Fatalf("WriteEntity failed: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"Mentioned by:", "DEC-1 Pick a store", "DOC-1@draft Design", "(more not shown)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
 }

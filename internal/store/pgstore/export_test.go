@@ -170,3 +170,6 @@ func SetIteratorPageSizeForTest(t *testing.T, n int) {
 	iteratorPageSize.Store(int64(n))
 	t.Cleanup(func() { iteratorPageSize.Store(prev) })
 }
+
+// ReindexMentionsForTest runs one mention reindex pass synchronously.
+func ReindexMentionsForTest(ctx context.Context, s *Store) error { return reindexMentions(ctx, s) }

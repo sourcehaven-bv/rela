@@ -48,6 +48,7 @@ import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommentsPanel from '@/components/entity/CommentsPanel.vue'
+import MentionedByPanel from '@/components/entity/MentionedByPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
 import TextCommentPopover from '@/components/entity/TextCommentPopover.vue'
@@ -2903,6 +2904,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
         <DocumentsPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
+
+        <!-- Backlinks: entities whose body mentions this one. Self-gating:
+             renders nothing while nothing the reader can see mentions it. -->
+        <MentionedByPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
 
         <!-- Comment thread. Self-gating: renders nothing unless the schema
              marks this type commentable, so a project with no `comments:`

@@ -435,6 +435,12 @@ func worldCapablePath(path string) bool {
 	if isWorldCapableEntityExportPath(trimmed) {
 		return true
 	}
+	// And the backlinks of one entity (TKT-Q6AKUN), for the same reason: the
+	// detail page lists them, so they must be read in the page's world. See
+	// [isWorldCapableMentionedByPath].
+	if isWorldCapableMentionedByPath(trimmed) {
+		return true
+	}
 	// `{plural}` or `{plural}/{id}` only. A third segment is a
 	// sub-resource (relations, attachments) and is refused.
 	return strings.Count(trimmed, "/") <= 1 &&
@@ -561,6 +567,17 @@ func isWorldCapableEntityExportPath(trimmed string) bool {
 	parts := strings.Split(trimmed, "/")
 	return len(parts) == 3 && parts[0] != "" && parts[1] != "" &&
 		!strings.HasPrefix(parts[1], "_") && parts[2] == "_export"
+}
+
+// isWorldCapableMentionedByPath matches `{plural}/{id}/mentioned-by`. The
+// addressed entity is read with readAddressedOr404 and every source through
+// visibility.Resolver.MentionedBy, both in the world on ctx, so a source is
+// listed at the face the page's world serves. Refused, a world-bound page
+// would list backlinks computed in the default world.
+func isWorldCapableMentionedByPath(trimmed string) bool {
+	parts := strings.Split(trimmed, "/")
+	return len(parts) == 3 && parts[0] != "" && parts[1] != "" &&
+		!strings.HasPrefix(parts[1], "_") && parts[2] == "mentioned-by"
 }
 
 // isWorldCapableHistoryPath matches `_history/{type}/{id}` and

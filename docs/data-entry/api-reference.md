@@ -1094,6 +1094,44 @@ for an ID that never existed.
 
 ---
 
+## Backlinks: GET /api/v1/{plural}/{id}/mentioned-by
+
+Lists the entities whose body mentions `{id}` as a code span holding the bare
+ID, such as `` `TKT-007` ``. Code spans in fenced or indented code blocks and
+inside link text do not count, and neither do relation bodies.
+
+| Query    | Meaning |
+| -------- | ------- |
+| `limit`  | Page size, 1 to 200. Default 50. |
+| `cursor` | The `next_cursor` of the previous page. |
+| `world`  | The world to read in, as on the entity GET. |
+
+```json
+{
+  "items": [
+    { "id": "TKT-001", "type": "ticket", "title": "Pick a store" },
+    { "id": "DOC-4", "face": "draft", "type": "document", "title": "Design" }
+  ],
+  "next_cursor": "DOC-4"
+}
+```
+
+Items are ordered by ID. `next_cursor` is the ID of the last item, and it is
+absent on the last page. Keep paging until `next_cursor` is absent.
+
+The server reads at most 10,000 index entries per request. Sources you may not
+read count toward that limit. If the limit is reached, the response has
+`"truncated": true` and no `next_cursor`, and further sources are not listed.
+Only a target mentioned by more than 10,000 entities you cannot read can reach
+the limit.
+
+Each source passes the same read gate as a list row, carries the title you may
+see, and appears at the face the world serves. A source whose served face does
+not itself mention `{id}` is left out. A hidden or missing `{id}` gets the same
+404 as the entity GET. A bad `limit` or `cursor` is a 400.
+
+---
+
 ## Data-entry API: GET /api/v1/_apps/{id}/{path}
 
 Serves a custom app's files for embedding in a sandboxed iframe. See the

@@ -1613,6 +1613,29 @@ type Mention struct {
 	InaccessibleReason string `json:"inaccessible_reason,omitempty"`
 }
 
+// MentionedByResponse is GET /api/v1/{plural}/{id}/mentioned-by
+// (TKT-Q6AKUN): the entities whose body mentions the addressed one, one page
+// at a time, in id order.
+type MentionedByResponse struct {
+	Items []MentionSource `json:"items"`
+	// NextCursor is passed back as ?cursor= for the following page: the id
+	// of the last item. Absent when there is none. A page may be short and
+	// still carry one: the server bounds the work one request does.
+	NextCursor string `json:"next_cursor,omitempty"`
+	// Truncated reports that the server stopped scanning with nothing more
+	// to show, so further sources may exist that no cursor reaches.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// MentionSource is one entity that mentions the addressed one, at the face
+// the request's world serves. Title and the inaccessible flags follow
+// [Mention].
+type MentionSource struct {
+	ID   string `json:"id"`
+	Face string `json:"face,omitempty"`
+	Mention
+}
+
 // Face is one content state an entity has, other than the one being served.
 // See [Entity.Faces] for why it carries no readability flag.
 type Face struct {

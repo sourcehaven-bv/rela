@@ -672,6 +672,9 @@ const (
 	// it does not move with row count — the fixture puts every ticket one
 	// level below the epic, so a per-node gate would make this grow.
 	recursiveViewBudget = 12
+	// mentioned-by: the target's address read, one index batch, ONE header
+	// read for that batch's sources, and the membership walk.
+	mentionedByBudget = 5
 	// nested view: entry, the two traverse passes, the collection loads, the
 	// entry edges and the membership walk, plus the relation column's own
 	// reads — one ListRelations per ROW TYPE (epic and ticket) and the gated
@@ -872,4 +875,32 @@ func TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly(t *testing.
 			"resolution (RR-HKHPYG); breadth: %s",
 			got, emitted, limit, nestedRelationIDsPerRow, nestedRelationIDsPerRowDiv, visibleChildren, breadth)
 	}
+}
+
+// A backlinks page (TKT-Q6AKUN): every ticket's body mentions F1. The
+// sources come back in index batches, each gated with one header read, so
+// the count must not move with the number of mentioning tickets.
+func TestQueryBudget_MentionedByIsSizeIndependent(t *testing.T) {
+	counts := make([]int, 0, 2)
+	var detail string
+	for _, n := range []int{10, 50} {
+		app, counting, d, ctx := newBudgetAppOn(t, n, memstore.New())
+		for i := 1; i <= n; i++ {
+			id := fmt.Sprintf("TKT-%04d", i)
+			e := entity.New(id, "ticket")
+			e.SetString("title", "Ticket "+id)
+			e.Content = "Implements `F1`."
+			if err := counting.UpdateEntity(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		counting.Reset()
+		got := decodeMentionedBy(t, getMentionedByAs(ctx, t, app, d, http.MethodGet, "F1", "limit=100"))
+		if len(got.Items) != n {
+			t.Fatalf("n=%d: got %d sources", n, len(got.Items))
+		}
+		counts = append(counts, counting.Reads())
+		detail = counting.String()
+	}
+	assertBudget(t, "mentioned-by", counts[0], counts[1], mentionedByBudget, detail)
 }

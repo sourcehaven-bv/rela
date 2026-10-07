@@ -169,6 +169,15 @@ func (s *ScriptReader) ResolveHeadersErr(
 	return s.res.ResolveHeadersErr(s.bind(ctx), worldIn(ctx, s.world), refs)
 }
 
+// MentionedBy pages the entities whose body mentions target that the caller
+// may read, gated and redacted, in the reader's world. See
+// [Resolver.MentionedBy].
+func (s *ScriptReader) MentionedBy(
+	ctx context.Context, target, after string, limit int,
+) (MentionPage, error) {
+	return s.res.MentionedBy(s.bind(ctx), worldIn(ctx, s.world), target, after, limit)
+}
+
 // ListEntities yields only the entities the caller may read, redacted.
 //
 // Prefers ACL PUSHDOWN: when the gate can compose the caller's scope as a

@@ -34,7 +34,7 @@ func TestACLMentions_RedactsHiddenPrimaryTitle(t *testing.T) {
 	}, app.store)
 	app.acl = d
 
-	got := collectMentions(gateCtxFor(aliceCtx(), t, d), app.store, app.viewReader,
+	got := collectMentions(gateCtxFor(aliceCtx(), t, d), app.viewReader,
 		app.State().Meta, "see `TKT-001`")
 	if m, ok := got["TKT-001"]; ok && strings.Contains(m.Title, "SECRET-MENTION") {
 		t.Errorf("LEAK: hidden display value in mention title: %+v", m)
@@ -54,7 +54,7 @@ func TestACLMentions_DropsUnreadable(t *testing.T) {
 	}, app.store)
 	app.acl = d
 
-	got := collectMentions(gateCtxFor(aliceCtx(), t, d), app.store, app.viewReader,
+	got := collectMentions(gateCtxFor(aliceCtx(), t, d), app.viewReader,
 		app.State().Meta, "see `FEAT-001`")
 	if _, ok := got["FEAT-001"]; ok {
 		t.Errorf("LEAK: unreadable entity resolved as a mention: %+v", got)

@@ -173,6 +173,10 @@ type GraphReader interface {
 	// error instead of hiding the edges it touches. Aggregates fold from it,
 	// so a fault never reads as a missing relation (TKT-5LW875).
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+
+	// MentionedBy pages the readable entities whose body mentions target
+	// as an `id` code span ([visibility.Resolver.MentionedBy]).
+	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
 }
 
 // TraversalBinder answers the `related(...)` calls of a list_entities filter

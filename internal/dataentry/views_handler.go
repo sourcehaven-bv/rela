@@ -1083,7 +1083,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp.Mentions = collectMentions(
-		r.Context(), h.store, h.viewReader, s.Meta, viewContentBlobs(result.Entry, sections)...)
+		r.Context(), h.viewReader, s.Meta, viewContentBlobs(result.Entry, sections)...)
 
 	writeV1JSON(w, http.StatusOK, resp)
 }

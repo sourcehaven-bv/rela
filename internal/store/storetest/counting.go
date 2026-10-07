@@ -2,6 +2,7 @@ package storetest
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"maps"
 	"sort"
@@ -21,14 +22,14 @@ import (
 // Reads are counted; writes pass through uncounted (a test seeds through
 // the same handle, and seeding is not the thing under measurement). The
 // optional capabilities a consumer type-asserts are forwarded: the header
-// readers and the matched counter (counted), and the transaction view (its
+// readers, the matched counter and the mention index (counted), and the transaction view (its
 // reads counted too).
 //
 // Its exported methods are the store read surface it decorates plus the
 // optional capabilities above, so the count moves with store.Store rather than
 // with this type.
 //
-//plimsoll:max-exported-methods=20
+//plimsoll:max-exported-methods=21
 type Counting struct {
 	store.Store
 
@@ -189,6 +190,20 @@ func (c *Counting) CountMatched(ctx context.Context, q store.GraphQuery) (int, e
 func (c *Counting) ListEntityHeaders(ctx context.Context, q store.EntityQuery) iter.Seq2[store.EntityHeader, error] {
 	c.hit("ListEntityHeaders")
 	return store.ListEntityHeaders(ctx, c.Store, q)
+}
+
+// MentionSources forwards to the wrapped store's mention index, counted as
+// one read. A store without one fails the call: no index means no answer,
+// not an empty one.
+func (c *Counting) MentionSources(
+	ctx context.Context, target string, after entity.Ref, limit int,
+) ([]entity.Ref, error) {
+	c.hit("MentionSources")
+	idx, ok := c.Store.(store.MentionIndex)
+	if !ok {
+		return nil, errors.New("storetest: the wrapped store keeps no mention index")
+	}
+	return idx.MentionSources(ctx, target, after, limit)
 }
 
 // Tx forwards the transaction, wrapping the view so reads inside it count.
