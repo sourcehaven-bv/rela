@@ -1005,6 +1005,9 @@ deps:
       - automation
   automation:
     mayDependOn:
+      # canonical.HashEntity decides whether an update changed anything for
+      # `on.updated`, with the value normalization the stores use.
+      - canonical
       - filter
       - metamodel
       - predicate
