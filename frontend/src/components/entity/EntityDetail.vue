@@ -1775,16 +1775,26 @@ onBeforeUnmount(() => {
 // A write from elsewhere (a board move, another tab, a script) reaches this
 // view only through the server's entity:changed event; the view is fetched
 // imperatively, so no cache invalidation reaches it. The event names the type,
-// not the id, so any change to this type refetches. A pending content
+// not the id, so any change to this type refetches. Events are coalesced: one
+// relation re-point alone sends a create and a delete. A pending content
 // autosave wins: reloading under it would replace what the reader is typing.
+// Section forms keep a pending field edit across the reload themselves.
+const ENTITY_CHANGED_DEBOUNCE_MS = 250
 const { on: onServerEvent, off: offServerEvent } = useEvents()
+let entityChangedTimer: ReturnType<typeof setTimeout> | undefined
 function onEntityChanged(data: EntityEventData) {
   if (data.type && data.type !== props.entityType) return
-  if (contentAutoSave.pendingCount.value > 0) return
-  void loadView()
+  clearTimeout(entityChangedTimer)
+  entityChangedTimer = setTimeout(() => {
+    if (contentAutoSave.pendingCount.value > 0) return
+    void loadView()
+  }, ENTITY_CHANGED_DEBOUNCE_MS)
 }
 onMounted(() => onServerEvent('entity:changed', onEntityChanged))
-onBeforeUnmount(() => offServerEvent('entity:changed', onEntityChanged))
+onBeforeUnmount(() => {
+  offServerEvent('entity:changed', onEntityChanged)
+  clearTimeout(entityChangedTimer)
+})
 
 // Switching WORLD reloads the view, but is deliberately NOT folded into the
 // entity watcher below.
