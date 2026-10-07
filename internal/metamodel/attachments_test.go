@@ -84,7 +84,7 @@ attachments:
 			t.Errorf("scan_sockets: %q accepted; want a validation error", value)
 			continue
 		}
-		if !strings.Contains(err.Error(), "RELA_SANDBOX_READ_PATHS") {
+		if !strings.Contains(err.Error(), "RELA_SANDBOX_SCAN_READ_PATHS") {
 			t.Errorf("scan_sockets: %q: error does not name the replacement: %v", value, err)
 		}
 	}
@@ -97,7 +97,7 @@ attachments:
 	}
 	if _, err := Parse([]byte(merged)); err == nil {
 		t.Error("scan_sockets via a merge key accepted; want a validation error")
-	} else if !strings.Contains(err.Error(), "RELA_SANDBOX_READ_PATHS") {
+	} else if !strings.Contains(err.Error(), "RELA_SANDBOX_SCAN_READ_PATHS") {
 		t.Errorf("merge key: wrong error: %v", err)
 	}
 }

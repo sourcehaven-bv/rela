@@ -16,45 +16,53 @@ import (
 // timeout, output cap) lives in [cmdexec]; CmdRunner adds the attachment-specific
 // scan/transform policy semantics (fail-closed scan, [ErrRejected] mapping).
 //
+// Scans and transforms run in separate [cmdexec.Runner] values, one per
+// [cmdexec.Purpose], so each sees only its own operator read paths. A scanner
+// needs the daemon's unix socket and the config file naming it (clamdscan
+// parses clamd.conf before it connects, so the socket alone is not enough). A
+// transform step parses the untrusted upload and must not reach that socket.
+//
 // A nil *CmdRunner is not valid; use [NewCmdRunner].
 type CmdRunner struct {
-	exec *cmdexec.Runner
+	scan      *cmdexec.Runner
+	transform *cmdexec.Runner
 }
 
 // NewCmdRunner builds a runner. timeout bounds each command; maxBytes bounds
 // transform output. Both must be positive.
-//
-// A scan command needs two things from outside the sandbox's mount view: the
-// daemon's unix socket, and the config file naming that socket (clamdscan
-// parses clamd.conf before it connects, so the socket alone is not enough).
-// Both are host paths, so the operator lists them in RELA_SANDBOX_READ_PATHS
-// ([cmdexec.SetHostReadOnly]); this runner adds nothing of its own.
 func NewCmdRunner(timeout time.Duration, maxBytes int64) (*CmdRunner, error) {
-	r, err := cmdexec.New(timeout, maxBytes)
+	scan, err := cmdexec.New(timeout, maxBytes, cmdexec.WithPurpose(cmdexec.PurposeScan))
 	if err != nil {
 		return nil, fmt.Errorf("attachment: %w", err)
 	}
-	return &CmdRunner{exec: r}, nil
+	transform, err := cmdexec.New(timeout, maxBytes, cmdexec.WithPurpose(cmdexec.PurposeTransform))
+	if err != nil {
+		return nil, fmt.Errorf("attachment: %w", err)
+	}
+	return &CmdRunner{scan: scan, transform: transform}, nil
 }
 
 // Probe reports whether the command's binary is resolvable on PATH. The
 // composition root calls this at startup for every configured command so a
 // missing tool surfaces as a warning rather than a per-upload failure.
-func (c *CmdRunner) Probe(cmd []string) error { return c.exec.Probe(cmd) }
+func (c *CmdRunner) Probe(cmd []string) error { return c.scan.Probe(cmd) }
 
-// Describe returns a one-line summary of how scan/transform commands are
+// Describe returns a one-line summary of how scan and transform commands are
 // confined, for the startup log. Diagnostic only — never branch on this string;
 // callers just run the command and handle the error.
-func (c *CmdRunner) Describe() string { return c.exec.Describe() }
+func (c *CmdRunner) Describe() string {
+	return "scan: " + c.scan.Describe() + "; transform: " + c.transform.Describe()
+}
 
 // SandboxErr reports why commands run by this runner will FAIL, or nil when they
-// will run.
+// will run. Both runners share the host's sandbox, so the scan runner answers
+// for both.
 //
 // Nil: does NOT mean "confined" — see [cmdexec.Runner.SandboxErr], which this
 // delegates to. The composition root uses it to warn at startup that configured
 // scans will all fail closed. Never skip a scan because it is non-nil: that
 // turns a fail-closed rejection into an unscanned upload.
-func (c *CmdRunner) SandboxErr() error { return c.exec.SandboxErr() }
+func (c *CmdRunner) SandboxErr() error { return c.scan.SandboxErr() }
 
 // Scan runs cmd over data as a virus/policy scan. A nil error means clean; a
 // non-zero exit is mapped to a rejection wrapping [ErrRejected]. The bytes are
@@ -63,7 +71,7 @@ func (c *CmdRunner) Scan(ctx context.Context, cmd []string, data []byte) error {
 	if len(cmd) == 0 {
 		return Rejectedf("scan command is empty")
 	}
-	_, _, err := c.exec.Run(ctx, cmd, data, false)
+	_, _, err := c.scan.Run(ctx, cmd, data, false)
 	if err == nil {
 		return nil
 	}
@@ -85,7 +93,7 @@ func (c *CmdRunner) Transform(
 	if len(cmd) == 0 {
 		return nil, "", errors.New("transform command is empty")
 	}
-	out, usedOutFile, err := c.exec.Run(ctx, cmd, data, true)
+	out, usedOutFile, err := c.transform.Run(ctx, cmd, data, true)
 	if err != nil {
 		return nil, "", err
 	}

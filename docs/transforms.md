@@ -262,7 +262,7 @@ Commands run **confined**, and this is enforced in one shared place
 |---|---|
 | No network | Linux: bubblewrap (`--unshare-all`). macOS: `sandbox-exec` (`deny network*`) |
 | Writes | only the run's own temp dir |
-| Reads (**Linux only**) | the binary and library directories, plus the paths the operator lists in `RELA_SANDBOX_READ_PATHS` — nothing else is present, including the project directory, `/home` and `/root`. On macOS the same list only selects which unix sockets a command may connect to |
+| Reads (**Linux only**) | the binary and library directories, plus the paths the operator lists for the command's purpose (`RELA_SANDBOX_TRANSFORM_READ_PATHS` or `RELA_SANDBOX_SCAN_READ_PATHS`) — nothing else is present, including the project directory, `/home` and `/root`. On macOS the same lists only select which unix sockets a command may connect to |
 | Memory / processes / file size / CPU | `RLIMIT_AS` / `NPROC` / `FSIZE` / `CPU` (Linux) |
 | No orphaned helpers | the whole process group is killed at the deadline |
 | Concurrency | a bounded pool caps simultaneous conversions |
@@ -278,20 +278,27 @@ explicitly accept unconfined execution. The startup log states the posture.
 ### Sandbox read paths
 
 On Linux a confined command can read only `/usr`, `/bin`, `/sbin` and `/lib*`.
-rela adds nothing else on its own. Whatever else a converter needs depends on
-the distro and the tools you installed, so you list it in
-`RELA_SANDBOX_READ_PATHS`, separated by `:` like `PATH`. `rela-server` also
-accepts `--sandbox-read-paths`, which defaults to the variable. The CLI
-(`rela render`) and rela-desktop read the same variable.
+rela adds nothing else on its own. Whatever else a command needs depends on the
+distro and the tools you installed, so you list it, separated by `:` like
+`PATH`. There is one list per kind of command, so a path one kind needs is not
+exposed to the other:
 
-The variable is read by each process. Set it for every process that runs a
+| Variable | `rela-server` flag | Applies to |
+|---|---|---|
+| `RELA_SANDBOX_TRANSFORM_READ_PATHS` | `--sandbox-transform-read-paths` | export transforms, attachment transform steps, document commands |
+| `RELA_SANDBOX_SCAN_READ_PATHS` | `--sandbox-scan-read-paths` | attachment scans; see [attachment-security.md](attachment-security.md) |
+
+Each flag defaults to its variable. The CLI (`rela render`) and rela-desktop
+read the same variables.
+
+The variables are read by each process. Set them for every process that runs a
 converter or scanner: the server unit, and any `rela` command run from a shell,
 a timer or a deploy script. A shared systemd `EnvironmentFile=` keeps them equal.
 
 For `pandoc` with `xelatex` on Debian 13:
 
 ```sh
-RELA_SANDBOX_READ_PATHS=/etc/paperspecs:/var/lib/texmf
+RELA_SANDBOX_TRANSFORM_READ_PATHS=/etc/paperspecs:/var/lib/texmf
 ```
 
 | Path | Needed by |
@@ -311,19 +318,20 @@ converters may need more:
   `No such file or directory`.
 
 A missing path is skipped. The startup log lists the paths in effect, and warns
-when a scan or transform is configured but the list is empty.
+when a scan or transform is configured but its list is empty.
 
-Every listed path is exposed to **every** command, including a converter fed
-untrusted content:
+Every path in the transform list is exposed to **every** transform command, and
+each of them may be fed untrusted content:
 
 - **Files are readable.** A raw LaTeX block can make the converter embed a
   readable file into the export. List single files where a directory holds
   anything sensitive.
 - **Unix sockets are connectable.** A read-only bind does not stop a connect.
-  List the socket file, never its directory: `/run` and `/var/run` also hold the
-  database, docker and D-Bus sockets.
+  Keep daemon sockets, such as clamd's, out of this list; they belong in the
+  scan list. List a socket file, never its directory: `/run` and `/var/run` also
+  hold the database, docker and D-Bus sockets.
 
-rela refuses, with a warning:
+rela refuses the same paths in both lists. It refuses, with a warning:
 
 - `/proc` and `/dev`, and any path inside them;
 - any path that is or contains `/tmp`, the temp directory, `/etc`, `/run`,
@@ -345,12 +353,13 @@ on every host, and clamd's socket and `clamd.conf` for virus scans only. To
 keep the converter paths, set:
 
 ```sh
-RELA_SANDBOX_READ_PATHS=/etc/fonts:/etc/alternatives:/var/lib/texmf:/var/lib/fontconfig
+RELA_SANDBOX_TRANSFORM_READ_PATHS=/etc/fonts:/etc/alternatives:/var/lib/texmf:/var/lib/fontconfig
 ```
 
-Add `/etc/paperspecs` for a PDF export on Debian 13, and the clamd paths from
-[attachment-security.md](attachment-security.md) if you scan uploads. Then
-remove what your converters do not need.
+Add `/etc/paperspecs` for a PDF export on Debian 13. Then remove what your
+converters do not need. If you scan uploads, set
+`RELA_SANDBOX_SCAN_READ_PATHS` to the clamd paths from
+[attachment-security.md](attachment-security.md).
 
 > **Converter flags are not a substitute.** `pandoc --sandbox` restricts pandoc's
 > own file access but explicitly **does not cover PDF production** — the PDF
@@ -359,8 +368,8 @@ remove what your converters do not need.
 > file via `\input`. Use it as defence-in-depth, not as the control.
 
 **macOS does not confine reads.** Write and network restrictions work there, but
-the read allowlist is Linux-only (on macOS `RELA_SANDBOX_READ_PATHS` only allows
-connects to the unix sockets it lists): `sandbox-exec`'s profile language is
+the read allowlist is Linux-only (on macOS each list only allows connects to the
+unix sockets it names): `sandbox-exec`'s profile language is
 undocumented and deprecated, and a read-restricting profile could not be made to
 behave consistently. On macOS a crafted document can therefore still disclose
 server-readable files into an export. Treat macOS as a development tier and run

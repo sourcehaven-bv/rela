@@ -53,7 +53,8 @@ type serverFlags struct {
 	principalHeader   string
 	readOnly          bool
 	unconfinedCommand bool
-	sandboxReadPaths  string
+	// sandboxReadPaths holds the operator's read paths per cmdexec.Purpose.
+	sandboxReadPaths map[cmdexec.Purpose]*string
 	// remoteMCP serves the MCP endpoint over HTTP at dataentry.MCPPath.
 	// Off by default; requires the JWT identity flags below (dataentry
 	// refuses to enable it otherwise — the endpoint is CSRF-exempt, and
@@ -117,16 +118,25 @@ func parseFlags() *serverFlags {
 			"commands. Accepts running third-party parsers on untrusted input "+
 			"unconfined — see docs/transforms.md. Also enabled by "+
 			"RELA_UNCONFINED_COMMANDS=1.")
-	flag.StringVar(&f.sandboxReadPaths, "sandbox-read-paths", os.Getenv(cmdexec.EnvSandboxReadPaths),
-		"Host paths that sandboxed scan/transform/export commands may read, separated "+
-			"by ':' like PATH. Commands always get the binary and library directories "+
-			"(/usr, /bin, /sbin, /lib*); everything else a converter or scanner needs "+
-			"(e.g. /etc/paperspecs and /var/lib/texmf for xelatex, a clamd socket and "+
-			"clamd.conf) must be listed here. Every listed path is exposed to every "+
-			"command, including converters fed untrusted content: files are readable "+
-			"and unix sockets connectable, so list single files and a socket file, "+
-			"never /run or /var/run. Defaults to "+
-			"$"+cmdexec.EnvSandboxReadPaths+". See docs/transforms.md.")
+	f.sandboxReadPaths = map[cmdexec.Purpose]*string{
+		cmdexec.PurposeTransform: flag.String("sandbox-transform-read-paths",
+			os.Getenv(cmdexec.EnvSandboxTransformReadPaths),
+			"Host paths that sandboxed transform commands (export transforms, attachment "+
+				"transform steps, document commands) may read, separated by ':' like PATH. "+
+				"Commands always get the binary and library directories (/usr, /bin, /sbin, "+
+				"/lib*); anything else a converter needs (e.g. /etc/paperspecs and "+
+				"/var/lib/texmf for xelatex) must be listed here. These commands parse "+
+				"untrusted content: listed files are readable and unix sockets connectable, "+
+				"so list single files, never a daemon socket. Defaults to "+
+				"$"+cmdexec.EnvSandboxTransformReadPaths+". See docs/transforms.md."),
+		cmdexec.PurposeScan: flag.String("sandbox-scan-read-paths",
+			os.Getenv(cmdexec.EnvSandboxScanReadPaths),
+			"Host paths that sandboxed attachment scan commands may read, separated by "+
+				"':' like PATH, on top of /usr, /bin, /sbin and /lib*. For clamdscan: the "+
+				"clamd socket file and clamd.conf. List the socket file, never /run or "+
+				"/var/run. Defaults to $"+cmdexec.EnvSandboxScanReadPaths+
+				". See docs/attachment-security.md."),
+	}
 	flag.BoolVar(&f.remoteMCP, "mcp", os.Getenv("RELA_MCP") == "1",
 		"Serve the Model Context Protocol endpoint over HTTP at /api/v1/_mcp, "+
 			"so AI assistants can reach a deployed rela the same way `rela mcp` "+
@@ -218,16 +228,19 @@ func discoverProject(f *serverFlags) *appbuild.Services {
 // applyCommandConfinement records the host-level command-confinement decision
 // and the operator's sandbox read paths before any runner is built, warning once
 // (like a disabled attachment scan) when commands will run unconfined.
-func applyCommandConfinement(unconfined bool, readPaths string) {
+func applyCommandConfinement(unconfined bool, readPaths map[cmdexec.Purpose]*string) {
 	// The paths in effect are logged by the "external command confinement"
 	// line (Runner.Describe); only a path that is missing or cannot be checked is reported here.
-	for _, p := range cmdexec.SetHostReadOnly(cmdexec.ParseReadPaths(readPaths)) {
-		switch _, err := os.Stat(p); {
-		case errors.Is(err, fs.ErrNotExist):
-			slog.Warn("sandbox read path does not exist; commands will not see it until it does",
-				"path", p)
-		case err != nil:
-			slog.Warn("sandbox read path cannot be checked; commands may not see it", "path", p, "err", err)
+	for purpose, paths := range readPaths {
+		for _, p := range cmdexec.SetHostReadOnly(purpose, cmdexec.ParseReadPaths(*paths)) {
+			switch _, err := os.Stat(p); {
+			case errors.Is(err, fs.ErrNotExist):
+				slog.Warn("sandbox read path does not exist; commands will not see it until it does",
+					"path", p, "purpose", purpose)
+			case err != nil:
+				slog.Warn("sandbox read path cannot be checked; commands may not see it",
+					"path", p, "purpose", purpose, "err", err)
+			}
 		}
 	}
 	if cmdexec.SetUnconfinedByDefault(unconfined) {

@@ -58,7 +58,7 @@ func requireClamd(t *testing.T) {
 var documentedScanCmd = []string{"clamdscan", "--no-summary", "--stream", "{in}"}
 
 // clamdRunner builds the runner under test with the sandbox read paths an
-// operator would set in RELA_SANDBOX_READ_PATHS: clamd's socket and the
+// operator would set in RELA_SANDBOX_SCAN_READ_PATHS: clamd's socket and the
 // clamd.conf naming it. The default is the Debian/Ubuntu layout (what CI and the
 // docs target). A Linux host whose clamd lives elsewhere (Fedora's clamd@scan
 // uses /run/clamd.scan/clamd.sock and /etc/clamd.d/scan.conf) overrides it with
@@ -68,8 +68,8 @@ var documentedScanCmd = []string{"clamdscan", "--no-summary", "--stream", "{in}"
 func clamdRunner(t *testing.T) *CmdRunner {
 	t.Helper()
 	binds := envOrDefault("RELA_TEST_CLAMD_BINDS", "/var/run/clamav/clamd.ctl:/etc/clamav/clamd.conf")
-	cmdexec.SetHostReadOnly(cmdexec.ParseReadPaths(binds))
-	t.Cleanup(func() { cmdexec.SetHostReadOnly(nil) })
+	cmdexec.SetHostReadOnly(cmdexec.PurposeScan, cmdexec.ParseReadPaths(binds))
+	t.Cleanup(func() { cmdexec.SetHostReadOnly(cmdexec.PurposeScan, nil) })
 	r, err := NewCmdRunner(30*time.Second, 1<<20)
 	if err != nil {
 		t.Fatal(err)

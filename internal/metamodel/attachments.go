@@ -84,7 +84,7 @@ type AttachmentsConfig struct {
 	// with any value (a list, [] or null), so validation can refuse it with a
 	// pointer to its replacement instead of the loader silently ignoring it
 	// (unknown nested keys are not rejected). Host paths are the operator's
-	// concern now: RELA_SANDBOX_READ_PATHS.
+	// concern now: RELA_SANDBOX_SCAN_READ_PATHS.
 	scanSocketsSet bool
 }
 
@@ -165,8 +165,8 @@ func validateAttachments(m *Metamodel) []string {
 		return nil
 	}
 	return []string{"attachments.scan_sockets was removed: sandbox read paths are host " +
-		"configuration now. Move these paths to RELA_SANDBOX_READ_PATHS " +
-		"(or rela-server --sandbox-read-paths) and delete the key"}
+		"configuration now. Move these paths to RELA_SANDBOX_SCAN_READ_PATHS " +
+		"(or rela-server --sandbox-scan-read-paths) and delete the key"}
 }
 
 // HasConfiguredScan reports whether at least one `file` property will actually

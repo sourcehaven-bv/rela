@@ -1,7 +1,7 @@
 ---
 id: TKT-AM1IS7
 type: ticket
-title: Make sandbox read paths operator-configured (RELA_SANDBOX_READ_PATHS)
+title: Make sandbox read paths operator-configured, per purpose (scan / transform)
 kind: enhancement
 priority: high
 effort: m

@@ -151,28 +151,38 @@ func TestCmdRunner_Timeout(t *testing.T) {
 }
 
 // TestCmdRunnerBindsOnlyOperatorPaths pins the WIRING: the scan runner binds
-// exactly the operator's RELA_SANDBOX_READ_PATHS list and adds no paths of its
-// own. A scanner that cannot reach its socket or read clamd.conf rejects every
-// upload, so the operator's list must actually reach the runner.
+// exactly the operator's scan list and the transform runner exactly the
+// transform list, and neither adds paths of its own. A scanner that cannot
+// reach its socket or read clamd.conf rejects every upload, and a transform
+// step that could reach the socket could stop clamd or probe files.
 func TestCmdRunnerBindsOnlyOperatorPaths(t *testing.T) {
-	t.Cleanup(func() { cmdexec.SetHostReadOnly(nil) })
+	t.Cleanup(func() {
+		cmdexec.SetHostReadOnly(cmdexec.PurposeScan, nil)
+		cmdexec.SetHostReadOnly(cmdexec.PurposeTransform, nil)
+	})
 
-	cmdexec.SetHostReadOnly(nil)
+	cmdexec.SetHostReadOnly(cmdexec.PurposeScan, nil)
+	cmdexec.SetHostReadOnly(cmdexec.PurposeTransform, nil)
 	r, err := NewCmdRunner(time.Second, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := r.exec.ExtraReadOnly(); len(got) != 0 {
-		t.Errorf("no operator paths configured, runner binds %v; want none", got)
+	if got := append(r.scan.ExtraReadOnly(), r.transform.ExtraReadOnly()...); len(got) != 0 {
+		t.Errorf("no operator paths configured, runners bind %v; want none", got)
 	}
 
-	want := []string{"/run/clamav/clamd.ctl", "/etc/clamav/clamd.conf"}
-	cmdexec.SetHostReadOnly(want)
+	scan := []string{"/run/clamav/clamd.ctl", "/etc/clamav/clamd.conf"}
+	transform := []string{"/etc/paperspecs"}
+	cmdexec.SetHostReadOnly(cmdexec.PurposeScan, scan)
+	cmdexec.SetHostReadOnly(cmdexec.PurposeTransform, transform)
 	r, err = NewCmdRunner(time.Second, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := r.exec.ExtraReadOnly(); !slices.Equal(got, want) {
-		t.Errorf("runner binds %v, want the operator's list %v", got, want)
+	if got := r.scan.ExtraReadOnly(); !slices.Equal(got, scan) {
+		t.Errorf("scan runner binds %v, want the operator's scan list %v", got, scan)
+	}
+	if got := r.transform.ExtraReadOnly(); !slices.Equal(got, transform) {
+		t.Errorf("transform runner binds %v, want the operator's transform list %v", got, transform)
 	}
 }

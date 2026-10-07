@@ -24,8 +24,8 @@ func (linuxSandbox) Name() string { return "bubblewrap" }
 // directories that hold binaries and shared libraries, without which no command
 // can start. Everything a particular converter or scanner needs beyond that —
 // fontconfig, TeX Live config, libpaper's paper sizes, a clamd socket — is
-// host-specific and comes from the operator ([SetHostReadOnly],
-// RELA_SANDBOX_READ_PATHS). Everything else — the project directory, /root,
+// host-specific and comes from the operator ([SetHostReadOnly], one list per
+// [Purpose]). Everything else — the project directory, /root,
 // /home, .rela secrets, /etc/passwd — simply is not present inside the mount
 // namespace, as long as the operator's list does not cover it. The list is
 // checked for that: [unsafeReadPath] refuses /, /etc, /home, /root, /var/lib

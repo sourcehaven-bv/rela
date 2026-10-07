@@ -1294,8 +1294,10 @@ func NewApp(
 		// scan/transform (which will fail closed).
 		slog.Info("external command confinement", "detail", runner.Describe())
 		probeAttachmentCommands(meta, runner)
-		warnIfNoSandboxReadPaths(meta, cfg.Documents, runtime.GOOS,
-			cmdexec.HostReadOnly(), !cmdexec.UnconfinedByDefault())
+		warnIfNoSandboxReadPaths(meta, cfg.Documents, runtime.GOOS, map[cmdexec.Purpose][]string{
+			cmdexec.PurposeScan:      cmdexec.HostReadOnly(cmdexec.PurposeScan),
+			cmdexec.PurposeTransform: cmdexec.HostReadOnly(cmdexec.PurposeTransform),
+		}, !cmdexec.UnconfinedByDefault())
 	} else {
 		slog.Warn("attachments: command runner unavailable; scan/transform disabled", "err", rerr)
 	}

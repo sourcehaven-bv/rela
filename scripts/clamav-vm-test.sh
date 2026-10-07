@@ -115,7 +115,7 @@ fi
 
 say "Deploying binary, project and the guide's unit"
 # The project uses ONLY the guide's scan_cmd; the sandbox read paths come from
-# the guide's unit (RELA_SANDBOX_READ_PATHS), so the published setup is tested.
+# the guide's unit (RELA_SANDBOX_SCAN_READ_PATHS), so the published setup is tested.
 cat > "$WORK/schema.yaml" <<YAML
 attachments:
   $SCAN_CMD

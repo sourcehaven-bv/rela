@@ -278,7 +278,7 @@ func TestSandboxErrNilOnOperatorOptOut(t *testing.T) {
 	}
 }
 
-// TestParseReadPaths pins the RELA_SANDBOX_READ_PATHS format: PATH-style
+// TestParseReadPaths pins the RELA_SANDBOX_*_READ_PATHS format: PATH-style
 // separators, with empty entries (a doubled or trailing separator) dropped.
 func TestParseReadPaths(t *testing.T) {
 	sep := string(filepath.ListSeparator)
@@ -295,12 +295,12 @@ func TestParseReadPaths(t *testing.T) {
 // TestHostReadOnlyReachesEveryRunner pins that the operator's list is bound in
 // every runner New builds, ahead of a runner's own extra paths, and that
 // non-absolute entries are dropped. Every runner matters: export, document
-// commands and attachment scans each build their own, and a converter that
+// commands and attachment transforms each build their own, and a converter that
 // cannot read fontconfig or libpaper's paper sizes fails the whole export.
 func TestHostReadOnlyReachesEveryRunner(t *testing.T) {
-	t.Cleanup(func() { SetHostReadOnly(nil) })
+	t.Cleanup(func() { SetHostReadOnly(PurposeTransform, nil) })
 
-	accepted := SetHostReadOnly([]string{"/etc/fonts", "relative/x", "/etc/paperspecs/"})
+	accepted := SetHostReadOnly(PurposeTransform, []string{"/etc/fonts", "relative/x", "/etc/paperspecs/"})
 	if want := []string{"/etc/fonts", "/etc/paperspecs"}; !slices.Equal(accepted, want) {
 		t.Fatalf("accepted %v, want %v", accepted, want)
 	}
@@ -314,7 +314,7 @@ func TestHostReadOnlyReachesEveryRunner(t *testing.T) {
 		t.Errorf("runner binds %v, want %v", got, want)
 	}
 
-	SetHostReadOnly(nil)
+	SetHostReadOnly(PurposeTransform, nil)
 	r, err = New(time.Second, 1<<20, WithSandboxDisabled())
 	if err != nil {
 		t.Fatal(err)
@@ -324,24 +324,61 @@ func TestHostReadOnlyReachesEveryRunner(t *testing.T) {
 	}
 }
 
-// TestApplyHostEnv pins the wiring the CLI and rela-desktop share: both host
-// settings come from the environment in one call, so a composition root cannot
-// apply one and miss the other.
+// TestHostReadOnlyIsPerPurpose pins the isolation between purposes: a scan
+// runner binds only the scan list and a transform runner only the transform
+// list. A converter fed untrusted content must not reach the clamd socket, and
+// a runner that names no purpose is a transform runner.
+func TestHostReadOnlyIsPerPurpose(t *testing.T) {
+	t.Cleanup(func() {
+		SetHostReadOnly(PurposeScan, nil)
+		SetHostReadOnly(PurposeTransform, nil)
+	})
+	scan := []string{"/run/clamav/clamd.ctl", "/etc/clamav/clamd.conf"}
+	transform := []string{"/etc/paperspecs", "/var/lib/texmf"}
+	SetHostReadOnly(PurposeScan, scan)
+	SetHostReadOnly(PurposeTransform, transform)
+
+	cases := []struct {
+		name string
+		opts []Option
+		want []string
+	}{
+		{"scan", []Option{WithPurpose(PurposeScan)}, scan},
+		{"transform", []Option{WithPurpose(PurposeTransform)}, transform},
+		{"no purpose", nil, transform},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := New(time.Second, 1<<20, append(tc.opts, WithSandboxDisabled())...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := r.ExtraReadOnly(); !slices.Equal(got, tc.want) {
+				t.Errorf("runner binds %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestApplyHostEnv pins the wiring the CLI and rela-desktop share: every host
+// setting comes from the environment in one call, so a composition root cannot
+// apply one and miss another.
 func TestApplyHostEnv(t *testing.T) {
 	t.Cleanup(func() {
-		SetHostReadOnly(nil)
+		SetHostReadOnly(PurposeScan, nil)
+		SetHostReadOnly(PurposeTransform, nil)
 		SetUnconfinedByDefault(false)
 	})
-	t.Setenv(EnvSandboxReadPaths, "/etc/paperspecs::/var/lib/texmf/")
+	t.Setenv(EnvSandboxTransformReadPaths, "/etc/paperspecs::/var/lib/texmf/")
+	t.Setenv(EnvSandboxScanReadPaths, "/run/clamav/clamd.ctl")
 	t.Setenv(EnvUnconfinedCommands, "1")
 
-	got := ApplyHostEnv()
-	want := []string{"/etc/paperspecs", "/var/lib/texmf"}
-	if !slices.Equal(got, want) {
-		t.Errorf("ApplyHostEnv() = %v, want %v", got, want)
+	ApplyHostEnv()
+	if got, want := HostReadOnly(PurposeTransform), []string{"/etc/paperspecs", "/var/lib/texmf"}; !slices.Equal(got, want) {
+		t.Errorf("HostReadOnly(PurposeTransform) = %v, want %v", got, want)
 	}
-	if !slices.Equal(HostReadOnly(), want) {
-		t.Errorf("HostReadOnly() = %v, want %v", HostReadOnly(), want)
+	if got, want := HostReadOnly(PurposeScan), []string{"/run/clamav/clamd.ctl"}; !slices.Equal(got, want) {
+		t.Errorf("HostReadOnly(PurposeScan) = %v, want %v", got, want)
 	}
 	if !unconfinedDefault() {
 		t.Error("RELA_UNCONFINED_COMMANDS=1 not applied")
@@ -353,7 +390,7 @@ func TestApplyHostEnv(t *testing.T) {
 // /tmp and writable-dir mounts, so each of these would replace one of them,
 // expose the whole host, or hand over every daemon socket or data directory.
 func TestSetHostReadOnlyRejectsPathsThatUndoTheSandbox(t *testing.T) {
-	t.Cleanup(func() { SetHostReadOnly(nil) })
+	t.Cleanup(func() { SetHostReadOnly(PurposeTransform, nil) })
 	// A nested TMPDIR, so "a parent of the temp dir" is a real case on Linux
 	// CI too, where the default /tmp's parent is already refused as "/".
 	tmp := filepath.Join(t.TempDir(), "nested", "tmp")
@@ -366,7 +403,7 @@ func TestSetHostReadOnlyRejectsPathsThatUndoTheSandbox(t *testing.T) {
 		"/run", "/var/run", "/var", "/var/lib", "/home", "/root",
 	}
 	for _, p := range rejected {
-		if got := SetHostReadOnly([]string{p}); len(got) != 0 {
+		if got := SetHostReadOnly(PurposeTransform, []string{p}); len(got) != 0 {
 			t.Errorf("SetHostReadOnly(%q) accepted %v; want it rejected", p, got)
 		}
 		r, err := New(time.Second, 1<<20, WithSandboxDisabled(), WithExtraReadOnly(p))
@@ -384,7 +421,7 @@ func TestSetHostReadOnlyRejectsPathsThatUndoTheSandbox(t *testing.T) {
 		"/etc/paperspecs", "/var/lib/texmf", "/var/run/clamav/clamd.ctl",
 		"/tmp/clamd.sock", "/devices", "/procfs", "/etcetera",
 	}
-	if got := SetHostReadOnly(allowed); !slices.Equal(got, allowed) {
+	if got := SetHostReadOnly(PurposeTransform, allowed); !slices.Equal(got, allowed) {
 		t.Errorf("SetHostReadOnly(%v) = %v; want all accepted", allowed, got)
 	}
 }
@@ -395,17 +432,17 @@ func TestSetHostReadOnlyRejectsPathsThatUndoTheSandbox(t *testing.T) {
 // refused like the target itself. A path that does not exist yet is resolved
 // through its existing parent.
 func TestSetHostReadOnlyChecksSymlinkTargets(t *testing.T) {
-	t.Cleanup(func() { SetHostReadOnly(nil) })
+	t.Cleanup(func() { SetHostReadOnly(PurposeTransform, nil) })
 	dir := t.TempDir()
 	for name, target := range map[string]string{"root": "/", "dev": "/dev", "etc": "/etc"} {
 		link := filepath.Join(dir, name)
 		if err := os.Symlink(target, link); err != nil {
 			t.Fatal(err)
 		}
-		if got := SetHostReadOnly([]string{link}); len(got) != 0 {
+		if got := SetHostReadOnly(PurposeTransform, []string{link}); len(got) != 0 {
 			t.Errorf("symlink %s -> %s accepted", link, target)
 		}
-		if got := SetHostReadOnly([]string{filepath.Join(link, "not-yet")}); target == "/dev" && len(got) != 0 {
+		if got := SetHostReadOnly(PurposeTransform, []string{filepath.Join(link, "not-yet")}); target == "/dev" && len(got) != 0 {
 			t.Errorf("future path under symlink %s -> /dev accepted", link)
 		}
 	}
@@ -413,8 +450,8 @@ func TestSetHostReadOnlyChecksSymlinkTargets(t *testing.T) {
 
 // TestSetHostReadOnlyDropsDuplicates keeps bwrap from binding a path twice.
 func TestSetHostReadOnlyDropsDuplicates(t *testing.T) {
-	t.Cleanup(func() { SetHostReadOnly(nil) })
-	got := SetHostReadOnly([]string{"/etc/paperspecs", "/etc/paperspecs/", "/var/lib/texmf"})
+	t.Cleanup(func() { SetHostReadOnly(PurposeTransform, nil) })
+	got := SetHostReadOnly(PurposeTransform, []string{"/etc/paperspecs", "/etc/paperspecs/", "/var/lib/texmf"})
 	if want := []string{"/etc/paperspecs", "/var/lib/texmf"}; !slices.Equal(got, want) {
 		t.Errorf("SetHostReadOnly = %v, want %v", got, want)
 	}
@@ -423,7 +460,10 @@ func TestSetHostReadOnlyDropsDuplicates(t *testing.T) {
 // TestCheckProjectNotExposed pins that no operator path may be, contain, or lie
 // inside the project directory, including through a symlink.
 func TestCheckProjectNotExposed(t *testing.T) {
-	t.Cleanup(func() { SetHostReadOnly(nil) })
+	t.Cleanup(func() {
+		SetHostReadOnly(PurposeScan, nil)
+		SetHostReadOnly(PurposeTransform, nil)
+	})
 	base := t.TempDir()
 	project := filepath.Join(base, "srv", "project")
 	if err := os.MkdirAll(filepath.Join(project, ".rela"), 0o755); err != nil {
@@ -446,18 +486,23 @@ func TestCheckProjectNotExposed(t *testing.T) {
 		{"a symlink to the project", []string{link}, true},
 		{"a sibling", []string{filepath.Join(base, "srv", "other")}, false},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Bypass SetHostReadOnly: a TempDir path may itself be refused as
-			// lying under the temp dir's parent on some hosts, and this test is
-			// about the project check alone.
-			paths := slices.Clone(tc.paths)
-			hostReadOnly.Store(&paths)
-			err := CheckProjectNotExposed(project)
-			if (err != nil) != tc.wantErr {
-				t.Errorf("CheckProjectNotExposed = %v, wantErr %v", err, tc.wantErr)
-			}
-		})
+	// Every purpose's list is checked: a scan path inside the project would
+	// expose it as surely as a transform path.
+	for _, purpose := range []Purpose{PurposeTransform, PurposeScan} {
+		for _, tc := range cases {
+			t.Run(purpose.String()+"/"+tc.name, func(t *testing.T) {
+				// Bypass SetHostReadOnly: a TempDir path may itself be refused as
+				// lying under the temp dir's parent on some hosts, and this test is
+				// about the project check alone.
+				paths := slices.Clone(tc.paths)
+				hostReadOnly[purpose].Store(&paths)
+				t.Cleanup(func() { hostReadOnly[purpose].Store(nil) })
+				err := CheckProjectNotExposed(project)
+				if (err != nil) != tc.wantErr {
+					t.Errorf("CheckProjectNotExposed = %v, wantErr %v", err, tc.wantErr)
+				}
+			})
+		}
 	}
 	if err := CheckProjectNotExposed(""); err != nil {
 		t.Errorf("empty project root: %v", err)

@@ -267,7 +267,7 @@ Group=rela
 SupplementaryGroups=clamav
 # Host paths the sandboxed scanner may read: clamd's socket and the clamd.conf
 # naming it. See "Reaching clamd from inside the sandbox" below.
-Environment=RELA_SANDBOX_READ_PATHS=/var/run/clamav/clamd.ctl:/etc/clamav/clamd.conf
+Environment=RELA_SANDBOX_SCAN_READ_PATHS=/var/run/clamav/clamd.ctl:/etc/clamav/clamd.conf
 ExecStart=/usr/local/bin/rela-server --project /var/lib/rela/project --bind 127.0.0.1 --port 8080
 Restart=on-failure
 RestartSec=2
@@ -447,33 +447,31 @@ neither.
    reaches the socket at all.
 
 rela binds neither on its own: a confined command sees only the binary and
-library directories. List both in `RELA_SANDBOX_READ_PATHS`, separated by `:`,
+library directories. List both in `RELA_SANDBOX_SCAN_READ_PATHS`, separated by `:`,
 as the unit above does. For Debian/Ubuntu `clamav-daemon`:
 
 ```sh
-RELA_SANDBOX_READ_PATHS=/var/run/clamav/clamd.ctl:/etc/clamav/clamd.conf
+RELA_SANDBOX_SCAN_READ_PATHS=/var/run/clamav/clamd.ctl:/etc/clamav/clamd.conf
 ```
 
 Elsewhere, use your `clamd.conf` path and the `LocalSocket` it names (Homebrew:
 `/opt/homebrew/var/run/clamav/clamd.sock:/opt/homebrew/etc/clamav/clamd.conf`).
-`rela-server --sandbox-read-paths` takes the same list. The variable is host
-configuration, shared by every sandboxed command; the
-[transforms guide](transforms.md#sandbox-read-paths) lists what a PDF converter
-needs alongside it.
+`rela-server --sandbox-scan-read-paths` takes the same list. The variable is
+host configuration and applies to scan commands only. Converters and attachment
+transform steps get a separate list, `RELA_SANDBOX_TRANSFORM_READ_PATHS`; the
+[transforms guide](transforms.md#sandbox-read-paths) describes it.
 
 Name the config **file**, never its directory: `/etc/clamav` also holds the
 signature databases and `freshclam.conf`, which can carry a `DatabaseMirror`
 proxy credential. Name the socket **file** too, never `/run` or `/var/run`:
-every listed path is readable by every sandboxed command, and a socket under a
+every listed path is readable by every scan command, and a socket under a
 listed directory is connectable.
 
-The list is shared by every sandboxed command, so export converters (pandoc,
-xelatex) can read `clamd.conf` and connect to the clamd socket too. Before this
-release only the scanner had them. A converter compromised by hostile input can
-then send clamd commands: `SHUTDOWN` stops it, after which every upload to a
-scanned property is rejected until clamd restarts, and `SCAN <path>` reports
-whether a file clamd can read is infected. It cannot read file contents this
-way. Keep clamd under a service manager that restarts it.
+Keep the clamd paths out of `RELA_SANDBOX_TRANSFORM_READ_PATHS`. Converters and
+transform steps parse untrusted content. One compromised by hostile input could
+send clamd commands: `SHUTDOWN` stops it, after which every upload to a scanned
+property is rejected until clamd restarts, and `SCAN <path>` reports whether a
+file clamd can read is infected.
 
 Binding a socket does **not** re-open network egress — a unix socket is a
 filesystem object, and the network namespace stays isolated. `--stream` over a
@@ -488,13 +486,12 @@ network operation denied.
 
 rela-desktop reads the variable from its own environment. Started from the
 Finder or the Dock it does not see your shell's variables; set it with
-`launchctl setenv RELA_SANDBOX_READ_PATHS <paths>` and then start the app.
+`launchctl setenv RELA_SANDBOX_SCAN_READ_PATHS <paths>` and then start the app.
 
 > **Upgrading:** rela used to bind the common clamd locations itself, and offered
 > `attachments.scan_sockets` in `schema.yaml` for others. Both are gone. A schema
 > that still sets `scan_sockets` fails to load; move its paths, plus the socket
-> and `clamd.conf`, to `RELA_SANDBOX_READ_PATHS`. Note that export converters
-> then reach them too (see above).
+> and `clamd.conf`, to `RELA_SANDBOX_SCAN_READ_PATHS`.
 
 ### Strip image metadata (EXIF/GPS) — exiftool
 

@@ -1076,7 +1076,7 @@ func main() {
 
 	configureLogging(*verbose, *quiet)
 	// Host-level command settings (RELA_UNCONFINED_COMMANDS,
-	// RELA_SANDBOX_READ_PATHS), applied before any project builds its
+	// RELA_SANDBOX_TRANSFORM_READ_PATHS, RELA_SANDBOX_SCAN_READ_PATHS), applied before any project builds its
 	// export/attachment runners. Without them a sandboxed converter sees only
 	// the system directories. Read from the environment, like the CLI; a desktop
 	// launched from a GUI gets them from the session environment.
