@@ -1988,10 +1988,58 @@ Each entry under `fields:` takes:
 | Field      | Type   | Description                                                  |
 | ---------- | ------ | ------------------------------------------------------------ |
 | `property` | string | Property name                                                |
-| `label`    | string | Display label (defaults to the raw property name)            |
+| `relation` | string | Relation to show as a field, instead of `property` (see below) |
+| `style_from` | string | Relation fields only: enum property of the target that colours each target (see below) |
+| `label`    | string | Display label (defaults to the raw property name, or the relation's label) |
 | `span`     | int    | Width on the 12-column grid (1-12; omit for full width)      |
 | `render`   | string | `display` or `input`; overrides the section's `render`        |
 | `widget`   | string | Which widget renders this property (see Widget Overrides)    |
+
+#### Relation fields
+
+A `relation:` field shows the entry's outgoing edges of that relation as a
+field among the properties, instead of a section of its own. It shows the
+target titles. With `render: input`, a menu lists the candidates:
+
+- On a relation with `max_outgoing: 1`, picking a target replaces the current
+  one in one write.
+- On any other relation, each pick adds or removes that target.
+
+```yaml
+sections:
+  - heading: Details
+    source: entry
+    display: properties
+    render: input
+    fields:
+      - relation: has_status
+        label: Status
+        span: 6
+      - property: deadline
+        span: 6
+```
+
+With `style_from: <property>`, each target shows as a badge with the target's
+title, coloured by that property's value under `styles:`. The property must be
+an enum on every target type. For example, statuses with a `categorie` enum:
+
+```yaml
+styles:
+  statuscategorie:
+    actief: blue
+    gereed: green
+
+# in the view section
+fields:
+  - relation: heeft_status
+    label: Status
+    style_from: categorie
+```
+
+A relation field is valid only in a `source: entry` section with
+`display: properties`, on a relation that starts at the entry type. Set
+`property` or `relation`, not both. `widget` does not apply. Targets the
+reader may not read are left out.
 
 ### Creating related entities from a section
 
