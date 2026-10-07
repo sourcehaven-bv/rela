@@ -5,7 +5,9 @@ title: Kanban columns from a single-valued relation (columns_from)
 kind: enhancement
 priority: high
 effort: l
-status: backlog
+status: done
+started: '2026-10-06'
+completed: '2026-10-07'
 ---
 
 ## Description
@@ -56,3 +58,9 @@ Other column and drag via a full-linkage PATCH. Project:
 types (`pumpStoreEvents`), and `EntityDetail` reloads on that event, so an
 open detail panel follows a move. Not in the demo: per-column create,
 write-time cardinality, and scoped picker candidates.
+
+## Scope change
+
+Column colour comes from `style_from` on `columns_from` (an enum property of
+the target, mapped through `styles:`), not from relation paths such as
+`has_status.kleur`. TKT-DA9C0L is therefore not needed for this ticket.

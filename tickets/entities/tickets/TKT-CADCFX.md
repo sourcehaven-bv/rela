@@ -5,7 +5,9 @@ title: Relation fields in view properties sections
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: done
+started: '2026-10-06'
+completed: '2026-10-07'
 ---
 
 Let a view `properties` section on the entry show a relation as a field among

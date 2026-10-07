@@ -5,7 +5,9 @@ title: Enforce relation cardinality at write time and add an atomic replace oper
 kind: enhancement
 priority: high
 effort: m
-status: backlog
+status: done
+started: '2026-10-06'
+completed: '2026-10-07'
 ---
 
 ## Description

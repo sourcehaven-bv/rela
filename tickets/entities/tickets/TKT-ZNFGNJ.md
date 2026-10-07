@@ -5,8 +5,9 @@ title: 'Relation-backed status: design boards and views for a single-valued stat
 kind: enhancement
 priority: medium
 effort: l
-started: "2026-10-06"
-status: planning
+started: '2026-10-06'
+status: done
+completed: '2026-10-07'
 ---
 
 ## Description
@@ -116,3 +117,13 @@ alternative (per-parent enabled enum values).
 - Every row of the table above has a stated behaviour.
 - Follow-up tickets exist for the capabilities chosen for the first
 iteration, each linked to this ticket.
+
+## Outcome
+
+The design is recorded in RES-8CKUNJ (option D: status entity plus relation
+paths). The follow-ups TKT-65LVAK, TKT-KJ3Q07, TKT-JO8PN3 and TKT-CADCFX are
+built and done, with a demo in `examples/relation-status-demo`.
+
+TKT-DA9C0L (relation paths) is no longer needed for colour, because
+`style_from` covers it. It stays in the backlog for showing other target
+values. TKT-2EN0G5 and TKT-ZKPA1E stay in the backlog.

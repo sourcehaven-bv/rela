@@ -5,7 +5,9 @@ title: List group_by on a single-valued relation
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+status: done
+started: '2026-10-06'
+completed: '2026-10-07'
 ---
 
 ## Description
