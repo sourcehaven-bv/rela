@@ -141,8 +141,8 @@ func buildSectionFieldData(
 			Relation:  f.Relation,
 			StyleFrom: f.StyleFrom,
 			Label:     f.Label,
-			Span:     int(f.Span),
-			Render:   resolveFieldRender(sectionRender, f.Render),
+			Span:      int(f.Span),
+			Render:    resolveFieldRender(sectionRender, f.Render),
 		}
 	}
 	return SectionFieldData{
