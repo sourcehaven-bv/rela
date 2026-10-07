@@ -63,6 +63,12 @@ type entityMutator interface {
 	// type. The zero tail is the implicit-tail edge, so this also covers
 	// every identity-scoped and faceless removal.
 	DeleteRelation(ctx context.Context, key entityPkg.RelationKey) error
+	// ReplaceOutgoing makes key the only outgoing edge of its type on the
+	// source's tail, atomically (TKT-65LVAK). See
+	// entitymanager.Manager.ReplaceOutgoing.
+	ReplaceOutgoing(
+		ctx context.Context, key entityPkg.RelationKey, opts entityPkg.RelationOptions,
+	) (*entityPkg.Relation, error)
 
 	// PatchEntity is how the webhook pipeline writes: it names only the
 	// properties a hook actually sets, so a property the hook does not mention

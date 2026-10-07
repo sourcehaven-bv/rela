@@ -914,9 +914,9 @@ Relations define how entity types can be connected:
 | `inverse`      | Inverse relation definition (string or object)  |
 | `symmetric`    | `true` if relation is bidirectional             |
 | `min_outgoing` | Minimum outgoing relations per from-side entity |
-| `max_outgoing` | Maximum outgoing relations per from-side entity |
+| `max_outgoing` | Maximum outgoing relations per from-side entity; enforced on write |
 | `min_incoming` | Minimum incoming relations per to-side entity   |
-| `max_incoming` | Maximum incoming relations per to-side entity   |
+| `max_incoming` | Maximum incoming relations per to-side entity; enforced on write |
 | `scope`        | `identity` (default) or `content` — what the relation attaches to under content states (see below) |
 
 ### Relation scope (`scope:`)

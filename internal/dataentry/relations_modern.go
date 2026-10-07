@@ -366,6 +366,20 @@ func (h *writeHandler) applyRelationsModern(
 		if err := h.requireReadablePeers(ctx, canonical, ops); err != nil {
 			return warnings, err
 		}
+		if err := checkFullLinkageSize(&relDef, canonical, incoming, upd, dataPath); err != nil {
+			return warnings, err
+		}
+		if create, ok := replaceCreate(&relDef, incoming, upd, ops); ok {
+			// Re-pointing a single-valued relation: one atomic replace
+			// instead of a delete and a create (TKT-65LVAK).
+			finalProps, _, _ := mergeEdgeMeta(nil, create.ref)
+			warnings = append(warnings, requiredMetaWarnings(canonical, &relDef, create.ref, finalProps,
+				dataPath+upsertKey(upd), direction)...)
+			if err := h.writeReplaceRelation(ctx, entityID, create, canonical, finalProps); err != nil {
+				return warnings, err
+			}
+			continue
+		}
 		for _, op := range ops {
 			k := edgeKeyOf(entityID, canonical, op.slot, incoming)
 			if op.remove {
@@ -512,6 +526,9 @@ func (h *writeHandler) writeCreateRelation(
 	if isMissingPeerCondition(err) {
 		return danglingPeerError(relType, ref.ID)
 	}
+	if ce := cardinalityError(err, relType); ce != nil {
+		return ce
+	}
 	if !isSoftCondition(err) {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
@@ -522,7 +539,17 @@ func (h *writeHandler) writeCreateRelation(
 	// the store, skipping the workspace's pre-write validation. Safe
 	// because the EntityManager already ran the ACL above.
 	data := &store.RelationData{Properties: finalProps, Content: finalContent}
-	if _, sErr := h.store.CreateRelation(ctx, k, data); sErr != nil {
+	sErr := h.store.Tx(ctx, func(view store.Store) error {
+		if err := entitymanager.CheckRelationCapacity(ctx, view, h.schema().Meta, k); err != nil {
+			return err
+		}
+		_, err := view.CreateRelation(ctx, k, data)
+		return err
+	})
+	if ce := cardinalityError(sErr, relType); ce != nil {
+		return ce
+	}
+	if sErr != nil {
 		return &relationError{
 			RelType: relType, Target: ref.ID, Op: "create",
 			Reason: "create_failed", Err: sErr,
@@ -831,4 +858,83 @@ func asStructuralError(err error) (*structuralError, bool) {
 		return se, true
 	}
 	return nil, false
+}
+
+// replaceCreate reports whether a relation wrapper re-points a single-valued
+// relation (TKT-65LVAK): a full linkage (`data`) on an outgoing relation with
+// `max_outgoing: 1` whose plan is one create plus removals. It returns the
+// create. Any other plan (a no-op, a meta update of the kept edge, a delta)
+// goes through the edge-by-edge loop, which cannot exceed the bound there.
+func replaceCreate(
+	relDef *metamodel.RelationDef, incoming bool, upd v1.RelationsUpdate, ops []edgeOp,
+) (edgeOp, bool) {
+	if incoming || upd.Delta || !upd.DataPresent || relDef.MaxOutgoing == nil || *relDef.MaxOutgoing != 1 {
+		return edgeOp{}, false
+	}
+	var create edgeOp
+	creates := 0
+	for _, op := range ops {
+		switch {
+		case op.remove:
+		case op.existing == nil:
+			create = op
+			creates++
+		default:
+			return edgeOp{}, false
+		}
+	}
+	return create, creates == 1
+}
+
+// checkFullLinkageSize refuses a full linkage naming more targets than the
+// relation's max_outgoing allows, before any edge is written.
+func checkFullLinkageSize(
+	relDef *metamodel.RelationDef, relType string, incoming bool, upd v1.RelationsUpdate, path string,
+) error {
+	if incoming || upd.Delta || !upd.DataPresent || relDef.MaxOutgoing == nil {
+		return nil
+	}
+	if n := len(upd.Data); n > *relDef.MaxOutgoing {
+		return &structuralError{
+			Code: "cardinality_exceeded",
+			Path: path + "/data",
+			Detail: fmt.Sprintf("relation %q allows at most %d target(s) (max_outgoing); the request names %d",
+				relType, *relDef.MaxOutgoing, n),
+		}
+	}
+	return nil
+}
+
+// cardinalityError maps a refused create (entitymanager.ErrCardinalityExceeded)
+// to a 422 naming the relation and its bound; nil for any other error.
+func cardinalityError(err error, relType string) *structuralError {
+	var ce *entitymanager.CardinalityError
+	if !errors.As(err, &ce) {
+		return nil
+	}
+	return &structuralError{
+		Code:   "cardinality_exceeded",
+		Path:   "/relations/" + v1.JSONPointerEscape(relType),
+		Detail: ce.Error(),
+	}
+}
+
+// writeReplaceRelation applies a replaceCreate plan through
+// [entitymanager.Manager.ReplaceOutgoing], mapping its errors the way
+// writeCreateRelation maps a create's.
+func (h *writeHandler) writeReplaceRelation(
+	ctx context.Context, entityID string, create edgeOp, relType string, props map[string]any,
+) error {
+	k := entity.RelationKey{From: entityID, FromFace: create.slot.tail, Type: relType, To: create.slot.peer}
+	_, err := h.manager.ReplaceOutgoing(ctx, k, entity.RelationOptions{Properties: props, Content: create.ref.Content})
+	if err == nil {
+		return nil
+	}
+	if isMissingPeerCondition(err) {
+		return danglingPeerError(relType, create.ref.ID)
+	}
+	if ce := cardinalityError(err, relType); ce != nil {
+		return ce
+	}
+	return &relationError{RelType: relType, Target: create.ref.ID, Op: "replace", Reason: "replace_failed", Err: err}
 }

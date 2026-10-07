@@ -2431,6 +2431,58 @@ func (m *Manager) CreateRelation(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	ctx = withStoreAttribution(ctx)
+	rel, _, err := m.prepareRelationCreate(ctx, key, opts)
+	if err != nil {
+		return nil, err
+	}
+	// Keyed on the TAIL too: two edges on the same triple with different
+	// tails are two relations, so a faced create must not be rejected by
+	// the default face's edge (BUG-64MU2Q). Advisory either way — the
+	// store's atomic create below is the real guard.
+	if _, gErr := m.deps.Store.GetRelation(ctx, key); gErr == nil {
+		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
+			entity.FormatStateRef(key.From, key.FromFace), key.Type, key.To)
+	}
+
+	// Auto-assign managed order properties (_order_out / _order_in) when
+	// the relation type declares the side orderable. Overrides any
+	// non-finite caller-supplied value with AppendOrder over existing
+	// siblings; keeps finite caller values as-is. The sibling scan and the
+	// create share one Tx so two concurrent appends cannot both read the
+	// same last value and land on the same position. A bounded relation
+	// (max_outgoing / max_incoming) counts its edges in the same Tx, for the
+	// same reason (TKT-65LVAK).
+	//
+	// CreateRelation, not upsert: a create must never fall through to an
+	// update (that would clobber a racing create of the same triple).
+	// The GetRelation pre-check above is advisory; the store's atomic
+	// create is the real guard, and a conflict surfaces as
+	// ErrRelationAlreadyExists (BUG-ZWTDH9).
+	create := func(st store.Store) error { return m.writeRelationCreate(ctx, st, key, rel, true) }
+	var createErr error
+	if relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) {
+		createErr = m.deps.Store.Tx(ctx, create)
+	} else {
+		createErr = create(m.deps.Store)
+	}
+	if createErr != nil {
+		if errors.Is(createErr, store.ErrConflict) {
+			return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
+				entity.FormatStateRef(key.From, key.FromFace), key.Type, key.To)
+		}
+		return nil, createErr
+	}
+	m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
+	return rel, nil
+}
+
+// prepareRelationCreate runs everything a relation create checks before it
+// writes: the face, the ACL, both endpoints and the relation-type tuple. It
+// returns the relation to write, with the template and opts applied, and the
+// source's entity type.
+func (m *Manager) prepareRelationCreate(
+	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
+) (*entity.Relation, string, error) {
 	from, relType, to := key.From, key.Type, key.To
 	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
 	// peer must never let a write skip the ACL: if authz is deferred until
@@ -2447,11 +2499,11 @@ func (m *Manager) CreateRelation(
 	// bypassACL path, where authorizeAndAudit returns without consulting
 	// any grant.
 	if fErr := m.deps.requireRelationFaceFor(relType, source.typ, key.FromFace); fErr != nil {
-		return nil, fErr
+		return nil, "", fErr
 	}
 	if aclErr := m.authorizeAndAudit(ctx,
 		RelationCreateRequest(m.deps.Meta, relType, source.typ, from, key.FromFace)); aclErr != nil {
-		return nil, aclErr
+		return nil, "", aclErr
 	}
 
 	// By family, not GetEntity: an endpoint is an ENTITY and only its type is
@@ -2462,27 +2514,19 @@ func (m *Manager) CreateRelation(
 	// missing endpoint, which would read as an ordinary validation refusal.
 	if srcErr != nil {
 		if !errors.Is(srcErr, store.ErrNotFound) {
-			return nil, srcErr
+			return nil, "", srcErr
 		}
-		return nil, fmt.Errorf("source %w: %s", ErrEntityNotFound, from)
+		return nil, "", fmt.Errorf("source %w: %s", ErrEntityNotFound, from)
 	}
 	target, err := lookupFamily(ctx, m.deps.Store, to)
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
-			return nil, err
+			return nil, "", err
 		}
-		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
+		return nil, "", fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, source.typ, target.typ); vErr != nil {
-		return nil, fmt.Errorf("invalid relation: %w", vErr)
-	}
-	// Keyed on the TAIL too: two edges on the same triple with different
-	// tails are two relations, so a faced create must not be rejected by
-	// the default face's edge (BUG-64MU2Q). Advisory either way — the
-	// store's atomic create below is the real guard.
-	if _, gErr := m.deps.Store.GetRelation(ctx, key); gErr == nil {
-		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
-			entity.FormatStateRef(from, key.FromFace), relType, to)
+		return nil, "", fmt.Errorf("invalid relation: %w", vErr)
 	}
 
 	rel := entity.NewRelation(from, relType, to)
@@ -2490,7 +2534,7 @@ func (m *Manager) CreateRelation(
 
 	tmpl, err := m.deps.Templater.RelationTemplate(ctx, relType)
 	if err != nil {
-		return nil, fmt.Errorf("load relation template: %w", err)
+		return nil, "", fmt.Errorf("load relation template: %w", err)
 	}
 	if tmpl != nil {
 		rel.Properties = templating.ApplyRelation(rel.Properties, tmpl)
@@ -2503,44 +2547,27 @@ func (m *Manager) CreateRelation(
 	if opts.Content != nil {
 		rel.Content = *opts.Content
 	}
+	return rel, source.typ, nil
+}
 
-	// Auto-assign managed order properties (_order_out / _order_in) when
-	// the relation type declares the side orderable. Overrides any
-	// non-finite caller-supplied value with AppendOrder over existing
-	// siblings; keeps finite caller values as-is. The sibling scan and the
-	// create share one Tx so two concurrent appends cannot both read the
-	// same last value and land on the same position.
-	//
-	// CreateRelation, not upsert: a create must never fall through to an
-	// update (that would clobber a racing create of the same triple).
-	// The GetRelation pre-check above is advisory; the store's atomic
-	// create is the real guard, and a conflict surfaces as
-	// ErrRelationAlreadyExists (BUG-ZWTDH9).
-	create := func(st store.Store) error {
-		if err := m.assignManagedOrder(ctx, st, rel, relType); err != nil {
-			return err
-		}
-		_, err := st.CreateRelation(ctx, key, &store.RelationData{
-			Properties: rel.Properties,
-			Content:    rel.Content,
-		})
+// writeRelationCreate is the write half of a relation create, on st: the
+// cardinality bound, the managed order, then the store create.
+//
+// checkOutgoing false skips the source's max_outgoing, for ReplaceOutgoing.
+func (m *Manager) writeRelationCreate(
+	ctx context.Context, st store.Store, key entity.RelationKey, rel *entity.Relation, checkOutgoing bool,
+) error {
+	if err := checkRelationCapacity(ctx, st, m.deps.Meta, key, checkOutgoing); err != nil {
 		return err
 	}
-	var createErr error
-	if relTypeIsOrdered(m.deps.Meta, relType) {
-		createErr = m.deps.Store.Tx(ctx, create)
-	} else {
-		createErr = create(m.deps.Store)
+	if err := m.assignManagedOrder(ctx, st, rel, key.Type); err != nil {
+		return err
 	}
-	if createErr != nil {
-		if errors.Is(createErr, store.ErrConflict) {
-			return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
-				entity.FormatStateRef(from, key.FromFace), relType, to)
-		}
-		return nil, createErr
-	}
-	m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
-	return rel, nil
+	_, err := st.CreateRelation(ctx, key, &store.RelationData{
+		Properties: rel.Properties,
+		Content:    rel.Content,
+	})
+	return err
 }
 
 // UpdateRelation merges new properties into the relation key names,
