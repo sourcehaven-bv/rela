@@ -21,38 +21,16 @@ type CmdRunner struct {
 	exec *cmdexec.Runner
 }
 
-// cmdRunnerConfig accumulates option settings before the cmdexec runner is built.
-type cmdRunnerConfig struct {
-	extraReadOnly []string
-}
-
-// CmdRunnerOption configures a [CmdRunner].
-type CmdRunnerOption func(*cmdRunnerConfig)
-
-// WithScannerSockets binds extra host paths (a clamd socket in a non-standard
-// location) read-only into the scan command's sandbox, on top of the well-known
-// defaults ([cmdexec.DefaultScannerSockets]). A unix socket bound this way is
-// reachable without opening network egress.
-func WithScannerSockets(paths ...string) CmdRunnerOption {
-	return func(c *cmdRunnerConfig) { c.extraReadOnly = append(c.extraReadOnly, paths...) }
-}
-
 // NewCmdRunner builds a runner. timeout bounds each command; maxBytes bounds
 // transform output. Both must be positive.
-func NewCmdRunner(timeout time.Duration, maxBytes int64, opts ...CmdRunnerOption) (*CmdRunner, error) {
-	var cfg cmdRunnerConfig
-	for _, o := range opts {
-		o(&cfg)
-	}
-	// A scan command needs two things from outside the sandbox's mount view: the
-	// daemon's unix socket, and the config file naming that socket (clamdscan
-	// parses clamd.conf before it connects, so the socket alone is not enough).
-	// Bind the well-known locations of both, plus any operator override, so a
-	// stock install works without configuration and without network access.
-	binds := append([]string{}, cmdexec.DefaultScannerSockets...)
-	binds = append(binds, cmdexec.DefaultScannerConfigs...)
-	binds = append(binds, cfg.extraReadOnly...)
-	r, err := cmdexec.New(timeout, maxBytes, cmdexec.WithExtraReadOnly(binds...))
+//
+// A scan command needs two things from outside the sandbox's mount view: the
+// daemon's unix socket, and the config file naming that socket (clamdscan
+// parses clamd.conf before it connects, so the socket alone is not enough).
+// Both are host paths, so the operator lists them in RELA_SANDBOX_READ_PATHS
+// ([cmdexec.SetHostReadOnly]); this runner adds nothing of its own.
+func NewCmdRunner(timeout time.Duration, maxBytes int64) (*CmdRunner, error) {
+	r, err := cmdexec.New(timeout, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("attachment: %w", err)
 	}

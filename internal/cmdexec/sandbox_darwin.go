@@ -19,7 +19,7 @@ import (
 //
 // # KNOWN LIMITATION: reads are not restricted on macOS
 //
-// Linux confines READS to an allowlist (see readOnlyPaths), which is what stops
+// Linux confines READS to an allowlist (see systemReadOnlyPaths), which is what stops
 // a converter being coerced into disclosing a file. A markdown body carrying a
 // raw LaTeX block — “```{=latex} \input{/etc/passwd} ```” — makes the TeX engine
 // embed that file's contents into the exported PDF. Verified: a canary file was

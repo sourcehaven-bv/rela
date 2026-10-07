@@ -5,8 +5,10 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -127,5 +129,60 @@ func TestWarnIfScanCannotRun_NilMetamodel(t *testing.T) {
 	})
 	if strings.Contains(out, "level=WARN") {
 		t.Errorf("warned about a nil metamodel, which declares no scan: %q", out)
+	}
+}
+
+// TestWarnIfNoSandboxReadPaths pins when an upgraded host is told it needs
+// RELA_SANDBOX_READ_PATHS: only on Linux, only with no paths listed, only when
+// commands are confined, and only when some external command is configured.
+func TestWarnIfNoSandboxReadPaths(t *testing.T) {
+	withTransform := &metamodel.Metamodel{Transforms: map[string]metamodel.TransformDef{"pdf": {}}}
+	withAttachmentStep := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"thing": {Properties: map[string]metamodel.PropertyDef{"doc": {
+			Type:      metamodel.PropertyTypeFile,
+			Scan:      metamodel.ScanOff,
+			Transform: []metamodel.TransformStep{{Cmd: []string{"qpdf", "{in}", "{out}"}}},
+		}}},
+	}}
+	commandDoc := map[string]dataentryconfig.DocumentConfig{"report": {Command: []string{"pandoc", "{in}"}}}
+	cases := []struct {
+		name     string
+		meta     *metamodel.Metamodel
+		docs     map[string]dataentryconfig.DocumentConfig
+		goos     string
+		paths    []string
+		confined bool
+		wantWarn bool
+	}{
+		{"scan configured → warn", scanWarnMeta(t, true), nil, "linux", nil, true, true},
+		{"export transform → warn", withTransform, nil, "linux", nil, true, true},
+		{"attachment transform step → warn", withAttachmentStep, nil, "linux", nil, true, true},
+		{"document command → warn", scanWarnMeta(t, false), commandDoc, "linux", nil, true, true},
+		{"paths listed → quiet", withTransform, nil, "linux", []string{"/etc/paperspecs"}, true, false},
+		{"unconfined → quiet", withTransform, nil, "linux", nil, false, false},
+		{"macOS → quiet", withTransform, nil, "darwin", nil, true, false},
+		{"no commands → quiet", scanWarnMeta(t, false), nil, "linux", nil, true, false},
+		{"nil metamodel → quiet", nil, nil, "linux", nil, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			noReadPathsWarning = sync.Once{}
+			got := captureWarn(t, func() {
+				warnIfNoSandboxReadPaths(tc.meta, tc.docs, tc.goos, tc.paths, tc.confined)
+			})
+			if warned := strings.Contains(got, "RELA_SANDBOX_READ_PATHS"); warned != tc.wantWarn {
+				t.Errorf("warned = %v, want %v; log: %q", warned, tc.wantWarn, got)
+			}
+		})
+	}
+
+	// Once per process: a multi-tenant server builds one App per tenant.
+	noReadPathsWarning = sync.Once{}
+	got := captureWarn(t, func() {
+		warnIfNoSandboxReadPaths(withTransform, nil, "linux", nil, true)
+		warnIfNoSandboxReadPaths(withTransform, nil, "linux", nil, true)
+	})
+	if n := strings.Count(got, "RELA_SANDBOX_READ_PATHS"); n != 1 {
+		t.Errorf("warned %d times, want once; log: %q", n, got)
 	}
 }

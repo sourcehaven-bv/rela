@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os/exec"
 	"runtime"
+	"slices"
 	"testing"
 	"time"
 
@@ -149,59 +150,29 @@ func TestCmdRunner_Timeout(t *testing.T) {
 	}
 }
 
-// TestCmdRunnerBindsScannerDefaults pins the WIRING, not the constant. The
-// defaults being well-formed says nothing about anything reading them: before
-// this test, deleting the DefaultScannerConfigs append from NewCmdRunner
-// reintroduced the bug this package exists to prevent — clamdscan unable to
-// parse /etc/clamav/clamd.conf, so every upload rejected — while leaving
-// internal/attachment, internal/cmdexec and internal/metamodel all green.
-//
-// Both lists are asserted: the socket is how the scanner is reached, the config
-// is how it learns where the socket is, and having only one looks like having
-// neither.
-func TestCmdRunnerBindsScannerDefaults(t *testing.T) {
+// TestCmdRunnerBindsOnlyOperatorPaths pins the WIRING: the scan runner binds
+// exactly the operator's RELA_SANDBOX_READ_PATHS list and adds no paths of its
+// own. A scanner that cannot reach its socket or read clamd.conf rejects every
+// upload, so the operator's list must actually reach the runner.
+func TestCmdRunnerBindsOnlyOperatorPaths(t *testing.T) {
+	t.Cleanup(func() { cmdexec.SetHostReadOnly(nil) })
+
+	cmdexec.SetHostReadOnly(nil)
 	r, err := NewCmdRunner(time.Second, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bound := map[string]bool{}
-	for _, p := range r.exec.ExtraReadOnly() {
-		bound[p] = true
+	if got := r.exec.ExtraReadOnly(); len(got) != 0 {
+		t.Errorf("no operator paths configured, runner binds %v; want none", got)
 	}
-	for _, want := range cmdexec.DefaultScannerSockets {
-		if !bound[want] {
-			t.Errorf("scanner socket %q is not bound; the scanner is unreachable", want)
-		}
-	}
-	for _, want := range cmdexec.DefaultScannerConfigs {
-		if !bound[want] {
-			t.Errorf("scanner config %q is not bound; clamdscan cannot find LocalSocket", want)
-		}
-	}
-}
 
-// TestCmdRunnerBindsOperatorPathsAlongsideDefaults pins that an operator's
-// scan_sockets entries are added to the defaults rather than replacing them —
-// supplying one custom path must not silently unbind the stock locations.
-func TestCmdRunnerBindsOperatorPathsAlongsideDefaults(t *testing.T) {
-	const custom = "/opt/clamav/run/clamd.sock"
-	r, err := NewCmdRunner(time.Second, 1<<20, WithScannerSockets(custom))
+	want := []string{"/run/clamav/clamd.ctl", "/etc/clamav/clamd.conf"}
+	cmdexec.SetHostReadOnly(want)
+	r, err = NewCmdRunner(time.Second, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sawCustom, sawDefault bool
-	for _, p := range r.exec.ExtraReadOnly() {
-		switch p {
-		case custom:
-			sawCustom = true
-		case cmdexec.DefaultScannerConfigs[0]:
-			sawDefault = true
-		}
-	}
-	if !sawCustom {
-		t.Errorf("operator path %q not bound", custom)
-	}
-	if !sawDefault {
-		t.Errorf("operator path replaced the defaults instead of extending them")
+	if got := r.exec.ExtraReadOnly(); !slices.Equal(got, want) {
+		t.Errorf("runner binds %v, want the operator's list %v", got, want)
 	}
 }

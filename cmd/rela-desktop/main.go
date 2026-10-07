@@ -29,6 +29,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/desktop"
@@ -1074,6 +1075,12 @@ func main() {
 	flag.Parse()
 
 	configureLogging(*verbose, *quiet)
+	// Host-level command settings (RELA_UNCONFINED_COMMANDS,
+	// RELA_SANDBOX_READ_PATHS), applied before any project builds its
+	// export/attachment runners. Without them a sandboxed converter sees only
+	// the system directories. Read from the environment, like the CLI; a desktop
+	// launched from a GUI gets them from the session environment.
+	cmdexec.ApplyHostEnv()
 
 	// Fail fast if the embedded SPA is missing (BUG-W144 class regression).
 	if err := dataentry.CheckEmbeddedSPA(); err != nil {

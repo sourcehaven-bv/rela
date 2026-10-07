@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -241,7 +242,7 @@ func TestSandboxExtraReadOnlyReachesBoundSocket(t *testing.T) {
 
 // TestWithExtraReadOnlySkipsNonAbsolute pins that a typo'd (empty or relative)
 // bind path is dropped rather than silently becoming a useless -try no-op, so a
-// misconfigured scan_sockets entry is visible in the log, not invisible.
+// misconfigured read path is visible in the log, not invisible.
 func TestWithExtraReadOnlySkipsNonAbsolute(t *testing.T) {
 	r, err := New(time.Second, 1<<20,
 		WithSandboxDisabled(), // no platform sandbox needed to inspect the option effect
@@ -277,38 +278,203 @@ func TestSandboxErrNilOnOperatorOptOut(t *testing.T) {
 	}
 }
 
-// TestDefaultScannerConfigsAreAbsoluteFiles guards the two properties that make
-// the default binds safe and effective: every entry must be absolute (a relative
-// path is silently dropped by WithExtraReadOnly, leaving an unreachable scanner
-// and no error), and none may be a bare directory — /etc/clamav holds the
-// signature databases and freshclam.conf, which can carry a DatabaseMirror proxy
-// credential, so only the single config file may be exposed to a sandboxed
-// third-party parser.
-func TestDefaultScannerConfigsAreAbsoluteFiles(t *testing.T) {
-	if len(DefaultScannerConfigs) == 0 {
-		t.Fatal("DefaultScannerConfigs is empty; the stock ClamAV install needs clamd.conf bound")
+// TestParseReadPaths pins the RELA_SANDBOX_READ_PATHS format: PATH-style
+// separators, with empty entries (a doubled or trailing separator) dropped.
+func TestParseReadPaths(t *testing.T) {
+	sep := string(filepath.ListSeparator)
+	got := ParseReadPaths("/etc/fonts" + sep + sep + " /etc/paperspecs " + sep)
+	want := []string{"/etc/fonts", "/etc/paperspecs"}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
-	for _, p := range DefaultScannerConfigs {
-		if !filepath.IsAbs(p) {
-			t.Errorf("%q is not absolute; WithExtraReadOnly would drop it", p)
+	if got := ParseReadPaths(""); len(got) != 0 {
+		t.Errorf("empty input: got %v, want none", got)
+	}
+}
+
+// TestHostReadOnlyReachesEveryRunner pins that the operator's list is bound in
+// every runner New builds, ahead of a runner's own extra paths, and that
+// non-absolute entries are dropped. Every runner matters: export, document
+// commands and attachment scans each build their own, and a converter that
+// cannot read fontconfig or libpaper's paper sizes fails the whole export.
+func TestHostReadOnlyReachesEveryRunner(t *testing.T) {
+	t.Cleanup(func() { SetHostReadOnly(nil) })
+
+	accepted := SetHostReadOnly([]string{"/etc/fonts", "relative/x", "/etc/paperspecs/"})
+	if want := []string{"/etc/fonts", "/etc/paperspecs"}; !slices.Equal(accepted, want) {
+		t.Fatalf("accepted %v, want %v", accepted, want)
+	}
+
+	r, err := New(time.Second, 1<<20, WithSandboxDisabled(), WithExtraReadOnly("/run/x.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/etc/fonts", "/etc/paperspecs", "/run/x.sock"}
+	if got := r.ExtraReadOnly(); !slices.Equal(got, want) {
+		t.Errorf("runner binds %v, want %v", got, want)
+	}
+
+	SetHostReadOnly(nil)
+	r, err = New(time.Second, 1<<20, WithSandboxDisabled())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.ExtraReadOnly(); len(got) != 0 {
+		t.Errorf("after reset, runner binds %v; want none", got)
+	}
+}
+
+// TestApplyHostEnv pins the wiring the CLI and rela-desktop share: both host
+// settings come from the environment in one call, so a composition root cannot
+// apply one and miss the other.
+func TestApplyHostEnv(t *testing.T) {
+	t.Cleanup(func() {
+		SetHostReadOnly(nil)
+		SetUnconfinedByDefault(false)
+	})
+	t.Setenv(EnvSandboxReadPaths, "/etc/paperspecs::/var/lib/texmf/")
+	t.Setenv(EnvUnconfinedCommands, "1")
+
+	got := ApplyHostEnv()
+	want := []string{"/etc/paperspecs", "/var/lib/texmf"}
+	if !slices.Equal(got, want) {
+		t.Errorf("ApplyHostEnv() = %v, want %v", got, want)
+	}
+	if !slices.Equal(HostReadOnly(), want) {
+		t.Errorf("HostReadOnly() = %v, want %v", HostReadOnly(), want)
+	}
+	if !unconfinedDefault() {
+		t.Error("RELA_UNCONFINED_COMMANDS=1 not applied")
+	}
+}
+
+// TestSetHostReadOnlyRejectsPathsThatUndoTheSandbox pins the paths an operator
+// cannot list. Operator binds are applied after the sandbox's own /proc, /dev,
+// /tmp and writable-dir mounts, so each of these would replace one of them,
+// expose the whole host, or hand over every daemon socket or data directory.
+func TestSetHostReadOnlyRejectsPathsThatUndoTheSandbox(t *testing.T) {
+	t.Cleanup(func() { SetHostReadOnly(nil) })
+	// A nested TMPDIR, so "a parent of the temp dir" is a real case on Linux
+	// CI too, where the default /tmp's parent is already refused as "/".
+	tmp := filepath.Join(t.TempDir(), "nested", "tmp")
+	t.Setenv("TMPDIR", tmp)
+
+	rejected := []string{
+		"/", "/etc", "/etc/",
+		"/proc", "/proc/self", "/dev", "/dev/shm",
+		"/tmp", tmp, filepath.Dir(tmp),
+		"/run", "/var/run", "/var", "/var/lib", "/home", "/root",
+	}
+	for _, p := range rejected {
+		if got := SetHostReadOnly([]string{p}); len(got) != 0 {
+			t.Errorf("SetHostReadOnly(%q) accepted %v; want it rejected", p, got)
 		}
-		// Cheap smell test, host-independent: a bare directory usually has no
-		// extension. Not sufficient on its own — /etc/clamav/conf.d would pass —
-		// which is why the stat below is the real check wherever it can run.
-		if filepath.Ext(p) == "" {
-			t.Errorf("%q looks like a directory; bind the config FILE only", p)
+		r, err := New(time.Second, 1<<20, WithSandboxDisabled(), WithExtraReadOnly(p))
+		if err != nil {
+			t.Fatal(err)
 		}
-		// The honest check: on a host that actually has ClamAV, assert the path
-		// is a regular file. Skipped elsewhere rather than faked, so this test
-		// asserts the property its name claims wherever that is possible.
-		switch fi, err := os.Stat(p); {
-		case err != nil:
-			continue // not installed on this host; nothing to verify
-		case fi.IsDir():
-			t.Errorf("%q is a DIRECTORY; binding it would expose the signature "+
-				"databases and freshclam.conf (which can carry a DatabaseMirror "+
-				"credential) to every sandboxed command", p)
+		if got := r.ExtraReadOnly(); len(got) != 0 {
+			t.Errorf("WithExtraReadOnly(%q) bound %v; want it rejected", p, got)
 		}
+	}
+
+	// Single files and sockets inside protected directories stay allowed, as
+	// do names that merely share a prefix with one.
+	allowed := []string{
+		"/etc/paperspecs", "/var/lib/texmf", "/var/run/clamav/clamd.ctl",
+		"/tmp/clamd.sock", "/devices", "/procfs", "/etcetera",
+	}
+	if got := SetHostReadOnly(allowed); !slices.Equal(got, allowed) {
+		t.Errorf("SetHostReadOnly(%v) = %v; want all accepted", allowed, got)
+	}
+}
+
+// TestSetHostReadOnlyChecksSymlinkTargets pins that the check follows
+// symlinks: bwrap binds a symlink's target, and the macOS backend resolves
+// paths before writing its profile, so a link to "/" or to /dev must be
+// refused like the target itself. A path that does not exist yet is resolved
+// through its existing parent.
+func TestSetHostReadOnlyChecksSymlinkTargets(t *testing.T) {
+	t.Cleanup(func() { SetHostReadOnly(nil) })
+	dir := t.TempDir()
+	for name, target := range map[string]string{"root": "/", "dev": "/dev", "etc": "/etc"} {
+		link := filepath.Join(dir, name)
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if got := SetHostReadOnly([]string{link}); len(got) != 0 {
+			t.Errorf("symlink %s -> %s accepted", link, target)
+		}
+		if got := SetHostReadOnly([]string{filepath.Join(link, "not-yet")}); target == "/dev" && len(got) != 0 {
+			t.Errorf("future path under symlink %s -> /dev accepted", link)
+		}
+	}
+}
+
+// TestSetHostReadOnlyDropsDuplicates keeps bwrap from binding a path twice.
+func TestSetHostReadOnlyDropsDuplicates(t *testing.T) {
+	t.Cleanup(func() { SetHostReadOnly(nil) })
+	got := SetHostReadOnly([]string{"/etc/paperspecs", "/etc/paperspecs/", "/var/lib/texmf"})
+	if want := []string{"/etc/paperspecs", "/var/lib/texmf"}; !slices.Equal(got, want) {
+		t.Errorf("SetHostReadOnly = %v, want %v", got, want)
+	}
+}
+
+// TestCheckProjectNotExposed pins that no operator path may be, contain, or lie
+// inside the project directory, including through a symlink.
+func TestCheckProjectNotExposed(t *testing.T) {
+	t.Cleanup(func() { SetHostReadOnly(nil) })
+	base := t.TempDir()
+	project := filepath.Join(base, "srv", "project")
+	if err := os.MkdirAll(filepath.Join(project, ".rela"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(project, link); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name    string
+		paths   []string
+		wantErr bool
+	}{
+		{"unrelated paths", []string{"/etc/paperspecs", "/var/lib/texmf"}, false},
+		{"the project itself", []string{project}, true},
+		{"a parent of the project", []string{filepath.Join(base, "srv")}, true},
+		{"inside the project", []string{filepath.Join(project, ".rela")}, true},
+		{"a symlink to the project", []string{link}, true},
+		{"a sibling", []string{filepath.Join(base, "srv", "other")}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Bypass SetHostReadOnly: a TempDir path may itself be refused as
+			// lying under the temp dir's parent on some hosts, and this test is
+			// about the project check alone.
+			paths := slices.Clone(tc.paths)
+			hostReadOnly.Store(&paths)
+			err := CheckProjectNotExposed(project)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("CheckProjectNotExposed = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+	if err := CheckProjectNotExposed(""); err != nil {
+		t.Errorf("empty project root: %v", err)
+	}
+}
+
+// TestWrapRefusesBindOverWritableDir pins that a read-only bind containing the
+// command's writable dir is refused rather than silently making it read-only.
+// unsafeReadPath only knows the OS temp dir; WithTempDir can point elsewhere.
+func TestWrapRefusesBindOverWritableDir(t *testing.T) {
+	spec := Spec{WritableDir: "/srv/scratch/run1", ExtraReadOnly: []string{"/srv/scratch"}}
+	if err := validateSpec([]string{"true"}, spec); err == nil {
+		t.Error("bind over the writable dir accepted")
+	}
+	spec.ExtraReadOnly = []string{"/srv/scratch/run1/sock", "/srv/other"}
+	if err := validateSpec([]string{"true"}, spec); err != nil {
+		t.Errorf("unrelated binds refused: %v", err)
 	}
 }
 

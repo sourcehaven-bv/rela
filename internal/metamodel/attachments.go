@@ -7,6 +7,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ScanPolicy is the per-scope virus-scan switch for attachments. Scanning is
@@ -78,12 +80,12 @@ type AttachmentsConfig struct {
 	// `scan: off`.
 	ScanCmd []string `yaml:"scan_cmd,omitempty"`
 
-	// ScanSockets are extra host paths bound read-only into the scan command's
-	// sandbox, on top of the well-known clamd socket locations that are always
-	// bound. The motivating case is a `clamd.conf` whose `LocalSocket` lives
-	// outside the defaults. A unix socket bound this way is reachable without
-	// opening network egress. Empty on the common path (stock ClamAV install).
-	ScanSockets []string `yaml:"scan_sockets,omitempty"`
+	// scanSocketsSet records that the removed `scan_sockets` key is present,
+	// with any value (a list, [] or null), so validation can refuse it with a
+	// pointer to its replacement instead of the loader silently ignoring it
+	// (unknown nested keys are not rejected). Host paths are the operator's
+	// concern now: RELA_SANDBOX_READ_PATHS.
+	scanSocketsSet bool
 }
 
 // AttachmentPolicy is a focused read-view over a metamodel's attachment-scan
@@ -117,14 +119,54 @@ func (p AttachmentPolicy) ScanCommandFor(prop PropertyDef) []string {
 	return nil
 }
 
-// ScanSockets returns the operator-configured extra socket paths to bind
-// read-only into the scan command's sandbox (`attachments.scan_sockets`), on
-// top of the always-bound well-known clamd locations. Nil when unset.
-func (p AttachmentPolicy) ScanSockets() []string {
-	if p.m.Attachments == nil {
+// UnmarshalYAML decodes the block normally and records whether the removed
+// `scan_sockets` key is present, whatever its value.
+func (c *AttachmentsConfig) UnmarshalYAML(n *yaml.Node) error {
+	type plain AttachmentsConfig
+	if err := n.Decode((*plain)(c)); err != nil {
+		return err
+	}
+	c.scanSocketsSet = hasKey(n, "scan_sockets")
+	return nil
+}
+
+// hasKey reports whether mapping n has key, directly or through a merge key
+// (`<<: *base`, `<<: [*a, *b]`), so a removed key cannot hide in an anchor.
+func hasKey(n *yaml.Node, key string) bool {
+	if n.Kind == yaml.AliasNode {
+		return n.Alias != nil && hasKey(n.Alias, key)
+	}
+	if n.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k, v := n.Content[i], n.Content[i+1]
+		switch {
+		case k.Value == key:
+			return true
+		case k.Tag == "!!merge":
+			if v.Kind == yaml.SequenceNode {
+				for _, item := range v.Content {
+					if hasKey(item, key) {
+						return true
+					}
+				}
+			} else if hasKey(v, key) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// validateAttachments rejects the removed `attachments.scan_sockets` key.
+func validateAttachments(m *Metamodel) []string {
+	if m.Attachments == nil || !m.Attachments.scanSocketsSet {
 		return nil
 	}
-	return p.m.Attachments.ScanSockets
+	return []string{"attachments.scan_sockets was removed: sandbox read paths are host " +
+		"configuration now. Move these paths to RELA_SANDBOX_READ_PATHS " +
+		"(or rela-server --sandbox-read-paths) and delete the key"}
 }
 
 // HasConfiguredScan reports whether at least one `file` property will actually

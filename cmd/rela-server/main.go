@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -52,6 +53,7 @@ type serverFlags struct {
 	principalHeader   string
 	readOnly          bool
 	unconfinedCommand bool
+	sandboxReadPaths  string
 	// remoteMCP serves the MCP endpoint over HTTP at dataentry.MCPPath.
 	// Off by default; requires the JWT identity flags below (dataentry
 	// refuses to enable it otherwise — the endpoint is CSRF-exempt, and
@@ -107,7 +109,7 @@ func parseFlags() *serverFlags {
 		"Refuse all writes. Useful for demos, maintenance windows, "+
 			"observe-only deployments, and post-incident forensic mode. "+
 			"Also enabled by RELA_READ_ONLY=1.")
-	flag.BoolVar(&f.unconfinedCommand, "unconfined-commands", os.Getenv("RELA_UNCONFINED_COMMANDS") == "1",
+	flag.BoolVar(&f.unconfinedCommand, "unconfined-commands", os.Getenv(cmdexec.EnvUnconfinedCommands) == "1",
 		"Run external scan/transform/export commands UNCONFINED (no sandbox). "+
 			"Only for hosts that cannot sandbox (no bubblewrap / a kernel without "+
 			"unprivileged user namespaces / a locked-down container) or that isolate "+
@@ -115,6 +117,16 @@ func parseFlags() *serverFlags {
 			"commands. Accepts running third-party parsers on untrusted input "+
 			"unconfined — see docs/transforms.md. Also enabled by "+
 			"RELA_UNCONFINED_COMMANDS=1.")
+	flag.StringVar(&f.sandboxReadPaths, "sandbox-read-paths", os.Getenv(cmdexec.EnvSandboxReadPaths),
+		"Host paths that sandboxed scan/transform/export commands may read, separated "+
+			"by ':' like PATH. Commands always get the binary and library directories "+
+			"(/usr, /bin, /sbin, /lib*); everything else a converter or scanner needs "+
+			"(e.g. /etc/paperspecs and /var/lib/texmf for xelatex, a clamd socket and "+
+			"clamd.conf) must be listed here. Every listed path is exposed to every "+
+			"command, including converters fed untrusted content: files are readable "+
+			"and unix sockets connectable, so list single files and a socket file, "+
+			"never /run or /var/run. Defaults to "+
+			"$"+cmdexec.EnvSandboxReadPaths+". See docs/transforms.md.")
 	flag.BoolVar(&f.remoteMCP, "mcp", os.Getenv("RELA_MCP") == "1",
 		"Serve the Model Context Protocol endpoint over HTTP at /api/v1/_mcp, "+
 			"so AI assistants can reach a deployed rela the same way `rela mcp` "+
@@ -204,9 +216,20 @@ func discoverProject(f *serverFlags) *appbuild.Services {
 }
 
 // applyCommandConfinement records the host-level command-confinement decision
-// before any runner is built, warning once (like a disabled attachment scan)
-// when commands will run unconfined.
-func applyCommandConfinement(unconfined bool) {
+// and the operator's sandbox read paths before any runner is built, warning once
+// (like a disabled attachment scan) when commands will run unconfined.
+func applyCommandConfinement(unconfined bool, readPaths string) {
+	// The paths in effect are logged by the "external command confinement"
+	// line (Runner.Describe); only a path that is missing or cannot be checked is reported here.
+	for _, p := range cmdexec.SetHostReadOnly(cmdexec.ParseReadPaths(readPaths)) {
+		switch _, err := os.Stat(p); {
+		case errors.Is(err, fs.ErrNotExist):
+			slog.Warn("sandbox read path does not exist; commands will not see it until it does",
+				"path", p)
+		case err != nil:
+			slog.Warn("sandbox read path cannot be checked; commands may not see it", "path", p, "err", err)
+		}
+	}
 	if cmdexec.SetUnconfinedByDefault(unconfined) {
 		slog.Warn("external commands run UNCONFINED (--unconfined-commands / " +
 			"RELA_UNCONFINED_COMMANDS=1): scan/transform/export run third-party " +
@@ -470,7 +493,7 @@ func main() {
 	// choice is read by every cmdexec.Runner at construction, and appbuild.Discover
 	// may build one. Applying it after discovery would confine (or fail closed on)
 	// a host the operator explicitly opted out of. Keep this above discoverProject.
-	applyCommandConfinement(f.unconfinedCommand)
+	applyCommandConfinement(f.unconfinedCommand, f.sandboxReadPaths)
 
 	// No svc.Close(): rela-server is a daemon — it runs until the process exits,
 	// at which point the OS reclaims file descriptors and goroutines. Per-project

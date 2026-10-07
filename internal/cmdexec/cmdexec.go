@@ -77,8 +77,8 @@ type Runner struct {
 	slots chan struct{}
 
 	// extraReadOnly are host paths bound read-only into every command's sandbox,
-	// on top of the standard binary/library allowlist — the case being a scanner
-	// daemon's unix socket (clamd), which a scan command must reach.
+	// on top of the system binary/library directories: the operator's
+	// SetHostReadOnly list, then any WithExtraReadOnly paths.
 	extraReadOnly []string
 }
 
@@ -130,6 +130,7 @@ func New(timeout time.Duration, maxBytes int64, opts ...Option) (*Runner, error)
 		maxBytes:      maxBytes,
 		limits:        DefaultLimits(),
 		sandboxOptOut: unconfinedDefault(), // host-level knob; an explicit option below overrides
+		extraReadOnly: HostReadOnly(),
 	}
 	for _, o := range opts {
 		o(r)

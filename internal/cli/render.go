@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -44,6 +45,9 @@ func (c *RenderCmd) Run(ctx context.Context, svc *readServices) error {
 		Relations: c.relationGroups(ctx, svc, e.ID),
 	}
 
+	if exposedErr := cmdexec.CheckProjectNotExposed(svc.Paths.Root); exposedErr != nil {
+		return exposedErr
+	}
 	res, err := transform.NewEngine().Run(ctx, reg, c.Transform, renderer)
 	if err != nil {
 		return fmt.Errorf("render %q as %q: %w", c.ID, c.Transform, err)
