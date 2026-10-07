@@ -273,9 +273,7 @@ var locked = map[File][]string{
 		// Access control: a transition guard names an ACL permission.
 		"types.*.transitions.[].guard",
 		// Not in the Configure space yet.
-		"copies.**", "default_world", "worlds.**",
-		// owning cascades an owner's delete to what it owns (TKT-QO14GB).
-		"relations.*.owning", "entities.*.faces.**",
+		"copies.**", "default_world", "worlds.**", "entities.*.faces.**",
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
 		"relations.*.scope", "relations.*.owning",
 		"validations.[].faces.**", "automations.[].on.faces.**",
