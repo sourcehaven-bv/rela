@@ -7171,6 +7171,8 @@ The server refuses to start with `--config-editing` in these cases:
   permission.
 - It has no identity source. Set the `-jwt-*` flags, `--principal-header`, or
   `$RELA_DATAENTRY_USER`.
+- Its only identity source is `$RELA_DATAENTRY_USER` and it binds beyond
+  loopback. That variable verifies nobody: every caller acts as that user.
 - It is the SQLite or PostgreSQL build. This version supports the filesystem
   build only.
 - The schema file is the legacy `metamodel.yaml`. Rename it to `schema.yaml`

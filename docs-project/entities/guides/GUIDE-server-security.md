@@ -723,7 +723,9 @@ The server refuses to start the feature without two safeguards:
   anyone who can reach the server could edit the configuration.
 - **An identity source** (`-jwt-*`, `-principal-header`, or
   `$RELA_DATAENTRY_USER`). The permission check needs to know who is asking.
-  The Configure API refuses an unknown principal.
+  The Configure API refuses an unknown principal. `$RELA_DATAENTRY_USER` is
+  accepted on a loopback bind only: it verifies nobody, so beyond loopback it
+  would give `config:edit` to everyone who can reach the server.
 
 The permission must be granted by name; `*` does not grant it, and a client
 acting for a user never holds it. See

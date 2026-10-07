@@ -254,7 +254,12 @@ func TestValidateConfigEditing(t *testing.T) {
 		wantErr string
 	}{
 		{name: "header identity", dir: withACL, flags: serverFlags{principalHeader: "X-User"}},
-		{name: "env identity", dir: withACL, envUser: "ada"},
+		{name: "env identity", dir: withACL, flags: serverFlags{bind: "127.0.0.1"}, envUser: "ada"},
+		// RELA_DATAENTRY_USER verifies nobody, so it must not reach the network.
+		{name: "env identity beyond loopback", dir: withACL, flags: serverFlags{bind: "0.0.0.0"}, envUser: "ada",
+			wantErr: "not a verified identity"},
+		{name: "header identity beyond loopback", dir: withACL,
+			flags: serverFlags{bind: "0.0.0.0", principalHeader: "X-User"}},
 		{name: "read-only", dir: withACL, flags: serverFlags{principalHeader: "X-User", readOnly: true},
 			wantErr: "--read-only"},
 		{name: "no acl.yaml", dir: noACL, flags: serverFlags{principalHeader: "X-User"}, wantErr: "acl.yaml"},

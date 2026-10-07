@@ -39,6 +39,11 @@ func validateConfigEditing(f *serverFlags, svc *appbuild.Services, mode identity
 	case mode != identityJWT && f.principalHeader == "" && envUser == "":
 		return errors.New("needs an identity source (-jwt-*, -principal-header or $" +
 			dataentry.EnvDataEntryUserVar + ")")
+	case mode != identityJWT && f.principalHeader == "" && !isLoopbackHost(f.bind):
+		// $RELA_DATAENTRY_USER verifies nobody: every caller acts as that
+		// user. Beyond loopback that hands config:edit to the network.
+		return errors.New("$" + dataentry.EnvDataEntryUserVar +
+			" is not a verified identity; beyond loopback use -jwt-* or -principal-header")
 	case svc.Paths().SchemaIsLegacy:
 		return fmt.Errorf("the schema file is %s; rename it to %s first",
 			svc.Paths().SchemaPath, configedit.SchemaFile)
