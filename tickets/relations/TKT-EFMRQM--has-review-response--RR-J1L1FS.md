@@ -1,5 +1,5 @@
 ---
 from: TKT-EFMRQM
-type: has-review-response
+relation: has-review-response
 to: RR-J1L1FS
 ---

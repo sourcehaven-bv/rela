@@ -1,5 +1,5 @@
 ---
 from: TKT-CFGSQL
-type: has-review
+relation: has-review
 to: REV-CFGSQL
 ---

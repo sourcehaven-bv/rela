@@ -1,5 +1,5 @@
 ---
 from: TKT-EMB4RG0
-type: implements
+relation: implements
 to: FEAT-9CD2MX
 ---

@@ -47,13 +47,13 @@ func (s entitySerializer) toV1(
 	visibleNeighbors map[string]bool, meta *metamodel.Metamodel, plural string,
 ) v1.Entity {
 	out := v1.Entity{
-		ID:         e.ID,
-		Type:       e.Type,
-		Title:      meta.DisplayTitle(e.ID, e.Type, e.Properties),
-		Properties: make(map[string]any),
-		Content:    e.Content,
-		Self:       selfHref(plural, e),
-		Actions:    s.affordances.computeActions(ctx, e),
+		ID:          e.ID,
+		Type:        e.Type,
+		Title:       meta.DisplayTitle(e.ID, e.Type, e.Properties),
+		Properties:  make(map[string]any),
+		Content:     e.Content,
+		EntityLinks: v1.EntityLinks{Self: selfHref(plural, e)},
+		Actions:     s.affordances.computeActions(ctx, e),
 	}
 
 	maps.Copy(out.Properties, e.Properties)

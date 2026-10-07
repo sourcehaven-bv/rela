@@ -1198,6 +1198,28 @@ func TestValidateConfig_ViewSectionInvalidDisplay(t *testing.T) {
 	}
 }
 
+// TestValidateConfig_ViewSectionRelatedDisplay pins that `display: related`
+// loads and, like `list`, renders `fields` (TKT-QO14GB).
+func TestValidateConfig_ViewSectionRelatedDisplay(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Views: map[string]ViewConfig{
+			"test": {
+				Entry: ViewEntry{Type: "ticket"},
+				Sections: []ViewSection{
+					{Source: "entry", Display: DisplayRelated, Fields: []ViewSectionField{{Property: "title"}}},
+				},
+			},
+		},
+	}
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Fatalf("display: related rejected: %v", err)
+	}
+	if !sectionDisplayModesRenderingFields[DisplayRelated] {
+		t.Error("display: related must render fields")
+	}
+}
+
 func TestValidateConfig_ViewSectionUnknownFieldProperty(t *testing.T) {
 	meta := testMetamodel()
 	cfg := &Config{

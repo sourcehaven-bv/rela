@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,7 +15,9 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/fsimport"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -69,7 +72,7 @@ func projectAt(t *testing.T, root string) *project.Context {
 	return paths
 }
 
-func importData(t *testing.T, root string, force bool, sink audit.Audit) (appbuild.DataSummary, error) {
+func importData(t *testing.T, root string, force bool, sink audit.Audit) (*fsimport.Report, error) {
 	t.Helper()
 	return appbuild.ImportMarkdownData(context.Background(), osFS(), projectAt(t, root), root,
 		appbuild.DataImportOptions{Force: force, Audit: sink})
@@ -147,12 +150,12 @@ func TestImportMarkdownData_CopiesEverything(t *testing.T) {
 	root := writeDataProject(t)
 	sink := audit.NewMemory()
 
-	sum, err := importData(t, root, false, sink)
+	rep, err := importData(t, root, false, sink)
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	if want := (appbuild.DataSummary{Entities: 2, Relations: 1, Attachments: 1}); sum != want {
-		t.Fatalf("summary = %+v, want %+v", sum, want)
+	if got := [3]int{rep.Entities, rep.Relations, rep.Attachments}; got != [3]int{2, 1, 1} {
+		t.Fatalf("entities, relations, attachments = %v, want [2 1 1]", got)
 	}
 
 	withDatabase(t, root, func(st store.Store) {
@@ -193,9 +196,15 @@ func TestImportMarkdownData_NonEmptyDatabase(t *testing.T) {
 			if _, err := importData(t, root, false, audit.NewMemory()); err != nil {
 				t.Fatal(err)
 			}
-			_, err := importData(t, root, tc.force, audit.NewMemory())
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
+			rep, err := importData(t, root, tc.force, audit.NewMemory())
+			// The error says that the import failed; the report lists
+			// each row that failed it.
+			found := err
+			if rep != nil {
+				found = errors.Join(err, errors.New(strings.Join(rep.Errors, "\n")))
+			}
+			if err == nil || !strings.Contains(found.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want one containing %q", found, tc.wantErr)
 			}
 			withDatabase(t, root, func(st store.Store) {
 				n, err := st.CountEntities(context.Background(), store.EntityQuery{Faces: store.AllFaces()})
@@ -221,13 +230,13 @@ func TestImportMarkdownData_ForceAddsBesideStoredRows(t *testing.T) {
 	if _, err := importData(t, root, false, audit.NewMemory()); err != nil {
 		t.Fatal(err)
 	}
-	sum, err := appbuild.ImportMarkdownData(context.Background(), osFS(), projectAt(t, root), other,
+	rep, err := appbuild.ImportMarkdownData(context.Background(), osFS(), projectAt(t, root), other,
 		appbuild.DataImportOptions{Force: true, Audit: audit.NewMemory()})
 	if err != nil {
 		t.Fatalf("forced import: %v", err)
 	}
-	if sum.Entities != 1 {
-		t.Fatalf("imported %d entities, want 1", sum.Entities)
+	if rep.Entities != 1 {
+		t.Fatalf("imported %d entities, want 1", rep.Entities)
 	}
 	withDatabase(t, root, func(st store.Store) {
 		if n, _ := st.CountEntities(context.Background(), store.EntityQuery{Faces: store.AllFaces()}); n != 3 {
@@ -342,5 +351,114 @@ func TestSQLite_MarkdownProjectOpensOnItsFiles(t *testing.T) {
 	}
 	if appbuild.KeepsMarkdownData(paths) {
 		t.Error("KeepsMarkdownData = true after the import")
+	}
+}
+
+// openData opens the project's database with every store it holds.
+func openData(t *testing.T, root string) *appbuild.SQLiteData {
+	t.Helper()
+	data, err := appbuild.OpenSQLiteData(context.Background(), filepath.Join(root, ".rela", "rela.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = data.Close() })
+	return data
+}
+
+const commentThread = "comments:\n- id: c1\n  author: alice\n" +
+	"  created_at: 2026-01-01T09:00:00Z\n  anchor: {kind: property, ref: title}\n  body: hi\n"
+
+// The import carries what the markdown project keeps beside its data:
+// comment threads, runtime state and the applied-migration record.
+func TestImportMarkdownData_CopiesCommentsStateAndMigrations(t *testing.T) {
+	root := writeDataProject(t)
+	writeFile(t, root, ".rela/comments/DOC-1.yaml", commentThread)
+	writeFile(t, root, ".rela/user-defaults.yaml", "doc: {}\n")
+	writeFile(t, root, ".rela/migration/state.json", `{"shape_hash":"abc","projection":{"entities":{}},`+
+		`"applied":["20260101000000-first.yaml"],"updated_at":"2026-01-02T00:00:00Z"}`)
+
+	rep, err := importData(t, root, false, audit.NewMemory())
+	if err != nil {
+		t.Fatalf("import: %v (problems: %v)", err, rep)
+	}
+	// Two state keys: the user defaults and the legacy migration marker,
+	// which the migration record is read from but which is state too.
+	if rep.Comments != 1 || rep.StateKeys != 2 {
+		t.Fatalf("comments, state keys = %d, %d; want 1, 2", rep.Comments, rep.StateKeys)
+	}
+
+	data := openData(t, root)
+	ctx := context.Background()
+	list, err := data.Comments.List(ctx, comments.Target{Type: "doc", ID: "DOC-1"})
+	if err != nil || len(list) != 1 || list[0].Author != "alice" {
+		t.Fatalf("comments = %+v, %v", list, err)
+	}
+	got, err := data.State.Get(ctx, "user-defaults.yaml")
+	if err != nil || string(got) != "doc: {}\n" {
+		t.Fatalf("state = %q, %v", got, err)
+	}
+	st, err := data.Migrations.Load(ctx)
+	if err != nil || st == nil || len(st.Applied) != 1 {
+		t.Fatalf("migration record = %+v, %v", st, err)
+	}
+}
+
+// One failing row rolls back everything, the state and comments written on
+// the same transaction included.
+func TestImportMarkdownData_FailureWritesNothing(t *testing.T) {
+	root := writeDataProject(t)
+	writeFile(t, root, ".rela/comments/DOC-1.yaml", commentThread)
+	writeFile(t, root, ".rela/user-defaults.yaml", "doc: {}\n")
+	// A value JSON cannot hold fails its row.
+	writeFile(t, root, "entities/docs/DOC-3.md", "---\nid: DOC-3\ntype: doc\ntitle: .nan\n---\n")
+
+	rep, err := importData(t, root, false, audit.NewMemory())
+	if err == nil {
+		t.Fatal("import succeeded; want the unstorable value to fail it")
+	}
+	if rep == nil || len(rep.Errors) == 0 {
+		t.Fatalf("report lists no problems: %+v", rep)
+	}
+
+	data := openData(t, root)
+	ctx := context.Background()
+	if n, _ := data.Store.CountEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}); n != 0 {
+		t.Fatalf("entities = %d, want 0", n)
+	}
+	if _, err := data.State.Get(ctx, "user-defaults.yaml"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("state survived the rollback: %v", err)
+	}
+	if list, _ := data.Comments.List(ctx, comments.Target{Type: "doc", ID: "DOC-1"}); len(list) != 0 {
+		t.Fatalf("comments survived the rollback: %+v", list)
+	}
+}
+
+// A setting the database already holds is kept on a forced import, and the
+// report says so.
+func TestImportMarkdownData_KeepsExistingState(t *testing.T) {
+	root := writeDataProject(t)
+	if _, err := importData(t, root, false, audit.NewMemory()); err != nil {
+		t.Fatal(err)
+	}
+	func() {
+		data := openData(t, root)
+		if err := data.State.Put(context.Background(), "user-defaults.yaml", []byte("mine\n")); err != nil {
+			t.Fatal(err)
+		}
+		_ = data.Close()
+	}()
+
+	other := t.TempDir()
+	writeFile(t, other, "schema.yaml", dataSchemaYAML)
+	writeFile(t, other, "entities/docs/DOC-9.md", "---\nid: DOC-9\ntype: doc\ntitle: Ninth\n---\n")
+	writeFile(t, other, ".rela/user-defaults.yaml", "theirs\n")
+	rep, err := appbuild.ImportMarkdownData(context.Background(), osFS(), projectAt(t, root), other,
+		appbuild.DataImportOptions{Force: true, Audit: audit.NewMemory()})
+	if err != nil {
+		t.Fatalf("forced import: %v (%+v)", err, rep)
+	}
+	got, err := openData(t, root).State.Get(context.Background(), "user-defaults.yaml")
+	if err != nil || string(got) != "mine\n" {
+		t.Fatalf("state = %q, %v; want the database's own value kept", got, err)
 	}
 }

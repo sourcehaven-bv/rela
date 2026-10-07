@@ -1,5 +1,5 @@
 ---
 from: TKT-K3W8VD
-type: affects
+relation: affects
 to: cli-flags
 ---

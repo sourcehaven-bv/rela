@@ -171,6 +171,7 @@ components:
   # store contract: it emits entities/relations and loads them through
   # store.Store, and must never learn about entitymanager or the metamodel.
   perfseed:         { in: internal/perfseed }
+  fsimport:         { in: internal/fsimport }
 
   # Infrastructure
   acl:              { in: internal/acl }
@@ -373,6 +374,8 @@ deps:
       - dataentry
       - config
       - dataentrywire
+      # fsimport.Report: the import dialog lists the problems it found.
+      - fsimport
       - desktop
       - desktopnotify
       - git
@@ -441,6 +444,7 @@ deps:
       - metamodel
       - output
       - perfseed
+      - fsimport
       - pgstore
       - sqlitestore
       - predicate
@@ -707,6 +711,9 @@ deps:
       # comment backends: the recipe owns the handle each one needs, and the
       # file backend is the filesystem tier's default (TKT-XCJ0Y2).
       - filemigstate
+      # `rela db load --data` and the desktop import run the fs-to-sqlite
+      # copy inside the transaction the sqlite recipe opens (TKT-YNKKRQ).
+      - fsimport
       - memmigstate
       - pgmigstate
       - sqlitemigstate
@@ -1585,6 +1592,23 @@ deps:
   state:
     mayDependOn:
       - storage
+  fsimport:
+    mayDependOn:
+      - app
+      - audit
+      - canonical
+      - comments
+      - filecomments
+      - datamigration
+      - filemigstate
+      - entity
+      - frontmatter
+      - metamodel
+      - principal
+      - project
+      - state
+      - storage
+      - store
   perfseed:
     mayDependOn:
       - store

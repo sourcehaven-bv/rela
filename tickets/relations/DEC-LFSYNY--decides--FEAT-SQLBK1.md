@@ -1,5 +1,5 @@
 ---
 from: DEC-LFSYNY
-type: decides
+relation: decides
 to: FEAT-SQLBK1
 ---

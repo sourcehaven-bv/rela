@@ -1,5 +1,5 @@
 ---
 from: TKT-STATSQL
-type: implements
+relation: implements
 to: FEAT-UP14BT
 ---

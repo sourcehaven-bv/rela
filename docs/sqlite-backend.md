@@ -183,7 +183,7 @@ While it waits, the deleted rows sit in `marked_entities` and
 `marked_relations` inside `rela.db`, so they survive a restart like the rest
 of the data.
 
-## Migrating between backends
+## Moving a filesystem project to SQLite
 
 A markdown project, one with files under `entities/` or `relations/` and no
 `.rela/rela.db`, opens on its markdown files in the SQLite build too, exactly
@@ -200,7 +200,8 @@ build:
 rela db load --data
 ```
 
-It imports every entity, relation and attachment, then stores the
+It imports every entity, relation, attachment and comment thread, the runtime
+state under `.rela/` and the applied-migration record, then stores the
 configuration as above. IDs, properties, bodies and relation properties are
 kept. Timestamps are not: each row gets the time of the import. The import
 writes the rows as they are, without running automations or validation, and
@@ -208,8 +209,11 @@ records one `fs-import` entry in the audit log. Every row is attributed to the
 `fs-import` tool.
 
 The import refuses a database that already holds entities. `--force` imports
-anyway, but an ID that is already stored still stops it. The import is one
-transaction, so a failed import writes nothing and you can run it again. Use
+anyway, but an ID that is already stored still stops it, and a setting or
+migration record the database already holds is kept and listed. The import is
+one transaction, so a failed import writes nothing and you can run it again.
+It runs the same checks as `db import-fs` below and prints the same list of
+problems and of files it did not copy. Use
 `--from <dir>` to read the configuration and data from another directory.
 
 Once the import has succeeded, the `entities/`, `relations/` and `attachments/`
@@ -231,5 +235,61 @@ layout from hand-written files while holding the same content.
 Both commands open the database, so they fail while a server or the desktop app
 has the project open. Content history, comments and the migration record stay
 in `rela.db`; they are not part of the markdown export.
+
+**Into a new directory.** `rela-sqlite db import-fs` copies a filesystem project into a new project
+directory whose data lives in `.rela/rela.db`:
+
+```bash
+rela-sqlite db import-fs ./my-project ./my-project-sqlite
+```
+
+The source is only read; it is unchanged afterwards. The target must not
+exist yet. The command builds the new project in a hidden directory beside
+it and renames it into place only when every row is written, so a failed run
+leaves nothing behind. If the process is killed, a hidden
+`.<target>.import-<random>` directory may remain beside the target; delete it.
+
+What is copied:
+
+- Every entity and every face, relation, attachment and comment thread.
+- The runtime state under `.rela/` (user defaults, logo and theme, CalDAV
+  aliases, scheduler run times) and the applied-migration record.
+- The project files (`schema.yaml`, `data-entry.yaml`, `templates/`,
+  `scripts/` and so on), `.rela/config.yaml`, `mail.yaml`, `ai.yaml`,
+  `secrets.yaml` and the audit log.
+
+What is not copied:
+
+- **Git history.** Version history in the new project starts at the import.
+- **Deletes waiting for undo.** The entity, its relations and its attachments
+  stay behind.
+- **Files the filesystem store does not read**, such as a folder for a type
+  the schema does not declare. The command lists each one with the reason.
+- **Caches**: the search index and the rendered-document cache rebuild
+  themselves.
+
+Both commands refuse to write anything when they find a problem: an id used in
+two type folders, two ids that differ only in case (the database treats them as
+one), a relation file whose frontmatter disagrees with its file name, a value
+the database cannot store, or a file still encrypted by git-crypt. They report
+every problem found in one run, so you can fix them all and run it again.
+
+Dates and times written without quotes in YAML are stored as text in their
+standard form (`2026-03-04`, or RFC 3339 for a datetime), which is how the
+database builds store them anyway.
+
+After the import:
+
+- Open the new directory with `rela-sqlite` or `rela-server-sqlite`.
+- Run `rela-sqlite analyze` there. The import copies rows as they are; an
+  entity that fails a schema validation is copied, not refused, and `analyze`
+  lists it the same way it did in the source.
+- If you deliver secrets as a systemd credential, run
+  `rela secrets credential-name` in the new directory: the name depends on the
+  project path.
+- The new directory is not a git repository. `.rela/` is in its `.gitignore`,
+  so the database is never committed if you make it one.
+- If the source used git-crypt, the database stores that content
+  **unencrypted**. Protect the directory accordingly.
 
 There is no automated migration to or from the PostgreSQL build yet.

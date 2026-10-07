@@ -7,6 +7,13 @@ export interface TargetCandidate {
   _title?: string
 }
 
+export interface EntityOwner {
+  id: string
+  type: string
+  title: string
+  relation: string
+}
+
 export interface Entity {
   id: string
   type: string
@@ -16,6 +23,11 @@ export interface Entity {
   relations?: Record<string, string[]>
   included?: Record<string, Entity>
   _self?: string
+  // The entity this one is shown as part of, through an `owning:` relation
+  // (TKT-QO14GB). Present on detail views, list rows and search hits when
+  // the principal can read exactly one owner. Link to the owner's page,
+  // anchored at this entity, instead of to this entity's own page.
+  _owner?: EntityOwner
   // Present only on rows of a `/_search` or list read made with a relation
   // context (`relation` + `direction=incoming`): whether the principal may
   // create that relation from this row's face. The server computes it with the gates the
@@ -482,7 +494,7 @@ export interface SidePanelLinkInfo {
 export interface SidePanelSection {
   heading: string
   sectionId: string
-  display: 'cards' | 'list' | 'properties'
+  display: 'cards' | 'list' | 'properties' | 'related'
   isEmpty: boolean
   emptyMessage?: string
   fields?: SidePanelField[]

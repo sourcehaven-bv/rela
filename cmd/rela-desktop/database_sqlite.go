@@ -13,6 +13,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/fsimport"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -85,11 +86,16 @@ func exportConfig(dir string) databaseOp {
 // which must hold no entities yet.
 func importData(dir string) databaseOp {
 	return func(ctx context.Context, fsys storage.FS, paths *project.Context) (string, error) {
-		sum, err := appbuild.ImportMarkdownData(ctx, fsys, paths, dir, appbuild.DataImportOptions{Audit: desktopAudit})
+		rep, err := appbuild.ImportMarkdownData(ctx, fsys, paths, dir, appbuild.DataImportOptions{Audit: desktopAudit})
 		if err != nil {
-			return "", err
+			return "", importError(rep, err)
 		}
-		return "Imported " + sum.String() + ".", nil
+		msg := fmt.Sprintf("Imported %d entities, %d relations, %d attachments and %d comments.",
+			rep.Entities, rep.Relations, rep.Attachments, rep.Comments)
+		if n := len(rep.Skipped); n > 0 {
+			msg += fmt.Sprintf(" %d files were not copied.", n)
+		}
+		return msg, nil
 	}
 }
 
@@ -172,4 +178,19 @@ func (d *Desktop) runDatabaseAction(title, prompt string, build func(dir string)
 		return
 	}
 	d.wails.Dialog.Info().SetTitle(title).SetMessage(summary).Show()
+}
+
+// importError adds the import's problems to err, so the dialog says what to
+// fix rather than only that the import failed.
+func importError(rep *fsimport.Report, err error) error {
+	if rep == nil || len(rep.Errors) == 0 {
+		return err
+	}
+	const shown = 10
+	list, more := rep.Errors, ""
+	if len(list) > shown {
+		more = fmt.Sprintf("\n…and %d more", len(list)-shown)
+		list = list[:shown]
+	}
+	return fmt.Errorf("%w:\n- %s%s", err, strings.Join(list, "\n- "), more)
 }

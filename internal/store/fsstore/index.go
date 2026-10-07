@@ -45,7 +45,7 @@ type indexedRelation struct {
 
 // loadPersistedIndex reads the index from disk. Returns nil if missing or corrupt.
 func (s *FSStore) loadPersistedIndex() *persistedIndex {
-	if s.cacheKey == "" {
+	if s.cacheKey == "" || s.ignoreIndexCache {
 		return nil
 	}
 	data, err := s.codec.readDataFile(IndexKey(s.cacheKey))
@@ -61,7 +61,7 @@ func (s *FSStore) loadPersistedIndex() *persistedIndex {
 
 // savePersistedIndex writes the current index state to disk.
 func (s *FSStore) savePersistedIndex() error {
-	if s.cacheKey == "" {
+	if s.cacheKey == "" || s.ignoreIndexCache {
 		return nil
 	}
 

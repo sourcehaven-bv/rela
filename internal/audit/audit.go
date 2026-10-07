@@ -188,10 +188,11 @@ const (
 	// reproducible from those anyway.
 	OpPerfSeed = "perf-seed"
 
-	// OpFSImport records a `rela db load --data` run: a raw-store copy of a
-	// markdown project's entities, relations and attachments into a SQLite
-	// database. One record per run with the source and counts, never the
-	// content, which is still in the source files.
+	// OpFSImport records an import of a markdown project into a database:
+	// `rela db load --data` into the project's own database, or
+	// `rela db import-fs` into a new project (internal/fsimport). One record
+	// per run with the counts, never the content, which is still in the
+	// source files.
 	OpFSImport = "fs-import"
 )
 

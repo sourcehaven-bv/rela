@@ -13,14 +13,26 @@ export interface EntityRef {
   type: string
 }
 
+export interface OwnedEntityRef extends EntityRef {
+  _owner?: EntityRef
+}
+
+// ownedEntityHref links an entity that may be owned (TKT-QO14GB): to its
+// owner's page, anchored at the entity, when it has an owner, and to its own
+// page otherwise.
+export function ownedEntityHref(entity: OwnedEntityRef): string {
+  if (entity._owner) {
+    const base = entityDetailHref(entity._owner)
+    return base && `${base}#${encodeURIComponent(entity.id)}`
+  }
+  return entityDetailHref(entity)
+}
+
 export interface EntityDetailHrefOpts {
   cellLink?: string
 }
 
-export function entityDetailHref(
-  entity: EntityRef,
-  opts: EntityDetailHrefOpts = {},
-): string {
+export function entityDetailHref(entity: EntityRef, opts: EntityDetailHrefOpts = {}): string {
   if (opts.cellLink) return opts.cellLink
   if (!entity.type || !entity.id) return ''
   return `/entity/${entity.type}/${entity.id}`

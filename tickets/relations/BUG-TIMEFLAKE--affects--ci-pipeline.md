@@ -1,5 +1,5 @@
 ---
 from: BUG-TIMEFLAKE
-type: affects
+relation: affects
 to: ci-pipeline
 ---

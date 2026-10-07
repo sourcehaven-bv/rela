@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -72,9 +73,9 @@ type MarkedEntity struct {
 type revealKey struct{}
 
 // WithRevealed returns a context under which [RelationReader.GetRelation] and
-// [RelationReader.ListRelations] also return the hidden relations of ONE marked
-// entity. Nothing else honors it: entity reads, counts, pages and graph queries
-// still treat the entity and its relations as deleted.
+// [RelationReader.ListRelations] also return the hidden relations of the
+// marked entities ids. Nothing else honors it: entity reads, counts, pages and
+// graph queries still treat those entities and their relations as deleted.
 //
 // It exists for one caller. Restoring an entity must be authorized against the
 // same local roles that authorized deleting it, and the ACL resolves those roles
@@ -82,25 +83,32 @@ type revealKey struct{}
 // methods). Without the reveal those relations are hidden, so a restore would be
 // judged without the grants the delete was judged with.
 //
-// For GetRelation the id must be one endpoint. For ListRelations the query's
-// EntityID must equal it; the hidden relations then follow the live ones, so the
-// usual ordering does not hold across the two groups.
-func WithRevealed(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, revealKey{}, id)
+// A hidden relation is held by the mark of ONE of its endpoints: the one
+// marked first. A restore that brings back several marked entities together
+// (an owner and what it owns) reveals all of them, so a relation between two
+// of them is found whichever end holds it.
+//
+// For GetRelation one endpoint must be revealed. For ListRelations the query's
+// EntityID must be revealed; the hidden relations then follow the live ones, so
+// the usual ordering does not hold across the two groups.
+func WithRevealed(ctx context.Context, ids ...string) context.Context {
+	return context.WithValue(ctx, revealKey{}, slices.Clone(ids))
 }
 
-// RevealedID returns the id set by [WithRevealed], or "" when none is.
-func RevealedID(ctx context.Context) string {
-	id, _ := ctx.Value(revealKey{}).(string)
-	return id
+// RevealedIDs returns the ids set by [WithRevealed], or nil when none are.
+func RevealedIDs(ctx context.Context) []string {
+	ids, _ := ctx.Value(revealKey{}).([]string)
+	return ids
 }
 
-// RevealedFor reports whether ctx reveals the hidden relations of an entity
-// that is one endpoint of the relation from→to.
-func RevealedFor(ctx context.Context, from, to string) (string, bool) {
-	id := RevealedID(ctx)
-	if id == "" || (id != from && id != to) {
-		return "", false
-	}
-	return id, true
+// Reveals reports whether ctx reveals the hidden relations of id.
+func Reveals(ctx context.Context, id string) bool {
+	return id != "" && slices.Contains(RevealedIDs(ctx), id)
+}
+
+// RevealedFor reports whether ctx reveals an endpoint of the relation
+// from→to. The relation, when hidden, is held by the mark of one of the
+// revealed ids.
+func RevealedFor(ctx context.Context, from, to string) bool {
+	return Reveals(ctx, from) || Reveals(ctx, to)
 }
