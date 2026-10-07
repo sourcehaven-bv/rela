@@ -49,7 +49,7 @@ func aliasHookMeta(t *testing.T) *metamodel.Metamodel {
 		Version: "1.0",
 		Entities: map[string]metamodel.EntityDef{
 			"task": {
-				Label: "Task", IDPrefix: "TSK-", DisplayProperty: "title",
+				Label: "Task", IDPrefix: "TSK-", IDType: metamodel.IDTypeManual, DisplayProperty: "title",
 				Properties: map[string]metamodel.PropertyDef{
 					"title": {Type: metamodel.PropertyTypeString},
 				},

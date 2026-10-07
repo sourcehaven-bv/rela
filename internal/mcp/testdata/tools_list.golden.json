@@ -369,7 +369,7 @@
   },
   {
     "name": "rename_entity",
-    "description": "Change an entity's ID and update every relation that references it",
+    "description": "Change an entity's ID and update every relation that references it. Only for types with id_type: manual; generated ids cannot be renamed",
     "inputSchema": {
       "properties": {
         "dry_run": {

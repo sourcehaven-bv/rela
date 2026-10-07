@@ -53,6 +53,11 @@ func newEntityNotFound(id string) error { return entityNotFoundError{id: id} }
 // or generated ID collides with an existing entity.
 var ErrEntityAlreadyExists = errors.New("entity already exists")
 
+// ErrRenameNotSupported is returned by [Manager.RenameEntity] for an entity
+// whose type generates its ids (`id_type: short` or `sequential`). Only a
+// hand-typed id carries meaning a rename can improve.
+var ErrRenameNotSupported = errors.New("rename is only available for types with id_type: manual")
+
 // ErrTypeImmutable is returned by the upsert/apply path when the caller
 // supplies a type that differs from the STORED type of an existing entity.
 // An entity's type is immutable on update: an UPDATE is authorized and

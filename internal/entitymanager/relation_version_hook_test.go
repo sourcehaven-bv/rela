@@ -164,15 +164,20 @@ func TestRelationVersionHook_CascadeDeleteCapturesEveryEdge(t *testing.T) {
 func TestRelationVersionHook_RenameStitchesEndpoints(t *testing.T) {
 	mgr, rec := newRelationVersionManager(t)
 	ctx := ctxWithPrincipal("bob", principal.ToolMCP)
-	dec, req := seedDecReq(ctx, t, mgr)
+	dec, _ := seedDecReq(ctx, t, mgr)
+	const req = "api"
+	if _, err := mgr.CreateEntity(ctx, entity.New(req, "component"), entity.CreateOptions{ID: req}); err != nil {
+		t.Fatalf("create component: %v", err)
+	}
 
+	// The renamed entity is the edge's source; the decision stays put.
 	note := "note"
-	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec, Type: "addresses", To: req}, entity.RelationOptions{Content: &note}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: req, Type: "depends-on", To: dec}, entity.RelationOptions{Content: &note}); err != nil {
 		t.Fatalf("CreateRelation: %v", err)
 	}
 	rec.records = nil
 
-	const newReq = "REQ-RENAMED"
+	const newReq = "gateway"
 	if _, err := mgr.RenameEntity(ctx, req, newReq, entity.RenameOptions{}); err != nil {
 		t.Fatalf("RenameEntity: %v", err)
 	}
@@ -189,14 +194,14 @@ func TestRelationVersionHook_RenameStitchesEndpoints(t *testing.T) {
 		t.Fatalf("rename should record one relation rename version; got %d", len(renames))
 	}
 	got := renames[0]
-	if got.To != newReq {
-		t.Errorf("new to = %q, want %q", got.To, newReq)
+	if got.From != newReq {
+		t.Errorf("new from = %q, want %q", got.From, newReq)
 	}
-	if got.PrevTo != req {
-		t.Errorf("prev_to = %q, want %q (the pre-rename endpoint)", got.PrevTo, req)
+	if got.PrevFrom != req {
+		t.Errorf("prev_from = %q, want %q (the pre-rename endpoint)", got.PrevFrom, req)
 	}
-	if got.From != dec {
-		t.Errorf("from = %q, want %q (unchanged endpoint)", got.From, dec)
+	if got.To != dec {
+		t.Errorf("to = %q, want %q (unchanged endpoint)", got.To, dec)
 	}
 	if got.Content != "note" {
 		t.Errorf("content = %q, want preserved 'note'", got.Content)

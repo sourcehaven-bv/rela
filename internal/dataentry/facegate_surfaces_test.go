@@ -35,6 +35,8 @@ func facedTicketApp(t *testing.T) *App {
 	meta := app.State().Meta
 	td := meta.Entities["ticket"]
 	td.Faces = map[string]metamodel.FaceDef{"draft": {}, "published": {}, "review": {}}
+	// Hand-typed ids, so the rename tests have a type a rename accepts.
+	td.IDType = metamodel.IDTypeManual
 	meta.Entities["ticket"] = td
 	return app
 }
