@@ -277,7 +277,7 @@ var locked = map[File][]string{
 		// owning cascades an owner's delete to what it owns (TKT-QO14GB).
 		"relations.*.owning", "entities.*.faces.**",
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
-		"relations.*.scope",
+		"relations.*.scope", "relations.*.owning",
 		"validations.[].faces.**", "automations.[].on.faces.**",
 	},
 	DataEntryFile: {
