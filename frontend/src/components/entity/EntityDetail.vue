@@ -2609,6 +2609,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             :entities="section.entities ?? []"
             :anchor="(id: string) => anchorId(section.sectionId, id)"
             :world="worldParam"
+            :page-entity="entry ? refBareId(entry.id) : undefined"
           />
 
           <div v-else-if="section.display === 'table'" class="table-wrapper">

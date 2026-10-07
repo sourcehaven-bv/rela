@@ -72,3 +72,7 @@ search, pickers, graph or MCP.
 - No owned/embedded flag on entity or relation types.
 - Delete never removes related entities, only edges; no `deleted` trigger.
 - Search hits always navigate to `/entity/<type>/<id>`.
+
+## Merged
+
+PR #1780 merged into `develop` on 2026-10-07 as 41886e10.
