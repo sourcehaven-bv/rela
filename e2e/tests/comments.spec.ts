@@ -136,6 +136,43 @@ test.describe('Comments', () => {
     await expect(comments.highlights().first()).toHaveText('unit tests for auth');
   });
 
+  test('comments across a heading and its body (TKT-U32AUB)', async ({ appPage, api }) => {
+    const comments = new CommentsPage(appPage);
+    await api.setEntityContent(
+      'tasks',
+      ID,
+      '## Auth module\n\nWrite unit tests for auth module.\n',
+    );
+    await comments.openEntity(TYPE, ID);
+
+    await comments.selectBodyRange('Auth module', 'unit tests');
+    await expect(comments.selectionButton()).toBeVisible();
+    await comments.commentOnSelection('Heading and body together');
+
+    // One mark per block: a single <mark> cannot span the heading and the
+    // paragraph, and the browser would drop it from the second block.
+    const [comment] = (await api.listComments(TYPE, ID)).comments;
+    const marks = comments.highlightsFor(comment.id);
+    await expect(marks).toHaveText(['Auth module', 'Write unit tests']);
+    await expect(comments.headingHighlights()).toHaveCount(1);
+
+    // Either mark opens the same thread.
+    await marks.nth(1).click();
+    await expect(comments.highlightCommentBodies()).toHaveText(['Heading and body together']);
+
+    // An edit inside the range keeps the anchor.
+    await api.setEntityContent(
+      'tasks',
+      ID,
+      '## Auth module\n\nWrite more unit tests for auth module.\n',
+    );
+    await comments.openEntity(TYPE, ID);
+    await expect(comments.highlightsFor(comment.id)).toHaveText([
+      'Auth module',
+      'Write more unit tests',
+    ]);
+  });
+
   test('suggests a replacement and accepts it into the body', async ({ appPage, api }) => {
     const comments = new CommentsPage(appPage);
     await comments.openEntity(TYPE, ID);

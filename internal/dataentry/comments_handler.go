@@ -253,6 +253,13 @@ type anchorWire struct {
 	// slice with these, never with the quote's length.
 	Start *int `json:"start,omitempty"`
 	End   *int `json:"end,omitempty"`
+	// Segments splits [Start, End) into one byte range per markdown block, so
+	// a client can highlight a range that crosses blocks with one element per
+	// block: a single inline element cannot cross a block boundary. Present
+	// whenever Start/End are. An EMPTY list means nothing in the range can be
+	// highlighted (it is all code); a client must not fall back to Start/End
+	// then, since marking inside code renders the markup literally.
+	Segments *[]spanWire `json:"segments,omitempty"`
 	// Confidence is the resolver's score for a text anchor (0-1).
 	Confidence float64 `json:"confidence,omitempty"`
 	// Uncertain marks the middle band: located, but far enough from an exact
@@ -261,6 +268,12 @@ type anchorWire struct {
 	// Replacement is the suggested substitute for Quote. A pointer so a
 	// deletion suggestion ("") is distinguishable from none.
 	Replacement *string `json:"replacement,omitempty"`
+}
+
+// spanWire is a [start, end) byte range into the entity body.
+type spanWire struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
 }
 
 type commentWire struct {
@@ -327,7 +340,7 @@ func (h *commentsHandler) listComments(
 			Detached:   detached,
 			Editable:   auth.CanUpdate(ctx, target, c, user),
 			Deletable:  auth.CanDelete(ctx, target, c, user),
-			Acceptable: !c.Resolved && anchors.loaded && comments.Acceptable(anchors.body, c.Anchor),
+			Acceptable: !c.Resolved && anchors.loaded && anchors.body.Acceptable(c.Anchor),
 		})
 	}
 
@@ -670,12 +683,17 @@ func resolveAnchor(ctx anchorContext, a comments.Anchor) (anchorWire, bool) {
 		return out, !ctx.properties[a.Ref]
 
 	case comments.AnchorText:
-		m := comments.ResolveText(ctx.body, a.Text)
+		m := ctx.body.ResolveText(a.Text)
 		if m.Detached {
 			return out, true
 		}
 		start, end := m.Start, m.End
 		out.Start, out.End = &start, &end
+		segments := make([]spanWire, len(m.Segments))
+		for i, sp := range m.Segments {
+			segments[i] = spanWire(sp)
+		}
+		out.Segments = &segments
 		out.Confidence = m.Confidence
 		out.Uncertain = m.Uncertain
 		return out, false

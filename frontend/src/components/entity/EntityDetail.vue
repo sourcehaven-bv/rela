@@ -449,6 +449,7 @@ const textHighlights = computed<HighlightRange[]>(() =>
       id: c.id,
       start: c.anchor.start as number,
       end: c.anchor.end as number,
+      segments: c.anchor.segments,
       uncertain: c.anchor.uncertain,
     }))
 )
