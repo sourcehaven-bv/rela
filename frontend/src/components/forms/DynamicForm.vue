@@ -1093,16 +1093,29 @@ function applyTemplate(template: Template, preserveUserInput = false) {
  * this entity's values: a template default that landed first must lose. Nothing
  * the user typed can be at risk yet, since this runs before the form is
  * interactive.
+ *
+ * A prefilled single-valued relation (`max_outgoing: 1`) REPLACES the value
+ * the template or defaults gave it, rather than adding to it: Add in a board's
+ * "Done" column under a template that defaults the status to "Open" would
+ * otherwise send two targets, which the server refuses (TKT-KJ3Q07).
+ *
+ * `keepContent` is set when the prefill is re-applied after the user picked
+ * another template: the body that template brought is the point of the pick.
  */
-function applyEmbeddedPrefill() {
+function applyEmbeddedPrefill(keepContent = false) {
   const prefill = props.embeddedPrefill
   if (!prefill) return
   const prefillRelations = prefill.relations ?? {}
+  for (const relation of Object.keys(prefillRelations)) {
+    if (schemaStore.getRelationType(relation)?.max_outgoing === 1) {
+      delete relations.value[relation]
+    }
+  }
   applyTemplate(
     {
       name: '',
       properties: prefill.properties,
-      content: prefill.content ?? content.value,
+      content: keepContent ? content.value : (prefill.content ?? content.value),
       relations: Object.entries(prefillRelations).flatMap(([relation, peers]) =>
         peers.map((peer) => ({ relation, target: peer.id }))
       ),
@@ -1211,6 +1224,9 @@ function selectTemplate(name: string) {
     content.value = ''
     initializeDefaults()
     applyTemplate(template)
+    // A host's prefill (a board column's status, a list section's value) is
+    // not part of the template, so it survives the switch.
+    applyEmbeddedPrefill(true)
   }
 }
 

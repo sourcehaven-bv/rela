@@ -835,7 +835,7 @@ type SectionField struct {
 	// Property is empty and Targets holds the entry's readable targets.
 	Relation string               `json:"relation,omitempty"`
 	Targets  []SectionFieldTarget `json:"targets,omitempty"`
-	// StyleFrom is the target property whose enum styles colour each target.
+	// StyleFrom is the target property whose enum styles color each target.
 	StyleFrom string `json:"styleFrom,omitempty"`
 }
 
@@ -845,7 +845,7 @@ type SectionFieldTarget struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 	// Style is the target's value of the field's `style_from` property, an
-	// enum value the SPA colours with that enum's `styles`. Empty when the
+	// enum value the SPA colors with that enum's `styles`. Empty when the
 	// field sets no style_from or the target has no (readable) value.
 	Style string `json:"style,omitempty"`
 }

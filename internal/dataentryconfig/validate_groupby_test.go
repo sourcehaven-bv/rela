@@ -85,8 +85,8 @@ func TestValidateListGroupBy(t *testing.T) {
 		},
 		{
 			name:    "unknown color",
-			groupBy: &ListGroupBy{Property: "status", Groups: []ListGroup{{Value: "todo", Color: "purple"}}},
-			wantErr: `unknown color "purple"`,
+			groupBy: &ListGroupBy{Property: "status", Groups: []ListGroup{{Value: "todo", Color: "violet"}}},
+			wantErr: `unknown color "violet"`,
 		},
 		{
 			name:    "groups on a non-enum property",

@@ -9,7 +9,7 @@ import type { Section } from 'rela-components/types'
 import { useSchemaStore } from '@/stores/schema'
 import { _setEntityPluralForTest } from '@/api/entities'
 import { withPageHeader } from '@/composables/pageHeaderTestHost'
-import { styleColor } from '@/composables/useRelationColumns'
+import { STYLE_PALETTE, styleStatusColor } from '@/utils/styleColors'
 import type { Entity, ListResponse } from '@/types'
 
 // A relation-backed board (`columns_from`, TKT-KJ3Q07): each column offers
@@ -192,14 +192,20 @@ describe('KanbanView with columns_from', () => {
   })
 })
 
-describe('styleColor', () => {
+describe('styleStatusColor', () => {
   it('maps app style classes to status colours', () => {
     const styles = { open: 'badge-gray', wachten: 'badge-orange', in_review: 'badge-purple' }
-    expect(styleColor(styles, 'open')).toBe('grey')
-    expect(styleColor(styles, 'wachten')).toBe('amber')
-    expect(styleColor(styles, 'In Review')).toBe('blue')
-    expect(styleColor(styles, 'gereed')).toBeUndefined()
-    expect(styleColor(styles, undefined)).toBeUndefined()
-    expect(styleColor(undefined, 'open')).toBeUndefined()
+    expect(styleStatusColor(styles, 'open')).toBe('grey')
+    expect(styleStatusColor(styles, 'wachten')).toBe('amber')
+    expect(styleStatusColor(styles, 'In Review')).toBe('purple')
+    expect(styleStatusColor(styles, 'gereed')).toBeUndefined()
+    expect(styleStatusColor(styles, undefined)).toBeUndefined()
+    expect(styleStatusColor(undefined, 'open')).toBeUndefined()
+  })
+
+  it('gives every badge class a status colour', () => {
+    for (const cls of ['blue', 'purple', 'green', 'gray', 'red', 'orange', 'yellow']) {
+      expect(STYLE_PALETTE[`badge-${cls}`]?.status).toBeDefined()
+    }
   })
 })

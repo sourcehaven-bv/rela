@@ -1,6 +1,6 @@
 import type { Component } from 'vue'
 
-export type StatusColor = 'green' | 'amber' | 'red' | 'grey' | 'blue'
+export type StatusColor = 'green' | 'amber' | 'red' | 'grey' | 'blue' | 'purple'
 
 export type TagColor = 'grey' | 'blue' | 'green' | 'amber' | 'red' | 'purple'
 

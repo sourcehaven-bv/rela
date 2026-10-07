@@ -119,6 +119,9 @@ const pairs = [
     [`--rl-color-status-${c}`, '--rl-color-bg', 3],
     [`--rl-color-status-${c}`, '--rl-color-bg-hover', 3],
   ]),
+  // A purple status dot is the accent.
+  ['--rl-color-accent', '--rl-color-bg', 3],
+  ['--rl-color-accent', '--rl-color-bg-hover', 3],
   /*
    * The selected segmented-control chip carries its own label, and rides on
    * `--rl-color-bg-hover` rather than on the page, so it is checked against

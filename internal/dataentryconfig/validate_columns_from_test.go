@@ -87,9 +87,9 @@ func TestValidateConfig_KanbanColumnsFrom(t *testing.T) {
 		{
 			name: "style_from unknown property",
 			kanban: Kanban{EntityType: "ticket", ColumnsFrom: &KanbanColumnsFrom{
-				Relation: "in-category", StyleFrom: "colour",
+				Relation: "in-category", StyleFrom: "color",
 			}},
-			wantErr: `columns_from: style_from "colour" is not a property of "category"`,
+			wantErr: `columns_from: style_from "color" is not a property of "category"`,
 		},
 		{
 			name: "style_from not an enum",

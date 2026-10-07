@@ -8,8 +8,8 @@ import type { Entity } from '@/types'
 import type { ViewResponse } from '@/api'
 
 // The detail page reloads its view when the server reports that entities of
-// its own type changed. Bursts are debounced to one reload, and nothing
-// reloads after unmount.
+// its own type changed. Bursts are debounced to one reload, a steady stream
+// still reloads about once a second, and nothing reloads after unmount.
 
 const fetchViewMock = vi.fn()
 type Handler = (data: { type: string }) => void
@@ -98,8 +98,25 @@ describe('EntityDetail entity:changed listener', () => {
     await vi.advanceTimersByTimeAsync(100)
     await flushPromises()
     await vi.advanceTimersByTimeAsync(2000)
-    console.log("timers",vi.getTimerCount(), fetchViewMock.mock.calls.length)
     expect(fetchViewMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('reloads during a steady stream instead of waiting for it to stop', async () => {
+    await mountDetail()
+    // An event every 100 ms for 2.5 s never leaves the 250 ms debounce quiet.
+    for (let i = 0; i < 25; i++) {
+      emit(entityType)
+      await vi.advanceTimersByTimeAsync(100)
+    }
+    await flushPromises()
+    const during = fetchViewMock.mock.calls.length
+    expect(during).toBeGreaterThanOrEqual(2)
+    expect(during).toBeLessThanOrEqual(3)
+
+    // The stream stops: one trailing reload, then quiet.
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+    expect(fetchViewMock.mock.calls.length).toBe(during + 1)
   })
 
   it('ignores events for another type', async () => {

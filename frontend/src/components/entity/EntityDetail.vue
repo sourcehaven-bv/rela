@@ -1779,16 +1779,28 @@ onBeforeUnmount(() => {
 // relation re-point alone sends a create and a delete. A pending content
 // autosave wins: reloading under it would replace what the reader is typing.
 // Section forms keep a pending field edit across the reload themselves.
+// A steady stream (an import, a script) never goes quiet for the debounce, so
+// the wait is capped: during a stream the view reloads at most once per
+// ENTITY_CHANGED_MAX_WAIT_MS rather than not at all.
 const ENTITY_CHANGED_DEBOUNCE_MS = 250
+const ENTITY_CHANGED_MAX_WAIT_MS = 1000
 const { on: onServerEvent, off: offServerEvent } = useEvents()
 let entityChangedTimer: ReturnType<typeof setTimeout> | undefined
+let entityChangedSince: number | undefined
 function onEntityChanged(data: EntityEventData) {
   if (data.type && data.type !== props.entityType) return
+  const now = Date.now()
+  entityChangedSince ??= now
+  const delay = Math.max(
+    0,
+    Math.min(ENTITY_CHANGED_DEBOUNCE_MS, entityChangedSince + ENTITY_CHANGED_MAX_WAIT_MS - now)
+  )
   clearTimeout(entityChangedTimer)
   entityChangedTimer = setTimeout(() => {
+    entityChangedSince = undefined
     if (contentAutoSave.pendingCount.value > 0) return
     void loadView()
-  }, ENTITY_CHANGED_DEBOUNCE_MS)
+  }, delay)
 }
 onMounted(() => onServerEvent('entity:changed', onEntityChanged))
 onBeforeUnmount(() => {

@@ -14,11 +14,12 @@ import (
 // SPA hands the section heading. A token rather than a CSS value, for the
 // reason ValidCalendarColors gives.
 var ValidGroupColors = map[string]bool{
-	"green": true,
-	"amber": true,
-	"red":   true,
-	"grey":  true,
-	"blue":  true,
+	"green":  true,
+	"amber":  true,
+	"red":    true,
+	"grey":   true,
+	"blue":   true,
+	"purple": true,
 }
 
 // DateBucketKeys are the bucket keys `labels:` may override, in the order the

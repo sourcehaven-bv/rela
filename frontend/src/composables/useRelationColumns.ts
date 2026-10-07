@@ -7,6 +7,7 @@ import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { ORDER_PROPERTY_OUT } from '@/types/schema'
 import type { Entity, PageScope } from '@/types'
 import type { StatusColor } from 'rela-components/types'
+import { styleStatusColor } from '@/utils/styleColors'
 
 /** Where columns or sections come from: a kanban's `columns_from`, or a relation `group_by`. */
 export interface RelationColumnsSource {
@@ -27,35 +28,6 @@ export interface RelationColumn {
   entity?: Entity
   /** From the target's `style_from` value; absent without one or without a style. */
   color?: StatusColor
-}
-
-/**
- * The status colour for an app style class (`badge-<colour>`, see Badge.vue).
- * The board's status palette has no purple or yellow, so those fold into the
- * nearest status colour.
- */
-const STYLE_STATUS_COLORS: Record<string, StatusColor> = {
-  'badge-blue': 'blue',
-  'badge-purple': 'blue',
-  'badge-green': 'green',
-  'badge-gray': 'grey',
-  'badge-red': 'red',
-  'badge-orange': 'amber',
-  'badge-yellow': 'amber',
-}
-
-/**
- * The colour a target's `styleFrom` value maps to through the app styles,
- * keyed the way Badge.vue keys them.
- */
-export function styleColor(
-  styles: Record<string, string> | undefined,
-  value: unknown,
-): StatusColor | undefined {
-  if (!styles || value === undefined || value === null || value === '') return undefined
-  const key = String(value).toLowerCase().replace(/\s/g, '_')
-  const cls = styles[key]
-  return cls ? STYLE_STATUS_COLORS[cls] : undefined
 }
 
 function orderValue(v: unknown): number {
@@ -122,7 +94,7 @@ export function useRelationColumns(
       ? schemaStore.stylesForProperty(styleFrom, targetType.value)
       : undefined
     const toColumn = (e: Entity): RelationColumn => {
-      const color = styleFrom ? styleColor(styles, e.properties[styleFrom]) : undefined
+      const color = styleFrom ? styleStatusColor(styles, e.properties[styleFrom]) : undefined
       return {
         value: e.id,
         label: entityDisplayTitle(e),

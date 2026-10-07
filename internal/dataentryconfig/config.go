@@ -1129,8 +1129,8 @@ type Kanban struct {
 // OrderBy (a property of the target type) and then by title.
 //
 // StyleFrom names an enum property of the target type. Each column takes its
-// colour from its target's value of that property, through the app styles,
-// the same way a relation field's `style_from` colours its badge.
+// color from its target's value of that property, through the app styles,
+// the same way a relation field's `style_from` colors its badge.
 type KanbanColumnsFrom struct {
 	Relation  string `yaml:"relation" json:"relation"`
 	OfferedBy string `yaml:"offered_by,omitempty" json:"offered_by,omitempty"`
@@ -2228,7 +2228,7 @@ type ViewSectionField struct {
 	Property string `yaml:"property,omitempty" json:"property,omitempty"`
 	Relation string `yaml:"relation,omitempty" json:"relation,omitempty"`
 	// StyleFrom names an enum property of a relation field's target; each
-	// target shows as a badge coloured by that enum's `styles` (TKT-CADCFX).
+	// target shows as a badge colored by that enum's `styles` (TKT-CADCFX).
 	StyleFrom string `yaml:"style_from,omitempty" json:"style_from,omitempty"`
 	Label     string `yaml:"label,omitempty" json:"label,omitempty"`
 	Span      Span   `yaml:"span,omitempty" json:"span,omitempty"`

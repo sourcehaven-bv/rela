@@ -34,7 +34,7 @@ type ListGroupBy struct {
 	Relation  string `yaml:"relation,omitempty" json:"relation,omitempty"`
 	OfferedBy string `yaml:"offered_by,omitempty" json:"offered_by,omitempty"`
 	OrderBy   string `yaml:"order_by,omitempty" json:"order_by,omitempty"`
-	// StyleFrom colours each relation section by an enum property of its
+	// StyleFrom colors each relation section by an enum property of its
 	// target, as on a kanban's `columns_from`.
 	StyleFrom string      `yaml:"style_from,omitempty" json:"style_from,omitempty"`
 	Groups    []ListGroup `yaml:"groups,omitempty" json:"groups,omitempty"`

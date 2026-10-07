@@ -2183,6 +2183,32 @@ func suggestRelation(name string, meta *metamodel.Metamodel) string {
 	return ""
 }
 
+// validateKanbanColumnProperty checks that column_property is an enum of the
+// card type and that explicit columns name its values.
+func validateKanbanColumnProperty(
+	kanbanID string, kanban Kanban, entDef *metamodel.EntityDef, meta *metamodel.Metamodel,
+) []string {
+	propDef, ok := entDef.Properties[kanban.ColumnProperty]
+	if !ok {
+		return []string{fmt.Sprintf("kanban %q: column_property %q not in entity %q",
+			kanbanID, kanban.ColumnProperty, kanban.EntityType)}
+	}
+	validValues := GetValidEnumValues(propDef, meta)
+	if len(validValues) == 0 {
+		return []string{fmt.Sprintf("kanban %q: column_property %q must be an enum type",
+			kanbanID, kanban.ColumnProperty)}
+	}
+	var errs []string
+	for i, col := range kanban.Columns {
+		if !slices.Contains(validValues, col.Value) {
+			errs = append(errs, fmt.Sprintf(
+				"kanban %q: columns[%d] value %q is not valid for %q (valid: %s)",
+				kanbanID, i, col.Value, kanban.ColumnProperty, strings.Join(validValues, ", ")))
+		}
+	}
+	return errs
+}
+
 // validateKanbanColumnsFrom checks a relation-backed board (TKT-KJ3Q07).
 func validateKanbanColumnsFrom(kanbanID string, kanban Kanban, meta *metamodel.Metamodel) []string {
 	var errs []string
@@ -2268,39 +2294,14 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 			continue
 		}
 
-		// Validate column_property exists and is enum type
-		if kanban.ColumnsFrom != nil {
+		// Columns come from a relation or from an enum column_property.
+		switch {
+		case kanban.ColumnsFrom != nil:
 			errs = append(errs, validateKanbanColumnsFrom(kanbanID, kanban, meta)...)
-		} else if kanban.ColumnProperty == "" { //nolint:nestif // nested guards each check a distinct optional field of the kanban config.
+		case kanban.ColumnProperty == "":
 			errs = append(errs, fmt.Sprintf("kanban %q: column_property is required", kanbanID))
-		} else {
-			propDef, ok := entDef.Properties[kanban.ColumnProperty]
-			if !ok {
-				errs = append(errs, fmt.Sprintf(
-					"kanban %q: column_property %q not in entity %q",
-					kanbanID, kanban.ColumnProperty, kanban.EntityType))
-			} else {
-				// Check if it's an enum type
-				validValues := GetValidEnumValues(propDef, meta)
-				if len(validValues) == 0 {
-					errs = append(errs, fmt.Sprintf(
-						"kanban %q: column_property %q must be an enum type",
-						kanbanID, kanban.ColumnProperty))
-				} else {
-					// Validate column values if specified
-					validSet := make(map[string]bool)
-					for _, v := range validValues {
-						validSet[v] = true
-					}
-					for i, col := range kanban.Columns {
-						if !validSet[col.Value] {
-							errs = append(errs, fmt.Sprintf(
-								"kanban %q: columns[%d] value %q is not valid for %q (valid: %s)",
-								kanbanID, i, col.Value, kanban.ColumnProperty, strings.Join(validValues, ", ")))
-						}
-					}
-				}
-			}
+		default:
+			errs = append(errs, validateKanbanColumnProperty(kanbanID, kanban, entDef, meta)...)
 		}
 
 		// Icon names are checked unconditionally — deliberately NOT inside the
@@ -3174,17 +3175,16 @@ func validateSectionRelationFields(
 		}
 		prefix := fmt.Sprintf("view %q: section[%d] field[%d]", viewID, i, j)
 		if f.Property != "" {
-			errs = append(errs, fmt.Sprintf("%s sets both property and relation; set one", prefix))
+			errs = append(errs, prefix+" sets both property and relation; set one")
 			continue
 		}
 		if s.Source != "entry" || s.Display != "properties" {
-			errs = append(errs, fmt.Sprintf(
-				"%s: a relation field is only valid in a section with source: entry and display: properties",
-				prefix))
+			errs = append(errs,
+				prefix+": a relation field is only valid in a section with source: entry and display: properties")
 			continue
 		}
 		if f.Widget != "" {
-			errs = append(errs, fmt.Sprintf("%s: widget does not apply to a relation field", prefix))
+			errs = append(errs, prefix+": widget does not apply to a relation field")
 		}
 		def, ok := meta.GetRelationDef(f.Relation)
 		if !ok {
@@ -3209,7 +3209,7 @@ func validateSectionRelationFields(
 }
 
 // validateStyleFrom checks that every target type of a relation field has
-// styleFrom as an enum property, so each target can be coloured.
+// styleFrom as an enum property, so each target can be colored.
 func validateStyleFrom(prefix, styleFrom string, targets []string, meta *metamodel.Metamodel) []string {
 	var errs []string
 	for _, t := range targets {
