@@ -378,19 +378,37 @@ func markedTaken(s *FSStore, id, except string) bool {
 	return false
 }
 
-// revealedRelations returns the hidden relations of the entity ctx reveals
+// revealedRelation returns the hidden edge k when ctx reveals one of its
+// endpoints (see [store.WithRevealed]). Caller holds mu.
+func revealedRelation(ctx context.Context, s *FSStore, k entity.RelationKey) (relationMeta, bool) {
+	if !store.RevealedFor(ctx, k.From, k.To) {
+		return relationMeta{}, false
+	}
+	for _, id := range store.RevealedIDs(ctx) {
+		if fam, marked := markedFamilyOf(s, id); marked {
+			if rm, ok := fam.relations[keyOf(k)]; ok {
+				return rm, true
+			}
+		}
+	}
+	return relationMeta{}, false
+}
+
+// revealedRelations returns the hidden relations of the entities ctx reveals
 // (see [store.WithRevealed]) that satisfy match. Caller holds mu.
 func revealedRelations(ctx context.Context, s *FSStore, match func(*entity.Relation) bool) []relationMeta {
-	fam, ok := markedFamilyOf(s, store.RevealedID(ctx))
-	if !ok {
-		return nil
-	}
 	var out []relationMeta
-	for _, rm := range sortedRelMetas(fam.relations) {
-		r := entity.NewRelation(rm.From, rm.Type, rm.To)
-		r.FromFace = rm.FromFace
-		if match(r) {
-			out = append(out, rm)
+	for _, id := range store.RevealedIDs(ctx) {
+		fam, ok := markedFamilyOf(s, id)
+		if !ok {
+			continue
+		}
+		for _, rm := range sortedRelMetas(fam.relations) {
+			r := entity.NewRelation(rm.From, rm.Type, rm.To)
+			r.FromFace = rm.FromFace
+			if match(r) {
+				out = append(out, rm)
+			}
 		}
 	}
 	return out

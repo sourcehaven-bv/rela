@@ -7,6 +7,18 @@ import (
 )
 
 // buildEntitySchema builds a JSON Schema for an entity type.
+// ownerSchema describes `_owner`: the entity a row is shown as part of,
+// through an owning relation (TKT-QO14GB).
+func ownerSchema() *Schema {
+	return &Schema{
+		Type:        "object",
+		Description: "The entity this one is shown as part of, through an owning relation",
+		Properties: map[string]*Schema{
+			"id": StringSchema(), "type": StringSchema(), "title": StringSchema(), "relation": StringSchema(),
+		},
+	}
+}
+
 func (g *Generator) buildEntitySchema(typeName string, def metamodel.EntityDef) *Schema {
 	props := make(map[string]*Schema)
 	required := []string{"id", "type"}
@@ -16,6 +28,7 @@ func (g *Generator) buildEntitySchema(typeName string, def metamodel.EntityDef) 
 	props["type"] = &Schema{Type: "string", Enum: []string{typeName}, Description: "Entity type"}
 	props["content"] = &Schema{Type: "string", Description: "Markdown body content"}
 	props["_self"] = &Schema{Type: "string", Format: "uri-reference", Description: "Self link"}
+	props["_owner"] = ownerSchema()
 
 	// Properties object
 	propSchema := g.buildPropertiesSchema(def)
@@ -239,6 +252,7 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 				AdditionalProperties: ArraySchema(StringSchema()),
 			},
 			"_self":    {Type: "string", Format: "uri-reference"},
+			"_owner":   ownerSchema(),
 			"warnings": ArraySchema(Ref("Warning")),
 		},
 		Required: []string{"id", "type"},
@@ -392,6 +406,7 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 			"description":  StringSchema(),
 			"from":         ArraySchema(StringSchema()),
 			"to":           ArraySchema(StringSchema()),
+			"owning":       BooleanSchema(),
 			"min_outgoing": IntegerSchema(),
 			"max_outgoing": IntegerSchema(),
 			"min_incoming": IntegerSchema(),

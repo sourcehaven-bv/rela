@@ -966,11 +966,18 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		writeGateError(w, r, werr)
 		return
 	}
+	owner, oErr := newOwnerResolver(h.schema().Meta, h.store, h.visible, h.redactor()).
+		resolve(r.Context(), ownerRows(result.Entry, sections))
+	if oErr != nil {
+		writeGateError(w, r, oErr)
+		return
+	}
 	resp := v1.ViewResponse{
 		Entry:    h.serializer.forWire(r.Context(), result.Entry, entryRels, h.schema().Meta, plural),
 		Sections: make([]v1.ViewSection, 0, len(sections)),
 		Create:   sectionCreateMenuToV1(headerCreateMenu(sections)),
 	}
+	resp.Entry.Owner = owner[result.Entry.ID]
 	// The entity page autosaves the entry's body and properties, so the
 	// entry carries their version tokens (TKT-2VDVHF). It has no relations
 	// token: the entry is serialized without the face-scoped neighbor filter
@@ -1002,7 +1009,11 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 
 		// Convert entities
 		for _, e := range sec.Entities {
-			v1Sec.Entities = append(v1Sec.Entities, sectionEntityToV1(e))
+			v1e := sectionEntityToV1(e)
+			if sec.Display == dataentryconfig.DisplayRelated {
+				v1e.Owner = owner[e.ID]
+			}
+			v1Sec.Entities = append(v1Sec.Entities, v1e)
 		}
 
 		// Convert columns
@@ -1066,6 +1077,23 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 		r.Context(), h.store, h.viewReader, s.Meta, viewContentBlobs(result.Entry, sections)...)
 
 	writeV1JSON(w, http.StatusOK, resp)
+}
+
+// ownerRows is what a view resolves owners for, in one batch: the entry, so
+// the SPA can show it as part of its owner, and the rows of every `related`
+// section, so each links to where it is shown (TKT-QO14GB). Other displays
+// link to the row's own page, which redirects when the row is owned.
+func ownerRows(entry *entityPkg.Entity, sections []SectionData) []*entityPkg.Entity {
+	rows := []*entityPkg.Entity{entry}
+	for _, sec := range sections {
+		if sec.Display != dataentryconfig.DisplayRelated {
+			continue
+		}
+		for _, e := range sec.Entities {
+			rows = append(rows, &entityPkg.Entity{ID: e.ID, Type: e.Type})
+		}
+	}
+	return rows
 }
 
 // viewContentBlobs gathers every markdown body that will be rendered by

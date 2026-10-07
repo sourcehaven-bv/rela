@@ -1318,6 +1318,17 @@ type RelationDef struct {
 	// side(s); the API returns relations sorted by the corresponding managed
 	// order property (OrderPropertyOut / OrderPropertyIn).
 	Orderable OrderableMode `yaml:"orderable,omitempty"`
+
+	// Owning declares that the target of an edge of this type is part of
+	// its source (TKT-QO14GB): a subtask of a task. An owned entity has
+	// exactly one owner, an owner is never itself owned, and a cascading
+	// delete of the owner deletes what it owns. Navigation to an owned
+	// entity opens its owner's page.
+	//
+	// Ownership is a fact about the EDGE, not the type, so the same type can
+	// sit on both ends (a task owning tasks) and removing the edge promotes
+	// the target to an ordinary entity without a type change.
+	Owning bool `yaml:"owning,omitempty"`
 }
 
 // OutgoingOrderProperty returns the relation-property name that holds the
@@ -1679,4 +1690,18 @@ func (s *StringOrSlice) UnmarshalYAML(unmarshal func(any) error) error {
 	}
 	*s = slice
 	return nil
+}
+
+// IsOwning reports whether relType is declared `owning:` (TKT-QO14GB).
+//
+// A package function rather than a method: Metamodel's exported API is capped
+// (plimsoll).
+//
+// Nil: accepted for m; a nil metamodel declares no owning relation.
+func IsOwning(m *Metamodel, relType string) bool {
+	if m == nil {
+		return false
+	}
+	def, ok := m.Relations[relType]
+	return ok && def.Owning
 }
