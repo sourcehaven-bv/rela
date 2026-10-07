@@ -1686,7 +1686,7 @@ lists:
 | Key        | Type   | Description |
 |------------|--------|-------------|
 | `property` | string | The property to group by. Required. It must be a single value, not a `list: true` property. |
-| `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (`green`, `amber`, `red`, `grey` or `blue`). Needs an enum property. |
+| `groups`   | list   | Optional. Per value: `value` (required, must be one of the enum's values), `label`, and `color` (`green`, `amber`, `red`, `grey`, `blue` or `purple`). Needs an enum property. |
 | `buckets`  | string | `relative` groups a date by how far away it is. See [Date buckets](#date-buckets). |
 | `labels`   | map    | Section titles for the date buckets. Only with `buckets`. |
 | `max_rows` | int    | How many rows the list loads, from 1 to 2000. Default 500. |
@@ -3124,7 +3124,7 @@ kanbans:
 | `relation`   | string | Required. A relation from the card type with `max_outgoing: 1` and exactly one target type. |
 | `offered_by` | string | Optional. A relation from the page's entity to the same target type. On a page tab, the columns are the targets the page's entity offers, in that relation's order. |
 | `order_by`   | string | Optional. A property of the target type that orders the columns when there is no `offered_by` or no page. Ties sort by title. |
-| `style_from` | string | Optional. An enum property of the target type. Each column heading takes its colour from its target's value, through the app `styles:`, the same way a relation field's `style_from` colours its badge. |
+| `style_from` | string | Optional. An enum property of the target type. Each column heading takes its color from its target's value, through the app `styles:`, the same way a relation field's `style_from` colors its badge. |
 
 `columns_from` cannot be combined with `column_property`, `columns` or
 swimlanes. A card whose target is not one of the columns goes in an

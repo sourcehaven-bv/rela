@@ -3,7 +3,7 @@
 Demo for TKT-KJ3Q07 / RES-8CKUNJ: kanban columns from a single-valued
 relation (`columns_from`).
 
-```
+```sh
 cd examples/relation-status-demo
 rela --project . script scripts/seed.lua   # once
 rela-server -project . -port 8957

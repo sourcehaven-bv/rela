@@ -244,14 +244,21 @@ after them.
 To re-point a bounded relation, change it in one PATCH. Send the new edges as
 `"data": [...]`, or send the old ones in `remove` and the new ones in `add`.
 This works on either side: use the inverse name to change the edges from the
-target. The removed edges do not count against the bound. On Postgres the
-change is one transaction, so a failure leaves the edges as they were. The
-file and memory stores do not roll back. They create the new edges before
-they remove the old ones, so a failure part way leaves an extra edge, which
-`analyze cardinality` reports, and never a missing one.
+target. The removed edges do not count against the bound. On Postgres and
+SQLite the change is one transaction, so a failure leaves the edges as they
+were. The file and memory stores do not roll back. They create the new edges
+before they remove the old ones, so a failure part way leaves an extra edge,
+which `analyze cardinality` reports, and never a missing one.
+
+A new edge whose types the relation does not allow is still written, with a
+warning. In a re-point, rela writes such an edge first and then makes the rest
+of the change. These are two steps, so this case is not atomic on any store:
+if the second step fails, the new edge stays as an extra edge.
 
 In CalDAV, moving a to-do to another collection works the same way when the
-membership relation allows one edge per to-do.
+membership relation allows one edge per to-do. Only a to-do put into a new
+collection moves. An edit of a to-do in a collection it has left does not move
+it back; the server refuses the membership and keeps the edit.
 
 ### Orphan Detection
 
