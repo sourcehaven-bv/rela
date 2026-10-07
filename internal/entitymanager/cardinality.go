@@ -273,7 +273,7 @@ func (rp *relationReplace) prepare(ctx context.Context) error {
 				entity.FormatStateRef(c.Key.From, c.Key.FromFace), c.Key.Type, c.Key.To)
 		}
 		seen[c.Key] = true
-		rel, err := m.prepareRelationCreate(ctx, c.Key, c.Opts)
+		rel, err := prepareRelationCreate(ctx, m, c.Key, c.Opts)
 		if _, soft := errors.AsType[*InvalidRelationError](err); soft {
 			if invalid == nil {
 				invalid = err
@@ -350,7 +350,7 @@ func (rp *relationReplace) write(ctx context.Context, view store.Store) ([]*enti
 		pending = append(pending, c.Key)
 	}
 	for i, c := range rp.creates {
-		if err := rp.m.writeRelationCreate(ctx, view, c.Key, rp.rels[i], rp.leaving); err != nil {
+		if err := writeRelationCreate(ctx, view, rp.m.deps.Meta, c.Key, rp.rels[i], rp.leaving); err != nil {
 			return nil, err
 		}
 	}

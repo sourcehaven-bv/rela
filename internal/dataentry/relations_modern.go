@@ -339,7 +339,7 @@ func (h *writeHandler) applyRelationsModern(
 ) ([]Warning, error) {
 	var warnings []Warning
 	for bodyKey, upd := range desired {
-		ws, err := h.applyRelationWrapper(ctx, addr, bodyKey, upd)
+		ws, err := applyRelationWrapper(ctx, h, addr, bodyKey, upd)
 		warnings = append(warnings, ws...)
 		if err != nil {
 			return warnings, err
@@ -349,8 +349,8 @@ func (h *writeHandler) applyRelationsModern(
 }
 
 // applyRelationWrapper is applyRelationsModern for one relation wrapper.
-func (h *writeHandler) applyRelationWrapper(
-	ctx context.Context, addr entity.Ref, bodyKey string, upd v1.RelationsUpdate,
+func applyRelationWrapper(
+	ctx context.Context, h *writeHandler, addr entity.Ref, bodyKey string, upd v1.RelationsUpdate,
 ) ([]Warning, error) {
 	meta := h.schema().Meta
 	canonical, incoming, ok := resolveDirection(meta, bodyKey)

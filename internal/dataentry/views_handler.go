@@ -1359,7 +1359,7 @@ type idResolver interface {
 // a readable face. Otherwise the world picks the row first and the gate
 // checks that row's face.
 func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []string) map[string]string {
-	served := h.visibleHeaders(ctx, svc, ids)
+	served := visibleHeaders(ctx, h.viewReader, svc, ids)
 	titles := make(map[string]string, len(served))
 	for id, hd := range served {
 		titles[id] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
@@ -1368,9 +1368,12 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 }
 
 // visibleHeaders is [viewsHandler.visibleTitles] returning the redacted
-// headers, for a caller that needs more of the target than its title.
-func (h *viewsHandler) visibleHeaders(ctx context.Context, svc Services, ids []string) map[string]store.EntityHeader {
-	if r, ok := h.viewReader.(idResolver); ok {
+// headers, read through vr, for a caller that needs more of the target than
+// its title.
+func visibleHeaders(
+	ctx context.Context, vr visibility.Reader, svc Services, ids []string,
+) map[string]store.EntityHeader {
+	if r, ok := vr.(idResolver); ok {
 		return r.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
 	}
 	sel := store.InWorld(worldScopeFrom(ctx))
@@ -1384,7 +1387,7 @@ func (h *viewsHandler) visibleHeaders(ctx context.Context, svc Services, ids []s
 		headers = append(headers, hd)
 	}
 	var visible []store.EntityHeader
-	if hf, ok := h.viewReader.(visibility.HeaderFilterer); ok {
+	if hf, ok := vr.(visibility.HeaderFilterer); ok {
 		visible = hf.FilterHeaders(ctx, headers)
 	} else {
 		// No header capability: gate the same batch as whole entities.
@@ -1397,7 +1400,7 @@ func (h *viewsHandler) visibleHeaders(ctx context.Context, svc Services, ids []s
 			}
 			ents = append(ents, e)
 		}
-		for _, e := range h.viewReader.Filter(ctx, ents) {
+		for _, e := range vr.Filter(ctx, ents) {
 			visible = append(visible, store.HeaderOf(e))
 		}
 	}

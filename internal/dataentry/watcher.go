@@ -250,17 +250,16 @@ func (a *App) pumpStoreEvents(events <-chan store.Event) {
 			// relation fields. Mark both ends' types stale so those views
 			// re-fetch; the per-connection read gate applies as for any
 			// entity event.
-			for _, t := range a.relationEndTypes(ev.RelationType) {
+			for _, t := range relationEndTypes(a.State(), ev.RelationType) {
 				a.broker.broadcastEntityChange(t)
 			}
 		}
 	}
 }
 
-// relationEndTypes is every entity type a relation can start or end at, each
-// once. Unknown relation types yield nothing.
-func (a *App) relationEndTypes(relation string) []string {
-	state := a.State()
+// relationEndTypes is every entity type a relation of state's metamodel can
+// start or end at, each once. Unknown relation types yield nothing.
+func relationEndTypes(state *Schema, relation string) []string {
 	if state == nil || state.Meta == nil {
 		return nil
 	}

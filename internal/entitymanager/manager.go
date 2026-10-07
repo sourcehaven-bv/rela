@@ -2431,7 +2431,7 @@ func (m *Manager) CreateRelation(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	ctx = withStoreAttribution(ctx)
-	rel, err := m.prepareRelationCreate(ctx, key, opts)
+	rel, err := prepareRelationCreate(ctx, m, key, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -2458,7 +2458,7 @@ func (m *Manager) CreateRelation(
 	// The GetRelation pre-check above is advisory; the store's atomic
 	// create is the real guard, and a conflict surfaces as
 	// ErrRelationAlreadyExists (BUG-ZWTDH9).
-	create := func(st store.Store) error { return m.writeRelationCreate(ctx, st, key, rel, nil) }
+	create := func(st store.Store) error { return writeRelationCreate(ctx, st, m.deps.Meta, key, rel, nil) }
 	var createErr error
 	if relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) {
 		createErr = m.deps.Store.Tx(ctx, create)
@@ -2479,8 +2479,8 @@ func (m *Manager) CreateRelation(
 // prepareRelationCreate runs everything a relation create checks before it
 // writes: the face, the ACL, both endpoints and the relation-type tuple. It
 // returns the relation to write, with the template and opts applied.
-func (m *Manager) prepareRelationCreate(
-	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
+func prepareRelationCreate(
+	ctx context.Context, m *Manager, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	from, relType, to := key.From, key.Type, key.To
 	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
@@ -2553,14 +2553,14 @@ func (m *Manager) prepareRelationCreate(
 // cardinality bound, the managed order, then the store create.
 //
 // Edges in leaving are not counted against the bounds (ReplaceRelations).
-func (m *Manager) writeRelationCreate(
-	ctx context.Context, st store.Store, key entity.RelationKey, rel *entity.Relation,
+func writeRelationCreate(
+	ctx context.Context, st store.Store, meta *metamodel.Metamodel, key entity.RelationKey, rel *entity.Relation,
 	leaving map[entity.RelationKey]bool,
 ) error {
-	if err := checkRelationCapacity(ctx, st, m.deps.Meta, key, leaving, nil); err != nil {
+	if err := checkRelationCapacity(ctx, st, meta, key, leaving, nil); err != nil {
 		return err
 	}
-	if err := m.assignManagedOrder(ctx, st, rel, key.Type); err != nil {
+	if err := assignManagedOrder(ctx, st, meta, rel, key.Type); err != nil {
 		return err
 	}
 	_, err := st.CreateRelation(ctx, key, &store.RelationData{

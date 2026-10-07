@@ -102,7 +102,7 @@ type SectionFieldData struct {
 	// has already rejected a name/type mismatch at config load (TKT-3R7RF3).
 	Widget string
 	// Relation and Targets describe a relation field (TKT-CADCFX); see
-	// [viewsHandler.resolveRelationFields].
+	// [resolveRelationFields].
 	Relation  string
 	Targets   []v1.SectionFieldTarget
 	StyleFrom string
@@ -370,7 +370,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 				for _, f := range sec.Fields {
 					sd.Fields = append(sd.Fields, buildSectionFieldData(f, e, entDef, sec.Render))
 				}
-				h.resolveRelationFields(ctx, s, sd.Fields, e)
+				resolveRelationFields(ctx, h, s, sd.Fields, e)
 			case "content":
 				sd.Content = e.Content
 				sd.HasContent = e.Content != ""
@@ -563,8 +563,8 @@ func (h *viewsHandler) resolveSectionButtonsWithTraverse(
 // The targets go through the same read as a relation column: edges owned by
 // the entry's face, then the principal's read gate on the targets, so a
 // target the principal may not read is left out rather than shown by id.
-func (h *viewsHandler) resolveRelationFields(
-	ctx context.Context, s *Schema, fields []SectionFieldData, e *entity.Entity,
+func resolveRelationFields(
+	ctx context.Context, h *viewsHandler, s *Schema, fields []SectionFieldData, e *entity.Entity,
 ) {
 	columns := make([]dataentryconfig.ListColumn, len(fields))
 	has := false
@@ -589,7 +589,7 @@ func (h *viewsHandler) resolveRelationFields(
 	if len(ids) == 0 {
 		return
 	}
-	headers := h.visibleHeaders(ctx, svc, ids)
+	headers := visibleHeaders(ctx, h.viewReader, svc, ids)
 	for i, f := range fields {
 		for _, id := range targets[e.ID][i] {
 			hd, ok := headers[id]
