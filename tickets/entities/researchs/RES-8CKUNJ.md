@@ -2,8 +2,8 @@
 id: RES-8CKUNJ
 type: research
 title: 'Relation-backed status: how should boards and views use a single-valued status relation?'
-summary: Status as an entity with typed relation paths (has_status.kleur) read at request time; boards and lists take columns from the relation. Copying status properties onto the task was rejected.
-status: in-progress
+summary: Status as an entity behind a single-valued relation. Boards and lists take columns from the relation; views show it as a field coloured by style_from. Copying status properties onto the task was rejected.
+status: done
 ---
 
 ## Problem
@@ -175,3 +175,21 @@ Other column).
 Colour from the status entity uses `has_status.kleur`. A real colour property
 type (TKT-28FRME) is needed for free colours; until then `kleur` is an enum
 mapped through `styles:`.
+
+## Outcome
+
+Built on branch `demo/relation-backed-status`, with a demo in
+`examples/relation-status-demo`:
+
+- TKT-65LVAK: `max_outgoing` and `max_incoming` are enforced on write. A
+  re-point is one transaction, whether the PATCH sends `data` or
+  `add` plus `remove`.
+- TKT-KJ3Q07 and TKT-JO8PN3: boards and lists take columns and sections from a
+  relation.
+- TKT-CADCFX: a view shows a relation as a field, `fields: - relation:`. Its
+  `style_from` colours a target by an enum property of the target. The board
+  column uses the same key.
+
+Colour therefore comes from `style_from: categorie`, not from a
+`has_status.kleur` path. TKT-DA9C0L (relation paths) is no longer needed for
+colour. It stays open for showing other target values.
