@@ -1174,7 +1174,9 @@ func buildFieldPolicy(meta *metamodel.Metamodel, st store.Store, d *acl.Declarat
 //
 // A condition's `related(...)` is answered ungated from st: an automation is
 // system policy, so what it sees must not depend on who made the write.
-func buildAutomation(meta *metamodel.Metamodel, st store.Store) (*automation.Engine, *autocascade.Runner, error) {
+func buildAutomation(
+	meta *metamodel.Metamodel, st store.Store, bg autocascade.BackgroundScripts,
+) (*automation.Engine, *autocascade.Runner, error) {
 	if len(meta.Automations) == 0 {
 		return nil, nil, nil
 	}
@@ -1186,7 +1188,7 @@ func buildAutomation(meta *metamodel.Metamodel, st store.Store) (*automation.Eng
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
-	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
+	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine, Background: bg})
 	// coverage-ignore-start: defensive: autocascade.New only errors on a nil Engine; autoEngine is freshly built by
 	// NewEngineFromMetamodel just
 	// above and is never nil
@@ -1217,6 +1219,18 @@ type options struct {
 	// from, given the assembled store's state. Nil means the project's .rela
 	// directory.
 	hostConfig func(state.KV) (HostConfig, error)
+
+	// backgroundAutomationJobs runs `background: true` automation actions
+	// on the job queue instead of in the foreground.
+	backgroundAutomationJobs bool
+}
+
+// WithBackgroundAutomationJobs runs `background: true` automation actions
+// on the job queue (TKT-2Q4UFI). Only a long-lived process may set it: a
+// one-shot command exits before its queue runs the job, so without this
+// option the action runs in the foreground, right after the save.
+func WithBackgroundAutomationJobs() Option {
+	return func(o *options) { o.backgroundAutomationJobs = true }
 }
 
 // HostConfig is where a project's secrets and AI and mail settings come
@@ -2246,15 +2260,6 @@ func assemble(
 		return nil, err
 	}
 
-	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st)
-	// coverage-ignore-start: defensive: buildAutomation only errors when autocascade.New fails, which requires a nil
-	// Engine that buildAutomation
-	// never produces (see the scupper there)
-	if err != nil {
-		return nil, err
-	}
-	// coverage-ignore-end
-
 	tr, templater, err := tracerAndTemplater(st, base.worlds.DefaultWorld(), cfg)
 	if err != nil {
 		return nil, err
@@ -2307,6 +2312,11 @@ func assemble(
 		}
 	}()
 
+	autoJobs, autoEngine, cascadeRunner, err := buildAutomationWithJobs(base, st, stateKV, jobQueue)
+	if err != nil {
+		return nil, err
+	}
+
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
 	readDeps, err := base.cascadeReadDeps(st, tr, searcher, stateKV, aclDeclarative, fieldPol.redactor)
@@ -2334,7 +2344,7 @@ func assemble(
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
-	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc), templater, resolvedACL,
+	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc, autoJobs), templater, resolvedACL,
 		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet, attachLocker, fieldPol.gate)
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
@@ -2388,8 +2398,48 @@ func assemble(
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, commentSvc, versions,
 		resolvedACL, aclDeclarative, fieldPol.redactor, schedState,
 	)
-	assembled.attachLocker = attachLocker
-	return assembled, nil
+	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine)
+}
+
+// finishAssembly sets what newServices cannot take as a constructor input
+// and connects the background-action scheduler, whose job handler needs the
+// finished services.
+func finishAssembly(
+	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *automation.Engine,
+) (*Services, error) {
+	s.attachLocker = attachLocker
+	if err := autoJobs.bind(servicesJobRunner{s}, engine); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// buildAutomationWithJobs builds the automation engine and cascade runner
+// together with the background-action scheduler the runner hands work to.
+// The scheduler needs the state store and job queue, so this runs after
+// buildRuntimeServices.
+func buildAutomationWithJobs(
+	base *SharedBase, st store.Store, kv state.KV, q jobs.Queue,
+) (*automationJobs, *automation.Engine, *autocascade.Runner, error) {
+	autoJobs, err := newAutomationJobs(base.meta, kv, st, automationJobQueue(base, q))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	// Errors only on a nil Engine, which buildAutomation never produces.
+	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st, autoJobs)
+	if err != nil { // coverage-ignore: defensive: see above
+		return nil, nil, nil, err
+	}
+	return autoJobs, autoEngine, cascadeRunner, nil
+}
+
+// automationJobQueue is the queue background automation actions use, or
+// nil for foreground delivery.
+func automationJobQueue(base *SharedBase, q jobs.Queue) jobs.Client {
+	if !base.opts.backgroundAutomationJobs {
+		return nil
+	}
+	return q
 }
 
 // newServices bundles the assembled collaborators into the Services value.

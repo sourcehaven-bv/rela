@@ -20,7 +20,8 @@ import (
 // the per-call passing is what dissolves the future constructor
 // cycle with EntityManager.
 type Runner struct {
-	engine *automation.Engine
+	engine     *automation.Engine
+	background BackgroundScripts
 }
 
 // Deps is the constructor input for [New]. Using a struct keeps the
@@ -30,6 +31,11 @@ type Deps struct {
 	// Engine is the rule-evaluation engine. Runner calls
 	// engine.Process on each newly created entity in a cascade.
 	Engine *automation.Engine
+
+	// Background schedules `background: true` script actions. Optional: a
+	// project without such actions never calls it, and one that has them
+	// gets an outcome error per action when it is nil.
+	Background BackgroundScripts
 }
 
 // New constructs a Runner. Required collaborators must be non-nil per
@@ -38,7 +44,7 @@ func New(d Deps) (*Runner, error) {
 	if d.Engine == nil {
 		return nil, errors.New("autocascade: New: Engine is required")
 	}
-	return &Runner{engine: d.Engine}, nil
+	return &Runner{engine: d.Engine, background: d.Background}, nil
 }
 
 // queueItem is one pending automation result to process during a BFS
@@ -333,6 +339,10 @@ func (r *Runner) executeScriptActions(
 			// Empty action — skip (matches pre-refactor behavior).
 			continue
 		}
+		if action.Background {
+			r.enqueueScriptAction(ctx, action, newEntity, outcome)
+			continue
+		}
 		if scripts == nil {
 			outcome.Errors = append(outcome.Errors,
 				fmt.Sprintf("automation %q: no ScriptRunner configured; cannot run scripted action",
@@ -370,6 +380,28 @@ func (r *Runner) executeScriptActions(
 			"automation", action.AutomationName,
 			"entity", triggerID,
 			"error", err)
+		outcome.Errors = append(outcome.Errors, err.Error())
+	}
+}
+
+// enqueueScriptAction hands a background action to the scheduler. A failure
+// is recorded like a failed inline script: the save stands either way.
+func (r *Runner) enqueueScriptAction(
+	ctx context.Context, action automation.LuaToExecute, trigger *entity.Entity, outcome *Outcome,
+) {
+	if r.background == nil || trigger == nil {
+		outcome.Errors = append(outcome.Errors,
+			fmt.Sprintf("automation %q: cannot schedule background action", action.AutomationName))
+		return
+	}
+	err := r.background.EnqueueScript(triggeredByCtx(ctx, action.AutomationName), BackgroundScript{
+		Automation: action.AutomationName,
+		LuaFile:    action.FilePath,
+		Ref:        trigger.Ref(),
+	})
+	if err != nil {
+		slog.Warn("automation background action failed",
+			"automation", action.AutomationName, "entity", trigger.ID, "error", err)
 		outcome.Errors = append(outcome.Errors, err.Error())
 	}
 }

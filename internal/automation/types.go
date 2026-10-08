@@ -20,11 +20,14 @@ type Automation struct {
 
 // Trigger specifies conditions that activate an automation.
 type Trigger struct {
-	Entity          []string
-	Property        string
-	Becomes         string
-	From            string
-	Created         bool
+	Entity   []string
+	Property string
+	Becomes  string
+	From     string
+	Created  bool
+	// Updated fires on an update that changes a property or the body. A
+	// rename re-runs only background actions (see [EventEntityRenamed]).
+	Updated         bool
 	RelationCreated string
 	RelationRemoved string
 	// Faces limits the trigger to specific content states, named as declared
@@ -76,6 +79,8 @@ type Action struct {
 	// ambient capabilities (http/ai/mail/write_file/named secrets) the script
 	// may reach. Zero value grants none.
 	Capabilities metamodel.Capabilities
+	// Background runs the LuaFile as a background job (TKT-2Q4UFI).
+	Background bool
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
@@ -145,6 +150,12 @@ const (
 
 	// EventRelationRemoved fires when a relation is removed.
 	EventRelationRemoved
+
+	// EventEntityRenamed fires when an entity's id changes. Only the
+	// background job service raises it, and only background actions act on
+	// it: a pending job names the old id, so every created, updated or
+	// property trigger re-runs for the new one.
+	EventEntityRenamed
 )
 
 // EntityToCreate specifies an entity to be created by automation.
@@ -197,6 +208,9 @@ type LuaToExecute struct {
 	// ambient capabilities (http/ai/mail/write_file/named secrets) the script
 	// may reach. Zero value grants none.
 	Capabilities metamodel.Capabilities
+	// Background asks the cascade to enqueue the script rather than run it
+	// (TKT-2Q4UFI). Set only with FilePath.
+	Background bool
 }
 
 // CapabilityFields exposes the grant as plain values so consumers that may not

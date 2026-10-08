@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/Sourcehaven-BV/rela/internal/canonical"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -263,6 +264,7 @@ func convertFromMetamodel(def metamodel.AutomationDef) (Automation, error) {
 			Becomes:         def.On.Becomes,
 			From:            def.On.From,
 			Created:         def.On.Created,
+			Updated:         def.On.Updated,
 			RelationCreated: def.On.RelationCreated,
 			RelationRemoved: def.On.RelationRemoved,
 			Faces:           []string(def.On.Faces),
@@ -284,6 +286,7 @@ func convertFromMetamodel(def metamodel.AutomationDef) (Automation, error) {
 			// automation's `capabilities:` block (TKT-YH52OM), which is the
 			// hand-copy failure mode this hop is most prone to.
 			Capabilities: a.Capabilities,
+			Background:   a.Background,
 		}
 		if a.CreateRelation != nil {
 			action.CreateRelation = &CreateRelationAction{
@@ -377,10 +380,18 @@ func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event, res 
 		return trigger.Created
 
 	case EventEntityUpdated:
+		if trigger.Updated {
+			return entityChanged(event)
+		}
 		if trigger.Property == "" {
 			return false
 		}
 		return e.matchesPropertyChange(trigger, event)
+
+	case EventEntityRenamed:
+		// A pending job names the old id and finds nothing, so a rename
+		// re-runs every entity trigger that could have scheduled one.
+		return trigger.Created || trigger.Updated || trigger.Property != ""
 
 	case EventRelationCreated:
 		if trigger.RelationCreated == "" {
@@ -399,6 +410,20 @@ func (e *Engine) matches(ctx context.Context, trigger Trigger, event Event, res 
 }
 
 // matchesPropertyChange checks if a property change event matches the trigger.
+// entityChanged reports whether an update changed a property or the body.
+// An update without the previous state counts as a change.
+func entityChanged(event Event) bool {
+	if event.Entity == nil {
+		return false
+	}
+	if event.OldEntity == nil {
+		return true
+	}
+	// The canonical hash normalizes value types, so a script writing back a
+	// float64 where the store held an int is not a change.
+	return canonical.HashEntity(*event.Entity) != canonical.HashEntity(*event.OldEntity)
+}
+
 func (e *Engine) matchesPropertyChange(trigger Trigger, event Event) bool {
 	if event.Entity == nil {
 		return false
@@ -576,6 +601,7 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 			AutomationName: automationName,
 			AllowACLBypass: action.AllowACLBypass,
 			Capabilities:   action.Capabilities,
+			Background:     action.Background,
 		})
 	}
 }
