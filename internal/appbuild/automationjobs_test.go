@@ -2,9 +2,11 @@ package appbuild_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,7 +23,8 @@ const backgroundSchema = `
 entities:
   note:
     label: Note
-    id_type: short
+    # manual: the rename tests need it (rename is manual-id only).
+    id_type: manual
     id_prefix: "NOTE-"
     properties:
       title: {type: string, required: true}
@@ -56,6 +59,9 @@ func writeBackgroundSchema(t *testing.T, schema string) string {
 	return root
 }
 
+// noteSeq mints manual note ids.
+var noteSeq atomic.Int64
+
 func createNote(t *testing.T, svc *appbuild.Services) *entity.Entity {
 	t.Helper()
 	return createNoteWith(t, svc, map[string]any{"title": "one"})
@@ -65,7 +71,7 @@ func createNoteWith(t *testing.T, svc *appbuild.Services, props map[string]any) 
 	t.Helper()
 	res, err := svc.EntityManager().CreateEntity(asAlice(), &entity.Entity{
 		Type: "note", Properties: props,
-	}, entity.CreateOptions{})
+	}, entity.CreateOptions{ID: fmt.Sprintf("NOTE-%d", noteSeq.Add(1))})
 	require.NoError(t, err)
 	require.Empty(t, res.AutomationErrors)
 	return res.Entity
