@@ -67,8 +67,8 @@ paths:
 
   Migration/GC writes are the third sanctioned raw-store exception (after
   `db migrate` and `history-purge`): operator-shell trust (or, for a
-  Configure save, the `config:edit` grant, which is admin-equivalent), no ACL, explicit
-  audit records (`data-migration`/`data-gc`), `store.WithAttribution`, and
+  Configure save, the `config:edit` grant, which is admin-equivalent), no
+  ACL, explicit audit records (`data-migration`/`data-gc`), `store.WithAttribution`, and
   synchronous pre-delete version capture on pg (the sweep cannot reconstruct
   deleted rows). **Steps must stay idempotent — with the applied list as the
   only double-apply guard, re-run IS the crash recovery.** The Lua step is a
