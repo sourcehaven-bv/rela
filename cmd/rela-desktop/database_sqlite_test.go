@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/desktop"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -69,7 +70,8 @@ func TestDatabaseProject_OpensAndRoundTrips(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(root, project.CacheDir), 0o755))
 	paths, err := project.Discover(root, fsys)
 	require.NoError(t, err)
-	_, err = appbuild.LoadProjectConfig(context.Background(), fsys, paths, src)
+	_, err = appbuild.LoadProjectConfig(context.Background(), fsys, paths, src,
+		appbuild.ConfigImportOptions{Audit: audit.Nop{}})
 	require.NoError(t, err)
 	require.True(t, isRelaProject(root), "a directory holding only rela.db is a project")
 
@@ -110,7 +112,8 @@ func TestDatabaseProject_SetupFromDatabaseSchema(t *testing.T) {
 	fsys := storage.NewSafeFS(storage.NewOsFS())
 	paths, err := project.Discover(root, fsys)
 	require.NoError(t, err)
-	_, err = appbuild.LoadProjectConfig(context.Background(), fsys, paths, src)
+	_, err = appbuild.LoadProjectConfig(context.Background(), fsys, paths, src,
+		appbuild.ConfigImportOptions{Audit: audit.Nop{}})
 	require.NoError(t, err)
 
 	d := newTestDesktop(t)

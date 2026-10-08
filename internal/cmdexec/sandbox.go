@@ -3,6 +3,7 @@ package cmdexec
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 )
 
@@ -32,10 +33,10 @@ type Spec struct {
 	WritableDir string
 	// Network allows egress when true. Default false — the whole point.
 	Network bool
-	// ExtraReadOnly are additional host paths bound read-only into the sandbox,
-	// beyond the standard binary/library allowlist. The motivating case is a
-	// scanner daemon's unix socket (clamd): the socket lives outside the default
-	// mount view, so a scan command cannot reach it unless its path is bound.
+	// ExtraReadOnly are host paths bound read-only into the sandbox beyond the
+	// system binary and library directories: the operator's list
+	// ([SetHostReadOnly]) followed by any per-runner extras
+	// ([WithExtraReadOnly]). A path that contains WritableDir is refused.
 	// Binding a socket does NOT grant network egress — a unix socket is a
 	// filesystem object, and the network namespace stays isolated. A path that
 	// does not exist on the host is skipped, not an error.
@@ -118,6 +119,15 @@ func validateSpec(argv []string, spec Spec) error {
 	}
 	if spec.WritableDir == "" {
 		return errors.New("cmdexec: sandbox: WritableDir is required")
+	}
+	// A read-only bind is applied after the writable dir's bind, so one that
+	// contains it would make the command's only writable directory read-only.
+	// [unsafeReadPath] already refuses the OS temp dir and its parents; this
+	// covers any other WritableDir (WithTempDir).
+	for _, p := range spec.ExtraReadOnly {
+		if within(filepath.Clean(spec.WritableDir), filepath.Clean(p)) {
+			return fmt.Errorf("cmdexec: sandbox: read path %s contains the writable directory %s", p, spec.WritableDir)
+		}
 	}
 	return nil
 }

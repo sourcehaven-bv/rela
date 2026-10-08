@@ -1370,7 +1370,7 @@ func (m *Manager) processUpdateAutomation(
 // the principal would face deleting the edge directly, which is the property
 // that makes this gate meaningful rather than merely stricter.
 func (m *Manager) authorizeCascadeRelations(
-	ctx context.Context, tx store.Store, id string, incoming, outgoing []*entity.Relation,
+	ctx context.Context, tx store.Store, id string, self []*entity.Entity, incoming, outgoing []*entity.Relation,
 ) error {
 	// The FACE is part of the key, not just the pair (BUG-64MU2Q): a
 	// content-scoped edge is authorized against the state that owns it, so
@@ -1386,7 +1386,10 @@ func (m *Manager) authorizeCascadeRelations(
 		fromFace          entity.Face
 		familyFaces       string
 	}
-	seen := make(map[subject]bool)
+	// The decision is cached, not just marked seen: a later edge of the same
+	// subject must get the same answer, or the hidden-edge rule below would
+	// depend on which of two equal edges came first.
+	decided := make(map[subject]error)
 	// One lookup per source id, not per edge: every face of a family has the
 	// same type, so a hub's thousands of edges from a few sources cost a few
 	// reads.
@@ -1422,10 +1425,9 @@ func (m *Manager) authorizeCascadeRelations(
 			relType: rel.Type, fromType: sub.FromType, fromFace: rel.FromFace,
 			familyFaces: fmt.Sprint(sub.FamilyFaces),
 		}
-		if seen[key] {
-			return nil
+		if err, done := decided[key]; done {
+			return err
 		}
-		seen[key] = true
 
 		// FromID is deliberately EMPTY. The decision is a pure function of
 		// (relation type, source type, source face, op) — FromID is never
@@ -1436,7 +1438,34 @@ func (m *Manager) authorizeCascadeRelations(
 		// would find nothing, though it was equally refused. An empty
 		// FromID says "this type-and-face class", which is what was
 		// actually decided.
-		return m.authorizeAndAudit(ctx, acl.WriteRequest{Op: acl.OpDelete, Subject: sub})
+		err := m.authorizeAndAudit(ctx, acl.WriteRequest{Op: acl.OpDelete, Subject: sub})
+		decided[key] = err
+		return err
+	}
+
+	// A relation the caller cannot see is nonexistent to them, so a denial
+	// over one names nothing about it (BUG-1BXQDD). It is reported only when
+	// no visible relation is denied: answering with the first denial in store
+	// order would tell a caller who expects a visible edge's denial that a
+	// hidden edge came first. Every edge counts as hidden when visibility
+	// cannot be decided.
+	vis := newEdgeVisibility(faceGateOf(m), tx)
+	visErr := vis.seed(ctx, self)
+	if visErr == nil {
+		visErr = vis.load(ctx, append(append([]*entity.Relation(nil), incoming...), outgoing...))
+	}
+	var hiddenErr error
+	judge := func(rel *entity.Relation, err error, describe func() error) error {
+		if err == nil {
+			return nil
+		}
+		if visErr == nil && vis.visible(rel) {
+			return describe()
+		}
+		if hiddenErr == nil {
+			hiddenErr = hiddenEdgeFailure(id, err)
+		}
+		return nil
 	}
 
 	// Split by direction so the error can name the FAR endpoint. For an
@@ -1445,18 +1474,28 @@ func (m *Manager) authorizeCascadeRelations(
 	// makes the error actionable: the other endpoint, whose type is what
 	// actually blocked the delete.
 	for _, rel := range incoming {
-		if err := check(rel); err != nil {
+		err := check(rel)
+		if jErr := judge(rel, err, func() error {
 			return fmt.Errorf("cannot delete %s: its incoming %s relation from %s: %w",
 				id, rel.Type, entity.FormatStateRef(rel.From, rel.FromFace), err)
+		}); jErr != nil {
+			return jErr
 		}
 	}
 	for _, rel := range outgoing {
-		if err := check(rel); err != nil {
+		err := check(rel)
+		if jErr := judge(rel, err, func() error {
 			return fmt.Errorf("cannot delete %s: its outgoing %s relation to %s: %w",
 				id, rel.Type, rel.To, err)
+		}); jErr != nil {
+			return jErr
 		}
 	}
-	return nil
+	if visErr != nil && hiddenErr != nil {
+		slog.Error("entitymanager: cannot tell which relations the caller sees on a delete",
+			"id", id, "error", visErr)
+	}
+	return hiddenErr
 }
 
 // cascadeCapture is what deleteEntityInTx hands back for the caller to act on
@@ -1515,7 +1554,7 @@ func (m *Manager) deleteEntityInTx(
 	// concurrent writer. Denials abort before any write, so nothing unwinds
 	// — which matters because fs/mem do not roll back (store.Transactor).
 	if cascade && totalRelations > 0 {
-		if aErr := m.authorizeCascadeRelations(ctx, tx, id, incoming, outgoing); aErr != nil {
+		if aErr := m.authorizeCascadeRelations(ctx, tx, id, nil, incoming, outgoing); aErr != nil {
 			return nil, nil, aErr
 		}
 	}
@@ -2074,7 +2113,7 @@ func (m *Manager) DeleteEntityFace(
 			return ErrHasRelations
 		}
 		if len(incoming)+len(outgoing) > 0 {
-			if aErr := m.authorizeCascadeRelations(ctx, tx, id, incoming, outgoing); aErr != nil {
+			if aErr := m.authorizeCascadeRelations(ctx, tx, id, nil, incoming, outgoing); aErr != nil {
 				return aErr
 			}
 		}
@@ -2271,12 +2310,37 @@ func (m *Manager) RenameEntity(
 	if rErr := requireReadableRow(ctx, faceGateOf(m), oldID, family); rErr != nil {
 		return nil, rErr
 	}
+	if mErr := requireManualID(m.deps.Meta, family); mErr != nil {
+		return nil, mErr
+	}
 	authorized := make(familyAuthorization, len(family))
 	if aclErr := m.authorizeRename(ctx, oldID, family, authorized); aclErr != nil {
 		return nil, aclErr
 	}
+	// Under a read gate the result reports only relations the caller can
+	// see. Counted before the rename, because the count must not fail a
+	// rename that already happened. Without a gate the store's own count
+	// stands: it is taken under the store's lock.
+	gate := faceGateOf(m)
+	visible := 0
+	if gate != nil {
+		n, cErr := readableRelationCount(ctx, gate, m.deps.Store, oldID)
+		if cErr != nil {
+			// The error text can name a neighbor the caller cannot see.
+			slog.Error("entitymanager: count visible relations for a rename", "id", oldID, "error", cErr)
+			return nil, fmt.Errorf("rename %s: %w", oldID, errRelationCheck)
+		}
+		visible = n
+	}
 	if opts.DryRun {
-		return renameEntity(ctx, m.deps.Store, oldID, newID, opts)
+		res, err := renameEntity(ctx, m.deps.Store, oldID, newID, opts)
+		if err != nil {
+			return nil, err
+		}
+		if gate != nil {
+			res.RelationsUpdated = visible
+		}
+		return res, nil
 	}
 
 	// Collect incident relations (with their content) BEFORE the rename,
@@ -2309,7 +2373,22 @@ func (m *Manager) RenameEntity(
 		return nil, txErr
 	}
 	r.record(ctx, renamed)
+	if gate != nil {
+		res.RelationsUpdated = visible
+	}
 	return res, nil
+}
+
+// requireManualID refuses to rename a family whose type generates its ids.
+// An unknown type is refused too: nothing declares its ids hand-typed.
+func requireManualID(meta *metamodel.Metamodel, family []*entity.Entity) error {
+	for _, e := range family {
+		def, ok := meta.GetEntityDef(e.Type)
+		if !ok || !def.IsManualID() {
+			return fmt.Errorf("%w (type %q)", ErrRenameNotSupported, e.Type)
+		}
+	}
+	return nil
 }
 
 // familyRename is one non-dry-run RenameEntity: the ids, the faces
@@ -2341,6 +2420,11 @@ func (r *familyRename) inTx(
 	family, err := familyRows(ctx, tx, r.oldID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("rename: load entity %q: %w", r.oldID, err)
+	}
+	// A face that appeared since the caller's check gets the id-type check
+	// too.
+	if mErr := requireManualID(r.m.deps.Meta, family); mErr != nil {
+		return nil, nil, mErr
 	}
 	if aErr := r.m.authorizeRename(ctx, r.oldID, family, r.authorized); aErr != nil {
 		return nil, nil, aErr
@@ -2640,6 +2724,9 @@ func (m *Manager) UpdateRelation(
 	// HTTP wire validators already cover the dataentry path; this is
 	// the engine-level backstop for MCP/Lua/CLI write paths.
 	relDef, hasDef := m.deps.Meta.Relations[relType]
+	if opts.Position != nil {
+		return moveRelation(ctx, m, key, relDef, hasDef, opts)
+	}
 	touchedOut := hasDef && relDef.OutgoingOrderProperty() != "" && touchesOrderKey(opts, relDef.OutgoingOrderProperty())
 	touchedIn := hasDef && relDef.IncomingOrderProperty() != "" && touchesOrderKey(opts, relDef.IncomingOrderProperty())
 	if hasDef {

@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { Entity, EntityOwner, EntityWorld, FieldAffordance, Mention } from '@/types'
+import type { Entity, EntityOwner, EntityWorld, FieldAffordance, Mention, RelationOrder } from '@/types'
 
 // Field data for view sections
 export interface ViewSectionField {
@@ -166,6 +166,9 @@ export interface ViewSection {
   tree?: ViewTreeNode[]
   // True when the node budget stopped a visible row from being emitted.
   truncated?: boolean
+  // Set when the rows are the entry's targets over one orderable relation,
+  // shown in that relation's order.
+  relationOrder?: RelationOrder
   // The section's opt-in create affordance. Absent unless the section's config
   // carries a `create:` block AND the principal may create something the
   // relation reaches — the detail page is read-only by default (TKT-651W).

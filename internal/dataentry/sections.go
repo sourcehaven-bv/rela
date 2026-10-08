@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -262,6 +263,9 @@ type SectionData struct {
 	HasContent   bool
 	AddInfo      *SectionAddInfo
 	LinkInfo     *SectionLinkInfo
+	// RelationOrder is set when the rows are shown in relation order; see
+	// sectionOrdering.
+	RelationOrder *v1.RelationOrder
 	// CreateInfo is the entity-detail view's opt-in create affordance
 	// (TKT-R4BMJM). Nil unless the section's config carries a `create:` block,
 	// which is what keeps TKT-651W's read-only default intact.
@@ -380,14 +384,9 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			if !exists {
 				entities = []*entity.Entity{}
 			}
-			// `sort:` orders a FLAT section. A nested one takes parent_sort /
-			// child_sort instead and orders each level inside buildNestedTree,
-			// where the per-parent cap is; validation refuses the wrong key
-			// for the display, so only one of the two can be set here.
-			//
 			// Sorted once for the section, before the display switch, so every
 			// flat mode honors it rather than each arm remembering to.
-			entities = newEntitySorter(sec.Sort, entities, s.Meta)(entities)
+			entities, sd.RelationOrder = sortSectionRows(ctx, h, sec, result, entities, s.Meta)
 			sd.IsEmpty = len(entities) == 0
 			ctx = primeVerdicts(ctx, h.affordances.resolver(), entities)
 
@@ -606,4 +605,27 @@ func resolveRelationFields(
 			fields[i].Targets = append(fields[i].Targets, t)
 		}
 	}
+}
+
+// sortSectionRows orders a section's rows: in relation order when the
+// section is shown in one (see [sectionOrdering]), which it also returns,
+// and by the section's `sort:` otherwise.
+//
+// `sort:` orders a FLAT section. A nested one takes parent_sort / child_sort
+// instead and orders each level inside buildNestedTree, where the
+// per-parent cap is; validation refuses the wrong key for the display, so
+// only one of the two can be set here.
+func sortSectionRows(
+	ctx context.Context, h *viewsHandler, sec ViewSection, result *viewResult,
+	rows []*entity.Entity, meta *metamodel.Metamodel,
+) ([]*entity.Entity, *v1.RelationOrder) {
+	ordering := sectionOrdering(ctx, h, sec, result)
+	if ordering == nil {
+		return newEntitySorter(sec.Sort, rows, meta)(rows), nil
+	}
+	// A copy: the collection is shared with every other section over the
+	// same source, which must keep traversal order.
+	rows = slices.Clone(rows)
+	ordering.sort(rows)
+	return rows, ordering.wire()
 }

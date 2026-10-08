@@ -93,16 +93,14 @@ func TestVersionHook_RenameCarriesPrevID(t *testing.T) {
 	// the rename version carries the acting identity, not a hardcoded one.
 	ctx := ctxWithPrincipal("bob", principal.ToolMCP)
 
-	e := entity.New("", "requirement")
-	e.Properties = map[string]any{"title": "R1"}
-	created, err := mgr.CreateEntity(ctx, e, entity.CreateOptions{})
+	created, err := mgr.CreateEntity(ctx, entity.New("api", "component"), entity.CreateOptions{ID: "api"})
 	if err != nil {
 		t.Fatalf("CreateEntity: %v", err)
 	}
 	oldID := created.Entity.ID
 	rec.records = nil // ignore anything before the rename
 
-	const newID = "REQ-9001"
+	const newID = "gateway"
 	if _, err := mgr.RenameEntity(ctx, oldID, newID, entity.RenameOptions{}); err != nil {
 		t.Fatalf("RenameEntity: %v", err)
 	}

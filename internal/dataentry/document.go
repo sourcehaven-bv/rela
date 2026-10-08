@@ -732,7 +732,7 @@ func (s *documentService) executeCommand(
 	// Temp files land in the OS temp dir, not the project root: the {in} file
 	// is runner-owned scratch, and a project checkout may legitimately be
 	// read-only.
-	runner, err := cmdexec.New(timeout, maxCommandOutputBytes)
+	runner, err := cmdexec.New(timeout, maxCommandOutputBytes, cmdexec.WithPurpose(cmdexec.PurposeTransform))
 	if err != nil {
 		return "", fmt.Errorf("build document command runner: %w", err)
 	}

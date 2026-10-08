@@ -126,6 +126,63 @@ roles conferred on the entity itself do not count.
 edges are not supported: their source is the edited entity, so the answer
 would be the same on every row.
 
+## Moving an edge (`position`)
+
+On a relation whose outgoing side is
+[orderable](../metamodel.md#ordered-relations-orderable), the single-edge
+route moves an edge among its source's other edges of that relation:
+
+```text
+PATCH /api/v1/projects/PRJ-1/relations/contains/TASK-7
+{"position": {"before": "TASK-2"}}
+```
+
+`position` names exactly one of these fields:
+
+| Field    | Moves the edge                                          |
+| -------- | ------------------------------------------------------- |
+| `before` | directly above the edge to this target id               |
+| `after`  | directly below the edge to this target id               |
+| `step`   | one place up (`-1`) or down (`1`) in the complete order |
+
+The server computes the stored order value. `step` exists for a client that
+shows one page of the order: moving the last row of a page down needs the
+first row of the next page, which that client does not have.
+
+A move considers only the edges the caller can see, on the source's face in
+the address. A `step` skips edges to entities the caller cannot read, and the
+new value comes from visible neighbors only. When no value fits between them,
+the server renumbers the visible edges to 1, 2, 3 and so on. Edges the caller
+cannot see keep their values, so their place among the renumbered edges can
+change. This way a move neither reveals nor rewrites an edge the caller cannot
+see. On a content-scoped relation, address the source with its face, as in
+`POL-1@draft`; the response's `relation_order.anchor` already does.
+
+| Answer | When |
+| --- | --- |
+| `204` | The edge moved. |
+| `400 order_position_invalid` | `position` names no field or several, or is sent together with `meta`. |
+| `400 relation_not_orderable` | The relation is not orderable on the outgoing side, or the request has `direction=incoming`. |
+| `403` | The caller may not write the edge, or `_order_out` is read-only for them. |
+| `404` | The `before` or `after` target is not a sibling, or the caller cannot read it. Both give the same answer, so the route does not reveal whether an entity exists. |
+| `500 internal_error` | The store failed. The server logs the cause; the answer does not include it. |
+
+### Reading the order
+
+A list read scoped to an entity page tab (`scope_page`, `scope_tab`,
+`anchor`) whose relation is orderable on the outgoing side returns its rows in
+the anchor's edge order when the request has no `sort`. The response then
+carries `meta.relation_order`:
+
+```json
+"relation_order": {"relation": "contains", "anchor": "PRJ-1", "anchor_type": "project", "movable": true}
+```
+
+`movable` is `true` when the caller may move the anchor's edges with the
+route above. A request with `sort` gets that sort and no `relation_order`. A
+detail view section in relation order carries the same object as
+`relationOrder`. Neither appears when the caller cannot read `_order_out`.
+
 ## Relations field
 
 Each value of the `relations` map is one of TWO shapes:

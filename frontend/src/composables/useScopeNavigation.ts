@@ -4,6 +4,9 @@ import { useSchemaStore } from '@/stores'
 import { toApiOperator, parseFilterQueryParams, filterStateToApiParams } from '@/utils/filters'
 import { getEntityPosition, type ScopeDescriptor, type PositionRef } from '@/api/entities'
 import { readFromPage } from '@/utils/pageContext'
+import { usePageStore } from '@/stores/pages'
+import { defaultSortParam } from '@/utils/listParams'
+import { tabIsRelationOrdered } from '@/utils/relationOrder'
 
 export interface ScopeNav {
   // Neighbours carry their type, not just id, so navigation builds the correct
@@ -23,6 +26,7 @@ export function useScopeNavigation(entityId: () => string) {
   const route = useRoute()
   const router = useRouter()
   const schemaStore = useSchemaStore()
+  const pageStore = usePageStore()
 
   const scopeNav = ref<ScopeNav | null>(null)
 
@@ -98,14 +102,12 @@ export function useScopeNavigation(entityId: () => string) {
       filters[key] = value
     }
 
-    // Sort from query params or list default.
-    const sortParam = route.query.sort as string | undefined
-    let sort = sortParam
-    if (!sort && listConfig.default_sort?.length) {
-      sort = listConfig.default_sort
-        .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
-        .join(',')
-    }
+    // Sort from query params or list default. A tab in relation order has no
+    // default: the server walks the relation order when the scope has no sort.
+    const tab = readFromPage(route.query)
+    const relationOrdered =
+      !!tab?.entity && tabIsRelationOrdered(pageStore.pages[tab.page], tab.tab, schemaStore.relationTypes)
+    const sort = (route.query.sort as string | undefined) || defaultSortParam(listConfig, relationOrdered)
 
     // Free-text search applied within the list, if any. Including it here is
     // what lets list scope navigation honor an active ?q= filter — the prior
@@ -115,7 +117,6 @@ export function useScopeNavigation(entityId: () => string) {
     // A list opened from an entity-page tab showed only the anchor's rows.
     // The list pipeline applies `q` as well, so such a scope stays a list
     // scope: the search pipeline cannot narrow to the tab.
-    const tab = readFromPage(route.query)
     const scope: ScopeDescriptor = {
       source: q && !tab?.entity ? 'search' : 'list',
       type: listConfig.entity,

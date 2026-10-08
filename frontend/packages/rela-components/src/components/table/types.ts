@@ -151,3 +151,15 @@ export type ColumnVisibility = Record<string, boolean>
  * screen, and a stack of labelled fields repeats it at three times the height.
  */
 export type TableCompact = 'stack' | 'compress'
+
+/**
+ * A row the reader asked to move, reported by a reorderable table. A drag
+ * names the row it was dropped against; the handle's arrow keys name a step
+ * of one place up or down.
+ *
+ * A step is not resolved to a neighbour here, because the table sees only the
+ * rows on screen: the caller may know of rows on a previous or next page.
+ */
+export type RowMove =
+  | { itemId: string; targetId: string; placement: 'before' | 'after' }
+  | { itemId: string; step: -1 | 1 }

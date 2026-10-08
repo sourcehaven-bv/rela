@@ -75,9 +75,33 @@ func TestComputeActions_ReadOnly(t *testing.T) {
 	}
 }
 
+// manualTicketIDs gives the fixture's ticket type hand-typed ids, the only
+// kind a rename accepts.
+func manualTicketIDs(app *App) {
+	meta := app.State().Meta
+	td := meta.Entities["ticket"]
+	td.IDType = metamodel.IDTypeManual
+	meta.Entities["ticket"] = td
+}
+
+// A type that generates its ids offers no rename, whatever the ACL grants,
+// because the manager refuses it (BUG-1BXQDD).
+func TestComputeActions_NoRenameForGeneratedIDs(t *testing.T) {
+	app := newTestAppV1(t)
+
+	got := app.affordances.computeActions(t.Context(), &entity.Entity{ID: "TKT-001", Type: "ticket"})
+	if got["rename"] {
+		t.Error(`_actions["rename"] = true for a type with generated ids, want false`)
+	}
+	if !got["update"] || !got["delete"] {
+		t.Errorf("_actions = %v under NopACL, want update and delete true", got)
+	}
+}
+
 // AC2: NopACL principal sees all per-item verbs as true.
 func TestComputeActions_NopACL(t *testing.T) {
 	app := newTestAppV1(t)
+	manualTicketIDs(app)
 	// app.acl is already acl.NopACL via the test fixture wiring.
 
 	e := &entity.Entity{ID: "TKT-001", Type: "ticket"}
@@ -109,6 +133,7 @@ func TestComputeCollectionActions_ReadOnly(t *testing.T) {
 // WriteRequest carries no entity ID.)
 func TestComputeActions_MixedTypeDeclarative(t *testing.T) {
 	app := newTestAppV1(t)
+	manualTicketIDs(app)
 	d, err := acl.NewDeclarative(&acl.Policy{
 		UserEntityType: "person",
 		Roles: map[string]acl.RoleDef{

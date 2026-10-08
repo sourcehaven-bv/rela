@@ -174,14 +174,16 @@ func (h *commentsHandler) commentWritesPermitted() bool {
 // located within.
 //
 // Loaded ONCE per list request. Resolving text anchors needs the entity body,
-// and re-reading it per comment would be N redacted reads for N comments.
+// and re-reading it per comment would be N redacted reads for N comments; the
+// body is also prepared once, so matching and highlight segmenting do not
+// re-scan it per comment.
 type anchorContext struct {
 	// properties is nil when the entity could not be loaded, which means "do
 	// not flag anything as detached" rather than "nothing exists".
 	properties map[string]bool
-	// body is the entity content text anchors resolve against. Empty when the
+	// body is the entity content text anchors resolve against. Nil when the
 	// entity could not be read.
-	body string
+	body *comments.Body
 	// loaded distinguishes "read the entity, it has an empty body" from "could
 	// not read the entity at all" — only the latter suppresses detach flags.
 	loaded bool
@@ -224,7 +226,7 @@ func (h *commentsHandler) liveAnchors(target comments.Target, ent *entity.Entity
 	}
 	// The body is the REDACTED entity's content, so a text anchor can only ever
 	// resolve against text this principal may already read.
-	return anchorContext{properties: refs, body: ent.Content, loaded: true}
+	return anchorContext{properties: refs, body: comments.NewBody(ent.Content), loaded: true}
 }
 
 // buildTextAnchor derives a text anchor's descriptors from the entity's own

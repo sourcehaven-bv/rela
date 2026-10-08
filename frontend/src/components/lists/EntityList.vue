@@ -6,6 +6,7 @@ import { useSchemaStore, useUIStore } from '@/stores'
 import { useListKeyboard } from '@/composables/useListKeyboard'
 import { useListSelection } from '@/composables/useListSelection'
 import { useListActions } from '@/composables/useListActions'
+import { useListReorder } from '@/composables/useListReorder'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useWorld } from '@/composables/useWorld'
 import { useCreateTarget } from '@/composables/useCreateTarget'
@@ -14,7 +15,7 @@ import { listEntities, listAllEntities, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { beginOptimisticRemove } from '@/queries/optimisticList'
 import { filterStateToApiParams } from '@/utils/filters'
-import { groupedSort, listBaseParams, sortParam } from '@/utils/listParams'
+import { defaultSortParam, groupedSort, listBaseParams, sortParam } from '@/utils/listParams'
 import { editFormRoute, entityDetailHref } from '@/utils/entityRoute'
 import { entityRef } from '@/utils/entityRef'
 import { worldText } from '@/utils/worldText'
@@ -367,6 +368,13 @@ function refreshAfterCreate() {
 // In an entity-page tab a new row is linked to the anchor first, so the
 // refresh already shows it in the tab.
 const tabScope = usePageTabScope(() => props.pageScope)
+// The server withholds the relation order from a reader who may not see the
+// order value. The tab then reads in its configured default_sort, as any
+// other list does, rather than in store order. Set from the first read that
+// asked for the relation order and did not get it.
+const orderWithheld = ref(false)
+watch(() => props.pageScope, () => (orderWithheld.value = false))
+const relationOrdered = computed(() => tabScope.relationOrdered.value && !orderWithheld.value)
 const createModal = useCreateModal(async (entity) => {
   await tabScope.linkCreated(entity)
   refreshAfterCreate()
@@ -530,7 +538,7 @@ const queryParams = computed((): ListParams => {
   // The config's share of the read (list_id, static filters, default sort,
   // scope) comes from the helper the sidebar flyout uses too.
   const params: ListParams = listConfig.value
-    ? listBaseParams(props.listId, listConfig.value)
+    ? listBaseParams(props.listId, listConfig.value, { relationOrdered: relationOrdered.value })
     : { per_page: 25, list_id: props.listId }
   // A grouped list is read whole, so it has no page to name.
   if (!groupBy.value) params.page = page.value
@@ -624,6 +632,13 @@ const listQuery = useQuery({
   placeholderData: (prev) => prev,
 })
 listQueryRef.value = listQuery
+watch(
+  () => listQuery.data.value,
+  (res) => {
+    if (!res || listQuery.isPlaceholderData.value || res.meta.relation_order) return
+    if (relationOrdered.value && !queryParams.value.sort) orderWithheld.value = true
+  },
+)
 
 function handleSort(field: string, event: MouseEvent) {
   const existingIndex = sortSpecs.value.findIndex((s) => s.property === field)
@@ -756,6 +771,18 @@ const tableSections = computed(() =>
     ? grouping.sections.value.map((section) => ({ ...section, items: section.items.map(toTableItem) }))
     : [{ id: 'entities', title: '', items: entities.value.map(toTableItem) }],
 )
+
+// Dragging rows on a tab shown in relation order. Only while the reader
+// sees that order: their own sort, or a grouping, puts the rows elsewhere,
+// and a row dropped there would jump back on the next read.
+const reorder = useListReorder({
+  order: () => meta.value.relation_order,
+  active: () => relationOrdered.value && sortSpecs.value.length === 0 && !grouping.grouped.value,
+  rows: () => entities.value,
+  key: () => listKey.value,
+  type: () => listConfig.value?.entity ?? '',
+})
+const reorderableRow = computed(() => (reorder.reorderable.value ? () => true : undefined))
 
 function onSectionCollapse(section: { id: string }, collapsed: boolean) {
   grouping.setCollapsed(section.id, collapsed)
@@ -901,10 +928,9 @@ function entityTarget(entity: Entity): RouteLocationRaw | undefined {
     query.sort = sortSpecs.value
       .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
       .join(',')
-  } else if (listConfig.value?.default_sort?.length) {
-    query.sort = listConfig.value.default_sort
-      .map((s) => (s.direction === 'desc' ? `-${s.property}` : s.property))
-      .join(',')
+  } else {
+    const sort = defaultSortParam(listConfig.value, relationOrdered.value)
+    if (sort) query.sort = sort
   }
 
   // Forward bracket-format filter params from the current URL. Narrow the
@@ -1431,6 +1457,8 @@ watch(searchQuery, () => {
         :show-section-header="grouping.grouped.value"
         :show-add="!!createFormTarget && canCreate()"
         compact="compress"
+        :reorderable="reorderableRow"
+        @reorder="reorder.onReorder"
         @sort-click="onSortClick"
         @toggle="onTableToggle"
         @toggle-all="onTableToggleAll"

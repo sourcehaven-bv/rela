@@ -1,0 +1,407 @@
+[
+  {
+    "name": "heading into body",
+    "body": "## Setup\n\nInstall the tools first.\n",
+    "start": 3,
+    "end": 27,
+    "segments": [
+      {
+        "start": 3,
+        "end": 8
+      },
+      {
+        "start": 10,
+        "end": 27
+      }
+    ],
+    "marks": [
+      "Setup",
+      "Install the tools"
+    ]
+  },
+  {
+    "name": "atx closing hashes",
+    "body": "## Setup ##\n\nInstall the tools first.\n",
+    "start": 3,
+    "end": 20,
+    "segments": [
+      {
+        "start": 3,
+        "end": 8
+      },
+      {
+        "start": 13,
+        "end": 20
+      }
+    ],
+    "marks": [
+      "Setup",
+      "Install"
+    ]
+  },
+  {
+    "name": "setext heading",
+    "body": "Setup\n=====\n\nInstall the tools first.\n",
+    "start": 0,
+    "end": 20,
+    "segments": [
+      {
+        "start": 0,
+        "end": 5
+      },
+      {
+        "start": 13,
+        "end": 20
+      }
+    ],
+    "marks": [
+      "Setup",
+      "Install"
+    ]
+  },
+  {
+    "name": "link reference definition between",
+    "body": "Intro text here.\n\n[ref]: https://example.com\n\nSee [the ref][ref] now.\n",
+    "start": 6,
+    "end": 49,
+    "segments": [
+      {
+        "start": 6,
+        "end": 16
+      },
+      {
+        "start": 46,
+        "end": 49
+      }
+    ],
+    "marks": [
+      "text here.",
+      "See"
+    ]
+  },
+  {
+    "name": "html block skipped",
+    "body": "Intro text here.\n\n\u003cdiv\u003e\nraw block\n\u003c/div\u003e\n\nAfter the block.\n",
+    "start": 6,
+    "end": 47,
+    "segments": [
+      {
+        "start": 6,
+        "end": 16
+      },
+      {
+        "start": 42,
+        "end": 47
+      }
+    ],
+    "marks": [
+      "text here.",
+      "After"
+    ]
+  },
+  {
+    "name": "html comment interrupts paragraph",
+    "body": "Intro text here.\n\u003c!-- note --\u003e\nAfter the note.\n",
+    "start": 6,
+    "end": 36,
+    "segments": [
+      {
+        "start": 6,
+        "end": 16
+      },
+      {
+        "start": 31,
+        "end": 36
+      }
+    ],
+    "marks": [
+      "text here.",
+      "After"
+    ]
+  },
+  {
+    "name": "nested list",
+    "body": "- outer item\n    - inner item\n- last item\n",
+    "start": 2,
+    "end": 36,
+    "segments": [
+      {
+        "start": 2,
+        "end": 12
+      },
+      {
+        "start": 19,
+        "end": 29
+      },
+      {
+        "start": 32,
+        "end": 36
+      }
+    ],
+    "marks": [
+      "outer item",
+      "inner item",
+      "last"
+    ]
+  },
+  {
+    "name": "blockquote continuation",
+    "body": "Intro.\n\n\u003e quote line\n\u003e second line\n",
+    "start": 0,
+    "end": 29,
+    "segments": [
+      {
+        "start": 0,
+        "end": 6
+      },
+      {
+        "start": 10,
+        "end": 29
+      }
+    ],
+    "marks": [
+      "Intro.",
+      "quote line\nsecond"
+    ]
+  },
+  {
+    "name": "table right after paragraph",
+    "body": "Intro text.\n| a | b |\n|---|---|\n| one | two |\n",
+    "start": 6,
+    "end": 43,
+    "segments": [
+      {
+        "start": 6,
+        "end": 11
+      },
+      {
+        "start": 14,
+        "end": 15
+      },
+      {
+        "start": 18,
+        "end": 19
+      },
+      {
+        "start": 34,
+        "end": 37
+      },
+      {
+        "start": 40,
+        "end": 43
+      }
+    ],
+    "marks": [
+      "text.",
+      "a",
+      "b",
+      "one",
+      "two"
+    ]
+  },
+  {
+    "name": "fenced code skipped",
+    "body": "Intro text.\n\n```\ncode line\n```\n\nAfter text.\n",
+    "start": 6,
+    "end": 37,
+    "segments": [
+      {
+        "start": 6,
+        "end": 11
+      },
+      {
+        "start": 32,
+        "end": 37
+      }
+    ],
+    "marks": [
+      "text.",
+      "After"
+    ]
+  },
+  {
+    "name": "inline code included whole",
+    "body": "Intro text.\n\nRun `make` now.\n",
+    "start": 6,
+    "end": 27,
+    "segments": [
+      {
+        "start": 6,
+        "end": 11
+      },
+      {
+        "start": 13,
+        "end": 27
+      }
+    ],
+    "marks": [
+      "text.",
+      "Run make now"
+    ]
+  },
+  {
+    "name": "start inside inline code",
+    "body": "Run `make test` now.\n\nNext paragraph.\n",
+    "start": 10,
+    "end": 26,
+    "segments": [
+      {
+        "start": 4,
+        "end": 20
+      },
+      {
+        "start": 22,
+        "end": 26
+      }
+    ],
+    "marks": [
+      "make test now.",
+      "Next"
+    ]
+  },
+  {
+    "name": "end inside inline code",
+    "body": "Intro text.\n\nRun `make test` now.\n",
+    "start": 6,
+    "end": 22,
+    "segments": [
+      {
+        "start": 6,
+        "end": 11
+      },
+      {
+        "start": 13,
+        "end": 28
+      }
+    ],
+    "marks": [
+      "text.",
+      "Run make test"
+    ]
+  },
+  {
+    "name": "double-backtick code span",
+    "body": "Intro text.\n\nUse `` a`b `` here.\n",
+    "start": 6,
+    "end": 31,
+    "segments": [
+      {
+        "start": 6,
+        "end": 11
+      },
+      {
+        "start": 13,
+        "end": 31
+      }
+    ],
+    "marks": [
+      "text.",
+      "Use a`b here"
+    ]
+  },
+  {
+    "name": "trailing backslash",
+    "body": "Path is C:\\dir\\\n\nNext paragraph.\n",
+    "start": 0,
+    "end": 21,
+    "segments": [
+      {
+        "start": 0,
+        "end": 14
+      },
+      {
+        "start": 17,
+        "end": 21
+      }
+    ],
+    "marks": [
+      "Path is C:\\dir",
+      "Next"
+    ]
+  },
+  {
+    "name": "task item starting with emphasis",
+    "body": "Intro text.\n\n- [ ] **bold** rest\n- [x] [link](https://example.com) more\n",
+    "start": 6,
+    "end": 71,
+    "segments": [
+      {
+        "start": 6,
+        "end": 11
+      },
+      {
+        "start": 19,
+        "end": 32
+      },
+      {
+        "start": 39,
+        "end": 71
+      }
+    ],
+    "marks": [
+      "text.",
+      "bold rest",
+      "link more"
+    ]
+  },
+  {
+    "name": "start inside emphasis",
+    "body": "Read the **important** text.\n\nNext paragraph.\n",
+    "start": 13,
+    "end": 34,
+    "segments": [
+      {
+        "start": 9,
+        "end": 28
+      },
+      {
+        "start": 30,
+        "end": 34
+      }
+    ],
+    "marks": [
+      "important text.",
+      "Next"
+    ]
+  },
+  {
+    "name": "start inside link",
+    "body": "See [the docs](https://example.com) here.\n\nNext paragraph.\n",
+    "start": 9,
+    "end": 47,
+    "segments": [
+      {
+        "start": 4,
+        "end": 41
+      },
+      {
+        "start": 43,
+        "end": 47
+      }
+    ],
+    "marks": [
+      "the docs here.",
+      "Next"
+    ]
+  },
+  {
+    "name": "end inside emphasis",
+    "body": "Intro text.\n\nRead the **important** text.\n",
+    "start": 6,
+    "end": 29,
+    "segments": [
+      {
+        "start": 6,
+        "end": 11
+      },
+      {
+        "start": 13,
+        "end": 29
+      }
+    ],
+    "marks": [
+      "text.",
+      "Read the impor"
+    ]
+  }
+]

@@ -203,8 +203,12 @@ func (svc affordanceService) computeActions(ctx context.Context, e *entityPkg.En
 // family, hidden faces included, so for a faced type the manager authorizes
 // it once at family level and so does this; the served face's own grant
 // would offer a rename the write refuses. The verdict reads no other face,
-// so it cannot disclose one. A faceless type keeps its per-row check.
+// so it cannot disclose one. A faceless type keeps its per-row check. A type
+// that generates its ids offers no rename at all, as the manager refuses it.
 func (svc affordanceService) renameAllowed(ctx context.Context, e *entityPkg.Entity) bool {
+	if def, ok := svc.meta().GetEntityDef(e.Type); !ok || !def.IsManualID() {
+		return false
+	}
 	if len(metamodel.FaceOrderOf(svc.meta(), e.Type)) == 0 {
 		return svc.acl().AuthorizeWrite(ctx, translateVerb("rename", e.Type, e.ID, e.Face)).Allow
 	}

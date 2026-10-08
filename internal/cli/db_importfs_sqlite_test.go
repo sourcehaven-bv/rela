@@ -191,7 +191,7 @@ func TestDBImportFS_SQLiteTablesAreAccounted(t *testing.T) {
 	// The full-text index and FTS5's shadow tables are filled by triggers on
 	// entities, so the entity copy fills them.
 	for _, name := range []string{"entity_search", "entity_search_config", "entity_search_content",
-		"entity_search_data", "entity_search_docsize", "entity_search_idx"} {
+		"entity_search_data", "entity_search_docsize", "entity_search_idx", "entity_search_key"} {
 		accounted[name] = "derived from entities by trigger"
 	}
 	data, err := appbuild.OpenSQLiteData(context.Background(), filepath.Join(t.TempDir(), "x.db"))

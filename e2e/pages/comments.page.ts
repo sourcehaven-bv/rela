@@ -95,6 +95,41 @@ export class CommentsPage extends BasePage {
     }, phrase);
   }
 
+  /** Select from the start of `from` to the end of `to`, which may sit in
+   *  different blocks (a heading and the paragraph below it). Like
+   *  selectBodyText, a DOM Range keeps the selection exact. */
+  async selectBodyRange(from: string, to: string) {
+    await this.page.evaluate(
+      ([fromText, toText]) => {
+        const host = document.querySelector(".content-body");
+        if (!host) throw new Error("no rendered body on this page");
+        const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+        const range = document.createRange();
+        let started = false;
+        let node: Node | null;
+        while ((node = walker.nextNode())) {
+          const text = node.textContent ?? "";
+          if (!started) {
+            const i = text.indexOf(fromText);
+            if (i === -1) continue;
+            range.setStart(node, i);
+            started = true;
+          }
+          const j = text.indexOf(toText);
+          if (j === -1) continue;
+          range.setEnd(node, j + toText.length);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+          document.dispatchEvent(new Event("selectionchange"));
+          return;
+        }
+        throw new Error(`range not found in body: ${fromText} .. ${toText}`);
+      },
+      [from, to],
+    );
+  }
+
   /** The "Comment" button offered for a valid selection. */
   selectionButton(): Locator {
     return this.page.locator(".tsc-btn");
@@ -153,6 +188,20 @@ export class CommentsPage extends BasePage {
     return this.page.locator(".content-body mark[data-comment-id]");
   }
 
+  /** Every mark of one comment; a range over several blocks has one each. */
+  highlightsFor(commentId: string): Locator {
+    return this.page.locator(
+      `.content-body mark[data-comment-id="${commentId}"]`,
+    );
+  }
+
+  /** Highlights inside headings of the rendered body. */
+  headingHighlights(): Locator {
+    return this.page.locator(
+      ".content-body :is(h1, h2, h3, h4, h5, h6) mark[data-comment-id]",
+    );
+  }
+
   /** Open the thread for a highlight by its text. */
   async openHighlight(text: string) {
     await this.highlights().filter({ hasText: text }).first().click();
@@ -162,6 +211,16 @@ export class CommentsPage extends BasePage {
   /** Comment bodies in the open highlight thread. */
   highlightCommentBodies(): Locator {
     return this.page.locator(".tcp .tcp-body");
+  }
+
+  /** Delete the first comment in the open highlight thread, confirming the modal. */
+  async deleteFirstInThread() {
+    await this.page.locator(".tcp").getByRole("button", { name: "Delete" }).first().click();
+    await this.page
+      .locator("[role=dialog] button, [role=alertdialog] button")
+      .filter({ hasText: /^Delete$/ })
+      .last()
+      .click();
   }
 
   /** Reply within the open highlight thread. */

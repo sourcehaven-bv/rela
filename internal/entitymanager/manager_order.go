@@ -257,3 +257,104 @@ func (m *Manager) runRenumberAfterUpdate(ctx context.Context, from, to, relType 
 		}
 	}
 }
+
+// moveRelation is [Manager.UpdateRelation] for a [entity.RelationOptions]
+// with a Position, after its authorization. The sibling read, the
+// placement and every write share one [store.Store.Tx], so a concurrent
+// move or renumber cannot slip between the values read and the values
+// written. Audit records follow the commit: one for the moved edge, one
+// per sibling the densify rewrote, marked as a renumber.
+//
+// A package function rather than a Manager method: the Manager is at its
+// plimsoll method line.
+func moveRelation(
+	ctx context.Context, m *Manager, key entity.RelationKey, relDef metamodel.RelationDef, hasDef bool,
+	opts entity.RelationOptions,
+) (*entity.Relation, error) {
+	if len(opts.Properties) > 0 || len(opts.MetaUnset) > 0 || opts.Content != nil {
+		return nil, fmt.Errorf("%w: a position cannot be combined with property or content changes",
+			ErrInvalidOrderPosition)
+	}
+	prop := relDef.OutgoingOrderProperty()
+	if !hasDef || prop == "" {
+		return nil, fmt.Errorf("%w: %s", ErrRelationNotOrderable, key.Type)
+	}
+	var moved *entity.Relation
+	var densified []*entity.Relation
+	err := m.deps.Store.Tx(ctx, func(view store.Store) error {
+		if _, gErr := view.GetRelation(ctx, key); gErr != nil {
+			return fmt.Errorf("%w: %s", ErrRelationNotFound, key)
+		}
+		// Only the moved edge's own tail, which is the list a reader sees,
+		// and only the targets in Among: authorization covered this one
+		// tail, and an edge the caller cannot see must not shape the result.
+		var among map[string]bool
+		if opts.Position.Among != nil {
+			among = make(map[string]bool, len(opts.Position.Among))
+			for _, id := range opts.Position.Among {
+				among[id] = true
+			}
+		}
+		var siblings []entity.Relation
+		for r, lErr := range view.ListRelations(ctx, store.RelationQuery{From: key.From, Type: key.Type}) {
+			if lErr != nil {
+				return lErr
+			}
+			if r.FromFace != key.FromFace || (among != nil && !among[r.To] && r.Identity() != key) {
+				continue
+			}
+			siblings = append(siblings, *r)
+		}
+		plan, pErr := PlaceOrder(siblings, key, *opts.Position, prop)
+		if pErr != nil {
+			return pErr
+		}
+		var wErr error
+		moved, densified, wErr = writeOrderPlan(ctx, view, siblings, plan, key, prop)
+		return wErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	renumberCtx := audit.WithTriggeredBy(ctx, "renumber:"+prop)
+	for _, u := range densified {
+		m.recordRelationAudit(renumberCtx, audit.OpUpdateRelation, u, "renumbered "+prop)
+	}
+	if moved == nil {
+		// A densify can keep the moved edge's value and renumber the
+		// siblings around it; a no-op move rewrites nothing at all.
+		if moved, err = m.deps.Store.GetRelation(ctx, key); err != nil || len(densified) == 0 {
+			return moved, err
+		}
+	}
+	m.recordRelationAudit(ctx, audit.OpUpdateRelation, moved, "moved "+prop)
+	return moved, nil
+}
+
+// writeOrderPlan writes each planned order value to its sibling through
+// view. It returns the moved edge, when the plan rewrote it, apart from the
+// siblings a densify rewrote around it.
+func writeOrderPlan(
+	ctx context.Context, view store.Store, siblings []entity.Relation, plan map[entity.RelationKey]float64,
+	key entity.RelationKey, prop string,
+) (moved *entity.Relation, densified []*entity.Relation, err error) {
+	for _, r := range siblings {
+		value, ok := plan[r.Identity()]
+		if !ok {
+			continue
+		}
+		props := make(map[string]any, len(r.Properties)+1)
+		maps.Copy(props, r.Properties)
+		props[prop] = value
+		u, wErr := view.UpdateRelation(ctx, r.Identity(), store.RelationData{Properties: props, Content: r.Content})
+		if wErr != nil {
+			return nil, nil, fmt.Errorf("move write failed: %w", wErr)
+		}
+		if r.Identity() == key {
+			moved = u
+		} else {
+			densified = append(densified, u)
+		}
+	}
+	return moved, densified, nil
+}

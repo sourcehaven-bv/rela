@@ -31,8 +31,13 @@ const (
 // a space where the stored body now has a newline). Always slice with
 // Start/End — never Start+len(Quote).
 type TextMatch struct {
-	Start      int
-	End        int
+	Start int
+	End   int
+	// Segments splits [Start, End) into one span per markdown block of text,
+	// for highlighting: one inline element cannot cross a block boundary.
+	// Block markup and code are left out, so a range over nothing but code
+	// has none. Set only by [Body.ResolveText].
+	Segments   []Span
 	Confidence float64
 	// Uncertain marks the middle band: located, but far enough from an exact
 	// match that the UI should say so.
@@ -41,6 +46,58 @@ type TextMatch struct {
 	Detached bool
 	// Reason carries the resolver's explanation when Detached.
 	Reason string
+}
+
+// Span is a [Start, End) byte range in an entity body.
+type Span struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
+
+// Body is an entity body prepared for resolving many text anchors against it.
+//
+// A list read resolves every comment on one body; preparing it once keeps that
+// to one pass over the body for matching and at most one markdown parse for
+// highlight segments, instead of one of each per comment.
+//
+// Not safe for concurrent use: the segment parse is built lazily, since a
+// body with no text comments never needs it.
+type Body struct {
+	text     string
+	anchors  *textanchor.Document
+	segments *quotefind.Document
+	// located memoizes locate per anchor. A list read asks twice for each
+	// open suggestion (to highlight it and to decide whether it is
+	// acceptable), and a fuzzy resolve is the expensive part of that read.
+	located map[*TextAnchor]TextMatch
+}
+
+// NewBody prepares body for resolving.
+func NewBody(body string) *Body {
+	return &Body{text: body, anchors: textanchor.NewDocument(body)}
+}
+
+// ResolveText locates a text anchor within the body, with highlight segments.
+// See the package-level [ResolveText] for the matching rules.
+func (b *Body) ResolveText(a *TextAnchor) TextMatch {
+	m := b.locate(a)
+	if m.Detached {
+		return m
+	}
+	if b.segments == nil {
+		b.segments = quotefind.NewDocument(b.text)
+	}
+	m.Segments = []Span{}
+	for _, r := range b.segments.Segments(m.Start, m.End) {
+		m.Segments = append(m.Segments, Span{Start: r.Start, End: r.End})
+	}
+	return m
+}
+
+// Acceptable reports whether [ApplyReplacement] would succeed on the body.
+func (b *Body) Acceptable(a Anchor) bool {
+	_, err := b.applyReplacement(a)
+	return err == nil
 }
 
 // ResolveText locates a text anchor within body.
@@ -53,12 +110,33 @@ type TextMatch struct {
 // back to original coordinates, so a quote spanning fsstore's 80-column reflow
 // resolves without the caller flattening anything. (Before v0.2.0 that case
 // hard-orphaned, which is why this function does not exist for v0.1.0.)
+//
+// It does not compute highlight segments; [Body.ResolveText] does.
 func ResolveText(body string, a *TextAnchor) TextMatch {
+	return NewBody(body).locate(a)
+}
+
+// locate is the matching half of [Body.ResolveText].
+func (b *Body) locate(a *TextAnchor) TextMatch {
 	if a == nil {
 		return TextMatch{Detached: true, Reason: "missing text descriptor"}
 	}
+	if m, ok := b.located[a]; ok {
+		return m
+	}
+	m := b.resolve(a)
+	if b.located == nil {
+		b.located = make(map[*TextAnchor]TextMatch)
+	}
+	b.located[a] = m
+	return m
+}
 
-	res := textanchor.Resolve(body, textanchor.Anchor{
+// resolve runs the resolver for locate.
+func (b *Body) resolve(a *TextAnchor) TextMatch {
+	body := b.text
+
+	res := b.anchors.Resolve(textanchor.Anchor{
 		Quote:              a.Quote,
 		Prefix:             a.Prefix,
 		Suffix:             a.Suffix,
@@ -154,13 +232,18 @@ func NewTextAnchor(body string, start, end int) (*TextAnchor, error) {
 // Offsets come from [ResolveText] and are sliced as-is: the span may be longer
 // than the quote where the resolver absorbed a reflowed line break.
 func ApplyReplacement(body string, a Anchor) (string, error) {
+	return NewBody(body).applyReplacement(a)
+}
+
+func (b *Body) applyReplacement(a Anchor) (string, error) {
 	if a.Replacement == nil {
 		return "", ErrNoSuggestion
 	}
 	if a.Kind != AnchorText || a.Text == nil {
 		return "", ErrSuggestionStale
 	}
-	m := ResolveText(body, a.Text)
+	body := b.text
+	m := b.locate(a.Text)
 	if m.Detached {
 		return "", ErrSuggestionStale
 	}
@@ -183,12 +266,6 @@ func ApplyReplacement(body string, a Anchor) (string, error) {
 		end++
 	}
 	return body[:m.Start] + *a.Replacement + body[end:], nil
-}
-
-// Acceptable reports whether [ApplyReplacement] would succeed on body.
-func Acceptable(body string, a Anchor) bool {
-	_, err := ApplyReplacement(body, a)
-	return err == nil
 }
 
 // collapseSpace trims s and folds every whitespace run to one space, the

@@ -424,6 +424,22 @@ type ListMeta struct {
 	Page    int  `json:"page"`
 	PerPage int  `json:"per_page"`
 	HasMore bool `json:"has_more"`
+	// RelationOrder is set when the rows are shown in relation order.
+	//
+	// Nil: the rows follow the request's sort, or no sort at all.
+	RelationOrder *RelationOrder `json:"relation_order,omitempty"`
+}
+
+// RelationOrder says that a collection lists the targets of one anchor's
+// edges over one relation, in the order those edges hold on the anchor's
+// outgoing order side. Movable reports whether this principal may move
+// them: a relation PATCH with a `position` body on
+// /{plural of AnchorType}/{Anchor}/relations/{Relation}/{row id}.
+type RelationOrder struct {
+	Relation   string `json:"relation"`
+	Anchor     string `json:"anchor"`
+	AnchorType string `json:"anchor_type"`
+	Movable    bool   `json:"movable"`
 }
 
 // Schema is the JSON representation of the metamodel.
@@ -1293,6 +1309,11 @@ type ViewSection struct {
 	// the preview cap sets both. This flag exists for what HasMoreChildren
 	// cannot express — a parent dropped entirely has no row to signal on.
 	Truncated bool `json:"truncated,omitempty"`
+
+	// RelationOrder is set when the section's rows are the entry's targets
+	// over one orderable relation, shown in relation order; see
+	// [RelationOrder]. Nil for every other section.
+	RelationOrder *RelationOrder `json:"relationOrder,omitempty"`
 
 	// Create is this section's opt-in create affordance (TKT-R4BMJM).
 	//

@@ -165,7 +165,7 @@ func prepareOwnedDeletes(
 		if cErr != nil {
 			return nil, ownedDeleteError(owner, cErr)
 		}
-		if aErr := m.authorizeCascadeRelations(ctx, tx, id, incoming, out); aErr != nil {
+		if aErr := m.authorizeCascadeRelations(ctx, tx, id, nil, incoming, out); aErr != nil {
 			return nil, ownedDeleteError(owner, aErr)
 		}
 		owned = append(owned, ownedDeletion{

@@ -5,9 +5,10 @@ import (
 	"errors"
 	"os"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 )
 
 // eicarSignature is the standard AV test string, assembled at runtime from two
@@ -56,25 +57,31 @@ func requireClamd(t *testing.T) {
 // test using different arguments would have passed throughout.
 var documentedScanCmd = []string{"clamdscan", "--no-summary", "--stream", "{in}"}
 
-// clamdRunner builds the runner under test, honoring RELA_TEST_CLAMD_BINDS for
-// hosts whose clamd lives outside the built-in defaults.
-//
-// The defaults cover the Linux distro layouts (which is what CI and the docs
-// target). A Homebrew macOS install puts both the socket and clamd.conf under
-// /opt/homebrew, so a developer running this locally passes those paths the same
-// way an operator would use `attachments.scan_sockets:` — which means the local
-// run also exercises that escape hatch rather than bypassing the sandbox.
+// clamdRunner builds the runner under test with the sandbox read paths an
+// operator would set in RELA_SANDBOX_SCAN_READ_PATHS: clamd's socket and the
+// clamd.conf naming it. The default is the Debian/Ubuntu layout (what CI and the
+// docs target). A Linux host whose clamd lives elsewhere (Fedora's clamd@scan
+// uses /run/clamd.scan/clamd.sock and /etc/clamd.d/scan.conf) overrides it with
+// RELA_TEST_CLAMD_BINDS, so a local run goes through the same operator setting
+// rather than bypassing the sandbox. The variable is ":"-separated like PATH;
+// it used to be comma-separated.
 func clamdRunner(t *testing.T) *CmdRunner {
 	t.Helper()
-	var opts []CmdRunnerOption
-	if binds := os.Getenv("RELA_TEST_CLAMD_BINDS"); binds != "" {
-		opts = append(opts, WithScannerSockets(strings.Split(binds, ",")...))
-	}
-	r, err := NewCmdRunner(30*time.Second, 1<<20, opts...)
+	binds := envOrDefault("RELA_TEST_CLAMD_BINDS", "/var/run/clamav/clamd.ctl:/etc/clamav/clamd.conf")
+	cmdexec.SetHostReadOnly(cmdexec.PurposeScan, cmdexec.ParseReadPaths(binds))
+	t.Cleanup(func() { cmdexec.SetHostReadOnly(cmdexec.PurposeScan, nil) })
+	r, err := NewCmdRunner(30*time.Second, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return r
+}
+
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 // TestClamdScan_DocumentedRecipe runs the guide's scan command against a real

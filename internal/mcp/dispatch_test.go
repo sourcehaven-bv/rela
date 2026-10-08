@@ -171,7 +171,8 @@ var toolCalls = map[string]struct {
 	"create_entity":   {args: `{"type":"requirement","properties":{"title":"Created via dispatch"}}`},
 	"update_entity":   {args: `{"id":"REQ-001","properties":{"status":"done"}}`},
 	"delete_entity":   {args: `{"id":"REQ-002","cascade":true}`},
-	"rename_entity":   {args: `{"id":"REQ-003","new_id":"REQ-099"}`},
+	// requirement generates its ids, so the rename is refused (BUG-1BXQDD).
+	"rename_entity":   {args: `{"id":"REQ-003","new_id":"REQ-099"}`, wantErr: true},
 	"list_relations":  {args: `{}`},
 	"create_relation": {args: `{"from":"DEC-001","type":"addresses","to":"REQ-002"}`},
 	"delete_relation": {args: `{"from":"DEC-001","type":"addresses","to":"REQ-001"}`},

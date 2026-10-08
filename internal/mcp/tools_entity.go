@@ -522,9 +522,6 @@ func (s *Server) handleRenameEntity(
 	snap.deps.Watcher.Pause()
 	defer snap.deps.Watcher.Resume()
 
-	// Counted before the rename and through the gated store; the manager's
-	// RelationsUpdated includes edges to hidden entities.
-	visible := visibleRelationCount(ctx, snap.deps.Store, oldID)
 	result, renameErr := snap.deps.EntityManager.RenameEntity(
 		ctx, oldID, newID, entity.RenameOptions{DryRun: dryRun})
 	if renameErr != nil {
@@ -536,7 +533,7 @@ func (s *Server) handleRenameEntity(
 		verb = "Dry run — would rename"
 	}
 	return textResult(
-		fmt.Sprintf("%s: %s → %s (%d relations updated)", verb, result.OldID, result.NewID, visible)), nil
+		fmt.Sprintf("%s: %s → %s (%d relations updated)", verb, result.OldID, result.NewID, result.RelationsUpdated)), nil
 }
 
 // visibleRelationCount counts id's relations through st. On the gated store

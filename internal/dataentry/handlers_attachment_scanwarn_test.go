@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
@@ -127,5 +131,70 @@ func TestWarnIfScanCannotRun_NilMetamodel(t *testing.T) {
 	})
 	if strings.Contains(out, "level=WARN") {
 		t.Errorf("warned about a nil metamodel, which declares no scan: %q", out)
+	}
+}
+
+// TestWarnIfNoSandboxReadPaths pins when an upgraded host is told it needs a
+// purpose's read paths: only on Linux, only when commands are confined, and
+// only for a purpose that has commands configured and no paths listed.
+func TestWarnIfNoSandboxReadPaths(t *testing.T) {
+	const scanVar, transformVar = cmdexec.EnvSandboxScanReadPaths, cmdexec.EnvSandboxTransformReadPaths
+	withTransform := &metamodel.Metamodel{Transforms: map[string]metamodel.TransformDef{"pdf": {}}}
+	withAttachmentStep := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"thing": {Properties: map[string]metamodel.PropertyDef{"doc": {
+			Type:      metamodel.PropertyTypeFile,
+			Scan:      metamodel.ScanOff,
+			Transform: []metamodel.TransformStep{{Cmd: []string{"qpdf", "{in}", "{out}"}}},
+		}}},
+	}}
+	commandDoc := map[string]dataentryconfig.DocumentConfig{"report": {Command: []string{"pandoc", "{in}"}}}
+	scanPaths := map[cmdexec.Purpose][]string{cmdexec.PurposeScan: {"/run/clamav/clamd.ctl"}}
+	transformPaths := map[cmdexec.Purpose][]string{cmdexec.PurposeTransform: {"/etc/paperspecs"}}
+	cases := []struct {
+		name     string
+		meta     *metamodel.Metamodel
+		docs     map[string]dataentryconfig.DocumentConfig
+		goos     string
+		paths    map[cmdexec.Purpose][]string
+		confined bool
+		wantVars []string // the variables the warning names; none means quiet
+	}{
+		{"scan configured → warn scan", scanWarnMeta(t, true), nil, "linux", nil, true, []string{scanVar}},
+		{"export transform → warn transform", withTransform, nil, "linux", nil, true, []string{transformVar}},
+		{"attachment transform step → warn transform", withAttachmentStep, nil, "linux", nil, true,
+			[]string{transformVar}},
+		{"document command → warn transform", scanWarnMeta(t, false), commandDoc, "linux", nil, true,
+			[]string{transformVar}},
+		{"transform paths listed → quiet", withTransform, nil, "linux", transformPaths, true, nil},
+		{"scan paths listed → quiet", scanWarnMeta(t, true), nil, "linux", scanPaths, true, nil},
+		{"only the other purpose listed → warn", withTransform, nil, "linux", scanPaths, true,
+			[]string{transformVar}},
+		{"unconfined → quiet", withTransform, nil, "linux", nil, false, nil},
+		{"macOS → quiet", withTransform, nil, "darwin", nil, true, nil},
+		{"no commands → quiet", scanWarnMeta(t, false), nil, "linux", nil, true, nil},
+		{"nil metamodel → quiet", nil, nil, "linux", nil, true, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			noReadPathsWarning = sync.Map{}
+			got := captureWarn(t, func() {
+				warnIfNoSandboxReadPaths(tc.meta, tc.docs, tc.goos, tc.paths, tc.confined)
+			})
+			for _, v := range []string{scanVar, transformVar} {
+				if warned, want := strings.Contains(got, v), slices.Contains(tc.wantVars, v); warned != want {
+					t.Errorf("warned about %s = %v, want %v; log: %q", v, warned, want, got)
+				}
+			}
+		})
+	}
+
+	// Once per purpose per process: a multi-tenant server builds one App per tenant.
+	noReadPathsWarning = sync.Map{}
+	got := captureWarn(t, func() {
+		warnIfNoSandboxReadPaths(withTransform, nil, "linux", nil, true)
+		warnIfNoSandboxReadPaths(withTransform, nil, "linux", nil, true)
+	})
+	if n := strings.Count(got, transformVar); n != 1 {
+		t.Errorf("warned %d times, want once; log: %q", n, got)
 	}
 }

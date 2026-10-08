@@ -25,6 +25,7 @@ import { useDetailPanel } from '@/composables/useDetailPanel'
 import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
 import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
+import { useListReorder } from '@/composables/useListReorder'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
@@ -48,6 +49,7 @@ import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlBoard from 'rela-components/components/board/RlBoard.vue'
 import RlSwimlaneBoard from 'rela-components/components/board/RlSwimlaneBoard.vue'
 import type { Section, StatusColor, Swimlane } from 'rela-components/types'
+import type { BoardDropPosition } from 'rela-components/composables/useBoardDnd'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
 const props = defineProps<{
@@ -495,7 +497,7 @@ interface MoveCardVars {
 
 const entitiesStore = useEntitiesStore()
 
-const { mutate: moveCard } = useMutation({
+const { mutateAsync: moveCard } = useMutation({
   mutation: ({ entity, updates, relation }: MoveCardVars) => {
     const config = kanbanConfig.value
     if (!config) throw new Error(`unknown kanban view: ${props.id}`)
@@ -669,31 +671,71 @@ function canMoveCard(card: BoardCard): boolean {
   return canUpdate(card.entity)
 }
 
-// The board reports a drop on another column (and lane); the move writes the
-// values the card now sits under.
-function onMove({ item, to, lane }: { item: BoardCard; to: Section<BoardCard>; lane?: Swimlane<BoardCard> }) {
+// On a board whose cards the reader may reorder, every card can be picked up:
+// moving one within its column writes the anchor's edge, not the card.
+function boardCanMove(card: BoardCard): boolean {
+  return reorder.reorderable.value || canMoveCard(card)
+}
+
+// Card order on a tab shown in relation order: the order the reader sets by
+// dropping a card before or after another. One order runs through every
+// column, so a card placed before another lands there whichever column it
+// came from.
+const reorder = useListReorder({
+  order: () => boardQuery.data.value?.meta.relation_order,
+  active: () => tabScope.relationOrdered.value,
+  rows: () => entities.value,
+  key: () => entityKeys.listParams(kanbanConfig.value?.entity ?? '', boardParams.value),
+  type: () => kanbanConfig.value?.entity ?? '',
+})
+
+// The board reports a drop on another column (and lane), and with `reorder`
+// the card it landed against. The move writes the values the card now sits
+// under, then its place: in that order, so a failed column change leaves the
+// card where it was rather than half moved.
+async function onMove({
+  item,
+  to,
+  lane,
+  at,
+}: {
+  item: BoardCard
+  to: Section<BoardCard>
+  lane?: Swimlane<BoardCard>
+  at?: BoardDropPosition
+}) {
   const config = kanbanConfig.value
   const entity = item.entity
-  if (!config || !canUpdate(entity)) return
+  if (!config) return
 
   if (config.columns_from) {
     const target = relationColumns.targetType.value
     // Other is where unoffered cards wait; dropping into it would mean
     // "some status this page does not offer", which names no target.
     if (!target || to.id === OTHER_COLUMN) return
-    if (relationColumns.columnOf(entity) === to.id) return
-    moveCard({
-      entity,
-      updates: {},
-      relation: { name: config.columns_from.relation, target: { type: target, id: to.id } },
-    })
+    if (relationColumns.columnOf(entity) !== to.id) {
+      if (!canUpdate(entity)) {
+        uiStore.error('You may not move this card to another column')
+        return
+      }
+      try {
+        await moveCard({
+          entity,
+          updates: {},
+          relation: { name: config.columns_from.relation, target: { type: target, id: to.id } },
+        })
+      } catch {
+        return // reported by the mutation
+      }
+    }
+    if (at) await reorder.onReorder({ itemId: entity.id, ...at })
     return
   }
 
   const colProp = config.column_property
   const swimProp = config.swimlane_property
 
-  // Build update payload; skip the write when nothing moved.
+  // The values the card now sits under that differ from its own.
   const updates: Record<string, string> = {}
   if (String(entity.properties[colProp] || '') !== to.id) {
     updates[colProp] = to.id
@@ -701,9 +743,22 @@ function onMove({ item, to, lane }: { item: BoardCard; to: Section<BoardCard>; l
   if (swimProp && lane && String(entity.properties[swimProp] || '') !== lane.id) {
     updates[swimProp] = lane.id
   }
-  if (Object.keys(updates).length === 0) return
 
-  moveCard({ entity, updates })
+  if (Object.keys(updates).length > 0) {
+    // On a reorderable board a card the reader may not update can still be
+    // picked up, to move it within its column; a drop into another column
+    // would change the card itself, so it is refused out loud.
+    if (!canUpdate(entity)) {
+      uiStore.error('You may not move this card to another column')
+      return
+    }
+    try {
+      await moveCard({ entity, updates })
+    } catch {
+      return // reported by the mutation
+    }
+  }
+  if (at) await reorder.onReorder({ itemId: entity.id, ...at })
 }
 
 // cardTarget is the single source of truth for where a card goes, bound to each
@@ -944,7 +999,8 @@ watch(createModal.open, (open) => {
       :sections="boardSections"
       :show-add="showColumnAdd"
       :show-add-section="false"
-      :can-move="canMoveCard"
+      :can-move="boardCanMove"
+      :reorder="reorder.reorderable.value"
       :selected-id="selectedEntityId ?? undefined"
       @move="onMove"
       @add="onColumnAdd"

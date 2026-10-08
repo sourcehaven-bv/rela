@@ -36,7 +36,7 @@ type Engine struct {
 // NewEngine builds an engine with the package's execution bounds.
 func NewEngine() *Engine {
 	runner, err := cmdexec.New(defaultTimeout, defaultMaxBytes,
-		cmdexec.WithMaxConcurrent(defaultMaxConcurrent))
+		cmdexec.WithMaxConcurrent(defaultMaxConcurrent), cmdexec.WithPurpose(cmdexec.PurposeTransform))
 	if err != nil {
 		// Unreachable: cmdexec.New fails only on non-positive bounds, and the
 		// bounds are package constants.

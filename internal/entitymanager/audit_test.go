@@ -181,20 +181,14 @@ func TestAudit_AC1_EntityRenameRecordsBeforeAfter(t *testing.T) {
 	mem := audit.NewMemory()
 	mgr := newManagerWithAudit(t, mem, nil)
 
+	// Rename takes only a hand-typed id, so the entity is a component.
 	res, err := mgr.CreateEntity(context.Background(),
-		entity.New("REQ-OLD", "requirement"), entity.CreateOptions{ID: "REQ-OLD"})
+		entity.New("api", "component"), entity.CreateOptions{ID: "api"})
 	if err != nil {
-		// Sequential IDs reject custom — use whatever ID was assigned.
-		res, err = mgr.CreateEntity(context.Background(),
-			entity.New("", "requirement"), entity.CreateOptions{})
-		if err != nil {
-			t.Fatalf("CreateEntity: %v", err)
-		}
+		t.Fatalf("CreateEntity: %v", err)
 	}
 	oldID := res.Entity.ID
 
-	// Use a custom-ID-capable type (decision) for rename; both use
-	// sequential IDs but rename takes the operator-supplied new ID.
 	_, err = mgr.RenameEntity(context.Background(), oldID, oldID+"-renamed", entity.RenameOptions{})
 	if err != nil {
 		t.Fatalf("RenameEntity: %v", err)
@@ -218,8 +212,8 @@ func TestAudit_AC1_EntityRenameRecordsBeforeAfter(t *testing.T) {
 	if renameRec.After.ID != oldID+"-renamed" {
 		t.Errorf("After.ID = %q, want %q-renamed", renameRec.After.ID, oldID)
 	}
-	if renameRec.Before.Type != "requirement" || renameRec.After.Type != "requirement" {
-		t.Errorf("expected type=requirement in Before/After, got %q/%q",
+	if renameRec.Before.Type != "component" || renameRec.After.Type != "component" {
+		t.Errorf("expected type=component in Before/After, got %q/%q",
 			renameRec.Before.Type, renameRec.After.Type)
 	}
 	// Subject must be nil for rename (Before/After carry the diff).

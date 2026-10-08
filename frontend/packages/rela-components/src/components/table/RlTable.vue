@@ -25,9 +25,10 @@
  * title happens to end, and a column of them comes out ragged.
  */
 import type { CollectionItem, Section } from '../../types'
-import { watchEffect } from 'vue'
+import { ref, useId, watchEffect } from 'vue'
 import type {
   ColumnVisibility,
+  RowMove,
   SortClickEvent,
   TableColumn,
   TableCompact,
@@ -165,6 +166,16 @@ const props = withDefaults(
      * which therefore renders no link to key off.
      */
     rowAttrs?: (item: T) => Record<string, unknown>
+    /**
+     * Which rows carry a handle to move them, for a list whose order the
+     * reader sets by hand. Absent means no row does.
+     *
+     * The table reports a move through `reorder` and moves nothing itself:
+     * the caller's data decides the order, as it does for a board's cards.
+     * Leave this off while the list is sorted or grouped by a field, where a
+     * row dropped somewhere would only jump back to where the sort puts it.
+     */
+    reorderable?: (item: T) => boolean
   }>(),
   {
     columns: () => [],
@@ -183,8 +194,27 @@ const props = withDefaults(
     columnVisibility: () => ({}),
     rowAttrs: undefined,
     compact: 'stack',
+    reorderable: undefined,
   },
 )
+
+/** Ties drags to this table, so two tables on one page cannot trade rows. */
+const reorderGroup = useId()
+
+/*
+ * What the live region last said about a keyboard move. A dragged row is
+ * seen to move; a row moved with the arrow keys is announced, since focus
+ * stays on its handle and nothing else tells a screen reader it moved.
+ */
+const moveStatus = ref('')
+
+function onReorder(move: RowMove) {
+  if ('step' in move) {
+    const item = props.sections.flatMap((s) => s.items).find((i) => i.id === move.itemId)
+    if (item) moveStatus.value = `${item.title} moved ${move.step < 0 ? 'up' : 'down'}`
+  }
+  emit('reorder', move)
+}
 
 /*
  * A duplicated key is silent and looks like it works: each cell still renders
@@ -231,6 +261,8 @@ const emit = defineEmits<{
   toggle: [item: T]
   /** A section's select-all box was ticked or cleared. */
   toggleAll: [section: Section<T>, checked: boolean]
+  /** A row's handle asked to move it. See `reorderable`. */
+  reorder: [move: RowMove]
 }>()
 
 /*
@@ -288,17 +320,21 @@ defineSlots<
       :column-visibility="columnVisibility"
       :row-attrs="rowAttrs"
       :compact="compact"
+      :reorderable="reorderable"
+      :reorder-group="reorderGroup"
       @add="emit('add', $event)"
       @collapse="(target, collapsed) => emit('collapse', target, collapsed)"
       @select="emit('select', $event)"
       @sort-click="(column, event) => emit('sortClick', column, event)"
       @toggle="emit('toggle', $event)"
       @toggle-all="(target, checked) => emit('toggleAll', target, checked)"
+      @reorder="onReorder"
     >
       <template v-for="(_, name) in $slots" #[name]="slotProps">
         <slot :name="name" v-bind="slotProps ?? {}" />
       </template>
     </RlTableSection>
+    <span v-if="reorderable" class="rl-table__status" role="status">{{ moveStatus }}</span>
   </div>
 </template>
 
@@ -320,5 +356,15 @@ defineSlots<
    * consuming app happened to make a container for its own layout.
    */
   container: rl-table / inline-size;
+}
+
+/* Heard, not seen: the moved row is already in its new place on screen. */
+.rl-table__status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 </style>

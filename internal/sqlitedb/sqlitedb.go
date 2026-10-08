@@ -543,27 +543,53 @@ CREATE INDEX IF NOT EXISTS comments_thread_idx ON comments(target_key, created_a
 // the trigram tokenizer, which answers case-insensitive substring queries as
 // pgstore's LIKE over its trigram index does.
 //
-// Each row's rowid is the entities row's rowid, and triggers keep the index
-// in step inside the writing transaction. That makes it as current as the
-// table on every write path (store writes, renames, soft delete, purge, bulk
-// import) with no observer and no rebuild after a crash. The indexed text is
-// pgstore's search_text: the id, the string-valued top-level properties and
-// the body. The tokenizer folds case, so none of it is lowercased here.
+// Triggers keep the index in step inside the writing transaction. That makes
+// it as current as the table on every write path (store writes, renames, soft
+// delete, purge, bulk import) with no observer and no rebuild after a crash.
+// The indexed text is pgstore's search_text: the id, the string-valued
+// top-level properties and the body. The tokenizer folds case, so none of it
+// is lowercased here.
 //
-// Writes use INSERT OR REPLACE: an entities rowid freed by a delete can be
-// reused, and a stale index row must never make that insert fail.
+// An index row is not keyed by the entities rowid (RR-44YDTU). entities is
+// keyed by (id, face) and has no INTEGER PRIMARY KEY, so its rowid is not
+// stable: VACUUM may renumber it, and the index would then point at other
+// rows. entity_search_key gives each (id, face) a key that VACUUM keeps,
+// because an INTEGER PRIMARY KEY column is the rowid and VACUUM preserves it.
+// Each index row's rowid is that key, and search joins through the key table
+// to entities by (id, face). Every trigger finds its key through the UNIQUE
+// (id, face) index, so a write costs O(log n), never a scan of the index.
+//
+// A rename updates the key row in place, so the entity keeps its key. The
+// inserts use INSERT OR IGNORE on the key and INSERT OR REPLACE on the index,
+// so neither fails on a row it finds already there: a key freed by a delete
+// can be reused, and an INSERT OR REPLACE on entities removes the old row
+// without firing the delete trigger.
 var searchDDL = `
+CREATE TABLE IF NOT EXISTS entity_search_key (
+	key  INTEGER PRIMARY KEY,
+	id   TEXT NOT NULL,
+	face TEXT NOT NULL,
+	UNIQUE (id, face)
+) STRICT;
 CREATE VIRTUAL TABLE IF NOT EXISTS entity_search USING fts5(body, tokenize = 'trigram');
 CREATE TRIGGER IF NOT EXISTS entity_search_insert AFTER INSERT ON entities BEGIN
-	INSERT OR REPLACE INTO entity_search(rowid, body) VALUES (NEW.rowid, ` + searchBody("NEW") + `);
+	INSERT OR IGNORE INTO entity_search_key(id, face) VALUES (NEW.id, NEW.face);
+	INSERT OR REPLACE INTO entity_search(rowid, body) VALUES (` + searchKey("NEW") + `, ` + searchBody("NEW") + `);
 END;
-CREATE TRIGGER IF NOT EXISTS entity_search_update AFTER UPDATE OF id, properties, content ON entities BEGIN
-	DELETE FROM entity_search WHERE rowid = OLD.rowid;
-	INSERT OR REPLACE INTO entity_search(rowid, body) VALUES (NEW.rowid, ` + searchBody("NEW") + `);
+CREATE TRIGGER IF NOT EXISTS entity_search_update AFTER UPDATE OF id, face, properties, content ON entities BEGIN
+	UPDATE entity_search_key SET id = NEW.id, face = NEW.face WHERE id = OLD.id AND face = OLD.face;
+	INSERT OR IGNORE INTO entity_search_key(id, face) VALUES (NEW.id, NEW.face);
+	INSERT OR REPLACE INTO entity_search(rowid, body) VALUES (` + searchKey("NEW") + `, ` + searchBody("NEW") + `);
 END;
 CREATE TRIGGER IF NOT EXISTS entity_search_delete AFTER DELETE ON entities BEGIN
-	DELETE FROM entity_search WHERE rowid = OLD.rowid;
+	DELETE FROM entity_search WHERE rowid = ` + searchKey("OLD") + `;
+	DELETE FROM entity_search_key WHERE id = OLD.id AND face = OLD.face;
 END;`
+
+// searchKey is the SQL for the index key of the entities row named row.
+func searchKey(row string) string {
+	return `(SELECT key FROM entity_search_key WHERE id = ` + row + `.id AND face = ` + row + `.face)`
+}
 
 // searchBody is the SQL for the indexed text of the entities row named row.
 func searchBody(row string) string {
@@ -571,7 +597,18 @@ func searchBody(row string) string {
 		`.properties) WHERE type = 'text'), '') || char(10) || ` + row + `.content`
 }
 
-// rebuildSearchSQL fills the search index from the entities table, for a
-// database that had rows before the index existed.
+// rebuildSearchSQL refills the search index and its keys from the entities
+// table. It replaces everything both tables held, so a re-run is harmless.
 var rebuildSearchSQL = `DELETE FROM entity_search;
-INSERT INTO entity_search(rowid, body) SELECT e.rowid, ` + searchBody("e") + ` FROM entities e;`
+DELETE FROM entity_search_key;
+INSERT INTO entity_search_key(id, face) SELECT id, face FROM entities;
+INSERT INTO entity_search(rowid, body) SELECT k.key, ` + searchBody("e") + `
+	FROM entities e JOIN entity_search_key k ON k.id = e.id AND k.face = e.face;`
+
+// dropRowidSearchSQL removes the v12 index, whose rows were keyed by the
+// entities rowid. The triggers go with it: they share the new triggers'
+// names, so CREATE TRIGGER IF NOT EXISTS would otherwise keep the old ones.
+const dropRowidSearchSQL = `DROP TRIGGER IF EXISTS entity_search_insert;
+DROP TRIGGER IF EXISTS entity_search_update;
+DROP TRIGGER IF EXISTS entity_search_delete;
+DROP TABLE IF EXISTS entity_search;`

@@ -1390,8 +1390,9 @@ func (h *writeHandler) handleV1UpdateRelation(
 	}
 
 	var req struct {
-		Meta      map[string]any `json:"meta"`
-		Direction string         `json:"direction,omitempty"`
+		Meta      map[string]any        `json:"meta"`
+		Direction string                `json:"direction,omitempty"`
+		Position  *relationPositionWire `json:"position,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
@@ -1415,6 +1416,16 @@ func (h *writeHandler) handleV1UpdateRelation(
 
 	sources, ok := h.relationSourcesOr500(w, r, entity, entityPkg.Ref{ID: from, Face: tail}, req.Direction, relType)
 	if !ok {
+		return
+	}
+	if req.Position != nil {
+		writeRelationPosition(w, r, h, relationPositionRequest{
+			key:       entityPkg.RelationKey{From: from, FromFace: tail, Type: relType, To: to},
+			position:  *req.Position,
+			incoming:  req.Direction == string(DirectionIncoming),
+			sources:   sources,
+			metaGiven: len(req.Meta) > 0,
+		})
 		return
 	}
 	if source, denial := h.affordances.relationMetaDenial(r.Context(), sources, relType, req.Meta, nil); denial != nil {

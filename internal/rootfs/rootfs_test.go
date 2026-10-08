@@ -169,6 +169,67 @@ func TestDir_Subscribe(t *testing.T) {
 	}
 }
 
+// A subscription reports a file that appears or disappears after it began,
+// which a watch on the file itself cannot do. A project whose config lives
+// in its database has no file at subscribe time. A change to a sibling is
+// not reported.
+func TestDir_SubscribeFollowsTheName(t *testing.T) {
+	writeTo := func(name string) func(string) error {
+		return func(root string) error { return os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644) }
+	}
+	tests := []struct {
+		name     string
+		existing bool
+		change   func(root string) error
+		want     bool
+	}{
+		{name: "file created after subscribe", change: writeTo("data-entry.yaml"), want: true},
+		{
+			name:     "file removed after subscribe",
+			existing: true,
+			change:   func(root string) error { return os.Remove(filepath.Join(root, "data-entry.yaml")) },
+			want:     true,
+		},
+		{name: "sibling file changed", change: writeTo("acl.yaml"), want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := project(t)
+			if tc.existing {
+				write(t, root, "data-entry.yaml", "old")
+			}
+			changed := make(chan struct{}, 1)
+			stop, err := rootfs.New(root).Subscribe(context.Background(), "data-entry.yaml", func() {
+				select {
+				case changed <- struct{}{}:
+				default:
+				}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stop()
+			if err := tc.change(root); err != nil {
+				t.Fatal(err)
+			}
+			wait := 5 * time.Second
+			if !tc.want {
+				wait = time.Second
+			}
+			select {
+			case <-changed:
+				if !tc.want {
+					t.Fatal("notified for a file the subscription does not name")
+				}
+			case <-time.After(wait):
+				if tc.want {
+					t.Fatal("no change notification")
+				}
+			}
+		})
+	}
+}
+
 // Containment is per area, as the readers had it before the loader seam: a
 // symlink between subdirectories of scripts/ resolves, a top-level file may
 // be a symlink anywhere, and a symlinked area directory is refused.
