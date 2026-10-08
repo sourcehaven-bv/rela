@@ -157,3 +157,60 @@ func TestAnchorValidate_Text(t *testing.T) {
 		})
 	}
 }
+
+// TestBody_ResolveTextAcrossBlocks covers a range that starts in a heading
+// and ends in the paragraph below it (TKT-U32AUB).
+func TestBody_ResolveTextAcrossBlocks(t *testing.T) {
+	const doc = "Intro paragraph.\n\n## Search index\n\n" +
+		"Renaming an entity leaves the old id in the search index until a restart, " +
+		"which is confusing because the store itself is already correct.\n"
+	start := strings.Index(doc, "Search index")
+	end := strings.Index(doc, "the old id") + len("the old id")
+	a, err := comments.NewTextAnchor(doc, start, end)
+	require.NoError(t, err)
+
+	spans := func(body string, m comments.TextMatch) []string {
+		var out []string
+		for _, sp := range m.Segments {
+			out = append(out, body[sp.Start:sp.End])
+		}
+		return out
+	}
+
+	t.Run("one segment per block", func(t *testing.T) {
+		m := comments.NewBody(doc).ResolveText(a)
+		require.False(t, m.Detached)
+		require.Equal(t, []string{"Search index", "Renaming an entity leaves the old id"}, spans(doc, m))
+	})
+
+	t.Run("survives the fsstore reflow", func(t *testing.T) {
+		reflowed := markdown.FormatMarkdown(doc)
+		m := comments.NewBody(reflowed).ResolveText(a)
+		require.False(t, m.Detached)
+		require.GreaterOrEqual(t, m.Confidence, comments.ConfidenceExact)
+		require.Len(t, m.Segments, 2)
+	})
+
+	t.Run("survives an edit inside the range", func(t *testing.T) {
+		edited := strings.Replace(doc, "Renaming an entity", "Renaming any entity", 1)
+		m := comments.NewBody(edited).ResolveText(a)
+		require.False(t, m.Detached)
+		require.Equal(t, []string{"Search index", "Renaming any entity leaves the old id"}, spans(edited, m))
+	})
+
+	t.Run("package ResolveText locates the same range", func(t *testing.T) {
+		b := comments.NewBody(doc).ResolveText(a)
+		s := comments.ResolveText(doc, a)
+		require.Equal(t, b.Start, s.Start)
+		require.Equal(t, b.End, s.End)
+		require.Nil(t, s.Segments, "segments come only from Body.ResolveText")
+	})
+}
+
+func TestBody_ResolveTextDetachedHasNoSegments(t *testing.T) {
+	m := comments.NewBody(body).ResolveText(&comments.TextAnchor{Quote: "nowhere in this body at all", ParagraphIndex: -1})
+	require.True(t, m.Detached)
+	require.Nil(t, m.Segments)
+
+	require.True(t, comments.NewBody(body).ResolveText(nil).Detached)
+}

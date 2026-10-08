@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -617,7 +619,7 @@ func appRedactor(a *App) visibility.FieldRedactor {
 // appbuild's guard: it would convert a caught bug into a silent downgrade,
 // and delete the fault path failclosed_test.go exercises.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
-	return gatedScriptReader(a.acl, a.store, redactor, familiesOption(a), defaultWorldScope(a.worlds))
+	return gatedScriptReader(a.acl, a.store, a.versions, redactor, familiesOption(a), defaultWorldScope(a.worlds))
 }
 
 // familiesOption is the resolver option every App-wired resolver takes, so a
@@ -747,6 +749,28 @@ func (r lateGatedReader) Family(ctx context.Context, id string) (visibility.Fami
 	return fr.Family(ctx, id)
 }
 
+// EntityVersions forwards to the live gated reader, so a validation rule
+// reads history as an action does. A reader without history answers
+// store.ErrHistoryUnsupported, which the binding raises.
+func (r lateGatedReader) EntityVersions(ctx context.Context, addr string) ([]store.VersionMeta, error) {
+	hr, ok := r.reader().(lua.EntityVersionReader)
+	if !ok {
+		return nil, store.ErrHistoryUnsupported
+	}
+	return hr.EntityVersions(ctx, addr)
+}
+
+// EntityVersion forwards like [lateGatedReader.EntityVersions].
+func (r lateGatedReader) EntityVersion(
+	ctx context.Context, addr string, n int,
+) (*entity.Entity, store.VersionMeta, error) {
+	hr, ok := r.reader().(lua.EntityVersionReader)
+	if !ok {
+		return nil, store.VersionMeta{}, store.ErrHistoryUnsupported
+	}
+	return hr.EntityVersion(ctx, addr, n)
+}
+
 // lateGatedTracer is the tracer.Tracer counterpart of lateGatedReader: it
 // resolves the gated tracer (scriptTracer, which prunes hidden nodes and fails
 // closed) from the LIVE App per call, so a rule's rela.trace_from/trace_to/
@@ -806,16 +830,17 @@ func elevationRecorder(sink audit.Audit) lua.ElevationRecorder {
 // NopACL it degrades to the raw store (byte-identical to pre-ACL); under a
 // Declarative policy it row-gates + field-redacts, resolving the principal from
 // ctx per call; a construction fault REFUSES (DenyReader) rather than reading
-// ungated. Same policy the per-request App.scriptReader wraps.
+// ungated. Same policy the per-request App.scriptReader wraps. history serves
+// rela.history and rela.get_version; nil leaves scripts without it.
 func gatedScriptReader(
-	aclImpl acl.ACL, store store.Store, redactor visibility.FieldRedactor, order visibility.ResolverOption,
-	world store.WorldScope,
+	aclImpl acl.ACL, store store.Store, history store.HistoryReader,
+	redactor visibility.FieldRedactor, order visibility.ResolverOption, world store.WorldScope,
 ) lua.EntityReader {
 	d, ok := aclImpl.(*acl.Declarative)
 	if !ok || d == nil {
 		// Named so the NopACL path is greppable alongside every other
 		// ungated read site (TKT-1WV50C).
-		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world))
+		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world)).WithHistory(history)
 	}
 	gate, err := visibility.NewDeclarativeGate(d, world)
 	if err != nil {
@@ -832,7 +857,7 @@ func gatedScriptReader(
 		slog.Error("dataentry: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	return sr.WithWorld(visibility.WorldOf(world))
+	return sr.WithWorld(visibility.WorldOf(world)).WithHistory(history)
 }
 
 // scriptTraversalGate authorizes a validation rule's traversal under the same
@@ -1285,11 +1310,15 @@ func NewApp(
 	// always available; the PolicyProcessor only invokes it when a property's
 	// scan/transform config references a command. A nil runner (constructor
 	// failure) leaves uploads with native MIME validation only.
-	var runnerOpts []attachment.CmdRunnerOption
-	if socks := metamodel.NewAttachmentPolicy(meta).ScanSockets(); len(socks) > 0 {
-		runnerOpts = append(runnerOpts, attachment.WithScannerSockets(socks...))
+	// Refuse to serve when the operator's sandbox read paths would hand the
+	// project (every user's entities, .rela secrets) to the converters that
+	// render untrusted content: that is what the sandbox exists to prevent.
+	if paths != nil {
+		if err := cmdexec.CheckProjectNotExposed(paths.Root); err != nil {
+			return nil, fmt.Errorf("dataentry.NewApp: %w", err)
+		}
 	}
-	runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes, runnerOpts...)
+	runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes)
 	if rerr == nil {
 		app.attachmentRunner = runner
 		// Tell the operator the confinement posture at boot, so an unsandboxable
@@ -1297,6 +1326,10 @@ func NewApp(
 		// scan/transform (which will fail closed).
 		slog.Info("external command confinement", "detail", runner.Describe())
 		probeAttachmentCommands(meta, runner)
+		warnIfNoSandboxReadPaths(meta, cfg.Documents, runtime.GOOS, map[cmdexec.Purpose][]string{
+			cmdexec.PurposeScan:      cmdexec.HostReadOnly(cmdexec.PurposeScan),
+			cmdexec.PurposeTransform: cmdexec.HostReadOnly(cmdexec.PurposeTransform),
+		}, !cmdexec.UnconfinedByDefault())
 	} else {
 		slog.Warn("attachments: command runner unavailable; scan/transform disabled", "err", rerr)
 	}

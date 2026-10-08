@@ -3,6 +3,7 @@ import { computed, ref, useId } from 'vue'
 import type { CollectionItem, Section } from '../../types'
 import type {
   ColumnVisibility,
+  RowMove,
   SortClickEvent,
   TableColumn,
   TableCompact,
@@ -85,11 +86,17 @@ const props = withDefaults(
      * never renders the row itself, so this is the only place to reach it.
      */
     rowAttrs?: (item: T) => Record<string, unknown>
+    /** Which rows carry a move handle. See `RlTable`. */
+    reorderable?: (item: T) => boolean
+    /** Which table the rows belong to, so drops stay inside it. */
+    reorderGroup?: string
   }>(),
   {
     columns: () => [],
     showHeaderRow: true,
     addLabel: 'Add',
+    reorderable: undefined,
+    reorderGroup: '',
     cursorId: undefined,
     pageSize: 0,
     nameLabel: 'Name',
@@ -119,6 +126,8 @@ const emit = defineEmits<{
   sortClick: [column: TableColumn, event: SortClickEvent]
   toggle: [item: T]
   toggleAll: [section: Section<T>, checked: boolean]
+  /** A row's handle asked to move it. See `RlTable`. */
+  reorder: [move: RowMove]
 }>()
 
 /*
@@ -127,6 +136,10 @@ const emit = defineEmits<{
  * outranks the record, so a column carrying the row's identity cannot be
  * hidden by a stale saved view.
  */
+const anyReorderable = computed(
+  () => !!props.reorderable && props.section.items.some((item) => props.reorderable?.(item)),
+)
+
 const visibleColumns = computed(() =>
   props.columns.filter(
     (column) => column.hideable === false || props.columnVisibility[column.key] !== false,
@@ -346,6 +359,8 @@ function sortHint(column: TableColumn) {
                     : undefined
               "
             >
+              <!-- Keeps the header label over the titles, past the rows' handles. -->
+              <span v-if="anyReorderable" class="rl-table-section__handle-space" aria-hidden="true" />
               <RlCheckbox
                 v-if="selectable"
                 :model-value="allSelected"
@@ -447,8 +462,11 @@ function sortHint(column: TableColumn) {
             :checked="selected.has(item.id)"
             :cursor="cursorId !== undefined && item.id === cursorId"
             :compact="compact"
+            :reorderable="reorderable?.(item) ?? false"
+            :reorder-group="reorderGroup"
             @click="emit('select', $event)"
             @toggle="emit('toggle', $event)"
+            @reorder="emit('reorder', $event)"
           >
             <template v-for="(_, name) in $slots" #[name]="slotProps">
               <slot :name="name" v-bind="slotProps ?? {}" />
@@ -757,5 +775,11 @@ function sortHint(column: TableColumn) {
   }
 
   .rl-table-section__add { padding-inline: var(--rl-page-gutter-left) var(--rl-page-gutter-right); }
+}
+
+/* The width of a row's move handle, so the header lines up with the titles. */
+.rl-table-section__handle-space {
+  flex: none;
+  width: 20px;
 }
 </style>

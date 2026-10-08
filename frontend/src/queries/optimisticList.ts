@@ -68,6 +68,21 @@ export function beginOptimisticRemove(
   return { key, previous, optimistic }
 }
 
+// beginOptimisticReorder is the reorder counterpart: replaces the cached
+// page's rows with `rows`, the same rows in their new order, so a moved row
+// lands where it was dropped before the server answers.
+export function beginOptimisticReorder(
+  queryCache: QueryCache,
+  key: readonly string[],
+  rows: Entity[]
+): OptimisticListContext {
+  queryCache.cancelQueries({ key })
+  const previous = queryCache.getQueryData<ListResponse<Entity>>(key)
+  const optimistic = previous && { ...previous, data: rows }
+  if (optimistic) queryCache.setQueryData(key, optimistic)
+  return { key, previous, optimistic }
+}
+
 // rollbackOptimistic restores `previous` — but ONLY if the cache still holds
 // the exact object we wrote. If a refetch resolved between onMutate and
 // onError, the cache holds newer server truth that we must not stomp.

@@ -7,6 +7,7 @@ import { storyComponent } from '../storyGeneric'
 import { boardSections } from '../../fixtures'
 import { ref } from 'vue'
 import type { Section } from '../../types'
+import type { BoardDropPosition } from '../../composables/useBoardDnd'
 
 /* The board is generic over its item; `Task` is this library's demo row. */
 const meta: Meta<typeof RlBoard<Task>> = {
@@ -104,6 +105,51 @@ export const DragAndDrop: StoryObj = {
           {{ moved || 'Drag a card, or focus one and press Enter then the arrow keys.' }}
         </p>
         <RlBoard :sections="sections" :can-move="canMove" add-label="Add task" @move="onMove">
+          <template #card="{ item, selected }">
+            <RlTaskCard :task="item" :selected="selected" />
+          </template>
+        </RlBoard>
+      </div>
+    `,
+  }),
+}
+
+/**
+ * Cards in an order the reader sets by hand. With `reorder`, a drop against a
+ * card reports where it landed (`at`), and a card dropped among the cards of
+ * its own column is reported too.
+ *
+ * As with a column move, the board changes nothing itself; this story moves
+ * the card in its own copy of the data. The keyboard move still picks a
+ * column only.
+ */
+export const Reorder: StoryObj = {
+  render: () => ({
+    components: { RlBoard: storyComponent(RlBoard), RlTaskCard },
+    setup() {
+      const sections = ref<Section<Task>[]>(structuredClone(boardSections))
+      const moved = ref('')
+
+      function onMove({ item, to, at }: { item: Task; to: Section<Task>; at?: BoardDropPosition }) {
+        for (const section of sections.value) {
+          section.items = section.items.filter((candidate) => candidate.id !== item.id)
+        }
+        const target = sections.value.find((section) => section.id === to.id)
+        if (!target) return
+        const index = at ? target.items.findIndex((candidate) => candidate.id === at.targetId) : -1
+        if (index < 0) target.items.push(item)
+        else target.items.splice(at?.placement === 'after' ? index + 1 : index, 0, item)
+        moved.value = at ? `${item.title} ${at.placement} ${at.targetId}` : `${item.title} → ${to.title}`
+      }
+
+      return { sections, moved, onMove, canMove: () => true }
+    },
+    template: `
+      <div style="display:flex; flex-direction:column; height:100%">
+        <p style="margin:0; padding:8px 24px; font: 12px system-ui; color:#666">
+          {{ moved || 'Drag a card above or below another one.' }}
+        </p>
+        <RlBoard :sections="sections" :can-move="canMove" reorder add-label="Add task" @move="onMove">
           <template #card="{ item, selected }">
             <RlTaskCard :task="item" :selected="selected" />
           </template>

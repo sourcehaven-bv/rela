@@ -3,8 +3,10 @@ import { useQueryCache } from '@pinia/colada'
 import { createRelation } from '@/api/entities'
 import { entityKeys } from '@/queries/entities'
 import { usePageStore } from '@/stores/pages'
+import { useSchemaStore } from '@/stores/schema'
 import { useUIStore } from '@/stores/ui'
 import { pageScopeParams } from '@/utils/listParams'
+import { tabIsRelationOrdered } from '@/utils/relationOrder'
 import type { Entity, PageScope, SidebarPage, SidebarPageLink } from '@/types'
 
 /** How a new row is linked to a page's entity: the anchor and the edge to create from its side. */
@@ -75,6 +77,7 @@ function anchorLink(
  */
 export function usePageTabScope(scope: () => PageScope | undefined) {
   const pageStore = usePageStore()
+  const schemaStore = useSchemaStore()
 
   const params = computed(() => pageScopeParams(scope()))
 
@@ -91,7 +94,14 @@ export function usePageTabScope(scope: () => PageScope | undefined) {
     if (b) await linkToAnchor(b, entity)
   }
 
-  return { params, linkCreated }
+  // Whether the tab's rows are in relation order, which the reader sets by
+  // dragging. See tabIsRelationOrdered.
+  const relationOrdered = computed(() => {
+    const s = scope()
+    return !!s && tabIsRelationOrdered(pageStore.pages[s.page], s.tab, schemaStore.relationTypes)
+  })
+
+  return { params, linkCreated, relationOrdered }
 }
 
 /**

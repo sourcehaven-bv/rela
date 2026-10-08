@@ -899,6 +899,9 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 	// Relation query functions
 	r.L.SetField(rela, "get_relations", r.L.NewFunction(r.luaGetRelations))
 
+	// Version history (database backends; raises elsewhere)
+	registerHistoryBindings(r, rela)
+
 	// Graph traversal
 	r.L.SetField(rela, "trace_from", r.L.NewFunction(r.luaTraceFrom))
 	r.L.SetField(rela, "trace_to", r.L.NewFunction(r.luaTraceTo))

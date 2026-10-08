@@ -4111,6 +4111,36 @@ Every tab of an entity page needs a `scope:`:
   `hierarchy:` relations must start from that type.
 - An entity page cannot show a calendar, a document or the dashboard.
 
+### Rows in relation order
+
+When a tab's relation is [orderable](metamodel.md#ordered-relations-orderable)
+on the outgoing side, the tab shows its rows in the order of the page entity's
+edges. This order replaces the list's `default_sort:`. A user who may update
+the edges can change the order:
+
+- **List tab.** Each row has a handle. Drag the handle above or below another
+  row, or focus it and press the up or down arrow key. Moving the top or bottom
+  row of a page with an arrow key moves it onto the next or previous page.
+- **Board tab.** Drag a card above or below another card. A card dropped in
+  another column moves to that column first and then takes its place. A move
+  with the keyboard still picks a column only.
+
+The same order shows on the entity's detail page, in a `display: table`
+section whose rows come from one non-recursive `follow:` from `entry`. A
+section with `sort:`, `group_by:` or `display: nested`, or whose collection
+more than one rule writes, keeps its usual order.
+
+The order applies only while nothing else orders the rows. A sort the user
+picks in a column header, or a grouping, shows the rows in that order instead,
+and the handles disappear until it is cleared. These limits also apply:
+
+- A tab ordered over an `incoming` relation is not offered, even when the
+  relation's incoming side is orderable.
+- A board with `swimlanes:` cannot be reordered.
+- A user who may not see the order property `_order_out` does not see the
+  relation order, and has no handles. Ordering by a value the user may not
+  read would reveal it.
+
 A row created from a list or board tab, with New or a section's Add, is linked
 to the page's entity over the tab's relation, so it appears in the tab. When
 that link fails, a message names the new row so it can be linked by hand.

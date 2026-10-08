@@ -1,8 +1,9 @@
 package entitymanager
 
 import (
+	"fmt"
 	"math"
-	"sort"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -73,11 +74,11 @@ func NeedsRenumber(sorted []float64) bool {
 	return false
 }
 
-// SortRelations returns a copy of rels in stable sort order by the named
-// numeric property ascending. Entries with a missing, non-numeric, or
-// non-finite value sort after entries with a finite value; among themselves
-// they preserve the original input order (stable). Ties on the value are
-// also broken by original order.
+// SortRelations returns a copy of rels sorted by the named order property
+// with [metamodel.CompareOrderKeys]: finite values first, ascending, then
+// edges without one; ties and missing values by the far endpoint's id, then
+// the tail. The far endpoint is the target for [metamodel.OrderPropertyOut]
+// and the source for [metamodel.OrderPropertyIn].
 //
 // When prop is empty, returns a shallow copy of rels in input order.
 func SortRelations(rels []entity.Relation, prop string) []entity.Relation {
@@ -86,26 +87,19 @@ func SortRelations(rels []entity.Relation, prop string) []entity.Relation {
 	if prop == "" {
 		return out
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		vi, oki := orderValue(out[i], prop)
-		vj, okj := orderValue(out[j], prop)
-		switch {
-		case oki && !okj:
-			return true
-		case !oki && okj:
-			return false
-		case !oki && !okj:
-			return false
-		}
-		return vi < vj
+	slices.SortStableFunc(out, func(a, b entity.Relation) int {
+		return metamodel.CompareOrderKeys(OrderKeyOf(a, prop), OrderKeyOf(b, prop))
 	})
 	return out
 }
 
-// orderValue extracts a finite float ordering value from a relation's
-// properties using FiniteOrder semantics on the named property.
-func orderValue(r entity.Relation, prop string) (float64, bool) {
-	return FiniteOrder(r.Properties[prop])
+// OrderKeyOf returns r's place on the order side prop names.
+func OrderKeyOf(r entity.Relation, prop string) metamodel.OrderKey {
+	peer := r.To
+	if prop == metamodel.OrderPropertyIn {
+		peer = r.From
+	}
+	return metamodel.OrderKey{Value: r.Properties[prop], Peer: peer, Tail: string(r.FromFace)}
 }
 
 // FiniteOrder is re-exported from metamodel for callers that already
@@ -117,4 +111,119 @@ func FiniteOrder(v any) (float64, bool) {
 
 func isFiniteFloat(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0)
+}
+
+// PlaceOrder plans the writes that move the edge moved to pos among its
+// siblings on the order side prop. siblings is every edge on that side the
+// move may see and write, moved included, in any order. The result maps each edge to rewrite to its
+// new value; it is empty when the move changes nothing.
+//
+// Usually only moved is rewritten, to a value between its new neighbors.
+// When the edge above the new place has no value, or the gap between the
+// two neighbors has collapsed, no value fits, so siblings is densified to
+// 1..N in the new order. Edges without a value sort after all
+// valued ones, so landing directly after the last valued edge needs no
+// densify: prev+1 already puts it there.
+func PlaceOrder(
+	siblings []entity.Relation, moved entity.RelationKey, pos entity.OrderPosition, prop string,
+) (map[entity.RelationKey]float64, error) {
+	sorted := SortRelations(siblings, prop)
+	from := slices.IndexFunc(sorted, func(r entity.Relation) bool { return r.Identity() == moved })
+	if from < 0 {
+		return nil, fmt.Errorf("%w: %s", ErrRelationNotFound, moved)
+	}
+	rest := slices.Delete(slices.Clone(sorted), from, from+1)
+	to, err := insertionIndex(rest, from, moved, pos, prop)
+	if err != nil {
+		return nil, err
+	}
+	if to == from {
+		return map[entity.RelationKey]float64{}, nil
+	}
+	final := slices.Insert(rest, to, sorted[from])
+
+	value, ok := slotValue(final, to, prop)
+	if ok {
+		return map[entity.RelationKey]float64{moved: value}, nil
+	}
+	plan := make(map[entity.RelationKey]float64, len(final))
+	for i, r := range final {
+		want := float64(i + 1)
+		if cur, has := FiniteOrder(r.Properties[prop]); has && cur == want {
+			continue
+		}
+		plan[r.Identity()] = want
+	}
+	return plan, nil
+}
+
+// insertionIndex resolves pos to an index into rest, the order with the
+// moved edge taken out; from is where the moved edge was.
+func insertionIndex(
+	rest []entity.Relation, from int, moved entity.RelationKey, pos entity.OrderPosition, prop string,
+) (int, error) {
+	set := 0
+	for _, named := range []bool{pos.Before != "", pos.After != "", pos.Step != 0} {
+		if named {
+			set++
+		}
+	}
+	if set != 1 {
+		return 0, fmt.Errorf("%w: name exactly one of before, after and step", ErrInvalidOrderPosition)
+	}
+	if pos.Step != 0 {
+		if pos.Step != -1 && pos.Step != 1 {
+			return 0, fmt.Errorf("%w: step must be -1 or 1", ErrInvalidOrderPosition)
+		}
+		return min(max(from+pos.Step, 0), len(rest)), nil
+	}
+	ref := pos.Before + pos.After
+	if ref == OrderKeyOf(entity.Relation{From: moved.From, To: moved.To}, prop).Peer {
+		return 0, fmt.Errorf("%w: an edge cannot move relative to itself", ErrInvalidOrderPosition)
+	}
+	i := slices.IndexFunc(rest, func(r entity.Relation) bool {
+		k := OrderKeyOf(r, prop)
+		return k.Peer == ref && k.Tail == string(moved.FromFace)
+	})
+	if i < 0 {
+		return 0, ErrOrderRefNotSibling
+	}
+	if pos.After != "" {
+		i++
+	}
+	return i, nil
+}
+
+// slotValue returns a value that puts final[at] between its neighbors
+// without touching them, or false when none exists.
+func slotValue(final []entity.Relation, at int, prop string) (float64, bool) {
+	var prev, next *float64
+	if at > 0 {
+		v, ok := FiniteOrder(final[at-1].Properties[prop])
+		if !ok {
+			return 0, false
+		}
+		prev = &v
+	}
+	if at+1 < len(final) {
+		if v, ok := FiniteOrder(final[at+1].Properties[prop]); ok {
+			next = &v
+		}
+	}
+	switch {
+	case prev == nil && next == nil:
+		return 1, true
+	case prev == nil:
+		return *next - 1, true
+	case next == nil:
+		return *prev + 1, true
+	}
+	// Twice the threshold, so the midpoint leaves at least the threshold on
+	// both sides. A smaller gap reads as collapsed, and the next update's
+	// renumber would then rewrite the whole family, including edges the
+	// mover cannot see. The densify below touches only the siblings given.
+	if *next-*prev < 2*OrderCollapseThreshold {
+		return 0, false
+	}
+	return MidpointOrder(*prev, *next)
 }

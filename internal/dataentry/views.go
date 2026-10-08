@@ -44,6 +44,21 @@ type viewResult struct {
 	// records nothing; config validation refuses to pair one with a nested
 	// section rather than letting it render silently flat.
 	Parents map[string]map[string][]string
+
+	// EntryEdges maps a collection to the entry's own edges that reached it,
+	// for a collection a single flat `follow:` rule from `entry` writes: the
+	// one shape whose rows have one order (see sectionOrdering). Raw store
+	// edges, like Parents: a consumer reads only the edges of rows in the
+	// gated collection.
+	//
+	// Nil: accepted — no collection qualifies.
+	EntryEdges map[string]entryEdges
+}
+
+// entryEdges is one collection's entry edges and the relation they are of.
+type entryEdges struct {
+	relation string
+	edges    []*entity.Relation
 }
 
 // executeView runs a view's traversal rules and returns the result.
@@ -167,6 +182,7 @@ func (h *viewsHandler) executeViewBodies(
 
 	// Remove internal "entry" collection
 	delete(result.Collections, "entry")
+	keepSingleRuleEntryEdges(result, view.Traverse)
 
 	// Row-gate + field-redact on the way out (DEC-ZBI39P). Traversal above runs
 	// on raw store entities on purpose: a rule's where: filter may reference a
@@ -291,7 +307,14 @@ func (h *viewsHandler) applyViewTraverse(
 		// One relation query for every source at once (TKT-1U8XYN), in the
 		// same order the per-source loop produced: sources in collection
 		// order, each source's edges in store order.
-		foundIDs, byParent = h.traverseViewMany(ctx, sourceIDs, sourceFaces, rule, w)
+		var edges []*entity.Relation
+		foundIDs, byParent, edges = h.traverseViewMany(ctx, sourceIDs, sourceFaces, rule, w)
+		if rule.From == "entry" && rule.Follow != "" {
+			if result.EntryEdges == nil {
+				result.EntryEdges = map[string]entryEdges{}
+			}
+			result.EntryEdges[rule.CollectAs] = entryEdges{relation: rule.Follow, edges: edges}
+		}
 	}
 
 	// ONE resolution for the whole rule application, not one per hop.
@@ -379,7 +402,7 @@ func mergeViewParents(result *viewResult, collectAs string, byParent map[string]
 }
 
 // traverseViewMany is [viewsHandler.traverseViewOnce] for many sources in ONE
-// relation query. The result is ordered as the per-source calls would have
+// relation query. It also returns the edges it followed. The result is ordered as the per-source calls would have
 // been concatenated: by source in the given order, then by the store's edge
 // order within a source. A source with no edges contributes nothing.
 //
@@ -396,9 +419,9 @@ func mergeViewParents(result *viewResult, collectAs string, byParent map[string]
 // neighbor it will load.
 func (h *viewsHandler) traverseViewMany(
 	ctx context.Context, sourceIDs []string, faces map[string]entity.Face, rule ViewTraverse, w viewWorld,
-) (found []string, byParent map[string][]string) {
+) (found []string, byParent map[string][]string, edges []*entity.Relation) {
 	if len(sourceIDs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var relType string
 	var direction store.Direction
@@ -409,11 +432,10 @@ func (h *viewsHandler) traverseViewMany(
 	case rule.FollowIncoming != "":
 		relType, direction, useTarget = rule.FollowIncoming, store.DirectionIncoming, false
 	default:
-		return nil, nil
+		return nil, nil, nil
 	}
 	bySource := make(map[string][]string, len(sourceIDs))
 	q := store.RelationQuery{EntityIDs: sourceIDs, Type: relType, Direction: direction}
-	var edges []*entity.Relation
 	for r, err := range h.store.ListRelations(ctx, q) {
 		if err != nil {
 			break
@@ -436,7 +458,7 @@ func (h *viewsHandler) traverseViewMany(
 	for _, id := range sourceIDs {
 		out = append(out, bySource[id]...)
 	}
-	return out, bySource
+	return out, bySource, edges
 }
 
 // traverseViewBreadthFirst walks the relation graph from every source at
@@ -464,7 +486,7 @@ func (h *viewsHandler) traverseViewBreadthFirst(
 		// Edge map discarded: this walk reports ids level by level and a node
 		// reached at two depths has no single parent here, so retaining it
 		// would be a partial answer worse than none. See [viewResult.Parents].
-		found, _ := h.traverseViewMany(ctx, frontier, faces, rule, w)
+		found, _, _ := h.traverseViewMany(ctx, frontier, faces, rule, w)
 		all = append(all, found...)
 
 		// SOURCE-GATE the frontier (BUG-9Z20WH). An id the principal cannot
@@ -704,4 +726,22 @@ func (h *viewsHandler) filterEntities(entities []*entity.Entity, whereExpr strin
 		}
 	}
 	return result, nil
+}
+
+// keepSingleRuleEntryEdges drops the entry edges of every collection that a
+// rule other than its one flat `follow:` from `entry` also writes. Rows
+// gathered by two rules, or from more than one source, have no single
+// relation order to show them in. Decided from config rather than from the
+// result, because the fixpoint loop and `from: "*"` rules make the result
+// alone unable to say who contributed a row.
+func keepSingleRuleEntryEdges(result *viewResult, rules []ViewTraverse) {
+	writers := make(map[string]int, len(rules))
+	for _, rule := range rules {
+		writers[rule.CollectAs]++
+	}
+	for name := range result.EntryEdges {
+		if writers[name] != 1 {
+			delete(result.EntryEdges, name)
+		}
+	}
 }

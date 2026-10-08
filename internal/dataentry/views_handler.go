@@ -996,6 +996,8 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 			IsGrouped:    sec.IsGrouped,
 			Content:      sec.Content,
 			HasContent:   sec.HasContent,
+			// Already wire-shaped; nil for a section not in relation order.
+			RelationOrder: sec.RelationOrder,
 		}
 
 		// The opt-in create affordance. Nil for every section that did not

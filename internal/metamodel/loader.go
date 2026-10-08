@@ -281,6 +281,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateRelationScope(m)...)
 	validationErrors = append(validationErrors, validateRelationOwning(m)...)
 	validationErrors = append(validationErrors, validateTransforms(m)...)
+	validationErrors = append(validationErrors, validateAttachments(m)...)
 	validationErrors = append(validationErrors, validateCopies(m)...)
 	validationErrors = append(validationErrors, validateWorlds(m)...)
 	validationErrors = append(validationErrors, validateDefaultWorld(m)...)

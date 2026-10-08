@@ -394,7 +394,31 @@ export interface ListMeta {
   per_page: number
   has_more: boolean
   next_cursor?: string
+  // Set when the rows are in the order of one orderable relation from the
+  // tab's anchor; see RelationOrder.
+  relation_order?: RelationOrder
 }
+
+/**
+ * Rows shown in the order of an orderable relation from one anchor entity:
+ * the order a reader sets by dragging. `movable` is the server's answer to
+ * whether this principal may change it, so the client does no permission
+ * arithmetic of its own.
+ */
+export interface RelationOrder {
+  relation: string
+  anchor: string
+  // The anchor's entity type, which names the route a move is sent to.
+  anchor_type: string
+  movable: boolean
+}
+
+/**
+ * Where to move a row of a relation-ordered list. Exactly one field is set:
+ * a sibling row to land before or after, or a step of one place up or down.
+ * A step needs no neighbour on screen, so it can cross a page boundary.
+ */
+export type RelationPosition = { before: string } | { after: string } | { step: -1 | 1 }
 
 export interface ListParams {
   page?: number

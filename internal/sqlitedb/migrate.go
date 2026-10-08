@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 12
+const schemaVersion = 13
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -152,10 +152,20 @@ var migrations = []migration{
 	},
 	{
 		// v11 → v12: the FTS5 search index (DEC-10Z731). schemaSQL has
-		// already created the table and its triggers; this fills it from the
-		// rows that predate them.
+		// already created the table and its triggers. The v13 rung fills
+		// it, so this rung only moves the stamp.
 		to:    12,
-		apply: sqlSteps(searchDDL, rebuildSearchSQL),
+		apply: sqlSteps(searchDDL),
+	},
+	{
+		// v12 → v13: key the search index by entity_search_key rather than
+		// by the entities rowid, which VACUUM may renumber (RR-44YDTU).
+		// schemaSQL has created the key table, but on a v12 database it
+		// kept the old triggers, which share the new ones' names. The rung
+		// drops the old index and triggers, recreates them and refills the
+		// index. A re-run after a crash repeats the same full refill.
+		to:    13,
+		apply: sqlSteps(dropRowidSearchSQL, searchDDL, rebuildSearchSQL),
 	},
 }
 

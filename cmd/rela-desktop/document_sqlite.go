@@ -131,7 +131,8 @@ func newDocumentFromTemplate(ctx context.Context, templateDir, dest string) (err
 			return err
 		}
 	}
-	_, err = appbuild.StoreProjectConfig(ctx, paths, files)
+	_, err = appbuild.StoreProjectConfig(ctx, paths, files,
+		appbuild.ConfigImportOptions{Source: templateDir, Audit: desktopAudit})
 	return err
 }
 

@@ -11,6 +11,7 @@ import type {
   NextActionResponse,
   NextActionFeedbackKind,
   Preconditions,
+  RelationPosition,
 } from '@/types'
 import { warnIfMissingActions } from '@/utils/affordancesWarning'
 
@@ -128,6 +129,8 @@ export async function listAllEntities(
       page: 1,
       per_page: data.length,
       has_more: res.meta.has_more || data.length < all.length,
+      // Every page of one read carries the same order, so the first's holds.
+      ...(first.meta.relation_order ? { relation_order: first.meta.relation_order } : {}),
     },
   }
 }
@@ -418,6 +421,21 @@ export async function updateRelationProperties(
     meta,
     ...(direction === 'incoming' ? { direction } : {}),
   })
+}
+
+/**
+ * Moves the edge from `entityId` to `targetId` to another place among the
+ * entity's edges of `relationName`. The server answers 204; a reader that
+ * wants the new order refetches the list.
+ */
+export async function moveRelation(
+  type: string,
+  entityId: string,
+  relationName: string,
+  targetId: string,
+  position: RelationPosition
+): Promise<void> {
+  return api.patch(`/${getPlural(type)}/${entityId}/relations/${relationName}/${targetId}`, { position })
 }
 
 export async function deleteRelation(
