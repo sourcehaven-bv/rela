@@ -469,6 +469,90 @@ func TestComments_TextAnchor(t *testing.T) {
 	})
 }
 
+// TestComments_TextAnchorAcrossBlocks covers a selection dragged from a
+// heading into its body (TKT-U32AUB). The quote arrives as rendered text, with
+// no "## " and a plain newline between the blocks, and the read must hand back
+// one highlight segment per block, since one inline element cannot cross the
+// boundary.
+func TestComments_TextAnchorAcrossBlocks(t *testing.T) {
+	const doc = "Some introduction.\n\n## Configuration\n\n" +
+		"Configure the package by creating a config file in the project root.\n"
+
+	newApp := func(t *testing.T, content string) *App {
+		t.Helper()
+		app := commentsApp(t)
+		setBody(t, app, content)
+		return app
+	}
+	segmentTexts := func(t *testing.T, body string, a anchorWire) []string {
+		t.Helper()
+		require.NotNil(t, a.Segments, "a located text anchor always carries segments")
+		var out []string
+		for _, sp := range *a.Segments {
+			out = append(out, body[sp.Start:sp.End])
+		}
+		return out
+	}
+	post := func(t *testing.T, app *App) {
+		t.Helper()
+		body := `{"anchor":{"kind":"text","quote":"Configuration\nConfigure the package",` +
+			`"quote_prefix":"Some introduction.\n","quote_suffix":" by creating"},"body":"which file?"}`
+		rec := doComments(t, app, http.MethodPost, "/api/v1/_comments/ticket/TKT-001", body, "alice@example.com")
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	t.Run("read returns one segment per block", func(t *testing.T) {
+		app := newApp(t, doc)
+		post(t, app)
+
+		got := listComments(t, app)
+		require.Len(t, got.Comments, 1)
+		a := got.Comments[0].Anchor
+		require.False(t, got.Comments[0].Detached)
+		require.Equal(t, "Configuration\n\nConfigure the package", doc[*a.Start:*a.End])
+		require.Equal(t, []string{"Configuration", "Configure the package"}, segmentTexts(t, doc, a))
+	})
+
+	t.Run("still resolves after an edit inside the range", func(t *testing.T) {
+		app := newApp(t, doc)
+		post(t, app)
+
+		edited := strings.Replace(doc, "Configure the package", "Configure this package", 1)
+		setBody(t, app, edited)
+
+		got := listComments(t, app)
+		require.Len(t, got.Comments, 1)
+		require.False(t, got.Comments[0].Detached, "an edit inside a cross-block range must not detach it")
+		a := got.Comments[0].Anchor
+		require.Equal(t, []string{"Configuration", "Configure this package"}, segmentTexts(t, edited, a))
+	})
+
+	t.Run("a range over only code has an empty segment list", func(t *testing.T) {
+		const code = "Intro.\n\n```\nmake test all\n```\n"
+		app := newApp(t, code)
+		body := `{"anchor":{"kind":"text","quote":"make test all"},"body":"flaky?"}`
+		rec := doComments(t, app, http.MethodPost, "/api/v1/_comments/ticket/TKT-001", body, "alice@example.com")
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+		got := listComments(t, app)
+		require.Len(t, got.Comments, 1)
+		a := got.Comments[0].Anchor
+		require.NotNil(t, a.Segments, "empty, not absent: absent means an older server")
+		require.Empty(t, *a.Segments)
+	})
+}
+
+// setBody replaces TKT-001's body in the comments fixture.
+func setBody(t *testing.T, app *App, content string) {
+	t.Helper()
+	require.NoError(t, app.store.UpdateEntity(t.Context(), &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "Test Ticket", "status": "open"},
+		Content:    content,
+	}))
+}
+
 // TestComments_TextAnchorDisambiguation pins the fix for a comment landing on
 // the WRONG occurrence of a repeated quote.
 //

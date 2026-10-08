@@ -463,6 +463,7 @@ const textHighlights = computed<HighlightRange[]>(() =>
       id: c.id,
       start: c.anchor.start as number,
       end: c.anchor.end as number,
+      segments: c.anchor.segments,
       uncertain: c.anchor.uncertain,
     }))
 )
@@ -2934,6 +2935,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   padding: 0 1px;
   color: inherit;
   cursor: pointer;
+}
+
+/* Inline code paints its own opaque background, which would hide the mark's.
+ * Tint it instead, so it still reads as code and as highlighted. */
+.content-body :deep(mark[data-comment-id] code) {
+  background: color-mix(in srgb, var(--comment-highlight) 40%, var(--rl-color-bg-hover));
 }
 
 /* A highlighted LINK keeps its own click: navigation is the primary action and
