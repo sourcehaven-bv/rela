@@ -171,6 +171,11 @@ test.describe('Comments', () => {
       'Auth module',
       'Write more unit tests',
     ]);
+
+    // Deleting from the thread removes every mark without a reload.
+    await comments.openHighlight('Auth module');
+    await comments.deleteFirstInThread();
+    await expect(comments.highlightsFor(comment.id)).toHaveCount(0);
   });
 
   test('suggests a replacement and accepts it into the body', async ({ appPage, api }) => {

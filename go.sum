@@ -387,6 +387,8 @@ github.com/vloothuis/textanchor v0.2.0 h1:K2w7j/HwdIYV0ovTmZuJ2vV+ED+jKily2i8hVm
 github.com/vloothuis/textanchor v0.2.0/go.mod h1:UU2SGgqVOUYV4H8V8ctFfooeyA96Fln4gf5dVe4/sqU=
 github.com/vloothuis/textanchor v0.3.0 h1:BVXgZYXZP2CWydd9WCwtyLtgpH5/eGfEMLK/ZjdcD2w=
 github.com/vloothuis/textanchor v0.3.0/go.mod h1:UU2SGgqVOUYV4H8V8ctFfooeyA96Fln4gf5dVe4/sqU=
+github.com/vloothuis/textanchor v0.3.1 h1:g1Ki1NF1Z9KkglcCekPcXZLLGqfBomrNVgF5xTpKfLg=
+github.com/vloothuis/textanchor v0.3.1/go.mod h1:UU2SGgqVOUYV4H8V8ctFfooeyA96Fln4gf5dVe4/sqU=
 github.com/wailsapp/wails/v3 v3.0.0-beta.26 h1:Cs7E3wSD6kouJGDzbbvqeFBIbNOzuUMjf0kto3/a7Oc=
 github.com/wailsapp/wails/v3 v3.0.0-beta.26/go.mod h1:5DR/EG5FHU8+BNV7tQYQ/rJMjoFsVlYpM+0gp1+gcTI=
 github.com/wneessen/go-mail v0.8.1 h1:tVcncj02/QySVFw3zr/kXOzZcuFQqBNT6K+Rbgm/pcM=

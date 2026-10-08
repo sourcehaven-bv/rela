@@ -208,13 +208,13 @@ to a selected paragraph keeps the comment in place, flagged "may have moved".
 Some parts of a selection are not highlighted, although they still belong to
 the comment:
 
-- code blocks and inline code, because a mark inside code renders as literal
-  markup;
+- code blocks, because a mark inside code renders as literal markup;
 - block markup such as the `##` of a heading, the `-` of a list item and a
   task item's checkbox.
 
-A selection that covers only code gets no highlight; the comment still lists in
-the panel.
+Inline code is highlighted whole: a selection that starts or ends inside a
+code span highlights the entire span. A selection that covers only a code
+block gets no highlight; the comment still lists in the panel.
 
 A short comment inside a longer one keeps its highlight; the longer comment
 then shows only in the panel.

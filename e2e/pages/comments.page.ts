@@ -213,6 +213,16 @@ export class CommentsPage extends BasePage {
     return this.page.locator(".tcp .tcp-body");
   }
 
+  /** Delete the first comment in the open highlight thread, confirming the modal. */
+  async deleteFirstInThread() {
+    await this.page.locator(".tcp").getByRole("button", { name: "Delete" }).first().click();
+    await this.page
+      .locator("[role=dialog] button, [role=alertdialog] button")
+      .filter({ hasText: /^Delete$/ })
+      .last()
+      .click();
+  }
+
   /** Reply within the open highlight thread. */
   async replyInThread(body: string) {
     await this.page.locator(".tcp-reply textarea").fill(body);

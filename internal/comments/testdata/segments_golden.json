@@ -220,7 +220,7 @@
     ]
   },
   {
-    "name": "inline code cut out",
+    "name": "inline code included whole",
     "body": "Intro text.\n\nRun `make` now.\n",
     "start": 6,
     "end": 27,
@@ -231,17 +231,72 @@
       },
       {
         "start": 13,
-        "end": 16
-      },
-      {
-        "start": 24,
         "end": 27
       }
     ],
     "marks": [
       "text.",
-      "Run",
-      "now"
+      "Run make now"
+    ]
+  },
+  {
+    "name": "start inside inline code",
+    "body": "Run `make test` now.\n\nNext paragraph.\n",
+    "start": 10,
+    "end": 26,
+    "segments": [
+      {
+        "start": 4,
+        "end": 20
+      },
+      {
+        "start": 22,
+        "end": 26
+      }
+    ],
+    "marks": [
+      "make test now.",
+      "Next"
+    ]
+  },
+  {
+    "name": "end inside inline code",
+    "body": "Intro text.\n\nRun `make test` now.\n",
+    "start": 6,
+    "end": 22,
+    "segments": [
+      {
+        "start": 6,
+        "end": 11
+      },
+      {
+        "start": 13,
+        "end": 28
+      }
+    ],
+    "marks": [
+      "text.",
+      "Run make test"
+    ]
+  },
+  {
+    "name": "double-backtick code span",
+    "body": "Intro text.\n\nUse `` a`b `` here.\n",
+    "start": 6,
+    "end": 31,
+    "segments": [
+      {
+        "start": 6,
+        "end": 11
+      },
+      {
+        "start": 13,
+        "end": 31
+      }
+    ],
+    "marks": [
+      "text.",
+      "Use a`b here"
     ]
   },
   {

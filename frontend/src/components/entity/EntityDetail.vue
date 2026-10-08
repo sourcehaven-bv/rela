@@ -2909,6 +2909,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   cursor: pointer;
 }
 
+/* Inline code paints its own opaque background, which would hide the mark's.
+ * Tint it instead, so it still reads as code and as highlighted. */
+.content-body :deep(mark[data-comment-id] code) {
+  background: color-mix(in srgb, var(--comment-highlight) 40%, var(--rl-color-bg-hover));
+}
+
 /* A highlighted LINK keeps its own click: navigation is the primary action and
  * a mark must not swallow it. The chip beside it opens the thread instead. */
 .content-body :deep(mark[data-comment-id] a) {
