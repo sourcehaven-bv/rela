@@ -105,7 +105,7 @@ project's `connections.yaml` is listed with its state:
 
 To store a token, pick the connection, paste the token and choose
 **Save Token**. The token is the refresh token, or the whole JSON line a
-consent script such as `consent.sh` prints. Tokens are kept in the
+consent script such as `consent.py` prints. Tokens are kept in the
 keychain beside the secrets, follow the same **Allow This Document** rule,
 and are never listed under Secrets. Scripts reach them only through
 `rela.oauth` (see the Lua scripting guide, "OAuth Tokens"), never as a

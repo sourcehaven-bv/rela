@@ -2005,7 +2005,7 @@ the desktop app use Settings, Connections instead. The token is never
 printed.
 
 ```bash
-./consent.sh | rela token set NAME   # store a token, read from stdin
+./consent.py | rela token set NAME   # store a token, read from stdin
 rela token status [NAME...]          # state of each connection
 rela token delete NAME               # remove a stored token
 ```

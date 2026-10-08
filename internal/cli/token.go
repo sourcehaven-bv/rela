@@ -55,7 +55,7 @@ func (c *TokenSetCmd) Run(ctx context.Context, svc *writeServices) error {
 		return err
 	}
 	if f, ok := tokenStdin.(*os.File); ok && isTerminal(f) {
-		return errors.New("pipe the token in, for example: ./consent.sh | rela token set " + c.Name +
+		return errors.New("pipe the token in, for example: ./consent.py | rela token set " + c.Name +
 			"; a token typed at a prompt would be echoed")
 	}
 	data, err := io.ReadAll(io.LimitReader(tokenStdin, maxTokenInput))

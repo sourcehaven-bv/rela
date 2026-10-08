@@ -12,7 +12,7 @@ token.
 | `schedules.yaml`   | merge into `schedules.yaml`  | The pull, every 5 minutes.                           |
 | `acl.yaml`         | merge into `acl.yaml`        | What the connector identity may do.                  |
 | `connections.yaml` | `connections.yaml`           | How rela refreshes the Basecamp token.               |
-| `consent.sh`       | run once                     | Gets the first refresh token.                        |
+| `consent.py`       | run once                     | Gets the first refresh token.                        |
 
 One script does both directions because a rela script cannot load another
 file. When the global `entity` is set (the automation), it pushes that todo.
@@ -60,20 +60,24 @@ push is late, not gone.
 3. Copy and merge the files as the table above says. Put your own contact
    address in the User-Agent, in both `connections.yaml` and
    `basecamp.lua`; Basecamp refuses requests without one.
-4. Get the first token:
+4. Get the first token. Register `http://localhost:8765/callback` as the
+   app's redirect URI (or pass yours with `--redirect-uri`; it must point at
+   localhost), then run:
 
    ```sh
-   BASECAMP_CLIENT_ID=... BASECAMP_REDIRECT_URI=https://example.com/callback \
-     ./consent.sh | rela token set basecamp
+   BASECAMP_CLIENT_ID=... ./consent.py | rela token set basecamp
    ```
 
    The script asks for the client secret without showing it. Do not put
-   the secret on the command line, where your shell history keeps it. The
-   script lists the Basecamp accounts the token reaches; use one of
-   those ids as `basecamp_account_id`. On SQLite, stop `rela-server` first:
-   the CLI cannot open the database while the server holds it.
+   the secret on the command line, where your shell history keeps it. It
+   opens Basecamp in your browser and runs a small web server on the
+   redirect URI that catches the answer, so you copy nothing by hand. It
+   lists the Basecamp accounts the token reaches; use one of those ids as
+   `basecamp_account_id`. Pass your User-Agent with `--user-agent` or
+   `BASECAMP_USER_AGENT`. On SQLite, stop `rela-server` first: the CLI
+   cannot open the database while the server holds it.
 
-   **Desktop app:** run `./consent.sh` without the pipe. It prints a line of
+   **Desktop app:** run `./consent.py` without the pipe. It prints a line of
    JSON. In the app, open Settings, Connections, pick `basecamp`, paste the
    line and choose Save Token.
 5. Check it: `rela token status basecamp` says `ok`.
@@ -113,7 +117,7 @@ push is late, not gone.
 - **Expired or revoked access.** rela refreshes the access token when it
   expires. When Basecamp rejects one anyway, the script invalidates it and
   tries once more with a new one. When the refresh token itself is refused,
-  `rela token status` reports `needs_consent`: run `consent.sh` again.
+  `rela token status` reports `needs_consent`: run `consent.py` again.
 
 ### The lost-update window
 
