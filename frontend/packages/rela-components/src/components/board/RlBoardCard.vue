@@ -17,7 +17,7 @@
  */
 import { computed, onMounted, onUpdated, ref, toRef } from 'vue'
 import type { CollectionItem } from '../../types'
-import { useDraggableCard } from '../../composables/useBoardDnd'
+import { useDraggableCard, useDropTargetCard } from '../../composables/useBoardDnd'
 import { useMessages } from '../../composables/useMessages'
 
 const props = withDefaults(
@@ -31,8 +31,13 @@ const props = withDefaults(
     grabbed?: boolean
     /** Names the column the card is in, for the grab announcement. */
     sectionTitle?: string
+    /**
+     * Whether another card can be dropped before or after this one. See
+     * `reorder` on `RlBoard`.
+     */
+    reorder?: boolean
   }>(),
-  { draggable: false, grabbed: false },
+  { draggable: false, grabbed: false, reorder: false },
 )
 
 const emit = defineEmits<{ grab: [item: T]; release: [] }>()
@@ -76,6 +81,12 @@ const { dragging } = useDraggableCard({
   })),
 })
 
+const { edge } = useDropTargetCard({
+  element,
+  enabled: toRef(() => props.reorder),
+  itemId: toRef(() => props.item.id),
+})
+
 function onKeydown(event: KeyboardEvent) {
   if (!props.draggable) return
   if (event.key !== 'Enter' && event.key !== ' ') return
@@ -112,6 +123,7 @@ function onKeydown(event: KeyboardEvent) {
       'rl-board-card--draggable': draggable,
       'rl-board-card--dragging': dragging,
       'rl-board-card--grabbed': grabbed,
+      [`rl-board-card--drop-${edge}`]: edge !== null,
     }"
     :tabindex="draggable ? 0 : undefined"
     :role="draggable ? 'button' : undefined"
@@ -146,6 +158,27 @@ function onKeydown(event: KeyboardEvent) {
   opacity: 0.4;
   cursor: grabbing;
 }
+
+/*
+ * Where a held card will land: a line just above or below this card, in
+ * the gap between cards, so it reads as "between these two" rather than as
+ * a mark on either. It sits within the 2px the column's scroll area keeps
+ * around its cards: any further out, and the line above the first card or
+ * below the last is clipped.
+ */
+.rl-board-card { position: relative; }
+.rl-board-card--drop-top::before,
+.rl-board-card--drop-bottom::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--rl-color-accent);
+  pointer-events: none;
+}
+.rl-board-card--drop-top::before { top: -2px; }
+.rl-board-card--drop-bottom::before { bottom: -2px; }
 
 /* The keyboard equivalent of holding a card. */
 .rl-board-card--grabbed {

@@ -92,6 +92,9 @@ import { useStickyHeight } from '@/composables/useStickyHeight'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 import { recordRecentEntity } from '@/utils/recentEntities'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
+import type { RowMove } from 'rela-components/components/table/types'
+import OrderedSectionRow from '@/components/entity/OrderedSectionRow.vue'
+import { sectionRowLabel, useSectionReorder } from '@/composables/useSectionReorder'
 
 const props = withDefaults(
   defineProps<{
@@ -211,6 +214,17 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
   return loading.value ? 'pending' : 'loaded'
 })
 const viewData = ref<ViewResponse | null>(null)
+// Reordering the rows of a section table shown in relation order.
+// A move changes one section's row order and nothing else on the page, so
+// the reload after it fetches the view alone, without the route-load bar or
+// the commands, navigation and comments a full loadView refreshes.
+const sectionReorder = useSectionReorder({
+  view: viewData,
+  reload: async () => {
+    const view = await fetchView(props.entityType, props.entityId, worldParam.value)
+    if (view) viewData.value = view
+  },
+})
 const loadedCommands = ref<Command[]>([])
 
 // Commands run against the ADDRESS on screen, face included (BUG-G2BASF).
@@ -2235,7 +2249,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
       <!-- Sections -->
       <div v-if="viewData" class="sections">
         <section
-          v-for="section in viewData.sections"
+          v-for="(section, sectionIndex) in viewData.sections"
           :id="section.sectionId"
           :key="section.sectionId"
           class="view-section"
@@ -2676,6 +2690,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             <table v-else class="data-table">
               <thead>
                 <tr>
+                  <th v-if="sectionReorder.movable(section)" class="order-col"><span class="rl-visually-hidden">Order</span></th>
                   <th v-for="col in section.columns" :key="col.property || col.relation">
                     {{ col.label || col.property || col.relation }}
                   </th>
@@ -2683,7 +2698,19 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in section.rows" :id="anchorId(section.sectionId, row.entityId)" :key="row.entityId">
+                <!--
+                  A section in relation order the reader may change gets a
+                  handle per row. The row component is the <tr> itself, so
+                  the cells below are the same either way.
+                -->
+                <component
+                  :is="sectionReorder.movable(section) ? OrderedSectionRow : 'tr'"
+                  v-for="row in section.rows"
+                  :id="anchorId(section.sectionId, row.entityId)"
+                  :key="row.entityId"
+                  v-bind="sectionReorder.movable(section) ? { rowId: row.entityId, title: sectionRowLabel(row), group: `section-${sectionIndex}` } : {}"
+                  @reorder="(move: RowMove) => sectionReorder.onReorder(sectionIndex, move)"
+                >
                   <td v-for="(cell, idx) in row.cells" :key="idx">
                     <a
                       v-if="cell.link"
@@ -2725,9 +2752,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                       &#9998;
                     </button>
                   </td>
-                </tr>
+                </component>
               </tbody>
             </table>
+            <span v-if="sectionReorder.movable(section)" class="rl-visually-hidden" role="status">{{ sectionReorder.statusOf(sectionIndex) }}</span>
           </div>
 
           <!-- display: nested — a two-level parent→child tree.

@@ -9,8 +9,10 @@
  * render anything richer.
  */
 import type { CollectionItem } from '../../types'
-import type { TableColumn, TableCompact } from './types'
+import { computed, nextTick, ref } from 'vue'
+import type { RowMove, TableColumn, TableCompact } from './types'
 import RlCheckbox from '../form/RlCheckbox.vue'
+import { useReorderableRow } from '../../composables/useRowReorder'
 
 const props = withDefaults(
   defineProps<{
@@ -43,9 +45,22 @@ const props = withDefaults(
      * `cursorId` never supplies this.
      */
     rowId?: string
+    /**
+     * Whether the row carries a handle to drag it to another place, or to
+     * move it one place with the arrow keys. See `reorderable` on `RlTable`.
+     */
+    reorderable?: boolean
+    /**
+     * Which table the row belongs to. A row is dropped only on rows of the
+     * same group, so two tables on one page cannot trade rows. Set by the
+     * table.
+     */
+    reorderGroup?: string
   }>(),
   {
     selected: false,
+    reorderable: false,
+    reorderGroup: '',
     selectable: false,
     checked: false,
     cursor: false,
@@ -53,7 +68,35 @@ const props = withDefaults(
     compact: 'stack',
   },
 )
-const emit = defineEmits<{ click: [item: T]; toggle: [item: T] }>()
+const emit = defineEmits<{ click: [item: T]; toggle: [item: T]; reorder: [move: RowMove] }>()
+
+const rowEl = ref<HTMLElement>()
+const handleEl = ref<HTMLElement>()
+const { dragging, edge } = useReorderableRow({
+  element: rowEl,
+  handle: handleEl,
+  enabled: computed(() => props.reorderable),
+  itemId: computed(() => props.item.id),
+  group: computed(() => props.reorderGroup),
+  onDrop: (drop) => emit('reorder', drop),
+})
+
+/**
+ * Moves the row one place with the handle's arrow keys.
+ *
+ * The caller moves its data synchronously, so the row is re-rendered in its
+ * new place by the next tick. Focus goes back to the handle then: Vue may
+ * move this row's element to get there, and a moved element can lose focus,
+ * which would end a run of presses after the first.
+ */
+function onHandleKey(event: KeyboardEvent) {
+  const step = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
+  if (!step) return
+  event.preventDefault()
+  event.stopPropagation()
+  emit('reorder', { itemId: props.item.id, step })
+  void nextTick(() => handleEl.value?.focus())
+}
 
 /*
  * Declared loosely on purpose: a per-column `cell-<key>` slot has a name only
@@ -105,6 +148,7 @@ function asText(value: unknown): string | undefined {
 <template>
   <div
     :id="rowId"
+    ref="rowEl"
     class="rl-table-row"
     :class="[
       `rl-table-row--${compact}`,
@@ -112,12 +156,36 @@ function asText(value: unknown): string | undefined {
         'rl-table-row--selected': selected,
         'rl-table-row--checked': checked,
         'rl-table-row--cursor': cursor,
+        'rl-table-row--dragging': dragging,
+        [`rl-table-row--drop-${edge}`]: edge !== null,
       },
     ]"
     role="row"
     :aria-selected="selectable ? checked : undefined"
   >
     <span class="rl-table-row__name" role="gridcell">
+      <!--
+        The drag starts here and nowhere else, so the rest of the row keeps
+        its clicks. A button, so the arrow keys reach it from the keyboard.
+      -->
+      <button
+        v-if="reorderable"
+        ref="handleEl"
+        type="button"
+        class="rl-table-row__handle"
+        :aria-label="`Move ${item.title}`"
+        aria-description="Use the up and down arrow keys to move this row"
+        @keydown="onHandleKey"
+      >
+        <svg viewBox="0 0 10 16" width="10" height="16" fill="currentColor" aria-hidden="true">
+          <circle cx="2.5" cy="3" r="1.3" />
+          <circle cx="7.5" cy="3" r="1.3" />
+          <circle cx="2.5" cy="8" r="1.3" />
+          <circle cx="7.5" cy="8" r="1.3" />
+          <circle cx="2.5" cy="13" r="1.3" />
+          <circle cx="7.5" cy="13" r="1.3" />
+        </svg>
+      </button>
       <!--
         Named for the row it checks, so a column of boxes is not a column of
         identical "Select" controls to a screen reader.
@@ -318,6 +386,52 @@ function asText(value: unknown): string | undefined {
   z-index: 1;
   flex: none;
 }
+
+/*
+ * Above the row-wide hit area, like the select box, so pressing the handle
+ * starts a drag instead of opening the row.
+ */
+.rl-table-row__handle {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: var(--rl-radius-sm);
+  background: none;
+  color: var(--rl-color-text-subtle);
+  cursor: grab;
+}
+.rl-table-row__handle:hover { color: var(--rl-color-text); }
+.rl-table-row__handle:focus-visible {
+  outline: 2px solid var(--rl-color-focus);
+  outline-offset: 0;
+}
+
+.rl-table-row--dragging { opacity: 0.5; }
+
+/*
+ * The drop line, on the edge of the target row the dragged row will land
+ * against. Drawn inside the row, because `content-visibility` clips anything
+ * the row paints outside itself, and so it never shifts the layout.
+ */
+.rl-table-row--drop-top::after,
+.rl-table-row--drop-bottom::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  z-index: 2;
+  height: 2px;
+  background: var(--rl-color-accent);
+  pointer-events: none;
+}
+.rl-table-row--drop-top::after { top: 0; }
+.rl-table-row--drop-bottom::after { bottom: 0; }
 
 /* Numbers read better trailing, so a column of them lines up on the right. */
 .rl-table-row__cell--end { justify-content: flex-end; }

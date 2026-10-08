@@ -164,3 +164,17 @@ func customIDNotAllowedError(entityType string, def *metamodel.EntityDef, offend
 		entityType, def.GetIDType(), offendingID, hint,
 	)
 }
+
+// ErrRelationNotOrderable reports a move on a relation type whose outgoing
+// side declares no managed order.
+var ErrRelationNotOrderable = errors.New("relation type is not orderable on the outgoing side")
+
+// ErrInvalidOrderPosition reports an [entity.OrderPosition] that does not set
+// exactly one of its fields, steps by something other than one place, names
+// the moved edge itself, or comes with property changes.
+var ErrInvalidOrderPosition = errors.New("invalid order position")
+
+// ErrOrderRefNotSibling reports a Before/After sibling that is not an edge
+// of the same source, type and tail. Callers answer it like a hidden
+// sibling, so the error does not tell the two apart.
+var ErrOrderRefNotSibling = errors.New("order position names no sibling edge")

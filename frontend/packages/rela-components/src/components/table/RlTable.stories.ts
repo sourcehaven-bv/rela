@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import { expect, within } from 'storybook/test'
+import { expect, userEvent, within } from 'storybook/test'
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
 import RlTable from './RlTable.vue'
 import RlButton from '../common/RlButton.vue'
@@ -7,7 +7,7 @@ import type { Section, Task } from '../../types'
 import RlCheckbox from '../form/RlCheckbox.vue'
 import RlTagList from '../common/RlTagList.vue'
 import RlStatusPill from '../common/RlStatusPill.vue'
-import type { ColumnVisibility, SortClickEvent, TableColumn, TableSort } from './types'
+import type { ColumnVisibility, RowMove, SortClickEvent, TableColumn, TableSort } from './types'
 import { storyComponent } from '../storyGeneric'
 import { tableSections, tableColumns } from '../../fixtures'
 
@@ -741,4 +741,59 @@ export const LongList: Story = {
     const scroller = canvasElement.querySelector('.rl-table') as HTMLElement
     await expect(scroller.scrollHeight).toBeGreaterThan(1000 * 20)
   },
+}
+
+/**
+ * Rows in an order the reader sets by hand. Each row gets a handle: drag it,
+ * or focus it and press the up and down arrow keys.
+ *
+ * The table reports the move as a `RowMove` and changes nothing itself; this
+ * story applies it to its own copy of the rows, which is what a consuming app
+ * does. A drag names the row it landed against, and a key press names a step.
+ */
+export const Reorderable: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const handle = canvas.getAllByRole('button', { name: /^Move / })[0]
+    const first = handle.getAttribute('aria-label')
+
+    handle.focus()
+    await userEvent.keyboard('{ArrowDown}')
+    await expect(canvas.getAllByRole('button', { name: /^Move / })[1]).toHaveAttribute('aria-label', first)
+  },
+  render: () => ({
+    components: { RlTable: storyComponent(RlTable) },
+    setup() {
+      const items = ref<Task[]>(structuredClone(tableSections[0].items))
+      const sections = computed<Section<Task>[]>(() => [{ id: 'all', title: '', items: items.value }])
+
+      function onReorder(move: RowMove) {
+        const list = items.value.slice()
+        const from = list.findIndex((item) => item.id === move.itemId)
+        if (from < 0) return
+        const [moved] = list.splice(from, 1)
+        let to: number
+        if ('step' in move) {
+          to = Math.min(Math.max(from + move.step, 0), list.length)
+        } else {
+          to = list.findIndex((item) => item.id === move.targetId)
+          if (to < 0) return
+          if (move.placement === 'after') to += 1
+        }
+        list.splice(to, 0, moved)
+        items.value = list
+      }
+
+      return { sections, columns: tableColumns, onReorder, reorderable: () => true }
+    },
+    template: `
+      <RlTable
+        :sections="sections"
+        :columns="columns"
+        :show-section-header="false"
+        :reorderable="reorderable"
+        @reorder="onReorder"
+      />
+    `,
+  }),
 }
