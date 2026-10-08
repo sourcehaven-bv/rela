@@ -70,6 +70,7 @@ type fakeJobRunner struct {
 	runs    []principal.Principal
 	labels  []string
 	files   []string
+	hops    []int
 	started chan struct{}
 	gate    chan struct{}
 	during  func(ctx context.Context, path string)
@@ -88,6 +89,8 @@ func (f *fakeJobRunner) ExecuteFile(ctx context.Context, path string, _ lua.Writ
 	f.runs = append(f.runs, principal.From(ctx))
 	f.labels = append(f.labels, audit.TriggeredByFrom(ctx))
 	f.files = append(f.files, path)
+	hops, _ := ctx.Value(jobHopsKey{}).(int)
+	f.hops = append(f.hops, hops)
 	first := len(f.runs) == 1
 	f.mu.Unlock()
 	if first && f.started != nil {
@@ -304,7 +307,8 @@ func TestAutomationJobs_ForegroundJobsTriggeringEachOther(t *testing.T) {
 }
 
 // TestAutomationJobs_QueuedChainStops: queued jobs triggering each other
-// stop at the hop limit.
+// stop at the hop limit. A trigger that collapses into a running job must
+// not restart the count (BUG-WKL0M2).
 func TestAutomationJobs_QueuedChainStops(t *testing.T) {
 	var a *automationJobs
 	r := &fakeJobRunner{during: func(ctx context.Context, path string) {
@@ -315,7 +319,13 @@ func TestAutomationJobs_QueuedChainStops(t *testing.T) {
 	require.NoError(t, a.EnqueueScript(context.Background(), scriptFor("a.lua")))
 	require.Eventually(t, func() bool { return r.count() == maxAutomationJobHops }, 5*time.Second, 5*time.Millisecond)
 	time.Sleep(50 * time.Millisecond)
-	require.Equal(t, maxAutomationJobHops, r.count())
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	want := make([]int, maxAutomationJobHops)
+	for i := range want {
+		want[i] = i + 1
+	}
+	require.Equal(t, want, r.hops, "files run: %v", r.files)
 }
 
 // TestAutomationJobs_HopLimit: a chain of jobs triggering jobs stops.

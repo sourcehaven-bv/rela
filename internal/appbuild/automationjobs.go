@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -233,7 +235,7 @@ func (a *automationJobs) EnqueueScript(ctx context.Context, s autocascade.Backgr
 	if a.queue == nil {
 		return a.runForeground(ctx, p)
 	}
-	token := newToken()
+	token := newToken(p.Hops)
 	if err := a.kv.Put(ctx, tokenKey(p.key()), token); err != nil {
 		return fmt.Errorf("automation %q: record trigger: %w", p.Automation, err)
 	}
@@ -398,7 +400,13 @@ func (a *automationJobs) run(ctx context.Context, p automationJobPayload) error 
 		if before != "" && handled == before {
 			return nil // an earlier run handled this save
 		}
-		if runErr := a.runOnce(ctx, p, act, user); runErr != nil {
+		// A save that collapsed into this job may sit further along a
+		// chain than the save that queued it. Run with its hop count, or
+		// jobs that trigger each other while running would reset the
+		// count and outlast maxAutomationJobHops (BUG-WKL0M2).
+		p.Hops = max(p.Hops, tokenHops(before))
+		runCtx := context.WithValue(ctx, jobHopsKey{}, p.Hops)
+		if runErr := a.runOnce(runCtx, p, act, user); runErr != nil {
 			return runErr
 		}
 		if err = a.kv.Put(ctx, handledKey(key), []byte(before)); err != nil {
@@ -489,10 +497,25 @@ func tokenKey(jobKey string) string {
 // handledKey records the token of the last save a run handled.
 func handledKey(jobKey string) string { return tokenKey(jobKey) + "-handled" }
 
-func newToken() []byte {
+// newToken returns a fresh trigger token that ends in the trigger's hop
+// count, which [tokenHops] reads back.
+func newToken(hops int) []byte {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b) // never fails (crypto/rand)
-	return []byte(hex.EncodeToString(b))
+	return fmt.Appendf(nil, "%s/%d", hex.EncodeToString(b), hops)
+}
+
+// tokenHops returns the hop count in a token from [newToken], or 0.
+func tokenHops(token string) int {
+	_, hops, ok := strings.Cut(token, "/")
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(hops)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func jobRetry(r metamodel.JobRetry) jobs.Retry {
