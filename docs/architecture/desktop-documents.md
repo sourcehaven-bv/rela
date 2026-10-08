@@ -127,8 +127,12 @@ and no index folder is needed.
   trade-off 4), and `trigram` is the built-in one with these semantics.
 - Triggers on `entities` keep the index current inside each write
   transaction, on every write path. There is no backfill and no rebuild
-  after a crash. Schema version 11 adds the index and fills it for an
-  existing database.
+  after a crash. Schema version 12 adds the index.
+- An index row is keyed by a row in `entity_search_key`, which maps an
+  entity's `(id, face)` to an `INTEGER PRIMARY KEY`. The `entities` rowid
+  is not a usable key: the table has no `INTEGER PRIMARY KEY`, so `VACUUM`
+  may renumber it. Search joins through the key table by `(id, face)`.
+  Schema version 13 rebuilds a version 12 index, which used the rowid.
 - `search.Visible` wraps the searcher, so the ACL contract does not change.
   It passes the store conformance search suites.
 - The index makes the file larger, roughly by the size of the indexed text
