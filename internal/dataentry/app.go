@@ -239,6 +239,10 @@ type App struct {
 	// [SetVersionTags], which leaves scripts without tags.
 	versionTags versionTagWiring
 
+	// oauth backs rela.oauth in action scripts (TKT-01KZSO). Nil until
+	// [SetOAuthTokens]; rela.oauth then reports not_configured.
+	oauth lua.OAuthTokens
+
 	// recreator brings a deleted face back at its own id on a history
 	// restore, create-only (see entitymanager.RecreateEntity).
 	recreator entityRecreator
@@ -904,6 +908,14 @@ func SetVersionTags(a *App, writer lua.VersionTagWriter, reader visibility.Versi
 	a.versionTags = versionTagWiring{writer: writer, reader: reader}
 }
 
+// SetOAuthTokens gives action scripts rela.oauth (TKT-01KZSO). Only an
+// action whose `capabilities.tokens` names a connection sees the binding. A
+// package function because App is at its plimsoll method cap. Call it before
+// serving.
+//
+// Nil: accepted; rela.oauth then reports not_configured.
+func SetOAuthTokens(a *App, t lua.OAuthTokens) { a.oauth = t }
+
 // scriptTraversalGate authorizes a validation rule's traversal under the same
 // tier as [gatedScriptReader], resolved at call time because a.acl is set
 // after construction. Deriving both from a.acl, not from the request on ctx,
@@ -1460,6 +1472,7 @@ func NewApp(
 		engine:           func() *script.Engine { return app.scriptEngine },
 		luaDeps:          app.luaWriteDeps,
 		versionTags:      func() lua.VersionTagWriter { return app.versionTags.writer },
+		oauth:            func() lua.OAuthTokens { return app.oauth },
 		fullScriptDetail: app.allowFullScriptDetail,
 		paths:            paths,
 		provision:        newProvisionSeam(app),

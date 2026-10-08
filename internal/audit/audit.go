@@ -205,6 +205,12 @@ const (
 	// per run with the source and the file count, never file names or
 	// contents.
 	OpConfigImport = "config-import"
+
+	// OpTokenSet and OpTokenDelete record `rela token set` and
+	// `rela token delete` (TKT-01KZSO): which connection, never the token.
+	// A refresh rela makes itself is not audited; it changes no grant.
+	OpTokenSet    = "token-set"
+	OpTokenDelete = "token-delete"
 )
 
 // Subject identifies what an op acted on. Exactly one of {Type, ID}

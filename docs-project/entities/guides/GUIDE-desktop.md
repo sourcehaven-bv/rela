@@ -92,6 +92,31 @@ the same ID, and its scripts would then read your secrets.
 Any person or program that can use your user account can read these
 secrets, as it could read a file in your home folder.
 
+**Connections** holds the OAuth tokens of connector scripts, such as the
+Basecamp sync in `examples/basecamp/`. Each connection declared in the
+project's `connections.yaml` is listed with its state:
+
+| State | Meaning |
+|---|---|
+| Connected | A token is stored and the provider has not refused it |
+| No token | No token is stored for this connection |
+| Needs consent | The provider refused the refresh token. Run the consent flow and paste the new token. |
+| Cannot read the token | The stored token could not be read; the message says why |
+
+To store a token, pick the connection, paste the token and choose
+**Save Token**. The token is the refresh token, or the whole JSON line a
+consent script such as `consent.sh` prints. Tokens are kept in the
+keychain beside the secrets, follow the same **Allow This Document** rule,
+and are never listed under Secrets. Scripts reach them only through
+`rela.oauth` (see the Lua scripting guide, "OAuth Tokens"), never as a
+secret.
+
+The desktop app keeps tokens only in the keychain, never in the
+document's `rela.db`. The `rela` command line and `rela-server` keep them
+only in `rela.db` and never read the keychain. So a token stored in one
+does not exist in the other. When you move a project between the desktop
+app and the command line or a server, set the token again there.
+
 ### What stays outside the document
 
 The search index is stored inside the document. Documents created by an

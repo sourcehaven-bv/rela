@@ -1,0 +1,32 @@
+# Basecamp sync: the todo type and the push automation.
+# Merge these into your project's schema.yaml.
+version: "1.0"
+entities:
+  todo:
+    label: To-do
+    plural: todos
+    id_prefix: "TODO-"
+    id_type: sequential
+    properties:
+      title: {type: string, required: true}
+      due: {type: date}
+      done: {type: boolean}
+      # Why the todo is not syncing, written by the connector. Empty when
+      # it syncs.
+      sync_conflict: {type: string}
+      basecamp:
+        type: external_ref
+        system: basecamp
+        sync: true
+automations:
+  - name: basecamp-push
+    on: {entity: todo, created: true, updated: true}
+    do:
+      - lua_file: basecamp.lua
+        background: true
+        run_as: integration:basecamp
+        retry: bounded
+        capabilities:
+          http: true
+          tokens: [basecamp]
+          secrets: [basecamp_account_id, basecamp_todolist_id, basecamp_api_base]

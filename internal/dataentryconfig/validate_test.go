@@ -3628,6 +3628,32 @@ func TestValidateDocuments_ReservedExportNameRejected(t *testing.T) {
 	}
 }
 
+// capabilities.tokens is refused on a document at load: a render is a GET,
+// and a token refresh would spend a rotated refresh token (TKT-01KZSO).
+// Actions may still hold it.
+func TestValidateDocuments_TokensRefused(t *testing.T) {
+	meta := testMetamodel()
+	cfg := &Config{
+		Documents: map[string]DocumentConfig{
+			"report": {EntityType: "ticket", Script: "docs/r.lua",
+				Capabilities: metamodel.Capabilities{HTTP: true, Tokens: []string{"basecamp"}}},
+		},
+	}
+	err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
+	if err == nil {
+		t.Fatal("a document with capabilities.tokens was accepted")
+	}
+	if !strings.Contains(err.Error(), `document "report": capabilities.tokens is not supported`) {
+		t.Errorf("error should name the document and the key, got: %s", err)
+	}
+
+	cfg.Documents["report"] = DocumentConfig{EntityType: "ticket", Script: "docs/r.lua",
+		Capabilities: metamodel.Capabilities{HTTP: true}}
+	if err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta); err != nil {
+		t.Errorf("a document without tokens should load, got: %v", err)
+	}
+}
+
 // A document whose name merely CONTAINS the reserved segment is fine — only the
 // exact name collides with the route.
 func TestValidateDocuments_NameContainingExportAllowed(t *testing.T) {

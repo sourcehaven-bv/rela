@@ -123,6 +123,10 @@ type writeHandler struct {
 	// invoked may write one. Nil, or returning nil: the tag bindings are
 	// absent.
 	versionTags func() lua.VersionTagWriter
+	// oauth is what rela.oauth reads tokens through in an action script
+	// (TKT-01KZSO), kept out of luaDeps for the same reason as versionTags.
+	// Nil, or returning nil: rela.oauth reports not_configured.
+	oauth func() lua.OAuthTokens
 
 	// visible is the read path's resolver. Every addressed write resolves its
 	// row through it first, so a row the caller may not read, at any face, is

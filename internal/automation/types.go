@@ -216,7 +216,9 @@ type LuaToExecute struct {
 // CapabilityFields exposes the grant as plain values so consumers that may not
 // import metamodel (autocascade) still read it through the single translation
 // seam rather than copying fields by hand. See metamodel.Capabilities.Fields.
-func (l LuaToExecute) CapabilityFields() (http, ai, mail, writeFile bool, secrets []string) {
+//
+//nolint:gocritic // tooManyResultsChecker: mirrors metamodel.Capabilities.Fields, one result per capability
+func (l LuaToExecute) CapabilityFields() (http, ai, mail, writeFile bool, secrets, tokens []string) {
 	return l.Capabilities.Fields()
 }
 

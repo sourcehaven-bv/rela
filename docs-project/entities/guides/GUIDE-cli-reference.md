@@ -27,6 +27,7 @@ These options work with any command:
 | Variable       | Description                                                      |
 | -------------- | ---------------------------------------------------------------- |
 | `RELA_PROJECT` | Default project directory when `--project` flag is not specified |
+| `RELA_TOKEN_KEY` | Key that seals stored OAuth tokens, when `token_key` is not in `.rela/secrets.yaml` |
 
 ## Project Configuration
 
@@ -2002,6 +2003,43 @@ new project's audit log gets one `fs-import` record.
 
 ---
 
+### rela token
+
+Manage the OAuth tokens connector scripts use through `rela.oauth` (see the
+Lua scripting guide, "OAuth Tokens"). SQLite and PostgreSQL builds only; on
+the desktop app use Settings, Connections instead. The token is never
+printed.
+
+```bash
+./consent.sh | rela token set NAME   # store a token, read from stdin
+rela token status [NAME...]          # state of each connection
+rela token delete NAME               # remove a stored token
+```
+
+`set` reads stdin only, so the token stays out of shell history and the
+process list. It refuses a terminal. The input is either a bare refresh
+token or the provider's JSON token answer (`refresh_token`, and optionally
+`access_token` and `expires_in`). `NAME` must be declared in
+`connections.yaml`.
+
+`status` covers every declared connection when no name is given. Each row
+is one of:
+
+| State           | Meaning                                                                 |
+| --------------- | ----------------------------------------------------------------------- |
+| `ok`            | A refresh token is stored; the access token is refreshed when needed    |
+| `missing`       | No token is stored                                                      |
+| `needs_consent` | The provider refused the refresh token; run the consent flow again       |
+| `unreadable`    | Sealed with another `token_key`, or damaged; set the token again        |
+
+`set` and `delete` each leave one audit record (`token-set`,
+`token-delete`) naming the connection, never the token.
+
+On SQLite, `rela-server-sqlite` holds the database open. Stop it, run
+`rela-sqlite token set`, and start it again.
+
+---
+
 ### rela validate
 
 Validate project configuration files.
@@ -2017,6 +2055,10 @@ Checks `schema.yaml` and `data-entry.yaml` for:
 - Invalid entity types, relations, and properties
 - View traversal correctness
 - Dashboard and command configuration
+
+It also checks `connections.yaml` when the project has one. An invalid
+`connections.yaml` stops every rela command and server from starting, so
+`rela validate` reports it first.
 
 **Examples:**
 

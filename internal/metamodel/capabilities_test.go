@@ -57,12 +57,14 @@ func TestCapabilities_FieldsCoversEveryField(t *testing.T) {
 	t.Parallel()
 
 	// Every bool field set, so a dropped one shows as a false in the results.
-	all := Capabilities{HTTP: true, AI: true, Mail: true, WriteFile: true, Secrets: []string{"k"}}
+	all := Capabilities{
+		HTTP: true, AI: true, Mail: true, WriteFile: true, Secrets: []string{"k"}, Tokens: []string{"crm"},
+	}
 
 	structFields := reflect.TypeFor[Capabilities]().NumField()
-	http, ai, mail, writeFile, secrets := all.Fields()
+	http, ai, mail, writeFile, secrets, tokens := all.Fields()
 
-	returned := []any{http, ai, mail, writeFile, secrets}
+	returned := []any{http, ai, mail, writeFile, secrets, tokens}
 	require.Len(t, returned, structFields,
 		"Capabilities.Fields must return one value per struct field — a capability "+
 			"missing from the seam is dropped silently on every surface")
@@ -84,4 +86,33 @@ func TestCapabilities_RefusesBareBoolean(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorContains(t, err, "must be a mapping")
 	require.False(t, got.Any(), "a refused block must not have granted anything")
+}
+
+// TKT-01KZSO: the token store key is never grantable to a script, and a
+// token connection follows the connection name grammar.
+func TestCapabilities_TokensAndTokenKey(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{"tokens granted", "tokens: [basecamp]", ""},
+		{"token key as secret", "secrets: [api_key, token_key]", "token store key"},
+		{"bad connection name", "tokens: [Base-Camp]", "invalid connection name"},
+		{"duplicate connection", "tokens: [crm, crm]", "listed twice"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got Capabilities
+			err := yaml.Unmarshal([]byte(tc.yaml), &got)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				require.True(t, got.Any(), "a tokens grant counts as a grant")
+				return
+			}
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
 }

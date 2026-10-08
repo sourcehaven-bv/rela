@@ -190,8 +190,10 @@ func (l *LuaScriptRunner) Run(ctx context.Context, action autocascade.ScriptActi
 	// TKT-YH52OM: translate the action's declared capability grant. An
 	// automation runs on the write path of an ordinary HTTP request, so it is
 	// NOT an operator-shell surface: an undeclared capability stays absent.
-	http, ai, mail, writeFile, secrets := action.Capabilities.Fields()
-	caps := lua.Capabilities{HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets}
+	http, ai, mail, writeFile, secrets, tokens := action.Capabilities.Fields()
+	caps := lua.Capabilities{
+		HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets, Tokens: tokens,
+	}
 	var err error
 	switch {
 	case action.Code != "":

@@ -961,8 +961,8 @@ func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver) http.Hand
 				// carries the value, which is where it belongs (RR-I5S4NK).
 				writeV1Error(w, r, http.StatusForbidden, "reserved_principal",
 					"Reserved principal",
-					"A '"+principal.ReservedPrefix+"' prefixed identity is internal to rela "+
-						"and cannot be asserted by a request.")
+					"A '"+principal.ReservedPrefix+"' or '"+principal.IntegrationPrefix+
+						"' prefixed identity is internal to rela and cannot be asserted by a request.")
 				return
 			}
 			p = defaultPrincipalResolver(r)

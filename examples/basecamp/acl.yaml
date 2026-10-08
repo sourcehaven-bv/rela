@@ -1,0 +1,11 @@
+# Basecamp sync: the connector's role. Merge it into your acl.yaml.
+# `run_as` grants nothing by itself; this role is what the connector may do.
+roles:
+  basecamp-connector:
+    read: [todo]
+    create: [todo]
+    update: [todo]
+    # Moves the sync/basecamp version tags.
+    permissions: ["tag:sync"]
+assignments:
+  integration:basecamp: basecamp-connector

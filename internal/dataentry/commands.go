@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
@@ -1050,7 +1051,8 @@ func containedProjectPath(projectRoot, filePath string) (string, error) {
 }
 
 func (h *commandHandler) buildCommandEnv(cmd CommandConfig, input *commandInput) []string {
-	env := os.Environ()
+	// Never the token key or the database DSN; see cmdexec.Environ.
+	env := cmdexec.Environ()
 	env = append(env,
 		"RELA_PROJECT_ROOT="+h.projectRoot(),
 		"RELA_CONTEXT="+cmd.Context,

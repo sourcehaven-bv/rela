@@ -966,6 +966,7 @@ func (r *Runtime) registerWriteBindings(rela *lua.LTable) {
 	r.L.SetField(rela, "create_relation", r.L.NewFunction(r.luaCreateRelation))
 	r.L.SetField(rela, "delete_relation", r.L.NewFunction(r.luaDeleteRelation))
 	registerVersionTagWriteBindings(r, rela)
+	registerOAuthModule(r, rela)
 	// write_file is additionally capability-gated (TKT-YH52OM): a writer
 	// runtime may mutate the graph without being entitled to touch the disk.
 	if r.caps.WriteFile {

@@ -12,6 +12,7 @@ exclude:
   - internal/visibility/visibilitytest
   - internal/state/statetest
   - internal/lock/locktest
+  - internal/tokenstore/tokenstoretest
   - internal/jobs/jobstest
   - internal/mail/mailtest
   - internal/userstate/userstatetest
@@ -206,6 +207,9 @@ components:
   project:          { in: internal/project }
   state:            { in: internal/state }
   lock:             { in: internal/lock }
+  # OAuth refresh tokens for connector scripts, sealed into state.KV, and the
+  # Go-side refresher (TKT-01KZSO).
+  tokenstore:       { in: internal/tokenstore }
   storage:          { in: internal/storage }
 
   # Shared utilities
@@ -387,6 +391,9 @@ deps:
       - state
       - storage
       - store
+      # The keychain token store and the settings window's Connections
+      # section (TKT-01KZSO).
+      - tokenstore
     canUse:
       # The OS credential store for project secrets (see
       # docs/architecture/desktop-documents.md).
@@ -464,6 +471,9 @@ deps:
       - storage
       - store
       - templating
+      # `rela token set|status|delete` (TKT-01KZSO) parses the operator's
+      # token input and reports the store's typed read errors.
+      - tokenstore
       - tracer
       - transform
       - validator
@@ -690,6 +700,11 @@ deps:
       # manager and the attachment service must share one instance
       # (BUG-CTUW2N), so the composition root builds it once for both.
       - lock
+      # The connector token store (TKT-01KZSO): sealed into the database
+      # backend's state store, its broker shares the attachment lock. secrets
+      # names the global section's "no secrets file" error.
+      - tokenstore
+      - secrets
       - memuserstate
       - kvuserstate
       # Likewise the commentary layer: the root picks the backend and hands the
@@ -845,6 +860,8 @@ deps:
       - project
       - scheduler
       - storage
+      # `rela validate` checks connections.yaml (TKT-01KZSO).
+      - tokenstore
       # `rela validate` must check the pointer grammar too. The loader
       # checks world structure; grammar lives in the compiler because
       # metamodel may not import entity (TKT-WAV8XP).
@@ -1228,6 +1245,13 @@ deps:
   metamodel:
     mayDependOn:
       - migration
+      # principal: the shared run_as validator (TKT-01KZSO), so a background
+      # action and a scheduled task accept the same identities. principal is a
+      # leaf.
+      - principal
+      # secrets: ScriptReadable refuses the token store key in a
+      # capabilities.secrets list (TKT-01KZSO). secrets is a leaf.
+      - secrets
       - storage
     canUse:
       - rrulego
@@ -1584,6 +1608,11 @@ deps:
   state:
     mayDependOn:
       - storage
+  # Depends only on state: the lock, the secrets and the HTTP client are
+  # consumer-side interfaces the wiring site satisfies.
+  tokenstore:
+    mayDependOn:
+      - state
   fsimport:
     mayDependOn:
       - app

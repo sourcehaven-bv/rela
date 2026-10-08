@@ -273,6 +273,7 @@ func (r *Runner) execute(ctx context.Context, args []string, stdin io.Reader) (*
 	// args[0] is caller-configured (project config), not request input; the array
 	// form guarantees no shell interpretation of attacker-controlled bytes.
 	ec := exec.CommandContext(ctx, args[0], args[1:]...)
+	ec.Env = Environ()
 	ec.Stdin = stdin
 	var stdout, stderr bytes.Buffer
 	// Cap stdout so a runaway command can't exhaust memory; +1 to detect over.

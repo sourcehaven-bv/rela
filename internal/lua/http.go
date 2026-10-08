@@ -8,8 +8,10 @@
 //
 // The error table mirrors ai.Error so scripts switching between ai.chat
 // and http.request see the same shape: kind (string), message (string),
-// retry_after (number, always 0 for http), details (string, unwrapped
-// cause when present). Scripts branch on err.kind.
+// retry_after (number, always 0 on an error table), details (string, unwrapped
+// cause when present). Scripts branch on err.kind. A 429 or 503 response is
+// not an error: it is a response whose retry_after field holds the wait the
+// Retry-After header named.
 //
 // Error kinds:
 //   - timeout:      request exceeded deadline
@@ -43,11 +45,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,7 +128,67 @@ func (r *Runtime) registerHTTPModule() {
 	r.L.SetField(tbl, "put", r.L.NewFunction(h.luaHTTPPut))
 	r.L.SetField(tbl, "patch", r.L.NewFunction(h.luaHTTPPatch))
 	r.L.SetField(tbl, "delete", r.L.NewFunction(h.luaHTTPDelete))
+	r.L.SetField(tbl, "encode_query", r.L.NewFunction(h.luaEncodeQuery))
 	r.L.SetGlobal("http", tbl)
+}
+
+// luaEncodeQuery implements http.encode_query(tbl): it returns tbl as an
+// application/x-www-form-urlencoded string, keys sorted, so a script builds
+// a query string or a form body without hand-escaping (TKT-01KZSO). A value
+// may be a string, number or boolean, or an array of those, which repeats
+// the key. Any other value is a programming error and raises.
+func (h httpBindings) luaEncodeQuery(ls *lua.LState) int {
+	tbl := ls.CheckTable(1)
+	values := url.Values{}
+	var bad string
+	tbl.ForEach(func(k, v lua.LValue) {
+		if bad != "" {
+			return
+		}
+		key, ok := k.(lua.LString)
+		if !ok {
+			bad = "keys must be strings"
+			return
+		}
+		if arr, isTable := v.(*lua.LTable); isTable {
+			for i := 1; i <= arr.Len(); i++ {
+				s, scalar := queryScalar(arr.RawGetInt(i))
+				if !scalar {
+					bad = fmt.Sprintf("value for %q must be a string, number or boolean", string(key))
+					return
+				}
+				values.Add(string(key), s)
+			}
+			return
+		}
+		s, scalar := queryScalar(v)
+		if !scalar {
+			bad = fmt.Sprintf("value for %q must be a string, number or boolean", string(key))
+			return
+		}
+		values.Set(string(key), s)
+	})
+	if bad != "" {
+		ls.RaiseError("http.encode_query: %s", bad)
+		return 0
+	}
+	ls.Push(lua.LString(values.Encode()))
+	return 1
+}
+
+// queryScalar renders a scalar Lua value as query text. A whole number
+// renders without a decimal point, so an id stays an id.
+func queryScalar(v lua.LValue) (string, bool) {
+	switch x := v.(type) {
+	case lua.LString:
+		return string(x), true
+	case lua.LNumber:
+		return x.String(), true
+	case lua.LBool:
+		return x.String(), true
+	default:
+		return "", false
+	}
 }
 
 // luaHTTPRequest implements http.request(opts) where opts is a table with:
@@ -621,7 +685,9 @@ func parseHeaderTable(v lua.LValue) (map[string]string, error) {
 func validateURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("invalid URL: %s", err.Error())
+		// url.Error quotes the URL, which may hold a token in its query or a
+		// password in its userinfo, so its text is not passed on.
+		return nil, errors.New("invalid URL: it does not parse")
 	}
 	switch u.Scheme {
 	case "http", "https":
@@ -682,9 +748,18 @@ type httpError struct {
 }
 
 // classifyHTTPError converts a net/http client error into an httpError.
+//
+// The request URL in a transport error loses its query string and fragment
+// first (TKT-01KZSO). A query often carries a credential (an API key, a
+// signature), and this message reaches script output, logs and the job
+// error column.
 func classifyHTTPError(err error) *httpError {
 	if err == nil {
 		return nil
+	}
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		uerr.URL = redactURL(uerr.URL)
 	}
 	msg := err.Error()
 
@@ -704,6 +779,24 @@ func classifyHTTPError(err error) *httpError {
 	}
 
 	return &httpError{Kind: "network", Message: msg, Cause: err}
+}
+
+// redactURL drops the userinfo, query string and fragment from raw. Text that
+// does not parse keeps only what comes before the first '?' or '#'.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		if i := strings.IndexAny(raw, "?#"); i >= 0 {
+			return raw[:i]
+		}
+		return raw
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.ForceQuery = false
+	u.Fragment = ""
+	u.RawFragment = ""
+	return u.String()
 }
 
 // errHTTPBodyTooLarge is returned when the response exceeds httpMaxResponseBytes.
@@ -757,11 +850,12 @@ func pushHTTPError(ls *lua.LState, e *httpError) int {
 
 // pushHTTPResponse pushes a response table onto the Lua stack.
 // The response table has: status_code (number), status (string),
-// headers (table), body (string).
+// headers (table), body (string), and retry_after (number of seconds).
 func pushHTTPResponse(ls *lua.LState, resp *http.Response, body []byte) int {
 	tbl := ls.NewTable()
 	tbl.RawSetString("status_code", lua.LNumber(resp.StatusCode))
 	tbl.RawSetString("status", lua.LString(resp.Status))
+	tbl.RawSetString("retry_after", lua.LNumber(retryAfterSeconds(resp, time.Now())))
 
 	headersTbl := ls.NewTable()
 	for name, values := range resp.Header {
@@ -775,4 +869,26 @@ func pushHTTPResponse(ls *lua.LState, resp *http.Response, body []byte) int {
 	ls.Push(tbl)
 	ls.Push(lua.LNil)
 	return 2
+}
+
+// retryAfterSeconds reads the Retry-After header of a 429 or 503 response
+// (TKT-01KZSO). The header is either a number of seconds or an HTTP date; a
+// date in the past, a missing or unreadable header, and any other status all
+// give 0, which means "the server named no wait".
+func retryAfterSeconds(resp *http.Response, now time.Time) int {
+	if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusServiceUnavailable {
+		return 0
+	}
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(v); err == nil {
+		return max(secs, 0)
+	}
+	when, err := http.ParseTime(v)
+	if err != nil {
+		return 0
+	}
+	return max(int(math.Ceil(when.Sub(now).Seconds())), 0)
 }

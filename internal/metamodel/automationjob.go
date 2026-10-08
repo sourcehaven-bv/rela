@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
-	"unicode"
+
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // JobRetry is a background automation job's retry intent (TKT-2Q4UFI). It
@@ -57,6 +58,11 @@ func validateBackgroundActions(m *Metamodel) []string {
 			if !a.Background {
 				if a.RunAs != "" || a.Retry != JobRetryDefault {
 					errs = append(errs, where+": `run_as` and `retry` apply only with `background: true`")
+				}
+				if len(a.Capabilities.Tokens) > 0 {
+					// A token refresh is slow network I/O under a lock, and a
+					// synchronous action runs inside the save (TKT-01KZSO).
+					errs = append(errs, where+": `capabilities.tokens` applies only with `background: true`")
 				}
 				continue
 			}
@@ -111,22 +117,15 @@ func backgroundActionErrors(where string, a AutomationAction) []string {
 	if a.AllowACLBypass.Enabled() {
 		errs = append(errs, where+": `allow_acl_bypass` is not supported on a background action")
 	}
-	if a.RunAs != "" && !validRunAs(a.RunAs) {
-		errs = append(errs, fmt.Sprintf("%s: invalid run_as %q", where, a.RunAs))
+	if a.RunAs != "" {
+		if err := principal.ValidateRunAs(a.RunAs, isAutomationIdentity); err != nil {
+			errs = append(errs, where+": "+err.Error())
+		}
 	}
 	return errs
 }
 
-// validRunAs refuses surrounding space and control characters, which would
-// make the principal differ from the acl.yaml name it is meant to match. It
-// also refuses the reserved `system:` prefix, which names rela's own jobs,
-// except the automation identity itself.
-func validRunAs(s string) bool {
-	if strings.TrimSpace(s) != s {
-		return false
-	}
-	if strings.HasPrefix(s, "system:") && s != "system:automation" {
-		return false
-	}
-	return !strings.ContainsFunc(s, unicode.IsControl)
-}
+// isAutomationIdentity is the one `system:` name a background action may run
+// as: the identity it would have without `run_as`. Other `system:` names
+// belong to rela's own jobs.
+func isAutomationIdentity(s string) bool { return s == principal.UserAutomation }

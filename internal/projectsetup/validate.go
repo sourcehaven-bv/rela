@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
+	"github.com/Sourcehaven-BV/rela/internal/tokenstore"
 	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
@@ -31,11 +32,15 @@ type ValidateResult struct {
 	MailTemplatesError   error
 	MailTemplatesPresent bool
 	SchedulesError       error
+	// ConnectionsError is why connections.yaml does not parse or validate.
+	// Nil when the file is valid or absent.
+	ConnectionsError error
 }
 
 // HasErrors returns true if any validation failed.
 func (r *ValidateResult) HasErrors() bool {
-	return r.MetamodelError != nil || r.DataEntryError != nil || r.MailTemplatesError != nil || r.SchedulesError != nil
+	return r.MetamodelError != nil || r.DataEntryError != nil || r.MailTemplatesError != nil ||
+		r.SchedulesError != nil || r.ConnectionsError != nil
 }
 
 // Validate validates project configuration files (metamodel.yaml, data-entry.yaml)
@@ -96,8 +101,24 @@ func ValidateWithFS(startDir string, fs storage.FS) (*ValidateResult, error) {
 	}
 	result.MailTemplatesError, result.SchedulesError = validateScheduledMail(ctx.Root, mm, fs)
 	result.MailTemplatesPresent, _ = fileExists(filepath.Join(ctx.Root, mailtemplate.ConfigFile), fs)
+	result.ConnectionsError = validateConnections(ctx.Root, fs)
 
 	return result, nil
+}
+
+// validateConnections parses connections.yaml the way assembly does. An
+// absent file is valid: it declares no connections.
+func validateConnections(root string, fs storage.FS) error {
+	path := filepath.Join(root, tokenstore.ConnectionsFile)
+	if exists, _ := fileExists(path, fs); !exists {
+		return nil
+	}
+	data, err := fs.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	_, err = tokenstore.ParseConnections(data)
+	return err
 }
 
 func validateScheduledMail(root string, mm *metamodel.Metamodel, fs storage.FS) (mailErr, schedulesErr error) {
