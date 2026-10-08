@@ -10,7 +10,11 @@ import type { CollectionItem, Section } from '../../types'
 import RlAddButton from '../common/RlAddButton.vue'
 import RlBoardColumn from './RlBoardColumn.vue'
 import RlBoardColumnCollapsed from './RlBoardColumnCollapsed.vue'
-import { useBoardAutoScroll, type BoardDragData } from '../../composables/useBoardDnd'
+import {
+  useBoardAutoScroll,
+  type BoardDragData,
+  type BoardDropPosition,
+} from '../../composables/useBoardDnd'
 import { useBoardKeyboardMove } from './useBoardKeyboardMove'
 
 const props = withDefaults(
@@ -42,8 +46,17 @@ const props = withDefaults(
     emptyLabel?: string
     /** A line under `emptyLabel`, for what would put a card in the column. */
     emptyDescription?: string
+    /**
+     * Whether a drop onto a card reports where it landed, for a board whose
+     * card order the reader sets by hand. With it, `move` carries `at`, and a
+     * card dropped among the cards of its own column is reported too.
+     *
+     * The keyboard move still picks a column only.
+     */
+    reorder?: boolean
   }>(),
   {
+    reorder: false,
     showAddSection: true,
     addLabel: 'Add',
     showAdd: true,
@@ -59,10 +72,11 @@ const emit = defineEmits<{
   expandSection: [section: Section<T>]
   addSection: []
   /**
-   * A card was dropped on a column other than its own. The board does not
-   * move it; the caller's data decides whether the move happens.
+   * A card was dropped on a column other than its own, or, with `reorder`,
+   * before or after another card (`at`). The board does not move it; the
+   * caller's data decides whether the move happens.
    */
-  move: [payload: { item: T; to: Section<T> }]
+  move: [payload: { item: T; to: Section<T>; at?: BoardDropPosition }]
 }>()
 
 const element = ref<HTMLElement>()
@@ -77,9 +91,9 @@ function itemById(id: string) {
   return undefined
 }
 
-function onDrop({ drag, section }: { drag: BoardDragData; section: Section<T> }) {
+function onDrop({ drag, section, at }: { drag: BoardDragData; section: Section<T>; at?: BoardDropPosition }) {
   const item = itemById(drag.itemId)
-  if (item) emit('move', { item, to: section })
+  if (item) emit('move', { item, to: section, at })
 }
 
 /*
@@ -124,6 +138,7 @@ defineSlots<{
         :can-move="canMove"
         :grabbed-id="grabbedId"
         :keyboard-target="targetId === section.id"
+        :reorder="reorder"
         @add="emit('add', $event)"
         @select="emit('select', $event)"
         @drop="onDrop"

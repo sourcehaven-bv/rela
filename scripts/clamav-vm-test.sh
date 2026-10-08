@@ -114,8 +114,8 @@ fi
 (cd "$REPO_ROOT" && GOOS=linux GOARCH="$GOARCH" CGO_ENABLED=0 go build -o "$WORK/rela-server" ./cmd/rela-server)
 
 say "Deploying binary, project and the guide's unit"
-# The project uses ONLY the guide's scan_cmd — no scan_sockets — so the
-# zero-config claim is what gets tested.
+# The project uses ONLY the guide's scan_cmd; the sandbox read paths come from
+# the guide's unit (RELA_SANDBOX_SCAN_READ_PATHS), so the published setup is tested.
 cat > "$WORK/schema.yaml" <<YAML
 attachments:
   $SCAN_CMD
@@ -176,7 +176,7 @@ upload() { # upload <file> -> HTTP status
 }
 
 # ── Assertions ───────────────────────────────────────────────────────────────
-say "The guide's unit + guide's recipe, with NO scan_sockets"
+say "The guide's unit + guide's recipe"
 
 if [ "$(vm systemctl is-active rela-server)" = "active" ]; then
   pass "service started"

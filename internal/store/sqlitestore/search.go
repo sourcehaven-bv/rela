@@ -183,12 +183,12 @@ func (b *SearchBackend) queryCandidates(ctx context.Context, sqlText string, arg
 func buildMatchedFacesSQL(text string, titles SearchTitles) (sqlText string, args []any) {
 	b := &sqlBuilder{}
 	needle := strings.ToLower(text)
-	all := `SELECT rowid AS rid, id, face, type, properties FROM entities`
+	all := `SELECT id, face, type, properties FROM entities`
 	if needle == "" {
 		return `SELECT id, face, type FROM (` + all + `) ORDER BY id, face`, b.args
 	}
 	matched := `SELECT id, face, type, ` + titleSQL(b, titles) + ` AS t FROM (` + all + `) p` +
-		` WHERE p.rid IN (` + matchSQL(b, needle) + `)`
+		` WHERE (p.id, p.face) IN (` + matchSQL(b, needle) + `)`
 	ranked := `SELECT id, face, type, t, ` + titleRankSQL(b, needle) + ` AS r FROM (` + matched + `)`
 	return `SELECT id, face, type FROM (` + ranked + `)` +
 		` ORDER BY r DESC, CASE WHEN r > 0 THEN length(t) ELSE 0 END, id, face`, b.args
@@ -203,7 +203,7 @@ func buildFamiliesSQL(text string) (sqlText string, args []any) {
 		return `SELECT id, face, type FROM entities`, b.args
 	}
 	return `SELECT id, face, type FROM entities WHERE id IN (` +
-		`SELECT id FROM entities WHERE rowid IN (` + matchSQL(b, needle) + `))`, b.args
+		`SELECT id FROM (` + matchSQL(b, needle) + `))`, b.args
 }
 
 // faceFor records which world rule chose a face, as pgstore's does.
@@ -236,11 +236,11 @@ func buildSearchSQL(text string, limit int, w store.WorldScope, titles SearchTit
 	b := &sqlBuilder{}
 	needle := strings.ToLower(text)
 
-	primes := `SELECT rowid AS rid, id, face, type, properties, 0 AS wrank FROM entities WHERE face = ''`
+	primes := `SELECT id, face, type, properties, 0 AS wrank FROM entities WHERE face = ''`
 	if !w.IsTrivial() {
 		rank, candidate := worldSQL(b, w, "")
-		primes = `SELECT rid, id, face, type, properties, wrank FROM (` +
-			`SELECT rowid AS rid, id, face, type, properties, (` + rank + `) AS wrank, ` +
+		primes = `SELECT id, face, type, properties, wrank FROM (` +
+			`SELECT id, face, type, properties, (` + rank + `) AS wrank, ` +
 			`ROW_NUMBER() OVER (PARTITION BY id ORDER BY (` + rank + `), face) AS rn ` +
 			`FROM entities WHERE ` + candidate + `) WHERE rn = 1`
 	}
@@ -249,7 +249,7 @@ func buildSearchSQL(text string, limit int, w store.WorldScope, titles SearchTit
 		sqlText = `SELECT id, face, type, wrank FROM (` + primes + `) ORDER BY id`
 	} else {
 		matched := `SELECT id, face, type, wrank, ` + titleSQL(b, titles) + ` AS t FROM (` + primes + `) p` +
-			` WHERE p.rid IN (` + matchSQL(b, needle) + `)`
+			` WHERE (p.id, p.face) IN (` + matchSQL(b, needle) + `)`
 		ranked := `SELECT id, face, type, wrank, t, ` + titleRankSQL(b, needle) + ` AS r FROM (` + matched + `)`
 		sqlText = `SELECT id, face, type, wrank FROM (` + ranked + `)` +
 			` ORDER BY r DESC, CASE WHEN r > 0 THEN length(t) ELSE 0 END, id`
@@ -260,15 +260,20 @@ func buildSearchSQL(text string, limit int, w store.WorldScope, titles SearchTit
 	return sqlText, b.args
 }
 
-// matchSQL selects the rowids of index rows containing needle.
+// matchSQL selects the (id, face) of every entity row whose indexed text
+// contains needle. An index row's rowid is its entity_search_key key, never
+// the entities rowid (see sqlitedb's searchDDL).
 func matchSQL(b *sqlBuilder, needle string) string {
+	var hits string
 	if utf8.RuneCountInString(needle) >= minTrigramRunes {
 		// A quoted FTS5 phrase is matched literally, as a substring.
-		return `SELECT rowid FROM entity_search WHERE entity_search MATCH ` +
+		hits = `SELECT rowid FROM entity_search WHERE entity_search MATCH ` +
 			b.arg(`"`+strings.ReplaceAll(needle, `"`, `""`)+`"`)
+	} else {
+		hits = `SELECT rowid FROM entity_search WHERE body LIKE ` +
+			b.arg("%"+escapeLike(needle)+"%") + ` ESCAPE '\'`
 	}
-	return `SELECT rowid FROM entity_search WHERE body LIKE ` +
-		b.arg("%"+escapeLike(needle)+"%") + ` ESCAPE '\'`
+	return `SELECT id, face FROM entity_search_key WHERE key IN (` + hits + `)`
 }
 
 // titleSQL is the lowercased title of row p: its type's title property, else

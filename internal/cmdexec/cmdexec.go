@@ -76,14 +76,22 @@ type Runner struct {
 	// means unbounded.
 	slots chan struct{}
 
+	// purpose picks the operator's read-path list (SetHostReadOnly).
+	purpose Purpose
+
 	// extraReadOnly are host paths bound read-only into every command's sandbox,
-	// on top of the standard binary/library allowlist — the case being a scanner
-	// daemon's unix socket (clamd), which a scan command must reach.
+	// on top of the system binary/library directories: the operator's
+	// SetHostReadOnly list for purpose, then any WithExtraReadOnly paths.
 	extraReadOnly []string
 }
 
 // Option configures a [Runner].
 type Option func(*Runner)
+
+// WithPurpose sets what the runner's commands are for, which picks the
+// operator's read paths their sandbox gets. Without it a runner is
+// [PurposeTransform].
+func WithPurpose(p Purpose) Option { return func(r *Runner) { r.purpose = p } }
 
 // WithTempDir sets the directory for {in}/{out} temp files.
 func WithTempDir(dir string) Option { return func(r *Runner) { r.tempDir = dir } }
@@ -134,6 +142,8 @@ func New(timeout time.Duration, maxBytes int64, opts ...Option) (*Runner, error)
 	for _, o := range opts {
 		o(r)
 	}
+	// After the options, which set the purpose and may add their own paths.
+	r.extraReadOnly = append(HostReadOnly(r.purpose), r.extraReadOnly...)
 
 	// The three-way confinement decision, made ONCE. After this, Run always calls
 	// sandbox.Wrap unconditionally — there is no per-invocation branch that could

@@ -44,6 +44,11 @@ func hasPageScope(query map[string][]string) bool {
 // anchor: the entities the anchor reaches over the tab's scope relation.
 // active is false when the request names no page scope.
 //
+// ordering is non-nil when the rows are to be shown in relation order: the
+// tab reaches its rows over outgoing edges of a relation orderable on that
+// side, and the request names no sort of its own. The edge values come from
+// the relation query the scope runs anyway.
+//
 // Errors: a malformed or unknown page, tab or type is errBadFilter (400); an
 // anchor the principal cannot see is errPageAnchorNotFound (the uniform 404);
 // a read-gate failure is wrapped in errACLListQuery; a store failure in
@@ -53,26 +58,26 @@ func hasPageScope(query map[string][]string) bool {
 // rows.
 func resolvePageScope(
 	ctx context.Context, a *App, query map[string][]string, typeName string,
-) (ids map[string]bool, active bool, err error) {
+) (ids map[string]bool, ordering *relationOrdering, active bool, err error) {
 	if !hasPageScope(query) {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	pageID, tabID, anchor, err := pageScopeParams(query)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	state := a.State()
 	page, ok := state.Cfg.Pages[pageID]
 	if !ok || !page.IsEntityPage() {
-		return nil, false, fmt.Errorf("%w: %s %q is not an entity page", errBadFilter, scopePageParam, pageID)
+		return nil, nil, false, fmt.Errorf("%w: %s %q is not an entity page", errBadFilter, scopePageParam, pageID)
 	}
 	tab, ok := page.Tab(tabID)
 	if !ok || tab.Scope == nil || tab.Scope.Root {
-		return nil, false, fmt.Errorf("%w: page %q has no tab %q scoped by a relation",
+		return nil, nil, false, fmt.Errorf("%w: page %q has no tab %q scoped by a relation",
 			errBadFilter, pageID, tabID)
 	}
 	if rowType := pageTabRowType(state.Cfg, tab); rowType != typeName {
-		return nil, false, fmt.Errorf("%w: tab %q of page %q shows %q, not %q",
+		return nil, nil, false, fmt.Errorf("%w: tab %q of page %q shows %q, not %q",
 			errBadFilter, tabID, pageID, rowType, typeName)
 	}
 
@@ -80,10 +85,10 @@ func resolvePageScope(
 	// hidden anchor and a missing one cannot be told apart.
 	e, visible, err := a.visibleReader.address(ctx, page.EntityType, anchor)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: %w", errACLListQuery, err)
+		return nil, nil, false, fmt.Errorf("%w: %w", errACLListQuery, err)
 	}
 	if !visible || e.Type != page.EntityType {
-		return nil, false, errPageAnchorNotFound
+		return nil, nil, false, errPageAnchorNotFound
 	}
 
 	dir := tab.Scope.ResolvedDirection(page.EntityType, state.Meta)
@@ -91,7 +96,7 @@ func resolvePageScope(
 	var rels []*entityPkg.Relation
 	for r, lerr := range a.store.ListRelations(ctx, q) {
 		if lerr != nil {
-			return nil, false, fmt.Errorf("%w: page scope: %w", errListLoad, lerr)
+			return nil, nil, false, fmt.Errorf("%w: page scope: %w", errListLoad, lerr)
 		}
 		rels = append(rels, r)
 	}
@@ -107,7 +112,10 @@ func resolvePageScope(
 			ids[r.To] = true
 		}
 	}
-	return ids, true, nil
+	if !dir.IsIncoming() && len(parseSortParam(query)) == 0 {
+		ordering = newRelationOrdering(ctx, a.affordances, state.Meta, e, tab.Scope.Relation, rels)
+	}
+	return ids, ordering, true, nil
 }
 
 // pageScopeParams reads the three parameters. All three are required once

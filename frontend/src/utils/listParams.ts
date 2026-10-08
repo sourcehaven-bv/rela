@@ -28,12 +28,20 @@ export function groupedSort(groupBy: ListGroupBy | undefined, specs: SortSpec[])
  * The part of a list read that the list's CONFIG decides, before the reader
  * filters, sorts or pages it.
  *
+ * `relationOrdered` leaves the configured `default_sort` out, for an entity
+ * page tab whose rows are in relation order (see `tabIsRelationOrdered`):
+ * the server applies that order only to a read without a sort.
+ *
  * Shared by the list page and the sidebar flyout, so the two cannot disagree
  * about which rows a list holds. Static `filters:` are applied client-side of
  * the wire (the server applies only `condition:`, through `list_id`), so a
  * second reader that forgot them would silently show a wider list.
  */
-export function listBaseParams(listId: string, config: ListConfig): ListParams {
+export function listBaseParams(
+  listId: string,
+  config: ListConfig,
+  opts: { relationOrdered?: boolean } = {}
+): ListParams {
   const params: ListParams = {
     per_page: config.page_size || 25,
     // Names the configured list so the server can apply its `condition:`.
@@ -52,7 +60,7 @@ export function listBaseParams(listId: string, config: ListConfig): ListParams {
     record[key] = existing ? `${existing},${filter.value}` : (filter.value as string)
   }
 
-  const sort = groupedSort(config.group_by, config.default_sort ?? [])
+  const sort = groupedSort(config.group_by, opts.relationOrdered ? [] : (config.default_sort ?? []))
   if (sort.length) params.sort = sortParam(sort)
 
   // The list's configured scope. Sent because the endpoint is keyed by entity
@@ -72,4 +80,14 @@ export function listBaseParams(listId: string, config: ListConfig): ListParams {
 export function pageScopeParams(scope: PageScope | undefined): Pick<ListParams, 'scope_page' | 'scope_tab' | 'anchor'> {
   if (!scope) return {}
   return { scope_page: scope.page, scope_tab: scope.tab, anchor: scope.entity }
+}
+
+/**
+ * The sort a list is read in when the reader has not picked one: none on a
+ * relation-ordered tab, otherwise the list's `default_sort`, as a `sort`
+ * param or undefined.
+ */
+export function defaultSortParam(config: ListConfig | undefined, relationOrdered: boolean): string | undefined {
+  if (relationOrdered || !config?.default_sort?.length) return undefined
+  return sortParam(config.default_sort)
 }

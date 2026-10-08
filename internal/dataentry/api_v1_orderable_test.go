@@ -41,8 +41,9 @@ func newOrderableRelationsTestApp(t *testing.T, mode metamodel.OrderableMode) *A
 // order. Without that property the assertion would pass even if the sort
 // were a no-op. memstore returns alphabetical: STP-M, STP-X, STP-Y, STP-Z.
 // Orderable: STP-Z=1, STP-X=2, STP-M=3, STP-Y=missing.
-func seedOrderableFixture(t *testing.T, app *App, prop string) string {
+func seedOrderableFixture(t *testing.T, app *App) string {
 	t.Helper()
+	const prop = metamodel.OrderPropertyOut
 	const recipeID = "REC-001"
 	seedEntity(app, &entity.Entity{ID: recipeID, Type: "recipe", Properties: map[string]any{"title": "Soup"}})
 	type stepSeed struct {
@@ -71,7 +72,7 @@ func seedOrderableFixture(t *testing.T, app *App, prop string) string {
 
 func TestV1EntityRelations_OutgoingOrderableSorted(t *testing.T) {
 	app := newOrderableRelationsTestApp(t, metamodel.OrderableOutgoing)
-	recipeID := seedOrderableFixture(t, app, metamodel.OrderPropertyOut)
+	recipeID := seedOrderableFixture(t, app)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes/"+recipeID+"/relations", http.NoBody)
 	rec := httptest.NewRecorder()
@@ -100,7 +101,7 @@ func TestV1EntityRelations_OutgoingOrderableSorted(t *testing.T) {
 
 func TestV1GetRelationType_OutgoingOrderableSorted(t *testing.T) {
 	app := newOrderableRelationsTestApp(t, metamodel.OrderableOutgoing)
-	recipeID := seedOrderableFixture(t, app, metamodel.OrderPropertyOut)
+	recipeID := seedOrderableFixture(t, app)
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/recipes/"+recipeID+"/relations/has-step", http.NoBody)
@@ -130,7 +131,7 @@ func TestV1GetRelationType_OutgoingOrderableSorted(t *testing.T) {
 
 func TestV1EntityRelations_NonOrderable_NotSortedByOrderProperty(t *testing.T) {
 	app := newOrderableRelationsTestApp(t, metamodel.OrderableNone)
-	recipeID := seedOrderableFixture(t, app, metamodel.OrderPropertyOut)
+	recipeID := seedOrderableFixture(t, app)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/recipes/"+recipeID+"/relations", http.NoBody)
 	rec := httptest.NewRecorder()

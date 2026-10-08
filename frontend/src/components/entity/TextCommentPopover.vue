@@ -41,6 +41,12 @@ const editingId = ref<string | null>(null)
 const editBody = ref('')
 const rootRef = useTemplateRef<HTMLElement>('root')
 
+// True while a delete is being confirmed or sent. The confirm dialog lives
+// outside the popover, so its button click would otherwise close the popover;
+// the parent unmounts it, and the later `changed` is dropped, leaving the
+// deleted thread highlighted until a reload.
+let deleting = false
+
 const replyBody = ref('')
 const replying = ref(false)
 
@@ -107,19 +113,22 @@ async function toggleResolved(c: Comment) {
 async function remove(c: Comment) {
   // Branch on the boolean: useConfirm resolves false if the shell unmounts
   // while the dialog is open, and a DELETE must not fire on that path.
-  const ok = await confirm({
-    title: 'Delete comment',
-    message: 'Delete this comment? This cannot be undone.',
-    confirmLabel: 'Delete',
-    danger: true,
-  })
-  if (!ok) return
+  deleting = true
   try {
+    const ok = await confirm({
+      title: 'Delete comment',
+      message: 'Delete this comment? This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    })
+    if (!ok) return
     await deleteComment(props.entityType, props.entityId, c.id)
     emit('changed')
     emit('close')
   } catch (err) {
     uiStore.error(getErrorMessage(err))
+  } finally {
+    deleting = false
   }
 }
 
@@ -127,12 +136,12 @@ function onDocClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null
   // A click on a highlight is the parent's to interpret — it may be opening a
   // different thread, and closing here first would fight that.
-  if (target?.closest('mark[data-comment-id]')) return
+  if (deleting || target?.closest('mark[data-comment-id]')) return
   if (!rootRef.value?.contains(target)) emit('close')
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') emit('close')
+  if (e.key === 'Escape' && !deleting) emit('close')
 }
 
 onMounted(() => {

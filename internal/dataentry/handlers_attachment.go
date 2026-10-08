@@ -10,11 +10,14 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -354,6 +357,104 @@ func warnIfScanCannotRun(meta *metamodel.Metamodel, runner sandboxReporter, buil
 	}
 }
 
+// warnIfNoSandboxReadPaths warns at startup, per [cmdexec.Purpose], when
+// commands of that purpose are configured and confined but the operator listed
+// no read paths for it on Linux, where a confined command can then read only
+// the system binary and library directories. A scanner then cannot reach
+// clamd, and a converter such as xelatex fails, or silently falls back to other
+// fonts. rela ships no default paths, so this is the moment an upgraded host
+// learns it needs them. macOS does not confine reads, other platforms do not
+// sandbox at all, and an operator who chose unconfined commands has no read
+// restriction to warn about.
+//
+// Logged at most once per purpose per process: a multi-tenant server builds
+// one App per tenant, and the host setting is the same for all of them.
+//
+// goos, paths and confined are parameters so every branch is testable on any
+// host.
+func warnIfNoSandboxReadPaths(meta *metamodel.Metamodel, docs map[string]dataentryconfig.DocumentConfig,
+	goos string, paths map[cmdexec.Purpose][]string, confined bool,
+) {
+	if goos != "linux" || !confined {
+		return
+	}
+	for _, purpose := range []cmdexec.Purpose{cmdexec.PurposeScan, cmdexec.PurposeTransform} {
+		if len(paths[purpose]) > 0 || !commandsConfigured(meta, docs, purpose) {
+			continue
+		}
+		if _, warned := noReadPathsWarning.LoadOrStore(purpose, true); warned {
+			continue
+		}
+		slog.Warn("sandboxed commands are configured but their read paths are empty: "+
+			"they can read only /usr, /bin, /sbin and /lib*, which is not enough "+
+			"for clamdscan or a TeX-based PDF export",
+			"purpose", purpose, "setting", purpose.EnvVar(), "docs", "docs/transforms.md#sandbox-read-paths")
+	}
+}
+
+// noReadPathsWarning records which purposes [warnIfNoSandboxReadPaths] has
+// warned about, keeping it to one line per purpose per process.
+var noReadPathsWarning sync.Map
+
+// commandsConfigured reports whether the project runs an external command of
+// the given purpose. Scan: an attachment scan some property uses; a global
+// scan_cmd that no property scans with never runs, so it does not count.
+// Transform: an attachment transform step, an export transform, or a document
+// rendered by a command.
+func commandsConfigured(meta *metamodel.Metamodel, docs map[string]dataentryconfig.DocumentConfig,
+	purpose cmdexec.Purpose,
+) bool {
+	if purpose == cmdexec.PurposeScan {
+		return meta != nil && metamodel.NewAttachmentPolicy(meta).HasConfiguredScan()
+	}
+	if meta != nil {
+		if len(meta.Transforms) > 0 {
+			return true
+		}
+		for _, def := range meta.Entities {
+			for _, prop := range def.Properties {
+				for _, step := range prop.Transform {
+					if prop.Type == metamodel.PropertyTypeFile && len(step.Cmd) > 0 {
+						return true
+					}
+				}
+			}
+		}
+	}
+	for _, d := range docs {
+		if len(d.Command) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// attachmentCommands lists every attachment scan and transform command in the
+// schema, empty ones omitted.
+func attachmentCommands(meta *metamodel.Metamodel) [][]string {
+	var out [][]string
+	add := func(cmd []string) {
+		if len(cmd) > 0 {
+			out = append(out, cmd)
+		}
+	}
+	if meta.Attachments != nil {
+		add(meta.Attachments.ScanCmd)
+	}
+	for _, def := range meta.Entities {
+		for _, prop := range def.Properties {
+			if prop.Type != metamodel.PropertyTypeFile {
+				continue
+			}
+			add(prop.ScanCmd)
+			for _, step := range prop.Transform {
+				add(step.Cmd)
+			}
+		}
+	}
+	return out
+}
+
 // attachmentSecurityDoc is the generated guide path, which is what an operator
 // reading the log will look for on disk.
 const attachmentSecurityDoc = "docs/attachment-security.md"
@@ -364,27 +465,13 @@ const attachmentSecurityDoc = "docs/attachment-security.md"
 // uninstalled tool at boot rather than on the first upload.
 func probeAttachmentCommands(meta *metamodel.Metamodel, runner *attachment.CmdRunner) {
 	seen := map[string]bool{}
-	probe := func(cmd []string) {
-		if len(cmd) == 0 || seen[cmd[0]] {
-			return
+	for _, cmd := range attachmentCommands(meta) {
+		if seen[cmd[0]] {
+			continue
 		}
 		seen[cmd[0]] = true
 		if err := runner.Probe(cmd); err != nil {
 			slog.Warn("attachments: configured command not found", "binary", cmd[0], "err", err)
-		}
-	}
-	if meta.Attachments != nil {
-		probe(meta.Attachments.ScanCmd)
-	}
-	for _, def := range meta.Entities {
-		for _, prop := range def.Properties {
-			if prop.Type != metamodel.PropertyTypeFile {
-				continue
-			}
-			probe(prop.ScanCmd)
-			for _, step := range prop.Transform {
-				probe(step.Cmd)
-			}
 		}
 	}
 }

@@ -20,36 +20,24 @@ type linuxSandbox struct{}
 
 func (linuxSandbox) Name() string { return "bubblewrap" }
 
-// readOnlyPaths is what a document converter is allowed to READ: its own
-// binaries, shared libraries, and font/TeX data. Everything else — the project
-// directory, /root, /home, .rela secrets, /etc/passwd — simply is not present
-// inside the mount namespace.
+// systemReadOnlyPaths is the only read access rela grants on its own: the
+// directories that hold binaries and shared libraries, without which no command
+// can start. Everything a particular converter or scanner needs beyond that —
+// fontconfig, TeX Live config, libpaper's paper sizes, a clamd socket — is
+// host-specific and comes from the operator ([SetHostReadOnly], one list per
+// [Purpose]). Everything else — the project directory, /root,
+// /home, .rela secrets, /etc/passwd — simply is not present inside the mount
+// namespace, as long as the operator's list does not cover it. The list is
+// checked for that: [unsafeReadPath] refuses /, /etc, /home, /root, /var/lib
+// and similar, and [CheckProjectNotExposed] refuses the project directory.
 //
-// No TLS trust store: --unshare-all leaves the command with no network, so CA
-// certificates would be read surface bought for nothing.
-//
-// Deliberately excludes /etc wholesale, keeping only the few subpaths converters
-// genuinely consult.
-var readOnlyPaths = []string{
+// Do not grow this list. A path a converter needs on one distro is added by the
+// operator of that host, not compiled into every rela.
+var systemReadOnlyPaths = []string{
 	"/usr",          // binaries, libraries, fonts, TeX trees
 	"/bin", "/sbin", // usr-merge symlink targets on older layouts
 	"/lib", "/lib64", "/lib32",
-	"/etc/fonts",        // fontconfig
-	"/etc/alternatives", // Debian binary indirection
-	"/var/lib/texmf",    // TeX Live generated config
-	"/var/lib/fontconfig",
 }
-
-// Deliberately NOT in the list:
-//
-//   - /opt — unmanaged, arbitrary-vendor territory. Whatever an admin unpacked
-//     there (license files, credentials, application data) would become readable
-//     by a converter, for the speculative benefit of a tool that might live
-//     there. An operator who really does install a converter under /opt should
-//     extend this list knowingly rather than get it by default.
-//   - /etc (wholesale) — passwd, shadow, and rela's own config live there.
-//   - CA certificates — there is no network inside the sandbox, so a trust store
-//     is read surface bought for nothing.
 
 // usernsFailure matches the stderr signatures of a host where bwrap exists but
 // unprivileged user namespaces are unavailable — the common cases being
@@ -109,12 +97,13 @@ func (l linuxSandbox) Wrap(argv []string, spec Spec) ([]string, error) {
 	// file on the host, and a converter can be made to read one: a markdown body
 	// carrying a raw LaTeX block (\input{/etc/passwd}) makes the TeX engine
 	// embed that file's contents INTO the exported document — verified. Reads
-	// are therefore restricted to what a converter genuinely needs, so a path
-	// outside the list does not merely fail permission-wise, it does not exist.
+	// are therefore restricted to the system paths plus the operator's list
+	// (spec.ExtraReadOnly, below), so a path outside them does not merely fail
+	// permission-wise, it does not exist.
 	//
-	// -try variants: these paths differ across distros (no /lib64 on some, no
-	// /etc/ssl in a minimal image); a missing one must not break the sandbox.
-	for _, p := range readOnlyPaths {
+	// -try variants: these paths differ across distros (no /lib64 on some); a
+	// missing one must not break the sandbox.
+	for _, p := range systemReadOnlyPaths {
 		wrapped = append(wrapped, "--ro-bind-try", p, p)
 	}
 	wrapped = append(wrapped,
@@ -128,8 +117,8 @@ func (l linuxSandbox) Wrap(argv []string, spec Spec) ([]string, error) {
 		"--bind", spec.WritableDir, spec.WritableDir,
 		"--chdir", spec.WritableDir,
 	)
-	// Caller-supplied extra binds (e.g. a clamd socket), AFTER --tmpfs so a path
-	// under /tmp is not shadowed. Read-only, -try so a missing path is skipped. A
+	// Operator-configured binds (fontconfig, a clamd socket, ...), AFTER --tmpfs
+	// so a path under /tmp is not shadowed. Read-only, -try so a missing path is skipped. A
 	// unix socket bound here is reachable without any network access — the network
 	// namespace stays isolated.
 	for _, p := range spec.ExtraReadOnly {

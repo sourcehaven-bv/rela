@@ -5,7 +5,9 @@ title: Lua history API for entity versions
 kind: enhancement
 priority: medium
 effort: s
-status: backlog
+started: "2026-10-07"
+completed: "2026-10-07"
+status: done
 ---
 
 ## Description

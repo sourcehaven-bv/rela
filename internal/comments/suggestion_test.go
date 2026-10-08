@@ -185,7 +185,7 @@ func TestApplyReplacement_Refusals(t *testing.T) {
 		a := suggestion(t, doc, "old oak tree", new("birch"))
 		_, err := comments.ApplyReplacement("Nothing like it remains in this text at all.\n", a)
 		require.ErrorIs(t, err, comments.ErrSuggestionStale)
-		require.False(t, comments.Acceptable("Nothing like it remains.\n", a))
+		require.False(t, comments.NewBody("Nothing like it remains.\n").Acceptable(a))
 	})
 	t.Run("quote rewritten into a fuzzy match", func(t *testing.T) {
 		a := suggestion(t, doc, "sleeps under the old oak tree", new("rests"))
@@ -205,6 +205,6 @@ func TestApplyReplacement_Refusals(t *testing.T) {
 		require.ErrorIs(t, err, comments.ErrSuggestionStale)
 	})
 	t.Run("acceptable on the original body", func(t *testing.T) {
-		require.True(t, comments.Acceptable(doc, suggestion(t, doc, "brown fox", new("red fox"))))
+		require.True(t, comments.NewBody(doc).Acceptable(suggestion(t, doc, "brown fox", new("red fox"))))
 	})
 }

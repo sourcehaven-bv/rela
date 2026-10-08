@@ -160,21 +160,21 @@ func TestSortRelations_StableMissingLast(t *testing.T) {
 			want: []string{"a", "b", "c"},
 		},
 		{
-			name: "missing sorted last, stable among themselves",
+			name: "missing sorted last, by id among themselves",
 			in: []entity.Relation{
-				mkRel("missing1", nil),
-				mkRel("a", 1.0),
 				mkRel("missing2", nil),
+				mkRel("a", 1.0),
+				mkRel("missing1", nil),
 				mkRel("b", 2.0),
 			},
 			want: []string{"a", "b", "missing1", "missing2"},
 		},
 		{
-			name: "duplicate values, stable",
+			name: "duplicate values, by id",
 			in: []entity.Relation{
+				mkRel("c", 1.0),
 				mkRel("a", 1.0),
 				mkRel("b", 1.0),
-				mkRel("c", 1.0),
 			},
 			want: []string{"a", "b", "c"},
 		},

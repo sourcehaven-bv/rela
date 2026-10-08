@@ -119,10 +119,37 @@ type RenameResult struct {
 // The pointer-vs-string distinction on Content is the only way to
 // express "leave the body alone" vs "set the body to empty"; callers
 // that want to clear must pass a pointer to "".
+//
+// UpdateRelation with Position moves the edge on its source's outgoing
+// order side instead of writing values; the engine computes the order value
+// (and densifies the side when it must) in the same transaction. A Position
+// excludes Properties, MetaUnset and Content.
+//
+// Nil Position: accepted — the ordinary property update.
 type RelationOptions struct {
 	Properties map[string]any
 	MetaUnset  []string
 	Content    *string
+	Position   *OrderPosition
+}
+
+// OrderPosition names where an edge moves among its source's other edges of
+// the same type on the outgoing order side. Exactly one field is set.
+// Before and After name a sibling by its TARGET id, on the moved edge's own
+// tail; Step moves one place up (-1) or down (1) in the full order, so a
+// client showing one page of it needs no neighbor it cannot see.
+//
+// Among, when not nil, names the targets the caller may see. The move then
+// reads and writes only the edges to those targets: a step skips the
+// others, the new value comes from visible neighbors, and a densify
+// renumbers only visible edges. So a move neither reveals nor rewrites an
+// edge the caller cannot see. Nil means every edge, for a caller with no
+// read gate.
+type OrderPosition struct {
+	Before string
+	After  string
+	Step   int
+	Among  []string
 }
 
 // Patch describes a TARGETED entity write: apply exactly these

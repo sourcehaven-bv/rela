@@ -14,14 +14,31 @@
  * through. They are stripped by DOMPurify unless the tag and its attributes are
  * allowlisted — see `markdown.ts`.
  *
+ * # One mark per block
+ *
+ * A range that crosses blocks (a heading and its body, several list items)
+ * cannot be one mark: the HTML parser closes an inline element at the end of
+ * its block and drops the stray closing tag, so only the first block would
+ * show it. The server therefore sends `segments`, one byte range per block,
+ * and each segment gets its own mark with the same comment id. A click on any
+ * of them opens the same thread.
+ *
  * # Code is skipped, not marked
  *
  * Inside a code span or fence, markdown renders HTML LITERALLY — so a mark
  * inserted there shows the user `<mark data-comment-id="...">` as text instead
- * of a highlight. Any range touching code is therefore left unmarked; the
- * comment still lists in the panel, it just gets no highlight. Rendering the
- * markup raw would be strictly worse than rendering nothing.
+ * of a highlight. The server cuts code out of a range's segments, parsing the
+ * body as a markdown parser does. Only a range from an older server, which
+ * sends no segments, is checked here, with the approximate scan below; a range
+ * touching code then gets no mark. The comment still lists in the panel.
+ * Rendering the markup raw would be strictly worse than rendering nothing.
+ *
+ * The scan is not applied to segments because it is approximate: any line
+ * indented four spaces looks like code to it, including a nested list item,
+ * and an unmatched backtick pairs with one in a later paragraph.
  */
+
+import type { ByteSpan } from '@/api/comments'
 
 /** The tag used for a highlight. Must be allowlisted in the sanitiser config. */
 export const HIGHLIGHT_TAG = 'mark'
@@ -40,7 +57,18 @@ export interface HighlightRange {
   id: string
   start: number
   end: number
+  /**
+   * The range split per markdown block, from the server. Absent (an older
+   * server) marks `[start, end)` as one; empty marks nothing.
+   */
+  segments?: ByteSpan[]
   uncertain?: boolean
+}
+
+/** One mark to insert: a whole range, or one segment of it. */
+interface Piece extends ByteSpan {
+  range: HighlightRange
+  chip: boolean
 }
 
 /**
@@ -61,6 +89,9 @@ function containsLink(marked: string): boolean {
  * of the ones not yet applied — the standard reason to iterate in reverse here,
  * and the bug that appears immediately if you don't.
  *
+ * Overlap is judged on whole ranges, so the segments of different comments
+ * never interleave.
+ *
  * Overlapping ranges are dropped rather than nested: markdown renderers do not
  * reliably handle interleaved inline HTML, and a half-open tag would corrupt
  * the rest of the document. The dropped comment still appears in the panel, so
@@ -75,30 +106,64 @@ export function applyHighlights(body: string, ranges: HighlightRange[]): string 
   if (!body || ranges.length === 0) return body
 
   const bytes = new TextEncoder().encode(body)
-  const codeSpans = findCodeSpans(body)
-  const usable = selectNonOverlapping(ranges, bytes.length).filter(
-    (r) => !overlapsCode(r, codeSpans)
-  )
-  if (usable.length === 0) return body
-
+  let scanned: ByteSpan[] | undefined
+  const codeSpans = () => (scanned ??= findCodeSpans(body))
   const decoder = new TextDecoder()
+  const pieces = selectNonOverlapping(ranges, bytes.length)
+    .flatMap((r) => piecesOf(r, codeSpans, (p) => decoder.decode(bytes.slice(p.start, p.end))))
+    .sort((a, b) => a.start - b.start)
+  if (pieces.length === 0) return body
+
   let out = ''
   let cursor = bytes.length
 
   // Back-to-front: later insertions never disturb earlier offsets.
-  for (let i = usable.length - 1; i >= 0; i--) {
-    const r = usable[i]
-    const marked = decoder.decode(bytes.slice(r.start, r.end))
+  for (let i = pieces.length - 1; i >= 0; i--) {
+    const p = pieces[i]
     out =
-      openTag(r) +
-      marked +
+      openTag(p.range) +
+      decoder.decode(bytes.slice(p.start, p.end)) +
       `</${HIGHLIGHT_TAG}>` +
-      (containsLink(marked) ? chipFor(r) : '') +
-      decoder.decode(bytes.slice(r.end, cursor)) +
+      (p.chip ? chipFor(p.range) : '') +
+      decoder.decode(bytes.slice(p.end, cursor)) +
       out
-    cursor = r.start
+    cursor = p.start
   }
   return decoder.decode(bytes.slice(0, cursor)) + out
+}
+
+/**
+ * The marks for one range: its segments, or the whole range when the server
+ * sent none. A whole range touching code is dropped (see the module comment).
+ *
+ * Only the first piece containing a link gets the chip, so a comment over
+ * several linked blocks has one way in rather than one per block, and it sits
+ * next to the link that needed it.
+ */
+function piecesOf(
+  r: HighlightRange,
+  codeSpans: () => ByteSpan[],
+  text: (s: ByteSpan) => string
+): Piece[] {
+  let spans: ByteSpan[]
+  if (r.segments) {
+    // Ordered and disjoint, or the splice would repeat text.
+    spans = []
+    for (const s of [...r.segments].sort((a, b) => a.start - b.start)) {
+      const last = spans[spans.length - 1]
+      if (s.start < s.end && (!last || s.start >= last.end)) spans.push(s)
+    }
+  } else {
+    spans = overlapsCode(r, codeSpans()) ? [] : [{ start: r.start, end: r.end }]
+  }
+  const pieces: Piece[] = []
+  let chipped = false
+  for (const s of spans) {
+    const chip: boolean = !chipped && containsLink(text(s))
+    chipped ||= chip
+    pieces.push({ start: s.start, end: s.end, range: r, chip })
+  }
+  return pieces
 }
 
 function openTag(r: HighlightRange): string {
@@ -127,36 +192,52 @@ function escapeAttr(v: string): string {
 
 /**
  * Sorts ranges and drops any that overlap one already kept, or that fall
- * outside the body.
+ * outside the body. A range's extent includes its segments: the server may
+ * start a segment before the range, at the opening "**" or "[" of emphasis or
+ * a link the range starts inside.
+ *
+ * When one range lies inside another, the inner one is kept. The outer one is
+ * usually a long cross-block comment, and keeping it would hide every short
+ * comment within it; the outer comment still lists in the panel. Ranges that
+ * only partly overlap keep the one that starts first.
  *
  * An out-of-range offset means the body changed between the read that resolved
  * it and this render — dropping it is right, since marking an arbitrary span
  * would attach a remark to text nobody selected.
  */
 function selectNonOverlapping(ranges: HighlightRange[], size: number): HighlightRange[] {
-  const sorted = [...ranges]
-    .filter((r) => r.start >= 0 && r.end <= size && r.start < r.end)
+  const placed = ranges
+    .filter((r) => r.start < r.end)
+    .map((r) => ({ r, ...extentOf(r) }))
+    .filter((p) => p.start >= 0 && p.end <= size)
     .sort((a, b) => a.start - b.start || a.end - b.end)
 
-  const kept: HighlightRange[] = []
-  let lastEnd = -1
-  for (const r of sorted) {
-    // An IDENTICAL range is a reply sharing the anchor, not a competing
-    // highlight: one mark represents the whole thread, and clicking it opens
-    // every comment at that range.
+  const kept: typeof placed = []
+  for (const p of placed) {
     const prev = kept[kept.length - 1]
-    if (prev && prev.start === r.start && prev.end === r.end) continue
-    if (r.start < lastEnd) continue // overlaps the previous keeper
-    kept.push(r)
-    lastEnd = r.end
+    if (prev && p.start < prev.end) {
+      // An IDENTICAL range is a reply sharing the anchor, not a competing
+      // highlight: one mark represents the whole thread, and clicking it opens
+      // every comment at that range.
+      const identical = prev.r.start === p.r.start && prev.r.end === p.r.end
+      const inside = p.end <= prev.end
+      if (inside && !identical) kept[kept.length - 1] = p
+      continue
+    }
+    kept.push(p)
   }
-  return kept
+  return kept.map((p) => p.r)
 }
 
-/** A byte range of the source that markdown renders verbatim. */
-interface ByteSpan {
-  start: number
-  end: number
+/** The bytes a range's marks may cover: the range and all its segments. */
+function extentOf(r: HighlightRange): ByteSpan {
+  let start = r.start
+  let end = r.end
+  for (const s of r.segments ?? []) {
+    start = Math.min(start, s.start)
+    end = Math.max(end, s.end)
+  }
+  return { start, end }
 }
 
 /**
@@ -216,6 +297,6 @@ function byteSpanOf(enc: TextEncoder, body: string, from: number, to: number): B
 }
 
 /** True when the range touches any code span at all — even partially. */
-function overlapsCode(r: HighlightRange, spans: ByteSpan[]): boolean {
+function overlapsCode(r: ByteSpan, spans: ByteSpan[]): boolean {
   return spans.some((s) => r.start < s.end && s.start < r.end)
 }

@@ -30,6 +30,11 @@ var (
 	// backstop so no storage path is ever unbounded; the HTTP/API layer
 	// caps at its own ingress for a clean 413 before reaching the store.
 	ErrAttachmentTooLarge = errors.New("store: attachment too large")
+	// ErrHistoryUnsupported is returned by a read of version history on a
+	// store that is not a [HistoryReader]. It is an error, never an empty
+	// timeline: a caller comparing against a past version must not mistake
+	// "no history kept" for "never changed".
+	ErrHistoryUnsupported = errors.New("version history is not supported on this storage backend")
 )
 
 // MaxAttachmentBytes is the backstop cap every store backend enforces on

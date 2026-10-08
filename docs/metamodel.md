@@ -1127,6 +1127,40 @@ then shows such an entity on its own page, because it has no single owner to
 show it under. Only owners the principal can read count, so an owner the
 principal cannot see is never revealed.
 
+### Ordered Relations (`orderable:`)
+
+Some relations have an order that only a person can decide, such as the tasks
+of a project or the steps of a procedure. Declare the side that holds the
+order with `orderable:`:
+
+```yaml
+relations:
+  contains:
+    from: [project]
+    to: [task]
+    orderable: outgoing # a project orders its tasks
+```
+
+| Value      | The order belongs to                                |
+| ---------- | --------------------------------------------------- |
+| `outgoing` | the source: a project orders the tasks it contains  |
+| `incoming` | the target: a task orders the projects that hold it |
+| `both`     | each side keeps its own order                       |
+
+rela stores the place of each edge in a managed relation property:
+`_order_out` for the outgoing side and `_order_in` for the incoming side. A new
+edge goes to the end. You do not write these values yourself. The data-entry
+app moves an edge when a user drags a row, and the API takes a position (see
+the [API reference](data-entry/api-reference.md#moving-an-edge-position)).
+Edges without a value, such as edges made before the relation was orderable,
+come after the ordered ones, by id.
+
+A symmetric relation cannot be orderable, because it has no source or target
+side to hold the order.
+
+The data-entry app shows relation order on the outgoing side only. See
+[Rows in relation order](data-entry.md#rows-in-relation-order).
+
 ## Query Scopes
 
 An entity type can declare **query scopes**: named boolean expressions that

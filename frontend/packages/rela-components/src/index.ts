@@ -156,6 +156,7 @@ export type {
   TableCompact,
   ColumnVisibility,
   SortClickEvent,
+  RowMove,
 } from './components/table/types'
 export type { SelectOption } from './components/form/types'
 export type { Person, RelatedItem, RelatedMeta, RelatedTone } from './components/data/types'
@@ -219,9 +220,12 @@ export type { DelayedPendingOptions } from './composables/useDelayedPending'
 export {
   useDraggableCard,
   useDropTargetColumn,
+  useDropTargetCard,
   useBoardAutoScroll,
 } from './composables/useBoardDnd'
-export type { BoardDragData, BoardDropData } from './composables/useBoardDnd'
+export type { BoardDragData, BoardDropData, BoardDropPosition } from './composables/useBoardDnd'
+export { useReorderableRow, closestEdge } from './composables/useRowReorder'
+export type { RowDrop, RowEdge } from './composables/useRowReorder'
 export {
   useBoardKeyboardMove,
   useSwimlaneKeyboardMove,

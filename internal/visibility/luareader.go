@@ -47,6 +47,10 @@ type ScriptReader struct {
 	// store as a query instead of probing per batch. Derived from binder in
 	// the constructor; nil simply means no pushdown, never a weaker gate.
 	provider ReadQueryProvider
+
+	// history serves EntityVersions and EntityVersion; nil means none (see
+	// [ScriptReader.WithHistory]).
+	history store.HistoryReader
 }
 
 // Binder attaches a per-operation ACL scope to a ctx. [DeclarativeGate]
