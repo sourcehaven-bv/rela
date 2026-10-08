@@ -360,6 +360,9 @@ deps:
       - ai
       - appbuild
       - audit
+      # cmdexec: applies the host command settings (sandbox read paths,
+      # confinement opt-out) at startup, like the server and CLI.
+      - cmdexec
       - dataentry
       - config
       - dataentrywire

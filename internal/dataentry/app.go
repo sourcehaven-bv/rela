@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -16,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -1276,11 +1278,15 @@ func NewApp(
 	// always available; the PolicyProcessor only invokes it when a property's
 	// scan/transform config references a command. A nil runner (constructor
 	// failure) leaves uploads with native MIME validation only.
-	var runnerOpts []attachment.CmdRunnerOption
-	if socks := metamodel.NewAttachmentPolicy(meta).ScanSockets(); len(socks) > 0 {
-		runnerOpts = append(runnerOpts, attachment.WithScannerSockets(socks...))
+	// Refuse to serve when the operator's sandbox read paths would hand the
+	// project (every user's entities, .rela secrets) to the converters that
+	// render untrusted content: that is what the sandbox exists to prevent.
+	if paths != nil {
+		if err := cmdexec.CheckProjectNotExposed(paths.Root); err != nil {
+			return nil, fmt.Errorf("dataentry.NewApp: %w", err)
+		}
 	}
-	runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes, runnerOpts...)
+	runner, rerr := attachment.NewCmdRunner(attachmentCmdTimeout, store.MaxAttachmentBytes)
 	if rerr == nil {
 		app.attachmentRunner = runner
 		// Tell the operator the confinement posture at boot, so an unsandboxable
@@ -1288,6 +1294,10 @@ func NewApp(
 		// scan/transform (which will fail closed).
 		slog.Info("external command confinement", "detail", runner.Describe())
 		probeAttachmentCommands(meta, runner)
+		warnIfNoSandboxReadPaths(meta, cfg.Documents, runtime.GOOS, map[cmdexec.Purpose][]string{
+			cmdexec.PurposeScan:      cmdexec.HostReadOnly(cmdexec.PurposeScan),
+			cmdexec.PurposeTransform: cmdexec.HostReadOnly(cmdexec.PurposeTransform),
+		}, !cmdexec.UnconfinedByDefault())
 	} else {
 		slog.Warn("attachments: command runner unavailable; scan/transform disabled", "err", rerr)
 	}

@@ -184,14 +184,16 @@ func runKong() int {
 	outputFormat = cli.Output
 	projectPath = cli.Project
 
-	// Host-level command-confinement opt-out, from the same env var the server
-	// honors. `rela render` shells out to a converter; on a host that cannot
-	// sandbox it fails closed unless this is set. (A local CLI user can already
-	// run anything, so this is convenience more than a security boundary — but
-	// keeping one knob avoids surprising divergence from the server.)
-	cmdexec.SetUnconfinedByDefault(os.Getenv("RELA_UNCONFINED_COMMANDS") == "1")
-
 	configureKongLogging(verbose, quiet)
+
+	// Host-level command settings, from the same env vars the server honors:
+	// the confinement opt-out and the sandbox read paths. `rela render` shells
+	// out to a converter, which must be confined exactly like an export through
+	// rela-server. (A local CLI user can already run anything, so this is
+	// convenience more than a security boundary — but one set of knobs avoids
+	// surprising divergence from the server.) After logging, so a rejected
+	// path's warning honors --quiet.
+	cmdexec.ApplyHostEnv()
 	out = output.New(output.Format(outputFormat))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
