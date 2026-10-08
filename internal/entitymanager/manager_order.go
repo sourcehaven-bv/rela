@@ -281,7 +281,8 @@ func moveRelation(
 	var moved *entity.Relation
 	var densified []*entity.Relation
 	err := m.deps.Store.Tx(ctx, func(view store.Store) error {
-		if _, gErr := view.GetRelation(ctx, key); gErr != nil {
+		txCtx := store.ContextInTx(ctx)
+		if _, gErr := view.GetRelation(txCtx, key); gErr != nil {
 			return fmt.Errorf("%w: %s", ErrRelationNotFound, key)
 		}
 		// Only the moved edge's own tail, which is the list a reader sees,
@@ -295,7 +296,7 @@ func moveRelation(
 			}
 		}
 		var siblings []entity.Relation
-		for r, lErr := range view.ListRelations(ctx, store.RelationQuery{From: key.From, Type: key.Type}) {
+		for r, lErr := range view.ListRelations(txCtx, store.RelationQuery{From: key.From, Type: key.Type}) {
 			if lErr != nil {
 				return lErr
 			}
@@ -309,7 +310,7 @@ func moveRelation(
 			return pErr
 		}
 		var wErr error
-		moved, densified, wErr = writeOrderPlan(ctx, view, siblings, plan, key, prop)
+		moved, densified, wErr = writeOrderPlan(txCtx, view, siblings, plan, key, prop)
 		return wErr
 	})
 	if err != nil {
