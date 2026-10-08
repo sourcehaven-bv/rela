@@ -341,6 +341,45 @@ rela.get_relations(e.id)               -- NOT a filter: a bare id is not a
                                        -- table, so this returns EVERY relation
 ```
 
+### History Functions
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.history(addr)` | The entity's versions, oldest first | table (array) or nil |
+| `rela.get_version(addr, n)` | The entity as it was at version `n` | table or nil |
+
+Version history exists on the SQLite and PostgreSQL backends. On any other
+backend both functions raise `version history is not supported on this storage
+backend`, for a missing entity too. They never return an empty history there,
+because a script comparing against an old version would read "no history" as
+"never changed".
+
+Each row of `rela.history` has `version`, `op` (`create`, `update`, `rename`,
+`delete`, or `purge` for a row whose content an operator purged), `type`, `face`, `created_at` (RFC 3339), `user`, `tool`,
+`triggered_by` and `prev_id` (set by a rename). There is no content hash: the
+stored one covers fields the script may not see.
+`rela.get_version` returns the same table as `rela.get_entity`, plus `version`;
+its `mod_time` is when that version was captured.
+
+```lua
+local h = rela.history("TKT-1")
+local base = rela.get_version("TKT-1", h[#h].version)
+```
+
+Both read the face `addr` names, or the face a bare id resolves to, the same way
+`rela.get_entity` does. In a world that falls back to another face, a bare id can
+resolve to that stand-in face, so check each row's `face` or name the face in
+`addr`. An entity the script may not read answers nil, as does
+a deleted one. A purge row, which keeps no content, also answers nil from `rela.get_version`.
+A snapshot is redacted for the script's principal. A field whose
+`visible:` grant depends on relations stays hidden, because the current graph
+cannot show what the relations were at that version.
+
+Versions are captured by a background sweep. The newest version can lag the
+live entity by one sweep interval, and a new entity can have no version yet,
+which gives an empty history. A script that needs the version it saw before
+should store its `version` number and read it back with `rela.get_version`.
+
 ### Mutation Functions
 
 | Function | Description | Returns |

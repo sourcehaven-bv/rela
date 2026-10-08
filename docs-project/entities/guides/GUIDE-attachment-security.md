@@ -271,6 +271,9 @@ User=rela
 Group=rela
 # Only needed if clamd.conf sets LocalSocketMode 660. Debian ships 666.
 SupplementaryGroups=clamav
+# Host paths the sandboxed scanner may read: clamd's socket and the clamd.conf
+# naming it. See "Reaching clamd from inside the sandbox" below.
+Environment=RELA_SANDBOX_SCAN_READ_PATHS=/var/run/clamav/clamd.ctl:/etc/clamav/clamd.conf
 ExecStart=/usr/local/bin/rela-server --project /var/lib/rela/project --bind 127.0.0.1 --port 8080
 Restart=on-failure
 RestartSec=2
@@ -445,27 +448,36 @@ neither.
 1. **The socket.** Each command gets its own mount namespace, so the socket path
    is invisible unless rela binds it in.
 2. **The config file.** `clamdscan` parses `clamd.conf` at startup to learn where
-   `LocalSocket` is — *before* it connects. The sandbox's read allowlist excludes
-   `/etc` wholesale (it holds `passwd`, `shadow`, and rela's own config), so
-   without an explicit bind the scanner fails with
+   `LocalSocket` is — *before* it connects. Without it the scanner fails with
    `ERROR: Can't parse clamd configuration file /etc/clamav/clamd.conf` and never
    reaches the socket at all.
 
-rela binds the well-known locations of both, read-only:
+rela binds neither on its own: a confined command sees only the binary and
+library directories. List both in `RELA_SANDBOX_SCAN_READ_PATHS`, separated by `:`,
+as the unit above does. For Debian/Ubuntu `clamav-daemon`:
 
-```text
-sockets   /var/run/clamav/clamd.ctl                 configs  /etc/clamav/clamd.conf
-          /run/clamav/clamd.ctl                              /usr/local/etc/clamav/clamd.conf
-          /var/run/clamav/clamd.sock                         /opt/homebrew/etc/clamav/clamd.conf
-          /run/clamav/clamd.sock
-          /tmp/clamd.socket
-          /opt/homebrew/var/run/clamav/clamd.sock
-          /usr/local/var/run/clamav/clamd.sock
+```sh
+RELA_SANDBOX_SCAN_READ_PATHS=/var/run/clamav/clamd.ctl:/etc/clamav/clamd.conf
 ```
 
-so a stock ClamAV install (Debian/Ubuntu `clamav-daemon`, Homebrew `clamav`)
-needs no extra configuration. Missing paths are skipped, so the list is harmless
-on hosts without ClamAV.
+Elsewhere, use your `clamd.conf` path and the `LocalSocket` it names (Homebrew:
+`/opt/homebrew/var/run/clamav/clamd.sock:/opt/homebrew/etc/clamav/clamd.conf`).
+`rela-server --sandbox-scan-read-paths` takes the same list. The variable is
+host configuration and applies to scan commands only. Converters and attachment
+transform steps get a separate list, `RELA_SANDBOX_TRANSFORM_READ_PATHS`; the
+[transforms guide](transforms.md#sandbox-read-paths) describes it.
+
+Name the config **file**, never its directory: `/etc/clamav` also holds the
+signature databases and `freshclam.conf`, which can carry a `DatabaseMirror`
+proxy credential. Name the socket **file** too, never `/run` or `/var/run`:
+every listed path is readable by every scan command, and a socket under a
+listed directory is connectable.
+
+Keep the clamd paths out of `RELA_SANDBOX_TRANSFORM_READ_PATHS`. Converters and
+transform steps parse untrusted content. One compromised by hostile input could
+send clamd commands: `SHUTDOWN` stops it, after which every upload to a scanned
+property is rejected until clamd restarts, and `SCAN <path>` reports whether a
+file clamd can read is infected.
 
 Binding a socket does **not** re-open network egress — a unix socket is a
 filesystem object, and the network namespace stays isolated. `--stream` over a
@@ -475,22 +487,17 @@ provide that at the deployment layer.
 
 On macOS there is no mount namespace. Connecting to a unix socket counts as a
 network operation there, so the profile's network deny would block it. rela
-allows outbound connects to exactly these paths and keeps every other network
-operation denied.
+allows outbound connects to exactly the listed paths and keeps every other
+network operation denied.
 
-If your `clamd.conf` lives elsewhere, or its `LocalSocket` points outside those
-paths, bind the extra paths explicitly:
+rela-desktop reads the variable from its own environment. Started from the
+Finder or the Dock it does not see your shell's variables; set it with
+`launchctl setenv RELA_SANDBOX_SCAN_READ_PATHS <paths>` and then start the app.
 
-```yaml
-attachments:
-  scan_cmd: [clamdscan, --no-summary, --stream, "{in}"]
-  scan_sockets: [/opt/clamav/run/clamd.sock, /opt/clamav/etc/clamd.conf]
-```
-
-Despite the name, `scan_sockets` binds any read-only path, which is what a
-non-default config file needs. Name the config **file**, never its directory:
-`/etc/clamav` also holds the signature databases and `freshclam.conf`, which can
-carry a `DatabaseMirror` proxy credential.
+> **Upgrading:** rela used to bind the common clamd locations itself, and offered
+> `attachments.scan_sockets` in `schema.yaml` for others. Both are gone. A schema
+> that still sets `scan_sockets` fails to load; move its paths, plus the socket
+> and `clamd.conf`, to `RELA_SANDBOX_SCAN_READ_PATHS`.
 
 ### Strip image metadata (EXIF/GPS) — exiftool
 

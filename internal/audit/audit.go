@@ -194,6 +194,12 @@ const (
 	// per run with the counts, never the content, which is still in the
 	// source files.
 	OpFSImport = "fs-import"
+
+	// OpConfigImport records a `rela db load` run storing a project's config
+	// files in its SQLite database, replacing the set it carried. One record
+	// per run with the source and the file count, never file names or
+	// contents.
+	OpConfigImport = "config-import"
 )
 
 // Subject identifies what an op acted on. Exactly one of {Type, ID}

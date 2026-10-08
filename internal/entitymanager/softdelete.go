@@ -149,7 +149,7 @@ func softDeleteInTx(
 	if err != nil {
 		return fmt.Errorf("collect outgoing relations for %q: %w", id, err)
 	}
-	if aErr := m.authorizeCascadeRelations(ctx, tx, id, incoming, outgoing); aErr != nil {
+	if aErr := m.authorizeCascadeRelations(ctx, tx, id, nil, incoming, outgoing); aErr != nil {
 		return aErr
 	}
 	owned, err := prepareOwnedDeletes(ctx, m, tx, id, outgoing)
@@ -420,7 +420,7 @@ func authorizeRestore(ctx context.Context, m *Manager, src markedSource, marked 
 	if err != nil {
 		return fmt.Errorf("collect outgoing relations for %q: %w", marked.ID, err)
 	}
-	if err := m.authorizeCascadeRelations(ctx, src, marked.ID, incoming, outgoing); err != nil {
+	if err := m.authorizeCascadeRelations(ctx, src, marked.ID, marked.Entities, incoming, outgoing); err != nil {
 		return fmt.Errorf("cannot restore %s: %w", marked.ID, err)
 	}
 	return nil

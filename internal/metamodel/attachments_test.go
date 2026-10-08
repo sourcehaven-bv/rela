@@ -1,6 +1,7 @@
 package metamodel
 
 import (
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -54,33 +55,50 @@ func fileMetaCmd(globalCmd, propCmd []string, propScan ScanPolicy, hasFileProp b
 	return m
 }
 
-func TestScanSockets(t *testing.T) {
-	// Unset: no attachments block, then a block without scan_sockets.
-	if got := NewAttachmentPolicy(&Metamodel{}).ScanSockets(); got != nil {
-		t.Errorf("no attachments block: got %v, want nil", got)
-	}
-	m := &Metamodel{}
-	if err := yaml.Unmarshal([]byte(`attachments:
+// TestParse_ScanSocketsRemoved pins that a schema still carrying the removed
+// `attachments.scan_sockets` key fails to load with a pointer to its
+// replacement. Without the check the loader would ignore the key, and the paths
+// it listed would silently stop being bound.
+func TestParse_ScanSocketsRemoved(t *testing.T) {
+	const base = `
+version: "1.0"
+entities:
+  requirement:
+    label: Requirement
+    id_prefix: "REQ-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+attachments:
   scan_cmd: [clamdscan, "{in}"]
-`), m); err != nil {
-		t.Fatal(err)
+`
+	if _, err := Parse([]byte(base)); err != nil {
+		t.Fatalf("schema without scan_sockets rejected: %v", err)
 	}
-	if got := NewAttachmentPolicy(m).ScanSockets(); got != nil {
-		t.Errorf("scan_sockets omitted: got %v, want nil", got)
+	// Any value counts: an emptied list or a bare key still means the operator
+	// expects rela to honor it.
+	for _, value := range []string{"[/opt/clamav/run/clamd.sock]", "[]", ""} {
+		_, err := Parse([]byte(base + "  scan_sockets: " + value + "\n"))
+		if err == nil {
+			t.Errorf("scan_sockets: %q accepted; want a validation error", value)
+			continue
+		}
+		if !strings.Contains(err.Error(), "RELA_SANDBOX_SCAN_READ_PATHS") {
+			t.Errorf("scan_sockets: %q: error does not name the replacement: %v", value, err)
+		}
 	}
 
-	// Set: parses into ScanSockets.
-	m2 := &Metamodel{}
-	if err := yaml.Unmarshal([]byte(`attachments:
-  scan_cmd: [clamdscan, "{in}"]
-  scan_sockets: [/opt/clamav/run/clamd.sock, /srv/clamd.sock]
-`), m2); err != nil {
-		t.Fatal(err)
+	// A merge key must not hide it either.
+	merged := strings.Replace(base, "attachments:\n",
+		"attachments:\n  <<: {scan_sockets: [/a]}\n", 1)
+	if merged == base {
+		t.Fatal("test schema has no attachments block to merge into")
 	}
-	got := NewAttachmentPolicy(m2).ScanSockets()
-	want := []string{"/opt/clamav/run/clamd.sock", "/srv/clamd.sock"}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Errorf("got %v, want %v", got, want)
+	if _, err := Parse([]byte(merged)); err == nil {
+		t.Error("scan_sockets via a merge key accepted; want a validation error")
+	} else if !strings.Contains(err.Error(), "RELA_SANDBOX_SCAN_READ_PATHS") {
+		t.Errorf("merge key: wrong error: %v", err)
 	}
 }
 

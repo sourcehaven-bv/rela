@@ -73,7 +73,7 @@ func navItemsFor(
 		return v1.NavItemList{}, fmt.Errorf("unknown list %q", from.List)
 	}
 	limit := from.EffectiveLimit()
-	rows, total, err := a.listPage(ctx, listCfg.EntityType, navItemsListQuery(from.List, listCfg), 1, limit)
+	rows, total, _, err := a.listPage(ctx, listCfg.EntityType, navItemsListQuery(from.List, listCfg), 1, limit)
 	if err != nil {
 		return v1.NavItemList{}, err
 	}

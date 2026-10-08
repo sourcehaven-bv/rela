@@ -1792,7 +1792,9 @@ rela rename entity requirement feature --force
 
 #### rela rename id
 
-Rename an entity's ID and update all relations that reference it.
+Rename an entity's ID and update all relations that reference it. Only
+entities of a type with `id_type: manual` can be renamed; generated ids
+(`short`, `sequential`) cannot.
 
 ```bash
 rela rename id <old-id> <new-id> [flags]
@@ -1817,8 +1819,8 @@ This updates:
 **Examples:**
 
 ```bash
-rela rename id REQ-001 REQ-100
-rela rename id REQ-001 REQ-100 --dry-run
+rela rename id auth-module identity-module
+rela rename id auth-module identity-module --dry-run
 ```
 
 ---

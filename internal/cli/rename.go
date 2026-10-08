@@ -18,7 +18,7 @@ import (
 // RenameCmd is the parent of rename subcommands.
 type RenameCmd struct {
 	Entity RenameEntityCmd `cmd:"" help:"Rename an entity type."`
-	ID     RenameIDCmd     `cmd:"" name:"id" help:"Rename an entity's ID."`
+	ID     RenameIDCmd     `cmd:"" name:"id" help:"Rename an entity's ID (types with id_type: manual only)."`
 }
 
 // RenameEntityCmd renames an entity type.

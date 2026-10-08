@@ -185,6 +185,44 @@ Consequences worth understanding:
 - **A match below the confidence threshold is flagged "may have moved"** rather
   than being presented as an exact location.
 
+#### Selections across blocks
+
+A selection may cross markdown blocks: a heading and the start of its body,
+several paragraphs, or several list items. The highlight then shows as one
+mark per block, and clicking any of them opens the same thread.
+
+Such a comment is matched block by block. rela locates the first and the last
+block of the selection on their own, then checks what lies between them. This
+keeps the comment in place when you:
+
+- fix a typo in the heading or change a word in the body,
+- insert a paragraph inside the selected range (up to two),
+- move the whole section elsewhere in the body.
+
+When the selected text is deleted or rewritten beyond recognition, the comment
+is reported detached, as for any text comment. This includes a paragraph in the
+middle of the selection, and a short heading that was renamed: rela orphans the
+comment rather than attach it to text that may say something else. A small edit
+to a selected paragraph keeps the comment in place, flagged "may have moved".
+
+Some parts of a selection are not highlighted, although they still belong to
+the comment:
+
+- code blocks, because a mark inside code renders as literal markup;
+- block markup such as the `##` of a heading, the `-` of a list item and a
+  task item's checkbox.
+
+Inline code is highlighted whole: a selection that starts or ends inside a
+code span highlights the entire span. A selection that covers only a code
+block gets no highlight; the comment still lists in the panel.
+
+A short comment inside a longer one keeps its highlight; the longer comment
+then shows only in the panel.
+
+Two sections with identical headings and bodies are told apart by the text just
+before and after the selection. If you comment on a heading in a repeated
+section, include some text of its own in the selection.
+
 ### Images and diagrams
 
 An image or a mermaid/PlantUML diagram cannot be text-selected, so it gets its
@@ -253,6 +291,12 @@ A create body adds a suggestion with `anchor.replacement`. `resolve` returns
 the selection's markdown source as `source_quote`. Each listed comment carries
 `acceptable: true` when its suggestion can be applied to the current body.
 
+A located text anchor carries `start` and `end`, byte offsets into the body
+resolved on this read, and `segments`: the same range split into one byte range
+per markdown block, with block markup and code left out. A client highlights
+each segment separately. An empty `segments` list means nothing in the range
+can be highlighted.
+
 `accept` returns the new body and any write warnings. It answers 409 when the
 comment has no suggestion, is already resolved, or no longer matches the body
 exactly. A refused or failed entity write reopens the comment.
@@ -282,6 +326,7 @@ comment by reusing it.
 | Comment body | 16 KB, no control characters except tab and newline |
 | Comments per target | 500 |
 | Anchored quote | 5 characters minimum, 2 KB maximum |
+| Paragraphs in one selection | 32 for re-locating after an edit; a longer selection still resolves while its text is unchanged |
 | Suggested replacement | 16 KB, one block of the quoted text |
 
 The quote minimum exists because a shorter selection cannot be re-located

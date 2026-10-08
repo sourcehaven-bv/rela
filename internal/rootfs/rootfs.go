@@ -140,15 +140,29 @@ func (d *Dir) Stat(_ context.Context, name string) (fs.FileInfo, error) {
 // Subscribe watches the named file and calls onChange after each change,
 // debounced. It satisfies config.Subscriber, which is how data-entry.yaml is
 // reloaded live.
+//
+// It watches the file's directory and filters on the name, because a watch
+// on the file itself cannot be placed while the file is absent. That is the
+// normal state of a project whose config lives in its database: a file
+// created beside it later must still be noticed, and so must a file that is
+// removed (the layered loader then falls back to the stored copy).
 func (d *Dir) Subscribe(_ context.Context, name string, onChange func()) (func(), error) {
 	if !fs.ValidPath(name) || name == "." {
 		return nil, fmt.Errorf("rootfs: invalid file name %q", name)
 	}
+	target := filepath.Join(d.path, filepath.FromSlash(name))
 	watcher, err := storage.NewWatcher(storage.WatchConfig{
-		Files:      []string{filepath.Join(d.path, filepath.FromSlash(name))},
+		Files:      []string{filepath.Dir(target)},
 		Debounce:   watchDebounce,
 		SkipHidden: true,
-		OnChange:   func([]storage.ChangeEvent) { onChange() },
+		OnChange: func(events []storage.ChangeEvent) {
+			for _, ev := range events {
+				if filepath.Clean(ev.Path) == target {
+					onChange()
+					return
+				}
+			}
+		},
 	})
 	if err != nil { // coverage-ignore: fsnotify.NewWatcher fails only on OS watch-descriptor exhaustion
 		return nil, err

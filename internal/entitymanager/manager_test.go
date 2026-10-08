@@ -56,7 +56,18 @@ entities:
         type: string
       status:
         type: status
+  component:
+    label: Component
+    plural: components
+    id_type: manual
+    properties:
+      title:
+        type: string
 relations:
+  depends-on:
+    label: DependsOn
+    from: [component]
+    to: [decision, component]
   addresses:
     label: Addresses
     from: [decision]
@@ -209,6 +220,19 @@ func createReq(t *testing.T, mgr *entitymanager.Manager, title string) *entity.E
 	res, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{})
 	if err != nil {
 		t.Fatalf("createReq(%q): %v", title, err)
+	}
+	return res.Entity
+}
+
+// createComp creates a component, the test schema's hand-typed-id type and so
+// the one a rename accepts.
+func createComp(t *testing.T, mgr *entitymanager.Manager, id string) *entity.Entity {
+	t.Helper()
+	e := entity.New(id, "component")
+	e.SetString("title", id)
+	res, err := mgr.CreateEntity(context.Background(), e, entity.CreateOptions{ID: id})
+	if err != nil {
+		t.Fatalf("createComp(%q): %v", id, err)
 	}
 	return res.Entity
 }
@@ -760,7 +784,7 @@ func TestRename_DryRunDoesNotChangeStore(t *testing.T) {
 	t.Parallel()
 	mgr, cs := newManager(t, nil)
 	ctx := context.Background()
-	req := createReq(t, mgr, "To Be Renamed")
+	req := createComp(t, mgr, "to-be-renamed")
 
 	creatBefore := cs.creates.Load()
 	updatesBefore := cs.updates.Load()
@@ -796,9 +820,9 @@ func TestRename_AppliesAndRewritesRelations(t *testing.T) {
 	t.Parallel()
 	mgr, _ := newManager(t, nil)
 	ctx := context.Background()
-	req := createReq(t, mgr, "Original")
+	req := createComp(t, mgr, "original")
 	dec := createDec(t, mgr, "Face")
-	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: dec.ID, Type: "addresses", To: req.ID}, entity.RelationOptions{}); err != nil {
+	if _, err := mgr.CreateRelation(ctx, entity.RelationKey{From: req.ID, Type: "depends-on", To: dec.ID}, entity.RelationOptions{}); err != nil {
 		t.Fatalf("create relation: %v", err)
 	}
 
@@ -836,8 +860,8 @@ func TestRename_TargetExistsDoesNotOverwrite(t *testing.T) {
 	t.Parallel()
 	mgr, cs := newManager(t, nil)
 	ctx := context.Background()
-	src := createReq(t, mgr, "source")
-	dst := createReq(t, mgr, "occupied target")
+	src := createComp(t, mgr, "source")
+	dst := createComp(t, mgr, "occupied-target")
 
 	creates, updates, deletes := cs.creates.Load(), cs.updates.Load(), cs.deletes.Load()
 
@@ -861,8 +885,8 @@ func TestRename_TargetExistsDoesNotOverwrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("target entity missing after conflicting rename: %v", err)
 	}
-	if title := gotDst.GetString("title"); title != "occupied target" {
-		t.Errorf("target title = %q, want %q — target was clobbered", title, "occupied target")
+	if title := gotDst.GetString("title"); title != "occupied-target" {
+		t.Errorf("target title = %q, want %q — target was clobbered", title, "occupied-target")
 	}
 	if _, err := cs.GetEntity(ctx, src.Ref()); err != nil {
 		t.Errorf("source entity missing after failed rename: %v", err)

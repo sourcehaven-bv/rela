@@ -9,6 +9,7 @@
 import type { Section, Task } from '../types'
 import RlBoard from '../components/board/RlBoard.vue'
 import RlTaskCard from '../components/board/RlTaskCard.vue'
+import type { BoardDropPosition } from '../composables/useBoardDnd'
 
 withDefaults(
   defineProps<{
@@ -19,8 +20,10 @@ withDefaults(
     canMove?: (item: Task) => boolean
     emptyLabel?: string
     emptyDescription?: string
+    reorder?: boolean
   }>(),
   {
+    reorder: false,
     showAddSection: true,
     showAdd: true,
     canMove: undefined,
@@ -34,7 +37,7 @@ const emit = defineEmits<{
   select: [item: Task]
   expandSection: [section: Section<Task>]
   addSection: []
-  move: [payload: { item: Task; to: Section<Task> }]
+  move: [payload: { item: Task; to: Section<Task>; at?: BoardDropPosition }]
 }>()
 </script>
 
@@ -47,6 +50,7 @@ const emit = defineEmits<{
     :can-move="canMove"
     :empty-label="emptyLabel"
     :empty-description="emptyDescription"
+    :reorder="reorder"
     add-label="Add task"
     @add="emit('add', $event)"
     @select="emit('select', $event)"

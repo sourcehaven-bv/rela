@@ -22,7 +22,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/conflict"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -336,33 +335,34 @@ var errListLoad = errors.New("list load failed")
 // read; everything else takes the whole-type Go pipeline and slices it.
 func (a *App) listPage(
 	ctx context.Context, typeName string, query map[string][]string, page, perPage int,
-) (rows []*entityPkg.Entity, total int, err error) {
+) (rows []*entityPkg.Entity, total int, ordering *relationOrdering, err error) {
 	ctx, n, err := resolveListNarrowing(ctx, a, typeName, query)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if plan, empty, ok := n.pushdownPlan(ctx, a, typeName, query, page, perPage); ok {
 		if empty {
-			return nil, 0, nil
+			return nil, 0, nil, nil
 		}
-		return plan.run(ctx, a.Services().Store)
+		rows, total, err = plan.run(ctx, a.Services().Store)
+		return rows, total, nil, err
 	}
 	cond, scope := n.cond, n.scope
-	all, err := scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
+	all, ordering, err := scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
 	// condition narrows the population the page and total describe, so
 	// applying it later would page one set and count another.
 	ctx = primeVerdicts(ctx, a.fieldResolver, all)
 	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion, a.Services().Store); err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	total = len(all)
 	start := min((page-1)*perPage, total)
 	end := min(start+perPage, total)
-	return all[start:end], total, nil
+	return all[start:end], total, ordering, nil
 }
 
 func (a *App) scopedSortedEntities(
@@ -382,12 +382,15 @@ func (a *App) scopedSortedEntities(
 	if err != nil {
 		return nil, err
 	}
-	return scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
+	rows, _, err := scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
+	return rows, err
 }
 
 // scopedSortedEntitiesScoped is App.scopedSortedEntities with the query
 // scope already resolved, for callers that resolved it to decide something
-// else first (listPage uses it to gate the pushdown).
+// else first (listPage uses it to gate the pushdown). It also returns the
+// relation ordering a page-scoped request was sorted by, if any; see
+// [resolvePageScope].
 //
 // A package function taking the App rather than a method, to keep App under
 // its plimsoll load line — the discipline the directive at [App] records:
@@ -398,18 +401,18 @@ func scopedSortedEntitiesScoped(
 	typeName string,
 	query map[string][]string,
 	scope resolvedQueryScope,
-) ([]*entityPkg.Entity, error) {
+) ([]*entityPkg.Entity, *relationOrdering, error) {
 	// Stamp the scope's request-scoped state ONCE, before any row is
 	// evaluated — a scope reading current_user resolves it here, not per row.
 	ctx, err := scope.bind(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// The page scope resolves BEFORE the load, so an anchor the principal
 	// cannot see answers the uniform 404 whatever the type's verdict is.
-	pageIDs, pageScoped, err := resolvePageScope(ctx, a, query, typeName)
+	pageIDs, ordering, pageScoped, err := resolvePageScope(ctx, a, query, typeName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// The verdict switch, the world scope, the face allowlist and the query
 	// scope all live in scopedHeaders (scopedread.go) — see its doc for why
@@ -423,13 +426,13 @@ func scopedSortedEntitiesScoped(
 		ScopeFilter: scope.Filter,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if withheld {
 		// Return BEFORE the free-text search: a principal who may read
 		// nothing must not be able to probe the search backend's latency or
 		// induce load through ?q= (RR-X56H).
-		return []*entityPkg.Entity{}, nil
+		return []*entityPkg.Entity{}, nil, nil
 	}
 	// An intersection with the ACL-scoped set: the page scope only removes
 	// rows, so it cannot surface one the load above did not admit.
@@ -450,7 +453,7 @@ func scopedSortedEntitiesScoped(
 	// and pretending the search succeeded.
 	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(query, "q"), typeName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if searchResult.HasFilter {
 		filtered := entities[:0]
@@ -471,14 +474,17 @@ func scopedSortedEntitiesScoped(
 	isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
 	entities, err = applyV1Filters(entities, query, typeName, isRelationKey)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	entities, err = a.applyRelationFilters(ctx, entities, query, typeName, isRelationKey)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	entities = applyV1Sorting(entities, query, a.Meta())
-	return entities, nil
+	if ordering != nil {
+		ordering.sort(entities)
+		return entities, ordering, nil
+	}
+	return applyV1Sorting(entities, query, a.Meta()), nil, nil
 }
 
 // relationFilterClassifier returns a predicate that decides, for a bare filter
@@ -760,7 +766,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		return
 	}
 
-	entities, total, err := a.listPage(r.Context(), typeName, query, page, perPage)
+	entities, total, ordering, err := a.listPage(r.Context(), typeName, query, page, perPage)
 	if err != nil {
 		writeListPipelineError(w, r, err)
 		return
@@ -847,6 +853,9 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 			Page:    page,
 			PerPage: perPage,
 			HasMore: end < total,
+			// Relation order is shown only when it was applied, so the
+			// client never has to re-derive the condition.
+			RelationOrder: ordering.wire(),
 		},
 		Actions: a.affordances.computeCollectionActions(r.Context(), typeName),
 	}
@@ -1310,31 +1319,23 @@ func (a *App) buildRelationTypeRows(
 	return rows, strips
 }
 
-// sortRelationGroup sorts a relation group in place by a numeric meta key.
-// Entries without a finite numeric value at prop sort last; ties stable.
+// sortRelationGroup sorts a relation group in place by a numeric meta key,
+// with [metamodel.CompareOrderKeys] so the entity page and every
+// relation-ordered list agree on one order.
 func sortRelationGroup(group []map[string]any, prop string) {
 	if len(group) < 2 || prop == "" {
 		return
 	}
-	value := func(m map[string]any) (float64, bool) {
-		meta, ok := m["meta"].(map[string]any)
-		if !ok {
-			return 0, false
+	key := func(m map[string]any) metamodel.OrderKey {
+		k := metamodel.OrderKey{}
+		if meta, ok := m["meta"].(map[string]any); ok {
+			k.Value = meta[prop]
 		}
-		return entitymanager.FiniteOrder(meta[prop])
+		k.Peer, _ = m["id"].(string)
+		return k
 	}
-	sort.SliceStable(group, func(i, j int) bool {
-		vi, oki := value(group[i])
-		vj, okj := value(group[j])
-		switch {
-		case oki && !okj:
-			return true
-		case !oki && okj:
-			return false
-		case !oki && !okj:
-			return false
-		}
-		return vi < vj
+	slices.SortStableFunc(group, func(x, y map[string]any) int {
+		return metamodel.CompareOrderKeys(key(x), key(y))
 	})
 }
 

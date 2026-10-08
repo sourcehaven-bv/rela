@@ -29,6 +29,13 @@ export interface CommentAnchor {
    */
   start?: number
   end?: number
+  /**
+   * `[start, end)` split into one byte range per markdown block, sent
+   * whenever `start`/`end` are. A highlight wraps each segment separately,
+   * because one inline element cannot cross a block boundary. An empty list
+   * means nothing in the range is markable (it is all code).
+   */
+  segments?: ByteSpan[]
   /** Resolver score, 0-1. */
   confidence?: number
   /** Located, but far enough from an exact match that the UI should say the
@@ -40,6 +47,12 @@ export interface CommentAnchor {
    * `quote` is the markdown SOURCE the replacement will overwrite.
    */
   replacement?: string | null
+}
+
+/** A `[start, end)` byte range into the entity body. */
+export interface ByteSpan {
+  start: number
+  end: number
 }
 
 /** One comment as served by `/api/v1/_comments/...`. */

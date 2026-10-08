@@ -469,6 +469,90 @@ func TestComments_TextAnchor(t *testing.T) {
 	})
 }
 
+// TestComments_TextAnchorAcrossBlocks covers a selection dragged from a
+// heading into its body (TKT-U32AUB). The quote arrives as rendered text, with
+// no "## " and a plain newline between the blocks, and the read must hand back
+// one highlight segment per block, since one inline element cannot cross the
+// boundary.
+func TestComments_TextAnchorAcrossBlocks(t *testing.T) {
+	const doc = "Some introduction.\n\n## Configuration\n\n" +
+		"Configure the package by creating a config file in the project root.\n"
+
+	newApp := func(t *testing.T, content string) *App {
+		t.Helper()
+		app := commentsApp(t)
+		setBody(t, app, content)
+		return app
+	}
+	segmentTexts := func(t *testing.T, body string, a anchorWire) []string {
+		t.Helper()
+		require.NotNil(t, a.Segments, "a located text anchor always carries segments")
+		var out []string
+		for _, sp := range *a.Segments {
+			out = append(out, body[sp.Start:sp.End])
+		}
+		return out
+	}
+	post := func(t *testing.T, app *App) {
+		t.Helper()
+		body := `{"anchor":{"kind":"text","quote":"Configuration\nConfigure the package",` +
+			`"quote_prefix":"Some introduction.\n","quote_suffix":" by creating"},"body":"which file?"}`
+		rec := doComments(t, app, http.MethodPost, "/api/v1/_comments/ticket/TKT-001", body, "alice@example.com")
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	t.Run("read returns one segment per block", func(t *testing.T) {
+		app := newApp(t, doc)
+		post(t, app)
+
+		got := listComments(t, app)
+		require.Len(t, got.Comments, 1)
+		a := got.Comments[0].Anchor
+		require.False(t, got.Comments[0].Detached)
+		require.Equal(t, "Configuration\n\nConfigure the package", doc[*a.Start:*a.End])
+		require.Equal(t, []string{"Configuration", "Configure the package"}, segmentTexts(t, doc, a))
+	})
+
+	t.Run("still resolves after an edit inside the range", func(t *testing.T) {
+		app := newApp(t, doc)
+		post(t, app)
+
+		edited := strings.Replace(doc, "Configure the package", "Configure this package", 1)
+		setBody(t, app, edited)
+
+		got := listComments(t, app)
+		require.Len(t, got.Comments, 1)
+		require.False(t, got.Comments[0].Detached, "an edit inside a cross-block range must not detach it")
+		a := got.Comments[0].Anchor
+		require.Equal(t, []string{"Configuration", "Configure this package"}, segmentTexts(t, edited, a))
+	})
+
+	t.Run("a range over only code has an empty segment list", func(t *testing.T) {
+		const code = "Intro.\n\n```\nmake test all\n```\n"
+		app := newApp(t, code)
+		body := `{"anchor":{"kind":"text","quote":"make test all"},"body":"flaky?"}`
+		rec := doComments(t, app, http.MethodPost, "/api/v1/_comments/ticket/TKT-001", body, "alice@example.com")
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+		got := listComments(t, app)
+		require.Len(t, got.Comments, 1)
+		a := got.Comments[0].Anchor
+		require.NotNil(t, a.Segments, "empty, not absent: absent means an older server")
+		require.Empty(t, *a.Segments)
+	})
+}
+
+// setBody replaces TKT-001's body in the comments fixture.
+func setBody(t *testing.T, app *App, content string) {
+	t.Helper()
+	require.NoError(t, app.store.UpdateEntity(t.Context(), &entity.Entity{
+		ID:         "TKT-001",
+		Type:       "ticket",
+		Properties: map[string]any{"title": "Test Ticket", "status": "open"},
+		Content:    content,
+	}))
+}
+
 // TestComments_TextAnchorDisambiguation pins the fix for a comment landing on
 // the WRONG occurrence of a repeated quote.
 //
@@ -719,6 +803,79 @@ func TestComments_FacedThreadUnderRelationConferredGrant(t *testing.T) {
 		rec := doCommentsAs(t, app, d, http.MethodGet, draftPath, "", "alice")
 		require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 	})
+}
+
+// TestComments_FaceLimitedConferredGrant pins BUG-EEIIXB: a role conferred
+// by a relation and granted only `ticket@draft` must reach the draft face when
+// the address names it. acl.Request.PermitsRead used to ask about the
+// default-world row, which the face-limited grant does not cover, so both
+// routes 404'd until #1753.
+//
+// The two routes pin different code. The comments route's row gate calls
+// PermitsRead, so it is the regression test for that method; a regression
+// there surfaces as a 403 naming comment:read, because the gate's answer feeds
+// the permission floor. The entity route resolves the address through
+// visibility.Resolver, which asks ReadableFacesMany directly.
+func TestComments_FaceLimitedConferredGrant(t *testing.T) {
+	app := commentsApp(t)
+	seedDraftTicket(t, app)
+	// A second draft ticket alice has no edge to: the relation, not the face
+	// allowlist alone, must decide whether she reads it.
+	require.NoError(t, app.store.CreateEntity(t.Context(), &entity.Entity{
+		ID: "TKT-002", Type: "ticket", Face: "draft",
+		Properties: map[string]any{"title": "Someone else's ticket", "status": "open"},
+	}))
+	_, err := app.store.CreateRelation(t.Context(), entity.RelationKey{From: "alice", Type: "owned-by", To: "TKT-001"}, nil)
+	require.NoError(t, err)
+	d := mustNewACL(t, &acl.Policy{
+		Roles: map[string]acl.RoleDef{"viewer": {
+			Read:        []string{"ticket@draft"},
+			Permissions: []string{"comment:read"},
+		}},
+		RoleRelations: map[string]acl.RoleRelationDef{"owned-by": {Confers: "viewer"}},
+	}, app.store)
+	app.acl = d
+
+	routes := []struct {
+		name string
+		get  func(t *testing.T, user, id string) *httptest.ResponseRecorder
+	}{
+		{"entity", func(t *testing.T, user, id string) *httptest.ResponseRecorder {
+			t.Helper()
+			return getEntityAs(principalCtx(user), t, app, d, "ticket", "tickets", id, "")
+		}},
+		{"comments", func(t *testing.T, user, id string) *httptest.ResponseRecorder {
+			t.Helper()
+			return doCommentsAs(t, app, d, http.MethodGet, "/api/v1/_comments/ticket/"+id, "", user)
+		}},
+	}
+	tests := []struct {
+		name, user, id string
+		want           int
+	}{
+		{"the granted face", "alice", "TKT-001@draft", http.StatusOK},
+		// Not an ACL denial: the trivial default world serves only the
+		// implicit face, which the grant excludes.
+		{"the bare id", "alice", "TKT-001", http.StatusNotFound},
+		{"the face of an unrelated entity", "alice", "TKT-002@draft", http.StatusNotFound},
+		{"the face, for a principal without the relation", "bob", "TKT-001@draft", http.StatusNotFound},
+	}
+	for _, r := range routes {
+		t.Run(r.name, func(t *testing.T) {
+			// A denial must read exactly like an entity that does not exist.
+			missing := r.get(t, "alice", "TKT-999@draft")
+			require.Equal(t, http.StatusNotFound, missing.Code, missing.Body.String())
+			for _, tc := range tests {
+				t.Run(tc.name, func(t *testing.T) {
+					rec := r.get(t, tc.user, tc.id)
+					require.Equal(t, tc.want, rec.Code, rec.Body.String())
+					if tc.want == http.StatusNotFound {
+						require.Equal(t, stripInstance(t, missing.Body.String()), stripInstance(t, rec.Body.String()))
+					}
+				})
+			}
+		})
+	}
 }
 
 // TestComments_TextAnchorResolvesAgainstItsFace pins BUG-R1PQY9's anchor half.

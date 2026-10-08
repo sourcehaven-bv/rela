@@ -131,7 +131,8 @@ func toolDeleteEntity() *mcpgo.Tool {
 
 func toolRenameEntity() *mcpgo.Tool {
 	return newTool("rename_entity",
-		withDescription("Change an entity's ID and update every relation that references it"),
+		withDescription("Change an entity's ID and update every relation that references it. "+
+			"Only for types with id_type: manual; generated ids cannot be renamed"),
 		withString("id", required(), description("Current ID")),
 		withString("new_id", required(), description("New ID")),
 		withBoolean("dry_run", description("Preview only (default false)")),

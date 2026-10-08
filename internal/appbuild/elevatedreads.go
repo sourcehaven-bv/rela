@@ -61,7 +61,10 @@ func familiesOption(w worlds.Compiled) visibility.ResolverOption {
 }
 
 // unrestrictedReader is [visibility.Unrestricted] over st, listing faces by
-// w's families and resolving bare ids in w's default world.
+// w's families, resolving bare ids in w's default world, and serving st's
+// version history when its backend keeps one.
 func unrestrictedReader(st store.Store, w worlds.Compiled) *visibility.UnrestrictedReader {
-	return visibility.Unrestricted(st, familiesOption(w)).WithWorld(visibility.WorldOf(w.DefaultWorld()))
+	return visibility.Unrestricted(st, familiesOption(w)).
+		WithWorld(visibility.WorldOf(w.DefaultWorld())).
+		WithHistory(versionServiceFor(st))
 }

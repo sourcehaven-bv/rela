@@ -556,7 +556,7 @@ func scriptReads(
 		slog.Error("appbuild: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
 	}
-	return sr.WithWorld(visibility.WorldOf(w.DefaultWorld())), gate.GateTraversal
+	return sr.WithWorld(visibility.WorldOf(w.DefaultWorld())).WithHistory(versionServiceFor(st)), gate.GateTraversal
 }
 
 // refuseTraversal pairs with [visibility.DenyReader]: reads are refused, so

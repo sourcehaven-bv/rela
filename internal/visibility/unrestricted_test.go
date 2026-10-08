@@ -122,11 +122,14 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// ListRelationsStrict (TKT-5LW875) is ListRelations itself here: with no
 	// gate there is no fault to report. WriteTarget (TKT-7IZHP0) picks one
 	// face out of the Family by header: it names the face a write would
-	// edit and performs none.
+	// edit and performs none. EntityVersions and EntityVersion (TKT-EC7F65)
+	// read the history of the entity GetAddress reads; WithHistory returns a
+	// copy that serves it. None of the three writes.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
 		"ResolveHeaders": true, "ListRelationsStrict": true, "WriteTarget": true,
+		"EntityVersions": true, "EntityVersion": true, "WithHistory": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))

@@ -1371,15 +1371,28 @@ other surfaces and how each counts hidden entities.
   remain on the remote endpoint:
   - relation meta values are not field-redacted (TKT-0RBFN0), the same as
     on every other read path;
-  - a create or rename that picks a new id which a hidden entity already
-    holds fails with a conflict, which confirms that id exists. The
-    data-entry write path has the same property;
-  - `delete_entity` without `cascade` on an entity whose only edges lead
-    to hidden entities fails with "entity has relations". That shows some
-    hidden edge exists, but not how many or to what. The counts that
-    `delete_entity` and `rename_entity` report cover visible edges only.
-    So do the relation counts behind `analyze` with `check: cardinality`
-    or `check: orphans`, and in the data-entry analyze view (TKT-5LW875).
+  - a write that collides with hidden data reveals that it collides, and
+    nothing more (BUG-1BXQDD). This one bit cannot be closed: the write
+    must be refused, and a refused write reads differently from one that
+    succeeds. Every surface, the data-entry write path included, keeps the
+    refusal to that bit. Three writes carry it:
+    - a create or rename that picks a new id which a hidden entity already
+      holds fails with a conflict, which confirms that id exists. Rename is
+      offered only for types with `id_type: manual`, so generated ids are
+      never renamed and the rename conflict exists only for hand-typed ids;
+    - `delete_entity` without `cascade` on an entity whose only edges are
+      hidden fails with "entity has relations". That shows some hidden
+      edge exists, but not how many or to what;
+    - a cascade delete refused because of a hidden edge says only that a
+      relation blocks it. It names neither the edge's type nor its
+      endpoints, and a denied visible edge is reported in its place.
+  - An edge is hidden on these paths by the read path's own rule: its head
+    must be readable, and the tail of a content-scoped edge must have its
+    own face readable. The counts that `delete_entity` and `rename_entity`
+    report cover visible edges only; rename's count comes from the write
+    path itself, so the CLI reports the same. So do the relation counts
+    behind `analyze` with `check: cardinality` or `check: orphans`, and in
+    the data-entry analyze view (TKT-5LW875).
   - an edge of an `owning:` relation that clashes with an owning edge to a
     hidden entity is refused with `owning_rule` (TKT-QO14GB). That shows some
     hidden owning edge exists. The message is the same for all three clashes,

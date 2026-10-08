@@ -61,8 +61,13 @@ func aclWorldMeta() *metamodel.Metamodel {
 // ACL-bound, exactly as appbuild/dataentry wire them in production.
 func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 	t.Helper()
+	return newACLWorldOn(t, memstore.New())
+}
+
+// newACLWorldOn is [newACLWorld] over st, which must be empty.
+func newACLWorldOn(t *testing.T, st store.Store) (store.Store, lua.WriteDeps) {
+	t.Helper()
 	ctx := context.Background()
-	st := memstore.New()
 
 	seed := []*entity.Entity{
 		{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "Visible", "cost": "99"}},
@@ -109,6 +114,9 @@ func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
 	scriptReader = scriptReader.WithWorld(visibility.WorldOf(store.TrivialScope()))
+	if h, ok := st.(store.HistoryReader); ok {
+		scriptReader = scriptReader.WithHistory(h)
+	}
 	visRes, err := visibility.NewResolver(gate, redactor, st)
 	if err != nil {
 		t.Fatalf("NewResolver: %v", err)

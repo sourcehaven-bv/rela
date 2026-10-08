@@ -57,7 +57,7 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
 			"ticket": {
-				Label: "Ticket", IDPrefix: "TKT", DisplayProperty: "title",
+				Label: "Ticket", IDPrefix: "TKT", IDType: metamodel.IDTypeManual, DisplayProperty: "title",
 				Properties: map[string]metamodel.PropertyDef{"title": {Type: "string"}},
 			},
 			"feature": {
@@ -641,11 +641,20 @@ func TestACL_WriteCounts_OmitHiddenEdges(t *testing.T) {
 		t.Errorf("rename reports the hidden edge: %s", got)
 	}
 
-	res, err = s.handleDeleteEntity(ctx, makeToolRequest(map[string]any{"id": visibleID, "cascade": true}))
+	const renamed = "TKT-NEW"
+	res, err = s.handleRenameEntity(ctx, makeToolRequest(map[string]any{"id": visibleID, "new_id": renamed}))
+	if err != nil || isErrorResult(res) {
+		t.Fatalf("rename: %v %s", err, getResultText(t, res))
+	}
+	if got, want := getResultText(t, res), "Renamed: "+visibleID+" → "+renamed+" (0 relations updated)"; got != want {
+		t.Errorf("rename reply = %q, want %q", got, want)
+	}
+
+	res, err = s.handleDeleteEntity(ctx, makeToolRequest(map[string]any{"id": renamed, "cascade": true}))
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if got := getResultText(t, res); got != "Deleted "+visibleID {
+	if got := getResultText(t, res); got != "Deleted "+renamed {
 		t.Errorf("delete reply = %q, want no relation count", got)
 	}
 }

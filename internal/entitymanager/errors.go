@@ -53,6 +53,11 @@ func newEntityNotFound(id string) error { return entityNotFoundError{id: id} }
 // or generated ID collides with an existing entity.
 var ErrEntityAlreadyExists = errors.New("entity already exists")
 
+// ErrRenameNotSupported is returned by [Manager.RenameEntity] for an entity
+// whose type generates its ids (`id_type: short` or `sequential`). Only a
+// hand-typed id carries meaning a rename can improve.
+var ErrRenameNotSupported = errors.New("rename is only available for types with id_type: manual")
+
 // ErrTypeImmutable is returned by the upsert/apply path when the caller
 // supplies a type that differs from the STORED type of an existing entity.
 // An entity's type is immutable on update: an UPDATE is authorized and
@@ -164,3 +169,17 @@ func customIDNotAllowedError(entityType string, def *metamodel.EntityDef, offend
 		entityType, def.GetIDType(), offendingID, hint,
 	)
 }
+
+// ErrRelationNotOrderable reports a move on a relation type whose outgoing
+// side declares no managed order.
+var ErrRelationNotOrderable = errors.New("relation type is not orderable on the outgoing side")
+
+// ErrInvalidOrderPosition reports an [entity.OrderPosition] that does not set
+// exactly one of its fields, steps by something other than one place, names
+// the moved edge itself, or comes with property changes.
+var ErrInvalidOrderPosition = errors.New("invalid order position")
+
+// ErrOrderRefNotSibling reports a Before/After sibling that is not an edge
+// of the same source, type and tail. Callers answer it like a hidden
+// sibling, so the error does not tell the two apart.
+var ErrOrderRefNotSibling = errors.New("order position names no sibling edge")

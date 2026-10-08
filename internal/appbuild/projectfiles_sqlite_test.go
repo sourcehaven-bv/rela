@@ -7,11 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -36,7 +39,8 @@ func bake(t *testing.T, root string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	names, err := appbuild.LoadProjectConfig(context.Background(), fs, paths, root)
+	names, err := appbuild.LoadProjectConfig(context.Background(), fs, paths, root,
+		appbuild.ConfigImportOptions{Audit: audit.Nop{}})
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: %v", err)
 	}
@@ -399,5 +403,74 @@ func TestSQLite_BakedTemplatesAreUsed(t *testing.T) {
 	all, err := svc.Templater().EntityTemplates(ctx, "doc")
 	if err != nil || len(all) != 2 {
 		t.Fatalf("EntityTemplates = %d templates, %v; want 2", len(all), err)
+	}
+}
+
+// A config load leaves one audit record, like the data import: it bypasses
+// the entitymanager, so the record is its only trace. The record names the
+// source and the count, never a stored file's content.
+func TestSQLite_LoadProjectConfigWritesOneAuditRecord(t *testing.T) {
+	root := writeMinimalProject(t)
+	const secretBody = "return 'do-not-echo'\n"
+	writeFile(t, root, "scripts/report.lua", secretBody)
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover(root, fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: "cli"})
+	sink := audit.NewMemory()
+
+	names, err := appbuild.LoadProjectConfig(ctx, fs, paths, root, appbuild.ConfigImportOptions{Audit: sink})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	records := sink.Records()
+	if len(records) != 1 || records[0].Op != audit.OpConfigImport {
+		t.Fatalf("audit records = %+v, want one %s record", records, audit.OpConfigImport)
+	}
+	rec := records[0]
+	if rec.Principal.User != "alice" || rec.Principal.Tool != "cli" {
+		t.Errorf("principal = %+v, want alice/cli", rec.Principal)
+	}
+	if !strings.Contains(rec.Summary, root) || !strings.Contains(rec.Summary, strconv.Itoa(len(names))+" files") {
+		t.Errorf("summary %q does not name the source and the file count", rec.Summary)
+	}
+	if strings.Contains(rec.Summary, "do-not-echo") || strings.Contains(rec.Summary, "report.lua") {
+		t.Errorf("summary %q echoes a stored file", rec.Summary)
+	}
+}
+
+func TestSQLite_ConfigImportRequiresAudit(t *testing.T) {
+	root := writeMinimalProject(t)
+	fs := storage.NewSafeFS(storage.NewOsFS())
+	paths, err := project.Discover(root, fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{"load", func() error {
+			_, err := appbuild.LoadProjectConfig(context.Background(), fs, paths, root, appbuild.ConfigImportOptions{})
+			return err
+		}},
+		{"store", func() error {
+			_, err := appbuild.StoreProjectConfig(context.Background(), paths, map[string][]byte{},
+				appbuild.ConfigImportOptions{})
+			return err
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.run(); err == nil || !strings.Contains(err.Error(), "audit sink") {
+				t.Fatalf("err = %v, want an audit sink refusal", err)
+			}
+			if _, err := os.Stat(appbuild.DatabasePath(paths)); !os.IsNotExist(err) {
+				t.Errorf("refused import created the database (stat err = %v)", err)
+			}
+		})
 	}
 }
