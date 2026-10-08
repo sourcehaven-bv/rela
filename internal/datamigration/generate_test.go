@@ -177,3 +177,37 @@ func TestGenerate_EmitsNoShapeHashes(t *testing.T) {
 func testNow() time.Time {
 	return time.Date(2026, 9, 19, 14, 30, 22, 0, time.UTC)
 }
+
+// D8 (TKT-SM20FG): a string that becomes an external ref gets a Lua stub
+// taking the old string as the id; a system change gets a TODO.
+func TestGenerate_ExternalRefStubs(t *testing.T) {
+	from := metaV1()
+	from.Entities["task"].Properties["jira"] = metamodel.PropertyDef{Type: "string"}
+	live := metaV1()
+	live.Entities["task"].Properties["jira"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeExternalRef, System: "jira"}
+	d, err := Generate(from.ShapeProjection(), live.ShapeProjection(), "jira refs", testNow())
+	if err != nil || d == nil {
+		t.Fatalf("Generate: %v, %v", d, err)
+	}
+	content := string(d.Content)
+	for _, want := range []string{
+		"no built-in coercion to \"external_ref\"",
+		"function migrate(entity)",
+		"return { properties = { [\"jira\"] = { id = v } } }",
+		"# - lua: {entity: task, script: migrations/task-jira.lua}",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("draft lacks %q:\n%s", want, content)
+		}
+	}
+
+	moved := metaV1()
+	moved.Entities["task"].Properties["jira"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeExternalRef, System: "linear"}
+	d, err = Generate(live.ShapeProjection(), moved.ShapeProjection(), "move system", testNow())
+	if err != nil || d == nil {
+		t.Fatalf("Generate: %v, %v", d, err)
+	}
+	if !strings.Contains(string(d.Content), "TODO") {
+		t.Errorf("system change draft lacks a TODO:\n%s", d.Content)
+	}
+}

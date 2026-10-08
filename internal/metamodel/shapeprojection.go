@@ -82,6 +82,10 @@ type PropertyShape struct {
 	// Computed changes affect already-materialized values and therefore take
 	// part in shape identity even though bulk recomputation is operator-driven.
 	Computed string `json:"computed,omitempty"`
+	// System is an external ref's system (TKT-SM20FG). Stored ids belong to
+	// one system, so moving a property to another system re-means every
+	// stored value: a needs-migration change.
+	System string `json:"system,omitempty"`
 }
 
 // RelationShape is the data-shape projection of one relation type.
@@ -164,6 +168,7 @@ func propertyShape(p PropertyDef) PropertyShape {
 		Format:   p.Format,
 		Default:  p.Default,
 		Computed: p.Computed,
+		System:   p.System,
 	}
 	if len(p.Values) > 0 {
 		ps.Values = append([]string(nil), p.Values...)
@@ -247,6 +252,13 @@ func hashPropertyShapes(h *projectionHasher, props map[string]PropertyShape) {
 		h.strList(ps.Values)
 		h.str(ps.Default)
 		h.str(ps.Computed)
+		// Hashed only when set, so a schema without external refs keeps the
+		// hash it had before System joined the shape. The tag byte cannot be
+		// mistaken for what follows, whose first byte is a zero length byte.
+		if ps.System != "" {
+			h.tag('R')
+			h.str(ps.System)
+		}
 	}
 }
 

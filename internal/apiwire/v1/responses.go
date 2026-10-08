@@ -665,6 +665,9 @@ type PropertyDef struct {
 	// file widget reads it to switch between replace-mode and multi-file
 	// add-mode. Omitted unless set above 1.
 	Max int `json:"max,omitempty"`
+	// System names the external system of an `external_ref` property
+	// (TKT-SM20FG). The value is read-only on every interactive surface.
+	System string `json:"system,omitempty"`
 }
 
 // RelationType is the JSON representation of a relation type.

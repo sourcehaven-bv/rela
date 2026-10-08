@@ -36,6 +36,8 @@ import (
 func RunGraphQueryTests(t *testing.T, f Factory) {
 	t.Helper()
 
+	t.Run("PropKeyEqual", func(t *testing.T) { runKeyEqualTests(t, f) })
+
 	t.Run("HasInbound_direct", func(t *testing.T) {
 		s := f(t)
 		seedGraphQueryEntities(t, s, "ticket", "TKT-1", "TKT-2", "TKT-3")

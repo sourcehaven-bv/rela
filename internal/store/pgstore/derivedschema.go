@@ -334,7 +334,12 @@ func (s *Store) Reconcile(
 	if err != nil {
 		return nil, err
 	}
-	return append(outcomes, listOutcomes...), nil
+	outcomes = append(outcomes, listOutcomes...)
+	xrefOutcomes, err := reconcileXrefIndexes(ctx, conn, desired, opts)
+	if err != nil {
+		return nil, err
+	}
+	return append(outcomes, xrefOutcomes...), nil
 }
 
 // reconcileListIndexes is reconcileQueryIndexes for [store.DerivedListIndex]
@@ -713,12 +718,20 @@ func (s *Store) mapConflict(err error) error {
 }
 
 // mapUniqueViolation classifies a 23505's constraint name. See mapConflict.
+// An external-ref index (rela_derived_xref__*) maps the same way: the 422
+// names the property only, never the entity holding the id.
 func mapUniqueViolation(constraintName string, metaPairs []store.DerivedObjectSpec) error {
-	if !strings.HasPrefix(constraintName, derivedUniquePrefix) {
+	if !strings.HasPrefix(constraintName, derivedUniquePrefix) &&
+		!strings.HasPrefix(constraintName, derivedXrefPrefix) {
+
 		return store.ErrConflict
 	}
 	for _, p := range metaPairs {
-		if uniqueIndexName(p.Type, p.Property) == constraintName {
+		name := uniqueIndexName(p.Type, p.Property)
+		if p.Kind == store.DerivedExternalRefUnique {
+			name = xrefIndexName(p.Type, p.Property)
+		}
+		if name == constraintName {
 			return store.UniquePropertyError{Property: p.Property}
 		}
 	}

@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -356,6 +357,13 @@ func formatValue(v any) string {
 		return val
 	case nil:
 		return ""
+	case map[string]any:
+		// An external ref exports as its id (TKT-SM20FG).
+		if id, ok := metamodel.ExternalRefID(val); ok {
+			return id
+		}
+		b, _ := json.Marshal(val)
+		return string(b)
 	default:
 		b, _ := json.Marshal(val)
 		return string(b)

@@ -641,6 +641,7 @@ entities:
 | `boolean`  | True or false                                 | `=`, `!=`                           |
 | `enum`     | Inline enum with `values`                     | `=`, `!=`                           |
 | `file`     | File attachment (stored under `attachments/`) | N/A                                 |
+| `external_ref` | Link to the entity's counterpart in another system (see [External refs](#external-refs)) | N/A |
 | `<custom>` | Reference to a type defined in `types:`       | `=`, `!=`                           |
 
 ### Property Options
@@ -660,6 +661,72 @@ entities:
 | `scan_cmd`       | For `file` properties: the scan command (array args); configuring it enables scanning |
 | `scan: off`      | For `file` properties: opt out of scanning despite a global `scan_cmd`                |
 | `transform`      | For `file` properties: ordered byte transforms, each `{cmd: [...]}` or `{image: {...}}` |
+| `system`         | For `external_ref` properties: the external system's name (required)                 |
+| `sync: true`     | For `external_ref` properties: a sync connector manages this link                     |
+
+### External refs
+
+An `external_ref` property links an entity to its counterpart in another
+system, such as a Basecamp to-do or a Jira issue. Its value is an object with
+an `id` and an optional `url`:
+
+```yaml
+entities:
+  ticket:
+    properties:
+      title: { type: string }
+      basecamp:
+        type: external_ref
+        system: basecamp
+        sync: true
+```
+
+```yaml
+# entities/ticket/TKT-1.md front matter
+basecamp:
+  id: "7012345"
+  url: https://3.basecamp.com/1/buckets/2/todos/7012345
+```
+
+Rules:
+
+- `system` is required. It is at most 63 characters: lowercase letters,
+  digits, `.`, `-` and `_`, starting with a letter or digit. The sync base
+  is the version tag `sync/<system>`, so the name must be a valid tag
+  segment.
+- A type declares each system at most once. A `(system, id)` pair is unique
+  across every type that declares the system, within one face. The write
+  path refuses a duplicate with a 422, and an entity in the trash still
+  holds its id. On PostgreSQL a database index backs the rule per type.
+  `rela analyze unique` reports duplicates already in the data.
+- The `id` is a non-empty string of at most 256 bytes of valid UTF-8. It
+  may not hold control characters, invisible format characters such as a
+  right-to-left override or a zero-width space, or other non-printable
+  characters. Quote a numeric id in YAML. The `url`, when present, must be
+  `http` or `https`.
+- An empty object `{}` is refused. To clear a ref, remove the property.
+- An external ref cannot be `list`, `unique`, `required`, `computed`, have a
+  `default`, `values` or `format`, be the type's display property, trigger
+  an automation on change, or appear on a relation. An automation whose
+  `set:` or `create_entity` properties name a ref is refused at load.
+- `sync: true` is refused on a type with `faces:`.
+- Only operator-authored Lua scripts (actions, schedules, automation
+  scripts and `rela script`), data migrations and imports write a ref. MCP
+  `lua_eval` and `lua_run` cannot. The data-entry app shows it as a link and
+  never edits it, a restore of a deleted entity from the data-entry app
+  refuses one (`rela restore` keeps it), and a copy or duplicate leaves it
+  out. Exports and table cells show the id.
+- Changing `system` is a change that needs a migration, because it changes
+  what the stored ids mean.
+- When a `string` property becomes an `external_ref`, `rela migrate gen`
+  drafts a Lua step that takes the old string as the id. Check that guess
+  before you run it.
+
+`sync: true` needs version history, so only the SQLite and PostgreSQL builds
+support it. `rela-server`, the desktop app and `rela scheduler` refuse to
+start with a sync ref on the file backend; other commands still open the
+project. See [Sync connectors](lua-scripting.md#sync-connectors) for the
+connector loop.
 
 ### Computed properties
 

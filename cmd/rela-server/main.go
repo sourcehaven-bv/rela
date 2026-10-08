@@ -220,6 +220,10 @@ func discoverProject(f *serverFlags) *appbuild.Services {
 		slog.Error("failed to initialize project services", "error", err)
 		os.Exit(1)
 	}
+	if err := appbuild.RequireSyncBackend(svc); err != nil {
+		slog.Error("refusing to start", "error", err)
+		os.Exit(1)
+	}
 	if f.readOnly {
 		slog.Warn("rela-server is read-only; every write request will be refused")
 	}

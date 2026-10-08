@@ -37,13 +37,20 @@ export interface DuplicatePeer {
 
 export interface OmittedProperty {
   property: string
-  reason: 'redacted' | 'file' | 'state-machine' | 'not-configured' | 'untyped-peer' | 'self-loop'
+  reason:
+    | 'redacted'
+    | 'file'
+    | 'external-ref'
+    | 'state-machine'
+    | 'not-configured'
+    | 'untyped-peer'
+    | 'self-loop'
 }
 
 /**
  * Builds the prefill for a duplicate of `source`.
  *
- * Four categories of property do not carry, and each is reported rather than
+ * Five categories of property do not carry, and each is reported rather than
  * dropped silently:
  *
  *   - `redacted`: field-level `visible:` ACL withheld the value on read, so the
@@ -51,6 +58,8 @@ export interface OmittedProperty {
  *     content and relation-meta redaction are different mechanisms.)
  *   - `file`: attachments are stored under the SOURCE entity's id, so copying
  *     the filename would point the duplicate at bytes that are not its own.
+ *   - `external-ref`: a ref names one remote object and only a sync may write
+ *     it (TKT-SM20FG); the server refuses it on a create from this form.
  *   - `state-machine`: a create is an ENTRY, not a transition. The server pins
  *     these to the machine's entry value, so carrying the source's value would
  *     be silently replaced rather than honoured.
@@ -78,6 +87,10 @@ export function buildDuplicatePrefill(
     }
     if (typeInfo?.properties?.[name]?.type === 'file') {
       omitted.push({ property: name, reason: 'file' })
+      continue
+    }
+    if (typeInfo?.properties?.[name]?.type === 'external_ref') {
+      omitted.push({ property: name, reason: 'external-ref' })
       continue
     }
     if (config && !carriesProperty(config, name)) {

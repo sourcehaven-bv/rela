@@ -55,6 +55,10 @@ func propertyToStrings(v any, propType string) []string {
 
 func scalarToString(v any, propType string) string {
 	isDate := propType == metamodel.PropertyTypeDate
+	if propType == metamodel.PropertyTypeExternalRef {
+		// A cell shows the ref's id (TKT-SM20FG).
+		return metamodel.FormatExternalRef(v)
+	}
 	switch t := v.(type) {
 	case time.Time:
 		if isDate {

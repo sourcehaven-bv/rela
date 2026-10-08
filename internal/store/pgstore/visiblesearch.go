@@ -100,14 +100,13 @@ func visiblePages(
 		}
 		var after *visibleKey
 		for {
-			sqlText, args, anyVisible := buildVisibleSearchSQL(q, scope, titles, after, size)
-			if !anyVisible {
-				return // empty effective scope: deny everything, skip the query
-			}
-			rows, err := queryAll(ctx, db, sqlText, args, scanVisibleRow)
+			rows, anyVisible, err := readVisiblePage(ctx, db, titles, q, scope, after, size)
 			if err != nil {
 				yield(nil, fmt.Errorf("%w: pgstore visible search: %w", search.ErrScope, err))
 				return
+			}
+			if !anyVisible {
+				return // empty effective scope: deny everything, skip the query
 			}
 			page := make([]*entity.Entity, 0, len(rows))
 			for _, r := range rows {
@@ -129,6 +128,20 @@ func visiblePages(
 			after = &last
 		}
 	}
+}
+
+// readVisiblePage builds and runs one keyset page of a visible search.
+// anyVisible is false, with no query run, when the scope admits nothing.
+func readVisiblePage(
+	ctx context.Context, db DBTX, titles SearchTitles, q search.Query, scope map[string]search.TypeScope,
+	after *visibleKey, size int,
+) (rows []visibleRow, anyVisible bool, err error) {
+	sqlText, args, anyVisible, err := buildVisibleSearchSQL(q, scope, titles, after, size)
+	if err != nil || !anyVisible {
+		return nil, false, err
+	}
+	rows, err = queryAll(ctx, db, sqlText, args, scanVisibleRow)
+	return rows, err == nil, err
 }
 
 // visibleRow is one visible-search row and its keyset key.
@@ -358,7 +371,7 @@ const visibleSearchColumns = "e.id, e.type, e.face, e.properties, ''::text AS co
 // is the key's first part; see visiblePages.
 func buildVisibleSearchSQL(
 	q search.Query, scope map[string]search.TypeScope, titles SearchTitles, after *visibleKey, pageLimit int,
-) (sqlText string, args []any, anyVisible bool) {
+) (sqlText string, args []any, anyVisible bool, err error) {
 	b := &sqlBuilder{}
 
 	wildcardAllow := false
@@ -370,7 +383,7 @@ func buildVisibleSearchSQL(
 	if !wildcardAllow {
 		withParts, visParts = buildVisibilityDisjunction(b, scope, store.InWorld(q.World))
 		if len(visParts) == 0 {
-			return "", nil, false
+			return "", nil, false, nil
 		}
 	}
 
@@ -447,7 +460,10 @@ func buildVisibleSearchSQL(
 	}
 	sb.WriteString(orderBy)
 	sb.WriteString(" LIMIT " + b.arg(pageLimit))
-	return sb.String(), b.args, true
+	if b.err != nil {
+		return "", nil, false, b.err
+	}
+	return sb.String(), b.args, true, nil
 }
 
 // buildVisibilityDisjunction emits the per-type OR-parts of the

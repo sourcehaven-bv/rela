@@ -441,8 +441,8 @@ scheduled script.
 
 | Function | Description | Returns |
 |----------|-------------|---------|
-| `rela.create_entity(type, props, content?, id?, opts?)` | Create entity | table, warnings? |
-| `rela.update_entity(id, props, content?)` | Update entity | table, warnings? |
+| `rela.create_entity(type, props, content?, id?, opts?)` | Create entity; `opts.token = true` returns a write token | table, warnings?, token? |
+| `rela.update_entity(id, props, content?, opts?)` | Update entity; `opts.expect` makes it conditional, and it or `opts.token = true` returns a write token | table, warnings?, token?; or nil and `"conflict"` |
 | `rela.delete_entity(id, cascade?)` | Delete entity; `ID@face` deletes one face and its edges | boolean |
 | `rela.create_relation(from, type, to, opts?)` | Create relation | table |
 | `rela.delete_relation(from, type, to, opts?)` | Delete relation; `opts.face` names a content edge's tail | boolean |
@@ -549,6 +549,215 @@ local ok, err = pcall(rela.update_entity, "BAD-PREFIX", {})
 -- Soft conditions don't raise:
 local ok, e, warnings = pcall(rela.update_entity, "TKT-001", {title = ""})
 -- ok=true, e is the entity, warnings is the validation findings.
+```
+
+### Sync connectors
+
+A sync connector keeps an entity in step with its counterpart in another
+system, such as a Basecamp to-do. It links the two with an
+[`external_ref`](metamodel.md#external-refs) property declared `sync: true`,
+and remembers the state of its last sync as the version tag
+`sync/<system>`. Sync needs version history, so it runs on the SQLite and
+PostgreSQL builds only. On any other build `rela.find_by_external_ref` for a
+sync system and `rela.sync.merge` raise `sync needs version history`.
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.find_by_external_ref(system, id)` | The entity holding this id | table or nil |
+| `rela.sync.merge(base, ours, theirs, {fields = {...}})` | Three-way merge of one entity | table |
+| `rela.sync.EMPTY` | Marks a cleared value | userdata |
+
+**Writing a ref.** Only operator-authored scripts, data migrations and
+imports may write an external ref: `rela.create_entity("ticket", {basecamp =
+{id = "7012345", url = "https://..."}})`. The scripts that may are action
+scripts, scheduled scripts, automation scripts (inline and background) and
+`rela script`. The data-entry app, the REST API, the MCP tools (including
+`lua_eval` and `lua_run`) and an automation's `set:` or `create_entity`
+refuse it. Run a connector as a scheduled task.
+
+**Finding the entity.** `rela.find_by_external_ref` reads through the
+script's own access rules. It returns nil when no entity it can read holds
+the id, and also when the ref field is hidden from it. A nil answer
+therefore does not mean the id is free: a create still checks every holder,
+including ones the script cannot see and ones in the trash, and fails with
+`must be unique`. It raises when two readable entities hold the id, and for
+a system no type declares.
+
+**Merging.** `rela.sync.merge` compares each field in `fields` across three
+states: `base` (the entity at its last sync, from `rela.version_by_tag`, or
+nil on the first sync), `ours` (from `rela.get_entity`) and `theirs`
+(`{properties = {...}, content = "..."}`, from the other system). Name the
+body `"content"`. For each field:
+
+- ours equals theirs: `unchanged`;
+- only they changed: the value is in `write`, or the body in `content`;
+- only we changed: the value is in `push`;
+- both changed, or there is no base: an entry in `conflicts`
+  (`{field, base, ours, theirs}`).
+
+The result also has `base_unknown` (no base given), `complete` (`theirs`
+reported every field in `fields`) and `retag` (nothing to do, but the tag
+should move to the current state). `retag` is true only for a complete
+report.
+
+Values compare by meaning for the property type: `3` and `"3"` are the same
+integer, a date ignores a midnight time, a list ignores order, and a body
+ignores line endings and trailing whitespace. So a value the other system
+reformats does not echo back and forth.
+
+In `theirs`, an absent field means "not reported" and is skipped. Use
+`rela.sync.EMPTY` for a field the other system has cleared. Passing
+`rela.sync.EMPTY` as a value to `rela.update_entity` clears the property,
+so `write` can go straight into an update. A value that does not fit the
+property type, an undeclared field, a `file` or `computed` property, and a
+field hidden from the script all raise.
+
+**Write tokens.** Pass `{token = true}` as the options of
+`rela.create_entity` or `rela.update_entity` to get a third return value: a
+token for the row they wrote, as the script sees it. An update with `expect`
+returns one too. Without either option a write reads nothing extra. Pass the
+token as `expect` to `rela.tag_version`. If someone edits the entity between
+the write and the tag, the tag returns nil and `"conflict"`, and the edit
+stays out of the base, so the next run finds it. When the row changed before
+the token was taken, the token is `"stale"` and every tag with it conflicts.
+If reading the token fails after the write committed, the write still
+stands: the call returns the entity and a nil token and logs a warning, so
+skip the tag and let the next run merge. `rela.update_entity(id, props,
+content, {expect = token})` writes only while the script's read of the
+entity still has that token, and otherwise returns nil and `"conflict"`
+with nothing written. Tokens and `expect` need a runtime that can tag
+versions (action, scheduled and background automation scripts).
+
+**The loop.** Run it as a scheduled task with its own `run_as` identity.
+The order is load-bearing:
+
+```lua
+local FIELDS = {"title", "due", "done", "content"}
+
+local function theirs_of(remote)
+  return {
+    properties = {
+      title = remote.title,
+      due = remote.due_on or rela.sync.EMPTY,
+      done = remote.completed,
+    },
+    content = remote.description,
+  }
+end
+
+-- One attempt. Returns "done", "conflict" or "retry".
+local function sync_once(id, remote)
+  local base = rela.version_by_tag(id, "sync/basecamp")
+  local read_tok = rela.version_token(id)
+  local ours = rela.get_entity(id)
+  local r = rela.sync.merge(base, ours, theirs_of(remote), {fields = FIELDS})
+  if #r.conflicts > 0 then
+    return "conflict"                 -- leave the base where it is
+  end
+
+  local tok = read_tok
+  if next(r.write) or r.content then
+    local w, why, t = rela.update_entity(id, r.write, r.content, {expect = read_tok})
+    if not w then return "retry" end  -- edited since we read it
+    tok = t
+  end
+  if next(r.push) then
+    -- Make the push conditional on the remote's version (ETag/If-Match or
+    -- its own version field). An unconditional push overwrites an edit
+    -- made there since we fetched it.
+    if not push_to_basecamp(remote, r.push) then
+      return "done"                   -- they changed it: the next run merges
+    end
+  end
+  -- Move the base only after a complete report. A field the other
+  -- system left out may hold a local edit that was never pushed.
+  if r.complete and (next(r.write) or r.content or next(r.push) or r.retag) then
+    if not tok then return "done" end -- no token: the next run merges
+    local v = rela.tag_version(id, "sync/basecamp", {expect = tok})
+    if not v then return "retry" end  -- someone wrote after us
+  end
+  return "done"
+end
+
+local function sync_one(remote)
+  local e = rela.find_by_external_ref("basecamp", remote.id)
+  if not e then
+    local ok, created, _, tok = pcall(rela.create_entity, "ticket", {
+      title = remote.title, due = remote.due_on, done = remote.completed,
+      basecamp = {id = remote.id, url = remote.app_url},
+    }, remote.description, nil, {token = true})
+    if not ok then
+      -- Most often "must be unique": an entity this connector cannot see
+      -- already holds the id. Do not retry it.
+      rela.output("basecamp " .. remote.id .. ": " .. tostring(created))
+      return
+    end
+    if tok and rela.tag_version(created.id, "sync/basecamp", {expect = tok}) then
+      return
+    end
+    -- An automation rewrote the entity during the create. Merge it with no
+    -- base below: a complete report that agrees retags with the read token.
+    e = created
+  end
+  for _ = 1, 3 do
+    local outcome = sync_once(e.id, remote)
+    if outcome == "conflict" then
+      rela.output(e.id .. ": conflicting edits; left for a person")
+      return
+    end
+    if outcome == "done" then return end
+  end
+  rela.output(e.id .. ": still changing after 3 attempts; next run")
+end
+```
+
+Five rules keep the loop from losing an edit:
+
+1. Move the base only when there are no conflicts and the report was
+   complete (`r.complete`). A tag over a conflict makes the next run read
+   one side's change as the agreed state. A tag after a partial report
+   absorbs a local edit to a field the other system did not report, and
+   that edit is then never pushed. When every field is unchanged but the
+   entity moved since the base (both sides made the same change), `retag`
+   is true: tag with the read token.
+2. Tag with the token of what the script wrote, or of what it read when it
+   wrote nothing. Never take a fresh token after the fact, which would
+   absorb an edit the merge never saw.
+3. Write with `expect`. On `"conflict"`, read again and merge again, a fixed
+   number of times. An automation or background job can rewrite the entity
+   right after the write, which makes the tag conflict too.
+4. Treat a nil from `rela.find_by_external_ref` as "not visible", not as
+   "free". A `must be unique` error on the create ends that item.
+5. Let the connector's role read every type that declares the system, and
+   the ref on each. Otherwise its lookups miss entities and its creates
+   fail.
+
+**Conflicts.** The merge resolves no conflict by itself. A common pattern:
+the connector records the conflict on the entity (a property or a comment).
+A person picks a side through an [action](data-entry.md#actions) that runs
+as the connector's identity. The action writes or pushes the chosen value
+and moves the tag.
+
+**Access.** Give the connector its own role. It needs `read`, `create` and
+`update` on the synced types, `visible:` on every synced field and the ref,
+and the permission `tag:sync` to move `sync/...` tags:
+
+```yaml
+# acl.yaml
+roles:
+  basecamp-connector:
+    read: [ticket]
+    create: [ticket]
+    update: [ticket]
+    permissions: ["tag:sync"]
+    visible:
+      ticket:
+        - field: title
+        - field: due
+        - field: done
+        - field: basecamp
+assignments:
+  system:basecamp-sync: basecamp-connector
 ```
 
 ### Elevated access — `rela.bypass_acl`

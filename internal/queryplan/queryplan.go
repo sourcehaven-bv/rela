@@ -20,6 +20,41 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
+// UniqueSpecs returns the derived unique specs the metamodel declares: one
+// [store.DerivedUnique] per non-list `unique: true` property, and one
+// [store.DerivedExternalRefUnique] per external-ref property. The wiring
+// layer and `rela db reconcile` share it so they converge to one desired
+// set. Sorted by kind, type and property.
+func UniqueSpecs(meta *metamodel.Metamodel) []store.DerivedObjectSpec {
+	if meta == nil {
+		return nil
+	}
+	var specs []store.DerivedObjectSpec
+	for _, typeName := range meta.EntityTypes() {
+		def, ok := meta.GetEntityDef(typeName)
+		if !ok {
+			continue
+		}
+		for propName, pd := range def.PropertyDefs() {
+			switch {
+			case pd.Type == metamodel.PropertyTypeExternalRef:
+				specs = append(specs, store.DerivedObjectSpec{
+					Kind: store.DerivedExternalRefUnique, Type: typeName, Property: propName,
+				})
+			case pd.Unique && !pd.List:
+				specs = append(specs, store.DerivedObjectSpec{
+					Kind: store.DerivedUnique, Type: typeName, Property: propName,
+				})
+			}
+		}
+	}
+	slices.SortFunc(specs, func(a, b store.DerivedObjectSpec) int {
+		return strings.Compare(string(a.Kind)+"\x00"+a.Type+"\x00"+a.Property,
+			string(b.Kind)+"\x00"+b.Type+"\x00"+b.Property)
+	})
+	return specs
+}
+
 // LoadStaticIndexSpecs parses and validates a complete data-entry config before
 // deriving specs. An error yields no partial desired set: reconciliation treats
 // absence as permission to drop owned indexes.

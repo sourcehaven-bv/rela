@@ -218,7 +218,7 @@ func (a Attachments) StampAttachments(
 	}
 	p := entity.Patch{Properties: map[string]any{prop: value}}
 	return patchWithRetry(ctx, true, func(pin bool) (*entity.UpdateResult, error) {
-		return a.m.patchEntityOnce(withStoreAttribution(ctx), ref.String(), p, pin, prop)
+		return a.m.patchEntityOnce(withStoreAttribution(ctx), ref.String(), p, pin, prop, nil)
 	})
 }
 
@@ -315,6 +315,11 @@ func familyReferences(family []*entity.Entity, prop, key string) bool {
 // uses it: a restore keeps the face's current file values and never
 // re-introduces an old name, which a later upload on another face may have
 // reused. live may be nil (a re-created entity has no live value).
+//
+// External refs of a live face are carried the same way, because a restore
+// must not move a sync link (TKT-SM20FG). A re-created face keeps the
+// snapshot's ref; the unique check refuses it when another entity holds the
+// id now.
 func CarryFileValues(
 	meta *metamodel.Metamodel, entityType string, props map[string]any, live *entity.Entity,
 ) map[string]any {
@@ -325,6 +330,15 @@ func CarryFileValues(
 		if live == nil {
 			continue
 		}
+		if v, ok := live.Properties[prop]; ok {
+			out[prop] = v
+		}
+	}
+	if live == nil {
+		return out
+	}
+	for _, prop := range metamodel.ExternalRefPropertyNames(meta, entityType) {
+		delete(out, prop)
 		if v, ok := live.Properties[prop]; ok {
 			out[prop] = v
 		}

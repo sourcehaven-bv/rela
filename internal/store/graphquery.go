@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"slices"
 
@@ -353,7 +354,59 @@ const (
 	// same way.
 	PropGreaterEqual
 	PropLessEqual
+	// PropKeyEqual matches when the property holds an OBJECT whose entry
+	// [PropPredicate.Key] is a string equal to Value (TKT-SM20FG). It is
+	// the lookup of an external ref by id: `{Property: "basecamp", Op:
+	// PropKeyEqual, Key: "id", Value: "42"}`.
+	//
+	// A distinct operator rather than a Key on PropEqual. Every backend
+	// switch over PropOp handles each operator in its own arm and answers
+	// an unknown one with [ErrInvalidQuery], so a reader that does not know
+	// this operator refuses it instead of reading it as a plain equality.
+	// Planners that lower other dialects to GraphQuery (queryplan, the list
+	// pushdown, derived-index inference) never emit it and refuse it by
+	// name. Key and Value must both be non-empty, and Key is only valid
+	// with this operator; anything else is [ErrInvalidQuery] (see
+	// [ValidatePropPredicates]). A non-object value, a missing entry and a
+	// non-string entry never match.
+	PropKeyEqual
 )
+
+// UnknownPropOpError is the [ErrInvalidQuery] for an operator a backend
+// does not know.
+func UnknownPropOpError(p PropPredicate) error {
+	return fmt.Errorf("%w: property %q: unknown operator %d", ErrInvalidQuery, p.Property, p.Op)
+}
+
+// ValidatePropPredicates refuses an unknown operator and a malformed
+// [PropKeyEqual] use: a Key on another operator, or a PropKeyEqual with an
+// empty Key or Value, or a Key outside [a-z0-9_]. Every backend runs it
+// (through the naive shape check) so they refuse the same shapes.
+func ValidatePropPredicates(props []PropPredicate) error {
+	for _, p := range props {
+		switch p.Op {
+		case PropEqual, PropNotEqual, PropNotEqualOrEmpty, PropGreaterEqual, PropLessEqual, PropKeyEqual:
+		default:
+			return UnknownPropOpError(p)
+		}
+		if p.Op != PropKeyEqual {
+			if p.Key != "" {
+				return fmt.Errorf("%w: property %q: Key is only valid with PropKeyEqual", ErrInvalidQuery, p.Property)
+			}
+			continue
+		}
+		if p.Key == "" || p.Value == "" {
+			return fmt.Errorf("%w: property %q: PropKeyEqual needs a Key and a Value", ErrInvalidQuery, p.Property)
+		}
+		for i := range len(p.Key) {
+			c := p.Key[i]
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
+				return fmt.Errorf("%w: property %q: Key %q must match [a-z0-9_]+", ErrInvalidQuery, p.Property, p.Key)
+			}
+		}
+	}
+	return nil
+}
 
 // PropPredicate restricts a GraphQuery to entities whose own property
 // matches. Multiple predicates on one query are ANDed.
@@ -387,6 +440,9 @@ type PropPredicate struct {
 	// lets SQL backends emit an indexable ->> comparison. It is ignored for
 	// empty values and other operators.
 	Scalar bool
+	// Key names the object entry a [PropKeyEqual] compares. Empty for
+	// every other operator.
+	Key string
 }
 
 // RelationPredicate restricts which relations the surrounding

@@ -686,3 +686,32 @@ func TestService_New_RejectsNilDeps(t *testing.T) {
 		})
 	}
 }
+
+// D12 (TKT-SM20FG): a (system, id) pair held twice is reported, across the
+// types that declare the system.
+func TestFindUniqueViolations_ExternalRef(t *testing.T) {
+	meta := &metamodel.Metamodel{
+		Entities: map[string]metamodel.EntityDef{
+			"ticket": {Label: "Ticket", Properties: map[string]metamodel.PropertyDef{
+				"jira": {Type: metamodel.PropertyTypeExternalRef, System: "jira"},
+			}},
+			"bug": {Label: "Bug", Properties: map[string]metamodel.PropertyDef{
+				"issue": {Type: metamodel.PropertyTypeExternalRef, System: "jira"},
+			}},
+		},
+	}
+	svc := newServiceWith(t, meta, func(s store.Store) {
+		addEntity(s, "T-1", "ticket", map[string]any{"jira": map[string]any{"id": "J-1"}})
+		addEntity(s, "B-1", "bug", map[string]any{"issue": map[string]any{"id": "J-1"}})
+		addEntity(s, "T-2", "ticket", map[string]any{"jira": map[string]any{"id": "J-2"}})
+		addEntity(s, "T-3", "ticket", map[string]any{"jira": map[string]any{}})
+		addEntity(s, "T-4", "ticket", map[string]any{"jira": map[string]any{}})
+	})
+	v, err := svc.FindUniqueViolations(context.Background(), analysis.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v) != 1 || v[0].System != "jira" || v[0].Value != "J-1" || len(v[0].Entities) != 2 {
+		t.Fatalf("violations = %+v, want one jira J-1 group of two", v)
+	}
+}

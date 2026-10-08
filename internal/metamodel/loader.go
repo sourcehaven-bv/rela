@@ -291,6 +291,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateValidationRelations(m)...)
 	validationErrors = append(validationErrors, validateAutomationFaces(m)...)
 	validationErrors = append(validationErrors, validateBackgroundActions(m)...)
+	validationErrors = append(validationErrors, validateExternalRefs(m)...)
 	validationErrors = append(validationErrors, validateComments(m)...)
 
 	if len(validationErrors) > 0 {
@@ -481,7 +482,7 @@ func validateDisplayPropertyRef(
 	// types defined elsewhere. Reject the structured types whose default
 	// rendering is unhelpful.
 	switch prop.Type {
-	case PropertyTypeDate, PropertyTypeDatetime, PropertyTypeFile, PropertyTypeRrule:
+	case PropertyTypeDate, PropertyTypeDatetime, PropertyTypeFile, PropertyTypeRrule, PropertyTypeExternalRef:
 		errs = append(errs, fmt.Sprintf(
 			"entity %q: display_property %q references property %q of type %q; "+
 				"only string, integer, boolean, or enum types render as display names",
@@ -1197,7 +1198,7 @@ func validatePropertyDef(
 		errs = append(errs, fmt.Sprintf(
 			"%s: property %q is type \"enum\" but has no 'values' list", schemaName, propName))
 	}
-	if propDef.Unique && !isStringValuedType(propDef.Type) {
+	if propDef.Unique && !isStringValuedType(propDef.Type) && propDef.Type != PropertyTypeExternalRef {
 		errs = append(errs, fmt.Sprintf(
 			"%s: property %q has 'unique: true' on non-string type %q; "+
 				"unique is only supported on string-valued properties",
@@ -1205,6 +1206,7 @@ func validatePropertyDef(
 	}
 	errs = append(errs, validateComputedProperty(schemaName, propName, propDef, allowComputed)...)
 	errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
+	errs = append(errs, validateExternalRefOptions(schemaName, propName, propDef, allowComputed)...)
 	return errs
 }
 
@@ -1237,7 +1239,7 @@ func isStringValuedType(typeName string) bool {
 	switch typeName {
 	case PropertyTypeString, PropertyTypeDate, PropertyTypeDatetime, PropertyTypeEnum, PropertyTypeRrule:
 		return true
-	case PropertyTypeInteger, PropertyTypeBoolean, PropertyTypeFile:
+	case PropertyTypeInteger, PropertyTypeBoolean, PropertyTypeFile, PropertyTypeExternalRef:
 		return false
 	default:
 		// A custom type (declared in `types:`) — enum or regex-validated string.

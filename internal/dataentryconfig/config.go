@@ -42,6 +42,9 @@ const (
 	// SPA's defaultWidgetFor, documented at sectionFieldWidgetTypes.
 	WidgetFile  = "file"
 	WidgetCards = "cards" // card-based UI for relations with properties
+	// WidgetExternalRef is the read-only display of an external ref
+	// (TKT-SM20FG). It never writes: refs change only through sync.
+	WidgetExternalRef = "external-ref"
 )
 
 // Direction represents the edge direction for relation columns and form relations.

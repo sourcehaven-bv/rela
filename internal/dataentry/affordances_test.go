@@ -525,6 +525,27 @@ func TestComputeFieldAffordances_ComputedIsAlwaysReadOnly(t *testing.T) {
 	}
 }
 
+// TKT-SM20FG (D3): an external ref is read-only on the data-entry surface.
+func TestComputeFieldAffordances_ExternalRefIsReadOnly(t *testing.T) {
+	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"ticket": {Properties: map[string]metamodel.PropertyDef{
+			"jira": {Type: metamodel.PropertyTypeExternalRef, System: "jira"},
+		}},
+	}}
+	svc := affordanceService{
+		resolver: func() FieldVerdictResolver { return NopFieldVerdictResolver{} },
+		meta:     func() *metamodel.Metamodel { return meta },
+	}
+	e := &entity.Entity{Type: "ticket", Properties: map[string]any{"jira": map[string]any{"id": "J-1"}}}
+	got := svc.computeFieldAffordances(context.Background(), e)
+	if ref, ok := got["jira"]; !ok || ref.Writable == nil || *ref.Writable {
+		t.Fatalf("jira affordance = %+v, want writable=false", ref)
+	}
+	if denial := svc.validateFieldWrite(context.Background(), e, nil, []string{"jira"}); denial == nil {
+		t.Fatal("clearing an external ref must be denied")
+	}
+}
+
 func TestComputeFieldAffordances_SparseWritable(t *testing.T) {
 	// title=true is the default (writable) and must NOT appear in
 	// output; kind=false deviates and must be emitted.

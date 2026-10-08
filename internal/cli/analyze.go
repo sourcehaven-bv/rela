@@ -205,8 +205,9 @@ func (c *AnalyzeUniqueCmd) Run(ctx context.Context, analyzer *analysis.Service) 
 		out.WriteMessage("Coverage: %s", analysis.CoveragePerFace)
 	} else {
 		type uniqueViolation struct {
-			EntityType string           `json:"entity_type"`
-			Property   string           `json:"property"`
+			EntityType string           `json:"entity_type,omitempty"`
+			Property   string           `json:"property,omitempty"`
+			System     string           `json:"system,omitempty"`
 			Face       entity.Face      `json:"face,omitempty"`
 			Value      string           `json:"value"`
 			Entities   []*entity.Entity `json:"entities"`
@@ -214,7 +215,8 @@ func (c *AnalyzeUniqueCmd) Run(ctx context.Context, analyzer *analysis.Service) 
 		details := make([]uniqueViolation, 0, len(violations))
 		for _, v := range violations {
 			details = append(details, uniqueViolation{
-				EntityType: v.EntityType, Property: v.Property, Face: v.Face, Value: v.Value, Entities: v.Entities,
+				EntityType: v.EntityType, Property: v.Property, System: v.System, Face: v.Face, Value: v.Value,
+				Entities: v.Entities,
 			})
 		}
 		writeCoveredAnalysis(analysis.CoveragePerFace, len(violations), details,
@@ -235,7 +237,11 @@ func (c *AnalyzeUniqueCmd) Run(ctx context.Context, analyzer *analysis.Service) 
 		if v.Face != "" {
 			face = fmt.Sprintf(" (face %s)", v.Face)
 		}
-		out.WriteMessage("  %s.%s = %q%s shared by:", v.EntityType, v.Property, v.Value, face)
+		if v.System != "" {
+			out.WriteMessage("  external ref %s id %q%s shared by:", v.System, v.Value, face)
+		} else {
+			out.WriteMessage("  %s.%s = %q%s shared by:", v.EntityType, v.Property, v.Value, face)
+		}
 		for _, e := range v.Entities {
 			out.WriteMessage("    - %s", e.ID)
 		}

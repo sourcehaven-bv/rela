@@ -1294,6 +1294,10 @@ duplicates; this surfaces ones that already exist (e.g. after adding
 `unique: true` to a property whose data already contains collisions, which
 the constraint does not clean retroactively).
 
+It also reports an [external ref](metamodel.md#external-refs) id held by
+more than one entity in one face, across every type that declares the
+system.
+
 ```bash
 rela analyze unique
 ```

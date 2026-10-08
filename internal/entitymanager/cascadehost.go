@@ -64,6 +64,11 @@ func (h *cascadeHost) CreateEntity(
 	if err := h.deps.requireCreateFaceFor(entityType, ""); err != nil {
 		return nil, err
 	}
+	// A cascade's properties are interpolated strings from the schema; no
+	// caller granted ref writes.
+	if err := rejectExternalRefPresent(h.deps.Meta, entityType, opts.Properties); err != nil {
+		return nil, err
+	}
 	e, _, err := createCore(ctx, h.deps, entityType, createCoreOpts{
 		ID:              opts.ID,
 		IDPrefix:        opts.IDPrefix,

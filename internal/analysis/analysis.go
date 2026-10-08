@@ -86,9 +86,14 @@ type DuplicateGroup struct {
 //
 // A violation is judged within one face: Face names it, and every entity
 // in Entities is a row of that face.
+//
+// System is set for an external ref (TKT-SM20FG): the (system, id) pair is
+// unique across every type declaring the system, so EntityType and Property
+// are empty and Value is the shared id.
 type UniqueViolation struct {
 	EntityType string
 	Property   string
+	System     string
 	Face       entity.Face
 	Value      string
 	Entities   []*entity.Entity
@@ -264,7 +269,7 @@ func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) ([]Uni
 			}
 		}
 	}
-	if len(uniqueProps) == 0 {
+	if len(uniqueProps) == 0 && !hasExternalRefs(s.deps.Meta) {
 		return nil, nil
 	}
 
@@ -310,10 +315,12 @@ func (s *Service) FindUniqueViolations(ctx context.Context, opts Options) ([]Uni
 			}
 		}
 	}
+	violations = append(violations, externalRefViolations(s.deps.Meta, entities)...)
 	slices.SortFunc(violations, func(a, b UniqueViolation) int {
 		return cmp.Or(
 			cmp.Compare(a.EntityType, b.EntityType),
 			cmp.Compare(a.Property, b.Property),
+			cmp.Compare(a.System, b.System),
 			cmp.Compare(a.Face, b.Face),
 			cmp.Compare(a.Value, b.Value),
 		)
