@@ -81,6 +81,10 @@ type automationJobs struct {
 	locksMu sync.Mutex
 	locks   map[string]*keyLock
 
+	// tokenMu serializes recordTrigger's read and write of a token. It is
+	// process-local: two nodes writing one key can still lose a hop count.
+	tokenMu sync.Mutex
+
 	// followUpDelay spaces the enqueue retries after a collapsed enqueue.
 	followUpDelay time.Duration
 
@@ -235,11 +239,11 @@ func (a *automationJobs) EnqueueScript(ctx context.Context, s autocascade.Backgr
 	if a.queue == nil {
 		return a.runForeground(ctx, p)
 	}
-	token := newToken(p.Hops)
-	if err := a.kv.Put(ctx, tokenKey(p.key()), token); err != nil {
+	token, err := a.recordTrigger(ctx, p.key(), p.Hops)
+	if err != nil {
 		return fmt.Errorf("automation %q: record trigger: %w", p.Automation, err)
 	}
-	err := a.enqueue(ctx, p, act)
+	err = a.enqueue(ctx, p, act)
 	if errors.Is(err, jobs.ErrDuplicateJob) {
 		// The follow-up outlives the save, and the save's ctx may carry a
 		// transaction's job deferral that is flushed by then.
@@ -379,6 +383,8 @@ func (a *automationJobs) run(ctx context.Context, p automationJobPayload) error 
 	ctx = principal.With(ctx, principal.Principal{User: user, Tool: principal.ToolAutomationJob})
 	ctx = audit.WithTriggeredBy(ctx, label)
 	ctx = context.WithValue(ctx, runningJobsKey{}, append(slices.Clone(runningJobs(ctx)), key))
+	// Queue mode overrides this per run with the hop count of the trigger
+	// it handles; a foreground run handles only its own trigger.
 	ctx = context.WithValue(ctx, jobHopsKey{}, p.Hops)
 	ctx, err := a.runner.BindIdentity(ctx)
 	if err != nil {
@@ -497,6 +503,34 @@ func tokenKey(jobKey string) string {
 // handledKey records the token of the last save a run handled.
 func handledKey(jobKey string) string { return tokenKey(jobKey) + "-handled" }
 
+// recordTrigger writes a new token for key and returns it. While the current
+// token is unhandled, the new one keeps the higher hop count: otherwise an
+// unrelated save between two reruns would lower a chain's count
+// (BUG-WKL0M2). A fresh save may therefore inherit a chain's count, which
+// errs toward stopping early.
+func (a *automationJobs) recordTrigger(ctx context.Context, key string, hops int) ([]byte, error) {
+	a.tokenMu.Lock()
+	defer a.tokenMu.Unlock()
+	current, err := a.token(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if current != "" {
+		handled, hErr := a.handled(ctx, key)
+		if hErr != nil {
+			return nil, hErr
+		}
+		if handled != current {
+			hops = max(hops, tokenHops(current))
+		}
+	}
+	token := newToken(hops)
+	if err := a.kv.Put(ctx, tokenKey(key), token); err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
 // newToken returns a fresh trigger token that ends in the trigger's hop
 // count, which [tokenHops] reads back.
 func newToken(hops int) []byte {
@@ -505,7 +539,9 @@ func newToken(hops int) []byte {
 	return fmt.Appendf(nil, "%s/%d", hex.EncodeToString(b), hops)
 }
 
-// tokenHops returns the hop count in a token from [newToken], or 0.
+// tokenHops returns the hop count in a token from [newToken]. A token
+// without one, written before tokens carried it, reads as 0, so the job's
+// own payload count applies.
 func tokenHops(token string) int {
 	_, hops, ok := strings.Cut(token, "/")
 	if !ok {

@@ -318,7 +318,8 @@ func TestAutomationJobs_QueuedChainStops(t *testing.T) {
 	a = newTestJobs(t, jobsMeta("", "a.lua", "b.lua"), startedQueue(t), r)
 	require.NoError(t, a.EnqueueScript(context.Background(), scriptFor("a.lua")))
 	require.Eventually(t, func() bool { return r.count() == maxAutomationJobHops }, 5*time.Second, 5*time.Millisecond)
-	time.Sleep(50 * time.Millisecond)
+	// Outlast every follow-up, which could still queue one more run.
+	time.Sleep(50*time.Millisecond + time.Duration(followUpAttempts*(followUpAttempts+1)/2)*a.followUpDelay)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	want := make([]int, maxAutomationJobHops)
@@ -326,6 +327,40 @@ func TestAutomationJobs_QueuedChainStops(t *testing.T) {
 		want[i] = i + 1
 	}
 	require.Equal(t, want, r.hops, "files run: %v", r.files)
+}
+
+// TestAutomationJobs_UnhandledTriggerKeepsHops: a later trigger cannot
+// lower the hop count of a trigger no run has handled yet (BUG-WKL0M2).
+func TestAutomationJobs_UnhandledTriggerKeepsHops(t *testing.T) {
+	ctx := context.Background()
+	a := newTestJobs(t, jobsMeta(""), startedQueue(t), &fakeJobRunner{})
+	key := note1Key()
+	_, err := a.recordTrigger(ctx, key, 7)
+	require.NoError(t, err)
+	tok, err := a.recordTrigger(ctx, key, 1)
+	require.NoError(t, err)
+	require.Equal(t, 7, tokenHops(string(tok)), "unhandled: the chain's count stays")
+
+	require.NoError(t, a.kv.Put(ctx, handledKey(key), tok))
+	tok, err = a.recordTrigger(ctx, key, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, tokenHops(string(tok)), "handled: a new trigger starts its own count")
+}
+
+func TestTokenHops(t *testing.T) {
+	for _, tc := range []struct {
+		token string
+		want  int
+	}{
+		{string(newToken(3)), 3},
+		{"0123abcd", 0}, // written before tokens carried a count
+		{"0123abcd/x", 0},
+		{"0123abcd/", 0},
+	} {
+		t.Run(tc.token, func(t *testing.T) {
+			require.Equal(t, tc.want, tokenHops(tc.token))
+		})
+	}
 }
 
 // TestAutomationJobs_HopLimit: a chain of jobs triggering jobs stops.
