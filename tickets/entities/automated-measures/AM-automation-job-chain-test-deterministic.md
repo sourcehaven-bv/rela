@@ -1,8 +1,8 @@
 ---
 id: AM-automation-job-chain-test-deterministic
 type: automated-measure
-title: Automation job hop-limit test is deterministic under CI load
-description: The queued-chain hop-limit test waits on a completion signal from the queue instead of a wall-clock deadline.
+title: Queued chain test asserts the hop sequence
+description: TestAutomationJobs_QueuedChainStops records the hop count of every run and requires exactly 1..8, so a hop reset fails the test directly.
 kind: test
 location: internal/appbuild
 status: proposed
