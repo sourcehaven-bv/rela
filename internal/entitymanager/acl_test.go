@@ -141,10 +141,12 @@ func TestManager_ACLDenies_AllWritePathsBlocked(t *testing.T) {
 			name: "RenameEntity denied",
 			setup: func(t *testing.T, store *countingStore) {
 				t.Helper()
-				seedEntity(t, store, "requirement", "Original")
+				if err := store.CreateEntity(context.Background(), entity.New("api", "component")); err != nil {
+					t.Fatalf("seed component: %v", err)
+				}
 			},
 			run: func(_ *testing.T, mgr *entitymanager.Manager) error {
-				_, err := mgr.RenameEntity(context.Background(), "REQ-001", "REQ-002", entity.RenameOptions{})
+				_, err := mgr.RenameEntity(context.Background(), "api", "gateway", entity.RenameOptions{})
 				return err
 			},
 			wantSubjectKind: "entity",

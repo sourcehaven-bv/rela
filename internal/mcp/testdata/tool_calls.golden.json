@@ -92,8 +92,8 @@
   {
     "tool": "rename_entity",
     "args": "{\"id\":\"REQ-003\",\"new_id\":\"REQ-099\"}",
-    "isError": false,
-    "text": "Renamed: REQ-003 → REQ-099 (0 relations updated)"
+    "isError": true,
+    "text": "rename is only available for types with id_type: manual (type \"requirement\")"
   },
   {
     "tool": "schema",

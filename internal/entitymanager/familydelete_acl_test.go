@@ -24,6 +24,7 @@ entities:
     label: Policy
     plural: policies
     id_prefix: "POL-"
+    id_type: manual
     faces:
       draft: {label: Draft}
       published: {label: Published}
