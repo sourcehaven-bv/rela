@@ -932,6 +932,7 @@ deps:
       - goldmark
       - bluemonday
       - htmltomarkdown
+      - nethtml
   # Project declarations assemble renderer models from an injected visible
   # reader. SMTP and app wiring remain outside this package.
   mailtemplate:

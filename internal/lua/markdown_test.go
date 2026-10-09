@@ -2199,9 +2199,11 @@ func TestMdHTMLConversion(t *testing.T) {
 	tests := []struct {
 		name, code, want string
 	}{
-		{"from_html", `return rela.md.from_html("<div>a <strong>b</strong></div>")`, "a **b**"},
-		{"to_html", `return rela.md.to_html("a **b**")`, "<p>a <strong>b</strong></p>"},
-		{"round trip", `return rela.md.from_html(rela.md.to_html("- x\n- y"))`, "- x\n- y"},
+		{"from_html", `return (rela.md.from_html("<div>a <strong>b</strong></div>"))`, "a **b**"},
+		{"to_html", `return (rela.md.to_html("a **b**"))`, "<p>a <strong>b</strong></p>"},
+		{"round trip", `return (rela.md.from_html((rela.md.to_html("- x\n- y"))))`, "- x\n- y"},
+		{"lossy from_html", `local _, l = rela.md.from_html("<img src=x>a"); return tostring(l)`, "true"},
+		{"lossless to_html", `local _, l = rela.md.to_html("a"); return tostring(l)`, "false"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

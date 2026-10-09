@@ -177,25 +177,28 @@ func (r *Runtime) registerMarkdownModule(rela *lua.LTable) {
 }
 
 // luaMdFromHTML converts untrusted HTML to markdown; see [htmlmd.FromHTML].
-// Usage: md = rela.md.from_html(html)
+// Usage: md, lossy = rela.md.from_html(html)
 func luaMdFromHTML(ls *lua.LState) int {
-	out, err := htmlmd.FromHTML(ls.CheckString(1))
-	if err != nil {
-		ls.RaiseError("rela.md.from_html: %v", err)
-	}
-	ls.Push(lua.LString(out))
-	return 1
+	return pushConverted(ls, "from_html", htmlmd.FromHTML)
 }
 
 // luaMdToHTML renders markdown as sanitized HTML; see [htmlmd.ToHTML].
-// Usage: html = rela.md.to_html(md)
+// Usage: html, lossy = rela.md.to_html(md)
 func luaMdToHTML(ls *lua.LState) int {
-	out, err := htmlmd.ToHTML(ls.CheckString(1))
+	return pushConverted(ls, "to_html", htmlmd.ToHTML)
+}
+
+// pushConverted runs one htmlmd conversion on argument 1 and pushes the text
+// and the lossy flag. A failure, such as an oversized or too deeply nested
+// input, raises.
+func pushConverted(ls *lua.LState, name string, conv func(string) (string, bool, error)) int {
+	out, lossy, err := conv(ls.CheckString(1))
 	if err != nil {
-		ls.RaiseError("rela.md.to_html: %v", err)
+		ls.RaiseError("rela.md.%s: %v", name, err)
 	}
 	ls.Push(lua.LString(out))
-	return 1
+	ls.Push(lua.LBool(lossy))
+	return 2
 }
 
 // --- Inline node constructors ---
