@@ -5,6 +5,7 @@ package lua
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 
 	lua "github.com/yuin/gopher-lua"
@@ -24,7 +25,7 @@ type elevationBindings struct {
 	er       EntityReader           // nil: admin read methods present but raising
 	recorder ElevationRecorder      // nil: no post-closure read audit record
 	ctxFn    func() context.Context // the runtime's callerCtx
-	world    store.WorldScope       // ReadDeps.World: admin.list_entities lists in it
+	faces    listFaces              // admin.list_entities' face selection
 }
 
 // luaBypassACL implements rela.bypass_acl(fn) (TKT-D8T148). It invokes fn with
@@ -60,7 +61,7 @@ func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 	// reads accumulates the distinct elevated read bindings this closure
 	// used, for the single post-closure audit record (TKT-ACSBSA).
 	reads := &readUsage{}
-	admin := newElevatedHandle(ls, b.em, b.er, &live, reads, b.ctxFn, b.world)
+	admin := newElevatedHandle(ls, b.em, b.er, &live, reads, b.ctxFn, b.faces)
 
 	// Invalidate on every exit path (normal return or Lua error). pcall keeps
 	// the runtime alive so we can flip `live` before re-raising.
@@ -120,7 +121,7 @@ func (b *elevationBindings) luaBypassACL(ls *lua.LState) int {
 // means misconfiguration".
 func newElevatedHandle(
 	ls *lua.LState, em Mutator, er EntityReader, live *bool, reads *readUsage,
-	ctxFn func() context.Context, world store.WorldScope,
+	ctxFn func() context.Context, faces listFaces,
 ) *lua.LTable {
 	t := ls.NewTable()
 	guard := func(name string) bool {
@@ -166,7 +167,7 @@ func newElevatedHandle(
 	if em != nil {
 		registerElevatedWrites(ls, t, em, er, guard, ctxFn)
 	}
-	registerElevatedReads(ls, t, er, readGuard, ctxFn, reads, world)
+	registerElevatedReads(ls, t, er, readGuard, ctxFn, reads, faces)
 	return t
 }
 
@@ -290,10 +291,10 @@ func registerElevatedWrites(
 // small and it keeps the two read paths physically separate.
 func registerElevatedReads(
 	ls *lua.LState, t *lua.LTable, er EntityReader, readGuard func(string) bool,
-	ctxFn func() context.Context, reads *readUsage, world store.WorldScope,
+	ctxFn func() context.Context, reads *readUsage, faces listFaces,
 ) {
 	ls.SetField(t, "get_entity", ls.NewFunction(elevatedGetEntity(er, readGuard, ctxFn, reads)))
-	ls.SetField(t, "list_entities", ls.NewFunction(elevatedListEntities(er, readGuard, ctxFn, reads, world)))
+	ls.SetField(t, "list_entities", ls.NewFunction(elevatedListEntities(er, readGuard, ctxFn, reads, faces)))
 	ls.SetField(t, "get_relations", ls.NewFunction(elevatedGetRelations(er, readGuard, ctxFn, reads)))
 }
 
@@ -339,7 +340,8 @@ func elevatedGetEntity(
 	}
 }
 
-// elevatedListEntities builds admin.list_entities(type) -> table.
+// elevatedListEntities builds admin.list_entities(type, opts?) -> table.
+// The only option is `face`, as on rela.list_entities.
 //
 // No filter-expression argument: rela.list_entities' filter is a
 // convenience over an already-gated set, and adding an expression parser to
@@ -348,7 +350,7 @@ func elevatedGetEntity(
 // (TKT-YWDGZD tracks paging for both).
 func elevatedListEntities(
 	er EntityReader, readGuard func(string) bool, ctxFn func() context.Context,
-	reads *readUsage, world store.WorldScope,
+	reads *readUsage, faces listFaces,
 ) func(*lua.LState) int {
 	return func(s *lua.LState) int {
 		if !readGuard("list_entities") {
@@ -359,10 +361,21 @@ func elevatedListEntities(
 			s.RaiseError("bypass_acl list_entities: entity type cannot be empty")
 			return 0
 		}
+		face, err := elevatedListFace(s)
+		if err != nil {
+			s.RaiseError("bypass_acl list_entities: %s", err.Error())
+			return 0
+		}
+		sel, err := faces.selection(entityType, face)
+		if err != nil {
+			s.RaiseError("bypass_acl list_entities: %s", err.Error())
+			return 0
+		}
 		reads.mark("list_entities")
 		result := s.NewTable()
 		idx := 1
-		for e, err := range er.ListEntities(ctxFn(), store.EntityQuery{Type: entityType, Faces: store.InWorld(world)}) {
+		q := store.EntityQuery{Type: entityType, Faces: sel}
+		for e, err := range er.ListEntities(ctxFn(), q) {
 			if err != nil {
 				s.RaiseError("bypass_acl list_entities error: %s", err.Error())
 				return 0
@@ -373,6 +386,22 @@ func elevatedListEntities(
 		s.Push(result)
 		return 1
 	}
+}
+
+// elevatedListFace reads admin.list_entities' optional options table, whose
+// only key is `face`. An unknown key raises, as on the gated read.
+func elevatedListFace(s *lua.LState) (entity.Face, error) {
+	if s.GetTop() < 2 || s.Get(2) == lua.LNil {
+		return "", nil
+	}
+	tbl, ok := s.Get(2).(*lua.LTable)
+	if !ok {
+		return "", fmt.Errorf("options must be a table, got %s", s.Get(2).Type())
+	}
+	if err := rejectUnknownKeys(tbl, "face"); err != nil {
+		return "", err
+	}
+	return faceOption(tbl)
 }
 
 // elevatedGetRelations builds admin.get_relations(opts?) -> table, with

@@ -314,6 +314,23 @@ One caveat worth knowing: with a `filter`, the bound applies to rows
 **examined**, so a `limit` of 50 can return fewer than 50 matches. Without a
 filter it is exact.
 
+#### Listing one face
+
+For a type with `faces:`, `list_entities` returns each entity at the face the
+project's default world serves. To list the rows of one face instead, name it:
+
+```lua
+local concepts = rela.list_entities("document", { face = "concept" })
+for _, d in ipairs(concepts) do
+  print(d.id .. "@" .. d.face)   -- every row has face "concept"
+end
+```
+
+An entity without a row at that face is left out. A face the type does not
+declare raises an error, so a typo cannot pass as an empty result.
+`admin.list_entities` takes the same option and checks it the same way.
+`face` combines with `filter` and `limit`.
+
 #### Relation filters
 
 `rela.get_relations` takes an **options table** — `{from = ..., type = ...,
@@ -520,7 +537,7 @@ end)
 | `admin.delete_relation(from, type, to, opts?)` | Unlink, skipping the ACL deny |
 | `admin.delete_entity(id, cascade?)` | Remove, skipping the ACL deny |
 | `admin.get_entity(id)` | Read **raw** — full properties, no redaction |
-| `admin.list_entities(type)` | Every entity of `type`, ungated |
+| `admin.list_entities(type, opts?)` | Every entity of `type`, ungated; `opts.face` lists one face |
 | `admin.get_relations(opts?)` | Every matching edge, not peer-gated |
 
 **Elevated reads return raw data.** `admin.get_entity` returns the entity with
