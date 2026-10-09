@@ -451,7 +451,8 @@ func newBCWorld(t *testing.T) *bcWorld {
 	var policy map[string]map[string]any
 	require.NoError(t, yaml.Unmarshal(exampleFile(t, "acl.yaml"), &policy))
 	policy["roles"]["editor"] = map[string]any{"read": []string{"todo", "todolist", "project"},
-		"create": []string{"todo"}, "update": []string{"todo"}, "permissions": []string{"basecamp-links"}}
+		"create": []string{"todo"}, "update": []string{"todo"}, "delete": []string{"todolist"},
+		"permissions": []string{"basecamp-links"}}
 	policy["assignments"]["alice"] = "editor"
 	aclYAML, err := yaml.Marshal(policy)
 	require.NoError(t, err)
@@ -609,13 +610,18 @@ func TestBasecampExample(t *testing.T) {
 	}
 	require.Empty(t, writes(stub.takeCalls()), "the first pull wrote to Basecamp")
 
-	// Fixed point: the next pull changes nothing, and its unchanged pages
-	// come back as 304s.
+	// Fixed point: the next pull changes nothing. Its unchanged pages come
+	// back as 304s, except the last page of each of the two listings, which
+	// is always fetched in full.
 	w.settle()
 	w.pull()
+	full := 0
 	for _, c := range stub.takeCalls() {
-		require.True(t, strings.HasSuffix(c, " 304"), "unchanged page fetched in full: %s", c)
+		if !strings.HasSuffix(c, " 304") {
+			full++
+		}
 	}
+	require.Equal(t, 2, full, "unchanged pages fetched in full")
 
 	// R7: after a pull the push makes no HTTP call at all.
 	for _, id := range []int64{plan, write, ship} {
@@ -752,6 +758,31 @@ func TestBasecampExample(t *testing.T) {
 		require.NoError(t, err)
 		w.settle()
 		require.Equal(t, []string{later.ID}, w.linked(id, "in-list"))
+	})
+
+	t.Run("a local body Basecamp cannot hold is not pushed", func(t *testing.T) {
+		stub.takeCalls()
+		_, err := w.svc.EntityManager().PatchEntity(w.alice(), planID,
+			entity.Patch{Content: new("see ![chart](https://img.example/c.png)")})
+		require.NoError(t, err)
+		require.Empty(t, writes(stub.takeCalls()))
+		require.Contains(t, w.get(planID).Properties["sync_conflict"], "body:")
+		_, err = w.svc.EntityManager().PatchEntity(w.alice(), planID, entity.Patch{Content: new("see")})
+		require.NoError(t, err)
+		w.settle()
+		require.Nil(t, w.get(planID).Properties["sync_conflict"])
+	})
+
+	t.Run("a deleted list mirror does not stop the pull", func(t *testing.T) {
+		stub.addList(79, "Scratch", bcProject, "Launch")
+		scratch := stub.addTo(79, "Scribble", "", false)
+		w.settle()
+		list := w.byTypeRef("todolist", 79)
+		_, err := w.svc.EntityManager().DeleteEntity(w.alice(), list.ID, true)
+		require.NoError(t, err)
+		stub.edit(scratch, func(td *bcTodo) { td.Content = "Scribble v2" })
+		w.pull()
+		require.Equal(t, "Scribble v2", w.byRef(scratch).Properties["title"])
 	})
 
 	t.Run("a retried create does not post a second to-do", func(t *testing.T) {

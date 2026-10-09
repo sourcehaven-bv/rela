@@ -88,9 +88,17 @@ push is late, not gone.
 ## How it behaves
 
 - **Identity.** Both directions run as `integration:basecamp`. That name
-  holds only the `basecamp-connector` role from `acl.yaml`, so the connector
-  can read and write todos and move the `sync/basecamp` tags, and nothing
-  else. No person can sign in under an `integration:` name.
+  holds only the `basecamp-connector` role from `acl.yaml`. It can read,
+  create and update todos, to-do lists and projects, replace the `in-list`
+  and `in-project` links, and move the `sync/basecamp` tags. It cannot
+  delete anything. No person can sign in under an `integration:` name.
+- **Names.** The example adds types named `project` and `todolist`. If your
+  schema already has a `project`, rename the example's type in
+  `schema.yaml`, `acl.yaml` and `basecamp.lua`.
+- **Who may link.** A person puts a todo in a list by adding an `in-list`
+  link, which needs `update` on `todo`. Removing or replacing a link needs
+  the `basecamp-links` permission (or `delete` on `todo`); grant it to the
+  people who sort todos into lists.
 - **What is pulled.** Every active to-do and to-do list in every project
   the account can see, read through Basecamp's recordings listing. A to-do
   becomes a todo with a `basecamp` reference, linked with `in-list` to its
@@ -99,7 +107,12 @@ push is late, not gone.
 - **Projects and lists belong to Basecamp.** The pull creates and renames
   them, and relinks a to-do that moved to another list. A title or link
   changed in rela is overwritten on the next pull. Nothing is pushed for
-  them.
+  them. A list or project that disappears from Basecamp stays in rela. If
+  a person deletes a mirror in rela, the pull cannot recreate it while it
+  is in the trash; it reports that, and leaves that list's todos
+  unlinked.
+- **To-do list groups.** Basecamp reports a group inside a list as a list
+  of its own, so it becomes its own `todolist`, linked to the project.
 - **New todos.** A todo created in rela becomes a Basecamp to-do on its
   first save. It goes to the list its `in-list` link names, or else to
   `basecamp_todolist_id`. With neither, the todo gets a `sync_conflict`
@@ -114,7 +127,12 @@ push is late, not gone.
   Basecamp, a local edit to such a body is not pushed: the todo gets a
   `sync_conflict` starting with `body:`. Edit that body in Basecamp, or undo
   the local edit. The same holds the other way for a rela body with an image
-  or raw HTML.
+  or raw HTML. While the note is there, nothing of that todo is pushed, not
+  even a title or date change; changes from Basecamp still come in.
+- **Upgrading from the one-list version.** Bodies used to be stored as
+  Basecamp's HTML. The first pull rewrites each into markdown and drops any
+  attachments from the rela copy; Basecamp keeps them. A todo with an
+  unsynced local body edit at that moment gets a conflict note.
 - **Edits.** Each side's change since the last agreed state is carried to
   the other. A save that changed no synced field makes no request to
   Basecamp at all.
@@ -129,7 +147,12 @@ push is late, not gone.
 - **Deleted or archived to-dos.** A todo whose Basecamp to-do is no longer
   listed gets a `sync_conflict` starting with `vanished:`. This includes the
   to-dos of a project that was archived. The connector never deletes
-  anything.
+  anything. A to-do trashed while a pull is reading the listing can make
+  another one look vanished for that one run; the next pull clears it.
+- **Cost.** A pull reads every page of two listings: to-do lists and
+  to-dos. Unchanged pages come back as cheap 304s, except the last page of
+  each listing. A to-do whose Basecamp copy and rela copy are both unchanged
+  since the last pull is skipped without a merge.
 - **Fields rela does not own.** A Basecamp update replaces the whole to-do,
   so the push reads it first and sends back the assignees, completion
   subscribers and start date unchanged.

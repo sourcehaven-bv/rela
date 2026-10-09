@@ -134,16 +134,16 @@ local function next_link(resp)
 end
 
 -- get_page reads one page of a list. An ETag from an earlier run makes an
--- unchanged page a cheap 304. The next-page link is read from the 304 when
--- it carries one: a page can stay the same while a new page is added after
--- it, and the cached link would then stop the listing early.
+-- unchanged page a cheap 304. The last page is always fetched in full: a
+-- new page may have been added after it, and a 304 need not carry the Link
+-- header that would say so.
 local function get_page(url)
   local key = "page:" .. url
   local cached = rela.cache.get(key)
   local extra = {}
-  if cached then extra["If-None-Match"] = cached.etag end
+  if cached and cached.next then extra["If-None-Match"] = cached.etag end
   local resp = request("GET", url, nil, extra)
-  if resp.status_code == 304 and cached then
+  if resp.status_code == 304 and cached and cached.next then
     local nxt = cached.next
     if resp.headers["link"] then nxt = next_link(resp) end
     return rela.json.decode(cached.body), nxt
@@ -361,11 +361,13 @@ local function sync_once(id, remote)
   return "done"
 end
 
+-- sync_item returns true when the to-do settled.
 local function sync_item(id, remote)
   for _ = 1, 3 do
-    if sync_once(id, remote) == "done" then return end
+    if sync_once(id, remote) == "done" then return true end
   end
   rela.output(id .. ": still changing after 3 attempts; the next run merges it")
+  return false
 end
 
 -- ---------------------------------------------------------------------------
@@ -382,28 +384,58 @@ end
 -- link_one makes `to` the only target of from's rtype relation.
 local function link_one(current, from, rtype, to)
   if current[from] == to then return end
-  for _, r in ipairs(rela.get_relations({from = from, type = rtype})) do
-    rela.delete_relation(from, rtype, r.to)
+  local old = rela.get_relations({from = from, type = rtype})
+  local have = false
+  for _, r in ipairs(old) do have = have or r.to == to end
+  -- Create first, so a failure leaves the old link rather than none.
+  if not have then rela.create_relation(from, rtype, to) end
+  for _, r in ipairs(old) do
+    if r.to ~= to then rela.delete_relation(from, rtype, r.to) end
   end
-  rela.create_relation(from, rtype, to)
   current[from] = to
 end
 
 -- mirror creates or renames the rela entity for a Basecamp project or to-do
 -- list and returns its id. Basecamp owns these, so a title edited in rela
 -- is overwritten.
+--
+-- It returns nil when the mirror cannot be created. That happens when a
+-- person deleted it: the trashed entity still holds the id. The to-dos of
+-- that list then stay unlinked, and the rest of the pull goes on.
 local function mirror(typ, system, rid, title, url)
   local e = rela.find_by_external_ref(system, rid)
   if not e then
-    return rela.create_entity(typ, {title = title, [SYSTEM] = {id = rid, url = url}}).id
+    local ok, created = pcall(rela.create_entity, typ, {title = title, [SYSTEM] = {id = rid, url = url}})
+    if not ok then
+      rela.output("basecamp " .. typ .. " " .. rid .. ": " .. tostring(created))
+      return nil
+    end
+    return created.id
   end
   if e.properties.title ~= title then rela.update_entity(e.id, {title = title}) end
   return e.id
 end
 
-local function pull_one(remote, list_ids, in_list)
+-- A to-do whose Basecamp updated_at and rela version token both match what
+-- the last pull saw needs no merge. The marks live in the cache, so losing
+-- them costs one full merge, never a wrong one.
+local function mark_key(rid) return "seen:" .. rid end
+
+local function unchanged(e, remote)
+  local m = rela.cache.get(mark_key(sid(remote.id)))
+  return m and m.updated_at == remote.updated_at and m.token == rela.version_token(e.id)
+end
+
+local function mark(e, remote)
+  local tok = rela.version_token(e.id)
+  if tok then
+    rela.cache.set(mark_key(sid(remote.id)), {updated_at = remote.updated_at, token = tok}, {ttl = 86400})
+  end
+end
+
+local function pull_one(remote, list_ids, in_list, by_ref)
   local rid = sid(remote.id)
-  local e = rela.find_by_external_ref(SYSTEM, rid)
+  local e = by_ref[rid]
   local settled = false
   if not e then
     local ok, created, _, tok = pcall(rela.create_entity, TYPE, {
@@ -427,7 +459,8 @@ local function pull_one(remote, list_ids, in_list)
   -- Basecamp owns the list a to-do is in, so a move in rela is undone here.
   local list = remote.parent and list_ids[sid(remote.parent.id)]
   if list then link_one(in_list, e.id, IN_LIST, list) end
-  if not settled then sync_item(e.id, remote) end
+  if settled or unchanged(e, remote) then return end
+  if sync_item(e.id, remote) then mark(e, remote) end
 end
 
 local function pull()
@@ -456,20 +489,23 @@ local function pull()
     end
     local lid = mirror("todolist", LIST_SYSTEM, sid(l.id), l.title or l.name or sid(l.id), l.app_url)
     list_ids[sid(l.id)] = lid
-    if project_ids[pid] then link_one(in_project, lid, IN_PROJECT, project_ids[pid]) end
+    if lid and project_ids[pid] then link_one(in_project, lid, IN_PROJECT, project_ids[pid]) end
   end
 
+  -- One listing maps every linked todo, instead of a lookup per to-do.
+  local todos, by_ref = rela.list_entities(TYPE), {}
+  for _, e in ipairs(todos) do
+    local ref = e.properties[SYSTEM]
+    if ref then by_ref[ref.id] = e end
+  end
   local seen = {}
   for _, r in ipairs(remotes) do
     seen[sid(r.id)] = true
-    pull_one(r, list_ids, in_list)
+    pull_one(r, list_ids, in_list, by_ref)
   end
-  for _, e in ipairs(rela.list_entities(TYPE)) do
+  for _, e in ipairs(todos) do
     local ref = e.properties[SYSTEM]
-    if ref and not seen[ref.id] then
-      local ours = rela.get_entity(e.id)
-      if ours then record_conflict(e.id, ours, VANISHED) end
-    end
+    if ref and not seen[ref.id] then record_conflict(e.id, e, VANISHED) end
   end
   rela.output(string.format("basecamp: %d lists, %d to-dos; created %d, updated %d, pushed %d, conflicts %d",
     #lists, #remotes, stats.created, stats.written, stats.pushed, stats.conflicts))
@@ -478,14 +514,6 @@ end
 -- ---------------------------------------------------------------------------
 -- Push
 
--- create_remote creates the Basecamp to-do for a todo made in rela.
---
--- The todo is linked right after the POST, before any call that can raise.
--- A failed run is retried, and the retry must find the link; otherwise it
--- would create a second to-do. A retry that finds the link but no base
--- stops (see push), and the next pull merges the todo. With no base, that
--- pull records any field that still differs, such as a completion that did
--- not reach Basecamp, as a conflict.
 -- target_list returns the Basecamp id of the list a new todo goes to: the
 -- list its in-list relation names, else basecamp_todolist_id.
 local function target_list(e)
@@ -498,6 +526,14 @@ local function target_list(e)
   return nil
 end
 
+-- create_remote creates the Basecamp to-do for a todo made in rela.
+--
+-- The todo is linked right after the POST, before any call that can raise.
+-- A failed run is retried, and the retry must find the link; otherwise it
+-- would create a second to-do. A retry that finds the link but no base
+-- stops (see push), and the next pull merges the todo. With no base, that
+-- pull records any field that still differs, such as a completion that did
+-- not reach Basecamp, as a conflict.
 local function create_remote(e)
   local list = target_list(e)
   if not list then return record_conflict(e.id, e, NO_LIST) end
@@ -507,6 +543,12 @@ local function create_remote(e)
   local body = {content = e.properties.title or e.id, description = description,
     due_on = e.properties.due, notify = false}
   local resp = request("POST", ROOT .. "/todolists/" .. list .. "/todos.json", body)
+  local code = resp.status_code
+  if code == 403 or code == 404 or code == 422 then
+    -- A retry would fail the same way: the list is gone, archived or not
+    -- open to this account.
+    return record_conflict(e.id, e, "no to-do list: Basecamp refused list " .. list .. " (" .. resp.status .. ")")
+  end
   check(resp, "creating a to-do")
   local remote = decode(resp, "creating a to-do")
   local rid = sid(remote.id)
