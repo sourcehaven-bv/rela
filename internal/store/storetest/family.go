@@ -134,6 +134,35 @@ func RunFamilyTests(t *testing.T, f Factory) {
 		assert.Empty(t, collectRelations(t, s, store.RelationQuery{EntityID: "DOC-11"}))
 	})
 
+	// The zero tail is shared: the implicit row's own edges and the family's
+	// identity edges both live there, and the store cannot tell them apart.
+	// Deleting the implicit face while a named face remains must keep them,
+	// or a face move (migrate_face, adopt-face) destroys every identity edge
+	// the entity holds.
+	t.Run("ZeroFaceDeleteWithSiblingsKeepsZeroTailEdges", func(t *testing.T) {
+		s := f(t)
+		seed(t, s, "DOC-15", "", "draft")
+		seed(t, s, "DST-2", "")
+		edges := []entity.RelationKey{
+			{From: "DOC-15", Type: "owned-by", To: "DST-2"},
+			{From: "DOC-15", FromFace: "draft", Type: "references", To: "DST-2"},
+			{From: "DST-2", Type: "links", To: "DOC-15"},
+		}
+		for _, k := range edges {
+			_, err := s.CreateRelation(ctx(), k, nil)
+			require.NoError(t, err)
+		}
+
+		res, err := s.DeleteFace(ctx(), entity.Ref{ID: "DOC-15"})
+		require.NoError(t, err)
+		assert.Len(t, res.DeletedEntities, 1)
+		assert.Empty(t, res.DeletedRelations, "a non-last implicit face takes no edge")
+		for _, k := range edges {
+			_, err = s.GetRelation(ctx(), k)
+			assert.NoError(t, err, "%s --%s--> %s outlives the implicit row", k.From, k.Type, k.To)
+		}
+	})
+
 	t.Run("DeleteFamilyOfNamedFacesOnly", func(t *testing.T) {
 		s := f(t)
 		seed(t, s, "DOC-12", "draft", "published")

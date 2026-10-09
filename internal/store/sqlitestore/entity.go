@@ -427,17 +427,21 @@ func (s *Store) deleteFaceLocked(
 	last := size == 1
 
 	// The last face takes every incident edge, as DeleteFamily does
-	// (RR-2466U1); otherwise only the outgoing edges tailed at this face.
+	// (RR-2466U1); otherwise only the outgoing edges tailed at this face. A
+	// non-last implicit face takes none: its zero tail is shared with the
+	// family's identity edges (see store.EntityWriter.DeleteFace).
 	var owned []*entity.Relation
-	if last {
+	switch {
+	case last:
 		owned, err = s.incidentRelations(ctx, id)
-	} else {
+	case !p.IsImplicit():
 		owned, err = s.ownedRelations(ctx, id, p)
 	}
 	if err != nil {
 		return nil, err
 	}
-	ownedDelete, ownedArgs := `DELETE FROM relations WHERE from_id = ? AND from_face = ?`, []any{id, string(p)}
+	ownedDelete, ownedArgs := `DELETE FROM relations WHERE from_id = ? AND from_face = ? AND from_face <> ''`,
+		[]any{id, string(p)}
 	if last {
 		ownedDelete, ownedArgs = `DELETE FROM relations WHERE from_id = ? OR to_id = ?`, []any{id, id}
 	}

@@ -271,6 +271,18 @@ Each value of the keying property names the face its rows move to. The move is
 real: the row is created at the new coordinate and the zero-coordinate row is
 removed.
 
+The row's relations follow their scope. A `scope: content` edge belongs to the
+row, so it moves to the new face with it. An identity-scoped edge belongs to the
+entity, so it stays where it is. `rename_face` and `rela migrate adopt-face`
+move edges the same way, and `rename_face` also returns an identity-scoped edge
+it finds on the old face to the entity. If a move fails part-way, run it again:
+each row's source is removed last, so a second run finishes the edges the first
+did not. On the file backend, rows moved before the failure stay moved.
+
+A migration file written before relation scopes were recorded cannot tell the
+two kinds apart. Such a file refuses to move a row that has relations; generate
+it again with `rela migrate gen`.
+
 **The mapping must cover every value of the property.** That is the safety
 property, not a formality — a value you leave out keeps its rows at the zero
 coordinate, where they name no face, and once the keying property is dropped
