@@ -41,3 +41,6 @@ rationale is dropped.
 - For a principal, the count equals the length of the gated list, for global,
 face-restricted and relation-conferred read.
 - A principal without read on a type gets 0.
+
+The docs change lives in `docs-project/entities/guides/GUIDE-acl-security.md`;
+`docs/acl-security.md` is generated from it.

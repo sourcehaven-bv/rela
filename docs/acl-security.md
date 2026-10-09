@@ -1370,11 +1370,11 @@ other surfaces and how each counts hidden entities.
   properties. The per-type entity and relation counts are gated too
   (TKT-QZTROQ). This covers the schema tool, the schema resource, the
   summary prompt and `analyze` with `check: schema`. An entity count is the
-  length of the list the caller would get. A relation
-  count includes only edges whose two ends the caller may read, at any face.
-  So `analyze` reports a type the caller may not read as unused. A count
-  that fails is left out of the schema rather than shown as 0, and the
-  summary prompt fails. The Lua tools are not offered there at all. These residuals
+  length of the list the caller would get. A relation count includes only
+  edges whose two ends the caller may read, at any face. So `analyze`
+  reports a type the caller may not read as unused. A count that fails is
+  left out of the schema rather than shown as 0, and the summary prompt
+  fails. The Lua tools are not offered there at all. These residuals
   remain on the remote endpoint:
   - relation meta values are not field-redacted (TKT-0RBFN0), the same as
     on every other read path;
