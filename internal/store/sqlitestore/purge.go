@@ -26,8 +26,10 @@ import (
 //   - REFUSES if a LIVE row still holds the content, unless ForceLive:
 //     otherwise the sweep re-captures it within one interval and the "erasure"
 //     is a lie. A ForceLive purge writes a no-content `purge` tombstone whose
-//     content_hash IS the live hash, so the sweep's existing dedup suppresses
-//     re-capture until the live value genuinely changes again.
+//     content_hash IS the live hash. Deleting versions clears the row's stored
+//     hash (contentHashDDL), so the sweep looks at the row once more, and its
+//     existing dedup suppresses re-capture until the live value genuinely
+//     changes again.
 //   - `--all` purges the FENCED lineage (exactly the rows ListVersions shows),
 //     never a naive `WHERE entity_id = ?`, which would both miss pre-rename
 //     segments and destroy a reused id's unrelated history.

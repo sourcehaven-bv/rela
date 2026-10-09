@@ -188,6 +188,60 @@ func RunSweepBacklogTests(t *testing.T, f Factory, sweepNow func(t *testing.T, s
 		require.Emptyf(t, stale, "%d relations kept their pre-rename endpoints in history", len(stale))
 	})
 
+	// The sweep selects only rows whose stored hash is NULL, so a version
+	// written outside it must clear the hash when the live row no longer
+	// matches the latest version. Otherwise that row is never looked at again
+	// and its history ends in content it does not hold (TASK-Y73Y9 in Atlas).
+	outOfBand := []struct {
+		name     string
+		write    func(t *testing.T, v store.VersionService)
+		relation bool
+		wantOp   store.VersionOp
+	}{
+		{name: "EntityUpdate", wantOp: store.VersionOpUpdate, write: func(t *testing.T, v store.VersionService) {
+			writeVersion(t, v, store.VersionInput{
+				EntityID: id(last), Op: store.VersionOpUpdate, Type: "feature", Content: "elsewhere",
+			})
+		}},
+		// A delete version starts a new lifecycle, so the live row is captured
+		// again as a create.
+		{name: "EntityDelete", wantOp: store.VersionOpCreate, write: func(t *testing.T, v store.VersionService) {
+			e := newEntity(id(last), "v1")
+			writeVersion(t, v, store.VersionInput{
+				EntityID: id(last), Op: store.VersionOpDelete, Type: "feature", Properties: e.Properties,
+			})
+		}},
+		{name: "RelationUpdate", relation: true, wantOp: store.VersionOpUpdate,
+			write: func(t *testing.T, v store.VersionService) {
+				require.NoError(t, v.WriteRelationVersion(ctx(), store.RelationVersionInput{
+					Key: relKey(last), Op: store.VersionOpUpdate, Content: "elsewhere",
+					SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+				}))
+			}},
+	}
+	for _, tc := range outOfBand {
+		t.Run("VersionWrittenOutsideTheSweep/"+tc.name, func(t *testing.T) {
+			s := f(t)
+			v := versionsOf(t, s)
+			seed(t, s)
+			drain(t, s)
+
+			tc.write(t, v)
+			sweepNow(t, s)
+
+			if tc.relation {
+				metas, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{Key: relKey(last)})
+				require.NoError(t, err)
+				require.Len(t, metas, 3, "the live relation was not captured after an out-of-band version")
+				require.Equal(t, tc.wantOp, metas[2].Op)
+				return
+			}
+			metas := entityVersions(t, v, last)
+			require.Len(t, metas, 3, "the live entity was not captured after an out-of-band version")
+			require.Equal(t, tc.wantOp, metas[2].Op)
+		})
+	}
+
 	// A force-live purge leaves a tombstone carrying the live row's hash. Saving
 	// the rows unchanged afterwards must neither re-capture the purged content
 	// nor leave the rows selected on every tick.
