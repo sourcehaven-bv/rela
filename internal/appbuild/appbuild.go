@@ -64,6 +64,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
+	"github.com/Sourcehaven-BV/rela/internal/tokenstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/userstate"
 	"github.com/Sourcehaven-BV/rela/internal/userstate/kvuserstate"
@@ -212,6 +213,10 @@ type Services struct {
 	// versionTags is the version tag writer (TKT-VO6VG9), built in
 	// finishAssembly over entityManager. See [VersionTags].
 	versionTags *entitymanager.VersionTags
+
+	// tokens is the connector token broker, or why there is none
+	// (TKT-01KZSO). See [Tokens].
+	tokens tokenSetup
 
 	// base is the SharedBase this Services was assembled from. Retained so a
 	// host can build a successor base from the same Config (see
@@ -631,6 +636,7 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 		ReadDeps:      s.LuaReadDeps(),
 		EntityManager: s.entityManager,
 		VersionTags:   ScriptVersionTags(s),
+		OAuth:         ScriptOAuth(s),
 	}
 }
 
@@ -644,6 +650,7 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 		ReadDeps:      s.luaReadDepsFor(redactor),
 		EntityManager: s.entityManager,
 		VersionTags:   ScriptVersionTags(s),
+		OAuth:         ScriptOAuth(s),
 	}
 }
 
@@ -1230,6 +1237,11 @@ type options struct {
 	// backgroundAutomationJobs runs `background: true` automation actions
 	// on the job queue instead of in the foreground.
 	backgroundAutomationJobs bool
+
+	// tokenStore builds where connector refresh tokens live; see
+	// [WithTokenStore]. Nil means a sealed store on the database backends
+	// and none elsewhere.
+	tokenStore func(HostConfig) (tokenstore.Store, error)
 }
 
 // WithBackgroundAutomationJobs runs `background: true` automation actions
@@ -1765,6 +1777,9 @@ type SharedBase struct {
 	aclPolicy *acl.Policy
 	meta      *metamodel.Metamodel
 	worlds    worlds.Compiled
+	// conns is the parsed connections.yaml (TKT-01KZSO), empty when the
+	// file is absent. Parsed here so an invalid file fails the boot.
+	conns tokenstore.Connections
 	// reassembly marks a base built to re-assemble against an ALREADY-OPEN
 	// store, so [assemble] skips the store-open-only steps. Set by
 	// [SharedBase.ForReassembly]; false for a base that will open its own store.
@@ -1935,9 +1950,16 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("compile query scopes: %s", strings.Join(problems, "; "))
 	}
 
+	// An invalid connections.yaml fails the boot rather than leaving every
+	// connector without tokens behind a log line.
+	conns, err := loadConnections(context.Background(), cfg.configLoader())
+	if err != nil {
+		return nil, err
+	}
+
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
-		meta: meta, worlds: compiledWorlds,
+		meta: meta, worlds: compiledWorlds, conns: conns,
 	}, nil
 }
 
@@ -2405,6 +2427,7 @@ func assemble(
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, commentSvc, versions,
 		resolvedACL, aclDeclarative, fieldPol.redactor, schedState,
 	)
+	assembled.tokens = buildTokens(context.Background(), base, st, backendKV, readDeps.Host, attachLocker)
 	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine)
 }
 

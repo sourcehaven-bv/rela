@@ -5,7 +5,9 @@ title: OAuth token binding and Basecamp reference connector
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-10-08"
+completed: "2026-10-08"
+status: done
 ---
 
 ## Description

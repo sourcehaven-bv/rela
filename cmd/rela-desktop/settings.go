@@ -11,11 +11,14 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/ai"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/mail"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
+	"github.com/Sourcehaven-BV/rela/internal/tokenstore"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -35,8 +38,20 @@ type settingsView struct {
 	Mail        string   `json:"mail"`
 	// Untrusted is set when the keychain holds secrets for this document's
 	// ID that this place may not read yet (see keychainSecrets).
-	Untrusted bool   `json:"untrusted"`
-	Error     string `json:"error,omitempty"`
+	Untrusted bool `json:"untrusted"`
+	// Connections lists the connections.yaml entries and whether each has
+	// a token. Token values never come back to a page either.
+	Connections []connectionView `json:"connections"`
+	// ConnectionsError says why the project has no token store, when it
+	// declares connections but cannot keep tokens.
+	ConnectionsError string `json:"connectionsError,omitempty"`
+	Error            string `json:"error,omitempty"`
+}
+
+// connectionView is one row of the Connections section.
+type connectionView struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
 }
 
 // ProjectSettings is the bound service behind the settings window. It edits
@@ -149,6 +164,10 @@ func (s *ProjectSettings) open(id string) string {
 type settingsTarget struct {
 	host *desktopHost
 	name string
+	// tokens manages the project's connector tokens; nil with tokensErr
+	// saying why when it has none.
+	tokens    *tokenstore.Broker
+	tokensErr error
 	// active is set when the project is the one at the bare root, the only
 	// one SaveFile can reopen.
 	active bool
@@ -179,7 +198,9 @@ func (s *ProjectSettings) target(ctx context.Context) (settingsTarget, error) {
 	d.mu.RLock()
 	active := d.app == p.app
 	d.mu.RUnlock()
-	return settingsTarget{host: host, name: p.app.ProjectName(), active: active}, nil
+	t := settingsTarget{host: host, name: p.app.ProjectName(), active: active}
+	t.tokens, t.tokensErr = appbuild.Tokens(p.svc)
+	return t, nil
 }
 
 // Load returns a project's settings.
@@ -194,7 +215,8 @@ func (s *ProjectSettings) Load(ctx context.Context) settingsView {
 	if err != nil {
 		view.Error = err.Error()
 	}
-	view.Secrets = slices.Sorted(maps.Keys(fromKeychain))
+	view.Secrets = slices.Sorted(maps.Keys(withoutTokenItems(fromKeychain)))
+	view.Connections, view.ConnectionsError = connectionRows(ctx, t)
 	if _, trusted, err := host.secrets.forPlace(host.docID, host.Path()); err == nil {
 		view.Untrusted = !trusted
 	}
@@ -215,6 +237,64 @@ func (s *ProjectSettings) SetSecret(ctx context.Context, name, value string) str
 		err = t.host.secrets.set(t.host.docID, t.host.Path(), strings.TrimSpace(name), value)
 	}
 	return errText(err)
+}
+
+// connectionRows lists the declared connections with their token state.
+func connectionRows(ctx context.Context, t settingsTarget) (rows []connectionView, errMsg string) {
+	if t.tokens == nil {
+		return nil, errText(t.tokensErr)
+	}
+	names := slices.Sorted(maps.Keys(t.tokens.Connections()))
+	rows = make([]connectionView, 0, len(names))
+	for _, n := range names {
+		st, err := t.tokens.Status(ctx, string(n))
+		row := connectionView{Name: string(n)}
+		switch {
+		case err != nil:
+			row.State = err.Error()
+		case st.Err != nil:
+			row.State = "Cannot read the token: " + st.Err.Error()
+		case !st.Stored:
+			row.State = "No token"
+		case !st.NeedsConsentAt.IsZero():
+			row.State = "Needs consent: run the consent flow and paste the new token"
+		default:
+			row.State = "Connected"
+		}
+		rows = append(rows, row)
+	}
+	return rows, ""
+}
+
+// SetToken stores a connection's token: the refresh token, or the
+// provider's JSON token response, as `rela token set` reads it. It returns
+// "" or an error message.
+func (s *ProjectSettings) SetToken(ctx context.Context, name, input string) string {
+	t, err := s.target(ctx)
+	if err != nil {
+		return err.Error()
+	}
+	if t.tokens == nil {
+		return errText(t.tokensErr)
+	}
+	tok, err := tokenstore.ParseInput([]byte(input), time.Now())
+	if err == nil {
+		err = t.tokens.Set(ctx, name, tok)
+	}
+	return errText(err)
+}
+
+// DeleteToken removes a connection's token. It returns "" or an error
+// message.
+func (s *ProjectSettings) DeleteToken(ctx context.Context, name string) string {
+	t, err := s.target(ctx)
+	if err != nil {
+		return err.Error()
+	}
+	if t.tokens == nil {
+		return errText(t.tokensErr)
+	}
+	return errText(t.tokens.Delete(ctx, name))
 }
 
 // errTrustDeclined is returned when the user does not approve.
@@ -349,6 +429,7 @@ const settingsPage = `<!doctype html>
   .row { display: flex; gap: 8px; margin-top: 8px; }
   .row > * { flex: 1; }
   .row > button { flex: none; }
+  [hidden] { display: none !important; }
   #status { min-height: 1.4em; margin-top: 12px; }
   #status.error { color: #c0392b; }
 </style>
@@ -371,6 +452,17 @@ const settingsPage = `<!doctype html>
   <input type="text" id="secret-name" placeholder="Name" autocomplete="off" spellcheck="false">
   <input type="password" id="secret-value" placeholder="Value" autocomplete="off">
   <button type="submit">Save Secret</button>
+</form>
+
+<h2>Connections</h2>
+<p class="hint">OAuth connections from connections.yaml. Paste the refresh token the consent flow printed,
+or its whole JSON token response. Stored in the keychain; scripts get only short-lived access tokens.</p>
+<p class="hint" id="connections-error"></p>
+<table id="connections"></table>
+<form id="add-token" class="row">
+  <select id="token-name"></select>
+  <input type="password" id="token-value" placeholder="Refresh token or JSON" autocomplete="off">
+  <button type="submit">Save Token</button>
 </form>
 
 <h2>AI</h2>
@@ -418,6 +510,25 @@ async function load() {
     ? "Also read from .rela/secrets.yaml: " + fromFile.join(", ") + ". A keychain secret with the same name wins."
     : "";
   $("untrusted").hidden = !view.untrusted;
+  const conns = $("connections");
+  conns.replaceChildren();
+  const select = $("token-name");
+  select.replaceChildren();
+  for (const c of view.connections || []) {
+    const row = conns.insertRow();
+    row.insertCell().textContent = c.name;
+    row.insertCell().textContent = c.state;
+    const actions = row.insertCell();
+    actions.className = "actions";
+    const remove = document.createElement("button");
+    remove.textContent = "Remove Token";
+    remove.onclick = async () => done(await call("DeleteToken", c.name), "Removed the token for " + c.name + ".");
+    actions.append(remove);
+    select.append(new Option(c.name, c.name));
+  }
+  if (!(view.connections || []).length) conns.insertRow().insertCell().textContent = "No connections declared.";
+  $("connections-error").textContent = view.connectionsError || "";
+  $("add-token").hidden = !(view.connections || []).length;
   $("ai").value = view.ai || "";
   $("mail").value = view.mail || "";
   if (view.error) status(view.error, true);
@@ -437,6 +548,13 @@ $("add-secret").onsubmit = async (event) => {
   const err = await call("SetSecret", name, $("secret-value").value);
   if (!err) { $("secret-name").value = ""; $("secret-value").value = ""; }
   await done(err, "Saved " + name + ".");
+};
+$("add-token").onsubmit = async (event) => {
+  event.preventDefault();
+  const name = $("token-name").value;
+  const err = await call("SetToken", name, $("token-value").value);
+  if (!err) $("token-value").value = "";
+  await done(err, "Saved the token for " + name + ".");
 };
 $("save-ai").onclick = async () => done(await call("SaveFile", "ai.yaml", $("ai").value), "Saved AI settings.");
 $("save-mail").onclick = async () => done(await call("SaveFile", "mail.yaml", $("mail").value), "Saved mail settings.");

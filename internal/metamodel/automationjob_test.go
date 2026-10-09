@@ -43,6 +43,15 @@ func TestValidateBackgroundActions(t *testing.T) {
 			{LuaFile: "p.lua", Background: true, RunAs: "system:scheduler"}}}}, "invalid run_as"},
 		{"automation run_as", []AutomationDef{{Name: "a", Do: []AutomationAction{
 			{LuaFile: "p.lua", Background: true, RunAs: "system:automation"}}}}, ""},
+		{"integration run_as", []AutomationDef{{Name: "a", Do: []AutomationAction{
+			{LuaFile: "p.lua", Background: true, RunAs: "integration:basecamp"}}}}, ""},
+		{"bad integration run_as", []AutomationDef{{Name: "a", Do: []AutomationAction{
+			{LuaFile: "p.lua", Background: true, RunAs: "integration:Base Camp"}}}}, "invalid run_as"},
+		{"tokens on a synchronous action", []AutomationDef{{Name: "a", Do: []AutomationAction{
+			{LuaFile: "p.lua", Capabilities: Capabilities{Tokens: []string{"basecamp"}}}}}},
+			"`capabilities.tokens` applies only with `background: true`"},
+		{"tokens on a background action", []AutomationDef{{Name: "a", Do: []AutomationAction{
+			{LuaFile: "p.lua", Background: true, Capabilities: Capabilities{Tokens: []string{"basecamp"}}}}}}, ""},
 		{"same file, other spelling", []AutomationDef{{Name: "a", Do: []AutomationAction{
 			bg, {LuaFile: "./" + bg.LuaFile, Background: true}}}}, "twice"},
 	}

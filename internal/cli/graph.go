@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -187,6 +188,7 @@ func renderWithGraphviz(ctx context.Context, dot, outputPath, format string) err
 		return errors.New("graphviz 'dot' command not found; install Graphviz or use -f dot")
 	}
 	cmd := exec.CommandContext(ctx, "dot", "-T"+format, "-o", outputPath)
+	cmd.Env = cmdexec.Environ()
 	cmd.Stdin = strings.NewReader(dot)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

@@ -50,6 +50,18 @@ import (
 // ConfigFile is the name of the secrets file inside .rela/.
 const ConfigFile = "secrets.yaml"
 
+// TokenKey is the global key holding the token store's encryption key
+// (TKT-01KZSO): 32 random bytes, base64 encoded. It is read only from the
+// global section, never from a per-script override, and it is never handed
+// to a script: [ScriptReadable] reports false for it, and every
+// `capabilities.secrets` list that names it is refused at load.
+const TokenKey = "token_key"
+
+// ScriptReadable reports whether a script may be granted the secret name. A
+// script that could read [TokenKey] could decrypt every stored refresh token,
+// which defeats keeping refresh tokens out of Lua.
+func ScriptReadable(name string) bool { return name != TokenKey }
+
 // cacheDirName is the project cache directory holding the secrets file.
 //
 // Duplicated from project.CacheDir rather than imported: internal/secrets is a

@@ -188,3 +188,15 @@ func TestCapabilities_FilterSecrets(t *testing.T) {
 		t.Errorf("AllSecrets must pass everything through, got %d", n)
 	}
 }
+
+// TKT-01KZSO: the token store key is filtered out of rela.secrets even for
+// the operator shell's all-secrets grant.
+func TestFilterSecrets_DropsTokenKey(t *testing.T) {
+	all := map[string]string{"token_key": "k", "api": "v"}
+	for _, c := range []Capabilities{{AllSecrets: true}, {Secrets: []string{"token_key", "api"}}} {
+		got := c.filterSecrets(all)
+		if _, ok := got["token_key"]; ok || got["api"] != "v" {
+			t.Errorf("%+v: filterSecrets = %v", c, got)
+		}
+	}
+}

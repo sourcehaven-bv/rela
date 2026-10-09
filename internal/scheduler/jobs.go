@@ -56,6 +56,7 @@ const (
 	payloadMail      = "capability_mail"
 	payloadWriteFile = "capability_write_file"
 	payloadSecrets   = "capability_secrets"
+	payloadTokens    = "capability_tokens"
 )
 
 // UseQueue routes script execution through q.
@@ -121,7 +122,7 @@ func (s *Scheduler) jobFor(task TaskConfig, runID string, now time.Time) (jobs.J
 		}, occurrence, nil
 	}
 
-	http, ai, mail, writeFile, secrets := task.Capabilities.Fields()
+	http, ai, mail, writeFile, secrets, tokens := task.Capabilities.Fields()
 	return jobs.Job{
 		Kind: TaskKind,
 		Payload: map[string]any{
@@ -134,6 +135,7 @@ func (s *Scheduler) jobFor(task TaskConfig, runID string, now time.Time) (jobs.J
 			payloadMail:      mail,
 			payloadWriteFile: writeFile,
 			payloadSecrets:   append([]string(nil), secrets...),
+			payloadTokens:    append([]string(nil), tokens...),
 		},
 		Retry:          jobs.RetryNever,
 		IdempotencyKey: runID,
@@ -187,21 +189,28 @@ func capabilitiesFromPayload(payload map[string]any) metamodel.Capabilities {
 	mail, _ := payload[payloadMail].(bool)
 	writeFile, _ := payload[payloadWriteFile].(bool)
 
-	var secrets []string
-	switch values := payload[payloadSecrets].(type) {
+	return metamodel.Capabilities{
+		HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile,
+		Secrets: stringsFromPayload(payload[payloadSecrets]),
+		Tokens:  stringsFromPayload(payload[payloadTokens]),
+	}
+}
+
+// stringsFromPayload reads a string list from a job payload. A value of any
+// other type reads as empty, so it grants nothing.
+func stringsFromPayload(v any) []string {
+	var out []string
+	switch values := v.(type) {
 	case []string:
-		secrets = append([]string(nil), values...)
+		out = append([]string(nil), values...)
 	case []any:
 		for _, value := range values {
-			if secret, ok := value.(string); ok {
-				secrets = append(secrets, secret)
+			if s, ok := value.(string); ok {
+				out = append(out, s)
 			}
 		}
 	}
-
-	return metamodel.Capabilities{
-		HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets,
-	}
+	return out
 }
 
 // errNoQueue reports that the scheduler has no job queue, so it cannot execute

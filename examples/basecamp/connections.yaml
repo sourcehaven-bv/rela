@@ -1,0 +1,10 @@
+# Basecamp sync: how rela refreshes the access token. Put this file in the
+# project root (beside schema.yaml). The client id and secret are secret
+# NAMES, set in .rela/secrets.yaml or the desktop app's Secrets section.
+connections:
+  basecamp:
+    token_url: https://launchpad.37signals.com/authorization/token
+    client_id_secret: basecamp_client_id
+    client_secret_secret: basecamp_client_secret
+    style: launchpad
+    user_agent: "rela-basecamp-example (ops@example.com)"

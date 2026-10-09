@@ -175,6 +175,12 @@ func (k *keychainSecrets) set(docID, place, name, value string) error {
 	if !secretNamePattern.MatchString(name) {
 		return fmt.Errorf("a secret name uses only letters, digits, '.', '_' and '-' (at most 64): %q", name)
 	}
+	return k.put(docID, place, name, value)
+}
+
+// put is set without the name check. The token store uses it for its
+// `token/` items, whose names a secret name cannot take.
+func (k *keychainSecrets) put(docID, place, name, value string) error {
 	if value == "" {
 		return errors.New("a secret needs a value")
 	}
@@ -367,7 +373,7 @@ func (h *desktopHost) Secrets(scriptPath string) (map[string]string, error) {
 	if out == nil {
 		out = map[string]string{}
 	}
-	maps.Copy(out, fromKeychain)
+	maps.Copy(out, withoutTokenItems(fromKeychain))
 	return out, nil
 }
 
@@ -400,9 +406,13 @@ func projectOptions(relaDir string, kc *keychainSecrets) []appbuild.Option {
 	// The app stays open, so background automation actions use the queue.
 	opts := []appbuild.Option{appbuild.WithACL(acl.NopACL{}), appbuild.WithBackgroundAutomationJobs()}
 	if kc != nil {
-		opts = append(opts, appbuild.WithHostConfig(func(kv state.KV) (appbuild.HostConfig, error) {
-			return newDesktopHost(context.Background(), relaDir, kv, kc)
-		}))
+		opts = append(opts,
+			appbuild.WithHostConfig(func(kv state.KV) (appbuild.HostConfig, error) {
+				return newDesktopHost(context.Background(), relaDir, kv, kc)
+			}),
+			// Connector tokens go in the keychain too, beside the secrets
+			// (TKT-01KZSO).
+			appbuild.WithTokenStore(newKeychainTokens))
 	}
 	return opts
 }

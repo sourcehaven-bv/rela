@@ -1,0 +1,10 @@
+# Basecamp sync: the pull. Merge this task into your schedules.yaml.
+tasks:
+  - name: basecamp-pull
+    script: basecamp.lua
+    every: 5m
+    run_as: integration:basecamp
+    capabilities:
+      http: true
+      tokens: [basecamp]
+      secrets: [basecamp_account_id, basecamp_todolist_id, basecamp_api_base]

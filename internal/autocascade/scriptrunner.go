@@ -96,12 +96,18 @@ type ScriptCapabilities struct {
 	// Secrets names the .rela/secrets.yaml keys the script may read. Empty
 	// means none — NOT all.
 	Secrets []string
+	// Tokens names the token store connections rela.oauth may use
+	// (TKT-01KZSO). Only a background job registers rela.oauth; the
+	// metamodel refuses `tokens:` on a synchronous action.
+	Tokens []string
 }
 
 // Fields returns the grant as plain values, mirroring
 // metamodel.Capabilities.Fields so both ends of the hop read through one shape.
-func (c ScriptCapabilities) Fields() (http, ai, mail, writeFile bool, secrets []string) {
-	return c.HTTP, c.AI, c.Mail, c.WriteFile, c.Secrets
+//
+//nolint:gocritic // tooManyResultsChecker: mirrors metamodel.Capabilities.Fields, one result per capability
+func (c ScriptCapabilities) Fields() (http, ai, mail, writeFile bool, secrets, tokens []string) {
+	return c.HTTP, c.AI, c.Mail, c.WriteFile, c.Secrets, c.Tokens
 }
 
 // NopScriptRunner is a no-op [ScriptRunner] for tests that should not

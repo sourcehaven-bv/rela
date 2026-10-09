@@ -104,6 +104,63 @@ func TestValidateWithFS_ValidProject(t *testing.T) {
 	}
 }
 
+// rela validate refuses a connections.yaml that assembly would refuse, and
+// accepts a project without one (TKT-01KZSO).
+func TestValidateWithFS_Connections(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		body    string // "" leaves the file out
+		wantErr string
+	}{
+		{name: "absent"},
+		{name: "valid", body: `connections:
+  svc:
+    token_url: https://auth.example.com/token
+    client_id_secret: svc_id
+    client_secret_secret: svc_secret
+    style: rfc6749
+    user_agent: "test (ops@example.com)"
+`},
+		{name: "unknown key", body: "connections:\n  svc:\n    tokn_url: x\n", wantErr: "tokn_url"},
+		{name: "http token url", body: `connections:
+  svc:
+    token_url: http://auth.example.com/token
+    client_id_secret: svc_id
+    client_secret_secret: svc_secret
+    style: rfc6749
+    user_agent: "test (ops@example.com)"
+`, wantErr: "https"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fs := storage.NewMemFS()
+			root := "/proj"
+			if _, err := projectsetup.InitializeWithFS(root, fs); err != nil {
+				t.Fatal(err)
+			}
+			if tc.body != "" {
+				if err := fs.WriteFile(filepath.Join(root, "connections.yaml"), []byte(tc.body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := projectsetup.ValidateWithFS(root, fs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantErr == "" {
+				if result.ConnectionsError != nil {
+					t.Fatalf("ConnectionsError = %v, want nil", result.ConnectionsError)
+				}
+				return
+			}
+			if result.ConnectionsError == nil || !strings.Contains(result.ConnectionsError.Error(), tc.wantErr) {
+				t.Fatalf("ConnectionsError = %v, want one naming %q", result.ConnectionsError, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateResult_HasErrors(t *testing.T) {
 	cases := []struct {
 		name string
@@ -115,6 +172,7 @@ func TestValidateResult_HasErrors(t *testing.T) {
 		{"data-entry err", projectsetup.ValidateResult{DataEntryError: errExample}, true},
 		{"mail err", projectsetup.ValidateResult{MailTemplatesError: errExample}, true},
 		{"schedules err", projectsetup.ValidateResult{SchedulesError: errExample}, true},
+		{"connections err", projectsetup.ValidateResult{ConnectionsError: errExample}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
