@@ -209,9 +209,10 @@ func TestGet_ReportsNotFound(t *testing.T) {
 // forgotten method into a nil-dereference at call time instead of a build
 // failure here.
 type countingStore struct {
-	inner comments.Store
-	lists int
-	gets  int
+	inner  comments.Store
+	lists  int
+	gets   int
+	counts int
 }
 
 var _ comments.Store = (*countingStore)(nil)
@@ -224,6 +225,11 @@ func (s *countingStore) List(ctx context.Context, target comments.Target) ([]com
 func (s *countingStore) Get(ctx context.Context, target comments.Target, id string) (comments.Comment, error) {
 	s.gets++
 	return s.inner.Get(ctx, target, id)
+}
+
+func (s *countingStore) Count(ctx context.Context, targets []comments.Target) (map[string]int, error) {
+	s.counts++
+	return s.inner.Count(ctx, targets)
 }
 
 func (s *countingStore) Add(ctx context.Context, target comments.Target, c comments.Comment) error {

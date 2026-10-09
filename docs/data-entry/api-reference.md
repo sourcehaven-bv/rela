@@ -71,6 +71,29 @@ unchanged: they always carry `content`, as do ETags computed over it. A row
 whose entity has an empty body looks the same with or without the flag, which
 is the reason the field is omitted rather than sent empty.
 
+## Comment counts on list rows
+
+`GET /api/v1/{plural}` accepts `comment_counts=true` (any value
+`strconv.ParseBool` accepts; anything else is `false`). Each row then carries
+`_comment_count`, the number of comments on that row's face, resolved ones
+included. The whole page costs one call to the comment store. If that call
+fails, the error is logged and the rows are served without counts.
+
+```text
+GET /api/v1/tickets?comment_counts=true
+```
+
+The field is absent, not `0`, when it is not served:
+
+- the request did not ask for it;
+- commenting is off, or not enabled for the row's type;
+- the principal does not hold `comment:read` as a global grant.
+
+The last rule is deliberate. A `comment:read` granted only by a local role (for
+example through an ownership relation) is checked per entity, which would cost
+one ACL walk per row. Such a principal gets no counts on list rows; the thread
+itself is still readable at `/api/v1/_comments/{type}/{id}`.
+
 ## Limiting search results
 
 `GET /api/v1/_search` accepts an optional `limit` (an integer from 1 to 100)

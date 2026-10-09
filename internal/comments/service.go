@@ -120,6 +120,12 @@ func (s *Service) List(ctx context.Context, target Target) ([]Comment, error) {
 	return s.store.List(ctx, target)
 }
 
+// Count returns the thread size of each target, keyed by [Target.Key]; see
+// [Store.Count]. The ACL gate is the caller's job, as with List.
+func (s *Service) Count(ctx context.Context, targets []Target) (map[string]int, error) {
+	return s.store.Count(ctx, targets)
+}
+
 // Get returns one comment by ID, or [ErrNotFound].
 //
 // It exists chiefly so a handler can resolve a comment's author *before*
