@@ -442,7 +442,7 @@ func (s *sweep) captureOne(
 // next sweep finds the row clean against the new version and does.
 func captureLive(
 	ctx context.Context, q querier, c sweepCandidate, schemaHash string, projJSON []byte,
-) (int64, string, error) {
+) (vseq int64, contentHash string, err error) {
 	in, contentHash, err := c.versionInput(schemaHash, projJSON)
 	if err != nil {
 		return 0, "", err
@@ -454,7 +454,7 @@ func captureLive(
 	if c.latestHash != "" && contentHash == c.latestHash {
 		return 0, contentHash, nil
 	}
-	vseq, err := insertVersion(ctx, q, in, contentHash)
+	vseq, err = insertVersion(ctx, q, in, contentHash)
 	return vseq, contentHash, err
 }
 
