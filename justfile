@@ -351,10 +351,13 @@ fuzz-all fuzztime="25s":
 
 # ── Lint & Format ──
 
-# Run Go linter
+# Run Go linter on the default build and on every backend build tag, as CI does
 lint:
     @echo "Running Go linter..."
-    golangci-lint run
+    golangci-lint run --build-tags maildemo,mailmanual
+    golangci-lint run --build-tags sqlite
+    golangci-lint run --build-tags postgres
+    golangci-lint run --build-tags memorybackend
 
 # Check for known vulnerabilities (govulncheck with OSV filter)
 govulncheck:
@@ -388,7 +391,10 @@ plimsoll:
 # Run linter with auto-fix
 lint-fix:
     @echo "Running linter with auto-fix..."
-    golangci-lint run --fix
+    golangci-lint run --fix --build-tags maildemo,mailmanual
+    golangci-lint run --fix --build-tags sqlite
+    golangci-lint run --fix --build-tags postgres
+    golangci-lint run --fix --build-tags memorybackend
 
 # Lint markdown files
 lint-md:
