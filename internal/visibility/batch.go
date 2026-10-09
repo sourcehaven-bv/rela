@@ -2,6 +2,7 @@ package visibility
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -65,6 +66,36 @@ func (r *Resolver) ResolveHeaders(
 		return nil
 	}
 	return r.resolved(ctx, w, refs, faces)
+}
+
+// ResolveHeadersErr is [Resolver.ResolveHeaders] for a caller that must not
+// read a store fault as "nothing is served": a failed header read is
+// returned, as [Resolver.ResolveIDsErr] returns it. The error is the same
+// for every ref, so it tells an existing ref from a missing one no better
+// than a success would. A gate error for one type still hides that type's
+// refs and is logged, because the gate runs only for ids the read found. An
+// unset world is a wiring bug and is returned wrapping
+// [store.ErrInvalidQuery], as [Resolver.WriteTarget] returns it.
+func (r *Resolver) ResolveHeadersErr(
+	ctx context.Context, w World, refs []entity.Ref,
+) (map[entity.Ref]ResolvedHeader, error) {
+	if !w.denied && !w.scope.IsSet() {
+		return nil, fmt.Errorf("%w: visibility: ResolveHeadersErr with an unset world (use WorldOf)",
+			store.ErrInvalidQuery)
+	}
+	refs = wellFormed(refs)
+	ids := refIDs(refs)
+	if len(ids) == 0 {
+		return map[entity.Ref]ResolvedHeader{}, nil
+	}
+	faces, err := r.scanHeaders(ctx, ids, func(typ string, err error) error {
+		warnGate("batch", typ, "", err)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return r.resolved(ctx, w, refs, faces), nil
 }
 
 // ResolveIDs is [Resolver.ResolveHeaders] for bare ids, keyed by id: it

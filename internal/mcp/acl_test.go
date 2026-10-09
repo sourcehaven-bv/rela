@@ -380,6 +380,12 @@ func (d denyEntityReader) ResolveHeaders(
 	return out
 }
 
+func (d denyEntityReader) ResolveHeadersErr(
+	ctx context.Context, refs []entity.Ref,
+) (map[entity.Ref]visibility.ResolvedHeader, error) {
+	return d.ResolveHeaders(ctx, refs), nil
+}
+
 func (d denyEntityReader) ListEntities(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[*entity.Entity, error] {

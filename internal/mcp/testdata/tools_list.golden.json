@@ -1,5 +1,34 @@
 [
   {
+    "name": "add_to_pile",
+    "description": "Add entities to a pile by name, on top. A full pile drops its oldest items. Result: {added}. With owner set to another user, the push is write-only: added is always 0, and a missing pile (with create false) or a user at the pile limit is a silent no-op",
+    "inputSchema": {
+      "properties": {
+        "create": {
+          "description": "Create the pile when it does not exist (default true)",
+          "type": "boolean"
+        },
+        "ids": {
+          "description": "Entity IDs, or ID@face for one face of a faced type",
+          "type": "array"
+        },
+        "owner": {
+          "description": "Person entity ID of the pile's owner (default: you)",
+          "type": "string"
+        },
+        "pile": {
+          "description": "Pile name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pile",
+        "ids"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "analyze",
     "description": "Check the graph against the schema. cardinality: relation min/max; properties: property values; validations: custom rules; unique: duplicate unique values; orphans: unconnected entities; schema: unused types.",
     "inputSchema": {
@@ -269,6 +298,15 @@
     }
   },
   {
+    "name": "list_piles",
+    "description": "List your piles: personal, named stacks of entities. `count` is the number of items you can read. Result: {piles:[{id,name,icon,count}]}",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    }
+  },
+  {
     "name": "list_relations",
     "description": "List relations, filtered by type, source or target. Result: {total,has_more,relations}.",
     "inputSchema": {
@@ -368,6 +406,27 @@
     }
   },
   {
+    "name": "remove_from_pile",
+    "description": "Remove entities from one of your piles. A bare ID removes every face of it; ID@face removes that face. IDs not on the pile are ignored",
+    "inputSchema": {
+      "properties": {
+        "ids": {
+          "description": "Entity IDs, or ID@face",
+          "type": "array"
+        },
+        "pile": {
+          "description": "Pile name or pile id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pile",
+        "ids"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "rename_entity",
     "description": "Change an entity's ID and update every relation that references it. Only for types with id_type: manual; generated ids cannot be renamed",
     "inputSchema": {
@@ -454,6 +513,26 @@
       },
       "required": [
         "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "show_pile",
+    "description": "Show one of your piles: its items newest first, as {id,type,face,title,address}. Items you cannot read are left out",
+    "inputSchema": {
+      "properties": {
+        "pile": {
+          "description": "Pile name or pile id",
+          "type": "string"
+        },
+        "world": {
+          "description": "World to read in (see list_worlds). A world picks one face (content state) per entity. Omitted, the server's default world applies",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pile"
       ],
       "type": "object"
     }

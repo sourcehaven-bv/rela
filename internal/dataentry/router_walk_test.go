@@ -85,6 +85,10 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		// failure rather than a silently-identical status.
 		{http.MethodGet, "/api/v1/_comments/ticket/TKT-001", http.StatusNotFound},
 		{http.MethodPost, "/api/v1/_comments/ticket/TKT-001/c1/accept", http.StatusNotFound},
+		// Piles: no service is wired in the fixture, so the handler answers
+		// its own JSON 404.
+		{http.MethodGet, "/api/v1/_piles", http.StatusNotFound},
+		{http.MethodGet, "/api/v1/_piles/PIL-ABCD", http.StatusNotFound},
 		{http.MethodGet, "/api/v1/_conflicts", 0},
 		{http.MethodGet, "/api/v1/_conflicts/some-id", 0},
 		{http.MethodGet, "/api/v1/_documents/readme", 0},

@@ -26,3 +26,4 @@ export { FlyoutPage } from './flyout.page';
 export { PageTabsPage } from './page-tabs.page';
 export { SpacesPage } from './spaces.page';
 export { RelationOrderPage } from './relation-order.page';
+export { PilesPage } from './piles.page';

@@ -2892,6 +2892,44 @@ A background action holds only `lua_file:`, cannot use `allow_acl_bypass`,
 and must belong to an automation with a unique, non-empty `name:`. The
 schema refuses to load otherwise.
 
+**Add to Pile**:
+
+```yaml
+do:
+  - add_to_pile: {pile: Inbox, owner: "{{new.assignee}}"}
+```
+
+A pile is a personal, named stack of entities that one user collects and
+works through. This action puts the triggering entity on a pile. The face
+of the entity is kept, so `POL-1@draft` lands on the pile as that face.
+
+| Field    | Required | Description                                                         |
+| -------- | -------- | ------------------------------------------------------------------- |
+| `pile`   | yes      | The pile name. Supports interpolation.                              |
+| `owner`  | no       | The user whose pile receives the entity. Supports interpolation.    |
+| `create` | no       | Create the pile when it does not exist. Defaults to `true`.         |
+
+- Without `owner`, the entity goes on a pile of the user who made the
+  write.
+- `owner` must be that user or an existing entity of the ACL's
+  `user_entity_type` (a person). Anything else is refused.
+- When `owner` is set but interpolates to nothing, for example an
+  unassigned ticket, the action does nothing.
+- A push to another user's pile is write-only. It never reveals whether
+  that pile exists or how full it is.
+- A push to another user's pile never removes their items. On a full pile
+  the entity is not added. The push creates a pile only while that user has
+  fewer than 25 piles, so the other 25 of the 50 are always left for the
+  user. Each such push is logged with the pushing user, the target user and
+  the number of entities, but not the pile name.
+- The action is best-effort. A failed push is logged with the automation
+  name and never fails the entity write. A pile is a notification surface,
+  not a system of record.
+- `add_to_pile` must be the only action in its list entry.
+- On PostgreSQL the push runs outside the entity's transaction. If the
+  write then rolls back, the pile holds a reference to an entity that does
+  not exist. Readers skip it, so it is harmless.
+
 ### Template Variables
 
 Automation values support template substitution:

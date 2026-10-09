@@ -296,6 +296,7 @@ Domain and storage:
 | `internal/entitymanager` | Write path: automations, validation, audit, policy                                               |
 | `internal/audit`         | Append-only JSONL audit log of every successful write                                            |
 | `internal/jobs`          | Background-job seam: ephemeral (fs/desktop) or durable (postgres)                                |
+| `internal/piles`         | Per-user piles of entity refs, outside the graph; kvpiles (file-locked KV) or pgpiles (tenant schema) |
 | `internal/principal`     | Identity attribution (`Principal{User, Tool}`) on ctx                                            |
 | `internal/validator`     | Validation engine invoked by entitymanager                                                       |
 | `internal/markdown`      | Parse/write entity and relation markdown                                                         |

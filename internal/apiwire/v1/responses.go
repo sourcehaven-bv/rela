@@ -750,6 +750,12 @@ type Config struct {
 	// invite a client-side re-implementation of the engine. Same reasoning as
 	// "no useACL() composable": the SPA renders what the server computed.
 	NextActionBands []dataentryconfig.NextActionBand `json:"next_action_bands,omitempty"`
+
+	// Piles is the data-entry.yaml `piles:` block (TKT-K3RJLH): the actions
+	// and transforms a pile panel offers. Null when the block is absent.
+	// Whether THIS principal may use piles is on `_sidebar`
+	// ([SidebarResponse.PilesAvailable]).
+	Piles *dataentryconfig.PilesConfig `json:"piles"`
 }
 
 // App is the client-facing view of a custom app. It deliberately omits the
@@ -1142,6 +1148,17 @@ type SidebarResponse struct {
 	// A UI hint, never authorization: POST /api/v1/{plural} re-authorizes,
 	// so a stale or forged map can only surface a button that then 403s.
 	InlineCreate map[string]string `json:"inline_create,omitempty"`
+
+	// PilesAvailable reports that piles are wired AND this principal has an
+	// owner identity to keep them under (TKT-K3RJLH). False hides the piles
+	// UI. It rides here for the reason InlineCreate does: this is the one
+	// principal-scoped boot payload. The `piles:` config itself is on
+	// `_config` ([Config.Piles]), which is principal-independent.
+	PilesAvailable bool `json:"piles_available"`
+	// Piles repeats the `piles:` block of `_config`, so the SPA can read
+	// both piles fields from this one boot payload. Null when the block is
+	// absent.
+	Piles *dataentryconfig.PilesConfig `json:"piles"`
 }
 
 // ConflictItem represents a conflicted file.
@@ -1520,9 +1537,15 @@ type ViewLinkInfo struct {
 // because a scope (notably a search scope) can span entity types, so the SPA
 // must build the target's detail route from *its* type, not the current
 // entity's. ID alone would break cross-type prev/next.
+//
+// Address is what the SPA links to: `ID@face` for a pile item that names a
+// face, because a pile holds that face and stepping must open it; the bare
+// `ID` otherwise, which the request's world resolves exactly as the list or
+// search page that produced the scope did.
 type PositionRef struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Address string `json:"address"`
 }
 
 // Position is the scope-navigator payload: the neighbors plus the counter

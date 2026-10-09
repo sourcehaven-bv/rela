@@ -31,6 +31,11 @@ import (
 // behavior can't drift between the read and view paths. This surface is
 // read-only — no entitymanager.
 type viewsHandler struct {
+	// pilesAvailable reports that piles are wired and the principal has an
+	// owner identity. Nil: accepted, answers false (a test handler without
+	// piles).
+	pilesAvailable func(ctx context.Context) bool
+
 	schema      func() *Schema
 	store       store.Store
 	reader      entityReader
@@ -263,6 +268,8 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	resp.Pages = sidebarPages(ctx, aclImpl, s.Cfg, s.Meta)
 	resp.LogoURL = h.logo.URL()
 	resp.InlineCreate = h.inlineCreateForms(ctx)
+	resp.PilesAvailable = h.pilesAvailable != nil && h.pilesAvailable(ctx)
+	resp.Piles = pilesWire(s.Cfg.Piles)
 
 	writeV1JSON(w, http.StatusOK, resp)
 }

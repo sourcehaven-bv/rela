@@ -296,7 +296,11 @@ export async function listRecentlyModified(
  * scope.go and issue #844.
  */
 export interface ScopeDescriptor {
-  source: 'list' | 'search'
+  // 'pile' walks one of the principal's piles (TKT-K3RJLH): it carries `pile`
+  // and no other field, and the server refuses any other one.
+  source: 'list' | 'search' | 'pile'
+  // The pile id, for a pile scope only.
+  pile?: string
   // Required for a list scope (single-type). Optional for a search scope,
   // where it narrows a possibly-mixed-type result to one type; omit it to
   // navigate across all matched types. The backend enforces this per-source.
@@ -322,6 +326,12 @@ export interface ScopeDescriptor {
 export interface PositionRef {
   id: string
   type: string
+  /**
+   * `ID` or `ID@face`: the row the scope holds. A pile holds a face, so its
+   * prev/next links address it rather than the bare id. Absent from an older
+   * server.
+   */
+  address?: string
 }
 
 /** EntityPosition mirrors the backend V1Position payload. */
@@ -338,13 +348,19 @@ export interface EntityPosition {
  * current, total} — no entity bodies — so navigation is correct at any set
  * size. Replaces the old per_page=1000 fetch-and-scan that silently truncated
  * past the pagination cap (#844).
+ *
+ * `world` is the page's world (`worldParam`), so the position is computed over
+ * the set the page showed: a pile's total then equals its panel count.
  */
 export async function getEntityPosition(
   id: string,
   scope: ScopeDescriptor,
+  world?: string,
   signal?: AbortSignal
 ): Promise<EntityPosition> {
-  return api.get<EntityPosition>('/_position', { id, scope: JSON.stringify(scope) }, signal)
+  const params: Record<string, string> = { id, scope: JSON.stringify(scope) }
+  if (world) params.world = world
+  return api.get<EntityPosition>('/_position', params, signal)
 }
 
 export async function analyze(): Promise<AnalyzeResult> {

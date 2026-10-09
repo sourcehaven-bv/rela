@@ -569,7 +569,8 @@ func Stamped(ctx context.Context) (Principal, bool) {
 }
 
 // SystemUser returns the OS user running this process — $USER
-// trimmed, or "unknown" if $USER is unset or whitespace-only. Used by
+// trimmed, else %USERNAME% (Windows sets that one, not $USER), or
+// "unknown" if both are unset or whitespace-only. Used by
 // entry-point wiring to populate [Principal.User].
 //
 // The original plan had a four-tier fallback chain ($RELA_ACTOR →
@@ -579,6 +580,9 @@ func Stamped(ctx context.Context) (Principal, bool) {
 // override per-request via HTTP middleware in a follow-up.
 func SystemUser() string {
 	u := strings.TrimSpace(os.Getenv("USER"))
+	if u == "" {
+		u = strings.TrimSpace(os.Getenv("USERNAME"))
+	}
 	if u == "" {
 		return Unknown
 	}

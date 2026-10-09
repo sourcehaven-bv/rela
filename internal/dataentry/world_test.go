@@ -92,6 +92,14 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/_documents/report", false, "document render and its cache key are world-blind"},
 		{"/api/v1/_position", true, "position recomputes a search or list page's set in its world (BUG-SMPOZB)"},
 		{"/api/v1/_analyze", false, "whole-graph, tracer-backed"},
+		{"/api/v1/_piles", true, "pile counts resolve items in the request's world (TKT-K3RJLH)"},
+		{"/api/v1/_piles/PIL-ABCD", true, "one pile's items resolve in the request's world"},
+		{"/api/v1/_piles/PIL-ABCD/_export", true, "the export is the same rows as the pile GET"},
+		{"/api/v1/_piles/PIL-ABCD/items", false, "an add is a write; only the read shapes are named"},
+		{"/api/v1/_piles/PIL-ABCD/items/_remove", false, "a removal is a write"},
+		{"/api/v1/_piles/", true, "a trailing slash is the list, which the handler serves as such"},
+		{"/api/v1/_piles/PIL-ABCD/_other", false, "the match is exact, not a prefix"},
+		{"/api/v1/_pilesx", false, "a longer name is not the piles route"},
 		// BUG-2: history WAS refused as "an orthogonal version axis". It is not
 		// orthogonal — `entity_versions` is keyed by content state (TKT-C1XUA8),
 		// so a draft and its published face have different histories, and
@@ -445,6 +453,9 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 		// `_position` (BUG-SMPOZB). Reads through resolveScope and the list
 		// pushdown, both world-scoped.
 		"handleV1EntityPosition": true,
+		// `_piles` (TKT-K3RJLH). Reads items through the pile resolver in
+		// the request's world, never through the entity reader.
+		"handleV1Piles": true,
 	}
 
 	entries, err := os.ReadDir(".")
