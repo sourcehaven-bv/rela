@@ -1199,6 +1199,9 @@ attachment write mutates the entity, so it is authorized as an `update`,
 re-checked server-side **before any bytes are written** (a deny never
 orphans a file). A caller who cannot read the entity gets the same uniform
 `404` as the read path; a caller who can read but not update gets `403`.
+A `fields:` policy applies as on `PATCH`: a file property the caller may
+not write is refused with `403` and `rule_kind: affordance` before any bytes
+are written.
 
 Size limits: the request is capped at ingress (`413 attachment_too_large`,
 `application/problem+json`) by a default of 64 MiB, overridable per

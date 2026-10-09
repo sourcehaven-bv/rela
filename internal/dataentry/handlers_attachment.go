@@ -600,6 +600,20 @@ func (h *attachmentHandler) attachmentWritePreflight(
 		writeForbiddenIfACLDenied(w, &acl.ForbiddenError{Decision: decision})
 		return nil, false
 	}
+	// An upload or detach sets the property, so a `fields:` policy that
+	// freezes it refuses the write, as on PATCH (GitHub #1760). The audit
+	// record is the attachment one, so it carries op=attachment-write like
+	// the ACL denial above.
+	if denial := h.affordances.validateFieldWrite(ctx, entity, map[string]any{property: nil}, nil); denial != nil {
+		reason := denial.Reason
+		if denial.Attribution != "" {
+			reason += " attribution=" + denial.Attribution
+		}
+		h.audit().Record(audit.AttachmentWriteDenied(ctx, entity.Type, entity.ID,
+			reason, "affordance", denial.RuleID()))
+		writeAffordanceDenialError(w, *denial)
+		return nil, false
+	}
 	return entity, true
 }
 

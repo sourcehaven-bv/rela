@@ -607,7 +607,8 @@ Create, and the entity is saved with its file. Two details are worth knowing:
   again, since the form that held them is gone by then.
 
 Attachments inherit the owning entity's permissions: if you may not update the
-entity, you may not attach to it.
+entity, you may not attach to it. A `fields:` rule that makes the file field
+read-only also blocks adding or removing its files.
 
 ### Field Layout (`span`)
 
