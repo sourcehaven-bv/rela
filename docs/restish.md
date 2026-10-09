@@ -58,7 +58,6 @@ are the same for any proxy that does this.
    {
      "rela": {
        "base_url": "https://rela.example",
-       "spec_files": ["https://rela.example/api/v1/_openapi.json"],
        "profiles": {
          "default": {
            "auth": {
@@ -75,8 +74,11 @@ are the same for any proxy that does this.
    }
    ```
 
-   Give the spec URL explicitly. restish looks for a spec at the root of the
-   base URL, and rela serves it under `/api/v1/`.
+   No spec URL is needed. The site root answers with a
+   `Link: </api/v1/_openapi.json>; rel="service-desc"` header (RFC 8631),
+   and restish follows it. It reads that header only from a successful
+   response, so if your proxy redirects `GET /`, add
+   `"spec_files": ["https://rela.example/api/v1/_openapi.json"]` instead.
 
 3. Sign in and load the spec. The first call opens the browser for the OAuth
    sign-in; restish then caches the token and refreshes it.
