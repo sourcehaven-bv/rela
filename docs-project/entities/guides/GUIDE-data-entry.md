@@ -2995,7 +2995,7 @@ kanbans:
 | `header`           | string | Markdown rendered above the board (info/help; see below)   |
 | `footer`           | string | Markdown rendered below the board                          |
 | `column_property`  | string | Property to group by for columns (must be enum/custom type)|
-| `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`)     |
+| `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`, `collapsed`) |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
 | `card`             | object | Card display configuration                                 |
@@ -3085,12 +3085,45 @@ kanbans:
         label: "✅ Done"
 ```
 
-| Field   | Type   | Description                                    |
-| ------- | ------ | ---------------------------------------------- |
-| `value` | string | Enum value that maps to this column            |
-| `label` | string | Display label (defaults to the raw enum value)  |
+| Field       | Type    | Description                                         |
+| ----------- | ------- | --------------------------------------------------- |
+| `value`     | string  | Enum value that maps to this column                 |
+| `label`     | string  | Display label (defaults to the raw enum value)      |
+| `icon`      | string  | Icon name shown beside the label                    |
+| `collapsed` | boolean | Start the column collapsed (see below)              |
 
 Entities with column property values not in the explicit list are hidden from the board.
+
+### Collapsing columns
+
+Every column heading has a collapse button. A collapsed column shrinks to a
+narrow strip that shows its title and card count; click the strip to expand
+it. On a swimlane board the column collapses across all lanes.
+
+The browser remembers which columns a reader collapsed, per board, so the
+board looks the same after a reload. This is stored locally and is not shared
+between browsers or users.
+
+`collapsed: true` on a declared column starts it collapsed, for example a
+column of postponed work:
+
+```yaml
+kanbans:
+  task_board:
+    entity_type: task
+    column_property: status
+    columns:
+      - value: todo
+      - value: doing
+      - value: postponed
+        collapsed: true
+```
+
+This only sets the starting state. A reader can still expand the column, and
+the board remembers that choice. Columns inferred from the enum have no config
+default, so they start expanded.
+
+You cannot drop a card onto a collapsed column. Expand it first.
 
 ### Swimlanes
 
