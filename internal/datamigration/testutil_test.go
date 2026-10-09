@@ -166,7 +166,12 @@ func mustParse(t *testing.T, name string, data []byte) *File {
 // seedStore builds a memstore with representative v1 data.
 func seedStore(t *testing.T) store.Store {
 	t.Helper()
-	st := memstore.New()
+	return seedInto(t, memstore.New())
+}
+
+// seedInto writes seedStore's fixture into st and returns it.
+func seedInto(t *testing.T, st store.Store) store.Store {
+	t.Helper()
 	ctx := t.Context()
 	entities := []*entity.Entity{
 		{ID: "TSK-1", Type: "task", Properties: map[string]any{"title": "one", "status": "open", "due": "01/02/2026"}},

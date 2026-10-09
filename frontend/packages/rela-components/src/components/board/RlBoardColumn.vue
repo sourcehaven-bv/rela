@@ -54,8 +54,11 @@ const props = withDefaults(
     keyboardTarget?: boolean
     /** Whether a drop reports where among the cards it landed. See `RlBoard`. */
     reorder?: boolean
+    /** Whether the heading offers a control that collapses the column. */
+    collapsible?: boolean
   }>(),
   {
+    collapsible: false,
     reorder: false,
     showAdd: true,
     canMove: undefined,
@@ -72,6 +75,7 @@ const emit = defineEmits<{
   drop: [payload: { drag: BoardDragData; section: Section<T>; at?: BoardDropPosition }]
   grab: [item: T]
   release: []
+  collapse: [section: Section<T>]
 }>()
 
 defineSlots<{
@@ -108,6 +112,7 @@ function onRelease() {
     ref="element"
     class="rl-board-column"
     :class="{ 'rl-board-column--target': target }"
+    :data-section-id="section.id"
   >
     <RlSectionHeading
       class="rl-board-column__heading"
@@ -115,6 +120,8 @@ function onRelease() {
       :color="section.color"
       :icon="section.icon"
       :count="section.count ?? section.items.length"
+      :collapsible="collapsible"
+      @collapse="emit('collapse', section)"
     />
 
     <div class="rl-board-column__cards">

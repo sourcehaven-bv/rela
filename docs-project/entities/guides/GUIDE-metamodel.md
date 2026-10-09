@@ -2709,6 +2709,7 @@ Automations fire based on entity changes:
 | `becomes`          | Value the property changed to             | `in-progress`          |
 | `from`             | Value the property changed from           | `backlog`              |
 | `created`          | Fires when entity is created              | `true`                 |
+| `updated`          | Fires on an update that changes a property or the body, not on a create. Not with `property`, `becomes` or `from`; a script under it must be `background: true` | `true` |
 | `relation_created` | Fires when this relation type is created  | `implements`           |
 | `relation_removed` | Fires when this relation type is removed  | `implements`           |
 | `faces`            | Content states to watch (default: all)    | `[published]`          |
@@ -2817,6 +2818,79 @@ do:
       relation: has-planning
       if_exists: skip
 ```
+
+**Run a Lua script**: `lua:` holds inline code and `lua_file:` names a
+file under `scripts/`. The script gets the saved entity as `entity` and its
+previous state as `old_entity`, and runs in the request that saved it, as
+the user who saved. `capabilities:` and `allow_acl_bypass` are described in
+the [Lua scripting guide](lua-scripting.md).
+
+```yaml
+do:
+  - lua_file: notify.lua
+```
+
+**Run a Lua script in the background**: `background: true` runs a
+`lua_file:` action as a background job instead (TKT-2Q4UFI). Use it for a
+script that calls an external system, so a save does not wait on that
+system.
+
+```yaml
+automations:
+  - name: push-to-tracker
+    on: {entity: ticket, created: true, updated: true}
+    do:
+      - lua_file: tracker/push.lua
+        background: true
+        run_as: tracker-sync      # default: system:automation
+        retry: bounded            # never | bounded (default) | persistent
+        capabilities: {http: true, secrets: [tracker_token]}
+```
+
+A background action differs from an inline one in these ways:
+
+- **Identity.** The job runs as `run_as`, or as `system:automation`, never as
+  the user who saved. Reads, writes and transition guards are checked against
+  that identity's grants in `acl.yaml`, field grants included. Give it a role
+  there. Without one, the job cannot read the entity and ends with a warning
+  in the server log. `run_as` lets any user who can save a matching entity
+  start a script with that identity's access, so treat it as an elevation
+  you grant, and treat the entity's values as untrusted input. `run_as` may
+  not name another `system:` identity. The audit log records the job as
+  `automation-job:<name>;by=<user who saved>`.
+- **What the script sees.** The job reads the entity again when it runs, so
+  `entity` is the current state, not the saved one, and `old_entity` is nil.
+  The trigger's `when:` and `condition:` are not checked again.
+- **Coalescing.** Saves of one entity while its job is waiting make one run.
+  A save while the job runs makes the job run once more afterwards. A save
+  that arrives just as a job finishes is queued again shortly after. A job
+  stops rerunning after 5 runs and fails, so `retry:` decides whether it
+  runs again.
+- **Renames.** A job still waiting for the old id finds nothing. So a rename
+  checks the automation's trigger again for the new id, and starts its
+  background actions if it matches. Only background actions run on a
+  rename.
+- **Failures.** A script error is retried as `retry:` says. A job can
+  therefore run a script more than once, so write it so that a second run
+  does no harm. A job whose action was removed from the schema, or whose
+  entity was deleted, ends without running.
+- **Loops.** The job's own writes do not start it again for the same entity.
+  A chain of background jobs that start each other stops after 8 steps.
+- **Where it runs.** `rela-server` and the desktop app run jobs on the job
+  queue. Every other command, including `rela mcp` and `rela scheduler`, runs
+  the script in the foreground, right after the save, because a one-shot
+  command would exit before the queue ran the job. There `retry:` does not
+  apply, and a failed script makes the save report only that the background
+  action failed; the error itself goes to the log. On the file and SQLite
+  backends the queue is in memory, so jobs still waiting when the process
+  stops are lost.
+- **State.** In queue mode each (automation, script, entity) keeps two small
+  records in the project's state store (`.rela/automation-jobs/` on the
+  file backend). They are not removed when the entity is deleted.
+
+A background action holds only `lua_file:`, cannot use `allow_acl_bypass`,
+and must belong to an automation with a unique, non-empty `name:`. The
+schema refuses to load otherwise.
 
 ### Template Variables
 

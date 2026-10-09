@@ -26,6 +26,7 @@ import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
 import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
 import { useListReorder } from '@/composables/useListReorder'
+import { useKanbanCollapse } from '@/composables/useKanbanCollapse'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
@@ -452,15 +453,35 @@ const relationColumnColors = computed(() => {
   return colors
 })
 
+// Folded columns, remembered per board. Only declared columns carry a config
+// default; an inferred column starts open.
+const columnCollapse = useKanbanCollapse(
+  () => props.id,
+  () => Object.fromEntries((kanbanConfig.value?.columns ?? []).map((c) => [c.value, c.collapsed ?? false]))
+)
+
 const boardSections = computed((): Section<BoardCard>[] =>
   columns.value.map((column) => ({
     id: column.value,
     title: columnTitle(column),
     icon: iconFor(column.icon),
     color: columnsFrom.value ? relationColumnColors.value.get(column.value) : undefined,
+    collapsed: columnCollapse.isCollapsed(column.value),
     items: (entitiesByColumn.value[column.value] ?? []).map(toCard),
   }))
 )
+
+function sectionId(section: string | Section<BoardCard>): string {
+  return typeof section === 'string' ? section : section.id
+}
+
+function collapseColumn(section: string | Section<BoardCard>) {
+  columnCollapse.setCollapsed(sectionId(section), true)
+}
+
+function expandColumn(section: string | Section<BoardCard>) {
+  columnCollapse.setCollapsed(sectionId(section), false)
+}
 
 // Lanes the user folded away. View state only, so it resets with the page.
 const collapsedLanes = ref(new Set<string>())
@@ -964,8 +985,11 @@ watch(createModal.open, (open) => {
       :show-add-section="false"
       :can-move="canMoveCard"
       :selected-id="selectedEntityId ?? undefined"
+      collapsible
       @move="onMove"
       @toggle-lane="toggleLane"
+      @collapse-section="collapseColumn"
+      @expand-section="expandColumn"
     >
           <template #card="{ item }">
             <RouterLink
@@ -1002,8 +1026,11 @@ watch(createModal.open, (open) => {
       :can-move="boardCanMove"
       :reorder="reorder.reorderable.value"
       :selected-id="selectedEntityId ?? undefined"
+      collapsible
       @move="onMove"
       @add="onColumnAdd"
+      @collapse-section="collapseColumn"
+      @expand-section="expandColumn"
     >
           <template #card="{ item }">
             <RouterLink

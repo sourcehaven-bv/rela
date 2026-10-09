@@ -29,9 +29,9 @@ const dropMarkedEdgesSQL = `DELETE FROM marked_relations WHERE from_id = ? OR to
 const (
 	entityRowColumns = "id, face, type, properties, content, updated_at, " +
 		"last_edited_by_user, last_edited_by_tool, origin_kind, origin_source, origin_source_face, " +
-		"origin_source_type, origin_definition"
+		"origin_source_type, origin_definition, content_hash"
 	relationRowColumns = "from_id, from_face, rel_type, to_id, properties, content, updated_at, " +
-		"rel_record_id, last_edited_by_user, last_edited_by_tool"
+		"rel_record_id, last_edited_by_user, last_edited_by_tool, content_hash"
 )
 
 // SoftDelete implements [store.SoftDeleteProvider]. On a transaction view the

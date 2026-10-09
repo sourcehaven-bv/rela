@@ -30,3 +30,8 @@ export const Variants: Story = {
     `,
   }),
 }
+
+/** With `collapsible`, the heading ends in a control that emits `collapse`. */
+export const Collapsible: Story = {
+  args: { collapsible: true },
+}

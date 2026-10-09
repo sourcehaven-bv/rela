@@ -159,10 +159,10 @@ func TestRelationVersionRecreateStartsFreshLineage(t *testing.T) {
 //     (via WriteRelationVersion with RecordID=0 → resolves the key → the
 //     surviving rel_record_id) simply appends to that one lineage.
 //  2. The atomic re-key does NOT bump relations.updated_at (RR-N5YK81, now the
-//     live path) — see TestRelationRenameDoesNotBumpUpdatedAt. That means the
-//     sweep cannot back-fill a missed rename capture; documented as best-effort
-//     (the lineage stays continuous regardless, so a missed rename version only
-//     loses the rename MARKER, not history continuity).
+//     live path) — see TestRelationRenameDoesNotBumpUpdatedAt. If the rename
+//     capture is missed, the sweep records the new endpoints as a plain update
+//     (the re-key clears content_hash), so only the rename MARKER is lost, not
+//     history continuity; documented as best-effort.
 //
 // This is the STORE half of rename-version coverage: it asserts the store
 // persists the rename version on the surviving rel_record_id. The MANAGER half —
@@ -262,7 +262,7 @@ func TestRelationRenameDoesNotBumpUpdatedAt(t *testing.T) {
 		`SELECT updated_at::text FROM relations WHERE from_id='A2' AND rel_type='links' AND to_id='X'`).Scan(&after))
 
 	require.Equal(t, before, after,
-		"atomic rename re-key does not bump relations.updated_at (documented best-effort; sweep can't back-fill a missed rename)")
+		"atomic rename re-key does not bump relations.updated_at (documented best-effort; a missed rename marker is not back-filled)")
 }
 
 // TestSweepCapturesSettledRelations drives the sweep against a settled relation

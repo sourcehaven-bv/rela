@@ -601,7 +601,8 @@ Create, and the entity is saved with its file. Two details are worth knowing:
   again, since the form that held them is gone by then.
 
 Attachments inherit the owning entity's permissions: if you may not update the
-entity, you may not attach to it.
+entity, you may not attach to it. A `fields:` rule that makes the file field
+read-only also blocks adding or removing its files.
 
 ### Field Layout (`span`)
 
@@ -3038,7 +3039,7 @@ kanbans:
 | `footer`           | string | Markdown rendered below the board                          |
 | `column_property`  | string | Property to group by for columns (must be enum/custom type)|
 | `columns_from`     | object | Columns from a relation's targets instead of an enum (see below) |
-| `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`)     |
+| `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`, `collapsed`) |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
 | `card`             | object | Card display configuration                                 |
@@ -3128,10 +3129,12 @@ kanbans:
         label: "✅ Done"
 ```
 
-| Field   | Type   | Description                                    |
-| ------- | ------ | ---------------------------------------------- |
-| `value` | string | Enum value that maps to this column            |
-| `label` | string | Display label (defaults to the raw enum value)  |
+| Field       | Type    | Description                                         |
+| ----------- | ------- | --------------------------------------------------- |
+| `value`     | string  | Enum value that maps to this column                 |
+| `label`     | string  | Display label (defaults to the raw enum value)      |
+| `icon`      | string  | Icon name shown beside the label                    |
+| `collapsed` | boolean | Start the column collapsed (see below)              |
 
 Entities with column property values not in the explicit list are hidden from the board.
 
@@ -3178,6 +3181,37 @@ reason as from a list section.
 A list can group on a relation the same way: `group_by` takes `relation`,
 `offered_by`, `order_by` and `style_from` with the same meaning, one section
 per target.
+
+### Collapsing columns
+
+Every column heading has a collapse button. A collapsed column shrinks to a
+narrow strip that shows its title and card count; click the strip to expand
+it. On a swimlane board the column collapses across all lanes.
+
+The browser remembers which columns a reader collapsed, per board, so the
+board looks the same after a reload. This is stored locally and is not shared
+between browsers or users.
+
+`collapsed: true` on a declared column starts it collapsed, for example a
+column of postponed work:
+
+```yaml
+kanbans:
+  task_board:
+    entity_type: task
+    column_property: status
+    columns:
+      - value: todo
+      - value: doing
+      - value: postponed
+        collapsed: true
+```
+
+This only sets the starting state. A reader can still expand the column, and
+the board remembers that choice. Columns inferred from the enum have no config
+default, so they start expanded.
+
+You cannot drop a card onto a collapsed column. Expand it first.
 
 ### Swimlanes
 

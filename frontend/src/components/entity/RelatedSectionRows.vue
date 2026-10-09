@@ -4,9 +4,10 @@
  * its title and its fields as trailing text.
  *
  * It suits records shown as part of the entry, such as owned subtasks. A row
- * owned by something links to its owner's page, anchored at the row; on the
- * owner's own page that is a jump to the row. Any other row links to its own
- * page.
+ * owned by the page's own entity is static text: the row is all there is to
+ * see of it, and a link would only reload the page. A row owned by something
+ * else links to its owner's page, anchored at the row. Any other row links to
+ * its own page.
  *
  * Each row's id is the entity id, so `#<id>` scrolls to it, unless `anchor`
  * gives the anchor to another row on the page.
@@ -28,6 +29,8 @@ const props = defineProps<{
   world?: string
   /** The anchor id for a row, or undefined when another row holds it. */
   anchor?: (id: string) => string | undefined
+  /** The bare id of the entity whose page this is. Its own rows do not link. */
+  pageEntity?: string
 }>()
 
 const schemaStore = useSchemaStore()
@@ -65,13 +68,12 @@ function meta(ent: ViewEntity): RelatedMeta[] {
 
 const items = computed<RelatedItem[]>(() =>
   props.entities.map((ent) => {
-    const to = target(ent)
-    return {
-      id: ent.id,
-      title: ent.title || ent.id,
-      meta: meta(ent),
-      ...(to ? { as: RouterLink, attrs: { to } } : {}),
+    const base = { id: ent.id, title: ent.title || ent.id, meta: meta(ent) }
+    if (props.pageEntity && ent._owner?.id === props.pageEntity) {
+      return { ...base, as: 'span' as const }
     }
+    const to = target(ent)
+    return to ? { ...base, as: RouterLink, attrs: { to } } : base
   })
 )
 </script>
@@ -86,9 +88,3 @@ const items = computed<RelatedItem[]>(() =>
     />
   </div>
 </template>
-
-<style scoped>
-.related-rows {
-  border-top: 1px solid var(--rl-color-border);
-}
-</style>

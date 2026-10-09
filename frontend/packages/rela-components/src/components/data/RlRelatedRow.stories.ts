@@ -38,3 +38,15 @@ export const LongTitle: Story = {
   },
   decorators: [() => ({ template: '<div style="max-width:420px"><story /></div>' })],
 }
+
+/** A static row: plain text, for a record already shown in full here. */
+export const Static: Story = {
+  args: {
+    item: {
+      id: 'static',
+      title: 'Book the venue',
+      as: 'span',
+      meta: [{ id: 'assignee', label: 'Assigned to', value: 'Sam' }],
+    },
+  },
+}

@@ -16,6 +16,7 @@ import {
   type BoardDropPosition,
 } from '../../composables/useBoardDnd'
 import { useBoardKeyboardMove } from './useBoardKeyboardMove'
+import { useSectionToggleFocus } from './useSectionToggleFocus'
 
 const props = withDefaults(
   defineProps<{
@@ -54,9 +55,16 @@ const props = withDefaults(
      * The keyboard move still picks a column only.
      */
     reorder?: boolean
+    /**
+     * Whether each column heading offers a collapse control. The board does
+     * not fold the column itself: it emits `collapseSection`, and the caller
+     * sets `collapsed` on the section, as it does for `expandSection`.
+     */
+    collapsible?: boolean
   }>(),
   {
     reorder: false,
+    collapsible: false,
     showAddSection: true,
     addLabel: 'Add',
     showAdd: true,
@@ -70,6 +78,7 @@ const emit = defineEmits<{
   add: [section: Section<T>]
   select: [item: T]
   expandSection: [section: Section<T>]
+  collapseSection: [section: Section<T>]
   addSection: []
   /**
    * A card was dropped on a column other than its own, or, with `reorder`,
@@ -81,6 +90,20 @@ const emit = defineEmits<{
 
 const element = ref<HTMLElement>()
 useBoardAutoScroll(element)
+
+const toggleFocus = useSectionToggleFocus(element, () =>
+  props.sections.map((section) => `${section.id}:${!!section.collapsed}`).join('|'),
+)
+
+function onExpand(section: Section<T>) {
+  toggleFocus.expect(section.id)
+  emit('expandSection', section)
+}
+
+function onCollapse(section: Section<T>) {
+  toggleFocus.expect(section.id)
+  emit('collapseSection', section)
+}
 
 /** Finds the dragged item, which the drag payload carries only by id. */
 function itemById(id: string) {
@@ -125,7 +148,7 @@ defineSlots<{
       <RlBoardColumnCollapsed
         v-if="section.collapsed"
         :section="section"
-        @expand="emit('expandSection', $event)"
+        @expand="onExpand"
       />
       <RlBoardColumn
         v-else
@@ -139,11 +162,13 @@ defineSlots<{
         :grabbed-id="grabbedId"
         :keyboard-target="targetId === section.id"
         :reorder="reorder"
+        :collapsible="collapsible"
         @add="emit('add', $event)"
         @select="emit('select', $event)"
         @drop="onDrop"
         @grab="grab($event, section)"
         @release="cancelMove()"
+        @collapse="onCollapse"
       >
         <template v-if="$slots.card" #card="cardProps">
           <slot name="card" v-bind="cardProps" />
