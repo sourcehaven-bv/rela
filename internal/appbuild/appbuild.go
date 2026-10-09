@@ -517,6 +517,8 @@ type scriptEntityReaderFamily interface {
 	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
 	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
+	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
 }
 
 // scriptReads returns the principal-bound script reader and the traversal gate
@@ -757,8 +759,8 @@ func gatedSearcher(
 }
 
 // GatedGraphReader is the row-and-tally read surface returned by
-// [Services.GatedReads]. Row reads are ACL-gated; the two counts are not —
-// see [gatedGraphReader] for why.
+// [Services.GatedReads]. Row reads and counts are ACL-gated — see
+// [gatedGraphReader].
 //
 // Resolve takes an entity ADDRESS (`ID` or `ID@face`) and reads the face it
 // names, or the face the reader's world resolves a bare id to. Family answers
@@ -783,19 +785,16 @@ type GatedGraphReader interface {
 }
 
 // gatedGraphReader composes the ACL-gated row reader with the raw store for
-// the two operations the gated reader does not provide.
+// the one operation the gated reader does not provide.
 //
 // The split is deliberate:
 //
 //   - Resolve / ListEntities / ListRelations go through `rows`, so a hidden
 //     entity is absent and a hidden edge is not listed.
-//   - CountEntities / CountRelations go to the raw store. A count is
-//     STRUCTURAL: it says how many rows of a declared type exist, never which.
-//     Entity *existence* is the secret the row gate protects; an aggregate
-//     tally of a type the metamodel already publishes is not. A count scoped
-//     to ONE entity is different, since it reveals that entity's hidden
-//     neighbors; cardinality analysis therefore folds its counts from
-//     ListRelationsStrict instead (TKT-5LW875).
+//   - CountEntities / CountRelations go through `rows` too, so a count is the
+//     length of the list it summarizes (TKT-QZTROQ). A count over the raw
+//     store told a caller how many rows exist of a type it may not read, and
+//     how many rows of a readable type are hidden from it.
 //   - GetRelation answers not-found unless both endpoints have a readable
 //     face ([visibility.Resolver.Family]), then reads the raw store. An edge
 //     at the zero tail is entity level, so the family check is the whole gate
@@ -899,11 +898,11 @@ func (g gatedGraphReader) readableFaces(ctx context.Context, id string) ([]entit
 }
 
 func (g gatedGraphReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
-	return g.raw.CountEntities(ctx, q)
+	return g.rows.CountEntities(ctx, q)
 }
 
 func (g gatedGraphReader) CountRelations(ctx context.Context, q store.RelationQuery) (int, error) {
-	return g.raw.CountRelations(ctx, q)
+	return g.rows.CountRelations(ctx, q)
 }
 
 // Collaborators bundles the fully-built dependencies of a [Services]

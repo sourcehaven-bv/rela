@@ -87,3 +87,39 @@ func TestGatedGetRelation_TailFace(t *testing.T) {
 		})
 	}
 }
+
+// fixedCountReader answers both counts with fixed numbers. The embedded
+// interface is nil: the reader under test calls the counts only.
+type fixedCountReader struct {
+	scriptEntityReaderFamily
+	entities, relations int
+}
+
+func (r fixedCountReader) CountEntities(context.Context, store.EntityQuery) (int, error) {
+	return r.entities, nil
+}
+
+func (r fixedCountReader) CountRelations(context.Context, store.RelationQuery) (int, error) {
+	return r.relations, nil
+}
+
+// TestGatedCounts_UseTheGatedReader pins that the counts the remote MCP
+// reports come from the gated reader, not the raw store (TKT-QZTROQ). The raw
+// store holds rows the gated reader does not count.
+func TestGatedCounts_UseTheGatedReader(t *testing.T) {
+	ctx := context.Background()
+	raw := memstore.New()
+	for _, id := range []string{"OPP-1", "OPP-2"} {
+		require.NoError(t, raw.CreateEntity(ctx, &entity.Entity{ID: id, Type: "opportunity"}))
+	}
+	_, err := raw.CreateRelation(ctx, entity.RelationKey{From: "OPP-1", Type: "follows", To: "OPP-2"}, nil)
+	require.NoError(t, err)
+
+	g := gatedGraphReader{rows: fixedCountReader{}, raw: raw}
+	n, err := g.CountEntities(ctx, store.EntityQuery{Type: "opportunity", Faces: store.AllFaces()})
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "entity count must come from the gated reader")
+	n, err = g.CountRelations(ctx, store.RelationQuery{Type: "follows"})
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "relation count must come from the gated reader")
+}
