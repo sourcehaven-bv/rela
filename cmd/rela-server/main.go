@@ -86,6 +86,32 @@ type serverFlags struct {
 // coverage-ignore-start: main-or-wiring: flag/DI startup wiring using the global flag.CommandLine and process env,
 // exercised only at process
 // start
+// registerIdentityFlags registers the JWT identity and inbound-IdP webhook
+// flags on f.
+func registerIdentityFlags(f *serverFlags) {
+	// JWT identity flags (env fallbacks $RELA_JWT_*). Verifying a SIGNED assertion
+	// is safer than --principal-header (which merely trusts the proxy set a header).
+	flag.StringVar(&f.jwtIssuer, "jwt-issuer", os.Getenv("RELA_JWT_ISSUER"),
+		"Expected issuer (iss) of the identity JWT. Set with -jwt-audience and -jwt-jwks-url to "+
+			"enable cryptographic principal verification.")
+	flag.StringVar(&f.jwtAudience, "jwt-audience", os.Getenv("RELA_JWT_AUDIENCE"),
+		"Expected audience (aud) of the identity JWT — this server's id, per the proxy config.")
+	flag.StringVar(&f.jwtJWKSURL, "jwt-jwks-url", os.Getenv("RELA_JWT_JWKS_URL"),
+		"HTTPS URL of the proxy's JWKS, used to verify the identity JWT's ES256 signature.")
+	flag.StringVar(&f.jwtHeader, "jwt-header", envOr("RELA_JWT_HEADER", "X-Auth-Assertion"),
+		"Request header carrying the signed identity JWT (a leading 'Bearer ' is stripped). "+
+			"Point it at whatever your proxy injects, e.g. X-Pratique-Assertion or Authorization.")
+	// Inbound-IdP webhook flags (env fallbacks $RELA_WEBHOOK_*). Enable POST
+	// /webhooks/idp: a signed-JWT callback that provisions a user via an action.
+	flag.StringVar(&f.webhookAudience, "webhook-audience", os.Getenv("RELA_WEBHOOK_AUDIENCE"),
+		"Expected audience (aud) of an inbound IdP webhook JWT — distinct from -jwt-audience so an "+
+			"identity assertion can't be replayed as a webhook. Set with -webhook-action to enable "+
+			"POST /webhooks/idp. Reuses the -jwt-issuer/-jwt-jwks-url trust root.")
+	flag.StringVar(&f.webhookAction, "webhook-action", envOr("RELA_WEBHOOK_ACTION", ""),
+		"Name of the action a verified IdP webhook dispatches to (e.g. idp-sync). The action "+
+			"receives event/user_id/org_id as params and provisions the user.")
+}
+
 func parseFlags() *serverFlags {
 	f := &serverFlags{}
 	flag.StringVar(&f.projectDir, "project", ".", "Path to the rela project directory")
@@ -158,27 +184,7 @@ func parseFlags() *serverFlags {
 			"authenticates). Loopback binds and deployments with an acl.yaml never "+
 			"need this. See docs/server-security.md. Also enabled by "+
 			"RELA_ALLOW_UNAUTHENTICATED_COMMANDS=1.")
-	// JWT identity flags (env fallbacks $RELA_JWT_*). Verifying a SIGNED assertion
-	// is safer than --principal-header (which merely trusts the proxy set a header).
-	flag.StringVar(&f.jwtIssuer, "jwt-issuer", os.Getenv("RELA_JWT_ISSUER"),
-		"Expected issuer (iss) of the identity JWT. Set with -jwt-audience and -jwt-jwks-url to "+
-			"enable cryptographic principal verification.")
-	flag.StringVar(&f.jwtAudience, "jwt-audience", os.Getenv("RELA_JWT_AUDIENCE"),
-		"Expected audience (aud) of the identity JWT — this server's id, per the proxy config.")
-	flag.StringVar(&f.jwtJWKSURL, "jwt-jwks-url", os.Getenv("RELA_JWT_JWKS_URL"),
-		"HTTPS URL of the proxy's JWKS, used to verify the identity JWT's ES256 signature.")
-	flag.StringVar(&f.jwtHeader, "jwt-header", envOr("RELA_JWT_HEADER", "X-Auth-Assertion"),
-		"Request header carrying the signed identity JWT (a leading 'Bearer ' is stripped). "+
-			"Point it at whatever your proxy injects, e.g. X-Pratique-Assertion or Authorization.")
-	// Inbound-IdP webhook flags (env fallbacks $RELA_WEBHOOK_*). Enable POST
-	// /webhooks/idp: a signed-JWT callback that provisions a user via an action.
-	flag.StringVar(&f.webhookAudience, "webhook-audience", os.Getenv("RELA_WEBHOOK_AUDIENCE"),
-		"Expected audience (aud) of an inbound IdP webhook JWT — distinct from -jwt-audience so an "+
-			"identity assertion can't be replayed as a webhook. Set with -webhook-action to enable "+
-			"POST /webhooks/idp. Reuses the -jwt-issuer/-jwt-jwks-url trust root.")
-	flag.StringVar(&f.webhookAction, "webhook-action", envOr("RELA_WEBHOOK_ACTION", ""),
-		"Name of the action a verified IdP webhook dispatches to (e.g. idp-sync). The action "+
-			"receives event/user_id/org_id as params and provisions the user.")
+	registerIdentityFlags(f)
 	flag.BoolVar(&f.configEditing, "config-editing", os.Getenv("RELA_CONFIG_EDITING") == "1",
 		"Let principals holding the config:edit permission change the data model and "+
 			"screens (schema.yaml, data-entry.yaml) from the browser. A save rewrites the "+
