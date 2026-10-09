@@ -260,18 +260,19 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// acl/audit/field-resolver fields (attachment ACL tests reassign app.acl
 	// after this rebind), values for the fixed store/manager handles.
 	app.attachments = &attachmentHandler{
-		schema:     app.State,
-		store:      svc.Store(),
-		runner:     func() attachment.CommandRunner { return app.attachmentRunner },
-		reader:     app.reader,
-		serializer: app.serializer,
-		acl:        func() acl.ACL { return app.acl },
-		audit:      func() audit.Audit { return app.auditSink },
-		fields:     func() FieldVerdictResolver { return app.fieldResolver },
-		visible:    app.visibleReader,
-		owner:      app.attachmentOwner,
-		uploads:    app.attachmentUploads,
-		provision:  newProvisionSeam(app),
+		schema:      app.State,
+		store:       svc.Store(),
+		runner:      func() attachment.CommandRunner { return app.attachmentRunner },
+		reader:      app.reader,
+		serializer:  app.serializer,
+		acl:         func() acl.ACL { return app.acl },
+		audit:       func() audit.Audit { return app.auditSink },
+		fields:      func() FieldVerdictResolver { return app.fieldResolver },
+		affordances: app.affordances,
+		visible:     app.visibleReader,
+		owner:       app.attachmentOwner,
+		uploads:     app.attachmentUploads,
+		provision:   newProvisionSeam(app),
 	}
 
 	// Export handler over the app's current services (mirrors NewApp).
