@@ -600,6 +600,18 @@ reported every field in `fields`) and `retag` (nothing to do, but the tag
 should move to the current state). `retag` is true only for a complete
 report.
 
+**Rich text.** When the other system stores bodies as HTML, convert them
+with `rela.md.from_html(html)` on the way in and `rela.md.to_html(markdown)`
+on the way out. Both sanitize with the same allowlist: paragraphs, headings,
+bold, italic, strikethrough, lists, code, quotes, rules and `http`, `https`
+and `mailto` links. Everything else, such as colors, images and attachments,
+is dropped and its text kept. Converting a body back and forth a second time
+changes nothing, so a merge settles instead of pushing the same body forever.
+The other system may still store the HTML in its own form; the next pull
+then writes that form into rela once. Because dropped markup is lost, do not
+push a body that held markup the allowlist drops; the Basecamp example
+reports such a body as a conflict instead.
+
 Values compare by meaning for the property type: `3` and `"3"` are the same
 integer, a date ignores a midnight time, a list ignores order, and a body
 ignores line endings and trailing whitespace. So a value the other system
@@ -2209,6 +2221,12 @@ What the walker visits and what it skips:
 | `image` | recurse into `alt_inlines` |
 | `text`, `raw_html`, `autolink`, breaks | left untouched |
 | inside `code_block` or `raw` block | left untouched (parser doesn't emit code-span inlines there) |
+
+#### `rela.md.from_html(html)` and `rela.md.to_html(markdown)`
+
+Convert rich text between HTML and markdown, for sync connectors. Both
+return a string and sanitize their output. See "Rich text" under
+[Sync connectors](#sync-connectors) for what they keep.
 
 ## Entity Structure
 

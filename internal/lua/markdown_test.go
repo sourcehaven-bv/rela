@@ -2190,3 +2190,33 @@ func TestTitleSlug(t *testing.T) {
 		})
 	}
 }
+
+// TestMdHTMLConversion checks the rela.md.from_html / to_html bindings; the
+// conversion itself is tested in internal/htmlmd.
+func TestMdHTMLConversion(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, code, want string
+	}{
+		{"from_html", `return rela.md.from_html("<div>a <strong>b</strong></div>")`, "a **b**"},
+		{"to_html", `return rela.md.to_html("a **b**")`, "<p>a <strong>b</strong></p>"},
+		{"round trip", `return rela.md.from_html(rela.md.to_html("- x\n- y"))`, "- x\n- y"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
+			require.NoError(t, rt.RunString(tt.code))
+			assert.Equal(t, tt.want, lua.LVAsString(rt.L.Get(-1)))
+		})
+	}
+
+	t.Run("argument required", func(t *testing.T) {
+		t.Parallel()
+		rt := newMdTestRuntime(t)
+		defer rt.Close()
+		require.Error(t, rt.RunString(`return rela.md.to_html()`))
+	})
+}

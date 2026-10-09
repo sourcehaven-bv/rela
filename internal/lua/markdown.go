@@ -18,6 +18,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/htmlmd"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -168,7 +169,33 @@ func (r *Runtime) registerMarkdownModule(rela *lua.LTable) {
 	r.L.SetField(md, "resolve_refs", r.L.NewFunction(m.luaMdResolveRefs))
 	r.L.SetField(md, "entity_refs", r.L.NewFunction(er.luaMdEntityRefs))
 
+	// Rich-text conversion for sync connectors (TKT-LAMZ8F).
+	r.L.SetField(md, "from_html", r.L.NewFunction(luaMdFromHTML))
+	r.L.SetField(md, "to_html", r.L.NewFunction(luaMdToHTML))
+
 	r.L.SetField(rela, "md", md)
+}
+
+// luaMdFromHTML converts untrusted HTML to markdown; see [htmlmd.FromHTML].
+// Usage: md = rela.md.from_html(html)
+func luaMdFromHTML(ls *lua.LState) int {
+	out, err := htmlmd.FromHTML(ls.CheckString(1))
+	if err != nil {
+		ls.RaiseError("rela.md.from_html: %v", err)
+	}
+	ls.Push(lua.LString(out))
+	return 1
+}
+
+// luaMdToHTML renders markdown as sanitized HTML; see [htmlmd.ToHTML].
+// Usage: html = rela.md.to_html(md)
+func luaMdToHTML(ls *lua.LState) int {
+	out, err := htmlmd.ToHTML(ls.CheckString(1))
+	if err != nil {
+		ls.RaiseError("rela.md.to_html: %v", err)
+	}
+	ls.Push(lua.LString(out))
+	return 1
 }
 
 // --- Inline node constructors ---
