@@ -241,7 +241,7 @@ func (s *bcStub) serve(w http.ResponseWriter, r *http.Request) {
 		s.recordings(w, r, call)
 		return
 	}
-	if listText, ok := strings.CutPrefix(path, "todolists/"); ok && r.Method == http.MethodPost {
+	if listText, isList := strings.CutPrefix(path, "todolists/"); isList && r.Method == http.MethodPost {
 		s.calls = append(s.calls, call)
 		id, err := strconv.ParseInt(strings.TrimSuffix(listText, "/todos.json"), 10, 64)
 		if err != nil || s.lists[id] == nil {
