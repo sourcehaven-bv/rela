@@ -842,7 +842,7 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 				er:       r.deps.ElevatedReader,
 				recorder: r.deps.ElevationRecorder,
 				ctxFn:    r.callerCtx,
-				world:    r.deps.World,
+				faces:    listFaces{world: r.deps.World, meta: r.deps.Meta},
 			}
 			r.L.SetField(rela, "bypass_acl", r.L.NewFunction(eb.luaBypassACL))
 		}
@@ -1209,14 +1209,19 @@ func (r *Runtime) luaGetEntity(ls *lua.LState) int {
 	return 1
 }
 
-// luaListEntities implements rela.list_entities(type, filter?) -> table
+// luaListEntities implements rela.list_entities(type, opts?) -> table
 func (r *Runtime) luaListEntities(ls *lua.LState) int {
 	entityType := ls.CheckString(1)
 	if entityType == "" {
 		ls.RaiseError("entity type cannot be empty")
 		return 0
 	}
-	filterExpr, opts, err := listEntitiesArgs(ls)
+	filterExpr, face, opts, err := listEntitiesArgs(ls)
+	if err != nil {
+		ls.RaiseError("rela.list_entities: %s", err.Error())
+		return 0
+	}
+	faces, err := listFaces{world: r.deps.World, meta: r.deps.Meta}.selection(entityType, face)
 	if err != nil {
 		ls.RaiseError("rela.list_entities: %s", err.Error())
 		return 0
@@ -1237,7 +1242,7 @@ func (r *Runtime) luaListEntities(ls *lua.LState) int {
 	// Resolving that needs the cursor -- DEC-IYHLNF stage 2.
 	entities := make([]*entity.Entity, 0, min(opts.limit, initialRowCapacity))
 	for e, err := range rd.ListEntities(r.callerCtx(), store.EntityQuery{
-		Type: entityType, Faces: store.InWorld(r.deps.World),
+		Type: entityType, Faces: faces,
 	}) {
 		if err != nil {
 			// RAISE, never break-and-return-what-we-have (TKT-FVQ4). A short
