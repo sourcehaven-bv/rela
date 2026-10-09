@@ -120,6 +120,19 @@ func BuildMatchingFacesSQLForTest(q store.GraphQuery, ids []string) (sqlText str
 	return buildMatchingFacesSQL(q, ids)
 }
 
+// SweepNowWithWrite is [Store.SweepNow] with write run after the tick has
+// read its entity candidates and before it captures them.
+func (s *Store) SweepNowWithWrite(
+	ctx context.Context, p store.ProjectionProvider, cfg store.SweepConfig, write func(),
+) error {
+	pool, ok := s.db.(*pgxpool.Pool)
+	if !ok {
+		return errors.New("pgstore: SweepNowWithWrite needs a store built over a *pgxpool.Pool")
+	}
+	sw := &sweep{pool: pool, provider: p, cfg: sweepDefaults(cfg), beforeCapture: write}
+	return sw.tick(ctx)
+}
+
 // SweepNow runs exactly one reconciliation tick synchronously, so a test can
 // capture versions without waiting out a ticker interval. Test-only; the
 // sqlitestore counterpart has the same signature.

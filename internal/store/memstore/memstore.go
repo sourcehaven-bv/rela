@@ -737,10 +737,12 @@ func (m *MemStore) deleteFace(_ context.Context, ref entity.Ref) (*store.DeleteR
 
 	// OUTGOING edges on this tail go with the face. INCOMING edges do NOT
 	// while a face remains: heads are entity-level (§2.3), so an inbound
-	// edge points at the entity and survives its faces.
+	// edge points at the entity and survives its faces. Neither do edges
+	// on the zero tail, which the family's identity edges share (see
+	// store.EntityWriter.DeleteFace).
 	var owned []*entity.Relation
 	for _, r := range m.relations {
-		if (r.From == id && r.FromFace == p) || (last && (r.From == id || r.To == id)) {
+		if (r.From == id && r.FromFace == p && !p.IsImplicit()) || (last && (r.From == id || r.To == id)) {
 			owned = append(owned, r)
 		}
 	}

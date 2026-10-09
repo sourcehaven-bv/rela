@@ -199,7 +199,8 @@ func parseFlags() *serverFlags {
 // read-only ACL. The postgres DSN is not an option here — it is read from
 // $RELA_DATABASE_URL by appbuild.Discover (env-only, never a flag).
 func discoverOptions(f *serverFlags) []appbuild.Option {
-	var opts []appbuild.Option
+	// A long-lived process, so background automation actions use the queue.
+	opts := []appbuild.Option{appbuild.WithBackgroundAutomationJobs()}
 	if f.readOnly {
 		opts = append(opts, appbuild.WithACL(acl.ReadOnlyACL{}))
 	}

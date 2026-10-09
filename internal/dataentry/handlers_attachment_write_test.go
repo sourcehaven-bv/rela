@@ -7,13 +7,16 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
+	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -652,5 +655,55 @@ func TestAttachmentUpload_FullUploadBudgetIs503(t *testing.T) {
 	}
 	if got := mustGet(t, app, "TKT-001").GetString("screenshot"); got != "" {
 		t.Errorf("property = %q after a refused upload, want empty", got)
+	}
+}
+
+// TestAttachmentWrite_HonorsReadOnlyField pins GitHub #1760 part 3: a file
+// property that a `fields:` policy makes read-only cannot be uploaded to or
+// detached from, even by a principal with `update` on the entity. Before the
+// fix the preflight checked visibility and `update` only, so any editor could
+// fill a frozen file field. Each denial is the field rule's, and is audited as
+// an attachment write.
+func TestAttachmentWrite_HonorsReadOnlyField(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
+	d := writeACL(t, app)
+	app.acl = d
+	if rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.txt", []byte("data")); rec.Code != http.StatusOK {
+		t.Fatalf("seed upload: got %d; body=%s", rec.Code, rec.Body)
+	}
+	sink := audit.NewMemory()
+	app.auditSink = sink
+	app.fieldResolver = newVerdicts().ReadOnly("screenshot").Build()
+
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"upload": putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "b.txt", []byte("other")),
+		"delete": deleteAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "a.txt"),
+	} {
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s to a read-only field: got %d, want 403; body=%s", name, rec.Code, rec.Body)
+		}
+		if want := `"rule_id":"field-affordance:read-only:screenshot"`; !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("%s denial is not the field rule's: body=%s", name, rec.Body)
+		}
+	}
+	if got := mustGet(t, app, "TKT-001").GetString("screenshot"); path.Base(got) != "a.txt" {
+		t.Errorf("screenshot = %q after denied writes, want the original a.txt", got)
+	}
+	var denied int
+	for _, r := range sink.Records() {
+		if r.Op == audit.OpDeniedWrite && strings.Contains(r.Summary, "op=attachment-write") {
+			denied++
+		}
+	}
+	if denied != 2 {
+		t.Errorf("attachment denied-write records = %d, want 2; got %+v", denied, sink.Records())
+	}
+
+	// A field that is hidden as well stays a 404: the field check must not
+	// answer before the visibility check does.
+	app.fieldResolver = newVerdicts().Hidden("screenshot").ReadOnly("screenshot").Build()
+	if rec := putAttachmentAs(aliceCtx(), t, app, d, "TKT-001", "screenshot", "c.txt", []byte("x")); rec.Code != http.StatusNotFound {
+		t.Errorf("upload to a hidden read-only field: got %d, want 404", rec.Code)
 	}
 }

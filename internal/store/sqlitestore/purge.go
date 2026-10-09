@@ -352,7 +352,7 @@ func (v *VersionStore) liveEntityHash(
 	ctx context.Context, id string, p entity.Face,
 ) (hash string, exists bool, err error) {
 	e, gErr := scanEntity(v.db.QueryRowContext(ctx,
-		`SELECT id, face, type, properties, content, updated_at
+		`SELECT id, type, face, properties, content, updated_at
 		 FROM entities WHERE id = ? AND face = ?`, id, string(p)))
 	if errors.Is(gErr, sql.ErrNoRows) {
 		return "", false, nil

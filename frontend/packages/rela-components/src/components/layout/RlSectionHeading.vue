@@ -5,6 +5,10 @@ import type { StatusColor } from '../../types'
 import RlStatusDot from '../common/RlStatusDot.vue'
 import RlCount from '../common/RlCount.vue'
 import RlHeading from '../common/RlHeading.vue'
+import RlIconButton from '../common/RlIconButton.vue'
+import { useMessages } from '../../composables/useMessages'
+
+const messages = useMessages()
 
 withDefaults(
   defineProps<{
@@ -18,9 +22,13 @@ withDefaults(
     count?: number
     size?: 'sm' | 'md'
     level?: 1 | 2 | 3 | 4 | 5 | 6
+    /** Whether the heading offers a control that folds its section away. */
+    collapsible?: boolean
   }>(),
-  { size: 'md', level: 2 },
+  { size: 'md', level: 2, collapsible: false },
 )
+
+defineEmits<{ collapse: [] }>()
 </script>
 
 <template>
@@ -29,6 +37,14 @@ withDefaults(
     <RlStatusDot v-else :color="color" />
     <RlHeading :level="level" :size="size === 'md' ? 'lg' : 'md'" line-height="normal">{{ title }}</RlHeading>
     <RlCount v-if="count !== undefined" :value="count" />
+    <RlIconButton
+      v-if="collapsible"
+      class="rl-section-heading__collapse"
+      icon="chevron-left"
+      :size="16"
+      :label="messages.collapseSection({ title })"
+      @click="$emit('collapse')"
+    />
   </div>
 </template>
 
@@ -38,6 +54,8 @@ withDefaults(
   align-items: center;
   gap: var(--rl-space-2);
 }
+
+.rl-section-heading__collapse { margin-left: auto; }
 
 /*
  * The icon replaces the status dot rather than joining it: both sit in the

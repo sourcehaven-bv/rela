@@ -108,8 +108,8 @@ func (p *adoptionPlan) notes(property string) []string {
 // create-then-delete pair, and carrying the source row's outgoing edges across
 // so the delete does not destroy them (BUG-TOX8U4) — are not ones this path
 // may quietly do without.
-func (p *adoptionPlan) apply(ctx context.Context, st store.Store, threads CommentThreads) error {
-	return applyMoves(ctx, st, threads, p.moves)
+func (p *adoptionPlan) apply(ctx context.Context, st store.Store, threads CommentThreads, scopes relationScopes) error {
+	return applyMoves(ctx, st, threads, p.moves, scopes)
 }
 
 // AdoptDeps are the collaborators [Adopt] needs.
@@ -195,14 +195,12 @@ func Adopt(ctx context.Context, deps AdoptDeps, req AdoptRequest) (*AdoptResult,
 	// The zero-coordinate row is deleted, and on the database backends the
 	// sweep cannot reconstruct a row that no longer exists — so capture it
 	// synchronously first, exactly as the runner's delete steps do.
-	if vc := newCapturer(deps.Versions, deps.Meta, adoptTool, adoptTriggeredBy); vc != nil {
-		for _, m := range plan.moves {
-			if err := vc.entityDelete(ctx, m.e); err != nil {
-				return res, err
-			}
-		}
+	scopes := scopesOfMeta(deps.Meta)
+	vc := newCapturer(deps.Versions, deps.Meta, adoptTool, adoptTriggeredBy)
+	if err := captureMoves(ctx, deps.Store, vc, plan.moves, scopes); err != nil {
+		return res, err
 	}
-	if err := plan.apply(ctx, deps.Store, deps.Comments); err != nil {
+	if err := plan.apply(ctx, deps.Store, deps.Comments, scopes); err != nil {
 		return res, err
 	}
 	auditAdopt(deps.Audit, p, req, res.Affected)

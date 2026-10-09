@@ -76,6 +76,9 @@ func TestRemoteMCPDeps_UsesGatedHandles(t *testing.T) {
 	if deps.Tracer == svc.Tracer() {
 		t.Error("Tracer is the raw tracer")
 	}
+	if deps.EntityManager == svc.EntityManager() {
+		t.Error("EntityManager is the default handle; MCP writes must go through the field-gated one (TKT-0XL8MF)")
+	}
 	if deps.LuaWriteDeps.EntityManager != nil || deps.LuaWriteDeps.VisibleReader != nil {
 		t.Error("LuaWriteDeps is set; the remote server has no Lua tools")
 	}

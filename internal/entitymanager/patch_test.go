@@ -62,7 +62,9 @@ func newPatchManager(t *testing.T, gate entitymanager.FieldWriteGate) (*entityma
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
-	return mgr, st
+	// The field-gated handle, the one MCP and scheduled Lua write through:
+	// these tests are about the gate (TKT-0XL8MF).
+	return entitymanager.FieldGated(mgr), st
 }
 
 // seedTask writes a task directly to the store so the fixture is
@@ -566,6 +568,7 @@ func TestPatchEntity_AutomationNotFieldGated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
+	mgr = entitymanager.FieldGated(mgr)
 
 	seedTask(t, st, "TASK-1", map[string]any{"title": "T", "status": "todo"}, "")
 
@@ -632,6 +635,7 @@ func TestPatchEntity_GateRunsAfterAuthorize(t *testing.T) {
 			if err != nil {
 				t.Fatalf("entitymanager.New: %v", err)
 			}
+			mgr = entitymanager.FieldGated(mgr)
 			if tc.exists {
 				seedTask(t, st, tc.id, map[string]any{"title": "T", "salary": "secret"}, "")
 			}

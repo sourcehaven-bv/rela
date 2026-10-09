@@ -272,19 +272,20 @@ func TestAdopt_RejectsMissingCollaborators(t *testing.T) {
 	}
 }
 
-// The repair must carry a moved row's OUTGOING edges to the new face.
+// The repair must carry a moved row's content-scoped edges to the new face and
+// leave its identity-scoped edges on the entity.
 //
 // adopt-face runs the same move as migrate_face (see
-// TestMigrateFace_CarriesOutgoingEdgesToTheNewFace for why deleting a face
-// takes its outgoing edges with it), so it inherits the same obligation. This
+// TestMigrateFace_CarriesContentEdgesAndKeepsIdentityEdges for why), so it
+// inherits the same obligation. This
 // test exists because the two paths are only safe together by sharing
 // applyMoves — re-implementing the move here would silently destroy every
 // relation the repaired rows owned (BUG-TOX8U4).
 func TestAdopt_CarriesOutgoingEdgesToTheNewFace(t *testing.T) {
 	st := seedStore(t)
 	ctx := t.Context()
+	review := seedReviewEdge(t, st, "PER-1")
 
-	// seedStore links TSK-1 --assigned-to--> PER-1 from the bare face.
 	if _, err := Adopt(ctx, adoptDeps(t, st, "draft", "published"), AdoptRequest{
 		Entity:   "task",
 		Property: "status",
@@ -294,20 +295,11 @@ func TestAdopt_CarriesOutgoingEdgesToTheNewFace(t *testing.T) {
 		t.Fatalf("Adopt: %v", err)
 	}
 
-	var got []*entity.Relation
-	for rel, err := range st.ListRelations(ctx, store.RelationQuery{}) {
-		if err != nil {
-			t.Fatalf("list relations: %v", err)
-		}
-		got = append(got, rel)
-	}
-	if len(got) != 1 {
-		t.Fatalf("the edge must survive the repair, once: got %d relation(s): %+v", len(got), got)
-	}
-	// TSK-1's status is `open`, which the mapping sends to `draft`, so the edge
-	// follows its tail onto that face rather than staying behind.
-	if got[0].From != "TSK-1" || got[0].To != "PER-1" || string(got[0].FromFace) != "draft" {
-		t.Errorf("edge should be re-tailed on the destination face: %s@%q --%s--> %s",
-			got[0].From, got[0].FromFace, got[0].Type, got[0].To)
-	}
+	// TSK-1's status is `open`, which the mapping sends to `draft`. The
+	// content edge follows the row; the identity edge stays on the entity.
+	review.FromFace = "draft"
+	assertEdges(t, st, map[entity.RelationKey]map[string]any{
+		{From: "TSK-1", Type: "assigned-to", To: "PER-1"}: {"weight": "high"},
+		review: {"weight": "low"},
+	})
 }

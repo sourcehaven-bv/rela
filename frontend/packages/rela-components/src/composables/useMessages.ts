@@ -90,6 +90,8 @@ export interface Messages {
 
   /** A collapsed column's expand control: `Expand Done`. */
   expandSection: (args: { title: string }) => string
+  /** A column heading's collapse control: `Collapse Done`. */
+  collapseSection: (args: { title: string }) => string
   /** A section's add control, named for the section: `Add task to Done`. */
   addToSection: (args: { addLabel: string; section: string; lane?: string }) => string
 
@@ -155,6 +157,7 @@ export const DEFAULT_MESSAGES: Messages = {
     `${title}, over ${target} in ${lane}. Press Enter to drop, Escape to cancel.`,
 
   expandSection: ({ title }) => `Expand ${title}`,
+  collapseSection: ({ title }) => `Collapse ${title}`,
   addToSection: ({ addLabel, section, lane }) =>
     `${addLabel} to ${section}${lane ? `, ${lane}` : ''}`,
 

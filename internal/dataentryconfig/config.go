@@ -1122,10 +1122,14 @@ type Kanban struct {
 // (see ValidIconNames). It is a NAME, never a glyph: putting an emoji in
 // Label works and is left alone, but the SPA will never parse one back out
 // of label text — that would silently rewrite what an author typed.
+//
+// Collapsed starts the column folded to a narrow rail. It is only a default:
+// the reader can expand it, and the SPA remembers that choice per board.
 type KanbanColumn struct {
-	Value string `yaml:"value" json:"value"`
-	Label string `yaml:"label,omitempty" json:"label,omitempty"`
-	Icon  string `yaml:"icon,omitempty" json:"icon,omitempty"`
+	Value     string `yaml:"value" json:"value"`
+	Label     string `yaml:"label,omitempty" json:"label,omitempty"`
+	Icon      string `yaml:"icon,omitempty" json:"icon,omitempty"`
+	Collapsed bool   `yaml:"collapsed,omitempty" json:"collapsed,omitempty"`
 }
 
 // KanbanSwimlane defines a swimlane row in the kanban board.

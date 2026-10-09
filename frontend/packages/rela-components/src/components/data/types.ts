@@ -59,8 +59,12 @@ export interface RelatedItem {
   iconLabel?: string
   iconTone?: RelatedTone
   meta?: RelatedMeta[]
-  /** What the title renders as. See `NavItem.as`. */
-  as?: 'button' | 'a' | Component
+  /**
+   * What the title renders as. See `NavItem.as`. `'span'` makes the row
+   * static: plain text, with no hover, pointer or focus, for a record that is
+   * already shown in full where the row sits.
+   */
+  as?: 'button' | 'a' | 'span' | Component
   /** Attributes for the rendered element, such as `to` or `href`. */
   attrs?: Record<string, unknown>
 }

@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 13
+const schemaVersion = 14
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -167,6 +167,21 @@ var migrations = []migration{
 		to:    13,
 		apply: sqlSteps(dropRowidSearchSQL, searchDDL, rebuildSearchSQL),
 	},
+	{
+		// v13 → v14: the content hash on live rows, which the version sweep
+		// selects on (BUG-1DWMYO). The soft-delete tables carry it too, as
+		// they carry every live column. No backfill: NULL means "not known",
+		// and the sweep fills it in. init creates the triggers after the
+		// ladder; see contentHashDDL.
+		to:    14,
+		apply: addColumns(contentHashColumns),
+	},
+}
+
+// contentHashColumns are the content_hash columns of the v14 rung.
+var contentHashColumns = []addedColumn{
+	{"entities", "content_hash"}, {"relations", "content_hash"},
+	{"marked_entities", "content_hash"}, {"marked_relations", "content_hash"},
 }
 
 // editorColumns are the attribution columns, on both tables that carry them.
