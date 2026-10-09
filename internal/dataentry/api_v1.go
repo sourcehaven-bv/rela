@@ -2934,7 +2934,10 @@ func (a *App) handleV1OpenAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	// no-cache, not no-store: a client may keep the spec (it is configuration,
+	// not data) but must fetch it again before reuse, since it changes when the
+	// schema is reloaded. There is no validator, so that fetch is a full one.
+	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(data)
 }
 

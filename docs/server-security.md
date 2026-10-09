@@ -558,15 +558,26 @@ as cross-origin and rejects them with `403 forbidden` and reason
 `origin_missing`. This catches `<img src=...>` style attacks where the
 attacker has set `Referrer-Policy: no-referrer` to strip both headers.
 
-It also rejects bare `curl http://localhost:8080/api/...` calls. To use the
-API from the command line, set the Origin header explicitly:
+A few paths are exempt for a client that is provably not a browser: one that
+sends no `Origin`, no cookie and no `Sec-Fetch-Site` header. Every current
+browser sends `Sec-Fetch-Site`, and script cannot remove it. The exempt paths
+are the ones a command-line client needs:
+
+- the entity and relation routes, `/api/v1/{plural}/...`, including
+  attachments;
+- `/api/v1/_schema` and `/api/v1/_openapi.json`;
+- the calendar feeds, CalDAV and remote MCP.
+
+So `curl` and [restish](restish.md) work on those paths without extra
+headers. Every other `/api` path, such as `_config` or `_search`, still needs
+an allowed `Origin`:
 
 ```sh
 curl -H 'Origin: http://localhost:8080' http://localhost:8080/api/v1/_config
 ```
 
-The same applies to any script, MCP integration, or test harness that speaks
-HTTP directly to `rela-server`.
+The exemption only skips the same-origin check. The JWT gate and the ACL
+apply as usual.
 
 ## Troubleshooting
 
@@ -687,10 +698,12 @@ stdio use becomes remotely reachable the moment `-mcp` is on.
 
 Two related gaps, both deliberate and tracked:
 
-- **No RFC 9728 discovery.** The 401 does not carry a `resource_metadata`
-  challenge unless your assertion header is literally `Authorization`, so MCP
-  clients must be pointed at the IdP by configuration rather than discovering
-  it. Usability, not confidentiality.
+- **No RFC 9728 discovery from rela itself.** rela's 401 carries at most
+  `WWW-Authenticate: Bearer` (when the assertion header is `Authorization`),
+  never a `resource_metadata` parameter, so a client cannot discover the IdP
+  from rela. A proxy can add it: Pratique answers a request without
+  credentials with the metadata for each path listed in
+  `upstream.protected_resources`. Usability, not confidentiality.
 - **`acl.Request` is not goroutine-safe.** One is attached per HTTP request
   and memoises global roles without synchronisation. Nothing in the current
   handler fans a JSON-RPC batch across goroutines, so this is latent rather

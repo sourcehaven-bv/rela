@@ -102,6 +102,7 @@ go build -o rela ./cmd/rela
 | [Data Migration](docs/data-migration.md) | Detect schema shape changes and migrate stored content with generated, reviewable migrations |
 | [Comments: Annotating Entities, Fields and Text](docs/comments.md) | Enable commenting, control who may comment, and understand how anchors survive edits |
 | [Rela Desktop: Documents, Menus and Notifications](docs/desktop.md) | Open projects and single-file .rela documents in the desktop app, and send notifications with desktop.yaml |
+| [Driving rela-server from the command line with restish](docs/restish.md) | Call a remote rela-server from the command line, including file uploads, through its OpenAPI spec |
 
 ### Tutorials
 

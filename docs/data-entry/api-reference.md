@@ -1172,9 +1172,30 @@ PUT  /api/v1/{plural}/{id}/_attachments/{property}
 POST /api/v1/{plural}/{id}/_attachments/{property}
 ```
 
-`multipart/form-data` with a single `file` field. The response is the
-updated entity (its `_attachments` reflects the new file). Behavior depends
-on the property's `max`:
+The file travels in one of two forms, chosen by `Content-Type`:
+
+- **`multipart/form-data`** with a single `file` field. The browser SPA
+  uses this.
+- **Any other content type: the request body is the file.** The file name
+  comes from the `filename` query parameter or, failing that, the
+  `filename` parameter of a `Content-Disposition` header. A raw body with
+  neither answers `400 missing_filename`. This is the form for `curl -T`
+  and for generic OpenAPI clients such as restish, which need no multipart
+  envelope:
+
+  ```sh
+  curl -T shot.png -H 'Authorization: Bearer …' \
+    'https://rela.example/api/v1/tasks/TASK-1/_attachments/evidence?filename=shot.png'
+  ```
+
+A raw body is stored as sent, so one with a `Content-Encoding` other than
+`identity` answers `415 unsupported_content_encoding`. The declared content
+type of a raw body is not trusted. The upload policy
+inspects the bytes and the name, the same as for a multipart file. The name
+is reduced to its base name in both forms, so a path in it is dropped.
+
+The response is the updated entity (its `_attachments` reflects the new
+file). Behavior depends on the property's `max`:
 
 - **`max == 1`** (default): the upload **replaces** the existing file.
 - **`max > 1`**: the upload **appends**, up to `max`. A file whose
@@ -1204,8 +1225,10 @@ Size limits: the request is capped at ingress (`413 attachment_too_large`,
 `application/problem+json`) by a default of 64 MiB, overridable per
 deployment via the data-entry config key `app.max_attachment_bytes`. Every
 store backend also enforces `store.MaxAttachmentBytes` as a backstop, so no
-storage path is ever unbounded. Other failures: `400` for a malformed
-multipart body or a missing `file` field; `422` for a validation failure
+storage path is ever unbounded. A raw body over the cap is refused on its
+`Content-Length` before it is read, or when the cap is crossed if it has
+none. Other failures: `400` for a malformed multipart body, a missing `file`
+field or a raw body without a file name; `422` for a validation failure
 when persisting the property.
 
 ### Delete endpoint

@@ -136,6 +136,7 @@ func (h *attachmentHandler) handleV1GetAttachment(
 // `file`-type property:
 //
 //	PUT|POST /api/v1/{plural}/{id}/_attachments/{property}   (multipart, field "file")
+//	PUT|POST /api/v1/{plural}/{id}/_attachments/{property}?filename=x.png   (raw body)
 //
 // Writing an attachment mutates the owning entity's property, so it
 // inherits the entity's `update` permission. The write is authorized
@@ -166,45 +167,11 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	}
 	defer releaseUpload()
 
-	// Cap the request body at ingress: MaxBytesReader makes ParseMultipartForm
-	// and the FormFile read fail with *http.MaxBytesError once the limit is
-	// crossed, which we map to 413. The store backends enforce their own cap
-	// as a backstop, but this rejects an oversize upload before buffering it.
-	r.Body = http.MaxBytesReader(w, r.Body, limit+maxAttachmentUploadHeadroom)
-	if err := r.ParseMultipartForm(limit + maxAttachmentUploadHeadroom); err != nil {
-		if isMaxBytesError(err) {
-			writeAttachmentTooLarge(w, r, limit)
-			return
-		}
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_multipart",
-			"Invalid multipart body", err.Error())
+	upload, ok := readUploadBody(w, r, limit)
+	if !ok {
 		return
 	}
-
-	// Clean up any on-disk temp files the multipart parser spilled past its
-	// in-memory threshold. Go's server removes them when the request body
-	// closes, but for a 64 MiB upload path being explicit is cheap insurance.
-	defer func() {
-		if r.MultipartForm != nil {
-			_ = r.MultipartForm.RemoveAll()
-		}
-	}()
-
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		writeV1Error(w, r, http.StatusBadRequest, "missing_file",
-			"Missing form field \"file\"", "")
-		return
-	}
-	defer file.Close()
-
-	// The ingress MaxBytesReader bounds the whole multipart request, but its
-	// envelope headroom means it doesn't precisely cap the file *content*.
-	// header.Size is the part's declared length — reject early when it's over.
-	if header.Size > limit {
-		writeAttachmentTooLarge(w, r, limit)
-		return
-	}
+	defer upload.close()
 
 	// Delegate the cap / suffix / write-order / re-stamp policy to the
 	// shared attachment service so the HTTP and CLI paths apply identical
@@ -219,10 +186,10 @@ func (h *attachmentHandler) handleV1PutAttachment(
 		return
 	}
 	propDef := filePropertyDef(s, typeName, property)
-	capped := store.CapAttachmentReader(file, limit)
-	written, err := svc.WriteAttachment(ctx, entity, propDef, property, header.Filename, capped)
+	capped := store.CapAttachmentReader(upload.body, limit)
+	written, err := svc.WriteAttachment(ctx, entity, propDef, property, upload.fileName, capped)
 	if err != nil {
-		h.auditRejectedUpload(ctx, entity, property, header.Filename, err)
+		h.auditRejectedUpload(ctx, entity, property, upload.fileName, err)
 		writeAttachmentWriteError(w, r, limit, err)
 		return
 	}
@@ -232,6 +199,110 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	rels := edgesOwnedBy(s.Meta, h.reader.outgoingRelations(ctx, entity.ID), entity.Face)
 	result := h.serializer.forWire(ctx, entity, rels, s.Meta, plural)
 	writeV1JSON(w, http.StatusOK, result)
+}
+
+// uploadBody is the file an upload request carries, however it was encoded.
+type uploadBody struct {
+	fileName string
+	body     io.Reader
+	close    func()
+}
+
+// readUploadBody extracts the file from an upload request and writes the
+// error response itself when it cannot. Two encodings are accepted:
+//
+//   - multipart/form-data with the file in field "file" (the SPA);
+//   - any other Content-Type, where the request body IS the file and the name
+//     comes from `?filename=` or, failing that, a Content-Disposition
+//     filename. This is what a generic HTTP client (curl -T, restish) sends,
+//     so a file can be uploaded without a multipart envelope.
+//
+// Both are capped at limit at ingress, so an oversize upload is refused
+// before it is buffered; the store backends keep their own cap as a backstop.
+// The raw name is passed on unsanitized, like a multipart one: the attachment
+// service reduces every name to a safe base name ([store.NormalizeFileName]).
+func readUploadBody(w http.ResponseWriter, r *http.Request, limit int64) (uploadBody, bool) {
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mediaType == "multipart/form-data" {
+		return readMultipartUpload(w, r, limit)
+	}
+
+	name := r.URL.Query().Get("filename")
+	if name == "" {
+		if _, params, err := mime.ParseMediaType(r.Header.Get("Content-Disposition")); err == nil {
+			name = params["filename"]
+		}
+	}
+	if name == "" {
+		writeV1Error(w, r, http.StatusBadRequest, "missing_filename",
+			"Missing file name", "pass ?filename= or a Content-Disposition filename with a raw upload body")
+		return uploadBody{}, false
+	}
+	// The bytes are stored as sent, so a compressed body would be stored
+	// compressed under the plain name. Refuse it rather than guess.
+	if ce := r.Header.Get("Content-Encoding"); ce != "" && !strings.EqualFold(ce, "identity") {
+		writeV1Error(w, r, http.StatusUnsupportedMediaType, "unsupported_content_encoding",
+			"Unsupported content encoding", "send the file uncompressed")
+		return uploadBody{}, false
+	}
+	if r.ContentLength > limit {
+		writeAttachmentTooLarge(w, r, limit)
+		return uploadBody{}, false
+	}
+	// No multipart envelope, so no headroom: the body is exactly the file.
+	body := http.MaxBytesReader(w, r.Body, limit)
+	return uploadBody{fileName: name, body: body, close: func() { _ = body.Close() }}, true
+}
+
+// readMultipartUpload is the multipart arm of readUploadBody.
+func readMultipartUpload(w http.ResponseWriter, r *http.Request, limit int64) (uploadBody, bool) {
+	// MaxBytesReader makes ParseMultipartForm and the FormFile read fail with
+	// *http.MaxBytesError once the limit is crossed, which we map to 413.
+	r.Body = http.MaxBytesReader(w, r.Body, limit+maxAttachmentUploadHeadroom)
+	if err := r.ParseMultipartForm(limit + maxAttachmentUploadHeadroom); err != nil {
+		if isMaxBytesError(err) {
+			writeAttachmentTooLarge(w, r, limit)
+			return uploadBody{}, false
+		}
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_multipart",
+			"Invalid multipart body", err.Error())
+		return uploadBody{}, false
+	}
+
+	// Clean up any on-disk temp files the multipart parser spilled past its
+	// in-memory threshold. Go's server removes them when the request body
+	// closes, but for a 64 MiB upload path being explicit is cheap insurance.
+	removeForm := func() {
+		if r.MultipartForm != nil {
+			_ = r.MultipartForm.RemoveAll()
+		}
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		removeForm()
+		writeV1Error(w, r, http.StatusBadRequest, "missing_file",
+			"Missing form field \"file\"", "")
+		return uploadBody{}, false
+	}
+
+	// The ingress MaxBytesReader bounds the whole multipart request, but its
+	// envelope headroom means it doesn't precisely cap the file *content*.
+	// header.Size is the part's declared length — reject early when it's over.
+	if header.Size > limit {
+		_ = file.Close()
+		removeForm()
+		writeAttachmentTooLarge(w, r, limit)
+		return uploadBody{}, false
+	}
+	return uploadBody{
+		fileName: header.Filename,
+		body:     file,
+		close: func() {
+			_ = file.Close()
+			removeForm()
+		},
+	}, true
 }
 
 // auditRejectedUpload records an upload the attachment processor refused —
@@ -260,7 +331,8 @@ func (h *attachmentHandler) auditRejectedUpload(
 	if !errors.Is(err, attachment.ErrRejected) {
 		return
 	}
-	h.audit().Record(audit.AttachmentRejected(ctx, e.Type, e.ID, property, fileName,
+	// The normalized name, so a client-chosen name cannot bloat the log.
+	h.audit().Record(audit.AttachmentRejected(ctx, e.Type, e.ID, property, attachment.DisplayName(fileName),
 		attachment.RejectionReason(err)))
 }
 
@@ -269,7 +341,9 @@ func (h *attachmentHandler) auditRejectedUpload(
 // the property held it too long), 403 (ACL deny from the entity update), or
 // 422 (validation / other).
 func writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, limit int64, err error) {
-	if isAttachmentTooLarge(err) {
+	// A raw body without a Content-Length reaches the service unchecked, so
+	// the ingress MaxBytesReader can trip while the service spools it.
+	if isAttachmentTooLarge(err) || isMaxBytesError(err) {
 		writeAttachmentTooLarge(w, r, limit)
 		return
 	}
