@@ -46,7 +46,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26.6"
+          go-version-file: go.mod
 
       # rela-desktop links Wails v3, whose Linux build needs GTK4 + WebKitGTK
       # headers to type-check. Without them govulncheck cannot load the cgo
@@ -73,6 +73,10 @@ jobs:
       - name: Try auto-update for fixable vulns
         id: autoupdate
         if: steps.vulncheck.outputs.status != '0'
+        env:
+          # setup-go sets GOTOOLCHAIN=local. The re-scan must run on the
+          # toolchain go.mod now names, or a stdlib fix never verifies.
+          GOTOOLCHAIN: auto
         run: |
           set -euo pipefail
 
@@ -97,9 +101,16 @@ jobs:
 
           for mod in "${!latest[@]}"; do
             ver="${latest[$mod]}"
-            echo "go get $mod@v$ver"
-            go get "$mod@v$ver" || {
-              echo "go get failed for $mod@v$ver — may be transitive-only; continuing."
+            # A standard-library fix needs a newer Go, not a module upgrade.
+            # Workflows read the version from go.mod, so this is the only pin.
+            if [[ "$mod" == "stdlib" ]]; then
+              target="toolchain@go$ver"
+            else
+              target="$mod@v$ver"
+            fi
+            echo "go get $target"
+            go get "$target" || {
+              echo "go get failed for $target; may be transitive-only; continuing."
             }
           done
           go mod tidy
@@ -153,7 +164,7 @@ jobs:
             --head "$BRANCH" \
             --title "chore(deps): govulncheck auto-update" \
             --label security,automated,dependencies \
-            --body "Auto-applied \`go get\` updates to resolve vulnerabilities found by the daily scan. Verified locally that post-update \`govulncheck\` is clean. Enabled auto-merge once CI passes.")
+            --body "Auto-applied \`go get\` (module or toolchain) updates to resolve vulnerabilities found by the daily scan. Verified locally that post-update \`govulncheck\` is clean. Enabled auto-merge once CI passes.")
 
           gh pr merge "$PR_URL" --auto --squash
 
