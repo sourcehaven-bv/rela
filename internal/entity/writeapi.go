@@ -126,11 +126,19 @@ type RenameResult struct {
 // excludes Properties, MetaUnset and Content.
 //
 // Nil Position: accepted — the ordinary property update.
+//
+// TolerateTypeMismatch lets CreateRelation write an edge whose endpoint types
+// the relation type does not allow. It serves the data-entry write path, which
+// treats that mismatch as a soft condition (DEC-HWZHA) and reports it as a
+// warning itself. The edge still goes through the full create path: ACL,
+// template, ordering, audit and attribution. An unknown relation type and a
+// missing endpoint stay errors. UpdateRelation ignores it.
 type RelationOptions struct {
-	Properties map[string]any
-	MetaUnset  []string
-	Content    *string
-	Position   *OrderPosition
+	Properties           map[string]any
+	MetaUnset            []string
+	Content              *string
+	Position             *OrderPosition
+	TolerateTypeMismatch bool
 }
 
 // OrderPosition names where an edge moves among its source's other edges of
