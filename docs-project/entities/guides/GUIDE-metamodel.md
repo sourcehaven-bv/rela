@@ -1164,7 +1164,7 @@ come after the ordered ones, by id.
 A symmetric relation cannot be orderable, because it has no source or target
 side to hold the order.
 
-The data-entry app shows relation order on the outgoing side only. See
+The data-entry app shows and edits relation order on both sides. See
 [Rows in relation order](data-entry.md#rows-in-relation-order).
 
 ## Query Scopes

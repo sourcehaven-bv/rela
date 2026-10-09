@@ -63,22 +63,48 @@ func (rc searchRelation) active() bool { return rc.relType != "" }
 func (svc affordanceService) linkablePage(
 	ctx context.Context, rows []*entityPkg.Entity, relType string, scope metamodel.RelationScope,
 ) (map[entityPkg.Ref]bool, error) {
-	ids := make([]string, 0, len(rows))
-	keys := make([]entityPkg.Ref, 0, len(rows))
+	refs := make([]entityPkg.Ref, 0, len(rows))
 	for _, e := range rows {
-		ids = append(ids, e.ID)
-		keys = append(keys, entityPkg.Ref{ID: e.ID, Face: e.Face})
+		refs = append(refs, entityPkg.Ref{ID: e.ID, Face: e.Face})
 	}
+	page, err := batchedSources(ctx, svc, refs, scope)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[entityPkg.Ref]bool, len(rows))
+	for _, e := range rows {
+		out[e.Ref()] = page.linkableFrom(ctx, e, relType, scope)
+	}
+	return out, nil
+}
+
+// batchedSources returns a copy of svc whose source reads resolve from one
+// batch over the source rows refs name: one read per distinct face, plus one
+// header read for an identity-scoped relation, whose edges have the zero
+// tail and so judge a faced source on every face of its family the
+// principal may read. A read the batch missed falls back to svc's own.
+// The batch only feeds [affordanceService.relationSources]; every decision
+// still runs through the gates.
+//
+// A package function rather than an affordanceService method, to keep the
+// service's method set to the gates themselves.
+func batchedSources(
+	ctx context.Context, svc affordanceService, refs []entityPkg.Ref, scope metamodel.RelationScope,
+) (affordanceService, error) {
+	keys := refs
 	var families map[string]storedFamily
 	if !scope.IsContent() {
-		// An identity edge has the zero tail, so a faced source is judged on
-		// every face of its family the principal may read.
+		ids := make([]string, 0, len(refs))
+		for _, r := range refs {
+			ids = append(ids, r.ID)
+		}
 		var err error
 		families, err = loadStoredFamilies(ctx, svc.store, ids)
 		if err != nil {
-			return nil, err
+			return svc, err
 		}
-		keys = keys[:0]
+		keys = nil
 		for id, fam := range families {
 			for _, f := range fam.faces {
 				keys = append(keys, entityPkg.Ref{ID: id, Face: f})
@@ -87,7 +113,7 @@ func (svc affordanceService) linkablePage(
 	}
 	raw, err := loadRows(ctx, svc.store, keys)
 	if err != nil {
-		return nil, err
+		return svc, err
 	}
 
 	page := svc
@@ -106,12 +132,7 @@ func (svc affordanceService) linkablePage(
 			return readable[id], nil
 		}
 	}
-
-	out := make(map[entityPkg.Ref]bool, len(rows))
-	for _, e := range rows {
-		out[e.Ref()] = page.linkableFrom(ctx, e, relType, scope)
-	}
-	return out, nil
+	return page, nil
 }
 
 // readableFamilies is the batch form of [affordanceService.sourceFamily]: the

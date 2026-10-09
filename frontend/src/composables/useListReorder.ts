@@ -7,7 +7,7 @@ import { entityKeys } from '@/queries/entities'
 import { beginOptimisticReorder, rollbackOptimistic } from '@/queries/optimisticList'
 import { useUIStore } from '@/stores/ui'
 import { createMoveQueue } from '@/utils/moveQueue'
-import { planRowMove } from '@/utils/relationOrder'
+import { orderMoveArgs, planRowMove } from '@/utils/relationOrder'
 import type { Entity, RelationOrder } from '@/types'
 
 /**
@@ -54,7 +54,7 @@ export function useListReorder(opts: {
     const id = ++latest
     return enqueue(async () => {
       try {
-        await moveRelation(order.anchor_type, order.anchor, order.relation, move.itemId, plan.position)
+        await moveRelation(...orderMoveArgs(order, move.itemId, plan.position))
       } catch (err) {
         if (id === latest) rollbackOptimistic(queryCache, ctx)
         ui.error(getErrorMessage(err, 'Could not move the row'))

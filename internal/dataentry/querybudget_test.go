@@ -585,6 +585,28 @@ func TestQueryBudget_PageScopedListIsSizeIndependent(t *testing.T) {
 	assertBudget(t, "page-scoped list", small, large, pageScopedListBudget, detail)
 }
 
+// The same tab over a relation orderable on its incoming side: the list is
+// shown in relation order, and its movable check adds one edge gate and one
+// batch of source reads, whatever the number of rows.
+func TestQueryBudget_IncomingOrderedListIsSizeIndependent(t *testing.T) {
+	small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+		t.Helper()
+		meta := app.State().Meta
+		rd := meta.Relations["tracked-by"]
+		rd.Orderable = metamodel.OrderableIncoming
+		meta.Relations["tracked-by"] = rd
+		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets",
+			"per_page=100&scope_page=epic&scope_tab=tickets&anchor=E1")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", rec.Code, rec.Body)
+		}
+		if resp.Meta.RelationOrder == nil || len(resp.Data) < 10 {
+			t.Fatalf("list returned %d rows, order %+v", len(resp.Data), resp.Meta.RelationOrder)
+		}
+	})
+	assertBudget(t, "incoming-ordered list", small, large, incomingOrderedListBudget, detail)
+}
+
 // The generated navigation entries (nav_items.go) of a group over the tickets
 // list, with the owner's initial. At 50 tickets the group is truncated at its
 // limit of 20, at 10 it is not, and the read count must not tell them apart:
@@ -629,6 +651,10 @@ const (
 	// page-scoped list: the anchor read, the scope's relation query, the
 	// whole-type read, page edges, neighbor headers, membership walk.
 	pageScopedListBudget = 7
+	// incoming-ordered list: pageScopedListBudget plus the edge gate's
+	// header read and the movable check's batched source rows and gate.
+	// Measured, not derived.
+	incomingOrderedListBudget = 10
 	// nav items: scoped count + one bounded page read (listpushdown.go), the
 	// initials' relation query and neighbor headers, membership walk.
 	navItemsBudget = 6

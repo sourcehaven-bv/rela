@@ -133,23 +133,29 @@ type RelationOptions struct {
 	Position   *OrderPosition
 }
 
-// OrderPosition names where an edge moves among its source's other edges of
-// the same type on the outgoing order side. Exactly one field is set.
-// Before and After name a sibling by its TARGET id, on the moved edge's own
-// tail; Step moves one place up (-1) or down (1) in the full order, so a
-// client showing one page of it needs no neighbor it cannot see.
+// OrderPosition names where an edge moves among its siblings on one order
+// side. Exactly one of Before, After and Step is set.
 //
-// Among, when not nil, names the targets the caller may see. The move then
-// reads and writes only the edges to those targets: a step skips the
-// others, the new value comes from visible neighbors, and a densify
-// renumbers only visible edges. So a move neither reveals nor rewrites an
-// edge the caller cannot see. Nil means every edge, for a caller with no
-// read gate.
+// On the outgoing side (Incoming false) the siblings are the source's
+// edges of the type on the moved edge's own tail, and Before and After name
+// a sibling by its TARGET id. On the incoming side the siblings are every
+// edge of the type into the target, and Before and After name a sibling by
+// its SOURCE address: a bare id names the source's first place in the
+// order, `id@face` the edge from that face. Step moves one place up (-1) or
+// down (1) in the full order, so a client showing one page of it needs no
+// neighbor it cannot see.
+//
+// Among, when not nil, names the edges the caller may see. The move then
+// reads and writes only those edges: a step skips the others, the new
+// value comes from visible neighbors, and a densify renumbers only visible
+// edges. So a move neither reveals nor rewrites an edge the caller cannot
+// see. Nil means every edge, for a caller with no read gate.
 type OrderPosition struct {
-	Before string
-	After  string
-	Step   int
-	Among  []string
+	Before   string
+	After    string
+	Step     int
+	Incoming bool
+	Among    []RelationKey
 }
 
 // Patch describes a TARGETED entity write: apply exactly these
