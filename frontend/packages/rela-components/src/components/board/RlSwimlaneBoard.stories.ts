@@ -9,7 +9,7 @@ import { swimlanes } from '../../fixtures'
 import RlIcon from '../common/RlIcon.vue'
 import type { IconName } from '../common/icons'
 import { h } from 'vue'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { Section, Swimlane } from '../../types'
 
 /* Generic over its item, as `RlBoard` is; `Task` is this library's demo row. */
@@ -167,6 +167,61 @@ export const Icons: StoryObj = {
     },
     template: `
       <RlSwimlaneBoard :lanes="lanes" add-label="Add task">
+        <template #card="{ item, selected }">
+          <RlTaskCard :task="item" :selected="selected" />
+        </template>
+      </RlSwimlaneBoard>
+    `,
+  }),
+}
+
+/**
+ * Columns collapse across every lane. As on `RlBoard`, the board reports the
+ * toggle and keeps focus on the column's control; the story holds the state.
+ */
+export const CollapsibleColumns: StoryObj = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse QA' }))
+    await expect(canvas.getByRole('button', { name: 'Expand QA' })).toHaveFocus()
+
+    await userEvent.keyboard('{Enter}')
+    await expect(canvas.getByRole('button', { name: 'Collapse QA' })).toHaveFocus()
+  },
+  render: () => ({
+    components: { RlSwimlaneBoard: storyComponent(RlSwimlaneBoard), RlTaskCard },
+    setup() {
+      const collapsed = ref(new Set(['postpone']))
+      const columns = computed(() =>
+        swimlanes[0].sections.map((section) => ({ ...section, collapsed: collapsed.value.has(section.id) })),
+      )
+      const lanes = computed(() =>
+        swimlanes.map((lane) => ({
+          ...lane,
+          sections: lane.sections.map((section) => ({ ...section, collapsed: collapsed.value.has(section.id) })),
+        })),
+      )
+
+      function setCollapsed(id: string, value: boolean) {
+        const next = new Set(collapsed.value)
+        if (value) next.add(id)
+        else next.delete(id)
+        collapsed.value = next
+      }
+
+      return { columns, lanes, setCollapsed }
+    },
+    template: `
+      <RlSwimlaneBoard
+        :lanes="lanes"
+        :columns="columns"
+        collapsible
+        :show-add-section="false"
+        add-label="Add task"
+        @collapse-section="setCollapsed($event, true)"
+        @expand-section="setCollapsed($event, false)"
+      >
         <template #card="{ item, selected }">
           <RlTaskCard :task="item" :selected="selected" />
         </template>
