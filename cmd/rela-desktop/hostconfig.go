@@ -397,7 +397,8 @@ func (h *desktopHost) Path() string { return h.dir.Path() }
 // server's users. It still applies when the project is served. Secrets come
 // from the keychain when there is one.
 func projectOptions(relaDir string, kc *keychainSecrets) []appbuild.Option {
-	opts := []appbuild.Option{appbuild.WithACL(acl.NopACL{})}
+	// The app stays open, so background automation actions use the queue.
+	opts := []appbuild.Option{appbuild.WithACL(acl.NopACL{}), appbuild.WithBackgroundAutomationJobs()}
 	if kc != nil {
 		opts = append(opts, appbuild.WithHostConfig(func(kv state.KV) (appbuild.HostConfig, error) {
 			return newDesktopHost(context.Background(), relaDir, kv, kc)

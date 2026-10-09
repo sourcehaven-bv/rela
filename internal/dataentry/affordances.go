@@ -13,6 +13,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
@@ -476,141 +478,23 @@ func (svc affordanceService) validateFieldWrite(
 		return nil
 	}
 	v := svc.fieldVerdicts(ctx, e)
-	declared := declaredProperties(svc.meta(), e.Type)
-
-	check := func(key string, value any, present bool) *AffordanceDenialError {
-		// Unknown field (not in metamodel, not in resolver overrides) →
-		// hidden-shape rejection (F8 side-channel closure).
-		if !declared[key] && !knownToResolver(v, key) {
-			return &AffordanceDenialError{
-				Rule:   RuleFieldHidden,
-				Path:   key,
-				Reason: fmt.Sprintf("field %q is not visible", key),
-			}
-		}
-		// Hidden via resolver verdict.
-		if !v.IsVisible(key) {
-			return &AffordanceDenialError{
-				Rule:        RuleFieldHidden,
-				Path:        key,
-				Reason:      fmt.Sprintf("field %q is not visible", key),
-				Attribution: v.Attribution[key],
-			}
-		}
-		// Read-only via resolver verdict.
-		if !v.IsWritable(key) {
-			return &AffordanceDenialError{
-				Rule:        RuleFieldReadOnly,
-				Path:        key,
-				Reason:      fmt.Sprintf("field %q is not writable", key),
-				Attribution: v.Attribution[key],
-			}
-		}
-		// Enum-filter (only for set, not unset, and only when a value
-		// is provided — unset has no value to check). Handles both
-		// scalar enums and list-typed enums (e.g. tags); for the list
-		// case every element is checked against the allow-set and the
-		// first disallowed value triggers the denial.
-		if present && value != nil {
-			if opts, ok := v.Options[key]; ok {
-				if d := checkEnumOption(key, value, opts); d != nil {
-					// checkEnumOption sets Path to "field=option", the
-					// same key the resolver attributes options under.
-					d.Attribution = v.Attribution[d.Path]
-					return d
-				}
-			}
-		}
+	d := affordances.CheckFieldWrite(affordances.FieldVerdicts(v), affordances.DeclaredProperties(svc.meta(), e.Type),
+		setKeys, unsetKeys)
+	if d == nil {
 		return nil
 	}
-
-	// Check sets first, then unsets. First denial wins.
-	for k, val := range setKeys {
-		if d := check(k, val, true); d != nil {
-			return d
-		}
-	}
-	for _, k := range unsetKeys {
-		if d := check(k, nil, false); d != nil {
-			return d
-		}
-	}
-	return nil
+	return fieldWriteDenial(d)
 }
 
-// checkEnumOption rejects an enum value that isn't in the allow-set.
-// Handles both scalar enums (`string`) and list-typed enums
-// (`[]interface{}` — the JSON decoder's shape for a YAML
-// `list: true` enum like `tags`). For lists, the first disallowed
-// element produces the denial. Returns nil when the value passes.
-//
-// Non-string/non-list values fall through silently — the existing
-// type-validation pipeline catches those upstream; the affordance
-// gate only cares about disallowed-but-otherwise-valid values.
-func checkEnumOption(key string, value any, opts map[string]bool) *AffordanceDenialError {
-	deny := func(option string) *AffordanceDenialError {
-		return &AffordanceDenialError{
-			Rule:   RuleFieldEnumFiltered,
-			Path:   key + "=" + option,
-			Reason: fmt.Sprintf("option %q is not allowed for field %q", option, key),
-		}
+// fieldWriteDenial maps the shared field-write denial onto the wire type.
+// The rule strings are the same; TestFieldWriteRulesMatchWire pins that.
+func fieldWriteDenial(d *affordances.FieldWriteError) *AffordanceDenialError {
+	return &AffordanceDenialError{
+		Rule:        AffordanceDenialRule(d.Rule),
+		Path:        d.Path,
+		Reason:      d.Reason,
+		Attribution: d.Attribution,
 	}
-	switch v := value.(type) {
-	case string:
-		if allowed, ok := opts[v]; ok && !allowed {
-			return deny(v)
-		}
-	case []any:
-		for _, elem := range v {
-			str, ok := elem.(string)
-			if !ok {
-				continue
-			}
-			if allowed, ok := opts[str]; ok && !allowed {
-				return deny(str)
-			}
-		}
-	}
-	return nil
-}
-
-// declaredProperties returns the set of property names that the
-// metamodel declares for entityType. Returns an empty (non-nil) map
-// when the entity type is unknown — callers should treat that as
-// "nothing is declared," which causes the unknown-field rule to
-// reject every PATCH key. That's deliberate: an unknown entity type
-// should never reach this code path (the GET handler returns 404
-// upstream), but if it does the safe-fail behavior is reject-all.
-func declaredProperties(meta *metamodel.Metamodel, entityType string) map[string]bool {
-	out := make(map[string]bool)
-	if meta == nil {
-		return out
-	}
-	def, ok := meta.Entities[entityType]
-	if !ok {
-		return out
-	}
-	for name := range def.Properties {
-		out[name] = true
-	}
-	return out
-}
-
-// knownToResolver reports whether the resolver has any verdict
-// (writable, visible, or options) covering the given field name.
-// Used as the "known field" fallback for fields the metamodel does
-// not declare but the resolver has explicit opinions on.
-func knownToResolver(v FieldVerdicts, name string) bool {
-	if _, ok := v.Writable[name]; ok {
-		return true
-	}
-	if _, ok := v.Visible[name]; ok {
-		return true
-	}
-	if _, ok := v.Options[name]; ok {
-		return true
-	}
-	return false
 }
 
 // writeAffordanceDenialError renders an AffordanceDenialError as a 403
