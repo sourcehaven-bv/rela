@@ -291,7 +291,7 @@ func writeAttachmentWriteError(w http.ResponseWriter, r *http.Request, limit int
 	if writeForbiddenIfACLDenied(w, err) {
 		return
 	}
-	slog.Warn("dataentry: attachment write failed", "err", err, "path", r.URL.Path)
+	slog.Warn("dataentry: attachment write failed", "err", err, "path", shapedPath(r))
 	writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
 		"Validation failed", err.Error())
 }
@@ -554,7 +554,7 @@ func (h *attachmentHandler) handleV1DeleteAttachment(
 		if writeAttachmentBusy(w, r, err) || writeForbiddenIfACLDenied(w, err) {
 			return
 		}
-		slog.Warn("dataentry: delete attachment failed", "err", err, "path", r.URL.Path)
+		slog.Warn("dataentry: delete attachment failed", "err", err, "path", shapedPath(r))
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed",
 			"Validation failed", err.Error())
 		return

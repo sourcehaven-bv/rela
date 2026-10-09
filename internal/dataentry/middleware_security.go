@@ -187,7 +187,7 @@ func (s *security) reject(w http.ResponseWriter, r *http.Request, reason string)
 		"rule", reason,
 		"host", strconv.Quote(truncate(r.Host, maxLogFieldLen)),
 		"origin", strconv.Quote(truncate(origin, maxLogFieldLen)),
-		"path", strconv.Quote(truncate(r.URL.Path, maxLogFieldLen)),
+		"path", strconv.Quote(truncate(shapedPath(r), maxLogFieldLen)),
 	)
 
 	w.Header().Set("Content-Type", "application/json")

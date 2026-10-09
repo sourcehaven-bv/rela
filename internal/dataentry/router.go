@@ -285,7 +285,7 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// Outermost of all: per-request query accounting must wrap the whole
 	// chain so the principal resolution and ACL compilation above (which
 	// read the store) are counted with the handler, not missed.
-	handler = requestStats(handler, cfg.accessLog)
+	handler = requestStats(handler, cfg.accessLog, (&routeWordCache{schema: a.State}).words)
 	return handler
 }
 
