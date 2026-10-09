@@ -5,7 +5,9 @@ title: Lua HTML and markdown conversion helpers
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+started: "2026-10-09"
+completed: "2026-10-09"
+status: done
 ---
 
 ## Description
