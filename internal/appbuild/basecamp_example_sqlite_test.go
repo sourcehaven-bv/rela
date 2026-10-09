@@ -39,7 +39,10 @@ import (
 
 const (
 	bcAccount = "999"
+	// bcList is the default list: the secret basecamp_todolist_id, and the
+	// list bcStub.add puts a to-do in.
 	bcList    = "42"
+	bcProject = 500
 	bcClient  = "client-id"
 	bcSecret  = "client-secret"
 )
@@ -47,6 +50,22 @@ const (
 // bcPerson is a person on a stub to-do.
 type bcPerson struct {
 	ID int64 `json:"id"`
+}
+
+// bcRef is a recording's parent or bucket.
+type bcRef struct {
+	ID    int64  `json:"id"`
+	Title string `json:"title,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Type  string `json:"type"`
+}
+
+// bcTodolist is a stub to-do list in Basecamp's shape.
+type bcTodolist struct {
+	ID     int64  `json:"id"`
+	Title  string `json:"title"`
+	AppURL string `json:"app_url"`
+	Bucket bcRef  `json:"bucket"`
 }
 
 // bcTodo is a stub to-do in Basecamp's shape.
@@ -61,6 +80,8 @@ type bcTodo struct {
 	AppURL                string     `json:"app_url"`
 	Assignees             []bcPerson `json:"assignees"`
 	CompletionSubscribers []bcPerson `json:"completion_subscribers"`
+	Parent                bcRef      `json:"parent"`
+	Bucket                bcRef      `json:"bucket"`
 }
 
 // bcStub is the Basecamp API and the Launchpad token endpoint. Like
@@ -70,6 +91,7 @@ type bcStub struct {
 	srv *httptest.Server
 
 	mu       sync.Mutex
+	lists    map[int64]*bcTodolist
 	todos    map[int64]*bcTodo
 	nextID   int64
 	clock    int
@@ -90,10 +112,21 @@ var bcUserAgent = regexp.MustCompile(`\(.+@.+\)`)
 
 func newBCStub(t *testing.T) *bcStub {
 	t.Helper()
-	s := &bcStub{todos: map[int64]*bcTodo{}, nextID: 100, pageSize: 2, refresh: "R0"}
+	s := &bcStub{lists: map[int64]*bcTodolist{}, todos: map[int64]*bcTodo{}, nextID: 100, pageSize: 2, refresh: "R0"}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.srv.Close)
+	id, err := strconv.ParseInt(bcList, 10, 64)
+	require.NoError(t, err)
+	s.addList(id, "Tasks", bcProject, "Launch")
 	return s
+}
+
+// addList creates a remote to-do list in a project.
+func (s *bcStub) addList(id int64, title string, project int64, projectName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lists[id] = &bcTodolist{ID: id, Title: title, AppURL: fmt.Sprintf("%s/app/todolists/%d", s.srv.URL, id),
+		Bucket: bcRef{ID: project, Name: projectName, Type: "Project"}}
 }
 
 func (s *bcStub) stamp() string {
@@ -101,13 +134,19 @@ func (s *bcStub) stamp() string {
 	return time.Date(2026, 1, 1, 0, 0, s.clock, 0, time.UTC).Format(time.RFC3339)
 }
 
-// add creates a remote to-do as a Basecamp user would.
+// add creates a remote to-do in the default list as a Basecamp user would.
 func (s *bcStub) add(title, due string, done bool, assignees ...int64) int64 {
+	id, _ := strconv.ParseInt(bcList, 10, 64)
+	return s.addTo(id, title, due, done, assignees...)
+}
+
+// addTo creates a remote to-do in a list.
+func (s *bcStub) addTo(list int64, title, due string, done bool, assignees ...int64) int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.nextID++
-	td := &bcTodo{ID: s.nextID, Content: title, Completed: done, UpdatedAt: s.stamp(),
-		AppURL: fmt.Sprintf("%s/app/todos/%d", s.srv.URL, s.nextID)}
+	td := s.newTodo(list, title)
+	td.Completed = done
 	if due != "" {
 		td.DueOn = &due
 	}
@@ -116,6 +155,14 @@ func (s *bcStub) add(title, due string, done bool, assignees ...int64) int64 {
 	}
 	s.todos[td.ID] = td
 	return td.ID
+}
+
+// newTodo builds a to-do with the next id in a list. The caller holds mu.
+func (s *bcStub) newTodo(list int64, title string) *bcTodo {
+	l := s.lists[list]
+	return &bcTodo{ID: s.nextID, Content: title, UpdatedAt: s.stamp(),
+		AppURL: fmt.Sprintf("%s/app/todos/%d", s.srv.URL, s.nextID),
+		Parent: bcRef{ID: l.ID, Title: l.Title, Type: "Todolist"}, Bucket: l.Bucket}
 }
 
 // edit changes a remote to-do as a Basecamp user would.
@@ -190,13 +237,18 @@ func (s *bcStub) serve(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if path == "todolists/"+bcList+"/todos.json" {
-		if r.Method == http.MethodPost {
-			s.calls = append(s.calls, call)
-			s.create(w, r)
+	if path == "projects/recordings.json" && r.Method == http.MethodGet {
+		s.recordings(w, r, call)
+		return
+	}
+	if listText, ok := strings.CutPrefix(path, "todolists/"); ok && r.Method == http.MethodPost {
+		s.calls = append(s.calls, call)
+		id, err := strconv.ParseInt(strings.TrimSuffix(listText, "/todos.json"), 10, 64)
+		if err != nil || s.lists[id] == nil {
+			http.NotFound(w, r)
 			return
 		}
-		s.list(w, r, call)
+		s.create(w, r, id)
 		return
 	}
 	s.calls = append(s.calls, call)
@@ -259,14 +311,24 @@ func (s *bcStub) serveToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"access_token": s.access, "refresh_token": s.refresh, "expires_in": "1209600"})
 }
 
-func (s *bcStub) list(w http.ResponseWriter, r *http.Request, call string) {
+// recordings lists active to-dos or to-do lists across all projects,
+// oldest first, as Basecamp's recordings endpoint does with
+// sort=created_at&direction=asc.
+func (s *bcStub) recordings(w http.ResponseWriter, r *http.Request, call string) {
 	q := r.URL.Query()
-	completed := q.Get("completed") == "true"
 	var ids []int64
-	for id, td := range s.todos {
-		if td.Completed == completed {
+	switch q.Get("type") {
+	case "Todo":
+		for id := range s.todos {
 			ids = append(ids, id)
 		}
+	case "Todolist":
+		for id := range s.lists {
+			ids = append(ids, id)
+		}
+	default:
+		http.Error(w, "type", http.StatusBadRequest)
+		return
 	}
 	slices.Sort(ids)
 	page := 1
@@ -275,9 +337,13 @@ func (s *bcStub) list(w http.ResponseWriter, r *http.Request, call string) {
 	}
 	start := min((page-1)*s.pageSize, len(ids))
 	end := min(start+s.pageSize, len(ids))
-	items := make([]*bcTodo, 0, end-start)
+	items := make([]any, 0, end-start)
 	for _, id := range ids[start:end] {
-		items = append(items, s.todos[id])
+		if q.Get("type") == "Todo" {
+			items = append(items, s.todos[id])
+		} else {
+			items = append(items, s.lists[id])
+		}
 	}
 	body, err := json.Marshal(items)
 	if err != nil {
@@ -312,15 +378,15 @@ type bcWrite struct {
 	CompletionSubscriberIDs []int64 `json:"completion_subscriber_ids"`
 }
 
-func (s *bcStub) create(w http.ResponseWriter, r *http.Request) {
+func (s *bcStub) create(w http.ResponseWriter, r *http.Request, list int64) {
 	var in bcWrite
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Content == "" {
 		http.Error(w, "content required", http.StatusUnprocessableEntity)
 		return
 	}
 	s.nextID++
-	td := &bcTodo{ID: s.nextID, Content: in.Content, Description: in.Description, DueOn: in.DueOn,
-		UpdatedAt: s.stamp(), AppURL: fmt.Sprintf("%s/app/todos/%d", s.srv.URL, s.nextID)}
+	td := s.newTodo(list, in.Content)
+	td.Description, td.DueOn = in.Description, in.DueOn
 	s.todos[td.ID] = td
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, td)
@@ -384,8 +450,8 @@ func newBCWorld(t *testing.T) *bcWorld {
 	// The example's role, plus an editor for the person using rela.
 	var policy map[string]map[string]any
 	require.NoError(t, yaml.Unmarshal(exampleFile(t, "acl.yaml"), &policy))
-	policy["roles"]["editor"] = map[string]any{"read": []string{"todo"}, "create": []string{"todo"},
-		"update": []string{"todo"}}
+	policy["roles"]["editor"] = map[string]any{"read": []string{"todo", "todolist", "project"},
+		"create": []string{"todo"}, "update": []string{"todo"}, "permissions": []string{"basecamp-links"}}
 	policy["assignments"]["alice"] = "editor"
 	aclYAML, err := yaml.Marshal(policy)
 	require.NoError(t, err)
@@ -433,15 +499,32 @@ func (w *bcWorld) pull() {
 // byRef returns the todo linked to the remote id.
 func (w *bcWorld) byRef(id int64) *entity.Entity {
 	w.t.Helper()
+	return w.byTypeRef("todo", id)
+}
+
+// byTypeRef returns the entity of a type linked to the remote id.
+func (w *bcWorld) byTypeRef(typ string, id int64) *entity.Entity {
+	w.t.Helper()
 	want := strconv.FormatInt(id, 10)
-	for e, err := range w.svc.Store().ListEntities(context.Background(), store.EntityQuery{Type: "todo", Faces: store.AllFaces()}) {
+	for e, err := range w.svc.Store().ListEntities(context.Background(), store.EntityQuery{Type: typ, Faces: store.AllFaces()}) {
 		require.NoError(w.t, err)
 		if ref, ok := e.Properties["basecamp"].(map[string]any); ok && ref["id"] == want {
 			return e
 		}
 	}
-	w.t.Fatalf("no todo for remote %d", id)
+	w.t.Fatalf("no %s for remote %d", typ, id)
 	return nil
+}
+
+// linked returns the targets of from's relations of a type.
+func (w *bcWorld) linked(from, relType string) []string {
+	w.t.Helper()
+	var out []string
+	for r, err := range w.svc.Store().ListRelations(context.Background(), store.RelationQuery{From: from, Type: relType}) {
+		require.NoError(w.t, err)
+		out = append(out, r.To)
+	}
+	return out
 }
 
 func (w *bcWorld) get(id string) *entity.Entity {
@@ -568,7 +651,58 @@ func TestBasecampExample(t *testing.T) {
 		w.settle()
 		got := w.byRef(ship)
 		require.Equal(t, "Ship it", got.Properties["title"])
-		require.Equal(t, "<div>now</div>", w.get(got.ID).Content)
+		require.Equal(t, "now", w.get(got.ID).Content, "the HTML body was not converted")
+	})
+
+	t.Run("projects and lists are mirrored and linked", func(t *testing.T) {
+		stub.addList(77, "Ideas", 600, "Research")
+		idea := stub.addTo(77, "Idea", "", false)
+		w.settle()
+		list := w.byTypeRef("todolist", 77)
+		require.Equal(t, "Ideas", list.Properties["title"])
+		project := w.byTypeRef("project", 600)
+		require.Equal(t, "Research", project.Properties["title"])
+		require.Equal(t, []string{project.ID}, w.linked(list.ID, "in-project"))
+		require.Equal(t, []string{list.ID}, w.linked(w.byRef(idea).ID, "in-list"))
+		require.Equal(t, []string{w.byTypeRef("todolist", 42).ID}, w.linked(planID, "in-list"))
+
+		// A rename in Basecamp renames the mirror; a move relinks the todo.
+		stub.mu.Lock()
+		stub.lists[77].Title = "Ideas v2"
+		stub.mu.Unlock()
+		stub.edit(idea, func(td *bcTodo) { td.Parent.ID = 42 })
+		w.settle()
+		require.Equal(t, "Ideas v2", w.get(list.ID).Properties["title"])
+		require.Equal(t, []string{w.byTypeRef("todolist", 42).ID}, w.linked(w.byRef(idea).ID, "in-list"))
+	})
+
+	t.Run("a markdown body is pushed as HTML", func(t *testing.T) {
+		_, err := w.svc.EntityManager().PatchEntity(w.alice(), planID,
+			entity.Patch{Content: new("Steps:\n\n- one\n- **two**")})
+		require.NoError(t, err)
+		require.Equal(t, "<p>Steps:</p>\n<ul>\n<li>one</li>\n<li><strong>two</strong></li>\n</ul>",
+			stub.todo(plan).Description)
+		w.settle()
+		require.Equal(t, "Steps:\n\n- one\n- **two**", w.get(planID).Content)
+		require.Nil(t, w.get(planID).Properties["sync_conflict"])
+	})
+
+	t.Run("a body with an attachment is not pushed", func(t *testing.T) {
+		html := `<div>see <bc-attachment sgid="s" content-type="image/png"></bc-attachment></div>`
+		stub.edit(plan, func(td *bcTodo) { td.Description = html })
+		w.settle()
+		require.Equal(t, "see", w.get(planID).Content)
+		_, err := w.svc.EntityManager().PatchEntity(w.alice(), planID,
+			entity.Patch{Content: new("see this")})
+		require.NoError(t, err)
+		require.Equal(t, html, stub.todo(plan).Description, "the push dropped the attachment")
+		require.Contains(t, w.get(planID).Properties["sync_conflict"], "attachments")
+
+		// Resolved by undoing the local edit.
+		_, err = w.svc.EntityManager().PatchEntity(w.alice(), planID, entity.Patch{Content: new("see")})
+		require.NoError(t, err)
+		w.settle()
+		require.Nil(t, w.get(planID).Properties["sync_conflict"])
 	})
 
 	t.Run("local create posts and links", func(t *testing.T) {
@@ -582,9 +716,42 @@ func TestBasecampExample(t *testing.T) {
 		rid, err := strconv.ParseInt(ref["id"].(string), 10, 64)
 		require.NoError(t, err)
 		require.Equal(t, "Fresh", stub.todo(rid).Content)
-		require.True(t, strings.HasSuffix(ref["url"].(string), "#todolist-"+bcList), "ref url %v", ref["url"])
+		require.Equal(t, bcList, strconv.FormatInt(stub.todo(rid).Parent.ID, 10), "not posted to the default list")
 		require.Positive(t, w.base(got.ID))
 		w.settle()
+		require.Equal(t, []string{w.byTypeRef("todolist", 42).ID}, w.linked(got.ID, "in-list"))
+	})
+
+	t.Run("a todo linked to a list is posted to that list", func(t *testing.T) {
+		stub.addList(78, "Later", bcProject, "Launch")
+		w.settle()
+		later := w.byTypeRef("todolist", 78)
+
+		// The first push is refused, so the todo is still unlinked when
+		// alice puts it in a list; the job queue's retry then posts there.
+		stub.limited = 1
+		e := entity.New("", "todo")
+		e.SetString("title", "Someday")
+		created, err := w.svc.EntityManager().CreateEntity(w.alice(), e, entity.CreateOptions{})
+		require.NoError(t, err)
+		id := created.Entity.ID
+		require.Nil(t, w.get(id).Properties["basecamp"])
+		_, err = w.svc.EntityManager().CreateRelation(w.alice(),
+			entity.RelationKey{From: id, Type: "in-list", To: later.ID}, entity.RelationOptions{})
+		require.NoError(t, err)
+		require.NoError(t, w.run(w.get(id)))
+		ref := w.get(id).Properties["basecamp"].(map[string]any)
+		rid, err := strconv.ParseInt(ref["id"].(string), 10, 64)
+		require.NoError(t, err)
+		require.Equal(t, int64(78), stub.todo(rid).Parent.ID)
+		w.settle()
+
+		// Basecamp owns the list: a move made in rela is undone by the pull.
+		err = w.svc.EntityManager().DeleteRelation(w.alice(),
+			entity.RelationKey{From: id, Type: "in-list", To: later.ID})
+		require.NoError(t, err)
+		w.settle()
+		require.Equal(t, []string{later.ID}, w.linked(id, "in-list"))
 	})
 
 	t.Run("a retried create does not post a second to-do", func(t *testing.T) {

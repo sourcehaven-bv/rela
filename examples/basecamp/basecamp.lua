@@ -3,8 +3,9 @@
 -- One file holds both directions, because a rela script cannot load
 -- another file:
 --
---   * Run as a scheduled task (schedules.yaml), it PULLS: it reads every
---     to-do of one Basecamp to-do list and merges each into its rela todo.
+--   * Run as a scheduled task (schedules.yaml), it PULLS: it mirrors every
+--     Basecamp project and to-do list the account can see, reads every
+--     to-do, and merges each into its rela todo.
 --   * Run as a background automation (schema.yaml), the global `entity` is
 --     set, and it PUSHES that one todo's local edits to Basecamp.
 --
@@ -13,8 +14,11 @@
 -- in the "Sync connectors" section of the Lua scripting guide.
 
 local SYSTEM = "basecamp"
+local LIST_SYSTEM = "basecamp-list"
+local PROJECT_SYSTEM = "basecamp-project"
 local TAG = "sync/basecamp"
 local TYPE = "todo"
+local IN_LIST, IN_PROJECT = "in-list", "in-project"
 local FIELDS = {"title", "due", "done", "content"}
 
 -- Basecamp refuses a request whose User-Agent names no contact. Put your
@@ -22,15 +26,24 @@ local FIELDS = {"title", "due", "done", "content"}
 local USER_AGENT = "rela-basecamp-example (ops@example.com)"
 
 local RATE_LIMITED = "basecamp: rate limited"
-local VANISHED = "vanished: Basecamp no longer lists this to-do (deleted, archived or moved)"
+local VANISHED = "vanished: Basecamp no longer lists this to-do (deleted or archived)"
+local NO_LIST = "no to-do list: link this todo to a to-do list with in-list, then save it again"
+local RICH = "body: the Basecamp description holds attachments, mentions or images that rela " ..
+  "cannot keep; edit the body in Basecamp"
+local LOCAL_RICH = "body: holds images, raw HTML or links that Basecamp cannot take; remove them to sync"
 
 -- Settings. They are secrets only so the test can point the API at a stub;
 -- none of them is sensitive.
 local S = rela.secrets
 local ACCOUNT = S.basecamp_account_id or ""
-local LIST = S.basecamp_todolist_id or ""
-if not ACCOUNT:match("^%d+$") or not LIST:match("^%d+$") then
-  error("basecamp: set the secrets basecamp_account_id and basecamp_todolist_id to Basecamp ids", 0)
+-- Optional: the list a todo made in rela goes to when it has no in-list
+-- relation.
+local DEFAULT_LIST = S.basecamp_todolist_id or ""
+if not ACCOUNT:match("^%d+$") then
+  error("basecamp: set the secret basecamp_account_id to a Basecamp account id", 0)
+end
+if DEFAULT_LIST ~= "" and not DEFAULT_LIST:match("^%d+$") then
+  error("basecamp: basecamp_todolist_id, when set, must be a Basecamp id", 0)
 end
 local API = string.gsub(S.basecamp_api_base or "https://3.basecampapi.com", "/+$", "")
 -- The access token goes to API, so it must be https. Plain http is allowed
@@ -135,8 +148,8 @@ local function get_page(url)
     if resp.headers["link"] then nxt = next_link(resp) end
     return rela.json.decode(cached.body), nxt
   end
-  check(resp, "listing to-dos")
-  local items = decode(resp, "listing to-dos")
+  check(resp, "listing " .. url)
+  local items = decode(resp, "listing " .. url)
   local nxt = next_link(resp)
   if resp.headers["etag"] then
     rela.cache.set(key, {etag = resp.headers["etag"], body = resp.body, next = nxt}, {ttl = 86400})
@@ -144,23 +157,25 @@ local function get_page(url)
   return items, nxt
 end
 
+-- list_all reads every page of a listing.
+local function list_all(url)
+  local out = {}
+  while url do
+    local items, nxt = get_page(url)
+    for _, r in ipairs(items) do table.insert(out, r) end
+    url = nxt
+  end
+  return out
+end
+
+-- recordings lists every active recording of a type across all projects the
+-- account can see. Oldest first, so a new recording lands on the last page
+-- and the earlier pages stay cached.
+local function recordings(kind)
+  return list_all(ROOT .. "/projects/recordings.json?type=" .. kind .. "&sort=created_at&direction=asc")
+end
+
 local function todo_url(id) return ROOT .. "/todos/" .. id .. ".json" end
-
--- The ref url of a to-do ends in a fragment naming the to-do list it was
--- synced from. The vanished check reads it, so pointing
--- basecamp_todolist_id at another list does not flag the todos of the old
--- one. A browser ignores the fragment.
-local LIST_MARK = "#todolist-" .. LIST
-
-local function list_ref_url(remote)
-  if not remote.app_url then return nil end
-  return remote.app_url .. LIST_MARK
-end
-
-local function in_this_list(ref)
-  local url = ref.url or ""
-  return url:sub(-#LIST_MARK) == LIST_MARK
-end
 
 -- get_todo returns the to-do, or nil when Basecamp no longer has it.
 local function get_todo(id)
@@ -186,6 +201,30 @@ end
 
 local EMPTY = rela.sync.EMPTY
 
+-- Basecamp stores rich text as HTML and rela stores markdown. The
+-- conversions settle after one round trip, so a merge does too.
+--
+-- convert runs one of them. It returns the text and whether something was
+-- dropped, or nil and the reason when the body cannot be converted at all;
+-- one bad body must not stop the run.
+local function convert(fn, text)
+  local ok, out, lossy = pcall(fn, text or "")
+  if not ok then return nil, "body: " .. tostring(out) end
+  return out, lossy
+end
+
+local function body_of(r) return convert(rela.md.from_html, r.description) end
+
+-- html_of renders a rela body for Basecamp, or returns nil and the reason it
+-- cannot go: pushing a body Basecamp cannot hold would delete the dropped
+-- part in rela on the next pull.
+local function html_of(md)
+  local html, lossy = convert(rela.md.to_html, md)
+  if not html then return nil, lossy end
+  if lossy then return nil, LOCAL_RICH end
+  return html
+end
+
 local function theirs_of(r)
   return {
     properties = {
@@ -193,7 +232,9 @@ local function theirs_of(r)
       due = r.due_on or EMPTY,
       done = r.completed == true,
     },
-    content = r.description or "",
+    -- A body that cannot be converted is not reported, so the merge
+    -- leaves it alone.
+    content = (body_of(r)),
   }
 end
 
@@ -229,9 +270,11 @@ local function put_remote(remote, push)
       if push[f] ~= nil then return value(push[f]) end
       return theirs
     end
+    local description = fresh.description
+    if push.content ~= nil then description = assert(html_of(value(push.content))) end
     local body = {
       content = pick("title", fresh.content),
-      description = pick("content", fresh.description),
+      description = description,
       due_on = pick("due", fresh.due_on),
       starts_on = fresh.starts_on,
       notify = false,
@@ -297,6 +340,15 @@ local function sync_once(id, remote)
     stats.written = stats.written + 1
   end
   if next(m.push) then
+    if m.push.content ~= nil then
+      local _, remote_lossy = body_of(remote)
+      local _, why = html_of(value(m.push.content))
+      if remote_lossy then why = RICH end
+      if why then
+        record_conflict(id, ours, why)
+        return "done"
+      end
+    end
     if not put_remote(remote, m.push) then return "done" end
     stats.pushed = stats.pushed + 1
   end
@@ -319,16 +371,47 @@ end
 -- ---------------------------------------------------------------------------
 -- Pull
 
-local function pull_one(remote)
+-- links maps each todo or to-do list to the target of its one outgoing
+-- relation of rtype, read in one query.
+local function links(rtype)
+  local out = {}
+  for _, r in ipairs(rela.get_relations({type = rtype})) do out[r.from] = r.to end
+  return out
+end
+
+-- link_one makes `to` the only target of from's rtype relation.
+local function link_one(current, from, rtype, to)
+  if current[from] == to then return end
+  for _, r in ipairs(rela.get_relations({from = from, type = rtype})) do
+    rela.delete_relation(from, rtype, r.to)
+  end
+  rela.create_relation(from, rtype, to)
+  current[from] = to
+end
+
+-- mirror creates or renames the rela entity for a Basecamp project or to-do
+-- list and returns its id. Basecamp owns these, so a title edited in rela
+-- is overwritten.
+local function mirror(typ, system, rid, title, url)
+  local e = rela.find_by_external_ref(system, rid)
+  if not e then
+    return rela.create_entity(typ, {title = title, [SYSTEM] = {id = rid, url = url}}).id
+  end
+  if e.properties.title ~= title then rela.update_entity(e.id, {title = title}) end
+  return e.id
+end
+
+local function pull_one(remote, list_ids, in_list)
   local rid = sid(remote.id)
   local e = rela.find_by_external_ref(SYSTEM, rid)
+  local settled = false
   if not e then
     local ok, created, _, tok = pcall(rela.create_entity, TYPE, {
       title = remote.content,
       due = remote.due_on,
       done = remote.completed == true,
-      [SYSTEM] = {id = rid, url = list_ref_url(remote)},
-    }, remote.description or "", nil, {token = true})
+      [SYSTEM] = {id = rid, url = remote.app_url},
+    }, body_of(remote) or "", nil, {token = true})
     if not ok then
       -- Most often "must be unique": an entity this connector cannot see
       -- holds the id. Retrying would fail the same way.
@@ -336,23 +419,22 @@ local function pull_one(remote)
       return
     end
     stats.created = stats.created + 1
-    if tok and rela.tag_version(created.id, TAG, {expect = tok}) then return end
-    e = created -- an automation rewrote it; merge it with no base
+    e = created
+    -- When the tag fails, an automation rewrote the todo: merge it with no
+    -- base below.
+    settled = tok and rela.tag_version(created.id, TAG, {expect = tok})
   end
-  sync_item(e.id, remote)
+  -- Basecamp owns the list a to-do is in, so a move in rela is undone here.
+  local list = remote.parent and list_ids[sid(remote.parent.id)]
+  if list then link_one(in_list, e.id, IN_LIST, list) end
+  if not settled then sync_item(e.id, remote) end
 end
 
 local function pull()
-  local remotes, seen = {}, {}
+  local lists, remotes
   local ok, err = pcall(function()
-    for _, query in ipairs({"", "?completed=true"}) do
-      local url = ROOT .. "/todolists/" .. LIST .. "/todos.json" .. query
-      while url do
-        local items, nxt = get_page(url)
-        for _, r in ipairs(items) do table.insert(remotes, r) end
-        url = nxt
-      end
-    end
+    lists = recordings("Todolist")
+    remotes = recordings("Todo")
   end)
   if not ok then
     if tostring(err):find(RATE_LIMITED, 1, true) then
@@ -363,19 +445,34 @@ local function pull()
     error(err, 0)
   end
 
+  -- Projects and to-do lists first, so each todo can be linked to its list.
+  local project_ids, list_ids = {}, {}
+  local in_project, in_list = links(IN_PROJECT), links(IN_LIST)
+  for _, l in ipairs(lists) do
+    local b = l.bucket or {}
+    local pid = sid(b.id or "")
+    if pid ~= "" and not project_ids[pid] then
+      project_ids[pid] = mirror("project", PROJECT_SYSTEM, pid, b.name or pid, nil)
+    end
+    local lid = mirror("todolist", LIST_SYSTEM, sid(l.id), l.title or l.name or sid(l.id), l.app_url)
+    list_ids[sid(l.id)] = lid
+    if project_ids[pid] then link_one(in_project, lid, IN_PROJECT, project_ids[pid]) end
+  end
+
+  local seen = {}
   for _, r in ipairs(remotes) do
     seen[sid(r.id)] = true
-    pull_one(r)
+    pull_one(r, list_ids, in_list)
   end
   for _, e in ipairs(rela.list_entities(TYPE)) do
     local ref = e.properties[SYSTEM]
-    if ref and not seen[ref.id] and in_this_list(ref) then
+    if ref and not seen[ref.id] then
       local ours = rela.get_entity(e.id)
       if ours then record_conflict(e.id, ours, VANISHED) end
     end
   end
-  rela.output(string.format("basecamp: %d to-dos; created %d, updated %d, pushed %d, conflicts %d",
-    #remotes, stats.created, stats.written, stats.pushed, stats.conflicts))
+  rela.output(string.format("basecamp: %d lists, %d to-dos; created %d, updated %d, pushed %d, conflicts %d",
+    #lists, #remotes, stats.created, stats.written, stats.pushed, stats.conflicts))
 end
 
 -- ---------------------------------------------------------------------------
@@ -389,15 +486,31 @@ end
 -- stops (see push), and the next pull merges the todo. With no base, that
 -- pull records any field that still differs, such as a completion that did
 -- not reach Basecamp, as a conflict.
+-- target_list returns the Basecamp id of the list a new todo goes to: the
+-- list its in-list relation names, else basecamp_todolist_id.
+local function target_list(e)
+  for _, r in ipairs(rela.get_relations({from = e.id, type = IN_LIST})) do
+    local l = rela.get_entity(r.to)
+    local ref = l and l.properties[SYSTEM]
+    if ref then return ref.id end
+  end
+  if DEFAULT_LIST ~= "" then return DEFAULT_LIST end
+  return nil
+end
+
 local function create_remote(e)
+  local list = target_list(e)
+  if not list then return record_conflict(e.id, e, NO_LIST) end
+  local description, why = html_of(e.content)
+  if not description then return record_conflict(e.id, e, why) end
   local read_tok = rela.version_token(e.id)
-  local body = {content = e.properties.title or e.id, description = e.content or "",
+  local body = {content = e.properties.title or e.id, description = description,
     due_on = e.properties.due, notify = false}
-  local resp = request("POST", ROOT .. "/todolists/" .. LIST .. "/todos.json", body)
+  local resp = request("POST", ROOT .. "/todolists/" .. list .. "/todos.json", body)
   check(resp, "creating a to-do")
   local remote = decode(resp, "creating a to-do")
   local rid = sid(remote.id)
-  local ref = {[SYSTEM] = {id = rid, url = list_ref_url(remote)}}
+  local ref = {[SYSTEM] = {id = rid, url = remote.app_url}}
   local w, _, tok = rela.update_entity(e.id, ref, nil, {expect = read_tok})
   if not w then
     -- Edited while we created it. Link it anyway and leave the merge to

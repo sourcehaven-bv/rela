@@ -1,4 +1,5 @@
-# Basecamp sync: the todo type and the push automation.
+# Basecamp sync: the todo, to-do list and project types, and the push
+# automation.
 # Merge these into your project's schema.yaml.
 version: "1.0"
 entities:
@@ -18,6 +19,35 @@ entities:
         type: external_ref
         system: basecamp
         sync: true
+  # Mirrors of Basecamp projects and to-do lists. The pull creates and renames
+  # them; an edit made in rela is overwritten.
+  project:
+    label: Project
+    plural: projects
+    id_prefix: "PRJ-"
+    id_type: sequential
+    properties:
+      title: {type: string, required: true}
+      basecamp: {type: external_ref, system: basecamp-project}
+  todolist:
+    label: To-do list
+    plural: to-do lists
+    id_prefix: "TDL-"
+    id_type: sequential
+    properties:
+      title: {type: string, required: true}
+      basecamp: {type: external_ref, system: basecamp-list}
+relations:
+  in-list:
+    label: in list
+    from: [todo]
+    to: [todolist]
+    max_outgoing: 1
+  in-project:
+    label: in project
+    from: [todolist]
+    to: [project]
+    max_outgoing: 1
 automations:
   - name: basecamp-push
     on: {entity: todo, created: true, updated: true}
