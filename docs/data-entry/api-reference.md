@@ -1130,6 +1130,23 @@ see, and appears at the face the world serves. A source whose served face does
 not itself mention `{id}` is left out. A hidden or missing `{id}` gets the same
 404 as the entity GET. A bad `limit` or `cursor` is a 400.
 
+### Backlinks in a view
+
+A view can collect backlinks with a `mentioned_by` traverse step and show them
+in a section of its own (see the data-entry guide). The `_views` response then
+carries three extra fields:
+
+| Field | Where | Meaning |
+| ----- | ----- | ------- |
+| `hideMentionedByPanel` | response | `true` when the page should leave out the built-in panel: the view collects backlinks, or `entity_views.<type>.mentioned_by_panel` is `false`. Omitted otherwise. |
+| `incomplete` | section | `true` when the section's backlinks collection holds only part of the matching sources. Omitted otherwise. |
+| `entityType`, `columns` | `groups[]` | Set on each group of a `columns_by_type` table. The group's rows are of `entityType`, and their cells are positional over the group's `columns`. |
+
+`incomplete` is set when more than 200 readable sources match, or when the
+backlink scan reaches its 10,000-entry limit. The second case is the same
+accepted signal as `truncated` above. `incomplete` differs from a nested
+section's `truncated`, which is never set by a budget.
+
 ---
 
 ## Data-entry API: GET /api/v1/_apps/{id}/{path}

@@ -675,6 +675,12 @@ const (
 	// mentioned-by: the target's address read, one index batch, ONE header
 	// read for that batch's sources, and the membership walk.
 	mentionedByBudget = 5
+	// backlinks view (TKT-HF0D5W): the entry read, one index batch, the
+	// resolver's ONE header read to gate it, the step's ONE header reload,
+	// and the edge and membership reads every view makes. Measured: 7 at 10
+	// and 50 sources. The separate MentionSources assertion pins the
+	// once-per-view read.
+	mentionsViewBudget = 7
 	// nested view: entry, the two traverse passes, the collection loads, the
 	// entry edges and the membership walk, plus the relation column's own
 	// reads — one ListRelations per ROW TYPE (epic and ticket) and the gated
@@ -903,4 +909,46 @@ func TestQueryBudget_MentionedByIsSizeIndependent(t *testing.T) {
 		detail = counting.String()
 	}
 	assertBudget(t, "mentioned-by", counts[0], counts[1], mentionedByBudget, detail)
+}
+
+// A view with a `mentioned_by` step and a `columns_by_type` table
+// (TKT-HF0D5W). The index is read once per view, not once per fixpoint pass,
+// and nothing scales with the number of sources.
+func TestQueryBudget_MentionsViewIsSizeIndependent(t *testing.T) {
+	counts := make([]int, 0, 2)
+	var detail string
+	for _, n := range []int{10, 50} {
+		app, counting, d, ctx := newBudgetAppOn(t, n, memstore.New())
+		for i := 1; i <= n; i++ {
+			id := fmt.Sprintf("TKT-%04d", i)
+			e := entity.New(id, "ticket")
+			e.SetString("title", "Ticket "+id)
+			e.SetString("status", "open")
+			e.Content = "Implements `F1`."
+			if err := counting.UpdateEntity(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		app.Cfg().Views["fv"] = ViewConfig{
+			Entry:    ViewEntry{Type: "feature"},
+			Traverse: []ViewTraverse{{From: "entry", MentionedBy: true, CollectAs: "mentions"}},
+			Sections: []ViewSection{{
+				Heading: "Mentioned by", Source: "mentions", Display: "table",
+				Columns:       []ListColumn{{Property: "title"}},
+				ColumnsByType: map[string][]ListColumn{"ticket": {{Property: "title"}, {Property: "status"}}},
+			}},
+		}
+		counting.Reset()
+		rec := viewsAs(ctx, t, app, d, "feature", "F1")
+		got := decodeView(t, rec.Code, rec.Body.Bytes())
+		if rows := len(got.Sections[0].Groups[0].Rows); rows != n {
+			t.Fatalf("n=%d: got %d rows", n, rows)
+		}
+		if calls := counting.Calls()["MentionSources"]; calls != 1 {
+			t.Errorf("n=%d: MentionSources called %d times, want once per view", n, calls)
+		}
+		counts = append(counts, counting.Reads())
+		detail = counting.String()
+	}
+	assertBudget(t, "mentions view", counts[0], counts[1], mentionsViewBudget, detail)
 }

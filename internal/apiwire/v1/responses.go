@@ -1304,6 +1304,13 @@ type ViewResponse struct {
 	// re-deriving which section maps to which relation. Omitted when no section
 	// opted in — which is every view that predates this field.
 	Create []ViewSectionCreate `json:"create,omitempty"`
+
+	// HideMentionedByPanel tells the page to leave out the built-in
+	// "Mentioned by" panel (TKT-HF0D5W): the view collects backlinks itself
+	// through a `mentioned_by` traverse step, or
+	// `entity_views.<type>.mentioned_by_panel` is false. Decided by the server
+	// from the view it executed, so the SPA does not re-derive view selection.
+	HideMentionedByPanel bool `json:"hideMentionedByPanel,omitempty"`
 }
 
 // ViewSection represents a section with resolved data.
@@ -1335,6 +1342,12 @@ type ViewSection struct {
 	// the preview cap sets both. This flag exists for what HasMoreChildren
 	// cannot express — a parent dropped entirely has no row to signal on.
 	Truncated bool `json:"truncated,omitempty"`
+	// Incomplete reports that a flat section's backlinks collection holds
+	// only part of the matching sources (TKT-HF0D5W): more exist than a
+	// `mentioned_by` step collects, or the backlink scan stopped at its
+	// budget. The scan-budget case is the signal docs/acl-security.md
+	// accepts for the mentioned-by endpoint.
+	Incomplete bool `json:"incomplete,omitempty"`
 
 	// RelationOrder is set when the section's rows are the entry's targets
 	// over one orderable relation, shown in relation order; see
@@ -1520,6 +1533,12 @@ type ViewGroup struct {
 	GroupName string       `json:"groupName"`
 	Rows      []ViewRow    `json:"rows,omitempty"`
 	Entities  []ViewEntity `json:"entities,omitempty"`
+	// EntityType and Columns are set on the per-type groups of a
+	// `columns_by_type` table (TKT-HF0D5W). Rows' cells are positional over
+	// Columns. Both are omitted on a `group_by` group, whose rows use the
+	// section's columns.
+	EntityType string       `json:"entityType,omitempty"`
+	Columns    []ViewColumn `json:"columns,omitempty"`
 }
 
 // ViewAddInfo describes an add button configuration. Despite the "View"

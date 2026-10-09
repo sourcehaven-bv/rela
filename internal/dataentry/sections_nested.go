@@ -107,7 +107,7 @@ func (h *viewsHandler) buildNestedTree(
 		node := SectionTreeNode{
 			SectionEntityData: h.buildNestedEntityData(ctx, sec, row.parent, result),
 			Columns:           parentCols,
-			Row:               h.buildSectionRow(s, parentCols, row.parent, parentRel),
+			Row:               buildSectionRow(s, parentCols, row.parent, parentRel),
 			ChildCount:        row.childCount,
 			HasMoreChildren:   len(row.children) < row.childCount,
 		}
@@ -117,7 +117,7 @@ func (h *viewsHandler) buildNestedTree(
 			node.Children = append(node.Children, SectionTreeNode{
 				SectionEntityData: h.buildNestedEntityData(ctx, sec, child, result),
 				Columns:           childCols,
-				Row:               h.buildSectionRow(s, childCols, child, childRel),
+				Row:               buildSectionRow(s, childCols, child, childRel),
 			})
 		}
 		nodes = append(nodes, node)
@@ -317,12 +317,12 @@ func (h *viewsHandler) buildNestedEntityData(
 // Extracted from the `table` arm so `nested` renders the same cell vocabulary
 // from the same code — two implementations of a cell would drift on widget
 // resolution and multi-value handling.
-func (h *viewsHandler) buildSectionRow(
+func buildSectionRow(
 	s *Schema, columns []ListColumn, e *entity.Entity, relValues map[string]map[int][]string,
 ) SectionRowData {
 	eDef, _ := s.Meta.GetEntityDef(e.Type)
 	row := SectionRowData{
-		EntityID: e.ID, EntityType: e.Type, EditFormID: editFormForType(h.schema().Cfg, e.Type),
+		EntityID: e.ID, EntityType: e.Type, EditFormID: editFormForType(s.Cfg, e.Type),
 		Self: rowSelfHref(s.Meta, e),
 	}
 	for ci, col := range columns {

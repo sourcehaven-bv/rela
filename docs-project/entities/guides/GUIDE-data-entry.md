@@ -1893,6 +1893,44 @@ traverse:
 | `recursive`       | bool   | Follow the relation transitively                   |
 | `max_depth`       | int    | Maximum recursion depth                            |
 | `where`           | string | Filter expression to select matching entities      |
+| `mentioned_by`    | bool   | Collect the entities whose body mentions the entry (see below) |
+
+#### Backlinks: `mentioned_by`
+
+A `mentioned_by` step collects the entities whose markdown body mentions the
+entry as a code span holding its id, such as `` `FEAT-001` ``. These are the
+same backlinks the built-in "Mentioned by" panel lists. The step lets you place
+them in a section of your own and choose how they look.
+
+```yaml
+traverse:
+  - from: entry
+    mentioned_by: true
+    collect_as: mentions
+    where: "status != done"   # optional
+```
+
+- The step takes `from: entry` only. It cannot be combined with `follow`,
+  `follow_incoming`, `recursive` or `max_depth`, and it needs a `collect_as`
+  no other step uses.
+- It collects at most 200 sources, in id order. `where:` filters while the
+  step collects, so the 200 are matching sources. A bad `where:` on this step
+  is a load error.
+- When more matching sources exist, or the backlink index scan reaches its
+  limit, the section shows a note that only part of the list is shown. A
+  section `sort:` orders the collected sources; it does not pick which 200
+  are collected.
+- Sources you may not read are never collected, and each source appears at
+  the face the world serves.
+- Any type can mention the entry, so the collection can hold several types.
+  Use `fields_by_type` or `columns_by_type` on the section to give each type
+  its own fields or columns (see [Per-type fields and columns](#per-type-fields-and-columns)).
+- A view that collects backlinks hides the built-in "Mentioned by" panel on
+  that type's page, so the backlinks are not shown twice. A `mentioned_by`
+  collection that no section shows is a load error.
+- Side panels do not support `mentioned_by`.
+- A command with `kind: view` receives the same collection, so a script sees
+  at most 200 backlinks.
 
 #### Where Clause Syntax
 
@@ -1976,6 +2014,8 @@ sections:
 | `children`      | string | Collection to nest under each row (`nested` mode; required) |
 | `parent_columns`| map    | `nested` mode: columns for the source level, keyed by entity type |
 | `child_columns` | map    | `nested` mode: columns for the child level, keyed by entity type |
+| `fields_by_type`| map    | Per-type `fields`, keyed by entity type (`list`, `cards`, `content`, `properties`) |
+| `columns_by_type`| map   | Per-type `columns`, keyed by entity type (`table`) |
 | `sort`          | list   | Sort keys for a flat section (`list`, `table`, `cards`) |
 | `parent_sort`   | list   | `nested` mode: sort keys for the source level            |
 | `child_sort`    | list   | `nested` mode: sort keys for the child level             |
@@ -1993,6 +2033,48 @@ Each entry under `fields:` takes:
 | `span`     | int    | Width on the 12-column grid (1-12; omit for full width)      |
 | `render`   | string | `display` or `input`; overrides the section's `render`        |
 | `widget`   | string | Which widget renders this property (see Widget Overrides)    |
+
+### Per-type fields and columns
+
+A collection can hold several entity types: the sources of a `mentioned_by`
+step, or a relation with several `to:` types. One `fields:` or `columns:` list
+then fits poorly, because each type has its own properties. `fields_by_type`
+and `columns_by_type` give each type its own list:
+
+```yaml
+sections:
+  - heading: Mentioned by
+    source: mentions
+    display: table
+    columns_by_type:
+      ticket:
+        - {property: title, link: detail}
+        - {property: status}
+      decision:
+        - {property: title, link: detail}
+        - {property: date}
+    columns:                      # every other type
+      - {property: title, link: detail}
+
+  - heading: Mentioned by (cards)
+    source: mentions
+    display: cards
+    fields_by_type:
+      ticket: [{property: status}, {property: priority}]
+```
+
+- A row uses its own type's list. A type absent from the map uses `fields:` or
+  `columns:`.
+- A `columns_by_type` table shows one group per type, ordered by type name,
+  each with its own header. It cannot be combined with `group_by`. It needs a
+  `columns:` fallback unless the map covers every type the collection can hold;
+  for a `mentioned_by` collection that is every type in the schema.
+- Load errors: a key that is not an entity type, or a type the collection can
+  never hold; a property the keyed type does not declare; an empty list; a
+  fallback property that none of the remaining types declares; the key on the
+  wrong display mode or on `source: entry`.
+- `display: nested` keeps its own per-level keys, `parent_columns` and
+  `child_columns`.
 
 ### Creating related entities from a section
 
@@ -2341,9 +2423,15 @@ entity_views:
 | ------------- | ------- | ----------------------------------------------------------------- |
 | `detail_view` | string  | View name (must reference a key under `views:`) used for entities of this type |
 | `duplicate`   | mapping | Narrows what a duplicate of this type copies — see below |
+| `mentioned_by_panel` | bool | `false` hides the built-in "Mentioned by" panel on this type's page |
 
-An entry may carry either field or both. An entry that declares neither is a
+An entry may carry any of these fields. An entry that declares none is a
 load error, since it configures nothing.
+
+The "Mentioned by" panel lists the entities whose body mentions the one on the
+page. It is shown by default. It is hidden when `mentioned_by_panel` is
+`false`, and when the type's view collects backlinks itself through a
+[`mentioned_by` step](#backlinks-mentioned_by).
 
 ### Duplicating an entity
 
