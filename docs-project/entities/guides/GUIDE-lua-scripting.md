@@ -606,6 +606,26 @@ reported every field in `fields`) and `retag` (nothing to do, but the tag
 should move to the current state). `retag` is true only for a complete
 report.
 
+**Rich text.** When the other system stores bodies as HTML, convert them
+with `rela.md.from_html(html)` on the way in and `rela.md.to_html(markdown)`
+on the way out. Both return the converted text and a boolean `lossy`. Both
+sanitize with the same allowlist: paragraphs, headings, bold, italic,
+strikethrough, lists, code, quotes, tables, rules and `http`, `https` and
+`mailto` links. Other elements, such as images and attachments, are dropped
+and their text kept, and `lossy` is true. Colors and other styling are
+dropped without setting `lossy`.
+
+`from_html` returns markdown that converts back to itself: the text does not
+change again on the next round trip, so a merge settles. To get there it may
+normalize the text once. Two adjacent lists become one list, and bold inside
+a word next to punctuation becomes literal asterisks. The other system may
+also store the HTML in its own form; the next pull then writes that form
+into rela once. Do not push a body when `lossy` is true for the other
+system's current HTML: the push would delete what rela could not represent.
+The Basecamp example records such a body as a conflict instead. Either
+function raises on input over 1 MiB or HTML nested too deeply to parse; call
+it with `pcall` when one bad body must not stop a whole run.
+
 Values compare by meaning for the property type: `3` and `"3"` are the same
 integer, a date ignores a midnight time, a list ignores order, and a body
 ignores line endings and trailing whitespace. So a value the other system
@@ -2215,6 +2235,13 @@ What the walker visits and what it skips:
 | `image` | recurse into `alt_inlines` |
 | `text`, `raw_html`, `autolink`, breaks | left untouched |
 | inside `code_block` or `raw` block | left untouched (parser doesn't emit code-span inlines there) |
+
+#### `rela.md.from_html(html)` and `rela.md.to_html(markdown)`
+
+Convert rich text between HTML and markdown, for sync connectors. Each
+returns the converted text and a boolean that is true when something was
+dropped. See "Rich text" under [Sync connectors](#sync-connectors) for what
+they keep.
 
 ## Entity Structure
 

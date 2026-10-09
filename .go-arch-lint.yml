@@ -86,6 +86,8 @@ components:
   calfeed:          { in: internal/calfeed }
   classification:   { in: internal/classification }
   mailrender:       { in: internal/mailrender }
+  # HTML <-> markdown for sync connectors (TKT-LAMZ8F). A leaf like mailrender.
+  htmlmd:           { in: internal/htmlmd }
   mailtemplate:     { in: internal/mailtemplate }
   caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
@@ -256,10 +258,14 @@ vendors:
   # quoted-printable, multipart — which is the part that is easy to get subtly
   # wrong. Granted only to mail.
   gomail:      { in: github.com/wneessen/go-mail }
-  # HTML sanitize + CSS inline for mail bodies. Both granted only to
-  # mailrender; the ORDER they run in is a security property documented on that
-  # package (sanitize the untrusted fragment, inline last).
+  # HTML sanitize + CSS inline for mail bodies, granted to mailrender; the
+  # ORDER they run in is a security property documented on that package
+  # (sanitize the untrusted fragment, inline last). htmlmd also sanitizes with
+  # bluemonday, in both conversion directions.
   bluemonday:  { in: github.com/microcosm-cc/bluemonday }
+  htmltomarkdown:
+    in:
+      - github.com/JohannesKaufmann/html-to-markdown/v2/**
   douceur:
     in:
       - github.com/aymerick/douceur
@@ -921,6 +927,12 @@ deps:
       - goldmark
       - bluemonday
       - douceur
+  htmlmd:
+    canUse:
+      - goldmark
+      - bluemonday
+      - htmltomarkdown
+      - nethtml
   # Project declarations assemble renderer models from an injected visible
   # reader. SMTP and app wiring remain outside this package.
   mailtemplate:
@@ -1411,6 +1423,8 @@ deps:
       # deps at all, and `go list -deps` confirms it imports nothing internal),
       # so this arrow cannot close a cycle. lua still must not depend on mail.
       - mailrender
+      # rela.md.from_html / to_html (TKT-LAMZ8F); a leaf, no cycle possible.
+      - htmlmd
       - metamodel
       - principal
       - search

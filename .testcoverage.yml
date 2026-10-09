@@ -39,6 +39,10 @@ override:
     threshold: 85
   - path: ^internal/mail$
     threshold: 85
+  # Sanitizes rich text that sync connectors read from other systems
+  # (TKT-LAMZ8F); pinned for the same reason as mailrender.
+  - path: ^internal/htmlmd$
+    threshold: 80
 
   # Data classification overlay (TKT-8UCV32): a parser and a file rewriter
   # whose mistakes silently mislabel data, so pinned above the default floor.
