@@ -147,7 +147,13 @@ func (c *DB) init(ctx context.Context) error {
 	if _, err := c.db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("sqlitedb: create schema: %w", err)
 	}
-	return c.migrate(ctx, fresh)
+	if err := c.migrate(ctx, fresh); err != nil {
+		return err
+	}
+	if _, err := c.db.ExecContext(ctx, contentHashDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create content_hash triggers: %w", err)
+	}
+	return nil
 }
 
 // verifyBusyTimeout confirms the PRAGMA reached more than one connection.
@@ -294,6 +300,10 @@ CREATE TABLE IF NOT EXISTS entities (
 	origin_source_face TEXT,
 	origin_source_type TEXT,
 	origin_definition  TEXT,
+	-- content_hash is the canonical hash the version sweep last computed for
+	-- this row; NULL means not known. See contentHashDDL. Added to older
+	-- databases by the v14 rung.
+	content_hash       TEXT,
 	PRIMARY KEY (id, face)
 ) STRICT;
 ` + entitiesTypeIDFaceIndexDDL + `
@@ -341,6 +351,7 @@ CREATE TABLE IF NOT EXISTS relations (
 	-- Same meaning as on entities.
 	last_edited_by_user TEXT,
 	last_edited_by_tool TEXT,
+	content_hash        TEXT,
 	PRIMARY KEY (from_id, from_face, rel_type, to_id)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS relations_from_idx ON relations(from_id);
@@ -390,6 +401,7 @@ CREATE TABLE IF NOT EXISTS marked_entities (
 	origin_source_face TEXT,
 	origin_source_type TEXT,
 	origin_definition  TEXT,
+	content_hash       TEXT,
 	deleted_at  TEXT NOT NULL,
 	deleted_by  TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (id, face)
@@ -411,9 +423,45 @@ CREATE TABLE IF NOT EXISTS marked_relations (
 	rel_record_id INTEGER NOT NULL DEFAULT 0,
 	last_edited_by_user TEXT,
 	last_edited_by_tool TEXT,
+	content_hash        TEXT,
 	PRIMARY KEY (from_id, from_face, rel_type, to_id)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS marked_relations_owner_idx ON marked_relations(owner_id);`
+
+// contentHashDDL clears a live row's content_hash whenever a hashed column
+// changes (BUG-1DWMYO, pgstore migration 0020).
+//
+// The version sweep selects only rows whose stored hash is NULL or differs
+// from their latest version's, and writes back the hash it computes. Writers
+// never set the column; these triggers keep it from going stale, including on
+// a write path that does not know about it. The sweep's own write-back sets
+// content_hash alone, so it does not fire them.
+//
+// Not part of schemaSQL. SQLite resolves trigger columns when a trigger fires,
+// not when it is created, so schemaSQL would install these on a v13 database
+// before the rung adds the column. If the rung then failed, a v13 binary
+// opening that database would fail every update with "no such column". init
+// runs this after migrate instead, when the column exists either way.
+const contentHashDDL = `
+CREATE TRIGGER IF NOT EXISTS entities_clear_content_hash
+AFTER UPDATE OF id, face, type, properties, content ON entities
+WHEN NEW.content_hash IS NOT NULL
+ AND (NEW.id IS NOT OLD.id OR NEW.face IS NOT OLD.face OR NEW.type IS NOT OLD.type
+      OR NEW.properties IS NOT OLD.properties OR NEW.content IS NOT OLD.content)
+BEGIN
+	UPDATE entities SET content_hash = NULL WHERE id = NEW.id AND face = NEW.face;
+END;
+CREATE TRIGGER IF NOT EXISTS relations_clear_content_hash
+AFTER UPDATE OF from_id, from_face, rel_type, to_id, properties, content ON relations
+WHEN NEW.content_hash IS NOT NULL
+ AND (NEW.from_id IS NOT OLD.from_id OR NEW.from_face IS NOT OLD.from_face
+      OR NEW.rel_type IS NOT OLD.rel_type OR NEW.to_id IS NOT OLD.to_id
+      OR NEW.properties IS NOT OLD.properties OR NEW.content IS NOT OLD.content)
+BEGIN
+	UPDATE relations SET content_hash = NULL
+	 WHERE from_id = NEW.from_id AND from_face = NEW.from_face
+	   AND rel_type = NEW.rel_type AND to_id = NEW.to_id;
+END;`
 
 // entitiesTypeIDFaceIndexDDL serves a type page in every face selection
 // (TKT-KQXVF7). Each list shape orders by (id, face), and a world picks one

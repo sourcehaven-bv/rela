@@ -17,6 +17,22 @@ func (s *Store) SweepNow(ctx context.Context, p store.ProjectionProvider, cfg st
 	return sweepNow(ctx, s, p, cfg)
 }
 
+// SweepNowWithWrite is [Store.SweepNow] with write run after the tick has
+// read its entity candidates and before it captures them.
+func (s *Store) SweepNowWithWrite(
+	ctx context.Context, p store.ProjectionProvider, cfg store.SweepConfig, write func(),
+) error {
+	done := make(chan struct{})
+	close(done)
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	sw := &sweep{
+		store: s, provider: p, cfg: sweepDefaults(cfg), cancel: cancel, done: done,
+		beforeCapture: write,
+	}
+	return sw.tick(sctx)
+}
+
 // ExplainGraphQuery returns SQLite's EXPLAIN QUERY PLAN for the statement
 // GraphQuery would run for q, one detail line per plan node.
 func (s *Store) ExplainGraphQuery(ctx context.Context, q store.GraphQuery) (string, error) {
