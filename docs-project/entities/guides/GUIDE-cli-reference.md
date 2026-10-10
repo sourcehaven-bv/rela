@@ -645,12 +645,23 @@ rela history-purge <address> (--vseq N | --content-hash H | --all) --reason "...
   shows what would be purged
 - `--yes` — skip the type-the-id confirmation (scripts); requires `--commit`
 - `--force-live` — purge even though the live row still holds the content (writes
-  a tombstone so the sweep will not re-capture it). Prefer redacting the live
-  value first.
+  a tombstone so the sweep will not re-capture it). The tombstone only stops
+  the sweep re-capturing the same content: the next edit, rename or delete
+  records the live row again. For erasure that lasts, redact the live value
+  or delete the row first.
 
 Purge **refuses** while the live row still holds the content (unless
 `--force-live`) and **refuses** a rename row. It is one necessary step, not
 cryptographic erasure — PITR/backup lifecycle is the operator's responsibility.
+
+**SQLite builds v26.9.7 to v26.10.4:** a `--force-live` purge wrote its
+tombstone with the wrong content hash, so the next sweep captured the purged
+content again. `relation-history-purge` and PostgreSQL builds are not
+affected. The audit log records each purge as `op=purge-version`. For each
+one made with an affected build, run `rela history <address>` after
+upgrading. A version listed after the purge row holds the content again.
+Purge that version with `--vseq <N> --force-live`; `--force-live` is needed
+whenever the live row exists. Afterwards the newest row is the purge row.
 
 **Examples:**
 
