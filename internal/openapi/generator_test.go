@@ -59,8 +59,7 @@ func TestGenerator_Generate(t *testing.T) {
 
 	// Check paths exist
 	expectedPaths := []string{
-		"/api/metamodel",
-		"/api/search",
+		"/api/v1/_openapi.json",
 		"/api/v1/tickets",
 		"/api/v1/tickets/{id}",
 		"/api/v1/tickets/{id}/relations",

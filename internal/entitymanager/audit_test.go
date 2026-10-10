@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -288,6 +289,83 @@ func TestAudit_AC2_RelationCreateRecordsWithRelationSubject(t *testing.T) {
 	if r.Subject.FromID != rel.From || r.Subject.ToID != rel.To {
 		t.Errorf("Subject endpoints = %s -> %s, want %s -> %s",
 			r.Subject.FromID, r.Subject.ToID, rel.From, rel.To)
+	}
+}
+
+// TestCreateRelation_TolerateTypeMismatch pins GitHub #1806: with the flag a
+// type-allowlist mismatch is written and audited like any create; without it
+// the create still fails. An unknown relation type fails either way.
+func TestCreateRelation_TolerateTypeMismatch(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		relType  string
+		tolerate bool
+		// wantErr checks the refusal; nil means the create succeeds.
+		wantErr func(error) bool
+	}{
+		{name: "mismatch with flag is written", relType: "addresses", tolerate: true},
+		{
+			name: "mismatch without flag fails", relType: "addresses",
+			wantErr: func(err error) bool {
+				var target *metamodel.InvalidRelationError
+				return errors.As(err, &target)
+			},
+		},
+		{
+			name: "unknown type with flag fails", relType: "no-such-relation", tolerate: true,
+			wantErr: func(err error) bool {
+				var target *metamodel.RelationNotFoundError
+				return errors.As(err, &target)
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mem := audit.NewMemory()
+			mgr := newManagerWithAudit(t, mem, nil)
+			ctx := context.Background()
+			req, err := mgr.CreateEntity(ctx, entity.New("", "requirement"), entity.CreateOptions{})
+			if err != nil {
+				t.Fatalf("CreateEntity req: %v", err)
+			}
+			dec, err := mgr.CreateEntity(ctx, entity.New("", "decision"), entity.CreateOptions{})
+			if err != nil {
+				t.Fatalf("CreateEntity dec: %v", err)
+			}
+			startLen := len(mem.Records())
+
+			// addresses allows decision -> requirement; this edge is reversed.
+			who := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
+			key := entity.RelationKey{From: req.Entity.ID, Type: tc.relType, To: dec.Entity.ID}
+			_, err = mgr.CreateRelation(principal.With(ctx, who), key,
+				entity.RelationOptions{TolerateTypeMismatch: tc.tolerate})
+
+			records := mem.Records()[startLen:]
+			if tc.wantErr != nil {
+				if !tc.wantErr(err) {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if len(records) != 0 {
+					t.Errorf("failed create must not be audited, got %+v", records)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateRelation: %v", err)
+			}
+			if len(records) != 1 || records[0].Op != audit.OpCreateRelation {
+				t.Fatalf("want one create-relation record, got %+v", records)
+			}
+			want := audit.Subject{Kind: "relation", RelationType: tc.relType, FromID: key.From, ToID: key.To}
+			if *records[0].Subject != want {
+				t.Errorf("Subject = %+v, want %+v", *records[0].Subject, want)
+			}
+			if p := records[0].Principal; p.User != who.User || p.Tool != who.Tool {
+				t.Errorf("Principal = %+v, want %+v", records[0].Principal, who)
+			}
+		})
 	}
 }
 

@@ -169,13 +169,13 @@ func schemaPinnedDSN(t *testing.T, admin, schema string) string {
 	require.NoError(t, err)
 	defer pool.Close()
 
-	_, err = pool.Exec(ctx, fmt.Sprintf(`DROP SCHEMA IF EXISTS %s CASCADE`, pgx.Identifier{schema}.Sanitize()))
+	_, err = pool.Exec(ctx, `DROP SCHEMA IF EXISTS `+pgx.Identifier{schema}.Sanitize()+` CASCADE`)
 	require.NoError(t, err)
-	_, err = pool.Exec(ctx, fmt.Sprintf(`CREATE SCHEMA %s`, pgx.Identifier{schema}.Sanitize()))
+	_, err = pool.Exec(ctx, `CREATE SCHEMA `+pgx.Identifier{schema}.Sanitize())
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		cleanup, err := pgxpool.New(context.Background(), admin)
-		if err != nil {
+		cleanup, cerr := pgxpool.New(context.Background(), admin)
+		if cerr != nil {
 			return
 		}
 		defer cleanup.Close()

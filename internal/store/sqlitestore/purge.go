@@ -371,12 +371,8 @@ func (v *VersionStore) entityLineageIDsForPurge(
 func (v *VersionStore) liveEntityHash(
 	ctx context.Context, id string, p entity.Face,
 ) (hash string, exists bool, err error) {
-	// Column order is scanEntity's: id, type, face. With type and face
-	// swapped the hash never matched the sweep's, so a ForceLive tombstone
-	// did not stop the sweep re-capturing the content just purged.
-	e, gErr := scanEntity(v.db.QueryRowContext(ctx,
-		`SELECT id, type, face, properties, content, updated_at
-		 FROM entities WHERE id = ? AND face = ?`, id, string(p)))
+	// getEntitySQL keeps the column order in step with scanEntity.
+	e, gErr := scanEntity(v.db.QueryRowContext(ctx, getEntitySQL, id, string(p)))
 	if errors.Is(gErr, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -399,7 +395,7 @@ func (v *VersionStore) liveRelationHash(
 	ctx context.Context, k entity.RelationKey,
 ) (hash string, exists bool, err error) {
 	r, gErr := scanRelation(v.db.QueryRowContext(ctx,
-		`SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
+		`SELECT `+relationColumns+`
 		 FROM relations WHERE from_id = ? AND rel_type = ? AND to_id = ? AND from_face = ?`,
 		k.From, k.Type, k.To, string(k.FromFace)))
 	if errors.Is(gErr, sql.ErrNoRows) {
