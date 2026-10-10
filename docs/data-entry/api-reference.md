@@ -304,6 +304,18 @@ are removed.
 Mixing the two shapes in one PATCH body returns 400 with a stable
 `shape_mixed` error code.
 
+## Server errors
+
+A 500 means the server failed, not the request. The server logs the cause,
+and the response does not include it, because a store or database error can
+name data the caller may not read.
+
+- On `/api/v1` endpoints, `code` and `title` say which operation failed and
+  `detail` ends in `check server logs`. A `relation_write_failed` detail also
+  names the relation, op and target, which all come from the request.
+- The settings and theme endpoints answer `{"error": "<what failed>; check
+  server logs"}`.
+
 ## Validation policy
 
 Per [DEC-HWZHA](../../tickets/entities/decisions/DEC-HWZHA.md), validation
