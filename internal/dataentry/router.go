@@ -280,6 +280,9 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// principal.
 	if a.jwtGate != nil {
 		handler = requireVerifiedJWT(handler, *a.jwtGate)
+		// The spec tells a generic client (restish) which header carries the
+		// credential. The generator outlives schema reloads, so this sticks.
+		a.State().OpenAPIGen.SetAuthHeader(a.jwtGate.HeaderName)
 	}
 	handler = stampAuditPrincipal(handler, resolver)
 	// Outermost of all: per-request query accounting must wrap the whole
