@@ -24,8 +24,13 @@ import { cardFieldLabel, type KanbanCardField } from '@/types/config'
 import { ICONS } from '@/utils/icons'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
+import { useQueryCache } from '@pinia/colada'
+import { entityKeys } from '@/queries/entities'
+import { useUIStore } from '@/stores/ui'
+import { useGanttDrag, type GanttDragMode } from '@/composables/useGanttDrag'
 import {
   barSpan,
+  isoDay,
   findNode,
   flattenRows,
   forestSpan,
@@ -52,6 +57,8 @@ const props = defineProps<{
 const route = useRoute()
 const router = useRouter()
 const schemaStore = useSchemaStore()
+const uiStore = useUIStore()
+const queryCache = useQueryCache()
 
 const config = computed(() => schemaStore.getGantt(props.id))
 
@@ -70,16 +77,23 @@ let fetchSeq = 0
 /** True while a fetch for the shown scope is in flight. */
 const loading = ref(false)
 
+/** The scope of the latest fetch: the one on screen, or the one about to be.
+ * A reload after a write asks for this, never for a scope navigated away from. */
+let requestedRoot: string | null = null
+
 /** Drops any fetch still in flight: the scope it was for is no longer shown. */
 function cancelFetch() {
   fetchSeq++
   loading.value = false
 }
 
-async function fetchScope(root: string | null) {
+/** fetchScope loads a scope. A reload of the scope on screen (`keep`) keeps
+ * the chart on failure and reports the error instead of replacing it. */
+async function fetchScope(root: string | null, keep = false) {
   const seq = ++fetchSeq
+  requestedRoot = root
   loading.value = true
-  error.value = ''
+  if (!keep) error.value = ''
   try {
     const res = await getGantt(props.id, root ?? undefined)
     if (seq !== fetchSeq) return
@@ -87,6 +101,10 @@ async function fetchScope(root: string | null) {
     fetchedRoot.value = root
   } catch (e) {
     if (seq !== fetchSeq) return
+    if (keep) {
+      uiStore.error(`Could not reload the chart: ${getErrorMessage(e)}`)
+      return
+    }
     data.value = null
     error.value = getErrorMessage(e)
   } finally {
@@ -113,6 +131,30 @@ function pathQuery(path: string[]): string | undefined {
 const zoom = ref<GanttZoom>('month')
 const expanded = ref<Set<string>>(new Set())
 
+const drag = useGanttDrag({
+  datesOf(type) {
+    const src = config.value?.sources?.[type]
+    if (!src?.start || !src.end) return null
+    const props = schemaStore.getEntityType(type)?.properties
+    const kind = (p: string) => (props?.[p]?.type === 'datetime' ? 'datetime' : 'date')
+    return { start: src.start, end: src.end, startKind: kind(src.start), endKind: kind(src.end) }
+  },
+  pxPerDay: () => pxPerDay.value,
+  async refresh(type) {
+    // Lists and detail pages of the type hold the old dates too.
+    void queryCache.invalidateQueries({ key: entityKeys.type(type) })
+    await fetchScope(requestedRoot, true)
+  },
+  error: (m) => uiStore.error(m),
+  warning: (m) => uiStore.warning(m),
+})
+watch(zoom, () => drag.cancel())
+// Another gantt may map other date fields, so earlier verdicts do not apply.
+watch(
+  () => props.id,
+  () => drag.reset()
+)
+
 /**
  * Fetch policy: drilling is client-side (snappy — the subtree is usually
  * already here) EXCEPT when the fetched data cannot answer: the target is
@@ -125,6 +167,7 @@ watch(
   ([id, path, root], old) => {
     // Every navigation settles the scope anew, whether or not it fetches.
     cancelFetch()
+    drag.cancel()
     const idChanged = !old || id !== old[0] || root !== old[2]
     if (idChanged) {
       crumbTitles.value = new Map()
@@ -181,7 +224,10 @@ const todayDay = computed(() => {
 })
 
 const axis = computed(() => {
-  const span = forestSpan(currentRoots.value)
+  let span = forestSpan(currentRoots.value)
+  // A bar dragged past the plan's ends widens the axis rather than overflowing it.
+  const p = drag.preview.value
+  if (span && p) span = { start: Math.min(span.start, p.start), end: Math.max(span.end, p.end) }
   return span && todayDay.value !== null ? withToday(span, todayDay.value, zoom.value) : span
 })
 const ticks = computed(() => {
@@ -339,8 +385,72 @@ const gridStyle = computed(() => {
 })
 
 const defaultDepth = computed(() => config.value?.default_depth ?? 2)
+
+/** The node as drawn: a bar being dragged shows its preview window. */
+function shown(node: GanttNode): GanttNode {
+  const p = drag.preview.value
+  if (!p || p.id !== node.id) return node
+  return { ...node, planned: { start: isoDay(p.start), end: isoDay(p.end) } }
+}
+
+/** The own planned window of a draggable bar, axis-relative: the move target,
+ * with the edge handles on its sides. Absent until the entity's verdict is in. */
+function dragWindowStyle(node: GanttNode) {
+  const pos = scale.value
+  const ps = parseDay(node.planned?.start)
+  const pe = parseDay(node.planned?.end)
+  if (!pos || ps === null || pe === null || !drag.draggable(node)) return null
+  return {
+    style: { left: `${pos(ps)}%`, width: `${pos(pe + 1) - pos(ps)}%` },
+    // Too narrow for two edge handles inside it: they move outside, or they
+    // would cover the move control.
+    narrow: (pe + 1 - ps) * pxPerDay.value < NARROW_WINDOW_PX,
+  }
+}
+
+const NARROW_WINDOW_PX = 24
+
+/** True when focus moves to another handle of the same bar. */
+function staysInBar(ev: FocusEvent): boolean {
+  const from = (ev.target as HTMLElement).closest('.drag-window')
+  const to =
+    ev.relatedTarget instanceof HTMLElement ? ev.relatedTarget.closest('.drag-window') : null
+  return from !== null && from === to
+}
+
+/** The three controls of a draggable bar, in tab order. The move control
+ * covers the window; the edges sit on top of its sides. */
+const DRAG_HANDLES: { mode: GanttDragMode; label: string }[] = [
+  { mode: 'start', label: 'Start of' },
+  { mode: 'move', label: 'Move' },
+  { mode: 'end', label: 'End of' },
+]
+
+/** A handle's slider value: the day of the edge it moves, or the start
+ * for the move control, which announces the whole range. */
+function handleValue(node: GanttNode, mode: GanttDragMode): { now?: number; text?: string } {
+  const day = mode === 'end' ? node.planned?.end : node.planned?.start
+  const text = mode === 'move' ? fmtRange(node.planned) : day
+  return { now: parseDay(day) ?? undefined, text }
+}
+
+function onLabelFocus(node: GanttNode, ev: FocusEvent) {
+  showTip(node, ev)
+  drag.probe(node, true)
+}
+
+function onHandleDown(e: PointerEvent, node: GanttNode, mode: GanttDragMode) {
+  hideTip()
+  drag.onPointerDown(e, node, mode)
+}
+
 const rows = computed(() =>
-  axis.value ? flattenRows(currentRoots.value, defaultDepth.value, expanded.value) : []
+  axis.value
+    ? flattenRows(currentRoots.value, defaultDepth.value, expanded.value).map((r) => ({
+        ...r,
+        node: shown(r.node),
+      }))
+    : []
 )
 
 /** cycleLabel describes the containment loop a node sits on. Worded
@@ -515,6 +625,14 @@ function moveTip(ev: MouseEvent) {
 function hideTip() {
   tip.value = null
 }
+function onBarEnter(node: GanttNode, ev: MouseEvent) {
+  showTip(node, ev)
+  drag.probe(node)
+}
+function onBarLeave() {
+  hideTip()
+  drag.unprobe()
+}
 
 /** The configured tooltip rows that have a value on this node. Labels via the
  * shared kanban-card resolution; enum values through the schema's label map. */
@@ -641,6 +759,7 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
           '--tree-w': TREE_W + 'px',
           '--chart-max-h': chartMaxH ? chartMaxH + 'px' : 'none',
         }"
+        @click.capture="drag.onClickCapture"
       >
         <div class="axis-row">
           <div class="tree-gutter" />
@@ -700,9 +819,9 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
                 ]"
                 :style="barStyle(row.node)!"
                 @click="drill(row.node)"
-                @mouseenter="showTip(row.node, $event)"
+                @mouseenter="onBarEnter(row.node, $event)"
                 @mousemove="moveTip"
-                @mouseleave="hideTip"
+                @mouseleave="onBarLeave"
               >
                 <div
                   v-if="plannedStyle(row.node)"
@@ -728,7 +847,7 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
                   @mouseenter="showTip(row.node, $event)"
                   @mousemove="moveTip"
                   @mouseleave="hideTip"
-                  @focus="showTip(row.node, $event)"
+                  @focus="onLabelFocus(row.node, $event)"
                   @blur="hideTip"
                   @keydown.escape="hideTip"
                 >
@@ -737,6 +856,41 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
                     row.node.children!.length
                   }}</span>
                 </button>
+              </div>
+              <div
+                v-if="dragWindowStyle(row.node)"
+                class="drag-window"
+                :class="{
+                  previewing: drag.preview.value?.id === row.node.id,
+                  narrow: dragWindowStyle(row.node)!.narrow,
+                }"
+                :style="dragWindowStyle(row.node)!.style"
+                data-testid="gantt-drag-window"
+                @click="drill(row.node)"
+                @mouseenter="onBarEnter(row.node, $event)"
+                @mousemove="moveTip"
+                @mouseleave="onBarLeave"
+                @pointermove="drag.onPointerMove"
+                @pointerup="drag.onPointerUp"
+                @pointercancel="drag.cancel"
+                @lostpointercapture="drag.cancel"
+              >
+                <span
+                  v-for="h in DRAG_HANDLES"
+                  :key="h.mode"
+                  :class="['drag-handle', h.mode]"
+                  role="slider"
+                  tabindex="0"
+                  :aria-label="`${h.label} ${row.node.title || row.node.id}`"
+                  :aria-valuemin="axis.start"
+                  :aria-valuemax="axis.end"
+                  :aria-valuenow="handleValue(row.node, h.mode).now"
+                  :aria-valuetext="handleValue(row.node, h.mode).text"
+                  :data-testid="`gantt-drag-${h.mode}`"
+                  @pointerdown="onHandleDown($event, row.node, h.mode)"
+                  @keydown="drag.onHandleKey($event, row.node, h.mode)"
+                  @blur="drag.onHandleBlur(row.node, staysInBar($event))"
+                />
               </div>
               <div
                 v-if="committedStyle(row.node)"
@@ -1127,6 +1281,61 @@ const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.
 }
 .bar.breached {
   border-color: #b45309; /* 4.6:1 vs white, 3.4:1 vs the dark bg */
+}
+/* The draggable planned window, over the bar. It exists only once the
+   entity's verdict allows a write (useGanttDrag). */
+.drag-window {
+  position: absolute;
+  top: 30px;
+  height: 18px;
+  z-index: 2;
+}
+.drag-window.previewing {
+  outline: 2px dashed var(--rl-color-accent);
+  outline-offset: 1px;
+  border-radius: 5px;
+}
+.drag-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  touch-action: none;
+  user-select: none;
+}
+.drag-handle.move {
+  left: 0;
+  right: 0;
+  cursor: grab;
+}
+.drag-window.previewing .drag-handle.move {
+  cursor: grabbing;
+}
+/* An 8px hit area centred on each edge, above the move control. */
+.drag-handle.start,
+.drag-handle.end {
+  width: 8px;
+  z-index: 1;
+  cursor: ew-resize;
+}
+.drag-handle.start {
+  left: -4px;
+}
+.drag-handle.end {
+  right: -4px;
+}
+.drag-window.narrow .drag-handle.start {
+  left: -8px;
+  width: 8px;
+}
+.drag-window.narrow .drag-handle.end {
+  right: -8px;
+  width: 8px;
+}
+.drag-handle:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--rl-color-bg),
+    0 0 0 4px var(--rl-color-focus);
 }
 .planned {
   position: absolute;
