@@ -1032,6 +1032,11 @@ entities:
       title:
         type: string
         required: true
+      # gantt-scroll.spec.ts: the roadmap gantt's planned window.
+      start:
+        type: date
+      end:
+        type: date
 
   step:
     label: Step
@@ -1043,6 +1048,10 @@ entities:
         required: true
       assignee:
         type: string
+      start:
+        type: date
+      end:
+        type: date
 
 relations:
   has_step:
@@ -1554,6 +1563,15 @@ views:
         source: tasks
         display: list
         create: {}
+
+# gantt-scroll.spec.ts: plans with their steps, sideways scroll and Now.
+gantts:
+  roadmap:
+    title: "Roadmap"
+    hierarchy: [has_step]
+    sources:
+      plan: { start: start, end: end, where: ["start!="] }
+      step: { start: start, end: end, where: ["start!="] }
 
 kanbans:
   feature-board:

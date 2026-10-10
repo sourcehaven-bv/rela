@@ -14,7 +14,7 @@
  *
  * All geometry lives in utils/ganttLayout.ts as pure functions.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fromPageQuery } from '@/utils/pageContext'
 import { getGantt, getErrorMessage, type GanttNode, type GanttResponse } from '@/api'
@@ -22,6 +22,8 @@ import { useSchemaStore } from '@/stores/schema'
 import { renderMarkdown } from '@/utils/markdown'
 import { cardFieldLabel, type KanbanCardField } from '@/types/config'
 import { ICONS } from '@/utils/icons'
+import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import {
   barSpan,
   findNode,
@@ -29,8 +31,11 @@ import {
   forestSpan,
   isRowExpanded,
   parseDay,
-  scaleFor,
+  pct,
+  PX_PER_DAY,
+  SCROLL_UNIT_DAYS,
   ticksFor,
+  withToday,
   type GanttZoom,
 } from '@/utils/ganttLayout'
 
@@ -59,14 +64,33 @@ const error = ref('')
  * re-scoped fetch no longer carries the ancestors. */
 const crumbTitles = ref<Map<string, string>>(new Map())
 
+/** Numbers each fetch so a slow response for a scope the user already left
+ * cannot overwrite the newer one. */
+let fetchSeq = 0
+/** True while a fetch for the shown scope is in flight. */
+const loading = ref(false)
+
+/** Drops any fetch still in flight: the scope it was for is no longer shown. */
+function cancelFetch() {
+  fetchSeq++
+  loading.value = false
+}
+
 async function fetchScope(root: string | null) {
+  const seq = ++fetchSeq
+  loading.value = true
   error.value = ''
   try {
-    data.value = await getGantt(props.id, root ?? undefined)
+    const res = await getGantt(props.id, root ?? undefined)
+    if (seq !== fetchSeq) return
+    data.value = res
     fetchedRoot.value = root
   } catch (e) {
+    if (seq !== fetchSeq) return
     data.value = null
     error.value = getErrorMessage(e)
+  } finally {
+    if (seq === fetchSeq) loading.value = false
   }
 }
 
@@ -99,6 +123,8 @@ const expanded = ref<Set<string>>(new Set())
 watch(
   [() => props.id, drillPath, () => props.root] as const,
   ([id, path, root], old) => {
+    // Every navigation settles the scope anew, whether or not it fetches.
+    cancelFetch()
     const idChanged = !old || id !== old[0] || root !== old[2]
     if (idChanged) {
       crumbTitles.value = new Map()
@@ -121,7 +147,7 @@ watch(
       (target === null || (found !== null && !found.has_more_children))
     if (!canAnswerLocally) void fetchScope(target)
   },
-  { immediate: true },
+  { immediate: true }
 )
 
 /** The roots currently shown: the forest, or the drilled node's subtree. */
@@ -143,13 +169,155 @@ const crumbs = computed<{ id: string; title: string }[]>(() => {
   }))
 })
 
-const axis = computed(() => forestSpan(currentRoots.value))
-const ticks = computed(() => (axis.value ? ticksFor(axis.value, zoom.value) : []))
+const todayDay = computed(() => {
+  // LOCAL calendar fields on purpose: the user's local "today" is what the
+  // marker means, while every stored date is UTC-parsed. Rebuilding this from
+  // toISOString() would shift the line a day for anyone west of Greenwich
+  // after 00:00 UTC.
+  const now = new Date()
+  return parseDay(
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  )
+})
 
-/** The shared horizontal scale: equal-width period columns, days
- * interpolated inside each (see scaleFor). Every positioned element —
- * bars, gridlines, ticks, markers — goes through it, so nothing drifts. */
-const scale = computed(() => (axis.value ? scaleFor(axis.value, ticks.value) : null))
+const axis = computed(() => {
+  const span = forestSpan(currentRoots.value)
+  return span && todayDay.value !== null ? withToday(span, todayDay.value, zoom.value) : span
+})
+const ticks = computed(() => {
+  if (!axis.value) return []
+  const all = ticksFor(axis.value, zoom.value)
+  // Only a compressed timeline packs periods closer than a label's width.
+  const stride = Math.max(1, Math.ceil(MIN_TICK_GAP_PX / (SCROLL_UNIT_DAYS[zoom.value] * pxPerDay.value)))
+  return stride === 1 ? all : all.filter((_, i) => i % stride === 0)
+})
+
+/** The tree column's width; the timeline scrolls beside it. */
+const TREE_W = 280
+/** The widest timeline drawn; see pxPerDay. */
+const MAX_TIMELINE_PX = 250_000
+/** The closest two tick labels may sit; a compressed timeline thins them. */
+const MIN_TICK_GAP_PX = 56
+/** The narrowest bar, so a one-day item stays visible and hoverable. */
+const MIN_BAR_PX = 6
+/** Room a start-anchored label needs; a bar starting closer than this to the
+ * timeline's end gets an end-anchored label instead. */
+const LABEL_ROOM_PX = 240
+
+const chartEl = ref<HTMLElement | null>(null)
+/** Visible timeline width: the chart's width minus the tree column. */
+const viewportW = ref(0)
+/** The chart's height cap: the room left below its top edge, so its
+ * horizontal scrollbar stays on screen whatever sits above it. */
+const chartMaxH = ref(0)
+let resizeObserver: ResizeObserver | undefined
+
+function measure() {
+  const el = chartEl.value
+  if (!el) return
+  viewportW.value = Math.max(el.clientWidth - TREE_W, 0)
+  chartMaxH.value = Math.max(320, window.innerHeight - el.getBoundingClientRect().top - 24)
+}
+window.addEventListener('resize', measure)
+onBeforeUnmount(() => window.removeEventListener('resize', measure))
+
+watch(chartEl, (el) => {
+  resizeObserver?.disconnect()
+  resizeObserver = undefined
+  if (!el) return
+  measure()
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(measure)
+    resizeObserver.observe(el)
+  }
+})
+onBeforeUnmount(() => resizeObserver?.disconnect())
+
+/**
+ * Width of one day in px: the zoom's fixed width, stretched when the whole
+ * span is narrower than the screen so a short plan still fills it, and
+ * squeezed when the timeline would pass MAX_TIMELINE_PX. That cap keeps a
+ * typo such as 2062 for 2026 from producing a timeline wider than the
+ * browser can lay out; the chart then says it is compressed.
+ */
+const pxPerDay = computed(() => {
+  const a = axis.value
+  if (!a) return PX_PER_DAY[zoom.value]
+  const days = Math.max(a.end - a.start, 1)
+  return Math.min(Math.max(PX_PER_DAY[zoom.value], viewportW.value / days), MAX_TIMELINE_PX / days)
+})
+const compressed = computed(() => pxPerDay.value < PX_PER_DAY[zoom.value])
+const timelineW = computed(() =>
+  axis.value ? (axis.value.end - axis.value.start) * pxPerDay.value : 0
+)
+
+/** The shared horizontal scale, a percentage of the timeline width and linear
+ * in days. Every positioned element — bars, gridlines, ticks, markers — goes
+ * through it, so nothing drifts. */
+const scale = computed(() => {
+  const a = axis.value
+  return a ? (day: number) => pct(day, a) : null
+})
+
+/** Today, when the axis holds it; null disables "Now". */
+const nowDay = computed<number | null>(() => {
+  const a = axis.value
+  const t = todayDay.value
+  return a && t !== null && t >= a.start && t <= a.end ? t : null
+})
+
+/** scrollTo moves the timeline; smooth for the buttons unless the user asked
+ * for reduced motion, instant for re-anchoring after a layout change. */
+function scrollTo(left: number, smooth: boolean) {
+  const el = chartEl.value
+  if (!el) return
+  const reduce =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  if (smooth && !reduce && typeof el.scrollTo === 'function')
+    el.scrollTo({ left, behavior: 'smooth' })
+  else el.scrollLeft = left
+}
+
+/** Scroll offset that centres a day in the visible timeline. */
+function centreOffset(day: number, axisStart: number, ppd: number): number {
+  return (day - axisStart) * ppd - viewportW.value / 2
+}
+
+function goNow() {
+  const a = axis.value
+  if (a && nowDay.value !== null)
+    scrollTo(centreOffset(nowDay.value, a.start, pxPerDay.value), true)
+}
+
+function step(dir: -1 | 1) {
+  const el = chartEl.value
+  if (el) scrollTo(el.scrollLeft + dir * SCROLL_UNIT_DAYS[zoom.value] * pxPerDay.value, true)
+}
+
+/**
+ * Scroll position across layout changes. A zoom change, a resize or a
+ * refetch of the same scope keeps the day at the left edge where it was. A
+ * new scope (first load, drill, breadcrumb) starts at today when the axis
+ * holds it, else at the start.
+ *
+ * Dates are inclusive: a bar ends at the END of its end day, pos(end + 1).
+ */
+let shownScope: string | null = null
+watch([axis, pxPerDay], ([a, ppd], old) => {
+  // While a drill's fetch is in flight the chart shows a stand-in axis; the
+  // scope opens when its own data arrives.
+  if (!a || loading.value) return
+  const scope = `${props.id}|${drillPath.value.join(',')}`
+  const [oldA, oldPpd] = old ?? [null, 0]
+  const el = chartEl.value
+  const leftDay = scope === shownScope && oldA && el ? oldA.start + el.scrollLeft / oldPpd : null
+  shownScope = scope
+  void nextTick(() => {
+    if (leftDay !== null) scrollTo((leftDay - a.start) * ppd, false)
+    else scrollTo(nowDay.value !== null ? centreOffset(nowDay.value, a.start, ppd) : 0, false)
+  })
+})
 
 /**
  * Gridlines as ONE shared multi-background style instead of per-row spans:
@@ -164,7 +332,7 @@ const gridStyle = computed(() => {
     backgroundImage: ticks.value
       .map(() => 'linear-gradient(to right, var(--rl-color-border) 1px, transparent 1px)')
       .join(', '),
-    backgroundPosition: ticks.value.map((t) => `${scale.value!(t.day)}% 0`).join(', '),
+    backgroundPosition: ticks.value.map((t) => `${pct(t.day, a)}% 0`).join(', '),
     backgroundSize: '1px 100%',
     backgroundRepeat: 'no-repeat',
   }
@@ -172,19 +340,8 @@ const gridStyle = computed(() => {
 
 const defaultDepth = computed(() => config.value?.default_depth ?? 2)
 const rows = computed(() =>
-  axis.value ? flattenRows(currentRoots.value, defaultDepth.value, expanded.value) : [],
+  axis.value ? flattenRows(currentRoots.value, defaultDepth.value, expanded.value) : []
 )
-
-const todayDay = computed(() => {
-  // LOCAL calendar fields on purpose: the user's local "today" is what the
-  // marker means, while every stored date is UTC-parsed. Rebuilding this from
-  // toISOString() would shift the line a day for anyone west of Greenwich
-  // after 00:00 UTC.
-  const now = new Date()
-  return parseDay(
-    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
-  )
-})
 
 /** cycleLabel describes the containment loop a node sits on. Worded
  * neutrally: whether a loop is a data error or a legitimate mutual
@@ -237,25 +394,36 @@ function barStyle(node: GanttNode) {
   const span = barSpan(node)
   if (!pos || span.start === null || span.end === null) return null
   const left = Math.max(0, pos(span.start))
-  const width = Math.max(Math.min(100, pos(span.end)) - left, 0.6)
+  const minWidth = timelineW.value ? (MIN_BAR_PX / timelineW.value) * 100 : 0
+  const width = Math.max(Math.min(100, pos(span.end + 1)) - left, minWidth)
   return { left: `${left}%`, width: `${width}%` }
 }
 
 /**
- * Label placement: ABOVE the bar, anchored to its start (right-anchored when
- * the bar begins in the last stretch of the axis, so long names stay on
- * screen). Inside-the-bar labels sat on top of the breach textures
- * (unreadable) and forced accent-on-light text that failed WCAG AA
- * (4.16:1 < 4.5:1); above the bar, the label renders in the body text color
- * on the row background — the row is the label's own clean strip.
+ * Label placement: ABOVE the bar. Inside-the-bar labels sat on top of the
+ * breach textures (unreadable) and forced accent-on-light text that failed
+ * WCAG AA (4.16:1 < 4.5:1); above the bar, the label renders in the body text
+ * color on the row background — the row is the label's own clean strip.
+ *
+ * The label sits in a track spanning the bar (at least LABEL_ROOM_PX wide)
+ * and sticks to the left edge of the visible timeline inside it, so a bar
+ * that starts off-screen still shows its name. A bar too close to the
+ * timeline's end for the name to fit gets a LABEL_ROOM_PX track ending at the
+ * bar's end, with the label aligned right.
  */
-function labelStyle(node: GanttNode) {
+function labelTrack(node: GanttNode): { style: Record<string, string>; end: boolean } | null {
   const pos = scale.value
   const span = barSpan(node)
   if (!pos || span.start === null || span.end === null) return null
   const startPct = Math.max(0, pos(span.start))
-  if (startPct <= 60) return { left: `${startPct}%` }
-  return { right: `${100 - Math.min(100, pos(span.end))}%` }
+  const endPct = Math.min(100, pos(span.end + 1))
+  if (((100 - startPct) / 100) * timelineW.value >= LABEL_ROOM_PX) {
+    return {
+      style: { left: `${startPct}%`, width: `max(${endPct - startPct}%, ${LABEL_ROOM_PX}px)` },
+      end: false,
+    }
+  }
+  return { style: { right: `${100 - endPct}%`, width: `${LABEL_ROOM_PX}px` }, end: true }
 }
 
 /** The planned window inset, relative to the BAR (not the axis). */
@@ -267,10 +435,10 @@ function plannedStyle(node: GanttNode) {
   if (!pos || span.start === null || span.end === null || ps === null || pe === null) return null
   if (!node.breach?.before && !node.breach?.after) return null
   const barLeft = pos(span.start)
-  const barW = Math.max(pos(span.end) - barLeft, 0.001)
+  const barW = Math.max(pos(span.end + 1) - barLeft, 0.001)
   return {
     left: `${((pos(ps) - barLeft) / barW) * 100}%`,
-    width: `${((pos(pe) - pos(ps)) / barW) * 100}%`,
+    width: `${((pos(pe + 1) - pos(ps)) / barW) * 100}%`,
   }
 }
 
@@ -282,7 +450,7 @@ function overrunStyles(node: GanttNode) {
   const pe = parseDay(node.planned?.end)
   if (!pos || span.start === null || span.end === null) return []
   const barLeft = pos(span.start)
-  const barW = Math.max(pos(span.end) - barLeft, 0.001)
+  const barW = Math.max(pos(span.end + 1) - barLeft, 0.001)
   const rel = (d: number) => ((pos(d) - barLeft) / barW) * 100
   const out: { cls: string; style: Record<string, string> }[] = []
   if (node.breach?.before && ps !== null) {
@@ -294,18 +462,19 @@ function overrunStyles(node: GanttNode) {
   if (node.breach?.after && pe !== null) {
     out.push({
       cls: 'overrun right',
-      style: { left: `${rel(pe)}%`, width: `${100 - rel(pe)}%` },
+      style: { left: `${rel(pe + 1)}%`, width: `${100 - rel(pe + 1)}%` },
     })
   }
   return out
 }
 
-/** Committed marker + past-commit rule, axis-relative. */
+/** Committed marker + past-commit rule, axis-relative. The marker stands at
+ * the end of the committed day, where the work was due. */
 function committedStyle(node: GanttNode) {
   const pos = scale.value
   const c = parseDay(node.committed)
   if (!pos || c === null) return null
-  return { left: `${pos(c)}%` }
+  return { left: `${pos(c + 1)}%` }
 }
 
 function pastCommitStyle(node: GanttNode) {
@@ -314,8 +483,8 @@ function pastCommitStyle(node: GanttNode) {
   const span = barSpan(node)
   if (!pos || c === null || span.end === null || span.end <= c) return null
   return {
-    left: `${pos(c)}%`,
-    width: `${Math.min(100, pos(span.end)) - pos(c)}%`,
+    left: `${pos(c + 1)}%`,
+    width: `${Math.min(100, pos(span.end + 1)) - pos(c + 1)}%`,
   }
 }
 
@@ -340,7 +509,8 @@ function showTip(node: GanttNode, ev: MouseEvent | FocusEvent) {
   tip.value = { node, x: Math.min(x, window.innerWidth - 320), y }
 }
 function moveTip(ev: MouseEvent) {
-  if (tip.value) tip.value = { ...tip.value, x: Math.min(ev.clientX, window.innerWidth - 320), y: ev.clientY }
+  if (tip.value)
+    tip.value = { ...tip.value, x: Math.min(ev.clientX, window.innerWidth - 320), y: ev.clientY }
 }
 function hideTip() {
   tip.value = null
@@ -388,23 +558,28 @@ function breachLines(node: GanttNode): { text: string; kind: 'overrun' | 'commit
   const c = parseDay(node.committed)
   const span = barSpan(node)
   if (c !== null && span.end !== null && span.end > c) {
-    out.push({ text: `${span.end - c}d past the committed date (${node.committed})`, kind: 'commit' })
+    out.push({
+      text: `${span.end - c}d past the committed date (${node.committed})`,
+      kind: 'commit',
+    })
   }
   return out
 }
 
-const headerHtml = computed(() =>
-  config.value?.header ? renderMarkdown(config.value.header) : '',
-)
-const footerHtml = computed(() =>
-  config.value?.footer ? renderMarkdown(config.value.footer) : '',
-)
+const headerHtml = computed(() => (config.value?.header ? renderMarkdown(config.value.header) : ''))
+const footerHtml = computed(() => (config.value?.footer ? renderMarkdown(config.value.footer) : ''))
 </script>
 
 <template>
   <div class="gantt-view">
     <div class="gantt-head">
       <h1>{{ config?.title || id }}</h1>
+      <div class="gantt-nav">
+        <RlIconButton icon="chevron-left" label="Earlier" :disabled="!axis" @click="step(-1)" />
+        <span v-if="axis && nowDay === null" class="now-hint">Today is outside this plan</span>
+        <RlButton variant="secondary" :disabled="nowDay === null" @click="goNow">Now</RlButton>
+        <RlIconButton icon="chevron-right" label="Later" :disabled="!axis" @click="step(1)" />
+      </div>
       <div class="zoom-seg" role="group" aria-label="Time zoom">
         <button
           v-for="z in ['quarter', 'month', 'week'] as GanttZoom[]"
@@ -424,7 +599,12 @@ const footerHtml = computed(() =>
 
     <div v-else class="gantt-panel">
       <div class="crumb-bar">
-        <button v-if="!root" class="crumb" :class="{ current: crumbs.length === 0 }" @click="drillTo(-1)">
+        <button
+          v-if="!root"
+          class="crumb"
+          :class="{ current: crumbs.length === 0 }"
+          @click="drillTo(-1)"
+        >
           All work
         </button>
         <button
@@ -436,12 +616,32 @@ const footerHtml = computed(() =>
         >
           {{ c.title }}
         </button>
-        <span v-if="data?.truncated" class="truncated-flag" title="The tree was cut at the node cap; drill in to see more">
+        <span
+          v-if="data?.truncated"
+          class="truncated-flag"
+          title="The tree was cut at the node cap; drill in to see more"
+        >
           truncated
+        </span>
+        <span
+          v-if="compressed"
+          class="truncated-flag"
+          title="The plan spans too long to draw at this zoom; days are drawn narrower"
+        >
+          compressed
         </span>
       </div>
 
-      <div v-if="axis" class="chart">
+      <div
+        v-if="axis"
+        ref="chartEl"
+        class="chart"
+        :style="{
+          '--timeline-w': timelineW + 'px',
+          '--tree-w': TREE_W + 'px',
+          '--chart-max-h': chartMaxH ? chartMaxH + 'px' : 'none',
+        }"
+      >
         <div class="axis-row">
           <div class="tree-gutter" />
           <div class="axis">
@@ -504,7 +704,11 @@ const footerHtml = computed(() =>
                 @mousemove="moveTip"
                 @mouseleave="hideTip"
               >
-                <div v-if="plannedStyle(row.node)" class="planned" :style="plannedStyle(row.node)!" />
+                <div
+                  v-if="plannedStyle(row.node)"
+                  class="planned"
+                  :style="plannedStyle(row.node)!"
+                />
                 <div
                   v-for="(o, i) in overrunStyles(row.node)"
                   :key="i"
@@ -512,23 +716,28 @@ const footerHtml = computed(() =>
                   :style="o.style"
                 />
               </div>
-              <button
-                v-if="labelStyle(row.node)"
-                class="bar-name"
-                :style="labelStyle(row.node)!"
-                @click="drill(row.node)"
-                @mouseenter="showTip(row.node, $event)"
-                @mousemove="moveTip"
-                @mouseleave="hideTip"
-                @focus="showTip(row.node, $event)"
-                @blur="hideTip"
-                @keydown.escape="hideTip"
+              <div
+                v-if="labelTrack(row.node)"
+                class="bar-label-track"
+                :class="{ end: labelTrack(row.node)!.end }"
+                :style="labelTrack(row.node)!.style"
               >
-                {{ row.node.title || row.node.id }}
-                <span v-if="row.node.children?.length" class="bar-count">{{
-                  row.node.children!.length
-                }}</span>
-              </button>
+                <button
+                  class="bar-name"
+                  @click="drill(row.node)"
+                  @mouseenter="showTip(row.node, $event)"
+                  @mousemove="moveTip"
+                  @mouseleave="hideTip"
+                  @focus="showTip(row.node, $event)"
+                  @blur="hideTip"
+                  @keydown.escape="hideTip"
+                >
+                  {{ row.node.title || row.node.id }}
+                  <span v-if="row.node.children?.length" class="bar-count">{{
+                    row.node.children!.length
+                  }}</span>
+                </button>
+              </div>
               <div
                 v-if="committedStyle(row.node)"
                 class="commit-marker"
@@ -605,7 +814,12 @@ const footerHtml = computed(() =>
             <dd>{{ row.value }}</dd>
           </template>
         </dl>
-        <div v-for="(b, i) in breachLines(tip.node)" :key="i" class="tip-breach" :class="'tip-' + b.kind">
+        <div
+          v-for="(b, i) in breachLines(tip.node)"
+          :key="i"
+          class="tip-breach"
+          :class="'tip-' + b.kind"
+        >
           <span class="tip-glyph">{{ b.kind === 'commit' ? '╱' : '●' }}</span> {{ b.text }}
         </div>
       </div>
@@ -626,6 +840,13 @@ const footerHtml = computed(() =>
 .gantt-head h1 {
   font-size: 1.25rem;
   margin: 0;
+  margin-right: auto;
+}
+.gantt-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: 0.75rem;
 }
 .zoom-seg {
   display: inline-flex;
@@ -704,23 +925,45 @@ const footerHtml = computed(() =>
   padding: 0 5px;
   cursor: help;
 }
+/* The chart scrolls on both axes. The axis row sticks to the top and the
+   tree column to the left, so names and dates stay readable while scrolling;
+   both need an opaque background to cover what scrolls beneath them. Rows
+   are as wide as the tree column plus the timeline (--timeline-w). */
 .chart {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: var(--chart-max-h);
+  /* Keeps a focused label from scrolling under the sticky axis or tree. */
+  scroll-padding-top: 36px;
+  scroll-padding-left: var(--tree-w);
+}
+.now-hint {
+  font-size: 0.75rem;
+  color: var(--rl-color-text-muted);
+  margin-right: 0.25rem;
 }
 .axis-row {
   display: flex;
   border-bottom: 1px solid var(--rl-color-border);
   height: 36px;
+  width: max-content;
+  min-width: 100%;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--rl-color-bg-raised);
 }
 .tree-gutter {
-  width: 280px;
-  min-width: 280px;
+  width: var(--tree-w);
+  min-width: var(--tree-w);
   border-right: 1px solid var(--rl-color-border);
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--rl-color-bg-raised);
 }
 .axis {
-  flex: 1;
+  flex: 0 0 var(--timeline-w);
   position: relative;
-  min-width: 300px;
 }
 .tick {
   position: absolute;
@@ -753,19 +996,26 @@ const footerHtml = computed(() =>
   display: flex;
   height: 58px;
   border-bottom: 1px solid var(--rl-color-border);
+  width: max-content;
+  min-width: 100%;
 }
-.row:hover {
+.row:hover,
+.row:hover .cell-tree {
   background: var(--rl-color-bg-hover);
 }
 .cell-tree {
-  width: 280px;
-  min-width: 280px;
+  width: var(--tree-w);
+  min-width: var(--tree-w);
   display: flex;
   align-items: center;
   gap: 0.3rem;
   border-right: 1px solid var(--rl-color-border);
   overflow: hidden;
   white-space: nowrap;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--rl-color-bg-raised);
 }
 .twisty {
   border: 0;
@@ -807,17 +1057,32 @@ const footerHtml = computed(() =>
   margin-right: 0.5rem;
   flex: 0 0 auto;
 }
+/* clip, not hidden: hidden would make each row its own scroll container and
+   the sticky bar labels would stick to it instead of to the chart. */
 .cell-bars {
-  flex: 1;
+  flex: 0 0 var(--timeline-w);
   position: relative;
-  min-width: 300px;
-  overflow: hidden;
+  overflow: clip;
 }
 /* The label strip: body text color on the row background (≥12:1 in both
    themes), anchored above the bar's start. */
-.bar-name {
+/* The label's track spans its bar; the label sticks just right of the
+   sticky tree column while the bar scrolls under it. It paints above the
+   commit flag and today line (they may slide over it) and below the tree. */
+.bar-label-track {
   position: absolute;
+  z-index: 2;
   top: 4px;
+  display: flex;
+  pointer-events: none;
+}
+.bar-label-track.end {
+  justify-content: flex-end;
+}
+.bar-name {
+  position: sticky;
+  left: calc(var(--tree-w) + 8px);
+  pointer-events: auto;
   border: 0;
   background: transparent;
   padding: 0;
@@ -826,7 +1091,7 @@ const footerHtml = computed(() =>
   color: var(--rl-color-text);
   cursor: pointer;
   white-space: nowrap;
-  max-width: 60%;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -890,7 +1155,7 @@ const footerHtml = computed(() =>
   top: 9px;
   bottom: 4px;
   width: 0;
-  z-index: 2;
+  z-index: 1;
 }
 .commit-flag {
   position: absolute;
