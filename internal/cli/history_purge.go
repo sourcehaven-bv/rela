@@ -36,6 +36,7 @@ type HistoryPurgeCmd struct {
 	Commit      bool   `help:"Actually delete. Without this, the command is a dry-run that only shows what WOULD be purged."`
 	Yes         bool   `help:"Skip the type-the-id confirmation (for scripts). Requires --commit."`
 	ForceLive   bool   `help:"Purge even though a live row still holds the content; writes a tombstone so the sweep won't re-capture it. Redact the live value first when possible."`
+	ForceTags   bool   `help:"Purge rows that a version tag points at, deleting those tags too. Without it a tagged row refuses the purge."`
 }
 
 // Run dispatches `rela history-purge <id> ...`.
@@ -61,6 +62,7 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 		Selector:      store.PurgeSelector{Vseq: c.Vseq, ContentHash: c.ContentHash, All: c.All},
 		Reason:        c.Reason,
 		ForceLive:     c.ForceLive,
+		ForceTags:     c.ForceTags,
 		PrincipalUser: p.User,
 		PrincipalTool: p.Tool,
 	}
@@ -73,7 +75,8 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 	if err != nil {
 		return fmt.Errorf("purge history for %q: %w", target, err)
 	}
-	if refused := reportPurgePreview(res, target, !c.Commit); refused || !c.Commit {
+	force := purgeForce{live: c.ForceLive, tags: c.ForceTags}
+	if refused := reportPurgePreview(res, target, !c.Commit, force); refused || !c.Commit {
 		return nil
 	}
 	if !c.Yes && !confirmPurge(target) {
@@ -85,6 +88,9 @@ func (c *HistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) error {
 	final, err := purger.PurgeVersions(ctx, req)
 	if err != nil {
 		return fmt.Errorf("purge history for %q: %w", target, err)
+	}
+	if err := commitRefused(final, target); err != nil {
+		return err
 	}
 	auditPurge(svc.Audit, p, audit.Subject{Kind: "entity", ID: ref.ID}, ref.Face, final, c.Reason)
 	out.WriteSuccess("Purged %d version row(s) for %s. This is irreversible.", final.Purged, target)
@@ -163,7 +169,7 @@ func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) e
 			key, res.LifetimeCount, c.From, c.Type, c.To)
 		return nil
 	}
-	if refused := reportPurgePreview(res, key, !c.Commit); refused || !c.Commit {
+	if refused := reportPurgePreview(res, key, !c.Commit, purgeForce{live: c.ForceLive}); refused || !c.Commit {
 		return nil
 	}
 	if !c.Yes && !confirmPurge(key) {
@@ -174,6 +180,9 @@ func (c *RelationHistoryPurgeCmd) Run(ctx context.Context, svc *writeServices) e
 	final, err := purger.PurgeRelationVersions(ctx, req)
 	if err != nil {
 		return fmt.Errorf("purge relation history for %s: %w", key, err)
+	}
+	if err := commitRefused(final, key); err != nil {
+		return err
 	}
 	auditPurge(svc.Audit, p, audit.Subject{
 		Kind: "relation", RelationType: c.Type, FromID: from, ToID: c.To,
@@ -207,11 +216,18 @@ func validatePurgeFlags(reason string, vseq int64, hash string, all bool) error 
 	return nil
 }
 
-// reportPurgePreview prints the resolved targets and any refusal. Returns true
-// if the purge was REFUSED (rename row present, or live row without --force-live)
-// so the caller stops. In dry-run mode it always prints the preview and the
-// caller returns without deleting.
-func reportPurgePreview(res *store.PurgeResult, target string, dryRun bool) (refused bool) {
+// purgeForce is the operator's --force-* overrides of a purge refusal.
+type purgeForce struct{ live, tags bool }
+
+// reportPurgePreview prints the resolved targets of a dry-run preview and any
+// refusal the real purge would hit. Returns true if the purge is REFUSED
+// (rename row present, live row without --force-live, or a tagged row without
+// --force-tags) so the caller stops. In dry-run mode it always prints the
+// preview and the caller returns without deleting.
+//
+// res always comes from a dry run, which reports a live row and tags whether
+// or not the request forces past them, so the overrides are checked here.
+func reportPurgePreview(res *store.PurgeResult, target string, dryRun bool, force purgeForce) (refused bool) {
 	if len(res.Targets) == 0 {
 		out.WriteMessage("Nothing to purge for %s (no matching version rows).", target)
 		return true
@@ -231,18 +247,50 @@ func reportPurgePreview(res *store.PurgeResult, target string, dryRun bool) (ref
 			"Purging a rename row orphans lineage; select non-rename rows (by --vseq or --content-hash).")
 		return true
 	}
-	if res.LiveRowExists && !dryRun {
-		// Only reached when --commit was set but --force-live was not (the store
-		// refused and deleted nothing).
+	reportTaggedTargets(res.TaggedTargets)
+	if len(res.TaggedTargets) > 0 && !force.tags {
+		if !dryRun {
+			out.WriteMessage("Refused: a version tag points at a target row. Move or delete the tag " +
+				"first ('rela history-tag --delete'), or pass --force-tags to delete it with the row.")
+			return true
+		}
+		out.WriteInfo("NOTE: a version tag points at a target row. A --commit will REFUSE " +
+			"unless you also pass --force-tags (which deletes the tag with the row).")
+	}
+	if res.LiveRowExists && !force.live && !dryRun {
+		// --commit without --force-live: the store would refuse and delete
+		// nothing.
 		out.WriteMessage("Refused: the live entity/relation still holds this content — the sweep would " +
 			"re-capture it. Redact the live value (or delete it) first, or pass --force-live.")
 		return true
 	}
-	if res.LiveRowExists && dryRun {
+	if res.LiveRowExists && !force.live && dryRun {
 		out.WriteInfo("NOTE: a live row still holds this content. A --commit will REFUSE " +
 			"unless you also pass --force-live (which writes a sweep-suppressing tombstone).")
 	}
 	return false
+}
+
+// commitRefused returns an error when the committing purge deleted nothing
+// although it resolved targets. The preview passing does not guarantee the
+// commit runs: a tag or a live row can appear between the two calls, and the
+// store then refuses under its lock. Such a purge is not audited, because
+// nothing was purged.
+func commitRefused(res *store.PurgeResult, target string) error {
+	if res.Refusal != "" {
+		return fmt.Errorf("purge of %s refused: %s; nothing was deleted", target, res.Refusal)
+	}
+	if res.Purged == 0 && len(res.Targets) > 0 {
+		return fmt.Errorf("purge of %s deleted none of its %d target row(s)", target, len(res.Targets))
+	}
+	return nil
+}
+
+// reportTaggedTargets lists the version tags that point at purge targets.
+func reportTaggedTargets(tags []store.PurgeTag) {
+	for _, t := range tags {
+		out.WriteInfo("  vseq %d  tagged %q", t.Vseq, t.Name)
+	}
 }
 
 func confirmPurge(target string) bool {
@@ -274,6 +322,9 @@ func auditPurge(
 	}
 	if res.TombstoneWritten {
 		summary += " tombstone=true"
+	}
+	if res.Purged > 0 && len(res.TaggedTargets) > 0 {
+		summary += fmt.Sprintf(" tags_deleted=%d", len(res.TaggedTargets))
 	}
 	sink.Record(audit.Record{
 		Time:      time.Now().UTC(),

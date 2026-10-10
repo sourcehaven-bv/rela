@@ -126,6 +126,19 @@ const (
 	// showing who purged what and why. Isolate with `op == "purge-version"`.
 	OpPurgeVersion = "purge-version"
 
+	// OpTagVersion records setting or moving a version tag (TKT-VO6VG9): a
+	// name that points at one entity version, kept beside the history.
+	// Subject names the entity; Summary is `tag="<name>" version=<n>`, where
+	// n is the ordinal the tag now points at. Tagging the current state and
+	// tagging a numbered version record the same shape. Isolate with
+	// `op == "version-tag"`.
+	OpTagVersion = "version-tag"
+
+	// OpUntagVersion records deleting a version tag. Subject names the
+	// entity; Summary is `tag="<name>"`. Isolate with
+	// `op == "version-untag"`.
+	OpUntagVersion = "version-untag"
+
 	// OpCopyState records one invocation of a declared COPY DEFINITION —
 	// a mapped write of one entity content state (face) into another
 	// (TKT-C1XUA8). Subject names the TARGET face; Summary carries the

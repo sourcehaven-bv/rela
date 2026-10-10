@@ -112,6 +112,7 @@ func ImportMarkdownData(
 	start := time.Now()
 	var rep *fsimport.Report
 	err = dst.Tx(ctx, func(view store.Store) error {
+		txCtx := store.ContextInTx(ctx)
 		conn, ok := sqlitestore.TxConn(view)
 		if !ok {
 			return errors.New("appbuild: the import transaction has no connection")
@@ -121,7 +122,7 @@ func ImportMarkdownData(
 			return svcErr
 		}
 		var copyErr error
-		rep, copyErr = fsimport.Copy(ctx, fsimport.CopyOptions{
+		rep, copyErr = fsimport.Copy(txCtx, fsimport.CopyOptions{
 			Source: fromDir,
 			Meta:   meta,
 			Target: fsimport.Target{

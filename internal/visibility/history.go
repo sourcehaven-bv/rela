@@ -113,11 +113,8 @@ func entityVersions(
 	return hr.ListVersions(ctx, e.Ref())
 }
 
-// entityVersion reads version n of the live face live returns, unredacted.
-//
-// A snapshot of another type or face than the live row is refused: the gate
-// ran for the live row, so serving another type's lineage under it is the
-// cross-type leak the HTTP history API refuses too.
+// entityVersion reads version n of the live face live returns, unredacted,
+// through [snapshotEntity].
 func entityVersion(
 	ctx context.Context, hr store.HistoryReader, n int, live func() (*entity.Entity, error),
 ) (*entity.Entity, store.VersionMeta, error) {
@@ -132,6 +129,14 @@ func entityVersion(
 	if err != nil {
 		return nil, store.VersionMeta{}, err
 	}
+	return snapshotEntity(cur, snap)
+}
+
+// snapshotEntity serves snap as the entity cur was at that version,
+// unredacted. A snapshot of another type or face than the live row is
+// refused: the gate ran for the live row, so serving another type's lineage
+// under it is the cross-type leak the HTTP history API refuses too.
+func snapshotEntity(cur *entity.Entity, snap *store.VersionSnapshot) (*entity.Entity, store.VersionMeta, error) {
 	if snap.Type != cur.Type || snap.Face != cur.Face {
 		return nil, store.VersionMeta{}, store.ErrNotFound
 	}
@@ -147,4 +152,88 @@ func entityVersion(
 	e.UpdatedAt = snap.CreatedAt
 	maps.Copy(e.Properties, snap.Properties)
 	return e, snap.VersionMeta, nil
+}
+
+// VersionTagReader resolves a version tag to the tagged version's snapshot
+// (TKT-VO6VG9), in one consistent read. [store.VersionTagger] satisfies it;
+// absent tags are [store.ErrNotFound].
+type VersionTagReader interface {
+	VersionByTag(ctx context.Context, ref entity.Ref, name store.VersionTagName) (*store.VersionSnapshot, error)
+}
+
+// WithVersionTags returns a copy of s that resolves version tags through t.
+// Nil, or never called, leaves s without tags: [ScriptReader.VersionByTag]
+// answers [store.ErrHistoryUnsupported].
+func (s *ScriptReader) WithVersionTags(t VersionTagReader) *ScriptReader {
+	c := *s
+	c.tags = t
+	return &c
+}
+
+// WithVersionTags is [ScriptReader.WithVersionTags] for the ungated reader.
+func (r *UnrestrictedReader) WithVersionTags(t VersionTagReader) *UnrestrictedReader {
+	c := *r
+	c.tags = t
+	return &c
+}
+
+// VersionByTag returns the entity face addr names as it was at the version
+// tagged name, with that version's metadata. It is [ScriptReader.EntityVersion]
+// at the tagged ordinal: the same gated read resolves the face, so a hidden
+// entity is [store.ErrNotFound] exactly like a missing one, and the snapshot
+// is redacted the same way. An absent tag, or a tag whose version cannot be
+// served, is [store.ErrNotFound] too.
+func (s *ScriptReader) VersionByTag(
+	ctx context.Context, addr string, name store.VersionTagName,
+) (*entity.Entity, store.VersionMeta, error) {
+	ctx = s.bind(ctx)
+	e, meta, err := versionByTag(ctx, s.history, s.tags, name, func() (*entity.Entity, error) {
+		return s.res.addressAny(ctx, worldIn(ctx, s.world), addr)
+	})
+	if err != nil {
+		return nil, store.VersionMeta{}, err
+	}
+	red, ok := s.reader.(rowRedactor)
+	if !ok {
+		return nil, store.VersionMeta{}, store.ErrNotFound
+	}
+	return red.RedactRow(affordances.WithHistoricalSubject(ctx), e), meta, nil
+}
+
+// VersionByTag is [ScriptReader.VersionByTag] without the gate or the
+// redaction.
+func (r *UnrestrictedReader) VersionByTag(
+	ctx context.Context, addr string, name store.VersionTagName,
+) (*entity.Entity, store.VersionMeta, error) {
+	return versionByTag(ctx, r.history, r.tags, name, func() (*entity.Entity, error) {
+		return r.GetAddress(ctx, addr)
+	})
+}
+
+// VersionByTag denies, like every DenyReader read.
+func (DenyReader) VersionByTag(context.Context, string, store.VersionTagName) (
+	*entity.Entity, store.VersionMeta, error,
+) {
+	return nil, store.VersionMeta{}, store.ErrNotFound
+}
+
+// versionByTag resolves the live face once, looks the tag up in its lineage,
+// and serves that version through [entityVersion]. The live read runs first,
+// so the tag lookup never touches a face the gate refused.
+func versionByTag(
+	ctx context.Context, hr store.HistoryReader, tags VersionTagReader, name store.VersionTagName,
+	live func() (*entity.Entity, error),
+) (*entity.Entity, store.VersionMeta, error) {
+	if hr == nil || tags == nil {
+		return nil, store.VersionMeta{}, store.ErrHistoryUnsupported
+	}
+	cur, err := live()
+	if err != nil {
+		return nil, store.VersionMeta{}, err
+	}
+	snap, err := tags.VersionByTag(ctx, cur.Ref(), name)
+	if err != nil {
+		return nil, store.VersionMeta{}, err
+	}
+	return snapshotEntity(cur, snap)
 }

@@ -1583,6 +1583,35 @@ one; erasure is the separate operator tool. Relation restore reads the raw froze
 meta, never the redacted view — a redacted read-modify-write would erase the
 caller's hidden meta on save.)
 
+## Version tag permissions (`tag:<ns>`)
+
+A [version tag](postgres-backend.md#version-tags) names one version of an
+entity. Setting, moving or deleting one needs `update` on the entity, checked
+without naming any field: a tag changes no property, so a role whose field
+grants are partial may still tag.
+
+A tag name in a namespace, `ns/name`, also needs the permission `tag:ns` on
+that entity. Grant it in a role's `permissions:` list:
+
+```yaml
+roles:
+  jira-sync:
+    read: [ticket]
+    update: [ticket]
+    permissions: ["tag:sync"]
+```
+
+This keeps a connector's tags, such as `sync/jira`, out of reach of users who
+can edit the entity. Names without a namespace need only `update`. `rela acl
+audit` does not report a `tag:` permission as unused, since the namespace is
+chosen by the scripts that tag.
+
+A script or API caller that cannot read the entity gets the same "entity not
+found" as for an entity that does not exist. A denied tag write is audited as
+`denied-write`; a successful one as `version-tag` or `version-untag`. The
+`admin` handle of `rela.bypass_acl` has no tag functions, so a script's tag
+writes always pass both checks.
+
 ## Command execution gating (`command:*`)
 
 Data-entry [commands](data-entry.md#commands) execute arbitrary shell via

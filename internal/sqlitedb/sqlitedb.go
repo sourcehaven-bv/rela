@@ -372,6 +372,7 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + commentsDDL + `
 ` + migrationStateDDL + `
 ` + versionSchemaSQL + `
+` + versionTagsDDL + `
 ` + softDeleteDDL + `
 ` + searchDDL
 

@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // defaultMembershipRelation is the relation type the resolver walks
@@ -119,6 +120,32 @@ func BuiltinPermissions() []string {
 		PermCommentUpdateOwn, PermCommentUpdateAny,
 		PermCommentDeleteOwn, PermCommentDeleteAny,
 	}
+}
+
+// tagPermissionPrefix starts the per-namespace version tag permissions
+// (TKT-VO6VG9). Setting, moving or deleting a version tag named `ns/...`
+// needs `tag:ns` on the entity, resolved per entity via
+// [Request.HoldsPermissionForEntity], on top of the `update` verb. A tag in
+// the default namespace (no slash) needs `update` only.
+const tagPermissionPrefix = "tag:"
+
+// TagPermission returns the permission that guards version tags in the
+// namespace ns: "tag:" + ns.
+func TagPermission(ns string) string { return tagPermissionPrefix + ns }
+
+// IsTagPermission reports whether perm is a version tag permission: `tag:ns`
+// where ns is a namespace a tag name can carry (one segment of the
+// [store.ParseVersionTagName] grammar). These names are dynamic, so they
+// cannot be listed in [BuiltinPermissions]; consumers that reason about
+// which permissions rela consumes check this as well. A name such as
+// `tag:Sync` is not one: no tag can ask for it, so it is reported as unused.
+func IsTagPermission(perm string) bool {
+	ns, ok := strings.CutPrefix(perm, tagPermissionPrefix)
+	if !ok || ns == "" || strings.Contains(ns, "/") {
+		return false
+	}
+	_, err := store.ParseVersionTagName(ns + "/x")
+	return err == nil
 }
 
 // Policy is the declarative ACL configuration parsed from `acl.yaml`

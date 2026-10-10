@@ -1726,8 +1726,9 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		captured *cascadeCapture
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		txCtx := store.ContextInTx(ctx)
 		var dErr error
-		res, captured, dErr = m.deleteEntityInTx(ctx, tx, id, cascade, authorized)
+		res, captured, dErr = m.deleteEntityInTx(txCtx, tx, id, cascade, authorized)
 		return dErr
 	})
 	if txErr != nil {
@@ -2138,24 +2139,24 @@ func (m *Manager) DeleteEntityFace(
 	if err != nil {
 		return nil, err
 	}
-
 	var (
 		res                *store.DeleteResult
 		lastFace           bool
 		incoming, outgoing []*entity.Relation
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		txCtx := store.ContextInTx(ctx)
 		// Re-read the face under the transaction (BUG-J3PBFN). The read above
 		// only answers not-found and denial early; the version and audit
 		// record must carry the row this transaction deletes, not one a
 		// concurrent update has since replaced. A row whose type changed in
 		// between is a different ACL subject and is authorized again.
-		inTx, rErr := readFaceToDelete(ctx, tx, id, face)
+		inTx, rErr := readFaceToDelete(txCtx, tx, id, face)
 		if rErr != nil {
 			return rErr
 		}
 		if inTx.Type != current.Type {
-			if aErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+			if aErr := m.authorizeAndAudit(txCtx, acl.WriteRequest{
 				Op:      acl.OpDelete,
 				Subject: acl.NewEntitySubject(inTx.Type, id, inTx.Face),
 			}); aErr != nil {
@@ -2168,7 +2169,7 @@ func (m *Manager) DeleteEntityFace(
 			callerLast bool
 			cErr       error
 		)
-		incoming, outgoing, callerLast, lastFace, cErr = faceDeleteEdges(ctx, tx, id, face, readableSiblings)
+		incoming, outgoing, callerLast, lastFace, cErr = faceDeleteEdges(txCtx, tx, id, face, readableSiblings)
 		if cErr != nil {
 			return cErr
 		}
@@ -2179,12 +2180,12 @@ func (m *Manager) DeleteEntityFace(
 			return ErrHasRelations
 		}
 		if len(incoming)+len(outgoing) > 0 {
-			if aErr := m.authorizeCascadeRelations(ctx, tx, id, nil, incoming, outgoing); aErr != nil {
+			if aErr := m.authorizeCascadeRelations(txCtx, tx, id, nil, incoming, outgoing); aErr != nil {
 				return aErr
 			}
 		}
 		var dErr error
-		res, dErr = tx.DeleteFace(ctx, entity.Ref{ID: id, Face: face})
+		res, dErr = tx.DeleteFace(txCtx, entity.Ref{ID: id, Face: face})
 		if dErr != nil {
 			return fmt.Errorf("delete face: %w", dErr)
 		}
@@ -2425,8 +2426,9 @@ func (m *Manager) RenameEntity(
 		renamed []*entity.Entity
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		txCtx := store.ContextInTx(ctx)
 		var rErr error
-		res, renamed, rErr = r.inTx(ctx, tx)
+		res, renamed, rErr = r.inTx(txCtx, tx)
 		return rErr
 	})
 	if txErr != nil {
@@ -2708,7 +2710,7 @@ func (m *Manager) CreateRelation(
 	// The GetRelation pre-check above is advisory; the store's atomic
 	// create is the real guard, and a conflict surfaces as
 	// ErrRelationAlreadyExists (BUG-ZWTDH9).
-	create := func(st store.Store) error {
+	create := func(ctx context.Context, st store.Store) error {
 		if err := CheckOwningEdge(ctx, m.deps.Meta, st, key); err != nil {
 			return err
 		}
@@ -2725,9 +2727,9 @@ func (m *Manager) CreateRelation(
 	// An owning edge reads its neighbors' edges to decide whether it may
 	// exist, so the reads and the write share one Tx for the same reason.
 	if relTypeIsOrdered(m.deps.Meta, relType) || metamodel.IsOwning(m.deps.Meta, relType) {
-		createErr = m.deps.Store.Tx(ctx, create)
+		createErr = m.deps.Store.Tx(ctx, func(st store.Store) error { return create(store.ContextInTx(ctx), st) })
 	} else {
-		createErr = create(m.deps.Store)
+		createErr = create(ctx, m.deps.Store)
 	}
 	if createErr != nil {
 		if errors.Is(createErr, store.ErrConflict) {
@@ -2786,11 +2788,12 @@ func (m *Manager) UpdateRelation(
 	var rel *entity.Relation
 	var oldProps map[string]any
 	err := m.deps.Store.Tx(ctx, func(view store.Store) error {
+		txCtx := store.ContextInTx(ctx)
 		// Addressed by TAIL as well as triple (BUG-64MU2Q): the default-tail
 		// edge is a DIFFERENT relation on a faced source, and the merge below
 		// would write the caller's properties onto it.
 		var gErr error
-		rel, gErr = view.GetRelation(ctx, key)
+		rel, gErr = view.GetRelation(txCtx, key)
 		if gErr != nil {
 			return fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound,
 				entity.FormatStateRef(from, key.FromFace), relType, to)
@@ -2814,7 +2817,7 @@ func (m *Manager) UpdateRelation(
 		// UpdateRelation, not upsert: the read above established the triple
 		// exists (else ErrRelationNotFound), so this is unambiguously an
 		// update (BUG-ZWTDH9).
-		_, wErr := view.UpdateRelation(ctx, key, store.RelationData{
+		_, wErr := view.UpdateRelation(txCtx, key, store.RelationData{
 			Properties: rel.Properties,
 			Content:    rel.Content,
 		})

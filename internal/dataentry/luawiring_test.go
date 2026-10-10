@@ -137,3 +137,22 @@ func TestLuaWiring_NoRawReadHandleOnWriterDeps(t *testing.T) {
 			"the ungated read path must remain opt-in")
 	}
 }
+
+// stubTagWriter is a lua.VersionTagWriter that is never called.
+type stubTagWriter struct{ lua.VersionTagWriter }
+
+// TestLuaWiring_VersionTagsReachActionsOnly pins that the tag writer is
+// absent from the shared bundle that document renders, export_render and
+// the webhook use, and present on the action surface (TKT-VO6VG9).
+func TestLuaWiring_VersionTagsReachActionsOnly(t *testing.T) {
+	app := newTestAppV1(t)
+	w := stubTagWriter{}
+	SetVersionTags(app, w, nil)
+
+	if got := app.luaWriteDeps().VersionTags; got != nil {
+		t.Errorf("shared luaWriteDeps carries a tag writer (%T); renders and webhooks must not tag", got)
+	}
+	if app.write.versionTags == nil || app.write.versionTags() != lua.VersionTagWriter(w) {
+		t.Error("the action surface does not receive the tag writer")
+	}
+}

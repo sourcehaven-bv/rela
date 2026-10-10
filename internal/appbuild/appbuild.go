@@ -209,6 +209,10 @@ type Services struct {
 	// during single-threaded wiring. Constructing here, once, preserves that.
 	fieldRedactor visibility.FieldRedactor
 
+	// versionTags is the version tag writer (TKT-VO6VG9), built in
+	// finishAssembly over entityManager. See [VersionTags].
+	versionTags *entitymanager.VersionTags
+
 	// base is the SharedBase this Services was assembled from. Retained so a
 	// host can build a successor base from the same Config (see
 	// [Services.Base]). Nil for a NewFromCollaborators-built Services.
@@ -554,7 +558,8 @@ func scriptReads(
 		slog.Error("appbuild: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
 	}
-	return sr.WithWorld(visibility.WorldOf(w.DefaultWorld())).WithHistory(versionServiceFor(st)), gate.GateTraversal
+	return sr.WithWorld(visibility.WorldOf(w.DefaultWorld())).WithHistory(versionServiceFor(st)).
+		WithVersionTags(versionTagReaderFor(st)), gate.GateTraversal
 }
 
 // refuseTraversal pairs with [visibility.DenyReader]: reads are refused, so
@@ -625,6 +630,7 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 	return lua.WriteDeps{
 		ReadDeps:      s.LuaReadDeps(),
 		EntityManager: s.entityManager,
+		VersionTags:   ScriptVersionTags(s),
 	}
 }
 
@@ -637,6 +643,7 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 	return lua.WriteDeps{
 		ReadDeps:      s.luaReadDepsFor(redactor),
 		EntityManager: s.entityManager,
+		VersionTags:   ScriptVersionTags(s),
 	}
 }
 
@@ -2414,6 +2421,11 @@ func finishAssembly(
 	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *automation.Engine,
 ) (*Services, error) {
 	s.attachLocker = attachLocker
+	tags, err := buildVersionTags(s)
+	if err != nil {
+		return nil, err
+	}
+	s.versionTags = tags
 	if err := autoJobs.bind(servicesJobRunner{s}, engine); err != nil {
 		return nil, err
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
 
 // VersionStore is sqlitestore's content-versioning service: the SQLite
@@ -62,7 +63,7 @@ func (v *VersionStore) WriteVersion(ctx context.Context, in store.VersionInput) 
 	}
 	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
 
-	if err := insertVersion(ctx, tx, in, contentHashOf(in)); err != nil {
+	if _, err := insertVersion(ctx, tx, in, contentHashOf(in)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -113,11 +114,11 @@ func ensureSchemaVersion(ctx context.Context, q querier, hash string, projection
 }
 
 // insertVersion writes one entity_versions row through q (a pool handle or a
-// transaction). The caller supplies the content hash.
-func insertVersion(ctx context.Context, q querier, in store.VersionInput, contentHash string) error {
+// transaction) and returns its vseq. The caller supplies the content hash.
+func insertVersion(ctx context.Context, q querier, in store.VersionInput, contentHash string) (int64, error) {
 	props, err := marshalProps(in.Properties)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// ONE timestamp for the whole insert: the schema projection's captured_at
 	// and the version's created_at describe the same capture, and two
@@ -125,7 +126,7 @@ func insertVersion(ctx context.Context, q querier, in store.VersionInput, conten
 	// it happened.
 	now := timestampNow()
 	if schemaErr := ensureSchemaVersion(ctx, q, in.SchemaHash, in.Projection, now); schemaErr != nil {
-		return schemaErr
+		return 0, schemaErr
 	}
 	// prev_id is meaningful only on a rename row; leaving it NULL elsewhere is
 	// what makes the partial index on it small and the lineage walk cheap.
@@ -141,16 +142,22 @@ func insertVersion(ctx context.Context, q querier, in store.VersionInput, conten
 		     origin_kind, origin_source, origin_source_face, origin_source_type,
 		     origin_definition, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err = q.ExecContext(ctx, ins,
+	res, err := q.ExecContext(ctx, ins,
 		in.EntityID, string(in.Face), string(in.Op), prev, in.Type, in.Content,
 		props, contentHash, in.SchemaHash,
 		in.PrincipalUser, in.PrincipalTool, in.TriggeredBy,
 		o.kind, o.source, o.sourceFace, o.sourceType, o.definition,
 		now)
 	if err != nil {
-		return fmt.Errorf("sqlitestore: insert entity version: %w", err)
+		return 0, fmt.Errorf("sqlitestore: insert entity version: %w", err)
 	}
-	return nil
+	// vseq is the INTEGER PRIMARY KEY, i.e. the rowid, so the last insert id
+	// is the new row's vseq.
+	vseq, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("sqlitestore: read new version vseq: %w", err)
+	}
+	return vseq, nil
 }
 
 // --- Origin columns -------------------------------------------------------
@@ -296,42 +303,87 @@ const lineageJoin = `
 // --- Read -----------------------------------------------------------------
 
 // ListVersions implements [store.HistoryReader]: the fenced lineage walk of
-// one face. Ref{ID: id} is the implicit face of a faceless type.
+// one face. Ref{ID: id} is the implicit face of a faceless type. Each row
+// carries the current lifecycle's version tags.
 func (v *VersionStore) ListVersions(ctx context.Context, ref entity.Ref) ([]store.VersionMeta, error) {
+	rows, err := listLineage(ctx, v.db, ref)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	tags, err := readTags(ctx, v.db, storeutil.LineageVseqs(rows))
+	if err != nil {
+		return nil, err
+	}
+	storeutil.ApplyTags(rows, tags)
+	return storeutil.Metas(rows), nil
+}
+
+// listLineage reads the fenced lineage of one face through q, oldest first,
+// with ordinals assigned. Each row also carries its vseq, the id it was
+// captured under and its segment's upper fence, which the tag lifecycle rule
+// needs.
+func listLineage(ctx context.Context, q querier, ref entity.Ref) ([]storeutil.LineageRow, error) {
 	id, p := ref.ID, ref.Face
+	// GROUP BY vseq dedups the rename diamond by row identity (see
+	// GetVersion). A row matched by two segments gets the smaller fence;
+	// DISTINCT over (vseq, hi) would return it twice with different fences.
 	sel := lineageCTE + `
-		SELECT DISTINCT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
+		SELECT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
 		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.face,
 		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
 		       ev.origin_source_type, ev.origin_definition,
-		       ev.created_at
+		       ev.created_at, ev.entity_id, min(lin.hi)
 		FROM entity_versions ev` + lineageJoin + `
+		GROUP BY ev.vseq
 		ORDER BY ev.vseq ASC`
 
 	args := append(lineageArgs(id, p), string(p))
-	rows, err := v.db.QueryContext(ctx, sel, args...)
+	rows, err := q.QueryContext(ctx, sel, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: list versions for %s: %w", id, err)
 	}
 	defer rows.Close()
 
-	var metas []store.VersionMeta
+	var out []storeutil.LineageRow
 	for rows.Next() {
-		m, err := scanVersionMeta(rows)
+		r, err := scanLineageRow(rows)
 		if err != nil {
 			return nil, err
 		}
-		metas = append(metas, m)
+		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	// Ordinals are assigned at READ time over the fenced lineage, never
 	// stored: storing them would need an app-side max+1 that races.
-	for i := range metas {
-		metas[i].Version = i + 1
+	return storeutil.FinishLineage(out), nil
+}
+
+// readTags returns the tag rows on any of vseqs.
+func readTags(ctx context.Context, q querier, vseqs []int64) ([]storeutil.TagRow, error) {
+	if len(vseqs) == 0 {
+		return nil, nil
 	}
-	return metas, nil
+	ph, args := idPlaceholders(vseqs)
+	rows, err := q.QueryContext(ctx,
+		`SELECT vseq, name FROM version_tags WHERE vseq IN (`+ph+`) ORDER BY vseq, name`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlitestore: read version tags: %w", err)
+	}
+	defer rows.Close()
+	var out []storeutil.TagRow
+	for rows.Next() {
+		var t storeutil.TagRow
+		if err := rows.Scan(&t.Vseq, &t.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // GetVersion implements [store.HistoryReader].
@@ -413,25 +465,26 @@ func (v *VersionStore) GetVersion(
 	return &snap, nil
 }
 
-// scanVersionMeta scans one metadata row. The leading column is vseq, which is
-// not surfaced (the read-time ordinal replaces it) and goes to a throwaway.
-func scanVersionMeta(row scanner) (store.VersionMeta, error) {
+// scanLineageRow scans one row of listLineage: the version metadata, then the
+// row's entity id and its segment's upper fence (NULL for the head).
+func scanLineageRow(row scanner) (storeutil.LineageRow, error) {
 	var (
-		m       store.VersionMeta
-		vseq    int64
+		r       storeutil.LineageRow
 		op      string
 		prev    *string
 		face    string
 		oc      originCols
 		created string
+		hi      *int64
 	)
-	scanArgs := make([]any, 0, 11+originColumnCount)
-	scanArgs = append(scanArgs, &vseq, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
+	m := &r.Meta
+	scanArgs := make([]any, 0, 13+originColumnCount)
+	scanArgs = append(scanArgs, &r.Vseq, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
 		&m.PrincipalUser, &m.PrincipalTool, &m.TriggeredBy, &face)
 	scanArgs = append(scanArgs, oc.scanTargets()...)
-	scanArgs = append(scanArgs, &created)
+	scanArgs = append(scanArgs, &created, &r.EntityID, &hi)
 	if err := row.Scan(scanArgs...); err != nil {
-		return store.VersionMeta{}, err
+		return storeutil.LineageRow{}, err
 	}
 	m.Op = store.VersionOp(op)
 	m.Face = entity.Face(face)
@@ -439,9 +492,12 @@ func scanVersionMeta(row scanner) (store.VersionMeta, error) {
 	if prev != nil {
 		m.PrevID = *prev
 	}
+	if hi != nil {
+		r.Hi = *hi
+	}
 	var err error
 	if m.CreatedAt, err = parseTime(created); err != nil {
-		return store.VersionMeta{}, fmt.Errorf("sqlitestore: parse version created_at: %w", err)
+		return storeutil.LineageRow{}, fmt.Errorf("sqlitestore: parse version created_at: %w", err)
 	}
-	return m, nil
+	return r, nil
 }

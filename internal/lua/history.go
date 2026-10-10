@@ -3,6 +3,9 @@
 //	rela.history(addr)        -> table of version rows, oldest first | nil
 //	rela.get_version(addr, n) -> entity table as of version n | nil
 //
+// Each rela.history row carries `tags`, the names of the version tags that
+// point at it (TKT-VO6VG9; see versiontags.go).
+//
 // Both read through the runtime's VisibleReader, so an entity the script may
 // not read answers nil, exactly as rela.get_entity does, and a snapshot is
 // redacted for the caller. History exists on the database backends only. On
@@ -143,5 +146,10 @@ func versionToTable(ls *lua.LState, m store.VersionMeta) *lua.LTable {
 	t.RawSetString("tool", lua.LString(m.PrincipalTool))
 	t.RawSetString("triggered_by", lua.LString(m.TriggeredBy))
 	t.RawSetString("prev_id", lua.LString(m.PrevID))
+	tags := ls.CreateTable(len(m.Tags), 0)
+	for _, name := range m.Tags {
+		tags.Append(lua.LString(name))
+	}
+	t.RawSetString("tags", tags)
 	return t
 }

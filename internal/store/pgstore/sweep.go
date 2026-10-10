@@ -291,6 +291,11 @@ type sweepCandidate struct {
 	content    string
 	props      []byte
 	latestHash string
+	// latestVseq/latestOp identify the row latestHash came from (0/"" when
+	// there is none). The sweep ignores them; capture-now for a version tag
+	// tags that row when it already holds the live content.
+	latestVseq int64
+	latestOp   string
 	hasVersion bool
 	// xmin is the row version the candidate query read; see
 	// writeBackEntityHash.
@@ -359,29 +364,7 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 	// The content hash also folds in the face (contentHashOf), so two
 	// faces with byte-identical content hash differently. That is the
 	// structural half of the same guarantee; the SQL scoping is the other.
-	const q = `
-		SELECT e.id, e.face, e.type, e.content, e.properties,
-		       e.last_edited_by_user, e.last_edited_by_tool,
-		       e.origin_kind, e.origin_source, e.origin_source_face,
-		       e.origin_source_type, e.origin_definition,
-		       lvc.content_hash,
-		       (lv.vseq IS NOT NULL AND lv.op <> 'delete') AS live_lineage,
-		       e.xmin::text
-		FROM entities e
-		LEFT JOIN LATERAL (
-		    SELECT vseq, op, created_at FROM entity_versions ev
-		    WHERE ev.entity_id = e.id AND ev.face = e.face
-		    ORDER BY ev.vseq DESC LIMIT 1
-		) lv ON true
-		LEFT JOIN LATERAL (
-		    SELECT content_hash FROM entity_versions ev
-		    WHERE ev.entity_id = e.id AND ev.face = e.face
-		      AND ev.vseq > COALESCE(
-		          (SELECT max(vseq) FROM entity_versions d
-		           WHERE d.entity_id = e.id AND d.face = e.face
-		             AND d.op = 'delete'), 0)
-		    ORDER BY ev.vseq DESC LIMIT 1
-		) lvc ON true
+	const q = candidateSelect + `
 		WHERE e.content_hash IS NULL
 		  AND (e.updated_at < now() - make_interval(secs => $1)
 		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - make_interval(secs => $2)))
@@ -399,37 +382,129 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 
 	var out []sweepCandidate
 	for rows.Next() {
-		var (
-			c          sweepCandidate
-			latestHash *string // NULL when there is no version in the current lifecycle
-		)
-		scanArgs := make([]any, 0, 11+originColumnCount)
-		scanArgs = append(scanArgs, &c.id, &c.face, &c.typ, &c.content, &c.props,
-			&c.editorUser, &c.editorTool)
-		scanArgs = append(scanArgs, c.origin.scanTargets()...)
-		scanArgs = append(scanArgs, &latestHash, &c.hasVersion, &c.xmin)
-		if err := rows.Scan(scanArgs...); err != nil {
+		c, err := scanCandidate(rows)
+		if err != nil {
 			return nil, err
-		}
-		if latestHash != nil {
-			c.latestHash = *latestHash
 		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
 }
 
-// captureOne snapshots a single candidate as a create/update version, unless its
-// content is unchanged from the current lifecycle's latest version (dedup). op
-// is create when the current lifecycle has no non-delete version yet (a fresh or
-// re-created entity), else update. c.hasVersion is "the entity has a live
-// lineage" — a version exists AND the latest op is not delete.
+// candidateSelect reads entity rows with what a capture needs: the live
+// content, its attribution and origin columns, the two "latest version"
+// probes described on selectCandidates, and the xmin that writeBackEntityHash
+// uses. Shared by the sweep and by capture-now for a version tag, so both
+// decide dedup and op the same way. The caller appends the WHERE clause.
+const candidateSelect = `
+		SELECT e.id, e.face, e.type, e.content, e.properties,
+		       e.last_edited_by_user, e.last_edited_by_tool,
+		       e.origin_kind, e.origin_source, e.origin_source_face,
+		       e.origin_source_type, e.origin_definition,
+		       lvc.content_hash, lvc.vseq, lvc.op,
+		       (lv.vseq IS NOT NULL AND lv.op <> 'delete') AS live_lineage,
+		       e.xmin::text
+		FROM entities e
+		LEFT JOIN LATERAL (
+		    SELECT vseq, op, created_at FROM entity_versions ev
+		    WHERE ev.entity_id = e.id AND ev.face = e.face
+		    ORDER BY ev.vseq DESC LIMIT 1
+		) lv ON true
+		LEFT JOIN LATERAL (
+		    SELECT vseq, op, content_hash FROM entity_versions ev
+		    WHERE ev.entity_id = e.id AND ev.face = e.face
+		      AND ev.vseq > COALESCE(
+		          (SELECT max(vseq) FROM entity_versions d
+		           WHERE d.entity_id = e.id AND d.face = e.face
+		             AND d.op = 'delete'), 0)
+		    ORDER BY ev.vseq DESC LIMIT 1
+		) lvc ON true`
+
+// scanCandidate scans one candidateSelect row.
+func scanCandidate(row scanner) (sweepCandidate, error) {
+	var (
+		c          sweepCandidate
+		latestHash *string // NULL when there is no version in the current lifecycle
+		latestVseq *int64
+		latestOp   *string
+	)
+	scanArgs := make([]any, 0, 12+originColumnCount)
+	scanArgs = append(scanArgs, &c.id, &c.face, &c.typ, &c.content, &c.props,
+		&c.editorUser, &c.editorTool)
+	scanArgs = append(scanArgs, c.origin.scanTargets()...)
+	scanArgs = append(scanArgs, &latestHash, &latestVseq, &latestOp, &c.hasVersion, &c.xmin)
+	if err := row.Scan(scanArgs...); err != nil {
+		return sweepCandidate{}, err
+	}
+	if latestHash != nil {
+		c.latestHash = *latestHash
+	}
+	if latestVseq != nil {
+		c.latestVseq = *latestVseq
+	}
+	if latestOp != nil {
+		c.latestOp = *latestOp
+	}
+	return c, nil
+}
+
+// captureOne captures one sweep candidate and writes its hash back.
 func (s *sweep) captureOne(
 	ctx context.Context, conn *pgxpool.Conn, c sweepCandidate, schemaHash string, projJSON []byte,
 ) error {
-	props, err := unmarshalProps(c.props)
+	_, contentHash, err := captureLive(ctx, conn, c, schemaHash, projJSON)
 	if err != nil {
 		return err
+	}
+	return writeBackEntityHash(ctx, conn, c, contentHash)
+}
+
+// captureLive snapshots a candidate as a create/update version, unless its
+// content is unchanged from the current lifecycle's latest version (dedup).
+// It returns the new row's vseq (0 when dedup skipped the capture) and the
+// content hash. op is create when the current lifecycle has no non-delete
+// version yet (a fresh or re-created entity), else update. c.hasVersion is
+// "the entity has a live lineage": a version exists AND the latest op is not
+// delete.
+//
+// Shared by the sweep and by capture-now for a version tag (TKT-VO6VG9), so a
+// tagged capture is the version the sweep would have written: same op,
+// attribution, origin and hash. Capture-now does not write the hash back. A
+// row with a NULL hash stays a candidate: the next sweep dedups it against the
+// new version and writes the hash back then. A row with a stored hash keeps
+// it, which stays true: that hash is the live content's, and the new version
+// carries the same hash, so the version trigger leaves it alone.
+func captureLive(
+	ctx context.Context, q DBTX, c sweepCandidate, schemaHash string, projJSON []byte,
+) (vseq int64, contentHash string, err error) {
+	in, contentHash, err := c.versionInput(schemaHash, projJSON)
+	if err != nil {
+		return 0, "", err
+	}
+	// Dedup only within the current lifecycle: latestHash is empty when there is
+	// no post-delete version, so a re-creation with identical bytes still records.
+	//
+	// ORIGIN IS DELIBERATELY NOT IN THE HASH. History records content changes,
+	// not write events, and folding provenance in would mint a version whose
+	// content is byte-identical to its predecessor purely because the writer
+	// differed. The visible consequence is that a NO-OP copy (target already
+	// equals source) records no version — correct under this contract, and the
+	// audit log (audit.OpCopyState) is where every copy INVOCATION is recorded
+	// whether or not it changed anything.
+	if c.latestHash != "" && contentHash == c.latestHash {
+		return 0, contentHash, nil
+	}
+	vseq, err = insertVersion(ctx, q, in, contentHash)
+	return vseq, contentHash, err
+}
+
+// versionInput builds the version a capture of c writes, and its content
+// hash. Attribution comes from the row's last_edited_by_* columns, never from
+// whoever triggers the capture: they did not write these bytes.
+func (c sweepCandidate) versionInput(schemaHash string, projJSON []byte) (store.VersionInput, string, error) {
+	props, err := unmarshalProps(c.props)
+	if err != nil {
+		return store.VersionInput{}, "", err
 	}
 	principalUser, principalTool := store.SweptPrincipal(c.editorUser, c.editorTool)
 	in := store.VersionInput{
@@ -446,29 +521,12 @@ func (s *sweep) captureOne(
 		// mean the last write was a direct edit, and that stays the zero
 		// Origin rather than becoming a literal "manual".
 		Origin: scanOrigin(c.origin),
+		Op:     store.VersionOpCreate,
 	}
-	contentHash := contentHashOf(in)
-	// Dedup only within the current lifecycle: latestHash is empty when there is
-	// no post-delete version, so a re-creation with identical bytes still records.
-	//
-	// ORIGIN IS DELIBERATELY NOT IN THE HASH. History records content changes,
-	// not write events, and folding provenance in would mint a version whose
-	// content is byte-identical to its predecessor purely because the writer
-	// differed. The visible consequence is that a NO-OP copy (target already
-	// equals source) records no version — correct under this contract, and the
-	// audit log (audit.OpCopyState) is where every copy INVOCATION is recorded
-	// whether or not it changed anything.
-	if c.latestHash == "" || contentHash != c.latestHash {
-		if c.hasVersion {
-			in.Op = store.VersionOpUpdate
-		} else {
-			in.Op = store.VersionOpCreate
-		}
-		if insErr := insertVersion(ctx, conn, in, contentHash); insErr != nil {
-			return insErr
-		}
+	if c.hasVersion {
+		in.Op = store.VersionOpUpdate
 	}
-	return writeBackEntityHash(ctx, conn, c, contentHash)
+	return in, contentHashOf(in), nil
 }
 
 // writeBackEntityHash stores the hash the sweep computed on the live row, so

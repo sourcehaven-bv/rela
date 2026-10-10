@@ -444,6 +444,42 @@ endpoint:
 /relation-history/ticket/TKT-42/blocks/TKT-99?base=1&target=3
 ```
 
+### Version tags
+
+A version tag is a name that points at one version of an entity. A sync
+connector tags the version it last pushed (`sync/jira`), so the next run can
+diff against it. A reviewer tags the state they approved (`reviewed`). Tags
+live beside the history, not in the entity, so setting one is not an edit and
+creates no version.
+
+Tag names are lowercase. A name may have one namespace segment, `ns/name`.
+Each face of an entity has its own tags, and one name points at one version
+at a time: tagging again moves the tag.
+
+```bash
+rela history-tag TKT-42 reviewed                  # tag the current state
+rela history-tag TKT-42 reviewed --version 3      # tag version 3
+rela history-tag TKT-42 sync/jira --expect <tok>  # tag only if unchanged since <tok>
+rela history-tag TKT-42 reviewed --delete         # delete the tag
+rela history TKT-42                               # the timeline lists each version's tags
+```
+
+Tagging the current state records it as a version at once, so the tag never
+waits for the sweep. With `--expect`, the tag is written only while the entity
+still matches the token a script read earlier (`rela.version_token` in Lua).
+If someone edited it in between, nothing is tagged.
+
+Access control: a tag needs `update` on the entity. A tag in a namespace
+`ns/...` also needs the permission `tag:ns`, so a user who can edit an entity
+cannot move a connector's sync base. See
+[ACL security](acl-security.md#version-tag-permissions-tagns). Every tag write
+is audited (`version-tag`, `version-untag`). Lua scripts tag with
+`rela.tag_version` (see the [Lua scripting guide](lua-scripting.md)).
+
+A tag write is refused inside a store transaction (`ErrTagInTx`), because it
+writes history on its own connection. Tag from a background action or a
+scheduled script, not from a synchronous automation.
+
 ### Purging history for compliance
 
 History is append-only by design. When you must actually **remove** content from
@@ -479,6 +515,9 @@ Two guardrails you will hit:
   writes a tombstone that stops the sweep from re-capturing.
 - **Purge refuses a `rename` row** (purging one would sever unrelated history).
   Select non-rename rows by `--vseq`/`--content-hash`.
+- **Purge refuses a row a version tag points at.** The dry run lists those
+  tags. Move or delete the tag first, or pass `--force-tags`, which deletes the
+  tags with the rows.
 
 **Purge is one necessary step, not cryptographic erasure.** It removes rows from
 the primary database; a value may still survive in your PITR/base backups and WAL
