@@ -34,6 +34,9 @@ type attachmentHandler struct {
 	acl        func() acl.ACL
 	audit      func() audit.Audit
 	fields     func() FieldVerdictResolver
+	// affordances applies the `fields:` write check, the same one PATCH and
+	// PUT apply.
+	affordances affordanceService
 	// owner stamps file values and serializes writers to one (entity,
 	// property). The manager's copy engine and face delete hold the same
 	// lock, and so do the remote MCP attachment tools.

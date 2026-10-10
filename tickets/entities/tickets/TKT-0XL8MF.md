@@ -1,11 +1,13 @@
 ---
 id: TKT-0XL8MF
 type: ticket
-title: 'Wire a policy-backed FieldWriteGate so MCP and Lua callers cannot write fields their policy hides'
+title: Wire a policy-backed FieldWriteGate so MCP and Lua callers cannot write fields their policy hides
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-10-07"
+completed: "2026-10-07"
+status: done
 ---
 
 Follow-up to TKT-80EWGM, which introduced `entitymanager.FieldWriteGate` as a
@@ -45,8 +47,8 @@ construction a concurrency hazard as well as waste).
 to the data, so gating there buys nothing (settled in TKT-80EWGM).
 4. Consider migrating dataentry's PATCH onto `PatchEntity` at the same time, so
 the gate has exactly one implementation and one call site. That would also let
-`dataentry` drop its own `affordances.New` call in favour of the shared one,
-and retire the duplicated `storeRelationLookup` (see below).
+`dataentry` drop its own `affordances.New` call in favour of the shared one, and
+retire the duplicated `storeRelationLookup` (see below).
 
 ## Constraints inherited from TKT-80EWGM (do not re-litigate)
 

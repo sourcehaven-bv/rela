@@ -15,10 +15,23 @@ import (
 // change that classifies as faces_introduced. The `status` enum
 // (open/wip/done) is untouched, so it can key the migration.
 func facedV1() *metamodel.Metamodel {
-	m := metaV1()
+	m := withReviewedBy(metaV1())
 	def := m.Entities["task"]
 	def.Faces = map[string]metamodel.FaceDef{"draft": {}, "published": {}}
 	m.Entities["task"] = def
+	return m
+}
+
+// withReviewedBy adds `reviewed-by`, a content-scoped relation from task to
+// person, so a face move has an edge that belongs to one face. assigned-to is
+// identity-scoped and belongs to the entity.
+func withReviewedBy(m *metamodel.Metamodel) *metamodel.Metamodel {
+	m.Relations["reviewed-by"] = metamodel.RelationDef{
+		From:       []string{"task"},
+		To:         []string{"person"},
+		Scope:      metamodel.ScopeContent,
+		Properties: map[string]metamodel.PropertyDef{"weight": {Type: "string"}},
+	}
 	return m
 }
 

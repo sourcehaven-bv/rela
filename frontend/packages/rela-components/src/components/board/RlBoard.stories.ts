@@ -209,3 +209,52 @@ export const LinkCard: StoryObj = {
     `,
   }),
 }
+
+/**
+ * Each heading offers a collapse control. The board only reports the toggle;
+ * this story keeps `collapsed` in its own copy of the sections, as a
+ * consuming app does.
+ */
+export const Collapsible: StoryObj = {
+  /*
+   * The control and the rail are swapped on every toggle, so focus would fall
+   * to the page unless the board moves it. Driven by keyboard for that reason.
+   */
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+
+    await userEvent.click(canvas.getByRole('button', { name: 'Collapse Backlog' }))
+    await expect(canvas.getByRole('button', { name: 'Expand Backlog' })).toHaveFocus()
+
+    await userEvent.keyboard('{Enter}')
+    await expect(canvas.getByRole('button', { name: 'Collapse Backlog' })).toHaveFocus()
+  },
+  render: () => ({
+    components: { RlBoard: storyComponent(RlBoard), RlTaskCard },
+    setup() {
+      const sections = ref<Section<Task>[]>(structuredClone(boardSections))
+
+      function setCollapsed(id: string, collapsed: boolean) {
+        sections.value = sections.value.map((section) =>
+          section.id === id ? { ...section, collapsed } : section,
+        )
+      }
+
+      return { sections, setCollapsed }
+    },
+    template: `
+      <RlBoard
+        :sections="sections"
+        collapsible
+        :show-add-section="false"
+        add-label="Add task"
+        @collapse-section="setCollapsed($event.id, true)"
+        @expand-section="setCollapsed($event.id, false)"
+      >
+        <template #card="{ item, selected }">
+          <RlTaskCard :task="item" :selected="selected" />
+        </template>
+      </RlBoard>
+    `,
+  }),
+}

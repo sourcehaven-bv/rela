@@ -1602,6 +1602,28 @@ kanbans:
     create_form: bug
     edit_form: bug
 
+  # kanban-collapse.spec.ts: a swimlane board whose In Progress column starts
+  # collapsed. Not in the sidebar, so it changes no navigation count. The spec
+  # expects one in_progress bug in these lanes (BUG-002).
+  bug-lanes:
+    entity_type: bug
+    title: "Bug Lanes"
+    column_property: status
+    columns:
+      - value: draft
+        label: New
+      - value: in_progress
+        label: In Progress
+        collapsed: true
+      - value: done
+        label: Fixed
+    swimlane_property: severity
+    swimlanes:
+      - value: high
+      - value: critical
+    card:
+      title: title
+
 documents:
   feature-overview:
     title: "Feature Overview"

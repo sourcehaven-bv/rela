@@ -432,7 +432,7 @@ Some requests carry extra fields:
   was written, `status` is 500. That status is recorded, not sent: the
   connection is closed, so the client sees a reset and a proxy in front
   reports 502.
-- `path_truncated=true`: the path was longer than 512 bytes and was cut.
+- `path_truncated=true`: the route shape was longer than 512 bytes and was cut.
   A method longer than 32 bytes is logged as `OTHER`.
 
 The event streams (`/api/events`, `/api/v1/_events`) log one line when the
@@ -441,11 +441,18 @@ not how slow the server was. Leave them out of latency reports.
 
 What it records and what it leaves out:
 
-- The path is logged as received, decoded, without the query string. Query
-  strings can carry tokens. The path itself can still contain user data:
-  entity IDs, and attachment file names such as
-  `/api/v1/tickets/TKT-1/_attachments/file/ziekmelding.pdf`. Treat the log
-  as personal data where that applies.
+- The path is logged as its route shape, without the query string. Route
+  words are kept, and so are the names the configuration declares: entity
+  types and their plurals, relations, properties, and the names of views,
+  lists, forms, documents and similar entries. Every other segment becomes
+  `*`, including entity IDs and attachment file names.
+  `/api/v1/tickets/TKT-1/_attachments/screenshot/ziekmelding.pdf` is logged
+  as `/api/v1/tickets/*/_attachments/screenshot/*`. An ID or file name that
+  is identical to one of those words is kept as is. Query strings are left
+  out because they can carry tokens.
+- The application log is a separate stream. Its warnings for failed
+  attachment writes and blocked requests use a coarser shape that also masks
+  type names. Other error lines there can still contain the full path.
 - No user, IP address, or request body.
 - No SQL. `--verbose` is not a substitute: it also logs every SQL
   statement with its bound arguments.

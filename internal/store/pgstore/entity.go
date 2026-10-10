@@ -676,8 +676,10 @@ func (s *Store) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteRe
 	// OUTGOING edges on this tail only while a face remains. INCOMING edges
 	// are then deliberately NOT matched: heads are entity-level (§2.3), so
 	// an inbound edge points at the entity and survives its faces. The last
-	// face takes every incident edge, as DeleteFamily does.
-	ownedWhere, ownedArgs := `from_id = $1 AND from_face = $2`, []any{id, string(p)}
+	// face takes every incident edge, as DeleteFamily does. A non-last
+	// implicit face takes none: its zero tail is shared with the family's
+	// identity edges (see store.EntityWriter.DeleteFace).
+	ownedWhere, ownedArgs := `from_id = $1 AND from_face = $2 AND from_face <> ''`, []any{id, string(p)}
 	if last {
 		ownedWhere, ownedArgs = `from_id = $1 OR to_id = $1`, []any{id}
 	}

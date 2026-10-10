@@ -2,8 +2,13 @@ package lua
 
 import (
 	"fmt"
+	"slices"
 
 	lua "github.com/yuin/gopher-lua"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // maxReadLimit bounds how many rows ANY single Lua read binding returns
@@ -55,15 +60,15 @@ type readOpts struct {
 // expression is genuinely the one thing worth a positional shorthand. It is
 // exactly equivalent to `{filter = "status=open"}` and gets the same default
 // bound — the shorthand buys brevity, never different semantics.
-func listEntitiesArgs(s *lua.LState) (filterExpr string, o readOpts, err error) {
+func listEntitiesArgs(s *lua.LState) (filterExpr string, face entity.Face, o readOpts, err error) {
 	if s.GetTop() >= 2 {
 		if str, isStr := s.Get(2).(lua.LString); isStr {
-			return string(str), readOpts{limit: maxReadLimit}, nil
+			return string(str), "", readOpts{limit: maxReadLimit}, nil
 		}
 	}
-	o, err = parseReadOpts(s, 2, "filter")
+	o, err = parseReadOpts(s, 2, "filter", "face")
 	if err != nil {
-		return "", o, err
+		return "", "", o, err
 	}
 	if s.GetTop() >= 2 {
 		if tbl, isTbl := s.Get(2).(*lua.LTable); isTbl {
@@ -72,11 +77,58 @@ func listEntitiesArgs(s *lua.LState) (filterExpr string, o readOpts, err error) 
 			case lua.LString:
 				filterExpr = string(v)
 			default:
-				return "", o, fmt.Errorf("option %q must be a string, got %s", "filter", v.Type())
+				return "", "", o, fmt.Errorf("option %q must be a string, got %s", "filter", v.Type())
+			}
+			if face, err = faceOption(tbl); err != nil {
+				return "", "", o, err
 			}
 		}
 	}
-	return filterExpr, o, nil
+	return filterExpr, face, o, nil
+}
+
+// faceOption reads the `face` option of a list read: the one content state
+// to list, in place of the face the runtime's world serves for each entity.
+// It returns "" when the option is absent. A face that is not well formed
+// raises, like an unknown option does.
+func faceOption(tbl *lua.LTable) (entity.Face, error) {
+	switch v := tbl.RawGetString("face").(type) {
+	case *lua.LNilType:
+		return "", nil
+	case lua.LString:
+		f, err := entity.ParseFace(string(v))
+		if err != nil {
+			return "", fmt.Errorf("option %q: %w", "face", err)
+		}
+		return f, nil
+	default:
+		return "", fmt.Errorf("option %q must be a string, got %s", "face", v.Type())
+	}
+}
+
+// listFaces resolves the face selection of a list read. The gated and the
+// elevated list share it, so a face the type does not declare raises on both
+// rather than listing nothing, which a script cannot tell from an empty
+// result. The metamodel is configuration, not a secret, so checking against
+// it does not narrow what elevation may read.
+type listFaces struct {
+	world store.WorldScope
+	meta  *metamodel.Metamodel
+}
+
+// selection returns the rows of face, or the world's rows when face is "".
+func (l listFaces) selection(entityType string, face entity.Face) (store.FaceSelection, error) {
+	if face == "" {
+		return store.InWorld(l.world), nil
+	}
+	def, found := l.meta.GetEntityDef(entityType)
+	if !found {
+		return store.FaceSelection{}, fmt.Errorf("unknown entity type %q", entityType)
+	}
+	if _, declared := def.Faces[string(face)]; !declared {
+		return store.FaceSelection{}, fmt.Errorf("type %q declares no face %q", entityType, face)
+	}
+	return store.AtFaces(face), nil
 }
 
 // parseReadOpts reads the options table at stack position pos.
@@ -98,25 +150,8 @@ func parseReadOpts(s *lua.LState, pos int, known ...string) (readOpts, error) {
 		return o, fmt.Errorf("options must be a table, got %s", v.Type())
 	}
 
-	// Reject unknown keys. A typo'd option that is silently ignored is the
-	// same defect class as the dropped filter in TKT-9FKX8X: the script asks
-	// one question and unknowingly gets the answer to another.
-	allowed := map[string]bool{"limit": true}
-	for _, k := range known {
-		allowed[k] = true
-	}
-	var unknown error
-	tbl.ForEach(func(k, _ lua.LValue) {
-		if unknown != nil {
-			return
-		}
-		name, isStr := k.(lua.LString)
-		if !isStr || !allowed[string(name)] {
-			unknown = fmt.Errorf("unknown option %q", k.String())
-		}
-	})
-	if unknown != nil {
-		return o, unknown
+	if err := rejectUnknownKeys(tbl, append([]string{"limit"}, known...)...); err != nil {
+		return o, err
 	}
 
 	switch lv := tbl.RawGetString("limit").(type) {
@@ -138,4 +173,22 @@ func parseReadOpts(s *lua.LState, pos int, known ...string) (readOpts, error) {
 		return o, fmt.Errorf("option \"limit\" must be a number, got %s", lv.Type())
 	}
 	return o, nil
+}
+
+// rejectUnknownKeys raises on any key of tbl not in allowed. A typo'd option
+// that is silently ignored is the same defect class as the dropped filter in
+// TKT-9FKX8X: the script asks one question and unknowingly gets the answer
+// to another.
+func rejectUnknownKeys(tbl *lua.LTable, allowed ...string) error {
+	var unknown error
+	tbl.ForEach(func(k, _ lua.LValue) {
+		if unknown != nil {
+			return
+		}
+		name, isStr := k.(lua.LString)
+		if !isStr || !slices.Contains(allowed, string(name)) {
+			unknown = fmt.Errorf("unknown option %q", k.String())
+		}
+	})
+	return unknown
 }

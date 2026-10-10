@@ -371,8 +371,37 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
+      - name: Cache golangci-lint analysis
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/golangci-lint
+          key: golangci-lint-analysis-${{ runner.arch }}-${{ env.GOLANGCI_LINT_VERSION }}-${{ hashFiles('go.sum', '.golangci.yml') }}
+          restore-keys: |
+            golangci-lint-analysis-${{ runner.arch }}-${{ env.GOLANGCI_LINT_VERSION }}-
+
+      # maildemo and mailmanual only add test files, so they ride on the
+      # default build.
       - name: Run golangci-lint
-        run: golangci-lint run ./...
+        run: golangci-lint run --build-tags maildemo,mailmanual ./...
+
+      # Files behind a backend build tag are invisible to the default run, so
+      # neither the linters nor gosec would see them (#1775). The tags select
+      # mutually exclusive backends, so each needs its own run. Steps rather
+      # than a matrix keep the required check named "Lint"; !cancelled() runs
+      # every step even after one fails, so one push reports all findings.
+      # A //nolint needed under one tag only is reported as unused by the
+      # other runs (nolintlint): put it in the tagged file.
+      - name: Run golangci-lint (sqlite)
+        if: ${{ !cancelled() }}
+        run: golangci-lint run --build-tags sqlite ./...
+
+      - name: Run golangci-lint (postgres)
+        if: ${{ !cancelled() }}
+        run: golangci-lint run --build-tags postgres ./...
+
+      - name: Run golangci-lint (memorybackend)
+        if: ${{ !cancelled() }}
+        run: golangci-lint run --build-tags memorybackend ./...
 
   arch-lint:
     name: Architecture
@@ -589,7 +618,7 @@ jobs:
         # RELA_FULL_CORPUS sweeps every entity body through the markdown
         # editor's parse/serialize pair instead of the 1-in-8 sample the local
         # run uses. It is the gate on the WYSIWYG editor never rewriting what
-        # a user did not edit, and it takes about a minute.
+        # a user did not edit, and it takes over a minute.
         run: RELA_FULL_CORPUS=1 npm run test:run
 
       - name: Build
