@@ -68,8 +68,8 @@ var CurrentUserType = predicate.RecordType{
 // An empty identity would make `entity.assignee == current_user.id`
 // match every entity whose assignee is unset — turning "who am I?"
 // being unanswerable into a filter that silently WIDENS. Every other
-// direction in this codebase fails closed (acl.ResolvePrincipal returns
-// no id on ambiguity; an unparseable where: clause is a load error), and
+// direction in this codebase fails closed (acl.IdentityResolver.ResolvePrincipal
+// returns no id on ambiguity; an unparseable where: clause is a load error), and
 // a personal inbox that shows a stranger's rows is the worst version of
 // getting this wrong.
 var ErrNoCurrentUser = errors.New("predicatefns: no current user on this context")
@@ -80,9 +80,9 @@ var ErrNoCurrentUser = errors.New("predicatefns: no current user on this context
 //
 // The string a principal carries is NOT stable across transports.
 // internal/dataentry rewrites principal.User to the resolved user-entity
-// id on /api/ (access.Opener), while CLI, MCP, scheduler and
-// desktop keep the raw identifier — acl.Declarative.ResolvePrincipal
-// documents that split and its fail-closed rationale. A query condition
+// id on /api/ (access.Opener, through acl.IdentityResolver.Resolve),
+// while CLI, MCP, scheduler and desktop keep the raw identifier
+// (acl.IdentityResolver.ResolveDirect skips the lookup). A query condition
 // compares against entity DATA (`entity.assignee`, which holds an entity
 // id), so binding whichever string happened to be on the context would
 // make the same view correct in the browser and silently empty from the
@@ -378,7 +378,7 @@ func hasCurrentUser(identity string) predicate.FuncFunc {
 // entity type or the identifier matches none.
 //
 // Consumer-side interface (see docs/architecture/consumer-side-interfaces.md):
-// the one implementation is acl.Declarative.ResolvePrincipal, but
+// the one implementation is acl.IdentityResolver.ResolvePrincipal, but
 // predicatefns must not depend on internal/acl — and the one method it
 // needs is far narrower than that type's surface. The wiring site
 // supplies it.

@@ -1195,17 +1195,22 @@ func (h *viewsHandler) inlineCreateForms(ctx context.Context) map[string]string 
 // createAuthorizer returns whether the principal may create an entity of a
 // type.
 //
-// The middleware attaches a per-request scope; fall back to the unscoped
-// path when one is absent (tests and any non-HTTP caller), which is
-// correct-but-slower rather than a different answer.
+// Under a declarative policy it looks up the Request the middleware attached
+// once and asks it per type. Otherwise, or when no usable Request is attached,
+// it asks the ACL itself; a declarative ACL then fails closed, because
+// [acl.Declarative.AuthorizeWrite] denies a ctx without a Request.
 func (h *viewsHandler) createAuthorizer(ctx context.Context) func(entityType string) bool {
-	scope := acl.FromContext(ctx)
+	a := h.currentACL()
+	var scope *acl.Request
+	if d, ok := a.(*acl.Declarative); ok && d != nil {
+		scope, _ = d.RequestFrom(ctx)
+	}
 	return func(entityType string) bool {
 		req := translateVerb("create", entityType, "", "")
 		if scope != nil {
 			return scope.AuthorizeWrite(ctx, req).Allow
 		}
-		return h.currentACL().AuthorizeWrite(ctx, req).Allow
+		return a.AuthorizeWrite(ctx, req).Allow
 	}
 }
 

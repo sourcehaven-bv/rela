@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -223,7 +225,7 @@ func TestACLScript_RedactedVisibleToLua(t *testing.T) {
 	setTestACL(t, app, d)
 
 	reader := app.scriptReader(appRedactor(app))
-	e, err := reader.GetAddress(aliceCtx(), "TKT-001")
+	e, err := reader.GetAddress(acltest.Bind(aliceCtx(), t, app.acl), "TKT-001")
 	if err != nil {
 		t.Fatalf("GetAddress: %v", err)
 	}

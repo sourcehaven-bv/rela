@@ -119,7 +119,7 @@ func testCascadeDeniedWhenRelationNotDeletable(t *testing.T, guard entitymanager
 	seedCascadeGraph(t, st)
 	mgr := cascadeManagerWith(t, st, guard)
 
-	_, err := mgr.DeleteEntity(asUser("alice"), "REQ-1", true)
+	_, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("alice"), t, mgr), "REQ-1", true)
 	if err == nil {
 		t.Fatal("cascade succeeded; alice holds delete on requirement but not on " +
 			"decision, the source of the incident addresses edge")
@@ -154,7 +154,7 @@ func TestCascadeDelete_DeniedLeavesEverythingIntact(t *testing.T) {
 			seedCascadeGraph(t, st)
 			mgr := cascadeManagerWith(t, st, g.guard())
 
-			if _, err := mgr.DeleteEntity(asUser("alice"), "REQ-1", true); err == nil {
+			if _, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("alice"), t, mgr), "REQ-1", true); err == nil {
 				t.Fatal("expected denial")
 			}
 
@@ -178,7 +178,7 @@ func TestCascadeDelete_DenialComesBeforeTheBlock(t *testing.T) {
 	g := &fakeGuard{blockWhole: true}
 	mgr := cascadeManagerWith(t, st, g)
 
-	_, err := mgr.DeleteEntity(asUser("alice"), "REQ-1", true)
+	_, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("alice"), t, mgr), "REQ-1", true)
 	var forbidden *acl.ForbiddenError
 	if !errors.As(err, &forbidden) {
 		t.Fatalf("err = %v, want *acl.ForbiddenError", err)
@@ -203,7 +203,7 @@ func TestCascadeDelete_AllowedWhenEveryRelationIsDeletable(t *testing.T) {
 			seedCascadeGraph(t, st)
 			mgr := cascadeManagerWith(t, st, g.guard())
 
-			res, err := mgr.DeleteEntity(asUser("root"), "REQ-1", true)
+			res, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("root"), t, mgr), "REQ-1", true)
 			if err != nil {
 				t.Fatalf("root holds delete on everything: %v", err)
 			}
@@ -231,7 +231,7 @@ func TestCascadeDelete_NoRelationsNeedsNoRelationGrant(t *testing.T) {
 			}
 			mgr := cascadeManagerWith(t, st, g.guard())
 
-			if _, err := mgr.DeleteEntity(asUser("alice"), "REQ-9", true); err != nil {
+			if _, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("alice"), t, mgr), "REQ-9", true); err != nil {
 				t.Fatalf("alice holds delete on requirement and there are no edges: %v", err)
 			}
 		})
@@ -332,7 +332,7 @@ func TestCascadeDelete_ConcurrentWriterCannotEnterTheWindow(t *testing.T) {
 	}()
 
 	// alice may delete requirement and there are no edges yet, so this succeeds.
-	if _, err := mgr.DeleteEntity(asUser("alice"), "REQ-1", true); err != nil {
+	if _, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("alice"), t, mgr), "REQ-1", true); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 

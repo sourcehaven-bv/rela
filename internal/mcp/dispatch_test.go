@@ -313,10 +313,10 @@ func TestNewServer_LuaToolsAreOptIn(t *testing.T) {
 	}
 
 	noLua := newTestDeps(t, meta, st)
-	noLua.LuaWriteDeps = lua.WriteDeps{}
+	noLua.Lua.WriteDeps = lua.WriteDeps{}
 	if _, err := NewServer(noLua, "test",
 		WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}), WithLuaTools()); err == nil {
-		t.Error("NewServer accepted WithLuaTools without LuaWriteDeps")
+		t.Error("NewServer accepted WithLuaTools without Lua.WriteDeps")
 	}
 }
 

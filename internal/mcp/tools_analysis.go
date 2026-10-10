@@ -80,7 +80,7 @@ func findingsResult(check string, count int, results any) *mcpgo.CallToolResult 
 func (s *Server) handleAnalyzeOrphans(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	entityType := args.GetString("type", "")
 
@@ -222,7 +222,7 @@ type cardinalityViolation struct {
 func (s *Server) handleAnalyzeCardinality(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	// One snapshot for the whole operation (CLAUDE.md "capture state once"):
 	// ReloadDeps republishes the bundle atomically on a schema.yaml edit, so
 	// two separate deps() loads could pair a new store with an old metamodel.
@@ -269,7 +269,7 @@ type uniqueViolation struct {
 func (s *Server) handleAnalyzeUnique(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	violations := make([]uniqueViolation, 0)
 
 	type faceValue struct {
@@ -319,7 +319,7 @@ func (s *Server) handleAnalyzeUnique(
 func (s *Server) handleAnalyzeProperties(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	type entityErrors struct {
 		EntityID   string      `json:"entity_id"`
 		EntityType string      `json:"entity_type"`
@@ -404,7 +404,7 @@ func (s *Server) handleAnalyzeProperties(
 func (s *Server) handleAnalyzeValidations(
 	ctx context.Context, _ *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	rules := snap.deps.Meta.Validations
 	if len(rules) == 0 {
 		return textResult("No custom validation rules defined in metamodel"), nil
@@ -467,7 +467,7 @@ func (s *Server) handleAnalyzeValidations(
 func (s *Server) handleAnalyzeSchema(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	threshold := args.GetInt("threshold", 0)
 
@@ -491,7 +491,7 @@ func (s *Server) handleAnalyzeSchema(
 
 // loadDataEntryConfig loads data-entry.yaml if it exists.
 func (s *Server) loadDataEntryConfig(ctx context.Context) *dataentryconfig.Config {
-	data, err := s.deps().Config.Load(ctx, dataentryconfig.ConfigFile)
+	data, err := snapshotFor(ctx, s).deps.Config.Load(ctx, dataentryconfig.ConfigFile)
 	if err != nil {
 		return nil
 	}

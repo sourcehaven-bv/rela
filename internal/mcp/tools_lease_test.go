@@ -15,6 +15,7 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -209,6 +210,13 @@ func newLeaseEnv(t *testing.T) *leaseEnv {
 	return &leaseEnv{st: st, leases: leases, clock: clock, deps: deps, d: d}
 }
 
+// bound stamps p on a context and binds its Request on e's evaluator, as a
+// transport edge does before it calls the lease service.
+func (e *leaseEnv) bound(t *testing.T, p principal.Principal) context.Context {
+	t.Helper()
+	return acltest.Bind(principal.With(context.Background(), p), t, e.d)
+}
+
 // session connects a client that runs every call as p, with an acl.Request
 // attached up front as remote MCP does.
 func (e *leaseEnv) session(t *testing.T, p principal.Principal) *mcpgo.ClientSession {
@@ -219,7 +227,7 @@ func (e *leaseEnv) session(t *testing.T, p principal.Principal) *mcpgo.ClientSes
 	}
 	srv.mcp.AddReceivingMiddleware(func(next mcpgo.MethodHandler) mcpgo.MethodHandler {
 		return func(ctx context.Context, method string, req mcpgo.Request) (mcpgo.Result, error) {
-			r, err := e.d.ForPrincipal(p)
+			r, err := acl.OpenRequest(ctx, e.d, p)
 			if err != nil {
 				return nil, err
 			}
@@ -375,7 +383,7 @@ func TestRenewLease_LostIsOneAnswer(t *testing.T) {
 		c := claim(t, alice, `{"id":"TKT-1"}`)
 		releaseOK(t, bob, c.LeaseID)
 		releaseOK(t, bob, strings.Repeat("0", 32))
-		if _, err := e.leases.Renew(principal.With(context.Background(), leaseAlice), c.LeaseID, 0, nil); err != nil {
+		if _, err := e.leases.Renew(e.bound(t, leaseAlice), c.LeaseID, 0, nil); err != nil {
 			t.Fatalf("bob's release ended alice's lease: %v", err)
 		}
 	})
@@ -539,7 +547,7 @@ func TestWatch_WakesOnLeaseRelease(t *testing.T) {
 	target := `{"tool":"show_entity","args":{"id":"TKT-1"}}`
 	base := mustWatch(t, bob, `{"targets":[`+target+`]}`)
 	later(t, 300*time.Millisecond, func() error {
-		return e.leases.Release(principal.With(context.Background(), leaseAlice), c.LeaseID)
+		return e.leases.Release(e.bound(t, leaseAlice), c.LeaseID)
 	})
 	got := mustWatch(t, bob, watchArgs(base.Cursor, 10, target))
 	if got.TimedOut || len(got.Changed) != 1 {
@@ -560,7 +568,7 @@ func TestWatch_LeaseChanges(t *testing.T) {
 	}{
 		{"claim ends the wait", func(_ *testing.T, e *leaseEnv) func() error {
 			return func() error {
-				_, err := e.leases.Claim(principal.With(context.Background(), leaseAlice),
+				_, err := e.leases.Claim(e.bound(t, leaseAlice),
 					lease.ClaimRequest{Addr: "TKT-1"})
 				return err
 			}
@@ -570,7 +578,7 @@ func TestWatch_LeaseChanges(t *testing.T) {
 			c := claimDirect(t, e)
 			status := "new status"
 			return func() error {
-				_, err := e.leases.Renew(principal.With(context.Background(), leaseAlice), c.LeaseID, 0, &status)
+				_, err := e.leases.Renew(e.bound(t, leaseAlice), c.LeaseID, 0, &status)
 				return err
 			}
 		}, true},
@@ -578,7 +586,7 @@ func TestWatch_LeaseChanges(t *testing.T) {
 			t.Helper()
 			c := claimDirect(t, e)
 			return func() error {
-				_, err := e.leases.Renew(principal.With(context.Background(), leaseAlice), c.LeaseID, 0, nil)
+				_, err := e.leases.Renew(e.bound(t, leaseAlice), c.LeaseID, 0, nil)
 				return err
 			}
 		}, false},
@@ -609,7 +617,7 @@ func TestWatch_LeaseChanges(t *testing.T) {
 // claimDirect claims TKT-1 as alice through the service.
 func claimDirect(t *testing.T, e *leaseEnv) lease.Claimed {
 	t.Helper()
-	c, err := e.leases.Claim(principal.With(context.Background(), leaseAlice), lease.ClaimRequest{Addr: "TKT-1"})
+	c, err := e.leases.Claim(e.bound(t, leaseAlice), lease.ClaimRequest{Addr: "TKT-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -765,7 +773,7 @@ func TestLeases_NilService(t *testing.T) {
 			t.Errorf("tool %s registered without a lease service", tool.Name)
 		}
 	}
-	if _, claimErr := e.leases.Claim(principal.With(context.Background(), leaseAlice),
+	if _, claimErr := e.leases.Claim(e.bound(t, leaseAlice),
 		lease.ClaimRequest{Addr: "TKT-1"}); claimErr != nil {
 		t.Fatal(claimErr)
 	}

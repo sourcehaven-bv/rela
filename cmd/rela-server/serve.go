@@ -278,7 +278,7 @@ func (s *server) startScheduler(g *generation) {
 	ctx, cancel := context.WithCancel(context.Background())
 	g.schedStop = cancel
 	// *appbuild.Services satisfies scheduler.WorkspaceProvider structurally.
-	sched := scheduler.StartBackground(ctx, g.svc, slog.Default())
+	sched := scheduler.StartBackground(ctx, g.svc, appbuild.IdentityBinder(g.svc), slog.Default())
 	leases := appbuild.WatchLeases(ctx, g.svc)
 	done := make(chan struct{})
 	go func() {

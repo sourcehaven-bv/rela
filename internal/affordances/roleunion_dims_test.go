@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -149,10 +150,7 @@ func newUnionWorld(t *testing.T, policyYAML string) unionWorld {
 func (w unionWorld) clientCtx(t *testing.T, user, principalType string) context.Context {
 	t.Helper()
 	p := principal.VerifiedFrom(user, principal.ToolDataEntry, principal.Claims{PrincipalType: principalType})
-	req, err := w.decl.ForPrincipal(p)
-	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
-	}
+	req := acltest.RequestFor(context.Background(), t, w.decl, p)
 	return acl.WithRequest(principal.With(context.Background(), p), req)
 }
 
@@ -201,7 +199,10 @@ func TestRoleUnion_PerDimension(t *testing.T) {
 	t.Parallel()
 	w := newUnionWorld(t, unionPolicy)
 	user := func(name string) func(*testing.T) context.Context {
-		return func(*testing.T) context.Context { return userCtx(name) }
+		return func(t *testing.T) context.Context {
+			t.Helper()
+			return userCtx(t, w.decl, name)
+		}
 	}
 	app := func(name string) func(*testing.T) context.Context {
 		return func(t *testing.T) context.Context {
@@ -292,7 +293,7 @@ func TestRoleUnion_RelationMeta(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.user, func(t *testing.T) {
 			t.Parallel()
-			got := denied(w.resolver.RelationFieldVerdicts(userCtx(tc.user), unionTicket(), "cites", keys))
+			got := denied(w.resolver.RelationFieldVerdicts(userCtx(t, w.decl, tc.user), unionTicket(), "cites", keys))
 			if !slices.Equal(got, tc.hidden) {
 				t.Errorf("hidden meta = %v, want %v", got, tc.hidden)
 			}
@@ -308,31 +309,35 @@ func TestRoleUnion_History(t *testing.T) {
 	t.Parallel()
 	w := newUnionWorld(t, unionPolicy)
 	conferred := newRoleUnionWorld(t, roleUnionPolicy)
-	hist := func(user string) context.Context { return affordances.WithHistoricalSubject(userCtx(user)) }
+	hist := func(t *testing.T, decl *acl.Declarative, user string) context.Context {
+		t.Helper()
+		return affordances.WithHistoricalSubject(userCtx(t, decl, user))
+	}
 
 	tests := []struct {
 		name     string
 		resolver *affordances.PolicyResolver
+		decl     *acl.Declarative
 		user     string
 		row      *entity.Entity
 		hidden   []string
 	}{
-		{"global read role shows every field", w.resolver, "ulla", unionTicket(), nil},
-		{"global block alone keeps its restriction", w.resolver, "carl", unionTicket(), []string{"secret"}},
-		{"face read grant shows its face", w.resolver, "pia", unionPolicyRow("published"), nil},
-		{"face read grant does not show another face", w.resolver, "pia", unionPolicyRow("draft"),
+		{"global read role shows every field", w.resolver, w.decl, "ulla", unionTicket(), nil},
+		{"global block alone keeps its restriction", w.resolver, w.decl, "carl", unionTicket(), []string{"secret"}},
+		{"face read grant shows its face", w.resolver, w.decl, "pia", unionPolicyRow("published"), nil},
+		{"face read grant does not show another face", w.resolver, w.decl, "pia", unionPolicyRow("draft"),
 			[]string{"owner"}},
-		{"face read grant does not show an unnamed face", w.resolver, "pia", unionPolicyRow(""),
+		{"face read grant does not show an unnamed face", w.resolver, w.decl, "pia", unionPolicyRow(""),
 			[]string{"owner"}},
-		{"global wildcard read shows every field", conferred.resolver, "alice", conferred.watched, nil},
-		{"global type read shows every field", conferred.resolver, "rita", conferred.watched, nil},
-		{"conferred role is dropped and the reader fails closed", conferred.resolver, "vic", conferred.watched,
+		{"global wildcard read shows every field", conferred.resolver, conferred.decl, "alice", conferred.watched, nil},
+		{"global type read shows every field", conferred.resolver, conferred.decl, "rita", conferred.watched, nil},
+		{"conferred role is dropped and the reader fails closed", conferred.resolver, conferred.decl, "vic", conferred.watched,
 			[]string{"secret", "status", "title"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := denied(tc.resolver.FieldVerdicts(hist(tc.user), tc.row).Visible)
+			got := denied(tc.resolver.FieldVerdicts(hist(t, tc.decl, tc.user), tc.row).Visible)
 			if !slices.Equal(got, tc.hidden) {
 				t.Errorf("historical hidden = %v, want %v", got, tc.hidden)
 			}
@@ -340,8 +345,9 @@ func TestRoleUnion_History(t *testing.T) {
 	}
 }
 
-// TestRoleUnion_Everyone covers the role every principal holds, including one
-// with no identity: it joins the union like any other role.
+// TestRoleUnion_Everyone covers the role every principal holds: it joins the
+// union like any other role. A caller with no bound identity holds no role and
+// fails closed.
 func TestRoleUnion_Everyone(t *testing.T) {
 	t.Parallel()
 	const restricted = `
@@ -364,15 +370,16 @@ assignments:
 	}{
 		{"everyone without ticket read adds nothing", "person", "carl", []string{"secret", "status"}},
 		{"everyone with ticket read opens the block", "ticket", "carl", nil},
-		{"an unidentified caller holds only everyone", "ticket", "", nil},
+		{"an unidentified caller fails closed", "ticket", "", []string{"secret", "status", "title"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			w := newUnionWorld(t, fmt.Sprintf(restricted, tc.everyone))
-			ctx := context.Background() // no principal: only everyone applies
+			// No principal: no identity is bound, so every field is denied.
+			ctx := context.Background()
 			if tc.user != "" {
-				ctx = userCtx(tc.user)
+				ctx = userCtx(t, w.decl, tc.user)
 			}
 			got := denied(w.resolver.FieldVerdicts(ctx, unionTicket()).Visible)
 			if !slices.Equal(got, tc.hidden) {
@@ -632,7 +639,7 @@ func TestRoleUnion_Monotonic(t *testing.T) {
 				access := make([]map[string]bool, subsets)
 				for mask := range subsets {
 					user := fmt.Sprintf("u%03d", mask)
-					ctx := userCtx(user)
+					ctx := userCtx(t, decl, user)
 					if m.app {
 						ctx = world.clientCtx(t, user, "app")
 					}
@@ -732,16 +739,16 @@ func TestRoleUnion_WriteGateJudgesCreateByCreate(t *testing.T) {
 		t.Fatalf("NewWriteGate: %v", err)
 	}
 	set := map[string]any{"secret": "s"}
-	if err := gate.CheckCreateFieldWrite(userCtx("cora"), unionTicket(), set); err != nil {
+	if err := gate.CheckCreateFieldWrite(userCtx(t, w.decl, "cora"), unionTicket(), set); err != nil {
 		t.Errorf("create as creator and clerk: %v", err)
 	}
-	if err := gate.CheckFieldWrite(userCtx("cora"), unionTicket(), set, nil); err == nil {
+	if err := gate.CheckFieldWrite(userCtx(t, w.decl, "cora"), unionTicket(), set, nil); err == nil {
 		t.Error("update as creator and clerk: secret write allowed, want refused")
 	}
-	if err := gate.CheckCreateFieldWrite(userCtx("ulla"), unionTicket(), set); err == nil {
+	if err := gate.CheckCreateFieldWrite(userCtx(t, w.decl, "ulla"), unionTicket(), set); err == nil {
 		t.Error("create as updater and clerk: secret write allowed, want refused")
 	}
-	if err := gate.CheckFieldWrite(userCtx("ulla"), unionTicket(), set, nil); err != nil {
+	if err := gate.CheckFieldWrite(userCtx(t, w.decl, "ulla"), unionTicket(), set, nil); err != nil {
 		t.Errorf("update as updater and clerk: %v", err)
 	}
 }
@@ -754,10 +761,7 @@ func BenchmarkFieldVerdicts_RoleUnion(b *testing.B) {
 	all := 1<<len(monotonicRoles) - 1
 	r, decl := newMonotonicWorld(b, monotonicCeiling, map[string]int{"bench": all})
 	p := principal.VerifiedFrom("bench", principal.ToolDataEntry, principal.Claims{PrincipalType: "app"})
-	req, err := decl.ForPrincipal(p)
-	if err != nil {
-		b.Fatal(err)
-	}
+	req := acltest.RequestFor(context.Background(), b, decl, p)
 	reqCtx := acl.WithRequest(principal.With(context.Background(), p), req)
 	row := entity.New("TKT-review", "ticket")
 	row.SetString("status", "review")

@@ -54,10 +54,10 @@ func TestResolver_RelatedWhen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if !statusWritable(r.FieldVerdicts(ctxAs("alice"), ticket("T-FREE", nil))) {
+	if !statusWritable(r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-FREE", nil))) {
 		t.Error("T-FREE implements nothing: status should be writable")
 	}
-	if statusWritable(r.FieldVerdicts(ctxAs("alice"), ticket("T-LINKED", nil))) {
+	if statusWritable(r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-LINKED", nil))) {
 		t.Error("T-LINKED implements a feature: status should be denied")
 	}
 }
@@ -77,7 +77,7 @@ func TestResolver_PrimeTraversalsBindsOncePerPage(t *testing.T) {
 		for i := range rows {
 			rows[i] = ticket(strings.Repeat("T", i+1), nil)
 		}
-		ctx := r.PrimeTraversals(ctxAs("alice"), rows)
+		ctx := r.PrimeTraversals(ctxFor(t, r, "alice"), rows)
 		for _, e := range rows {
 			r.FieldVerdicts(ctx, e)
 			r.RelationVerdicts(ctx, e)
@@ -99,7 +99,7 @@ func TestResolver_PrimedBindErrorDenies(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	rows := []*entity.Entity{ticket("T-1", nil), ticket("T-2", nil)}
-	ctx := r.PrimeTraversals(ctxAs("alice"), rows)
+	ctx := r.PrimeTraversals(ctxFor(t, r, "alice"), rows)
 	for _, e := range rows {
 		if statusWritable(r.FieldVerdicts(ctx, e)) {
 			t.Errorf("%s: a grant whose traversal failed must be denied", e.ID)
@@ -120,7 +120,7 @@ func TestResolver_LiveAnswerIsKeptOnPrimedCtx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	ctx := r.PrimeTraversals(ctxAs("alice"), []*entity.Entity{ticket("T-1", nil)})
+	ctx := r.PrimeTraversals(ctxFor(t, r, "alice"), []*entity.Entity{ticket("T-1", nil)})
 	late := ticket("T-2", nil)
 	r.FieldVerdicts(ctx, late)
 	r.FieldVerdicts(ctx, late)
@@ -140,7 +140,7 @@ func TestResolver_UnprimedRowAnsweredLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	ctx := r.PrimeTraversals(ctxAs("alice"), []*entity.Entity{ticket("T-OTHER", nil)})
+	ctx := r.PrimeTraversals(ctxFor(t, r, "alice"), []*entity.Entity{ticket("T-OTHER", nil)})
 	if statusWritable(r.FieldVerdicts(ctx, ticket("T-LINKED", nil))) {
 		t.Error("unprimed T-LINKED: status should be denied")
 	}
@@ -154,15 +154,17 @@ func TestResolver_RelatedDeniesWhenUnanswerable(t *testing.T) {
 	cases := []struct {
 		name string
 		b    *stubBinder
-		ctx  func() context.Context
+		ctx  func(r *affordances.PolicyResolver) context.Context
 		e    func() *entity.Entity
 	}{
 		{"bind error", &stubBinder{err: errors.New("store down")},
-			func() context.Context { return ctxAs("alice") }, func() *entity.Entity { return ticket("T-1", nil) }},
+			func(r *affordances.PolicyResolver) context.Context { return ctxFor(t, r, "alice") }, func() *entity.Entity { return ticket("T-1", nil) }},
 		{"historical subject", &stubBinder{},
-			func() context.Context { return affordances.WithHistoricalSubject(ctxAs("alice")) },
+			func(r *affordances.PolicyResolver) context.Context {
+				return affordances.WithHistoricalSubject(ctxFor(t, r, "alice"))
+			},
 			func() *entity.Entity { return ticket("T-1", nil) }},
-		{"named face", &stubBinder{}, func() context.Context { return ctxAs("alice") },
+		{"named face", &stubBinder{}, func(r *affordances.PolicyResolver) context.Context { return ctxFor(t, r, "alice") },
 			func() *entity.Entity { e := ticket("T-1", nil); e.Face = entity.Face("en"); return e }},
 	}
 	for _, tc := range cases {
@@ -173,7 +175,7 @@ func TestResolver_RelatedDeniesWhenUnanswerable(t *testing.T) {
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
-			if statusWritable(r.FieldVerdicts(tc.ctx(), tc.e())) {
+			if statusWritable(r.FieldVerdicts(tc.ctx(r), tc.e())) {
 				t.Error("an unanswerable related() must deny the grant")
 			}
 		})

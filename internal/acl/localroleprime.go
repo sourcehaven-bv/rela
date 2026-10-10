@@ -117,7 +117,7 @@ func (p *localRolePrime) lookup(r *Request, id string) ([]RoleAttribution, bool)
 func batchLocalRoles(
 	ctx context.Context, r *Request, b edgeBatcher, ids []string,
 ) (map[string][]RoleAttribution, error) {
-	globals := r.Globals(ctx)
+	globals := r.Globals()
 	relTypes := r.conferringRelations()
 	byID := make(map[string][]RoleAttribution, len(ids))
 	if len(relTypes) == 0 || len(globals.Members) == 0 {

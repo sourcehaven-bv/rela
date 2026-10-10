@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -60,13 +61,13 @@ func aclWorldMeta() *metamodel.Metamodel {
 
 // newACLWorld seeds the graph and returns write deps whose reads are
 // ACL-bound, exactly as appbuild/dataentry wire them in production.
-func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps) {
+func newACLWorld(t *testing.T) (store.Store, lua.WriteDeps, *acl.Declarative) {
 	t.Helper()
 	return newACLWorldOn(t, memstore.New())
 }
 
 // newACLWorldOn is [newACLWorld] over st, which must be empty.
-func newACLWorldOn(t *testing.T, st store.Store) (store.Store, lua.WriteDeps) {
+func newACLWorldOn(t *testing.T, st store.Store) (store.Store, lua.WriteDeps, *acl.Declarative) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -137,7 +138,7 @@ func newACLWorldOn(t *testing.T, st store.Store) (store.Store, lua.WriteDeps) {
 			World:       store.TrivialScope(),
 		},
 		EntityManager: entitymanagertest.PanicOnUse{},
-	}
+	}, d
 }
 
 // noRelations satisfies affordances.RelationLookup for a fixture whose
@@ -149,12 +150,15 @@ func (noRelations) HasEdge(context.Context, string, string, string) bool  { retu
 
 // runAsAlice executes src under the fixture's restricted principal and
 // returns what the script emitted — i.e. what would reach a prompt.
-func runAsAlice(t *testing.T, deps lua.WriteDeps, src string) string {
+//
+// The identity is bound against decl first: the script runtime is not a
+// request edge, so it runs under whatever scope its caller bound.
+func runAsAlice(t *testing.T, decl *acl.Declarative, deps lua.WriteDeps, src string) string {
 	t.Helper()
 	var out strings.Builder
-	ctx := principal.With(context.Background(), principal.Principal{
+	ctx := acltest.Bind(principal.With(context.Background(), principal.Principal{
 		User: "alice", Tool: principal.ToolScheduler,
-	})
+	}), t, decl)
 	rt := lua.NewWriter(deps, &out, lua.WithContext(ctx), lua.WithPrincipal(principal.From(ctx)))
 	defer rt.Close()
 	if err := rt.RunString(src); err != nil {
@@ -166,9 +170,9 @@ func runAsAlice(t *testing.T, deps lua.WriteDeps, src string) string {
 // TestScriptReads_HiddenFieldRedacted (AC1): a property the caller's policy
 // hides never reaches the script — this is what keeps it out of a prompt.
 func TestScriptReads_HiddenFieldRedacted(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 local p = rela.get_entity("P-1")
 rela.output("name=" .. tostring(p.properties.name))
 rela.output("salary=" .. tostring(p.properties.salary))
@@ -184,9 +188,9 @@ rela.output("salary=" .. tostring(p.properties.salary))
 // TestScriptReads_HiddenEntityInvisible (AC1/AC2): a row the caller cannot
 // read is absent from both get_entity and list_entities.
 func TestScriptReads_HiddenEntityInvisible(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 rela.output("get=" .. tostring(rela.get_entity("SEC-1")))
 local n = 0
 for _, e in ipairs(rela.list_entities("secret")) do n = n + 1 end
@@ -210,9 +214,9 @@ rela.output("tickets=" .. t)
 // only when BOTH endpoints are visible — including under an explicit
 // opts.from filter, where an empty result means "none you may see".
 func TestScriptReads_RelationsPeerGated(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 local seen = {}
 for _, r in ipairs(rela.get_relations({from = "TKT-1"})) do
   seen[#seen+1] = r.to
@@ -230,9 +234,9 @@ rela.output("peers=" .. table.concat(seen, ","))
 // TestScriptReads_TraceGated (AC5): traversal prunes hidden nodes purely
 // via the injected decorator — the bindings are unchanged.
 func TestScriptReads_TraceGated(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 local function walk(node, acc)
   if node == nil then return acc end
   acc[#acc+1] = node.id
@@ -269,12 +273,12 @@ rela.output("nodes=" .. table.concat(walk(rela.trace_from("TKT-1", 2), {}), ",")
 // mechanism currently provides it. An earlier version asserting only on
 // the deps handles would not have caught a regression here (RR-KYWIMZ).
 func TestScriptReads_UpdatePreservesHiddenProperties(t *testing.T) {
-	st, deps := newACLWorld(t)
+	st, deps, decl := newACLWorld(t)
 	deps.EntityManager = &storeMutator{st: st}
 
 	// alice may read `person` but not its `salary`. She updates `name`;
 	// `salary` must survive untouched in the store.
-	runAsAlice(t, deps, `rela.update_entity("P-1", {name = "Ann Updated"})`)
+	runAsAlice(t, decl, deps, `rela.update_entity("P-1", {name = "Ann Updated"})`)
 
 	after, err := st.GetEntity(context.Background(), entity.Ref{ID: "P-1"})
 	if err != nil {
@@ -357,9 +361,9 @@ func (m *storeMutator) DeleteRelation(context.Context, entity.RelationKey) error
 //     usable identity — this is what the original defect broke), and
 //  2. entities the principal may NOT read are absent (the gate applies).
 func TestScriptReads_EntityRefsGated(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 local refs = rela.md.entity_refs()
 local ids = {}
 for id in pairs(refs) do ids[#ids+1] = id end
@@ -420,9 +424,9 @@ func TestScriptReads_NilReaderDenies(t *testing.T) {
 // set — both read as nil, so without a marker a script renders the same
 // blank for "you may not see this" and "nobody filled it in".
 func TestScriptReads_RedactedIsDistinguishableFromUnset(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 local p = rela.get_entity("P-1")
 rela.output("salary_val=" .. tostring(p.properties.salary))
 rela.output("salary_redacted=" .. tostring(p:is_redacted("salary")))
@@ -449,9 +453,9 @@ rela.output("name_redacted=" .. tostring(p:is_redacted("name")))
 // TestScriptReads_RedactedSetIsIterable pins the table form, for scripts
 // that render every withheld field rather than probing one by name.
 func TestScriptReads_RedactedSetIsIterable(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 local p = rela.get_entity("P-1")
 local names = {}
 for name in pairs(p.redacted) do names[#names+1] = name end
@@ -466,9 +470,9 @@ rela.output("redacted=" .. table.concat(names, ","))
 // TestScriptReads_RedactedNeverCarriesValues is the security invariant:
 // the marker discloses NAMES only. The value must appear nowhere.
 func TestScriptReads_RedactedNeverCarriesValues(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 local p = rela.get_entity("P-1")
 for name, v in pairs(p.redacted) do
   rela.output("entry=" .. name .. "/" .. tostring(v))
@@ -489,9 +493,9 @@ rela.output("via_prop=" .. tostring(p:prop("salary", "absent")))
 // reaches Redact through a different branch (pushdown or Filter) than
 // get_entity.
 func TestScriptReads_ListEntitiesMarksRedacted(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 for _, e in ipairs(rela.list_entities("person")) do
   rela.output(e.id .. ":" .. tostring(e:is_redacted("salary")) .. ":" .. tostring(e.properties.salary))
 end
@@ -506,10 +510,10 @@ end
 // evaluate no policy, so nothing is redacted and every value is present.
 // A false here means "not withheld", never "withheld but unreported".
 func TestScriptReads_UngatedRuntimeReportsNothingRedacted(t *testing.T) {
-	st, deps := newACLWorld(t)
+	st, deps, decl := newACLWorld(t)
 	deps.VisibleReader = visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope()))
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 local p = rela.get_entity("P-1")
 rela.output("salary=" .. tostring(p.properties.salary))
 rela.output("redacted=" .. tostring(p:is_redacted("salary")))
@@ -527,10 +531,10 @@ rela.output("redacted=" .. tostring(p:is_redacted("salary")))
 // entity, so returning it as-is would give a script every hidden property of
 // any entity it may update.
 func TestScriptWrites_ResultIsRedacted(t *testing.T) {
-	st, deps := newACLWorld(t)
+	st, deps, decl := newACLWorld(t)
 	deps.EntityManager = &storeMutator{st: st}
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 local p = rela.update_entity("P-1", {name = "Ann Updated"})
 rela.output("name=" .. tostring(p.properties.name))
 rela.output("salary=" .. tostring(p.properties.salary))
@@ -546,14 +550,14 @@ rela.output("salary=" .. tostring(p.properties.salary))
 // TestScriptWrites_HiddenTargetIsNotFound (RR-T4G0S7): a write naming an
 // entity the caller cannot read fails exactly like one naming an absent id.
 func TestScriptWrites_HiddenTargetIsNotFound(t *testing.T) {
-	st, deps := newACLWorld(t)
+	st, deps, decl := newACLWorld(t)
 	deps.EntityManager = &storeMutator{st: st}
 
 	run := func(id string) string {
 		var out strings.Builder
-		ctx := principal.With(context.Background(), principal.Principal{
+		ctx := acltest.Bind(principal.With(context.Background(), principal.Principal{
 			User: "alice", Tool: principal.ToolScheduler,
-		})
+		}), t, decl)
 		rt := lua.NewWriter(deps, &out, lua.WithContext(ctx), lua.WithPrincipal(principal.From(ctx)))
 		defer rt.Close()
 		err := rt.RunString(`rela.update_entity("` + id + `", {title = "x"})`)

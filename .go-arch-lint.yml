@@ -10,6 +10,7 @@ exclude:
   - internal/entitymanager/entitymanagertest
   - internal/tracer/tracertest
   - internal/visibility/visibilitytest
+  - internal/acl/acltest
   - internal/state/statetest
   - internal/lock/locktest
   - internal/tokenstore/tokenstoretest

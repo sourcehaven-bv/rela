@@ -93,8 +93,8 @@ func TestPrimeLocalRoles_MatchesPerEntityWalk(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
-			plain, _ := d.ForPrincipal(p)
-			primedReq, _ := d.ForPrincipal(p)
+			plain, _ := d.ForIdentity(identityFor(context.Background(), t, d, p))
+			primedReq, _ := d.ForIdentity(identityFor(context.Background(), t, d, p))
 			ctx := context.Background()
 			pctx := PrimeLocalRoles(WithRequest(ctx, primedReq), append(ids, "f0", "f1"))
 			for _, id := range append(ids, "f0", "f1") {
@@ -148,9 +148,10 @@ func TestPrimeLocalRoles_ReadsAreSizeIndependent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req, _ := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+		alice := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
+		req, _ := d.ForIdentity(identityFor(context.Background(), t, d, alice))
 		ctx = WithRequest(ctx, req)
-		req.Globals(ctx)
+		req.Globals()
 		st.Reset()
 		pctx := PrimeLocalRoles(ctx, ids)
 		for _, id := range ids {
@@ -172,8 +173,8 @@ func TestPrimeLocalRoles_ScopedToRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
-	first, _ := d.ForPrincipal(p)
-	second, _ := d.ForPrincipal(p)
+	first, _ := d.ForIdentity(identityFor(context.Background(), t, d, p))
+	second, _ := d.ForIdentity(identityFor(context.Background(), t, d, p))
 	pctx := PrimeLocalRoles(WithRequest(context.Background(), first), ids)
 	if _, ok := primedLocalRoles(pctx, second, ids[0]); ok {
 		t.Error("a prime computed for one Request answered another")
@@ -199,7 +200,8 @@ func TestWithoutLocalRolePrime_SeesLaterEdges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, _ := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	alice := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
+	req, _ := d.ForIdentity(identityFor(context.Background(), t, d, alice))
 	pctx := PrimeLocalRoles(WithRequest(ctx, req), []string{"d1"})
 	if _, err := st.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "owns", To: "d1"}, nil); err != nil {
 		t.Fatal(err)

@@ -20,6 +20,7 @@ package aclmap
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -39,22 +40,15 @@ type EntitySource interface {
 	ListRelations(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 }
 
-// Resolver is the per-principal ACL access the engine needs. Satisfied
-// by *acl.Declarative. Declared consumer-side so the engine binds only
-// to the calls it makes.
-type Resolver interface {
-	ForPrincipal(p principal.Principal) (*acl.Request, error)
-	ResolvePrincipal(ctx context.Context, rawUser string) (string, error)
-	EveryoneGrants(verb acl.Verb, entityType string) acl.EveryoneGrant
-	AssertedGrants(verb acl.Verb, entityType string) []acl.AssertedGrant
-	Policy() *acl.Policy
-}
-
-// Engine answers who-can queries. Construct with New; it holds only the
-// two narrow collaborators.
+// Engine answers who-can queries. Construct with New.
+//
+// It takes the concrete *acl.Declarative rather than a consumer-side
+// interface. The engine is its own request edge: it evaluates many candidate
+// principals, so it opens a Request for each with [acl.OpenRequest], which
+// needs the Declarative itself. No other type could satisfy an interface here.
 type Engine struct {
 	src      EntitySource
-	resolver Resolver
+	resolver *acl.Declarative
 	faces    DeclaredFaces
 }
 
@@ -66,12 +60,12 @@ type DeclaredFaces func(entityType string) []entity.Face
 
 // New constructs an Engine. All three collaborators are required; a nil
 // one is a programmer error (constructors-reject-nil).
-func New(src EntitySource, resolver Resolver, faces DeclaredFaces) (*Engine, error) {
+func New(src EntitySource, resolver *acl.Declarative, faces DeclaredFaces) (*Engine, error) {
 	if src == nil {
 		return nil, errors.New("aclmap: New: EntitySource must be non-nil")
 	}
 	if resolver == nil {
-		return nil, errors.New("aclmap: New: Resolver must be non-nil")
+		return nil, errors.New("aclmap: New: Declarative must be non-nil")
 	}
 	if faces == nil {
 		return nil, errors.New("aclmap: New: DeclaredFaces must be non-nil")
@@ -163,3 +157,14 @@ const schemaVersion = 1
 // misleading attestation (a typo'd ID must error, not return the
 // global-only reader set).
 var ErrEntityNotFound = errors.New("aclmap: entity not found")
+
+// requestFor resolves p's identity and opens a Request on it. p.User is
+// already the effective principal (Engine.resolveEffective applied the
+// principal_property lookup), so the resolution skips the lookup.
+func (e *Engine) requestFor(ctx context.Context, p principal.Principal) (*acl.Request, error) {
+	req, err := acl.OpenRequest(ctx, e.resolver, p)
+	if err != nil {
+		return nil, fmt.Errorf("aclmap: resolve identity of %q: %w", p.User, err)
+	}
+	return req, nil
+}

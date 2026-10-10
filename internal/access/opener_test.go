@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -68,10 +69,7 @@ func TestOpen_ReusesAttachedRequest(t *testing.T) {
 	d := mustDeclarative(t)
 	o := mustOpener(t, d, false)
 	ctx := asUser("alice")
-	upstream, err := d.ForPrincipal(principal.From(ctx))
-	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
-	}
+	upstream := acltest.RequestFor(ctx, t, d, principal.From(ctx))
 	ctx = acl.WithRequest(ctx, upstream)
 
 	_, req, err := o.Open(ctx, quietLog)
@@ -86,10 +84,7 @@ func TestOpen_ReusesAttachedRequest(t *testing.T) {
 func TestOpen_RejectsRequestForAnotherPrincipal(t *testing.T) {
 	d := mustDeclarative(t)
 	o := mustOpener(t, d, false)
-	bob, err := d.ForPrincipal(principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
-	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
-	}
+	bob := acltest.RequestFor(context.Background(), t, d, principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
 	ctx := acl.WithRequest(asUser("alice"), bob)
 
 	if _, req, err := o.Open(ctx, quietLog); !errors.Is(err, ErrPrincipalMismatch) || req != nil {
@@ -159,7 +154,7 @@ func TestOpen_ResolvesPrincipalProperty(t *testing.T) {
 			if req.Principal().User != tc.wantUser {
 				t.Errorf("request principal = %q, want %q", req.Principal().User, tc.wantUser)
 			}
-			if got := acl.UnmatchedVerifiedFrom(ctx); got != tc.wantUnmatched {
+			if got := req.UnmatchedVerified(); got != tc.wantUnmatched {
 				t.Errorf("unmatched-verified = %v, want %v", got, tc.wantUnmatched)
 			}
 		})
@@ -200,8 +195,8 @@ func TestRestamp(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			in := acl.WithUnmatchedVerified(asUser("sub-new"))
-			ctx, req, err := Restamp(in, lookupPolicy(t, tc.lookup), "sub-new")
+			in := asUser("sub-new")
+			ctx, req, err := Restamp(in, lookupPolicy(t, tc.lookup))
 			if tc.wantErr {
 				if !errors.Is(err, ErrUnresolvedPrincipal) || req != nil || ctx != in {
 					t.Fatalf("Restamp = (changed ctx %v, %v, %v), want the input ctx, nil, ErrUnresolvedPrincipal",
@@ -216,7 +211,7 @@ func TestRestamp(t *testing.T) {
 			if p.User != tc.wantUser || p.RawUser != "sub-new" {
 				t.Errorf("principal = (%q, raw %q), want (%q, raw sub-new)", p.User, p.RawUser, tc.wantUser)
 			}
-			if acl.UnmatchedVerifiedFrom(ctx) {
+			if req.UnmatchedVerified() {
 				t.Error("restamped ctx is still marked unmatched")
 			}
 			if acl.FromContext(ctx) != req || req.Principal().User != tc.wantUser {
@@ -228,7 +223,7 @@ func TestRestamp(t *testing.T) {
 
 func TestRestamp_RejectsNilPolicy(t *testing.T) {
 	in := asUser("sub-new")
-	ctx, req, err := Restamp(in, nil, "sub-new")
+	ctx, req, err := Restamp(in, nil)
 	if err == nil || req != nil || ctx != in {
 		t.Fatalf("Restamp(nil policy) = (%v, %v, %v), want the input ctx, nil, an error", ctx, req, err)
 	}
@@ -238,5 +233,25 @@ func TestOpen_NilLogFallsBackToDefault(t *testing.T) {
 	o := mustOpener(t, lookupPolicy(t, func(string) ([]string, error) { return nil, nil }), false)
 	if _, req, err := o.Open(asUser("alice"), nil); err != nil || req == nil {
 		t.Fatalf("Open(nil log) = (%v, %v), want a request", req, err)
+	}
+}
+
+// TestRestamp_KeepsClaims pins BUG-AR6NN9: the provisioned principal keeps the
+// client type and scopes, so a restricted client keeps its ceiling.
+func TestRestamp_KeepsClaims(t *testing.T) {
+	in := principal.VerifiedFrom("sub-new", principal.ToolDataEntry, principal.Claims{
+		OrgID: "org-1", Roles: []string{"editor"}, PrincipalType: "client",
+		Scopes: []string{"rela.read"}, Email: "a@example.org",
+	})
+	d := lookupPolicy(t, func(string) ([]string, error) { return []string{"PERS-9"}, nil })
+	ctx, _, err := Restamp(principal.With(context.Background(), in), d)
+	if err != nil {
+		t.Fatalf("Restamp: %v", err)
+	}
+	out := principal.From(ctx)
+	if out.User != "PERS-9" || out.PrincipalType() != "client" || len(out.Scopes()) != 1 ||
+		out.OrgID() != "org-1" || out.Email() != "a@example.org" {
+
+		t.Errorf("restamped principal lost claims: %+v", out)
 	}
 }

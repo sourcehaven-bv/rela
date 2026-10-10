@@ -58,7 +58,7 @@ func TestGateTraversal_AllFacesQueryCannotSatisfyHopOutsideRequestWorld(t *testi
 
 	matches := func(t *testing.T, world store.WorldScope, sel store.FaceSelection) bool {
 		t.Helper()
-		pred, gerr := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", world, hop)
+		pred, gerr := requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", world, hop)
 		if gerr != nil {
 			t.Fatalf("GateTraversal: %v", gerr)
 		}
@@ -92,7 +92,7 @@ func TestGateTraversal_AllFacesQueryCannotSatisfyHopOutsideRequestWorld(t *testi
 	// Control: the same hop with its endpoint selection cleared inherits the
 	// AllFaces query and matches through the draft face. This is the
 	// widening the stamp removes; without it the cases above prove nothing.
-	pred, err := requestFor(t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), hop)
+	pred, err := requestFor(ctx, t, d, "alice").GateTraversal(ctx, "ticket", store.TrivialScope(), hop)
 	if err != nil {
 		t.Fatal(err)
 	}

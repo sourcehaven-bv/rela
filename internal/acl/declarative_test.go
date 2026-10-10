@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -70,6 +71,13 @@ func ctxAs(user string) context.Context {
 	return principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolCLI})
 }
 
+// ctxFor is what a request edge produces: ctx stamped with the principal and
+// carrying d's Request for it.
+func ctxFor(t *testing.T, d *acl.Declarative, user string) context.Context {
+	t.Helper()
+	return acltest.Bind(ctxAs(user), t, d)
+}
+
 // entityCreate builds the canonical WriteRequest for an entity create
 // of the given type. Subject is required; tests for the type-level
 // grant check fold the create case so the entity ID is empty.
@@ -95,7 +103,7 @@ func TestAuthorizeWrite_RoleGrantsType_Allows(t *testing.T) {
 	t.Parallel()
 	d := newACL(t, testPolicy())
 
-	got := d.AuthorizeWrite(ctxAs("alice"), entityCreate("ticket"))
+	got := d.AuthorizeWrite(ctxFor(t, d, "alice"), entityCreate("ticket"))
 	if !got.Allow {
 		t.Fatalf("Allow = false, want true. Decision = %+v", got)
 	}
@@ -112,7 +120,7 @@ func TestAuthorizeWrite_NoRoleGrants_Denies(t *testing.T) {
 	t.Parallel()
 	d := newACL(t, testPolicy())
 
-	got := d.AuthorizeWrite(ctxAs("bob"), entityCreate("ticket"))
+	got := d.AuthorizeWrite(ctxFor(t, d, "bob"), entityCreate("ticket"))
 	if got.Allow {
 		t.Fatalf("Allow = true, want false (reviewer has no write on ticket). Decision = %+v", got)
 	}
@@ -134,7 +142,7 @@ func TestAuthorizeWrite_WildcardRole_Allows(t *testing.T) {
 	d := newACL(t, testPolicy())
 
 	for _, etype := range []string{"ticket", "concept", "person", "made-up-type"} {
-		got := d.AuthorizeWrite(ctxAs("jeroen"), entityCreate(etype))
+		got := d.AuthorizeWrite(ctxFor(t, d, "jeroen"), entityCreate(etype))
 		if !got.Allow {
 			t.Errorf("admin denied write on %q: %+v", etype, got)
 		}
@@ -153,7 +161,7 @@ func TestAuthorizeWrite_RoleRelation_DelegatePermissionMissing_Denies(t *testing
 	// alice (contributor) holds delegate-reviewer but not
 	// delegate-contributor, so she cannot grant the contributor role
 	// via the `ticket-owner` relation.
-	got := d.AuthorizeWrite(ctxAs("alice"), relCreate("ticket", "ticket-owner"))
+	got := d.AuthorizeWrite(ctxFor(t, d, "alice"), relCreate("ticket", "ticket-owner"))
 	if got.Allow {
 		t.Fatalf("Allow = true, want false. Decision = %+v", got)
 	}
@@ -173,7 +181,7 @@ func TestAuthorizeWrite_RoleRelation_DelegatePermissionHeld_Allows(t *testing.T)
 
 	// jeroen (admin) holds delegate-contributor AND can write any
 	// entity type via the `*` wildcard, so this allows.
-	got := d.AuthorizeWrite(ctxAs("jeroen"), relCreate("ticket", "ticket-owner"))
+	got := d.AuthorizeWrite(ctxFor(t, d, "jeroen"), relCreate("ticket", "ticket-owner"))
 	if !got.Allow {
 		t.Fatalf("Allow = false, want true (admin holds delegate-contributor). Decision = %+v", got)
 	}
@@ -186,7 +194,7 @@ func TestAuthorizeWrite_RoleRelation_NoDelegateRequired_Allows(t *testing.T) {
 	t.Parallel()
 	d := newACL(t, testPolicy())
 
-	got := d.AuthorizeWrite(ctxAs("alice"), relCreate("ticket", "open-relation"))
+	got := d.AuthorizeWrite(ctxFor(t, d, "alice"), relCreate("ticket", "open-relation"))
 	if !got.Allow {
 		t.Fatalf("Allow = false, want true (open-relation has no requires_permission). Decision = %+v", got)
 	}
@@ -201,7 +209,7 @@ func TestAuthorizeWrite_UnknownPrincipal_GetsDefaultRole(t *testing.T) {
 	// `everyone` has no write entries — every write is denied, but the
 	// deny RuleKind is role-grant (not "no roles at all"), proving the
 	// everyone role was consulted.
-	got := d.AuthorizeWrite(ctxAs("carol"), entityCreate("ticket"))
+	got := d.AuthorizeWrite(ctxFor(t, d, "carol"), entityCreate("ticket"))
 	if got.Allow {
 		t.Fatalf("Allow = true, want false (default has no writes). Decision = %+v", got)
 	}
@@ -221,7 +229,7 @@ func TestAuthorizeWrite_DefaultRoleGrantsWrites(t *testing.T) {
 	}
 	d := newACL(t, policy)
 
-	got := d.AuthorizeWrite(ctxAs("carol"), entityCreate("comment"))
+	got := d.AuthorizeWrite(ctxFor(t, d, "carol"), entityCreate("comment"))
 	if !got.Allow {
 		t.Fatalf("Allow = false, want true. Decision = %+v", got)
 	}
@@ -253,7 +261,7 @@ func TestAuthorizeWrite_MultipleRoles_Unions(t *testing.T) {
 		{"review-response", "reviewer"}, // explicit role wins
 		{"comment", acl.EveryoneRole},   // only everyone covers this
 	} {
-		got := d.AuthorizeWrite(ctxAs("bob"), entityCreate(tc.etype))
+		got := d.AuthorizeWrite(ctxFor(t, d, "bob"), entityCreate(tc.etype))
 		if !got.Allow {
 			t.Errorf("bob denied on %q: %+v", tc.etype, got)
 			continue
@@ -275,7 +283,7 @@ func TestAuthorizeWrite_AssignmentToUndefinedRole_DropsToDefault(t *testing.T) {
 	// the everyone role has no writes → deny on ticket. If the bad
 	// assignment leaked through, RuleID would be "contribtuor" (or
 	// the eval would Allow if we resolved the typo).
-	got := d.AuthorizeWrite(ctxAs("typo"), entityCreate("ticket"))
+	got := d.AuthorizeWrite(ctxFor(t, d, "typo"), entityCreate("ticket"))
 	if got.Allow {
 		t.Fatalf("Allow = true, want false. Decision = %+v", got)
 	}
@@ -298,7 +306,7 @@ func TestAuthorizeWrite_NilSubject_Panics(t *testing.T) {
 			t.Fatalf("expected panic on nil Subject; got none")
 		}
 	}()
-	_ = d.AuthorizeWrite(ctxAs("alice"), acl.WriteRequest{Op: acl.OpCreate})
+	_ = d.AuthorizeWrite(ctxFor(t, d, "alice"), acl.WriteRequest{Op: acl.OpCreate})
 }
 
 // Returns ForbiddenError via Decision propagation: any deny can be
@@ -308,7 +316,7 @@ func TestAuthorizeWrite_DenyConvertsToForbiddenError(t *testing.T) {
 	t.Parallel()
 	d := newACL(t, testPolicy())
 
-	dec := d.AuthorizeWrite(ctxAs("bob"), entityCreate("ticket"))
+	dec := d.AuthorizeWrite(ctxFor(t, d, "bob"), entityCreate("ticket"))
 	if dec.Allow {
 		t.Fatal("expected deny")
 	}

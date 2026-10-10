@@ -102,7 +102,7 @@ func TestOAuth_Bindings(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			deps := newHistoryWorld(t)
+			deps, _ := newHistoryWorld(t)
 			f := &fakeOAuth{err: tc.err}
 			if !tc.noBroker {
 				deps.OAuth = f
@@ -124,7 +124,7 @@ func TestOAuth_Bindings(t *testing.T) {
 // R13: a refresh is slow network I/O and must not run inside a store
 // transaction.
 func TestOAuth_RefusedInTx(t *testing.T) {
-	deps := newHistoryWorld(t)
+	deps, _ := newHistoryWorld(t)
 	f := &fakeOAuth{}
 	deps.OAuth = f
 	ctx := store.ContextInTx(principal.With(context.Background(), principal.Principal{User: "bot"}))
@@ -140,7 +140,7 @@ func TestOAuth_RefusedInTx(t *testing.T) {
 // A reader runtime never gets rela.oauth, whatever its grant: ReadDeps has
 // no token source to give it.
 func TestOAuth_AbsentOnReader(t *testing.T) {
-	deps := newHistoryWorld(t)
+	deps, _ := newHistoryWorld(t)
 	var out bytes.Buffer
 	rt := lua.NewReader(deps.ReadDeps, &out, lua.WithCapabilities(lua.Capabilities{Tokens: []string{"crm"}}))
 	defer rt.Close()

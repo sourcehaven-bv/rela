@@ -573,8 +573,8 @@ func (h *exportHandler) listCondition(listID string) ViewConditionMatcher {
 func (h *exportHandler) bindConditionIdentity(
 	ctx context.Context, typeName string, query map[string][]string,
 ) (context.Context, error) {
-	if h.bindIdentity == nil {
+	if h.stampQueryIdentity == nil {
 		return ctx, nil
 	}
-	return h.bindIdentity(ctx, typeName, query)
+	return h.stampQueryIdentity(ctx, typeName, query)
 }

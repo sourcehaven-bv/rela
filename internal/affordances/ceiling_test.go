@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
@@ -82,9 +84,9 @@ func (w ceilingWorld) ctxFor(t *testing.T, principalType string, scopes []string
 		Scopes:        scopes,
 	})
 	ctx := principal.With(context.Background(), p)
-	req, err := w.decl.ForPrincipal(p)
+	req, err := w.decl.ForIdentity(acltest.IdentityFor(t.Context(), t, w.decl, p))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 	return acl.WithRequest(ctx, req)
 }
@@ -274,27 +276,20 @@ client_baselines:
 	}
 }
 
-// TestCeiling_AppliesWithoutAnACLRequestOnContext is a regression test for a
+// TestCeiling_NoRequestOnContextFailsClosed is a regression test for a
 // fail-open found in review.
 //
-// applyClientCeiling originally returned early when ctx carried no acl.Request,
-// so a principal stamped WITHOUT one kept its user's full field visibility —
-// the ceiling silently did not apply. Role resolution had no such gap:
-// resolveViaDeclarative, twenty lines away in the same file, opens a fresh
-// Request when ctx has none. So within a single FieldVerdicts call, roles
-// resolved and the ceiling did not.
+// applyClientCeiling originally returned early when ctx carried no
+// acl.Request, so a principal stamped WITHOUT one kept its user's full field
+// visibility: the ceiling silently did not apply. The originating use case is
+// an MCP acting as an HR user, which must not see person.salary.
 //
-// That is the only direction that matters here. The verb axis was never
-// affected (every ForPrincipal computes the ceiling at construction), but the
-// FIELD axis is the one carrying this feature's originating use case — an MCP
-// acting as an HR user must not see person.salary — and it read the ceiling
-// back out of ctx.
-//
-// Production callers do bind (attachACLRequest, ScriptReader.bind), so this was
-// not a reachable leak; but visibility.PolicyRedactor.HiddenProperties forwards
-// whatever ctx it is handed and binds nothing itself, so the guarantee rested
-// on wiring rather than structure. Now it rests on structure.
-func TestCeiling_AppliesWithoutAnACLRequestOnContext(t *testing.T) {
+// Identity is now resolved only at the request edge. A ctx with a principal
+// but no bound Request gets no verdict from the resolver at all: every field
+// is hidden, salary and name alike. The guarantee rests on structure, not on
+// upstream wiring (visibility.PolicyRedactor.HiddenProperties forwards
+// whatever ctx it is handed and binds nothing itself).
+func TestCeiling_NoRequestOnContextFailsClosed(t *testing.T) {
 	t.Parallel()
 	w := newCeilingWorld(t, hrCanSeeEverything+`
 client_baselines:
@@ -303,40 +298,22 @@ client_baselines:
     redact:
       person: [salary]
 `)
-	// A principal, but deliberately NO acl.Request — the shape every test in
-	// this file avoided by going through ctxFor.
+	// A principal, but deliberately NO acl.Request: the shape every other
+	// test in this file avoids by going through ctxFor.
 	ctx := principal.With(context.Background(),
 		principal.VerifiedFrom("alice", principal.ToolDataEntry, principal.Claims{
 			PrincipalType: "app",
 		}))
-
 	v := w.resolver.FieldVerdicts(ctx, w.person)
-	if !hidden(t, v, "salary") {
-		t.Error("salary VISIBLE for an attenuated client because no acl.Request was " +
-			"on ctx — the ceiling must not depend on upstream wiring")
+	for _, field := range []string{"salary", "name"} {
+		if !hidden(t, v, field) {
+			t.Errorf("%s VISIBLE with no acl.Request on ctx; a missing identity must fail closed", field)
+		}
 	}
-	if hidden(t, v, "name") {
-		t.Error("name hidden; redact named only salary")
-	}
-}
 
-// TestCeiling_UnstampedPrincipalIsUnrestricted is the counterpart: recovering
-// the Request must NOT invent a ceiling for a principal that has no verified
-// principal_type. An unstamped caller has no claim to key a baseline on, and a
-// ceiling can only narrow — so there is nothing to narrow toward.
-func TestCeiling_UnstampedPrincipalIsUnrestricted(t *testing.T) {
-	t.Parallel()
-	w := newCeilingWorld(t, hrCanSeeEverything+`
-client_baselines:
-  apps:
-    applies_to: [app]
-    redact:
-      person: [salary]
-`)
-	// No principal at all: principal.From returns the unknown/unknown default,
-	// which ForPrincipal rejects as unstamped.
-	v := w.resolver.FieldVerdicts(context.Background(), w.person)
-	if hidden(t, v, "salary") {
-		t.Error("an unstamped principal was attenuated; no baseline covers it")
+	// No principal at all fails closed the same way.
+	v = w.resolver.FieldVerdicts(context.Background(), w.person)
+	if !hidden(t, v, "salary") {
+		t.Error("salary VISIBLE for an unstamped ctx; a missing identity must fail closed")
 	}
 }

@@ -718,8 +718,9 @@ func (st *sseStream) flush(ctx context.Context) error {
 // freshReadGate returns a read gate whose member-of closure is resolved
 // against the CURRENT graph, for use after a role-conferring relation
 // change invalidates the connection's cached membership. When ACL is a
-// *acl.Declarative it opens a new acl.Request for the principal (a fresh
-// Globals walk); otherwise (NopACL, or ForPrincipal failure) it keeps
+// *acl.Declarative it re-resolves the principal's identity (a fresh
+// member-of walk) and opens a new acl.Request on it; otherwise (NopACL, or a
+// resolution failure) it keeps
 // the existing gate — for NopACL the verdict is constant-true so there
 // is nothing to refresh, and on a transient resolve error keeping the
 // prior gate is fail-safe (it can only be equal-or-narrower than a stale
@@ -729,7 +730,11 @@ func (a *App) freshReadGate(ctx context.Context, current readGate) readGate {
 	if !ok || d == nil {
 		return current
 	}
-	req, err := d.ForPrincipal(principal.From(ctx))
+	// The ctx principal was already resolved by attachACLRequest (its User is
+	// the entity id when principal_property matched), so this refresh walks
+	// membership without repeating the lookup. It is an explicit edge step
+	// for a long-lived stream, not a lazy evaluation fallback.
+	req, err := acl.OpenRequest(ctx, d, principal.From(ctx))
 	if err != nil {
 		slog.Warn("sse: re-deriving read gate failed; keeping prior gate", "err", err)
 		return current

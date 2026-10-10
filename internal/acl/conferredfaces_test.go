@@ -53,9 +53,9 @@ func TestReadQuery_ConferredRolesKeepTheirOwnFaces(t *testing.T) {
 
 	reads := func(t *testing.T, user string, world store.WorldScope) bool {
 		t.Helper()
-		req, err := d.ForPrincipal(principal.Principal{User: user, Tool: principal.ToolDataEntry})
+		req, err := d.ForIdentity(identityFor(ctx, t, d, principal.Principal{User: user, Tool: principal.ToolDataEntry}))
 		if err != nil {
-			t.Fatalf("ForPrincipal: %v", err)
+			t.Fatalf("ForIdentity: %v", err)
 		}
 		rqr := req.ReadQuery(ctx, "policy")
 		if rqr.Query == nil {
@@ -118,7 +118,7 @@ func TestPermitsReadFace_ScopedVerdictReadsTheFaceRow(t *testing.T) {
 		{"carol", "published", false},
 	} {
 		t.Run(tc.user+"@"+tc.face.String(), func(t *testing.T) {
-			req, err := d.ForPrincipal(principal.Principal{User: tc.user, Tool: principal.ToolDataEntry})
+			req, err := d.ForIdentity(identityFor(ctx, t, d, principal.Principal{User: tc.user, Tool: principal.ToolDataEntry}))
 			if err != nil {
 				t.Fatal(err)
 			}

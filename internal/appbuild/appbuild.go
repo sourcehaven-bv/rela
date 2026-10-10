@@ -55,7 +55,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
@@ -797,17 +796,10 @@ func (s *Services) GatedReads() GatedReadBundle {
 // rebindFor returns the [GatedReadBundle.Rebind] for policy d: without a
 // policy it returns ctx unchanged, with one it replaces any attached
 // [acl.Request] by a fresh one for the ctx principal.
+//
+// Nil: accepted — a nil d means no policy is configured.
 func rebindFor(d *acl.Declarative) func(context.Context) (context.Context, error) {
-	if d == nil {
-		return func(ctx context.Context) (context.Context, error) { return ctx, nil }
-	}
-	return func(ctx context.Context) (context.Context, error) {
-		r, err := d.ForPrincipal(principal.From(ctx))
-		if err != nil {
-			return nil, err
-		}
-		return acl.WithRequest(ctx, r), nil
-	}
+	return identityBinderFor(d)
 }
 
 // GatedReadBundle is the result of [Services.GatedReads]: the read handles an

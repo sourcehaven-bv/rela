@@ -112,7 +112,7 @@ func TestCascadeDelete_DenialOverHiddenEdgeNamesNothingHidden(t *testing.T) {
 		[]entity.RelationKey{{From: "DEC-SECRET", Type: "addresses", To: "REQ-1"}})
 	mgr := hiddenWriteManager(t, st)
 
-	_, err := mgr.DeleteEntity(asUser("blind"), "REQ-1", true)
+	_, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("blind"), t, mgr), "REQ-1", true)
 	if err == nil {
 		t.Fatal("cascade succeeded; blind holds no delete on the addresses edge from a decision")
 	}
@@ -122,7 +122,7 @@ func TestCascadeDelete_DenialOverHiddenEdgeNamesNothingHidden(t *testing.T) {
 	assertNoTrace(t, err, "DEC-SECRET", "decision", "addresses")
 
 	// A caller who can read the neighbor gets the actionable message.
-	_, err = mgr.DeleteEntity(asUser("seer"), "REQ-1", true)
+	_, err = mgr.DeleteEntity(entitymanager.BindAs(asUser("seer"), t, mgr), "REQ-1", true)
 	if err == nil || !strings.Contains(err.Error(), "DEC-SECRET") {
 		t.Errorf("seer's denial = %v, want it to name DEC-SECRET", err)
 	}
@@ -139,7 +139,7 @@ func TestRename_RefusedForGeneratedIDs(t *testing.T) {
 	mgr := hiddenWriteManager(t, st)
 
 	for _, dryRun := range []bool{false, true} {
-		_, err := mgr.RenameEntity(asUser("seer"), "DEC-1", "DEC-2", entity.RenameOptions{DryRun: dryRun})
+		_, err := mgr.RenameEntity(entitymanager.BindAs(asUser("seer"), t, mgr), "DEC-1", "DEC-2", entity.RenameOptions{DryRun: dryRun})
 		if !errors.Is(err, entitymanager.ErrRenameNotSupported) {
 			t.Errorf("rename (dry run %v) of a sequential id = %v, want ErrRenameNotSupported", dryRun, err)
 		}
@@ -157,7 +157,7 @@ func TestRename_HiddenGeneratedIDReadsAsMissing(t *testing.T) {
 	seedHidden(t, st, []*entity.Entity{entity.New("DEC-SECRET", "decision")}, nil)
 	mgr := hiddenWriteManager(t, st)
 
-	_, err := mgr.RenameEntity(asUser("blind"), "DEC-SECRET", "DEC-2", entity.RenameOptions{})
+	_, err := mgr.RenameEntity(entitymanager.BindAs(asUser("blind"), t, mgr), "DEC-SECRET", "DEC-2", entity.RenameOptions{})
 	if !errors.Is(err, entitymanager.ErrEntityNotFound) {
 		t.Errorf("rename of a hidden entity = %v, want ErrEntityNotFound", err)
 	}
@@ -181,7 +181,7 @@ func TestRename_RelationsUpdatedCountsReadableNeighborsOnly(t *testing.T) {
 			})
 		mgr := hiddenWriteManager(t, st)
 
-		res, err := mgr.RenameEntity(asUser("blind"), "api", "gateway", entity.RenameOptions{DryRun: dryRun})
+		res, err := mgr.RenameEntity(entitymanager.BindAs(asUser("blind"), t, mgr), "api", "gateway", entity.RenameOptions{DryRun: dryRun})
 		if err != nil {
 			t.Fatalf("rename (dry run %v): %v", dryRun, err)
 		}
@@ -195,7 +195,8 @@ func TestRename_RelationsUpdatedCountsReadableNeighborsOnly(t *testing.T) {
 	seedHidden(t, st,
 		[]*entity.Entity{entity.New("api", "component"), entity.New("DEC-SECRET", "decision")},
 		[]entity.RelationKey{{From: "api", Type: "depends-on", To: "DEC-SECRET"}})
-	res, err := hiddenWriteManager(t, st).RenameEntity(asUser("seer"), "api", "gateway", entity.RenameOptions{})
+	seerMgr := hiddenWriteManager(t, st)
+	res, err := seerMgr.RenameEntity(entitymanager.BindAs(asUser("seer"), t, seerMgr), "api", "gateway", entity.RenameOptions{})
 	if err != nil {
 		t.Fatalf("seer rename: %v", err)
 	}
@@ -213,7 +214,7 @@ func TestRename_OntoHiddenIDRevealsOnlyTheCollision(t *testing.T) {
 	seedHidden(t, st, []*entity.Entity{entity.New("api", "component"), entity.New("DEC-SECRET", "decision")}, nil)
 	mgr := hiddenWriteManager(t, st)
 
-	_, err := mgr.RenameEntity(asUser("blind"), "api", "DEC-SECRET", entity.RenameOptions{})
+	_, err := mgr.RenameEntity(entitymanager.BindAs(asUser("blind"), t, mgr), "api", "DEC-SECRET", entity.RenameOptions{})
 	if !errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
 		t.Fatalf("rename onto a hidden id = %v, want ErrEntityAlreadyExists", err)
 	}
@@ -303,7 +304,7 @@ func TestCascadeDelete_EdgeFromHiddenFaceNamesNothing(t *testing.T) {
 	mgr := facedHiddenManager(t, []entity.RelationKey{
 		{From: "POL-A", FromFace: "draft", Type: "governs", To: "c1"},
 	})
-	_, err := mgr.DeleteEntity(asUser("viewer"), "c1", true)
+	_, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("viewer"), t, mgr), "c1", true)
 	if !errors.Is(err, acl.ErrForbidden) {
 		t.Fatalf("cascade over a hidden-face edge = %v, want a forbidden error", err)
 	}
@@ -312,7 +313,7 @@ func TestCascadeDelete_EdgeFromHiddenFaceNamesNothing(t *testing.T) {
 	mgr = facedHiddenManager(t, []entity.RelationKey{
 		{From: "POL-A", FromFace: "published", Type: "governs", To: "c1"},
 	})
-	_, err = mgr.DeleteEntity(asUser("viewer"), "c1", true)
+	_, err = mgr.DeleteEntity(entitymanager.BindAs(asUser("viewer"), t, mgr), "c1", true)
 	if err == nil || !strings.Contains(err.Error(), "POL-A@published") {
 		t.Errorf("denial over a visible edge = %v, want it to name POL-A@published", err)
 	}
@@ -332,7 +333,7 @@ func TestCascadeDelete_VisibleDenialWinsOverHidden(t *testing.T) {
 			{From: hidden, FromFace: "draft", Type: "governs", To: "c1"},
 			{From: visible, FromFace: "published", Type: "governs", To: "c1"},
 		})
-		_, err := mgr.DeleteEntity(asUser("viewer"), "c1", true)
+		_, err := mgr.DeleteEntity(entitymanager.BindAs(asUser("viewer"), t, mgr), "c1", true)
 		if err == nil || !strings.Contains(err.Error(), visible+"@published") {
 			t.Errorf("hidden edge from %s: denial = %v, want it to name %s@published", hidden, err, visible)
 		}
@@ -352,7 +353,7 @@ func TestRename_RelationsUpdatedSkipsEdgesOfHiddenFaces(t *testing.T) {
 			{From: "POL-A", FromFace: "draft", Type: "governs", To: "c1"},
 			{From: "POL-A", FromFace: "published", Type: "governs", To: "c2"},
 		})
-		res, err := mgr.RenameEntity(asUser("viewer"), "POL-A", "POL-Z", entity.RenameOptions{DryRun: dryRun})
+		res, err := mgr.RenameEntity(entitymanager.BindAs(asUser("viewer"), t, mgr), "POL-A", "POL-Z", entity.RenameOptions{DryRun: dryRun})
 		if err != nil {
 			t.Fatalf("rename (dry run %v): %v", dryRun, err)
 		}

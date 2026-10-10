@@ -80,14 +80,11 @@ type Deps struct {
 	Validator     validator.Validator
 	EntityManager EntityWriter
 	Config        config.Loader
-	// LuaWriteDeps and LuaCache back the lua_* tools, which exist only
-	// when the server is built [WithLuaTools]. A wiring that does not pass
-	// that option leaves both zero.
-	LuaWriteDeps lua.WriteDeps
-	LuaCache     *lua.Cache
-	Watcher      Watcher
-	ProjectRoot  string
-	Attachments  AttachmentDeps
+	// Lua backs the lua_* tools; see [LuaDeps].
+	Lua         LuaDeps
+	Watcher     Watcher
+	ProjectRoot string
+	Attachments AttachmentDeps
 	// Comments backs the comment tools (TKT-QIQO1W); see [CommentDeps].
 	Comments CommentDeps
 	// Actions backs list_actions and run_action (TKT-NW9QSN).
@@ -130,6 +127,24 @@ type Deps struct {
 	// hub leaves an already-waiting watch subscribed to the old hub until
 	// its timeout.
 	Leases LeaseService
+
+	// BindIdentity is the request-edge step the server runs after it stamps
+	// its fallback principal (see [WithPrincipal]): it resolves that
+	// principal once and attaches its ACL request scope to the call's ctx.
+	// It travels in Deps so a reload swaps it together with the readers it
+	// must match. A call whose ctx already carries an identity is left
+	// alone; its transport resolved it. An error from it fails the call.
+	//
+	// Nil: accepted, for a wiring whose ACL has no request scope or whose
+	// transport always stamps the identity.
+	BindIdentity func(context.Context) (context.Context, error)
+}
+
+// LuaDeps backs the lua_* tools, which exist only when the server is built
+// [WithLuaTools]. A wiring that does not pass that option leaves it zero.
+type LuaDeps struct {
+	WriteDeps lua.WriteDeps
+	Cache     *lua.Cache
 }
 
 // WatchDeps is what the watch tool needs beyond the read surface.
@@ -263,7 +278,7 @@ type EntityWriter interface {
 // the process CWD instead of the project's scripts/ dir. Catching these
 // at construction keeps the failure where it can be diagnosed.
 //
-// LuaCache is intentionally absent: a nil cache is a valid "no cache"
+// Lua.Cache is intentionally absent: a nil cache is a valid "no cache"
 // signal that lua.WithCache tolerates.
 func (d Deps) validate() error {
 	switch {
@@ -304,8 +319,8 @@ func validateFor(s *Server, d Deps) error {
 	if err := d.validate(); err != nil {
 		return err
 	}
-	if s.luaTools && d.LuaWriteDeps.EntityManager == nil {
-		return errors.New("mcp: WithLuaTools requires Deps.LuaWriteDeps")
+	if s.luaTools && d.Lua.WriteDeps.EntityManager == nil {
+		return errors.New("mcp: WithLuaTools requires Deps.Lua.WriteDeps")
 	}
 	return nil
 }
@@ -343,7 +358,7 @@ type Watcher interface {
 // registerTools points the affected AddTool lines at the field's methods.
 //
 // 38 → 25 (TKT-MGNE5L): the lua tools moved to luaHandler (the sole user of
-// LuaWriteDeps / LuaCache / ProjectRoot), the schema tools + resource reads
+// Lua / ProjectRoot), the schema tools + resource reads
 // to schemaResourceHandler (store + metamodel), and the prompt handlers to
 // promptHandler (store + metamodel + tracer + resolver). register* stay on
 // Server and point at the fields' methods. The remaining handlers genuinely
@@ -474,7 +489,7 @@ func (d Deps) handlers() handlerSet {
 	return handlerSet{
 		types:     types,
 		trace:     traceHandler{store: d.Store, tracer: d.Tracer, meta: d.Meta},
-		lua:       luaHandler{writeDeps: d.LuaWriteDeps, cache: d.LuaCache, projectRoot: d.ProjectRoot},
+		lua:       luaHandler{writeDeps: d.Lua.WriteDeps, cache: d.Lua.Cache, projectRoot: d.ProjectRoot},
 		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta, world: d.World},
 		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types, world: d.World},
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
@@ -535,12 +550,38 @@ func WithLuaTools() Option {
 // never the zero Principal.
 func (s *Server) principalMiddleware(next mcpgo.MethodHandler) mcpgo.MethodHandler {
 	return func(ctx context.Context, method string, req mcpgo.Request) (mcpgo.Result, error) {
+		// Capture state once per call: the binder below and every handler
+		// read this one snapshot.
+		// A Server literal in a test may not have published one yet.
+		snap := s.state.current()
+		if snap != nil {
+			ctx = withSnapshot(ctx, snap)
+		}
 		if _, stamped := principal.Stamped(ctx); stamped {
 			return next(ctx, method, req)
 		}
-		return next(principal.With(ctx, s.principal), method, req)
+		ctx = principal.With(ctx, s.principal)
+		if snap == nil {
+			return next(ctx, method, req)
+		}
+		if bind := snap.deps.BindIdentity; bind != nil {
+			bound, err := bind(ctx)
+			if err != nil {
+				// The resolve error can carry store or principal details, so
+				// it is logged and the client gets a fixed message.
+				s.logger.WarnContext(ctx, "mcp: could not resolve the caller's identity",
+					"method", method, "err", err)
+				return nil, errIdentityUnresolved
+			}
+			ctx = bound
+		}
+		return next(ctx, method, req)
 	}
 }
+
+// errIdentityUnresolved is the fixed error a call gets when the server could
+// not resolve its identity. The cause is logged, not returned.
+var errIdentityUnresolved = errors.New("mcp: could not resolve the caller's identity")
 
 // NewServer creates a new MCP server for a rela project. Returns an
 // error if [WithPrincipal] was not supplied — silently degrading to

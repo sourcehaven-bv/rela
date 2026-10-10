@@ -74,6 +74,10 @@ func run() int {
 	}
 	defer svc.Close()
 
+	// The request edge: resolve the stamped principal once into the ACL
+	// request scope the build's reads use.
+	ctx = appbuild.BindOrWarn(ctx, appbuild.IdentityBinder(svc))
+
 	ktx.BindTo(ctx, (*context.Context)(nil))
 	// appbuild.Services satisfies docscli.Project via Meta()/Paths().
 	ktx.BindTo(svc, (*docscli.Project)(nil))

@@ -159,7 +159,7 @@ func TestRunScheduledTemplate_RedactsPerRecipientACL(t *testing.T) {
 	send := func(t *testing.T, user string) mail.Message {
 		t.Helper()
 		pctx := principal.With(ctx, principal.Principal{User: user, Tool: principal.ToolScheduler})
-		require.NoError(t, svc.RunScheduledTemplate(pctx, "digest", user))
+		require.NoError(t, svc.RunScheduledTemplate(bindForTest(pctx, t, svc), "digest", user))
 		msgs := sender.Messages()
 		require.NotEmpty(t, msgs)
 		return msgs[len(msgs)-1]
@@ -261,7 +261,7 @@ assignments:
 	}
 
 	pctx := principal.With(ctx, principal.Principal{User: "carol", Tool: principal.ToolScheduler})
-	require.NoError(t, svc.RunScheduledTemplate(pctx, "digest", "carol"))
+	require.NoError(t, svc.RunScheduledTemplate(bindForTest(pctx, t, svc), "digest", "carol"))
 	msgs := sender.Messages()
 	require.Len(t, msgs, 1)
 
@@ -341,7 +341,7 @@ func TestRunScheduledTemplate_RequireVisibleContent(t *testing.T) {
 	run := func(t *testing.T, svc *Services, user string) {
 		t.Helper()
 		pctx := principal.With(t.Context(), principal.Principal{User: user, Tool: principal.ToolScheduler})
-		require.NoError(t, svc.RunScheduledTemplate(pctx, "digest", user))
+		require.NoError(t, svc.RunScheduledTemplate(bindForTest(pctx, t, svc), "digest", user))
 	}
 
 	t.Run("fully hidden is suppressed when opted in", func(t *testing.T) {
@@ -457,7 +457,7 @@ assignments:
 	}
 
 	pctx := principal.With(ctx, principal.Principal{User: "dana", Tool: principal.ToolScheduler})
-	require.NoError(t, svc.RunScheduledTemplate(pctx, "digest", "dana"))
+	require.NoError(t, svc.RunScheduledTemplate(bindForTest(pctx, t, svc), "digest", "dana"))
 	msgs := sender.Messages()
 	require.Len(t, msgs, 1, "one empty section must not suppress a message the other section fills")
 	require.Contains(t, string(msgs[0].Text), "Quarterly review")
@@ -519,7 +519,7 @@ func TestRunScheduledTemplate_SuppressionLogDoesNotDiscloseHiddenContent(t *test
 	t.Cleanup(func() { slog.SetDefault(restore) })
 
 	pctx := principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolScheduler})
-	require.NoError(t, svc.RunScheduledTemplate(pctx, "digest", "alice"))
+	require.NoError(t, svc.RunScheduledTemplate(bindForTest(pctx, t, svc), "digest", "alice"))
 	require.Empty(t, sender.Messages(), "precondition: this run must have been suppressed")
 
 	out := logged.String()
@@ -535,4 +535,15 @@ func TestRunScheduledTemplate_SuppressionLogDoesNotDiscloseHiddenContent(t *test
 		"the redacted field value must not reach the log")
 	require.NotContains(t, out, "T-1",
 		"even the hidden entity's ID must not reach the log")
+}
+
+// bindForTest runs the request edge for ctx against svc's ACL, as the
+// scheduler's task context does before it renders a recipient's mail.
+func bindForTest(ctx context.Context, tb testing.TB, svc *Services) context.Context {
+	tb.Helper()
+	out, err := IdentityBinder(svc)(ctx)
+	if err != nil {
+		tb.Fatalf("IdentityBinder: %v", err)
+	}
+	return out
 }

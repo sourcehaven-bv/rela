@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -324,8 +326,8 @@ func TestSectionCreate_GatedByCreatePermission(t *testing.T) {
 			}, app.store)
 			setTestACL(t, app, d)
 
-			ctx := principal.With(context.Background(),
-				principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
+			ctx := acltest.Bind(principal.With(context.Background(),
+				principal.Principal{User: "bob", Tool: principal.ToolDataEntry}), t, app.acl)
 			body := fetchView(ctx, t, app)
 
 			got := body.Sections[0].Create != nil

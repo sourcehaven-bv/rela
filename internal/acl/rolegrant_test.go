@@ -63,9 +63,9 @@ client_baselines:
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			req, err := d.ForPrincipal(verifiedClient("alice", tc.client))
+			req, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("alice", tc.client)))
 			if err != nil {
-				t.Fatalf("ForPrincipal: %v", err)
+				t.Fatalf("ForIdentity: %v", err)
 			}
 			// Asked twice: the second answer comes from the memo.
 			for range 2 {

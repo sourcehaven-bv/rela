@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -110,11 +111,14 @@ func TestUnmatchedPrincipal_RejectDeniesFlaggedWrite(t *testing.T) {
 	t.Parallel()
 	d := rejectWorld(t, acl.UnmatchedReject)
 
-	// A verified principal marked unmatched (the data-entry middleware sets
-	// this) is denied its write.
-	ctx := acl.WithUnmatchedVerified(
-		principal.With(context.Background(),
-			principal.Verified("usr_nobody", principal.ToolDataEntry, "", "", nil)))
+	// A verified principal the lookup does not match (the data-entry
+	// middleware marks it on the Request) is denied its write.
+	ctx := acltest.BindVerified(
+		principal.With(t.Context(),
+			principal.Verified("usr_nobody", principal.ToolDataEntry, "", "", nil)), t, d)
+	if !mustRequest(ctx, t, d).UnmatchedVerified() {
+		t.Fatal("an unmatched principal from a verified assertion must yield an unmatched-verified Request")
+	}
 
 	dec := d.AuthorizeWrite(ctx, writeReq())
 	if dec.Allow {
@@ -132,16 +136,67 @@ func TestUnmatchedPrincipal_RejectIgnoresUnflagged(t *testing.T) {
 	// on roles alone, exactly as without the feature. AC4/AC8.
 	d := rejectWorld(t, acl.UnmatchedReject)
 
-	// No WithUnmatchedVerified. This principal has no role grant either, so it
-	// is denied — but with a ROLE-GRANT denial, not the unmatched gate.
-	ctx := principal.With(context.Background(),
-		principal.Principal{User: "system:scheduler", Tool: principal.ToolScheduler})
+	// Bound without a verified assertion. This principal has no role grant
+	// either, so it is denied — but with a ROLE-GRANT denial, not the
+	// unmatched gate.
+	ctx := acltest.Bind(principal.With(t.Context(),
+		principal.Principal{User: "system:scheduler", Tool: principal.ToolScheduler}), t, d)
 
 	dec := d.AuthorizeWrite(ctx, writeReq())
 	if dec.RuleKind == "unmatched-principal" {
 		t.Error("an unflagged principal was rejected by the unmatched gate — " +
 			"the flag is not gating correctly (would hit scheduler/header/CLI)")
 	}
+}
+
+// TestUnmatchedPrincipal_FlagNeedsBothFacts pins that the Request is
+// unmatched-verified only when the lookup found no match AND the identity
+// came from a verified assertion. A header principal the lookup does not
+// match, and a verified principal it does match, are both judged on roles.
+func TestUnmatchedPrincipal_FlagNeedsBothFacts(t *testing.T) {
+	t.Parallel()
+	d := rejectWorld(t, acl.UnmatchedReject)
+	nobody := principal.With(t.Context(),
+		principal.Principal{User: "nobody", Tool: principal.ToolDataEntry})
+
+	// Unmatched, not verified: Resolve without WithVerifiedAssertion.
+	id, err := d.IdentityResolver().Resolve(nobody, principal.From(nobody))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !id.Unmatched() {
+		t.Fatal("want an unmatched identity for a principal absent from the store")
+	}
+	req, err := d.ForIdentity(id)
+	if err != nil {
+		t.Fatalf("ForIdentity: %v", err)
+	}
+	if req.UnmatchedVerified() {
+		t.Error("an unmatched identity without a verified assertion must not be unmatched-verified")
+	}
+	if dec := d.AuthorizeWrite(acl.WithRequest(nobody, req), writeReq()); dec.RuleKind == "unmatched-principal" {
+		t.Error("a header principal was rejected by the unmatched gate")
+	}
+
+	// Verified, but bound through the direct path (no lookup ran).
+	direct := acltest.IdentityFor(t.Context(), t, d, principal.From(nobody))
+	req, err = d.ForIdentity(direct.WithVerifiedAssertion())
+	if err != nil {
+		t.Fatalf("ForIdentity: %v", err)
+	}
+	if req.UnmatchedVerified() {
+		t.Error("a verified identity the lookup did not reject must not be unmatched-verified")
+	}
+}
+
+// mustRequest returns the Request attached to ctx for d.
+func mustRequest(ctx context.Context, t *testing.T, d *acl.Declarative) *acl.Request {
+	t.Helper()
+	req, err := d.RequestFrom(ctx)
+	if err != nil {
+		t.Fatalf("RequestFrom: %v", err)
+	}
+	return req
 }
 
 func TestUnmatchedPrincipal_AnonymousDoesNotReject(t *testing.T) {
@@ -152,9 +207,12 @@ func TestUnmatchedPrincipal_AnonymousDoesNotReject(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			d := rejectWorld(t, mode)
-			ctx := acl.WithUnmatchedVerified(
-				principal.With(context.Background(),
-					principal.Verified("usr_nobody", principal.ToolDataEntry, "", "", nil)))
+			ctx := acltest.BindVerified(
+				principal.With(t.Context(),
+					principal.Verified("usr_nobody", principal.ToolDataEntry, "", "", nil)), t, d)
+			if !mustRequest(ctx, t, d).UnmatchedVerified() {
+				t.Fatal("want an unmatched-verified Request")
+			}
 
 			dec := d.AuthorizeWrite(ctx, writeReq())
 			if dec.RuleKind == "unmatched-principal" {

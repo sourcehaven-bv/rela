@@ -1,8 +1,8 @@
 request: GET /api/v1/_apps/none/
 identity: a header login for each authenticated principal, all answered alike
 status: 404
-reads: GraphQueryHeaders=1
-breadth: 
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
 bodies: GraphQuery=0/1
 versions: 
 body:

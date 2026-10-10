@@ -134,7 +134,7 @@ func TestDecideFamily_LocalRoles(t *testing.T) {
 	g := newFakeGraph()
 	g.add("alice", "owns", "POL-1")
 	d := newTestDeclarative(t, mustPolicy(t, familyRenamePolicy), g)
-	r, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolCLI})
+	r, err := d.ForIdentity(identityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolCLI}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestDecideFamily_CeilingClamps(t *testing.T) {
 		{"user", true},
 		{"readonly-client", false},
 	} {
-		r, err := d.ForPrincipal(verifiedClient("renamer", tc.principalType))
+		r, err := d.ForIdentity(identityFor(t.Context(), t, d, verifiedClient("renamer", tc.principalType)))
 		if err != nil {
 			t.Fatal(err)
 		}

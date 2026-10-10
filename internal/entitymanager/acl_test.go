@@ -452,8 +452,8 @@ assignments:
 
 	// Stamp alice as the principal — the entry-point binary would
 	// normally do this; the test does it explicitly.
-	aliceCtx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	aliceCtx := entitymanager.BindAs(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, mgr)
 
 	// Story step 1 — Alice edits the ticket she's assigned to. The v1
 	// resolver follows `alice --assigned-to--> TKT-001`, finds the
@@ -608,8 +608,8 @@ assignments:
 		t.Fatalf("entitymanager.New: %v", err)
 	}
 
-	aliceCtx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	aliceCtx := entitymanager.BindAs(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, mgr)
 
 	update := entity.New(tktID, "ticket")
 	update.SetString("title", "should be denied")

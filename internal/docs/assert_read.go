@@ -108,7 +108,7 @@ func luaReadClaim(dr *docRuntime, ls *lua.LState, wantVisible bool) int {
 			"policy. Seeded %s: %s", verb, target, typ, joinIDs(seededIDs(dr, typ)))
 	}
 
-	reader, err := readerFor(dr)
+	reader, d, err := readerFor(dr)
 	if err != nil {
 		return dr.luaFail(ls, "%s: %v", verb, err)
 	}
@@ -117,7 +117,10 @@ func luaReadClaim(dr *docRuntime, ls *lua.LState, wantVisible bool) int {
 	if err != nil {
 		return dr.luaFail(ls, "%s: %v", verb, err)
 	}
-	ctx := principal.With(dr.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
+	ctx, err := acl.BindRequest(principal.With(dr.ctx, principal.Principal{User: who, Tool: principal.ToolCLI}), d)
+	if err != nil {
+		return dr.luaFail(ls, "%s: resolving %q failed: %v", verb, who, err)
+	}
 	_, visible, gerr := reader.Address(ctx, visibility.WorldOf(defaultScope), typ, target)
 	if gerr != nil {
 		return dr.luaFail(ls, "%s{id=%q}: the read gate errored: %v", verb, target, gerr)
@@ -143,7 +146,8 @@ func readTarget(id, face string) string {
 	return id + "@" + face
 }
 
-// readerFor builds the gated reader over the seeded graph.
+// readerFor builds the gated reader over the seeded graph, and returns the
+// evaluator so the caller can bind each claim's identity against it.
 //
 // A DeclarativeGate over the evaluator, read through a visibility.Resolver:
 // the same gate the application wires and the same single-entity read every
@@ -162,24 +166,24 @@ func readTarget(id, face string) string {
 // pass vacuously against a NopRedactor. Field redaction is asserted through
 // api{} instead, which goes over HTTP against a real server that has the
 // genuine redactor wired.
-func readerFor(dr *docRuntime) (*visibility.Resolver, error) {
+func readerFor(dr *docRuntime) (*visibility.Resolver, *acl.Declarative, error) {
 	d, err := acl.NewDeclarative(dr.policy, aclstore.NewGraph(dr.store), dr.store)
 	if err != nil {
-		return nil, fmt.Errorf("building the evaluator failed: %w", err)
+		return nil, nil, fmt.Errorf("building the evaluator failed: %w", err)
 	}
 	defaultScope, err := dr.worldScope("")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	gate, err := visibility.NewDeclarativeGate(d, defaultScope)
 	if err != nil {
-		return nil, fmt.Errorf("building the read gate failed: %w", err)
+		return nil, nil, fmt.Errorf("building the read gate failed: %w", err)
 	}
 	reader, err := visibility.NewResolver(gate, visibility.NopRedactor{}, dr.store, familiesOption(dr.worlds))
 	if err != nil {
-		return nil, fmt.Errorf("building the reader failed: %w", err)
+		return nil, nil, fmt.Errorf("building the reader failed: %w", err)
 	}
-	return reader, nil
+	return reader, d, nil
 }
 
 // checkRead renders the failure for a wrong visibility verdict.

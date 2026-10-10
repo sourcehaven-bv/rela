@@ -486,7 +486,7 @@ func newBCWorld(t *testing.T) *bcWorld {
 // push automation does.
 func (w *bcWorld) run(e *entity.Entity) error {
 	w.t.Helper()
-	ctx := principal.With(context.Background(), connector)
+	ctx := boundAs(w.t, w.svc, connector)
 	deps := w.svc.ScheduledLuaWriteDeps()
 	deps.Capabilities = w.caps
 	return w.svc.ScriptEngine().ExecuteFile(ctx, "basecamp.lua", deps, e, nil)
@@ -541,7 +541,7 @@ func (w *bcWorld) base(id string) int {
 	name, err := store.ParseVersionTagName("sync/basecamp")
 	require.NoError(w.t, err)
 	snap, err := appbuild.VersionTagReader(w.svc).VersionByTag(
-		principal.With(context.Background(), connector), entity.Ref{ID: id}, name)
+		boundAs(w.t, w.svc, connector), entity.Ref{ID: id}, name)
 	if err != nil {
 		return 0
 	}
@@ -549,7 +549,7 @@ func (w *bcWorld) base(id string) int {
 }
 
 func (w *bcWorld) alice() context.Context {
-	return principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolCLI})
+	return boundAs(w.t, w.svc, principal.Principal{User: "alice", Tool: principal.ToolCLI})
 }
 
 // writes are the calls that change Basecamp.

@@ -48,7 +48,7 @@ assignments:
 		{int64(50), true},
 	}
 	for _, tc := range cases {
-		fv := r.FieldVerdicts(ctxAs("alice"), ticket("T", map[string]any{"priority": tc.priority}))
+		fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T", map[string]any{"priority": tc.priority}))
 		if got := statusWritable(fv); got != tc.writable {
 			t.Errorf("priority=%v: writable=%v, want %v", tc.priority, got, tc.writable)
 		}
@@ -96,7 +96,7 @@ assignments:
 			if tc.due != nil {
 				props["due"] = tc.due
 			}
-			fv := r.FieldVerdicts(ctxAs("alice"), ticket("T", props))
+			fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T", props))
 			if got := statusWritable(fv); got != tc.writable {
 				t.Errorf("due=%v: writable=%v, want %v", tc.due, got, tc.writable)
 			}
@@ -150,7 +150,7 @@ assignments:
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			fv := r.FieldVerdicts(ctxAs("alice"), ticket("T", map[string]any{"due": tc.due}))
+			fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T", map[string]any{"due": tc.due}))
 			if got := statusWritable(fv); got != tc.writable {
 				t.Errorf("due=%q: writable=%v, want %v", tc.due, got, tc.writable)
 			}

@@ -1,8 +1,8 @@
 request: GET /api/v1/_piles/PIL-GOLDC
 identity: header stranger@example.test
 status: 403
-reads: GraphQueryHeaders=1
-breadth: 
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
 bodies: GraphQuery=0/1
 versions: 
 body:

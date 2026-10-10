@@ -47,7 +47,7 @@ func TestReadableFacesMany_OneQueryPerBatch(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			req, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+			req, err := d.ForIdentity(identityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
 			if err != nil {
 				t.Fatal(err)
 			}

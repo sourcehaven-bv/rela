@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -126,7 +127,7 @@ func TestScriptReader_CountEntitiesPushesDown(t *testing.T) {
 	q := store.EntityQuery{Type: "policy", Faces: store.AllFaces()}
 	for user, want := range map[string]int{"bob": 4, "carol": 2, "dave": 0} {
 		t.Run(user, func(t *testing.T) {
-			as := principal.With(ctx, principal.Principal{User: user, Tool: principal.ToolDataEntry})
+			as := acltest.Bind(principal.With(ctx, principal.Principal{User: user, Tool: principal.ToolDataEntry}), t, d)
 			st.Reset()
 			n, err := sr.CountEntities(as, q)
 			if err != nil {

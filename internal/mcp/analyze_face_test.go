@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -78,14 +79,14 @@ func facedGatedServer(t *testing.T, read []string, extra ...*entity.Entity) (*Se
 		Validator:     reads.Validator,
 		EntityManager: svc.EntityManager(),
 		Config:        svc.Config(),
-		LuaWriteDeps:  lua.WriteDeps{ReadDeps: reads.LuaReads, EntityManager: svc.EntityManager()},
+		Lua:           LuaDeps{WriteDeps: lua.WriteDeps{ReadDeps: reads.LuaReads, EntityManager: svc.EntityManager()}},
 		Watcher:       nopWatcher{},
 		ProjectRoot:   t.TempDir(),
 		Attachments:   testAttachmentDeps(t, svc, meta),
 		World:         store.TrivialScope(),
 		Families:      store.TrivialScope(),
 	})
-	return srv, principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolMCP})
+	return srv, acltest.Bind(principal.With(ctx, principal.Principal{User: "alice", Tool: principal.ToolMCP}), t, d)
 }
 
 var (

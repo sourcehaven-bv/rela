@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -374,11 +375,11 @@ func TestMaybeProvision_RefusesReservedSubjectDirectly(t *testing.T) {
 
 	// Hand maybeProvision exactly the state it sees mid-request for an
 	// unmatched verified principal, bypassing the HTTP boundary entirely.
-	ctx := acl.WithUnmatchedVerified(
-		principal.With(context.Background(), principal.Principal{
+	ctx := acltest.BindVerified(
+		principal.With(t.Context(), principal.Principal{
 			User: principal.UserScheduler,
 			Tool: principal.ToolDataEntry,
-		}))
+		}), t, d)
 
 	got := maybeProvision(ctx, d, app.entityManager, schemaMetaView{schema: app.State})
 

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -26,7 +28,7 @@ import (
 
 // schedulerReader wires the ACL-bound read handle a scheduled task gets,
 // under the given policy.
-func schedulerReader(t *testing.T, policyYAML string) *visibility.ScriptReader {
+func schedulerReader(t *testing.T, policyYAML string) (*visibility.ScriptReader, *acl.Declarative) {
 	t.Helper()
 	ctx := context.Background()
 	st := memstore.New()
@@ -57,15 +59,17 @@ func schedulerReader(t *testing.T, policyYAML string) *visibility.ScriptReader {
 		t.Fatalf("NewScriptReader: %v", err)
 	}
 	sr = sr.WithWorld(visibility.WorldOf(store.TrivialScope()))
-	return sr
+	return sr, d
 }
 
-// schedulerCtx is the context a task with no `run_as` runs under.
-func schedulerCtx() context.Context {
-	return principal.With(context.Background(), principal.Principal{
+// schedulerCtx is the context a task with no `run_as` runs under, bound
+// against d as the scheduler's task context does.
+func schedulerCtx(t *testing.T, d *acl.Declarative) context.Context {
+	t.Helper()
+	return acltest.Bind(principal.With(context.Background(), principal.Principal{
 		User: principal.UserScheduler,
 		Tool: principal.ToolScheduler,
-	})
+	}), t, d)
 }
 
 // TestSchedulerIdentity_GrantedPrincipalReads is the payoff: an operator
@@ -79,9 +83,9 @@ roles:
 assignments:
   system:scheduler: scheduler-system
 `
-	sr := schedulerReader(t, granted)
+	sr, d := schedulerReader(t, granted)
 
-	got, err := sr.GetAddress(schedulerCtx(), "TKT-1")
+	got, err := sr.GetAddress(schedulerCtx(t, d), "TKT-1")
 	if err != nil {
 		t.Fatalf("granted scheduler read failed: %v", err)
 	}
@@ -102,9 +106,9 @@ roles:
 assignments:
   alice: viewer
 `
-	sr := schedulerReader(t, ungranted)
+	sr, d := schedulerReader(t, ungranted)
 
-	_, err := sr.GetAddress(schedulerCtx(), "TKT-1")
+	_, err := sr.GetAddress(schedulerCtx(t, d), "TKT-1")
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("ungranted scheduler read err = %v, want ErrNotFound", err)
 	}
@@ -128,14 +132,14 @@ func TestSchedulerIdentity_IsAcceptedByACL(t *testing.T) {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
 
-	if _, err := d.ForPrincipal(principal.Principal{
+	if _, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{
 		User: principal.UserScheduler, Tool: principal.ToolScheduler,
-	}); err != nil {
+	})); err != nil {
 		t.Errorf("acl rejected the scheduler identity: %v", err)
 	}
 
 	// Contrast: the value the OLD default produced under systemd.
-	if _, err := d.ForPrincipal(principal.Principal{
+	if _, err := d.IdentityResolver().ResolveDirect(context.Background(), principal.Principal{
 		User: principal.SystemUser(), Tool: principal.ToolScheduler,
 	}); err == nil {
 		t.Error("expected the old $USER-derived 'unknown' principal to be rejected; " +

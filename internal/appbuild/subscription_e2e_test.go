@@ -31,8 +31,26 @@ const subscriptionFeed = `<?xml version="1.0"?>
 
 // TestSubscription_EndToEnd runs a feed subscription through the real chain:
 // the shared loader, the scheduler, the job queue, the gated write path and
-// the state store. A second run gets a 304 and writes nothing.
+// the state store. A second run gets a 304 and writes nothing. With an
+// acl.yaml, the poll runs as its own bound principal.
 func TestSubscription_EndToEnd(t *testing.T) {
+	for _, tc := range []struct{ name, policy string }{
+		{"no acl.yaml", ""},
+		{"acl.yaml grants the subscription", `roles:
+  feeder:
+    read: [article]
+    create: [article]
+    update: [article]
+assignments:
+  "system:subscription:news": feeder
+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) { subscriptionEndToEnd(t, tc.policy) })
+	}
+}
+
+func subscriptionEndToEnd(t *testing.T, policy string) {
+	t.Helper()
 	var requests, notModified atomic.Int32
 	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -69,6 +87,10 @@ subscriptions:
       content: "{{item.title}}\n\n{{item.summary}}"
 `), 0o600))
 
+	if policy != "" {
+		writePolicy(t, root, policy)
+	}
+
 	svc, err := discover(t, root)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
@@ -77,7 +99,7 @@ subscriptions:
 	require.NoError(t, err)
 	// One scheduler for both runs: a Services carries at most one, since a
 	// second registers the same job kinds.
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, discardTestLogger())
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.IdentityBinder(svc), discardTestLogger())
 	require.NoError(t, err)
 
 	runSubscriptionOnce(t, svc, s)
@@ -171,7 +193,7 @@ entities:
 	cfg, err := scheduler.LoadWorkspaceConfig(context.Background(), svc)
 	require.NoError(t, err)
 	require.Empty(t, cfg.Tasks)
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, discardTestLogger())
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.IdentityBinder(svc), discardTestLogger())
 	require.NoError(t, err)
 	s.WatchConfig()
 

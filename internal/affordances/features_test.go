@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -96,8 +97,8 @@ assignments:
 		t.Fatalf("affordances.New: %v", err)
 	}
 
-	ctx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	ctx := acltest.Bind(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, declarative)
 	verdict := resolver.FieldVerdicts(ctx, tkt)
 
 	// internal_notes is closed-world denied; title and status are
@@ -169,8 +170,8 @@ assignments:
 		t.Fatalf("affordances.New: %v", err)
 	}
 
-	ctx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	ctx := acltest.Bind(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, declarative)
 	verdict := resolver.FieldVerdicts(ctx, tkt)
 
 	for _, name := range []string{"title", "status"} {
@@ -182,21 +183,15 @@ assignments:
 	}
 }
 
-// TestFeature_UnstampedEveryone pins `everyone` role semantics: an
-// unstamped principal still picks up `everyone` if the policy declares
-// it. acl.Declarative.ForPrincipal errors on unstamped, but the
-// resolveViaDeclarative fallback adds `everyone` explicitly so
-// anonymous-readable workspaces work.
+// TestFeature_UnstampedFailsClosed pins that an unstamped principal gets
+// no affordances, not the `everyone` role. Identity is resolved at the
+// request edge, and an unstamped principal cannot be resolved, so no request
+// scope is bound. The resolver does not invent one: every field is hidden.
 //
-// Scenario. The policy declares the `everyone` role with `read:
-// [ticket]` and `visible:` granting only the `title` field. A request
-// with no principal stamp (User=""/"unknown") arrives — perhaps from
-// a misconfigured proxy or a public anonymous-readable workspace.
-// The affordance verdict should still apply the `everyone` role's
-// visibility rules. Without this, anonymous-readable workspaces
-// (which the design doc calls out as a supported case) silently
-// degrade to "no role at all".
-func TestFeature_UnstampedEveryone(t *testing.T) {
+// Before identity resolution moved to the edge, the resolver added
+// `everyone` itself for this case. No transport relied on it: the data-entry
+// API already refuses an unstamped principal under an ACL with a 500.
+func TestFeature_UnstampedFailsClosed(t *testing.T) {
 	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -237,17 +232,14 @@ roles:
 		t.Fatalf("affordances.New: %v", err)
 	}
 
-	// Unstamped: User="" → ForPrincipal errors, but everyone should
-	// still apply.
-	ctx := context.Background()
-	verdict := resolver.FieldVerdicts(ctx, tkt)
-
-	// internal_notes should be hidden (closed-world); title visible.
-	if v, present := verdict.Visible["internal_notes"]; !present || v {
-		t.Errorf("Visible[internal_notes] = (%v, present=%v); want (false, present=true) — everyone applies to unstamped", v, present)
-	}
-	if _, present := verdict.Visible["title"]; present {
-		t.Errorf("Visible[title] should be absent (visible-by-default); got entry in map")
+	// Unstamped: no identity can be resolved, so no request scope is
+	// bound. Every field is hidden, including the one `everyone` grants.
+	verdict := resolver.FieldVerdicts(context.Background(), tkt)
+	for _, field := range []string{"internal_notes", "title"} {
+		if v, present := verdict.Visible[field]; !present || v {
+			t.Errorf("Visible[%s] = (%v, present=%v); want (false, present=true): no identity fails closed",
+				field, v, present)
+		}
 	}
 }
 
@@ -335,8 +327,8 @@ role_relations:
 		t.Fatalf("affordances.New: %v", err)
 	}
 
-	aliceCtx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	aliceCtx := acltest.Bind(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, declarative)
 
 	// (1) Write path: deny without the per-entity edge would mean
 	// editor doesn't apply; allow with RuleID=editor confirms the
@@ -455,8 +447,8 @@ inherit_roles_through:
 			if err != nil {
 				t.Fatalf("affordances.New: %v", err)
 			}
-			ctx := principal.With(context.Background(),
-				principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+			ctx := acltest.Bind(principal.With(context.Background(),
+				principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, d)
 			verdict := resolver.FieldVerdicts(ctx, dsecret)
 
 			_, denied := verdict.Visible["internal_notes"]
