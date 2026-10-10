@@ -17,6 +17,20 @@ export class KanbanPage extends BasePage {
     this.filterBar = page.locator('.filter-bar');
   }
 
+  /** The count shown on a card for a count field, found by its spoken label. */
+  cardMetaCount(cardTitle: string, label: string): Locator {
+    return this.cards.filter({ hasText: cardTitle }).locator('.rl-meta-item').filter({ hasText: label });
+  }
+
+  async expectCardMetaCount(cardTitle: string, label: string, count: number) {
+    await expect(this.cardMetaCount(cardTitle, label)).toHaveText(new RegExp(`^${count}\\s`));
+  }
+
+  async expectNoCardMetaCount(cardTitle: string, label: string) {
+    await expect(this.cards.filter({ hasText: cardTitle })).toBeVisible();
+    await expect(this.cardMetaCount(cardTitle, label)).toHaveCount(0);
+  }
+
   async navigateToKanban(kanbanId: string) {
     await this.navigateTo(`/kanban/${kanbanId}`);
     await this.waitForSpinnerToDisappear();

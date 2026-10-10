@@ -35,6 +35,7 @@ type Entity struct {
 	Actions      map[string]bool     `json:"_actions,omitempty"`
 	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
 	EditState
+	RowCounts
 	// Redacted names the properties withheld from `Properties` by
 	// field-level ACL (`visible:`) on THIS response (DEC-T0XIWQ). It is the
 	// field-level sibling of Inaccessible, which says the same thing
@@ -170,6 +171,17 @@ type Entity struct {
 	// leave it nil. Each warning has a stable `code`, an RFC 6901
 	// JSON Pointer `path`, and a human-readable `detail`.
 	Warnings []Warning `json:"warnings,omitempty"`
+}
+
+// RowCounts groups derived counts a collection row carries on request. It is
+// embedded in [Entity] for the same reason as [EditState]: the fields serialize
+// flat, and Entity's own field count stays under the plimsoll cap.
+type RowCounts struct {
+	// CommentCount is the number of comments on this row's face, present only
+	// when the list request asked for it (`?comment_counts=1`), commenting is
+	// enabled for the type, and the principal holds `comment:read` across the
+	// project. Absent means "not served", never zero comments; zero is 0.
+	CommentCount *int `json:"_comment_count,omitempty"`
 }
 
 // EditState groups the per-entity fields an edit surface needs and a read

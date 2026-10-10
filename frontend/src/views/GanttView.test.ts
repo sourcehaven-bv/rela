@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import GanttView from './GanttView.vue'
 import { useSchemaStore } from '@/stores/schema'
 import type { GanttNode, GanttResponse } from '@/api/gantts'
@@ -114,6 +114,27 @@ describe('GanttView fetch policy', () => {
     expect(getGanttMock).toHaveBeenCalledTimes(2)
     expect(getGanttMock).toHaveBeenLastCalledWith('plan', 'B')
     expect(w.text()).toContain('Node C')
+    w.unmount()
+  })
+
+  it('drops a fetch the user navigated away from before it landed', async () => {
+    getGanttMock.mockResolvedValue(forest(true))
+    const w = mountGantt()
+    await flushPromises()
+
+    // Drilling into B on truncated data fetches B's subtree; the user goes
+    // back to "All work" before it answers. The forest already loaded answers
+    // that without a fetch, so the late subtree must not replace it.
+    let answer!: (r: GanttResponse) => void
+    getGanttMock.mockReturnValue(new Promise<GanttResponse>((r) => (answer = r)))
+    routeQuery.value = { path: 'B' }
+    await flushPromises()
+    routeQuery.value = {}
+    await flushPromises()
+    answer({ roots: [node('B', [node('C')])], truncated: false })
+    await flushPromises()
+
+    expect(w.find('.row[data-node-id="A"]').exists()).toBe(true)
     w.unmount()
   })
 
@@ -240,6 +261,157 @@ describe('GanttView containment-loop marker', () => {
     await flushPromises()
 
     expect(w.findAll('.cycle-flag')).toHaveLength(0)
+    w.unmount()
+  })
+})
+
+describe('GanttView scroll navigation', () => {
+  // jsdom keeps scrollLeft at 0 and has no layout; a backing field lets the
+  // test read what the view asked for.
+  const scrolls = new WeakMap<Element, number>()
+  const original = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollLeft')
+  const originalMatchMedia = window.matchMedia
+  const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+  // 880px chart: 280px tree column + 600px of visible timeline.
+  const CHART_W = 880
+  const VISIBLE_W = 600
+  const day = (s: string) => Math.floor(Date.parse(s + 'T00:00:00Z') / 86_400_000)
+  // forest() spans 2026-01-01..2026-06-01; forestSpan pads it by 6 days.
+  const axisStart = day('2025-12-26')
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 2, 1, 12)) // local 2026-03-01
+    Object.defineProperty(Element.prototype, 'scrollLeft', {
+      configurable: true,
+      get() {
+        return scrolls.get(this) ?? 0
+      },
+      set(v: number) {
+        scrolls.set(this, v)
+      },
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).classList.contains('chart') ? CHART_W : 0
+      },
+    })
+    // Reduced motion: the buttons then set scrollLeft directly.
+    window.matchMedia = ((q: string) => ({ matches: true, media: q })) as unknown as typeof window.matchMedia
+    setActivePinia(createPinia())
+    useSchemaStore().gantts.set('plan', {
+      title: 'Plan',
+      hierarchy: ['contains'],
+      multi_parent: 'first',
+      on_cycle: 'error',
+      default_depth: 2,
+      max_depth: 10,
+      max_nodes: 2000,
+      sources: { project: { start: 'planned_start', end: 'planned_end' } },
+    })
+    routeQuery.value = {}
+    getGanttMock.mockReset()
+    getGanttMock.mockResolvedValue(forest())
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    if (original) Object.defineProperty(Element.prototype, 'scrollLeft', original)
+    if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalClientWidth)
+    else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth
+    window.matchMedia = originalMatchMedia
+  })
+
+  async function mounted() {
+    const w = mountGantt()
+    await flushPromises()
+    await nextTick()
+    return w
+  }
+
+  const chartScroll = (w: ReturnType<typeof mountGantt>) => w.get('.chart').element.scrollLeft
+
+  it('gives every day the same width and labels every month', async () => {
+    const w = await mounted()
+    const days = day('2026-06-07') - axisStart
+    expect(w.get('.chart').attributes('style')).toContain(`--timeline-w: ${days * 12}px`)
+    expect(w.findAll('.tick').map((t) => t.text())).toEqual(["Jan '26", 'Feb', 'Mar', 'Apr', 'May', 'Jun'])
+    w.unmount()
+  })
+
+  it('opens at today and steps one unit with the arrows', async () => {
+    const w = await mounted()
+    // Today sits in the middle of the visible timeline.
+    const today = (day('2026-03-01') - axisStart) * 12 - VISIBLE_W / 2
+    expect(chartScroll(w)).toBe(today)
+
+    await w.get('[aria-label="Later"]').trigger('click')
+    expect(chartScroll(w)).toBe(today + 30 * 12)
+    await w.get('[aria-label="Earlier"]').trigger('click')
+    await w.get('[aria-label="Earlier"]').trigger('click')
+    expect(chartScroll(w)).toBe(today - 30 * 12)
+
+    const now = w.findAll('button').find((b) => b.text() === 'Now')!
+    await now.trigger('click')
+    expect(chartScroll(w)).toBe(today)
+    w.unmount()
+  })
+
+  it('keeps the day at the left edge when the zoom changes', async () => {
+    const w = await mounted()
+    w.get('.chart').element.scrollLeft = (day('2026-04-10') - axisStart) * 12
+    const week = w.findAll('.zoom-seg button').find((b) => b.text() === 'week')!
+    await week.trigger('click')
+    await nextTick()
+    await nextTick()
+    expect(chartScroll(w)).toBe((day('2026-04-10') - axisStart) * 40)
+    w.unmount()
+  })
+
+  it('draws a bar to the end of its end day', async () => {
+    getGanttMock.mockResolvedValue({
+      // B widens the axis past the screen, so days keep their 40px.
+      roots: [
+        { ...node('A'), planned: { start: '2026-03-02', end: '2026-03-06' } },
+        { ...node('B'), planned: { start: '2026-01-01', end: '2026-06-01' } },
+      ],
+      truncated: false,
+    })
+    const w = await mounted()
+    await w.findAll('.zoom-seg button').find((b) => b.text() === 'week')!.trigger('click')
+    const timeline = parseFloat(w.get('.chart').attributes('style')!.match(/--timeline-w: ([\d.]+)px/)![1])
+    const bar = w.get('.row[data-node-id="A"] .bar')
+    const width = parseFloat(bar.attributes('style')!.match(/width: ([\d.]+)%/)![1])
+    // Monday to Friday is five days of 40px, not four.
+    expect((width / 100) * timeline).toBeCloseTo(5 * 40, 3)
+    w.unmount()
+  })
+
+  it('compresses a span too long to draw and says so', async () => {
+    // A typo: 2062 for 2026. At 40px a day this would be ~525,000px wide.
+    getGanttMock.mockResolvedValue({
+      roots: [{ ...node('A'), planned: { start: '2026-01-01', end: '2062-01-01' } }],
+      truncated: false,
+    })
+    const w = await mounted()
+    await w.findAll('.zoom-seg button').find((b) => b.text() === 'week')!.trigger('click')
+    const timeline = parseFloat(w.get('.chart').attributes('style')!.match(/--timeline-w: ([\d.]+)px/)![1])
+    expect(timeline).toBeLessThanOrEqual(250_000)
+    expect(w.text()).toContain('compressed')
+    // Labels are thinned to stay readable: at least 56px apart.
+    const ticks = w.findAll('.tick')
+    expect(ticks.length).toBeLessThanOrEqual(250_000 / 56)
+    w.unmount()
+  })
+
+  it('disables Now when today is far outside the plan', async () => {
+    vi.setSystemTime(new Date(2027, 5, 1, 12))
+    const w = await mounted()
+    const now = w.findAll('button').find((b) => b.text() === 'Now')!
+    expect(now.attributes('disabled')).toBeDefined()
+    expect(w.text()).toContain('Today is outside this plan')
+    expect(chartScroll(w)).toBe(0)
     w.unmount()
   })
 })
