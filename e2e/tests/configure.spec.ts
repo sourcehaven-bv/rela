@@ -28,6 +28,22 @@ const test = base.extend({
 
 test.use({ serverEnv: { RELA_CONFIG_EDITING: "1" } });
 
+/** The lines of the YAML mapping entry `key:`, up to the next line that is
+ *  indented no deeper than the key. */
+function yamlBlock(yaml: string, key: string): string {
+  const lines = yaml.split("\n");
+  const start = lines.findIndex((l) => l.trimStart() === `${key}:`);
+  expect(start, `${key}: not found`).toBeGreaterThanOrEqual(0);
+  const indent = lines[start].length - lines[start].trimStart().length;
+  let end = start + 1;
+  while (end < lines.length) {
+    const l = lines[end];
+    if (l.trim() !== "" && l.length - l.trimStart().length <= indent) break;
+    end++;
+  }
+  return lines.slice(start, end).join("\n");
+}
+
 test.describe("Configure", () => {
   test("the space switcher opens Configure", async ({ appPage }) => {
     const configure = new ConfigurePage(appPage);
@@ -80,8 +96,10 @@ test.describe("Configure", () => {
       path.join(testProject, "data-entry.yaml"),
       "utf8",
     );
-    expect(screens).toMatch(/label: Signed off/);
-    expect(screens).not.toMatch(/label: Approved/);
+    // Other boards share the column value, so look at this board only.
+    const board = yamlBlock(screens, "feature-board");
+    expect(board).toMatch(/label: Signed off/);
+    expect(board).not.toMatch(/label: Approved/);
   });
 
   test("a renamed property moves the values records hold", async ({
