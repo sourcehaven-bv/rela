@@ -86,9 +86,33 @@ jobs:
         # skipping: it means the confinement CI thinks it is testing is absent.
         run: bwrap --unshare-all --ro-bind / / /bin/true
 
+      # TestRestish_* drives a real restish against the router, so a spec
+      # change that breaks the generic client fails here. Pinned by version
+      # and checksum; RELA_TEST_RESTISH=1 below turns a missing binary into a
+      # failure instead of a skip.
+      - name: Install restish
+        env:
+          RESTISH_VERSION: '2.3.0'
+        run: |
+          set -euo pipefail
+          case "$RUNNER_ARCH" in
+            X64) arch=amd64 RESTISH_SHA256=5de24353560597562ffc99799ea79a0cd22c5f3cabbb3ffba3ff5e9b97473357 ;;
+            ARM64) arch=arm64 RESTISH_SHA256=d55ae3ebd2a79e6fda8e0ea125eed2530eed60e27e61e3ffa243ae72ae973c91 ;;
+            *) echo "::error::no pinned restish for runner arch $RUNNER_ARCH"; exit 1 ;;
+          esac
+          archive="restish-${RESTISH_VERSION}-linux-${arch}.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/rest-sh/restish/releases/download/v${RESTISH_VERSION}/${archive}"
+          echo "${RESTISH_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/restish"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/restish" restish
+          echo "$RUNNER_TEMP/restish" >> "$GITHUB_PATH"
+
       - name: Run tests
         # -shuffle=on randomizes test order to surface inter-test ordering
         # dependencies; the seed is printed on failure for reproduction.
+        env:
+          RELA_TEST_RESTISH: '1'
         run: go test -v -race -shuffle=on -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Check coverage thresholds
