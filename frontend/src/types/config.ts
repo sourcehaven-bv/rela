@@ -491,6 +491,10 @@ export interface KanbanCardField {
   property?: string
   relation?: string
   direction?: 'outgoing' | 'incoming'
+  /** `count` shows a relation as the number of related entities, with an icon. */
+  display?: 'count'
+  /** Shows the number of comments on the card's entity. Stands alone. */
+  comments?: boolean
   /** Overrides the displayed name; derived from property/relation when unset. */
   label?: string
   /** Renders the label before the value. Defaults to true when unset. */
@@ -518,6 +522,7 @@ export function cardFieldLabel(
   relationLabel?: (relation: string) => string | undefined
 ): string {
   if (field.label) return field.label
+  if (field.comments) return 'comments'
   if (field.relation) return relationLabel?.(field.relation) || field.relation
   return field.property || ''
 }

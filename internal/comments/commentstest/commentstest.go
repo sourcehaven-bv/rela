@@ -57,6 +57,54 @@ func RunAll(t *testing.T, f Factory) {
 	t.Run("Concurrency", func(t *testing.T) { RunConcurrencyTests(t, f) })
 	t.Run("RoundTrip", func(t *testing.T) { RunRoundTripTests(t, f) })
 	t.Run("Faces", func(t *testing.T) { RunFaceTests(t, f) })
+	t.Run("Count", func(t *testing.T) { RunCountTests(t, f) })
+}
+
+// RunCountTests pins the batched thread size (TKT-WA25G2).
+//
+// Count is a third read path onto the rows List serves, so it must agree with
+// List on the key: per face, resolved comments included, and absent rather
+// than zero for an empty thread.
+func RunCountTests(t *testing.T, f Factory) {
+	t.Helper()
+	ctx := context.Background()
+	faced := comments.Target{Type: "ticket", ID: "TKT-1", Face: "draft"}
+
+	t.Run("counts per target and face, resolved included", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.Add(ctx, target("TKT-1"), comment("a", 0, "alice", "one")))
+		require.NoError(t, s.Add(ctx, target("TKT-1"), comment("b", time.Minute, "bob", "two")))
+		require.NoError(t, s.Add(ctx, faced, comment("c", 0, "alice", "draft")))
+		require.NoError(t, s.Add(ctx, target("TKT-2"), comment("d", 0, "alice", "other")))
+		_, err := s.SetResolved(ctx, target("TKT-1"), "b", true)
+		require.NoError(t, err)
+
+		got, err := s.Count(ctx, []comments.Target{target("TKT-1"), faced, target("TKT-3")})
+		require.NoError(t, err)
+		require.Equal(t, map[string]int{"TKT-1": 2, faced.Key(): 1}, got,
+			"TKT-2 was not asked for, TKT-3 has no comments")
+	})
+
+	t.Run("no targets is an empty map", func(t *testing.T) {
+		got, err := f(t).Count(ctx, nil)
+		require.NoError(t, err)
+		require.Empty(t, got)
+		require.NotNil(t, got)
+	})
+
+	t.Run("more targets than one query chunk", func(t *testing.T) {
+		s := f(t)
+		require.NoError(t, s.Add(ctx, target("TKT-0"), comment("a", 0, "alice", "first")))
+		require.NoError(t, s.Add(ctx, target("TKT-1199"), comment("b", 0, "alice", "last")))
+		targets := make([]comments.Target, 1200)
+		for i := range targets {
+			targets[i] = target(fmt.Sprintf("TKT-%d", i))
+		}
+
+		got, err := s.Count(ctx, targets)
+		require.NoError(t, err)
+		require.Equal(t, map[string]int{"TKT-0": 1, "TKT-1199": 1}, got)
+	})
 }
 
 // RunGetTests pins the single-comment read (TKT-4LG36M).
@@ -782,6 +830,14 @@ func RunKeyFidelityTests(t *testing.T, f Factory) {
 		require.NoError(t, s.Add(ctx, lower, comment("lower", time.Hour, "bob", "on tkt-1")))
 		return s
 	}
+
+	t.Run("Count does not count a target differing only by case", func(t *testing.T) {
+		s := seed(t)
+
+		got, err := s.Count(ctx, []comments.Target{upper, {Type: "ticket", ID: "Tkt-1", Face: "draft"}})
+		require.NoError(t, err)
+		require.Equal(t, map[string]int{upper.Key(): 1}, got)
+	})
 
 	t.Run("Get does not resolve a target differing only by case", func(t *testing.T) {
 		// Get matches both key halves with "=", which is byte-exact in SQLite

@@ -1432,6 +1432,14 @@ type KanbanCardField struct {
 	Property  string    `yaml:"property,omitempty" json:"property,omitempty"`
 	Relation  string    `yaml:"relation,omitempty" json:"relation,omitempty"`
 	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"` // "outgoing" (default) or "incoming"
+	// Display "count" shows a relation field as the number of related
+	// entities the reader can see, with an icon, instead of their titles.
+	// Only valid with Relation; empty shows the titles.
+	Display string `yaml:"display,omitempty" json:"display,omitempty"`
+	// Comments shows the number of comments on the card's entity. It stands
+	// alone: no Property or Relation. The count is served only to a reader
+	// who holds `comment:read` across the project (TKT-WA25G2).
+	Comments bool `yaml:"comments,omitempty" json:"comments,omitempty"`
 	// Label overrides the displayed name. Left empty it is DERIVED from the
 	// property or relation name, so an author never restates `assignee` as
 	// "Assignee" — only a genuine rename needs writing down.
@@ -1460,6 +1468,9 @@ func (f KanbanCardField) LabelShown() bool {
 func (f KanbanCardField) DisplayLabel() string {
 	if f.Label != "" {
 		return f.Label
+	}
+	if f.Comments {
+		return "comments"
 	}
 	if f.Relation != "" {
 		return f.Relation

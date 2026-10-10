@@ -96,6 +96,8 @@ import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.v
 import type { RowMove } from 'rela-components/components/table/types'
 import OrderedSectionRow from '@/components/entity/OrderedSectionRow.vue'
 import { sectionRowLabel, useSectionReorder } from '@/composables/useSectionReorder'
+import { useQueryCache } from '@pinia/colada'
+import { entityKeys } from '@/queries/entities'
 
 const props = withDefaults(
   defineProps<{
@@ -437,6 +439,14 @@ async function loadComments() {
     // this degrades to "no comments" rather than surfacing an error.
     comments.value = []
   }
+}
+
+// A comment write also changes the comment count a kanban card shows, and
+// comment writes raise no store event, so SSE never refreshes the board.
+const queryCache = useQueryCache()
+async function onCommentsChanged() {
+  void queryCache.invalidateQueries({ key: entityKeys.list(props.entityType) })
+  await loadComments()
 }
 
 const checkboxStats = computed(() => {
@@ -2377,7 +2387,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 :anchor="{ kind: 'property', ref: property }"
                 :comments="commentsForProperty(property)"
                 :flip="shouldFlipPopover(memoBuildSectionEditFields(section, entry), index)"
-                @changed="loadComments"
+                @changed="onCommentsChanged"
               />
             </template>
           </SectionEditForm>
@@ -2396,7 +2406,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 :anchor="{ kind: 'property', ref: property.name }"
                 :comments="commentsForProperty(property.name)"
                 :flip="shouldFlipPopover(section.fields, index)"
-                @changed="loadComments"
+                @changed="onCommentsChanged"
               />
             </template>
           </PropertyDisplay>
@@ -2463,7 +2473,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                   :comments="openTextComments"
                   :position="textCommentPos"
                   :can-accept="canAccept"
-                  @changed="loadComments"
+                  @changed="onCommentsChanged"
                   @accept="acceptSuggestion"
                   @close="closeTextComment"
                 />
@@ -2916,7 +2926,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           :comments="comments"
           :section-ids="commentSectionIds"
           :can-accept="canAccept"
-          @changed="loadComments"
+          @changed="onCommentsChanged"
           @accept="acceptSuggestion"
         />
       </div>

@@ -3258,6 +3258,41 @@ card:
 
 Card fields use the same styling as lists — enum values are displayed with colors from `styles`.
 
+#### Counts on cards
+
+Two kinds of card field show a number with an icon instead of a value. They sit
+in one row under the other fields:
+
+```yaml
+card:
+  title: title
+  fields:
+    - relation: subtask-of
+      direction: incoming
+      display: count      # number of subtasks
+      label: subtasks
+    - comments: true      # number of comments
+```
+
+| Key              | Description                                                                             |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| `display: count` | On a `relation` field: show how many related entities the reader can see.               |
+| `comments: true` | Show how many comments the card's entity has. Use it without `property` or `relation`. |
+
+A count of zero shows nothing. The label shows beside the number, for example
+"2 subtasks"; it defaults to the relation's label, or "comments". With
+`show_label: false` only the number and icon show, and the label stays
+available to screen readers and as a tooltip.
+
+A hidden related entity is never counted. A comment count needs commenting to
+be enabled for the board's entity type, and is shown only to readers who hold
+`comment:read` across the project. A reader who has it only through a role on
+one entity sees no count on the card, but can still read the comments on the
+entity.
+
+`display` and `comments` are kanban-only: on a calendar or gantt field they are
+a config error.
+
 ### Drag and Drop
 
 Cards can be dragged between columns (and swimlanes if configured). Dropping a card updates
@@ -5214,6 +5249,24 @@ clicking a bar re-roots the chart on that entity and rescales the time axis to
 its subtree, with breadcrumbs leading back out. The twisty beside a name
 expands a subtree in place instead. `default_depth` picks how many levels are
 open on first load; everything deeper stays one click away.
+
+### Scrolling through time
+
+Every day has the same width: 4px at the Quarter zoom, 12px at Month and
+40px at Week. A plan longer than the screen scrolls sideways; a shorter one is
+stretched to fill it. The tree column and the date axis stay in place while
+you scroll, and a bar's name stays beside the tree column while the bar
+scrolls past. A bar ends at the end of its end date, so a Monday-to-Friday
+task covers five full days.
+
+- **Now** scrolls today into the middle of the screen. The chart opens there
+  too when the plan covers today. When today lies just outside the plan, the
+  axis is extended to include it; when it is further away, **Now** is
+  disabled.
+- **‹** and **›** scroll one week, month or quarter, matching the zoom.
+- Changing the zoom keeps the day at the left edge where it was.
+- A plan spanning many years at a fine zoom is drawn with narrower days, and
+  the chart is flagged **compressed**.
 
 ### Planned versus rolled-up spans
 
