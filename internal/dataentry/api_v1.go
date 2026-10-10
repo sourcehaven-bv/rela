@@ -839,7 +839,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	if !serveOwners(w, r, a, entities, data) {
+	if !serveListRowExtras(w, r, a, query, entities, data) {
 		return
 	}
 

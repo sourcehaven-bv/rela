@@ -3782,3 +3782,49 @@ func TestValidateConfig_ListFaceColumn(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateKanbans_CardFieldCounts pins the load-time rules for the two
+// count shapes of a card field (TKT-WA25G2).
+func TestValidateKanbans_CardFieldCounts(t *testing.T) {
+	commentable := testMetamodel()
+	commentable.Comments = &metamodel.CommentsConfig{Enabled: true, On: []string{"ticket"}}
+
+	tests := []struct {
+		name    string
+		field   KanbanCardField
+		meta    *metamodel.Metamodel
+		wantErr string // substring; "" means valid
+	}{
+		{"relation count", KanbanCardField{Relation: "belongs-to", Display: "count"}, commentable, ""},
+		{"comments", KanbanCardField{Comments: true, Label: "Notes"}, commentable, ""},
+		{"display without relation", KanbanCardField{Property: "status", Display: "count"}, commentable,
+			"display: count needs a relation"},
+		{"unknown display", KanbanCardField{Relation: "belongs-to", Display: "titles"}, commentable,
+			`display "titles" is not supported`},
+		{"comments with property", KanbanCardField{Comments: true, Property: "status"}, commentable,
+			"comments cannot be combined"},
+		{"comments with relation", KanbanCardField{Comments: true, Relation: "blocks"}, commentable,
+			"comments cannot be combined"},
+		{"comments on a type without commenting", KanbanCardField{Comments: true}, testMetamodel(),
+			`comments are not enabled for entity type "ticket"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{Kanbans: map[string]Kanban{"k": {
+				EntityType:     "ticket",
+				ColumnProperty: "status",
+				Card:           KanbanCard{Fields: []KanbanCardField{tt.field}},
+			}}}
+			err := ValidateConfig([]byte(`version: "1.0"`), cfg, tt.meta)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected valid, got: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got: %v", tt.wantErr, err)
+			}
+		})
+	}
+}

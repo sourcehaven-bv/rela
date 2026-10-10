@@ -64,6 +64,20 @@ func (s *Store) Get(_ context.Context, target comments.Target, id string) (comme
 	return comments.Comment{}, comments.ErrNotFound
 }
 
+// Count returns the thread size of each target that has comments.
+func (s *Store) Count(_ context.Context, targets []comments.Target) (map[string]int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make(map[string]int, len(targets))
+	for _, t := range targets {
+		if n := len(s.byward[t.Key()]); n > 0 {
+			out[t.Key()] = n
+		}
+	}
+	return out, nil
+}
+
 // Add appends a comment to the target's thread.
 func (s *Store) Add(_ context.Context, target comments.Target, c comments.Comment) error {
 	s.mu.Lock()
