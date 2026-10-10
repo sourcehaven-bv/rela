@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
@@ -21,6 +22,15 @@ func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) 
 	// coverage-ignore-start: main-or-wiring: constructs and runs the long-running scheduler loop; the CLI test harness
 	// supplies no
 	// scheduler.WorkspaceProvider fixture
+	// The kong wiring binds *appbuild.Services. Anything else cannot be
+	// checked for a sync backend, so it is refused rather than run unchecked.
+	svc, ok := ws.(*appbuild.Services)
+	if !ok {
+		return fmt.Errorf("rela scheduler: workspace %T cannot be checked for a sync backend", ws)
+	}
+	if err := appbuild.RequireSyncBackend(svc); err != nil {
+		return err
+	}
 	data, err := ws.Config().Load(ctx, scheduler.ConfigFile)
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", scheduler.ConfigFile, err)

@@ -8,5 +8,6 @@
   "select": ["enum", "string"],
   "multi-select": ["enum", "string"],
   "rrule": ["rrule"],
-  "file": ["file"]
+  "file": ["file"],
+  "external-ref": ["external_ref"]
 }

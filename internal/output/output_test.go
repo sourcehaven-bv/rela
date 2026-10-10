@@ -978,3 +978,21 @@ func TestWriteTrace_TitleResolver(t *testing.T) {
 		}
 	})
 }
+
+func TestPropertyText_ExternalRef(t *testing.T) {
+	tests := []struct {
+		in   any
+		want string
+	}{
+		{map[string]any{"id": "42", "url": "https://x.test/42"}, "42 https://x.test/42"},
+		{map[string]any{"id": "42"}, "42"},
+		{map[string]any{"id": "42", "rev": "1"}, "map[id:42 rev:1]"},
+		{"plain", "plain"},
+		{3, "3"},
+	}
+	for _, tc := range tests {
+		if got := propertyText(tc.in); got != tc.want {
+			t.Errorf("propertyText(%v) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

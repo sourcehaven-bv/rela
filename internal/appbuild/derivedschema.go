@@ -47,7 +47,7 @@ func logDerivedOutcomes(outcomes []store.DerivedObjectOutcome) {
 	for _, o := range outcomes {
 		switch o.State {
 		case store.DerivedUnenforced:
-			if o.Spec.Kind == store.DerivedUnique {
+			if o.Spec.Kind == store.DerivedUnique || o.Spec.Kind == store.DerivedExternalRefUnique {
 				slog.Warn("appbuild: derived unique constraint NOT enforced",
 					"type", o.Spec.Type, "property", o.Spec.Property,
 					"blocking_value_groups", o.BlockingCount, "reason", o.Reason)
@@ -57,7 +57,7 @@ func logDerivedOutcomes(outcomes []store.DerivedObjectOutcome) {
 					"reason", o.Reason)
 			}
 		case store.DerivedCreated:
-			if o.Spec.Kind == store.DerivedUnique {
+			if o.Spec.Kind == store.DerivedUnique || o.Spec.Kind == store.DerivedExternalRefUnique {
 				slog.Info("appbuild: derived unique constraint created",
 					"type", o.Spec.Type, "property", o.Spec.Property)
 			} else {

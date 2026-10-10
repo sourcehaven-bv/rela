@@ -142,19 +142,7 @@ func loadDerivedSpecs() (specs []store.DerivedObjectSpec, schemaPath string, ok 
 	if err != nil {
 		return nil, "", false
 	}
-	for _, typeName := range meta.EntityTypes() {
-		def, defOK := meta.GetEntityDef(typeName)
-		if !defOK {
-			continue
-		}
-		for propName, pd := range def.PropertyDefs() {
-			if pd.Unique && !pd.List {
-				specs = append(specs, store.DerivedObjectSpec{
-					Kind: store.DerivedUnique, Type: typeName, Property: propName,
-				})
-			}
-		}
-	}
+	specs = append(specs, queryplan.UniqueSpecs(meta)...)
 	configPath := filepath.Join(paths.Root, dataentryconfig.ConfigFile)
 	data, err := fs.ReadFile(configPath)
 	if err != nil {

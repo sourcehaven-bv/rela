@@ -5,7 +5,9 @@ title: External-ref property type and Lua 3-way merge helper
 kind: enhancement
 priority: medium
 effort: l
-status: backlog
+started: "2026-10-08"
+completed: "2026-10-08"
+status: done
 ---
 
 ## Description

@@ -140,6 +140,7 @@ func TestListPushdown_Eligibility(t *testing.T) {
 	tk := meta.Entities["ticket"]
 	tk.Properties["due"] = metamodelProp("date")
 	tk.Properties["estimate"] = metamodelProp("integer")
+	tk.Properties["jira"] = metamodelProp(metamodel.PropertyTypeExternalRef)
 	meta.Entities["ticket"] = tk
 	allow := acl.ReadQueryResult{AllowAll: true}
 	isRel := func(k string) bool { return k == "implements" }
@@ -161,6 +162,9 @@ func TestListPushdown_Eligibility(t *testing.T) {
 		{"ne list", "filter%5Bstatus%5D%5Bne%5D=a,b", false},
 		{"array form", "filter%5Bstatus%5D%5B%5D=open", false},
 		{"range", "filter%5Bdue%5D%5Bgte%5D=2026-01-01", false},
+		// D7: an external ref is an object; only PropKeyEqual reads it.
+		{"external ref filter", "filter%5Bjira%5D=J-1", false},
+		{"external ref sort", "sort=jira", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, ok := planListPushdown(meta, "ticket", parseQuery(tc.query), allow, store.TrivialScope(), 1, 25, isRel)

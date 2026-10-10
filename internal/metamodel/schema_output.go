@@ -130,6 +130,8 @@ func (m *Metamodel) ResolveWidgetFromType(propType string) string {
 		return "select"
 	case PropertyTypeRrule:
 		return "rrule"
+	case PropertyTypeExternalRef:
+		return "external-ref"
 	default:
 		if ct, ok := m.Types[propType]; ok && len(ct.Values) > 0 {
 			return "select"

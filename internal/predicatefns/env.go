@@ -14,7 +14,7 @@ import (
 //     literals coerce against the field's declared layout at compile
 //   - boolean             -> BoolType
 //   - string / enum / rrule / an enum-like custom (named) type -> StringType
-//   - file, and any type predicate cannot model -> (nil, false)
+//   - file, external_ref, and any type predicate cannot model -> (nil, false)
 //
 // The (Type, ok) shape lets a caller OMIT a field it can't model so a
 // predicate referencing it fails at compile ("unknown variable") rather
@@ -40,7 +40,9 @@ func ScalarType(meta *metamodel.Metamodel, typeName string) (predicate.Type, boo
 	case "", metamodel.PropertyTypeString, metamodel.PropertyTypeEnum,
 		metamodel.PropertyTypeRrule:
 		return predicate.StringType, true
-	case metamodel.PropertyTypeFile:
+	case metamodel.PropertyTypeFile, metamodel.PropertyTypeExternalRef:
+		// An external ref is a map; predicates cannot reach into it
+		// (TKT-SM20FG), so a reference to one fails at compile.
 		return nil, false
 	}
 	// Custom named types: an enum-like custom type carries string values.

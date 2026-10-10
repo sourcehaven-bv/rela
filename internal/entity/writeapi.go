@@ -34,6 +34,10 @@ type CreateOptions struct {
 	Face Face
 	// SkipAutomation suppresses on-create automations. Defaults to false.
 	SkipAutomation bool
+	// WriteExternalRefs permits setting `external_ref` properties. Only
+	// operator-authored script writes set it; every interactive surface
+	// leaves it false, so a create naming a ref is refused (TKT-SM20FG).
+	WriteExternalRefs bool
 }
 
 // Warning is a non-blocking finding surfaced to the caller alongside
@@ -209,6 +213,10 @@ type Patch struct {
 	// what a Content replacement computed from a base read, or an edit of
 	// the same property, needs.
 	ExpectedVersion string
+
+	// WriteExternalRefs permits changing `external_ref` properties; see
+	// [CreateOptions.WriteExternalRefs].
+	WriteExternalRefs bool
 }
 
 // IsEmpty reports whether the patch would change nothing: no property

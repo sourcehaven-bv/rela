@@ -26,6 +26,7 @@ const ticketType = {
     tags: { type: 'string', list: true },
     status: { type: 'enum', values: ['open', 'closed'] },
     screenshot: { type: 'file' },
+    jira: { type: 'external_ref', system: 'jira' },
   },
 } as unknown as EntityType
 
@@ -77,6 +78,14 @@ describe('buildDuplicatePrefill', () => {
     const p = buildDuplicatePrefill(src, ticketType, {}, [], undefined)
     expect(p.properties).not.toHaveProperty('status')
     expect(p.omitted).toContainEqual({ property: 'status', reason: 'state-machine' })
+  })
+
+  // TKT-SM20FG: a ref names one remote object and only a sync writes it.
+  it('never carries an external ref, and reports it', () => {
+    const src = entity({ properties: { title: 'Original', jira: { id: 'J-1' } } })
+    const p = buildDuplicatePrefill(src, ticketType, {}, [], undefined)
+    expect(p.properties).not.toHaveProperty('jira')
+    expect(p.omitted).toContainEqual({ property: 'jira', reason: 'external-ref' })
   })
 
   // A plain enum has no _transitions key, so it must not be over-excluded.

@@ -39,6 +39,11 @@ const (
 	// page (listpushdown) is an index range scan instead of a sort over the
 	// type. Properties = filters (sorted), OrderBy = sort keys (in order).
 	DerivedListIndex DerivedObjectKind = "list-index"
+	// DerivedExternalRefUnique is the per-type backstop for external-ref
+	// uniqueness (TKT-SM20FG): a partial unique index over the `id` entry of
+	// the object property Property, per face. Uniqueness ACROSS types has no
+	// index; the entitymanager's serialized scan is the only guard there.
+	DerivedExternalRefUnique DerivedObjectKind = "external-ref-unique"
 )
 
 // DerivedObjectSpec is one desired derived object, derived from validated

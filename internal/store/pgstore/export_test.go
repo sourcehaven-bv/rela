@@ -90,7 +90,11 @@ const FeedChannelForTest = feedChannel
 // round-trip. Keeps the production surface narrow while letting
 // tests pin query shape and verify index usage. Test-only.
 func BuildGraphQuerySQLForTest(q store.GraphQuery, countOnly bool) (sqlText string, args []any) {
-	return buildGraphQuerySQL(q, countOnly)
+	sqlText, args, err := buildGraphQuerySQL(q, countOnly)
+	if err != nil {
+		panic(err)
+	}
+	return sqlText, args
 }
 
 // BuildEntityListSQLForTest exposes the SQL [Store.ListEntitiesPage] issues
@@ -117,7 +121,11 @@ func BuildHighestIDSQLForTest(prefix string) (sqlText string, args []any) {
 // BuildMatchingFacesSQLForTest exposes the SQL [Store.MatchingFaces] issues,
 // so EXPLAIN tests can check the shape the traversal path actually runs.
 func BuildMatchingFacesSQLForTest(q store.GraphQuery, ids []string) (sqlText string, args []any) {
-	return buildMatchingFacesSQL(q, ids)
+	sqlText, args, err := buildMatchingFacesSQL(q, ids)
+	if err != nil {
+		panic(err)
+	}
+	return sqlText, args
 }
 
 // SweepNowWithWrite is [Store.SweepNow] with write run after the tick has

@@ -135,6 +135,8 @@ type Schema struct {
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
 	Default     any    `json:"default,omitempty"`
+	// ReadOnly marks a value the API serves but refuses on write.
+	ReadOnly bool `json:"readOnly,omitempty"`
 
 	// Numeric constraints
 	Minimum *float64 `json:"minimum,omitempty"`

@@ -178,13 +178,15 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	write := writeServices{
 		readServices:  read,
 		EntityManager: svc.EntityManager(),
-		Recreator:     entitymanager.Recreator{M: svc.EntityManager()},
-		Validator:     svc.Validator(),
-		Audit:         svc.Audit(),
-		LuaCache:      svc.ScriptEngine().LuaCache(),
-		LuaWriteDeps:  svc.LuaWriteDeps(),
-		State:         svc.State(),
-		MigState:      svc.MigState(),
+		// `rela restore` is the operator shell, so it may bring back an
+		// external ref (TKT-SM20FG).
+		Recreator:    entitymanager.Recreator{M: svc.EntityManager(), WriteExternalRefs: true},
+		Validator:    svc.Validator(),
+		Audit:        svc.Audit(),
+		LuaCache:     svc.ScriptEngine().LuaCache(),
+		LuaWriteDeps: svc.LuaWriteDeps(),
+		State:        svc.State(),
+		MigState:     svc.MigState(),
 	}
 	if tags := appbuild.VersionTags(svc); tags != nil {
 		write.VersionTags = tags

@@ -104,6 +104,9 @@ components:
   templating:       { in: internal/templating }
   predicate:        { in: internal/predicate }
   predicatefns:     { in: internal/predicatefns }
+  # The pure three-way merge behind Lua rela.sync.merge (TKT-SM20FG): no
+  # I/O, reads the metamodel only to type the synced fields.
+  syncmerge:        { in: internal/syncmerge }
   relresolve:       { in: internal/relresolve }
   statemachine:     { in: internal/statemachine }
   tracer:           { in: internal/tracer }
@@ -1177,6 +1180,9 @@ deps:
       - predicate
       - filter
       - metamodel
+  syncmerge:
+    mayDependOn:
+      - metamodel
   # relresolve answers related(...) traversals in batches for every surface
   # that evaluates them (TKT-205V2N): gated through acl, answered by store.
   relresolve:
@@ -1386,6 +1392,8 @@ deps:
       - search
       - secrets
       - store
+      # rela.sync.merge classifies through the pure merge package.
+      - syncmerge
       - tracer
       # visibility.Family: the write bindings gate the ids they name through
       # the runtime's VisibleReader before calling the manager.

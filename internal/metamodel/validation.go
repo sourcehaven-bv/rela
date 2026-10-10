@@ -110,6 +110,10 @@ const (
 	// (which can query other entities), not by the pure per-entity
 	// [Metamodel.ValidateEntity].
 	ValidationErrorUnique ValidationErrorType = "unique"
+	// ValidationErrorExternalRef reports a malformed `external_ref` value
+	// (TKT-SM20FG). It is HARD: a ref is written by a sync script, never
+	// by hand, and a malformed one would break uniqueness and lookup.
+	ValidationErrorExternalRef ValidationErrorType = "invalid_external_ref"
 )
 
 // ValidationError represents a structured validation error with field information.
@@ -160,7 +164,7 @@ func (m *Metamodel) ValidateProperties(props map[string]any, schema PropertySche
 	for propName, propDef := range schema.PropertyDefs() {
 		if propDef.Required {
 			val, exists := props[propName]
-			if !exists || val == nil || val == "" || isEmptyList(val) {
+			if !exists || IsEmptyValue(val) {
 				errs = append(errs, &ValidationError{
 					Type:     ValidationErrorRequired,
 					Property: propName,
@@ -177,9 +181,9 @@ func (m *Metamodel) ValidateProperties(props map[string]any, schema PropertySche
 			continue
 		}
 
-		// Skip empty strings and empty lists - they represent "no value".
+		// Skip empty values (IsEmptyValue) - they represent "no value".
 		// For required properties, this is already reported as missing above.
-		if val == "" || isEmptyList(val) {
+		if IsEmptyValue(val) {
 			continue
 		}
 
@@ -242,19 +246,6 @@ func (m *Metamodel) ValidateRelationProperties(
 	}
 
 	return m.ValidateProperties(properties, &def)
-}
-
-// isEmptyList reports whether val is a zero-length slice. Both []string
-// (coerced from form submissions) and []interface{} (from YAML frontmatter)
-// are treated as list values.
-func isEmptyList(val any) bool {
-	switch v := val.(type) {
-	case []string:
-		return len(v) == 0
-	case []any:
-		return len(v) == 0
-	}
-	return false
 }
 
 // ValidatePropertyValue validates a single property value against its definition.
@@ -427,6 +418,15 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 		// Structural validation is just "string(s)"; content-level checks
 		// (file exists, hash matches) are the attachment store's concern.
 		return validateFileValue(propName, propDef, val)
+
+	case PropertyTypeExternalRef:
+		if _, err := ParseExternalRef(val); err != nil {
+			return &ValidationError{
+				Type:     ValidationErrorExternalRef,
+				Property: propName,
+				Message:  err.Error(),
+			}
+		}
 
 	default:
 		// Custom type (enum defined in types section)

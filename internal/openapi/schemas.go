@@ -145,6 +145,16 @@ func (g *Generator) propertyToSchema(prop metamodel.PropertyDef) *Schema {
 		base = &Schema{Type: "boolean"}
 	case metamodel.PropertyTypeFile:
 		base = &Schema{Type: "string", Format: "uri-reference"}
+	case metamodel.PropertyTypeExternalRef:
+		base = &Schema{
+			Type: "object",
+			Properties: map[string]*Schema{
+				"id":  {Type: "string", Description: "Id of the counterpart in system " + prop.System},
+				"url": {Type: "string", Format: "uri"},
+			},
+			Required: []string{"id"},
+			ReadOnly: true,
+		}
 	default:
 		// Check if it's a custom enum type
 		if ct, ok := g.meta.Types[prop.Type]; ok {

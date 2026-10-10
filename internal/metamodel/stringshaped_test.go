@@ -17,6 +17,7 @@ func TestStringShaped(t *testing.T) {
 		{"declared custom type", m, PropertyDef{Type: "status"}, true},
 		{"undeclared custom type", m, PropertyDef{Type: "nope"}, false},
 		{"integer", m, PropertyDef{Type: PropertyTypeInteger}, false},
+		{"external ref", m, PropertyDef{Type: PropertyTypeExternalRef, System: "x"}, false},
 		{"string list", m, PropertyDef{Type: PropertyTypeString, List: true}, false},
 		{"nil metamodel, string", nil, PropertyDef{Type: PropertyTypeString}, true},
 		{"nil metamodel, custom type", nil, PropertyDef{Type: "status"}, false},

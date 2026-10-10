@@ -156,10 +156,13 @@ var resolvingSteps = map[string][]string{
 	//
 	// The face kinds differ because there is exactly one right answer and it
 	// is cheap to state, which is what makes enforcing it reasonable.
-	"enum_values_replaced":           {},
-	"property_type_changed":          {},
-	"property_format_changed":        {},
-	"property_list_changed":          {},
+	"enum_values_replaced":    {},
+	"property_type_changed":   {},
+	"property_format_changed": {},
+	"property_list_changed":   {},
+	// A system change re-means stored ids; only the operator knows whether
+	// they map (a lua step) or must be cleared, so it is listed, not enforced.
+	"property_system_changed":        {},
 	"relation_endpoint_narrowed":     {},
 	"relation_cardinality_tightened": {},
 	"relation_symmetry_changed":      {},

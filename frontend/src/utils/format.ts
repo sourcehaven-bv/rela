@@ -5,6 +5,7 @@
 import { RRule } from 'rrule'
 import { TZDate } from '@date-fns/tz'
 import type { PropertyDef, EntityType } from '@/types'
+import { parseExternalRef } from '@/widgets/externalRef'
 
 export const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   year: 'numeric',
@@ -155,6 +156,10 @@ export function formatValue(value: unknown, type?: string, tz: string = browserT
     return value ? 'Yes' : 'No'
   }
 
+  if (type === 'external_ref') {
+    return parseExternalRef(value)?.id ?? '-'
+  }
+
   if (type === 'rrule' && typeof value === 'string' && value) {
     try {
       // Handle both "FREQ=..." and "DTSTART:... RRULE:FREQ=..." formats
@@ -208,6 +213,9 @@ export function formatCellValue(
     if (propDef?.type === 'rrule') {
       const single = Array.isArray(value) ? value[0] : value
       return formatValue(single, 'rrule')
+    }
+    if (propDef?.type === 'external_ref') {
+      return parseExternalRef(value)?.id ?? ''
     }
   }
 

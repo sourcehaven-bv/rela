@@ -38,6 +38,9 @@ const (
 	// argPosCreateEntityID is the position of the optional ID parameter in create_entity
 	// (type=1, properties=2, content=3, id=4, opts=5).
 	argPosCreateEntityID = 4
+	// argPosUpdateEntityOpts is the position of the optional options table in
+	// update_entity.
+	argPosUpdateEntityOpts = 4
 	// argPosCreateEntityOpts is the position of the optional options table in
 	// create_entity, carrying the content state to write.
 	argPosCreateEntityOpts = 5
@@ -124,6 +127,7 @@ type Runtime struct {
 	secrets       map[string]string // rela.secrets values (from .rela/secrets.yaml)
 	caps          Capabilities      // ambient capability grants; zero value denies all (TKT-YH52OM)
 	isAction      bool              // true when running as an action (changes rela.output behavior)
+	refWrites     bool              // may set external_ref properties; see WithExternalRefWrites
 	isDocument    bool              // document mode: rela.document populated, rela.output becomes a warning
 	documentID    string            // data-entry.yaml documents: key, exposed as rela.document.id
 	documentEntry string            // ID of the entity being rendered, exposed as rela.document.entry_id
@@ -255,6 +259,18 @@ func WithParams(params map[string]string) Option {
 func WithActionMode() Option {
 	return func(r *Runtime) {
 		r.isAction = true
+	}
+}
+
+// WithExternalRefWrites lets the runtime's create and update bindings set
+// `external_ref` properties (TKT-SM20FG, D3). Only runtimes that run
+// operator-authored scripts get it: scheduled tasks, data-entry actions,
+// automations (synchronous and background) and CLI `rela script`. A runtime
+// running code an MCP client chose (lua_eval, lua_run) does not, so a client
+// cannot repoint an entity's link to another system.
+func WithExternalRefWrites() Option {
+	return func(r *Runtime) {
+		r.refWrites = true
 	}
 }
 
@@ -902,6 +918,7 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 	// Version history (database backends; raises elsewhere)
 	registerHistoryBindings(r, rela)
 	registerVersionTagReadBindings(r, rela)
+	registerSyncBindings(r, rela)
 
 	// Graph traversal
 	r.L.SetField(rela, "trace_from", r.L.NewFunction(r.luaTraceFrom))
@@ -1774,7 +1791,8 @@ func (r *Runtime) luaSearch(ls *lua.LState) int {
 }
 
 // luaCreateEntity implements
-// rela.create_entity(type, properties, content?, id?, opts?) -> (entity, warnings).
+// rela.create_entity(type, properties, content?, id?, opts?) -> (entity, warnings, token).
+// token is set only when opts.token is true; see asSeen.
 //
 // opts is an optional table; `{face = "draft"}` names the content state to
 // create on a type declaring `faces:`, which such a type REQUIRES because it
@@ -1799,6 +1817,7 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 
 	propsTable := ls.CheckTable(2)
 	props := luaTableToGoMap(propsTable)
+	splitEmpty(propsTable, props) // a create has nothing to clear
 
 	content := ls.OptString(3, "")
 	customID := ls.OptString(argPosCreateEntityID, "")
@@ -1819,8 +1838,9 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 		Content:    content,
 	}
 	ctx := r.callerCtx()
+	writeCtx, token := asSeen(ctx, r, opts)
 	result, err := r.deps.EntityManager.CreateEntity(
-		ctx, newE, entity.CreateOptions{ID: customID, Face: opts.Face})
+		writeCtx, newE, entity.CreateOptions{ID: customID, Face: opts.Face, WriteExternalRefs: r.refWrites})
 	if err != nil {
 		ls.RaiseError("create entity error: %s", err.Error())
 		return 0
@@ -1828,7 +1848,8 @@ func (r *Runtime) luaCreateEntity(ls *lua.LState) int {
 
 	ls.Push(writtenEntityTable(ctx, ls, r.deps.VisibleReader, result.Entity))
 	ls.Push(WarningsToTable(ls, result.Warnings))
-	return 2
+	ls.Push(writeTokenValue(ctx, "rela.create_entity", token, result.Entity))
+	return 3
 }
 
 // writtenEntityTable returns the entity a write produced, as the caller may
@@ -1935,7 +1956,14 @@ func writeTargetReadable(ctx context.Context, rd EntityReader, addr string) bool
 	return ferr == nil && found
 }
 
-// luaUpdateEntity implements rela.update_entity(id, properties, content?) -> (entity, warnings).
+// luaUpdateEntity implements
+// rela.update_entity(id, properties, content?, opts?) -> (entity, warnings, token).
+//
+// opts is `{expect = token, token = bool}`. With expect the write applies
+// only while the caller's read of the entity still has that token, and
+// otherwise returns nil, "conflict" with nothing written (see writetoken.go).
+// The third return value is the caller's token of the row as written, only
+// when expect or token = true was given; see asSeen.
 //
 // Multi-return contract follows string.gsub semantics (NOT io.open):
 // both return values can be non-nil simultaneously. The first value
@@ -1959,17 +1987,27 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 	// the manager merge it against the raw stored entity. The binding holds
 	// no store handle at all, so the read-before-write that used to erase a
 	// caller's hidden properties is now unreachable from here (TKT-80EWGM).
-	var patch entity.Patch
+	// External refs only from runtimes granted WithExternalRefWrites.
+	patch := entity.Patch{WriteExternalRefs: r.refWrites}
 
 	// Merge properties if provided
 	if ls.GetTop() >= 2 && ls.Get(2).Type() == lua.LTTable {
-		patch.Properties = luaTableToGoMap(ls.CheckTable(2))
+		tbl := ls.CheckTable(2)
+		patch.Properties = luaTableToGoMap(tbl)
+		// rela.sync.EMPTY clears a property.
+		patch.MetaUnset = splitEmpty(tbl, patch.Properties)
 	}
 
 	// Update content if provided (nil means not provided, empty string clears content)
 	if ls.GetTop() >= 3 && ls.Get(3).Type() != lua.LTNil {
 		content := ls.CheckString(3)
 		patch.Content = &content
+	}
+
+	opts, optErr := parseWriteOpts(ls, argPosUpdateEntityOpts, updateEntityOptKeys, updateEntityOptSet)
+	if optErr != nil {
+		ls.RaiseError("update entity error: %s", optErr.Error())
+		return 0
 	}
 
 	rd, ok := r.reader(ls, "rela.update_entity")
@@ -1981,7 +2019,18 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 		return 0
 	}
 
-	result, err := r.deps.EntityManager.PatchEntity(ctx, target.String(), patch)
+	writeCtx, token := asSeen(ctx, r, opts)
+	if opts.Expect != "" && token == nil {
+		ls.RaiseError("rela.update_entity: expect needs a runtime that can tag versions")
+		return 0
+	}
+	result, err := r.deps.EntityManager.PatchEntity(writeCtx, target.String(), patch)
+	var conflict *store.VersionConflictError
+	if opts.Expect != "" && errors.As(err, &conflict) {
+		ls.Push(lua.LNil)
+		ls.Push(lua.LString(conflictResult))
+		return 2
+	}
 	if err != nil {
 		// Preserve the pre-TKT-80EWGM message for a missing entity: scripts
 		// match on it. The check is STRUCTURAL (see [NotFoundError]) — a
@@ -1997,7 +2046,8 @@ func (r *Runtime) luaUpdateEntity(ls *lua.LState) int {
 
 	ls.Push(writtenEntityTable(ctx, ls, r.deps.VisibleReader, result.Entity))
 	ls.Push(WarningsToTable(ls, result.Warnings))
-	return 2
+	ls.Push(writeTokenValue(ctx, "rela.update_entity", token, result.Entity))
+	return 3
 }
 
 // WarningsToTable converts a slice of entity.Warning to a Lua

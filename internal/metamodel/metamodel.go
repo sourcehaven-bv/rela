@@ -157,6 +157,11 @@ func StringShaped(m *Metamodel, pd PropertyDef) bool {
 	switch pd.Type {
 	case PropertyTypeString, PropertyTypeEnum, PropertyTypeDate, PropertyTypeDatetime:
 		return true
+	case PropertyTypeExternalRef:
+		// An object, never pushed as a string comparison: list pushdown,
+		// query scopes and derived-index inference all refuse it here
+		// (TKT-SM20FG D7). Its one store predicate is PropKeyEqual.
+		return false
 	}
 	if m == nil {
 		return false

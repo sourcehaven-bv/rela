@@ -128,12 +128,16 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// (TKT-VO6VG9) reads one of those versions by tag name, and
 	// WithVersionTags returns a copy that serves it; tagging itself is a
 	// write and lives on entitymanager.VersionTags, not here.
+	// FindByExternalRef (TKT-SM20FG) is ListEntityHeaders filtered by one
+	// property, then GetAddress; SyncReady reports whether history is
+	// served. Neither writes.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
 		"ResolveHeaders": true, "ListRelationsStrict": true, "WriteTarget": true,
 		"EntityVersions": true, "EntityVersion": true, "WithHistory": true,
 		"VersionByTag": true, "WithVersionTags": true,
+		"FindByExternalRef": true, "SyncReady": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))
