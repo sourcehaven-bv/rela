@@ -11,6 +11,10 @@ import (
 // (is_current_user / has_current_user) is usable in an affordance
 // `when:` and agrees with the explicit current_user.id comparison it
 // replaces. Same package, same semantics, one implementation.
+//
+// It uses a `fields:` block: a `visible:` condition must also lower to a
+// store query, which refuses `or` and list membership (see
+// TestNew_VisibleWhenMustLower). The sugar evaluates the same in every block.
 func TestAffordances_CurrentUserSugar(t *testing.T) {
 	t.Parallel()
 
@@ -78,7 +82,7 @@ func TestAffordances_CurrentUserSugar(t *testing.T) {
 			p := policyFromYAML(t, `
 roles:
   viewer:
-    visible:
+    fields:
       ticket:
         - field: assignee
           when: `+quoteYAML(tc.when)+`
@@ -93,7 +97,7 @@ assignments:
 			fv := r.FieldVerdicts(ctxFor(t, r, tc.user), ticket("T-1", tc.props))
 			// A field is hidden only when the map says so explicitly;
 			// absence means no grant narrowed it.
-			v, ok := fv.Visible["assignee"]
+			v, ok := fv.Writable["assignee"]
 			hidden := ok && !v
 			if hidden == tc.wantVisible {
 				t.Fatalf("when %q as %q: visible=%v, want visible=%v",
@@ -147,7 +151,7 @@ func TestAffordances_CurrentUserSugar_UnknownPlaceholderNeverMatches(t *testing.
 			p := policyFromYAML(t, `
 roles:
   everyone:
-    visible:
+    fields:
       ticket:
         - field: assignee
           when: `+quoteYAML(tc.when)+`
@@ -167,7 +171,7 @@ roles:
 				ctx = ctxFor(t, r, tc.user)
 			}
 			fv := r.FieldVerdicts(ctx, ticket("T-1", tc.props))
-			v, ok := fv.Visible["assignee"]
+			v, ok := fv.Writable["assignee"]
 			hidden := ok && !v
 			if hidden == tc.wantVisible {
 				t.Fatalf("when %q: visible=%v, want visible=%v", tc.when, !hidden, tc.wantVisible)

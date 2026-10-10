@@ -3,7 +3,9 @@ package search_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
+	"maps"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,38 +37,6 @@ func TestVisibleConformance_Bleve(t *testing.T) {
 	})
 }
 
-// TestVisibleFieldConformance_Bleve runs the property-level (match-on-hidden-
-// field) suite over the generic wrapper + bleve backend, exercising bleve's
-// own MatchedFields provenance path (TKT-GGQ0JT).
-func TestVisibleFieldConformance_Bleve(t *testing.T) {
-	storetest.RunVisibleFieldSearchTests(t, func(t *testing.T) (store.Store, search.Searcher, search.FieldVisibleSearcher) {
-		t.Helper()
-		idx, err := bleveindex.NewMem()
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = idx.Close() })
-		s := memstore.New(memstore.WithObserver(idx))
-		searcher := search.New(s, idx)
-		v, err := search.NewVisible(searcher, s)
-		require.NoError(t, err)
-		return s, searcher, v
-	})
-}
-
-// TestVisibleFieldConformance_Linear runs the property-level suite over the
-// generic wrapper + LinearSearch backend — the ground-truth matcher the other
-// backends are checked against.
-func TestVisibleFieldConformance_Linear(t *testing.T) {
-	storetest.RunVisibleFieldSearchTests(t, func(t *testing.T) (store.Store, search.Searcher, search.FieldVisibleSearcher) {
-		t.Helper()
-		ls := search.NewLinearSearch()
-		s := memstore.New(memstore.WithObserver(ls))
-		searcher := search.New(s, ls)
-		v, err := search.NewVisible(searcher, s)
-		require.NoError(t, err)
-		return s, searcher, v
-	})
-}
-
 func TestNewVisible_RejectsNil(t *testing.T) {
 	s := memstore.New()
 	searcher := search.New(s, search.NewLinearSearch())
@@ -89,12 +59,12 @@ func (n nonProvenanceSearcher) Search(ctx context.Context, q search.Query) iter.
 	return n.inner.Search(ctx, q)
 }
 
-// TestSearchVisibleFields_FailsClosedWithoutProvenance is the regression guard
-// for the reviewer's finding #1: if the wired searcher can't report match
-// provenance, SearchVisibleFields must FAIL CLOSED (yield ErrScope), never
-// silently return un-redacted hits. A wrapped Service loses the provenance
-// type assertion — this proves that path errors instead of leaking.
-func TestSearchVisibleFields_FailsClosedWithoutProvenance(t *testing.T) {
+// TestSearchVisible_FieldScopeFailsClosedWithoutProvenance: when the wired
+// searcher cannot report match provenance, a search over a field-gated type
+// must FAIL CLOSED (ErrScope), never return unchecked hits. A wrapped Service
+// loses the provenance type assertion; this proves that path errors instead
+// of leaking.
+func TestSearchVisible_FieldScopeFailsClosedWithoutProvenance(t *testing.T) {
 	s := memstore.New()
 	e := entity.New("TKT-1", "ticket")
 	e.SetString("title", "alpha rocket")
@@ -110,16 +80,12 @@ func TestSearchVisibleFields_FailsClosedWithoutProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	hide := func(_ context.Context, _ search.Hit, _ *entity.Entity) (map[string]struct{}, error) {
-		return map[string]struct{}{search.PropFieldPrefix + "code": {}}, nil
-	}
-	scope := map[string]search.TypeScope{"ticket": {AllowAll: true}}
+	scope := map[string]search.TypeScope{"ticket": {AllowAll: true, Fields: &search.FieldScope{Gated: []string{"code"}}}}
 
 	var streamErr error
 	hits := 0
-	for _, iterErr := range v.SearchVisibleFields(
-		context.Background(), search.Query{Text: "zeta777", World: store.TrivialScope()}, scope, hide) {
+	for _, iterErr := range v.SearchVisible(
+		context.Background(), search.Query{Text: "zeta777", World: store.TrivialScope()}, scope) {
 		if iterErr != nil {
 			streamErr = iterErr
 			break
@@ -131,6 +97,94 @@ func TestSearchVisibleFields_FailsClosedWithoutProvenance(t *testing.T) {
 	}
 	if !errors.Is(streamErr, search.ErrScope) {
 		t.Errorf("want ErrScope on missing provenance, got %v", streamErr)
+	}
+}
+
+// TestSearchVisible_FieldScopeReadBudget pins the field check's cost: the
+// reads it adds on top of the same search without a field scope are the same
+// for 10 matching rows as for 50, and with a shrunken page size the same per
+// page. A per-hit entity read or a per-hit grant query would grow with the
+// rows. (The inner Service's own per-hit read is
+// the ungated search's cost and is not measured here.)
+func TestSearchVisible_FieldScopeReadBudget(t *testing.T) {
+	fields := &search.FieldScope{
+		Gated: []string{"code", "status", "title"},
+		Grants: []search.FieldGrant{
+			{Fields: []string{"status"}},
+			{Fields: []string{"code"}, When: &store.GraphQuery{
+				Props: []store.PropPredicate{{Property: "status", Op: store.PropEqual, Value: "open", Scalar: true}},
+			}},
+		},
+	}
+	added := func(rows int) map[string]int {
+		t.Helper()
+		ms := memstore.New()
+		ls := search.NewLinearSearch()
+		for i := range rows {
+			e := entity.New(fmt.Sprintf("TKT-%03d", i), "ticket")
+			e.SetString("title", "row")
+			e.SetString("code", "budget code")
+			e.SetString("status", []string{"open", "done"}[i%2])
+			if err := ms.CreateEntity(t.Context(), e); err != nil {
+				t.Fatal(err)
+			}
+			_ = ls.EntityPut(e)
+		}
+		counting := storetest.NewCounting(ms)
+		v, err := search.NewVisible(search.New(counting, ls), counting)
+		if err != nil {
+			t.Fatal(err)
+		}
+		measure := func(fs *search.FieldScope, want int) map[string]int {
+			counting.Reset()
+			scope := map[string]search.TypeScope{"ticket": {AllowAll: true, Fields: fs}}
+			n := 0
+			q := search.Query{Text: "budget", World: store.TrivialScope()}
+			for _, err := range v.SearchVisible(t.Context(), q, scope) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				n++
+			}
+			if n != want {
+				t.Fatalf("%d rows: got %d hits, want %d", rows, n, want)
+			}
+			return counting.Calls()
+		}
+		base := measure(nil, rows)
+		gated := measure(fields, rows/2) // only open rows show code
+		for k, n := range base {
+			gated[k] -= n
+			if gated[k] == 0 {
+				delete(gated, k)
+			}
+		}
+		return gated
+	}
+	small, large := added(10), added(50)
+	if !maps.Equal(small, large) {
+		t.Errorf("field check reads grow with rows: 10 rows %v, 50 rows %v", small, large)
+	}
+	if len(small) == 0 {
+		t.Error("field check made no reads; the budget measures nothing")
+	}
+
+	// With pages of 5 hits, 10 rows take 2 pages and 50 rows take 10. The
+	// reads per page must be the same, or a page's cost grows with its rows.
+	search.SetFieldCheckPageForTest(t, 5)
+	two, ten := added(10), added(50)
+	if len(two) == 0 {
+		t.Fatal("paged field check made no reads; the budget measures nothing")
+	}
+	for k, n := range two {
+		if n%2 != 0 || ten[k]%10 != 0 || n/2 != ten[k]/10 {
+			t.Errorf("%s: %d reads over 2 pages, %d over 10 pages; want the same per page", k, n, ten[k])
+		}
+	}
+	for k := range ten {
+		if _, ok := two[k]; !ok {
+			t.Errorf("%s: read only at 50 rows", k)
+		}
 	}
 }
 
@@ -159,11 +213,10 @@ func TestSearchVisible_BleveHiddenOnlyMatchDropped(t *testing.T) {
 	}
 	require.Equal(t, 1, ungated, "fixture: bleve must match the hidden code")
 
-	scope := map[string]search.TypeScope{"ticket": {AllowAll: true}}
-	hidden := func(context.Context, search.Hit, *entity.Entity) (map[string]struct{}, error) {
-		return map[string]struct{}{search.PropFieldPrefix + "code": {}}, nil
-	}
-	for h, err := range v.SearchVisibleFields(t.Context(), q, scope, hidden) {
+	scope := map[string]search.TypeScope{"ticket": {AllowAll: true, Fields: &search.FieldScope{
+		Gated: []string{"code", "title"}, Grants: []search.FieldGrant{{Fields: []string{"title"}}},
+	}}}
+	for h, err := range v.SearchVisible(t.Context(), q, scope) {
 		require.NoError(t, err)
 		t.Errorf("hit %s returned; its only match is the hidden code", h.ID)
 	}

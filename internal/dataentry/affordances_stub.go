@@ -11,8 +11,10 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // AffordanceProfile names a verdict-source preset. "none" is the
@@ -238,4 +240,44 @@ func (d DemoFieldVerdictResolver) UnconditionalRelationVerdicts(
 // ticket.priority, whose verdict depends on the type only.
 func (DemoFieldVerdictResolver) FieldVisibleOnEveryRow(_ context.Context, entityType, property string) bool {
 	return entityType != "ticket" || property != "priority"
+}
+
+// searchFieldScoper returns the search form of r's `visible:` verdicts: the
+// [visibility.FieldScoper] that hides in search, per row, what r hides on an
+// entity read. Each resolver kind has its own. A resolver of any other kind
+// gets a scoper that refuses every search, so a resolver that hides fields can
+// never pair with a search that hides nothing. Tests that stub the resolver
+// set App.fieldScoper instead.
+func searchFieldScoper(r FieldVerdictResolver) visibility.FieldScoper {
+	switch r := r.(type) {
+	case *policyResolver:
+		return r.inner
+	case NopFieldVerdictResolver:
+		return visibility.NopRedactor{}
+	case DemoFieldVerdictResolver:
+		return demoFieldScope{}
+	default:
+		return unscopedResolver{kind: fmt.Sprintf("%T", r)}
+	}
+}
+
+// demoFieldScope is the search form of [DemoFieldVerdictResolver]: priority
+// is hidden on every ticket.
+type demoFieldScope struct{}
+
+// SearchFieldScope implements [visibility.FieldScoper].
+func (demoFieldScope) SearchFieldScope(_ context.Context, entityType string) (*search.FieldScope, error) {
+	if entityType != "ticket" {
+		return nil, nil //nolint:nilnil // nil scope is the documented "nothing hidden"
+	}
+	return &search.FieldScope{Gated: []string{"priority"}}, nil
+}
+
+// unscopedResolver is the scoper of a resolver with no search form. It fails
+// closed: search refuses rather than serve hits the resolver might hide.
+type unscopedResolver struct{ kind string }
+
+// SearchFieldScope implements [visibility.FieldScoper]: always an error.
+func (u unscopedResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, fmt.Errorf("dataentry: field resolver %s has no search field scope", u.kind)
 }

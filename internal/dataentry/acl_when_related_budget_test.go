@@ -23,7 +23,7 @@ func TestQueryBudget_ListPageACLRelatedWhenIsSizeIndependent(t *testing.T) {
 				Read: []string{"*"}, Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"},
 				Visible: map[string][]acl.FieldGrant{"ticket": {
 					{Field: "title"},
-					{Field: "status", When: "not related(entity, 'implements', { title = 'Feature 1' })"},
+					{Field: "status", When: "related(entity, 'implements', { title = 'Feature 1' })"},
 				}},
 			}},
 			Assignments: map[string]string{"T1": "editor"},
@@ -80,15 +80,15 @@ func TestQueryBudget_GetEntityACLRelatedWhenBindsOnce(t *testing.T) {
 		}
 		return counting.Calls()["MatchingFaces"]
 	}
-	base := get("entity.title ~= ''")
-	if n := get("not related(entity, 'implements', { title = 'Feature 1' })"); n != base+1 {
+	base := get("entity.title == 'x'")
+	if n := get("related(entity, 'implements', { title = 'Feature 1' })"); n != base+1 {
 		t.Fatalf("MatchingIDs = %d, want %d (baseline %d plus one traversal)", n, base+1, base)
 	}
 }
 
 // assertStatusVerdict checks a row's status visibility against the fixture:
 // ticket i implements feature i%5+1, so every fifth ticket implements
-// Feature 1 and has its status hidden.
+// Feature 1 and only those show their status.
 func assertStatusVerdict(t *testing.T, row v1.Entity) {
 	t.Helper()
 	var i int
@@ -96,20 +96,16 @@ func assertStatusVerdict(t *testing.T, row v1.Entity) {
 		t.Fatal(err)
 	}
 	_, shown := row.Properties["status"]
-	if want := i%5 != 0; shown != want {
+	if want := i%5 == 0; shown != want {
 		t.Errorf("%s: status shown = %v, want %v", row.ID, shown, want)
 	}
 }
 
 // A list `?q=` under a field-hiding policy (BUG-WJSYQT) drops a hit whose
-// text matched only fields the reader cannot see, which needs a field verdict
-// per hit. The list's own reads (headers, relations) do not grow with the
-// number of hits. Two per-hit terms remain, both inside the shared
-// search.FieldVisibleSearcher contract that /_search and the MCP searcher use
-// too: the searcher loads each hit once to tell which fields matched, and a
-// `when:` that traverses is answered per hit because the hidden-field
-// callback has no batch hook. BUG-57A53F tracks removing them; until
-// then this pins them at exactly one each, so they cannot grow further.
+// text matched only fields the reader cannot see. The `visible:` grants are
+// compiled into the search query, so neither the list's own reads nor the
+// field check grow with the number of hits: no hit is loaded a second time
+// and the `when:` traversal runs once per page, not once per hit.
 func TestQueryBudget_ListFreeTextUnderFieldHiding(t *testing.T) {
 	type sample struct{ fixed, entityLoads, traversals int }
 	var got []sample
@@ -121,7 +117,7 @@ func TestQueryBudget_ListFreeTextUnderFieldHiding(t *testing.T) {
 				Read: []string{"*"},
 				Visible: map[string][]acl.FieldGrant{"ticket": {
 					{Field: "title"},
-					{Field: "status", When: "not related(entity, 'implements', { title = 'Feature 1' })"},
+					{Field: "status", When: "related(entity, 'implements', { title = 'Feature 1' })"},
 				}},
 			}},
 			Assignments: map[string]string{"T1": "editor"},
@@ -151,9 +147,12 @@ func TestQueryBudget_ListFreeTextUnderFieldHiding(t *testing.T) {
 		t.Errorf("list reads grow with hits: %d at 10, %d at 50 (%s)", got[0].fixed, got[1].fixed, detail)
 	}
 	for i, n := range []int{10, 50} {
-		if got[i].entityLoads != n || got[i].traversals != n {
-			t.Errorf("at %d hits: %d field-check entity loads and %d traversals, want %d each (%s)",
-				n, got[i].entityLoads, got[i].traversals, n, detail)
+		if got[i].entityLoads != 0 {
+			t.Errorf("at %d hits: %d field-check entity loads, want 0 (%s)", n, got[i].entityLoads, detail)
 		}
+	}
+	if got[0].traversals != got[1].traversals {
+		t.Errorf("field-check traversals grow with hits: %d at 10, %d at 50 (%s)",
+			got[0].traversals, got[1].traversals, detail)
 	}
 }

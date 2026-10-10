@@ -235,7 +235,7 @@ type Services struct {
 	// stopped in stopBackgroundServices, so Close and CloseAssembly stop the
 	// sweep their own Assemble started and no sibling's.
 	versionSweep versionSweep
-	// fieldRedactor applies field-level `visible:` policy to the unattended
+	// fieldReads applies field-level `visible:` policy to the unattended
 	// and identity-bearing read paths (TKT-425426). Never nil after
 	// construction: [visibility.NopRedactor] when no policy declares
 	// affordance grants, so the no-policy path stays byte-identical.
@@ -245,7 +245,7 @@ type Services struct {
 	// must be fully built before it is shared — [affordances.PolicyResolver.WithMachines]
 	// is the one mutator on an otherwise-immutable value and is safe only
 	// during single-threaded wiring. Constructing here, once, preserves that.
-	fieldRedactor visibility.FieldRedactor
+	fieldReads fieldReadPolicy
 
 	// versionTags is the version tag writer (TKT-VO6VG9), built in
 	// finishAssembly over entityManager. See [VersionTags].
@@ -711,7 +711,7 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 // Field write grants apply too: writes go through the [entitymanager.FieldGated]
 // handle, so a job cannot set a property its identity may not.
 func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
-	deps := s.luaWriteDepsFor(s.fieldRedactor)
+	deps := s.luaWriteDepsFor(s.fieldReads)
 	deps.EntityManager = FieldGatedEntityManager(s)
 	return deps
 }
@@ -755,14 +755,14 @@ func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
 // visibility.PolicyReader implements only FilterRelations, so a surviving edge
 // still carries all of its meta.
 func (s *Services) GatedReads() GatedReadBundle {
-	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldRedactor, s.worlds)
-	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldRedactor, s.worlds)
+	reader, gate := scriptReads(s.store, s.aclDeclarative, s.fieldReads, s.worlds)
+	tr := scriptTracer(s.tracer, s.store, s.aclDeclarative, s.fieldReads, s.worlds)
 
 	deps := s.LuaReadDeps()
 	deps.VisibleReader = reader
 	deps.Tracer = tr
 	deps.Searcher = gatedSearcher(
-		s.searcher, s.visibleSearcher, s.aclDeclarative, s.fieldRedactor, s.meta, s.worlds.DefaultWorld(),
+		s.searcher, s.visibleSearcher, s.aclDeclarative, s.fieldReads, s.meta, s.worlds.DefaultWorld(),
 	)
 
 	b, err := relresolve.NewStoreBinder(s.meta, gate, s.store)
@@ -825,13 +825,10 @@ type GatedReadBundle struct {
 // degrading to raw hits (RR-GKCZO5).
 func gatedSearcher(
 	raw search.Searcher, vs search.VisibleSearcher, d *acl.Declarative,
-	redactor visibility.FieldRedactor, meta *metamodel.Metamodel, world store.WorldScope,
+	fields visibility.FieldScoper, meta *metamodel.Metamodel, world store.WorldScope,
 ) search.Searcher {
 	if d == nil {
 		return raw
-	}
-	if redactor == nil {
-		redactor = visibility.NopRedactor{}
 	}
 	gate, err := visibility.NewDeclarativeGate(d, world)
 	if err != nil {
@@ -842,7 +839,7 @@ func gatedSearcher(
 	for name := range meta.Entities {
 		types = append(types, name)
 	}
-	gs, err := visibility.NewSearcher(vs, gate, redactor, types)
+	gs, err := visibility.NewSearcher(vs, gate, fields, types)
 	if err != nil {
 		slog.Error("appbuild: gated searcher unavailable; search REFUSED", "err", err)
 		return visibility.DenySearcher{}
@@ -1149,11 +1146,11 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: compile worlds: %w", err)
 	}
-	fieldRedactor, err := buildFieldRedactor(c.Meta, c.Store, c.Declarative)
+	fields, err := buildFieldPolicy(c.Meta, c.Store, c.Declarative)
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
 	}
-	refs, err := collaboratorRefHolders(c, fieldRedactor, compiledWorlds)
+	refs, err := collaboratorRefHolders(c, fields.redactor, compiledWorlds)
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
 	}
@@ -1182,7 +1179,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		aclDeclarative: c.Declarative,
 		aclPolicy:      aclPolicy,
 		audit:          c.Audit,
-		fieldRedactor:  fieldRedactor,
+		fieldReads:     fields.redactor,
 		comments:       c.Comments,
 		piles:          refs.piles,
 		leases:         refs.leases,
@@ -1224,7 +1221,17 @@ func collaboratorRefHolders(
 	return refs, nil
 }
 
-// buildFieldRedactor constructs the field-level `visible:` redactor shared by
+// fieldReadPolicy is the field-level read policy as appbuild hands it out:
+// per-entity redaction for the readers, and its search form for the gated
+// searcher. Both answer from the same `visible:` grants, so one value serves
+// both and they cannot drift. [visibility.PolicyRedactor] and
+// [visibility.NopRedactor] implement it.
+type fieldReadPolicy interface {
+	visibility.FieldRedactor
+	visibility.FieldScoper
+}
+
+// buildFieldPolicy constructs the field-level `visible:` policy shared by
 // every appbuild-wired read path (TKT-0XL8MF). Before this existed, appbuild
 // could not build an affordance resolver at all, so the unattended and
 // identity-bearing paths were ROW-gated only and every property of a readable
@@ -1246,7 +1253,7 @@ func collaboratorRefHolders(
 // for the write gate.
 func buildFieldRedactor(
 	meta *metamodel.Metamodel, st store.Store, d *acl.Declarative,
-) (visibility.FieldRedactor, error) {
+) (fieldReadPolicy, error) {
 	fp, err := buildFieldPolicy(meta, st, d)
 	if err != nil {
 		return nil, err
@@ -1257,7 +1264,7 @@ func buildFieldRedactor(
 // fieldPolicy is the field-level half of acl.yaml: the read-side redactor
 // and the write-side gate, both answered by one resolver.
 type fieldPolicy struct {
-	redactor visibility.FieldRedactor
+	redactor fieldReadPolicy
 	gate     entitymanager.FieldWriteGate
 }
 
@@ -2335,12 +2342,12 @@ func startBackgroundServices(
 	}
 }
 
-// resolveACLAndRedactor resolves the ACL and derives the field redactor that
-// depends on it. They are returned together because the redactor is a function
+// resolveACLAndFieldPolicy resolves the ACL and derives the field policy that
+// depends on it. They are returned together because the policy is a function
 // of the resolved Declarative: splitting them invites a caller that has one
 // without the other, which is precisely the state that left three read paths
 // ungated (TKT-BUYEW1).
-func resolveACLAndRedactor(
+func resolveACLAndFieldPolicy(
 	base *SharedBase, st store.Store,
 ) (acl.ACL, *acl.Declarative, fieldPolicy, error) {
 	resolvedACL, aclDeclarative, err := resolveACL(base, st)
@@ -2468,7 +2475,7 @@ func assemble(
 	}
 
 	warnUndeclaredFaces(st, base.meta, base.cfg.Paths.Root)
-	resolvedACL, aclDeclarative, fieldPol, err := resolveACLAndRedactor(base, st)
+	resolvedACL, aclDeclarative, fieldPol, err := resolveACLAndFieldPolicy(base, st)
 	if err != nil {
 		return nil, err
 	}
@@ -2711,7 +2718,7 @@ func newServices(
 	templater templating.Templater, cfgLoader config.Loader, stateKV state.KV,
 	migState datamigration.StateStore, jobQueue jobs.Queue, aliases *caldavalias.Service, commentSvc *comments.Service,
 	versions store.VersionService, resolvedACL acl.ACL, aclDeclarative *acl.Declarative,
-	fieldRedactor visibility.FieldRedactor, schedState schedulerstate.Store,
+	fieldReads fieldReadPolicy, schedState schedulerstate.Store,
 ) *Services {
 	cfg := base.cfg
 	return &Services{
@@ -2749,7 +2756,7 @@ func newServices(
 		aclPolicy:          base.aclPolicy,
 		realtime:           base.realtime,
 		audit:              cfg.Audit,
-		fieldRedactor:      fieldRedactor,
+		fieldReads:         fieldReads,
 	}
 }
 

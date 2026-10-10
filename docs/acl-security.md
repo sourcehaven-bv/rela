@@ -1443,15 +1443,50 @@ is not enough on its own: the full-text index still contains a hidden
 property's text, so a query that matched *only* that property would
 otherwise return the entity as a hit and confirm the value by its mere
 presence (search a candidate postcode against a hidden address field →
-guess oracle). `/_search` closes this at the `VisibleSearcher` seam: each
-backend reports which fields a query matched (bleve with its own analyzer,
-Postgres by re-matching the candidate rows per field, the linear backend
-by substring), and a hit is **dropped** when every field it matched is one
-the principal may not see. A hit that also matched a *visible* field — or
-the id or content, which are never property-gated — still surfaces, with
-the hidden property redacted from its body. The property-level conformance
-suite (`storetest.RunVisibleFieldSearchTests`) pins this across all
-backends.
+guess oracle). `/_search` closes this inside the search itself. For each
+entity type, the request's `visible:` grants are compiled once into a
+field allowlist: which properties are gated, and which of them each grant
+shows on which rows. A grant's `when:`, and the role relation that confers a
+local role, become store predicates. The allowlist follows the role union:
+a role without a `visible:` block for the type shows every property on the
+rows it applies to and reads. The search backend applies the
+allowlist to every candidate row, so the result limit counts only hits that
+survive. Each backend checks a page of hits in one batch. On PostgreSQL the
+search query itself reports which grants hold on each row. Nothing calls back
+into the ACL per hit.
+
+A hit is **dropped** when every field it matched is one the principal may
+not see. A hit that also matched a *visible* field, or the id or content
+(which are never property-gated), still surfaces, with the hidden property
+redacted from its body. A property the metamodel does not declare is never
+gated. The suite `storetest.RunFieldScopeSearchTests` pins this on every
+backend, including a comparison with the Go matcher on generated data.
+
+Every backend decides which fields matched in Go, with the same case folding
+the search index was written with. PostgreSQL's `lower()` folds some
+characters differently: it turns 'İ' into "i" plus a combining dot, where Go
+turns it into "i". A match judged with `lower()` could count a visible field
+that the search did not actually match on, and so return a hit whose only
+real match was hidden. Bleve reports the fields its own fuzzy and wildcard
+rules matched, and never a field they did not.
+
+**A `visible:` condition must be answerable by a store query.** Because
+search applies `visible:` inside the store query, every `when:` in a role's
+`visible:` block must lower exactly to store predicates. The policy fails to
+load otherwise, and the error names the role, the type, the index and the
+field. A condition may be an AND of:
+
+- property equalities: `entity.status == 'open'`,
+  `entity.assignee == current_user.id`, `is_current_user(entity.assignee)`;
+- `related(...)` terms.
+
+Refused in `visible:`: `or`, `not`, ordered comparisons, `~=`,
+`has_role`, `has_global_role`, `has_relation`, `count_relations` and
+`has_current_user`. To show a field to whoever holds a role on the entity,
+confer that role with `role_relations` and give the role its own
+`visible:` block; local roles are honored exactly. The rule applies to
+entity `visible:` only. `fields:`, `options:` and relation-meta `visible:`
+keep the full predicate vocabulary.
 
 **Relation meta is redacted the same way.** A relation carries its own
 property map (`meta`), and a role's `relations:` grant can add a `visible:`

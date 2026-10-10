@@ -1160,6 +1160,14 @@ deps:
       - predicatefns
       - principal
       - statemachine
+      # SearchFieldScope compiles `visible:` grants into store predicates:
+      # queryplan decides exact lowering, relresolve resolves related() hops,
+      # and the result is a search.FieldScope (search never imports
+      # affordances, so there is no cycle).
+      - queryplan
+      - relresolve
+      - search
+      - store
   # Read-side ACL enforcement seam (DEC-ZBI39P): visibility wrappers over
   # the ungated pure readers. tracer is needed for the decorator's
   # interface/result types; store for the script reader's query types

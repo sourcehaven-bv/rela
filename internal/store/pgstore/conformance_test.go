@@ -54,17 +54,19 @@ func TestConformance(t *testing.T) {
 	})
 }
 
-// TestVisibleFieldConformance runs the property-level (match-on-hidden-field)
-// suite against the pgstore-native FieldVisibleSearcher (TKT-GGQ0JT).
-// DB-gated on RELA_TEST_DATABASE_URL like the rest of the suite.
 func TestGraphDifferential(t *testing.T) {
 	pgstore.SetIteratorPageSizeForTest(t, 2)
 	storetest.RunGraphDifferential(t, factory)
 }
 
-func TestVisibleFieldConformance(t *testing.T) {
+// TestFieldScopeConformance runs the field-scope suite a second time. RunAll
+// already runs it at the default page size, where every fixture fits on one
+// page. This run uses two-row pages, so the Go field check drops rows on
+// page edges and the keyset paging must refill the page until the limit
+// counts visible hits only.
+func TestFieldScopeConformance(t *testing.T) {
 	pgstore.SetIteratorPageSizeForTest(t, 2)
-	storetest.RunVisibleFieldSearchTests(t, fieldVisibleSearchFactory)
+	storetest.RunFieldScopeSearchTests(t, visibleSearchFactory)
 }
 
 func FuzzRelationKeyCollision(f *testing.F) {

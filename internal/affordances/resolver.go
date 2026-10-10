@@ -259,7 +259,7 @@ func (r *PolicyResolver) compileRole(roleName string, role acl.RoleDef) []error 
 		g := get(et)
 		g.declaredVisible = true
 		r.typesWithVisible[et] = true
-		errs = append(errs, r.compileFieldBlock(roleName, et, "visible", grants, &g.visible)...)
+		errs = append(errs, r.compileFieldBlock(roleName, et, blockVisible, grants, &g.visible)...)
 	}
 	for et, grants := range role.Options {
 		g := get(et)
@@ -292,6 +292,12 @@ func (r *PolicyResolver) compileFieldBlock(
 		if err != nil {
 			errs = append(errs, err)
 			continue
+		}
+		if block == blockVisible {
+			if err := requireLowerable(r.meta, roleName, entityType, i, fg.Field, prog); err != nil {
+				errs = append(errs, err)
+				continue
+			}
 		}
 		*out = append(*out, compiledFieldGrant{field: fg.Field, program: prog})
 	}

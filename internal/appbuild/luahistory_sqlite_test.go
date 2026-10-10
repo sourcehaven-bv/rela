@@ -85,7 +85,7 @@ const historyPolicy = `roles:
       doc:
         - field: title
         - field: secret
-          when: "has_relation(entity, 'blocks')"
+          when: "related(entity, 'blocks')"
 assignments:
   alice: admin
   bob: viewer

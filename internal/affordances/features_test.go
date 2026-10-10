@@ -261,11 +261,11 @@ roles:
 //  1. Write path: authorize OpUpdate on TKT-001. Allow with RuleID
 //     "editor" — only the editor role grants write on ticket, and
 //     editor flows in only via the per-entity edge.
-//  2. Affordance path: editor role declares a `visible:` grant on
-//     internal_notes ONLY when has_role(..., "editor"). Under the
-//     correct wiring, the affordance resolver picks up editor for
-//     Alice on TKT-001, the predicate passes, and the field is
-//     visible (absent from the deny-map under closed-world).
+//  2. Affordance path: the everyone role closes ticket with a
+//     `visible:` block of title only, and the editor role adds
+//     internal_notes. Under the correct wiring, the affordance resolver
+//     picks up editor for Alice on TKT-001 and the field is visible
+//     (absent from the deny-map under closed-world).
 //
 // A regression where affordances.New ignored its injected Declarative
 // would fail (2): the resolver would not see editor for Alice on
@@ -299,7 +299,10 @@ roles:
     visible:
       ticket:
         - field: internal_notes
-          when: 'has_role(current_user, entity, "editor")'
+  everyone:
+    visible:
+      ticket:
+        - field: title
 role_relations:
   editor-of:
     confers: editor
@@ -345,9 +348,8 @@ role_relations:
 	}
 
 	// (2) Affordance path: internal_notes should be VISIBLE because
-	// the predicate has_role(current_user, entity, "editor") passes —
 	// the resolver attributes editor to Alice on TKT-001 via the
-	// per-entity edge. Pre-fix or under a regression that ignored
+	// per-entity edge, and editor's `visible:` block grants it. Pre-fix or under a regression that ignored
 	// the injected Declarative, internal_notes would be hidden
 	// (present in the deny-map with false), because no other path
 	// confers editor.
@@ -426,7 +428,7 @@ func TestFeature_HasRole_AncestorConferred(t *testing.T) {
 roles:
   editor:
     read: [document]
-    visible:
+    fields:
       document:
         - field: internal_notes
           when: '` + tc.when + `'
@@ -451,9 +453,11 @@ inherit_roles_through:
 				principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, d)
 			verdict := resolver.FieldVerdicts(ctx, dsecret)
 
-			_, denied := verdict.Visible["internal_notes"]
+			// A `fields:` block: has_role does not lower to a store query, so a
+			// `visible:` condition may not use it (TestNew_VisibleWhenMustLower).
+			_, denied := verdict.Writable["internal_notes"]
 			if denied != tc.wantVisible {
-				t.Errorf("Visible[internal_notes] presence = %v; want %v (verdict=%+v)",
+				t.Errorf("Writable[internal_notes] presence = %v; want %v (verdict=%+v)",
 					denied, tc.wantVisible, verdict)
 			}
 		})

@@ -6,16 +6,20 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 )
 
-// TKT-73C6B2: under WithHistoricalSubject, a `visible:` grant conditioned on a
-// subject-world lookup (has_relation / count_relations) fails CLOSED — the live
-// store can't answer the entity's as-of-version edges, so trusting it would let
-// the grant flip open and leak a field hidden at write time. The marker makes
-// outgoingCounts return no edges, so the predicate evaluates false and the
-// field hides. Live reads (no marker) are unaffected: the edge is seen.
+// TKT-73C6B2: under WithHistoricalSubject, a `visible:` grant conditioned on
+// the subject's edges fails CLOSED. The live store cannot answer the entity's
+// as-of-version edges, so trusting it would let the grant flip open and leak a
+// field hidden at write time. traversalFor refuses a historical subject, so
+// related(...) evaluates as denied and the field hides. Live reads (no marker)
+// are unaffected: the edge is seen.
+//
+// has_relation and count_relations used to be pinned here too. A `visible:`
+// condition must now lower to a store query, so both are refused at load
+// (TestNew_VisibleWhenMustLower); related(...) is the form that remains.
 
 // Scenario 1 (edge present at capture, gone/untrusted at read): a
-// has_relation-gated visible field is VISIBLE live but HIDDEN historical.
-func TestHistorical_HasRelationVisible_FailsClosed(t *testing.T) {
+// related()-gated visible field is VISIBLE live but HIDDEN historical.
+func TestHistorical_RelatedVisible_FailsClosed(t *testing.T) {
 	t.Parallel()
 	p := policyFromYAML(t, `
 roles:
@@ -23,57 +27,24 @@ roles:
     visible:
       ticket:
         - field: assignee
-          when: "has_relation(entity, 'blocks')"
+          when: "related(entity, 'blocks')"
 assignments:
   alice: triager
 `)
-	// Edge present in the LIVE lookup.
-	r, err := affordances.New(testMeta(t), newStubLookup([3]string{"T-1", "blocks", "T-9"}), declFor(t, p))
+	// Edge present in the LIVE graph.
+	b := &stubBinder{answer: map[string]bool{"T-1": true}}
+	r, err := affordances.New(testMeta(t), newStubLookup(), declFor(t, p), affordances.WithTraversals(b))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Live read: edge present → grant passes → assignee visible (not in deny map,
-	// or present-and-true).
 	fvLive := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil))
 	if v, ok := fvLive.Visible["assignee"]; ok && !v {
 		t.Errorf("live: assignee should be visible (blocks edge present), got hidden")
 	}
 
-	// Historical read: marker neuters the subject-world lookup → grant fails →
-	// assignee hidden, regardless of what the live store still holds.
-	ctxHist := affordances.WithHistoricalSubject(ctxFor(t, r, "alice"))
-	fvHist := r.FieldVerdicts(ctxHist, ticket("T-1", nil))
-	if v, ok := fvHist.Visible["assignee"]; !ok || v {
-		t.Errorf("historical: assignee must fail closed (hidden), got ok=%v v=%v", ok, v)
-	}
-}
-
-// count_relations-gated grant fails closed the same way (both host funcs
-// funnel through outgoingCounts).
-func TestHistorical_CountRelationsVisible_FailsClosed(t *testing.T) {
-	t.Parallel()
-	p := policyFromYAML(t, `
-roles:
-  triager:
-    visible:
-      ticket:
-        - field: assignee
-          when: "count_relations(entity, 'blocks') > 0"
-assignments:
-  alice: triager
-`)
-	r, err := affordances.New(testMeta(t),
-		newStubLookup([3]string{"T-1", "blocks", "T-9"}, [3]string{"T-1", "blocks", "T-8"}), declFor(t, p))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	fvLive := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil))
-	if v, ok := fvLive.Visible["assignee"]; ok && !v {
-		t.Errorf("live: assignee should be visible (2 blocks edges), got hidden")
-	}
-
+	// Historical read: the traversal is refused → grant fails → assignee
+	// hidden, regardless of what the live store still holds.
 	fvHist := r.FieldVerdicts(affordances.WithHistoricalSubject(ctxFor(t, r, "alice")), ticket("T-1", nil))
 	if v, ok := fvHist.Visible["assignee"]; !ok || v {
 		t.Errorf("historical: assignee must fail closed (hidden), got ok=%v v=%v", ok, v)
@@ -84,7 +55,8 @@ assignments:
 // current_user (the reader) resolves identically live and historical — the
 // reader stays live, so an entitled reader keeps historical visibility and an
 // unentitled one stays denied, regardless of the marker. (This is why the
-// marker only neuters subject-world edges, not the reader.)
+// marker only neuters subject-world edges, not the reader.) The condition
+// compares the reader with a property the frozen record carries.
 func TestHistorical_ReaderSideGrant_Unaffected(t *testing.T) {
 	t.Parallel()
 	p := policyFromYAML(t, `
@@ -93,7 +65,7 @@ roles:
     visible:
       ticket:
         - field: assignee
-          when: "current_user.id == 'auditor'"
+          when: "is_current_user(entity.assignee)"
 assignments:
   auditor: viewer
   bob: viewer
@@ -110,7 +82,7 @@ assignments:
 		if hist {
 			ctx = affordances.WithHistoricalSubject(ctx)
 		}
-		fv := r.FieldVerdicts(ctx, ticket("T-1", nil))
+		fv := r.FieldVerdicts(ctx, ticket("T-1", map[string]any{"assignee": "auditor"}))
 		if v, ok := fv.Visible["assignee"]; ok && !v {
 			t.Errorf("auditor (historical=%v): assignee should be visible (reader is live), got hidden", hist)
 		}
@@ -122,7 +94,7 @@ assignments:
 		if hist {
 			ctx = affordances.WithHistoricalSubject(ctx)
 		}
-		fv := r.FieldVerdicts(ctx, ticket("T-1", nil))
+		fv := r.FieldVerdicts(ctx, ticket("T-1", map[string]any{"assignee": "auditor"}))
 		if v, ok := fv.Visible["assignee"]; !ok || v {
 			t.Errorf("bob (historical=%v): assignee should be hidden, got ok=%v v=%v", hist, ok, v)
 		}
