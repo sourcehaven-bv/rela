@@ -23,7 +23,7 @@ status: done
 - [x] All significant review-responses addressed
 - [x] Self-reviewed the diff for unrelated changes
 
-**Review Responses:** RR-W29XJT, RR-W592HL (deferred), RR-3DOK3T, RR-1HE885,
+**Review Responses:** RR-W29XJT, RR-W592HL (wont-fix: not a defect), RR-3DOK3T, RR-1HE885,
 RR-071ZE9, RR-4LC9XP, RR-PA5B23, RR-TTQMQK
 
 ## Acceptance Verification
