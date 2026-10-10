@@ -163,9 +163,19 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	// This path writes the store directly, so it applies the owning rules
 	// itself (TKT-QO14GB), in one Tx with the write. Re-creating the
 	// identical owning edge passes the check and is the idempotent no-op
-	// below.
-	owning := metamodel.IsOwning(h.deps.Meta, r.Type)
+	// below. An automation may not grow a bounded relation past its bound
+	// either (TKT-65LVAK): the count shares the Tx too, and an edge that
+	// exists already is the same no-op, not a refusal.
+	bounded := relTypeHasMax(h.deps.Meta, r.Type)
 	write := func(st store.Store) error {
+		if bounded {
+			if _, gErr := st.GetRelation(ctx, r.Identity()); gErr == nil {
+				return store.ErrConflict
+			}
+			if cErr := checkRelationCapacity(ctx, st, h.deps.Meta, r.Identity(), nil, nil); cErr != nil {
+				return cErr
+			}
+		}
 		if err := CheckOwningEdge(ctx, h.deps.Meta, st, r.Identity()); err != nil {
 			return err
 		}
@@ -176,7 +186,7 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 		return err
 	}
 	var err error
-	if owning {
+	if bounded || metamodel.IsOwning(h.deps.Meta, r.Type) {
 		err = h.deps.Store.Tx(ctx, write)
 	} else {
 		err = write(h.deps.Store)

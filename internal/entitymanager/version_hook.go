@@ -129,15 +129,23 @@ type RelationVersionRecord struct {
 	PrincipalUser string
 	PrincipalTool string
 	TriggeredBy   string
+
+	// RecordID is the edge's surrogate lineage id, read while its row still
+	// existed. Zero asks the store to resolve it from the key, which is only
+	// right while the row exists ([RelationLineageReader]).
+	RecordID int64
 }
 
 // recordRelationVersion builds a RelationVersionRecord from a relation's state
 // and dispatches it. No-op when no recorder is wired. Attribution is read from
 // ctx (never a caller-supplied field). triggeredBy overrides the ctx-derived
 // value when non-empty (a cascade delete attributes each relation to the entity
-// delete that triggered it). Failure is logged, never propagated.
+// delete that triggered it). recordID is the lineage id read earlier, for a
+// capture made after the row is gone (ReplaceRelations); zero lets the store
+// resolve it from the key. Failure is logged, never propagated.
 func (m *Manager) recordRelationVersion(
-	ctx context.Context, op store.VersionOp, r *entity.Relation, prevFrom, prevTo, triggeredBy string,
+	ctx context.Context, op store.VersionOp, r *entity.Relation, recordID int64,
+	prevFrom, prevTo, triggeredBy string,
 ) {
 	if m.deps.RelationVersionRecorder == nil {
 		return
@@ -176,6 +184,7 @@ func (m *Manager) recordRelationVersion(
 		PrincipalUser: p.User,
 		PrincipalTool: p.Tool,
 		TriggeredBy:   tb,
+		RecordID:      recordID,
 	}
 	if err := m.deps.RelationVersionRecorder.RecordRelationVersion(ctx, rec); err != nil {
 		slog.Error("relation_version.record_failed",

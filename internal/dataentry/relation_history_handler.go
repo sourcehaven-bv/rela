@@ -473,7 +473,7 @@ func restoreRelationHistoryVersion(a *App,
 		_, writeErr = a.entityManager.CreateRelation(ctx, key, opts)
 	}
 	if writeErr != nil {
-		if writeForbiddenIfACLDenied(w, writeErr) {
+		if writeForbiddenIfACLDenied(w, writeErr) || writeCardinalityIfExceeded(w, r, writeErr) {
 			return
 		}
 		if errors.Is(writeErr, entitymanager.ErrEntityNotFound) {

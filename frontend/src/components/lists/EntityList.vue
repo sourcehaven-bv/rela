@@ -176,9 +176,15 @@ function canCreate(): boolean {
 // The table's own Add button, below the rows: the same dialog as New, and
 // hidden under the same gate. In a grouped list each section has one, and the
 // new row starts with that section's value so it lands where it was added.
-const createPrefill = ref<{ properties: Record<string, unknown> }>()
-function onTableAdd(section: ListSection | { prefill?: undefined }) {
-  createPrefill.value = section.prefill ? { properties: section.prefill } : undefined
+const createPrefill = ref<{
+  properties: Record<string, unknown>
+  relations?: Record<string, { id: string; type: string }[]>
+}>()
+function onTableAdd(section: ListSection | { prefill?: undefined; prefillRelations?: undefined }) {
+  createPrefill.value =
+    section.prefill || section.prefillRelations
+      ? { properties: section.prefill ?? {}, relations: section.prefillRelations }
+      : undefined
   createModal.show()
 }
 // From `_actions` alone, under every world. The server computes the map for
@@ -478,6 +484,8 @@ const grouping = useListGrouping({
   entityType: () => entityType.value,
   response: () => listQueryRef.value?.data.value,
   filterParams: () => queryParams.value as Record<string, unknown>,
+  pageScope: () => props.pageScope,
+  worldParam: () => worldParam.value,
 })
 
 // listExportUrlFor builds the export URL for the current list view + chosen
@@ -674,6 +682,7 @@ const visibleListColumns = computed(() => {
   const columns = listConfig.value?.columns ?? []
   const grouping = groupBy.value
   if (!grouping || grouping.buckets) return columns
+  if (grouping.relation) return columns.filter((column) => column.relation !== grouping.relation)
   return columns.filter((column) => column.property !== grouping.property)
 })
 

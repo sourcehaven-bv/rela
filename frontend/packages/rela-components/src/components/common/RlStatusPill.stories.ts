@@ -6,7 +6,7 @@ const meta: Meta<typeof RlStatusPill> = {
   component: RlStatusPill,
   parameters: { layout: 'padded' },
   argTypes: {
-    color: { control: { type: 'select' }, options: ['green', 'amber', 'red', 'grey', 'blue'] },
+    color: { control: { type: 'select' }, options: ['green', 'amber', 'red', 'grey', 'blue', 'purple'] },
   },
   args: { label: 'On track', color: 'green' },
 }

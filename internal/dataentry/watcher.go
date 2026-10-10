@@ -202,9 +202,9 @@ func (a *App) StartWatching() error {
 const storeEventBufSize = 64
 
 // startStoreEventBridge subscribes to the store's change feed and pumps entity
-// events to the SSE broker. Only entity create/update/delete are broadcast
-// (relations/attachments are not part of the live feed today — matching the
-// prior inline-broadcast behavior). Idempotent re-snapshot semantics: a
+// events to the SSE broker. Entity create/update/delete are broadcast for
+// their type; a relation write is broadcast for the types at both of its ends
+// (attachments are not part of the live feed). Idempotent re-snapshot semantics: a
 // duplicate event just nudges the browser to re-fetch again, which is harmless.
 //
 // # Audit-isolation invariant
@@ -245,8 +245,37 @@ func (a *App) pumpStoreEvents(events <-chan store.Event) {
 			// cached per-type verdicts so the next entity event
 			// re-resolves against current membership (RR-K2WKEJ).
 			a.broker.broadcastRelationChange()
+			// An edge is also part of how both ends are shown: a board
+			// column or list section taken from a relation, a detail panel's
+			// relation fields. Mark both ends' types stale so those views
+			// re-fetch; the per-connection read gate applies as for any
+			// entity event.
+			for _, t := range relationEndTypes(a.State(), ev.RelationType) {
+				a.broker.broadcastEntityChange(t)
+			}
 		}
 	}
+}
+
+// relationEndTypes is every entity type a relation of state's metamodel can
+// start or end at, each once. Unknown relation types yield nothing.
+func relationEndTypes(state *Schema, relation string) []string {
+	if state == nil || state.Meta == nil {
+		return nil
+	}
+	def, ok := state.Meta.Relations[relation]
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range append(append([]string{}, def.From...), def.To...) {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // StartGitFetch begins periodic git fetch in the background.

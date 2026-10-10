@@ -71,7 +71,10 @@ func (b *caldavBackend) PutCalendarObject(
 		// create.
 		return b.createFromTodo(ctx, name, href, m, in)
 	}
-	return b.updateFromTodo(ctx, name, href, m, in, entityID)
+	// A PUT of a to-do this principal has no alias for in this collection is
+	// the client putting it here: a move, or a copy to a second list. One with
+	// an alias is an edit of what the client already holds here.
+	return b.updateFromTodo(ctx, name, href, m, in, entityID, !hasExisting)
 }
 
 // checkPreconditions enforces If-Match / If-None-Match.
@@ -231,16 +234,42 @@ func (b *caldavBackend) createFromTodo(
 // dynamic collection. A no-op for static collections, and idempotent: an entry
 // that is already a member reports success.
 //
+// With joining set, the write is the client putting the entity into this
+// collection, and on a single-valued membership it leaves the other one (see
+// singleMemberships). Without it, the write is an edit of a to-do the client
+// holds here already, and the membership is only re-asserted: a stale edit
+// from a list the entity has since moved out of must not move it back. The
+// bound then refuses the edge, with a CardinalityError.
+//
 // It has NO side effect on the entity. Whether a failure to attach should undo
 // anything depends on which flow is calling — see linkToDriver (create) and
 // updateFromTodo (update), which decide that differently and for good reason.
-func (b *caldavBackend) attachToDriver(ctx context.Context, collection string, member entitypkg.Ref) error {
+func (b *caldavBackend) attachToDriver(
+	ctx context.Context, collection string, member entitypkg.Ref, joining bool,
+) error {
 	dyn, driverID, ok := b.resolveDynamic(ctx, collection)
 	if !ok {
 		return nil // static collection: membership needs no edge
 	}
 	key := b.membershipKey(dyn, driverID, member)
-	_, err := b.app.entityManager.CreateRelation(ctx, key, entitypkg.RelationOptions{})
+	var others []entitypkg.RelationKey
+	if joining {
+		var err error
+		if others, err = singleMemberships(ctx, b.app, dyn, key); err != nil {
+			return err
+		}
+	}
+	var err error
+	if len(others) > 0 {
+		// A single-valued membership: joining this collection leaves the
+		// other, in one atomic replace (TKT-65LVAK). A client move is a PUT
+		// here and then a DELETE against the old collection; the create
+		// alone would be refused by the bound before that DELETE arrives.
+		_, err = b.app.entityManager.ReplaceRelations(ctx,
+			[]entitymanager.RelationCreate{{Key: key}}, others)
+	} else {
+		_, err = b.app.entityManager.CreateRelation(ctx, key, entitypkg.RelationOptions{})
+	}
 	// Already a member: the normal case on every edit, since an ordinary
 	// check-off re-asserts the membership it already has. Idempotent, never an
 	// error.
@@ -248,6 +277,56 @@ func (b *caldavBackend) attachToDriver(ctx context.Context, collection string, m
 		return nil
 	}
 	return err
+}
+
+// singleMemberships returns the member's other membership edges that joining
+// the collection key names must remove: those of a relation that allows the
+// member one edge (max_outgoing: 1 when the member is the source,
+// max_incoming: 1 when it is the target). For any other relation it returns
+// none, and joining is additive. Only edges whose endpoints the principal may
+// read are returned, as the relations PATCH plans them; the manager then
+// authorizes each delete. An edge the caller cannot see stays, and the bound
+// refuses the join.
+func singleMemberships(
+	ctx context.Context, app *App, dyn dataentryconfig.CalDAVDynamicCollection, key entitypkg.RelationKey,
+) ([]entitypkg.RelationKey, error) {
+	def, ok := app.State().Meta.Relations[dyn.Relation]
+	if !ok {
+		return nil, nil
+	}
+	incoming := dyn.Direction.IsIncoming()
+	bound := def.MaxOutgoing
+	q := store.RelationQuery{From: key.From, Type: key.Type}
+	if incoming {
+		bound = def.MaxIncoming
+		q = store.RelationQuery{To: key.To, Type: key.Type}
+	}
+	if bound == nil || *bound != 1 {
+		return nil, nil
+	}
+	var edges []*entitypkg.Relation
+	for rel, err := range app.Services().Store.ListRelations(ctx, q) {
+		if err != nil {
+			return nil, fmt.Errorf("caldav: list memberships: %w", err)
+		}
+		if rel.Identity() == key {
+			continue
+		}
+		// An outgoing bound of a content-scoped relation counts per face.
+		if !incoming && rel.FromFace != key.FromFace {
+			continue
+		}
+		edges = append(edges, rel)
+	}
+	edges, err := app.visibleReader.readableRelations(ctx, edges)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]entitypkg.RelationKey, len(edges))
+	for i, rel := range edges {
+		out[i] = rel.Identity()
+	}
+	return out, nil
 }
 
 // membershipKey is the edge that makes member part of a dynamic collection.
@@ -308,7 +387,7 @@ func (b *caldavBackend) membershipKey(
 // the user with a to-do they cannot see.
 func (b *caldavBackend) linkToDriver(ctx context.Context, collection string, member entitypkg.Ref) error {
 	entityID := member.ID
-	err := b.attachToDriver(ctx, collection, member)
+	err := b.attachToDriver(ctx, collection, member, true)
 	if err == nil {
 		return nil
 	}
@@ -323,6 +402,7 @@ func (b *caldavBackend) linkToDriver(ctx context.Context, collection string, mem
 // updateFromTodo applies a client edit to an existing entity.
 func (b *caldavBackend) updateFromTodo(
 	ctx context.Context, collection, href string, m *caldavMapper, in inboundTodo, entityID string,
+	joining bool,
 ) (*caldav.CalendarObject, error) {
 	patch, err := m.patchFor(in)
 	if err != nil {
@@ -371,23 +451,34 @@ func (b *caldavBackend) updateFromTodo(
 	// Without the edge the write is a silent no-op — the client shows it in the
 	// collection and the next poll does not.
 	//
-	// ADDITIVE, never a move: a client "move" and a client "copy-to-second-list"
-	// are indistinguishable on the wire (both are a PUT of the same UID into
-	// another collection), and Thunderbird supports assigning one to-do to
-	// several calendars. Dropping the old edge would silently break that, while
-	// adding one models it exactly — membership is a relation, so belonging to
-	// two projects is a legal graph state. A real move sends a DELETE against
-	// the source collection afterwards, which removes the other edge.
+	// Additive unless the membership is single-valued: a client "move" and a
+	// client "copy-to-second-list" are indistinguishable on the wire (both are
+	// a PUT of the same UID into another collection), and Thunderbird supports
+	// assigning one to-do to several calendars. Dropping the old edge would
+	// silently break that, while adding one models it exactly: membership is a
+	// relation, so belonging to two projects is a legal graph state. A real
+	// move sends a DELETE against the source collection afterwards, which
+	// removes the other edge. Only a relation that allows one membership
+	// (max_outgoing or max_incoming 1) makes the join a move, and only when
+	// the client is joining this collection, not editing what it holds here
+	// (attachToDriver).
+	//
+	// A to-do served under its derived href has no alias until the client
+	// writes it, so a stale first edit of one in a collection the entity has
+	// left counts as joining it. The alias closes that after the first write.
 	// NEVER linkToDriver here: its compensating delete is a create-flow undo and
 	// would destroy this already-patched, arbitrarily-old entity (BUG-2ATX4H).
 	// The patch has landed and is the user's data; a membership that could not
 	// be recorded is not a reason to remove it.
-	if linkErr := b.attachToDriver(ctx, collection, res.Entity.Ref()); linkErr != nil {
+	if linkErr := b.attachToDriver(ctx, collection, res.Entity.Ref(), joining); linkErr != nil {
 		var linkDenied *acl.ForbiddenError
-		if errors.As(linkErr, &linkDenied) {
+		_, overBound := errors.AsType[*entitymanager.CardinalityError](linkErr)
+		if errors.As(linkErr, &linkDenied) || overBound {
 			// Same answer as a deny on the patch itself: accept, serve the
 			// stored state, withhold the ETag so the client refetches and
-			// reconciles. The edit is kept, the assignment is not made.
+			// reconciles. The edit is kept, the assignment is not made. A
+			// bound the membership would exceed is as permanent as a deny,
+			// so a 409 would have the client retry it forever.
 			return b.refusedWriteResponse(ctx, collection, href, m, in, entityID)
 		}
 		return nil, caldavWriteError(linkErr)
@@ -624,6 +715,9 @@ func (b *caldavBackend) unlinkFromDriver(
 	}
 	key := b.membershipKey(dyn, driverID, member)
 	if delErr := b.app.entityManager.DeleteRelation(ctx, key); delErr != nil {
+		if errors.Is(delErr, store.ErrNotFound) {
+			return unlinkMissing(ctx, b.app, dyn, entityID)
+		}
 		return false, false, caldavWriteError(delErr)
 	}
 	if !last || !b.disposeOnLastUnlink(dyn) {
@@ -651,6 +745,44 @@ func (b *caldavBackend) unlinkFromDriver(
 		return true, false, e
 	}
 	return true, true, nil
+}
+
+// unlinkMissing answers a DELETE whose membership edge is already gone. That
+// is the second half of a client move into a single-valued membership's
+// other collection: the PUT there replaced this edge (attachToDriver). The
+// DELETE asked for exactly that state, so it succeeds, and it does not count
+// as removing the entity's last membership.
+//
+// It succeeds only when the principal may read the entity and it has another
+// readable membership of the same relation, which is what a move leaves.
+// Anything else is the opaque 404 of a resource that is not here: answering
+// success for any id would tell a caller which ids exist.
+func unlinkMissing(
+	ctx context.Context, app *App, dyn dataentryconfig.CalDAVDynamicCollection, entityID string,
+) (handled, entityDisposed bool, err error) {
+	types, err := app.visibleReader.readableTypes(ctx, []string{entityID})
+	if err != nil {
+		return false, false, err
+	}
+	if types[entityID] == "" {
+		return false, false, notFoundHere()
+	}
+	dir := store.DirectionOutgoing
+	if dyn.Direction.IsIncoming() {
+		dir = store.DirectionIncoming
+	}
+	rels, err := listRelationsCtx(ctx, app.Services().Store,
+		store.RelationQuery{EntityID: entityID, Type: dyn.Relation, Direction: dir})
+	if err != nil {
+		return false, false, fmt.Errorf("caldav: list memberships: %w", err)
+	}
+	if rels, err = app.visibleReader.readableRelations(ctx, rels); err != nil {
+		return false, false, err
+	}
+	if len(rels) == 0 {
+		return false, false, notFoundHere()
+	}
+	return true, false, nil
 }
 
 // deleteAddressed hard-deletes what a resource's address names: the face it
@@ -932,6 +1064,12 @@ func caldavWriteError(err error) error {
 	}
 	var denied *acl.ForbiddenError
 	if errors.As(err, &denied) {
+		return webdav.NewHTTPError(http.StatusForbidden, err)
+	}
+	// A relation bound the write would exceed is as permanent as a deny, so
+	// it gets the same status. The update flow never gets here with one: it
+	// answers it with refusedWriteResponse.
+	if _, overBound := errors.AsType[*entitymanager.CardinalityError](err); overBound {
 		return webdav.NewHTTPError(http.StatusForbidden, err)
 	}
 	// The entity is gone. Permanent from the client's perspective: 404 tells it

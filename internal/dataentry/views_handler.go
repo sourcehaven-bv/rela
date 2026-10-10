@@ -1389,13 +1389,22 @@ type idResolver interface {
 // a readable face. Otherwise the world picks the row first and the gate
 // checks that row's face.
 func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []string) map[string]string {
-	if r, ok := h.viewReader.(idResolver); ok {
-		served := r.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
-		titles := make(map[string]string, len(served))
-		for id, hd := range served {
-			titles[id] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
-		}
-		return titles
+	served := visibleHeaders(ctx, h.viewReader, svc, ids)
+	titles := make(map[string]string, len(served))
+	for id, hd := range served {
+		titles[id] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
+	}
+	return titles
+}
+
+// visibleHeaders is [viewsHandler.visibleTitles] returning the redacted
+// headers, read through vr, for a caller that needs more of the target than
+// its title.
+func visibleHeaders(
+	ctx context.Context, vr visibility.Reader, svc Services, ids []string,
+) map[string]store.EntityHeader {
+	if r, ok := vr.(idResolver); ok {
+		return r.ResolveIDs(ctx, worldFromContext(ctx).visibility(), ids)
 	}
 	sel := store.InWorld(worldScopeFrom(ctx))
 	var headers []store.EntityHeader
@@ -1403,12 +1412,12 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 		if err != nil {
 			slog.Warn("dataentry: view section relation titles dropped; header read failed",
 				"targets", len(ids), "err", err)
-			return map[string]string{}
+			return map[string]store.EntityHeader{}
 		}
 		headers = append(headers, hd)
 	}
 	var visible []store.EntityHeader
-	if hf, ok := h.viewReader.(visibility.HeaderFilterer); ok {
+	if hf, ok := vr.(visibility.HeaderFilterer); ok {
 		visible = hf.FilterHeaders(ctx, headers)
 	} else {
 		// No header capability: gate the same batch as whole entities.
@@ -1417,17 +1426,17 @@ func (h *viewsHandler) visibleTitles(ctx context.Context, svc Services, ids []st
 			if err != nil {
 				slog.Warn("dataentry: view section relation titles dropped; entity read failed",
 					"targets", len(ids), "err", err)
-				return map[string]string{}
+				return map[string]store.EntityHeader{}
 			}
 			ents = append(ents, e)
 		}
-		for _, e := range h.viewReader.Filter(ctx, ents) {
+		for _, e := range vr.Filter(ctx, ents) {
 			visible = append(visible, store.HeaderOf(e))
 		}
 	}
-	titles := make(map[string]string, len(visible))
+	out := make(map[string]store.EntityHeader, len(visible))
 	for _, hd := range visible {
-		titles[hd.ID] = svc.Meta.DisplayTitle(hd.ID, hd.Type, hd.Properties)
+		out[hd.ID] = hd
 	}
-	return titles
+	return out
 }

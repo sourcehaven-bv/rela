@@ -63,6 +63,11 @@ type entityMutator interface {
 	// type. The zero tail is the implicit-tail edge, so this also covers
 	// every identity-scoped and faceless removal.
 	DeleteRelation(ctx context.Context, key entityPkg.RelationKey) error
+	// ReplaceRelations creates and deletes edges in one transaction
+	// (TKT-65LVAK). See entitymanager.Manager.ReplaceRelations.
+	ReplaceRelations(
+		ctx context.Context, creates []entitymanager.RelationCreate, removes []entityPkg.RelationKey,
+	) ([]*entityPkg.Relation, error)
 
 	// PatchEntity is how the webhook pipeline writes: it names only the
 	// properties a hook actually sets, so a property the hook does not mention
@@ -1353,7 +1358,7 @@ func (h *writeHandler) handleV1CreateRelation(
 		entityPkg.RelationOptions{Properties: req.Meta},
 	)
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+		if writeForbiddenIfACLDenied(w, err) || writeCardinalityIfExceeded(w, r, err) {
 			return
 		}
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relation", err.Error())
@@ -1361,6 +1366,19 @@ func (h *writeHandler) handleV1CreateRelation(
 	}
 
 	w.WriteHeader(http.StatusCreated)
+}
+
+// writeCardinalityIfExceeded answers a create the relation's max_outgoing or
+// max_incoming refused (TKT-65LVAK) with 422 cardinality_exceeded, and
+// reports whether it did.
+func writeCardinalityIfExceeded(w http.ResponseWriter, r *http.Request, err error) bool {
+	var ce *entitymanager.CardinalityError
+	if !errors.As(err, &ce) {
+		return false
+	}
+	writeV1Error(w, r, http.StatusUnprocessableEntity, "cardinality_exceeded",
+		"Relation cardinality exceeded", ce.Error())
+	return true
 }
 
 func (h *writeHandler) handleV1UpdateRelation(

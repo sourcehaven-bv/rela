@@ -284,7 +284,16 @@ export type DateBucket = 'overdue' | 'today' | 'tomorrow' | 'next_7_days' | 'lat
  * `max_rows` already defaulted, so the SPA holds no copy of the default.
  */
 export interface ListGroupBy {
-  property: string
+  /** The property to group on. Absent when grouping on `relation`. */
+  property?: string
+  /** Groups on a single-valued relation: one section per target (TKT-JO8PN3). */
+  relation?: string
+  /** Relation from the page anchor that selects and orders the sections. */
+  offered_by?: string
+  /** Target property that orders the sections when there is no anchor. */
+  order_by?: string
+  /** Enum property of the target that colours each section through `styles:`. */
+  style_from?: string
   /** Restyles enum values. Every declared value still gets a section. */
   groups?: ListGroup[]
   /** Sorts a date property into relative sections. Exclusive with `groups`. */
@@ -427,6 +436,8 @@ export interface KanbanConfig {
   // which types alone cannot guarantee at runtime.
   column_property: string
   columns?: KanbanColumn[]
+  /** Columns from a single-valued relation instead of an enum (TKT-KJ3Q07). */
+  columns_from?: KanbanColumnsFrom
   swimlane_property?: string
   swimlanes?: KanbanSwimlane[]
   card: KanbanCard
@@ -436,6 +447,16 @@ export interface KanbanConfig {
   filter_controls?: FilterControl[]
   /** Named query scope; see the field of the same name on ListConfig. */
   query_scope?: string
+}
+
+export interface KanbanColumnsFrom {
+  relation: string
+  /** Relation from the page anchor that selects and orders the columns. */
+  offered_by?: string
+  /** Target property that orders the columns when there is no anchor. */
+  order_by?: string
+  /** Enum property of the target that colours each column through `styles:`. */
+  style_from?: string
 }
 
 export interface KanbanColumn {

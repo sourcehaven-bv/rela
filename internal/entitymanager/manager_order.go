@@ -27,8 +27,10 @@ import (
 //
 // st is the store the siblings are read from: the Tx view when the caller
 // runs the read and the create in one transaction.
-func (m *Manager) assignManagedOrder(ctx context.Context, st store.Store, rel *entity.Relation, relType string) error {
-	relDef, ok := m.deps.Meta.Relations[relType]
+func assignManagedOrder(
+	ctx context.Context, st store.Store, meta *metamodel.Metamodel, rel *entity.Relation, relType string,
+) error {
+	relDef, ok := meta.Relations[relType]
 	// Caller already validated the relation type via Meta.ValidateRelation. This
 	// branch is only reachable through a metamodel reload race; failing loudly
 	// surfaces the race rather than silently writing a relation with no managed

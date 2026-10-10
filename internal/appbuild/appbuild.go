@@ -2545,9 +2545,10 @@ func versionRecorderFor(vs store.VersionService) entitymanager.VersionRecorder {
 }
 
 // relationVersionRecorder adapts a store.RelationVersionWriter to the
-// entitymanager's consumer-side RelationVersionRecorder. RecordID is left 0 so
-// the store resolves the surrogate lineage id from the composite key at write
-// time (correct for the synchronous pre-delete / post-rename capture) — the
+// entitymanager's consumer-side RelationVersionRecorder. RecordID is passed on;
+// when it is 0 the store resolves the surrogate lineage id from the composite
+// key at write time (correct for the synchronous pre-delete / post-rename
+// capture) — the
 // key includes FromFace, so a state-tailed edge resolves to its OWN lineage
 // rather than the default tail's (TKT-JAROC3).
 type relationVersionRecorder struct {
@@ -2562,6 +2563,7 @@ func (r relationVersionRecorder) RecordRelationVersion(
 	ctx context.Context, v entitymanager.RelationVersionRecord,
 ) error {
 	return r.w.WriteRelationVersion(ctx, store.RelationVersionInput{
+		RecordID:      v.RecordID,
 		Key:           entity.RelationKey{From: v.From, FromFace: v.FromFace, Type: v.Type, To: v.To},
 		Op:            v.Op,
 		PrevFrom:      v.PrevFrom,
@@ -2574,6 +2576,18 @@ func (r relationVersionRecorder) RecordRelationVersion(
 		PrincipalTool: v.PrincipalTool,
 		TriggeredBy:   v.TriggeredBy,
 	})
+}
+
+// RelationRecordID satisfies entitymanager.RelationLineageReader through the
+// version store's own accessor, when it has one (pgstore and sqlitestore do).
+func (r relationVersionRecorder) RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error) {
+	ids, ok := r.w.(interface {
+		RelationRecordID(ctx context.Context, k entity.RelationKey) (int64, error)
+	})
+	if !ok {
+		return 0, nil
+	}
+	return ids.RelationRecordID(ctx, k)
 }
 
 // coverage-ignore-end

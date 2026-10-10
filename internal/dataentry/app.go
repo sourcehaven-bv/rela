@@ -87,6 +87,11 @@ type appEntityWriter interface {
 		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
 	DeleteRelation(ctx context.Context, key entity.RelationKey) error
+	// ReplaceRelations is how CalDAV moves a to-do between the collections
+	// of a single-valued membership relation (TKT-65LVAK).
+	ReplaceRelations(
+		ctx context.Context, creates []entitymanager.RelationCreate, removes []entity.RelationKey,
+	) ([]*entity.Relation, error)
 	// DeleteEntityFace is here for the script runtime's Mutator, which App
 	// hands a.entityManager as.
 	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)

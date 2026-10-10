@@ -505,6 +505,32 @@ func TestAutomationCreateRelation_OwningRules(t *testing.T) {
 	}
 }
 
+// Moving an owned entity to another owner in one ReplaceRelations call does
+// not count the edge it leaves as a second owner (TKT-65LVAK). A plain
+// create of the same edge is still refused.
+func TestReplaceRelations_MovesOwnedEntity(t *testing.T) {
+	t.Parallel()
+	mgr, st := newOwningManager(t)
+	ctx := context.Background()
+	a, b, child := mkTask(t, mgr, "a"), mkTask(t, mgr, "b"), mkTask(t, mgr, "child")
+	mustLink(t, mgr, a, "subtask", child)
+	if err := link(mgr, b, "subtask", child); !errors.Is(err, entitymanager.ErrOwningRule) {
+		t.Fatalf("plain second owner: err = %v, want ErrOwningRule", err)
+	}
+	old := entity.RelationKey{From: a, Type: "subtask", To: child}
+	moved := entity.RelationKey{From: b, Type: "subtask", To: child}
+	if _, err := mgr.ReplaceRelations(ctx,
+		[]entitymanager.RelationCreate{{Key: moved}}, []entity.RelationKey{old}); err != nil {
+		t.Fatalf("move owned entity: %v", err)
+	}
+	if _, err := st.GetRelation(ctx, moved); err != nil {
+		t.Errorf("new owning edge missing: %v", err)
+	}
+	if _, err := st.GetRelation(ctx, old); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("old owning edge: err = %v, want ErrNotFound", err)
+	}
+}
+
 // mismatchOwningMetamodel adds a note type outside the owning relation's
 // allowlist, so a tolerated type mismatch can meet the owning rules.
 const mismatchOwningMetamodel = `version: "1.0"

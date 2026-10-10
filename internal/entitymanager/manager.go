@@ -1778,10 +1778,10 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	if captured != nil {
 		cascadeTB := "cascade:delete-entity:" + id
 		for _, rel := range captured.incoming {
-			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", cascadeTB)
 		}
 		for _, rel := range captured.outgoing {
-			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+			m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", cascadeTB)
 		}
 	}
 
@@ -2058,7 +2058,7 @@ func (m *Manager) recordPartialCascade(
 		if s, ok := snapshots[relationKey(rel)]; ok {
 			snap = s
 		}
-		m.recordRelationVersion(ctx, store.VersionOpDelete, snap, "", "", cascadeTB)
+		m.recordRelationVersion(ctx, store.VersionOpDelete, snap, 0, "", "", cascadeTB)
 	}
 }
 
@@ -2214,7 +2214,7 @@ func (m *Manager) DeleteEntityFace(
 		cascadeCtx = audit.WithTriggeredBy(ctx, "cascade:delete-face:"+ref)
 	}
 	for _, rel := range res.DeletedRelations {
-		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", "cascade:delete-face:"+ref)
+		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", "cascade:delete-face:"+ref)
 		m.recordRelationAudit(cascadeCtx, audit.OpDeleteRelation, rel, "deleted")
 	}
 	summary := fmt.Sprintf("deleted face %s", face)
@@ -2579,7 +2579,7 @@ func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
 				From: newFrom, Type: rel.Type, To: newTo,
 				Properties: rel.Properties, Content: rel.Content,
 			}
-			m.recordRelationVersion(ctx, store.VersionOpRename, after, rel.From, rel.To, renameTB)
+			m.recordRelationVersion(ctx, store.VersionOpRename, after, 0, rel.From, rel.To, renameTB)
 		}
 	}
 }
@@ -2617,6 +2617,61 @@ func (m *Manager) CreateRelation(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
 	ctx = withStoreAttribution(ctx)
+	rel, err := prepareRelationCreate(ctx, m, key, opts)
+	if err != nil {
+		return nil, err
+	}
+	// Keyed on the TAIL too: two edges on the same triple with different
+	// tails are two relations, so a faced create must not be rejected by
+	// the default face's edge (BUG-64MU2Q). Advisory either way — the
+	// store's atomic create below is the real guard.
+	if _, gErr := m.deps.Store.GetRelation(ctx, key); gErr == nil {
+		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
+			entity.FormatStateRef(key.From, key.FromFace), key.Type, key.To)
+	}
+
+	// Auto-assign managed order properties (_order_out / _order_in) when
+	// the relation type declares the side orderable. Overrides any
+	// non-finite caller-supplied value with AppendOrder over existing
+	// siblings; keeps finite caller values as-is. The sibling scan and the
+	// create share one Tx so two concurrent appends cannot both read the
+	// same last value and land on the same position. A bounded relation
+	// (max_outgoing / max_incoming) counts its edges in the same Tx, for the
+	// same reason (TKT-65LVAK).
+	//
+	// CreateRelation, not upsert: a create must never fall through to an
+	// update (that would clobber a racing create of the same triple).
+	// The GetRelation pre-check above is advisory; the store's atomic
+	// create is the real guard, and a conflict surfaces as
+	// ErrRelationAlreadyExists (BUG-ZWTDH9).
+	create := func(st store.Store) error { return writeRelationCreate(ctx, st, m.deps.Meta, key, rel, nil) }
+	var createErr error
+	// An owning edge reads its neighbors' edges to decide whether it may
+	// exist, so the reads and the write share one Tx for the same reason.
+	inTx := relTypeIsOrdered(m.deps.Meta, key.Type) || relTypeHasMax(m.deps.Meta, key.Type) ||
+		metamodel.IsOwning(m.deps.Meta, key.Type)
+	if inTx {
+		createErr = m.deps.Store.Tx(ctx, create)
+	} else {
+		createErr = create(m.deps.Store)
+	}
+	if createErr != nil {
+		if errors.Is(createErr, store.ErrConflict) {
+			return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
+				entity.FormatStateRef(key.From, key.FromFace), key.Type, key.To)
+		}
+		return nil, createErr
+	}
+	m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
+	return rel, nil
+}
+
+// prepareRelationCreate runs everything a relation create checks before it
+// writes: the face, the ACL, both endpoints and the relation-type tuple. It
+// returns the relation to write, with the template and opts applied.
+func prepareRelationCreate(
+	ctx context.Context, m *Manager, key entity.RelationKey, opts entity.RelationOptions,
+) (*entity.Relation, error) {
 	from, relType, to := key.From, key.Type, key.To
 	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
 	// peer must never let a write skip the ACL: if authz is deferred until
@@ -2665,16 +2720,8 @@ func (m *Manager) CreateRelation(
 		// never tolerated.
 		var mismatch *metamodel.InvalidRelationError
 		if !opts.TolerateTypeMismatch || !errors.As(vErr, &mismatch) {
-			return nil, fmt.Errorf("invalid relation: %w", vErr)
+			return nil, &InvalidRelationError{Key: key, err: fmt.Errorf("invalid relation: %w", vErr)}
 		}
-	}
-	// Keyed on the TAIL too: two edges on the same triple with different
-	// tails are two relations, so a faced create must not be rejected by
-	// the default face's edge (BUG-64MU2Q). Advisory either way — the
-	// store's atomic create below is the real guard.
-	if _, gErr := m.deps.Store.GetRelation(ctx, key); gErr == nil {
-		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
-			entity.FormatStateRef(from, key.FromFace), relType, to)
 	}
 
 	rel := entity.NewRelation(from, relType, to)
@@ -2695,49 +2742,32 @@ func (m *Manager) CreateRelation(
 	if opts.Content != nil {
 		rel.Content = *opts.Content
 	}
+	return rel, nil
+}
 
-	// Auto-assign managed order properties (_order_out / _order_in) when
-	// the relation type declares the side orderable. Overrides any
-	// non-finite caller-supplied value with AppendOrder over existing
-	// siblings; keeps finite caller values as-is. The sibling scan and the
-	// create share one Tx so two concurrent appends cannot both read the
-	// same last value and land on the same position.
-	//
-	// CreateRelation, not upsert: a create must never fall through to an
-	// update (that would clobber a racing create of the same triple).
-	// The GetRelation pre-check above is advisory; the store's atomic
-	// create is the real guard, and a conflict surfaces as
-	// ErrRelationAlreadyExists (BUG-ZWTDH9).
-	create := func(st store.Store) error {
-		if err := CheckOwningEdge(ctx, m.deps.Meta, st, key); err != nil {
-			return err
-		}
-		if err := m.assignManagedOrder(ctx, st, rel, relType); err != nil {
-			return err
-		}
-		_, err := st.CreateRelation(ctx, key, &store.RelationData{
-			Properties: rel.Properties,
-			Content:    rel.Content,
-		})
+// writeRelationCreate is the write half of a relation create, on st: the
+// cardinality bound, the owning rules, the managed order, then the store
+// create.
+//
+// Edges in leaving are not counted against the bounds (ReplaceRelations).
+func writeRelationCreate(
+	ctx context.Context, st store.Store, meta *metamodel.Metamodel, key entity.RelationKey, rel *entity.Relation,
+	leaving map[entity.RelationKey]bool,
+) error {
+	if err := checkRelationCapacity(ctx, st, meta, key, leaving, nil); err != nil {
 		return err
 	}
-	var createErr error
-	// An owning edge reads its neighbors' edges to decide whether it may
-	// exist, so the reads and the write share one Tx for the same reason.
-	if relTypeIsOrdered(m.deps.Meta, relType) || metamodel.IsOwning(m.deps.Meta, relType) {
-		createErr = m.deps.Store.Tx(ctx, create)
-	} else {
-		createErr = create(m.deps.Store)
+	if err := CheckOwningEdgeLeaving(ctx, meta, st, key, leaving); err != nil {
+		return err
 	}
-	if createErr != nil {
-		if errors.Is(createErr, store.ErrConflict) {
-			return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationAlreadyExists,
-				entity.FormatStateRef(from, key.FromFace), relType, to)
-		}
-		return nil, createErr
+	if err := assignManagedOrder(ctx, st, meta, rel, key.Type); err != nil {
+		return err
 	}
-	m.recordRelationAudit(ctx, audit.OpCreateRelation, rel, "created")
-	return rel, nil
+	_, err := st.CreateRelation(ctx, key, &store.RelationData{
+		Properties: rel.Properties,
+		Content:    rel.Content,
+	})
+	return err
 }
 
 // UpdateRelation merges new properties into the relation key names,
@@ -2870,7 +2900,7 @@ func (m *Manager) DeleteRelation(ctx context.Context, key entity.RelationKey) er
 	// live row (and its rel_record_id) still exists — the same order-before
 	// rationale as entity delete. Skipped if the relation was already gone.
 	if getErr == nil {
-		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", "")
+		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", "")
 	}
 	if err := m.deps.Store.DeleteRelation(ctx, key); err != nil {
 		return fmt.Errorf("delete relation: %w", err)

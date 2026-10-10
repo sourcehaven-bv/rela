@@ -343,7 +343,9 @@ func restoreInTx(ctx context.Context, m *Manager, tx store.Store, id string, don
 	}
 
 	// Owned entities first: the owning edges are hidden with the owner, and
-	// Unmark brings an edge back only when its other end is live.
+	// Unmark brings an edge back only when its other end is live. Unbounded:
+	// the edges coming back are grandfathered data, so no max_outgoing /
+	// max_incoming is checked (TKT-65LVAK).
 	for _, o := range owned {
 		r, uErr := sd.SoftDelete().Unmark(ctx, o.ID)
 		if uErr != nil {
@@ -521,7 +523,7 @@ func recordPurge(ctx context.Context, m *Manager, id string, res *store.DeleteRe
 	m.notifyAliasesOfDelete(ctx, id)
 	cascadeTB := "cascade:delete-entity:" + id
 	for _, rel := range res.DeletedRelations {
-		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, "", "", cascadeTB)
+		m.recordRelationVersion(ctx, store.VersionOpDelete, rel, 0, "", "", cascadeTB)
 	}
 	m.recordEntityAudit(ctx, audit.OpPurgeDeletedEntity, head,
 		fmt.Sprintf("purged after soft delete (%d relations)", len(res.DeletedRelations)))

@@ -1786,6 +1786,10 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			// also never see the section-level value.
 			errs = append(errs, validateSectionRender(viewID, i, s)...)
 
+			// Relation fields (TKT-CADCFX) need only the entry type, which is
+			// known whatever the section's source resolves to.
+			errs = append(errs, validateSectionRelationFields(viewID, i, s, view.Entry.Type, meta)...)
+
 			// Validate widget overrides (TKT-3R7RF3), outside the guard for the
 			// same reason: an unregistered widget name is checkable without the
 			// metamodel. The type-compatibility half needs the entity def, so
@@ -2187,6 +2191,103 @@ func suggestRelation(name string, meta *metamodel.Metamodel) string {
 	return ""
 }
 
+// validateKanbanColumnProperty checks that column_property is an enum of the
+// card type and that explicit columns name its values.
+func validateKanbanColumnProperty(
+	kanbanID string, kanban Kanban, entDef *metamodel.EntityDef, meta *metamodel.Metamodel,
+) []string {
+	propDef, ok := entDef.Properties[kanban.ColumnProperty]
+	if !ok {
+		return []string{fmt.Sprintf("kanban %q: column_property %q not in entity %q",
+			kanbanID, kanban.ColumnProperty, kanban.EntityType)}
+	}
+	validValues := GetValidEnumValues(propDef, meta)
+	if len(validValues) == 0 {
+		return []string{fmt.Sprintf("kanban %q: column_property %q must be an enum type",
+			kanbanID, kanban.ColumnProperty)}
+	}
+	var errs []string
+	for i, col := range kanban.Columns {
+		if !slices.Contains(validValues, col.Value) {
+			errs = append(errs, fmt.Sprintf(
+				"kanban %q: columns[%d] value %q is not valid for %q (valid: %s)",
+				kanbanID, i, col.Value, kanban.ColumnProperty, strings.Join(validValues, ", ")))
+		}
+	}
+	return errs
+}
+
+// validateKanbanColumnsFrom checks a relation-backed board (TKT-KJ3Q07).
+func validateKanbanColumnsFrom(kanbanID string, kanban Kanban, meta *metamodel.Metamodel) []string {
+	var errs []string
+	cf := kanban.ColumnsFrom
+	if kanban.ColumnProperty != "" {
+		errs = append(errs, fmt.Sprintf("kanban %q: column_property and columns_from are mutually exclusive", kanbanID))
+	}
+	if len(kanban.Columns) > 0 {
+		errs = append(errs, fmt.Sprintf("kanban %q: columns cannot be combined with columns_from", kanbanID))
+	}
+	if kanban.SwimlaneProperty != "" {
+		errs = append(errs, fmt.Sprintf("kanban %q: swimlanes are not supported with columns_from", kanbanID))
+	}
+	prefix := fmt.Sprintf("kanban %q: columns_from", kanbanID)
+	return append(errs, validateRelationColumns(prefix, kanban.EntityType, relationColumnsSource{
+		Relation: cf.Relation, OfferedBy: cf.OfferedBy, OrderBy: cf.OrderBy, StyleFrom: cf.StyleFrom,
+	}, meta)...)
+}
+
+// relationColumnsSource is the part a kanban's `columns_from` and a list's
+// relation `group_by` share.
+type relationColumnsSource struct {
+	Relation, OfferedBy, OrderBy, StyleFrom string
+}
+
+// validateRelationColumns checks the relation that a board's columns or a
+// list's sections come from. It must be single-valued and single-target, so a
+// row sits in exactly one column and the column type is known at load time.
+// OfferedBy, when set, must point at that target type; OrderBy must be one of
+// its properties; StyleFrom must be one of its enum properties.
+func validateRelationColumns(
+	prefix, entityType string, src relationColumnsSource, meta *metamodel.Metamodel,
+) []string {
+	relation, offeredBy, orderBy := src.Relation, src.OfferedBy, src.OrderBy
+	var errs []string
+	rel, ok := meta.GetRelationDef(relation)
+	if !ok {
+		return append(errs, fmt.Sprintf("%s: relation %q is not a relation type", prefix, relation))
+	}
+	if !slices.Contains(rel.From, entityType) {
+		errs = append(errs, fmt.Sprintf("%s: relation %q does not start at %q", prefix, relation, entityType))
+	}
+	if maxOut := rel.GetMaxOutgoing(); maxOut == nil || *maxOut != 1 {
+		errs = append(errs, fmt.Sprintf("%s: relation %q must declare max_outgoing: 1", prefix, relation))
+	}
+	if len(rel.To) != 1 {
+		return append(errs, fmt.Sprintf("%s: relation %q must have exactly one target type", prefix, relation))
+	}
+	target := rel.To[0]
+	if offeredBy != "" {
+		offered, ok := meta.GetRelationDef(offeredBy)
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Sprintf("%s: offered_by %q is not a relation type", prefix, offeredBy))
+		case !slices.Contains(offered.To, target):
+			errs = append(errs, fmt.Sprintf("%s: offered_by %q does not point to %q", prefix, offeredBy, target))
+		}
+	}
+	if orderBy != "" {
+		if targetDef, ok := meta.GetEntityDef(target); ok {
+			if _, has := targetDef.Properties[orderBy]; !has {
+				errs = append(errs, fmt.Sprintf("%s: order_by %q is not a property of %q", prefix, orderBy, target))
+			}
+		}
+	}
+	if src.StyleFrom != "" {
+		errs = append(errs, validateStyleFrom(prefix, src.StyleFrom, rel.To, meta)...)
+	}
+	return errs
+}
+
 // validateKanbans validates kanban board definitions.
 //
 //nolint:gocognit,gocyclo,funlen // linear validation dispatcher: one independent config-vs-metamodel check per branch; splitting would scatter the rule set without lowering real complexity.
@@ -2201,37 +2302,14 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 			continue
 		}
 
-		// Validate column_property exists and is enum type
-		if kanban.ColumnProperty == "" { //nolint:nestif // nested guards each check a distinct optional field of the kanban config.
+		// Columns come from a relation or from an enum column_property.
+		switch {
+		case kanban.ColumnsFrom != nil:
+			errs = append(errs, validateKanbanColumnsFrom(kanbanID, kanban, meta)...)
+		case kanban.ColumnProperty == "":
 			errs = append(errs, fmt.Sprintf("kanban %q: column_property is required", kanbanID))
-		} else {
-			propDef, ok := entDef.Properties[kanban.ColumnProperty]
-			if !ok {
-				errs = append(errs, fmt.Sprintf(
-					"kanban %q: column_property %q not in entity %q",
-					kanbanID, kanban.ColumnProperty, kanban.EntityType))
-			} else {
-				// Check if it's an enum type
-				validValues := GetValidEnumValues(propDef, meta)
-				if len(validValues) == 0 {
-					errs = append(errs, fmt.Sprintf(
-						"kanban %q: column_property %q must be an enum type",
-						kanbanID, kanban.ColumnProperty))
-				} else {
-					// Validate column values if specified
-					validSet := make(map[string]bool)
-					for _, v := range validValues {
-						validSet[v] = true
-					}
-					for i, col := range kanban.Columns {
-						if !validSet[col.Value] {
-							errs = append(errs, fmt.Sprintf(
-								"kanban %q: columns[%d] value %q is not valid for %q (valid: %s)",
-								kanbanID, i, col.Value, kanban.ColumnProperty, strings.Join(validValues, ", ")))
-						}
-					}
-				}
-			}
+		default:
+			errs = append(errs, validateKanbanColumnProperty(kanbanID, kanban, entDef, meta)...)
 		}
 
 		// Icon names are checked unconditionally — deliberately NOT inside the
@@ -3094,6 +3172,74 @@ func checkQueryScopeRef(
 	return []string{fmt.Sprintf(
 		"%s %q: query_scope %q is not declared on entity type %q (declared: %s, plus the implicit %q)",
 		kind, id, scope, entityType, strings.Join(declared, ", "), metamodel.AllQueryScopeName)}
+}
+
+// validateSectionRelationFields checks `relation:` fields (TKT-CADCFX). A
+// relation field stands for the entry's outgoing edges, so it is valid only in
+// an entry properties section, on a relation the entry type can start.
+func validateSectionRelationFields(
+	viewID string, i int, s ViewSection, entryType string, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	for j, f := range s.Fields {
+		if f.Relation == "" {
+			continue
+		}
+		prefix := fmt.Sprintf("view %q: section[%d] field[%d]", viewID, i, j)
+		if f.Property != "" {
+			errs = append(errs, prefix+" sets both property and relation; set one")
+			continue
+		}
+		if s.Source != "entry" || s.Display != "properties" {
+			errs = append(errs,
+				prefix+": a relation field is only valid in a section with source: entry and display: properties")
+			continue
+		}
+		if f.Widget != "" {
+			errs = append(errs, prefix+": widget does not apply to a relation field")
+		}
+		def, ok := meta.GetRelationDef(f.Relation)
+		if !ok {
+			errs = append(errs, fmt.Sprintf("%s references unknown relation %q", prefix, f.Relation))
+			continue
+		}
+		if !slices.Contains(def.From, entryType) {
+			errs = append(errs, fmt.Sprintf(
+				"%s: relation %q does not start at entity type %q", prefix, f.Relation, entryType))
+		}
+		if f.StyleFrom != "" {
+			errs = append(errs, validateStyleFrom(prefix, f.StyleFrom, def.To, meta)...)
+		}
+	}
+	for j, f := range s.Fields {
+		if f.StyleFrom != "" && f.Relation == "" {
+			errs = append(errs, fmt.Sprintf(
+				"view %q: section[%d] field[%d]: style_from applies only to a relation field", viewID, i, j))
+		}
+	}
+	return errs
+}
+
+// validateStyleFrom checks that every target type of a relation field has
+// styleFrom as an enum property, so each target can be colored.
+func validateStyleFrom(prefix, styleFrom string, targets []string, meta *metamodel.Metamodel) []string {
+	var errs []string
+	for _, t := range targets {
+		def, ok := meta.GetEntityDef(t)
+		if !ok {
+			continue
+		}
+		pd, ok := def.Properties[styleFrom]
+		if !ok {
+			errs = append(errs, fmt.Sprintf("%s: style_from %q is not a property of %q", prefix, styleFrom, t))
+			continue
+		}
+		if len(pd.Values) == 0 && !meta.IsEnumType(pd.Type) {
+			errs = append(errs, fmt.Sprintf(
+				"%s: style_from %q on %q is not an enum property", prefix, styleFrom, t))
+		}
+	}
+	return errs
 }
 
 // cardDisplayCount is the one accepted card field `display:` value.
