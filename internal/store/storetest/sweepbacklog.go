@@ -188,6 +188,53 @@ func RunSweepBacklogTests(t *testing.T, f Factory, sweepNow func(t *testing.T, s
 		require.Emptyf(t, stale, "%d relations kept their pre-rename endpoints in history", len(stale))
 	})
 
+	// The tombstone must carry the hash of the live row as stored. A wrong
+	// hash (GitHub #1807: the purge read the row's columns in the wrong
+	// order) makes the next tick capture the erased content again.
+	for _, face := range []entity.Face{"", "draft"} {
+		t.Run("ForceLivePurgeIsNotRecaptured/face="+string(face), func(t *testing.T) {
+			s := f(t)
+			v := versionsOf(t, s)
+			e := newEntity(id(0), "secret")
+			e.Face = face
+			require.NoError(t, s.CreateEntity(ctx(), e))
+			drain(t, s)
+			res, err := v.PurgeVersions(ctx(), store.VersionPurgeRequest{
+				Ref: e.Ref(), Selector: store.PurgeSelector{All: true}, ForceLive: true,
+			})
+			require.NoError(t, err)
+			require.True(t, res.TombstoneWritten)
+			drain(t, s)
+
+			metas, err := v.ListVersions(ctx(), e.Ref())
+			require.NoError(t, err)
+			require.Len(t, metas, 1, "the sweep captured the purged content again")
+			require.Equal(t, store.VersionOpPurge, metas[0].Op)
+		})
+	}
+
+	t.Run("ForceLivePurgeIsNotRecaptured/relation", func(t *testing.T) {
+		s := f(t)
+		v := versionsOf(t, s)
+		for i := range 2 {
+			require.NoError(t, s.CreateEntity(ctx(), newEntity(id(i), "v1")))
+		}
+		_, err := s.CreateRelation(ctx(), relKey(1), newRelation("secret"))
+		require.NoError(t, err)
+		drain(t, s)
+		res, err := v.PurgeRelationVersions(ctx(), store.RelationVersionPurgeRequest{
+			Key: relKey(1), Selector: store.PurgeSelector{All: true}, ForceLive: true,
+		})
+		require.NoError(t, err)
+		require.True(t, res.TombstoneWritten)
+		drain(t, s)
+
+		metas, err := v.ListRelationVersions(ctx(), store.RelationHistoryQuery{Key: relKey(1)})
+		require.NoError(t, err)
+		require.Len(t, metas, 1, "the sweep captured the purged relation content again")
+		require.Equal(t, store.VersionOpPurge, metas[0].Op)
+	})
+
 	// A force-live purge leaves a tombstone carrying the live row's hash. Saving
 	// the rows unchanged afterwards must neither re-capture the purged content
 	// nor leave the rows selected on every tick.

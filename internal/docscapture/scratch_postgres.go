@@ -6,16 +6,21 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 )
+
+// scratchDropTimeout bounds the scratch-schema DROP at cleanup.
+const scratchDropTimeout = 30 * time.Second
 
 // scratchBackend creates a PRIVATE, empty PostgreSQL schema for one docs build
 // and returns the appbuild options that pin the stood-up temp project to it,
@@ -44,15 +49,14 @@ import (
 // pgx-importing dependency on every consumer of either.
 //
 // Nil: the returned cleanup is never nil — callers may defer it unconditionally.
-func scratchBackend(_ string) ([]appbuild.Option, func(), error) {
+func scratchBackend(ctx context.Context, _ string) ([]appbuild.Option, func(), error) {
 	base := os.Getenv("RELA_DATABASE_URL")
 	if base == "" {
-		return nil, func() {}, fmt.Errorf(
+		return nil, func() {}, errors.New(
 			"the postgres docs build needs a database to build a scratch schema in: " +
 				"set RELA_DATABASE_URL (env-only, never a flag)")
 	}
 
-	ctx := context.Background()
 	// pgxpool.ParseConfig, not pgx.Connect: the DSN may carry pool-only keys
 	// such as pool_max_conns, which pgx would send to the server (BUG-JQO2PH).
 	poolCfg, err := pgxpool.ParseConfig(base)
@@ -69,13 +73,16 @@ func scratchBackend(_ string) ([]appbuild.Option, func(), error) {
 		_ = admin.Close(ctx)
 		return nil, func() {}, err
 	}
-	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+quoteIdent(schema)); err != nil {
+	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+quoteIdent(schema)); err != nil {
 		_ = admin.Close(ctx)
 		return nil, func() {}, fmt.Errorf("create scratch schema %s: %w", schema, err)
 	}
 
 	cleanup := func() {
-		bg := context.Background()
+		// Detached: cleanup runs at close, after the caller's context may be
+		// done. Bounded so a hung DROP cannot block Close forever.
+		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), scratchDropTimeout)
+		defer cancel()
 		if _, derr := admin.Exec(bg, "DROP SCHEMA "+quoteIdent(schema)+" CASCADE"); derr != nil {
 			// Worth reporting rather than swallowing: a surviving scratch
 			// schema is clutter in the operator's database that nothing else

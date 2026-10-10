@@ -25,8 +25,7 @@ var ErrOwningRule = errors.New("owning rule")
 // Call it with the store handle of the transaction that writes the edge, so
 // the edges it reads and the edge being written are serialized together.
 // Every write path that creates relations must call it, including the ones
-// that write the store directly: automation `create_relation`, copies and
-// the data-entry type-allowlist fallback.
+// that write the store directly: automation `create_relation` and copies.
 //
 // An existing edge identical to key is not counted as a second owner. A
 // re-create of that edge is then left to the store's create, which reports
