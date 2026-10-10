@@ -26,7 +26,7 @@ import (
 // (TestWebhookConflict_CrossProcessAppendsCanBeLost), which demonstrates an
 // append being SILENTLY LOST across two pgstore handles on one schema. Two
 // separate pools + two separate pgstore.New handles is the closest in-process
-// analogue of two rela-server processes: they share only the database, exactly
+// analog of two rela-server processes: they share only the database, exactly
 // as `docs/postgres-backend.md` describes, and no Go-level mutex is common to
 // both. Anything a process-local lock could fix is therefore excluded by
 // construction.
@@ -136,7 +136,11 @@ func TestCrossProcess_ConditionalUpdateConflictsInsteadOfLosing(t *testing.T) {
 	require.ErrorAs(t, err, &conflict,
 		"the conflict must survive as a typed error across the store boundary (RR-HI9QIU)")
 	assert.Equal(t, base.ID, conflict.ID)
-	assert.Equal(t, versionB, conflict.Expected)
+	// conflict.Expected is the version the failed write expected, so it is the
+	// value under test here; the local name keeps testifylint from reading the
+	// field name as the assertion's expected side.
+	reported := conflict.Expected
+	assert.Equal(t, versionB, reported)
 
 	got, err := b.GetEntity(ctx, base.Ref())
 	require.NoError(t, err)
@@ -166,9 +170,7 @@ func TestCrossProcess_ConcurrentAppendersAllLandAcrossHandles(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, appenders)
 	for i := range appenders {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			// Alternate handles so half the contention is genuinely
 			// cross-handle rather than within one store's connection pool.
 			h := handles[i%len(handles)]
@@ -191,7 +193,7 @@ func TestCrossProcess_ConcurrentAppendersAllLandAcrossHandles(t *testing.T) {
 				}
 			}
 			errs[i] = fmt.Errorf("appender %d exhausted %d attempts", i, maxAttempts)
-		}()
+		})
 	}
 	wg.Wait()
 	for i, err := range errs {

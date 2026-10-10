@@ -26,8 +26,9 @@ import (
 //   - REFUSES if a LIVE row still holds the content, unless ForceLive: otherwise
 //     the sweep re-captures it within one interval and the "erasure" is a lie. A
 //     ForceLive purge writes a no-content `purge` tombstone whose content_hash is
-//     the live hash, so the sweep's existing dedup suppresses re-capture until
-//     the live value genuinely changes again.
+//     the live hash. Deleting versions clears the row's stored hash (migration
+//     0021), so the sweep looks at the row once more, and its existing dedup
+//     suppresses re-capture until the live value genuinely changes again.
 //   - --all purges the FENCED lineage (the same rows ListVersions shows), never
 //     a naive WHERE id=$1 (which both misses pre-rename segments and destroys a
 //     reused id's unrelated history).
@@ -310,9 +311,8 @@ func (v *VersionStore) entityLineageIDsForPurge(
 func (v *VersionStore) liveEntityHash(
 	ctx context.Context, q DBTX, id string, p entity.Face,
 ) (hash string, exists bool, err error) {
-	e, gErr := scanEntity(q.QueryRow(ctx,
-		`SELECT id, type, face, properties, content, updated_at
-		 FROM entities WHERE id = $1 AND face = $2`, id, string(p)))
+	// getEntitySQL keeps the column order in step with scanEntity.
+	e, gErr := scanEntity(q.QueryRow(ctx, getEntitySQL, id, string(p)))
 	if errors.Is(gErr, pgx.ErrNoRows) {
 		return "", false, nil
 	}
@@ -332,10 +332,7 @@ func (v *VersionStore) liveEntityHash(
 func (v *VersionStore) liveRelationHash(
 	ctx context.Context, q DBTX, k entity.RelationKey,
 ) (hash string, exists bool, err error) {
-	r, gErr := scanRelation(q.QueryRow(ctx,
-		`SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
-		 FROM relations WHERE from_id=$1 AND rel_type=$2 AND to_id=$3 AND from_face=$4`,
-		k.From, k.Type, k.To, string(k.FromFace)))
+	r, gErr := scanRelation(q.QueryRow(ctx, getRelationSQL, k.From, k.Type, k.To, string(k.FromFace)))
 	if errors.Is(gErr, pgx.ErrNoRows) {
 		return "", false, nil
 	}

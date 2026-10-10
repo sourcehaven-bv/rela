@@ -978,6 +978,11 @@ type Collaborators struct {
 
 	// SearchCloser may be nil — see type doc.
 	SearchCloser io.Closer
+
+	// Comments is the commentary service [Services.Comments] returns.
+	// Nil: accepted — commenting disabled, as in production when the
+	// metamodel declares no comments.
+	Comments *comments.Service
 }
 
 // NewFromCollaborators assembles a [Services] from pre-built
@@ -1087,6 +1092,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		aclPolicy:      aclPolicy,
 		audit:          c.Audit,
 		fieldRedactor:  fieldRedactor,
+		comments:       c.Comments,
 	}, nil
 }
 
@@ -2100,8 +2106,8 @@ type backgroundServices struct {
 // call, so Close needs no nil checks beyond the ones it already has.
 func startBackgroundServices(
 	base *SharedBase, st store.Store, stateKV state.KV, migState datamigration.StateStore,
-	cfgLoader config.Loader, versions store.VersionService, mgr *entitymanager.Manager, q jobs.Client,
-	host lua.HostConfig,
+	cfgLoader config.Loader, versions store.VersionService, commentSvc *comments.Service,
+	mgr *entitymanager.Manager, q jobs.Client, host lua.HostConfig,
 ) backgroundServices {
 	cfg := base.cfg
 
@@ -2110,7 +2116,7 @@ func startBackgroundServices(
 		envDuration("RELA_SOFT_DELETE_GC_INTERVAL", defaultSoftDeleteGCInterval))
 
 	gcStop := startDataMigration(
-		stateKV, migState, base.meta, st, cfg.Audit, versions, cfg.Paths.CacheDir,
+		stateKV, migState, base.meta, st, cfg.Audit, versions, commentSvc, cfg.Paths.CacheDir,
 		hasMigrationsVia(cfgLoader),
 	)
 
@@ -2391,7 +2397,7 @@ func assemble(
 	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(
-		base, st, stateKV, migState, cfgLoader, versions, mgr, jobQueue, readDeps.Host)
+		base, st, stateKV, migState, cfgLoader, versions, commentSvc, mgr, jobQueue, readDeps.Host)
 
 	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,

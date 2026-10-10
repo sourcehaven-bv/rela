@@ -36,7 +36,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           # The two Go caches are split deliberately, because they have
           # different sharing properties.
           #
@@ -86,9 +86,33 @@ jobs:
         # skipping: it means the confinement CI thinks it is testing is absent.
         run: bwrap --unshare-all --ro-bind / / /bin/true
 
+      # TestRestish_* drives a real restish against the router, so a spec
+      # change that breaks the generic client fails here. Pinned by version
+      # and checksum; RELA_TEST_RESTISH=1 below turns a missing binary into a
+      # failure instead of a skip.
+      - name: Install restish
+        env:
+          RESTISH_VERSION: '2.3.0'
+        run: |
+          set -euo pipefail
+          case "$RUNNER_ARCH" in
+            X64) arch=amd64 RESTISH_SHA256=5de24353560597562ffc99799ea79a0cd22c5f3cabbb3ffba3ff5e9b97473357 ;;
+            ARM64) arch=arm64 RESTISH_SHA256=d55ae3ebd2a79e6fda8e0ea125eed2530eed60e27e61e3ffa243ae72ae973c91 ;;
+            *) echo "::error::no pinned restish for runner arch $RUNNER_ARCH"; exit 1 ;;
+          esac
+          archive="restish-${RESTISH_VERSION}-linux-${arch}.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/rest-sh/restish/releases/download/v${RESTISH_VERSION}/${archive}"
+          echo "${RESTISH_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/restish"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/restish" restish
+          echo "$RUNNER_TEMP/restish" >> "$GITHUB_PATH"
+
       - name: Run tests
         # -shuffle=on randomizes test order to surface inter-test ordering
         # dependencies; the seed is printed on failure for reproduction.
+        env:
+          RELA_TEST_RESTISH: '1'
         run: go test -v -race -shuffle=on -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Check coverage thresholds
@@ -119,7 +143,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -212,7 +236,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -316,7 +340,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -347,8 +371,37 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
+      - name: Cache golangci-lint analysis
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/golangci-lint
+          key: golangci-lint-analysis-${{ runner.arch }}-${{ env.GOLANGCI_LINT_VERSION }}-${{ hashFiles('go.sum', '.golangci.yml') }}
+          restore-keys: |
+            golangci-lint-analysis-${{ runner.arch }}-${{ env.GOLANGCI_LINT_VERSION }}-
+
+      # maildemo and mailmanual only add test files, so they ride on the
+      # default build.
       - name: Run golangci-lint
-        run: golangci-lint run ./...
+        run: golangci-lint run --build-tags maildemo,mailmanual ./...
+
+      # Files behind a backend build tag are invisible to the default run, so
+      # neither the linters nor gosec would see them (#1775). The tags select
+      # mutually exclusive backends, so each needs its own run. Steps rather
+      # than a matrix keep the required check named "Lint"; !cancelled() runs
+      # every step even after one fails, so one push reports all findings.
+      # A //nolint needed under one tag only is reported as unused by the
+      # other runs (nolintlint): put it in the tagged file.
+      - name: Run golangci-lint (sqlite)
+        if: ${{ !cancelled() }}
+        run: golangci-lint run --build-tags sqlite ./...
+
+      - name: Run golangci-lint (postgres)
+        if: ${{ !cancelled() }}
+        run: golangci-lint run --build-tags postgres ./...
+
+      - name: Run golangci-lint (memorybackend)
+        if: ${{ !cancelled() }}
+        run: golangci-lint run --build-tags memorybackend ./...
 
   arch-lint:
     name: Architecture
@@ -362,7 +415,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -400,7 +453,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -446,7 +499,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -565,7 +618,7 @@ jobs:
         # RELA_FULL_CORPUS sweeps every entity body through the markdown
         # editor's parse/serialize pair instead of the 1-in-8 sample the local
         # run uses. It is the gate on the WYSIWYG editor never rewriting what
-        # a user did not edit, and it takes about a minute.
+        # a user did not edit, and it takes over a minute.
         run: RELA_FULL_CORPUS=1 npm run test:run
 
       - name: Build
@@ -631,7 +684,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -750,7 +803,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -855,7 +908,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -1107,7 +1160,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -1177,7 +1230,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -1269,7 +1322,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -1485,7 +1538,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -1560,7 +1613,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache

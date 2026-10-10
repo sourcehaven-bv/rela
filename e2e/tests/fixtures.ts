@@ -207,6 +207,8 @@ export interface ApiHelpers {
    *  store, so seeding and cleanup do not ride entity CRUD. */
   listComments(type: string, id: string): Promise<{ comments: { id: string; resolved: boolean }[] }>;
   deleteComment(type: string, id: string, commentId: string): Promise<void>;
+  /** Add a property-anchored comment, as the signed-in principal. */
+  addComment(type: string, id: string, body: string): Promise<void>;
   createRelation(
     fromPlural: string,
     fromId: string,
@@ -717,6 +719,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       },
       async deleteComment(type, id, commentId) {
         await call("DELETE", `_comments/${type}/${id}/${commentId}`);
+      },
+      async addComment(type, id, body) {
+        await call("POST", `_comments/${type}/${id}`, {
+          anchor: { kind: "property", ref: "title" },
+          body,
+        });
       },
       async setRelationMeta(fromPlural, fromId, relation, toType, toId, meta) {
         // Modern JSON:API relations body: upsert the edge with its meta. A PATCH
@@ -1632,6 +1640,26 @@ kanbans:
       - value: critical
     card:
       title: title
+
+  # kanban-card-counts.spec.ts: count card fields. Not in the sidebar, so it
+  # changes no navigation count. FEAT-001 is implemented by TASK-001 (seed).
+  feature-counts:
+    entity_type: feature
+    title: "Feature Counts"
+    column_property: status
+    columns:
+      - value: draft
+        label: Draft
+      - value: approved
+        label: Approved
+    card:
+      title: title
+      fields:
+        - relation: implements
+          direction: incoming
+          display: count
+          label: tasks
+        - comments: true
 
 documents:
   feature-overview:

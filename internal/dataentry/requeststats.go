@@ -2,8 +2,12 @@ package dataentry
 
 import (
 	"fmt"
+	"iter"
 	"log/slog"
+	"maps"
 	"net/http"
+	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -32,6 +36,10 @@ import (
 // does any work, so the numbers would be meaningless; the log record on
 // disconnect is still emitted.
 //
+// The logged path is the route shape, not the path itself: see
+// [routeShape]. That holds for the Debug copy too; a developer who needs the
+// raw path has it in the SQL arguments `--verbose` already logs.
+//
 // accessLog (--access-log) is a separate logger that receives the same
 // `request` record at Info for every request. It is its own sink so an
 // operator can collect request timing without Debug, which would also log
@@ -50,7 +58,7 @@ import (
 // panic(http.ErrAbortHandler) or runtime.Goexit is also logged as a panic;
 // no handler does either today, and telling them apart would need a
 // recover that rewrites the stack net/http prints.
-func requestStats(next http.Handler, accessLog *slog.Logger) http.Handler {
+func requestStats(next http.Handler, accessLog *slog.Logger, words func() routeWords) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		debug := slog.Default().Enabled(r.Context(), slog.LevelDebug)
 		if !debug && accessLog == nil {
@@ -66,7 +74,11 @@ func requestStats(next http.Handler, accessLog *slog.Logger) http.Handler {
 		}
 		completed := false
 		defer func() {
-			attrs := requestAttrs(r, sw, completed, time.Since(start))
+			var known routeWords
+			if words != nil {
+				known = words()
+			}
+			attrs := requestAttrs(r, sw, completed, time.Since(start), known)
 			if debug {
 				slog.LogAttrs(ctx, slog.LevelDebug, "request", attrs...)
 			}
@@ -89,12 +101,14 @@ const (
 	maxLoggedMethod = 32
 )
 
-func requestAttrs(r *http.Request, sw *statsResponseWriter, completed bool, wall time.Duration) []slog.Attr {
+func requestAttrs(
+	r *http.Request, sw *statsResponseWriter, completed bool, wall time.Duration, words routeWords,
+) []slog.Attr {
 	method := r.Method
 	if len(method) > maxLoggedMethod {
 		method = "OTHER"
 	}
-	path, truncated := truncateUTF8(r.URL.Path, maxLoggedPath)
+	path, truncated := routeShape(r.URL.EscapedPath(), words, maxLoggedPath)
 	status := sw.statusOrDefault()
 	if !completed && !sw.written {
 		status = http.StatusInternalServerError
@@ -115,6 +129,133 @@ func requestAttrs(r *http.Request, sw *statsResponseWriter, completed bool, wall
 		attrs = append(attrs, slog.Bool("panic", true))
 	}
 	return attrs
+}
+
+// routeWords is the set of names a schema snapshot adds to the route words:
+// entity types, their plurals, relations, property names, and the names of
+// the data-entry config's views, lists, forms, documents and the like. All of
+// it is configuration, which is not a secret, and naming the view or document
+// is what makes a slow-route report useful. nil adds nothing.
+type routeWords map[string]bool
+
+// routeWordCache builds [routeWords] once per schema snapshot. words takes the
+// snapshot once, so a reload mid-request cannot mix two schemas in one line.
+type routeWordCache struct {
+	schema func() *Schema
+	cached atomic.Pointer[routeWordEntry]
+}
+
+type routeWordEntry struct {
+	schema *Schema
+	words  routeWords
+}
+
+func (c *routeWordCache) words() routeWords {
+	s := c.schema()
+	if e := c.cached.Load(); e != nil && e.schema == s {
+		return e.words
+	}
+	w := buildRouteWords(s)
+	c.cached.Store(&routeWordEntry{schema: s, words: w})
+	return w
+}
+
+func buildRouteWords(s *Schema) routeWords {
+	w := routeWords{}
+	if s == nil {
+		return w
+	}
+	if s.Meta != nil {
+		for name, def := range s.Meta.Entities {
+			w[name] = true
+			w[def.GetPlural(name)] = true
+			for prop := range def.Properties {
+				w[prop] = true
+			}
+		}
+		for name := range s.Meta.Relations {
+			w[name] = true
+		}
+	}
+	if c := s.Cfg; c != nil {
+		for _, names := range []iter.Seq[string]{
+			maps.Keys(c.Forms), maps.Keys(c.Lists), maps.Keys(c.Views), maps.Keys(c.EntityViews),
+			maps.Keys(c.Kanbans), maps.Keys(c.Calendars), maps.Keys(c.Gantts), maps.Keys(c.Documents),
+			maps.Keys(c.Feeds), maps.Keys(c.Commands), maps.Keys(c.Actions), maps.Keys(c.Webhooks),
+			maps.Keys(c.Pages), maps.Keys(c.NextActions),
+		} {
+			for name := range names {
+				w[name] = true
+			}
+		}
+	}
+	return w
+}
+
+// fixedRouteWords are the literal segments of rela's own routes.
+// TestFixedRouteWords_CoverRegisteredRoutes keeps it in step with the
+// registered patterns; a segment missing here is logged as "*", which loses
+// detail but discloses nothing.
+var fixedRouteWords = map[string]bool{
+	"api": true, "v1": true, "v2": true, "static": true, "assets": true, "hooks": true, "webhooks": true,
+	"idp": true, "events": true, "command": true, "command-cancel": true, "command-file": true,
+	"help": true, "git": true, "status": true, "sync": true, "types": true, "relations": true,
+	"file": true, "clone": true, "restore": true, "resolve": true, "export": true, "import": true,
+	"logo": true, "accept": true, "principal": true, "calendars": true, ".well-known": true,
+	"caldav": true,
+	// SPA client routes.
+	"list": true, "kanban": true, "calendar": true, "gantt": true, "document": true, "form": true,
+	"p": true, "search": true, "settings": true, "dashboard": true,
+	"_action": true, "_actions": true, "_analyze": true, "_apps": true, "_attachments": true,
+	"_caldav": true, "_commands": true, "_comments": true, "_config": true, "_conflicts": true,
+	"_copies": true, "_custom": true, "_dashboard": true, "_documents": true, "_events": true,
+	"_export": true, "_feeds": true, "_gantts": true, "_git": true, "_history": true,
+	"_lifetimes": true, "_mcp": true, "_me": true, "_nav_items": true, "_nav_status": true,
+	"_next_action": true, "_openapi.json": true, "_palette": true, "_position": true,
+	"_relation_history": true, "_schema": true, "_search": true, "_settings": true,
+	"_sidebar": true, "_sidepanel": true, "_templates": true, "_theme": true,
+	"_transforms": true, "_views": true,
+}
+
+// routeShape reduces an escaped request path to the shape of its route for
+// the request log: a segment that is neither a route word nor in words
+// becomes "*". The log is for timing, which does not need the resource's
+// identity, and a path carries entity ids and attachment file names that can
+// be personal data (GitHub #1782). It is an allowlist, so an id or file name
+// that happens to equal a route word or a config name is the only thing it
+// lets through.
+//
+// It stops once the shape passes max bytes and reports truncation, so a path
+// near the 1 MB header limit costs no more than a short one.
+func routeShape(p string, words routeWords, maxLen int) (string, bool) {
+	var b strings.Builder
+	for i := 0; ; i++ {
+		seg, rest, more := strings.Cut(p, "/")
+		if i > 0 {
+			b.WriteByte('/')
+		}
+		if seg == "" || fixedRouteWords[seg] || words[seg] {
+			b.WriteString(seg)
+		} else {
+			b.WriteByte('*')
+		}
+		if b.Len() > maxLen {
+			out, _ := truncateUTF8(b.String(), maxLen)
+			return out, true
+		}
+		if !more {
+			return b.String(), false
+		}
+		p = rest
+	}
+}
+
+// shapedPath is the request's route shape for an application-log warning
+// that has no schema snapshot to hand: route words only, so entity types are
+// masked too.
+func shapedPath(r *http.Request) string {
+	p, _ := routeShape(r.URL.EscapedPath(), nil, maxLoggedPath)
+	return p
 }
 
 // truncateUTF8 cuts s to at most n bytes without splitting a rune, so the

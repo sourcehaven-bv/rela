@@ -41,7 +41,7 @@ func (h *appearanceHandler) handleAPIThemeExport(w http.ResponseWriter, r *http.
 	manifest := buildExportManifest(h.schema(), h.palette.UserPalette(), logoExt)
 	zipBytes, err := buildThemeZip(manifest, logoBytes, logoExt)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to build theme package: "+err.Error())
+		writeInternalJSONError(w, r, "failed to build theme package", err)
 		return
 	}
 	filename := safeThemeFilename(manifest.Name) + ".relatheme"
@@ -101,7 +101,7 @@ func (h *appearanceHandler) handleAPIThemeImport(w http.ResponseWriter, r *http.
 	logoURL := ""
 	if pkg.Logo != nil {
 		if err := h.logo.Save(r.Context(), pkg.Logo.Bytes, pkg.Logo.Ext); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "failed to save logo: "+err.Error())
+			writeInternalJSONError(w, r, "failed to save logo", err)
 			return
 		}
 		logoURL = logoURLForHash(hashLogoBytes(pkg.Logo.Bytes))

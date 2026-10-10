@@ -26,12 +26,18 @@ paths:
   pre-delete state the sweep can't reconstruct); create/update are captured by a
   debounced reconciliation **sweep** goroutine (`sweep.go`, started/stopped like
   the listener in the change feed, see `storage.md`). The sweep's candidate query
-  must select exactly the rows its Go dedup would capture: a row it selects and
-  skips is selected again every tick, and a batch of those starves every row
-  behind them (BUG-1DWMYO). It therefore compares the live row's stored
-  `content_hash` (written back by the sweep, cleared by a trigger when a hashed
-  column changes; pgstore migration 0020, sqlitedb v14) with the latest
-  version's, never stored columns or timestamps. The sweep runs its **entire tick on ONE acquired pool
+  must not keep selecting rows its Go dedup skips: such a row is selected again
+  every tick, and a batch of those starves every row behind them (BUG-1DWMYO). It therefore selects only rows whose stored
+  `content_hash` is NULL, never by stored columns or timestamps. A non-NULL hash
+  means the current lifecycle's latest version has that hash: the sweep writes
+  it back after capturing or skipping a row (unless the row or its latest
+  version changed since the read), and triggers clear it when a hashed
+  column changes, a version is written with another hash or as a delete, a
+  version is purged, or a row is inserted (pgstore migrations 0020 and 0021,
+  sqlitedb v14 and v15). A partial index on the NULL rows keeps a tick
+  proportional to what changed. Any new path that writes or deletes version
+  rows is covered by those triggers; a new hashed column must join the update
+  trigger's column list. The sweep runs its **entire tick on ONE acquired pool
   connection** under `pg_try_advisory_lock` — the lock is session-scoped, so
   issuing the inserts via the pool (other sessions) would silently void the
   single-writer guarantee. Attribution comes from ctx only, via exactly two
@@ -92,8 +98,8 @@ paths:
   racing a capture-insert loses the erasure); it **REFUSES while a live row still
   holds the content** unless `--force-live` (else the sweep re-captures it within
   one interval — a `VersionOpPurge` no-content tombstone whose content_hash = the
-  live hash suppresses that re-capture, because the sweep selects only rows whose
-  hash differs from their latest version's); it
+  live hash suppresses that re-capture: the purge clears the row's stored hash,
+  and the sweep then finds the live content equal to the tombstone's); it
   **REFUSES a rename row** (purging one orphans/forks the lineage walk — v1 is
   non-rename-only); `--all` purges the **fenced lineage** (`lineageCTE` /
   `relationLineageIDs`), never `WHERE id=$1` (id-reuse would destroy unrelated
