@@ -36,7 +36,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           # The two Go caches are split deliberately, because they have
           # different sharing properties.
           #
@@ -143,7 +143,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -236,7 +236,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -340,7 +340,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -415,7 +415,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -453,7 +453,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -499,7 +499,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -684,7 +684,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -803,7 +803,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -908,7 +908,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -1160,7 +1160,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -1230,7 +1230,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -1322,7 +1322,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -1538,7 +1538,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
@@ -1613,7 +1613,7 @@ jobs:
         uses: actions/setup-go@v7
         id: setup-go
         with:
-          go-version: '1.26.6'
+          go-version-file: go.mod
           cache: true
 
       - name: Cache Go build cache
