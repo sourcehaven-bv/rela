@@ -5,7 +5,7 @@
  *
  * The title is a button by default and emits `select`. A row that navigates
  * should set `item.as` to a link instead, so it gets the middle click and the
- * status bar a link has.
+ * status bar a link has. `item.as: 'span'` makes the row static text.
  */
 import { computed } from 'vue'
 import type { RelatedItem } from './types'
@@ -14,6 +14,7 @@ const props = defineProps<{ item: T }>()
 const emit = defineEmits<{ select: [item: T] }>()
 
 const tag = computed(() => props.item.as ?? 'button')
+const isStatic = computed(() => tag.value === 'span')
 
 // The hidden labels end in a space inside the interpolation: the template
 // compiler trims a trailing literal space before a closing tag, and a screen
@@ -21,7 +22,7 @@ const tag = computed(() => props.item.as ?? 'button')
 </script>
 
 <template>
-  <div class="rl-related-row">
+  <div class="rl-related-row" :class="{ 'rl-related-row--static': isStatic }">
     <span
       v-if="item.icon"
       class="rl-related-row__icon"
@@ -34,7 +35,7 @@ const tag = computed(() => props.item.as ?? 'button')
       :type="tag === 'button' ? 'button' : undefined"
       class="rl-related-row__title"
       v-bind="item.attrs"
-      @click="emit('select', item)"
+      @click="isStatic || emit('select', item)"
     >
       <span v-if="item.iconLabel" class="rl-visually-hidden">{{ `${item.iconLabel}: ` }}</span>{{ item.title }}
     </component>
@@ -91,6 +92,10 @@ const tag = computed(() => props.item.as ?? 'button')
 }
 
 .rl-related-row__title:focus-visible { outline: none; }
+
+.rl-related-row--static:hover { background: none; }
+.rl-related-row--static .rl-related-row__title { cursor: auto; }
+.rl-related-row--static .rl-related-row__title::after { content: none; }
 
 .rl-related-row__meta {
   display: flex;

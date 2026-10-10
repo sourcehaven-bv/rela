@@ -76,6 +76,10 @@ type writeServices struct {
 	// MigState is the per-store migration record. Distinct from State: that
 	// is node-local cache, this describes what the CONTENT conforms to.
 	MigState datamigration.StateStore
+	// Comments is the commentary service as the migration commands use it:
+	// they move and drop its threads alongside the rows they relocate
+	// (BUG-6OZBP9). Nil: accepted — the project has commenting disabled.
+	Comments datamigration.CommentThreads
 }
 
 // entityWriter is the write surface the CLI's mutating subcommands call. See
@@ -182,6 +186,11 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 		LuaWriteDeps:  svc.LuaWriteDeps(),
 		State:         svc.State(),
 		MigState:      svc.MigState(),
+	}
+	// Assigned only when present: a nil *comments.Service stored in the
+	// interface would pass the engine's nil check and panic on first use.
+	if c := svc.Comments(); c != nil {
+		write.Comments = c
 	}
 	return &cliBundles{
 		read:       &read,

@@ -67,6 +67,7 @@ type Capabilities struct {
 	// row as settled. Required when Versioning is set: who a swept create or
 	// update is attributed to is contract, not mechanism, and a backend whose
 	// sweep cannot be driven cannot show it keeps that contract (BUG-07DNNY).
+	// Its batch must be smaller than the backlog [RunSweepBacklogTests] seeds.
 	SweepNow func(t *testing.T, s store.Store)
 
 	// SoftDelete declares that the backend implements
@@ -245,6 +246,11 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 			require.NotNil(t, caps.SweepNow,
 				"store declared Capabilities.Versioning but no Capabilities.SweepNow driver")
 			RunSweepAttributionTests(t, f, caps.SweepNow)
+		})
+		t.Run("SweepBacklog", func(t *testing.T) {
+			require.NotNil(t, caps.SweepNow,
+				"store declared Capabilities.Versioning but no Capabilities.SweepNow driver")
+			RunSweepBacklogTests(t, f, caps.SweepNow)
 		})
 		t.Run("SweepOrigin", func(t *testing.T) {
 			require.NotNil(t, caps.SweepNow,

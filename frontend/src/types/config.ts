@@ -448,6 +448,8 @@ export interface KanbanColumn {
    * renders verbatim, and the SPA never parses one back out of label text.
    */
   icon?: string
+  /** Starts the column collapsed; the reader's own choice overrides it. */
+  collapsed?: boolean
 }
 
 export interface KanbanSwimlane {

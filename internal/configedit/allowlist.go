@@ -129,6 +129,7 @@ var editable = map[File][]string{
 		"automations.[].on.becomes",
 		"automations.[].on.condition",
 		"automations.[].on.created",
+		"automations.[].on.updated",
 		"automations.[].on.entity.[]",
 		"automations.[].on.from",
 		"automations.[].on.property",
@@ -270,6 +271,8 @@ var locked = map[File][]string{
 		"automations.[].do.[].lua", "automations.[].do.[].lua_file",
 		"automations.[].do.[].allow_acl_bypass", "automations.[].do.[].capabilities.**",
 		"automations.[].do.[].create_entity.template",
+		// A background Lua job, and the principal it runs as.
+		"automations.[].do.[].background", "automations.[].do.[].run_as", "automations.[].do.[].retry",
 		// Access control: a transition guard names an ACL permission.
 		"types.*.transitions.[].guard",
 		// Not in the Configure space yet.

@@ -349,7 +349,7 @@ linters:
         path: internal/dataentry/(write_handler|softdelete_handler|actions|attachment_handler|handlers_attachment)\.go
       - linters:
           - contextcheck
-        path: internal/dataentry/(api_v1|acl_write_test|handlers_attachment_write_test)\.go
+        path: internal/dataentry/(api_v1|acl_write_test|handlers_attachment_write_test|handlers_attachment_raw_test)\.go
         text: handleV1(CreateEntity|UpdateEntity|DeleteEntity|RestoreEntity|CreateRelation|UpdateRelation|DeleteRelation|CloneEntity|Action|ConflictResolve|PutAttachment|DeleteAttachment)
       - linters:
           - contextcheck

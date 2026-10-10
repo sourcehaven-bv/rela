@@ -426,7 +426,7 @@ Some requests carry extra fields:
   was written, `status` is 500. That status is recorded, not sent: the
   connection is closed, so the client sees a reset and a proxy in front
   reports 502.
-- `path_truncated=true`: the path was longer than 512 bytes and was cut.
+- `path_truncated=true`: the route shape was longer than 512 bytes and was cut.
   A method longer than 32 bytes is logged as `OTHER`.
 
 The event streams (`/api/events`, `/api/v1/_events`) log one line when the
@@ -435,11 +435,18 @@ not how slow the server was. Leave them out of latency reports.
 
 What it records and what it leaves out:
 
-- The path is logged as received, decoded, without the query string. Query
-  strings can carry tokens. The path itself can still contain user data:
-  entity IDs, and attachment file names such as
-  `/api/v1/tickets/TKT-1/_attachments/file/ziekmelding.pdf`. Treat the log
-  as personal data where that applies.
+- The path is logged as its route shape, without the query string. Route
+  words are kept, and so are the names the configuration declares: entity
+  types and their plurals, relations, properties, and the names of views,
+  lists, forms, documents and similar entries. Every other segment becomes
+  `*`, including entity IDs and attachment file names.
+  `/api/v1/tickets/TKT-1/_attachments/screenshot/ziekmelding.pdf` is logged
+  as `/api/v1/tickets/*/_attachments/screenshot/*`. An ID or file name that
+  is identical to one of those words is kept as is. Query strings are left
+  out because they can carry tokens.
+- The application log is a separate stream. Its warnings for failed
+  attachment writes and blocked requests use a coarser shape that also masks
+  type names. Other error lines there can still contain the full path.
 - No user, IP address, or request body.
 - No SQL. `--verbose` is not a substitute: it also logs every SQL
   statement with its bound arguments.
@@ -558,15 +565,26 @@ as cross-origin and rejects them with `403 forbidden` and reason
 `origin_missing`. This catches `<img src=...>` style attacks where the
 attacker has set `Referrer-Policy: no-referrer` to strip both headers.
 
-It also rejects bare `curl http://localhost:8080/api/...` calls. To use the
-API from the command line, set the Origin header explicitly:
+A few paths are exempt for a client that is provably not a browser: one that
+sends no `Origin`, no cookie and no `Sec-Fetch-Site` header. Every current
+browser sends `Sec-Fetch-Site`, and script cannot remove it. The exempt paths
+are the ones a command-line client needs:
+
+- the entity and relation routes, `/api/v1/{plural}/...`, including
+  attachments;
+- `/api/v1/_schema` and `/api/v1/_openapi.json`;
+- the calendar feeds, CalDAV and remote MCP.
+
+So `curl` and [restish](restish.md) work on those paths without extra
+headers. Every other `/api` path, such as `_config` or `_search`, still needs
+an allowed `Origin`:
 
 ```sh
 curl -H 'Origin: http://localhost:8080' http://localhost:8080/api/v1/_config
 ```
 
-The same applies to any script, MCP integration, or test harness that speaks
-HTTP directly to `rela-server`.
+The exemption only skips the same-origin check. The JWT gate and the ACL
+apply as usual.
 
 ## Troubleshooting
 
@@ -687,10 +705,12 @@ stdio use becomes remotely reachable the moment `-mcp` is on.
 
 Two related gaps, both deliberate and tracked:
 
-- **No RFC 9728 discovery.** The 401 does not carry a `resource_metadata`
-  challenge unless your assertion header is literally `Authorization`, so MCP
-  clients must be pointed at the IdP by configuration rather than discovering
-  it. Usability, not confidentiality.
+- **No RFC 9728 discovery from rela itself.** rela's 401 carries at most
+  `WWW-Authenticate: Bearer` (when the assertion header is `Authorization`),
+  never a `resource_metadata` parameter, so a client cannot discover the IdP
+  from rela. A proxy can add it: Pratique answers a request without
+  credentials with the metadata for each path listed in
+  `upstream.protected_resources`. Usability, not confidentiality.
 - **`acl.Request` is not goroutine-safe.** One is attached per HTTP request
   and memoises global roles without synchronisation. Nothing in the current
   handler fans a JSON-RPC batch across goroutines, so this is latent rather

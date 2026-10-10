@@ -183,6 +183,36 @@ export class KanbanPage extends BasePage {
     await expect(column.locator('.rl-count')).toBeVisible();
   }
 
+  /** Fold a column away with the collapse button on its heading. */
+  async collapseColumn(name: string) {
+    await this.page.getByRole('button', { name: `Collapse ${name}`, exact: true }).click();
+  }
+
+  /** Open a collapsed column by clicking its rail. */
+  async expandColumn(name: string) {
+    await this.collapsedRail(name).click();
+  }
+
+  /** A collapsed column's rail, which is its expand button. */
+  collapsedRail(name: string): Locator {
+    return this.page.getByRole('button', { name: `Expand ${name}`, exact: true });
+  }
+
+  /** Drag a card onto a collapsed column's rail with the real pointer. */
+  async dragCardToCollapsedColumn(cardTitle: string, columnName: string) {
+    await this.dragCardToColumnLocator(this.cards.filter({ hasText: cardTitle }), this.collapsedRail(columnName));
+  }
+
+  async expectColumnCollapsed(name: string, count: number) {
+    await expect(this.collapsedRail(name)).toBeVisible();
+    await expect(this.collapsedRail(name).locator('.rl-count')).toHaveText(String(count));
+  }
+
+  async expectColumnExpanded(name: string) {
+    await expect(this.collapsedRail(name)).toHaveCount(0);
+    await expect(this.page.getByRole('button', { name: `Collapse ${name}`, exact: true })).toBeVisible();
+  }
+
   async expectEmptyColumn(columnName: string) {
     const column = this.getColumn(columnName);
     await expect(column.locator('.empty-column')).toBeVisible();

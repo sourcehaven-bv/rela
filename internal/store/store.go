@@ -402,6 +402,7 @@ type EntityWriter interface {
 	//
 	//   - OUTGOING edges whose tail is this face go WITH it. They
 	//     were written against this face and nothing else can own them.
+	//     The implicit face is the exception, see below.
 	//   - INCOMING edges SURVIVE while any face remains. Heads are
 	//     entity-level (design doc §2.3), so an inbound edge points at the
 	//     ENTITY, not at one of its faces — deleting them would let removing
@@ -417,11 +418,17 @@ type EntityWriter interface {
 	// can authorize, version and audit them. The caller that must not cut
 	// those edges checks the family size first.
 	//
-	// Deleting the implicit face while named faces remain is ALLOWED. It
-	// was once refused (a family was required to keep a default row), but
-	// BUG-HC6I2T removed that invariant: a type declaring `faces:` stores
-	// nothing at the zero coordinate, so the refusal would have made the
-	// flat→faced migration impossible. It is what migrate_face and
+	// Deleting the implicit face while named faces remain is ALLOWED, and
+	// removes NO edge. The zero tail holds the family's identity-scoped
+	// edges, which belong to the entity and outlive any one face, as well
+	// as the implicit row's own content-scoped edges, and the store cannot
+	// tell the two apart. The caller knows the relation scopes and moves or
+	// removes the content-scoped ones itself.
+	//
+	// The delete was once refused (a family was required to keep a default
+	// row), but BUG-HC6I2T removed that invariant: a type declaring `faces:`
+	// stores nothing at the zero coordinate, so the refusal would have made
+	// the flat→faced migration impossible. It is what migrate_face and
 	// `rela migrate adopt-face` do on every row they move, and
 	// TestFaces_RowCanLeaveTheZeroCoordinate pins it.
 	//

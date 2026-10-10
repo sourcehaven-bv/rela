@@ -320,8 +320,7 @@ func (h *commentsHandler) listComments(
 
 	list, err := h.svc.List(ctx, target)
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "comments_failed",
-			"Could not read comments", "")
+		writeInternalError(w, r, "comments_failed", "Could not read comments", err)
 		return
 	}
 
@@ -520,8 +519,7 @@ func (h *commentsHandler) gateCommentMutation(
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Comment not found", "")
 			return target, comments.Comment{}, false
 		}
-		writeV1Error(w, r, http.StatusInternalServerError, "comments_failed",
-			"Could not read comments", "")
+		writeInternalError(w, r, "comments_failed", "Could not read comments", err)
 		return target, comments.Comment{}, false
 	}
 
@@ -726,8 +724,7 @@ func writeCommentError(w http.ResponseWriter, r *http.Request, err error) {
 		writeV1Error(w, r, http.StatusForbidden, "forbidden",
 			"Comments require an identified author", "")
 	default:
-		writeV1Error(w, r, http.StatusInternalServerError, "comments_failed",
-			"Could not save the comment", "")
+		writeInternalError(w, r, "comments_failed", "Could not save the comment", err)
 	}
 }
 

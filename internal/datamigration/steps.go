@@ -257,6 +257,7 @@ type renameFaceStep struct {
 	// keeps the bare-face mapping next to the schemas that define it.
 	fromStored string
 	toStored   string
+	scopes     relationScopes
 }
 
 func (s *renameFaceStep) Kind() string { return "rename_face" }
@@ -279,6 +280,7 @@ func (s *renameFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 	// special-case: every face this step can name is a named row.
 	s.fromStored = s.From
 	s.toStored = s.To
+	s.scopes = scopesOf(from, to)
 	return nil
 }
 
@@ -326,7 +328,10 @@ func (s *renameFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	for _, e := range moving {
 		moves = append(moves, faceMove{e: e, to: s.toStored})
 	}
-	return res, applyMoves(ctx, x.Store, moves)
+	if err := captureMoves(ctx, x.Store, x.capture, moves, s.scopes); err != nil {
+		return res, err
+	}
+	return res, applyMoves(ctx, x.Store, x.comments, moves, s.scopes)
 }
 
 // sameContent reports whether two rows carry the same type, properties and
@@ -381,6 +386,10 @@ type migrateFaceStep struct {
 	Entity   string            `yaml:"entity"`
 	Property string            `yaml:"property"`
 	Mapping  map[string]string `yaml:"mapping"`
+
+	// The relation scopes, read in Validate where the shapes are in hand, as
+	// renameFaceStep does.
+	scopes relationScopes
 }
 
 func (s *migrateFaceStep) Kind() string { return "migrate_face" }
@@ -451,6 +460,7 @@ func (s *migrateFaceStep) Validate(from, to metamodel.ShapeProjection) error {
 			"no face, and become unreachable once %s is dropped",
 			s.Entity, s.Property, strings.Join(missing, ", "), s.Property)
 	}
+	s.scopes = scopesOf(from, to)
 	return nil
 }
 
@@ -489,7 +499,10 @@ func (s *migrateFaceStep) Run(ctx context.Context, x *Exec) (StepResult, error) 
 	if !x.Apply {
 		return res, nil
 	}
-	return res, plan.apply(ctx, x.Store)
+	if err := captureMoves(ctx, x.Store, x.capture, plan.moves, s.scopes); err != nil {
+		return res, err
+	}
+	return res, plan.apply(ctx, x.Store, x.comments, s.scopes)
 }
 
 // faceMove is one row and the face it is headed for. Shared by everything that
@@ -525,22 +538,98 @@ type faceMove struct {
 //
 // Takes the store rather than the *Exec the steps hold: `adopt-face` runs the
 // same moves outside a migration and so has no Exec to hand over.
-func applyMoves(ctx context.Context, st store.Store, moves []faceMove) error {
+func applyMoves(
+	ctx context.Context, st store.Store, threads CommentThreads, moves []faceMove, scopes relationScopes,
+) error {
 	for start := 0; start < len(moves); start += updateBatchSize {
 		batch := moves[start:min(start+updateBatchSize, len(moves))]
+		// Refuse a collision before any thread moves: FaceMoved would merge
+		// the thread into the thread of a DIFFERENT row at the destination,
+		// whose readers would then see remarks about content they may not be
+		// allowed to read. applyFaceMove checks again inside the transaction.
+		if threads != nil {
+			for _, m := range batch {
+				if _, err := destinationHolds(ctx, st, m.e, m.to); err != nil {
+					return err
+				}
+			}
+		}
+		if err := moveThreads(ctx, threads, batch); err != nil {
+			return err
+		}
 		err := st.Tx(ctx, func(s store.Store) error {
 			for _, m := range batch {
-				if err := applyFaceMove(ctx, s, m.e, m.to); err != nil {
+				if err := applyFaceMove(ctx, s, m.e, m.to, scopes); err != nil {
 					return err
 				}
 			}
 			return nil
 		})
 		if err != nil {
+			if threads != nil {
+				return fmt.Errorf("%w (the comment threads of this batch already moved; "+
+					"re-run to move the rows after them)", err)
+			}
+			return err
+		}
+		// Again after the commit, for a comment posted at the old face while
+		// the batch ran. A re-run no longer lists these rows, so this is the
+		// last chance to move it. FaceMoved finds an empty source otherwise.
+		if err := moveThreads(ctx, threads, batch); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// moveThreads moves the comment threads of a batch of rows to the faces those
+// rows are about to move to (BUG-6OZBP9). No-op without a comment service.
+//
+// Runs BEFORE the batch's row transaction, never after it. A re-run finds its
+// work by listing rows still at the source face, so once a row has moved it is
+// never listed again: a crash between a committed row move and a later thread
+// move would strand the thread for good. Moving the thread first means a
+// re-run that redoes the rows also redoes the threads, and FaceMoved is
+// idempotent. The thread is outside the store transaction either way, because
+// comments are a separate store; if the row move then fails, the thread waits
+// at the destination face until the re-run puts the row there.
+//
+// The collision pre-check in applyMoves runs outside the row transaction, so
+// a user creating the destination face between the check and the move can
+// still receive the thread. The window is one read; the check inside the
+// transaction then refuses the row move and the error names it.
+func moveThreads(ctx context.Context, threads CommentThreads, batch []faceMove) error {
+	if threads == nil {
+		return nil
+	}
+	for _, m := range batch {
+		if err := threads.FaceMoved(ctx, m.e.Type, m.e.ID, m.e.Face, entity.Face(m.to)); err != nil {
+			return fmt.Errorf("%s: move comment thread from face %q to %q: %w", m.e.ID, m.e.Face, m.to, err)
+		}
+	}
+	return nil
+}
+
+// destinationHolds reports whether the row's copy already sits at face `to`,
+// which means a previous run finished this move. A destination row with
+// different content is a genuine collision and is refused with the id named.
+func destinationHolds(ctx context.Context, s store.Store, e *entity.Entity, to string) (bool, error) {
+	existing, err := s.GetEntity(ctx, entity.Ref{ID: e.ID, Face: entity.Face(to)})
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		// Not "absent": the pre-check in applyMoves relies on this answer to
+		// keep a thread out of another row's thread.
+		return false, fmt.Errorf("%s: read the destination row at face %q: %w", e.ID, to, err)
+	}
+	if !sameContent(existing, e) {
+		return false, fmt.Errorf(
+			"%s: cannot move face %q to %q — a row already exists at the destination with "+
+				"different content; drop or merge it first, or this move would destroy one "+
+				"of the two", e.ID, e.Face, to)
+	}
+	return true, nil
 }
 
 // applyFaceMove relocates one row from its current face to `to`.
@@ -552,60 +641,231 @@ func applyMoves(ctx context.Context, st store.Store, moves []faceMove) error {
 // collision that would destroy one of two distinct rows, so it is refused with
 // the id named — same contract as rename_face.
 //
+// The row's outgoing edges move with it (BUG-TOX8U4), each to the tail its
+// scope gives it (see [plannedEdgeMoves]): the create copies content, not
+// edges. They are moved BEFORE the source row is deleted. On fs/mem a failure
+// is not rolled back and a re-run finds rows by scanning, so while the source
+// row stands a re-run moves whatever the failed run did not (GitHub #1628).
+// Every clash is checked before this row's first write, so a refused move
+// writes nothing for this row.
+//
 // `s` is the transaction view, never the outer store: writing through the
 // outer store from inside Tx deadlocks on fs/mem and bypasses the transaction
 // on pg.
-func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to string) error {
-	var alreadyMoved bool
-	if existing, err := s.GetEntity(ctx, entity.Ref{ID: e.ID, Face: entity.Face(to)}); err == nil && existing != nil {
-		alreadyMoved = sameContent(existing, e)
-		if !alreadyMoved {
-			return fmt.Errorf(
-				"%s: cannot move face %q to %q — a row already exists at the destination with "+
-					"different content; drop or merge it first, or this move would destroy one "+
-					"of the two", e.ID, e.Face, to)
-		}
+func applyFaceMove(ctx context.Context, s store.Store, e *entity.Entity, to string, scopes relationScopes) error {
+	dest := entity.Face(to)
+	alreadyMoved, err := destinationHolds(ctx, s, e, to)
+	if err != nil {
+		return err
 	}
+	edges, err := plannedEdgeMoves(ctx, s, e, dest, scopes)
+	if err != nil {
+		return err
+	}
+	pending, err := uncarriedEdges(ctx, s, e.ID, edges)
+	if err != nil {
+		return err
+	}
+
 	if !alreadyMoved {
 		moved := *e
-		moved.Face = entity.Face(to)
-		if err := s.CreateEntity(ctx, &moved); err != nil {
+		moved.Face = dest
+		if err = s.CreateEntity(ctx, &moved); err != nil {
 			return fmt.Errorf("%s: create at face %q: %w", e.ID, to, err)
 		}
 	}
-	// Deleting a face takes its OUTGOING edges with it — they were written
-	// against that face and nothing else can own them (see the
-	// store.EntityWriter.DeleteFace contract). The CreateEntity above copies the
-	// row's content, not its edges, so without re-creating them a move
-	// silently destroys every relation the row owned. Incoming edges are
-	// entity-level and survive the delete untouched, because the destination
-	// row created above keeps the family alive: this is never the last face.
-	//
-	// DeleteResult names exactly what went, which is why the result is read
-	// rather than discarded: the store reports what it destroyed and this is
-	// the code that has to listen.
+	for _, m := range pending {
+		if _, err = s.CreateRelation(ctx, m.key(), &store.RelationData{
+			Properties: m.rel.Properties,
+			Content:    m.rel.Content,
+		}); err != nil {
+			return fmt.Errorf("%s: move relation %q to %q onto tail %q: %w",
+				e.ID, m.rel.Type, m.rel.To, m.to, err)
+		}
+	}
+	for _, m := range edges {
+		if err = s.DeleteRelation(ctx, m.rel.Identity()); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%s: remove relation %q to %q from face %q: %w",
+				e.ID, m.rel.Type, m.rel.To, e.Face, err)
+		}
+	}
+	// An edge written to the source tail after the list above was never
+	// moved. Check before the delete, so nothing is destroyed on any backend.
+	left, err := plannedEdgeMoves(ctx, s, e, dest, scopes)
+	if err != nil {
+		return err
+	}
+	if len(left) > 0 {
+		return fmt.Errorf("%s: relation %q to %q appeared on face %q during the move and was not moved",
+			e.ID, left[0].rel.Type, left[0].rel.To, e.Face)
+	}
 	del, err := s.DeleteFace(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 	if err != nil {
 		return fmt.Errorf("%s: remove the source row at face %q: %w", e.ID, e.Face, err)
 	}
-	for _, rel := range del.DeletedRelations {
-		if rel.From != e.ID || rel.FromFace != e.Face {
-			// An incoming edge, or one tailed on another face: not ours to
-			// move. Nothing observed produces these, but re-creating one on
-			// the wrong tail would invent an edge rather than preserve it.
+	if len(del.DeletedRelations) > 0 {
+		r := del.DeletedRelations[0]
+		return fmt.Errorf("%s: removing face %q also removed relation %q to %q (properties %v), "+
+			"which the move did not carry", e.ID, e.Face, r.Type, r.To, r.Properties)
+	}
+	return nil
+}
+
+// edgeMove is one outgoing edge of a moving row and the tail it moves to.
+type edgeMove struct {
+	rel *entity.Relation
+	to  entity.Face
+}
+
+// key is the edge's key at its new tail.
+func (m edgeMove) key() entity.RelationKey {
+	k := m.rel.Identity()
+	k.FromFace = m.to
+	return k
+}
+
+// errScopesUnknown refuses a face move whose migration file cannot say which
+// relation types are content-scoped.
+var errScopesUnknown = errors.New("relation scopes unknown")
+
+// plannedEdgeMoves lists the outgoing edges on e's tail that a move of e to
+// dest must relocate, each with its target tail.
+//
+// A content-scoped edge belongs to the row, so it goes to dest. An
+// identity-scoped edge belongs to the entity, so it goes to the zero tail.
+// From the implicit row that is where it already is, and the store keeps it
+// when the row is deleted (see store.EntityWriter.DeleteFace). From a named
+// face it is an edge an earlier move put there by mistake, and this puts it
+// back.
+func plannedEdgeMoves(
+	ctx context.Context, s store.Store, e *entity.Entity, dest entity.Face, scopes relationScopes,
+) ([]edgeMove, error) {
+	from := e.Face
+	var out []edgeMove
+	for rel, err := range s.ListRelations(ctx, store.RelationQuery{
+		EntityID: e.ID, Direction: store.DirectionOutgoing, FromFace: &from,
+	}) {
+		if err != nil {
+			return nil, fmt.Errorf("%s: list the relations of face %q: %w", e.ID, from, err)
+		}
+		if !scopes.known {
+			return nil, fmt.Errorf("%s: %w: the migration file predates relation scopes, so it cannot "+
+				"tell which of the row's relations belong to the face; regenerate it with "+
+				"`rela migrate gen`", e.ID, errScopesUnknown)
+		}
+		target := entity.ImplicitFace
+		if scopes.content[rel.Type] {
+			target = dest
+		}
+		if target == from {
 			continue
 		}
-		if _, err := s.CreateRelation(ctx, entity.RelationKey{
-			From: e.ID, FromFace: entity.Face(to), Type: rel.Type, To: rel.To,
-		}, &store.RelationData{
-			Properties: rel.Properties,
-			Content:    rel.Content,
-		}); err != nil {
-			return fmt.Errorf("%s: carry relation %q to %q across to face %q: %w",
-				e.ID, rel.Type, rel.To, to, err)
+		out = append(out, edgeMove{rel: rel, to: target})
+	}
+	return out, nil
+}
+
+// uncarriedEdges returns the edges not yet present at their target tail.
+//
+// An edge already there with the same data is a previous run's copy. One with
+// different data is a distinct edge, and the move is refused rather than let
+// it destroy one of the two.
+func uncarriedEdges(ctx context.Context, s store.Store, id string, edges []edgeMove) ([]edgeMove, error) {
+	var pending []edgeMove
+	for _, m := range edges {
+		existing, err := s.GetRelation(ctx, m.key())
+		switch {
+		case err == nil:
+			if !sameRelationData(existing, m.rel) {
+				return nil, fmt.Errorf("%s: %w: relation %q to %q already exists on tail %q with different "+
+					"data; drop or merge it first", id, errEdgeClash, m.rel.Type, m.rel.To, m.to)
+			}
+		case errors.Is(err, store.ErrNotFound):
+			pending = append(pending, m)
+		default:
+			return nil, fmt.Errorf("%s: read relation %q to %q on tail %q: %w", id, m.rel.Type, m.rel.To, m.to, err)
+		}
+	}
+	return pending, nil
+}
+
+// errEdgeClash refuses a face move whose target tail already holds a
+// different edge with the same key.
+var errEdgeClash = errors.New("cannot move an edge over a different one")
+
+// sameRelationData reports whether two edges carry the same data. It is the
+// edge counterpart of [sameContent].
+func sameRelationData(a, b *entity.Relation) bool {
+	return a.Content == b.Content && reflect.DeepEqual(a.Properties, b.Properties)
+}
+
+// captureMoves records, before the moves run, a delete version for every row
+// the moves remove and for every edge whose key they change. The sweep cannot
+// reconstruct a deleted row, so the capture is synchronous, as for every other
+// migration delete. A nil capturer records nothing.
+//
+// It reads through st outside any transaction, like the adopt-face capture it
+// generalizes, so a move that then fails leaves a delete version for a row
+// that still exists. That is the accepted cost of capturing before the write.
+func captureMoves(
+	ctx context.Context, st store.Store, c *capturer, moves []faceMove, scopes relationScopes,
+) error {
+	if c == nil {
+		return nil
+	}
+	for _, m := range moves {
+		edges, err := plannedEdgeMoves(ctx, st, m.e, entity.Face(m.to), scopes)
+		if err != nil {
+			return err
+		}
+		if err := c.entityDelete(ctx, m.e); err != nil {
+			return err
+		}
+		for _, em := range edges {
+			if err := c.relationDelete(ctx, em.rel); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// relationScopes says which relation types are content-scoped. Every other
+// type is identity-scoped, the metamodel default. known is false for a
+// migration file whose projection predates relation scopes.
+type relationScopes struct {
+	content map[string]bool
+	known   bool
+}
+
+// scopesOf reads the content-scoped relation types from a migration file's
+// projections. A type is looked up in both, so a step that runs before a
+// rename_relation_type in the same file still finds the old name. A rename
+// across scopes is refused, so the union cannot disagree.
+func scopesOf(from, to metamodel.ShapeProjection) relationScopes {
+	out := relationScopes{content: map[string]bool{}, known: to.RelationScopes}
+	for _, p := range []metamodel.ShapeProjection{from, to} {
+		if !p.RelationScopes {
+			continue
+		}
+		for name, r := range p.Relations {
+			if r.Scope.IsContent() {
+				out.content[name] = true
+			}
+		}
+	}
+	return out
+}
+
+// scopesOfMeta reads the content-scoped relation types from a live metamodel.
+func scopesOfMeta(m *metamodel.Metamodel) relationScopes {
+	out := relationScopes{content: map[string]bool{}, known: true}
+	for name, r := range m.Relations {
+		if r.Scope.IsContent() {
+			out.content[name] = true
+		}
+	}
+	return out
 }
 
 // enumValuesIn returns the declared value set of an entity property, whether it
@@ -1113,6 +1373,12 @@ func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error)
 				return res, capErr
 			}
 		}
+		// Before the delete, like the capture above: once the rows are gone a
+		// re-run no longer lists this id, so a thread left behind by a crash
+		// here could never be found again.
+		if tErr := x.dropThreads(ctx, id); tErr != nil {
+			return res, tErr
+		}
 		del, err := x.Store.DeleteFamily(ctx, id, true)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
@@ -1128,6 +1394,13 @@ func (s *dropEntitiesStep) Run(ctx context.Context, x *Exec) (StepResult, error)
 			return res, err
 		}
 		captureCascaded(ctx, x, del, &res)
+		// Again after the delete: the migration lock does not hold off a
+		// live comment write, and one posted while the row was still
+		// readable would otherwise outlive it and pass to the next entity
+		// that takes this id.
+		if tErr := x.dropThreads(ctx, id); tErr != nil {
+			return res, tErr
+		}
 	}
 	return res, nil
 }

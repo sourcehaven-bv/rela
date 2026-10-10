@@ -195,6 +195,62 @@ func (s *Service) EntityFaceDeleted(ctx context.Context, entityID string, face e
 	return s.store.DeleteTarget(ctx, Target{ID: entityID, Face: face})
 }
 
+// FaceMoved moves a thread from one face of an entity to another, for a row
+// that a data migration relocated rather than deleted (BUG-6OZBP9).
+//
+// Moved, not dropped: the content is the same, it only sits at a new
+// coordinate. migrate_face and adopt-face move rows off the zero coordinate,
+// which is where every comment written before the type declared faces is
+// stored, so dropping here would erase commentary because of a schema change.
+//
+// Built from List, Add and Delete rather than a new [Store] method, so every
+// backend already honors it. Add persists a comment as given, so author,
+// timestamps, anchor and resolved flag all survive the move.
+//
+// Idempotent, which is what lets a re-run of a failed migration converge: a
+// comment already at the destination is skipped, and each source comment is
+// deleted only after it has arrived. On an id collision the destination's
+// comment wins, for the reason [MergeThreads] gives. Only the comments this
+// call listed are deleted, so a comment posted at the source meanwhile stays
+// there for the next call to move rather than being lost.
+//
+// [MaxPerTarget] is not enforced: merging into an occupied destination may
+// exceed it. The cap limits what a client can post; refusing here would
+// strand comments mid-migration instead, which is worse than a long thread.
+func (s *Service) FaceMoved(ctx context.Context, entityType, entityID string, from, to entity.Face) error {
+	if from == to {
+		return nil
+	}
+	src := Target{Type: entityType, ID: entityID, Face: from}
+	dst := Target{Type: entityType, ID: entityID, Face: to}
+	arriving, err := s.store.List(ctx, src)
+	if err != nil {
+		return err
+	}
+	if len(arriving) == 0 {
+		return nil
+	}
+	occupying, err := s.store.List(ctx, dst)
+	if err != nil {
+		return err
+	}
+	present := make(map[string]struct{}, len(occupying))
+	for _, c := range occupying {
+		present[c.ID] = struct{}{}
+	}
+	for _, c := range arriving {
+		if _, ok := present[c.ID]; !ok {
+			if aErr := s.store.Add(ctx, dst, c); aErr != nil {
+				return aErr
+			}
+		}
+		if dErr := s.store.Delete(ctx, src, c.ID); dErr != nil && !errors.Is(dErr, ErrNotFound) {
+			return dErr
+		}
+	}
+	return nil
+}
+
 // authorFrom resolves the comment author from ctx.
 //
 // Uses [principal.Stamped] rather than From because the two cases differ here:

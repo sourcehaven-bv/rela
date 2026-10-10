@@ -1368,18 +1368,19 @@ func NewApp(
 	// on App after construction (same rationale as affordanceService); the
 	// store/manager handles are fixed for App's lifetime.
 	app.attachments = &attachmentHandler{
-		schema:     app.State,
-		store:      st,
-		runner:     func() attachment.CommandRunner { return app.attachmentRunner },
-		reader:     app.reader,
-		visible:    app.visibleReader,
-		serializer: app.serializer,
-		acl:        func() acl.ACL { return app.acl },
-		audit:      func() audit.Audit { return app.auditSink },
-		fields:     func() FieldVerdictResolver { return app.fieldResolver },
-		owner:      app.attachmentOwner,
-		uploads:    app.attachmentUploads,
-		provision:  newProvisionSeam(app),
+		schema:      app.State,
+		store:       st,
+		runner:      func() attachment.CommandRunner { return app.attachmentRunner },
+		reader:      app.reader,
+		visible:     app.visibleReader,
+		serializer:  app.serializer,
+		acl:         func() acl.ACL { return app.acl },
+		audit:       func() audit.Audit { return app.auditSink },
+		fields:      func() FieldVerdictResolver { return app.fieldResolver },
+		affordances: app.affordances,
+		owner:       app.attachmentOwner,
+		uploads:     app.attachmentUploads,
+		provision:   newProvisionSeam(app),
 	}
 
 	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve

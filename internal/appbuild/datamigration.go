@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/state"
@@ -31,7 +32,7 @@ import (
 // per-assembled resource, never shared across tenants.
 func startDataMigration(
 	stateKV state.KV, migState datamigration.StateStore, meta *metamodel.Metamodel, st store.Store,
-	aud audit.Audit, versions store.VersionService, cacheDir string,
+	aud audit.Audit, versions store.VersionService, commentSvc *comments.Service, cacheDir string,
 	hasMigrations func(context.Context) (bool, error),
 ) (stop func(), reevaluate func(context.Context) error) {
 	reevaluate = func(context.Context) error { return errors.New("datamigration: gate not started") }
@@ -75,20 +76,7 @@ func startDataMigration(
 		slog.Info("datamigration: gc sweep disabled via RELA_DATA_GC")
 		return func() {}, reevaluate
 	}
-	var capture datamigration.VersionCapture
-	if versions != nil {
-		capture = versions
-	}
-	gc, err := datamigration.NewGC(datamigration.GCDeps{
-		Store:    st,
-		Meta:     func() *metamodel.Metamodel { return meta },
-		State:    stateKV,
-		Audit:    aud,
-		Verdicts: gate,
-		Versions: capture,
-		Grace:    envDuration("RELA_DATA_GC_GRACE", 0), // 0 → datamigration.DefaultGrace
-		Lock:     lock,
-	})
+	gc, err := datamigration.NewGC(gcDeps(st, meta, stateKV, aud, gate, versions, commentSvc, lock))
 	if err != nil {
 		slog.Warn("datamigration: gc sweep not started", "error", err)
 		return func() {}, reevaluate
@@ -155,4 +143,32 @@ func envDuration(env string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// gcDeps assembles the GC sweep's dependencies. The optional services arrive
+// as possibly-nil pointers and must become nil interfaces, not interfaces
+// holding a nil pointer, or the engine's nil checks pass and the first call
+// panics. The comment service lets drop_entities drop the threads of the rows
+// it collects (BUG-6OZBP9).
+func gcDeps(
+	st store.Store, meta *metamodel.Metamodel, stateKV state.KV, aud audit.Audit,
+	gate datamigration.VerdictSource, versions store.VersionService, commentSvc *comments.Service,
+	lock datamigration.MigrationLock,
+) datamigration.GCDeps {
+	deps := datamigration.GCDeps{
+		Store:    st,
+		Meta:     func() *metamodel.Metamodel { return meta },
+		State:    stateKV,
+		Audit:    aud,
+		Verdicts: gate,
+		Grace:    envDuration("RELA_DATA_GC_GRACE", 0), // 0 → datamigration.DefaultGrace
+		Lock:     lock,
+	}
+	if versions != nil {
+		deps.Versions = versions
+	}
+	if commentSvc != nil {
+		deps.Comments = commentSvc
+	}
+	return deps
 }

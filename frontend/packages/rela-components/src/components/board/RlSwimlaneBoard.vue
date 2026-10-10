@@ -21,6 +21,7 @@ import RlCount from '../common/RlCount.vue'
 import RlSwimlane from './RlSwimlane.vue'
 import { useBoardAutoScroll, type BoardDragData } from '../../composables/useBoardDnd'
 import { useSwimlaneKeyboardMove } from './useBoardKeyboardMove'
+import { useSectionToggleFocus } from './useSectionToggleFocus'
 import { useMessages } from '../../composables/useMessages'
 
 const messages = useMessages()
@@ -50,8 +51,10 @@ const props = withDefaults(
      * has no drag at all. See `RlBoard`.
      */
     canMove?: (item: T) => boolean
+    /** Whether each column heading offers a collapse control. See `RlBoard`. */
+    collapsible?: boolean
   }>(),
-  { showAddSection: true, addLabel: 'Add', showAdd: true, canMove: undefined },
+  { showAddSection: true, addLabel: 'Add', showAdd: true, canMove: undefined, collapsible: false },
 )
 
 const emit = defineEmits<{
@@ -60,6 +63,8 @@ const emit = defineEmits<{
   toggleLane: [lane: Swimlane<T>]
   /** A collapsed column's rail was clicked. Carries the column's id. */
   expandSection: [id: string]
+  /** A column heading's collapse control was clicked. Carries the column's id. */
+  collapseSection: [id: string]
   addSection: []
   /**
    * A card was dropped on a cell other than its own, naming both the column
@@ -84,6 +89,20 @@ function columnCount(id: string) {
 
 const element = ref<HTMLElement>()
 useBoardAutoScroll(element)
+
+const toggleFocus = useSectionToggleFocus(element, () =>
+  columns.value.map((column) => `${column.id}:${!!column.collapsed}`).join('|'),
+)
+
+function onExpand(id: string) {
+  toggleFocus.expect(id)
+  emit('expandSection', id)
+}
+
+function onCollapse(id: string) {
+  toggleFocus.expect(id)
+  emit('collapseSection', id)
+}
 
 /** Finds the dragged item, which the drag payload carries only by id. */
 function itemById(id: string) {
@@ -146,7 +165,8 @@ const {
           type="button"
           class="rl-swimlane-board__column-collapsed"
           :aria-label="messages.expandSection({ title: column.title })"
-          @click="emit('expandSection', column.id)"
+          :data-section-id="column.id"
+          @click="onExpand(column.id)"
         >
           <component
             :is="column.icon"
@@ -166,6 +186,9 @@ const {
           :color="column.color"
           :icon="column.icon"
           :count="columnCount(column.id)"
+          :collapsible="collapsible"
+          :data-section-id="column.id"
+          @collapse="onCollapse(column.id)"
         />
       </template>
 

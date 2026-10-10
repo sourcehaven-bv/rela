@@ -37,12 +37,35 @@ describe('RelatedSectionRows', () => {
     const w = mount(RelatedSectionRows, {
       props: {
         entities: [
-          row({ id: 'TASK-2', _owner: { id: 'TASK-1', type: 'task', title: 'Plan', relation: 'subtask' } }),
+          row({
+            id: 'TASK-2',
+            _owner: { id: 'TASK-1', type: 'task', title: 'Plan', relation: 'subtask' },
+          }),
         ],
         world: 'nl',
       },
     })
     expect(w.find('a').attributes('href')).toBe('/entity/task/TASK-1?world=nl#TASK-2')
+  })
+
+  it("renders a row owned by the page's entity as static text", () => {
+    const owned = row({
+      id: 'TASK-2',
+      _owner: { id: 'TASK-1', type: 'task', title: 'Plan', relation: 'subtask' },
+    })
+    const other = row({
+      id: 'TASK-4',
+      _owner: { id: 'TASK-9', type: 'task', title: 'Other', relation: 'subtask' },
+    })
+    const w = mount(RelatedSectionRows, {
+      props: { entities: [owned, other], pageEntity: 'TASK-1' },
+    })
+    const rows = w.findAll('.rl-related-row')
+    expect(rows[0].find('a').exists()).toBe(false)
+    expect(rows[0].find('button').exists()).toBe(false)
+    expect(rows[0].find('span.rl-related-row__title').text()).toBe('TASK-2')
+    // A row owned by another entity still links to that owner.
+    expect(rows[1].find('a').attributes('href')).toBe('/entity/task/TASK-9#TASK-4')
   })
 
   it('links a row without an owner to its own page', () => {

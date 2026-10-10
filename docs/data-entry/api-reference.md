@@ -304,6 +304,18 @@ are removed.
 Mixing the two shapes in one PATCH body returns 400 with a stable
 `shape_mixed` error code.
 
+## Server errors
+
+A 500 means the server failed, not the request. The server logs the cause,
+and the response does not include it, because a store or database error can
+name data the caller may not read.
+
+- On `/api/v1` endpoints, `code` and `title` say which operation failed and
+  `detail` ends in `check server logs`. A `relation_write_failed` detail also
+  names the relation, op and target, which all come from the request.
+- The settings and theme endpoints answer `{"error": "<what failed>; check
+  server logs"}`.
+
 ## Validation policy
 
 Per [DEC-HWZHA](../../tickets/entities/decisions/DEC-HWZHA.md), validation
@@ -1172,9 +1184,30 @@ PUT  /api/v1/{plural}/{id}/_attachments/{property}
 POST /api/v1/{plural}/{id}/_attachments/{property}
 ```
 
-`multipart/form-data` with a single `file` field. The response is the
-updated entity (its `_attachments` reflects the new file). Behavior depends
-on the property's `max`:
+The file travels in one of two forms, chosen by `Content-Type`:
+
+- **`multipart/form-data`** with a single `file` field. The browser SPA
+  uses this.
+- **Any other content type: the request body is the file.** The file name
+  comes from the `filename` query parameter or, failing that, the
+  `filename` parameter of a `Content-Disposition` header. A raw body with
+  neither answers `400 missing_filename`. This is the form for `curl -T`
+  and for generic OpenAPI clients such as restish, which need no multipart
+  envelope:
+
+  ```sh
+  curl -T shot.png -H 'Authorization: Bearer …' \
+    'https://rela.example/api/v1/tasks/TASK-1/_attachments/evidence?filename=shot.png'
+  ```
+
+A raw body is stored as sent, so one with a `Content-Encoding` other than
+`identity` answers `415 unsupported_content_encoding`. The declared content
+type of a raw body is not trusted. The upload policy
+inspects the bytes and the name, the same as for a multipart file. The name
+is reduced to its base name in both forms, so a path in it is dropped.
+
+The response is the updated entity (its `_attachments` reflects the new
+file). Behavior depends on the property's `max`:
 
 - **`max == 1`** (default): the upload **replaces** the existing file.
 - **`max > 1`**: the upload **appends**, up to `max`. A file whose
@@ -1199,13 +1232,18 @@ attachment write mutates the entity, so it is authorized as an `update`,
 re-checked server-side **before any bytes are written** (a deny never
 orphans a file). A caller who cannot read the entity gets the same uniform
 `404` as the read path; a caller who can read but not update gets `403`.
+A `fields:` policy applies as on `PATCH`: a file property the caller may
+not write is refused with `403` and `rule_kind: affordance` before any bytes
+are written.
 
 Size limits: the request is capped at ingress (`413 attachment_too_large`,
 `application/problem+json`) by a default of 64 MiB, overridable per
 deployment via the data-entry config key `app.max_attachment_bytes`. Every
 store backend also enforces `store.MaxAttachmentBytes` as a backstop, so no
-storage path is ever unbounded. Other failures: `400` for a malformed
-multipart body or a missing `file` field; `422` for a validation failure
+storage path is ever unbounded. A raw body over the cap is refused on its
+`Content-Length` before it is read, or when the cap is crossed if it has
+none. Other failures: `400` for a malformed multipart body, a missing `file`
+field or a raw body without a file name; `422` for a validation failure
 when persisting the property.
 
 ### Delete endpoint

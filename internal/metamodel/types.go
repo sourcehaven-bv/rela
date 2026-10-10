@@ -1433,13 +1433,16 @@ type AutomationDef struct {
 
 // AutomationTrigger specifies conditions that activate an automation.
 type AutomationTrigger struct {
-	Entity          StringOrSlice `yaml:"entity,omitempty"`
-	Property        string        `yaml:"property,omitempty"`
-	Becomes         string        `yaml:"becomes,omitempty"`
-	From            string        `yaml:"from,omitempty"`
-	Created         bool          `yaml:"created,omitempty"`
-	RelationCreated string        `yaml:"relation_created,omitempty"`
-	RelationRemoved string        `yaml:"relation_removed,omitempty"`
+	Entity   StringOrSlice `yaml:"entity,omitempty"`
+	Property string        `yaml:"property,omitempty"`
+	Becomes  string        `yaml:"becomes,omitempty"`
+	From     string        `yaml:"from,omitempty"`
+	Created  bool          `yaml:"created,omitempty"`
+	// Updated fires on any update that changes a property or the body, and
+	// on a rename (TKT-2Q4UFI). It cannot be combined with Property.
+	Updated         bool   `yaml:"updated,omitempty"`
+	RelationCreated string `yaml:"relation_created,omitempty"`
+	RelationRemoved string `yaml:"relation_removed,omitempty"`
 
 	// Faces limits the trigger to specific content states, named as declared
 	// in `faces:`. Empty means every state — see automation.Trigger.Faces for
@@ -1494,6 +1497,20 @@ type AutomationAction struct {
 	// request, so they are not an operator-shell surface and do not get the
 	// trusted default. Ignored for non-Lua actions.
 	Capabilities Capabilities `yaml:"capabilities,omitempty"`
+
+	// Background runs the lua_file action as a background job instead of on
+	// the write path (TKT-2Q4UFI). Saves of one entity coalesce into one run,
+	// and a save during a run is followed by one more. The job runs as RunAs
+	// with this action's capabilities, never as the user who saved.
+	Background bool `yaml:"background,omitempty"`
+
+	// RunAs is the principal a background job runs as. Empty means
+	// system:automation. Valid only with Background.
+	RunAs string `yaml:"run_as,omitempty"`
+
+	// Retry is the background job's retry intent. Empty means bounded.
+	// Valid only with Background.
+	Retry JobRetry `yaml:"retry,omitempty"`
 }
 
 // CreateRelationAction specifies parameters for creating a relation.
