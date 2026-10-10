@@ -218,3 +218,30 @@ func TestOpenAPI_SpecNamesTheJWTHeader(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenAPI_RootLinksToSpec pins the RFC 8631 discovery link on the site
+// root (TKT-XO9LQB): restish given only the origin follows it to the spec,
+// and reads it only from a 2xx. Other routes and methods do not carry it.
+func TestOpenAPI_RootLinksToSpec(t *testing.T) {
+	router := newTestAppV1(t).NewRouter(withSPAFS(stubSPA))
+	const link = `</api/v1/_openapi.json>; rel="service-desc"`
+	for _, tc := range []struct {
+		method, path, want string
+	}{
+		{http.MethodGet, "/", link},
+		{http.MethodHead, "/", link},
+		{http.MethodPost, "/", ""},
+		{http.MethodGet, "/tickets", ""},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, http.NoBody))
+			if got := rec.Header().Get("Link"); got != tc.want {
+				t.Fatalf("Link = %q, want %q", got, tc.want)
+			}
+			if tc.want != "" && rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: restish ignores the Link header on any other", rec.Code)
+			}
+		})
+	}
+}
