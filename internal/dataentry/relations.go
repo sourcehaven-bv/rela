@@ -28,20 +28,18 @@ func (e *relationError) Error() string {
 func (e *relationError) Unwrap() error { return e.Err }
 
 // reconcileDetail formats a reconcile error for the problem-details
-// response. If the error is a *relationError the output is a stable
-// "relation=<t> target=<to> op=<op> reason=<reason>" string so the
-// frontend can parse it; otherwise the raw error string is passed through.
+// response as "relation=<t> op=<op> reason=<reason> target=<to>". Every
+// field came from the request. The underlying cause is left out, because a
+// store error can name data the caller may not read (GitHub #1774); it is
+// empty when err is not a *relationError.
 func reconcileDetail(err error) string {
 	var rerr *relationError
-	if errors.As(err, &rerr) {
-		base := fmt.Sprintf("relation=%s op=%s reason=%s", rerr.RelType, rerr.Op, rerr.Reason)
-		if rerr.Target != "" {
-			base += " target=" + rerr.Target
-		}
-		if rerr.Err != nil {
-			base += fmt.Sprintf(" cause=%q", rerr.Err.Error())
-		}
-		return base
+	if !errors.As(err, &rerr) {
+		return ""
 	}
-	return err.Error()
+	base := fmt.Sprintf("relation=%s op=%s reason=%s", rerr.RelType, rerr.Op, rerr.Reason)
+	if rerr.Target != "" {
+		base += " target=" + rerr.Target
+	}
+	return base
 }

@@ -233,6 +233,20 @@ func TestValidateCalendars_Invalid(t *testing.T) {
 			}),
 			want: `references unknown relation "nope"`,
 		},
+		{
+			name: "event field relation count",
+			cal: withShell(func(c *Calendar) {
+				c.Event = CalendarEvent{Fields: []KanbanCardField{{Relation: "nope", Display: "count"}}}
+			}),
+			want: "display is only supported on kanban card fields",
+		},
+		{
+			name: "event field comment count",
+			cal: withShell(func(c *Calendar) {
+				c.Event = CalendarEvent{Fields: []KanbanCardField{{Comments: true}}}
+			}),
+			want: "comments is only supported on kanban card fields",
+		},
 	}
 
 	for _, tt := range tests {

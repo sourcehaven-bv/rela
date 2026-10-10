@@ -3,13 +3,13 @@ import { describe, expect, it } from 'vitest'
 import type { GanttNode } from '@/api/gantts'
 import {
   barSpan,
-  scaleFor,
   findNode,
   flattenRows,
   forestSpan,
   parseDay,
   pct,
   ticksFor,
+  withToday,
 } from './ganttLayout'
 
 const node = (id: string, extra: Partial<GanttNode> = {}): GanttNode => ({
@@ -88,18 +88,13 @@ describe('ticksFor', () => {
     expect(ticks[0].label).toBe('W10')
   })
 
-  it('caps density over a two-year span instead of smearing labels', () => {
+  it('emits every period: a fixed day width leaves room for each label', () => {
     const twoYears = { start: parseDay('2026-01-01')!, end: parseDay('2027-12-31')! }
-    for (const zoom of ['week', 'month', 'quarter'] as const) {
-      const ticks = ticksFor(twoYears, zoom)
-      expect(ticks.length).toBeLessThanOrEqual(22)
-      expect(ticks.length).toBeGreaterThan(3)
-    }
-    // A ~104-week span emits every 4th week, still Mondays, still ISO-numbered.
+    expect(ticksFor(twoYears, 'month')).toHaveLength(24) // Jan '26 .. Dec '27
+    expect(ticksFor(twoYears, 'quarter')).toHaveLength(8) // Q1 '26 .. Q4 '27
     const weeks = ticksFor(twoYears, 'week')
-    for (const t of weeks) {
-      expect(new Date(t.day * 86_400_000).getUTCDay()).toBe(1)
-      expect(t.label).toMatch(/^W\d{1,2}$/)
+    for (let i = 1; i < weeks.length; i++) {
+      expect(weeks[i].day - weeks[i - 1].day).toBe(7)
     }
   })
 
@@ -145,69 +140,25 @@ describe('flattenRows', () => {
   })
 })
 
-describe('scaleFor', () => {
-  const axis = { start: parseDay('2026-01-01')!, end: parseDay('2026-04-30')! }
-  const ticks = ticksFor(axis, 'month') // Jan..Apr boundaries
+describe('withToday', () => {
+  const axis = { start: parseDay('2026-03-01')!, end: parseDay('2026-03-31')! }
 
-  it('renders every period at equal width regardless of day count', () => {
-    const scale = scaleFor(axis, ticks)
-    const feb = scale(parseDay('2026-03-01')!) - scale(parseDay('2026-02-01')!)
-    const mar = scale(parseDay('2026-04-01')!) - scale(parseDay('2026-03-01')!)
-    expect(feb).toBeCloseTo(mar, 6) // 28 days == 31 days on screen
-  })
-
-  it('is monotonic and clamped', () => {
-    const scale = scaleFor(axis, ticks)
-    let prev = -1
-    for (let d = axis.start - 5; d <= axis.end + 5; d++) {
-      const v = scale(d)
-      expect(v).toBeGreaterThanOrEqual(0)
-      expect(v).toBeLessThanOrEqual(100)
-      expect(v).toBeGreaterThanOrEqual(prev)
-      prev = v
-    }
-    expect(scale(axis.start)).toBe(0)
-    expect(scale(axis.end + 1)).toBe(100)
-  })
-
-  it('places tick days exactly on segment boundaries', () => {
-    const scale = scaleFor(axis, ticks)
-    // Boundaries are axis.start, each tick day, axis.end+1: consecutive
-    // ticks must therefore sit exactly one segment width apart.
-    const widths: number[] = []
-    for (let i = 1; i < ticks.length; i++) {
-      widths.push(scale(ticks[i].day) - scale(ticks[i - 1].day))
-    }
-    for (const w of widths) {
-      expect(w).toBeCloseTo(widths[0], 6)
-    }
-  })
-})
-
-describe('ticksFor anchored striding (regression: missing months, uneven columns)', () => {
-  it('a strided two-year month axis keeps every month interval uniform', () => {
-    const twoYears = { start: parseDay('2026-01-01')!, end: parseDay('2027-12-31')! }
-    const ticks = ticksFor(twoYears, 'month')
-    // The force-January exception used to yield Oct, Dec, Jan'27, Feb, Apr —
-    // November missing and columns 2/1/1/2 months wide. Anchored striding
-    // must emit a uniform month step instead.
-    const months = ticks.map((t) => {
-      const d = new Date(t.day * 86_400_000)
-      return d.getUTCFullYear() * 12 + d.getUTCMonth()
+  it('widens the axis to a nearby today on either side', () => {
+    expect(withToday(axis, parseDay('2026-02-25')!, 'week')).toEqual({
+      start: parseDay('2026-02-23')!,
+      end: axis.end,
     })
-    const step = months[1] - months[0]
-    for (let i = 1; i < months.length; i++) {
-      expect(months[i] - months[i - 1]).toBe(step)
-    }
-    expect(12 % step).toBe(0) // stride divides the year → every January present
-    const labels = ticks.map((t) => t.label)
-    expect(labels).toContain("Jan '26")
-    expect(labels).toContain("Jan '27")
-    // November renders whenever the step includes it (step 2 anchored at Jan
-    // emits Jan, Mar, May, Jul, Sep, Nov).
-    if (step === 2) {
-      expect(labels).toContain('Nov')
-    }
+    expect(withToday(axis, parseDay('2026-04-05')!, 'week')).toEqual({
+      start: axis.start,
+      end: parseDay('2026-04-07')!,
+    })
+  })
+
+  it('leaves the axis alone when today is inside it or more than one unit away', () => {
+    expect(withToday(axis, parseDay('2026-03-10')!, 'week')).toBe(axis)
+    expect(withToday(axis, parseDay('2026-04-20')!, 'week')).toBe(axis)
+    // The same distance is within reach at month zoom.
+    expect(withToday(axis, parseDay('2026-04-20')!, 'month').end).toBe(parseDay('2026-04-22')!)
   })
 })
 

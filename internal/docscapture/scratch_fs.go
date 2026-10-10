@@ -2,7 +2,11 @@
 
 package docscapture
 
-import "github.com/Sourcehaven-BV/rela/internal/appbuild"
+import (
+	"context"
+
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+)
 
 // scratchBackend returns the appbuild options that point a stood-up temp
 // project at a THROWAWAY backend, plus a cleanup to run at teardown.
@@ -14,6 +18,6 @@ import "github.com/Sourcehaven-BV/rela/internal/appbuild"
 // whole reason this is a seam rather than an unconditional call.
 //
 // Nil: the returned cleanup is never nil — callers may defer it unconditionally.
-func scratchBackend(string) ([]appbuild.Option, func(), error) {
+func scratchBackend(context.Context, string) ([]appbuild.Option, func(), error) {
 	return nil, func() {}, nil
 }

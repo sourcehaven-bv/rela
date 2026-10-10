@@ -19,7 +19,9 @@
  * the dense-surface rule that an empty value renders as nothing rather than a
  * placeholder.
  */
-import type { Component } from 'vue'
+import { computed, type Component } from 'vue'
+import RlMetaItem from 'rela-components/components/common/RlMetaItem.vue'
+import type { IconName } from 'rela-components/components/common/icons'
 import { cardFieldLabel, cardFieldLabelShown, type KanbanCardField } from '@/types/config'
 import { useSchemaStore } from '@/stores/schema'
 
@@ -32,9 +34,12 @@ export interface ResolvedCardField {
   modelValue?: unknown
   /** Formatted value, used when no widget applies (relations, plain values). */
   text: string
+  /** Set for a count field (comments, `display: count`); rendered as an icon
+   * and number in one row under the other fields. */
+  count?: { value: number; icon: IconName }
 }
 
-defineProps<{
+const props = defineProps<{
   fields: ResolvedCardField[]
   /** Forwarded to widgets that need it for enum styling. */
   entityType?: string
@@ -42,17 +47,25 @@ defineProps<{
 
 const schemaStore = useSchemaStore()
 
+const lines = computed(() => props.fields.filter((f) => !f.count))
+const counts = computed(() => props.fields.filter((f) => f.count))
+
 /** A relation's authored label from the metamodel, so `belongs-to` renders as
  * "belongs to" rather than looking like a raw field name. */
 function relationLabel(relation: string): string | undefined {
   return schemaStore.getRelationType(relation)?.label
+}
+
+/** A stable key per count field: a card may count a relation both ways. */
+function countKey(field: KanbanCardField): string {
+  return field.comments ? 'comments' : `${field.relation}:${field.direction ?? 'outgoing'}`
 }
 </script>
 
 <template>
   <div v-if="fields.length" class="card-fields">
     <div
-      v-for="(resolved, i) in fields"
+      v-for="(resolved, i) in lines"
       :key="resolved.field.relation || resolved.field.property || i"
       class="card-field"
     >
@@ -69,6 +82,26 @@ function relationLabel(relation: string): string | undefined {
         :entity-type="entityType"
       />
       <span v-else class="field-value">{{ resolved.text }}</span>
+    </div>
+    <div v-if="counts.length" class="card-counts">
+      <!-- The label is visible unless show_label is false: two relation counts
+           share an icon, so the number alone cannot say which is which. -->
+      <RlMetaItem
+        v-for="resolved in counts"
+        :key="countKey(resolved.field)"
+        :icon="resolved.count!.icon"
+        :label="
+          cardFieldLabelShown(resolved.field)
+            ? `${resolved.count!.value} ${cardFieldLabel(resolved.field, relationLabel)}`
+            : resolved.count!.value
+        "
+        :count-label="
+          cardFieldLabelShown(resolved.field)
+            ? undefined
+            : cardFieldLabel(resolved.field, relationLabel)
+        "
+        :title="cardFieldLabel(resolved.field, relationLabel)"
+      />
     </div>
   </div>
 </template>
@@ -90,6 +123,12 @@ function relationLabel(relation: string): string | undefined {
   gap: var(--space-xs);
   min-width: 0;
   font-size: var(--font-size-sm);
+}
+
+.card-counts {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: 2px;
 }
 
 .field-label {
