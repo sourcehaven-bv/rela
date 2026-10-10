@@ -2,6 +2,7 @@ package visibility
 
 import (
 	"context"
+	"errors"
 	"iter"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -39,47 +40,53 @@ func (r *PolicyReader) RedactRow(ctx context.Context, e *entity.Entity) *entity.
 	return r.redacted(ctx, e)
 }
 
-// listPushdown streams the entities of q.Type the caller may READ, using the
-// ACL as a store query rather than filtering rows after the fact.
+// pushdownScope is the caller's read scope for one entity type, composed as a
+// store query. Exactly one of deny, allow and graph is set; a scope with none
+// set is a fault, and [listPushdown] and [countPushdown] fail closed on it.
+type pushdownScope struct {
+	// deny: the caller may read no row of the type.
+	deny bool
+	// allow: every row of the type is readable; the query carries the face
+	// allowlist.
+	allow *store.EntityQuery
+	// graph: the readable rows are those the composed ACL query matches,
+	// run on gq.
+	graph *store.GraphQuery
+	gq    store.GraphQueryer
+}
+
+// errEmptyScope reports a pushdownScope with no branch set.
+var errEmptyScope = errors.New("visibility: read scope has no branch")
+
+// composeReadScope turns the caller's read policy for q.Type into a store
+// query, so [listPushdown] and [countPushdown] gate the same rows.
 //
-// Returns ok=false when pushdown is unavailable (no ReadQueryProvider, or a
-// store without GraphQueryer), so the caller falls back to load-then-Filter.
-// A fallback is a performance regression, never a correctness or security
-// one — both paths gate on the same policy.
-//
-// WHAT THIS DOES NOT DO: it replaces the ROW GATE only. Field-level
-// `visible:` redaction is NOT expressible as a store predicate, so every
-// yielded row still goes through the redactor. Dropping that would return
-// hidden properties to callers — the #1188 finding this package exists to
-// close (RR-1W1G6K). The row gate and the field gate are separate
-// mechanisms; pushing one down does not push down the other.
-func listPushdown(
-	ctx context.Context,
-	provider ReadQueryProvider,
-	raw store.Store,
-	redact func(context.Context, *entity.Entity) *entity.Entity,
-	q store.EntityQuery,
-) (iter.Seq2[*entity.Entity, error], bool) {
+// Returns ok=false when pushdown is unavailable (no ReadQueryProvider, a
+// type-less query, or a store without GraphQueryer), so the caller falls back
+// to load-then-Filter. A scope that cannot be composed is an error, never an
+// ungated read.
+func composeReadScope(
+	ctx context.Context, provider ReadQueryProvider, raw store.Store, q store.EntityQuery,
+) (pushdownScope, bool, error) {
 	if provider == nil || q.Type == "" {
 		// A type-less list spans every type; the ACL query is composed per
 		// type, so there is nothing single to push down.
-		return nil, false
+		return pushdownScope{}, false, nil
 	}
 	gq, ok := raw.(store.GraphQueryer)
 	if !ok {
-		return nil, false
+		return pushdownScope{}, false, nil
 	}
 	rqr, err := provider.ReadQueryFor(ctx, q.Type)
 	if err != nil {
 		// Fail CLOSED: a scope we cannot compose must not degrade to an
-		// ungated read. Yield the error so the caller surfaces it rather
-		// than seeing an empty list that reads as "nothing here".
-		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }, true
+		// ungated read.
+		return pushdownScope{}, true, err
 	}
 
 	switch {
 	case rqr.DenyAll:
-		return func(func(*entity.Entity, error) bool) {}, true
+		return pushdownScope{deny: true}, true, nil
 	case rqr.AllowAll:
 		// Every row of the type is readable, so the row gate is a no-op --
 		// but redaction is NOT (RR-OXE47R). A principal with global read on
@@ -93,12 +100,12 @@ func listPushdown(
 		// yields, so the common case is unchanged.
 		allowQ := q
 		allowQ.FaceIn = rqr.Faces
-		return redactingSeq(ctx, raw.ListEntities(ctx, allowQ), redact), true
+		return pushdownScope{allow: &allowQ}, true, nil
 	case rqr.Query == nil:
 		// Neither allow, deny, nor query: an unrepresentable state. Treat as
 		// a fault and fall back rather than guessing, mirroring
 		// acl.Request.ReadableFacesMany, which errors here.
-		return nil, false
+		return pushdownScope{}, false, nil
 	}
 	// Carry the WORLD from the EntityQuery onto the composed GraphQuery
 	// (TKT-WAV8XP PR-D). This is the seam the whole two-mechanism design
@@ -131,7 +138,70 @@ func listPushdown(
 	// mutating rqr.Query in place would leak one principal's face set into
 	// the next caller's (TKT-O7R2A1).
 	worldQuery.FaceIn = rqr.Faces
-	return redactingSeq(ctx, gq.GraphQuery(ctx, worldQuery), redact), true
+	return pushdownScope{graph: &worldQuery, gq: gq}, true, nil
+}
+
+// listPushdown streams the entities of q.Type the caller may READ, using the
+// ACL as a store query rather than filtering rows after the fact.
+//
+// Returns ok=false when pushdown is unavailable (see [composeReadScope]), so
+// the caller falls back to load-then-Filter. A fallback is a performance
+// regression, never a correctness or security one — both paths gate on the
+// same policy.
+//
+// WHAT THIS DOES NOT DO: it replaces the ROW GATE only. Field-level
+// `visible:` redaction is NOT expressible as a store predicate, so every
+// yielded row still goes through the redactor. Dropping that would return
+// hidden properties to callers — the #1188 finding this package exists to
+// close (RR-1W1G6K). The row gate and the field gate are separate
+// mechanisms; pushing one down does not push down the other.
+func listPushdown(
+	ctx context.Context,
+	provider ReadQueryProvider,
+	raw store.Store,
+	redact func(context.Context, *entity.Entity) *entity.Entity,
+	q store.EntityQuery,
+) (iter.Seq2[*entity.Entity, error], bool) {
+	scope, ok, err := composeReadScope(ctx, provider, raw, q)
+	switch {
+	case !ok:
+		return nil, false
+	case err != nil:
+		// Yield the error so the caller surfaces it rather than seeing an
+		// empty list that reads as "nothing here".
+		return func(yield func(*entity.Entity, error) bool) { yield(nil, err) }, true
+	case scope.deny:
+		return func(func(*entity.Entity, error) bool) {}, true
+	case scope.allow != nil:
+		return redactingSeq(ctx, raw.ListEntities(ctx, *scope.allow), redact), true
+	case scope.graph != nil:
+		return redactingSeq(ctx, scope.gq.GraphQuery(ctx, *scope.graph), redact), true
+	}
+	return func(yield func(*entity.Entity, error) bool) { yield(nil, errEmptyScope) }, true
+}
+
+// countPushdown counts the entities of q.Type the caller may READ, as one
+// store count over the same scope [listPushdown] lists. A count and the list
+// it summarizes therefore cannot disagree.
+//
+// Returns ok=false when pushdown is unavailable, like [listPushdown].
+func countPushdown(
+	ctx context.Context, provider ReadQueryProvider, raw store.Store, q store.EntityQuery,
+) (n int, ok bool, err error) {
+	scope, ok, err := composeReadScope(ctx, provider, raw, q)
+	switch {
+	case !ok || err != nil:
+		return 0, ok, err
+	case scope.deny:
+		return 0, true, nil
+	case scope.allow != nil:
+		n, err = raw.CountEntities(ctx, *scope.allow)
+		return n, true, err
+	case scope.graph != nil:
+		n, err = store.CountMatched(ctx, scope.gq, *scope.graph)
+		return n, true, err
+	}
+	return 0, true, errEmptyScope
 }
 
 // redactingSeq applies the field redactor to every row of src.

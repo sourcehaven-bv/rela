@@ -375,3 +375,46 @@ func (s *ScriptReader) ListRelationsStrict(
 		}
 	}
 }
+
+// CountEntities counts the rows of q the caller may read: the number of rows
+// [ScriptReader.ListEntities] would yield for q.
+//
+// A count is gated like the list it summarizes (TKT-QZTROQ). A per-type
+// tally over the raw store tells a caller how many rows exist of a type it
+// may not read, and how many rows of a readable type are hidden from it.
+//
+// The count runs in the store over the same ACL scope the list pushes down,
+// under the same condition. Without pushdown it counts the rows the list's
+// fallback keeps, not the header stream: the header stream ranks faces before
+// it gates, so under a world it can keep a different face set than the list
+// does.
+func (s *ScriptReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
+	bound := s.bind(ctx)
+	if _, ok := s.reader.(rowRedactor); ok {
+		if n, pushed, err := countPushdown(bound, s.provider, s.raw, q); pushed {
+			return n, err
+		}
+	}
+	batch, err := s.listGatedThenRanked(bound, q)
+	if err != nil {
+		return 0, err
+	}
+	return len(s.reader.Filter(bound, batch)), nil
+}
+
+// CountRelations counts the relations of q whose both endpoints the caller
+// may read: the number of rows [ScriptReader.ListRelationsStrict] would yield.
+//
+// Relation gating has no store pushdown, so this counts the gated list. It
+// uses the strict list because a count that silently drops the relations a
+// gate fault touched is a wrong number, not a hidden row.
+func (s *ScriptReader) CountRelations(ctx context.Context, q store.RelationQuery) (int, error) {
+	n := 0
+	for _, err := range s.ListRelationsStrict(ctx, q) {
+		if err != nil {
+			return 0, err
+		}
+		n++
+	}
+	return n, nil
+}

@@ -142,3 +142,13 @@ func (r *UnrestrictedReader) ListRelationsStrict(
 ) iter.Seq2[*entity.Relation, error] {
 	return r.st.ListRelations(ctx, q)
 }
+
+// CountEntities implements the script read surface: straight pass-through.
+func (r *UnrestrictedReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
+	return r.st.CountEntities(ctx, q)
+}
+
+// CountRelations implements the script read surface: straight pass-through.
+func (r *UnrestrictedReader) CountRelations(ctx context.Context, q store.RelationQuery) (int, error) {
+	return r.st.CountRelations(ctx, q)
+}
