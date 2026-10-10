@@ -1,15 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { createPinia, setActivePinia } from 'pinia'
+import { createPinia, getActivePinia, setActivePinia } from 'pinia'
+import { PiniaColada } from '@pinia/colada'
 import { nextTick, ref } from 'vue'
 import GanttView from './GanttView.vue'
 import { useSchemaStore } from '@/stores/schema'
 import type { GanttNode, GanttResponse } from '@/api/gantts'
 
 const getGanttMock = vi.fn()
+const getEntityMock = vi.fn()
+const updateEntityMock = vi.fn()
 vi.mock('@/api', async (orig) => ({
   ...(await orig<typeof import('@/api')>()),
   getGantt: (...args: unknown[]) => getGanttMock(...args),
+  getEntity: (...args: unknown[]) => getEntityMock(...args),
+  updateEntity: (...args: unknown[]) => updateEntityMock(...args),
 }))
 
 const routeQuery = ref<Record<string, string>>({})
@@ -51,7 +56,10 @@ function forest(truncated = false): GanttResponse {
 }
 
 function mountGantt() {
-  return mount(GanttView, { props: { id: 'plan' } })
+  return mount(GanttView, {
+    props: { id: 'plan' },
+    global: { plugins: [getActivePinia()!, PiniaColada] },
+  })
 }
 
 describe('GanttView fetch policy', () => {
@@ -298,7 +306,12 @@ describe('GanttView scroll navigation', () => {
       },
     })
     // Reduced motion: the buttons then set scrollLeft directly.
-    window.matchMedia = ((q: string) => ({ matches: true, media: q })) as unknown as typeof window.matchMedia
+    window.matchMedia = ((q: string) => ({
+      matches: true,
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia
     setActivePinia(createPinia())
     useSchemaStore().gantts.set('plan', {
       title: 'Plan',
@@ -412,6 +425,163 @@ describe('GanttView scroll navigation', () => {
     expect(now.attributes('disabled')).toBeDefined()
     expect(w.text()).toContain('Today is outside this plan')
     expect(chartScroll(w)).toBe(0)
+    w.unmount()
+  })
+})
+
+describe('GanttView drag', () => {
+  const stored = {
+    id: 'A',
+    type: 'project',
+    properties: { planned_start: '2026-01-01', planned_end: '2026-06-01' },
+    _versions: { properties: { planned_start: 's1', planned_end: 'e1' }, content: 'c' },
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    useSchemaStore().gantts.set('plan', {
+      title: 'Plan',
+      hierarchy: ['contains'],
+      multi_parent: 'first',
+      on_cycle: 'error',
+      default_depth: 2,
+      max_depth: 10,
+      max_nodes: 2000,
+      sources: { project: { start: 'planned_start', end: 'planned_end' } },
+    })
+    routeQuery.value = {}
+    getGanttMock.mockReset().mockResolvedValue({ roots: [node('A')] })
+    getEntityMock.mockReset()
+    updateEntityMock.mockReset().mockResolvedValue({})
+    routerPush.mockClear()
+  })
+
+  async function focusLabel(w: ReturnType<typeof mountGantt>) {
+    await w.find('.row[data-node-id="A"] .bar-name').trigger('focus')
+    await flushPromises()
+  }
+
+  it('shows no handles until the entity allows the write', async () => {
+    getEntityMock.mockResolvedValue({ ...stored, _actions: { update: false } })
+    const w = mountGantt()
+    await flushPromises()
+    expect(w.find('[data-testid="gantt-drag-window"]').exists()).toBe(false)
+    await focusLabel(w)
+    expect(getEntityMock).toHaveBeenCalledWith('project', 'A')
+    expect(w.find('[data-testid="gantt-drag-window"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('offers start, move and end sliders and writes from the keyboard', async () => {
+    getEntityMock.mockResolvedValue(stored)
+    const w = mountGantt()
+    await flushPromises()
+    await focusLabel(w)
+    const handles = w.findAll('[role="slider"]')
+    expect(handles.map((h) => h.attributes('data-testid'))).toEqual([
+      'gantt-drag-start',
+      'gantt-drag-move',
+      'gantt-drag-end',
+    ])
+    expect(handles[0].attributes('aria-valuetext')).toBe('2026-01-01')
+
+    const move = w.find('[data-testid="gantt-drag-move"]')
+    await move.trigger('keydown', { key: 'ArrowRight' })
+    expect(w.find('[data-testid="gantt-drag-start"]').attributes('aria-valuetext')).toBe(
+      '2026-01-02'
+    )
+    expect(updateEntityMock).not.toHaveBeenCalled()
+
+    getGanttMock.mockResolvedValue({ roots: [node('A')] })
+    await move.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(updateEntityMock).toHaveBeenCalledWith('project', 'A', {
+      properties: { planned_start: '2026-01-02', planned_end: '2026-06-02' },
+      preconditions: { properties: { planned_start: 's1', planned_end: 'e1' } },
+    })
+    expect(getGanttMock).toHaveBeenCalledTimes(2)
+    w.unmount()
+  })
+
+  it('keeps focus on the handle through the write and reload', async () => {
+    getEntityMock.mockResolvedValue(stored)
+    const w = mount(GanttView, {
+      props: { id: 'plan' },
+      global: { plugins: [getActivePinia()!, PiniaColada] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    await focusLabel(w)
+    const move = w.find('[data-testid="gantt-drag-move"]')
+    ;(move.element as HTMLElement).focus()
+    await move.trigger('keydown', { key: 'ArrowRight' })
+    await move.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(updateEntityMock).toHaveBeenCalledTimes(1)
+    expect(document.activeElement?.getAttribute('data-testid')).toBe('gantt-drag-move')
+    w.unmount()
+  })
+
+  it('reloads the scope navigated to, not the one the write began in', async () => {
+    getEntityMock.mockResolvedValue(stored)
+    getGanttMock.mockResolvedValue({ roots: [node('A', [node('B')])], truncated: true })
+    const w = mountGantt()
+    await flushPromises()
+    await focusLabel(w)
+    let written!: (v: unknown) => void
+    updateEntityMock.mockReturnValueOnce(new Promise((r) => (written = r)))
+    const move = w.find('[data-testid="gantt-drag-move"]')
+    await move.trigger('keydown', { key: 'ArrowRight' })
+    await move.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    // Drill while the write is in flight; the truncated tree makes it fetch,
+    // and that fetch is still out when the write lands.
+    let drilled!: (r: GanttResponse) => void
+    getGanttMock.mockReturnValueOnce(new Promise<GanttResponse>((r) => (drilled = r)))
+    getGanttMock.mockResolvedValue({ roots: [node('B')] })
+    routeQuery.value = { path: 'B' }
+    await flushPromises()
+    written({})
+    await flushPromises()
+    drilled({ roots: [node('B')] })
+    await flushPromises()
+
+    expect(getGanttMock).toHaveBeenLastCalledWith('plan', 'B')
+    expect(w.find('.row[data-node-id="A"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('does not drill when a drag ends on the window', async () => {
+    getEntityMock.mockResolvedValue(stored)
+    getGanttMock.mockResolvedValue({ roots: [node('A', [node('B')])] })
+    const w = mountGantt()
+    await flushPromises()
+    await focusLabel(w)
+    const move = w.find('[data-testid="gantt-drag-move"]')
+    const ev = (type: string, clientX: number) => {
+      const e = new MouseEvent(type, { clientX, button: 0, bubbles: true })
+      Object.defineProperty(e, 'pointerId', { value: 1 })
+      return e
+    }
+    move.element.dispatchEvent(ev('pointerdown', 100))
+    move.element.dispatchEvent(ev('pointermove', 400))
+    move.element.dispatchEvent(ev('pointerup', 400))
+    move.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(routerPush).not.toHaveBeenCalled()
+    expect(updateEntityMock).toHaveBeenCalledTimes(1)
+    w.unmount()
+  })
+
+  it('drills on a click on the draggable window', async () => {
+    getEntityMock.mockResolvedValue(stored)
+    getGanttMock.mockResolvedValue({ roots: [node('A', [node('B')])] })
+    const w = mountGantt()
+    await flushPromises()
+    await focusLabel(w)
+    await w.find('[data-testid="gantt-drag-window"]').trigger('click')
+    expect(routerPush).toHaveBeenCalled()
     w.unmount()
   })
 })

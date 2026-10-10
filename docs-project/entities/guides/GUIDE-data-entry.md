@@ -5146,6 +5146,37 @@ task covers five full days.
 - A plan spanning many years at a fine zoom is drawn with narrower days, and
   the chart is flagged **compressed**.
 
+### Rescheduling by dragging
+
+You can change an entity's own `start` and `end` on the chart.
+
+- Drag the bar to move it. Both dates move by the same number of days.
+- Drag the left or right edge to change only the start or only the end. The
+  end cannot move before the start.
+- A short press without moving still drills in.
+- Press Escape during a drag to abandon it.
+
+The handles appear after the pointer rests on a bar, or when its name gets
+keyboard focus. At that moment the SPA reads the entity once. It shows the
+handles only when you may update the entity, both date fields are readable
+and writable for you, and both hold a value. A bar whose source maps only one
+of the two dates cannot be dragged, and a rolled-up span is never a drag
+target.
+
+From the keyboard, Tab from the bar's name to its start, move and end
+controls. The arrow keys move the chosen control one day, or a week with
+Shift. Enter saves and Escape cancels. Moving between the controls of one bar
+keeps the change, so you can adjust start and end and save both at once.
+
+Each gesture saves one change through the normal update path, so access
+rules, validation and the audit log apply. The save re-reads the entity first
+and sends field preconditions. If someone else changed a date since the chart
+loaded, or the save is refused, the chart shows a message and returns the bar
+to the stored dates. A `datetime` keeps its time of day and its offset; only
+the date part moves. Gantt nodes carry
+`face` on the wire when the type has faces, so the save goes to the face the
+chart shows.
+
 ### Planned versus rolled-up spans
 
 Each source maps up to three date roles, all independently optional:

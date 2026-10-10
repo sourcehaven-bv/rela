@@ -53,4 +53,21 @@ export class GanttPage extends BasePage {
   rowTreeCell(nodeId: string): Locator {
     return this.page.locator(`.row[data-node-id="${nodeId}"] .cell-tree`);
   }
+
+  /** A draggable bar's control: the move window or one of its edges. */
+  dragHandle(nodeId: string, mode: 'start' | 'move' | 'end'): Locator {
+    return this.page.locator(`.row[data-node-id="${nodeId}"] [data-testid="gantt-drag-${mode}"]`);
+  }
+
+  /** Drags a handle sideways by dx pixels with the mouse, in steps. */
+  async dragBy(handle: Locator, dx: number): Promise<void> {
+    const box = await handle.boundingBox();
+    if (!box) throw new Error('handle not laid out');
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await this.page.mouse.move(x, y);
+    await this.page.mouse.down();
+    await this.page.mouse.move(x + dx, y, { steps: 8 });
+    await this.page.mouse.up();
+  }
 }

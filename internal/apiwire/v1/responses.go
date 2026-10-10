@@ -1673,8 +1673,12 @@ type GanttResponse struct {
 // view exists to show — would be silently absorbed. Nodes carry no relation
 // properties: edge meta has no redaction on this path.
 type GanttNode struct {
-	ID    string `json:"id"`
-	Type  string `json:"type"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	// Face is the content state the node was read at, absent for a faceless
+	// type. A client writing the node's dates addresses `id@face`, so the
+	// write lands on the face the chart showed.
+	Face  string `json:"face,omitempty"`
 	Title string `json:"title,omitempty"`
 	Color string `json:"color,omitempty"`
 	// Planned is the entity's own start/end, absent when it declares none.

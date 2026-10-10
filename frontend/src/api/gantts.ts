@@ -20,6 +20,8 @@ export interface GanttBreach {
 export interface GanttNode {
   id: string
   type: string
+  /** The face the node was read at; absent for a faceless type. */
+  face?: string
   title?: string
   color?: string
   planned?: GanttSpan

@@ -135,6 +135,21 @@ func TestGanttNodes_KeepTheirFace(t *testing.T) {
 	}
 }
 
+// A node names its face on the wire, so a client writing its dates
+// addresses the face the chart showed; a faceless node names none.
+func TestGanttEmit_NamesTheFace(t *testing.T) {
+	f := &ganttForest{nodes: map[string]*ganttNode{
+		"PRJ-A": {id: "PRJ-A", entType: "project", face: "published"},
+		"PRJ-B": {id: "PRJ-B", entType: "project"},
+	}}
+	for id, want := range map[string]string{"PRJ-A": "published", "PRJ-B": ""} {
+		got := emitGanttNode(f, id, 0, 1, &ganttBudget{remaining: 10})
+		if got.Face != want {
+			t.Errorf("%s: face = %q, want %q", id, got.Face, want)
+		}
+	}
+}
+
 // The drill reads its root by id with no face, which a faced source type does
 // not have, so it declines to the full build (see ganttHasFacedSource).
 func TestGanttSubtree_DeclinesForFacedSources(t *testing.T) {

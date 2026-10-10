@@ -5,7 +5,9 @@ title: 'Gantt: drag bars to move and resize'
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-10-10"
+completed: "2026-10-10"
+status: done
 ---
 
 ## Description
