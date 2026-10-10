@@ -274,8 +274,19 @@ func moveRelation(
 			ErrInvalidOrderPosition)
 	}
 	prop := relDef.OutgoingOrderProperty()
+	if opts.Position.Incoming {
+		prop = relDef.IncomingOrderProperty()
+	}
 	if !hasDef || prop == "" {
 		return nil, fmt.Errorf("%w: %s", ErrRelationNotOrderable, key.Type)
+	}
+	keep := orderSiblingFilter(key, *opts.Position)
+	if opts.Position.Incoming {
+		authorized, aErr := authorizeIncomingSiblings(ctx, m, key, keep)
+		if aErr != nil {
+			return nil, aErr
+		}
+		keep = func(r *entity.Relation) bool { return authorized[r.Identity()] }
 	}
 	var moved *entity.Relation
 	var densified []*entity.Relation
@@ -283,25 +294,14 @@ func moveRelation(
 		if _, gErr := view.GetRelation(ctx, key); gErr != nil {
 			return fmt.Errorf("%w: %s", ErrRelationNotFound, key)
 		}
-		// Only the moved edge's own tail, which is the list a reader sees,
-		// and only the targets in Among: authorization covered this one
-		// tail, and an edge the caller cannot see must not shape the result.
-		var among map[string]bool
-		if opts.Position.Among != nil {
-			among = make(map[string]bool, len(opts.Position.Among))
-			for _, id := range opts.Position.Among {
-				among[id] = true
-			}
-		}
 		var siblings []entity.Relation
-		for r, lErr := range view.ListRelations(ctx, store.RelationQuery{From: key.From, Type: key.Type}) {
+		for r, lErr := range view.ListRelations(ctx, orderSiblingQuery(key, opts.Position.Incoming)) {
 			if lErr != nil {
 				return lErr
 			}
-			if r.FromFace != key.FromFace || (among != nil && !among[r.To] && r.Identity() != key) {
-				continue
+			if keep(r) {
+				siblings = append(siblings, *r)
 			}
-			siblings = append(siblings, *r)
 		}
 		plan, pErr := PlaceOrder(siblings, key, *opts.Position, prop)
 		if pErr != nil {
@@ -327,6 +327,74 @@ func moveRelation(
 	}
 	m.recordRelationAudit(ctx, audit.OpUpdateRelation, moved, "moved "+prop)
 	return moved, nil
+}
+
+// orderSiblingQuery lists the edges on key's order side: the source's
+// edges of the type on the outgoing side, every edge into the target on
+// the incoming side.
+func orderSiblingQuery(key entity.RelationKey, incoming bool) store.RelationQuery {
+	if incoming {
+		return store.RelationQuery{To: key.To, Type: key.Type}
+	}
+	return store.RelationQuery{From: key.From, Type: key.Type}
+}
+
+// orderSiblingFilter keeps the siblings a move plans among: the edges in
+// pos.Among, and the moved edge itself. An edge the caller cannot see must
+// not shape the result. On the outgoing side it keeps only the moved
+// edge's own tail, which is the list a reader sees and the one tail the
+// update was authorized for. The target side has no face, so an incoming
+// list spans every tail.
+func orderSiblingFilter(key entity.RelationKey, pos entity.OrderPosition) func(*entity.Relation) bool {
+	var among map[entity.RelationKey]bool
+	if pos.Among != nil {
+		among = make(map[entity.RelationKey]bool, len(pos.Among))
+		for _, k := range pos.Among {
+			among[k] = true
+		}
+	}
+	return func(r *entity.Relation) bool {
+		if !pos.Incoming && r.FromFace != key.FromFace {
+			return false
+		}
+		return among == nil || among[r.Identity()] || r.Identity() == key
+	}
+}
+
+// authorizeIncomingSiblings authorizes an update of every edge an incoming
+// move may write, and returns their identities. An edge belongs to its
+// source, so the update [Manager.UpdateRelation] authorized covers the
+// moved edge only, while a densify on the incoming side rewrites edges of
+// other sources. One denial fails the whole move, before anything is
+// written. It runs before the move's transaction, so the ACL reads stay out
+// of it; the transaction then writes only these edges, which leaves an edge
+// created in between alone.
+func authorizeIncomingSiblings(
+	ctx context.Context, m *Manager, key entity.RelationKey, keep func(*entity.Relation) bool,
+) (map[entity.RelationKey]bool, error) {
+	authorized := map[entity.RelationKey]bool{key: true}
+	types := map[string]string{}
+	for r, err := range m.deps.Store.ListRelations(ctx, orderSiblingQuery(key, true)) {
+		if err != nil {
+			return nil, err
+		}
+		if !keep(r) || authorized[r.Identity()] {
+			continue
+		}
+		typ, seen := types[r.From]
+		if !seen {
+			// A lookup error leaves the type empty, which matches no grant.
+			fam, _ := lookupFamily(ctx, m.deps.Store, r.From)
+			typ = fam.typ
+			types[r.From] = typ
+		}
+		if aErr := m.authorizeAndAudit(ctx,
+			RelationUpdateRequest(m.deps.Meta, key.Type, typ, r.From, r.FromFace)); aErr != nil {
+			return nil, aErr
+		}
+		authorized[r.Identity()] = true
+	}
+	return authorized, nil
 }
 
 // writeOrderPlan writes each planned order value to its sibling through

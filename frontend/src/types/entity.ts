@@ -394,16 +394,17 @@ export interface ListMeta {
   per_page: number
   has_more: boolean
   next_cursor?: string
-  // Set when the rows are in the order of one orderable relation from the
+  // Set when the rows are in the order of one orderable relation of the
   // tab's anchor; see RelationOrder.
   relation_order?: RelationOrder
 }
 
 /**
- * Rows shown in the order of an orderable relation from one anchor entity:
- * the order a reader sets by dragging. `movable` is the server's answer to
- * whether this principal may change it, so the client does no permission
- * arithmetic of its own.
+ * Rows shown in the order of an orderable relation on one side of an anchor
+ * entity: the order a reader sets by dragging. The rows are the anchor's
+ * targets, or with `direction: 'incoming'` the sources that link to it.
+ * `movable` is the server's answer to whether this principal may change it,
+ * so the client does no permission arithmetic of its own.
  */
 export interface RelationOrder {
   relation: string
@@ -411,6 +412,11 @@ export interface RelationOrder {
   // The anchor's entity type, which names the route a move is sent to.
   anchor_type: string
   movable: boolean
+  // Absent on the outgoing side.
+  direction?: 'incoming'
+  // On the incoming side, the address a move names a row by when it is not
+  // the row's id (`id@face`). See orderAddress.
+  addresses?: Record<string, string>
 }
 
 /**

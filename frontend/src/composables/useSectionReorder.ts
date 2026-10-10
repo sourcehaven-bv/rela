@@ -5,7 +5,7 @@ import { getErrorMessage } from '@/api/errors'
 import type { ViewResponse, ViewRow, ViewSection } from '@/api/views'
 import { useUIStore } from '@/stores/ui'
 import { createMoveQueue } from '@/utils/moveQueue'
-import { planRowMove } from '@/utils/relationOrder'
+import { orderMoveArgs, planRowMove } from '@/utils/relationOrder'
 
 /**
  * What a section row is called in its move handle's label and in the move
@@ -25,7 +25,10 @@ export function sectionRowLabel(row: ViewRow): string {
  * undone by that reload. The view has no per-section read, so the reload
  * is the whole view.
  */
-export function useSectionReorder(opts: { view: Ref<ViewResponse | null>; reload: () => Promise<void> }) {
+export function useSectionReorder(opts: {
+  view: Ref<ViewResponse | null>
+  reload: () => Promise<void>
+}) {
   const ui = useUIStore()
 
   /**
@@ -42,7 +45,9 @@ export function useSectionReorder(opts: { view: Ref<ViewResponse | null>; reload
 
   /** Whether the reader may reorder this section's rows. */
   function movable(section: ViewSection): boolean {
-    return section.display === 'table' && !section.isGrouped && section.relationOrder?.movable === true
+    return (
+      section.display === 'table' && !section.isGrouped && section.relationOrder?.movable === true
+    )
   }
 
   const enqueue = createMoveQueue(opts.reload)
@@ -58,17 +63,22 @@ export function useSectionReorder(opts: { view: Ref<ViewResponse | null>; reload
 
     opts.view.value = {
       ...view,
-      sections: view.sections.map((s) => (s === section ? { ...s, rows: plan.rows.map((r) => r.row) } : s)),
+      sections: view.sections.map((s) =>
+        s === section ? { ...s, rows: plan.rows.map((r) => r.row) } : s
+      ),
     }
     if ('step' in move) {
       const row = section.rows?.find((r) => r.entityId === move.itemId)
       const label = row ? sectionRowLabel(row) : move.itemId
-      status.value = { section: sectionIndex, text: `${label} moved ${move.step < 0 ? 'up' : 'down'}` }
+      status.value = {
+        section: sectionIndex,
+        text: `${label} moved ${move.step < 0 ? 'up' : 'down'}`,
+      }
     }
 
     return enqueue(async () => {
       try {
-        await moveRelation(order.anchor_type, order.anchor, order.relation, move.itemId, plan.position)
+        await moveRelation(...orderMoveArgs(order, move.itemId, plan.position))
       } catch (err) {
         ui.error(getErrorMessage(err, 'Could not move the row'))
       }

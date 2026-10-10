@@ -137,12 +137,26 @@ PATCH /api/v1/projects/PRJ-1/relations/contains/TASK-7
 {"position": {"before": "TASK-2"}}
 ```
 
+On a relation whose incoming side is orderable, add `"direction": "incoming"`.
+The path entity is then the target, and the edge moves among every edge into
+it. The last path segment and `before` or `after` name a source by its
+address:
+
+```text
+PATCH /api/v1/tasks/TASK-7/relations/contains/PRJ-3
+{"direction": "incoming", "position": {"after": "PRJ-1"}}
+```
+
+A source with faces can link to the target once per face. A bare id names the
+source's first place in the order, and `id@face` names the edge from that
+face.
+
 `position` names exactly one of these fields:
 
 | Field    | Moves the edge                                          |
 | -------- | ------------------------------------------------------- |
-| `before` | directly above the edge to this target id               |
-| `after`  | directly below the edge to this target id               |
+| `before` | directly above the edge to this target or source        |
+| `after`  | directly below the edge to this target or source        |
 | `step`   | one place up (`-1`) or down (`1`) in the complete order |
 
 The server computes the stored order value. `step` exists for a client that
@@ -158,19 +172,24 @@ change. This way a move neither reveals nor rewrites an edge the caller cannot
 see. On a content-scoped relation, address the source with its face, as in
 `POL-1@draft`; the response's `relation_order.anchor` already does.
 
+On the incoming side, a renumber writes the edges of other sources. The
+caller must therefore be allowed to update the edge from every source it can
+see, and `_order_in` must be writable on each. Otherwise the move answers
+`403` and writes nothing.
+
 | Answer | When |
 | --- | --- |
 | `204` | The edge moved. |
 | `400 order_position_invalid` | `position` names no field or several, or is sent together with `meta`. |
-| `400 relation_not_orderable` | The relation is not orderable on the outgoing side, or the request has `direction=incoming`. |
-| `403` | The caller may not write the edge, or `_order_out` is read-only for them. |
+| `400 relation_not_orderable` | The relation is not orderable on the side the request names. |
+| `403` | The caller may not write an edge the move may write, or the order property is read-only for them. |
 | `404` | The `before` or `after` target is not a sibling, or the caller cannot read it. Both give the same answer, so the route does not reveal whether an entity exists. |
 | `500 internal_error` | The store failed. The server logs the cause; the answer does not include it. |
 
 ### Reading the order
 
 A list read scoped to an entity page tab (`scope_page`, `scope_tab`,
-`anchor`) whose relation is orderable on the outgoing side returns its rows in
+`anchor`) whose relation is orderable on the tab's side returns its rows in
 the anchor's edge order when the request has no `sort`. The response then
 carries `meta.relation_order`:
 
@@ -178,10 +197,15 @@ carries `meta.relation_order`:
 "relation_order": {"relation": "contains", "anchor": "PRJ-1", "anchor_type": "project", "movable": true}
 ```
 
+On an incoming tab the object also has `"direction": "incoming"`. It may have
+`addresses`, which maps a row id to the address a move names that row by,
+such as `"POL-1": "POL-1@published"`. A row not in the map is named by its id.
+
 `movable` is `true` when the caller may move the anchor's edges with the
 route above. A request with `sort` gets that sort and no `relation_order`. A
 detail view section in relation order carries the same object as
-`relationOrder`. Neither appears when the caller cannot read `_order_out`.
+`relationOrder`. Neither appears when the caller cannot read the order
+property; on the incoming side, that is checked for every source.
 
 ## Relations field
 
