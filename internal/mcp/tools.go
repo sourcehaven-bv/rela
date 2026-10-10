@@ -43,6 +43,9 @@ func (s *Server) registerTools() {
 	addTool(s, toolAttachFile(), bind(s, selAttach, attachmentHandler.handleAttachFile))
 	addTool(s, toolDeleteAttachment(), bind(s, selAttach, attachmentHandler.handleDeleteAttachment))
 
+	// Pile tools: only when the wiring supplies piles (see WithPiles).
+	registerPileTools(s)
+
 	// Lua scripting tools: stdio only (see WithLuaTools).
 	if !s.luaTools {
 		return

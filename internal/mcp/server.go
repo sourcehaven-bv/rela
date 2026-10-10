@@ -149,6 +149,11 @@ type GraphReader interface {
 	// from headers only, in a cost that does not grow with len(refs)
 	// ([visibility.Resolver.ResolveHeaders]). A miss is absent.
 	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
+
+	// ResolveHeadersErr is ResolveHeaders with a failed header read
+	// returned ([visibility.Resolver.ResolveHeadersErr]), for a caller that
+	// must not answer a store fault as "nothing is readable".
+	ResolveHeadersErr(ctx context.Context, refs []entity.Ref) (map[entity.Ref]visibility.ResolvedHeader, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	// GetRelation reads the edge at k, tail included. It answers not-found
 	// unless the caller may read both endpoints and, for a content edge, the
@@ -316,6 +321,13 @@ type Server struct {
 	// luaTools registers lua_eval / lua_run. Off unless the wiring
 	// asks for it with [WithLuaTools]; see that option for why.
 	luaTools bool
+
+	// pileReader and pileWriter back the pile tools, registered only when
+	// both are set ([WithPiles]). pilesSet records that WithPiles was used,
+	// so NewServer can refuse a half-wired capability.
+	pileReader PileReader
+	pileWriter PileWriter
+	pilesSet   bool
 
 	// state publishes the reloadable (Deps, handlerSet) pair. Read it per
 	// request via [Server.deps] / the s.<group>() accessors, never by
@@ -495,6 +507,9 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	}
 	if err := validateFor(s, deps); err != nil {
 		return nil, err
+	}
+	if s.pilesSet && (s.pileReader == nil || s.pileWriter == nil) {
+		return nil, errors.New("mcp.NewServer: WithPiles requires both a PileReader and a PileWriter")
 	}
 	setDeps(s, deps)
 

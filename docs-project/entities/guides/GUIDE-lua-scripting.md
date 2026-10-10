@@ -511,6 +511,51 @@ local ok, e, warnings = pcall(rela.update_entity, "TKT-001", {title = ""})
 -- ok=true, e is the entity, warnings is the validation findings.
 ```
 
+### Pile Functions
+
+A pile is a personal, named stack of entities. The `rela.piles` functions
+work on the piles of the user the script runs as.
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.piles.add{pile=, entities=, owner=?, create=?}` | Put entities on top of a pile by name | number added |
+| `rela.piles.remove{pile=, entities=}` | Take entities off one of your own piles | `true` |
+| `rela.piles.list()` | Your piles, as `{id, name, icon, count}` | array |
+| `rela.piles.items(name)` | The items of your pile, newest first, as `{id, face, address, type, title}` | array |
+
+- `entities` is an array of addresses (`"TKT-1"`, `"POL-1@draft"`) or entity
+  tables. Up to 500 per call.
+- `add` resolves each entity like the other write functions. The script must
+  be able to read it, and a bare id of a type with several readable faces
+  raises an error that names the faces.
+- `create` defaults to `true`: a missing pile is created.
+- `owner` puts the entities on another user's pile. It must be an existing
+  entity of the ACL's `user_entity_type` (a person). The push is write-only:
+  `add` then always returns `0`, and a missing pile (with `create = false`)
+  is a silent no-op. Scheduled scripts run as a system identity and must
+  pass `owner`.
+- A push to another user's pile never removes their items. On a full pile it
+  adds only as many entities as there is room for, the first ones first, and
+  drops the rest. It creates a pile only while that user has fewer than 25
+  piles; past that it is a silent no-op. The other 25 of the 50 piles are
+  left for the user. Each such push is logged with the pushing user, the
+  target user and the number of entities. The pile name is not logged.
+- `remove` reads no graph. `ID@face` removes that face; a bare id removes
+  every face of it that is on the pile. Ids not on the pile are ignored.
+- `list` counts and `items` returns only the items the script can read.
+- `add` and `remove` exist only on runtimes that may write.
+- Where piles are not available, such as `rela script` on the command line,
+  every function raises `piles are not available in this context`.
+
+```lua
+local ticket = rela.get_entity("TKT-12")
+rela.piles.add{pile = "Review", entities = {ticket, "POL-1@draft"}}
+
+for _, item in ipairs(rela.piles.items("Review")) do
+  print(item.address, item.title)
+end
+```
+
 ### Elevated access — `rela.bypass_acl`
 
 By default an automation script's reads **and** writes are **ACL-checked

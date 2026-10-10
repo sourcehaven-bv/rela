@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useScopeNavigation } from './useScopeNavigation'
+import { rememberPileNames, resetPileNames } from './pileNames'
 import type { EntityPosition, ScopeDescriptor } from '@/api/entities'
 
 // Mock vue-router
@@ -30,7 +31,15 @@ vi.mock('@/stores', () => ({
 // rather than fetching the whole list and scanning client-side (#844).
 const mockGetEntityPosition = vi.fn()
 vi.mock('@/api/entities', () => ({
-  getEntityPosition: (id: string, scope: ScopeDescriptor) => mockGetEntityPosition(id, scope),
+  // The world is forwarded only when set, so default-world assertions keep
+  // their two-argument shape.
+  getEntityPosition: (id: string, scope: ScopeDescriptor, world?: string) =>
+    world === undefined ? mockGetEntityPosition(id, scope) : mockGetEntityPosition(id, scope, world),
+}))
+
+const mockListPiles = vi.fn()
+vi.mock('@/api/piles', () => ({
+  listPiles: (world?: string) => mockListPiles(world),
 }))
 
 /**
@@ -487,6 +496,101 @@ describe('useScopeNavigation', () => {
           sort: '-priority',
         },
       })
+    })
+  })
+
+  describe('pile scope', () => {
+    beforeEach(() => {
+      resetPileNames()
+      mockListPiles.mockReset()
+    })
+
+    it('walks the pile by the served address and labels it with the pile name', async () => {
+      rememberPileNames([{ id: 'PIL-AAAA1111', name: 'Friday review' }])
+      mockRouteQuery.value = { from: 'pile', pile: 'PIL-AAAA1111' }
+      mockGetEntityPosition.mockResolvedValue({
+        prev: { id: 'TKT-1', type: 'ticket', address: 'TKT-1' },
+        next: { id: 'POL-1', type: 'policy', address: 'POL-1@draft' },
+        current: 2,
+        total: 3,
+      })
+
+      const { scopeNav, loadScopeNav, scopeTarget } = useScopeNavigation(
+        () => 'RISK-1',
+        () => 'RISK-1@published'
+      )
+      await loadScopeNav()
+
+      expect(mockGetEntityPosition).toHaveBeenCalledWith('RISK-1@published', {
+        source: 'pile',
+        pile: 'PIL-AAAA1111',
+      })
+      expect(scopeNav.value?.label).toBe('Friday review')
+      expect(scopeNav.value?.current).toBe(2)
+      expect(scopeTarget('next')).toEqual({
+        path: '/entity/policy/POL-1@draft',
+        query: { from: 'pile', pile: 'PIL-AAAA1111' },
+      })
+      expect(scopeTarget('prev')).toEqual({
+        path: '/entity/ticket/TKT-1',
+        query: { from: 'pile', pile: 'PIL-AAAA1111' },
+      })
+      expect(mockListPiles).not.toHaveBeenCalled()
+    })
+
+    it('fetches the pile list once for a name it has not seen', async () => {
+      mockRouteQuery.value = { from: 'pile', pile: 'PIL-BBBB2222', world: 'published' }
+      mockListPiles.mockResolvedValue({ piles: [{ id: 'PIL-BBBB2222', name: 'Inbox' }], icons: [] })
+
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TKT-1', () => 'TKT-1')
+      await loadScopeNav()
+
+      expect(mockListPiles).toHaveBeenCalledWith('published')
+      expect(scopeNav.value?.label).toBe('Inbox')
+    })
+
+    it('computes the position in the page world, as the pile panel counts', async () => {
+      rememberPileNames([{ id: 'PIL-AAAA1111', name: 'Friday review' }])
+      mockRouteQuery.value = { from: 'pile', pile: 'PIL-AAAA1111', world: 'published' }
+
+      const { loadScopeNav } = useScopeNavigation(() => 'POL-1', () => 'POL-1@published')
+      await loadScopeNav()
+
+      expect(mockGetEntityPosition).toHaveBeenCalledWith(
+        'POL-1@published',
+        { source: 'pile', pile: 'PIL-AAAA1111' },
+        'published'
+      )
+    })
+
+    it('sends no world in the default world', async () => {
+      rememberPileNames([{ id: 'PIL-AAAA1111', name: 'Friday review' }])
+      mockRouteQuery.value = { from: 'pile', pile: 'PIL-AAAA1111', world: 'default' }
+
+      const { loadScopeNav } = useScopeNavigation(() => 'TKT-1', () => 'TKT-1')
+      await loadScopeNav()
+
+      expect(mockGetEntityPosition).toHaveBeenCalledWith('TKT-1', { source: 'pile', pile: 'PIL-AAAA1111' })
+    })
+
+    it('falls back to the bare id when no served address is known', async () => {
+      rememberPileNames([{ id: 'PIL-AAAA1111', name: 'Friday review' }])
+      mockRouteQuery.value = { from: 'pile', pile: 'PIL-AAAA1111' }
+
+      const { loadScopeNav } = useScopeNavigation(() => 'TKT-1', () => null)
+      await loadScopeNav()
+
+      expect(mockGetEntityPosition).toHaveBeenCalledWith('TKT-1', { source: 'pile', pile: 'PIL-AAAA1111' })
+    })
+
+    it('has no scope without a pile id', async () => {
+      mockRouteQuery.value = { from: 'pile' }
+
+      const { scopeNav, loadScopeNav } = useScopeNavigation(() => 'TKT-1', () => 'TKT-1')
+      await loadScopeNav()
+
+      expect(scopeNav.value).toBeNull()
+      expect(mockGetEntityPosition).not.toHaveBeenCalled()
     })
   })
 })

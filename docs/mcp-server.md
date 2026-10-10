@@ -185,6 +185,34 @@ resolved), the relations it takes part in, and its validation rules. With a
 relation type it returns that relation's endpoints, cardinality and properties.
 The full raw metamodel is the `rela://metamodel` resource.
 
+### Pile Tools
+
+A pile is a personal, named stack of entities. These tools are present only
+when the server is built with piles. Reads and removes act on the caller's
+own piles only.
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `list_piles` | Your piles with the number of items you can read | none |
+| `show_pile` | One of your piles: readable items, newest first | `pile` (name or id), `world?` |
+| `add_to_pile` | Put entities on top of a pile by name | `pile`, `ids`, `owner?`, `create?` (default true) |
+| `remove_from_pile` | Take entities off one of your piles | `pile` (name or id), `ids` |
+
+- `ids` takes addresses: `TKT-1` or `POL-1@draft`, up to 500 per call.
+- `add_to_pile` resolves each id like `update_entity`. You must be able to
+  read it, and a bare id of a type with several readable faces is refused,
+  naming the faces. Nothing is added unless every id resolves.
+- `owner` adds to another user's pile. It must be an existing entity of the
+  ACL's `user_entity_type` (a person). The push is write-only: `added` is
+  always `0`, and a missing pile (with `create: false`) is a silent no-op.
+- A push to another user's pile never removes their items. On a full pile it
+  adds only as many ids as there is room for, the first ones first, and drops
+  the rest. It creates a pile only while that user has fewer than 25 piles;
+  past that it is a silent no-op. Each such push is logged with the pushing
+  user, the target user and the number of ids, but not the pile name.
+- `remove_from_pile` reads no graph. A bare id removes every face of it that
+  is on the pile, and the answer is the same whether or not an id was on it.
+
 ### Lua Tools
 
 | Tool | Description | Parameters |

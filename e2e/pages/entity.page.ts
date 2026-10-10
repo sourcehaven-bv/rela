@@ -721,4 +721,22 @@ export class EntityPage extends BasePage {
   async expectRelatedRowText(id: string, text: string) {
     await expect(this.relatedRow(id)).toContainText(text);
   }
+
+  // ── Scope navigation (prev/next within a list, search or pile) ───────────
+
+  /** The "[current/total]" indicator in the scope bar. */
+  get scopeProgress(): Locator {
+    return this.page.locator('.scope-nav-progress');
+  }
+
+  async expectScopePosition(current: number, total: number) {
+    await expect(this.scopeProgress).toHaveText(`[${current}/${total}]`);
+  }
+
+  /** Step to the next entity in the scope and wait for the URL to change. */
+  async scopeNext() {
+    const startUrl = this.page.url();
+    await this.page.locator('.scope-nav').getByRole('link', { name: /^Next/ }).click();
+    await this.page.waitForURL((url) => url.href !== startUrl);
+  }
 }

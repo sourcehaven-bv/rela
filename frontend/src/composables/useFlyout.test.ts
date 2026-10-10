@@ -37,4 +37,24 @@ describe('useFlyout', () => {
     expect(flyout.list.value).toBeNull()
     expect(flyout.entity.value).toBeNull()
   })
+
+  it('shows a pile instead of a list, and toggles it closed', () => {
+    const flyout = useFlyout()
+    const pile = { navId: 'pile:PIL-1', title: 'Friday', pileId: 'PIL-1' }
+    flyout.toggle(mine)
+    flyout.togglePile(pile)
+    expect(flyout.list.value).toBeNull()
+    expect(flyout.pile.value?.pileId).toBe('PIL-1')
+    expect(flyout.openNavId.value).toBe('pile:PIL-1')
+    flyout.togglePile(pile)
+    expect(flyout.pile.value).toBeNull()
+  })
+
+  it('replaces an open pile with a list', () => {
+    const flyout = useFlyout()
+    flyout.openPile({ navId: 'pile:PIL-1', title: 'Friday', pileId: 'PIL-1' })
+    flyout.toggle(mine)
+    expect(flyout.pile.value).toBeNull()
+    expect(flyout.openNavId.value).toBe(mine.navId)
+  })
 })

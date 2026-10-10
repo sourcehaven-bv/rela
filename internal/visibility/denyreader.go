@@ -59,6 +59,11 @@ func (DenyReader) ResolveHeaders(_ context.Context, refs []entity.Ref) map[entit
 	return nil
 }
 
+// ResolveHeadersErr implements the script read surface: always refuses.
+func (DenyReader) ResolveHeadersErr(context.Context, []entity.Ref) (map[entity.Ref]ResolvedHeader, error) {
+	return nil, ErrReaderUnavailable
+}
+
 // ListEntities implements the script read surface: always refuses.
 func (DenyReader) ListEntities(
 	context.Context, store.EntityQuery,

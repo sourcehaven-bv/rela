@@ -12,6 +12,11 @@ package archguard
 // Each entry names which.
 var parseRefAllowlist = map[string]allowed{
 	// dataentry
+	"internal/dataentry/piles_handler.go": {2, "pile item addresses: remove matches them against the " +
+		"refs already on the pile and resolves nothing; add parses, then sends a bare id of a faced " +
+		"type through visibility.Resolver.WriteTarget. Stays"},
+	"internal/dataentry/scope.go": {1, "pile scope position: matches the address against the pile's " +
+		"resolved rows, a bare id at its first row. Stays"},
 	"internal/dataentry/comments_handler.go": {1, "comment route id segment; the thread keys on the " +
 		"parsed Ref. Read: PR 5b"},
 	"internal/dataentry/history_handler.go": {1, "history route id segment; history is per face row. " +
@@ -30,6 +35,9 @@ var parseRefAllowlist = map[string]allowed{
 		"refusal. Read: PR 5b"},
 
 	// mcp
+	"internal/mcp/tools_piles.go": {2, "remove_from_pile matches addresses against the refs on the " +
+		"pile and resolves nothing; add_to_pile batch-parses, keeps a bare id only for a faceless " +
+		"type and sends a faced one through WriteTarget, like the HTTP add. Stays"},
 	"internal/mcp/tools_relation.go": {1, "relationTail: an identity-scoped edge hangs on the entity, so " +
 		"its FROM is parsed, not resolved to a face. Stays"},
 	"internal/mcp/tools_helpers.go":    {1, "readable, the pre-write existence gate on an address. Stays"},
@@ -38,6 +46,9 @@ var parseRefAllowlist = map[string]allowed{
 		"coordinate. Read: PR 5b"},
 
 	// lua
+	"internal/lua/piles.go": {2, "rela.piles.remove matches addresses against the refs on the pile " +
+		"and resolves nothing; rela.piles.add batch-parses, keeps a bare id only for a faceless type " +
+		"and sends a faced one through WriteTarget, like the HTTP add. Stays"},
 	"internal/lua/runtime.go": {1, "writeTargetReadable: the write gate. Stays"},
 
 	// cli

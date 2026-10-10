@@ -16,6 +16,7 @@ exclude:
   - internal/mail/mailtest
   - internal/userstate/userstatetest
   - internal/comments/commentstest
+  - internal/piles/pilestest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -60,6 +61,7 @@ components:
   docs:             { in: internal/docs }
   docscapture:      { in: internal/docscapture }
   dataentrywire:    { in: internal/dataentrywire }
+  mcpwire:          { in: internal/mcpwire }
   # desktop.yaml: native notifications and the Dock badge. Wails-free; the
   # desktop shell delivers what it reports.
   desktopnotify:    { in: internal/desktopnotify }
@@ -144,6 +146,9 @@ components:
   filecomments:     { in: internal/comments/filecomments }
   pgcomments:       { in: internal/comments/pgcomments }
   sqlitecomments:   { in: internal/comments/sqlitecomments }
+  piles:            { in: internal/piles }
+  kvpiles:          { in: internal/piles/kvpiles }
+  pgpiles:          { in: internal/piles/pgpiles }
   schedulerstate:   { in: internal/schedulerstate }
   kvschedstate:     { in: internal/schedulerstate/kvstate }
   pgschedstate:     { in: internal/schedulerstate/pgschedstate }
@@ -347,6 +352,7 @@ deps:
       - jwtauth
       - lua
       - mcp
+      - mcpwire
       - principal
       - scheduler
       - script
@@ -432,6 +438,7 @@ deps:
       - lua
       - markdown
       - mcp
+      - mcpwire
       - memstore
       - metamodel
       - output
@@ -507,6 +514,9 @@ deps:
       # above, that is a wiring-site decision, so only the `comments` package
       # is granted here, never filecomments/memcomments.
       - comments
+      # The piles service (TKT-K3RJLH). Like comments, only the domain
+      # package: the backend (kvpiles/pgpiles) is the wiring site's choice.
+      - piles
       - cmdexec
       - config
       - conflict
@@ -698,6 +708,11 @@ deps:
       - filecomments
       - pgcomments
       - sqlitecomments
+      # Per-user piles: the root picks the backend (pgpiles over the store's
+      # pool on postgres, kvpiles over the node-local cache KV elsewhere).
+      - piles
+      - kvpiles
+      - pgpiles
       - datamigration
       # The migration-state backends, selected here for the same reason as the
       # comment backends: the recipe owns the handle each one needs, and the
@@ -1054,6 +1069,13 @@ deps:
     mayDependOn:
       - appbuild
       - dataentry
+  # MCP tool groups over appbuild services, shared by the stdio and remote
+  # servers. Separate from appbuild because mcp's tests import appbuild.
+  mcpwire:
+    mayDependOn:
+      - appbuild
+      - mcp
+      - piles
   docscapture:
     mayDependOn:
       - acl
@@ -1301,6 +1323,31 @@ deps:
       - principal
     canUse:
       - textanchor
+  # piles are per-user stacks of entity references (TKT-K3RJLH). Like
+  # comments, not graph content: entity for the Ref type, principal for the
+  # owner, and deliberately NOT store or entitymanager.
+  piles:
+    mayDependOn:
+      - entity
+      - principal
+  # The single-process backend: one JSON document in the node-local state KV.
+  kvpiles:
+    mayDependOn:
+      - entity
+      - piles
+      - state
+    canUse:
+      # x/sys for flock/LockFileEx: the lock file that keeps several
+      # processes over one cache directory from losing each other's writes.
+      - xsys
+  # The postgres backend takes the store's pool as an injected handle, like
+  # pgcomments, so it has no reason to know a store exists.
+  pgpiles:
+    mayDependOn:
+      - entity
+      - piles
+    canUse:
+      - pgx
   memcomments:
     mayDependOn:
       - comments

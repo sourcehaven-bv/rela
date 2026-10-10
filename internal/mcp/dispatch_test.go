@@ -36,8 +36,10 @@ func newDispatchServer(t *testing.T) *Server {
 	t.Helper()
 
 	meta, st := makeTestFixture(t)
+	_, pf := newFakePiles(t)
 	srv, err := NewServer(newTestDeps(t, meta, st), "test",
-		WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}), WithLuaTools())
+		WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}), WithLuaTools(),
+		WithPiles(pf, pf))
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -189,6 +191,11 @@ var toolCalls = map[string]struct {
 	"read_attachment":   {args: `{"id":"REQ-001","property":"title","file_name":"a.txt"}`, wantErr: true},
 	"attach_file":       {args: `{"id":"REQ-001","property":"title","file_name":"a.txt","content":"aGk="}`, wantErr: true},
 	"delete_attachment": {args: `{"id":"REQ-001","property":"title"}`, wantErr: true},
+	// Pile tools, over the fakePiles capability (tools_piles_test.go).
+	"list_piles":       {args: `{}`},
+	"show_pile":        {args: `{"pile":"Mine"}`},
+	"add_to_pile":      {args: `{"pile":"Inbox","ids":["REQ-001"]}`},
+	"remove_from_pile": {args: `{"pile":"Mine","ids":["REQ-001"]}`},
 }
 
 // TestDispatch_AnalyzeEveryCheck drives every analyze check through a real

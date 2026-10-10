@@ -114,6 +114,14 @@ func (r *UnrestrictedReader) ResolveHeaders(ctx context.Context, refs []entity.R
 	return r.res.ResolveHeaders(ctx, worldIn(ctx, r.world), refs)
 }
 
+// ResolveHeadersErr is [UnrestrictedReader.ResolveHeaders] with a failed
+// header read returned. See [ScriptReader.ResolveHeadersErr].
+func (r *UnrestrictedReader) ResolveHeadersErr(
+	ctx context.Context, refs []entity.Ref,
+) (map[entity.Ref]ResolvedHeader, error) {
+	return r.res.ResolveHeadersErr(ctx, worldIn(ctx, r.world), refs)
+}
+
 // ListEntities implements the script read surface: straight pass-through.
 func (r *UnrestrictedReader) ListEntities(
 	ctx context.Context, q store.EntityQuery,

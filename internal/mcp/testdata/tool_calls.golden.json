@@ -1,5 +1,11 @@
 [
   {
+    "tool": "add_to_pile",
+    "args": "{\"pile\":\"Inbox\",\"ids\":[\"REQ-001\"]}",
+    "isError": false,
+    "text": "{\"added\":1}"
+  },
+  {
     "tool": "analyze",
     "args": "{\"check\":\"orphans\"}",
     "isError": false,
@@ -60,6 +66,12 @@
     "text": "{\"total\":2,\"has_more\":false,\"entities\":[{\"id\":\"REQ-001\",\"type\":\"requirement\",\"title\":\"First requirement\",\"status\":\"accepted\"},{\"id\":\"REQ-003\",\"type\":\"requirement\",\"title\":\"Third requirement\",\"status\":\"accepted\"}]}"
   },
   {
+    "tool": "list_piles",
+    "args": "{}",
+    "isError": false,
+    "text": "{\"piles\":[{\"id\":\"PIL-AAAA\",\"name\":\"Mine\",\"icon\":\"star\",\"count\":2}]}"
+  },
+  {
     "tool": "list_relations",
     "args": "{}",
     "isError": false,
@@ -90,6 +102,12 @@
     "text": "property \"title\" is not a file type (is string)"
   },
   {
+    "tool": "remove_from_pile",
+    "args": "{\"pile\":\"Mine\",\"ids\":[\"REQ-001\"]}",
+    "isError": false,
+    "text": "Removed from pile Mine"
+  },
+  {
     "tool": "rename_entity",
     "args": "{\"id\":\"REQ-003\",\"new_id\":\"REQ-099\"}",
     "isError": true,
@@ -112,6 +130,12 @@
     "args": "{\"id\":\"REQ-001\"}",
     "isError": false,
     "text": "{\"id\":\"REQ-001\",\"type\":\"requirement\",\"properties\":{\"status\":\"accepted\",\"title\":\"First requirement\"},\"relations\":{\"incoming\":{\"addresses\":[{\"id\":\"DEC-001\",\"title\":\"First decision\"}]}}}"
+  },
+  {
+    "tool": "show_pile",
+    "args": "{\"pile\":\"Mine\"}",
+    "isError": false,
+    "text": "{\"id\":\"PIL-AAAA\",\"name\":\"Mine\",\"icon\":\"star\",\"count\":2,\"items\":[{\"id\":\"REQ-002\",\"type\":\"requirement\",\"title\":\"Second requirement\",\"address\":\"REQ-002\"},{\"id\":\"REQ-001\",\"type\":\"requirement\",\"title\":\"First requirement\",\"address\":\"REQ-001\"}]}"
   },
   {
     "tool": "trace",

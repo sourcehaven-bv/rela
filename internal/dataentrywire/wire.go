@@ -20,7 +20,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 )
 
-// Services wires app to the services in svc: CalDAV aliases, comments,
+// Services wires app to the services in svc: CalDAV aliases, comments, piles,
 // the worlds' relation scopes, next-action user state, and the
 // predicate compilers behind next-action sources, list and kanban
 // `condition:`, and `query_scopes:`.
@@ -32,6 +32,13 @@ import (
 func Services(app *dataentry.App, svc *appbuild.Services) error {
 	app.SetCalDAVAliases(svc.CalDAVAliases())
 	app.SetComments(svc.Comments())
+	// Piles are absent when the backend offers no piles store; the routes
+	// then 404 and the bootstrap says piles_available false.
+	if p := svc.Piles(); p != nil {
+		if err := app.SetPiles(p, appbuild.LuaPiles(svc)); err != nil {
+			return fmt.Errorf("wire piles: %w", err)
+		}
+	}
 
 	// The worlds themselves are a NewApp argument; this resolves their links.
 	// A surface that can select a world but not resolve its links renders

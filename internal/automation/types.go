@@ -70,6 +70,7 @@ type Action struct {
 	Value          string
 	CreateRelation *CreateRelationAction
 	CreateEntity   *CreateEntityAction
+	AddToPile      *AddToPileAction
 	Lua            string // Inline Lua code to execute
 	LuaFile        string // Path to Lua script file in scripts/ directory
 	// AllowACLBypass: which rela.bypass_acl capabilities this Lua action
@@ -96,6 +97,14 @@ type CreateEntityAction struct {
 	Properties map[string]string // Properties to set (values support interpolation)
 	Relation   string            // Optional: relation type FROM triggering entity TO created entity
 	IfExists   string            // Behavior when relation exists: skip (default), error, replace
+}
+
+// AddToPileAction puts the triggering entity on a user's pile. Pile and
+// Owner support interpolation; an empty Owner means the acting user.
+type AddToPileAction struct {
+	Pile   string
+	Owner  string
+	Create bool
 }
 
 // IfExists constants for CreateEntityAction behavior.
@@ -190,6 +199,19 @@ type RelationToCreate struct {
 	AutomationName string
 }
 
+// PileToPush is one interpolated add_to_pile action. The cascade pushes the
+// triggering entity's ref; nothing is written while planning.
+type PileToPush struct {
+	// Pile is the interpolated pile name.
+	Pile string
+	// Owner is the interpolated owner; empty means the acting user.
+	Owner string
+	// Create makes the pile when it does not exist.
+	Create bool
+	// AutomationName is the originating automation, for the log line.
+	AutomationName string
+}
+
 // LuaToExecute specifies Lua code to be executed by the workspace layer.
 // Either Code or FilePath is set, not both.
 //
@@ -234,6 +256,10 @@ type Result struct {
 
 	// LuaToExecute contains Lua scripts to be executed by the workspace layer.
 	LuaToExecute []LuaToExecute
+
+	// PilesToPush contains pile pushes of the triggering entity. They are
+	// best-effort: the cascade logs a failed push and never fails the write.
+	PilesToPush []PileToPush
 
 	// Warnings contains validation warnings (allow save, show message).
 	Warnings []string

@@ -4842,6 +4842,124 @@ The following keys are reserved for built-in list navigation and cannot be used 
 - `script` paths must end in `.lua` and be local paths (no `..` or absolute paths)
 - Keys must be unique within a list (no two actions on the same list can share a key)
 
+## Piles
+
+A pile is a private, named collection of entities. Use one to gather work you
+want to come back to: tickets to review, risks to discuss in a meeting, or
+search results to export. Each user keeps their own piles. Nobody else can
+see them.
+
+A pile is a stack. The newest item is at the top, and adding an item that is
+already on the pile does not add it again.
+
+### Adding to a pile
+
+You can add entities to a pile from three places:
+
+- **A list.** Select rows and choose **Add to pile** in the bulk bar. Pick an
+  existing pile or create a new one from the selection.
+- **Search.** Choose **Add results to pile** to put the search results on a
+  pile.
+- **The entity page.** Use **Add to pile** on the page of a single entity.
+
+A pile holds one face of an entity. When you add from a page or a row that
+shows a face, such as `POL-1@draft`, that face goes on the pile. An id alone
+is refused for a type with faces, and the message lists the faces you can
+pick from.
+
+A pile has a name and an icon. Names are unique per user, and the comparison
+ignores case.
+
+### Working with a pile
+
+Piles appear in the sidebar with a count of their items. Open a pile to see
+its items grouped by type, newest first. From there you can:
+
+- tick items and remove them. **Undo** puts them back, at the top of the pile
+  rather than where they were;
+- run an action on every item, or on the ticked items (see the `piles:`
+  block below);
+- export the pile;
+- rename it, delete it, or copy its ids.
+
+**Step through** opens the first item. The entity page then shows the pile
+name and your position, such as `Reading · 1 / 12`. Press P and N to move to
+the previous and next item. Stepping opens the face that is on the pile.
+
+### Configuring piles
+
+Piles work without any configuration. The optional `piles:` block in
+`data-entry.yaml` chooses what the pile menu offers:
+
+```yaml
+actions:
+  close-ticket:
+    label: "Close"
+    set:
+      status: closed
+
+piles:
+  # Actions the pile menu offers. Each runs once per item.
+  actions: [close-ticket]
+  # Transforms a pile can be exported with. Leave this out to offer every
+  # registered transform.
+  export: [docx, pdf]
+```
+
+- `actions` lists ids from the top-level `actions:` block. An action must have
+  a `label`, and it must not use `available_on`, because a pile can hold
+  entities of any type. The action runs through the normal action and update
+  paths, so it is authorized per item. The result reports how many items
+  succeeded and how many failed.
+- `export` lists names from the schema's `transforms:` registry.
+
+Config validation rejects an unknown action, an action with `available_on` or
+without a label, an unknown transform, and any unknown key inside the block.
+It warns when a `set:` action changes a property that no entity type declares,
+because that action would fail on every item.
+
+### Limits
+
+- A user can have at most 50 piles. Creating a 51st is refused.
+- A pile holds at most 500 items. When you add to a full pile, the oldest
+  items are dropped, so the pile keeps the 500 newest. An add never fails
+  because the pile is full.
+- A push by someone else follows stricter limits; see Privacy below.
+- Renaming an entity keeps it on every pile under its new id. Deleting an
+  entity removes it from every pile. Deleting one face removes only that face.
+
+### Privacy
+
+A pile belongs to its owner, and only the owner can read it. Another user who
+asks for your pile gets the same "not found" answer as for a pile that does not
+exist. Pile names are not written to the server logs.
+
+A pile never shows more than you may read. Every time you open a pile, each
+item is checked against your current access. An item you can no longer read
+is left out of the list, the count, stepping and the export. It is not
+removed: when your access returns, the item comes back. Removing an item gives
+the same answer whether the item is hidden, deleted, or was never on the pile.
+
+Piles need a user identity. When the server cannot tell who you are, the piles
+interface is hidden and the API answers with 403.
+
+Lua scripts, automations (the `add_to_pile` action) and MCP tools can put
+items on a pile. They may also put items on another user's pile, addressed by
+name. Such a push can only add. It cannot read the other user's piles, and
+the items are still checked against the owner's access when the owner reads
+them.
+
+A push by someone else never removes your items. On a full pile it adds only
+what fits and drops the rest. It creates a new pile only while you have fewer
+than 25 piles, so 25 of your 50 piles can only be filled by you. The server
+logs each such push with the pushing user, you as the target and the number of
+items. It does not log the pile name.
+
+One small signal remains. The 500-item limit counts every stored item,
+including items you cannot currently read. So you may notice that an old item
+stayed on a full pile longer than you expected. This never tells you which
+items are hidden, or how many.
+
 ## Calendars
 
 A calendar lays date-bearing entities out in a **month** or **week** grid, with

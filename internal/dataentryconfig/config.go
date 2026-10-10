@@ -92,10 +92,10 @@ func (d Direction) IsIncoming() bool {
 // accretion. Splitting it would churn the YAML shape for no design gain —
 // a breaking change to every project's config file, made to satisfy a lint.
 // A genuinely new top-level key therefore raises the pin by one; `spaces`
-// (TKT-GNKR5H), `account` (TKT-MJTD12) and `pages` (TKT-ITQ0HL) are the most
-// recent.
+// (TKT-GNKR5H), `account` (TKT-MJTD12), `pages` (TKT-ITQ0HL) and `piles`
+// (TKT-K3RJLH) are the most recent.
 //
-//plimsoll:max-fields=25
+//plimsoll:max-fields=26
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -138,6 +138,10 @@ type Config struct {
 	// Account configures the SPA's account menu. Nil: accepted, means no
 	// account links and no avatar. See [AccountConfig].
 	Account *AccountConfig `yaml:"account,omitempty" json:"account,omitempty"`
+
+	// Piles configures what a pile panel offers. Nil: accepted, means piles
+	// offer no actions and every registered transform. See [PilesConfig].
+	Piles *PilesConfig `yaml:"piles,omitempty" json:"piles,omitempty"`
 }
 
 // EntityViewConfig declares UX bindings for a metamodel entity type.

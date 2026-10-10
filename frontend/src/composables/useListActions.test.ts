@@ -7,7 +7,7 @@ import type { ActionConfig, Entity } from '@/types'
 import type { ScriptError } from '@/types/scriptError'
 import { ApiError } from '@/api/errors'
 
-import { useListActions } from './useListActions'
+import { useActionFanout, useListActions } from './useListActions'
 import { useScriptErrorStore } from '@/stores/scriptError'
 import { useSchemaStore, useUIStore } from '@/stores'
 import { runAction } from '@/api/actions'
@@ -298,5 +298,42 @@ describe('useListActions — addressing', () => {
     await executeAction('act-1', action)
 
     expect(runAction).toHaveBeenCalledWith('act-1', 't1@draft', 'task')
+  })
+})
+
+describe('useActionFanout — mixed types', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.resetAllMocks()
+  })
+
+  it('writes each target to its own type and address', async () => {
+    vi.mocked(updateEntity).mockResolvedValue({} as Entity)
+    const fanout = useActionFanout()
+
+    const result = await fanout.run('close', { label: 'Close', set: { status: 'done' } }, [
+      { address: 'TKT-1', type: 'ticket' },
+      { address: 'POL-1@draft', type: 'policy' },
+    ])
+
+    expect(result).toEqual({ successCount: 2, errorCount: 0 })
+    expect(updateEntity).toHaveBeenCalledWith('ticket', 'TKT-1', { properties: { status: 'done' } })
+    expect(updateEntity).toHaveBeenCalledWith('policy', 'POL-1@draft', { properties: { status: 'done' } })
+  })
+
+  it('runs a script action per target with that target as its context', async () => {
+    vi.mocked(runAction).mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('nope'))
+    const errorSpy = vi.spyOn(useUIStore(), 'error')
+    const fanout = useActionFanout()
+
+    const result = await fanout.run('notify', { label: 'Notify' }, [
+      { address: 'TKT-1', type: 'ticket' },
+      { address: 'RISK-2', type: 'risk' },
+    ])
+
+    expect(result).toEqual({ successCount: 1, errorCount: 1 })
+    expect(runAction).toHaveBeenCalledWith('notify', 'TKT-1', 'ticket')
+    expect(runAction).toHaveBeenCalledWith('notify', 'RISK-2', 'risk')
+    expect(errorSpy).toHaveBeenCalledWith('Notify: 1 failed, 1 succeeded')
   })
 })

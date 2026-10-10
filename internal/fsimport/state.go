@@ -34,9 +34,12 @@ var relaStateKeys = []string{
 }
 
 // relaSkipped entries are caches, locks and state with no meaning in the
-// target, with the reason the report gives.
+// target, with the reason the report gives. piles.json is per-user state the
+// database tiers keep node-local on purpose, because rela.db is shipped to
+// other people (see internal/piles/kvpiles).
 var relaSkipped = map[string]string{
 	"comments/":               "comments are copied into the database",
+	"piles.json":              "personal piles; not project data",
 	"documents/":              "rendered-document cache; rebuilt on demand",
 	"search/":                 "search index; rebuilt on first open",
 	"fsstore-index.json":      "filesystem index cache",

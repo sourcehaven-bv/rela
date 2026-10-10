@@ -824,6 +824,11 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 	rela := r.L.NewTable()
 
 	r.registerReadBindings(rela)
+	pb := &pileBindings{
+		reader: r.deps.Piles, writer: r.deps.PileWriter,
+		rd: r.deps.VisibleReader, meta: r.deps.Meta, ctxFn: r.callerCtx,
+	}
+	pb.register(r.L, rela, allowWrites)
 	if allowWrites {
 		r.registerWriteBindings(rela)
 		// rela.bypass_acl is registered ONLY when an elevated handle was wired

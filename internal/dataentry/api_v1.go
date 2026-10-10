@@ -157,6 +157,8 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
 	mux.HandleFunc("/api/v1/_comments/", a.comments.handleV1Comments)
+	mux.HandleFunc("/api/v1/_piles", a.piles.handleV1Piles)
+	mux.HandleFunc("/api/v1/_piles/", a.piles.handleV1Piles)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
 	a.registerCopyRoutes(mux)
@@ -1822,6 +1824,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 
 	config := v1.Config{
 		NextActionBands: s.Cfg.NextActionBands,
+		Piles:           pilesWire(s.Cfg.Piles),
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,

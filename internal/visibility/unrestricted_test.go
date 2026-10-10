@@ -125,10 +125,12 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// edit and performs none. EntityVersions and EntityVersion (TKT-EC7F65)
 	// read the history of the entity GetAddress reads; WithHistory returns a
 	// copy that serves it. None of the three writes.
+	// ResolveHeadersErr (TKT-K3RJLH) is ResolveHeaders with a failed read
+	// returned instead of answered as misses.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
-		"ResolveHeaders": true, "ListRelationsStrict": true, "WriteTarget": true,
+		"ResolveHeaders": true, "ResolveHeadersErr": true, "ListRelationsStrict": true, "WriteTarget": true,
 		"EntityVersions": true, "EntityVersion": true, "WithHistory": true,
 	}
 

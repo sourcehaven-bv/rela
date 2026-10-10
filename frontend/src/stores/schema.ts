@@ -24,6 +24,7 @@ import type {
   AppEntry,
   DocumentConfig,
   ActionConfig,
+  PilesConfig,
 } from '@/types'
 
 export const useSchemaStore = defineStore('schema', () => {
@@ -85,6 +86,13 @@ export const useSchemaStore = defineStore('schema', () => {
   // until that lands, which is why the offer simply does not render on
   // the first paint rather than flickering on.
   const inlineCreate = ref<Record<string, string>>({})
+  // Piles (TKT-K3RJLH). Whether this principal may use them, and what the
+  // operator's `piles:` block offers. Both default to off, so a server that
+  // sends neither field shows no piles UI at all. `/_config` may carry them,
+  // and the principal-scoped `/_sidebar` overrides when it does (setPiles):
+  // availability depends on who is asking, which `/_config` cannot know.
+  const pilesAvailable = ref(false)
+  const pilesConfig = ref<PilesConfig | null>(null)
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -439,6 +447,7 @@ export const useSchemaStore = defineStore('schema', () => {
       dashboard.value = dashboardData
       nextActionBands.value = configData.next_action_bands || []
       navigation.value = configData.navigation || []
+      setPiles(configData)
 
       // Apply palette if present
       if (configData.palette) {
@@ -467,6 +476,16 @@ export const useSchemaStore = defineStore('schema', () => {
 
   function setLogoUrl(url: string | null) {
     logoUrl.value = url
+  }
+
+  /**
+   * Takes the piles fields from a boot payload. A field the payload does not
+   * carry leaves the current value alone, so `/_config` and `/_sidebar` can
+   * each supply them without the other wiping them out.
+   */
+  function setPiles(data: { piles_available?: boolean; piles?: PilesConfig | null }) {
+    if (data.piles_available !== undefined) pilesAvailable.value = data.piles_available === true
+    if (data.piles !== undefined) pilesConfig.value = data.piles ?? null
   }
 
   function setInlineCreate(map: Record<string, string>) {
@@ -515,6 +534,8 @@ export const useSchemaStore = defineStore('schema', () => {
     darkDisabled,
     logoUrl,
     inlineCreate,
+    pilesAvailable,
+    pilesConfig,
     loaded,
     loading,
     error,
@@ -550,5 +571,6 @@ export const useSchemaStore = defineStore('schema', () => {
     reload,
     setLogoUrl,
     setInlineCreate,
+    setPiles,
   }
 })

@@ -45,6 +45,7 @@ var validTopLevelKeys = map[string]bool{
 	"next_action_bands": true,
 	"next_actions":      true,
 	"account":           true,
+	"piles":             true,
 }
 
 // Known typos with suggestions
@@ -480,6 +481,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateQueryScopes(cfg, meta)...)
 	errs = append(errs, validateNavEntities(cfg, meta)...)
 	errs = append(errs, validateAccount(data, cfg, meta)...)
+	errs = append(errs, validatePiles(data, cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
@@ -1297,6 +1299,7 @@ func CollectConfigWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 	warnings = append(warnings, viewCommandPermissionWarnings(cfg)...)
 	warnings = append(warnings, inertSectionRenderWarnings(cfg)...)
 	warnings = append(warnings, inertWidgetWarnings(cfg, meta)...)
+	warnings = append(warnings, pilesSetWarnings(cfg, meta)...)
 	return warnings
 }
 

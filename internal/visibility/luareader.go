@@ -156,6 +156,15 @@ func (s *ScriptReader) ResolveHeaders(ctx context.Context, refs []entity.Ref) ma
 	return s.res.ResolveHeaders(s.bind(ctx), worldIn(ctx, s.world), refs)
 }
 
+// ResolveHeadersErr is [ScriptReader.ResolveHeaders] with a failed header
+// read, or an unset world, returned instead of answered as misses. See
+// [Resolver.ResolveHeadersErr].
+func (s *ScriptReader) ResolveHeadersErr(
+	ctx context.Context, refs []entity.Ref,
+) (map[entity.Ref]ResolvedHeader, error) {
+	return s.res.ResolveHeadersErr(s.bind(ctx), worldIn(ctx, s.world), refs)
+}
+
 // ListEntities yields only the entities the caller may read, redacted.
 //
 // Prefers ACL PUSHDOWN: when the gate can compose the caller's scope as a

@@ -20,6 +20,8 @@ import type { SidebarGroup, SidebarItem } from '@/types'
 import type { NavItemEntry, NavItemList } from '@/api/navItems'
 import { entityDetailHref } from '@/utils/entityRoute'
 import type { NavEntitiesLookup } from '@/composables/useNavEntities'
+import type { PileSummary } from '@/api/piles'
+import { pileIcon } from '@/components/piles/pileIcon'
 
 /**
  * The stable identifier for a nav row.
@@ -251,4 +253,41 @@ export function activeNavId(groups: NavGroup[], path: string): string | undefine
   }
 
   return best?.id
+}
+
+/** The id of the sidebar's Piles group. */
+export const PILES_GROUP_ID = 'group:piles'
+
+/** The id prefix of a pile's sidebar row; the rest is the pile id. */
+export const PILE_NAV_PREFIX = 'pile:'
+
+/** The sidebar row id of a pile, shared by the sidebar and the flyout. */
+export function pileNavId(id: string): string {
+  return `${PILE_NAV_PREFIX}${id}`
+}
+
+/**
+ * The Piles group (TKT-K3RJLH): one row per pile, with its icon and its count
+ * of readable items, and an add control for a new pile.
+ *
+ * A row opens the pile in the flyout rather than navigating, so it is a
+ * button that claims `opensFlyout`. The group is shown even with no piles,
+ * because its add control is how the first one gets made.
+ */
+export function pilesNavGroup(piles: readonly PileSummary[]): NavGroup {
+  return {
+    id: PILES_GROUP_ID,
+    label: 'Piles',
+    addLabel: 'New pile',
+    items: piles.map((p) => ({
+      id: pileNavId(p.id),
+      label: p.name,
+      icon: pileIcon(p.icon),
+      as: 'button' as const,
+      opensFlyout: true,
+      ...(p.count > 0
+        ? { status: { tone: 'info' as const, label: `${p.count} item${p.count === 1 ? '' : 's'}`, count: p.count } }
+        : {}),
+    })),
+  }
 }
