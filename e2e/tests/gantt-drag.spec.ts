@@ -23,7 +23,7 @@ test.describe('Gantt drag', () => {
 
     // Resting on the bar reads the entity; the handles appear once it allows the write.
     await gantt.barLabel(plan.id).hover();
-    await appPage.locator(`.row[data-node-id="${plan.id}"] .bar`).hover();
+    await gantt.bar(plan.id).hover();
     const move = gantt.dragHandle(plan.id, 'move');
     await expect(move).toBeVisible();
     // A short plan stretches to fill the screen, so measure a day off the

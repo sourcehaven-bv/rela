@@ -50,6 +50,10 @@ export class GanttPage extends BasePage {
     return this.page.locator(`.row[data-node-id="${nodeId}"] .bar-name`);
   }
 
+  bar(nodeId: string): Locator {
+    return this.page.locator(`.row[data-node-id="${nodeId}"] .bar`);
+  }
+
   rowTreeCell(nodeId: string): Locator {
     return this.page.locator(`.row[data-node-id="${nodeId}"] .cell-tree`);
   }
