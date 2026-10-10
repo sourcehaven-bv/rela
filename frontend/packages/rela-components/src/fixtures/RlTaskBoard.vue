@@ -21,9 +21,11 @@ withDefaults(
     emptyLabel?: string
     emptyDescription?: string
     reorder?: boolean
+    collapsible?: boolean
   }>(),
   {
     reorder: false,
+    collapsible: false,
     showAddSection: true,
     showAdd: true,
     canMove: undefined,
@@ -36,6 +38,7 @@ const emit = defineEmits<{
   add: [section: Section<Task>]
   select: [item: Task]
   expandSection: [section: Section<Task>]
+  collapseSection: [section: Section<Task>]
   addSection: []
   move: [payload: { item: Task; to: Section<Task>; at?: BoardDropPosition }]
 }>()
@@ -51,10 +54,12 @@ const emit = defineEmits<{
     :empty-label="emptyLabel"
     :empty-description="emptyDescription"
     :reorder="reorder"
+    :collapsible="collapsible"
     add-label="Add task"
     @add="emit('add', $event)"
     @select="emit('select', $event)"
     @expand-section="emit('expandSection', $event)"
+    @collapse-section="emit('collapseSection', $event)"
     @add-section="emit('addSection')"
     @move="emit('move', $event)"
   >

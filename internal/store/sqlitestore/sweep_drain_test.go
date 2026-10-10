@@ -1,6 +1,7 @@
 package sqlitestore_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -130,4 +131,57 @@ func TestSweepCapturesAnEditAfterCapture(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, versions, 2,
 		"the edit was not captured: the dirty gate is excluding rows that changed")
+}
+
+// TestSweepWriteBackSkipsARowWrittenAfterTheRead pins the write-back guard
+// (BUG-1DWMYO). The row's stored hash is NULL and its content matches its
+// latest version, so the tick computes that version's hash and writes it back.
+// An edit lands between the candidate query and the write-back. Stored on the
+// edited row, the old hash would mark it clean and the edit would never be
+// captured.
+func TestSweepWriteBackSkipsARowWrittenAfterTheRead(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	e := entity.New("FEAT-1", "feature")
+	e.SetString("title", "v1")
+	require.NoError(t, s.CreateEntity(ctx, e))
+	require.NoError(t, s.SweepNow(ctx, fixedProjection{}, immediateSweep(10)))
+	require.NoError(t, s.ExecRaw(ctx, `UPDATE entities SET content_hash = NULL`))
+
+	require.NoError(t, s.SweepNowWithWrite(ctx, fixedProjection{}, immediateSweep(10), func() {
+		e.SetString("title", "v2")
+		require.NoError(t, s.UpdateEntity(ctx, e))
+	}))
+	require.NoError(t, s.SweepNow(ctx, fixedProjection{}, immediateSweep(10)))
+
+	metas, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "FEAT-1"})
+	require.NoError(t, err)
+	require.Len(t, metas, 2, "the edit made during the tick was never captured")
+}
+
+// TestSweepWriteBackSkipsARowWithANewerVersion pins the write-back's
+// latest-version guard (TASK-Y73Y9 in Atlas). A delete version lands between
+// the candidate query and the write-back while the row is unchanged, so the
+// version trigger has no stored hash to clear. Stored afterwards, the hash
+// would hide a live row whose history ends in a delete, and the row would
+// never be captured again.
+func TestSweepWriteBackSkipsARowWithANewerVersion(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	require.NoError(t, s.CreateEntity(ctx, entity.New("FEAT-1", "feature")))
+	require.NoError(t, s.SweepNow(ctx, fixedProjection{}, immediateSweep(10)))
+	require.NoError(t, s.ExecRaw(ctx, `UPDATE entities SET content_hash = NULL`))
+
+	require.NoError(t, s.SweepNowWithWrite(ctx, fixedProjection{}, immediateSweep(10), func() {
+		require.NoError(t, s.VersionStore().WriteVersion(ctx, store.VersionInput{
+			EntityID: "FEAT-1", Op: store.VersionOpDelete, Type: "feature",
+			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+		}))
+	}))
+	require.NoError(t, s.SweepNow(ctx, fixedProjection{}, immediateSweep(10)))
+
+	metas, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "FEAT-1"})
+	require.NoError(t, err)
+	require.Len(t, metas, 3, "the live row was not captured after the delete version")
+	require.Equal(t, store.VersionOpCreate, metas[2].Op)
 }

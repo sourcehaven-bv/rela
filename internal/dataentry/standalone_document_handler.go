@@ -167,7 +167,7 @@ func handleV1StandaloneDocument(a *App, w http.ResponseWriter, r *http.Request, 
 			writeV1ScriptError(w, se, a.allowFullScriptDetail(r), correlationID)
 			return
 		}
-		writeV1Error(w, r, http.StatusInternalServerError, "render_failed", "Document rendering failed", err.Error())
+		writeInternalError(w, r, "render_failed", "Document rendering failed", err)
 		return
 	}
 

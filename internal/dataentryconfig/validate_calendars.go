@@ -240,6 +240,9 @@ func validateCalendarEventFields(calID string, cal Calendar, meta *metamodel.Met
 
 	for i, f := range cal.Event.Fields {
 		prefix := fmt.Sprintf("calendar %q: event.fields[%d]", calID, i)
+		if errs = append(errs, refuseCardCounts(prefix, f)...); f.Comments {
+			continue
+		}
 		if f.Property != "" && f.Relation != "" {
 			errs = append(errs, prefix+": specify either property or relation, not both")
 			continue

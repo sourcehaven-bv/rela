@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 13
+const schemaVersion = 15
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -167,6 +167,35 @@ var migrations = []migration{
 		to:    13,
 		apply: sqlSteps(dropRowidSearchSQL, searchDDL, rebuildSearchSQL),
 	},
+	{
+		// v13 → v14: the content hash on live rows, which the version sweep
+		// selects on (BUG-1DWMYO). The soft-delete tables carry it too, as
+		// they carry every live column. No backfill: NULL means "not known",
+		// and the sweep fills it in. init creates the triggers after the
+		// ladder; see contentHashDDL.
+		to:    14,
+		apply: addColumns(contentHashColumns),
+	},
+	{
+		// v14 → v15: a stored content_hash now also means the latest version
+		// has that hash, so the sweep can select on NULL alone (TASK-Y73Y9 in
+		// Atlas). Hashes written under v14 were held only to the weaker rule,
+		// so the rung clears them and the sweep rehashes every row once. init
+		// creates the new triggers and indexes after the ladder.
+		to:    15,
+		apply: sqlSteps(clearContentHashSQL),
+	},
+}
+
+// clearContentHashSQL marks every live row's hash as not known.
+const clearContentHashSQL = `
+UPDATE entities SET content_hash = NULL WHERE content_hash IS NOT NULL;
+UPDATE relations SET content_hash = NULL WHERE content_hash IS NOT NULL;`
+
+// contentHashColumns are the content_hash columns of the v14 rung.
+var contentHashColumns = []addedColumn{
+	{"entities", "content_hash"}, {"relations", "content_hash"},
+	{"marked_entities", "content_hash"}, {"marked_relations", "content_hash"},
 }
 
 // editorColumns are the attribution columns, on both tables that carry them.

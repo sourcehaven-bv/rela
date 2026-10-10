@@ -35,8 +35,25 @@ type VersionCapture interface {
 	WriteRelationVersion(ctx context.Context, in store.RelationVersionInput) error
 }
 
+// CommentThreads keeps comment threads at the address of the content they
+// discuss when a migration moves or deletes rows (BUG-6OZBP9).
+//
+// Comments are keyed by entity address and stored outside the graph. On the
+// entitymanager path they follow a delete through the AliasRewriter hook, but
+// migration writes go straight to the store, below that hook, so the runner,
+// the GC sweep and adopt-face must carry the upkeep themselves.
+//
+// Nil: accepted — the project has commenting disabled, so there are no
+// threads to keep in step.
+type CommentThreads interface {
+	// FaceMoved moves a thread to the face its row was relocated to.
+	FaceMoved(ctx context.Context, entityType, entityID string, from, to entity.Face) error
+	// EntityDeleted drops every face's thread of a deleted entity.
+	EntityDeleted(ctx context.Context, entityID string) error
+}
+
 // Deps are the runner's collaborators. Store, Meta, State, Audit, ScriptFS
-// and Lock are required; Versions is optional (pg only).
+// and Lock are required; Versions (pg only) and Comments are optional.
 type Deps struct {
 	Store store.Store
 	Meta  *metamodel.Metamodel
@@ -50,6 +67,7 @@ type Deps struct {
 	Audit    audit.Audit
 	ScriptFS fs.FS // project root, for `lua:` step scripts
 	Versions VersionCapture
+	Comments CommentThreads
 	// Lock serializes apply runs against every other migration/GC writer on
 	// the same store (TKT-CPCBR7); build it with [LockFor]. Required even
 	// though dry-runs never touch it: a destructive path must not lose its
@@ -147,6 +165,7 @@ func (r *Runner) Run(ctx context.Context, plan []*File, apply bool) (*RunResult,
 			ScriptFS: r.deps.ScriptFS,
 			Computed: r.computed,
 			capture:  r.newCapturer(f.Name),
+			comments: r.deps.Comments,
 		}
 		fr := FileResult{Name: f.Name}
 		for _, step := range f.Steps {
@@ -215,6 +234,7 @@ type Exec struct {
 	ScriptFS fs.FS
 	Computed *computed.Set
 	capture  *capturer
+	comments CommentThreads
 }
 
 // forEachEntity runs fn over every entity of typ (collect-then-write, the
@@ -298,6 +318,21 @@ func (x *Exec) captureRelationDelete(ctx context.Context, rel *entity.Relation) 
 		return nil
 	}
 	return x.capture.relationDelete(ctx, rel)
+}
+
+// dropThreads drops a deleted entity's comment threads; no-op without a
+// comment service. Called before the delete, for the reason moveThreads
+// gives, and again after it, for a comment posted while the row was still
+// readable. A failure is a hard error for the reason captureEntityDelete
+// gives: the step aborts and a re-run retries.
+func (x *Exec) dropThreads(ctx context.Context, entityID string) error {
+	if x.comments == nil {
+		return nil
+	}
+	if err := x.comments.EntityDeleted(ctx, entityID); err != nil {
+		return fmt.Errorf("%s: drop comment threads: %w", entityID, err)
+	}
+	return nil
 }
 
 // capturer performs the synchronous version captures, carrying the render

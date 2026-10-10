@@ -1310,6 +1310,39 @@ is no `_title` fallback to worry about; the redaction is a straight
 value-omission from `meta`. A relation type with no `visible:` block emits
 its meta unchanged (permissive default).
 
+## Field write grants on MCP and scheduled scripts
+
+A role's `fields:` and `options:` grants limit which properties it may
+write. The data-entry API checks them on every create and update. MCP on
+`rela-server` and scheduled Lua tasks check them too (TKT-0XL8MF): their
+writes go through a field-gated handle of the entity manager. A refused write
+names the rule that fired, `field-affordance:hidden`,
+`field-affordance:read-only` or `field-affordance:enum-filtered`, and is
+recorded in the audit log as a denied write.
+
+The check covers the properties the caller sends. Like the data-entry API,
+it refuses a property the schema does not declare, unless a grant names it.
+It does not cover:
+
+- template defaults and automation output, including automation `script:`
+  actions;
+- `_actions` scripts and other server-side writes, which act for the
+  operator's configuration rather than for a caller's input;
+- the `rela` CLI and `rela mcp` over stdio, whose user can edit the data
+  files directly;
+- a script running with `allow_acl_bypass`;
+- relation grants (`relations:`) and attachment writes over MCP, which are
+  checked on the data-entry API only.
+
+Row grants apply on all of these.
+
+**Upgrading.** A scheduled task now fails to write a property its principal
+may not write. Grant the task's principal (`system:scheduler`, or its
+`run_as` user) the field, or move the write into an automation. Field lists
+are closed: once any role the principal holds lists fields for a type, a
+field none of them names is read-only. So name the field in a `fields:`
+block of one of the principal's roles.
+
 ## `related(...)` in a grant's `when:`
 
 A grant's `when:` may use `related(...)` to depend on the entities at the

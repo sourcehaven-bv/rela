@@ -15,9 +15,11 @@ const emit = defineEmits<{ expand: [section: Section<T>] }>()
     type="button"
     class="rl-board-column-collapsed"
     :aria-label="messages.expandSection({ title: section.title })"
+    :data-section-id="section.id"
     @click="emit('expand', section)"
   >
-    <RlStatusDot :color="section.color" />
+    <component :is="section.icon" v-if="section.icon" class="rl-board-column-collapsed__icon" :size="16" />
+    <RlStatusDot v-else :color="section.color" />
     <span class="rl-board-column-collapsed__title">{{ section.title }}</span>
     <RlCount :value="section.count ?? section.items.length" />
   </button>
@@ -40,6 +42,11 @@ const emit = defineEmits<{ expand: [section: Section<T>] }>()
   cursor: pointer;
 }
 .rl-board-column-collapsed:hover { background: var(--rl-color-bg-hover); }
+
+.rl-board-column-collapsed__icon {
+  flex: none;
+  color: var(--rl-color-text-subtle);
+}
 
 .rl-board-column-collapsed__title {
   font-size: var(--rl-font-size-md);

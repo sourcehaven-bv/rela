@@ -669,11 +669,15 @@ func (s *FSStore) deleteFace(_ context.Context, ref entity.Ref) (*store.DeleteRe
 
 	// OUTGOING edges on this tail go with the face. INCOMING edges do NOT
 	// while a face remains: heads are entity-level (§2.3), so an inbound edge
-	// points at the entity and survives its faces.
+	// points at the entity and survives its faces. Neither do edges on the
+	// zero tail, which the family's identity edges share (see
+	// store.EntityWriter.DeleteFace).
 	lastFace := s.familySize(id) == 1
 	var owned []relationMeta
 	for _, rm := range s.relations {
-		if (rm.From == id && rm.FromFace == p) || (lastFace && (rm.From == id || rm.To == id)) {
+		if (rm.From == id && rm.FromFace == p && !p.IsImplicit()) ||
+			(lastFace && (rm.From == id || rm.To == id)) {
+
 			owned = append(owned, rm)
 		}
 	}

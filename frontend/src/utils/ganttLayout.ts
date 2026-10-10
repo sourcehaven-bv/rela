@@ -73,46 +73,42 @@ export function forestSpan(roots: GanttNode[]): { start: number; end: number } |
 }
 
 /** pct positions a day on the axis as a 0-100 percentage, linearly in days.
- * The VIEW renders through scaleFor instead (equal-width period columns);
- * this stays as the fallback when no ticks exist. */
+ * The view gives every day the same width (see PX_PER_DAY), so this is the
+ * whole horizontal scale: bars, gridlines, ticks and markers all use it. */
 export function pct(day: number, axis: { start: number; end: number }): number {
   const span = Math.max(axis.end - axis.start, 1)
   return ((day - axis.start) / span) * 100
 }
 
 /**
- * scaleFor builds the chart's horizontal scale: every tick period renders at
- * EQUAL width (the calendar-grid convention — a February column as wide as
- * an August one), with days interpolated linearly INSIDE each period.
- *
- * Bars, gridlines, markers and the axis labels all position through this one
- * function, so they cannot drift apart: a purely day-linear scale made month
- * columns visibly uneven (28 vs 31 days) and let CSS background-position
- * round differently from element `left`.
+ * PX_PER_DAY is the width of one day at each zoom. The timeline scrolls
+ * sideways instead of squeezing a long plan into the screen, so a fixed day
+ * width keeps one period readable at any span: a week is 280px wide, a month
+ * at least 336px, a quarter at least 360px. That is also why ticksFor needs
+ * no density cap. A span shorter than the screen is stretched to fill it.
  */
-export function scaleFor(
-  axis: { start: number; end: number },
-  ticks: GanttTick[]
-): (day: number) => number {
-  // Segment boundaries: axis start, each tick, axis end (exclusive).
-  const bounds: number[] = [axis.start]
-  for (const t of ticks) {
-    if (t.day > bounds[bounds.length - 1]) bounds.push(t.day)
-  }
-  const end = axis.end + 1
-  if (end > bounds[bounds.length - 1]) bounds.push(end)
-  const segments = bounds.length - 1
-  if (segments < 1) return (day) => pct(day, axis)
+export const PX_PER_DAY: Record<GanttZoom, number> = { week: 40, month: 12, quarter: 4 }
 
-  return (day: number): number => {
-    if (day <= bounds[0]) return 0
-    if (day >= bounds[segments]) return 100
-    let i = 0
-    while (i < segments - 1 && day >= bounds[i + 1]) i++
-    const segStart = bounds[i]
-    const segSpan = Math.max(bounds[i + 1] - segStart, 1)
-    return ((i + (day - segStart) / segSpan) / segments) * 100
-  }
+/** SCROLL_UNIT_DAYS is how far the previous/next buttons move at each zoom. */
+export const SCROLL_UNIT_DAYS: Record<GanttZoom, number> = { week: 7, month: 30, quarter: 91 }
+
+/**
+ * withToday widens the axis to include today when today lies within one
+ * scroll unit of it, so "Now" has somewhere to go for a plan that starts next
+ * week or ended last week. A plan years away from today is not widened: that
+ * would make most of the timeline empty. The view disables "Now" then.
+ */
+export function withToday(
+  axis: { start: number; end: number },
+  today: number,
+  zoom: GanttZoom
+): { start: number; end: number } {
+  const reach = SCROLL_UNIT_DAYS[zoom]
+  // forestSpan's minimum pad, so the today line never sits on the edge.
+  const pad = 2
+  if (today < axis.start && axis.start - today <= reach) return { start: today - pad, end: axis.end }
+  if (today > axis.end && today - axis.end <= reach) return { start: axis.start, end: today + pad }
+  return axis
 }
 
 /** An axis tick: position day plus a short label. */
@@ -122,10 +118,6 @@ export interface GanttTick {
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-/** MAX_TICKS caps label density: past it, adjacent labels overlap into an
- * unreadable smear, so periods are emitted at a stride instead. */
-const MAX_TICKS = 20
 
 /** isoWeek returns the ISO 8601 week number for an epoch day (UTC). */
 export function isoWeek(day: number): number {
@@ -138,13 +130,10 @@ export function isoWeek(day: number): number {
 }
 
 /**
- * ticksFor lays out period boundaries across the axis for a zoom level.
- *
- * Density is bounded: when the span holds more periods than MAX_TICKS, every
- * Nth period is emitted instead — a two-year axis at week zoom would
- * otherwise draw ~104 labels into each other. Weeks are labelled with ISO
- * week numbers (the planning convention, and far shorter than dates); months
- * carry the year at January so a multi-year axis stays unambiguous.
+ * ticksFor lays out every period boundary across the axis for a zoom level.
+ * Weeks are labelled with ISO week numbers (the planning convention, and far
+ * shorter than dates); months carry the year at January so a multi-year axis
+ * stays unambiguous.
  */
 export function ticksFor(axis: { start: number; end: number }, zoom: GanttZoom): GanttTick[] {
   const out: GanttTick[] = []
@@ -158,67 +147,25 @@ export function ticksFor(axis: { start: number; end: number }, zoom: GanttZoom):
     cur.setTime(wd.getTime() - ((wd.getUTCDay() + 6) % 7) * MS_PER_DAY)
   }
 
-  const spanDays = axis.end - axis.start + 1
-  const periodDays = zoom === 'quarter' ? 91 : zoom === 'month' ? 30 : 7
-  let stride = Math.max(1, Math.ceil(spanDays / periodDays / MAX_TICKS))
-  // Month/quarter strides are rounded UP to a divisor of the year (12 or 4)
-  // and anchored to the CALENDAR index, not the iteration index: a stride
-  // that skips freely plus a force-emitted January produced uneven columns
-  // (Oct→Dec two months wide, Dec→Jan one) with months silently missing.
-  // Anchored, every January (or Q1) lands on the stride by construction and
-  // all intervals are uniform.
-  if (zoom === 'month') {
-    for (const d of [1, 2, 3, 4, 6, 12]) {
-      if (d >= stride) {
-        stride = d
-        break
-      }
-    }
-  } else if (zoom === 'quarter') {
-    for (const d of [1, 2, 4]) {
-      if (d >= stride) {
-        stride = d
-        break
-      }
-    }
-  }
-
   const endMs = (axis.end + 1) * MS_PER_DAY
   let guard = 0
-  let i = 0
-  while (cur.getTime() < endMs && guard++ < 800) {
+  // The guard only stops a runaway loop: GanttView caps the timeline, and
+  // 20000 weeks is 380 years.
+  while (cur.getTime() < endMs && guard++ < 20_000) {
     const day = Math.floor(cur.getTime() / MS_PER_DAY)
-    // Calendar-anchored emission (see the stride note above): months stride
-    // on the month-of-year index, quarters on the quarter index, weeks on
-    // the iteration index (they have no calendar anchor worth preserving).
-    let emit: boolean
-    if (zoom === 'month') {
-      emit = cur.getUTCMonth() % stride === 0
-    } else if (zoom === 'quarter') {
-      emit = Math.floor(cur.getUTCMonth() / 3) % stride === 0
-    } else {
-      emit = i % stride === 0
-    }
-    i++
     if (zoom === 'quarter') {
-      if (emit) {
-        out.push({
-          day,
-          label: `Q${Math.floor(cur.getUTCMonth() / 3) + 1} '${String(cur.getUTCFullYear()).slice(2)}`,
-        })
-      }
+      out.push({
+        day,
+        label: `Q${Math.floor(cur.getUTCMonth() / 3) + 1} '${String(cur.getUTCFullYear()).slice(2)}`,
+      })
       cur.setUTCMonth(cur.getUTCMonth() + 3)
     } else if (zoom === 'month') {
-      if (emit) {
-        const m = cur.getUTCMonth()
-        const label = m === 0 ? `${MONTHS[m]} '${String(cur.getUTCFullYear()).slice(2)}` : MONTHS[m]
-        out.push({ day, label })
-      }
+      const m = cur.getUTCMonth()
+      const label = m === 0 ? `${MONTHS[m]} '${String(cur.getUTCFullYear()).slice(2)}` : MONTHS[m]
+      out.push({ day, label })
       cur.setUTCMonth(cur.getUTCMonth() + 1)
     } else {
-      if (emit) {
-        out.push({ day, label: `W${isoWeek(day)}` })
-      }
+      out.push({ day, label: `W${isoWeek(day)}` })
       cur.setTime(cur.getTime() + 7 * MS_PER_DAY)
     }
   }

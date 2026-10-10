@@ -31,9 +31,9 @@ type VerdictSource interface {
 	Verdict() *Verdict
 }
 
-// GCDeps are the GC engine's collaborators. All but Versions are required —
-// notably Audit (amendment A8): an engine that deletes data without an audit
-// trail must be unconstructable, not misconfigurable.
+// GCDeps are the GC engine's collaborators. All but Versions and Comments are
+// required — notably Audit (amendment A8): an engine that deletes data without
+// an audit trail must be unconstructable, not misconfigurable.
 type GCDeps struct {
 	Store    store.Store
 	Meta     func() *metamodel.Metamodel // latest metamodel (hot-reload aware)
@@ -41,6 +41,7 @@ type GCDeps struct {
 	Audit    audit.Audit
 	Verdicts VerdictSource
 	Versions VersionCapture // optional (pg only)
+	Comments CommentThreads // optional (nil when commenting is disabled)
 	Grace    time.Duration  // 0 = DefaultGrace
 	// Lock serializes GC applies against migration runs and other GC
 	// writers (TKT-CPCBR7); build it with [LockFor]. Required — the one
@@ -186,7 +187,7 @@ func (g *GC) Tick(ctx context.Context, apply bool) (*GCResult, error) {
 // collect deletes (or counts, in dry-run) the data one expired ledger entry
 // names, reusing the migration step executors — same capture, same batching.
 func (g *GC) collect(ctx context.Context, key, kind string, apply bool) (int, error) {
-	x := &Exec{Store: g.deps.Store, Apply: apply, capture: g.newCapturer()}
+	x := &Exec{Store: g.deps.Store, Apply: apply, capture: g.newCapturer(), comments: g.deps.Comments}
 	var (
 		sr  StepResult
 		err error

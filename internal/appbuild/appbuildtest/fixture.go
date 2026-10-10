@@ -22,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
+	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -53,6 +54,7 @@ type testConfig struct {
 	audit       audit.Audit
 	acl         acl.ACL
 	declarative *acl.Declarative
+	comments    *comments.Service
 }
 
 // auditOrNop is the configured audit sink, or [audit.Nop] when none was set.
@@ -121,6 +123,14 @@ func WithAudit(a audit.Audit) Option {
 // resolver so [appbuild.Services.ACLDeclarative] returns non-nil.
 func WithACL(a acl.ACL) Option {
 	return func(c *testConfig) { c.acl = a }
+}
+
+// WithComments makes [appbuild.Services.Comments] return svc, as a project
+// with commenting enabled would. It is not wired into the entitymanager's
+// rename/delete hook, so only tests that call the service or hand it to a
+// consumer through Services observe it.
+func WithComments(svc *comments.Service) Option {
+	return func(c *testConfig) { c.comments = svc }
 }
 
 // WithDeclarative wires the concrete *acl.Declarative as both the ACL
@@ -282,6 +292,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		ACL:           aclImpl,
 		Declarative:   cfg.declarative,
 		Audit:         auditSink,
+		Comments:      cfg.comments,
 	})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: assemble services: %v", err))

@@ -60,6 +60,13 @@ type sweep struct {
 	cfg      store.SweepConfig
 	cancel   context.CancelFunc
 	done     chan struct{}
+	// beforeCapture, when set, runs between the candidate query and the
+	// captures. Tests use it to write a row the query has already read.
+	beforeCapture func()
+	// more is set by a tick that filled its batch and made progress, so run
+	// starts the next tick at once rather than an Interval later. Touched only
+	// from the run goroutine.
+	more bool
 }
 
 // StartVersionSweep implements [store.VersionSweeper]: it starts the periodic
@@ -124,8 +131,14 @@ func (s *sweep) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.tick(ctx); err != nil && ctx.Err() == nil {
-				slog.Warn("sqlitestore: version sweep tick failed", "error", err)
+			// A full batch means more rows are waiting: a backlog, such as
+			// every row after the content_hash migration, drains at once
+			// rather than Batch rows per Interval.
+			for first := true; first || (s.more && ctx.Err() == nil); first = false {
+				s.more = false
+				if err := s.tick(ctx); err != nil && ctx.Err() == nil {
+					slog.Warn("sqlitestore: version sweep tick failed", "error", err)
+				}
 			}
 		}
 	}
@@ -152,26 +165,56 @@ func (s *sweep) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if s.beforeCapture != nil {
+		s.beforeCapture()
+	}
+	resolved := 0
 	for _, c := range candidates {
 		if capErr := s.captureOne(ctx, c, hash, projJSON); capErr != nil {
 			// Best-effort per row: log and continue, so one bad row does not
 			// abort the tick. The next tick retries, idempotently via the dedup.
 			slog.Warn("sqlitestore: version sweep capture failed",
 				"id", c.id, "face", c.face, "error", capErr)
+			continue
 		}
+		resolved++
 	}
+	s.noteBatch(ctx, "entity", len(candidates), resolved)
 
 	relCandidates, err := s.selectRelationCandidates(ctx)
 	if err != nil {
 		return err
 	}
+	resolved = 0
 	for _, rc := range relCandidates {
 		if capErr := s.captureRelation(ctx, rc, hash, projJSON); capErr != nil {
 			slog.Warn("sqlitestore: relation version sweep capture failed",
 				"from", rc.from, "type", rc.relType, "to", rc.to, "error", capErr)
+			continue
 		}
+		resolved++
 	}
+	s.noteBatch(ctx, "relation", len(relCandidates), resolved)
 	return nil
+}
+
+// noteBatch records what one phase of a tick did with a full batch.
+//
+// A full batch with progress means more rows are waiting, so run ticks again
+// at once. A full batch with no progress means every selected row failed to
+// capture: those rows stay candidates and keep the rows behind them from being
+// reached, which is BUG-1DWMYO's starvation with a different cause. It cannot
+// be fixed here, so it is reported once per tick rather than only per row.
+func (s *sweep) noteBatch(ctx context.Context, kind string, selected, resolved int) {
+	if selected < s.cfg.Batch {
+		return
+	}
+	if resolved > 0 {
+		s.more = true
+		return
+	}
+	slog.WarnContext(ctx, "sqlitestore: version sweep stalled; every row in a full batch failed to capture, "+
+		"so rows behind them are not being versioned", "kind", kind, "batch", selected)
 }
 
 // --- Entities -------------------------------------------------------------
@@ -198,8 +241,9 @@ type sweepCandidate struct {
 	origin originCols
 }
 
-// selectCandidates returns up to Batch entities that have SETTLED (updated_at
-// older than now-Idle) or whose latest version has aged past MaxStaleness.
+// selectCandidates returns up to Batch entities whose stored content_hash is
+// NULL and that have SETTLED (updated_at older than now-Idle) or whose latest
+// version has aged past MaxStaleness.
 //
 // pgstore expresses the two "latest version" probes as LEFT JOIN LATERAL;
 // SQLite has no LATERAL, so they are correlated scalar subqueries. Each is still
@@ -222,39 +266,35 @@ type sweepCandidate struct {
 // duplicate — and one face's delete would reset another face's lifecycle
 // boundary.
 //
-// # The ORDER BY is what drains a backlog, and it is not cosmetic
+// # Only changed rows are candidates, or a backlog starves
 //
-// `lv_created IS NOT NULL, lv_created ASC` puts never-captured rows first and
-// then the longest-uncaptured ones. Ordering by `e.updated_at ASC` instead —
-// the obvious choice, and pgstore's — starves a backlog larger than Batch.
+// The dedup happens in Go: captureOne compares content hashes and skips the
+// write when they match. A row the query selects and the dedup skips changes
+// nothing the query keys on, so it is selected again on every tick, and once
+// Batch such rows exist the rows behind them are never reached (BUG-1DWMYO).
+// Ordering does not prevent that: an edit to a row whose capture is newer than
+// Batch others still waits behind them forever.
 //
-// The reason is that the dedup happens in Go: captureOne compares content
-// hashes and returns without writing when they match. A settled, already
-// captured, unchanged row is therefore selected, examined and skipped, leaving
-// nothing that the WHERE clause keys on any different — so the next tick
-// returns the identical first Batch rows, and everything behind them is never
-// reached. Not "eventually": never, for as long as those rows stay quiet.
+// So the WHERE clause selects only rows whose stored content_hash is NULL. A
+// non-NULL hash means the current lifecycle's latest version has that hash, so
+// the row has nothing to capture. captureOne writes the hash back after it
+// captures or skips the row, and triggers clear it whenever that could stop
+// being true: a hashed column changes, a version is inserted with another hash,
+// is a delete, or is purged, or a soft-deleted row is restored
+// (contentHashDDL). A skipped row gets its hash written back, so it drops out.
+// The one exception is a row whose capture keeps failing: it stays a
+// candidate, and noteBatch reports a full batch of them. The partial index
+// entities_unhashed_idx serves the scan, so a tick costs in proportion to the
+// rows that changed (TASK-Y73Y9 in Atlas).
 //
-// Ordering by the capture time fixes it without excluding anything, which is
-// why it is done here rather than in the WHERE clause. A tick that captures
-// rows moves their lv_created to now, so they sort to the BACK and the next
-// tick necessarily advances. A tick that skips them changes nothing, but they
-// were already the oldest captures, so the batch is still the right one to
-// look at.
+// Timestamps would not do. A capture is written after the write it snapshots,
+// so lv_created is normally NEWER than updated_at, and an `lv_created <
+// e.updated_at` gate excludes an edit landing in the same clock tick as its
+// predecessor's capture permanently (measured: updated_at …:28.741109Z against
+// lv_created …:28.741797Z, for an edit that needed capturing).
 //
-// Filtering instead — an `AND lv_created < e.updated_at` "dirty gate" — is the
-// tempting version and is WRONG. A capture is written after the write it
-// snapshots, so lv_created is normally NEWER than updated_at, and an edit
-// landing in the same clock tick as its predecessor's capture would be
-// excluded permanently. Measured while writing this: updated_at
-// …:28.741109Z against lv_created …:28.741797Z, for an edit that genuinely
-// needed capturing. The version rows carry no source-updated_at column to
-// compare against honestly, and adding one to this backend alone would diverge
-// the two schemas over a bug both share.
-//
-// pgstore has the same starvation and its comment claims a backlog "drains
-// oldest-first across ticks", which holds only where capture advances
-// something the query reads. Worth carrying back; it is not fixed here.
+// The ORDER BY puts never-captured rows first and then the longest-uncaptured
+// ones, so a large backlog drains in a stable order.
 func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) {
 	const q = `
 		SELECT e.id, e.face, e.type, e.content, e.properties,
@@ -277,8 +317,9 @@ func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) 
 		         WHERE ev.entity_id = e.id AND ev.face = e.face
 		         ORDER BY ev.vseq DESC LIMIT 1) AS lv_created
 		FROM entities e
-		WHERE e.updated_at < ?
-		   OR (lv_created IS NOT NULL AND lv_created < ?)
+		WHERE e.content_hash IS NULL
+		  AND (e.updated_at < ?
+		       OR (lv_created IS NOT NULL AND lv_created < ?))
 		ORDER BY lv_created IS NOT NULL, lv_created ASC, e.updated_at ASC
 		LIMIT ?`
 
@@ -298,7 +339,7 @@ func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) 
 			lvOp       *string
 			lvCreated  *string
 		)
-		dest := make([]any, 0, 11+originColumnCount)
+		dest := make([]any, 0, 12+originColumnCount)
 		dest = append(dest, &c.id, &c.face, &c.typ, &c.content, &c.props, &c.editorUser, &c.editorTool)
 		dest = append(dest, c.origin.scanTargets()...)
 		dest = append(dest, &latestHash, &lvVseq, &lvOp, &lvCreated)
@@ -358,15 +399,35 @@ func (s *sweep) captureOne(
 	// Dedup only within the CURRENT lifecycle: latestHash is empty when there is
 	// no post-delete version, so a re-creation with identical bytes still
 	// records rather than being swallowed.
-	if c.latestHash != "" && contentHash == c.latestHash {
-		return nil
+	if c.latestHash == "" || contentHash != c.latestHash {
+		if c.hasVersion {
+			in.Op = store.VersionOpUpdate
+		} else {
+			in.Op = store.VersionOpCreate
+		}
+		if insErr := insertVersion(ctx, s.store.db, in, contentHash); insErr != nil {
+			return insErr
+		}
 	}
-	if c.hasVersion {
-		in.Op = store.VersionOpUpdate
-	} else {
-		in.Op = store.VersionOpCreate
-	}
-	return insertVersion(ctx, s.store.db, in, contentHash)
+	// Write the hash back so the row stops being a candidate until a trigger
+	// clears it, whether or not a version was captured: a row whose content
+	// matches the latest version would otherwise be selected, and skipped, on
+	// every tick. Two guards make it a no-op when storing the hash would break
+	// what a stored hash promises, that the latest version has it. The content
+	// guard catches a hashed column changed since the candidate query read the
+	// row; stored on newer content, the hash would mark an uncaptured edit as
+	// clean. The latest-version guard catches a version written outside the
+	// sweep since the read, such as a delete followed by a re-create with the
+	// same content: the version triggers did not clear anything then, because
+	// the row's hash was still NULL.
+	_, err = s.store.db.ExecContext(ctx, `UPDATE entities SET content_hash = ?1
+		WHERE id = ?2 AND face = ?3 AND type = ?4 AND properties = ?5 AND content = ?6
+		  AND EXISTS (SELECT 1 FROM (
+		      SELECT op, content_hash FROM entity_versions
+		      WHERE entity_id = ?2 AND face = ?3 ORDER BY vseq DESC LIMIT 1) l
+		    WHERE l.op <> 'delete' AND l.content_hash = ?1)`,
+		contentHash, c.id, c.face, c.typ, c.props, c.content)
+	return err
 }
 
 // --- Relations ------------------------------------------------------------
@@ -383,7 +444,7 @@ type relationSweepCandidate struct {
 	props      string
 	latestHash string
 	hasVersion bool
-	// editorUser/editorTool mirror sweepCandidate's.
+	// editorUser and editorTool mirror sweepCandidate's.
 	editorUser *string
 	editorTool *string
 }
@@ -405,8 +466,9 @@ func (s *sweep) selectRelationCandidates(ctx context.Context) ([]relationSweepCa
 		         WHERE rv.rel_record_id = r.rel_record_id
 		         ORDER BY rv.vseq DESC LIMIT 1) AS lv_created
 		FROM relations r
-		WHERE r.updated_at < ?
-		   OR (lv_created IS NOT NULL AND lv_created < ?)
+		WHERE r.content_hash IS NULL
+		  AND (r.updated_at < ?
+		       OR (lv_created IS NOT NULL AND lv_created < ?))
 		ORDER BY lv_created IS NOT NULL, lv_created ASC, r.updated_at ASC
 		LIMIT ?`
 
@@ -457,15 +519,26 @@ func (s *sweep) captureRelation(
 		PrincipalTool: tool,
 	}
 	contentHash := contentHashOfRelation(in)
-	if c.latestHash != "" && contentHash == c.latestHash {
-		return nil
+	if c.latestHash == "" || contentHash != c.latestHash {
+		if c.hasVersion {
+			in.Op = store.VersionOpUpdate
+		} else {
+			in.Op = store.VersionOpCreate
+		}
+		if insErr := insertRelationVersion(ctx, s.store.db, in, contentHash); insErr != nil {
+			return insErr
+		}
 	}
-	if c.hasVersion {
-		in.Op = store.VersionOpUpdate
-	} else {
-		in.Op = store.VersionOpCreate
-	}
-	return insertRelationVersion(ctx, s.store.db, in, contentHash)
+	// As in captureOne. The key is the row's current one, so a rename since
+	// the read leaves nothing to match. The relation dedup does not fence on a
+	// delete version, so neither does the latest-version guard.
+	_, err = s.store.db.ExecContext(ctx, `UPDATE relations SET content_hash = ?1
+		WHERE from_id = ?2 AND from_face = ?3 AND rel_type = ?4 AND to_id = ?5
+		  AND properties = ?6 AND content = ?7
+		  AND ?1 = (SELECT content_hash FROM relation_versions
+		            WHERE rel_record_id = ?8 ORDER BY vseq DESC LIMIT 1)`,
+		contentHash, c.from, c.fromFace, c.relType, c.to, c.props, c.content, c.recordID)
+	return err
 }
 
 // sweepNow runs one tick synchronously. It exists for tests, which must not

@@ -98,6 +98,10 @@ type Manager struct {
 	// row per cascade step would misreport an ordinary automation as an
 	// elevated one. Set only by cascadeHost, on a throwaway handle.
 	cascadeWrite bool
+
+	// fieldGate marks a handle whose caller-authored property writes pass
+	// [Deps.FieldGate]. Set only by [FieldGated].
+	fieldGate bool
 }
 
 // elevated returns a throwaway Manager handle whose writes skip the ACL deny.
@@ -125,10 +129,65 @@ func (m *Manager) Elevated() autocascade.Mutator {
 // does not propagate to descendants (the leak the ctx-marker approach would
 // have had).
 func (m *Manager) gated() *Manager {
-	if !m.bypassACL && !m.cascadeWrite {
+	if !m.bypassACL && !m.cascadeWrite && !m.fieldGate {
 		return m
 	}
 	return &Manager{deps: m.deps}
+}
+
+// FieldGated returns a handle on m's deps whose caller-authored property
+// writes pass [Deps.FieldGate] (TKT-0XL8MF). Hand it to a surface that
+// writes for a principal and has no field check of its own: MCP on
+// rela-server and scheduled Lua. The default handle skips the gate, because
+// its callers either check fields themselves (the data-entry API's
+// validateFieldWrite) or act for the operator or the system (the CLI,
+// provisioning, CalDAV mapping, operator-declared actions).
+//
+// The handle does not pass its gating to an automation cascade it triggers:
+// cascades dispatch through gated(), which drops it, so automation output
+// stays ungated (RR-00ERM9). An elevated handle skips the gate like the row
+// ACL (RR-BA1NIV).
+//
+// Nil: rejected (panics); wiring hands it the manager it built.
+func FieldGated(m *Manager) *Manager {
+	return &Manager{deps: m.deps, fieldGate: true}
+}
+
+// fieldGated reports whether writes through m pass the [FieldWriteGate].
+func fieldGated(m *Manager) bool {
+	return m.fieldGate && !m.bypassACL && !m.cascadeWrite
+}
+
+// auditedDenial is a refusal that writes its own audit summary.
+// affordances.FieldWriteError is one.
+type auditedDenial interface {
+	error
+	AuditSummary() string
+}
+
+// checkFieldWrite asks the [FieldWriteGate] and records a refusal as a
+// denied write, like a row-level refusal (recordDeniedWrite). Without the
+// record, a caller probing read-only fields over MCP or Lua would leave no
+// trace. A plain function: Manager is at its method cap.
+func checkFieldWrite(ctx context.Context, m *Manager, e *entity.Entity, set map[string]any, unset []string) error {
+	err := m.deps.FieldGate.CheckFieldWrite(ctx, e, set, unset)
+	if err == nil || isAffordanceProbe(ctx) {
+		return err
+	}
+	summary := "denied: " + err.Error()
+	var d auditedDenial
+	if errors.As(err, &d) {
+		summary = d.AuditSummary()
+	}
+	m.deps.Audit.Record(audit.Record{
+		Time:        time.Now().UTC(),
+		Op:          audit.OpDeniedWrite,
+		Subject:     &audit.Subject{Kind: "entity", Type: e.Type, ID: e.ID},
+		Principal:   principal.From(ctx),
+		TriggeredBy: audit.TriggeredByFrom(ctx),
+		Summary:     summary,
+	})
+	return err
 }
 
 // Compile-time assertion: Manager must satisfy the autocascade.Mutator
@@ -307,13 +366,11 @@ type Deps struct {
 // interfaces) so entitymanager needs no dependency on the affordance
 // resolver that backs it in production.
 //
-// **STATUS: no production surface wires a real implementation yet.** Every
-// current wiring site passes [AllowAllFieldGate], so this gate is inert
-// outside tests — field-level write authz is enforced only by
-// internal/dataentry's own validateFieldWrite on its HTTP path, exactly as
-// before. The seam exists so the policy-backed implementation is a wiring
-// change rather than a rewrite; see TKT-0XL8MF. Do not assume a write
-// reaching PatchEntity has been field-gated.
+// It runs on PatchEntity and CreateEntity of a [FieldGated] handle, after
+// the row-level decision (RR-32XA5V). UpdateEntity and RecreateEntity never
+// run it: their callers check fields first or act for the operator.
+// Production wires the policy-backed gate from internal/affordances, or
+// [AllowAllFieldGate] for a deployment without field grants (TKT-0XL8MF).
 //
 // set holds the properties being upserted (key → new value); unset holds
 // the ones being removed. An implementation returns a non-nil error to
@@ -783,6 +840,16 @@ func (m *Manager) CreateEntity(
 	}); err != nil {
 		return nil, err
 	}
+	// Field-level gate on the caller's properties only, after the row-level
+	// decision. Template defaults and automation output are applied later
+	// and are not the caller's writes (RR-00ERM9). Without this, a field the
+	// caller may not write could be set at create time (BUG-Q60V).
+	if fieldGated(m) {
+		candidate := &entity.Entity{ID: opts.ID, Type: e.Type, Face: opts.Face, Properties: e.Properties}
+		if err := checkFieldWrite(ctx, m, candidate, e.Properties, nil); err != nil {
+			return nil, err
+		}
+	}
 	if err := rejectFileCreate(m.deps.Meta, e.Type, e.Properties); err != nil {
 		return nil, err
 	}
@@ -1162,10 +1229,9 @@ func (m *Manager) patchEntityOnce(
 		return nil, err
 	}
 
-	// Field-level gate, after the row-level decision. Skipped under
-	// elevation for the same reason the row ACL is (see the doc comment).
-	if !m.bypassACL {
-		if err := m.deps.FieldGate.CheckFieldWrite(ctx, stored, p.Properties, p.MetaUnset); err != nil {
+	// Field-level gate, after the row-level decision.
+	if fieldGated(m) {
+		if err := checkFieldWrite(ctx, m, stored, p.Properties, p.MetaUnset); err != nil {
 			return nil, err
 		}
 	}
@@ -2544,7 +2610,9 @@ func collectRenameAffectedRelations(ctx context.Context, st store.Store, id stri
 // CreateRelation creates the relation key names, validating endpoints and
 // the relation-type tuple against the metamodel. key.FromFace is the tail,
 // part of the relation's identity: two edges on one triple with different
-// tails are two relations (BUG-64MU2Q). **No automation.**
+// tails are two relations (BUG-64MU2Q). A caller that reports a type-allowlist
+// mismatch itself can let the write through with
+// [entity.RelationOptions.TolerateTypeMismatch]. **No automation.**
 func (m *Manager) CreateRelation(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
@@ -2553,9 +2621,9 @@ func (m *Manager) CreateRelation(
 	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
 	// peer must never let a write skip the ACL: if authz is deferred until
 	// after GetEntity, a denied caller (e.g. --read-only / ReadOnlyACL)
-	// gets a soft "entity not found" instead of a *acl.ForbiddenError,
-	// and the dataentry fallback then writes directly to the store,
-	// bypassing the ACL and audit. The source type feeds the type-level
+	// gets a soft "entity not found" instead of a *acl.ForbiddenError;
+	// before BUG-K6FEVB the dataentry fallback then wrote directly to the
+	// store, bypassing the ACL and audit. The source type feeds the type-level
 	// grant check; it is best-effort (empty if the source doesn't exist
 	// yet), mirroring UpdateRelation/DeleteRelation. Authorization must be
 	// decided from inputs that don't depend on peer existence.
@@ -2592,7 +2660,13 @@ func (m *Manager) CreateRelation(
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, source.typ, target.typ); vErr != nil {
-		return nil, fmt.Errorf("invalid relation: %w", vErr)
+		// A type-allowlist mismatch is the one tolerable failure: the caller
+		// opted in and reports it as a warning. An unknown relation type is
+		// never tolerated.
+		var mismatch *metamodel.InvalidRelationError
+		if !opts.TolerateTypeMismatch || !errors.As(vErr, &mismatch) {
+			return nil, fmt.Errorf("invalid relation: %w", vErr)
+		}
 	}
 	// Keyed on the TAIL too: two edges on the same triple with different
 	// tails are two relations, so a faced create must not be rejected by

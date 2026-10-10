@@ -603,6 +603,21 @@ func scriptTracer(
 	return vt
 }
 
+// FieldGatedEntityManager returns the handle of s's entity manager whose
+// caller-authored property writes honor acl.yaml's field grants
+// ([entitymanager.FieldGated], TKT-0XL8MF). Hand it to a surface that writes
+// for a principal and has no field check of its own, such as MCP on
+// rela-server. A package function because Services is at its plimsoll cap.
+//
+// Nil: returned when s has no entity manager, as a read-only fixture does,
+// so the result is what [Services.EntityManager] would have returned.
+func FieldGatedEntityManager(s *Services) *entitymanager.Manager {
+	if s.entityManager == nil {
+		return nil
+	}
+	return entitymanager.FieldGated(s.entityManager)
+}
+
 // LuaWriteDeps materializes the read-write Lua capability bundle with
 // UNRESTRICTED reads (see [Services.LuaReadDeps] for when that is right).
 // EntityManager goes in as the concrete *entitymanager.Manager; the
@@ -636,8 +651,13 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 // identity may read `person` receives that entity with the same properties
 // redacted as a human with the same role sees in the UI. This closed
 // RR-7408F5, which documented the earlier row-gating-only behavior.
+//
+// Field write grants apply too: writes go through the [entitymanager.FieldGated]
+// handle, so a job cannot set a property its identity may not.
 func (s *Services) ScheduledLuaWriteDeps() lua.WriteDeps {
-	return s.luaWriteDepsFor(s.fieldRedactor)
+	deps := s.luaWriteDepsFor(s.fieldRedactor)
+	deps.EntityManager = FieldGatedEntityManager(s)
+	return deps
 }
 
 // GatedReads returns the read handles bound to whatever principal is on the
@@ -957,6 +977,11 @@ type Collaborators struct {
 
 	// SearchCloser may be nil — see type doc.
 	SearchCloser io.Closer
+
+	// Comments is the commentary service [Services.Comments] returns.
+	// Nil: accepted — commenting disabled, as in production when the
+	// metamodel declares no comments.
+	Comments *comments.Service
 }
 
 // NewFromCollaborators assembles a [Services] from pre-built
@@ -1066,6 +1091,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		aclPolicy:      aclPolicy,
 		audit:          c.Audit,
 		fieldRedactor:  fieldRedactor,
+		comments:       c.Comments,
 	}, nil
 }
 
@@ -1087,38 +1113,64 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 // operator who had asked for redaction — the fail-open this whole path exists
 // to prevent (RR-GKCZO5).
 //
-// The resolver is built to completion here — including WithMachines — before
-// it escapes into a redactor, which is what keeps its documented
-// "safe for concurrent use after construction" guarantee true.
+// It is the redactor half of [buildFieldPolicy], for callers with no use
+// for the write gate.
 func buildFieldRedactor(
 	meta *metamodel.Metamodel, st store.Store, d *acl.Declarative,
 ) (visibility.FieldRedactor, error) {
+	fp, err := buildFieldPolicy(meta, st, d)
+	if err != nil {
+		return nil, err
+	}
+	return fp.redactor, nil
+}
+
+// fieldPolicy is the field-level half of acl.yaml: the read-side redactor
+// and the write-side gate, both answered by one resolver.
+type fieldPolicy struct {
+	redactor visibility.FieldRedactor
+	gate     entitymanager.FieldWriteGate
+}
+
+// buildFieldPolicy builds the field redactor and the field write gate
+// (TKT-0XL8MF) over ONE resolver, built to completion (WithMachines
+// included) before either escapes; that keeps its "safe for concurrent use
+// after construction" guarantee true. The permissive and failure cases are
+// those of [buildFieldRedactor]: no field grants gives NopRedactor and
+// AllowAllFieldGate, and a policy that fails to compile is an error, never a
+// permissive fallback.
+func buildFieldPolicy(meta *metamodel.Metamodel, st store.Store, d *acl.Declarative) (fieldPolicy, error) {
+	permissive := fieldPolicy{redactor: visibility.NopRedactor{}, gate: entitymanager.AllowAllFieldGate{}}
 	if d == nil {
-		return visibility.NopRedactor{}, nil
+		return permissive, nil
 	}
 	// Read the policy through Declarative, never a second channel — the two
 	// must not drift (RR-WTLD).
 	policy := d.Policy()
 	if policy == nil || !policy.HasAffordanceGrants() {
-		return visibility.NopRedactor{}, nil
+		return permissive, nil
 	}
 
 	resolver, err := affordances.New(meta, storeRelationLookup{st: st}, d,
 		affordances.WithTraversals(ungatedBinder(meta, st)))
 	if err != nil {
-		return nil, fmt.Errorf("appbuild: compiling acl.yaml affordance predicates: %w", err)
+		return fieldPolicy{}, fmt.Errorf("appbuild: compiling acl.yaml affordance predicates: %w", err)
 	}
 	machines, err := statemachine.Compile(meta, statemachine.WithTraversals(ungatedBinder(meta, st)))
 	if err != nil {
-		return nil, fmt.Errorf("appbuild: compiling state machines: %w", err)
+		return fieldPolicy{}, fmt.Errorf("appbuild: compiling state machines: %w", err)
 	}
 	resolver.WithMachines(machines)
 
 	redactor, err := visibility.NewPolicyRedactor(resolver)
 	if err != nil {
-		return nil, fmt.Errorf("appbuild: build field redactor: %w", err)
+		return fieldPolicy{}, fmt.Errorf("appbuild: build field redactor: %w", err)
 	}
-	return redactor, nil
+	gate, err := affordances.NewWriteGate(resolver)
+	if err != nil {
+		return fieldPolicy{}, fmt.Errorf("appbuild: build field write gate: %w", err)
+	}
+	return fieldPolicy{redactor: redactor, gate: gate}, nil
 }
 
 // buildAutomation wires the automation engine + cascade runner from
@@ -1127,7 +1179,9 @@ func buildFieldRedactor(
 //
 // A condition's `related(...)` is answered ungated from st: an automation is
 // system policy, so what it sees must not depend on who made the write.
-func buildAutomation(meta *metamodel.Metamodel, st store.Store) (*automation.Engine, *autocascade.Runner, error) {
+func buildAutomation(
+	meta *metamodel.Metamodel, st store.Store, bg autocascade.BackgroundScripts,
+) (*automation.Engine, *autocascade.Runner, error) {
 	if len(meta.Automations) == 0 {
 		return nil, nil, nil
 	}
@@ -1139,7 +1193,7 @@ func buildAutomation(meta *metamodel.Metamodel, st store.Store) (*automation.Eng
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
-	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine})
+	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine, Background: bg})
 	// coverage-ignore-start: defensive: autocascade.New only errors on a nil Engine; autoEngine is freshly built by
 	// NewEngineFromMetamodel just
 	// above and is never nil
@@ -1170,6 +1224,18 @@ type options struct {
 	// from, given the assembled store's state. Nil means the project's .rela
 	// directory.
 	hostConfig func(state.KV) (HostConfig, error)
+
+	// backgroundAutomationJobs runs `background: true` automation actions
+	// on the job queue instead of in the foreground.
+	backgroundAutomationJobs bool
+}
+
+// WithBackgroundAutomationJobs runs `background: true` automation actions
+// on the job queue (TKT-2Q4UFI). Only a long-lived process may set it: a
+// one-shot command exits before its queue runs the job, so without this
+// option the action runs in the foreground, right after the save.
+func WithBackgroundAutomationJobs() Option {
+	return func(o *options) { o.backgroundAutomationJobs = true }
 }
 
 // HostConfig is where a project's secrets and AI and mail settings come
@@ -1956,7 +2022,7 @@ func buildEntityManager(
 	templater entitymanager.TemplateLoader, resolvedACL acl.ACL,
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, versions store.VersionService, tw TransitionWiring,
-	computedSet *computed.Set, attachLocker lock.Locker,
+	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
 ) (*entitymanager.Manager, error) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		AliasRewriter: aliases,
@@ -1973,7 +2039,7 @@ func buildEntityManager(
 		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Computed:                computedSet,
 		Transitions:             tw.Enforcer,
-		FieldGate:               entitymanager.AllowAllFieldGate{},
+		FieldGate:               fieldGate,
 		TransitionGuard:         tw.Guard,
 		TransitionGraph:         tw.Graph,
 		// The copy deps (TKT-WRLDAPI item 5). Before this, NONE of the three
@@ -2039,8 +2105,8 @@ type backgroundServices struct {
 // call, so Close needs no nil checks beyond the ones it already has.
 func startBackgroundServices(
 	base *SharedBase, st store.Store, stateKV state.KV, migState datamigration.StateStore,
-	cfgLoader config.Loader, versions store.VersionService, mgr *entitymanager.Manager, q jobs.Client,
-	host lua.HostConfig,
+	cfgLoader config.Loader, versions store.VersionService, commentSvc *comments.Service,
+	mgr *entitymanager.Manager, q jobs.Client, host lua.HostConfig,
 ) backgroundServices {
 	cfg := base.cfg
 
@@ -2049,7 +2115,7 @@ func startBackgroundServices(
 		envDuration("RELA_SOFT_DELETE_GC_INTERVAL", defaultSoftDeleteGCInterval))
 
 	gcStop := startDataMigration(
-		stateKV, migState, base.meta, st, cfg.Audit, versions, cfg.Paths.CacheDir,
+		stateKV, migState, base.meta, st, cfg.Audit, versions, commentSvc, cfg.Paths.CacheDir,
 		hasMigrationsVia(cfgLoader),
 	)
 
@@ -2075,16 +2141,16 @@ func startBackgroundServices(
 // ungated (TKT-BUYEW1).
 func resolveACLAndRedactor(
 	base *SharedBase, st store.Store,
-) (acl.ACL, *acl.Declarative, visibility.FieldRedactor, error) {
+) (acl.ACL, *acl.Declarative, fieldPolicy, error) {
 	resolvedACL, aclDeclarative, err := resolveACL(base, st)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, fieldPolicy{}, err
 	}
-	fieldRedactor, err := buildFieldRedactor(base.meta, st, aclDeclarative)
+	fp, err := buildFieldPolicy(base.meta, st, aclDeclarative)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, fieldPolicy{}, err
 	}
-	return resolvedACL, aclDeclarative, fieldRedactor, nil
+	return resolvedACL, aclDeclarative, fp, nil
 }
 
 // cascadeReadDeps builds the static lua.ReadDeps backing automation cascades.
@@ -2194,19 +2260,10 @@ func assemble(
 	}
 
 	warnUndeclaredFaces(st, base.meta, base.cfg.Paths.Root)
-	resolvedACL, aclDeclarative, fieldRedactor, err := resolveACLAndRedactor(base, st)
+	resolvedACL, aclDeclarative, fieldPol, err := resolveACLAndRedactor(base, st)
 	if err != nil {
 		return nil, err
 	}
-
-	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st)
-	// coverage-ignore-start: defensive: buildAutomation only errors when autocascade.New fails, which requires a nil
-	// Engine that buildAutomation
-	// never produces (see the scupper there)
-	if err != nil {
-		return nil, err
-	}
-	// coverage-ignore-end
 
 	tr, templater, err := tracerAndTemplater(st, base.worlds.DefaultWorld(), cfg)
 	if err != nil {
@@ -2260,9 +2317,14 @@ func assemble(
 		}
 	}()
 
+	autoJobs, autoEngine, cascadeRunner, err := buildAutomationWithJobs(base, st, stateKV, jobQueue)
+	if err != nil {
+		return nil, err
+	}
+
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
-	readDeps, err := base.cascadeReadDeps(st, tr, searcher, stateKV, aclDeclarative, fieldRedactor)
+	readDeps, err := base.cascadeReadDeps(st, tr, searcher, stateKV, aclDeclarative, fieldPol.redactor)
 	if err != nil {
 		return nil, err
 	}
@@ -2287,8 +2349,8 @@ func assemble(
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
-	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc), templater, resolvedACL,
-		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet, attachLocker)
+	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc, autoJobs), templater, resolvedACL,
+		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet, attachLocker, fieldPol.gate)
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
 	// fail — unreachable with valid inputs (see the scupper in buildStateKV)
@@ -2334,15 +2396,55 @@ func assemble(
 	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(
-		base, st, stateKV, migState, cfgLoader, versions, mgr, jobQueue, readDeps.Host)
+		base, st, stateKV, migState, cfgLoader, versions, commentSvc, mgr, jobQueue, readDeps.Host)
 
 	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, commentSvc, versions,
-		resolvedACL, aclDeclarative, fieldRedactor, schedState,
+		resolvedACL, aclDeclarative, fieldPol.redactor, schedState,
 	)
-	assembled.attachLocker = attachLocker
-	return assembled, nil
+	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine)
+}
+
+// finishAssembly sets what newServices cannot take as a constructor input
+// and connects the background-action scheduler, whose job handler needs the
+// finished services.
+func finishAssembly(
+	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *automation.Engine,
+) (*Services, error) {
+	s.attachLocker = attachLocker
+	if err := autoJobs.bind(servicesJobRunner{s}, engine); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// buildAutomationWithJobs builds the automation engine and cascade runner
+// together with the background-action scheduler the runner hands work to.
+// The scheduler needs the state store and job queue, so this runs after
+// buildRuntimeServices.
+func buildAutomationWithJobs(
+	base *SharedBase, st store.Store, kv state.KV, q jobs.Queue,
+) (*automationJobs, *automation.Engine, *autocascade.Runner, error) {
+	autoJobs, err := newAutomationJobs(base.meta, kv, st, automationJobQueue(base, q))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	// Errors only on a nil Engine, which buildAutomation never produces.
+	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st, autoJobs)
+	if err != nil { // coverage-ignore: defensive: see above
+		return nil, nil, nil, err
+	}
+	return autoJobs, autoEngine, cascadeRunner, nil
+}
+
+// automationJobQueue is the queue background automation actions use, or
+// nil for foreground delivery.
+func automationJobQueue(base *SharedBase, q jobs.Queue) jobs.Client {
+	if !base.opts.backgroundAutomationJobs {
+		return nil
+	}
+	return q
 }
 
 // newServices bundles the assembled collaborators into the Services value.

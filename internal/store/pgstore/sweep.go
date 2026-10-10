@@ -67,6 +67,13 @@ type sweep struct {
 	cfg      SweepConfig
 	cancel   context.CancelFunc
 	done     chan struct{}
+	// beforeCapture, when set, runs between the candidate query and the
+	// captures. Tests use it to write a row the query has already read.
+	beforeCapture func()
+	// more is set by a tick that filled its batch and made progress, so run
+	// starts the next tick at once rather than an Interval later. Touched only
+	// from the run goroutine.
+	more bool
 	// consecutiveSkips counts ticks that could not take the lock, so sustained
 	// starvation escalates to a warning. Touched only from the run goroutine
 	// (tick is never called concurrently), so it needs no locking.
@@ -148,8 +155,14 @@ func (s *sweep) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.tick(ctx); err != nil && ctx.Err() == nil {
-				slog.Warn("pgstore: version sweep tick failed", "error", err)
+			// A full batch means more rows are waiting: a backlog, such as
+			// every row after the content_hash migration, drains at once
+			// rather than Batch rows per Interval.
+			for first := true; first || (s.more && ctx.Err() == nil); first = false {
+				s.more = false
+				if err := s.tick(ctx); err != nil && ctx.Err() == nil {
+					slog.Warn("pgstore: version sweep tick failed", "error", err)
+				}
 			}
 		}
 	}
@@ -209,13 +222,20 @@ func (s *sweep) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if s.beforeCapture != nil {
+		s.beforeCapture()
+	}
+	resolved := 0
 	for _, c := range candidates {
 		if capErr := s.captureOne(ctx, conn, c, hash, projJSON); capErr != nil {
 			// Best-effort per entity: log and continue so one bad row doesn't
 			// abort the whole tick. Next tick retries (idempotent via dedup).
 			slog.Warn("pgstore: version sweep capture failed", "id", c.id, "error", capErr)
+			continue
 		}
+		resolved++
 	}
+	s.noteBatch(ctx, "entity", len(candidates), resolved)
 
 	// Relations are swept AFTER entities within the same locked tick (a fixed,
 	// deterministic order — no interleaving). Relation create/update capture
@@ -225,13 +245,36 @@ func (s *sweep) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	resolved = 0
 	for _, rc := range relCandidates {
 		if capErr := s.captureRelation(ctx, conn, rc, hash, projJSON); capErr != nil {
 			slog.Warn("pgstore: relation version sweep capture failed",
 				"from", rc.from, "type", rc.relType, "to", rc.to, "error", capErr)
+			continue
 		}
+		resolved++
 	}
+	s.noteBatch(ctx, "relation", len(relCandidates), resolved)
 	return nil
+}
+
+// noteBatch records what one phase of a tick did with a full batch.
+//
+// A full batch with progress means more rows are waiting, so run ticks again
+// at once. A full batch with no progress means every selected row failed to
+// capture: those rows stay candidates and keep the rows behind them from being
+// reached, which is BUG-1DWMYO's starvation with a different cause. It cannot
+// be fixed here, so it is reported once per tick rather than only per row.
+func (s *sweep) noteBatch(ctx context.Context, kind string, selected, resolved int) {
+	if selected < s.cfg.Batch {
+		return
+	}
+	if resolved > 0 {
+		s.more = true
+		return
+	}
+	slog.WarnContext(ctx, "pgstore: version sweep stalled; every row in a full batch failed to capture, "+
+		"so rows behind them are not being versioned", "kind", kind, "batch", selected)
 }
 
 // sweepCandidate is one entity the sweep may snapshot: its current state plus
@@ -249,6 +292,9 @@ type sweepCandidate struct {
 	props      []byte
 	latestHash string
 	hasVersion bool
+	// xmin is the row version the candidate query read; see
+	// writeBackEntityHash.
+	xmin       string
 	editorUser *string
 	editorTool *string
 	// origin carries the row's origin_* columns (all nil = a direct edit), so
@@ -259,9 +305,9 @@ type sweepCandidate struct {
 	origin originCols
 }
 
-// selectCandidates returns up to Batch entities that have settled (updated_at
-// older than now-Idle) OR whose latest version has aged past MaxStaleness, and
-// whose current content differs from their latest version's. The LATERAL
+// selectCandidates returns up to Batch entities whose current content differs
+// from their latest version's and that have settled (updated_at older than
+// now-Idle) OR whose latest version has aged past MaxStaleness. The LATERAL
 // subquery is a per-entity index probe on entity_versions(entity_id, vseq DESC),
 // not a whole-table aggregate. Ordered by updated_at so a backlog drains
 // oldest-first across ticks.
@@ -271,6 +317,23 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 	// continuously-edited entity is still captured eventually). A brand-new
 	// entity with no version is captured only once it has settled — it debounces
 	// like any other, rather than being snapshotted the instant it is created.
+	//
+	// AND its stored content_hash is NULL (BUG-1DWMYO, TASK-Y73Y9 in Atlas).
+	// A non-NULL hash means the current lifecycle's latest version has that
+	// hash, so the row has nothing to capture. The sweep writes the hash back
+	// after it captures or skips the row (writeBackEntityHash), and triggers
+	// clear it whenever that could stop being true: a hashed column changes
+	// (migration 0020), or a version is inserted with another hash, is a
+	// delete, or is purged, or a soft-deleted row is restored (migration
+	// 0021). The gate must not select rows the dedup in captureOne then skips:
+	// such a row is selected again on every tick, and once Batch of them exist
+	// newer edits are never reached. A skipped row gets its hash written back,
+	// so it drops out. The one exception is a row whose capture keeps failing:
+	// it stays a candidate, and noteBatch reports a full batch of them.
+	// Timestamps would not do: a capture is written after the write it
+	// snapshots, so an edit racing a capture can be older than that capture's
+	// created_at. The partial index entities_unhashed_idx serves this scan, so
+	// a tick costs in proportion to the rows that changed.
 	//
 	// Two LATERALs, because delete and content-dedup need different "latest":
 	//   - `lv` is the latest version of ANY op — its created_at drives the
@@ -302,7 +365,8 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 		       e.origin_kind, e.origin_source, e.origin_source_face,
 		       e.origin_source_type, e.origin_definition,
 		       lvc.content_hash,
-		       (lv.vseq IS NOT NULL AND lv.op <> 'delete') AS live_lineage
+		       (lv.vseq IS NOT NULL AND lv.op <> 'delete') AS live_lineage,
+		       e.xmin::text
 		FROM entities e
 		LEFT JOIN LATERAL (
 		    SELECT vseq, op, created_at FROM entity_versions ev
@@ -318,7 +382,8 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 		             AND d.op = 'delete'), 0)
 		    ORDER BY ev.vseq DESC LIMIT 1
 		) lvc ON true
-		WHERE (e.updated_at < now() - make_interval(secs => $1)
+		WHERE e.content_hash IS NULL
+		  AND (e.updated_at < now() - make_interval(secs => $1)
 		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - make_interval(secs => $2)))
 		ORDER BY e.updated_at ASC
 		LIMIT $3`
@@ -338,11 +403,11 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 			c          sweepCandidate
 			latestHash *string // NULL when there is no version in the current lifecycle
 		)
-		scanArgs := make([]any, 0, 9+originColumnCount)
+		scanArgs := make([]any, 0, 11+originColumnCount)
 		scanArgs = append(scanArgs, &c.id, &c.face, &c.typ, &c.content, &c.props,
 			&c.editorUser, &c.editorTool)
 		scanArgs = append(scanArgs, c.origin.scanTargets()...)
-		scanArgs = append(scanArgs, &latestHash, &c.hasVersion)
+		scanArgs = append(scanArgs, &latestHash, &c.hasVersion, &c.xmin)
 		if err := rows.Scan(scanArgs...); err != nil {
 			return nil, err
 		}
@@ -393,15 +458,44 @@ func (s *sweep) captureOne(
 	// equals source) records no version — correct under this contract, and the
 	// audit log (audit.OpCopyState) is where every copy INVOCATION is recorded
 	// whether or not it changed anything.
-	if c.latestHash != "" && contentHash == c.latestHash {
-		return nil
+	if c.latestHash == "" || contentHash != c.latestHash {
+		if c.hasVersion {
+			in.Op = store.VersionOpUpdate
+		} else {
+			in.Op = store.VersionOpCreate
+		}
+		if insErr := insertVersion(ctx, conn, in, contentHash); insErr != nil {
+			return insErr
+		}
 	}
-	if c.hasVersion {
-		in.Op = store.VersionOpUpdate
-	} else {
-		in.Op = store.VersionOpCreate
-	}
-	return insertVersion(ctx, conn, in, contentHash)
+	return writeBackEntityHash(ctx, conn, c, contentHash)
+}
+
+// writeBackEntityHash stores the hash the sweep computed on the live row, so
+// the row stops being a candidate until a trigger clears it again.
+//
+// It runs whether or not a version was captured: a row whose content matches
+// the latest version would otherwise be selected, and skipped, on every tick.
+//
+// Two guards make it a no-op when storing the hash would break what a stored
+// hash promises, that the latest version has it:
+//
+//   - xmin: the row was written after the candidate query read it. The hash
+//     describes the content that was read; stored on newer content it would
+//     mark an uncaptured edit as clean. A concurrent writer still in flight is
+//     waited for, and the guard is then checked against its row.
+//   - the latest version: a version written outside the sweep since the read,
+//     such as a delete followed by a re-create, would otherwise be followed by
+//     a hash the version triggers never get to clear, because the row's hash
+//     was still NULL when that version was written.
+func writeBackEntityHash(ctx context.Context, conn *pgxpool.Conn, c sweepCandidate, hash string) error {
+	_, err := conn.Exec(ctx, `UPDATE entities SET content_hash = $1
+		WHERE id = $2 AND face = $3 AND xmin = $4::xid
+		  AND EXISTS (SELECT 1 FROM (
+		      SELECT op, content_hash FROM entity_versions
+		      WHERE entity_id = $2 AND face = $3 ORDER BY vseq DESC LIMIT 1) l
+		    WHERE l.op <> 'delete' AND l.content_hash = $1)`, hash, c.id, c.face, c.xmin)
+	return err
 }
 
 // relationSweepCandidate is one relation the sweep may snapshot: its current
@@ -419,13 +513,15 @@ type relationSweepCandidate struct {
 	props      []byte
 	latestHash string
 	hasVersion bool
+	// xmin mirrors sweepCandidate's.
+	xmin       string
 	editorUser *string
 	editorTool *string
 }
 
 // selectRelationCandidates returns up to Batch relations that have settled (or
-// whose latest version aged past MaxStaleness) and whose current content differs
-// from their latest version's.
+// whose latest version aged past MaxStaleness) and whose stored content_hash is
+// NULL, for the reason given at selectCandidates.
 //
 // Unlike the entity query this needs only ONE LATERAL: the relation carries its
 // stable rel_record_id on the row, and a delete+recreate mints a FRESH
@@ -451,13 +547,15 @@ func (s *sweep) selectRelationCandidates(
 		       r.content, r.properties,
 		       r.last_edited_by_user, r.last_edited_by_tool,
 		       lv.content_hash,
-		       (lv.vseq IS NOT NULL) AS has_version
+		       (lv.vseq IS NOT NULL) AS has_version,
+		       r.xmin::text
 		FROM relations r
 		LEFT JOIN LATERAL (
 		    SELECT vseq, content_hash, created_at FROM relation_versions rv
 		    WHERE rv.rel_record_id = r.rel_record_id ORDER BY rv.vseq DESC LIMIT 1
 		) lv ON true
-		WHERE (r.updated_at < now() - make_interval(secs => $1)
+		WHERE r.content_hash IS NULL
+		  AND (r.updated_at < now() - make_interval(secs => $1)
 		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - make_interval(secs => $2)))
 		ORDER BY r.updated_at ASC
 		LIMIT $3`
@@ -476,7 +574,7 @@ func (s *sweep) selectRelationCandidates(
 		)
 		if err := rows.Scan(&c.recordID, &c.from, &c.fromFace, &c.relType, &c.to,
 			&c.content, &c.props, &c.editorUser, &c.editorTool,
-			&latestHash, &c.hasVersion); err != nil {
+			&latestHash, &c.hasVersion, &c.xmin); err != nil {
 			return nil, err
 		}
 		if latestHash != nil {
@@ -509,15 +607,26 @@ func (s *sweep) captureRelation(
 		PrincipalTool: principalTool,
 	}
 	contentHash := contentHashOfRelation(in)
-	if c.latestHash != "" && contentHash == c.latestHash {
-		return nil
+	if c.latestHash == "" || contentHash != c.latestHash {
+		if c.hasVersion {
+			in.Op = store.VersionOpUpdate
+		} else {
+			in.Op = store.VersionOpCreate
+		}
+		if insErr := insertRelationVersion(ctx, conn, in, contentHash); insErr != nil {
+			return insErr
+		}
 	}
-	if c.hasVersion {
-		in.Op = store.VersionOpUpdate
-	} else {
-		in.Op = store.VersionOpCreate
-	}
-	return insertRelationVersion(ctx, conn, in, contentHash)
+	// As writeBackEntityHash. The key is the row's current one: a rename
+	// re-keys it in place, which the xmin guard catches as well. The relation
+	// dedup does not fence on a delete version, so neither does this guard.
+	_, err = conn.Exec(ctx, `UPDATE relations SET content_hash = $1
+		WHERE from_id = $2 AND from_face = $3 AND rel_type = $4 AND to_id = $5
+		  AND xmin = $6::xid
+		  AND $1 = (SELECT content_hash FROM relation_versions
+		            WHERE rel_record_id = $7 ORDER BY vseq DESC LIMIT 1)`,
+		contentHash, c.from, c.fromFace, c.relType, c.to, c.xmin, c.recordID)
+	return err
 }
 
 // tryAdvisoryLock takes a non-blocking session advisory lock on conn, returning

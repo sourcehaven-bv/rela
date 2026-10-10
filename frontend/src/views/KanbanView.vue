@@ -25,6 +25,7 @@ import { useDetailPanel } from '@/composables/useDetailPanel'
 import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
 import { useListReorder } from '@/composables/useListReorder'
+import { useKanbanCollapse } from '@/composables/useKanbanCollapse'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
@@ -139,8 +140,13 @@ const { filters, writeToQuery } = useUrlFilterSync({
 // relation we must ask the server to embed the related entities (?include=*)
 // so we can resolve those IDs to titles. Property-only boards fetch without
 // includes, exactly as before.
+// A `display: count` relation field needs no titles: it counts the ids the
+// `relations` map already carries.
 const hasRelationFields = computed(
-  () => kanbanConfig.value?.card.fields?.some((f) => !!f.relation) ?? false
+  () => kanbanConfig.value?.card.fields?.some((f) => !!f.relation && f.display !== 'count') ?? false
+)
+const hasCommentCounts = computed(
+  () => kanbanConfig.value?.card.fields?.some((f) => f.comments) ?? false
 )
 
 // A tab of an entity page narrows the board to the anchor's cards.
@@ -160,6 +166,7 @@ const tabScope = usePageTabScope(() => props.pageScope)
 const boardParams = computed<ListParams | undefined>(() => {
   const params: ListParams = {}
   if (hasRelationFields.value) params.include = '*'
+  if (hasCommentCounts.value) params.comment_counts = true
   if (worldParam.value) params.world = worldParam.value
   // See the same attachment in EntityList: the board's configured scope has to
   // travel on the request, since the endpoint is keyed by type.
@@ -416,14 +423,34 @@ function iconFor(name?: string) {
   return hasIcon(name) ? resolveIcon(name) : undefined
 }
 
+// Folded columns, remembered per board. Only declared columns carry a config
+// default; an inferred column starts open.
+const columnCollapse = useKanbanCollapse(
+  () => props.id,
+  () => Object.fromEntries((kanbanConfig.value?.columns ?? []).map((c) => [c.value, c.collapsed ?? false]))
+)
+
 const boardSections = computed((): Section<BoardCard>[] =>
   columns.value.map((column) => ({
     id: column.value,
     title: columnTitle(column),
     icon: iconFor(column.icon),
+    collapsed: columnCollapse.isCollapsed(column.value),
     items: (entitiesByColumn.value[column.value] ?? []).map(toCard),
   }))
 )
+
+function sectionId(section: string | Section<BoardCard>): string {
+  return typeof section === 'string' ? section : section.id
+}
+
+function collapseColumn(section: string | Section<BoardCard>) {
+  columnCollapse.setCollapsed(sectionId(section), true)
+}
+
+function expandColumn(section: string | Section<BoardCard>) {
+  columnCollapse.setCollapsed(sectionId(section), false)
+}
 
 // Lanes the user folded away. View state only, so it resets with the page.
 const collapsedLanes = ref(new Set<string>())
@@ -495,18 +522,8 @@ function getCardTitle(entity: Entity): string {
 // are keyed by the relation name itself; incoming edges are keyed by the
 // relation's declared inverse (schemaStore.getInverseName), falling back to
 // `<relation>_inverse` when no inverse is declared. This mirrors the wire
-// contract shared with EntityList relation columns (TKT-ODHV2D).
-//
-// MERGE-ORDER DEPENDENCY (RR-M8IIHV): the INCOMING branch only resolves once
-// TKT-ODHV2D's server change lands. The list endpoint on this branch
-// serializes OUTGOING edges only (see entityserializer.forWireRelated, fed by
-// entityReader.outgoingRelations) — it does NOT populate the inverse key for
-// incoming edges. Until ODHV2D merges, an incoming card field computes an
-// inverse key that is absent from `relations`, so getCardFieldValue below
-// returns '' and the card renders the '-' placeholder (degrades visibly, not a
-// silent blank). The Go contract test `TestListEndpoint_IncomingEdge_InverseKey_ODHV2DContract`
-// in internal/dataentry pins the server side of this inverse-key contract and
-// activates once ODHV2D is integrated.
+// contract shared with EntityList relation columns (TKT-ODHV2D). The list
+// endpoint serves incoming edges under that key, gated like outgoing ones.
 function relationCardKey(field: KanbanCardField): string {
   const rel = field.relation || ''
   if (field.direction === 'incoming') {
@@ -543,6 +560,18 @@ function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
     entityType.value,
     uiStore.effectiveTimezone
   )
+}
+
+// The count a count field shows, or undefined for any other field. A relation
+// count is the number of ids in the gated `relations` map, so a neighbour the
+// reader cannot see is never counted. A comment count is absent when the server
+// did not serve one (no comment:read across the project), which renders as 0.
+function cardFieldCount(entity: Entity, field: KanbanCardField): ResolvedCardField['count'] {
+  if (field.comments) return { value: entity._comment_count ?? 0, icon: 'message-square' }
+  if (field.relation && field.display === 'count') {
+    return { value: new Set(entity.relations?.[relationCardKey(field)]).size, icon: 'git-branch' }
+  }
+  return undefined
 }
 
 // The stored property value, unformatted. PROPERTY fields only -- a relation
@@ -595,6 +624,12 @@ function resolvedCardFields(entity: Entity): ResolvedCardField[] {
   const out: ResolvedCardField[] = []
 
   for (const field of kanbanConfig.value?.card.fields ?? []) {
+    const count = cardFieldCount(entity, field)
+    if (count !== undefined) {
+      // Zero renders nothing, like any empty card field.
+      if (count.value > 0) out.push({ field, text: String(count.value), count })
+      continue
+    }
     const text = getCardFieldValue(entity, field)
     if (text === '') continue
 
@@ -867,8 +902,11 @@ const createModal = useCreateModal(async (entity) => {
       :show-add-section="false"
       :can-move="canMoveCard"
       :selected-id="selectedEntityId ?? undefined"
+      collapsible
       @move="onMove"
       @toggle-lane="toggleLane"
+      @collapse-section="collapseColumn"
+      @expand-section="expandColumn"
     >
           <template #card="{ item }">
             <RouterLink
@@ -905,7 +943,10 @@ const createModal = useCreateModal(async (entity) => {
       :can-move="boardCanMove"
       :reorder="reorder.reorderable.value"
       :selected-id="selectedEntityId ?? undefined"
+      collapsible
       @move="onMove"
+      @collapse-section="collapseColumn"
+      @expand-section="expandColumn"
     >
           <template #card="{ item }">
             <RouterLink

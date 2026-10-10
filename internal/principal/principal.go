@@ -407,6 +407,10 @@ const (
 	// ToolSoftDeleteGC attributes the purge that finishes a soft delete once
 	// the undo window has passed. The user stays the one who deleted.
 	ToolSoftDeleteGC = "soft-delete-gc"
+	// ToolAutomationJob attributes writes made by a background automation
+	// script (TKT-2Q4UFI); paired with [UserAutomation] unless the action
+	// declares `run_as`.
+	ToolAutomationJob = "automation-job"
 )
 
 // UserScheduler is the default [Principal.User] for scheduled tasks that
@@ -442,6 +446,12 @@ const UserScheduler = "system:scheduler"
 // acl.yaml role the provisioner migration injects. Paired with
 // [ToolProvisioner].
 const UserProvisioner = "system:provisioner"
+
+// UserAutomation is the default [Principal.User] of a background automation
+// script (`background: true`, TKT-2Q4UFI). Like [UserScheduler] it grants
+// nothing by itself: an operator assigns it a role in acl.yaml, or the
+// action names another identity with `run_as`.
+const UserAutomation = "system:automation"
 
 // ReservedPrefix namespaces the [Principal.User] values that only rela's own
 // in-process entry points may assert. [UserScheduler] and [UserProvisioner] are

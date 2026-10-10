@@ -12,7 +12,7 @@ import (
 // facedMeta is metaV1 with `task` declaring content states, so a rename_face
 // step has something to move.
 func facedMeta(faces ...string) *metamodel.Metamodel {
-	m := metaV1()
+	m := withReviewedBy(metaV1())
 	def := m.Entities["task"]
 	def.Faces = map[string]metamodel.FaceDef{}
 	for _, f := range faces {

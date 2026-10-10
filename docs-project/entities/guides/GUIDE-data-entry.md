@@ -607,7 +607,8 @@ Create, and the entity is saved with its file. Two details are worth knowing:
   again, since the form that held them is gone by then.
 
 Attachments inherit the owning entity's permissions: if you may not update the
-entity, you may not attach to it.
+entity, you may not attach to it. A `fields:` rule that makes the file field
+read-only also blocks adding or removing its files.
 
 ### Field Layout (`span`)
 
@@ -2995,7 +2996,7 @@ kanbans:
 | `header`           | string | Markdown rendered above the board (info/help; see below)   |
 | `footer`           | string | Markdown rendered below the board                          |
 | `column_property`  | string | Property to group by for columns (must be enum/custom type)|
-| `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`)     |
+| `columns`          | list   | Explicit column definitions (`value`, `label`, `icon`, `collapsed`) |
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
 | `card`             | object | Card display configuration                                 |
@@ -3085,12 +3086,45 @@ kanbans:
         label: "✅ Done"
 ```
 
-| Field   | Type   | Description                                    |
-| ------- | ------ | ---------------------------------------------- |
-| `value` | string | Enum value that maps to this column            |
-| `label` | string | Display label (defaults to the raw enum value)  |
+| Field       | Type    | Description                                         |
+| ----------- | ------- | --------------------------------------------------- |
+| `value`     | string  | Enum value that maps to this column                 |
+| `label`     | string  | Display label (defaults to the raw enum value)      |
+| `icon`      | string  | Icon name shown beside the label                    |
+| `collapsed` | boolean | Start the column collapsed (see below)              |
 
 Entities with column property values not in the explicit list are hidden from the board.
+
+### Collapsing columns
+
+Every column heading has a collapse button. A collapsed column shrinks to a
+narrow strip that shows its title and card count; click the strip to expand
+it. On a swimlane board the column collapses across all lanes.
+
+The browser remembers which columns a reader collapsed, per board, so the
+board looks the same after a reload. This is stored locally and is not shared
+between browsers or users.
+
+`collapsed: true` on a declared column starts it collapsed, for example a
+column of postponed work:
+
+```yaml
+kanbans:
+  task_board:
+    entity_type: task
+    column_property: status
+    columns:
+      - value: todo
+      - value: doing
+      - value: postponed
+        collapsed: true
+```
+
+This only sets the starting state. A reader can still expand the column, and
+the board remembers that choice. Columns inferred from the enum have no config
+default, so they start expanded.
+
+You cannot drop a card onto a collapsed column. Expand it first.
 
 ### Swimlanes
 
@@ -3136,6 +3170,41 @@ card:
 | `fields` | list   | Additional properties displayed as badges on the card |
 
 Card fields use the same styling as lists — enum values are displayed with colors from `styles`.
+
+#### Counts on cards
+
+Two kinds of card field show a number with an icon instead of a value. They sit
+in one row under the other fields:
+
+```yaml
+card:
+  title: title
+  fields:
+    - relation: subtask-of
+      direction: incoming
+      display: count      # number of subtasks
+      label: subtasks
+    - comments: true      # number of comments
+```
+
+| Key              | Description                                                                             |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| `display: count` | On a `relation` field: show how many related entities the reader can see.               |
+| `comments: true` | Show how many comments the card's entity has. Use it without `property` or `relation`. |
+
+A count of zero shows nothing. The label shows beside the number, for example
+"2 subtasks"; it defaults to the relation's label, or "comments". With
+`show_label: false` only the number and icon show, and the label stays
+available to screen readers and as a tooltip.
+
+A hidden related entity is never counted. A comment count needs commenting to
+be enabled for the board's entity type, and is shown only to readers who hold
+`comment:read` across the project. A reader who has it only through a role on
+one entity sees no count on the card, but can still read the comments on the
+entity.
+
+`display` and `comments` are kanban-only: on a calendar or gantt field they are
+a config error.
 
 ### Drag and Drop
 
@@ -5093,6 +5162,24 @@ clicking a bar re-roots the chart on that entity and rescales the time axis to
 its subtree, with breadcrumbs leading back out. The twisty beside a name
 expands a subtree in place instead. `default_depth` picks how many levels are
 open on first load; everything deeper stays one click away.
+
+### Scrolling through time
+
+Every day has the same width: 4px at the Quarter zoom, 12px at Month and
+40px at Week. A plan longer than the screen scrolls sideways; a shorter one is
+stretched to fill it. The tree column and the date axis stay in place while
+you scroll, and a bar's name stays beside the tree column while the bar
+scrolls past. A bar ends at the end of its end date, so a Monday-to-Friday
+task covers five full days.
+
+- **Now** scrolls today into the middle of the screen. The chart opens there
+  too when the plan covers today. When today lies just outside the plan, the
+  axis is extended to include it; when it is further away, **Now** is
+  disabled.
+- **‹** and **›** scroll one week, month or quarter, matching the zoom.
+- Changing the zoom keeps the day at the left edge where it was.
+- A plan spanning many years at a fine zoom is drawn with narrower days, and
+  the chart is flagged **compressed**.
 
 ### Planned versus rolled-up spans
 

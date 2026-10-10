@@ -207,6 +207,8 @@ export interface ApiHelpers {
    *  store, so seeding and cleanup do not ride entity CRUD. */
   listComments(type: string, id: string): Promise<{ comments: { id: string; resolved: boolean }[] }>;
   deleteComment(type: string, id: string, commentId: string): Promise<void>;
+  /** Add a property-anchored comment, as the signed-in principal. */
+  addComment(type: string, id: string, body: string): Promise<void>;
   createRelation(
     fromPlural: string,
     fromId: string,
@@ -718,6 +720,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       async deleteComment(type, id, commentId) {
         await call("DELETE", `_comments/${type}/${id}/${commentId}`);
       },
+      async addComment(type, id, body) {
+        await call("POST", `_comments/${type}/${id}`, {
+          anchor: { kind: "property", ref: "title" },
+          body,
+        });
+      },
       async setRelationMeta(fromPlural, fromId, relation, toType, toId, meta) {
         // Modern JSON:API relations body: upsert the edge with its meta. A PATCH
         // that includes the edge again with new meta updates it in place.
@@ -1032,6 +1040,11 @@ entities:
       title:
         type: string
         required: true
+      # gantt-scroll.spec.ts: the roadmap gantt's planned window.
+      start:
+        type: date
+      end:
+        type: date
 
   step:
     label: Step
@@ -1043,6 +1056,10 @@ entities:
         required: true
       assignee:
         type: string
+      start:
+        type: date
+      end:
+        type: date
 
 relations:
   has_step:
@@ -1602,6 +1619,48 @@ kanbans:
     create_form: bug
     edit_form: bug
 
+  # kanban-collapse.spec.ts: a swimlane board whose In Progress column starts
+  # collapsed. Not in the sidebar, so it changes no navigation count. The spec
+  # expects one in_progress bug in these lanes (BUG-002).
+  bug-lanes:
+    entity_type: bug
+    title: "Bug Lanes"
+    column_property: status
+    columns:
+      - value: draft
+        label: New
+      - value: in_progress
+        label: In Progress
+        collapsed: true
+      - value: done
+        label: Fixed
+    swimlane_property: severity
+    swimlanes:
+      - value: high
+      - value: critical
+    card:
+      title: title
+
+  # kanban-card-counts.spec.ts: count card fields. Not in the sidebar, so it
+  # changes no navigation count. FEAT-001 is implemented by TASK-001 (seed).
+  feature-counts:
+    entity_type: feature
+    title: "Feature Counts"
+    column_property: status
+    columns:
+      - value: draft
+        label: Draft
+      - value: approved
+        label: Approved
+    card:
+      title: title
+      fields:
+        - relation: implements
+          direction: incoming
+          display: count
+          label: tasks
+        - comments: true
+
 documents:
   feature-overview:
     title: "Feature Overview"
@@ -1657,6 +1716,18 @@ navigation:
     analyze: true
   - label: "Conflicts"
     conflicts: true
+
+# gantt-scroll.spec.ts: plans with their steps, sideways scroll and Now.
+# Kept below navigation: specs that splice their own blocks in at
+# "navigation:" (space-create-page-link.spec.ts declares its own gantts:)
+# then replace this one instead of duplicating the key.
+gantts:
+  roadmap:
+    title: "Roadmap"
+    hierarchy: [has_step]
+    sources:
+      plan: { start: start, end: end, where: ["start!="] }
+      step: { start: start, end: end, where: ["start!="] }
 `;
 
 /** Custom-app HTML used by apps.spec.ts. Exercises the rela bridge end-to-end:

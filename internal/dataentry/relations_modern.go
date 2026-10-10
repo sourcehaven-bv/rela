@@ -394,7 +394,7 @@ func (h *writeHandler) applyRelationsModern(
 			if err := h.upsertEdge(ctx, edgeWrite{
 				from: k.From, to: k.To, relType: canonical, ref: op.ref,
 				exists: exists, existingTail: op.slot.tail, newTail: op.slot.tail,
-				props: finalProps, content: finalContent,
+				props: finalProps,
 			}); err != nil {
 				return warnings, err
 			}
@@ -439,7 +439,6 @@ type edgeWrite struct {
 	exists                bool // the edge existed when the reconciler read it
 	existingTail, newTail entity.Face
 	props                 map[string]any
-	content               string
 }
 
 // upsertEdge writes one desired edge: an update when it existed at read time,
@@ -458,7 +457,7 @@ func (h *writeHandler) upsertEdge(ctx context.Context, w edgeWrite) error {
 				return err
 			}
 		} else {
-			err = h.writeCreateRelation(ctx, w.from, w.newTail, w.to, w.relType, w.ref, w.props, w.content)
+			err = h.writeCreateRelation(ctx, w.from, w.newTail, w.to, w.relType, w.ref, w.props)
 			if !errors.Is(err, entitymanager.ErrRelationAlreadyExists) {
 				return err
 			}
@@ -480,29 +479,32 @@ const upsertEdgeAttempts = 8
 //   - ACL denial (*acl.ForbiddenError): propagated so the handler maps it
 //     to 403. The EntityManager authorizes BEFORE any peer-existence check
 //     (BUG-K6FEVB), so a denied write is a ForbiddenError even when the
-//     peer is missing — it never reaches the fallback below.
+//     peer is missing.
 //   - Missing peer (source/target entity not found): returned as a hard
 //     structuralError so the handler maps it to 422. This is a DELIBERATE
 //     reversal of DEC-HWZHA's soft-condition treatment for THIS case: the
-//     old ungated fallback wrote the edge directly to the store, skipping
-//     the ACL and audit (that is the --read-only bypass BUG-K6FEVB). The
-//     user needs feedback that the reference did not resolve, so we reject
-//     rather than silently warn — and we NEVER write directly to the store.
-//   - Type-allowlist mismatch (invalid relation): still a soft condition —
-//     both endpoints exist and a hand-editor could produce this state — so
-//     it keeps DEC-HWZHA's write-with-warning behavior via a direct store
-//     write. This write is safe because the ACL already allowed it above.
+//     old fallback wrote the edge directly to the store, skipping the ACL
+//     and audit (that is the --read-only bypass BUG-K6FEVB). The user needs
+//     feedback that the reference did not resolve, so we reject rather than
+//     silently warn.
+//   - Type-allowlist mismatch: still a soft condition, because both
+//     endpoints exist and a hand-editor could produce this state. The
+//     manager writes the edge anyway because of
+//     [entity.RelationOptions.TolerateTypeMismatch], so it is audited and
+//     attributed like any other create (GitHub #1806). The caller reports
+//     the mismatch as a warning.
 //
 // `from` and `to` are pre-resolved by the caller via edgeEndpoints —
 // this function does not consult direction. `ref.ID` is the peer ID
 // (which is `to` for outgoing edges and `from` for incoming).
 func (h *writeHandler) writeCreateRelation(
 	ctx context.Context, from string, tail entity.Face, to, relType string, ref v1.ResourceIdentifier,
-	finalProps map[string]any, finalContent string,
+	finalProps map[string]any,
 ) error {
 	opts := entity.RelationOptions{
-		Properties: finalProps,
-		Content:    ref.Content,
+		Properties:           finalProps,
+		Content:              ref.Content,
+		TolerateTypeMismatch: true,
 	}
 	k := entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}
 	_, err := h.manager.CreateRelation(ctx, k, opts)
@@ -515,45 +517,15 @@ func (h *writeHandler) writeCreateRelation(
 	if errors.Is(err, entitymanager.ErrOwningRule) {
 		return owningRuleError(relType, err)
 	}
-	if !isSoftCondition(err) {
-		return &relationError{
-			RelType: relType, Target: ref.ID, Op: "create",
-			Reason: "create_failed", Err: err,
-		}
+	return &relationError{
+		RelType: relType, Target: ref.ID, Op: "create",
+		Reason: "create_failed", Err: err,
 	}
-	// Soft condition (type-allowlist mismatch): write directly through
-	// the store, skipping the workspace's pre-write validation. Safe
-	// because the EntityManager already ran the ACL above.
-	data := &store.RelationData{Properties: finalProps, Content: finalContent}
-	var sErr error
-	if meta := h.schema().Meta; metamodel.IsOwning(meta, relType) {
-		// The owning rules read other edges, so the check and the write share
-		// one transaction. Other types skip the store's write lock.
-		sErr = h.store.Tx(ctx, func(st store.Store) error {
-			if oErr := entitymanager.CheckOwningEdge(ctx, meta, st, k); oErr != nil {
-				return oErr
-			}
-			_, cErr := st.CreateRelation(ctx, k, data)
-			return cErr
-		})
-	} else {
-		_, sErr = h.store.CreateRelation(ctx, k, data)
-	}
-	if errors.Is(sErr, entitymanager.ErrOwningRule) {
-		return owningRuleError(relType, sErr)
-	}
-	if sErr != nil {
-		return &relationError{
-			RelType: relType, Target: ref.ID, Op: "create",
-			Reason: "create_failed", Err: sErr,
-		}
-	}
-	return nil
 }
 
-// writeUpdateRelation updates an existing relation, preferring the
-// EntityManager path. Falls back to a direct store write on soft
-// conditions, mirroring writeCreateRelation.
+// writeUpdateRelation updates an existing relation through the
+// EntityManager. The manager does not re-validate the relation-type tuple
+// on update, so a type mismatch never fails it.
 //
 // `from` and `to` are pre-resolved by the caller via edgeEndpoints.
 func (h *writeHandler) writeUpdateRelation(
@@ -573,39 +545,10 @@ func (h *writeHandler) writeUpdateRelation(
 		// silent ungated store write (BUG-K6FEVB).
 		return danglingPeerError(relType, ref.ID)
 	}
-	if !isSoftCondition(err) {
-		return &relationError{
-			RelType: relType, Target: ref.ID, Op: "update",
-			Reason: "update_failed", Err: err,
-		}
+	return &relationError{
+		RelType: relType, Target: ref.ID, Op: "update",
+		Reason: "update_failed", Err: err,
 	}
-	// Soft condition: rebuild the post-merge state and write directly.
-	//
-	// FAILS CLOSED. mergeEdgeMeta reads a nil `current` as "no prior state",
-	// so swallowing a store error here would ERASE the edge's existing
-	// properties instead of merging into them — a silent partial write on a
-	// transient fault.
-	//
-	// The read, merge and write share one Tx, like the manager's
-	// UpdateRelation, so a concurrent update cannot land in between and be
-	// overwritten by the merge of the row read before it.
-	txErr := h.store.Tx(ctx, func(view store.Store) error {
-		current, readErr := view.GetRelation(ctx, entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to})
-		if readErr != nil && !errors.Is(readErr, store.ErrNotFound) {
-			return readErr
-		}
-		finalProps, finalContent, _ := mergeEdgeMeta(current, ref)
-		data := store.RelationData{Properties: finalProps, Content: finalContent}
-		_, sErr := view.UpdateRelation(ctx, entity.RelationKey{From: from, FromFace: tail, Type: relType, To: to}, data)
-		return sErr
-	})
-	if txErr != nil {
-		return &relationError{
-			RelType: relType, Target: ref.ID, Op: "update",
-			Reason: "update_failed", Err: txErr,
-		}
-	}
-	return nil
 }
 
 // incomingEdgeTail reports the tail of the stored edge from→to, for the
@@ -676,24 +619,6 @@ func isMissingPeerCondition(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "target entity not found") ||
 		strings.Contains(msg, "source entity not found")
-}
-
-// isSoftCondition returns true when the error from EntityManager
-// indicates a DEC-HWZHA "soft" condition that should be treated as a
-// warning rather than blocking the write. The current workspace
-// implementation surfaces these as plain fmt.Errorf strings; we match
-// on substrings, which is fragile but acceptable for the current
-// implementation surface.
-//
-// A missing peer is NOT a soft condition here (see isMissingPeerCondition);
-// only the type-allowlist mismatch remains soft, because both endpoints
-// exist and a hand-editor could produce that state.
-func isSoftCondition(err error) bool {
-	if err == nil {
-		return false
-	}
-	// metamodel.ValidateRelation rejects type-allowlist failures.
-	return strings.Contains(err.Error(), "invalid relation:")
 }
 
 // owningRuleError builds the 422 for an edge that would break ownership

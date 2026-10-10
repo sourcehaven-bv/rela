@@ -434,6 +434,34 @@ func TestKanban_EmptyHeaderFooterOmittedFromJSON(t *testing.T) {
 	}
 }
 
+func TestKanbanColumnCollapsed_YAMLAndJSON(t *testing.T) {
+	// `collapsed:` is a default the SPA reads off _config; an unset column
+	// must not carry the key, so existing boards render as before.
+	const src = `
+entity_type: ticket
+column_property: status
+columns:
+  - value: open
+  - value: postponed
+    collapsed: true
+`
+	var board Kanban
+	if err := yaml.Unmarshal([]byte(src), &board); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if board.Columns[0].Collapsed || !board.Columns[1].Collapsed {
+		t.Fatalf("collapsed: got %+v", board.Columns)
+	}
+
+	data, err := json.Marshal(board.Columns)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if got, want := string(data), `[{"value":"open"},{"value":"postponed","collapsed":true}]`; got != want {
+		t.Errorf("json: got %s, want %s", got, want)
+	}
+}
+
 func TestDirection_IsIncoming(t *testing.T) {
 	t.Run("incoming returns true", func(t *testing.T) {
 		if !DirectionIncoming.IsIncoming() {

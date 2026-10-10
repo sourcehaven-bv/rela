@@ -146,12 +146,14 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 	}
 	reads := svc.GatedReads()
 	deps := relamcp.Deps{
-		Store:         reads.Reader,
-		Meta:          svc.Meta(),
-		Tracer:        reads.Tracer,
-		Searcher:      reads.Searcher,
-		Validator:     reads.Validator,
-		EntityManager: svc.EntityManager(),
+		Store:     reads.Reader,
+		Meta:      svc.Meta(),
+		Tracer:    reads.Tracer,
+		Searcher:  reads.Searcher,
+		Validator: reads.Validator,
+		// The field-gated handle: an MCP client's writes honor acl.yaml's
+		// field grants, as the data-entry API's do (TKT-0XL8MF).
+		EntityManager: appbuild.FieldGatedEntityManager(svc),
 		Config:        svc.Config(),
 		Watcher:       noopWatcher{},
 		ProjectRoot:   svc.Paths().Root,

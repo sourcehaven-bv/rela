@@ -812,6 +812,9 @@ deps:
       - autocascade
       - automation
       - bleveindex
+      # comments: only for WithComments, the optional collaborator a
+      # commenting-enabled test supplies (BUG-6OZBP9).
+      - comments
       - config
       - entity
       - entitymanager
@@ -1005,6 +1008,9 @@ deps:
       - automation
   automation:
     mayDependOn:
+      # canonical.HashEntity decides whether an update changed anything for
+      # `on.updated`, with the value normalization the stores use.
+      - canonical
       - filter
       - metamodel
       - predicate
