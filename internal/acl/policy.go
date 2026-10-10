@@ -89,6 +89,14 @@ const (
 	// PermCommentDeleteAny permits deleting anyone's comment — a moderator
 	// capability. Implies [PermCommentDeleteOwn].
 	PermCommentDeleteAny = "comment:delete-any"
+
+	// PermConfigEdit permits rewriting schema.yaml and data-entry.yaml from
+	// the in-app Configure space (TKT-F5NGMG). It is admin-equivalent: the
+	// holder reshapes the data model every other grant is written against.
+	// So it must be named: a role's `permissions: ["*"]` never matched a
+	// named permission, and a client ceiling never passes it on (see
+	// [permissionCeiling.permits]).
+	PermConfigEdit = "config:edit"
 )
 
 // mutatingCommentPerms are the comment permissions that require a covering
@@ -118,6 +126,7 @@ func BuiltinPermissions() []string {
 		PermCommentRead, PermCommentAdd,
 		PermCommentUpdateOwn, PermCommentUpdateAny,
 		PermCommentDeleteOwn, PermCommentDeleteAny,
+		PermConfigEdit,
 	}
 }
 

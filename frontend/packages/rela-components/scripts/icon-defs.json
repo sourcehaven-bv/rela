@@ -236,5 +236,8 @@
   ["trash-2", "Trash2", "Chrome", "Delete"],
   ["thumbs-up", "ThumbsUp", "Chrome", "Reaction"],
   ["git-branch", "GitBranch", "Chrome", "Subtask or branch relation"],
-  ["chart-no-axes-gantt", "ChartNoAxesGantt", "Chrome", "Timeline view"]
+  ["chart-no-axes-gantt", "ChartNoAxesGantt", "Chrome", "Timeline view"],
+  ["grip-vertical", "GripVertical", "Chrome", "Drag handle on a reorderable row"],
+  ["arrow-up", "ArrowUp", "Chrome", "Move up"],
+  ["arrow-down", "ArrowDown", "Chrome", "Move down"]
 ]

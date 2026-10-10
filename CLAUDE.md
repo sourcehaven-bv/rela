@@ -240,6 +240,7 @@ code outside its globs.
 | `comments.md`         | Comments stay out of the graph: no entity type, audit, versioning or search                        |
 | `versioning.md`       | History reads are gated like live reads; relation history on both endpoints                        |
 | `datamigration.md`    | Migration steps stay idempotent; files are named by timestamp, never sequence                      |
+| `configedit.md`       | Configure is the only server-side config writer; its allowlist is per key and default-locked       |
 
 ## Architecture
 

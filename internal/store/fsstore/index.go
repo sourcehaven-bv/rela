@@ -14,6 +14,10 @@ import (
 
 const indexFile = "fsstore-index.json"
 
+// IndexKey is where a store whose Config.CacheKey is cacheKey persists its
+// index. Removing that file only costs the next store a full scan.
+func IndexKey(cacheKey string) string { return path.Join(cacheKey, indexFile) }
+
 // persistedIndex is the on-disk format for the cached store state.
 type persistedIndex struct {
 	// EntitiesDirMtime is the latest mtime across all entity type subdirectories.
@@ -44,7 +48,7 @@ func (s *FSStore) loadPersistedIndex() *persistedIndex {
 	if s.cacheKey == "" || s.ignoreIndexCache {
 		return nil
 	}
-	data, err := s.codec.readDataFile(path.Join(s.cacheKey, indexFile))
+	data, err := s.codec.readDataFile(IndexKey(s.cacheKey))
 	if err != nil {
 		return nil
 	}
@@ -90,7 +94,7 @@ func (s *FSStore) savePersistedIndex() error {
 		return err
 	}
 	// coverage-ignore-end
-	return s.rooted.WriteFile(path.Join(s.cacheKey, indexFile), data, 0o644)
+	return s.rooted.WriteFile(IndexKey(s.cacheKey), data, 0o644)
 }
 
 // syncIndex reconciles all in-memory state with the filesystem:

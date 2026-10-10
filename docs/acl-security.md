@@ -1733,6 +1733,50 @@ meta at all). See the property-level-redaction section above; the dual-endpoint
 gate bounds *which relations' histories* are reachable, and the live-world rule
 bounds *which meta fields* within a reachable one.
 
+## Configuration editing (`config:edit`)
+
+`config:edit` is a built-in global permission. It lets a principal use the
+in-app [Configure space](data-entry.md#configure-space), which edits
+`schema.yaml` and `data-entry.yaml`. The space exists only when `rela-server`
+runs with `--config-editing`.
+
+Treat `config:edit` as administrator access. A holder reshapes the data model
+that every other grant is written against. A save can also run a data
+migration, and a migration rewrites records without per-record ACL checks.
+
+Grant it to a role by name:
+
+```yaml
+# acl.yaml
+roles:
+  admin:
+    permissions: [config:edit]
+```
+
+Three rules keep the grant narrow:
+
+- **It must be named.** A role with `permissions: ["*"]` does not hold
+  `config:edit`.
+- **A client never holds it.** A client that acts for a user is restricted by
+  a ceiling (`client_baselines` / `scope_grants`). That ceiling never passes
+  `config:edit` on, whatever the baseline or scopes say. The Configure API
+  also refuses any token whose `principal_type` is set to something other
+  than `user`, so a client type with no baseline is refused as well.
+- **It needs an `acl.yaml`.** Without one, every principal holds every
+  permission, so `--config-editing` refuses to start. It also refuses to start
+  without an identity source, and the Configure API refuses an unknown
+  principal.
+
+A principal without the permission gets 403, and the response names
+`config:edit`. This follows the rule that configuration is not secret; only
+data is.
+
+The Configure space cannot change `acl.yaml`. It also refuses to rename or
+remove an entity type, property, relation or choice option that `acl.yaml`
+mentions. Settings that control access stay locked: a transition `guard`, and
+`permission:` on navigation entries, spaces and dashboard cards. Change those
+in the files directly.
+
 ## Where to read next
 
 - [GUIDE-acl-overview] — operator's overview of the resolver.

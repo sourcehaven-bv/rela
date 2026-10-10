@@ -2064,3 +2064,26 @@ Print version information.
 ```bash
 rela version
 ```
+
+## rela-server
+
+`rela-server` is a separate binary. It serves the
+[data-entry web app](data-entry.md). Run `rela-server -h` for every flag; this
+section covers the flags documented in this reference.
+
+| Flag | Description |
+| ---- | ----------- |
+| `--config-editing` | Turn on the in-app [Configure space](data-entry.md#configure-space). Principals holding `config:edit` can then change `schema.yaml` and `data-entry.yaml` from the browser. Off by default. Env: `RELA_CONFIG_EDITING=1`. |
+
+The server refuses to start with `--config-editing` when any of these is true:
+
+- it also runs with `--read-only`;
+- the project has no `acl.yaml`;
+- it has no identity source (`-jwt-*` flags, `--principal-header`, or
+  `$RELA_DATAENTRY_USER`);
+- it is the SQLite or PostgreSQL build;
+- the schema file is the legacy `metamodel.yaml`.
+
+```bash
+rela-server -project /path/to/project --config-editing
+```

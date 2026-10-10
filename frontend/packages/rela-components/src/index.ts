@@ -70,6 +70,9 @@ export { default as RlSegmentedControl } from './components/data/RlSegmentedCont
 export { default as RlBulkActionBar } from './components/data/RlBulkActionBar.vue'
 export { default as RlKbd } from './components/data/RlKbd.vue'
 export { default as RlCodeBlock } from './components/data/RlCodeBlock.vue'
+export { default as RlSortableList } from './components/data/RlSortableList.vue'
+export { default as RlChangeList } from './components/data/RlChangeList.vue'
+export { default as RlChangeItem } from './components/data/RlChangeItem.vue'
 
 export { default as RlAppShell } from './components/layout/RlAppShell.vue'
 export { default as RlResizer } from './components/layout/RlResizer.vue'
