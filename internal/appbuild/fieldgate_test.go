@@ -45,8 +45,19 @@ assignments:
   alice: editor
 `
 
-func asAlice() context.Context {
-	return principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolMCP})
+func asAlice(tb testing.TB, svc *appbuild.Services) context.Context {
+	tb.Helper()
+	return boundAs(tb, svc, principal.Principal{User: "alice", Tool: principal.ToolMCP})
+}
+
+// boundAs stamps p and binds its Request the way a request edge does.
+func boundAs(tb testing.TB, svc *appbuild.Services, p principal.Principal) context.Context {
+	tb.Helper()
+	ctx, err := appbuild.IdentityBinder(svc)(principal.With(context.Background(), p))
+	if err != nil {
+		tb.Fatalf("IdentityBinder(%q): %v", p.User, err)
+	}
+	return ctx
 }
 
 func fieldGateServices(t *testing.T) *appbuild.Services {
@@ -64,7 +75,7 @@ func createTask(t *testing.T, svc *appbuild.Services, title string) string {
 	t.Helper()
 	e := entity.New("", "task")
 	e.SetString("title", title)
-	res, err := svc.EntityManager().CreateEntity(asAlice(), e, entity.CreateOptions{})
+	res, err := svc.EntityManager().CreateEntity(asAlice(t, svc), e, entity.CreateOptions{})
 	require.NoError(t, err)
 	return res.Entity.ID
 }
@@ -84,22 +95,22 @@ func TestFieldGate_PolicyHoldsOnGatedHandle(t *testing.T) {
 	mgr := entitymanager.FieldGated(svc.EntityManager())
 
 	locked := createTask(t, svc, "locked")
-	_, err := mgr.PatchEntity(asAlice(), locked, entity.Patch{Properties: map[string]any{"status": "done"}})
+	_, err := mgr.PatchEntity(asAlice(t, svc), locked, entity.Patch{Properties: map[string]any{"status": "done"}})
 	requireReadOnlyStatus(t, err)
-	_, err = mgr.PatchEntity(asAlice(), locked, entity.Patch{MetaUnset: []string{"status"}})
+	_, err = mgr.PatchEntity(asAlice(t, svc), locked, entity.Patch{MetaUnset: []string{"status"}})
 	requireReadOnlyStatus(t, err)
 
 	editable := createTask(t, svc, "editable")
-	_, err = mgr.PatchEntity(asAlice(), editable, entity.Patch{Properties: map[string]any{"status": "done"}})
+	_, err = mgr.PatchEntity(asAlice(t, svc), editable, entity.Patch{Properties: map[string]any{"status": "done"}})
 	require.NoError(t, err)
 
 	e := entity.New("", "task")
 	e.SetString("title", "locked")
 	e.SetString("status", "done")
-	_, err = mgr.CreateEntity(asAlice(), e, entity.CreateOptions{})
+	_, err = mgr.CreateEntity(asAlice(t, svc), e, entity.CreateOptions{})
 	requireReadOnlyStatus(t, err)
 
-	_, err = mgr.PatchEntity(asAlice(), locked, entity.Patch{Properties: map[string]any{"nonexistent": "x"}})
+	_, err = mgr.PatchEntity(asAlice(t, svc), locked, entity.Patch{Properties: map[string]any{"nonexistent": "x"}})
 	var d *affordances.FieldWriteError
 	require.ErrorAs(t, err, &d)
 	require.Equal(t, "field-affordance:hidden:nonexistent", d.RuleID())
@@ -111,8 +122,8 @@ func TestFieldGate_LuaUpdateRaises(t *testing.T) {
 	svc := fieldGateServices(t)
 	locked := createTask(t, svc, "locked")
 	var out strings.Builder
-	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(asAlice()),
-		lua.WithPrincipal(principal.From(asAlice())))
+	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(asAlice(t, svc)),
+		lua.WithPrincipal(principal.From(asAlice(t, svc))))
 	defer rt.Close()
 	err := rt.RunString(`rela.update_entity("` + locked + `", {status = "done"})`)
 	require.Error(t, err)
@@ -125,16 +136,16 @@ func TestFieldGate_LuaUpdateRaises(t *testing.T) {
 func TestFieldGate_OperatorSurfacesUngated(t *testing.T) {
 	svc := fieldGateServices(t)
 	locked := createTask(t, svc, "locked")
-	_, err := svc.EntityManager().PatchEntity(asAlice(), locked, entity.Patch{Properties: map[string]any{"status": "done"}})
+	_, err := svc.EntityManager().PatchEntity(asAlice(t, svc), locked, entity.Patch{Properties: map[string]any{"status": "done"}})
 	require.NoError(t, err)
 
 	var out strings.Builder
-	rt := lua.NewWriter(svc.LuaWriteDeps(), &out, lua.WithContext(asAlice()),
-		lua.WithPrincipal(principal.From(asAlice())))
+	rt := lua.NewWriter(svc.LuaWriteDeps(), &out, lua.WithContext(asAlice(t, svc)),
+		lua.WithPrincipal(principal.From(asAlice(t, svc))))
 	defer rt.Close()
 	require.NoError(t, rt.RunString(`rela.update_entity("`+locked+`", {status = "again"})`))
 
-	bob := principal.With(context.Background(), principal.Principal{User: "bob", Tool: principal.ToolCLI})
+	bob := boundAs(t, svc, principal.Principal{User: "bob", Tool: principal.ToolCLI})
 	_, err = svc.EntityManager().PatchEntity(bob, locked, entity.Patch{Properties: map[string]any{"status": "x"}})
 	require.Error(t, err, "row grants must still refuse a principal without update")
 }

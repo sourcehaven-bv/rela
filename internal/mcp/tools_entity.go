@@ -26,7 +26,7 @@ import (
 func (s *Server) handleListEntities(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	typeArg := args.GetString("type", "")
 	filterExpr := strings.TrimSpace(args.GetString("filter", ""))
@@ -151,7 +151,7 @@ func filterEntities(
 func (s *Server) handleShowEntity(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	id, err := args.RequireString("id")
 	if err != nil {
@@ -207,7 +207,7 @@ func addMentionedBy(ctx context.Context, st GraphReader, meta *metamodel.Metamod
 func (s *Server) handleSearchEntities(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	query, err := args.RequireString("query")
 	if err != nil {
@@ -287,7 +287,7 @@ func hydrateHits(
 func (s *Server) handleCreateEntity(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	typeName, err := args.RequireString("type")
 	if err != nil {
@@ -343,7 +343,7 @@ func (s *Server) handleCreateEntity(
 func (s *Server) handleUpdateEntity(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	id, err := args.RequireString("id")
 	if err != nil {
@@ -451,7 +451,7 @@ func prefixWarnings(warnings []entity.Warning) string {
 func (s *Server) handleDeleteEntity(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	id, err := args.RequireString("id")
 	if err != nil {
@@ -519,7 +519,7 @@ func (s *Server) handleDeleteEntity(
 func (s *Server) handleRenameEntity(
 	ctx context.Context, request *mcpgo.CallToolRequest,
 ) (*mcpgo.CallToolResult, error) {
-	snap := s.state.current()
+	snap := snapshotFor(ctx, s)
 	args := newToolRequest(request)
 	oldID, err := args.RequireString("id")
 	if err != nil {

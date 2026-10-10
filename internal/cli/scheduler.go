@@ -16,9 +16,10 @@ import (
 // coverage-ignore: scheduler command - long-running process
 type SchedulerCmd struct{}
 
-// Run dispatches `rela scheduler`. The WorkspaceProvider is supplied at
-// the kong wiring site (appbuild.Services implements it structurally).
-func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) error {
+// Run dispatches `rela scheduler`. The WorkspaceProvider and the identity
+// binder are supplied at the kong wiring site (appbuild.Services implements
+// the provider structurally).
+func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider, bind scheduler.IdentityBinder) error {
 	// coverage-ignore-start: main-or-wiring: constructs and runs the long-running scheduler loop; the CLI test harness
 	// supplies no
 	// scheduler.WorkspaceProvider fixture
@@ -46,7 +47,7 @@ func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) 
 	}))
 	// NewWithQueue, not New: script execution happens on the job queue, so a
 	// scheduler built without one starts cleanly and then fails every task.
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), ws, logger)
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), ws, bind, logger)
 	if err != nil {
 		return err
 	}

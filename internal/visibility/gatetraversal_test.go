@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -39,14 +40,19 @@ func TestDeclarativeGate_GateTraversalUsesCtxPrincipal(t *testing.T) {
 		t.Fatal(err)
 	}
 	hop := acl.TraversalHop{RelationTypes: []string{"caused-by"}, EntityType: "concept"}
-	as := func(user string) context.Context {
+	stamped := func(user string) context.Context {
 		return principal.With(ctx, principal.Principal{User: user, Tool: principal.ToolDataEntry})
 	}
+	as := func(user string) context.Context { return acltest.Bind(stamped(user), t, d) }
 
 	if _, err := gate.GateTraversal(as("alice"), "ticket", hop); err != nil {
 		t.Fatalf("alice: %v", err)
 	}
 	if _, err := gate.GateTraversal(as("bob"), "ticket", hop); !errors.Is(err, acl.ErrTraversalDenied) {
 		t.Fatalf("bob: err = %v, want ErrTraversalDenied", err)
+	}
+	// No bound identity: the gate refuses rather than resolving one.
+	if _, err := gate.GateTraversal(stamped("alice"), "ticket", hop); !errors.Is(err, acl.ErrNoIdentity) {
+		t.Fatalf("unbound alice: err = %v, want ErrNoIdentity", err)
 	}
 }

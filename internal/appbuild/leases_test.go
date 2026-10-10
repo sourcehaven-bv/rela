@@ -43,8 +43,19 @@ assignments:
   system:provisioner: admin
 `
 
-func leaseCtx(user string) context.Context {
-	return principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolCLI})
+// leaseCtx stamps user and binds its Request through svc's edge binder, as
+// every transport that calls the lease service does.
+func leaseCtx(t *testing.T, svc *appbuild.Services, user string) context.Context {
+	t.Helper()
+	return bindAt(principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolCLI}), t, svc)
+}
+
+// bindAt runs svc's request-edge step on ctx.
+func bindAt(ctx context.Context, t *testing.T, svc *appbuild.Services) context.Context {
+	t.Helper()
+	bound, err := appbuild.IdentityBinder(svc)(ctx)
+	require.NoError(t, err)
+	return bound
 }
 
 // The lease service checks access through the real read gate and write ACL:
@@ -81,16 +92,16 @@ relations: {}
 	leases := appbuild.Leases(svc)
 	require.NotNil(t, leases)
 
-	_, hidden := leases.Claim(leaseCtx("alice"), lease.ClaimRequest{Addr: "S-1"})
-	_, missing := leases.Claim(leaseCtx("alice"), lease.ClaimRequest{Addr: "S-404"})
+	_, hidden := leases.Claim(leaseCtx(t, svc, "alice"), lease.ClaimRequest{Addr: "S-1"})
+	_, missing := leases.Claim(leaseCtx(t, svc, "alice"), lease.ClaimRequest{Addr: "S-404"})
 	require.ErrorIs(t, hidden, store.ErrNotFound)
 	require.ErrorIs(t, missing, store.ErrNotFound)
 	require.Equal(t, missing.Error(), hidden.Error(), "a hidden entity is indistinguishable from a missing one")
 
-	claimed, err := leases.Claim(leaseCtx("alice"), lease.ClaimRequest{Addr: "T-1", Status: "triage"})
+	claimed, err := leases.Claim(leaseCtx(t, svc, "alice"), lease.ClaimRequest{Addr: "T-1", Status: "triage"})
 	require.NoError(t, err)
 
-	_, err = leases.Claim(leaseCtx("bob"), lease.ClaimRequest{Addr: "T-1"})
+	_, err = leases.Claim(leaseCtx(t, svc, "bob"), lease.ClaimRequest{Addr: "T-1"})
 	require.ErrorIs(t, err, acl.ErrForbidden, "read without update is a permission error")
 	var held *lease.HeldError
 	require.NotErrorAs(t, err, &held)
@@ -99,8 +110,8 @@ relations: {}
 
 	wake, cancel := leases.Subscribe()
 	defer cancel()
-	admin := principal.With(context.Background(),
-		principal.Principal{User: principal.UserProvisioner, Tool: principal.ToolScheduler})
+	admin := bindAt(principal.With(context.Background(),
+		principal.Principal{User: principal.UserProvisioner, Tool: principal.ToolScheduler}), t, svc)
 	_, err = svc.EntityManager().RenameEntity(admin, "T-1", "T-2", entity.RenameOptions{})
 	require.NoError(t, err)
 	requireLeaseWake(t, wake)
@@ -115,7 +126,7 @@ relations: {}
 	got, err = leases.GetReadable(context.Background(), []string{"T-2"})
 	require.NoError(t, err)
 	require.Empty(t, got, "deleting the entity drops its lease")
-	_, err = leases.Renew(leaseCtx("alice"), claimed.LeaseID, 0, nil)
+	_, err = leases.Renew(leaseCtx(t, svc, "alice"), claimed.LeaseID, 0, nil)
 	require.ErrorIs(t, err, lease.ErrLost)
 }
 
@@ -197,9 +208,10 @@ client_baselines:
 	defer svc.Close()
 	leases := appbuild.Leases(svc)
 
-	browser := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
-	agent := principal.With(context.Background(), principal.VerifiedFrom(
-		"alice", principal.ToolDataEntry, principal.Claims{PrincipalType: "app"}))
+	browser := bindAt(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, svc)
+	agent := bindAt(principal.With(context.Background(), principal.VerifiedFrom(
+		"alice", principal.ToolDataEntry, principal.Claims{PrincipalType: "app"})), t, svc)
 	require.Equal(t, lease.Identity(principal.From(browser)), lease.Identity(principal.From(agent)),
 		"the session and the token share one lease identity")
 

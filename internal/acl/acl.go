@@ -26,9 +26,14 @@
 //	     │  caller    │ ─────────────────────────────────┐
 //	     └────────────┘                                  │
 //	                                                     ▼
-//	┌───────────────────┐    ForPrincipal(p)      ┌─────────────┐
+//	┌───────────────────┐  IdentityResolver.Resolve(ctx, p)
+//	│  request edge     │ ───────────────────────▶ Identity
+//	│  (HTTP, MCP, CLI) │                          (principal + member-of closure)
+//	└───────────────────┘                                │
+//	                                                     │ ForIdentity
+//	┌───────────────────┐                         ┌──────▼──────┐
 //	│  *Declarative     │ ───────────────────────▶│  *Request   │
-//	│  (policy + graph) │                         │  (per-call) │
+//	│  (policy + graph) │      WithRequest(ctx)   │  (per-call) │
 //	└───────────────────┘                         └──────┬──────┘
 //	                                                     │
 //	                                                     │ AuthorizeWrite
@@ -40,12 +45,14 @@
 //	                                          │ Attributions       │
 //	                                          └────────────────────┘
 //
-// A [*Request] is per-call, not goroutine-safe, and amortizes one
-// member-of walk across every per-entity probe in the same logical
-// operation. [WithRequest]/[FromContext] thread it through call chains
-// so the same Request is reused by downstream resolvers (e.g. the
-// affordance resolver in a list response) instead of each call
-// re-walking the graph.
+// Identity resolution is an explicit step at the request edge. The edge
+// resolves the principal once (the `principal_property` lookup and the
+// member-of walk), opens a [*Request] with [Declarative.ForIdentity], and
+// attaches it with [WithRequest]. A Request is per-call and not
+// goroutine-safe. Its global roles are a pure function of the [Identity]
+// and the policy. Downstream evaluation reads it with
+// [Declarative.RequestFrom] and fails closed when it is absent; nothing
+// below the edge resolves a principal.
 package acl
 
 import (

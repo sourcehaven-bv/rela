@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -44,9 +46,9 @@ func TestPermitsWorld_ConferredRoleOpensTheWorldGlobally(t *testing.T) {
 	}
 	permits := func(user string) bool {
 		t.Helper()
-		req, err := d.ForPrincipal(principal.Principal{User: user, Tool: principal.ToolDataEntry})
+		req, err := d.ForIdentity(acltest.IdentityFor(ctx, t, d, principal.Principal{User: user, Tool: principal.ToolDataEntry}))
 		if err != nil {
-			t.Fatalf("ForPrincipal: %v", err)
+			t.Fatalf("ForIdentity: %v", err)
 		}
 		ok, err := req.PermitsWorld(ctx, "published")
 		if err != nil {

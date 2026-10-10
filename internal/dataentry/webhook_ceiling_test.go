@@ -242,7 +242,7 @@ func TestWebhookRoute_ClearsAttachedRequest(t *testing.T) {
 	if !ok {
 		t.Fatalf("app ACL is %T, want *acl.Declarative", app.acl)
 	}
-	stale, err := d.ForPrincipal(principal.Principal{User: "nobody", Tool: principal.ToolDataEntry})
+	stale, err := acl.OpenRequest(t.Context(), d, principal.Principal{User: "nobody", Tool: principal.ToolDataEntry})
 	if err != nil {
 		t.Fatal(err)
 	}

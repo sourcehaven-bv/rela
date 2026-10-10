@@ -172,7 +172,7 @@ func TestQueryScope_RelatedToCurrentUser(t *testing.T) {
 }
 
 // An unidentified caller has no current_user.id. With an ACL policy the
-// request never gets this far (ForPrincipal refuses an unstamped principal);
+// request never gets this far (identity resolution refuses an unstamped principal);
 // without one it does, as the "unknown" placeholder the server stamps with no
 // identity source. Every such scope must then fail the request rather than
 // answer it: an unbound id reaching the store would be "any persoon", and

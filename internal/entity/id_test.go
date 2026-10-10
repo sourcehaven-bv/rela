@@ -567,7 +567,7 @@ func TestValidateID(t *testing.T) {
 // on: an entity ID can never contain ':'.
 //
 // The dependency is indirect, which is exactly why it needs a test here. When
-// acl.yaml sets `principal_property`, resolvePrincipalEntity SUBSTITUTES the
+// acl.yaml sets `principal_property`, the identity resolver SUBSTITUTES the
 // acting Principal.User with the resolved entity's ID — after the boundary
 // check that rejects `system:`-prefixed names has already run. So the ID
 // becomes an acting identity that no longer passes through that guard.
@@ -579,7 +579,7 @@ func TestValidateID(t *testing.T) {
 // DEC-O59WM4 migration, is `read: ["*"]`.
 //
 // Widening the grammar is not forbidden; doing so without revisiting
-// the principal resolution in internal/access/opener.go is.
+// the principal resolution in acl.IdentityResolver.Resolve is.
 func TestValidateID_RejectsReservedPrincipalSeparator(t *testing.T) {
 	for _, id := range []string{
 		"system:scheduler",

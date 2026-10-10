@@ -110,7 +110,7 @@ func TestCeiling_DenyWriteBlocksTheWrite(t *testing.T) {
 	t.Parallel()
 	mgr, id := ceilingManager(t)
 
-	err := updateTitle(ctxAsClient("app", nil), t, mgr, id, "edited by the app")
+	err := updateTitle(entitymanager.BindAs(ctxAsClient("app", nil), t, mgr), t, mgr, id, "edited by the app")
 	if err == nil {
 		t.Fatal("update succeeded under deny_write: [\"*\"]")
 	}
@@ -140,7 +140,7 @@ func TestCeiling_InteractiveUserWritesFine(t *testing.T) {
 	t.Parallel()
 	mgr, id := ceilingManager(t)
 
-	if err := updateTitle(ctxAsClient("user", nil), t, mgr, id, "edited by alice"); err != nil {
+	if err := updateTitle(entitymanager.BindAs(ctxAsClient("user", nil), t, mgr), t, mgr, id, "edited by alice"); err != nil {
 		t.Fatalf("interactive user was attenuated: %v", err)
 	}
 }
@@ -150,7 +150,7 @@ func TestCeiling_ScopeReopensTheWrite(t *testing.T) {
 	t.Parallel()
 	mgr, id := ceilingManager(t)
 
-	ctx := ctxAsClient("app", []string{"rela.req.write"})
+	ctx := entitymanager.BindAs(ctxAsClient("app", []string{"rela.req.write"}), t, mgr)
 	if err := updateTitle(ctx, t, mgr, id, "edited via scope"); err != nil {
 		t.Fatalf("rela.req.write did not re-open update: %v", err)
 	}
@@ -176,6 +176,7 @@ func TestCeiling_NeverGrantsPastTheUser(t *testing.T) {
 			PrincipalType: "app",
 			Scopes:        []string{"rela.req.write"},
 		}))
+	ctx = entitymanager.BindAs(ctx, t, mgr)
 
 	if err := updateTitle(ctx, t, mgr, id, "edited by bob"); !errors.Is(err, acl.ErrForbidden) {
 		t.Errorf("error = %v, want ErrForbidden — a scope must not grant past the acting user", err)

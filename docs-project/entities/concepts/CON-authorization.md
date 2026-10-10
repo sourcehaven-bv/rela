@@ -45,10 +45,15 @@ ancestry inherits role grants).
 it to `acl.NewStoreGraph(s)`; tests use `acl.NullGraph{}` for "no
 edges anywhere."
 
-**Request.** A per-HTTP-request resolver scope. Constructed by
-`Declarative.ForPrincipal(p)`. Caches one `member-of` closure walk
-and per-entity attribution sets so a list response amortises one
-graph walk across every per-entity probe.
+**Request.** A per-request resolver scope. Constructed by
+`Declarative.ForIdentity(id)`. It caches per-entity attribution sets,
+so a list response amortises the graph reads across every per-entity
+probe.
+
+**Identity.** A resolved principal: the principal plus its `member-of`
+closure. `IdentityResolver.Resolve` builds one at the request edge,
+once per request. It runs the `principal_property` lookup and the
+membership walk. The evaluator reads the closure and never walks it.
 
 **Source.** How a role landed in a principal's effective set:
 

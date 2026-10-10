@@ -241,16 +241,23 @@ func runKong() int {
 		// name or template), matching the data-entry app. Without a project
 		// (no metamodel) the writer falls back to the literal `title` property.
 		out.Titles = bundles.read.Meta
+
+		// The CLI's request edge: resolve the stamped principal once into the
+		// ACL request scope the command uses. A command that builds its own
+		// services (flow, validate) binds again against those, because a
+		// Request belongs to one Declarative.
+		ctx = appbuild.BindOrWarn(ctx, appbuild.IdentityBinder(svc))
 	}
 
 	ktx.BindTo(ctx, (*context.Context)(nil))
 	ktx.Bind(out)
 	if bundles != nil {
 		ktx.Bind(bundles.read, bundles.write, bundles.attachment, bundles.renametype, bundles.analysis, bundles.leases)
-		// The scheduler command's workspace is supplied here at the wiring
-		// site (consumer-side interface): appbuild.Services satisfies
-		// scheduler.WorkspaceProvider directly.
+		// The scheduler command's workspace and request-edge step are
+		// supplied here at the wiring site (consumer-side interface):
+		// appbuild.Services satisfies scheduler.WorkspaceProvider directly.
 		ktx.BindTo(svc, (*scheduler.WorkspaceProvider)(nil))
+		ktx.BindTo(appbuild.IdentityBinder(svc), (*scheduler.IdentityBinder)(nil))
 	}
 
 	if err := ktx.Run(); err != nil {

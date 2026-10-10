@@ -1424,7 +1424,7 @@ func desktopPrincipalResolver() dataentry.PrincipalResolver {
 // ctx; the returned channel closes once both have, and is awaited before svc
 // closes.
 func startBackground(ctx context.Context, svc *appbuild.Services) <-chan struct{} {
-	sched := scheduler.StartBackground(ctx, svc, slog.Default())
+	sched := scheduler.StartBackground(ctx, svc, appbuild.IdentityBinder(svc), slog.Default())
 	leases := appbuild.WatchLeases(ctx, svc)
 	done := make(chan struct{})
 	go func() {

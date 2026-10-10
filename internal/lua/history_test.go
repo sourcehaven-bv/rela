@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -63,7 +65,7 @@ func purged(s store.VersionSnapshot) store.VersionSnapshot {
 // newHistoryWorld is the ACL fixture over a store with history: P-1 has two
 // versions, the hidden SEC-1 one, and TKT-1's lineage holds a version of
 // another type, one of another face and a purge row.
-func newHistoryWorld(t *testing.T) lua.WriteDeps {
+func newHistoryWorld(t *testing.T) (lua.WriteDeps, *acl.Declarative) {
 	t.Helper()
 	st := historyStore{Store: memstore.New(), versions: map[string][]store.VersionSnapshot{
 		"P-1": {
@@ -78,24 +80,25 @@ func newHistoryWorld(t *testing.T) lua.WriteDeps {
 			purged(snapshot(4, "ticket", nil)),
 		},
 	}}
-	_, deps := newACLWorldOn(t, st)
-	return deps
+	_, deps, decl := newACLWorldOn(t, st)
+	return deps, decl
 }
 
 // runAsAliceErr runs src as alice and returns the script error.
-func runAsAliceErr(deps lua.WriteDeps, src string) error {
+func runAsAliceErr(t *testing.T, decl *acl.Declarative, deps lua.WriteDeps, src string) error {
+	t.Helper()
 	var out strings.Builder
-	ctx := principal.With(context.Background(), principal.Principal{
+	ctx := acltest.Bind(principal.With(context.Background(), principal.Principal{
 		User: "alice", Tool: principal.ToolScheduler,
-	})
+	}), t, decl)
 	rt := lua.NewWriter(deps, &out, lua.WithContext(ctx), lua.WithPrincipal(principal.From(ctx)))
 	defer rt.Close()
 	return rt.RunString(src)
 }
 
 func TestHistory_Timeline(t *testing.T) {
-	deps := newHistoryWorld(t)
-	out := runAsAlice(t, deps, `
+	deps, decl := newHistoryWorld(t)
+	out := runAsAlice(t, decl, deps, `
 local h = rela.history("P-1")
 rela.output("n=" .. #h)
 local v = h[2]
@@ -115,8 +118,8 @@ rela.output("face=[" .. v.face .. "]")
 }
 
 func TestHistory_GetVersionRedacts(t *testing.T) {
-	deps := newHistoryWorld(t)
-	out := runAsAlice(t, deps, `
+	deps, decl := newHistoryWorld(t)
+	out := runAsAlice(t, decl, deps, `
 local e = rela.get_version("P-1", 1)
 rela.output("v=" .. e.version .. " id=" .. e.id .. " type=" .. e.type)
 rela.output("name=" .. tostring(e.properties.name))
@@ -138,8 +141,8 @@ rela.output("mod=" .. e.mod_time)
 // of another type or face than the live row, and a purge row. A version
 // number past the int32 range raises.
 func TestHistory_MissesAnswerNil(t *testing.T) {
-	deps := newHistoryWorld(t)
-	out := runAsAlice(t, deps, `
+	deps, decl := newHistoryWorld(t)
+	out := runAsAlice(t, decl, deps, `
 rela.output("hidden_history=" .. tostring(rela.history("SEC-1")))
 rela.output("hidden_version=" .. tostring(rela.get_version("SEC-1", 1)))
 rela.output("absent_history=" .. tostring(rela.history("NOPE-1")))
@@ -163,9 +166,9 @@ rela.output("own_type=" .. rela.get_version("TKT-1", 1).properties.title)
 }
 
 func TestHistory_BadVersionRaises(t *testing.T) {
-	deps := newHistoryWorld(t)
+	deps, decl := newHistoryWorld(t)
 	for _, n := range []string{"0", "-1", "1.5"} {
-		err := runAsAliceErr(deps, `rela.get_version("P-1", `+n+`)`)
+		err := runAsAliceErr(t, decl, deps, `rela.get_version("P-1", `+n+`)`)
 		if err == nil || !strings.Contains(err.Error(), "version must be a positive integer") {
 			t.Errorf("version %s: err = %v", n, err)
 		}
@@ -175,12 +178,12 @@ func TestHistory_BadVersionRaises(t *testing.T) {
 // TestHistory_UnsupportedRaises: a store without history raises for an
 // existing and a missing id alike, never answering an empty timeline.
 func TestHistory_UnsupportedRaises(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 	for _, src := range []string{
 		`rela.history("TKT-1")`, `rela.history("NOPE-1")`,
 		`rela.get_version("TKT-1", 1)`, `rela.get_version("NOPE-1", 1)`,
 	} {
-		err := runAsAliceErr(deps, src)
+		err := runAsAliceErr(t, decl, deps, src)
 		if err == nil || !strings.Contains(err.Error(), store.ErrHistoryUnsupported.Error()) {
 			t.Errorf("%s: err = %v", src, err)
 		}
@@ -190,9 +193,9 @@ func TestHistory_UnsupportedRaises(t *testing.T) {
 // TestHistory_ReaderWithoutHistoryRaises: a VisibleReader that does not
 // serve history raises like a backend without it.
 func TestHistory_ReaderWithoutHistoryRaises(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 	deps.VisibleReader = readerOnly{deps.VisibleReader}
-	err := runAsAliceErr(deps, `rela.history("TKT-1")`)
+	err := runAsAliceErr(t, decl, deps, `rela.history("TKT-1")`)
 	if err == nil || !strings.Contains(err.Error(), store.ErrHistoryUnsupported.Error()) {
 		t.Errorf("err = %v", err)
 	}
@@ -204,7 +207,7 @@ type readerOnly struct{ lua.EntityReader }
 // TestHistory_UnrestrictedReaderDoesNotRedact: the ungated reader the CLI
 // uses serves the whole snapshot.
 func TestHistory_UnrestrictedReaderDoesNotRedact(t *testing.T) {
-	deps := newHistoryWorld(t)
+	deps, decl := newHistoryWorld(t)
 	st := historyStore{Store: memstore.New(), versions: map[string][]store.VersionSnapshot{
 		"P-1": {snapshot(1, "person", map[string]any{"name": "Ann", "salary": "90000"})},
 	}}
@@ -212,7 +215,7 @@ func TestHistory_UnrestrictedReaderDoesNotRedact(t *testing.T) {
 		t.Fatal(err)
 	}
 	deps.VisibleReader = visibility.Unrestricted(st).WithWorld(visibility.WorldOf(store.TrivialScope())).WithHistory(st)
-	out := runAsAlice(t, deps, `rela.output("salary=" .. tostring(rela.get_version("P-1", 1).properties.salary))`)
+	out := runAsAlice(t, decl, deps, `rela.output("salary=" .. tostring(rela.get_version("P-1", 1).properties.salary))`)
 	if !strings.Contains(out, "salary=90000") {
 		t.Errorf("output %q", out)
 	}

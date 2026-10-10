@@ -45,7 +45,7 @@ type exportHandler struct {
 	// store answers a condition's `related(...)`, under the request's gate.
 	store store.GraphQueryer
 
-	// bindIdentity stamps the query identity a `current_user` condition
+	// stampQueryIdentity stamps the query identity a `current_user` condition
 	// needs. Separate from viewCondition because the two seams answer
 	// different questions (which expression, and who is asking), and the
 	// identity is request-scoped rather than list-scoped.
@@ -53,7 +53,7 @@ type exportHandler struct {
 	// Nil skips the binding, which only matters for a condition that names
 	// current_user — such a condition then errors rather than matching
 	// everything, which is the safe direction.
-	bindIdentity func(ctx context.Context, typeName string, query map[string][]string) (context.Context, error)
+	stampQueryIdentity func(ctx context.Context, typeName string, query map[string][]string) (context.Context, error)
 
 	// redactForCondition strips the properties this principal may not see,
 	// so a `condition:` cannot decide row membership from a hidden value.
@@ -132,7 +132,7 @@ func newExportHandler(app *App) (*exportHandler, error) {
 			return viewCondition(app.viewConditions, app.State(), viewKindList, listID)
 		},
 		store: app.store,
-		bindIdentity: func(
+		stampQueryIdentity: func(
 			ctx context.Context, typeName string, query map[string][]string,
 		) (context.Context, error) {
 			// Resolving the scope is how this path reaches the binder; the

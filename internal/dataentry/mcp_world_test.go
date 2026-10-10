@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -119,15 +120,12 @@ func TestMCPWorldCheck_UsesRequestOnContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	request := func(user string) *acl.Request {
+	bind := func(ctx context.Context, user string) context.Context {
 		t.Helper()
-		r, err := d.ForPrincipal(principal.Principal{User: user, Tool: principal.ToolMCP})
-		if err != nil {
-			t.Fatalf("ForPrincipal: %v", err)
-		}
-		return r
+		return acltest.Bind(principal.With(ctx, principal.Principal{User: user, Tool: principal.ToolMCP}), t, d)
 	}
 	a := appWithDefaultWorld(t, "")
+	a.acl = d
 	tests := []struct {
 		name  string
 		stale readGate
@@ -140,7 +138,7 @@ func TestMCPWorldCheck_UsesRequestOnContext(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ctx := acl.WithRequest(withReadGate(context.Background(), tc.stale), request(tc.user))
+			ctx := bind(withReadGate(context.Background(), tc.stale), tc.user)
 			got, err := mcpHost(a).WorldReadable(ctx, "published")
 			if err != nil || got != tc.want {
 				t.Fatalf("WorldReadable = %v, %v; want %v", got, err, tc.want)

@@ -99,14 +99,14 @@ func TestRestore_OwnedGrantThroughOwner(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			_, err = entitymanager.SoftDeleteEntity(userCtx("alice"), mgr, "alice")
+			_, err = entitymanager.SoftDeleteEntity(entitymanager.BindAs(userCtx("alice"), t, mgr), mgr, "alice")
 			require.NoError(t, err)
 
-			_, err = entitymanager.RestoreEntity(userCtx("bob"), mgr, "alice")
+			_, err = entitymanager.RestoreEntity(entitymanager.BindAs(userCtx("bob"), t, mgr), mgr, "alice")
 			var forbidden *acl.ForbiddenError
 			require.ErrorAs(t, err, &forbidden, "bob holds no role on the note")
 
-			_, err = entitymanager.RestoreEntity(userCtx("alice"), mgr, "alice")
+			_, err = entitymanager.RestoreEntity(entitymanager.BindAs(userCtx("alice"), t, mgr), mgr, "alice")
 			require.NoError(t, err)
 			_, err = st.GetEntity(ctx, entity.Ref{ID: child})
 			require.NoError(t, err, "the owned note is back")

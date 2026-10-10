@@ -21,7 +21,7 @@ import (
 //
 // Served-vs-inert lives here, and the distinction is deliberate (RR-UOBUC):
 //
-//   - No policy configured (NopACL / no acl.yaml): policyActive is false. The
+//   - No policy configured (NopACL / no acl.yaml): the policy is nil. The
 //     guard is inert — it allows — matching the "no principal → no authorization
 //     to enforce" tier rule (direct CLI writes, demos).
 //   - A policy IS configured (Declarative) but no [acl.Request] is on the
@@ -31,16 +31,34 @@ import (
 //     not silently open a governed transition just because plumbing broke. This
 //     matches the rest of the ACL's fail-closed posture (the router 500s on an
 //     unresolved principal; role walks abort rather than over-grant).
-type transitionGuard struct{ policyActive bool }
+//
+// policy is the policy-backed evaluator, or nil when no policy is configured.
+// Nil: accepted — it selects the inert tier described above.
+type transitionGuard struct{ policy *acl.Declarative }
 
 func (g transitionGuard) HoldsPermission(ctx context.Context, subjectID, permission string) bool {
-	req := acl.FromContext(ctx)
+	req, inert := requestFor(ctx, g.policy)
 	if req == nil {
-		// No Request: inert when there is no policy at all; fail closed when a
-		// policy exists but the Request is unexpectedly absent.
-		return !g.policyActive
+		return inert
 	}
 	return req.HoldsPermissionForEntity(ctx, subjectID, permission)
+}
+
+// requestFor returns the [acl.Request] the operation's edge attached for d.
+// With no policy (d nil) it returns (nil, true): the caller is inert and
+// allows. With a policy but no usable Request (none attached, or one for
+// another principal or Declarative) it returns (nil, false): the caller fails
+// closed. [acl.Declarative.RequestFrom] does the checks, so these adapters
+// fail closed the same way the write gate does.
+func requestFor(ctx context.Context, d *acl.Declarative) (*acl.Request, bool) {
+	if d == nil {
+		return nil, true
+	}
+	req, err := d.RequestFrom(ctx)
+	if err != nil {
+		return nil, false
+	}
+	return req, false
 }
 
 // transitionGraph adapts the store to the [statemachine.GraphLookup] a `when:`
@@ -105,7 +123,7 @@ func CompileTransitions(meta *metamodel.Metamodel, st store.Store, resolvedACL a
 	if err != nil {
 		return TransitionWiring{}, err
 	}
-	declarative, policyActive := resolvedACL.(*acl.Declarative)
+	declarative, _ := resolvedACL.(*acl.Declarative)
 	// The cross-entity copy reads its source through the caller's FIELD
 	// redaction too — the same redactor the API read path uses, so a
 	// `visible:`-hidden property cannot travel into a new entity.
@@ -115,10 +133,10 @@ func CompileTransitions(meta *metamodel.Metamodel, st store.Store, resolvedACL a
 	}
 	return TransitionWiring{
 		Enforcer:   set,
-		Guard:      transitionGuard{policyActive: policyActive},
+		Guard:      transitionGuard{policy: declarative},
 		Graph:      transitionGraph{st: st},
-		ReadGate:   copyReadGate{policyActive: policyActive},
-		Visibility: copyVisibility{st: st, redact: copyRedactor, policyActive: policyActive},
+		ReadGate:   copyReadGate{policy: declarative},
+		Visibility: copyVisibility{st: st, redact: copyRedactor, policy: declarative},
 	}, nil
 }
 
@@ -144,14 +162,16 @@ func CompileTransitions(meta *metamodel.Metamodel, st store.Store, resolvedACL a
 // it must never be is absent on a deployment that HAS a policy". A copy's
 // source read then took the no-policy branch, so an unguarded cross-entity
 // copy read with no row gate and no redaction.
-type copyReadGate struct{ policyActive bool }
+//
+// policy follows [transitionGuard]. Nil: accepted — no policy, inert.
+type copyReadGate struct{ policy *acl.Declarative }
 
 func (g copyReadGate) PermitsReadFace(
 	ctx context.Context, entityType, entityID string, face entity.Face,
 ) (bool, error) {
-	req := acl.FromContext(ctx)
+	req, inert := requestFor(ctx, g.policy)
 	if req == nil {
-		return !g.policyActive, nil
+		return inert, nil
 	}
 	return req.PermitsReadFace(ctx, entityType, entityID, face)
 }
@@ -179,17 +199,17 @@ func (g copyReadGate) PermitsReadFace(
 // prevent, and one the unit tests could not see because they injected a
 // redacting fake.
 type copyVisibility struct {
-	st           store.Store
-	redact       visibility.FieldRedactor
-	policyActive bool
+	st     store.Store
+	redact visibility.FieldRedactor
+	policy *acl.Declarative // Nil: accepted — no policy, inert; see [copyReadGate]
 }
 
 func (v copyVisibility) Get(
 	ctx context.Context, entityType, id string, face entity.Face,
 ) (*entity.Entity, bool, error) {
-	req := acl.FromContext(ctx)
+	req, inert := requestFor(ctx, v.policy)
 	if req == nil {
-		if v.policyActive {
+		if !inert {
 			// Fail closed: absent rather than ungated. Indistinguishable from
 			// a genuine miss, which is what every read gate here promises.
 			return nil, false, nil

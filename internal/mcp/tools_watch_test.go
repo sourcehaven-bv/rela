@@ -729,7 +729,7 @@ func watchPolicyServer(t *testing.T) (*mcpgo.ClientSession, store.Store) {
 	// MCP. It caches alice's roles for the whole call.
 	srv.mcp.AddReceivingMiddleware(func(next mcpgo.MethodHandler) mcpgo.MethodHandler {
 		return func(ctx context.Context, method string, req mcpgo.Request) (mcpgo.Result, error) {
-			r, err := d.ForPrincipal(alice)
+			r, err := acl.OpenRequest(ctx, d, alice)
 			if err != nil {
 				return nil, err
 			}

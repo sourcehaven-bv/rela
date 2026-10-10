@@ -47,6 +47,7 @@ func (c *FlowCmd) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("no project found for script %s", scriptPath)
 	}
+	ctx = appbuild.BindOrWarn(ctx, appbuild.IdentityBinder(flowSvc))
 
 	opts := []lua.Option{
 		lua.WithContext(ctx),

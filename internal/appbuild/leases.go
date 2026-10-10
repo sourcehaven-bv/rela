@@ -75,7 +75,8 @@ func buildLeases(
 }
 
 // leaseGate adapts the gated reader to [lease.Gate], so package lease does
-// not import visibility. Every read resolves the ctx principal per call.
+// not import visibility. Every read uses the Request bound to ctx at the
+// request edge and fails closed without one.
 type leaseGate struct {
 	rows interface {
 		Family(ctx context.Context, id string) (visibility.Family, bool, error)

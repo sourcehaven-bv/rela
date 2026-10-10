@@ -131,6 +131,40 @@ your session id or `"$(hostname)-$$"`:
   genuine `system:*` principal for audit — allow-all is never inferred from
   identity. Write-prep reads (entitymanager diffing) keep raw store access: a
   redacted read-modify-write would clobber hidden fields.
+- **Resolve identity once, at the request edge.** Every transport resolves
+  the stamped principal once, opens a `Request` on it and attaches it to ctx.
+  Resolution is the `principal_property` lookup plus the member-of walk. A
+  walk error is an error, never a partial closure. Nothing caches an
+  `Identity` across requests, so a membership change applies on the next one.
+
+  There is one binding shape, `func(context.Context) (context.Context,
+  error)`, and `appbuild.IdentityBinder(svc)` builds it. The CLI, rela-docs,
+  the scheduler (`scheduler.New` takes it) and stdio MCP (`mcp.Deps.BindIdentity`,
+  taken from the same snapshot as the call's other deps) all receive it at
+  wiring. `appbuild.BindOrWarn` is the log-and-continue form for the CLI.
+  Below that sit `acl.BindRequest` and `acl.OpenRequest`. The data-entry
+  edge (`access.Opener.Open`, and `access.Restamp` after provisioning) calls
+  the resolver directly, because it needs the lookup and the verified-JWT
+  mark. `TestIdentityEdgeCallers`
+  (`internal/archguard`) pins every caller of these to an allowlist with a
+  reason. A new caller must be a genuine edge.
+
+  Code below the edge reads the attached `Request` via
+  `Declarative.RequestFrom` and **fails closed** without one: affordances
+  deny every field, relation and guarded transition (attribution
+  `no-identity`), and the visibility gate returns `acl.ErrNoIdentity`. A
+  `Request` bound to another principal returns `acl.ErrIdentityMismatch`;
+  the ids go to the log, not the error. `acl.FromContext` does neither
+  check, so `TestNoACLFromContext` forbids it outside `internal/acl`. Do not
+  add a fallback that resolves the principal from ctx; bind at the edge
+  instead. `TestEvaluatorDoesNotResolveIdentity` fails if a `Declarative` or
+  `Request` method, or a package helper it reaches, walks membership.
+
+  Whether a principal is a verified but unmatched assertion is a fact about
+  the identity, so it lives on the `Request` (`Request.UnmatchedVerified`),
+  set from `Identity.WithVerifiedAssertion`. Provisioning rebinds a new
+  `Request` rather than clearing a ctx flag. In tests, bind with
+  `acltest.Bind`, `acltest.BindVerified` or `acltest.RequestFor`.
 - **Aggregates computed over the graph gate BEFORE they fold.** The gantt
   endpoint (`internal/dataentry/gantt_handler.go`, TKT-MW28U5) pins the pattern:
   row-gate the node set, redact each entity ONCE, then run the roll-up fold,

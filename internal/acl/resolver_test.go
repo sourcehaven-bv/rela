@@ -102,7 +102,7 @@ func aliceDataEntry() principal.Principal {
 
 // ---- Unknown principal --------------------------------------------------
 
-func TestForPrincipal_UnstampedRejected(t *testing.T) {
+func TestResolve_UnstampedRejected(t *testing.T) {
 	t.Parallel()
 	// Each of the unstamped shapes the resolver must refuse. The
 	// audit-log misattribution-visible default that From(ctx) returns
@@ -123,12 +123,13 @@ func TestForPrincipal_UnstampedRejected(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			req, err := d.ForPrincipal(c.p)
-			if req != nil {
-				t.Errorf("ForPrincipal(%+v) returned non-nil Request", c.p)
-			}
-			if !errors.Is(err, ErrUnstampedPrincipal) {
-				t.Errorf("ForPrincipal(%+v) error = %v, want errors.Is(_, ErrUnstampedPrincipal)", c.p, err)
+			for name, resolve := range map[string]func(context.Context, principal.Principal) (Identity, error){
+				"Resolve":       d.IdentityResolver().Resolve,
+				"ResolveDirect": d.IdentityResolver().ResolveDirect,
+			} {
+				if _, err := resolve(context.Background(), c.p); !errors.Is(err, ErrUnstampedPrincipal) {
+					t.Errorf("%s(%+v) error = %v, want errors.Is(_, ErrUnstampedPrincipal)", name, c.p, err)
+				}
 			}
 		})
 	}
@@ -181,12 +182,10 @@ func TestWalkMembers_SelfLoop(t *testing.T) {
 	g.add("alice", "member-of", "alice")
 
 	d := newTestDeclarative(t, &Policy{}, g)
-	req, err := d.ForPrincipal(aliceDataEntry())
+	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice")
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("walkMembers: %v", err)
 	}
-
-	members := req.walkMembers(context.Background())
 	if got := len(members); got != 1 || members[0] != "alice" {
 		t.Errorf("walkMembers with self-loop = %v, want [alice]", members)
 	}
@@ -203,12 +202,10 @@ func TestWalkMembers_Cycle(t *testing.T) {
 	g.add("C", "member-of", "A")
 
 	d := newTestDeclarative(t, &Policy{}, g)
-	req, err := d.ForPrincipal(principal.Principal{User: "A", Tool: principal.ToolDataEntry})
+	members, err := d.IdentityResolver().walkMembers(context.Background(), "A")
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("walkMembers: %v", err)
 	}
-
-	members := req.walkMembers(context.Background())
 	got := append([]string(nil), members...)
 	slices.Sort(got)
 	want := []string{"A", "B", "C"}
@@ -230,12 +227,10 @@ func TestWalkMembers_DepthCap_ReachableAtCap(t *testing.T) {
 	}
 
 	d := newTestDeclarative(t, &Policy{}, g)
-	req, err := d.ForPrincipal(aliceDataEntry())
+	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice")
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("walkMembers: %v", err)
 	}
-
-	members := req.walkMembers(context.Background())
 	last := chain[len(chain)-1]
 	if !slices.Contains(members, last) {
 		t.Errorf("walkMembers at cap=%d: last node %q not in result %v",
@@ -257,12 +252,10 @@ func TestWalkMembers_DepthCap_TruncatedBeyondCap(t *testing.T) {
 	}
 
 	d := newTestDeclarative(t, &Policy{}, g)
-	req, err := d.ForPrincipal(aliceDataEntry())
+	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice")
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("walkMembers: %v", err)
 	}
-
-	members := req.walkMembers(context.Background())
 	beyondCap := chain[depthCap+1]
 	if slices.Contains(members, beyondCap) {
 		t.Errorf("walkMembers at depth %d: node %q (beyond cap=%d) leaked into result %v",
@@ -272,37 +265,31 @@ func TestWalkMembers_DepthCap_TruncatedBeyondCap(t *testing.T) {
 
 func TestWalkMembers_GraphError_AbortsWalk(t *testing.T) {
 	t.Parallel()
-	// When OutgoingRelations errors, the walk must abort rather than
-	// silently undercount or proceed with partial data. The result is
-	// the order accumulated so far — at minimum the principal itself.
+	// When OutgoingRelations errors, the walk must abort and return the
+	// error. A partial closure treated as complete would silently drop
+	// group grants.
 	g := newFakeGraph()
 	g.err = errors.New("backend failure")
 
 	d := newTestDeclarative(t, &Policy{}, g)
-	req, err := d.ForPrincipal(aliceDataEntry())
-	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+	members, err := d.IdentityResolver().walkMembers(context.Background(), "alice")
+	if err == nil {
+		t.Fatalf("walkMembers under error = %v, nil; want an error", members)
 	}
-
-	members := req.walkMembers(context.Background())
-	// Walk aborts: at least we got the principal. We must not loop
-	// indefinitely on the failure.
-	if !slices.Contains(members, "alice") {
-		t.Errorf("walkMembers under error: principal not in result %v", members)
+	if members != nil {
+		t.Errorf("walkMembers under error returned a partial closure %v", members)
 	}
-	// One call attempted, then abort. (More precise: we don't pin the
-	// exact count; we pin that it terminated.)
-	if g.outgoingCalls == 0 {
-		t.Errorf("walkMembers under error: graph was not called at all")
+	if _, rerr := d.IdentityResolver().ResolveDirect(context.Background(), aliceDataEntry()); rerr == nil {
+		t.Error("ResolveDirect under a membership error succeeded; want an error")
 	}
 }
 
 // ---- Globals memoization ------------------------------------------------
 
-func TestRequest_GlobalsMemoized(t *testing.T) {
+func TestRequest_GlobalsNeedNoGraphTraffic(t *testing.T) {
 	t.Parallel()
-	// Two calls to Globals on the same Request must share the cached
-	// result — the second call performs zero graph traffic.
+	// The membership walk runs once, in identity resolution. Opening the
+	// Request and reading its globals afterwards performs zero graph calls.
 	g := newFakeGraph()
 	g.add("alice", "member-of", "engineering")
 
@@ -311,20 +298,21 @@ func TestRequest_GlobalsMemoized(t *testing.T) {
 		Assignments: map[string]string{"engineering": "editor"},
 	}, g)
 
-	req, err := d.ForPrincipal(aliceDataEntry())
+	id := identityFor(t.Context(), t, d, aliceDataEntry())
+	callsAfterResolve := g.outgoingCalls
+	req, err := d.ForIdentity(id)
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
+	_ = req.Globals()
+	_ = req.Globals()
 
-	ctx := context.Background()
-	_ = req.Globals(ctx)
-	callsAfterFirst := g.outgoingCalls
-	_ = req.Globals(ctx)
-	callsAfterSecond := g.outgoingCalls
-
-	if callsAfterSecond != callsAfterFirst {
-		t.Errorf("Globals memoization broken: second call added %d more graph calls (first=%d, second=%d)",
-			callsAfterSecond-callsAfterFirst, callsAfterFirst, callsAfterSecond)
+	if g.outgoingCalls != callsAfterResolve {
+		t.Errorf("ForIdentity/Globals added %d graph calls; want 0",
+			g.outgoingCalls-callsAfterResolve)
+	}
+	if !slices.Contains(req.Globals().Members, "engineering") {
+		t.Errorf("Globals().Members = %v, want engineering", req.Globals().Members)
 	}
 }
 
@@ -342,13 +330,13 @@ func TestRequest_ForEntityReusesGlobals(t *testing.T) {
 		RoleRelations: map[string]RoleRelationDef{"editor-of": {Confers: "editor"}},
 	}, g)
 
-	req, err := d.ForPrincipal(aliceDataEntry())
+	req, err := d.ForIdentity(identityFor(t.Context(), t, d, aliceDataEntry()))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 
 	ctx := context.Background()
-	_ = req.Globals(ctx)
+	_ = req.Globals()
 	walksAfterGlobals := g.outgoingByRel["member-of"]
 	_ = req.ForEntity(ctx, "project", "PRJ-foo")
 	walksAfterForEntity := g.outgoingByRel["member-of"]
@@ -374,9 +362,9 @@ func TestRequest_HoldsPermissionForEntity_SubjectScoped(t *testing.T) {
 		RoleRelations: map[string]RoleRelationDef{"owner-of": {Confers: "owner"}},
 	}, g)
 
-	req, err := d.ForPrincipal(aliceDataEntry())
+	req, err := d.ForIdentity(identityFor(t.Context(), t, d, aliceDataEntry()))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 	ctx := context.Background()
 
@@ -424,9 +412,9 @@ func TestRequest_ForEntity_AttributionsDeterministic(t *testing.T) {
 	ctx := context.Background()
 	var first []RoleAttribution
 	for i := range 50 {
-		req, err := d.ForPrincipal(aliceDataEntry())
+		req, err := d.ForIdentity(identityFor(t.Context(), t, d, aliceDataEntry()))
 		if err != nil {
-			t.Fatalf("ForPrincipal: %v", err)
+			t.Fatalf("ForIdentity: %v", err)
 		}
 		attrs := req.ForEntity(ctx, "project", "PRJ-foo")
 		if i == 0 {
@@ -473,12 +461,12 @@ func TestMembershipRelation_Configured_ConfersGroupRole(t *testing.T) {
 		Assignments:        map[string]string{"engineering": "editor"},
 	}, g)
 
-	req, err := d.ForPrincipal(aliceDataEntry())
+	req, err := d.ForIdentity(identityFor(t.Context(), t, d, aliceDataEntry()))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 
-	attrs := req.Globals(context.Background()).Attributions
+	attrs := req.Globals().Attributions
 	want := RoleAttribution{Role: "editor", Source: Source{Kind: SourceGroup, Group: "engineering"}}
 	if !hasAttribution(attrs, want) {
 		t.Errorf("expected %+v in attributions, got %+v", want, attrs)
@@ -504,12 +492,12 @@ func TestMembershipRelation_Default_WhenUnset(t *testing.T) {
 		Assignments: map[string]string{"engineering": "editor"},
 	}, g)
 
-	req, err := d.ForPrincipal(aliceDataEntry())
+	req, err := d.ForIdentity(identityFor(t.Context(), t, d, aliceDataEntry()))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 
-	attrs := req.Globals(context.Background()).Attributions
+	attrs := req.Globals().Attributions
 	want := RoleAttribution{Role: "editor", Source: Source{Kind: SourceGroup, Group: "engineering"}}
 	if !hasAttribution(attrs, want) {
 		t.Errorf("expected %+v via default member-of, got %+v", want, attrs)
@@ -531,12 +519,12 @@ func TestMembershipRelation_Configured_DoesNotFollowMemberOf(t *testing.T) {
 		Assignments:        map[string]string{"engineering": "editor"},
 	}, g)
 
-	req, err := d.ForPrincipal(aliceDataEntry())
+	req, err := d.ForIdentity(identityFor(t.Context(), t, d, aliceDataEntry()))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 
-	attrs := req.Globals(context.Background()).Attributions
+	attrs := req.Globals().Attributions
 	notWant := RoleAttribution{Role: "editor", Source: Source{Kind: SourceGroup, Group: "engineering"}}
 	if hasAttribution(attrs, notWant) {
 		t.Errorf("member-of edge must not confer a role when membership_relation=heeft_rol; got %+v", attrs)
@@ -570,12 +558,12 @@ func TestMembershipRelation_BlankNeverQueriesMatchAll(t *testing.T) {
 				Assignments:        map[string]string{"engineering": "editor"},
 			}, g)
 
-			req, err := d.ForPrincipal(aliceDataEntry())
+			req, err := d.ForIdentity(identityFor(t.Context(), t, d, aliceDataEntry()))
 			if err != nil {
-				t.Fatalf("ForPrincipal: %v", err)
+				t.Fatalf("ForIdentity: %v", err)
 			}
 
-			attrs := req.Globals(context.Background()).Attributions
+			attrs := req.Globals().Attributions
 			want := RoleAttribution{Role: "editor", Source: Source{Kind: SourceGroup, Group: "engineering"}}
 			if !hasAttribution(attrs, want) {
 				t.Errorf("blank membership relation must walk member-of; expected %+v, got %+v", want, attrs)
@@ -604,12 +592,12 @@ func TestMembershipRelation_Configured_Transitive(t *testing.T) {
 		Assignments:        map[string]string{"C": "editor"},
 	}, g)
 
-	req, err := d.ForPrincipal(principal.Principal{User: "A", Tool: principal.ToolDataEntry})
+	req, err := d.ForIdentity(identityFor(t.Context(), t, d, principal.Principal{User: "A", Tool: principal.ToolDataEntry}))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 
-	attrs := req.Globals(context.Background()).Attributions
+	attrs := req.Globals().Attributions
 	want := RoleAttribution{Role: "editor", Source: Source{Kind: SourceGroup, Group: "C"}}
 	if !hasAttribution(attrs, want) {
 		t.Errorf("expected %+v via transitive heeft_rol, got %+v", want, attrs)

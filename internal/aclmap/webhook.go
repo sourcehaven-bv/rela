@@ -3,7 +3,6 @@ package aclmap
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -93,9 +92,9 @@ func (e *Engine) MapWebhook(
 	if err != nil || mapping == nil {
 		return result, err
 	}
-	req, err := e.resolver.ForPrincipal(p)
+	req, err := e.requestFor(ctx, p)
 	if err != nil {
-		return nil, fmt.Errorf("aclmap: open resolver for %q: %w", p.User, err)
+		return nil, err
 	}
 	check, err := e.checkWebhook(ctx, req, *mapping)
 	if err != nil {

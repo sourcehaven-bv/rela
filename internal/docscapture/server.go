@@ -74,20 +74,27 @@ func (p *project) syncSeed(ctx context.Context, seed []docs.SeedOp) error {
 	if p.seeded >= len(seed) {
 		return nil
 	}
-	if err := docs.ApplySeedWith(
-		p.seedCtx(ctx), p.svc.Store(), p.svc.EntityManager(), seed[p.seeded:],
-	); err != nil {
+	sctx, err := seedContext(ctx, p.svc, p.assignee(""))
+	if err != nil {
+		return err
+	}
+	if err := docs.ApplySeedWith(sctx, p.svc.Store(), p.svc.EntityManager(), seed[p.seeded:]); err != nil {
 		return err
 	}
 	p.seeded = len(seed)
 	return nil
 }
 
-// seedCtx stamps the principal a seed replay writes as — the same default-role
-// user standUp seeds with, so an `edit` arriving in a later island is
-// authorized and attributed identically to one in the first batch.
-func (p *project) seedCtx(ctx context.Context) context.Context {
-	return principal.With(ctx, p.assignee(""))
+// seedContext is the seed replay's request edge. It stamps the principal the
+// seed writes as (the default-role user, so an `edit` in any island is
+// authorized and attributed the same way) and resolves it into svc's ACL
+// request scope.
+func seedContext(ctx context.Context, svc *appbuild.Services, who principal.Principal) (context.Context, error) {
+	out, err := appbuild.IdentityBinder(svc)(principal.With(ctx, who))
+	if err != nil {
+		return ctx, fmt.Errorf("resolve seed principal: %w", err)
+	}
+	return out, nil
 }
 
 // standUp copies the documented project's schema/config into a temp dir, seeds
@@ -149,7 +156,13 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 	// same default `as=` resolves to — a user with UPDATE grants — which is
 	// what an `edit` op needs to get past the entitymanager's write gate, and
 	// what it is then attributed to in the version history the manual shows.
-	seedCtx := principal.With(ctx, assignee(""))
+	seedCtx, serr := seedContext(ctx, svc, assignee(""))
+	if serr != nil {
+		svc.Close()
+		scratchCleanup()
+		_ = os.RemoveAll(tmp)
+		return nil, serr
+	}
 
 	// Seed the temp project's store. create/face/link go in RAW so automations
 	// can't mutate the fixture; an `edit` goes through the entitymanager, which

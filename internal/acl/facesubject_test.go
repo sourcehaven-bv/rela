@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -19,9 +21,9 @@ func requestFor(t *testing.T, p *acl.Policy) *acl.Request {
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	req, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: "test"})
+	req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: "test"}))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 	return req
 }
@@ -217,10 +219,10 @@ func TestCeilingStillClampsFaceGranularWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	req, err := d.ForPrincipal(principal.VerifiedFrom("alice", "test",
-		principal.Claims{PrincipalType: "app"}))
+	req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.VerifiedFrom("alice", "test",
+		principal.Claims{PrincipalType: "app"})))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 	dec := req.AuthorizeWrite(context.Background(), acl.WriteRequest{
 		Op:      acl.OpUpdate,
@@ -301,10 +303,10 @@ func TestCeilingClampsOnTypeNotLiteral(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewDeclarative: %v", err)
 			}
-			req, err := d.ForPrincipal(principal.VerifiedFrom("alice", "test",
-				principal.Claims{PrincipalType: "app"}))
+			req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.VerifiedFrom("alice", "test",
+				principal.Claims{PrincipalType: "app"})))
 			if err != nil {
-				t.Fatalf("ForPrincipal: %v", err)
+				t.Fatalf("ForIdentity: %v", err)
 			}
 			dec := req.AuthorizeWrite(context.Background(), acl.WriteRequest{
 				Op:      acl.OpUpdate,

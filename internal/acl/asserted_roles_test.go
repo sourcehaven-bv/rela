@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -61,12 +63,12 @@ func verified(sub string, roles ...string) principal.Principal {
 // membership testing via the returned map.
 func globalRoles(t *testing.T, d *acl.Declarative, p principal.Principal) map[string]acl.Source {
 	t.Helper()
-	req, err := d.ForPrincipal(p)
+	req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, p))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 	out := map[string]acl.Source{}
-	for _, a := range req.Globals(context.Background()).Attributions {
+	for _, a := range req.Globals().Attributions {
 		out[a.Role] = a.Source
 	}
 	return out
@@ -131,9 +133,9 @@ func TestAssertedRoles_GrantsWriteAccess(t *testing.T) {
 	// End-to-end through the actual authorization decision, not just the
 	// attribution set — a role that resolves but doesn't authorize is useless.
 	d := assertedWorld(t, assertedPolicy)
-	req, err := d.ForPrincipal(verified("usr_1", "admin"))
+	req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, verified("usr_1", "admin")))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 
 	got := req.AuthorizeWrite(context.Background(), acl.WriteRequest{
@@ -295,8 +297,8 @@ func TestAssertedRoles_UnstampedPrincipalStillRejected(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := d.ForPrincipal(tc.p); err == nil {
-				t.Error("ForPrincipal accepted an unstamped principal carrying asserted roles")
+			if _, err := d.IdentityResolver().ResolveDirect(context.Background(), tc.p); err == nil {
+				t.Error("identity resolution accepted an unstamped principal carrying asserted roles")
 			}
 		})
 	}

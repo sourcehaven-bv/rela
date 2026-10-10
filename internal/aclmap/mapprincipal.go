@@ -64,7 +64,7 @@ func verbStrings(verbs []acl.Verb) []string {
 // typed with stray whitespace.
 func (e *Engine) resolveEffective(ctx context.Context, raw string) (user, rawShown string, err error) {
 	raw = strings.TrimSpace(raw)
-	if id, rErr := e.resolver.ResolvePrincipal(ctx, raw); rErr != nil {
+	if id, rErr := e.resolver.IdentityResolver().ResolvePrincipal(ctx, raw); rErr != nil {
 		return "", "", rErr
 	} else if id != "" && id != raw {
 		return id, raw, nil
@@ -311,7 +311,7 @@ func (e *Engine) splitFaces(
 // heldOnFace reports whether a type-level role of the principal grants verb
 // on face of typ. See splitFaces for the roles asked.
 func (e *Engine) heldOnFace(ctx context.Context, req *acl.Request, verb acl.Verb, typ string, face entity.Face) bool {
-	for _, a := range req.Globals(ctx).Attributions {
+	for _, a := range req.Globals().Attributions {
 		if req.RoleGrantsVerbOnFace(a.Role, verb, typ, face) {
 			return true
 		}

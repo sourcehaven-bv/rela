@@ -79,11 +79,11 @@ func TestRemoteMCPDeps_UsesGatedHandles(t *testing.T) {
 	if deps.EntityManager == svc.EntityManager() {
 		t.Error("EntityManager is the default handle; MCP writes must go through the field-gated one (TKT-0XL8MF)")
 	}
-	if deps.LuaWriteDeps.EntityManager != nil || deps.LuaWriteDeps.VisibleReader != nil {
-		t.Error("LuaWriteDeps is set; the remote server has no Lua tools")
+	if deps.Lua.WriteDeps.EntityManager != nil || deps.Lua.WriteDeps.VisibleReader != nil {
+		t.Error("Lua.WriteDeps is set; the remote server has no Lua tools")
 	}
-	if deps.LuaCache != nil {
-		t.Error("LuaCache is set; the remote server has no Lua tools")
+	if deps.Lua.Cache != nil {
+		t.Error("Lua.Cache is set; the remote server has no Lua tools")
 	}
 
 	assertNoLuaTools(t, svc)

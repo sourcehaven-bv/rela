@@ -129,7 +129,7 @@ func newAttachFixture(t *testing.T, opts attachOpts) attachFixture {
 		Validator:     reads.Validator,
 		EntityManager: svc.EntityManager(),
 		Config:        svc.Config(),
-		LuaWriteDeps:  svc.LuaWriteDeps(),
+		Lua:           LuaDeps{WriteDeps: svc.LuaWriteDeps()},
 		Watcher:       nopWatcher{},
 		Watch:         WatchDeps{Changes: svc.Store(), Rebind: reads.Rebind},
 		ProjectRoot:   t.TempDir(),
@@ -572,8 +572,16 @@ func aclPolicy() *acl.Policy {
 	}
 }
 
-func as(user string) context.Context {
-	return principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolMCP})
+// as builds a caller ctx bound against the fixture's policy, as the
+// transport edge does.
+func (f attachFixture) as(t *testing.T, user string) context.Context {
+	t.Helper()
+	ctx, err := appbuild.IdentityBinder(f.svc)(principal.With(context.Background(),
+		principal.Principal{User: user, Tool: principal.ToolMCP}))
+	if err != nil {
+		t.Fatalf("IdentityBinder: %v", err)
+	}
+	return ctx
 }
 
 // TestAttachments_ACL_HiddenIsIndistinguishableFromAbsent: every tool answers
@@ -581,7 +589,7 @@ func as(user string) context.Context {
 func TestAttachments_ACL_HiddenIsIndistinguishableFromAbsent(t *testing.T) {
 	t.Parallel()
 	f := newAttachFixture(t, attachOpts{policy: aclPolicy()})
-	ctx := as("bob")
+	ctx := f.as(t, "bob")
 
 	for _, tool := range []string{"list_attachments", "read_attachment", "attach_file", "delete_attachment"} {
 		t.Run(tool, func(t *testing.T) {
@@ -607,10 +615,10 @@ func TestAttachments_ACL_DeniedWriteLeavesBytes(t *testing.T) {
 	t.Parallel()
 	f := newAttachFixture(t, attachOpts{policy: aclPolicy()})
 
-	mustSucceed(t, f.attach(as("bob"), t, docID, "file", "a.txt", []byte("original")))
+	mustSucceed(t, f.attach(f.as(t, "bob"), t, docID, "file", "a.txt", []byte("original")))
 
-	mustFail(t, f.attach(as("alice"), t, docID, "file", "a.txt", []byte("clobbered")), "forbidden")
-	mustFail(t, f.call(as("alice"), t, "delete_attachment",
+	mustFail(t, f.attach(f.as(t, "alice"), t, docID, "file", "a.txt", []byte("clobbered")), "forbidden")
+	mustFail(t, f.call(f.as(t, "alice"), t, "delete_attachment",
 		map[string]any{"id": docID, "property": "file", "file_name": "a.txt"}), "forbidden")
 
 	key, ok := attachment.StorageKey(&entity.Entity{Properties: map[string]any{
@@ -640,7 +648,7 @@ func TestAttachments_ACL_DeniedWriteLeavesBytes(t *testing.T) {
 	}
 
 	// alice may still read what she may not write.
-	read := f.call(as("alice"), t, "read_attachment", map[string]any{"id": docID, "property": "file", "file_name": "a.txt"})
+	read := f.call(f.as(t, "alice"), t, "read_attachment", map[string]any{"id": docID, "property": "file", "file_name": "a.txt"})
 	if resultText(t, read) != "original" {
 		t.Fatalf("alice read = %q", resultText(t, read))
 	}
@@ -649,9 +657,9 @@ func TestAttachments_ACL_DeniedWriteLeavesBytes(t *testing.T) {
 func TestAttachments_ACL_HiddenPropertyAnswersNotFound(t *testing.T) {
 	t.Parallel()
 	f := newAttachFixture(t, attachOpts{policy: aclPolicy()})
-	mustSucceed(t, f.attach(as("bob"), t, docID, "file", "a.txt", []byte("secret")))
+	mustSucceed(t, f.attach(f.as(t, "bob"), t, docID, "file", "a.txt", []byte("secret")))
 
-	carol := as("carol")
+	carol := f.as(t, "carol")
 	if got := f.list(carol, t, docID); len(got) != 0 {
 		t.Fatalf("carol lists %+v, want nothing", got)
 	}

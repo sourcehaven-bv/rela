@@ -145,6 +145,15 @@ type WorkspaceProvider interface {
 	ScheduledLuaWriteDeps() lua.WriteDeps
 }
 
+// IdentityBinder is the request-edge step the wiring supplies: it resolves
+// the principal stamped on ctx and attaches its ACL request scope. It is the
+// same shape every transport takes (see appbuild.IdentityBinder). The
+// scheduler calls it once per task run, after stamping the task's principal
+// (see Scheduler.taskContext); reads and writes below fail closed without
+// it. The scheduler may not import internal/acl, so it takes the step as a
+// function rather than computing it.
+type IdentityBinder = func(ctx context.Context) (context.Context, error)
+
 // StartBackground starts the scheduler in a background goroutine, with
 // WatchConfig on, so it runs even before schedules.yaml or subscriptions.yaml
 // declares a task, and picks up a file added or fixed later. It runs until
@@ -156,6 +165,7 @@ type WorkspaceProvider interface {
 func StartBackground(
 	ctx context.Context,
 	ws WorkspaceProvider,
+	bind IdentityBinder,
 	logger *slog.Logger,
 ) <-chan struct{} {
 	done := make(chan struct{})
@@ -169,7 +179,7 @@ func StartBackground(
 		logger.Error("subscriptions not started", "error", loadErr)
 	}
 
-	s, err := NewWithQueue(cfg, script.NewEngine(), ws, logger)
+	s, err := NewWithQueue(cfg, script.NewEngine(), ws, bind, logger)
 	if err != nil {
 		logger.Error("scheduler not started", "error", err)
 		close(done)
@@ -250,9 +260,9 @@ func attachQueue(s *Scheduler, ws WorkspaceProvider) error {
 // is called. Returning an error here means a caller cannot accidentally start a
 // scheduler that will fail every task.
 func NewWithQueue(
-	cfg *Config, engine *script.Engine, ws WorkspaceProvider, logger *slog.Logger,
+	cfg *Config, engine *script.Engine, ws WorkspaceProvider, bind IdentityBinder, logger *slog.Logger,
 ) (*Scheduler, error) {
-	s, err := New(cfg, engine, ws, logger)
+	s, err := New(cfg, engine, ws, bind, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -313,6 +323,7 @@ type Scheduler struct {
 
 	engine *script.Engine
 	ws     WorkspaceProvider
+	bind   IdentityBinder
 	runs   schedulerstate.Store
 	logger *slog.Logger
 	now    func() time.Time // for testing
@@ -347,15 +358,28 @@ type Scheduler struct {
 	pruneAge time.Duration
 }
 
+// taskContext is the scheduler's request edge: it stamps the task's
+// principal (see stampTaskAuditContext) and resolves it once into the ACL
+// request scope every read and write of the run evaluates against.
+func (s *Scheduler) taskContext(ctx context.Context, taskName, runAs string) (context.Context, error) {
+	out, err := s.bind(stampTaskAuditContext(ctx, taskName, runAs))
+	if err != nil {
+		return ctx, fmt.Errorf("scheduler: resolve identity for task %q: %w", taskName, err)
+	}
+	return out, nil
+}
+
 // New creates a Scheduler.
 //
-// Nil: rejected — cfg, engine, ws, logger and ws.SchedulerState() are all
-// required. A scheduler without run-state would treat every task as due on
-// every tick.
+// Nil: rejected — cfg, engine, ws, bind, logger and ws.SchedulerState() are
+// all required. A scheduler without run-state would treat every task as due
+// on every tick, and one without bind would run every task without an
+// identity, so every gated read and write would deny.
 func New(
 	cfg *Config,
 	engine *script.Engine,
 	ws WorkspaceProvider,
+	bind IdentityBinder,
 	logger *slog.Logger,
 ) (*Scheduler, error) {
 	switch {
@@ -365,6 +389,8 @@ func New(
 		return nil, errors.New("scheduler: script engine must not be nil")
 	case ws == nil:
 		return nil, errors.New("scheduler: workspace must not be nil")
+	case bind == nil:
+		return nil, errors.New("scheduler: identity binder must not be nil")
 	case logger == nil:
 		return nil, errors.New("scheduler: logger must not be nil")
 	}
@@ -375,6 +401,7 @@ func New(
 	s := &Scheduler{
 		engine: engine,
 		ws:     ws,
+		bind:   bind,
 		runs:   runs,
 		logger: logger,
 		now:    time.Now,

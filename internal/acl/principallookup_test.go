@@ -93,12 +93,12 @@ func buildPrincipalLookupWorld(
 func resolveAndAttribute(ctx context.Context, t *testing.T, d *Declarative, rawUser, entityID string) map[string]bool {
 	t.Helper()
 	effective := rawUser
-	if id, err := d.ResolvePrincipal(ctx, rawUser); err == nil && id != "" {
+	if id, err := d.IdentityResolver().ResolvePrincipal(ctx, rawUser); err == nil && id != "" {
 		effective = id
 	}
-	req, err := d.ForPrincipal(principal.Principal{User: effective, Tool: principal.ToolDataEntry})
+	req, err := d.ForIdentity(identityFor(ctx, t, d, principal.Principal{User: effective, Tool: principal.ToolDataEntry}))
 	if err != nil {
-		t.Fatalf("ForPrincipal(%q): %v", effective, err)
+		t.Fatalf("ForIdentity(%q): %v", effective, err)
 	}
 	roles := map[string]bool{}
 	for _, a := range req.ForEntity(ctx, "", entityID) {
@@ -118,7 +118,7 @@ func TestResolvePrincipal(t *testing.T) {
 	d := buildPrincipalLookupWorld(ctx, t, principalLookupPolicyYAML, persons, nil)
 
 	t.Run("single match returns id", func(t *testing.T) {
-		id, err := d.ResolvePrincipal(ctx, "jvloothuis@sourcehaven.nl")
+		id, err := d.IdentityResolver().ResolvePrincipal(ctx, "jvloothuis@sourcehaven.nl")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -128,7 +128,7 @@ func TestResolvePrincipal(t *testing.T) {
 	})
 
 	t.Run("no match returns empty", func(t *testing.T) {
-		id, err := d.ResolvePrincipal(ctx, "nobody@sourcehaven.nl")
+		id, err := d.IdentityResolver().ResolvePrincipal(ctx, "nobody@sourcehaven.nl")
 		if err != nil {
 			t.Fatalf("err: %v", err)
 		}
@@ -138,7 +138,7 @@ func TestResolvePrincipal(t *testing.T) {
 	})
 
 	t.Run("blank raw returns empty", func(t *testing.T) {
-		id, err := d.ResolvePrincipal(ctx, "   ")
+		id, err := d.IdentityResolver().ResolvePrincipal(ctx, "   ")
 		if err != nil || id != "" {
 			t.Fatalf("got (%q,%v), want (\"\",nil)", id, err)
 		}
@@ -150,7 +150,7 @@ func TestResolvePrincipal(t *testing.T) {
 			{id: "PERS-B", email: "dup@sourcehaven.nl"},
 		}
 		dd := buildPrincipalLookupWorld(ctx, t, principalLookupPolicyYAML, dupPersons, nil)
-		id, err := dd.ResolvePrincipal(ctx, "dup@sourcehaven.nl")
+		id, err := dd.IdentityResolver().ResolvePrincipal(ctx, "dup@sourcehaven.nl")
 		if err == nil {
 			t.Fatal("expected ambiguity error, got nil")
 		}
@@ -163,7 +163,7 @@ func TestResolvePrincipal(t *testing.T) {
 		// Policy without principal_property → lookup disabled.
 		noLookup := "user_entity_type: persoon\nroles:\n  everyone:\n    read: [\"*\"]\n"
 		dd := buildPrincipalLookupWorld(ctx, t, noLookup, persons, nil)
-		id, err := dd.ResolvePrincipal(ctx, "jvloothuis@sourcehaven.nl")
+		id, err := dd.IdentityResolver().ResolvePrincipal(ctx, "jvloothuis@sourcehaven.nl")
 		if err != nil || id != "" {
 			t.Fatalf("disabled lookup: got (%q,%v), want (\"\",nil)", id, err)
 		}

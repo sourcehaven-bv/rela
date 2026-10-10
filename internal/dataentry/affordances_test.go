@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -150,10 +152,10 @@ func TestComputeActions_MixedTypeDeclarative(t *testing.T) {
 
 	// Declarative looks up the principal by Principal.User against
 	// Assignments. Stamp a matching User on ctx.
-	ctx := principal.With(t.Context(), principal.Principal{
+	ctx := acltest.Bind(principal.With(t.Context(), principal.Principal{
 		User: "test-user",
 		Tool: principal.ToolDataEntry,
-	})
+	}), t, app.acl)
 
 	ticket := &entity.Entity{ID: "TKT-001", Type: "ticket"}
 	got := app.affordances.computeActions(ctx, ticket)

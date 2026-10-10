@@ -1277,7 +1277,7 @@ func (p *Policy) validateUnmatchedPrincipal() error {
 	}
 	// reject and provision key off the principal_property lookup: "unmatched"
 	// only has meaning when the resolver maps an identifier to a user entity.
-	// Without the lookup enabled, ResolvePrincipal returns no-match for EVERY
+	// Without the lookup enabled, IdentityResolver.ResolvePrincipal returns no-match for EVERY
 	// request, so every principal would look unmatched — a foot-gun that would
 	// reject (or provision for) everyone. Fail loud at load rather than mis-gate
 	// at runtime.

@@ -163,8 +163,20 @@ func testHost(t *testing.T, svc *appbuild.Services) dataentry.MCPHost {
 	}
 }
 
-func aliceCtx() context.Context {
-	return principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolMCP})
+func aliceCtx(t *testing.T, svc *appbuild.Services) context.Context {
+	t.Helper()
+	return boundCtx(t, svc, "alice")
+}
+
+// boundCtx stamps user and binds the identity against svc's ACL, as
+// attachACLRequest does for a remote MCP call.
+func boundCtx(t *testing.T, svc *appbuild.Services, user string) context.Context {
+	t.Helper()
+	ctx, err := appbuild.IdentityBinder(svc)(principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolMCP}))
+	if err != nil {
+		t.Fatalf("IdentityBinder: %v", err)
+	}
+	return ctx
 }
 
 func listIDs(t *testing.T, seq func(func(*entity.Entity, error) bool)) []string {
@@ -183,7 +195,7 @@ func listIDs(t *testing.T, seq func(func(*entity.Entity, error) bool)) []string 
 func searchIDs(t *testing.T, svc *appbuild.Services, s search.Searcher) []string {
 	t.Helper()
 	var ids []string
-	for h, err := range s.Search(aliceCtx(), search.Query{Text: "retention", World: appbuild.CompiledWorlds(svc).DefaultWorld()}) {
+	for h, err := range s.Search(aliceCtx(t, svc), search.Query{Text: "retention", World: appbuild.CompiledWorlds(svc).DefaultWorld()}) {
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -204,7 +216,7 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoteMCPDeps: %v", err)
 	}
-	ctx := aliceCtx()
+	ctx := aliceCtx(t, svc)
 
 	readers := map[string]interface {
 		Resolve(ctx context.Context, addr string) (*entity.Entity, error)
@@ -264,7 +276,7 @@ func TestRemoteMCPDeps_FaceRestrictedReaderGetsTheFaceTheyMayRead(t *testing.T) 
 	if err != nil {
 		t.Fatalf("RemoteMCPDeps: %v", err)
 	}
-	carol := principal.With(context.Background(), principal.Principal{User: "carol", Tool: principal.ToolMCP})
+	carol := boundCtx(t, svc, "carol")
 
 	e, err := deps.Store.Resolve(carol, "POL-002")
 	if err != nil {
@@ -299,7 +311,7 @@ func TestRemoteMCPDeps_PassesTheHostWorldSelector(t *testing.T) {
 	if deps.Worlds == nil {
 		t.Fatal("RemoteMCPDeps left Worlds nil; the world argument would be refused remotely")
 	}
-	scope, err := deps.Worlds.SelectWorld(aliceCtx(), "current")
+	scope, err := deps.Worlds.SelectWorld(aliceCtx(t, svc), "current")
 	if err != nil || scope.IsTrivial() {
 		t.Fatalf("SelectWorld(current) = %+v, %v; want the compiled world", scope, err)
 	}
@@ -312,11 +324,11 @@ func TestRemoteMCPDeps_PassesTheHostWorldSelector(t *testing.T) {
 
 	// The trivial world selects no named face, so a bare id of a type whose
 	// rows are all faced resolves to nothing there.
-	trivial := visibility.WithReadWorld(aliceCtx(), visibility.WorldOf(store.TrivialScope()))
+	trivial := visibility.WithReadWorld(aliceCtx(t, svc), visibility.WorldOf(store.TrivialScope()))
 	if _, err := deps.Store.Resolve(trivial, "POL-001"); err == nil {
 		t.Error("Resolve(POL-001) in the trivial world found a face; the ctx world was ignored")
 	}
-	if _, err := deps.Store.Resolve(visibility.WithReadWorld(aliceCtx(), visibility.WorldOf(scope)), "POL-001"); err != nil {
+	if _, err := deps.Store.Resolve(visibility.WithReadWorld(aliceCtx(t, svc), visibility.WorldOf(scope)), "POL-001"); err != nil {
 		t.Errorf("Resolve(POL-001) in current = %v", err)
 	}
 }

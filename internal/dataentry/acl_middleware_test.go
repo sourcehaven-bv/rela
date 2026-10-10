@@ -1,6 +1,8 @@
 package dataentry
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,7 +23,7 @@ func TestACLMiddleware_FailLoudOnApi(t *testing.T) {
 
 	// Wrap a sentinel "next" handler that records whether it was
 	// reached — the middleware MUST short-circuit before calling next
-	// when ForPrincipal fails.
+	// when identity resolution fails.
 	called := false
 	next := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) { called = true })
 	handler := attachACLRequest(next, d, false)
@@ -97,8 +99,8 @@ func TestACLMiddleware_RouterChainOrder(t *testing.T) {
 
 	// Install a resolver that returns a stamped principal for every
 	// request. With the CORRECT wrap order (stamp outermost → ACL
-	// inner), ForPrincipal sees alice and succeeds. With the BROKEN
-	// order (ACL outermost → stamp inner), ForPrincipal sees the
+	// inner), identity resolution sees alice and succeeds. With the BROKEN
+	// order (ACL outermost → stamp inner), identity resolution sees the
 	// default unstamped principal and 500s.
 	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
 		return principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
@@ -163,5 +165,41 @@ func TestACLMiddleware_StampedPrincipalAttachesGate(t *testing.T) {
 	}
 	if permitsDoc {
 		t.Error("gate.PermitsRead(document): true; want false (no read grant on document)")
+	}
+}
+
+// downMembership fails every graph read, so the member-of walk fails.
+type downMembership struct{ acl.NullGraph }
+
+func (downMembership) OutgoingRelations(context.Context, string, string) ([]string, error) {
+	return nil, errors.New("graph down: secret backend detail")
+}
+
+// TestACLMiddleware_WalkFailureFailsTheRequest: when the member-of walk
+// fails, the request edge does not continue with a partial or missing
+// identity. It answers 500 without the backend error text, and the handler
+// never runs.
+func TestACLMiddleware_WalkFailureFailsTheRequest(t *testing.T) {
+	d, err := acl.NewDeclarative(&acl.Policy{}, downMembership{}, acl.NullGraphQueryer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	handler := attachACLRequest(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }), d, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets", http.NoBody)
+	req = req.WithContext(principal.With(req.Context(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "acl_identity_unresolved") {
+		t.Errorf("got %d %s, want 500 acl_identity_unresolved", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "secret backend detail") {
+		t.Errorf("response leaks the backend error: %s", rec.Body)
+	}
+	if called {
+		t.Error("next handler ran without a resolved identity")
 	}
 }

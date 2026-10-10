@@ -7,6 +7,8 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
@@ -327,9 +329,9 @@ func TestWhoCan_ReadMatchesRuntime(t *testing.T) {
 		everyoneGrantsRead := res.Everyone.Granted
 
 		for _, c := range candidates {
-			req, err := w.decl.ForPrincipal(principal.Principal{User: c, Tool: principal.ToolCLI})
+			req, err := w.decl.ForIdentity(acltest.IdentityFor(t.Context(), t, w.decl, principal.Principal{User: c, Tool: principal.ToolCLI}))
 			if err != nil {
-				t.Fatalf("ForPrincipal %s: %v", c, err)
+				t.Fatalf("ForIdentity %s: %v", c, err)
 			}
 			runtime, err := req.PermitsRead(ctx, e.typ, e.id)
 			if err != nil {

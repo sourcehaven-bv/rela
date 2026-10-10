@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -74,6 +75,10 @@ func TestScheduledLuaWriteDeps_ReadsAreACLBound(t *testing.T) {
 	taskCtx := principal.With(ctx, principal.Principal{
 		User: "system:reports", Tool: principal.ToolScheduler,
 	})
+	taskCtx, bindErr := appbuild.IdentityBinder(svc)(taskCtx)
+	if bindErr != nil {
+		t.Fatalf("IdentityBinder: %v", bindErr)
+	}
 	var out strings.Builder
 	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out,
 		lua.WithContext(taskCtx), lua.WithPrincipal(principal.From(taskCtx)))

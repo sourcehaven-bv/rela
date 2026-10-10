@@ -218,7 +218,7 @@ func createRelationAllowed(t *testing.T, createGrants []string, seedSource bool)
 		t.Fatalf("entitymanager.New: %v", err)
 	}
 
-	ctx := principal.With(bg, principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	ctx := entitymanager.BindAs(principal.With(bg, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, mgr)
 	_, wErr := mgr.CreateRelation(ctx, entity.RelationKey{From: "DEC-001", Type: "addresses", To: "REQ-001"}, entity.RelationOptions{})
 
 	// A ForbiddenError means the gate refused. Anything else — including the

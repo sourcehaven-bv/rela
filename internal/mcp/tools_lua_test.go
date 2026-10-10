@@ -120,8 +120,8 @@ func TestHandleLua_ErrorInModule(t *testing.T) {
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
 	// Read scripts and modules from the temp project on disk.
-	deps.LuaWriteDeps.ProjectRoot = deps.ProjectRoot
-	deps.LuaWriteDeps.Files = nil
+	deps.Lua.WriteDeps.ProjectRoot = deps.ProjectRoot
+	deps.Lua.WriteDeps.Files = nil
 	files := map[string]string{
 		"lib/fail.lua":  "local M = {}\nfunction M.run()\n  error(\"inside module\")\nend\nreturn M\n",
 		"scripts/s.lua": "local m = require(\"fail\")\nm.run()\n",

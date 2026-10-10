@@ -167,9 +167,15 @@ func mcpHost(a *App) MCPHost {
 // attachACLRequest builds the same gate once per call; the MCP watch tool
 // replaces the Request on every pass (Deps.Rebind), and a world check through
 // the gate attached up front would keep the roles cached at call start.
-func mcpWorldGate(ctx context.Context) context.Context {
-	r := acl.FromContext(ctx)
-	if r == nil {
+// Without a usable Request for a's policy, ctx keeps the gate
+// attachACLRequest attached.
+func mcpWorldGate(ctx context.Context, a *App) context.Context {
+	d, ok := a.acl.(*acl.Declarative)
+	if !ok || d == nil {
+		return ctx
+	}
+	r, err := d.RequestFrom(ctx)
+	if err != nil {
 		return ctx
 	}
 	gate, err := newACLReadGate(r)
@@ -181,7 +187,7 @@ func mcpWorldGate(ctx context.Context) context.Context {
 
 // mcpSelectWorld resolves name for the ctx principal.
 func mcpSelectWorld(ctx context.Context, a *App, name string) (store.WorldScope, error) {
-	handle, err := resolveNamedWorld(mcpWorldGate(ctx), a.worlds, name, effectiveDefaultWorld(a))
+	handle, err := resolveNamedWorld(mcpWorldGate(ctx, a), a.worlds, name, effectiveDefaultWorld(a))
 	switch {
 	case errors.Is(err, errWorldUnknown):
 		return store.WorldScope{}, fmt.Errorf("no such world %q; list_worlds names the worlds", name)
@@ -196,7 +202,7 @@ func mcpSelectWorld(ctx context.Context, a *App, name string) (store.WorldScope,
 // mcpWorldReadable reports whether the ctx principal may select name. An
 // unknown world is not readable.
 func mcpWorldReadable(ctx context.Context, a *App, name string) (bool, error) {
-	_, err := resolveNamedWorld(mcpWorldGate(ctx), a.worlds, name, effectiveDefaultWorld(a))
+	_, err := resolveNamedWorld(mcpWorldGate(ctx, a), a.worlds, name, effectiveDefaultWorld(a))
 	switch {
 	case errors.Is(err, errWorldUnknown), errors.Is(err, errWorldDenied):
 		return false, nil

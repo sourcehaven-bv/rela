@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -94,12 +96,21 @@ func declFor(t *testing.T, p *acl.Policy) *acl.Declarative {
 	return d
 }
 
-// ctxAs builds a request context for the named principal. user varies
-// across the table (e.g. the TKT-73C6B2 historical tests exercise
-// "auditor"/"bob"), documenting which principal each case exercises.
+// ctxAs builds a request context for the named principal, unbound. Only a
+// test of the missing-identity path should use it directly; everything else
+// goes through ctxFor.
 func ctxAs(user string) context.Context {
 	return principal.With(context.Background(),
 		principal.Principal{User: user, Tool: principal.ToolDataEntry})
+}
+
+// ctxFor builds a request context for the named principal and binds its
+// identity against r's evaluator, as the request edge does. user varies
+// across the table (e.g. the TKT-73C6B2 historical tests exercise
+// "auditor"/"bob"), documenting which principal each case exercises.
+func ctxFor(tb testing.TB, r *affordances.PolicyResolver, user string) context.Context {
+	tb.Helper()
+	return acltest.Bind(ctxAs(user), tb, affordances.DeclarativeOf(r))
 }
 
 func ticket(id string, props map[string]any) *entity.Entity {
@@ -122,7 +133,7 @@ assignments:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", nil))
+	fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil))
 	if fv.Writable != nil || fv.Visible != nil || fv.Options != nil {
 		t.Errorf("expected empty verdicts, got %+v", fv)
 	}
@@ -146,7 +157,7 @@ assignments:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", nil))
+	fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil))
 
 	// status granted unconditionally → not in the deny map.
 	if _, denied := fv.Writable["status"]; denied {
@@ -177,13 +188,13 @@ assignments:
 	}
 
 	// alice is NOT the assignee → status denied.
-	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"assignee": "bob"}))
+	fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", map[string]any{"assignee": "bob"}))
 	if v, ok := fv.Writable["status"]; !ok || v {
 		t.Errorf("status should be denied (predicate false), got ok=%v v=%v", ok, v)
 	}
 
 	// alice IS the assignee → status writable (absent from deny map).
-	fv = r.FieldVerdicts(ctxAs("alice"), ticket("T-2", map[string]any{"assignee": "alice"}))
+	fv = r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-2", map[string]any{"assignee": "alice"}))
 	if _, denied := fv.Writable["status"]; denied {
 		t.Errorf("status should be writable when predicate passes")
 	}
@@ -208,7 +219,7 @@ assignments:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", nil))
+	fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil))
 
 	// "done" is not granted → denied; open/review granted → absent.
 	statusOpts := fv.Options["status"]
@@ -238,7 +249,7 @@ assignments:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	rv := r.RelationVerdicts(ctxAs("alice"), ticket("T-1", nil))
+	rv := r.RelationVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil))
 	v, ok := rv.Types["implements"]
 	if !ok {
 		t.Fatalf("implements verdict missing")
@@ -279,7 +290,7 @@ assignments:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", nil))
+	fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil))
 	if _, denied := fv.Writable["status"]; denied {
 		t.Errorf("status should be writable via union")
 	}
@@ -311,14 +322,14 @@ role_relations:
 	}
 
 	// On T-1, alice is owner → status writable.
-	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", nil))
+	fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil))
 	if _, denied := fv.Writable["status"]; denied {
 		t.Errorf("status should be writable: alice is owner of T-1")
 	}
 
 	// On T-2, alice is NOT owner → owner role doesn't apply, no grants,
 	// so no opted-in block → permissive (empty verdicts).
-	fv = r.FieldVerdicts(ctxAs("alice"), ticket("T-2", nil))
+	fv = r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-2", nil))
 	if len(fv.Writable) != 0 {
 		t.Errorf("T-2: expected no verdicts (owner role absent), got %+v", fv.Writable)
 	}
@@ -345,7 +356,7 @@ assignments:
 	}
 
 	// alice is triager but not admin → assignee hidden.
-	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", nil))
+	fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil))
 	if v, ok := fv.Visible["assignee"]; !ok || v {
 		t.Errorf("assignee should be hidden for non-admin alice, got ok=%v v=%v", ok, v)
 	}
@@ -372,14 +383,14 @@ assignments:
 	}
 	// priority declared integer; store it as a string "5" — coerces to
 	// number 5, predicate passes, no Eval failure.
-	fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"priority": "5"}))
+	fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", map[string]any{"priority": "5"}))
 	if _, denied := fv.Writable["status"]; denied {
 		t.Errorf("status should be writable: priority '5' coerces to number 5")
 	}
 
 	// store a map where integer expected — coerces to Nil, predicate
 	// (nil == 5) is false → denied, but NO Eval error / no panic.
-	fv = r.FieldVerdicts(ctxAs("alice"),
+	fv = r.FieldVerdicts(ctxFor(t, r, "alice"),
 		ticket("T-2", map[string]any{"priority": map[string]any{"x": 1}}))
 	if v, ok := fv.Writable["status"]; !ok || v {
 		t.Errorf("status should be denied (priority uncoercible → nil != 5), got ok=%v v=%v", ok, v)
@@ -438,7 +449,7 @@ assignments:
 	}
 	var first string
 	for i := range 20 {
-		fv := r.FieldVerdicts(ctxAs("alice"), ticket("T-1", nil))
+		fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil))
 		got := fv.Attribution["status"]
 		if got == "" {
 			t.Fatalf("expected attribution for denied status")
@@ -540,7 +551,7 @@ assignments:
 	}
 
 	// status=done → note meta-field denied (predicate false).
-	rv := r.RelationVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"status": "done"}))
+	rv := r.RelationVerdicts(ctxFor(t, r, "alice"), ticket("T-1", map[string]any{"status": "done"}))
 	v, ok := rv.Types["has-planning"]
 	if !ok {
 		t.Fatalf("has-planning verdict missing")
@@ -551,7 +562,7 @@ assignments:
 
 	// status=open → note meta-field allowed (sparse: absent from Fields,
 	// or the type itself fully permissive and absent from Types).
-	rv = r.RelationVerdicts(ctxAs("alice"), ticket("T-2", map[string]any{"status": "open"}))
+	rv = r.RelationVerdicts(ctxFor(t, r, "alice"), ticket("T-2", map[string]any{"status": "open"}))
 	if v, ok := rv.Types["has-planning"]; ok {
 		if w, denied := v.Fields["note"]; denied && !w {
 			t.Errorf("note meta should be writable when predicate passes")
@@ -584,7 +595,7 @@ assignments:
 		t.Fatalf("New: %v", err)
 	}
 	for _, status := range []string{"open", "done"} {
-		rv := r.UnconditionalRelationVerdicts(ctxAs("alice"), ticket("T-1", map[string]any{"status": status}))
+		rv := r.UnconditionalRelationVerdicts(ctxFor(t, r, "alice"), ticket("T-1", map[string]any{"status": status}))
 		if v := rv.Types["blocks"]; v.Creatable || v.Removable {
 			t.Errorf("status=%s: blocks = %+v, want neither creatable nor removable", status, v)
 		}
@@ -642,7 +653,7 @@ assignments:
 		t.Fatalf("New: %v", err)
 	}
 
-	ctx := context.WithValue(ctxAs("alice"), ctxKey{}, "caller-marker")
+	ctx := context.WithValue(ctxFor(t, r, "alice"), ctxKey{}, "caller-marker")
 	_ = r.FieldVerdicts(ctx, ticket("T-1", nil))
 
 	if lookup.gotMarker != "caller-marker" {
@@ -680,18 +691,12 @@ func (g *countingGraph) OutgoingRelations(_ context.Context, _, _ string) ([]str
 	return nil, nil
 }
 
-// RR-JJYW: when ctx carries an acl.Request via acl.WithRequest, the
-// affordance resolver reuses it across per-entity calls instead of
-// opening a fresh Request each time. The fresh-per-call shape (the
-// pre-fix code) re-walked member-of N times for an N-entity list
-// response, defeating the very memoisation Request was designed to
-// provide.
+// The membership walk runs once, at the request edge (acl.BindRequest).
+// The affordance resolver reuses the bound Request for every entity and
+// never walks member-of itself (RR-JJYW). A ctx with no bound Request gets
+// deny-all verdicts and also causes no graph traffic.
 //
-// We pin the contract via the OutgoingRelations call counter on a
-// minimal Graph. With one Request attached, Globals computes once;
-// repeated FieldVerdicts calls add zero member-of calls. Without
-// the attached Request, each FieldVerdicts opens its own Request
-// and increments the counter.
+// The OutgoingRelations counter on a minimal Graph pins both halves.
 func TestResolver_ReusesRequestFromContext(t *testing.T) {
 	t.Parallel()
 	p := policyFromYAML(t, `
@@ -714,36 +719,25 @@ assignments:
 	}
 	e := ticket("T-1", nil)
 
-	// Baseline: fresh-Request-per-call (no acl.WithRequest on ctx)
-	// MUST re-walk member-of, otherwise the test below trivially
-	// passes (RR-K7CT: was a silent t.Skipf — gone now). If a
-	// future refactor makes Globals lazy enough to skip the walk
-	// even on the fresh path, this test loses its
-	// regression-detection capability, so fail loud.
-	baselineCtx := ctxAs("alice")
-	_ = r.FieldVerdicts(baselineCtx, e)
-	freshFirstCallOutgoing := g.outgoingCalls
-	_ = r.FieldVerdicts(baselineCtx, e)
-	freshSecondCallOutgoing := g.outgoingCalls - freshFirstCallOutgoing
-	if freshSecondCallOutgoing == 0 {
-		t.Fatalf("test premise broken: second fresh-per-call FieldVerdicts did not re-walk member-of (got %d additional outgoing calls); the without-Request baseline cannot discriminate the with-Request fix, so the rest of this test would be vacuous",
-			freshSecondCallOutgoing)
+	scopedCtx := ctxFor(t, r, "alice")
+	if g.outgoingCalls == 0 {
+		t.Fatal("test premise broken: binding did not walk member-of, so the zero below proves nothing")
 	}
-
-	// With Request attached: subsequent calls must not re-walk.
 	g.outgoingCalls = 0
-	req, err := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
-	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+	for range 3 {
+		_ = r.FieldVerdicts(scopedCtx, e)
 	}
-	scopedCtx := acl.WithRequest(ctxAs("alice"), req)
-	_ = r.FieldVerdicts(scopedCtx, e)
-	firstCallOutgoing := g.outgoingCalls
-	_ = r.FieldVerdicts(scopedCtx, e)
-	secondCallOutgoing := g.outgoingCalls - firstCallOutgoing
+	if g.outgoingCalls != 0 {
+		t.Errorf("bound ctx: FieldVerdicts made %d OutgoingRelations calls; want 0 (the edge walked already)",
+			g.outgoingCalls)
+	}
 
-	if secondCallOutgoing != 0 {
-		t.Errorf("with acl.WithRequest: second call added %d OutgoingRelations calls; want 0 (Request should memoise Globals)",
-			secondCallOutgoing)
+	fv := r.FieldVerdicts(ctxAs("alice"), e)
+	if g.outgoingCalls != 0 {
+		t.Errorf("unbound ctx: FieldVerdicts made %d OutgoingRelations calls; want 0 (no lazy resolution)",
+			g.outgoingCalls)
+	}
+	if v, ok := fv.Visible["status"]; !ok || v {
+		t.Errorf("unbound ctx: status visible=%v present=%v; want hidden (fail closed)", v, ok)
 	}
 }

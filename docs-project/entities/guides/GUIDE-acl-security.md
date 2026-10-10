@@ -858,14 +858,14 @@ principal's verdict for that type is not `DenyAll` (AllowAll or a
 relation-scoped Query both deliver). The type verdict is resolved once
 per connection and cached. A relation write (member-of / role-relation /
 containment edge — the types that can change a principal's read scope)
-re-derives a **fresh** read gate for the connection: a new `acl.Request`
-whose member-of closure is walked against the current graph, so a
-principal who gains or loses a group membership mid-connection starts or
-stops receiving a type's nudges without reconnecting. (The connection's
-original request memoizes its membership closure for its lifetime; the
-re-derive is what keeps the verdict honest — without it, only the
-per-entity inbound query would refresh, not the principal's own group
-membership.) Both the re-derive and the nudges are coalesced into one
+re-derives a **fresh** read gate for the connection. It resolves the
+principal again into a new `acl.Identity`, which walks the member-of
+closure against the current graph, and opens a new `acl.Request` from
+it. A principal who gains or loses a group membership mid-connection
+therefore starts or stops receiving a type's nudges without
+reconnecting. (An identity holds its membership closure for its
+lifetime. Without the re-derive, only the per-entity inbound query
+would refresh, not the principal's own group membership.) Both the re-derive and the nudges are coalesced into one
 flush window, so a bulk relation import triggers one membership re-walk
 per connection, not one per edge.
 

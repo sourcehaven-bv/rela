@@ -108,8 +108,7 @@ func (e *Engine) CanRelation(
 	if err != nil {
 		return nil, err
 	}
-	req, err := e.resolver.ForPrincipal(
-		principal.Principal{User: user, Tool: principal.ToolCLI, RawUser: rawShown})
+	req, err := e.requestFor(ctx, principal.Principal{User: user, Tool: principal.ToolCLI, RawUser: rawShown})
 	if err != nil {
 		return nil, fmt.Errorf("aclmap: open resolver for %q: %w", user, err)
 	}

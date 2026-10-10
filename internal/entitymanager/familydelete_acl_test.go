@@ -77,6 +77,10 @@ func (a *deniedFaceACL) AuthorizeWrite(ctx context.Context, req acl.WriteRequest
 	return d
 }
 
+// Declarative names the wrapped policy, so a test binds the request identity
+// against it (see entitymanager.BindAs).
+func (a *deniedFaceACL) Declarative() *acl.Declarative { return a.inner.(*acl.Declarative) }
+
 // PermitsReadFace forwards the read gate of the real policy, so the manager
 // finds the same optional capability it finds on [acl.Declarative].
 func (a *deniedFaceACL) PermitsReadFace(
@@ -208,7 +212,7 @@ func TestFamilyDelete_DeniedUnlessEveryFaceIsDeletable(t *testing.T) {
 			t.Run(b.name+"/"+user, func(t *testing.T) {
 				f := newFamilyDeleteFixture(t, b, nil, bothFaces...)
 
-				_, err := f.mgr.DeleteEntity(asUser(user), "POL-1", false)
+				_, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser(user), t, f.mgr), "POL-1", false)
 
 				var forbidden *acl.ForbiddenError
 				if !errors.As(err, &forbidden) {
@@ -252,7 +256,7 @@ func TestFamilyDelete_EveryFaceCapturedAndAudited(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFamilyDeleteFixture(t, b, nil, bothFaces...)
 
-			res, err := f.mgr.DeleteEntity(asUser("admin"), "POL-1", false)
+			res, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser("admin"), t, f.mgr), "POL-1", false)
 			if err != nil {
 				t.Fatalf("DeleteEntity as admin: %v", err)
 			}
@@ -362,7 +366,7 @@ func TestFamilyDelete_FaceAddedDuringDeleteIsAuthorized(t *testing.T) {
 				}
 				f := newFamilyDeleteFixture(t, b, wrap, "draft")
 
-				_, err := f.mgr.DeleteEntity(asUser("drafter"), "POL-1", false)
+				_, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser("drafter"), t, f.mgr), "POL-1", false)
 
 				var forbidden *acl.ForbiddenError
 				if !errors.As(err, &forbidden) {

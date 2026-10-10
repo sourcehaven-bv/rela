@@ -5,6 +5,8 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -179,7 +181,7 @@ func (*World) principalFor(actor string) principal.Principal {
 // covered by unit tests.)
 func (w *World) requestFor(actor string) *acl.Request {
 	w.t.Helper()
-	req, err := w.acl.ForPrincipal(w.principalFor(actor))
+	req, err := w.acl.ForIdentity(acltest.IdentityFor(w.t.Context(), w.t, w.acl, w.principalFor(actor)))
 	if err != nil {
 		w.t.Fatalf("World.requestFor(%q): %v", actor, err)
 	}

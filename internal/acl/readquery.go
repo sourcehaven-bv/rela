@@ -1,7 +1,6 @@
 package acl
 
 import (
-	"context"
 	"slices"
 	"sort"
 
@@ -41,7 +40,7 @@ type ReadQueryResult struct {
 // GraphQuery whose HasInbound predicate matches entities reachable
 // via the role-relations whose confers-role grants read on the type.
 // DenyAll when no role grants any kind of read.
-func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryResult {
+func (r *Request) readQuery(entityType string) ReadQueryResult {
 	// A client ceiling that denies reads of this type short-circuits every
 	// grant path below. Checked first because the ceiling can only ever remove:
 	// if it says no, no role — global, conferred or inherited — can say yes.
@@ -52,7 +51,7 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 		return ReadQueryResult{DenyAll: true}
 	}
 
-	globals := r.Globals(ctx)
+	globals := r.Globals()
 	var (
 		anyGlobal bool
 		faceUnion []entity.Face
@@ -124,8 +123,8 @@ func (r *Request) readQuery(ctx context.Context, entityType string) ReadQueryRes
 	// endpoint" to store.GraphQuery (the absence-query widening), so
 	// handing it an empty set would degrade this gate from "reachable
 	// from ME" to "reachable from ANYONE" — a read bypass, not a
-	// narrowing. Today walkMembers only returns empty for an unstamped
-	// principal, which Declarative.ForPrincipal already rejects; this
+	// narrowing. Today the membership walk only returns empty for an unstamped
+	// principal, which the IdentityResolver already rejects; this
 	// guard states the invariant HERE so the gate does not depend on a
 	// validation living in another file to stay safe.
 	if len(globals.Members) == 0 {

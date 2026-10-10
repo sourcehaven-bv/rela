@@ -29,12 +29,12 @@ assignments:
 	}
 	done := ticket("T-1", map[string]any{"status": "done"})
 
-	live := r.FieldVerdicts(ctxAs("alice"), done).Visible
+	live := r.FieldVerdicts(ctxFor(t, r, "alice"), done).Visible
 	if v, ok := live["assignee"]; !ok || v {
 		t.Fatalf("live: assignee must be hidden on a done ticket, got %v", live)
 	}
 
-	static := r.FieldVerdicts(affordances.WithStaticGrants(ctxAs("alice")), done).Visible
+	static := r.FieldVerdicts(affordances.WithStaticGrants(ctxFor(t, r, "alice")), done).Visible
 	if _, hidden := static["assignee"]; hidden {
 		t.Errorf("static: a conditional grant counts as granted, got %v", static)
 	}
@@ -68,10 +68,10 @@ assignments:
 	}
 	done := ticket("T-1", map[string]any{"status": "done"})
 	keys := []string{"note", "secret"}
-	if hidden := r.RelationFieldVerdicts(ctxAs("alice"), done, "has-planning", keys); !hasKey(hidden, "note") {
+	if hidden := r.RelationFieldVerdicts(ctxFor(t, r, "alice"), done, "has-planning", keys); !hasKey(hidden, "note") {
 		t.Fatalf("live: note must be hidden on a done ticket, got %v", hidden)
 	}
-	hidden := r.RelationFieldVerdicts(affordances.WithStaticGrants(ctxAs("alice")), done, "has-planning", keys)
+	hidden := r.RelationFieldVerdicts(affordances.WithStaticGrants(ctxFor(t, r, "alice")), done, "has-planning", keys)
 	if _, ok := hidden["note"]; ok {
 		t.Errorf("static: note is visible when the grant's when passes, got %v", hidden)
 	}

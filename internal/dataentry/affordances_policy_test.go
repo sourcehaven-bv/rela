@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
@@ -53,8 +55,8 @@ func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
 func patchAs(t *testing.T, app *App, user, id, body string) (status int, respBody string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/"+id, strings.NewReader(body))
-	req = req.WithContext(principal.With(req.Context(),
-		principal.Principal{User: user, Tool: principal.ToolDataEntry}))
+	req = req.WithContext(acltest.Bind(principal.With(req.Context(),
+		principal.Principal{User: user, Tool: principal.ToolDataEntry}), t, app.acl))
 	rec := httptest.NewRecorder()
 	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", id)
 	return rec.Code, rec.Body.String()
@@ -64,8 +66,8 @@ func patchAs(t *testing.T, app *App, user, id, body string) (status int, respBod
 func getAs(t *testing.T, app *App, user, id string) v1.Entity {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/"+id, http.NoBody)
-	req = req.WithContext(principal.With(req.Context(),
-		principal.Principal{User: user, Tool: principal.ToolDataEntry}))
+	req = req.WithContext(acltest.Bind(principal.With(req.Context(),
+		principal.Principal{User: user, Tool: principal.ToolDataEntry}), t, app.acl))
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", id)
 	if rec.Code != http.StatusOK {

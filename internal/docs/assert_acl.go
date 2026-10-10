@@ -119,7 +119,10 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 		return a.luaFail(ls, "%s: building the evaluator failed: %v", verb, err)
 	}
 
-	ctx := principal.With(a.ctx, principal.Principal{User: who, Tool: principal.ToolCLI})
+	ctx, err := acl.BindRequest(principal.With(a.ctx, principal.Principal{User: who, Tool: principal.ToolCLI}), d)
+	if err != nil {
+		return a.luaFail(ls, "%s: resolving %q failed: %v", verb, who, err)
+	}
 	// The claim holds when every face in it is allowed, as the manager
 	// authorizes a family operation on every face it touches; the first
 	// refusal is the decision reported.

@@ -189,15 +189,18 @@ func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID st
 	//
 	// The principal also carries principal_type `webhook`, so an acl.yaml
 	// baseline with `applies_to: [webhook]` caps every hook below its role and
-	// below `everyone`. Every ACL request in the delivery is built from this
-	// ctx principal, so the find, the write and any foreground automation the
-	// write fires all see the same ceiling.
+	// below `everyone`. The edge binds one Request for this principal, so the
+	// find, the write and any foreground automation the write fires all see
+	// the same ceiling.
 	ctx = principal.With(ctx, principal.Webhook(hookID))
-	// Several read-side consumers reuse an acl.Request attached to ctx without
-	// checking whose it is. /hooks is outside attachACLRequest, so none is
-	// attached today; clearing the slot keeps a future middleware's Request,
-	// opened for a different principal, from outliving the swap above.
-	ctx = acl.WithRequest(ctx, nil)
+	// This route is outside /api/, so attachACLRequest did not run: resolve
+	// the hook's identity here, once, as every request edge does. Binding
+	// replaces any Request already on ctx.
+	ctx, err = acl.BindRequest(ctx, h.write.acl())
+	if err != nil {
+		writeWebhookError(w, hookID, err)
+		return
+	}
 
 	result, err := h.runPipeline(ctx, hookID, hook, payload)
 	if err != nil {

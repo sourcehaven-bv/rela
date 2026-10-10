@@ -27,9 +27,9 @@ client_baselines:
 func TestClampedEveryoneGrants(t *testing.T) {
 	t.Parallel()
 	d := mustDeclarative(t, clampedGrantsPolicy)
-	app, err := d.ForPrincipal(verifiedClient("u1", "app"))
+	app, err := OpenRequest(t.Context(), d, verifiedClient("u1", "app"))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("OpenRequest: %v", err)
 	}
 	plain := mustRequest(t, d, "u1")
 
@@ -59,10 +59,10 @@ func TestClampedEveryoneGrants(t *testing.T) {
 func TestClampedAssertedGrants(t *testing.T) {
 	t.Parallel()
 	d := mustDeclarative(t, clampedGrantsPolicy)
-	app, err := d.ForPrincipal(principal.VerifiedFrom("u1", principal.ToolDataEntry,
+	app, err := OpenRequest(t.Context(), d, principal.VerifiedFrom("u1", principal.ToolDataEntry,
 		principal.Claims{PrincipalType: "app"}))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("OpenRequest: %v", err)
 	}
 	plain := mustRequest(t, d, "u1")
 

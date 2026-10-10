@@ -26,7 +26,7 @@ func TestSQLiteLuaReadsHistory(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
-	ctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolScheduler})
+	ctx := boundAs(t, svc, principal.Principal{User: "alice", Tool: principal.ToolScheduler})
 	e := entity.New("", "doc")
 	e.SetString("title", "first")
 	created, err := svc.EntityManager().CreateEntity(ctx, e, entity.CreateOptions{})
@@ -106,7 +106,7 @@ func TestSQLiteLuaHistoryRedactsUnderPolicy(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
-	alice := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolScheduler})
+	alice := boundAs(t, svc, principal.Principal{User: "alice", Tool: principal.ToolScheduler})
 	var ids []string
 	for _, title := range []string{"blocked", "blocker"} {
 		e := entity.New("", "doc")
@@ -121,7 +121,7 @@ func TestSQLiteLuaHistoryRedactsUnderPolicy(t *testing.T) {
 	require.NoError(t, err)
 	waitForVersions(t, svc.Versions().ListVersions, ids[0], 1)
 
-	bob := principal.With(context.Background(), principal.Principal{User: "bob", Tool: principal.ToolScheduler})
+	bob := boundAs(t, svc, principal.Principal{User: "bob", Tool: principal.ToolScheduler})
 	var out strings.Builder
 	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out, lua.WithContext(bob), lua.WithPrincipal(principal.From(bob)))
 	defer rt.Close()
