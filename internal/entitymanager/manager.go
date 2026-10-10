@@ -2610,7 +2610,9 @@ func collectRenameAffectedRelations(ctx context.Context, st store.Store, id stri
 // CreateRelation creates the relation key names, validating endpoints and
 // the relation-type tuple against the metamodel. key.FromFace is the tail,
 // part of the relation's identity: two edges on one triple with different
-// tails are two relations (BUG-64MU2Q). **No automation.**
+// tails are two relations (BUG-64MU2Q). A caller that reports a type-allowlist
+// mismatch itself can let the write through with
+// [entity.RelationOptions.TolerateTypeMismatch]. **No automation.**
 func (m *Manager) CreateRelation(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
@@ -2619,9 +2621,9 @@ func (m *Manager) CreateRelation(
 	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
 	// peer must never let a write skip the ACL: if authz is deferred until
 	// after GetEntity, a denied caller (e.g. --read-only / ReadOnlyACL)
-	// gets a soft "entity not found" instead of a *acl.ForbiddenError,
-	// and the dataentry fallback then writes directly to the store,
-	// bypassing the ACL and audit. The source type feeds the type-level
+	// gets a soft "entity not found" instead of a *acl.ForbiddenError;
+	// before BUG-K6FEVB the dataentry fallback then wrote directly to the
+	// store, bypassing the ACL and audit. The source type feeds the type-level
 	// grant check; it is best-effort (empty if the source doesn't exist
 	// yet), mirroring UpdateRelation/DeleteRelation. Authorization must be
 	// decided from inputs that don't depend on peer existence.
@@ -2658,7 +2660,13 @@ func (m *Manager) CreateRelation(
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, source.typ, target.typ); vErr != nil {
-		return nil, fmt.Errorf("invalid relation: %w", vErr)
+		// A type-allowlist mismatch is the one tolerable failure: the caller
+		// opted in and reports it as a warning. An unknown relation type is
+		// never tolerated.
+		var mismatch *metamodel.InvalidRelationError
+		if !opts.TolerateTypeMismatch || !errors.As(vErr, &mismatch) {
+			return nil, fmt.Errorf("invalid relation: %w", vErr)
+		}
 	}
 	// Keyed on the TAIL too: two edges on the same triple with different
 	// tails are two relations, so a faced create must not be rejected by

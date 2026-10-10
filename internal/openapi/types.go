@@ -8,6 +8,21 @@ type Spec struct {
 	Servers    []Server            `json:"servers,omitempty"`
 	Paths      map[string]PathItem `json:"paths"`
 	Components *Components         `json:"components,omitempty"`
+	// Security applies to every operation; see [SecurityRequirement].
+	Security []SecurityRequirement `json:"security,omitempty"`
+}
+
+// SecurityRequirement maps a [Components.SecuritySchemes] name to the scopes
+// it needs (none, for a bearer or API-key scheme).
+type SecurityRequirement map[string][]string
+
+// SecurityScheme describes how a client authenticates.
+type SecurityScheme struct {
+	Type        string `json:"type"`             // "http" or "apiKey"
+	Scheme      string `json:"scheme,omitempty"` // "bearer", for type http
+	In          string `json:"in,omitempty"`     // "header", for type apiKey
+	Name        string `json:"name,omitempty"`   // the header name, for type apiKey
+	Description string `json:"description,omitempty"`
 }
 
 // Info provides metadata about the API.
@@ -23,9 +38,10 @@ type Server struct {
 	Description string `json:"description,omitempty"`
 }
 
-// Components holds reusable schema definitions.
+// Components holds reusable schema and security scheme definitions.
 type Components struct {
-	Schemas map[string]*Schema `json:"schemas,omitempty"`
+	Schemas         map[string]*Schema         `json:"schemas,omitempty"`
+	SecuritySchemes map[string]*SecurityScheme `json:"securitySchemes,omitempty"`
 }
 
 // PathItem describes operations available on a single path.
@@ -33,6 +49,7 @@ type PathItem struct {
 	Summary     string      `json:"summary,omitempty"`
 	Description string      `json:"description,omitempty"`
 	Get         *Operation  `json:"get,omitempty"`
+	Put         *Operation  `json:"put,omitempty"`
 	Post        *Operation  `json:"post,omitempty"`
 	Patch       *Operation  `json:"patch,omitempty"`
 	Delete      *Operation  `json:"delete,omitempty"`
@@ -76,6 +93,13 @@ type Response struct {
 // MediaType provides schema and examples for a media type.
 type MediaType struct {
 	Schema *Schema `json:"schema,omitempty"`
+	// Encoding describes the parts of a multipart body, keyed by property.
+	Encoding map[string]Encoding `json:"encoding,omitempty"`
+}
+
+// Encoding describes one part of a multipart request body.
+type Encoding struct {
+	ContentType string `json:"contentType,omitempty"`
 }
 
 // Header describes a single header.

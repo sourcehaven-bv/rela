@@ -336,7 +336,7 @@ func (h *writeHandler) relationGateOK(
 		h.writeRelationsValidationError(w, r, err)
 		return false
 	}
-	writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation source", err.Error())
+	writeInternalError(w, r, "read_failed", "Failed to read relation source", err)
 	return false
 }
 
@@ -347,7 +347,7 @@ func (h *writeHandler) relationSourcesOr500(
 ) ([]relationSource, bool) {
 	sources, err := h.affordances.relationSources(r.Context(), pathEntity, peer, direction, relType)
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation source", err.Error())
+		writeInternalError(w, r, "read_failed", "Failed to read relation source", err)
 		return nil, false
 	}
 	return sources, true
@@ -1080,7 +1080,12 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 		if writeForbiddenIfACLDenied(w, err) {
 			return
 		}
-		writeV1Error(w, r, http.StatusInternalServerError, "delete_failed", "Failed to delete entity", err.Error())
+		// Another request deleted it between the read above and this write.
+		if errors.Is(err, entitymanager.ErrEntityNotFound) {
+			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+			return
+		}
+		writeInternalError(w, r, "delete_failed", "Failed to delete entity", err)
 		return
 	}
 
@@ -1188,7 +1193,7 @@ func (h *writeHandler) edgeSource(
 			h.writeRelationsValidationError(w, r, err)
 			return nil, "", false
 		}
-		writeV1Error(w, r, http.StatusInternalServerError, "read_failed", "Failed to read relation", err.Error())
+		writeInternalError(w, r, "read_failed", "Failed to read relation", err)
 		return nil, "", false
 	}
 	return served, tail, true
@@ -1233,25 +1238,28 @@ func (h *writeHandler) writeRelationsValidationError(w http.ResponseWriter, r *h
 // the structured 403 path; a dangling-peer structuralError maps to 422
 // (the reference did not resolve, so the edge was not stored —
 // BUG-K6FEVB); an edge that concurrent requests kept creating and deleting
-// under this one maps to 409; everything else falls through to the
-// 500-with-detail body.
+// under this one maps to 409; everything else is a 500 whose detail names
+// the relation, op and target, with the cause in the server log.
 func (h *writeHandler) writeRelationsApplyError(w http.ResponseWriter, r *http.Request, err error) {
 	if writeForbiddenIfACLDenied(w, err) {
 		return
 	}
+	detail := reconcileDetail(err)
 	if errors.Is(err, entitymanager.ErrRelationAlreadyExists) || errors.Is(err, entitymanager.ErrRelationNotFound) {
 		writeV1Error(w, r, http.StatusConflict, "conflict",
-			"A concurrent request changed the same relation; retry", reconcileDetail(err))
+			"A concurrent request changed the same relation; retry", detail)
 		return
 	}
 	if se, ok := asStructuralError(err); ok {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, se.Code, se.Detail, se.Path)
 		return
 	}
-	writeV1Error(w, r, http.StatusInternalServerError,
-		"relation_write_failed",
+	if detail != "" {
+		detail += "; "
+	}
+	writeInternalErrorDetail(w, r, "relation_write_failed",
 		"Failed to apply relation changes after entity update; the entity may have been updated",
-		reconcileDetail(err))
+		detail+internalErrorDetail, err)
 }
 
 func (h *writeHandler) handleV1CreateRelation(
@@ -1554,7 +1562,14 @@ func (h *writeHandler) handleV1CloneEntity(
 		if writeForbiddenIfACLDenied(w, err) {
 			return
 		}
-		writeV1Error(w, r, http.StatusInternalServerError, "clone_failed", "Failed to clone entity", err.Error())
+		// The clone is a create, so it fails validation like one: a
+		// `unique:` property always collides with its source.
+		var verr *entitymanager.ValidationError
+		if errors.As(err, &verr) {
+			writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", verr.Error())
+			return
+		}
+		writeInternalError(w, r, "clone_failed", "Failed to clone entity", err)
 		return
 	}
 	newEntity := cloneResult.Entity
@@ -1593,7 +1608,7 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 
 	cf, err := conflict.ParseConflictedFile(absPath, st.Meta)
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "parse_failed", "Failed to parse conflict", err.Error())
+		writeInternalError(w, r, "parse_failed", "Failed to parse conflict", err)
 		return
 	}
 
@@ -1629,18 +1644,21 @@ func (h *writeHandler) handleV1ConflictResolve(w http.ResponseWriter, r *http.Re
 	// as an external edit, keeping index/SSE consumers in sync.
 	resolvedEntity, resolvedRelation, err := conflict.Resolve(cf, resolution)
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "resolve_failed", "Failed to resolve", err.Error())
+		// Resolve fails only when the two sides are not both parseable
+		// entities or both relations: a fact about the file, not the server.
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "conflict_unresolvable",
+			"The conflict cannot be resolved automatically", "Resolve it by editing the file")
 		return
 	}
 	if !h.authorizeConflictResolve(r.Context(), w, resolvedEntity, resolvedRelation) {
 		return
 	}
 	if err := conflict.ValidateResolved(resolvedEntity, st.Meta); err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "resolve_failed", "Failed to resolve", err.Error())
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 		return
 	}
 	if err := conflict.WriteResolved(absPath, resolvedEntity, resolvedRelation); err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "resolve_failed", "Failed to resolve", err.Error())
+		writeInternalError(w, r, "resolve_failed", "Failed to resolve", err)
 		return
 	}
 	h.recordConflictResolveAudit(r.Context(), req.Path, resolvedEntity, resolvedRelation)
