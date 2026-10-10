@@ -14,6 +14,7 @@ import (
 // The sqlite twin of TestCountPushdown_EqualsListPushdown: the count and the
 // list render as different SQL, so parity is checked on the backend itself.
 func TestCountPushdown_EqualsListPushdown_SQLite(t *testing.T) {
+	t.Parallel()
 	db, err := sqlitedb.Open(context.Background(), sqlitedb.Options{
 		Path: filepath.Join(t.TempDir(), "count.db"),
 	})
