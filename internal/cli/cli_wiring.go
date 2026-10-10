@@ -79,6 +79,10 @@ type writeServices struct {
 	// VersionTags writes version tags through the entitymanager
 	// (TKT-VO6VG9). Nil when no Services was assembled.
 	VersionTags versionTagWriter
+	// Comments is the commentary service as the migration commands use it:
+	// they move and drop its threads alongside the rows they relocate
+	// (BUG-6OZBP9). Nil: accepted — the project has commenting disabled.
+	Comments datamigration.CommentThreads
 }
 
 // entityWriter is the write surface the CLI's mutating subcommands call. See
@@ -188,6 +192,11 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	}
 	if tags := appbuild.VersionTags(svc); tags != nil {
 		write.VersionTags = tags
+	}
+	// Assigned only when present: a nil *comments.Service stored in the
+	// interface would pass the engine's nil check and panic on first use.
+	if c := svc.Comments(); c != nil {
+		write.Comments = c
 	}
 	return &cliBundles{
 		read:       &read,

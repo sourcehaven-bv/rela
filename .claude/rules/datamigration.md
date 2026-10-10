@@ -60,10 +60,14 @@ paths:
   `db migrate` and `history-purge`): operator-shell trust, no ACL, explicit
   audit records (`data-migration`/`data-gc`), `store.WithAttribution`, and
   synchronous pre-delete version capture on pg (the sweep cannot reconstruct
-  deleted rows). **Steps must stay idempotent — with the applied list as the
-  only double-apply guard, re-run IS the crash recovery.** The Lua step is a
-  pure transform (patch in, patch out, engine applies); never hand it a write
-  handle.
+  deleted rows). Below the entitymanager no `AliasRewriter` fires, so the
+  engine also keeps id-keyed side stores in step itself: a face move MOVES the
+  comment thread and a drop deletes it, before the row changes and again after
+  (`datamigration.CommentThreads`, BUG-6OZBP9). A new raw-store writer, or a
+  new id-keyed side store, owes the same. **Steps must stay idempotent — with
+  the applied list as the only double-apply guard, re-run IS the crash
+  recovery.** The Lua step is a pure transform (patch in, patch out, engine
+  applies); never hand it a write handle.
 
 - **Perf seeding** (TKT-1U8XYN, `internal/perfseed`, `rela dev seed`) is the
   fourth raw-store exception, under the same terms: operator shell, attributed
