@@ -5163,6 +5163,24 @@ its subtree, with breadcrumbs leading back out. The twisty beside a name
 expands a subtree in place instead. `default_depth` picks how many levels are
 open on first load; everything deeper stays one click away.
 
+### Scrolling through time
+
+Every day has the same width: 4px at the Quarter zoom, 12px at Month and
+40px at Week. A plan longer than the screen scrolls sideways; a shorter one is
+stretched to fill it. The tree column and the date axis stay in place while
+you scroll, and a bar's name stays beside the tree column while the bar
+scrolls past. A bar ends at the end of its end date, so a Monday-to-Friday
+task covers five full days.
+
+- **Now** scrolls today into the middle of the screen. The chart opens there
+  too when the plan covers today. When today lies just outside the plan, the
+  axis is extended to include it; when it is further away, **Now** is
+  disabled.
+- **‹** and **›** scroll one week, month or quarter, matching the zoom.
+- Changing the zoom keeps the day at the left edge where it was.
+- A plan spanning many years at a fine zoom is drawn with narrower days, and
+  the chart is flagged **compressed**.
+
 ### Planned versus rolled-up spans
 
 Each source maps up to three date roles, all independently optional:

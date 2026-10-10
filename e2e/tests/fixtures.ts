@@ -1040,6 +1040,11 @@ entities:
       title:
         type: string
         required: true
+      # gantt-scroll.spec.ts: the roadmap gantt's planned window.
+      start:
+        type: date
+      end:
+        type: date
 
   step:
     label: Step
@@ -1051,6 +1056,10 @@ entities:
         required: true
       assignee:
         type: string
+      start:
+        type: date
+      end:
+        type: date
 
 relations:
   has_step:
@@ -1707,6 +1716,18 @@ navigation:
     analyze: true
   - label: "Conflicts"
     conflicts: true
+
+# gantt-scroll.spec.ts: plans with their steps, sideways scroll and Now.
+# Kept below navigation: specs that splice their own blocks in at
+# "navigation:" (space-create-page-link.spec.ts declares its own gantts:)
+# then replace this one instead of duplicating the key.
+gantts:
+  roadmap:
+    title: "Roadmap"
+    hierarchy: [has_step]
+    sources:
+      plan: { start: start, end: end, where: ["start!="] }
+      step: { start: start, end: end, where: ["start!="] }
 `;
 
 /** Custom-app HTML used by apps.spec.ts. Exercises the rela bridge end-to-end:
