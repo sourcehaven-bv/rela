@@ -546,6 +546,10 @@ type App struct {
 	// implementations with a policy-driven resolver via the same
 	// interface.
 	fieldResolver FieldVerdictResolver
+	// fieldScoper overrides the search form of fieldResolver. Nil, the
+	// production case, derives it from fieldResolver ([searchFieldScoper]).
+	// Tests that stub fieldResolver set it to the stub's search form.
+	fieldScoper visibility.FieldScoper
 
 	// webhook holds the inbound-IdP webhook receiver (verifier + target action +
 	// dedup). nil until SetWebhookReceiver is called, in which case the

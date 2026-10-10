@@ -93,7 +93,7 @@ assignments:
   dana: lead
 `
 
-func mustScheduledMailACL(t *testing.T, st store.Store, meta *metamodel.Metamodel) (*acl.Declarative, visibility.FieldRedactor) {
+func mustScheduledMailACL(t *testing.T, st store.Store, meta *metamodel.Metamodel) (*acl.Declarative, fieldReadPolicy) {
 	t.Helper()
 	var p acl.Policy
 	require.NoError(t, yaml.Unmarshal([]byte(scheduledMailACL), &p))
@@ -139,7 +139,7 @@ func TestRunScheduledTemplate_RedactsPerRecipientACL(t *testing.T) {
 	svc := &Services{
 		store: st, meta: meta,
 		aclDeclarative: d,
-		fieldRedactor:  redact,
+		fieldReads:     redact,
 		cfgLoader: staticConfig{"mail-templates.yaml": []byte(`mail_templates:
   digest:
     subject: Daily digest
@@ -243,7 +243,7 @@ assignments:
 	svc := &Services{
 		store: st, meta: meta,
 		aclDeclarative: d,
-		fieldRedactor:  redact,
+		fieldReads:     redact,
 		cfgLoader: staticConfig{"mail-templates.yaml": []byte(`mail_templates:
   digest:
     subject: Daily digest
@@ -327,7 +327,7 @@ func TestRunScheduledTemplate_RequireVisibleContent(t *testing.T) {
 		return &Services{
 			store: st, meta: meta,
 			aclDeclarative: d,
-			fieldRedactor:  redact,
+			fieldReads:     redact,
 			cfgLoader: staticConfig{"mail-templates.yaml": []byte(templates), "schedules.yaml": []byte(`tasks:
   - name: digest
     template: digest
@@ -436,7 +436,7 @@ assignments:
 	svc := &Services{
 		store: st, meta: meta,
 		aclDeclarative: d,
-		fieldRedactor:  redact,
+		fieldReads:     redact,
 		cfgLoader: staticConfig{"mail-templates.yaml": []byte(`mail_templates:
   digest:
     subject: Daily digest
@@ -495,7 +495,7 @@ func TestRunScheduledTemplate_SuppressionLogDoesNotDiscloseHiddenContent(t *test
 	svc := &Services{
 		store: st, meta: meta,
 		aclDeclarative: d,
-		fieldRedactor:  redact,
+		fieldReads:     redact,
 		cfgLoader: staticConfig{"mail-templates.yaml": []byte(`mail_templates:
   digest:
     subject: Daily digest

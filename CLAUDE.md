@@ -114,6 +114,31 @@ your session id or `"$(hostname)-$$"`:
   collaborators returns `error` and validates them up front. Never substitute a
   no-op or sentinel implementation silently — that defers the failure to a
   downstream symptom that is much harder to diagnose.
+- **Search applies `visible:` inside the store query; nothing calls back into
+  the ACL per hit.** `affordances.PolicyResolver.SearchFieldScope` compiles one
+  type's `visible:` grants for the bound request into a `search.FieldScope`: the
+  gated properties, and per grant the fields it shows plus a `store.GraphQuery`
+  for the rows it applies to. A role held through `role_relations` becomes
+  `acl.Request.LocalRolePredicate`, the same predicate the row gate uses.
+  Grants follow the role union (BUG-Y5UF3K): a role without a `visible:`
+  block for the type shows every property on the rows it applies to and
+  reads. The
+  scope rides on `search.TypeScope.Fields`; each backend applies it in one
+  batch per page (pgstore computes the grant predicates in the search SQL).
+  Which fields matched is always judged in Go: `search.MatchTextFields`, or
+  bleve's `MatchedFields`. Never judge it with SQL `lower()`, which folds case
+  differently from the Go-lowered `search_text` and can count a visible field
+  the search did not match on. A matcher may leave a field out, never add
+  one. `visibility.SearchScoped` is the one gated search path (the MCP
+  searcher and `/_search` both run it).
+  This only works because **every `visible:` `when:` must lower exactly
+  through `queryplan.LowerScope`, or the policy fails to load** (AND of
+  property equalities and `related(...)`; no `or`, `not`, `has_role`,
+  `has_relation`, `count_relations`, `has_current_user`). Do not loosen that check into a Go
+  fallback: a condition the store cannot answer would need the per-row
+  callback back. `TestSearchFieldScope_AgreesWithFieldVerdicts` pins the
+  compiled scope to `FieldVerdicts`; `storetest.RunFieldScopeSearchTests` pins
+  every backend.
 - **Read-out paths go through visibility wrappers, base readers stay ungated.**
   Read-side ACL (entity row-gating + field-level `visible:` redaction) is
   enforced by `internal/visibility` decorators (`Reader`, the tracer decorator)

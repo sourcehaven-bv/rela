@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 
 	"gopkg.in/yaml.v3"
 )
@@ -37,8 +38,14 @@ func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
+	// The traversal binder production wires (ResolverFromProfile), so a
+	// `related(...)` grant compiles here as it does there.
+	traversals, err := relresolve.NewStoreBinder(app.Meta(), relresolve.Ungated, app.store)
+	if err != nil {
+		t.Fatalf("relresolve.NewStoreBinder: %v", err)
+	}
 	resolver, err := affordances.New(app.Meta(),
-		storeRelationLookup{st: app.store}, declarative)
+		storeRelationLookup{st: app.store}, declarative, affordances.WithTraversals(traversals))
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}

@@ -13,40 +13,42 @@ follow-up, not a correctness gap" but did not actually ticket).
 
 ## Context
 
-TKT-GGQ0JT closed the `/_search` match-on-hidden-field oracle. The
-pgstore-native path (`internal/store/pgstore/visiblesearch.go`,
-`SearchVisibleFields` / `fieldVisibleForEntity`) computes per-field match
-provenance **in Go** over the already-scanned candidate rows, using
-`search.MatchTextFields`. Correct and cheap (the row is already in hand from the
-visibility scan), but it does the per-field match in the app, not the DB.
+TKT-GGQ0JT closed the `/_search` match-on-hidden-field oracle. The search is now
+given a per-request `search.FieldScope` for each type (`TypeScope.Fields`),
+compiled from the `visible:` grants. The pgstore path
+(`internal/store/pgstore/visiblesearch.go`, `SearchVisible`) splits the work:
+
+- SQL runs the trigram pre-filter and the visibility predicates, and reports
+per row which field grants hold (the `field_grants` column, built by
+`fieldGrantColumn`).
+- Go judges which fields the text matched (`fieldCheck`, using
+`search.MatchTextFields`). A row that no visible property admits has its body
+read in one batch per page.
 
 ## Opportunity
 
-For the **static** (predicate-free) `visible:` case, the visible-field set is
-known per (principal, type) and could be pushed into the SQL as a
-column-projection / per-field match expression — a two-stage query: the
-tsvector/trgm predicate narrows candidates cheaply (uses the index), then a
-per-visible-field expression runs server-side over the small candidate set. This
-avoids shipping hidden-field text to the app at all and keeps the match faithful
-to Postgres's own operators.
+Judge the matched fields in SQL too, so hidden-field text never reaches the app.
+The trigram predicate narrows candidates cheaply; a per-field expression then
+runs server-side over the small candidate set.
 
 ## Constraints / non-goals
 
+- The SQL match must fold case exactly as Go's `strings.ToLower` does, which
+is how `search_text` is written. PostgreSQL's `lower()` does not: it folds 'İ'
+to "i" plus U+0307, Go to "i". A gate judged with `lower()` admitted a row whose
+only real match was a hidden field. That is why the match moved to Go.
+`storetest.RunFieldScopeSearchTests` (`FoldDiffersBetweenGoAndSQL`) pins it.
 - `search_text` is a single concatenated column today
 (`internal/store/pgstore/entity.go` `entitySearchText`), so per-field SQL
-matching needs either per-field columns/tsvectors or JSONB per-key matching —
-real schema/query work.
-- **Predicate-conditioned** (`when:`) visibility is entity-dependent and can't
-be a static projection; it stays on the Go per-candidate path. `log()` /
-document the fallback, mirroring the bleve-10k-floor disclosure in TKT-BA8BSX.
-- Correctness must stay identical — `storetest.RunVisibleFieldSearchTests` is
-the guard; any pushdown must keep it green (and match the Go ground truth).
+matching needs either per-field Go-folded columns or JSONB per-key matching.
+- Correctness must stay identical: `storetest.RunFieldScopeSearchTests` is the
+guard, and pgstore runs it at the default and at a two-row page size.
 
 ## Reference files
 
-- `internal/store/pgstore/visiblesearch.go` — `SearchVisibleFields`,
-`fieldVisibleForEntity`, `buildVisibleSearchSQL`
-- `internal/store/pgstore/entity.go` — `entitySearchText`, `search_text`
-- `internal/store/storetest/visiblesearch.go` — `RunVisibleFieldSearchTests`
+- `internal/store/pgstore/visiblesearch.go`: `SearchVisible`, `visiblePages`,
+`fieldGrantColumn`, `fieldCheck`, `buildVisibleSearchSQL`
+- `internal/store/pgstore/entity.go`: `entitySearchText`, `search_text`
+- `internal/store/storetest/visiblesearch.go`: `RunFieldScopeSearchTests`
 
 Informed by RES-H5AB7S.

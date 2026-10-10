@@ -153,7 +153,7 @@ func TestScheduledLuaWriteDeps_RedactsHiddenField(t *testing.T) {
 }
 
 // TestNoPolicy_RedactorHidesNothing pins the byte-parity path. A project with
-// no acl.yaml must behave exactly as it did pre-ACL; if buildFieldRedactor
+// no acl.yaml must behave exactly as it did pre-ACL; if buildFieldPolicy
 // returned a policy-backed redactor (or nil) here instead of NopRedactor, this
 // would regress silently for every existing project.
 func TestNoPolicy_RedactorHidesNothing(t *testing.T) {
@@ -190,7 +190,7 @@ func TestNoPolicy_RedactorHidesNothing(t *testing.T) {
 }
 
 // TestPolicyWithoutAffordanceGrants_HidesNothing covers the third
-// buildFieldRedactor branch: an acl.yaml that gates ROWS but declares no
+// buildFieldPolicy branch: an acl.yaml that gates ROWS but declares no
 // `visible:` grants. HasAffordanceGrants is false there, so the redactor must
 // be NopRedactor — not a policy-backed one that hides nothing by accident, and
 // not an error. Row-only policies are a normal, common configuration.

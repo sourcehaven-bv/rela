@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -114,6 +115,12 @@ func (p PolicyRedactor) HiddenProperties(ctx context.Context, e *entity.Entity) 
 	return out
 }
 
+// SearchFieldScope implements [FieldScoper]: the resolver's `visible:`
+// verdict for entityType, in the form the search backend applies.
+func (p PolicyRedactor) SearchFieldScope(ctx context.Context, entityType string) (*search.FieldScope, error) {
+	return p.r.SearchFieldScope(ctx, entityType)
+}
+
 // NopGate is the permit-all [RowGate] for wirings without an ACL policy —
 // the byte-parity path (behavior identical to pre-ACL reads).
 type NopGate struct{}
@@ -133,4 +140,9 @@ type NopRedactor struct{}
 // HiddenProperties implements [FieldRedactor].
 func (NopRedactor) HiddenProperties(context.Context, *entity.Entity) map[string]struct{} {
 	return nil
+}
+
+// SearchFieldScope implements [FieldScoper]: nothing is hidden.
+func (NopRedactor) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, nil //nolint:nilnil // nil scope is the documented "nothing hidden"
 }

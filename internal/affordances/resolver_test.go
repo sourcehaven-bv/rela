@@ -342,7 +342,7 @@ func TestResolver_HasGlobalRole(t *testing.T) {
 roles:
   admin: {}
   triager:
-    visible:
+    fields:
       ticket:
         - field: assignee
           when: "has_global_role(current_user, 'admin')"
@@ -355,10 +355,12 @@ assignments:
 		t.Fatalf("New: %v", err)
 	}
 
-	// alice is triager but not admin → assignee hidden.
+	// alice is triager but not admin → assignee read-only. A `fields:` block:
+	// a `visible:` condition must lower to a store query, and host functions
+	// do not (TestNew_VisibleWhenMustLower).
 	fv := r.FieldVerdicts(ctxFor(t, r, "alice"), ticket("T-1", nil))
-	if v, ok := fv.Visible["assignee"]; !ok || v {
-		t.Errorf("assignee should be hidden for non-admin alice, got ok=%v v=%v", ok, v)
+	if v, ok := fv.Writable["assignee"]; !ok || v {
+		t.Errorf("assignee should be read-only for non-admin alice, got ok=%v v=%v", ok, v)
 	}
 }
 

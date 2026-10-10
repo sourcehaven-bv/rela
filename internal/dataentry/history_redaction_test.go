@@ -89,7 +89,8 @@ const historyEntityType = "ticket"
 
 // TKT-73C6B2 — the conditional-visible policy shared by the redaction tests:
 // `priority` is visible only when the entity has an outgoing `depends_on` edge (a
-// subject-world condition). Live, with the edge present, it shows; in history
+// subject-world condition, written as related() because `visible:` conditions
+// must lower to a store query). Live, with the edge present, it shows; in history
 // the marker neuters the lookup so it fails closed.
 const historyRedactionACL = `
 roles:
@@ -101,13 +102,13 @@ roles:
         - field: title
         - field: status
         - field: priority
-          when: "has_relation(entity, 'depends_on')"
+          when: "related(entity, 'depends_on')"
 assignments:
   alice: triager
   dana: triager
 `
 
-// Scenario 1/2 (fail closed): a has_relation-gated visible field that is shown
+// Scenario 1/2 (fail closed): a related()-gated visible field that is shown
 // on the LIVE entity (edge present) is HIDDEN in the historical snapshot — the
 // marker neuters the subject-world lookup so the grant can't be affirmed. This
 // holds even though the live store STILL has the edge, which is exactly the
@@ -120,6 +121,8 @@ func TestHistoryRedaction_SubjectConditional_FailsClosed(t *testing.T) {
 		Type:       "ticket",
 		Properties: map[string]any{"title": "t", "priority": "high", "status": "open"},
 	})
+	// related(...) matches an edge to an entity that exists.
+	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "dep"}})
 	// Live edge present → the grant passes on a LIVE read.
 	if _, err := app.store.CreateRelation(context.Background(),
 		entity.RelationKey{From: "TKT-001", Type: "depends_on", To: "TKT-002"}, nil); err != nil {

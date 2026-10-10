@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"sync/atomic"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -35,26 +36,23 @@ type Visible struct {
 	inner  Searcher
 	gq     store.GraphQueryer
 	reader store.EntityReader
-	// prov is the match-provenance source used by SearchVisibleFields; set
-	// when inner satisfies fieldMatchProvenance (the Service case). When nil,
-	// SearchVisibleFields FAILS CLOSED (yields ErrScope) rather than silently
-	// skipping field redaction — a missing provenance source is a wiring bug,
-	// not a reason to leak.
+	// prov is the match-provenance source the field check uses; set when
+	// inner satisfies fieldMatchProvenance (the Service case). When nil, a
+	// search over a field-gated type FAILS CLOSED (yields ErrScope) rather
+	// than silently skipping the check: a missing provenance source is a
+	// wiring bug, not a reason to leak.
 	prov fieldMatchProvenance
 }
 
-// compile-time checks
-var (
-	_ VisibleSearcher      = (*Visible)(nil)
-	_ FieldVisibleSearcher = (*Visible)(nil)
-)
+// compile-time check
+var _ VisibleSearcher = (*Visible)(nil)
 
 // NewVisible builds the generic scope-filtering wrapper around an
 // existing searcher and the store's graph-query capability. inner must also
-// satisfy [store.EntityReader] and (for the field-visibility filter) report
-// match provenance — a *Service does both. A non-provenance inner does not
-// disable field redaction silently: SearchVisibleFields fails closed on it (a
-// consumer that never calls SearchVisibleFields is unaffected).
+// satisfy [store.EntityReader] and (for the field check) report match
+// provenance — a *Service does both. A non-provenance inner does not disable
+// the field check silently: a search over a field-gated type fails closed on
+// it (a scope without [TypeScope.Fields] is unaffected).
 //
 // The reader defaults to inner when inner is a store.EntityReader; pass a
 // distinct reader only in tests. Requiring the reader here means the single
@@ -77,6 +75,21 @@ func NewVisible(inner Searcher, gq store.GraphQueryer) (*Visible, error) {
 	return v, nil
 }
 
+// SearchVisible yields the hits the scope admits, in backend order, at most
+// q.Limit of them. A type whose scope entry carries [TypeScope.Fields] keeps a
+// hit only when [FieldScope.AdmitsMatch] does, so a search cannot confirm a
+// hidden property's value by returning its entity; the limit counts the hits
+// that survive.
+//
+// It first collects every hit the scope admits, uncapped (see [Visible] for
+// the backend's own candidate bound), so memory grows with that hit list. The
+// field check then runs on it in pages of 256 hits, and stops once q.Limit
+// hits survived. A page costs one entity read, and one
+// [store.GraphQueryer.MatchingFaces] per conditional grant per type in the
+// page, so the reads per page do not grow with the number of rows.
+//
+// It fails closed (ErrScope) when a gated type needs the match provenance and
+// inner reports none: skipping the check would reopen the oracle.
 func (v *Visible) SearchVisible(
 	ctx context.Context, q Query, scope map[string]TypeScope,
 ) iter.Seq2[Hit, error] {
@@ -86,130 +99,140 @@ func (v *Visible) SearchVisible(
 			yield(Hit{}, err)
 			return
 		}
-		emitted := 0
-		for _, h := range hits {
-			if q.Limit > 0 && emitted >= q.Limit {
-				return
-			}
-			if !yield(h, nil) {
-				return
-			}
-			emitted++
-		}
-	}
-}
-
-// SearchVisibleFields is SearchVisible plus property-level redaction of the
-// search oracle: after entity-level scoping, a hit is dropped when every field
-// its text matched is one the principal may not see (hidden per the consumer's
-// HiddenFieldsFunc). A hit that matched a visible property — or matched the id
-// or content, which are never property-gated — always survives. This closes
-// the match-on-hidden-field oracle (a search that matched only a redacted
-// property must not confirm that property's value by returning the entity).
-//
-// hidden is supplied by the consumer (the search package never sees a
-// principal). A nil hidden func, or one returning an empty set, leaves the hit
-// unaffected. Errors from hidden fail closed: the hit is dropped and the error
-// surfaced, so an ACL resolution failure never widens visibility.
-//
-// If a hidden func is supplied but this Visible has no provenance source
-// (inner is not a *Service), the method FAILS CLOSED — it yields ErrScope
-// rather than silently returning un-redacted hits. A missing provenance source
-// is a wiring bug (a Searcher wrapped so the type assertion in NewVisible
-// misses), and silently skipping redaction is exactly the oracle this closes.
-func (v *Visible) SearchVisibleFields(
-	ctx context.Context, q Query, scope map[string]TypeScope, hidden HiddenFieldsFunc,
-) iter.Seq2[Hit, error] {
-	return func(yield func(Hit, error) bool) {
-		if hidden != nil && q.Text != "" && v.prov == nil {
+		gated := q.Text != "" && anyFieldScope(scope)
+		if gated && v.prov == nil {
 			yield(Hit{}, fmt.Errorf(
-				"%w: field-visibility requested but the searcher reports no match provenance", ErrScope))
-			return
-		}
-		hits, err := v.visibleHits(ctx, q, scope)
-		if err != nil {
-			yield(Hit{}, err)
+				"%w: field visibility requested but the searcher reports no match provenance", ErrScope))
 			return
 		}
 		emitted := 0
-		for _, h := range hits {
-			if q.Limit > 0 && emitted >= q.Limit {
-				return
+		pageSize := int(fieldCheckPage.Load())
+		for start := 0; start < len(hits); start += pageSize {
+			page := hits[start:min(start+pageSize, len(hits))]
+			if gated {
+				if page, err = v.fieldVisible(ctx, q, scope, page); err != nil {
+					yield(Hit{}, err)
+					return
+				}
 			}
-			keep, err := v.fieldVisible(ctx, q, h, hidden)
-			if err != nil {
-				yield(Hit{}, err)
-				return
+			for _, h := range page {
+				if q.Limit > 0 && emitted >= q.Limit {
+					return
+				}
+				if !yield(h, nil) {
+					return
+				}
+				emitted++
 			}
-			if !keep {
-				continue // matched only on hidden fields — drop (oracle closed)
-			}
-			if !yield(h, nil) {
-				return
-			}
-			emitted++
 		}
 	}
 }
 
-// fieldVisible decides whether hit h survives the property-level filter. It
-// returns true (keep) when field filtering does not apply — no hidden func or
-// no text query — and otherwise keeps the hit only if at least one matched
-// field is NOT hidden.
-//
-// The entity is loaded ONCE here and threaded through BOTH the hidden-field
-// verdict and the match-provenance computation, so a concurrent write cannot
-// make the two observe different snapshots (fail-closed stays snapshot-
-// consistent). Fail-closed points: a stale/missing entity drops the hit (a
-// deleted-but-still-indexed candidate cannot prove a visible-field match); a
-// hidden-func error drops the hit and surfaces the error.
-func (v *Visible) fieldVisible(ctx context.Context, q Query, h Hit, hidden HiddenFieldsFunc) (bool, error) {
-	if hidden == nil || q.Text == "" {
-		return true, nil
-	}
-	// The FACE that matched, not the bare id: the hidden-field verdict and the
-	// match provenance must both be computed against the text the backend
-	// actually scored. Reading the default face under a non-default world would
-	// ask "which fields matched?" of bytes that were never searched — and the
-	// answer decides whether the hit survives, so a mismatch drops hits the
-	// principal is entitled to (or keeps ones the oracle should close). Under
-	// the default world h.Face is zero and this is exactly GetEntity.
-	e, err := v.reader.GetEntity(ctx, entity.Ref{ID: h.ID, Face: h.Face})
-	if err != nil {
-		// Stale hit: entity vanished between indexing and now. Cannot prove the
-		// match came from a visible field → drop (fail closed).
-		return false, nil //nolint:nilerr // stale index hit is dropped, not an error
-	}
-	hiddenFields, herr := hidden(ctx, h, e)
-	if herr != nil {
-		return false, fmt.Errorf("%w: hidden-fields for %q: %w", ErrScope, h.ID, herr)
-	}
-	if len(hiddenFields) == 0 {
-		return true, nil // nothing hidden for this principal on this hit
-	}
-	matched := v.prov.MatchedFields(e, q.Text)
-	return MatchHasVisibleField(matched, hiddenFields), nil
-}
+// fieldCheckPage is how many hits one field check judges together. It is a
+// variable only so a test can shrink it and see the per-page cost.
+var fieldCheckPage = func() *atomic.Int64 {
+	var n atomic.Int64
+	n.Store(defaultFieldCheckPage)
+	return &n
+}()
 
-// MatchHasVisibleField reports whether at least one matched field is NOT in the
-// hidden set — i.e. the hit matched something the principal may see, so it must
-// survive. [FieldID] and [FieldContent] are never property-gated, so a match on
-// either always counts as visible regardless of the hidden set: this guards the
-// documented never-gated invariant even if a caller mis-supplies "id"/"content"
-// in the hidden set (a false drop would silently vanish an entity from search).
-//
-// Shared by the generic and pgstore-native filters so both apply the invariant
-// identically (conformance-pinned).
-func MatchHasVisibleField(matched, hidden map[string]struct{}) bool {
-	for f := range matched {
-		if f == FieldID || f == FieldContent {
-			return true
-		}
-		if _, isHidden := hidden[f]; !isHidden {
+// defaultFieldCheckPage is the production value of fieldCheckPage.
+const defaultFieldCheckPage = 256
+
+// anyFieldScope reports whether some entry gates properties.
+func anyFieldScope(scope map[string]TypeScope) bool {
+	for _, ts := range scope {
+		if ts.Fields != nil {
 			return true
 		}
 	}
 	return false
+}
+
+// fieldVisible keeps the hits of page that [FieldScope.AdmitsMatch] keeps,
+// in order.
+//
+// Each hit is judged on the FACE that matched, not the bare id: the verdict
+// and the match provenance must both be computed against the text the backend
+// scored. The rows are read once, and that snapshot feeds both the provenance
+// and the grant conditions. A hit whose row is gone (a stale index entry) is
+// dropped, since nothing can prove its match came from a visible field.
+func (v *Visible) fieldVisible(ctx context.Context, q Query, scope map[string]TypeScope, page []Hit) ([]Hit, error) {
+	idsByType := map[string][]string{}
+	for _, h := range page {
+		if ts, ok := scope[h.Type]; ok && ts.Fields != nil {
+			idsByType[h.Type] = append(idsByType[h.Type], h.ID)
+		}
+	}
+	if len(idsByType) == 0 {
+		return page, nil
+	}
+	var ids []string
+	for _, typeIDs := range idsByType {
+		ids = append(ids, typeIDs...)
+	}
+	rows := make(map[entity.Ref]*entity.Entity, len(ids))
+	for e, err := range v.reader.ListEntities(ctx, store.EntityQuery{IDs: ids, Faces: store.AllFaces()}) {
+		if err != nil {
+			return nil, fmt.Errorf("%w: field visibility: %w", ErrScope, err)
+		}
+		rows[e.Ref()] = e
+	}
+	holds, err := v.grantRows(ctx, scope, idsByType)
+	if err != nil {
+		return nil, err
+	}
+	out := page[:0:0]
+	for _, h := range page {
+		ts := scope[h.Type]
+		if ts.Fields == nil {
+			out = append(out, h)
+			continue
+		}
+		ref := entity.Ref{ID: h.ID, Face: h.Face}
+		e, ok := rows[ref]
+		if !ok {
+			continue
+		}
+		matched := v.prov.MatchedFields(e, q.Text)
+		if ts.Fields.AdmitsMatch(matched, func(i int) bool { return holds[h.Type][i][ref] }) {
+			out = append(out, h)
+		}
+	}
+	return out, nil
+}
+
+// grantRows answers, for each conditional field grant of each type on the
+// page, which face rows its When matches: holds[type][grant] is that set.
+// One MatchingFaces call per conditional grant per type, whatever the page
+// size.
+func (v *Visible) grantRows(
+	ctx context.Context, scope map[string]TypeScope, idsByType map[string][]string,
+) (map[string]map[int]map[entity.Ref]bool, error) {
+	holds := map[string]map[int]map[entity.Ref]bool{}
+	for typ, typeIDs := range idsByType {
+		holds[typ] = map[int]map[entity.Ref]bool{}
+		for i, g := range scope[typ].Fields.Grants {
+			if g.When == nil {
+				continue
+			}
+			probe := *g.When // copy: the scope is shared across the request
+			probe.EntityType = typ
+			probe.Faces = store.AllFaces()
+			m, err := v.gq.MatchingFaces(ctx, probe, typeIDs)
+			if err != nil {
+				return nil, fmt.Errorf("%w: field grant on %q: %w", ErrScope, typ, err)
+			}
+			set := map[entity.Ref]bool{}
+			for id, faces := range m {
+				for _, f := range faces {
+					set[entity.Ref{ID: id, Face: f}] = true
+				}
+			}
+			holds[typ][i] = set
+		}
+	}
+	return holds, nil
 }
 
 // visibleHits runs the search with the scope as its admission step and keeps
