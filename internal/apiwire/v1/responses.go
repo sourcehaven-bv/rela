@@ -1252,7 +1252,10 @@ type TemplateRelation struct {
 // spans (see collectMentions). The SPA's markdown renderer consumes this
 // map to rewrite those code spans into titled in-app links. Mirrors the
 // Lua-side `rela.md.entity_refs` shape (TKT-LXYHQ) for SPA consumers
-// that don't go through the Lua document path.
+// that don't go through the Lua document path. Each ID resolves in the
+// request's world (`?world=`, else the default world), to the face that
+// world serves among the faces the caller may read; the title is that
+// face's.
 //
 // Wire stability: `mentions` is part of the public v1 API. The set of
 // `inaccessible_reason` values may grow as new locking mechanisms are

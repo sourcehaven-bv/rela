@@ -13,13 +13,12 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // collectMentions scans the supplied markdown blobs for inline code spans
-// whose entire content is an entity ID known to the store, and returns a
-// deduplicated map keyed by ID. Self-references (the viewer's own ID) are
+// whose entire content is an entity ID the request's world serves to the
+// principal, and returns a deduplicated map keyed by ID. Self-references (the viewer's own ID) are
 // included — the renderer treats them like any other reference and the SPA
 // route handles them as no-op navigation. Returns nil when no mentions
 // are found so callers can rely on JSON `omitempty` for empty maps.
@@ -30,43 +29,37 @@ import (
 // context skips the lookup: callers (HTTP handlers) have already bound the
 // request context, and a client that disconnected wants no answer.
 func collectMentions(
-	ctx context.Context, s store.EntityLister, vis visibility.Reader,
-	meta *metamodel.Metamodel, contents ...string,
+	ctx context.Context, vis visibility.Reader, meta *metamodel.Metamodel, contents ...string,
 ) map[string]v1.Mention {
 	candidates := scanCodeSpanCandidates(contents...)
 	if len(candidates) == 0 || ctx.Err() != nil {
 		return nil
 	}
 
-	// Load the referenced entities, then route them through the read gate +
-	// redactor (DEC-ZBI39P) before deriving any title: a mention to an entity
-	// the principal may not read is dropped (row-gate), and a survivor whose
+	// Each id resolves like a bare id anywhere else on the read path
+	// ([visibility.Resolver.ResolveIDsErr] in the request's world), gated and
+	// redacted before any title is derived (DEC-ZBI39P). A mention to an
+	// entity the principal may not read is absent, and a survivor whose
 	// display property is hidden falls back to its id (BUG-R9EHKV). Mentions
-	// are arbitrary code-span IDs in user markdown, so without this a `TKT-…`
-	// span pointing at a hidden entity leaked its title via DisplayTitle.
+	// are arbitrary code-span IDs in user markdown, so without the gate a
+	// `TKT-…` span pointing at a hidden entity leaked its title via
+	// DisplayTitle.
 	//
-	// Every candidate's default-face row is loaded content-free in one batch.
-	// An id with no such row is not a mention.
+	// The SPA read view links a mention by bare id with the page's world
+	// (`rewriteEntityRefToken`), so the target opens in this same world.
 	ids := make([]string, 0, len(candidates))
 	for id := range candidates {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-	rows, err := loadDefaultFaceHeaders(ctx, s, ids)
+	served, err := vis.Resolver().ResolveIDsErr(ctx, worldFromContext(ctx).visibility(), ids)
 	if err != nil {
-		slog.WarnContext(ctx, "mentions: store lookup failed", "ids", len(ids), "err", err)
+		slog.WarnContext(ctx, "mentions: header read failed", "ids", len(ids), "err", err)
+		return nil
 	}
-	loaded := make([]*entityPkg.Entity, 0, len(rows))
-	for _, id := range ids {
-		if ent, ok := rows[id]; ok {
-			loaded = append(loaded, ent)
-		}
-	}
-
-	visible := vis.Filter(ctx, loaded)
-	out := make(map[string]v1.Mention, len(visible))
-	for _, ent := range visible {
-		out[ent.ID] = buildMention(ent, meta)
+	out := make(map[string]v1.Mention, len(served))
+	for id, h := range served {
+		out[id] = buildMention(headerEntity(h), meta)
 	}
 	if len(out) == 0 {
 		return nil
