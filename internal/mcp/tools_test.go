@@ -1104,8 +1104,8 @@ func TestHandleSchema_Overview(t *testing.T) {
 		t.Errorf("expected 1 relation type, got %d", len(parsed.RelationTypes))
 	}
 	for _, et := range parsed.EntityTypes {
-		if et.Name == "requirement" && et.Count != 3 {
-			t.Errorf("requirement count = %d, want 3", et.Count)
+		if et.Name == "requirement" && (et.Count == nil || *et.Count != 3) {
+			t.Errorf("requirement count = %v, want 3", et.Count)
 		}
 	}
 }
@@ -1151,7 +1151,7 @@ func TestHandleSchema_RelationType(t *testing.T) {
 	if err := json.Unmarshal([]byte(getResultText(t, result)), &parsed); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
-	if parsed.Name != "addresses" || parsed.Count != 1 {
+	if parsed.Name != "addresses" || parsed.Count == nil || *parsed.Count != 1 {
 		t.Errorf("unexpected relation detail: %+v", parsed)
 	}
 }

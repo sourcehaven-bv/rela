@@ -95,6 +95,16 @@ func (d DenyReader) ListRelationsStrict(
 	return d.ListRelations(ctx, q)
 }
 
+// CountEntities implements the script read surface: always refuses.
+func (DenyReader) CountEntities(context.Context, store.EntityQuery) (int, error) {
+	return 0, ErrReaderUnavailable
+}
+
+// CountRelations implements the script read surface: always refuses.
+func (DenyReader) CountRelations(context.Context, store.RelationQuery) (int, error) {
+	return 0, ErrReaderUnavailable
+}
+
 // DenyTracer refuses every traversal, the [DenyReader] counterpart for the
 // tracer handle. Same rationale (RR-GKCZO5): when a policy is configured
 // but the decorator cannot be built, an unattended job must not silently

@@ -127,7 +127,9 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// copy that serves it. None of the three writes. VersionByTag
 	// (TKT-VO6VG9) reads one of those versions by tag name, and
 	// WithVersionTags returns a copy that serves it; tagging itself is a
-	// write and lives on entitymanager.VersionTags, not here.
+	// write and lives on entitymanager.VersionTags, not here. CountEntities
+	// and CountRelations (TKT-QZTROQ) are the lengths of ListEntities and
+	// ListRelations, so they reveal no more than those lists do.
 	// FindByExternalRef (TKT-SM20FG) is ListEntityHeaders filtered by one
 	// property, then GetAddress; SyncReady reports whether history is
 	// served. Neither writes.
@@ -136,6 +138,7 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
 		"ResolveHeaders": true, "ListRelationsStrict": true, "WriteTarget": true,
 		"EntityVersions": true, "EntityVersion": true, "WithHistory": true,
+		"CountEntities": true, "CountRelations": true,
 		"VersionByTag": true, "WithVersionTags": true,
 		"FindByExternalRef": true, "SyncReady": true,
 	}
