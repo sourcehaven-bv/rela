@@ -1,0 +1,6 @@
+{
+  "name": "rela",
+  "model": ".archplan/model.archmodel.json",
+  "export": "just archplan-export",
+  "port": 8765
+}
