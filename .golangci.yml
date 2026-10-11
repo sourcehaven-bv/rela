@@ -372,6 +372,11 @@ linters:
           - thelper
           - unused
         path: internal/store/storetest/
+      # The lease conformance kit states fake-clock instants as minute
+      # offsets; naming each one would hide the timeline the tests read as.
+      - linters:
+          - mnd
+        path: internal/lease/leasetest/
       - linters:
           - lll
         source: ^//|`.*`|".*"

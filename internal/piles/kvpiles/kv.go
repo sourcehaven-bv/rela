@@ -16,7 +16,7 @@
 // project, and each builds its own Store over the same cache-directory
 // document. The mutex only excludes callers of one instance, so the Locker
 // must exclude every other process too: over an on-disk KV that is a
-// [FileLocker] on a lock file next to the document. Several MACHINES are out
+// filelock.Locker on a lock file next to the document. Several MACHINES are out
 // of scope; the postgres build uses pgpiles for that.
 //
 // # Node-local, not in the project database
@@ -101,7 +101,7 @@ func (it storedItem) ref() entity.Ref { return entity.Ref{ID: it.ID, Face: entit
 //
 // Nil: both rejected. A nil KV would defer the failure to the first pile
 // anyone creates, far from the wiring mistake that caused it; a nil locker
-// would hide the choice between [FileLocker] and [ProcessPrivate].
+// would hide the choice between a filelock.Locker and [ProcessPrivate].
 func New(kv state.KV, locker Locker) (*Store, error) {
 	if kv == nil {
 		return nil, errors.New("kvpiles: state KV must be non-nil")
