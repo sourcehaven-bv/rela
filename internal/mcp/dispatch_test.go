@@ -189,6 +189,9 @@ var toolCalls = map[string]struct {
 	"read_attachment":   {args: `{"id":"REQ-001","property":"title","file_name":"a.txt"}`, wantErr: true},
 	"attach_file":       {args: `{"id":"REQ-001","property":"title","file_name":"a.txt","content":"aGk="}`, wantErr: true},
 	"delete_attachment": {args: `{"id":"REQ-001","property":"title"}`, wantErr: true},
+	// The write comment tools are not registered on this stdio-shaped
+	// server; tools_comments_test.go drives them.
+	"list_comments": {args: `{"id":"REQ-001"}`},
 }
 
 // TestDispatch_AnalyzeEveryCheck drives every analyze check through a real

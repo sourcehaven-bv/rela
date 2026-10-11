@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
@@ -155,8 +156,7 @@ func (c *Capturer) captureOnce(ctx context.Context, spec docs.CaptureSpec) (stri
 		return "", err
 	}
 
-	var png []byte
-	actions := []chromedp.Action{
+	steps := []chromedp.Action[chromedp.Void]{
 		// Start every capture from a blank page.
 		//
 		// One browser tab is reused for the whole build, so without this each
@@ -175,7 +175,7 @@ func (c *Capturer) captureOnce(ctx context.Context, spec docs.CaptureSpec) (stri
 		// Deterministic viewport so form layout is stable across machines.
 		deviceMetricsOverride(),
 		// Thread the requested role to the per-request principal resolver.
-		network.SetExtraHTTPHeaders(network.Headers(map[string]any{roleHeader: spec.As})),
+		roleHeaderAction(spec.As),
 		chromedp.Navigate(url),
 		// Renderability gate (DR-S4): wait until the form stamps a terminal
 		// load state, then fail loud if it was an error. This races load vs
@@ -198,12 +198,12 @@ func (c *Capturer) captureOnce(ctx context.Context, spec docs.CaptureSpec) (stri
 		chromedp.Sleep(settleDelay),
 	}
 	if len(spec.Arrows) > 0 {
-		actions = append(actions, annotateAction(spec.Arrows))
+		steps = append(steps, annotateAction(spec.Arrows))
 	}
-	actions = append(actions, captureAction(spec, &png))
 
 	//nolint:contextcheck // chromedp actions bind to the browser context (cctx), not the caller ctx
-	if err := chromedp.Run(cctx, actions...); err != nil {
+	png, err := chromedp.Run(cctx, captureAfter(steps, spec))
+	if err != nil {
 		return "", fmt.Errorf("capture: %w", err)
 	}
 	if dir := filepath.Dir(spec.OutPath); dir != "" {
@@ -309,33 +309,54 @@ type rect struct{ X, Y, W, H float64 }
 // page. All paths go through page.CaptureScreenshot (PNG + CaptureBeyondViewport),
 // so a clip taller than the viewport still renders and padding is honored —
 // chromedp.Screenshot cannot pad.
-func captureAction(spec docs.CaptureSpec, out *[]byte) chromedp.Action {
-	return chromedp.ActionFunc(func(ctx context.Context) error {
-		page0, err := pageSize(ctx)
+func captureAction(spec docs.CaptureSpec) chromedp.Action[[]byte] {
+	return func(ctx context.Context, t *chromedp.Target) ([]byte, error) {
+		page0, err := pageSize(ctx, t)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		clip := rect{X: 0, Y: 0, W: page0.W, H: page0.H}
 		if spec.Clip != "" {
-			region, rerr := resolveClip(ctx, spec.Clip, spec.Arrows)
+			region, rerr := resolveClip(ctx, t, spec.Clip, spec.Arrows)
 			if rerr != nil {
-				return rerr
+				return nil, rerr
 			}
 			clip = padAndClamp(region, float64(spec.Pad), page0)
 		}
 		if clip.H > maxFullHeight {
-			return fmt.Errorf("%w: %.0fpx (> %dpx cap); use a tighter clip= selector or clip=\"focus\"", errRegionTooTall, clip.H, maxFullHeight)
+			return nil, fmt.Errorf("%w: %.0fpx (> %dpx cap); use a tighter clip= selector or clip=\"focus\"", errRegionTooTall, clip.H, maxFullHeight)
 		}
-		buf, err := page.CaptureScreenshot().
-			WithFormat(page.CaptureScreenshotFormatPng).
-			WithClip(&page.Viewport{X: clip.X, Y: clip.Y, Width: clip.W, Height: clip.H, Scale: 1}).
-			WithCaptureBeyondViewport(true).
-			Do(ctx)
+		res, err := cdp.Call(ctx, t, page.CaptureScreenshot, page.CaptureScreenshotParams{
+			Format:                page.CaptureScreenshotFormatPng,
+			Clip:                  &page.Viewport{X: clip.X, Y: clip.Y, Width: clip.W, Height: clip.H, Scale: 1},
+			CaptureBeyondViewport: new(true),
+		})
 		if err != nil {
-			return err
+			return nil, err
 		}
-		*out = buf
-		return nil
+		return res.Data, nil
+	}
+}
+
+// captureAfter runs the preparation steps and then the screenshot, as one
+// action, so the screenshot is the value of the run.
+func captureAfter(steps []chromedp.Action[chromedp.Void], spec docs.CaptureSpec) chromedp.Action[[]byte] {
+	return func(ctx context.Context, t *chromedp.Target) ([]byte, error) {
+		if _, err := chromedp.Steps(steps...)(ctx, t); err != nil {
+			return nil, err
+		}
+		return captureAction(spec)(ctx, t)
+	}
+}
+
+// roleHeaderAction threads the requested role to the per-request principal
+// resolver as an extra HTTP header on every request the tab makes.
+func roleHeaderAction(role string) chromedp.Action[chromedp.Void] {
+	return chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+		_, err := cdp.Call(ctx, t, network.SetExtraHTTPHeaders, network.SetExtraHTTPHeadersParams{
+			Headers: network.Headers{roleHeader: role},
+		})
+		return err
 	})
 }
 
@@ -346,23 +367,22 @@ func captureAction(spec docs.CaptureSpec, out *[]byte) chromedp.Action {
 // from an empty schema-only shell left after a failed load — the fail-OPEN hole
 // the spike hit. Polling races load vs error, so a failure short-circuits rather
 // than eating the capture timeout.
-func renderabilityGate() chromedp.Action {
-	return chromedp.ActionFunc(func(ctx context.Context) error {
-		var state string
+func renderabilityGate() chromedp.Action[chromedp.Void] {
+	return chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
 		// Two marker families, one contract. `form-state-*` is DynamicForm's;
 		// `page-state-*` is the same signal on the list, detail and search
 		// screens. Matching either keeps one gate for every view rather than a
 		// per-view poll that could disagree about what "loaded" means.
-		if err := chromedp.Poll(
+		state, err := chromedp.Poll[string](
 			`(function(){`+
 				`var e=document.querySelector('[data-testid^="form-state-"],[data-testid^="page-state-"]');`+
 				`if(!e)return null;`+
 				`var v=e.getAttribute('data-testid');`+
 				`var s=v.slice(v.indexOf('-state-')+7);`+
 				`return s==='pending'?null:s;})()`,
-			&state,
 			chromedp.WithPollingInterval(pollInterval),
-		).Do(ctx); err != nil {
+		)(ctx, t)
+		if err != nil {
 			return fmt.Errorf("waiting for the page to load: %w", err)
 		}
 		if state == "error" {
@@ -374,8 +394,21 @@ func renderabilityGate() chromedp.Action {
 
 // deviceMetrics gives the capture a stable, wide-enough viewport so form layout
 // is deterministic across machines.
-func deviceMetricsOverride() chromedp.Action {
-	return emulation.SetDeviceMetricsOverride(viewportW, viewportH, 1.0, false)
+func deviceMetricsOverride() chromedp.Action[chromedp.Void] {
+	return chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+		return setViewport(ctx, t, viewportH)
+	})
+}
+
+// setViewport emulates a viewportW-wide viewport of the given height at a
+// device scale factor of 1.
+func setViewport(ctx context.Context, t *chromedp.Target, height int64) error {
+	_, err := cdp.Call(ctx, t, emulation.SetDeviceMetricsOverride, emulation.SetDeviceMetricsOverrideParams{
+		Width:             viewportW,
+		Height:            height,
+		DeviceScaleFactor: 1.0,
+	})
+	return err
 }
 
 // fitViewportToContent grows the emulated viewport to the page's full scroll
@@ -386,9 +419,9 @@ func deviceMetricsOverride() chromedp.Action {
 // would alter the responsive breakpoint a figure is meant to show. The height
 // is capped at maxFullHeight — the same ceiling the capture itself enforces, so
 // an unbounded page fails there with its actionable message rather than here.
-func fitViewportToContent() chromedp.Action {
-	return chromedp.ActionFunc(func(ctx context.Context) error {
-		page0, err := pageSize(ctx)
+func fitViewportToContent() chromedp.Action[chromedp.Void] {
+	return chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+		page0, err := pageSize(ctx, t)
 		if err != nil {
 			return err
 		}
@@ -399,7 +432,7 @@ func fitViewportToContent() chromedp.Action {
 		if h > maxFullHeight {
 			h = maxFullHeight
 		}
-		return emulation.SetDeviceMetricsOverride(viewportW, h, 1.0, false).Do(ctx)
+		return setViewport(ctx, t, h)
 	})
 }
 

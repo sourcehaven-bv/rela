@@ -460,6 +460,10 @@ func comparePropertyShape(r *ShapeReport, subject string, from, to PropertyShape
 		r.add(TierMigration, "property_format_changed", subject,
 			fmt.Sprintf("property %s format changed %q → %q: stored values must be converted", subject, from.Format, to.Format))
 	}
+	if from.System != to.System {
+		r.add(TierMigration, "property_system_changed", subject,
+			fmt.Sprintf("property %s external system changed %q → %q: stored ids must be re-linked", subject, from.System, to.System))
+	}
 	if from.List != to.List {
 		r.add(TierMigration, "property_list_changed", subject,
 			fmt.Sprintf("property %s list flag changed %t → %t: stored values must be restructured", subject, from.List, to.List))
@@ -546,7 +550,8 @@ func compareNamedTypes(r *ShapeReport, from, to map[string][]string) {
 // samePropertyKernel reports whether two property shapes agree on the fields
 // that make a delete+add pair look like a rename (type, list, format).
 func samePropertyKernel(a, b PropertyShape) bool {
-	return a.Type == b.Type && a.List == b.List && a.Format == b.Format && a.Computed == b.Computed
+	return a.Type == b.Type && a.List == b.List && a.Format == b.Format && a.Computed == b.Computed &&
+		a.System == b.System
 }
 
 // propertyShapesSimilar reports whether two property maps share at least half
@@ -591,6 +596,7 @@ var migrationDeltaKinds = []string{
 	"faces_removed",
 	"property_format_changed",
 	"property_list_changed",
+	"property_system_changed",
 	"property_type_changed",
 	"relation_cardinality_tightened",
 	"relation_endpoint_narrowed",

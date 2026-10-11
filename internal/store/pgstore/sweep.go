@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/bgloop"
 )
 
 // sweepAdvisoryLockKey gates the version-reconciliation sweep to a single runner
@@ -55,28 +56,88 @@ func sweepDefaults(c SweepConfig) SweepConfig {
 	return c
 }
 
-// sweep is the periodic version-reconciliation goroutine. It captures
-// create/update versions for entities that have settled (or exceeded the
-// staleness ceiling), under a non-blocking advisory lock so only one process in
-// the deployment sweeps at a time. rename/delete are captured synchronously
-// elsewhere (see the entitymanager version hook) — the sweep never sees them as
-// distinct ops.
+// VersionSweep is the periodic version-reconciliation service. It captures
+// create/update versions for entities and relations that have settled (or
+// exceeded the staleness ceiling), under a non-blocking advisory lock so only
+// one process in the deployment sweeps a schema at a time. Rename and delete
+// are captured synchronously elsewhere (see the entitymanager version hook), so
+// the sweep never sees them as distinct ops.
+//
+// It is a service of its own rather than a goroutine the store owns
+// (TKT-IPXEZQ): it needs nothing from [Store] but the pool, so the wiring site
+// that builds it also starts and stops it. That owner must call [VersionSweep.Stop]
+// before closing the pool; a tick still in flight would otherwise fail against
+// a closed pool.
+type VersionSweep struct {
+	loop *bgloop.Loop
+}
+
+// NewVersionSweep builds the sweep over st's pool. It does not start it; call
+// [VersionSweep.Start].
+//
+// Nil: st and provider are rejected. A sweep without a provider has no schema
+// projection to stamp on a version, and a missing store is a wiring fault.
+//
+// The store's handle must be a *pgxpool.Pool: a tick acquires ONE connection
+// and runs entirely on it, because the advisory lock is session-scoped. A store
+// over a bare connection or a transaction is rejected rather than left
+// unswept, which would silently stop create/update capture.
+func NewVersionSweep(st *Store, provider ProjectionProvider, cfg SweepConfig) (*VersionSweep, error) {
+	if st == nil {
+		return nil, errors.New("pgstore: version sweep needs a store")
+	}
+	if provider == nil {
+		return nil, errors.New("pgstore: version sweep needs a projection provider")
+	}
+	pool, ok := st.db.(*pgxpool.Pool)
+	if !ok {
+		return nil, errors.New("pgstore: version sweep needs a store built over a *pgxpool.Pool")
+	}
+	return newVersionSweep(&sweep{pool: pool, provider: provider, cfg: sweepDefaults(cfg)})
+}
+
+// newVersionSweep wraps worker in the shared start-once, stop-and-wait
+// lifecycle.
+func newVersionSweep(worker *sweep) (*VersionSweep, error) {
+	loop, err := bgloop.New(worker.run)
+	if err != nil { // coverage-ignore: defensive: worker.run is never nil
+		return nil, err
+	}
+	return &VersionSweep{loop: loop}, nil
+}
+
+// Start launches the sweep goroutine on a detached context, independent of any
+// request. Only the first call starts it: a second call, or a call after
+// [VersionSweep.Stop], does nothing. Build a new sweep to run again.
+func (v *VersionSweep) Start() { v.loop.Start() }
+
+// Stop signals the goroutine to exit and waits for it, so once Stop returns
+// the sweep issues no further statements. Canceling interrupts the current
+// statement; the advisory unlock still runs before Stop returns. Safe to call
+// more than once, concurrently, on a sweep that was never started, and on a
+// nil receiver.
+func (v *VersionSweep) Stop() {
+	if v == nil {
+		return
+	}
+	v.loop.Stop()
+}
+
+// sweep is the tick worker behind [VersionSweep]. Its fields are touched only
+// from the run goroutine (or a test calling tick directly), never concurrently,
+// so it needs no lock.
 type sweep struct {
 	pool     *pgxpool.Pool
 	provider ProjectionProvider
 	cfg      SweepConfig
-	cancel   context.CancelFunc
-	done     chan struct{}
 	// beforeCapture, when set, runs between the candidate query and the
 	// captures. Tests use it to write a row the query has already read.
 	beforeCapture func()
 	// more is set by a tick that filled its batch and made progress, so run
-	// starts the next tick at once rather than an Interval later. Touched only
-	// from the run goroutine.
+	// starts the next tick at once rather than an Interval later.
 	more bool
 	// consecutiveSkips counts ticks that could not take the lock, so sustained
-	// starvation escalates to a warning. Touched only from the run goroutine
-	// (tick is never called concurrently), so it needs no locking.
+	// starvation escalates to a warning.
 	consecutiveSkips int
 }
 
@@ -92,62 +153,8 @@ type sweep struct {
 // which is worth surfacing.
 const sweepSkipWarnAfter = 10
 
-// StartVersionSweep starts the periodic version-reconciliation sweep for this
-// store, capturing create/update versions for settled entities. The wiring
-// layer calls this after construction, supplying a ProjectionProvider derived
-// from the active metamodel (which the store itself does not hold). The sweep
-// is stopped by Store.Close.
-//
-// It requires the store's handle to be a *pgxpool.Pool (so a tick can acquire a
-// single connection for the session-scoped advisory lock). If it is not — e.g.
-// a store built over a bare handle in a unit test — the sweep does not start and
-// this is a no-op, so create/update versions simply won't be captured in that
-// configuration. Calling it more than once replaces the previous sweep.
-func (s *Store) StartVersionSweep(provider ProjectionProvider, cfg SweepConfig) {
-	pool, ok := s.db.(*pgxpool.Pool)
-	if !ok || provider == nil {
-		// A production deployment always injects a pool and a provider; hitting
-		// this branch silently disables create/update version capture, so log it
-		// loudly enough to diagnose a misconfiguration (unit-test stores over a
-		// bare handle land here by design and are expected).
-		slog.Warn("pgstore: version sweep not started",
-			"pool", ok, "provider", provider != nil)
-		return
-	}
-	s.mu.Lock()
-	prev := s.sweep
-	s.sweep = startSweep(pool, provider, cfg)
-	s.mu.Unlock()
-	prev.stop()
-}
-
-// startSweep launches the sweep goroutine. It runs until stop() is called. The
-// goroutine uses a detached lifetime context (cancelled by stop), independent
-// of any request ctx.
-func startSweep(pool *pgxpool.Pool, provider ProjectionProvider, cfg SweepConfig) *sweep {
-	sctx, cancel := context.WithCancel(context.Background())
-	s := &sweep{
-		pool:     pool,
-		provider: provider,
-		cfg:      sweepDefaults(cfg),
-		cancel:   cancel,
-		done:     make(chan struct{}),
-	}
-	go s.run(sctx)
-	return s
-}
-
-// stop signals the loop to exit and waits for it. Idempotent and nil-safe.
-func (s *sweep) stop() {
-	if s == nil {
-		return
-	}
-	s.cancel()
-	<-s.done
-}
-
+// run ticks every Interval until ctx is canceled.
 func (s *sweep) run(ctx context.Context) {
-	defer close(s.done)
 	ticker := time.NewTicker(s.cfg.Interval)
 	defer ticker.Stop()
 	for {
@@ -161,11 +168,23 @@ func (s *sweep) run(ctx context.Context) {
 			for first := true; first || (s.more && ctx.Err() == nil); first = false {
 				s.more = false
 				if err := s.tick(ctx); err != nil && ctx.Err() == nil {
-					slog.Warn("pgstore: version sweep tick failed", "error", err)
+					logTickError(err)
 				}
 			}
 		}
 	}
+}
+
+// logTickError reports a failed tick: at Warn, unless the pool is already
+// closed. That happens only during shutdown, when a host closed the pool
+// before stopping the sweep (an MCP reload racing Close is one such window),
+// and the next tick never comes.
+func logTickError(err error) {
+	if strings.Contains(err.Error(), "closed pool") {
+		slog.Debug("pgstore: version sweep tick after the pool closed", "error", err)
+		return
+	}
+	slog.Warn("pgstore: version sweep tick failed", "error", err)
 }
 
 // tick runs one reconciliation pass. The ENTIRE tick — advisory lock, the
@@ -205,8 +224,8 @@ func (s *sweep) tick(ctx context.Context) error {
 		return nil
 	}
 	s.consecutiveSkips = 0
-	// Unlock on a context detached from cancellation: when Close cancels the
-	// tick ctx mid-tick, the deferred unlock must still run its statement, or
+	// Unlock on a context detached from cancellation: when [VersionSweep.Stop]
+	// cancels the tick ctx mid-tick, the deferred unlock must still run its statement, or
 	// the session-scoped advisory lock rides the pooled connection back into the
 	// pool and locks out OTHER processes until that connection is recycled
 	// (pgxpool does not reset session state on Release).

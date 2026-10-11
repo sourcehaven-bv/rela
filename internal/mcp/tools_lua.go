@@ -90,8 +90,8 @@ func (h luaHandler) handleLuaEval(ctx context.Context, req *mcpgo.CallToolReques
 	// accidentally share a nameless namespace.
 	//
 	// ctx is threaded via lua.WithContext(ctx) above; the runtime caches it and
-	// RunString applies it to the LState. contextcheck can't see that flow
-	// because it crosses the gopher-lua SetContext boundary.
+	// RunString applies it to the VM state. contextcheck can't see that flow
+	// because it crosses the boundary into the Lua VM.
 	//nolint:contextcheck // ctx threaded via WithContext; see comment above
 	if err := runtime.RunString(code); err != nil {
 		// output stays empty here: print() in non-document/non-action
@@ -194,7 +194,7 @@ func luaScriptErrorResult(surface lua.Surface, envelopePath string, sourceFS fs.
 	}
 	if sourceFS != nil {
 		in.SourceFS = sourceFS
-		// Frames coming from gopher-lua use the bare filename as Source;
+		// Frames coming from the Lua VM use the bare filename as Source;
 		// re-prefix matching frames so they line up with envelopePath.
 		bareName := strings.TrimPrefix(envelopePath, scriptsDir+"/")
 		for i := range in.Frames {

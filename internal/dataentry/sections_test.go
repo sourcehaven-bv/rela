@@ -33,6 +33,8 @@ func TestPropertyToStrings(t *testing.T) {
 		{"date as RFC 3339 string", "2026-09-26T00:00:00Z", metamodel.PropertyTypeDate, []string{"2026-09-26"}},
 		{"datetime string kept", "2026-09-26T10:30:00Z", metamodel.PropertyTypeDatetime,
 			[]string{"2026-09-26T10:30:00Z"}},
+		{"external ref shows its id", map[string]any{"id": "42", "url": "https://x.test/42"},
+			metamodel.PropertyTypeExternalRef, []string{"42"}},
 		{"[]any dates", []any{day, day.AddDate(0, 0, 1)}, metamodel.PropertyTypeDate,
 			[]string{"2026-09-26", "2026-09-27"}},
 	}

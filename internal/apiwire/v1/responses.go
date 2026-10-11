@@ -442,16 +442,27 @@ type ListMeta struct {
 	RelationOrder *RelationOrder `json:"relation_order,omitempty"`
 }
 
-// RelationOrder says that a collection lists the targets of one anchor's
-// edges over one relation, in the order those edges hold on the anchor's
-// outgoing order side. Movable reports whether this principal may move
-// them: a relation PATCH with a `position` body on
-// /{plural of AnchorType}/{Anchor}/relations/{Relation}/{row id}.
+// RelationOrder says that a collection lists the peers of one anchor's
+// edges over one relation, in the order those edges hold on one side of the
+// anchor: the targets in `_order_out` order, or, when Direction is
+// "incoming", the sources in `_order_in` order. Movable reports whether this
+// principal may move them: a relation PATCH with a `position` body on
+// /{plural of AnchorType}/{Anchor}/relations/{Relation}/{row}, with
+// `direction: "incoming"` on the incoming side.
+//
+// Addresses, on the incoming side, maps a row id to the address that names
+// the row in that PATCH, in the path and in `before`/`after`: `id@face` when
+// the row's place comes from an edge on that face of the source. A row
+// absent from it is named by its id.
 type RelationOrder struct {
 	Relation   string `json:"relation"`
 	Anchor     string `json:"anchor"`
 	AnchorType string `json:"anchor_type"`
 	Movable    bool   `json:"movable"`
+	// Direction is "incoming" on the incoming side, and absent on the
+	// outgoing side.
+	Direction string            `json:"direction,omitempty"`
+	Addresses map[string]string `json:"addresses,omitempty"`
 }
 
 // Schema is the JSON representation of the metamodel.
@@ -677,6 +688,9 @@ type PropertyDef struct {
 	// file widget reads it to switch between replace-mode and multi-file
 	// add-mode. Omitted unless set above 1.
 	Max int `json:"max,omitempty"`
+	// System names the external system of an `external_ref` property
+	// (TKT-SM20FG). The value is read-only on every interactive surface.
+	System string `json:"system,omitempty"`
 }
 
 // RelationType is the JSON representation of a relation type.

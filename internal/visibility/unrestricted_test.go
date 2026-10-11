@@ -130,6 +130,9 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// write and lives on entitymanager.VersionTags, not here. CountEntities
 	// and CountRelations (TKT-QZTROQ) are the lengths of ListEntities and
 	// ListRelations, so they reveal no more than those lists do.
+	// FindByExternalRef (TKT-SM20FG) is ListEntityHeaders filtered by one
+	// property, then GetAddress; SyncReady reports whether history is
+	// served. Neither writes.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
@@ -137,6 +140,7 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 		"EntityVersions": true, "EntityVersion": true, "WithHistory": true,
 		"CountEntities": true, "CountRelations": true,
 		"VersionByTag": true, "WithVersionTags": true,
+		"FindByExternalRef": true, "SyncReady": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))

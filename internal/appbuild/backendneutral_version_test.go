@@ -23,18 +23,6 @@ import (
 // pgstore (it asserts the real backend still satisfies them), so it cannot make
 // this claim. The two are complementary.
 
-// neutralSweeper implements store.VersionSweeper without any backend types.
-type neutralSweeper struct {
-	store.Store
-	started bool
-	gotCfg  store.SweepConfig
-}
-
-func (n *neutralSweeper) StartVersionSweep(_ store.ProjectionProvider, cfg store.SweepConfig) {
-	n.started = true
-	n.gotCfg = cfg
-}
-
 // neutralVersionProvider implements store.VersionServiceProvider.
 type neutralVersionProvider struct {
 	store.Store
@@ -63,14 +51,6 @@ func neutralBase(t *testing.T) store.Store {
 // of its own — which is precisely what sqlitestore then demonstrates for real
 // in versionwiring_sqlite_test.go.
 func TestCapabilitiesAreSatisfiableWithoutPgstore(t *testing.T) {
-	t.Run("version sweep", func(t *testing.T) {
-		s := &neutralSweeper{Store: neutralBase(t)}
-		startVersionSweepIfSupported(s, nil)
-		if !s.started {
-			t.Fatal("a store implementing store.VersionSweeper was not reached")
-		}
-	})
-
 	t.Run("version tagger needs the capability", func(t *testing.T) {
 		// neutralVersionService is not a store.VersionTaggerProvider, so the
 		// resolver must hand back an untyped nil rather than a broken tagger.

@@ -168,7 +168,7 @@ func (s *Store) CountEntities(ctx context.Context, q store.EntityQuery) (int, er
 // the publication bit, so an unscoped tally would tell a published-world
 // surface how many unpublished drafts exist.
 func buildEntityCountSQL(q store.EntityQuery) (sql string, args []any) {
-	q.Faces = q.Faces.Lowered(q.Type)
+	q.Faces = q.Faces.FlattenedWhenUnranked(q.Type)
 	w := storeutil.RankingWorld(q)
 	if w.IsTrivial() {
 		where, wargs := entityWhere(q, nil)
@@ -1098,7 +1098,7 @@ func buildEntityHeaderListSQL(q store.EntityQuery, after *entity.Ref) (sql strin
 // stopping. The bound is exact: primes come out one per id in id order, and
 // the keyset already removed the families before the cursor.
 func buildEntitySelectSQL(q store.EntityQuery, after *entity.Ref, columns string, limit int) (sql string, args []any) {
-	q.Faces = q.Faces.Lowered(q.Type)
+	q.Faces = q.Faces.FlattenedWhenUnranked(q.Type)
 	w := storeutil.RankingWorld(q)
 	if w.IsTrivial() {
 		where, wargs := entityWhere(q, after)

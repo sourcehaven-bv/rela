@@ -171,6 +171,7 @@ var sectionFieldWidgetTypes = map[string][]string{
 	WidgetMultiSelect: {metamodel.PropertyTypeEnum, metamodel.PropertyTypeString},
 	WidgetRrule:       {metamodel.PropertyTypeRrule},
 	WidgetFile:        {metamodel.PropertyTypeFile},
+	WidgetExternalRef: {metamodel.PropertyTypeExternalRef},
 }
 
 // widgetAcceptsProperty reports whether a widget can render a property, and if

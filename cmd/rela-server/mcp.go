@@ -12,7 +12,7 @@ import (
 
 // mcpServerVersion is the version rela reports in the MCP `initialize` /
 // `server/discover` response. It is a distinct var from the CLI's Version
-// (which rela-server does not import — it has no cobra/kong surface) and is
+// (which rela-server does not import — it has no CLI command surface) and is
 // overridable at build time via
 // -ldflags "-X main.mcpServerVersion=$(git describe --tags)".
 //
@@ -132,6 +132,12 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 	}
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals
+	}
+	// Assigned only when set: a nil *MCPComments in the interface would
+	// register the tools over an absent service.
+	if host.Comments != nil {
+		deps.Comments = host.Comments
+		deps.CommentWriter = host.Comments
 	}
 	return deps, nil
 }

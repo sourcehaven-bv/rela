@@ -186,6 +186,18 @@ var graphDiffValues = []any{
 // reals.
 var graphDiffScalars = []any{"open", "", nil, "absent", 5, true, "alpha", "Zed", "ñandú", false, 10, 9, "x", "it's"}
 
+// graphDiffRefs is the value mix of the object property graphDiffRefProp,
+// which only [store.PropKeyEqual] predicates target (TKT-SM20FG). Kept off
+// the other properties because the other operators read an object's text
+// form, which no backend is asked to agree on.
+var graphDiffRefs = []any{
+	map[string]any{"id": "42"}, map[string]any{"id": "43", "url": "https://x.test"}, map[string]any{"id": 42},
+	"42", []any{"42"}, "absent", map[string]any{}, map[string]any{"id": ""}, map[string]any{"url": "42"},
+}
+
+// graphDiffRefProp is the object-valued property; see graphDiffRefs.
+const graphDiffRefProp = "ref"
+
 // graphDiffTargets are the comparison values the generator picks from.
 var graphDiffTargets = []string{"open", "closed", "", "5", "true", "1.5", "x", "alpha", "Zed", "10", "9", "false", "m"}
 
@@ -214,6 +226,9 @@ func seedGraphDiff(t *testing.T, s store.Store) {
 				continue
 			}
 			props[p] = v
+		}
+		if v := graphDiffRefs[(i*5+1)%len(graphDiffRefs)]; v != "absent" {
+			props[graphDiffRefProp] = v
 		}
 		e := entity.New(fmt.Sprintf("ITM-%02d", i), "item")
 		e.Properties = props
@@ -289,6 +304,12 @@ func pickSome[T any](rng *rand.Rand, xs []T, most int) []T {
 }
 
 func genProp(rng *rand.Rand) store.PropPredicate {
+	if rng.IntN(8) == 0 {
+		return store.PropPredicate{
+			Property: graphDiffRefProp, Op: store.PropKeyEqual, Key: pick(rng, []string{"id", "url"}),
+			Value: pick(rng, []string{"42", "43", "x", "https://x.test"}),
+		}
+	}
 	ops := []store.PropOp{store.PropEqual, store.PropNotEqual, store.PropNotEqualOrEmpty,
 		store.PropGreaterEqual, store.PropLessEqual}
 	prop := pick(rng, graphDiffProps)

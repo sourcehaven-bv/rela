@@ -77,9 +77,9 @@ func Declare(env *predicate.Env) error {
 		{FuncFuzzy, twoStr},
 		{FuncContains, predicate.FuncSig{Params: []predicate.Type{strList, str}, Return: predicate.BoolType}},
 		{FuncLen, predicate.FuncSig{Params: []predicate.Type{strList}, Return: predicate.NumberType}},
-		// Not SQLPortable: no backend-neutral SQL spelling of SHA-256 exists
-		// (postgres needs pgcrypto/encode, sqlite has none builtin), so a
-		// program using it must evaluate in Go rather than push down.
+		// Not SQLPortable: no SQL spelling of SHA-256 works on every store
+		// backend, so a program using it must evaluate in Go rather than push
+		// down.
 		{FuncSHA256, predicate.FuncSig{Params: []predicate.Type{str}, Return: predicate.StringType}},
 		{FuncToday, predicate.FuncSig{Return: predicate.DateType, SQLPortable: true}},
 		{FuncDaysBetween, predicate.FuncSig{

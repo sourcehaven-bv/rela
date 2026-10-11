@@ -275,6 +275,10 @@ var locked = map[File][]string{
 		"automations.[].do.[].background", "automations.[].do.[].run_as", "automations.[].do.[].retry",
 		// Access control: a transition guard names an ACL permission.
 		"types.*.transitions.[].guard",
+		// External sync. A sync connector's Lua finds its records by system,
+		// so changing system or sync points reviewed code at other records.
+		"entities.*.properties.*.system", "entities.*.properties.*.sync",
+		"relations.*.properties.*.system", "relations.*.properties.*.sync",
 		// Not in the Configure space yet.
 		"copies.**", "default_world", "worlds.**", "entities.*.faces.**",
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",

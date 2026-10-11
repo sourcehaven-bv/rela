@@ -125,7 +125,16 @@ export interface WorldMessages {
 
 export interface PropertyDef {
   label?: string
-  type: 'string' | 'date' | 'datetime' | 'integer' | 'boolean' | 'enum' | 'file' | 'rrule'
+  type:
+    | 'string'
+    | 'date'
+    | 'datetime'
+    | 'integer'
+    | 'boolean'
+    | 'enum'
+    | 'file'
+    | 'rrule'
+    | 'external_ref'
   required?: boolean
   values?: string[]
   // Optional display labels keyed by enum value. Display-only: the stored/
@@ -138,6 +147,8 @@ export interface PropertyDef {
   // For `file` properties: maximum attachments (default 1). Above 1 the
   // property holds several files and the widget switches to add-mode.
   max?: number
+  // For `external_ref` properties: the external system the ref points into.
+  system?: string
 }
 
 export interface RelationType {

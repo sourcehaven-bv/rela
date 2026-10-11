@@ -199,6 +199,11 @@ type Services struct {
 	// softDeleteStop stops the soft-delete GC ticker. It runs before the job
 	// queue closes, so no tick enqueues into a closed queue.
 	softDeleteStop func()
+	// versionSweep is the store's version-reconciliation sweep, nil on a
+	// build or store without one. Per-assembled: started by finishAssembly,
+	// stopped in stopBackgroundServices, so Close and CloseAssembly stop the
+	// sweep their own Assemble started and no sibling's.
+	versionSweep versionSweep
 	// fieldRedactor applies field-level `visible:` policy to the unattended
 	// and identity-bearing read paths (TKT-425426). Never nil after
 	// construction: [visibility.NopRedactor] when no policy declares
@@ -2304,12 +2309,10 @@ func assemble(
 		return nil, fmt.Errorf("compile computed properties: %w", err)
 	}
 
-	// Content versioning is a separate injected service (pgstore and
-	// sqlitestore; nil on the fs/memory builds, which have no versioning
-	// store — fsstore uses git), NOT a store capability the manager
-	// type-asserts. Derived once here and threaded into the recorders and the
-	// Services bundle.
-	versions := versionServiceFor(st)
+	versions, sweep, err := versioningFor(st, base.meta)
+	if err != nil {
+		return nil, err
+	}
 
 	// A recipe-supplied state store wins over the per-backend one, which wins
 	// over the filesystem. Same precedence as the config loader, and for the
@@ -2389,12 +2392,6 @@ func assemble(
 		return nil, err
 	}
 
-	// Start the backend's version-reconciliation sweep (postgres and sqlite
-	// builds; a no-op elsewhere). It captures create/update versions for
-	// settled entities; rename/delete are captured synchronously via the
-	// entitymanager hook above.
-	startVersionSweepIfSupported(st, base.meta)
-
 	// Reconcile the derived schema (the database builds; a no-op elsewhere):
 	// derive query and list indexes from data-entry.yaml (both), and on
 	// postgres synthesize the metamodel's `unique: true` properties into
@@ -2428,14 +2425,49 @@ func assemble(
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, commentSvc, versions,
 		resolvedACL, aclDeclarative, fieldPol.redactor, schedState,
 	)
-	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine)
+	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine, sweep)
 }
 
-// finishAssembly sets what newServices cannot take as a constructor input
-// and connects the background-action scheduler, whose job handler needs the
-// finished services.
+// versioningFor derives the store's versioning service and builds, without
+// starting, its reconciliation sweep.
+//
+// Content versioning is a separate injected service (pgstore and
+// sqlitestore; nil on the fs/memory builds, which have no versioning store —
+// fsstore uses git), NOT a store capability the manager type-asserts. It is
+// derived once and threaded into the recorders and the Services bundle.
+//
+// The sweep is started only in finishAssembly, after the last step that can
+// fail: an unstarted sweep holds no goroutine, so no error path in assemble
+// needs to stop it.
+func versioningFor(st store.Store, meta *metamodel.Metamodel) (store.VersionService, versionSweep, error) {
+	sweep, err := newVersionSweep(st, meta)
+	if err != nil {
+		return nil, nil, err
+	}
+	return versionServiceFor(st), sweep, nil
+}
+
+// versionSweep is what assembly needs from a backend's version-reconciliation
+// sweep: start it once the Services is complete, stop it at teardown. The
+// sweep captures create/update versions for settled rows; rename and delete
+// are captured synchronously by the entitymanager hook.
+//
+// Declared here, at the consumer, so this build-agnostic file names no
+// backend; each versioning build's newBackendVersionSweep returns its own
+// concrete sweep through it.
+type versionSweep interface {
+	Start()
+	Stop()
+}
+
+// finishAssembly sets what newServices cannot take as a constructor input,
+// connects the background-action scheduler, whose job handler needs the
+// finished services, and then starts the version sweep.
+//
+// Nil: sweep is accepted and means the store has no sweep.
 func finishAssembly(
 	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *automation.Engine,
+	sweep versionSweep,
 ) (*Services, error) {
 	s.attachLocker = attachLocker
 	tags, err := buildVersionTags(s)
@@ -2445,6 +2477,11 @@ func finishAssembly(
 	s.versionTags = tags
 	if err := autoJobs.bind(servicesJobRunner{s}, engine); err != nil {
 		return nil, err
+	}
+	// Last, so a failed assembly never leaves a sweep goroutine running.
+	if sweep != nil {
+		s.versionSweep = sweep
+		sweep.Start()
 	}
 	return s, nil
 }
@@ -2617,13 +2654,11 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 	// (versionServiceFor returns nil in default/memory builds), so this non-nil return is unreachable here
 }
 
-// (startVersionSweepIfSupported is defined per build tag in
-// versionsweep_shared.go — compiled into the postgres and sqlite builds, where
-// it starts the backend's reconciliation sweep — and in
-// versionsweep_nosweep.go, where every other build no-ops. Discovery is by
-// type assertion on store.VersionSweeper, which keeps this build-agnostic file
-// and the shared resolver alike free of any backend import. assemble calls it
-// above.)
+// (newVersionSweep is defined per build tag: in versionsweep_shared.go for the
+// postgres and sqlite builds, over a newBackendVersionSweep in each recipe's
+// own versionsweep_<backend>.go, and in versionsweep_nosweep.go, where every
+// other build has no sweep. That keeps this build-agnostic file free of any
+// backend import. assemble calls it above.)
 
 // jobQueueShutdownTimeout bounds how long [Services.Close] waits for the job
 // queue to stop. A queue that will not drain must not wedge process shutdown.
@@ -2633,8 +2668,9 @@ func relationVersionRecorderFor(vs store.VersionService) entitymanager.RelationV
 const jobQueueShutdownTimeout = 5 * time.Second
 
 // CloseAssembly stops the resources this Services started during its own
-// [SharedBase.Assemble] — the mail worker, the data-migration GC sweep and the
-// background-job queue — and leaves the store and search backend running.
+// [SharedBase.Assemble] — the mail worker, the data-migration GC sweep, the
+// version-reconciliation sweep and the background-job queue — and leaves the
+// store and search backend running.
 //
 // It exists for ONE caller shape: a host that re-assembles a base against a
 // store it already owns, and must retire the superseded Services without
@@ -2679,6 +2715,10 @@ func (s *Services) stopBackgroundServices() {
 	if s.softDeleteStop != nil {
 		s.softDeleteStop()
 		s.softDeleteStop = nil
+	}
+	if s.versionSweep != nil {
+		s.versionSweep.Stop()
+		s.versionSweep = nil
 	}
 	if s.jobQueue != nil {
 		closeJobQueue(s.jobQueue)
@@ -2762,8 +2802,8 @@ func (s *Services) Close() error {
 // KNOWN COST: this is EAGER, and the scheduler is currently the only consumer
 // of Services.Jobs. So every short-lived CLI command (show, list, trace, …)
 // builds and starts a queue it never enqueues to. On the default build that is
-// cheap (~14µs and a few goroutines); on the postgres build it is not — neoq's
-// backend runs a golang-migrate check and opens a SECOND connection pool before
+// cheap (~14µs and a few goroutines); on the postgres build it is not — the durable
+// job queue runs a schema-migration check and opens a SECOND connection pool before
 // Start adds a LISTEN connection and its workers, all on the startup path of a
 // command that may only be reading one entity.
 //

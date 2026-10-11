@@ -47,7 +47,7 @@ import (
 // silently the moment this function emits a new column.
 //
 // A single-type query never reaches here for a type the world ranks
-// nothing for: [store.FaceSelection.Lowered] has already turned that into
+// nothing for: [store.FaceSelection.FlattenedWhenUnranked] has already turned that into
 // a flat face set.
 func worldSQL(w store.WorldScope, alias string, args *[]any) (rank, candidate string) {
 	col := func(name string) string {

@@ -1,7 +1,7 @@
 // Package dataentryconfig contains the configuration types and validation logic
 // for the data-entry web application. This package is separated from the main
 // dataentry package so that the CLI can import config/validation without pulling
-// in the full web application layer (goldmark, templates, git, etc.).
+// in the full web application layer (the markdown renderer, templates, git, etc.).
 package dataentryconfig
 
 import (
@@ -42,6 +42,9 @@ const (
 	// SPA's defaultWidgetFor, documented at sectionFieldWidgetTypes.
 	WidgetFile  = "file"
 	WidgetCards = "cards" // card-based UI for relations with properties
+	// WidgetExternalRef is the read-only display of an external ref
+	// (TKT-SM20FG). It never writes: refs change only through sync.
+	WidgetExternalRef = "external-ref"
 )
 
 // Direction represents the edge direction for relation columns and form relations.
@@ -2607,10 +2610,11 @@ const dynamicNameSep = "--"
 //
 // # The composite URL segment is FORCED, not chosen
 //
-// go-webdav classifies a resource by its DEPTH below the mount prefix (root /
-// principal / home-set / calendar / object), so `calendars/project_tasks/PROJ-1/`
-// would be read as an OBJECT, not a collection. The pattern key and the driver
-// id must therefore share one path segment.
+// The CalDAV library dataentry serves through classifies a resource by its
+// DEPTH below the mount prefix (root / principal / home-set / calendar /
+// object), so `calendars/project_tasks/PROJ-1/` would be read as an OBJECT, not
+// a collection. The pattern key and the driver id must therefore share one path
+// segment.
 //
 // `--` is the separator because entity ids cannot contain it (they match
 // `^[A-Za-z0-9][A-Za-z0-9_-]*$`), so the split is unambiguous and needs no

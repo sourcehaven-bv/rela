@@ -25,6 +25,10 @@ const columns: TableColumn[] = [
   { key: 'reads', header: 'Reads as', field: 'reads', width: 420 },
   { key: 'atLeast', header: 'Required', width: 120 },
 ]
+
+function routeOf(row: { id: string }): string {
+  return configureRoute.relation(row.id)
+}
 </script>
 
 <template>
@@ -35,7 +39,7 @@ const columns: TableColumn[] = [
       name-label="Relation"
       intro="A relation links two records, such as a ticket that implements a feature."
       empty="No relations yet."
-      :to="(row) => configureRoute.relation(row.id)"
+      :to="routeOf"
     >
       <template #cell-atLeast="{ item }">
         <RlTag v-if="item.atLeast" :label="`at least ${item.atLeast}`" color="blue" />

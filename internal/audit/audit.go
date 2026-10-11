@@ -209,7 +209,7 @@ const (
 	OpFSImport = "fs-import"
 
 	// OpConfigImport records a `rela db load` run storing a project's config
-	// files in its SQLite database, replacing the set it carried. One record
+	// files in its project database, replacing the set it carried. One record
 	// per run with the source and the file count, never file names or
 	// contents.
 	OpConfigImport = "config-import"

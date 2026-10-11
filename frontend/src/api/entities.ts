@@ -424,8 +424,10 @@ export async function updateRelationProperties(
 }
 
 /**
- * Moves the edge from `entityId` to `targetId` to another place among the
- * entity's edges of `relationName`. The server answers 204; a reader that
+ * Moves the edge between `entityId` and `targetId` to another place among
+ * the entity's edges of `relationName`: its outgoing edges, or with
+ * `direction` 'incoming' the edges into it, where `targetId` and the
+ * position name sources by address. The server answers 204; a reader that
  * wants the new order refetches the list.
  */
 export async function moveRelation(
@@ -433,9 +435,13 @@ export async function moveRelation(
   entityId: string,
   relationName: string,
   targetId: string,
-  position: RelationPosition
+  position: RelationPosition,
+  direction?: string
 ): Promise<void> {
-  return api.patch(`/${getPlural(type)}/${entityId}/relations/${relationName}/${targetId}`, { position })
+  return api.patch(`/${getPlural(type)}/${entityId}/relations/${relationName}/${targetId}`, {
+    position,
+    ...(direction === 'incoming' ? { direction } : {}),
+  })
 }
 
 export async function deleteRelation(

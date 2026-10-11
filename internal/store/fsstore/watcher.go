@@ -88,12 +88,12 @@ var ErrWatchNeedsObservableFS = errors.New(
 //
 // Calling StartWatching more than once is a no-op after the first call.
 //
-// coverage-ignore-func: requires real filesystem events via fsnotify
+// coverage-ignore-func: requires real filesystem events via the file watcher
 func (s *FSStore) StartWatching() error {
 	if s.echoWiringErr != nil {
 		return s.echoWiringErr
 	}
-	// coverage-ignore-start: os-fs-event: builds absolute dirs and starts a real fsnotify watcher; exercised only with
+	// coverage-ignore-start: os-fs-event: builds absolute dirs and starts a real file watcher; exercised only with
 	// live filesystem events
 	// (already carries coverage-ignore)
 	s.mu.Lock()
@@ -174,7 +174,7 @@ func (s *FSStore) handleExternalEvent(ev storage.ChangeEvent) {
 }
 
 // isEntityPath reports whether path lives under the entities directory.
-// path is absolute (from fsnotify); converted via absPath(entitiesKey).
+// path is absolute (from the file watcher); converted via absPath(entitiesKey).
 func (s *FSStore) isEntityPath(path string) bool {
 	abs := s.layout.absPath(s.layout.entitiesKey)
 	return abs != "" && hasPathPrefix(path, abs)

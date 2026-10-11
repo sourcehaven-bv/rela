@@ -540,9 +540,9 @@ func ValidateBody(body string) error {
 // escaped anyway, since this function's correctness should not depend on a
 // grammar declared in another package.
 //
-// Note this handles WILDCARDS only. SQLite's LIKE is also ASCII
-// case-insensitive, which no pattern can express; sqlitecomments pairs this
-// with a byte-exact guard for that.
+// Note this handles WILDCARDS only. Some databases' LIKE is ASCII
+// case-insensitive, which no pattern can express; a backend with that LIKE
+// pairs this with a byte-exact guard (comments/sqlitecomments does).
 func FacePrefixPattern(id string) string {
 	r := strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`)
 	return r.Replace(id) + entity.StateRefSeparator + "%"

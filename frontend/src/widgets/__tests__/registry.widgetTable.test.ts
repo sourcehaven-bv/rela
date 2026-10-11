@@ -67,6 +67,11 @@ describe('omitting widget: preserves the type-derived default', () => {
     { name: 'rrule', def: { type: 'rrule' } as PropertyDef, want: 'rrule' },
     { name: 'file', def: { type: 'file' } as PropertyDef, want: 'file' },
     {
+      name: 'external_ref',
+      def: { type: 'external_ref' } as PropertyDef,
+      want: 'external-ref',
+    },
+    {
       name: 'enum values win over scalar type',
       def: { type: 'string', values: ['a', 'b'] } as PropertyDef,
       want: 'select',
