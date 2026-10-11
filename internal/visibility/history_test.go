@@ -151,3 +151,116 @@ func TestHistory_DenyReaderMisses(t *testing.T) {
 		t.Errorf("EntityVersion err = %v", err)
 	}
 }
+
+// cannedTags resolves tags from a fixed map keyed `ref|name` to an ordinal
+// in hist, and records which refs it was asked about.
+type cannedTags struct {
+	tags  map[string]int
+	hist  cannedHistory
+	asked []string
+}
+
+func (c *cannedTags) VersionByTag(
+	ctx context.Context, ref entity.Ref, name store.VersionTagName,
+) (*store.VersionSnapshot, error) {
+	c.asked = append(c.asked, ref.String())
+	n, ok := c.tags[ref.String()+"|"+name.String()]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return c.hist.GetVersion(ctx, ref, n)
+}
+
+func tagName(t *testing.T, s string) store.VersionTagName {
+	t.Helper()
+	n, err := store.ParseVersionTagName(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestVersionByTag_WithoutTagsIsUnsupported(t *testing.T) {
+	script, unrestricted, h := historyFixture(t)
+	ctx := context.Background()
+	name := tagName(t, "reviewed")
+	for label, read := range map[string]func() error{
+		"script, no tags": func() error { _, _, err := script.WithHistory(h).VersionByTag(ctx, "TKT-1", name); return err },
+		"script, no history": func() error {
+			_, _, err := script.WithVersionTags(&cannedTags{}).VersionByTag(ctx, "TKT-1", name)
+			return err
+		},
+		"unrestricted, no tags": func() error { _, _, err := unrestricted.WithHistory(h).VersionByTag(ctx, "TKT-1", name); return err },
+	} {
+		if err := read(); !errors.Is(err, store.ErrHistoryUnsupported) {
+			t.Errorf("%s: err = %v, want ErrHistoryUnsupported", label, err)
+		}
+	}
+}
+
+// TestVersionByTag_ScriptReaderGatesAndRedacts pins that a hidden entity is
+// indistinguishable from a missing one, and from a missing tag: the same
+// error, and the tag lookup never runs for the hidden entity.
+func TestVersionByTag_ScriptReaderGatesAndRedacts(t *testing.T) {
+	script, _, h := historyFixture(t)
+	h["TKT-2"] = []store.VersionSnapshot{version(1, "ticket", store.VersionOpCreate, "")}
+	tags := &cannedTags{tags: map[string]int{
+		"TKT-1|reviewed": 1,
+		"TKT-1|purged":   4,
+		"TKT-2|reviewed": 1,
+	}, hist: h}
+	r := script.WithHistory(h).WithVersionTags(tags)
+	ctx := context.Background()
+
+	e, meta, err := r.VersionByTag(ctx, "TKT-1", tagName(t, "reviewed"))
+	if err != nil {
+		t.Fatalf("VersionByTag: %v", err)
+	}
+	if meta.Version != 1 || e.GetString("title") != "old" {
+		t.Errorf("tagged version = %+v (meta %+v)", e, meta)
+	}
+	if _, ok := e.Properties["salary"]; ok {
+		t.Error("salary served: the tagged snapshot was not redacted as a historical subject")
+	}
+
+	tags.asked = nil
+	misses := []struct {
+		name, addr, tag string
+	}{
+		{"hidden entity", "TKT-2", "reviewed"},
+		{"missing entity", "NOPE-1", "reviewed"},
+		{"missing tag", "TKT-1", "absent"},
+		{"tag on an unservable version", "TKT-1", "purged"},
+	}
+	var first error
+	for _, m := range misses {
+		_, _, err := r.VersionByTag(ctx, m.addr, tagName(t, m.tag))
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("%s: err = %v, want ErrNotFound", m.name, err)
+			continue
+		}
+		if first == nil {
+			first = err
+		} else if err.Error() != first.Error() {
+			t.Errorf("%s: err %q differs from %q", m.name, err, first)
+		}
+	}
+	for _, ref := range tags.asked {
+		if ref == "TKT-2" {
+			t.Error("the tag lookup ran for an entity the gate hides")
+		}
+	}
+}
+
+func TestVersionByTag_UnrestrictedAndDeny(t *testing.T) {
+	_, unrestricted, h := historyFixture(t)
+	tags := &cannedTags{tags: map[string]int{"TKT-1|reviewed": 1}, hist: h}
+	ctx := context.Background()
+	e, _, err := unrestricted.WithHistory(h).WithVersionTags(tags).VersionByTag(ctx, "TKT-1", tagName(t, "reviewed"))
+	if err != nil || e.GetString("salary") != "1" {
+		t.Fatalf("unrestricted VersionByTag = %+v, %v; want salary kept", e, err)
+	}
+	if _, _, err := (visibility.DenyReader{}).VersionByTag(ctx, "TKT-1", tagName(t, "reviewed")); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("DenyReader err = %v", err)
+	}
+}

@@ -233,6 +233,12 @@ type App struct {
 	versions      store.VersionService
 	entityManager appEntityWriter
 
+	// versionTags backs the version tag bindings (TKT-VO6VG9): writer writes
+	// through the entitymanager and reaches action scripts only; reader
+	// resolves a tag for rela.version_by_tag. Both nil until
+	// [SetVersionTags], which leaves scripts without tags.
+	versionTags versionTagWiring
+
 	// recreator brings a deleted face back at its own id on a history
 	// restore, create-only (see entitymanager.RecreateEntity).
 	recreator entityRecreator
@@ -610,7 +616,8 @@ func appRedactor(a *App) visibility.FieldRedactor {
 // appbuild's guard: it would convert a caught bug into a silent downgrade,
 // and delete the fault path failclosed_test.go exercises.
 func (a *App) scriptReader(redactor visibility.FieldRedactor) lua.EntityReader {
-	return gatedScriptReader(a.acl, a.store, a.versions, redactor, familiesOption(a), defaultWorldScope(a.worlds))
+	return gatedScriptReader(a.acl, a.store, scriptHistory{versions: a.versions, tags: a.versionTags.reader},
+		redactor, familiesOption(a), defaultWorldScope(a.worlds))
 }
 
 // familiesOption is the resolver option every App-wired resolver takes, so a
@@ -751,6 +758,17 @@ func (r lateGatedReader) EntityVersions(ctx context.Context, addr string) ([]sto
 	return hr.EntityVersions(ctx, addr)
 }
 
+// VersionByTag forwards like [lateGatedReader.EntityVersions].
+func (r lateGatedReader) VersionByTag(
+	ctx context.Context, addr string, name store.VersionTagName,
+) (*entity.Entity, store.VersionMeta, error) {
+	tr, ok := r.reader().(lua.TaggedVersionReader)
+	if !ok {
+		return nil, store.VersionMeta{}, store.ErrHistoryUnsupported
+	}
+	return tr.VersionByTag(ctx, addr, name)
+}
+
 // EntityVersion forwards like [lateGatedReader.EntityVersions].
 func (r lateGatedReader) EntityVersion(
 	ctx context.Context, addr string, n int,
@@ -822,16 +840,18 @@ func elevationRecorder(sink audit.Audit) lua.ElevationRecorder {
 // Declarative policy it row-gates + field-redacts, resolving the principal from
 // ctx per call; a construction fault REFUSES (DenyReader) rather than reading
 // ungated. Same policy the per-request App.scriptReader wraps. history serves
-// rela.history and rela.get_version; nil leaves scripts without it.
+// rela.history, rela.get_version and, when it carries tags,
+// rela.version_by_tag; its zero value leaves scripts without them.
 func gatedScriptReader(
-	aclImpl acl.ACL, store store.Store, history store.HistoryReader,
+	aclImpl acl.ACL, store store.Store, history scriptHistory,
 	redactor visibility.FieldRedactor, order visibility.ResolverOption, world store.WorldScope,
 ) lua.EntityReader {
 	d, ok := aclImpl.(*acl.Declarative)
 	if !ok || d == nil {
 		// Named so the NopACL path is greppable alongside every other
 		// ungated read site (TKT-1WV50C).
-		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world)).WithHistory(history)
+		return visibility.Unrestricted(store, order).WithWorld(visibility.WorldOf(world)).
+			WithHistory(history.reader()).WithVersionTags(history.tags)
 	}
 	gate, err := visibility.NewDeclarativeGate(d, world)
 	if err != nil {
@@ -848,7 +868,40 @@ func gatedScriptReader(
 		slog.Error("dataentry: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}
 	}
-	return sr.WithWorld(visibility.WorldOf(world)).WithHistory(history)
+	return sr.WithWorld(visibility.WorldOf(world)).WithHistory(history.reader()).WithVersionTags(history.tags)
+}
+
+// scriptHistory is what a script reader serves history from: the version
+// service and, when wired, the version tag lookup.
+type scriptHistory struct {
+	versions store.VersionService
+	tags     visibility.VersionTagReader
+}
+
+// reader returns the version service as a history reader, or a genuinely nil
+// interface when there is none, so the reader's nil check holds.
+func (h scriptHistory) reader() store.HistoryReader {
+	if h.versions == nil {
+		return nil
+	}
+	return h.versions
+}
+
+// versionTagWiring is the pair [SetVersionTags] installs.
+type versionTagWiring struct {
+	writer lua.VersionTagWriter
+	reader visibility.VersionTagReader
+}
+
+// SetVersionTags gives scripts the version tag bindings (TKT-VO6VG9):
+// writer backs rela.tag_version and rela.untag_version in action scripts
+// only, reader backs rela.version_by_tag on every script read surface. A package function because App is at
+// its plimsoll method cap. Call it before serving.
+//
+// Nil: either may be nil, and the bindings it backs are then absent
+// (writer) or raise as on a backend without history (reader).
+func SetVersionTags(a *App, writer lua.VersionTagWriter, reader visibility.VersionTagReader) {
+	a.versionTags = versionTagWiring{writer: writer, reader: reader}
 }
 
 // scriptTraversalGate authorizes a validation rule's traversal under the same
@@ -1406,6 +1459,7 @@ func NewApp(
 		}.plan,
 		engine:           func() *script.Engine { return app.scriptEngine },
 		luaDeps:          app.luaWriteDeps,
+		versionTags:      func() lua.VersionTagWriter { return app.versionTags.writer },
 		fullScriptDetail: app.allowFullScriptDetail,
 		paths:            paths,
 		provision:        newProvisionSeam(app),

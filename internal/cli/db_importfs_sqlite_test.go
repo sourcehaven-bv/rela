@@ -183,6 +183,7 @@ func TestDBImportFS_SQLiteTablesAreAccounted(t *testing.T) {
 		"entity_versions":   "history starts at the import (git history is not imported)",
 		"relation_versions": "history starts at the import",
 		"schema_versions":   "history starts at the import",
+		"version_tags":      "history starts at the import, and a tag names a version row",
 		"rel_record_seq":    "sequence for relation versions",
 		"marked_entities":   "soft deletes; pending deletes are not copied",
 		"marked_relations":  "soft deletes; pending deletes are not copied",

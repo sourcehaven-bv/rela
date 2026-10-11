@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -78,6 +79,9 @@ func (c *HistoryCmd) printTimeline(ctx context.Context, reader store.HistoryRead
 			if m.Origin.Definition != "" {
 				line += " (" + m.Origin.Definition + ")"
 			}
+		}
+		if len(m.Tags) > 0 {
+			line += "  tags: " + strings.Join(m.Tags, ", ")
 		}
 		out.WriteInfo("%s", line)
 	}

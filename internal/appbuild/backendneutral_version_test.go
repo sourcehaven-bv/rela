@@ -5,6 +5,7 @@ package appbuild
 import (
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -67,6 +68,19 @@ func TestCapabilitiesAreSatisfiableWithoutPgstore(t *testing.T) {
 		startVersionSweepIfSupported(s, nil)
 		if !s.started {
 			t.Fatal("a store implementing store.VersionSweeper was not reached")
+		}
+	})
+
+	t.Run("version tagger needs the capability", func(t *testing.T) {
+		// neutralVersionService is not a store.VersionTaggerProvider, so the
+		// resolver must hand back an untyped nil rather than a broken tagger.
+		s := neutralVersionProvider{Store: neutralBase(t), svc: neutralVersionService{}}
+		got, err := versionTaggerFor(s, metamodel.DefaultMetamodel())
+		if err != nil || got != nil {
+			t.Fatalf("versionTaggerFor = %#v, %v; want nil, nil", got, err)
+		}
+		if l := versionTagReaderFor(s); l != nil {
+			t.Fatalf("versionTagReaderFor = %#v, want nil", l)
 		}
 	})
 
