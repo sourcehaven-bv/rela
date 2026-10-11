@@ -28,6 +28,10 @@ export interface Entity {
   // the principal can read exactly one owner. Link to the owner's page,
   // anchored at this entity, instead of to this entity's own page.
   _owner?: EntityOwner
+  // The number of comments on this row's face. Present only on list rows read
+  // with `comment_counts`, and only when the reader holds comment:read across
+  // the project (TKT-WA25G2). Absent means not served, never zero.
+  _comment_count?: number
   // Present only on rows of a `/_search` or list read made with a relation
   // context (`relation` + `direction=incoming`): whether the principal may
   // create that relation from this row's face. The server computes it with the gates the
@@ -427,6 +431,9 @@ export interface ListParams {
   sort?: string
   fields?: string
   include?: string
+  // Asks each row to carry `_comment_count`. Off unless a kanban card shows
+  // a comment count.
+  comment_counts?: boolean
   // world selects which FACE of each entity is served, and which entities
   // appear at all — an entity with no face in the requested world is omitted
   // entirely, because existence in a world IS the publication bit.

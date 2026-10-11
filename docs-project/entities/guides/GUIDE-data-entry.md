@@ -3171,6 +3171,41 @@ card:
 
 Card fields use the same styling as lists — enum values are displayed with colors from `styles`.
 
+#### Counts on cards
+
+Two kinds of card field show a number with an icon instead of a value. They sit
+in one row under the other fields:
+
+```yaml
+card:
+  title: title
+  fields:
+    - relation: subtask-of
+      direction: incoming
+      display: count      # number of subtasks
+      label: subtasks
+    - comments: true      # number of comments
+```
+
+| Key              | Description                                                                             |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| `display: count` | On a `relation` field: show how many related entities the reader can see.               |
+| `comments: true` | Show how many comments the card's entity has. Use it without `property` or `relation`. |
+
+A count of zero shows nothing. The label shows beside the number, for example
+"2 subtasks"; it defaults to the relation's label, or "comments". With
+`show_label: false` only the number and icon show, and the label stays
+available to screen readers and as a tooltip.
+
+A hidden related entity is never counted. A comment count needs commenting to
+be enabled for the board's entity type, and is shown only to readers who hold
+`comment:read` across the project. A reader who has it only through a role on
+one entity sees no count on the card, but can still read the comments on the
+entity.
+
+`display` and `comments` are kanban-only: on a calendar or gantt field they are
+a config error.
+
 ### Drag and Drop
 
 Cards can be dragged between columns (and swimlanes if configured). Dropping a card updates
@@ -5127,6 +5162,55 @@ clicking a bar re-roots the chart on that entity and rescales the time axis to
 its subtree, with breadcrumbs leading back out. The twisty beside a name
 expands a subtree in place instead. `default_depth` picks how many levels are
 open on first load; everything deeper stays one click away.
+
+### Scrolling through time
+
+Every day has the same width: 4px at the Quarter zoom, 12px at Month and
+40px at Week. A plan longer than the screen scrolls sideways; a shorter one is
+stretched to fill it. The tree column and the date axis stay in place while
+you scroll, and a bar's name stays beside the tree column while the bar
+scrolls past. A bar ends at the end of its end date, so a Monday-to-Friday
+task covers five full days.
+
+- **Now** scrolls today into the middle of the screen. The chart opens there
+  too when the plan covers today. When today lies just outside the plan, the
+  axis is extended to include it; when it is further away, **Now** is
+  disabled.
+- **‹** and **›** scroll one week, month or quarter, matching the zoom.
+- Changing the zoom keeps the day at the left edge where it was.
+- A plan spanning many years at a fine zoom is drawn with narrower days, and
+  the chart is flagged **compressed**.
+
+### Rescheduling by dragging
+
+You can change an entity's own `start` and `end` on the chart.
+
+- Drag the bar to move it. Both dates move by the same number of days.
+- Drag the left or right edge to change only the start or only the end. The
+  end cannot move before the start.
+- A short press without moving still drills in.
+- Press Escape during a drag to abandon it.
+
+The handles appear after the pointer rests on a bar, or when its name gets
+keyboard focus. At that moment the SPA reads the entity once. It shows the
+handles only when you may update the entity, both date fields are readable
+and writable for you, and both hold a value. A bar whose source maps only one
+of the two dates cannot be dragged, and a rolled-up span is never a drag
+target.
+
+From the keyboard, Tab from the bar's name to its start, move and end
+controls. The arrow keys move the chosen control one day, or a week with
+Shift. Enter saves and Escape cancels. Moving between the controls of one bar
+keeps the change, so you can adjust start and end and save both at once.
+
+Each gesture saves one change through the normal update path, so access
+rules, validation and the audit log apply. The save re-reads the entity first
+and sends field preconditions. If someone else changed a date since the chart
+loaded, or the save is refused, the chart shows a message and returns the bar
+to the stored dates. A `datetime` keeps its time of day and its offset; only
+the date part moves. Gantt nodes carry
+`face` on the wire when the type has faces, so the save goes to the face the
+chart shows.
 
 ### Planned versus rolled-up spans
 
@@ -7176,6 +7260,205 @@ history_face_unsupported` rather than serving the default face's record.
 Restoring a version is a write, so a world on a restore is refused like any
 other write. Name the face in the address instead: `ID@face` reads and
 restores that face's history, including a face that was deleted.
+
+## Configure space
+
+The Configure space lets an operator change the configuration from the web
+app. It edits two files:
+
+- the **data model** in `schema.yaml`: entity types, properties, choice lists,
+  relations, query scopes, rules, automations and comments;
+- the **screens** in `data-entry.yaml`: navigation, forms, lists, boards,
+  detail views, calendars, timelines and the dashboard.
+
+YAML never appears in the UI.
+
+### How editing works
+
+Edits collect in a **draft**. The browser keeps the draft for each project,
+so it survives a page reload. The draft stays until you save or discard it.
+
+Review lists every change in the draft. It also checks the draft the way the
+server does at startup. Every expression and filter is compiled: conditions on
+rules, automations, transitions and query scopes, and list and view filters.
+Review shows each problem with its location, and a save with a problem is
+refused with 422 before any file is written.
+
+Saving then does four things:
+
+1. It writes `schema.yaml` and `data-entry.yaml`.
+2. It generates and runs a data migration when existing records need one. See
+   [Saves that migrate data](#saves-that-migrate-data).
+3. It switches the running server to the new configuration. No restart is
+   needed.
+4. It writes an audit record.
+
+A save keeps the comments in both files. Lines you did not change stay
+byte-identical. The save merges your changes line by line into the file as it
+is on disk (a three-way merge).
+
+If a file changed on disk after the draft was read, the save is refused with
+409. Reload the configuration and try again.
+
+### Enabling it
+
+The Configure space is off by default. Turn it on with `--config-editing`, or
+set `RELA_CONFIG_EDITING=1`:
+
+```bash
+rela-server -project /path/to/project --config-editing
+```
+
+Without it, every `/api/v1/_configure` endpoint returns 404 and the app shows
+no Configure entry.
+
+The server refuses to start with `--config-editing` in these cases:
+
+- It also runs with `--read-only`.
+- The project has no `acl.yaml`. Without one, every principal holds every
+  permission.
+- It has no identity source. Set the `-jwt-*` flags, `--principal-header`, or
+  `$RELA_DATAENTRY_USER`.
+- Its only identity source is `$RELA_DATAENTRY_USER` and it binds beyond
+  loopback. That variable verifies nobody: every caller acts as that user.
+- It is the SQLite or PostgreSQL build. This version supports the filesystem
+  build only.
+- The schema file is the legacy `metamodel.yaml`. Rename it to `schema.yaml`
+  first; `rela migrate` does this.
+
+### Who may use it
+
+A principal needs the `config:edit` permission. A role grants it only by naming
+it in its `permissions:` list. The wildcard `*` does not grant it. A client
+acting for a user never holds it, whatever its scopes say.
+
+A principal without the permission gets 403, and the response names the
+permission. An unknown principal is refused.
+
+Treat `config:edit` as administrator access. A holder can change the data
+model. The data migrations a save runs rewrite records without per-record ACL
+checks. See [acl-security.md](acl-security.md#configuration-editing-configedit).
+
+### What cannot be edited in the app
+
+Some settings are **locked**. They run code, reach external commands, or
+control access, or the Configure space does not cover them yet. A draft that
+adds or changes a locked setting is refused with 422, and the response names
+its path. Edit the file directly instead.
+
+Locked in `schema.yaml`:
+
+- external commands and upload policy: `attachments`, `transforms`, and a
+  property's `accept`, `scan`, `scan_cmd` and `transform`;
+- Lua and what a script may reach: a validation's `lua`, `lua_file` and
+  `lua_args`, and an automation action's `lua`, `lua_file`,
+  `allow_acl_bypass`, `capabilities` and `create_entity.template`;
+- a transition's `guard`;
+- `version` and `includes`;
+- sections the Configure space does not cover yet, such as `copies`, `worlds`,
+  faces and computed properties.
+
+Locked in `data-entry.yaml`:
+
+- `permission:` on navigation entries, spaces and dashboard cards;
+- actions, and `export_render` on a list or a detail view;
+- `app.disable_custom_injection` and `app.max_attachment_bytes`;
+- `version`;
+- sections the Configure space does not cover yet, such as `documents`,
+  `feeds`, `pages`, `next_actions`, `palette`, `commands` and `webhooks`.
+
+You may remove a whole item, such as a property, a form or an automation. The
+exception is an item that holds a setting that restricts access or uploads:
+`accept`, `scan`, a transition `guard`, a `permission:`,
+`app.disable_custom_injection` or `app.max_attachment_bytes`. Change such an
+item in the file directly. For the same reason, the `from` and `to` of a
+transition with a `guard` cannot change in the app. Nor can the records that
+Lua code applies to: the `on:` block of an automation that runs Lua or may
+bypass the ACL, and the `entity_type`, `when` and `when_condition` of a
+validation that runs Lua.
+
+Other limits:
+
+- A schema that uses `includes:` cannot be edited in the app.
+- A file that uses YAML anchors, aliases or merge keys (`<<`) cannot be edited
+  in the app.
+- Renaming or removing a name that `acl.yaml` mentions is refused. Update
+  `acl.yaml` first.
+- Entity type names cannot be changed here. Use `rela rename entity`.
+- `acl.yaml`, schedules and mail settings are not part of the Configure space.
+
+### Saves that migrate data
+
+Some changes do not fit the records already stored. For those, the save
+generates a data migration:
+
+| Change | Migration step |
+| --- | --- |
+| Rename a property | `rename_property` |
+| Remove or rename a choice option that records use | `map_values`, to the option you choose |
+| Some changes to a property's type | `convert` |
+
+The save writes the migration to `migrations/<timestamp>-<slug>.yaml`, runs
+it, and records it in `migrations/applied.json`. This is the same as
+`rela migrate data --apply`. See
+[Data Migration](data-migration.md#migrations-from-the-configure-space).
+
+A save is refused while the migration record is not ready. That is the case
+when:
+
+- stored records do not match the current schema;
+- a migration file has not run yet;
+- the project has no baseline.
+
+Run `rela migrate status` and `rela migrate data` on the server first.
+
+Some changes need a migration the app cannot generate: relation changes, face
+changes, and changes to choice values a relation uses. The save refuses them
+with a message. Use `rela migrate gen` for those.
+
+### When a save fails
+
+A failure **before** the migration starts leaves nothing changed. Examples are
+an invalid result, a new configuration the server cannot start, or a lock held
+by another migration or GC run (409). The save restores every file it wrote,
+and the old configuration keeps serving.
+
+A failure **after** the migration started rolls forward. The files stay, and
+the new configuration serves. The response says the migration is incomplete.
+Retry to finish it. Every migration step is safe to repeat.
+
+### Switching to the new configuration
+
+After a save, the server builds a complete new instance from the files. It
+runs the migration on that instance and then serves it. Requests already
+running finish on the old instance, for up to 30 seconds, before it closes.
+
+The scheduler stops and starts again on the new configuration. Open browser
+tabs receive a `config-changed` live-update event and reload.
+
+After a switch, the search index is kept in memory until the next restart.
+The instance being replaced holds the lock on the on-disk index.
+
+### Audit
+
+Every save and every refused save writes an audit record with op
+`config-edit`. The record names the principal and the file hashes before and
+after. A completed save also lists the paths it changed, up to 50. A refused
+save names the locked paths the draft tried to change. A retry of an
+unfinished migration writes its own record. See [audit-log.md](audit-log.md).
+
+### API
+
+All endpoints are under `/api/v1/_configure` and exchange JSON.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/v1/_configure` | The current files as trees, and their version |
+| `POST /api/v1/_configure/preview` | Check a draft. Returns problems, a description of the changes and the planned migration steps. Writes nothing. |
+| `POST /api/v1/_configure/save` | Save a draft |
+| `POST /api/v1/_configure/migrate` | Finish a migration a save left incomplete |
+
+This version has no screen for migration history.
 
 ## Best Practices
 

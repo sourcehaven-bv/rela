@@ -504,3 +504,76 @@ func TestAutomationCreateRelation_OwningRules(t *testing.T) {
 		t.Errorf("automation gave TASK-CHILD a second owner (GetRelation err = %v)", err)
 	}
 }
+
+// mismatchOwningMetamodel adds a note type outside the owning relation's
+// allowlist, so a tolerated type mismatch can meet the owning rules.
+const mismatchOwningMetamodel = `version: "1.0"
+entities:
+  task:
+    label: Task
+    id_prefix: "TASK-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+  note:
+    label: Note
+    id_prefix: "NOTE-"
+    id_type: sequential
+    properties:
+      title:
+        type: string
+relations:
+  subtask:
+    label: subtask
+    from: [task]
+    to: [task]
+    owning: true
+`
+
+// TestCreateRelation_TolerateTypeMismatchKeepsOwningRules pins that
+// [entity.RelationOptions.TolerateTypeMismatch] skips only the type
+// allowlist: a mismatched owning edge to an entity that already has an owner
+// is still refused, and nothing is audited (GitHub #1806).
+func TestCreateRelation_TolerateTypeMismatchKeepsOwningRules(t *testing.T) {
+	t.Parallel()
+	m, err := metamodel.Parse([]byte(mismatchOwningMetamodel))
+	if err != nil {
+		t.Fatalf("parse metamodel: %v", err)
+	}
+	mem := audit.NewMemory()
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store:       memstore.New(),
+		Meta:        m,
+		Templater:   nopTemplater{},
+		Audit:       mem,
+		ACL:         acl.NopACL{},
+		Transitions: statemachine.EmptySet(),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+	})
+	if err != nil {
+		t.Fatalf("entitymanager.New: %v", err)
+	}
+	ctx := context.Background()
+	mk := func(typ string) string {
+		t.Helper()
+		res, cErr := mgr.CreateEntity(ctx, entity.New("", typ), entity.CreateOptions{})
+		if cErr != nil {
+			t.Fatalf("create %s: %v", typ, cErr)
+		}
+		return res.Entity.ID
+	}
+	child := mk("task")
+	mustLink(t, mgr, mk("task"), "subtask", child)
+	note := mk("note")
+	startLen := len(mem.Records())
+
+	_, err = mgr.CreateRelation(ctx, entity.RelationKey{From: note, Type: "subtask", To: child},
+		entity.RelationOptions{TolerateTypeMismatch: true})
+	if !errors.Is(err, entitymanager.ErrOwningRule) {
+		t.Fatalf("want ErrOwningRule, got %v", err)
+	}
+	if got := mem.Records()[startLen:]; len(got) != 0 {
+		t.Errorf("refused create must not be audited, got %+v", got)
+	}
+}

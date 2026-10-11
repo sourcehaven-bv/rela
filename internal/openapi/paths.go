@@ -10,83 +10,9 @@ import (
 )
 
 // addSystemPaths adds the static system endpoint paths.
-//
-//nolint:funlen // Long function is acceptable for declarative spec building
 func (g *Generator) addSystemPaths(spec *Spec) {
-	// GET /api/metamodel
-	spec.Paths["/api/metamodel"] = PathItem{
-		Get: &Operation{
-			OperationID: "getMetamodel",
-			Summary:     "Get metamodel schema",
-			Description: "Returns the full metamodel definition including entity types, relations, and custom types",
-			Tags:        []string{"System"},
-			Responses: map[string]Response{
-				"200": {
-					Description: "Metamodel retrieved successfully",
-					Content:     jsonContent(Ref("Schema")),
-				},
-			},
-		},
-	}
-
-	// GET /api/search
-	spec.Paths["/api/search"] = PathItem{
-		Get: &Operation{
-			OperationID: "searchEntities",
-			Summary:     "Search entities",
-			Description: "Full-text search across entity titles and properties",
-			Tags:        []string{"System"},
-			Parameters: []Parameter{
-				{Name: "q", In: "query", Required: true, Description: "Search query", Schema: StringSchema()},
-				{Name: "type", In: "query", Description: "Filter by entity type", Schema: StringSchema()},
-				relationContextParam, directionContextParam,
-			},
-			Responses: map[string]Response{
-				"200": {
-					Description: "Search results",
-					Content:     jsonContent(Ref("ListResponse")),
-				},
-			},
-		},
-	}
-
-	// GET /api/analyze
-	spec.Paths["/api/analyze"] = PathItem{
-		Get: &Operation{
-			OperationID: "analyzeGraph",
-			Summary:     "Analyze graph for issues",
-			Description: "Runs validation checks and returns cardinality violations, orphans, and property errors",
-			Tags:        []string{"System"},
-			Responses: map[string]Response{
-				"200": {
-					Description: "Analysis results",
-					Content:     jsonContent(Ref("AnalysisResult")),
-				},
-			},
-		},
-	}
-
-	// GET /api/entity-types
-	spec.Paths["/api/entity-types"] = PathItem{
-		Get: &Operation{
-			OperationID: "getEntityTypes",
-			Summary:     "Get available entity types",
-			Description: "Returns list of entity types with their labels and configuration",
-			Tags:        []string{"System"},
-			Responses: map[string]Response{
-				"200": {
-					Description: "Entity types",
-					Content: jsonContent(&Schema{
-						Type:  "array",
-						Items: Ref("EntityType"),
-					}),
-				},
-			},
-		},
-	}
-
-	// GET /api/openapi.json
-	spec.Paths["/api/openapi.json"] = PathItem{
+	// GET /api/v1/_openapi.json
+	spec.Paths["/api/v1/_openapi.json"] = PathItem{
 		Get: &Operation{
 			OperationID: "getOpenAPISpec",
 			Summary:     "Get OpenAPI specification",
@@ -103,60 +29,9 @@ func (g *Generator) addSystemPaths(spec *Spec) {
 		},
 	}
 
-	// SSE endpoint (documented but not testable via OpenAPI)
-	spec.Paths["/api/events"] = PathItem{
-		Get: &Operation{
-			OperationID: "subscribeToEvents",
-			Summary:     "Subscribe to real-time events (SSE)",
-			Description: "Server-Sent Events stream for entity changes",
-			Tags:        []string{"System"},
-			Responses: map[string]Response{
-				"200": {
-					Description: "SSE event stream",
-					Content: map[string]MediaType{
-						"text/event-stream": {},
-					},
-				},
-			},
-		},
-	}
-
-	// Git endpoints
-	spec.Paths["/api/git/status"] = PathItem{
-		Get: &Operation{
-			OperationID: "getGitStatus",
-			Summary:     "Get git repository status",
-			Tags:        []string{"Git"},
-			Responses: map[string]Response{
-				"200": {
-					Description: "Git status",
-					Content: jsonContent(&Schema{
-						Type: "object",
-						Properties: map[string]*Schema{
-							"branch":        StringSchema(),
-							"clean":         BooleanSchema(),
-							"ahead":         IntegerSchema(),
-							"behind":        IntegerSchema(),
-							"has_conflicts": BooleanSchema(),
-						},
-					}),
-				},
-			},
-		},
-	}
-
-	spec.Paths["/api/git/sync"] = PathItem{
-		Post: &Operation{
-			OperationID: "syncGit",
-			Summary:     "Sync with remote repository",
-			Description: "Pull and push changes with the remote",
-			Tags:        []string{"Git"},
-			Responses: map[string]Response{
-				"200": {Description: "Sync successful"},
-				"409": {Description: "Conflicts detected", Content: jsonContent(Ref("Error"))},
-			},
-		},
-	}
+	// The SSE stream and the git routes are left out: they are browser
+	// surfaces outside the non-browser CSRF exemption, so a generic client
+	// would get 403 origin_missing from every call.
 }
 
 // addEntityPaths adds CRUD paths for an entity type.
@@ -172,13 +47,13 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 		Summary: fmt.Sprintf("Collection of %s entities", def.Label),
 		Get: &Operation{
 			OperationID: "list" + capitalize(plural),
-			Summary:     "List " + def.LabelPlural,
+			Summary:     "List " + def.GetLabelPlural(),
 			Description: def.Description,
 			Tags:        []string{tag},
 			Parameters:  g.listParameters(),
 			Responses: map[string]Response{
 				"200": {
-					Description: "List of " + def.LabelPlural,
+					Description: "List of " + def.GetLabelPlural(),
 					Content:     jsonContent(Ref("ListResponse")),
 					Headers: map[string]Header{
 						"X-Total-Count": {Description: "Total number of entities", Schema: IntegerSchema()},
@@ -205,7 +80,7 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 						"Location": {Description: "URL of created entity", Schema: StringSchema()},
 					},
 				},
-				"422": {Description: "Validation failed", Content: jsonContent(Ref("Error"))},
+				"422": {Description: "Validation failed", Content: problemContent()},
 			},
 		},
 	}
@@ -233,7 +108,7 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 					},
 				},
 				"304": {Description: "Not modified (ETag match)"},
-				"404": {Description: "Entity not found", Content: jsonContent(Ref("Error"))},
+				"404": {Description: "Entity not found", Content: problemContent()},
 			},
 		},
 		Patch: &Operation{
@@ -255,9 +130,9 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 						"ETag": {Description: "New entity version tag", Schema: StringSchema()},
 					},
 				},
-				"404": {Description: "Entity not found", Content: jsonContent(Ref("Error"))},
-				"412": {Description: "Precondition failed (ETag mismatch)", Content: jsonContent(Ref("Error"))},
-				"422": {Description: "Validation failed", Content: jsonContent(Ref("Error"))},
+				"404": {Description: "Entity not found", Content: problemContent()},
+				"412": {Description: "Precondition failed (ETag mismatch)", Content: problemContent()},
+				"422": {Description: "Validation failed", Content: problemContent()},
 			},
 		},
 		Delete: &Operation{
@@ -266,8 +141,8 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 			Tags:        []string{tag},
 			Responses: map[string]Response{
 				"204": {Description: "Entity deleted"},
-				"404": {Description: "Entity not found", Content: jsonContent(Ref("Error"))},
-				"409": {Description: "Cannot delete (has incoming relations)", Content: jsonContent(Ref("Error"))},
+				"404": {Description: "Entity not found", Content: problemContent()},
+				"409": {Description: "Cannot delete (has incoming relations)", Content: problemContent()},
 			},
 		},
 	}
@@ -291,13 +166,15 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 						AdditionalProperties: ArraySchema(&Schema{Type: "object"}),
 					}),
 				},
-				"404": {Description: "Entity not found", Content: jsonContent(Ref("Error"))},
+				"404": {Description: "Entity not found", Content: problemContent()},
 			},
 		},
 	}
 
 	// Add relation type paths for valid outgoing relations
 	g.addRelationTypePaths(spec, typeName, def, basePath)
+
+	g.addAttachmentPaths(spec, typeName, def, basePath)
 
 	// Clone action
 	clonePath := basePath + "/{id}/_actions/clone"
@@ -318,7 +195,7 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 						"Location": {Description: "URL of cloned entity", Schema: StringSchema()},
 					},
 				},
-				"404": {Description: "Entity not found", Content: jsonContent(Ref("Error"))},
+				"404": {Description: "Entity not found", Content: problemContent()},
 			},
 		},
 	}
@@ -376,7 +253,7 @@ func (g *Generator) addRelationTypePaths(spec *Spec, typeName string, def metamo
 							},
 						})),
 					},
-					"404": {Description: "Entity not found", Content: jsonContent(Ref("Error"))},
+					"404": {Description: "Entity not found", Content: problemContent()},
 				},
 			},
 			Post: &Operation{
@@ -390,8 +267,8 @@ func (g *Generator) addRelationTypePaths(spec *Spec, typeName string, def metamo
 				},
 				Responses: map[string]Response{
 					"201": {Description: "Relation created"},
-					"404": {Description: "Source or target entity not found", Content: jsonContent(Ref("Error"))},
-					"422": {Description: "Invalid relation", Content: jsonContent(Ref("Error"))},
+					"404": {Description: "Source or target entity not found", Content: problemContent()},
+					"422": {Description: "Invalid relation", Content: problemContent()},
 				},
 			},
 		}
@@ -409,7 +286,7 @@ func (g *Generator) addRelationTypePaths(spec *Spec, typeName string, def metamo
 				Tags:        []string{def.Label, "Relations"},
 				Responses: map[string]Response{
 					"204": {Description: "Relation deleted"},
-					"404": {Description: "Relation not found", Content: jsonContent(Ref("Error"))},
+					"404": {Description: "Relation not found", Content: problemContent()},
 				},
 			},
 		}
@@ -442,6 +319,15 @@ var (
 		Description: "Required with relation; only `incoming` is accepted",
 	}
 )
+
+// problemContent is the body of an error response from a handler: RFC 7807
+// problem details, served as application/problem+json. (A refusal by the
+// same-origin middleware, before any handler, is plain JSON.)
+func problemContent() map[string]MediaType {
+	return map[string]MediaType{
+		"application/problem+json": {Schema: Ref("Error")},
+	}
+}
 
 // jsonContent creates a JSON media type map with the given schema.
 func jsonContent(schema *Schema) map[string]MediaType {

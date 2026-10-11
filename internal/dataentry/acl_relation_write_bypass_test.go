@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // TestReadOnlyACL_DanglingPeerRelationWrite_Refused is the PoC-as-test for
@@ -110,5 +111,55 @@ func TestDanglingPeerRelationWrite_AllowedACL_422(t *testing.T) {
 	}
 	if _, err := app.store.GetRelation(t.Context(), entity.RelationKey{From: "TKT-001", Type: "belongs_to", To: "CMP-999"}); err == nil {
 		t.Fatal("dangling-peer edge persisted despite hard 422")
+	}
+}
+
+// TestTypeMismatchRelationWrite_Audited pins GitHub #1806 (ISMS
+// CONTROL-8-15): a type-allowlist mismatch keeps DEC-HWZHA's
+// write-with-warning answer, but the edge is written through the manager,
+// so it gets exactly one audit record naming the edge and the principal.
+// The old fallback wrote such an edge straight to the store, unaudited.
+func TestTypeMismatchRelationWrite_Audited(t *testing.T) {
+	sink := audit.NewMemory()
+	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
+
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
+	seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "U"}})
+
+	// belongs_to allows ticket -> component only; TKT-002 is a ticket.
+	who := principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/TKT-001",
+		strings.NewReader(`{"relations":{"belongs_to":{"data":[{"type":"ticket","id":"TKT-002"}]}}}`))
+	req = req.WithContext(principal.With(req.Context(), who))
+	rec := httptest.NewRecorder()
+	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", "TKT-001")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with warning, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "target_type_not_allowed") {
+		t.Errorf("expected target_type_not_allowed warning, got %s", rec.Body.String())
+	}
+	key := entity.RelationKey{From: "TKT-001", Type: "belongs_to", To: "TKT-002"}
+	if _, err := app.store.GetRelation(t.Context(), key); err != nil {
+		t.Fatalf("mismatched edge not stored: %v", err)
+	}
+
+	var creates []audit.Record
+	for _, r := range sink.Records() {
+		if r.Op == audit.OpCreateRelation {
+			creates = append(creates, r)
+		}
+	}
+	if len(creates) != 1 {
+		t.Fatalf("want exactly one create-relation audit record, got %d: %+v", len(creates), sink.Records())
+	}
+	got := creates[0]
+	want := audit.Subject{Kind: "relation", RelationType: "belongs_to", FromID: "TKT-001", ToID: "TKT-002"}
+	if got.Subject == nil || *got.Subject != want {
+		t.Errorf("audit subject = %+v, want %+v", got.Subject, want)
+	}
+	if got.Principal.User != who.User || got.Principal.Tool != who.Tool {
+		t.Errorf("audit principal = %+v, want %+v", got.Principal, who)
 	}
 }

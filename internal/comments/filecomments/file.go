@@ -109,6 +109,27 @@ func (s *Store) Get(_ context.Context, target comments.Target, id string) (comme
 	return comments.Comment{}, comments.ErrNotFound
 }
 
+// Count returns the thread size of each target that has comments.
+//
+// One file read per target: this tier keeps no index across threads to batch
+// against, and it serves a single user, so a page of reads is acceptable.
+func (s *Store) Count(_ context.Context, targets []comments.Target) (map[string]int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make(map[string]int, len(targets))
+	for _, t := range targets {
+		list, err := s.readThread(t.Key())
+		if err != nil {
+			return nil, err
+		}
+		if len(list) > 0 {
+			out[t.Key()] = len(list)
+		}
+	}
+	return out, nil
+}
+
 // Add appends a comment to the target's thread.
 func (s *Store) Add(_ context.Context, target comments.Target, c comments.Comment) error {
 	s.mu.Lock()

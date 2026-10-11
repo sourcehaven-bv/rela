@@ -194,6 +194,8 @@ type Services struct {
 	// gcStop terminates this store's data-migration GC sweep goroutine
 	// (TKT-0C57FS). Per-assembled, torn down in Close like searchCloser.
 	gcStop func()
+	// reevaluateDataGate re-runs this store's gate; see ReevaluateDataGate.
+	reevaluateDataGate func(context.Context) error
 	// softDeleteStop stops the soft-delete GC ticker. It runs before the job
 	// queue closes, so no tick enqueues into a closed queue.
 	softDeleteStop func()
@@ -985,6 +987,11 @@ type Collaborators struct {
 
 	// SearchCloser may be nil — see type doc.
 	SearchCloser io.Closer
+
+	// Comments is the commentary service [Services.Comments] returns.
+	// Nil: accepted — commenting disabled, as in production when the
+	// metamodel declares no comments.
+	Comments *comments.Service
 }
 
 // NewFromCollaborators assembles a [Services] from pre-built
@@ -1094,6 +1101,7 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		aclPolicy:      aclPolicy,
 		audit:          c.Audit,
 		fieldRedactor:  fieldRedactor,
+		comments:       c.Comments,
 	}, nil
 }
 
@@ -1222,6 +1230,9 @@ type options struct {
 	// building a Config already decides where the data lives.
 	databaseURL string
 
+	// memorySearch skips the on-disk search index; see [WithInMemorySearch].
+	memorySearch bool
+
 	// hostConfig builds where secrets and the AI and mail settings come
 	// from, given the assembled store's state. Nil means the project's .rela
 	// directory.
@@ -1247,6 +1258,17 @@ type HostConfig interface {
 	File(name string) ([]byte, error)
 	Secrets(scriptPath string) (map[string]string, error)
 	Path() string
+}
+
+// WithInMemorySearch builds the search index in memory instead of opening
+// the project's on-disk index. rela-server uses it when it rebuilds its
+// services after a Configure save: the services still serving hold the
+// on-disk index's lock, so opening it would wait for a timeout and then fall
+// back to memory anyway.
+//
+// Ignored by builds whose search backend is not bleve.
+func WithInMemorySearch() Option {
+	return func(o *options) { o.memorySearch = true }
 }
 
 // WithACL overrides the auto-loaded ACL with the supplied
@@ -2091,6 +2113,7 @@ func resolveVisibleSearcher(
 // may fail boot.
 type backgroundServices struct {
 	gcStop         func()
+	reevaluateGate func(context.Context) error
 	softDeleteStop func()
 	mailStop       func()
 	mail           *mailRuntime
@@ -2107,8 +2130,8 @@ type backgroundServices struct {
 // call, so Close needs no nil checks beyond the ones it already has.
 func startBackgroundServices(
 	base *SharedBase, st store.Store, stateKV state.KV, migState datamigration.StateStore,
-	cfgLoader config.Loader, versions store.VersionService, mgr *entitymanager.Manager, q jobs.Client,
-	host lua.HostConfig,
+	cfgLoader config.Loader, versions store.VersionService, commentSvc *comments.Service,
+	mgr *entitymanager.Manager, q jobs.Client, host lua.HostConfig,
 ) backgroundServices {
 	cfg := base.cfg
 
@@ -2116,8 +2139,8 @@ func startBackgroundServices(
 		envDuration("RELA_SOFT_DELETE_DELAY", defaultSoftDeleteDelay),
 		envDuration("RELA_SOFT_DELETE_GC_INTERVAL", defaultSoftDeleteGCInterval))
 
-	gcStop := startDataMigration(
-		stateKV, migState, base.meta, st, cfg.Audit, versions, cfg.Paths.CacheDir,
+	gcStop, reevaluateGate := startDataMigration(
+		stateKV, migState, base.meta, st, cfg.Audit, versions, commentSvc, cfg.Paths.CacheDir,
 		hasMigrationsVia(cfgLoader),
 	)
 
@@ -2129,6 +2152,7 @@ func startBackgroundServices(
 
 	return backgroundServices{
 		gcStop:         gcStop,
+		reevaluateGate: reevaluateGate,
 		softDeleteStop: softDeleteStop,
 		mailStop:       mailStop,
 		mail:           mailRuntime,
@@ -2398,7 +2422,7 @@ func assemble(
 	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(
-		base, st, stateKV, migState, cfgLoader, versions, mgr, jobQueue, readDeps.Host)
+		base, st, stateKV, migState, cfgLoader, versions, commentSvc, mgr, jobQueue, readDeps.Host)
 
 	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
@@ -2469,39 +2493,40 @@ func newServices(
 ) *Services {
 	cfg := base.cfg
 	return &Services{
-		base:            base,
-		gcStop:          background.gcStop,
-		softDeleteStop:  background.softDeleteStop,
-		mailStop:        background.mailStop,
-		mail:            background.mail,
-		host:            background.host,
-		fs:              cfg.FS,
-		paths:           cfg.Paths,
-		meta:            base.meta,
-		worlds:          base.worlds,
-		store:           st,
-		versions:        versions,
-		searcher:        searcher,
-		visibleSearcher: visible,
-		userState:       newUserState(st, stateKV),
-		entityManager:   mgr,
-		tracer:          tr,
-		validator:       val,
-		templater:       templater,
-		cfgLoader:       cfgLoader,
-		stateKV:         stateKV,
-		migState:        migState,
-		schedulerState:  schedState,
-		jobQueue:        jobQueue,
-		caldavAliases:   aliases,
-		comments:        commentSvc,
-		scriptEngine:    cfg.ScriptEngine,
-		searchCloser:    searchCloser,
-		acl:             resolvedACL,
-		aclDeclarative:  aclDeclarative,
-		aclPolicy:       base.aclPolicy,
-		audit:           cfg.Audit,
-		fieldRedactor:   fieldRedactor,
+		base:               base,
+		gcStop:             background.gcStop,
+		reevaluateDataGate: background.reevaluateGate,
+		softDeleteStop:     background.softDeleteStop,
+		mailStop:           background.mailStop,
+		mail:               background.mail,
+		host:               background.host,
+		fs:                 cfg.FS,
+		paths:              cfg.Paths,
+		meta:               base.meta,
+		worlds:             base.worlds,
+		store:              st,
+		versions:           versions,
+		searcher:           searcher,
+		visibleSearcher:    visible,
+		userState:          newUserState(st, stateKV),
+		entityManager:      mgr,
+		tracer:             tr,
+		validator:          val,
+		templater:          templater,
+		cfgLoader:          cfgLoader,
+		stateKV:            stateKV,
+		migState:           migState,
+		schedulerState:     schedState,
+		jobQueue:           jobQueue,
+		caldavAliases:      aliases,
+		comments:           commentSvc,
+		scriptEngine:       cfg.ScriptEngine,
+		searchCloser:       searchCloser,
+		acl:                resolvedACL,
+		aclDeclarative:     aclDeclarative,
+		aclPolicy:          base.aclPolicy,
+		audit:              cfg.Audit,
+		fieldRedactor:      fieldRedactor,
 	}
 }
 

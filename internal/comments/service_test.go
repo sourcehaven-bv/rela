@@ -209,9 +209,10 @@ func TestGet_ReportsNotFound(t *testing.T) {
 // forgotten method into a nil-dereference at call time instead of a build
 // failure here.
 type countingStore struct {
-	inner comments.Store
-	lists int
-	gets  int
+	inner  comments.Store
+	lists  int
+	gets   int
+	counts int
 }
 
 var _ comments.Store = (*countingStore)(nil)
@@ -224,6 +225,11 @@ func (s *countingStore) List(ctx context.Context, target comments.Target) ([]com
 func (s *countingStore) Get(ctx context.Context, target comments.Target, id string) (comments.Comment, error) {
 	s.gets++
 	return s.inner.Get(ctx, target, id)
+}
+
+func (s *countingStore) Count(ctx context.Context, targets []comments.Target) (map[string]int, error) {
+	s.counts++
+	return s.inner.Count(ctx, targets)
 }
 
 func (s *countingStore) Add(ctx context.Context, target comments.Target, c comments.Comment) error {
@@ -363,4 +369,121 @@ func TestEntityFaceDeleted_DropsOnlyThatFace(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, kept, 1, "face %q keeps its thread", face)
 	}
+}
+
+// TestFaceMoved pins the thread half of a data-migration face move
+// (BUG-6OZBP9): the content moved, so its comments move with it.
+func TestFaceMoved(t *testing.T) {
+	src := comments.Target{Type: "ticket", ID: "TKT-1"}
+	dst := comments.Target{Type: "ticket", ID: "TKT-1", Face: "draft"}
+
+	seed := func(t *testing.T) (*comments.Service, comments.Store, comments.Comment) {
+		t.Helper()
+		svc, st := newService(t)
+		c, err := svc.Add(aliceCtx(), src, comments.AddRequest{Anchor: propAnchor(), Body: "before faces"})
+		require.NoError(t, err)
+		require.NoError(t, svc.Update(aliceCtx(), src, c.ID, "edited", true))
+		got, err := st.Get(aliceCtx(), src, c.ID)
+		require.NoError(t, err)
+		return svc, st, got
+	}
+
+	t.Run("moves the thread with every field intact", func(t *testing.T) {
+		svc, st, want := seed(t)
+		require.NoError(t, svc.FaceMoved(aliceCtx(), "ticket", "TKT-1", "", "draft"))
+
+		got, err := st.List(aliceCtx(), dst)
+		require.NoError(t, err)
+		require.Equal(t, []comments.Comment{want}, got)
+		left, err := st.List(aliceCtx(), src)
+		require.NoError(t, err)
+		require.Empty(t, left)
+	})
+
+	t.Run("is idempotent", func(t *testing.T) {
+		svc, st, _ := seed(t)
+		require.NoError(t, svc.FaceMoved(aliceCtx(), "ticket", "TKT-1", "", "draft"))
+		require.NoError(t, svc.FaceMoved(aliceCtx(), "ticket", "TKT-1", "", "draft"))
+		got, err := st.List(aliceCtx(), dst)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+	})
+
+	t.Run("a half-finished move converges and keeps the destination's copy", func(t *testing.T) {
+		svc, st, c := seed(t)
+		// A crashed run copied the comment but never cleared the source.
+		// The destination copy differs, so we can tell which one survived.
+		copied := c
+		copied.Body = "destination copy"
+		require.NoError(t, st.Add(aliceCtx(), dst, copied))
+
+		require.NoError(t, svc.FaceMoved(aliceCtx(), "ticket", "TKT-1", "", "draft"))
+
+		got, err := st.List(aliceCtx(), dst)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.Equal(t, "destination copy", got[0].Body)
+		left, err := st.List(aliceCtx(), src)
+		require.NoError(t, err)
+		require.Empty(t, left)
+	})
+
+	t.Run("merges into an occupied destination and leaves other faces alone", func(t *testing.T) {
+		svc, st, _ := seed(t)
+		_, err := svc.Add(aliceCtx(), dst, comments.AddRequest{Anchor: propAnchor(), Body: "already on draft"})
+		require.NoError(t, err)
+		other := comments.Target{Type: "ticket", ID: "TKT-1", Face: "published"}
+		_, err = svc.Add(aliceCtx(), other, comments.AddRequest{Anchor: propAnchor(), Body: "on published"})
+		require.NoError(t, err)
+
+		require.NoError(t, svc.FaceMoved(aliceCtx(), "ticket", "TKT-1", "", "draft"))
+
+		got, err := st.List(aliceCtx(), dst)
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		kept, err := st.List(aliceCtx(), other)
+		require.NoError(t, err)
+		require.Len(t, kept, 1)
+	})
+
+	t.Run("a comment posted at the source during the move survives", func(t *testing.T) {
+		_, inner, _ := seed(t)
+		st := &postsDuringList{Store: inner, at: src}
+		svc, err := comments.NewService(st, nil)
+		require.NoError(t, err)
+
+		require.NoError(t, svc.FaceMoved(aliceCtx(), "ticket", "TKT-1", "", "draft"))
+
+		left, err := inner.List(aliceCtx(), src)
+		require.NoError(t, err)
+		require.Len(t, left, 1, "the late comment was deleted with the moved ones")
+		require.Equal(t, "posted mid-move", left[0].Body)
+	})
+
+	t.Run("same face is a no-op", func(t *testing.T) {
+		svc, st, _ := seed(t)
+		require.NoError(t, svc.FaceMoved(aliceCtx(), "ticket", "TKT-1", "", ""))
+		got, err := st.List(aliceCtx(), src)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+	})
+}
+
+// postsDuringList adds a comment at target right after the first List of it
+// returns, standing in for a user posting while FaceMoved runs.
+type postsDuringList struct {
+	comments.Store
+	at     comments.Target
+	posted bool
+}
+
+func (s *postsDuringList) List(ctx context.Context, target comments.Target) ([]comments.Comment, error) {
+	list, err := s.Store.List(ctx, target)
+	if err != nil || s.posted || target.Key() != s.at.Key() {
+		return list, err
+	}
+	s.posted = true
+	late := comments.Comment{ID: "late", Author: "bob@example.com", CreatedAt: testBase,
+		Anchor: propAnchor(), Body: "posted mid-move"}
+	return list, s.Add(ctx, target, late)
 }

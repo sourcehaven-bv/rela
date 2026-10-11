@@ -283,6 +283,20 @@ func TestValidateGantts_Invalid(t *testing.T) {
 			want: "relation fields are not supported on gantt tooltips",
 		},
 		{
+			name: "tooltip comment count rejected",
+			g: withGantt(func(g *Gantt) {
+				g.Tooltip = GanttTooltip{Fields: []KanbanCardField{{Comments: true}}}
+			}),
+			want: "comments is only supported on kanban card fields",
+		},
+		{
+			name: "tooltip display count rejected",
+			g: withGantt(func(g *Gantt) {
+				g.Tooltip = GanttTooltip{Fields: []KanbanCardField{{Property: "status", Display: "count"}}}
+			}),
+			want: "display is only supported on kanban card fields",
+		},
+		{
 			name: "tooltip field with no property",
 			g: withGantt(func(g *Gantt) {
 				g.Tooltip = GanttTooltip{Fields: []KanbanCardField{{}}}

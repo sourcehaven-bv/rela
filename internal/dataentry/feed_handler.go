@@ -54,13 +54,13 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 	}
 	provider, err := newDeclarativeFeed(feedID, cfg, s.Meta, feedEntitySource{app: a}, link, appRedactor(a))
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "feed_error", "Feed misconfigured", "")
+		writeInternalError(w, r, "feed_error", "Feed misconfigured", err)
 		return
 	}
 
 	feed, err := provider.renderFeed(r.Context())
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "feed_error", "Failed to render feed", "")
+		writeInternalError(w, r, "feed_error", "Failed to render feed", err)
 		return
 	}
 
@@ -90,7 +90,7 @@ func (a *App) handleV1Feed(w http.ResponseWriter, r *http.Request) {
 	case "json":
 		body, err := calfeed.RenderJSON(feed)
 		if err != nil {
-			writeV1Error(w, r, http.StatusInternalServerError, "feed_error", "Failed to render feed", "")
+			writeInternalError(w, r, "feed_error", "Failed to render feed", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
