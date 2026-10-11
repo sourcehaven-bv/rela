@@ -384,8 +384,8 @@ type EntityWriter interface {
 	// rollback) can fail partway through a cascade with some relation files
 	// already off disk. It then returns what it genuinely removed, so the
 	// caller's audit log can reflect the real state rather than denying a
-	// deletion that happened (issue #929). Transactional backends
-	// (pgstore, sqlitestore) roll back and return nil.
+	// deletion that happened (issue #929). Transactional backends roll
+	// back and return nil.
 	//
 	// A partial result is NOT success: the caller must still return the
 	// error. It lists only what really happened — DeletedEntities is
@@ -495,8 +495,8 @@ type RelationQuery struct {
 	//
 	// A backend must accept a batch of ANY size in one call: callers hand
 	// it a whole page or a whole subtree and do not chunk. A backend with a
-	// bind-parameter budget has to pack the batch itself (sqlitestore sends
-	// one JSON array). Pinned by storetest's ListEntityIDsLargeBatch.
+	// bind-parameter budget has to pack the batch itself (for example by
+	// sending one JSON array). Pinned by storetest's ListEntityIDsLargeBatch.
 	EntityIDs []string
 	Cursor    string // pagination cursor from a previous page (empty = start); ignored by ListRelations
 	Limit     int    // max relations per page (0 = no limit); ignored by ListRelations
@@ -744,24 +744,23 @@ type BulkMigrator interface {
 
 // SwapRelationEndpoints exchanges from and to on every relation of relType.
 //
-// Uses the store's native [BulkMigrator] when it has one — pgstore and
-// sqlitestore rewrite the table in one statement — and otherwise falls back to
-// a read-rewrite-write loop through the public writer API.
+// Uses the store's native [BulkMigrator] when it has one, which rewrites the
+// table in one statement, and otherwise falls back to a read-rewrite-write loop
+// through the public writer API.
 //
 // The two paths are held to ONE contract by storetest: same counts, same
-// refusals, same surviving data. The fallback differs in exactly one
-// observable way, and only on a backend with version history: it is
-// delete-then-create, so each edge starts a new lineage. The backends that
-// have history (pg, sqlite) are precisely the ones implementing the native
-// path, so in practice no deployment pays that cost.
+// refusals, same surviving data. The fallback differs in exactly one observable
+// way, and only on a backend with version history: it is delete-then-create, so
+// each edge starts a new lineage. The backends that currently have history all
+// implement [BulkMigrator], so in practice no deployment pays that cost.
 //
 // Nil: s is required.
 func SwapRelationEndpoints(ctx context.Context, s Store, relType string) (int, error) {
 	// Checked on BOTH paths, not just the fallback: a native backend discovers
-	// a collision only by attempting the write, so without this a pg/sqlite
-	// caller gets a different error (and a different moment of failure) than an
-	// fs caller for the same data. The native statement's unique constraint
-	// remains the backstop.
+	// a collision only by attempting the write, so without this a caller on a
+	// native backend gets a different error (and a different moment of failure)
+	// than an fs caller for the same data. The native statement's unique
+	// constraint remains the backstop.
 	if _, err := CheckSwapRelationEndpoints(ctx, s, relType); err != nil {
 		return 0, err
 	}
@@ -1114,7 +1113,7 @@ type TypeWatermark interface {
 
 // HistoryReader reads the captured version history of one face row. Like
 // Formatter it is NOT part of the Store interface — content versioning is a
-// backend-specific capability (pgstore and sqlitestore implement it). Callers
+// backend-specific capability that only some backends implement. Callers
 // type-assert a Store to HistoryReader and degrade gracefully when the
 // assertion fails.
 //

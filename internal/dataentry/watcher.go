@@ -168,11 +168,10 @@ func (b *eventBroker) broadcastGitStatus() {
 // subscription — the store-watcher lifecycle is owned by the store
 // (closed when the store is closed).
 //
-// coverage-ignore-func: requires real filesystem events via fsnotify
+// coverage-ignore-func: requires real filesystem events via the file watcher
 func (a *App) StartWatching() error {
-	// coverage-ignore-start: os-fs-event: startup wiring for fsnotify-backed config subscription, store watcher, and
-	// store-event SSE bridge
-	// (project marks it coverage-ignore)
+	// coverage-ignore-start: os-fs-event: startup wiring for file-watcher-backed config subscription, store
+	// watcher, and store-event SSE bridge (project marks it coverage-ignore)
 	// (1) data-entry.yaml subscription.
 	if sub, ok := a.cfgLoader.(config.Subscriber); ok {
 		stop, err := sub.Subscribe(context.Background(), ConfigFile, func() {

@@ -1046,7 +1046,7 @@ func (a *App) SetJWTGate(cfg JWTGateConfig) error {
 // NewApp creates and initializes an App. Callers pass in the
 // primitives (fs, paths, meta, store) plus the services that depend
 // on workspace assembly: entityManager (the production write path)
-// and searcher (the live Bleve index). Everything else — state.KV,
+// and searcher (the live full-text index). Everything else — state.KV,
 // config.Loader, tracer, templater, validator — is constructed
 // locally.
 //
@@ -1123,8 +1123,8 @@ func NewApp(
 	}
 	// Operator-authored files — data-entry.yaml, scripts, custom/, apps/ —
 	// come from the caller's loader rather than a filesystem loader built
-	// here: on the sqlite build they may live in the project's database
-	// (FEAT-UP14BT), layered behind the files on disk.
+	// here: on a backend that keeps the project in a database they may live
+	// there (FEAT-UP14BT), layered behind the files on disk.
 	cfgLoader := files
 	// The state store comes from the caller (appbuild's Services.State()) rather
 	// than being rebuilt here: on the postgres build it is database-backed, so

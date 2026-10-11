@@ -934,7 +934,7 @@ func TestCalDAV_SoftDeleteKeepsTheAlias(t *testing.T) {
 // drop its local copy, which is right for a real deletion. But entitymanager
 // collapses every GetEntity failure into ErrEntityNotFound ("structural, not
 // textual"), so malformed frontmatter from a bad merge, a transient EIO, or a
-// dropped pgx connection all arrive looking exactly like a deletion. Answering
+// dropped database connection all arrive looking exactly like a deletion. Answering
 // those with the permanent 404 destroys the only copy the user still had, for a
 // fault that would have cleared on its own.
 //
