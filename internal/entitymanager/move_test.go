@@ -183,14 +183,23 @@ func orderValue(t *testing.T, st store.Store, from, to string) any {
 	return r.Properties[metamodel.OrderPropertyOut]
 }
 
-// With Among set, a move plans among those targets only: a step skips the
+// stepKeys returns the has-step edges from recipe to steps.
+func stepKeys(recipe string, steps ...string) []entity.RelationKey {
+	keys := make([]entity.RelationKey, 0, len(steps))
+	for _, s := range steps {
+		keys = append(keys, entity.RelationKey{From: recipe, Type: "has-step", To: s})
+	}
+	return keys
+}
+
+// With Among set, a move plans among those edges only: a step skips the
 // edges outside it, the new value comes from visible neighbors, and the
 // edges outside it keep their values.
 func TestUpdateRelation_PositionAmongVisible(t *testing.T) {
 	t.Parallel()
 	mgr, st, _, recipe, ids := moveFixture(t, "outgoing")
 	hidden := ids[1]
-	visible := []string{ids[0], ids[2], ids[3]}
+	visible := stepKeys(recipe, ids[0], ids[2], ids[3])
 	hiddenBefore := orderValue(t, st, recipe, hidden)
 
 	if err := move(mgr, recipe, ids[0], entity.OrderPosition{Step: 1, Among: visible}); err != nil {
@@ -224,7 +233,7 @@ func TestUpdateRelation_PositionAmongDensifiesVisibleOnly(t *testing.T) {
 	}
 	shown := outgoingOrder(t, st, recipe)
 	hidden := shown[1]
-	visible := []string{shown[0], shown[2], shown[3]}
+	visible := stepKeys(recipe, shown[0], shown[2], shown[3])
 	if err := move(mgr, recipe, shown[3], entity.OrderPosition{After: shown[0], Among: visible}); err != nil {
 		t.Fatalf("move: %v", err)
 	}
