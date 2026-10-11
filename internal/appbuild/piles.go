@@ -96,7 +96,7 @@ const pilesLockFile = "piles.lock"
 // scripts and the scheduler.
 func pilesLocker(fs storage.FS, cacheDir string) (kvpiles.Locker, error) {
 	if _, mem := fs.(*storage.MemFS); mem {
-		return kvpiles.ProcessPrivate{}, nil
+		return filelock.ProcessPrivate{}, nil
 	}
 	return filelock.New(filepath.Join(cacheDir, pilesLockFile))
 }
@@ -120,7 +120,7 @@ func pilePersonType(d *acl.Declarative) string {
 // so lasts for the process only. It is the fallback where the no-op KV would
 // otherwise accept every write and keep none, as newUserState does.
 func memoryPiles() piles.Store {
-	s, err := kvpiles.New(memoryKV(), kvpiles.ProcessPrivate{})
+	s, err := kvpiles.New(memoryKV(), filelock.ProcessPrivate{})
 	if err != nil { // coverage-ignore: unreachable: both arguments are non-nil
 		panic(err)
 	}

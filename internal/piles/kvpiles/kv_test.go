@@ -35,7 +35,7 @@ func TestConformance(t *testing.T) {
 	t.Parallel()
 	pilestest.RunAll(t, func(t *testing.T) piles.Store {
 		t.Helper()
-		s, err := New(newKV(t), ProcessPrivate{})
+		s, err := New(newKV(t), filelock.ProcessPrivate{})
 		require.NoError(t, err)
 		return s
 	})
@@ -43,7 +43,7 @@ func TestConformance(t *testing.T) {
 
 func TestNew_RejectsNil(t *testing.T) {
 	t.Parallel()
-	_, err := New(nil, ProcessPrivate{})
+	_, err := New(nil, filelock.ProcessPrivate{})
 	require.Error(t, err)
 	_, err = New(newKV(t), nil)
 	require.Error(t, err)
@@ -103,12 +103,12 @@ func TestDurability_SurvivesReopen(t *testing.T) {
 	kv := newKV(t)
 	item := entity.Ref{ID: "TKT-1", Face: entity.Face("draft")}
 
-	first, err := New(kv, ProcessPrivate{})
+	first, err := New(kv, filelock.ProcessPrivate{})
 	require.NoError(t, err)
 	p := piles.Pile{ID: "PIL-AAAA1111", Owner: "alice", Name: "Inbox", Icon: "star", Created: created, Updated: created}
 	require.NoError(t, first.CreatePile(ctx, p, []entity.Ref{item}, piles.MaxPiles, piles.MaxItems))
 
-	second, err := New(kv, ProcessPrivate{})
+	second, err := New(kv, filelock.ProcessPrivate{})
 	require.NoError(t, err)
 	got, err := second.GetPile(ctx, "alice", p.ID)
 	require.NoError(t, err, "a pile must survive a restart")
@@ -127,7 +127,7 @@ func TestCorruptDocument_IsAnError(t *testing.T) {
 	kv := newKV(t)
 	require.NoError(t, kv.Put(ctx, StateKey, []byte("{ not json")))
 
-	s, err := New(kv, ProcessPrivate{})
+	s, err := New(kv, filelock.ProcessPrivate{})
 	require.NoError(t, err)
 	_, err = s.ListPiles(ctx, "alice")
 	require.Error(t, err)

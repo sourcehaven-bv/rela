@@ -23,13 +23,17 @@
 //
 // # Concurrency
 //
-// A claim runs in one transaction. It first takes an advisory lock keyed on
-// the holder identity, scoped by schema because advisory locks are
-// database-global, and then updates the single lease_counters row for its
-// token. That row lock serializes every claim in the schema, so the prune,
-// the held check and both caps see a stable set of rows. The insert is still
-// a conditional upsert on the entity id, which refuses a live lease even
-// without the serialization.
+// Every write runs in one transaction whose first statement locks the single
+// lease_counters row (SELECT ... FOR UPDATE). That row is the one
+// serialization point for the schema: the prune, the held check, both caps,
+// the token and the version all see a stable set of rows. Because every
+// write takes the same lock first, and takes no other lock before it, two
+// writes cannot wait on each other in opposite orders. Reads take no lock.
+//
+// The implementation plan for TKT-6QC5EL also put a per-identity advisory
+// lock in front of claims, for the per-identity cap. It was dropped: the
+// counter row already serializes every write, caps included, and a second
+// lock only added a lock order to get wrong.
 package pglease
 
 import (
@@ -81,64 +85,49 @@ const leaseColumns = `entity_id, lease_hash, identity, holder_user, holder_tool,
 func (s *Store) Claim(
 	ctx context.Context, id string, h lease.Holder, leaseHash string, now, until time.Time, status string,
 ) (lease.Lease, error) {
-	if err := lease.CheckClaim(id, h, leaseHash, now, until); err != nil {
+	if err := lease.CheckClaim(id, h, leaseHash, now, until, status); err != nil {
 		return lease.Lease{}, err
 	}
+	now, until = lease.Instant(now), lease.Instant(until)
 	var out lease.Lease
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx,
-			`SELECT pg_advisory_xact_lock(hashtext('leases:' || current_schema()), hashtext($1))`,
-			h.Identity); err != nil {
-			return fmt.Errorf("pglease: lock identity: %w", err)
+		last, err := lockCounters(ctx, tx)
+		if err != nil {
+			return err
 		}
-		var token int64
-		if err := tx.QueryRow(ctx, `
-			UPDATE lease_counters SET token = GREATEST(token + 1, $1), version = version + 1
-			RETURNING token`, microFloor(now)).Scan(&token); err != nil {
-			return fmt.Errorf("pglease: next token: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM leases WHERE expires <= $1`, now); err != nil {
+		// Rolled back with the rest when the claim is refused; the next
+		// write prunes again.
+		if _, err = tx.Exec(ctx, `DELETE FROM leases WHERE expires <= $1`, now); err != nil {
 			return fmt.Errorf("pglease: prune: %w", err)
 		}
-		if cur, ok, err := liveOn(ctx, tx, id, now); err != nil {
-			return err
-		} else if ok {
-			return held(cur)
-		}
-		if err := checkCaps(ctx, tx, h.Identity, now); err != nil {
+		cur, held, err := liveOn(ctx, tx, id, now)
+		if err != nil {
 			return err
 		}
+		if held {
+			cur.LeaseHash = ""
+			return &lease.HeldError{Current: cur}
+		}
+		if capErr := checkCaps(ctx, tx, h.Identity, now); capErr != nil {
+			return capErr
+		}
+		token := nextToken(last, now)
 		rows, err := tx.Query(ctx, `
 			INSERT INTO leases (`+leaseColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-			ON CONFLICT (entity_id) DO UPDATE SET
-				lease_hash = EXCLUDED.lease_hash, identity = EXCLUDED.identity,
-				holder_user = EXCLUDED.holder_user, holder_tool = EXCLUDED.holder_tool,
-				label = EXCLUDED.label, token = EXCLUDED.token, since = EXCLUDED.since,
-				expires = EXCLUDED.expires, status = EXCLUDED.status
-			WHERE leases.expires <= $8
 			RETURNING `+leaseColumns,
 			id, leaseHash, h.Identity, h.User, h.Tool, h.Label, token, now, until, status)
 		if err != nil {
 			return fmt.Errorf("pglease: claim: %w", err)
 		}
-		got, err := pgx.CollectRows(rows, scanLease)
+		got, err := pgx.CollectExactlyOneRow(rows, scanLease)
 		if isUniqueViolation(err, hashIndex) {
 			return fmt.Errorf("%w: lease hash already in use", lease.ErrInvalid)
 		}
 		if err != nil {
 			return fmt.Errorf("pglease: claim: %w", err)
 		}
-		if len(got) == 0 {
-			// The upsert found a live lease: only possible if the
-			// serialization above is ever removed.
-			cur, _, err := liveOn(ctx, tx, id, now)
-			if err != nil {
-				return err
-			}
-			return held(cur)
-		}
-		out = got[0]
-		return nil
+		out = got
+		return bumpVersion(ctx, tx, &token)
 	})
 	return out, err
 }
@@ -158,12 +147,6 @@ func checkCaps(ctx context.Context, tx pgx.Tx, identity string, now time.Time) e
 		return lease.ErrLimit
 	}
 	return nil
-}
-
-// held returns the conflict error for cur, without its lease hash.
-func held(cur lease.Lease) error {
-	cur.LeaseHash = ""
-	return &lease.HeldError{Current: cur}
 }
 
 // liveOn returns the lease on id that is live at now, if any.
@@ -187,11 +170,15 @@ func liveOn(ctx context.Context, tx pgx.Tx, id string, now time.Time) (lease.Lea
 func (s *Store) Renew(
 	ctx context.Context, leaseHash, identity string, now, until time.Time, status *string,
 ) (lease.Lease, error) {
-	if err := lease.CheckUntil(now, until); err != nil {
+	if err := lease.CheckRenew(leaseHash, now, until, status); err != nil {
 		return lease.Lease{}, err
 	}
+	now, until = lease.Instant(now), lease.Instant(until)
 	var out lease.Lease
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
+		if _, err := lockCounters(ctx, tx); err != nil {
+			return err
+		}
 		rows, err := tx.Query(ctx, `
 			UPDATE leases SET expires = $4, status = COALESCE($5::text, status)
 			WHERE lease_hash = $1 AND identity = $2 AND expires > $3
@@ -207,22 +194,69 @@ func (s *Store) Renew(
 			return lease.ErrLost
 		}
 		out = got[0]
-		return bumpVersion(ctx, tx)
+		return bumpVersion(ctx, tx, nil)
 	})
 	return out, err
 }
 
-// Release implements [lease.Store.Release]. now is not needed: claims prune.
-func (s *Store) Release(ctx context.Context, leaseHash, identity string, _ time.Time) error {
+// Lookup implements [lease.Store.Lookup].
+func (s *Store) Lookup(ctx context.Context, leaseHash, identity string, now time.Time) (lease.Lease, error) {
+	if err := lease.CheckHash(leaseHash); err != nil {
+		return lease.Lease{}, err
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT `+leaseColumns+` FROM leases WHERE lease_hash = $1 AND identity = $2 AND expires > $3`,
+		leaseHash, identity, lease.Instant(now))
+	if err != nil {
+		return lease.Lease{}, fmt.Errorf("pglease: lookup: %w", err)
+	}
+	got, err := pgx.CollectRows(rows, scanLease)
+	if err != nil {
+		return lease.Lease{}, fmt.Errorf("pglease: lookup: %w", err)
+	}
+	if len(got) == 0 {
+		return lease.Lease{}, lease.ErrLost
+	}
+	return got[0], nil
+}
+
+// Release implements [lease.Store.Release].
+func (s *Store) Release(ctx context.Context, leaseHash, identity string, now time.Time) error {
+	if err := lease.CheckHash(leaseHash); err != nil {
+		return err
+	}
+	return s.removeWhere(ctx, "release",
+		`DELETE FROM leases WHERE lease_hash = $1 AND identity = $2 RETURNING expires > $3`,
+		leaseHash, identity, lease.Instant(now))
+}
+
+// Drop implements [lease.Store.Drop].
+func (s *Store) Drop(ctx context.Context, id string, now time.Time) error {
+	return s.removeWhere(ctx, "drop",
+		`DELETE FROM leases WHERE entity_id = $1 RETURNING expires > $2`, id, lease.Instant(now))
+}
+
+// removeWhere runs del, a DELETE that returns whether each removed lease was
+// live, and moves the version when one was.
+func (s *Store) removeWhere(ctx context.Context, op, del string, args ...any) error {
 	return s.inTx(ctx, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `DELETE FROM leases WHERE lease_hash = $1 AND identity = $2`, leaseHash, identity)
+		if _, err := lockCounters(ctx, tx); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, del, args...)
 		if err != nil {
-			return fmt.Errorf("pglease: release: %w", err)
+			return fmt.Errorf("pglease: %s: %w", op, err)
 		}
-		if tag.RowsAffected() == 0 {
-			return nil
+		live, err := pgx.CollectRows(rows, pgx.RowTo[bool])
+		if err != nil {
+			return fmt.Errorf("pglease: %s: %w", op, err)
 		}
-		return bumpVersion(ctx, tx)
+		for _, l := range live {
+			if l {
+				return bumpVersion(ctx, tx, nil)
+			}
+		}
+		return nil
 	})
 }
 
@@ -233,7 +267,7 @@ func (s *Store) Get(ctx context.Context, ids []string, now time.Time) (map[strin
 		return out, nil
 	}
 	rows, err := s.db.Query(ctx,
-		`SELECT `+leaseColumns+` FROM leases WHERE entity_id = ANY($1) AND expires > $2`, ids, now)
+		`SELECT `+leaseColumns+` FROM leases WHERE entity_id = ANY($1) AND expires > $2`, ids, lease.Instant(now))
 	if err != nil {
 		return nil, fmt.Errorf("pglease: get: %w", err)
 	}
@@ -242,6 +276,7 @@ func (s *Store) Get(ctx context.Context, ids []string, now time.Time) (map[strin
 		return nil, fmt.Errorf("pglease: get: %w", err)
 	}
 	for _, l := range got {
+		l.LeaseHash = ""
 		out[l.ID] = l
 	}
 	return out, nil
@@ -251,7 +286,7 @@ func (s *Store) Get(ctx context.Context, ids []string, now time.Time) (map[strin
 func (s *Store) ListByHolder(ctx context.Context, identity string, now time.Time) ([]lease.Lease, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT `+leaseColumns+` FROM leases WHERE identity = $1 AND expires > $2
-		ORDER BY since, entity_id`, identity, now)
+		ORDER BY since, entity_id`, identity, lease.Instant(now))
 	if err != nil {
 		return nil, fmt.Errorf("pglease: list: %w", err)
 	}
@@ -265,45 +300,70 @@ func (s *Store) ListByHolder(ctx context.Context, identity string, now time.Time
 	return got, nil
 }
 
+// NextExpiry implements [lease.Store.NextExpiry], served by the expires
+// index.
+func (s *Store) NextExpiry(ctx context.Context, now time.Time) (time.Time, bool, error) {
+	var next *time.Time
+	if err := s.db.QueryRow(ctx,
+		`SELECT min(expires) FROM leases WHERE expires > $1`, lease.Instant(now)).Scan(&next); err != nil {
+		return time.Time{}, false, fmt.Errorf("pglease: next expiry: %w", err)
+	}
+	if next == nil {
+		return time.Time{}, false, nil
+	}
+	return next.UTC(), true, nil
+}
+
 // Rekey implements [lease.Store.Rekey].
-func (s *Store) Rekey(ctx context.Context, from, to string) error {
+//
+// The lease on from is deleted first, so its hash is free for the row on to.
+// The row on to is then an upsert that overwrites only an expired lease, so a
+// live lease on to stays even if the counter lock were ever bypassed, and no
+// unique violation on the entity id can surface.
+func (s *Store) Rekey(ctx context.Context, from, to string, now time.Time) error {
+	if from == "" || to == "" {
+		return fmt.Errorf("%w: entity id must be non-empty", lease.ErrInvalid)
+	}
 	if from == to {
 		return nil
 	}
+	now = lease.Instant(now)
 	return s.inTx(ctx, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT 1 FROM leases WHERE entity_id = $1 FOR UPDATE`, from)
+		last, err := lockCounters(ctx, tx)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `DELETE FROM leases WHERE entity_id = $1 RETURNING `+leaseColumns, from)
 		if err != nil {
 			return fmt.Errorf("pglease: rekey: %w", err)
 		}
-		found := rows.Next()
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		moved, err := pgx.CollectRows(rows, scanLease)
+		if err != nil {
 			return fmt.Errorf("pglease: rekey: %w", err)
 		}
-		if !found {
+		if len(moved) == 0 || !moved[0].Live(now) {
 			return nil
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM leases WHERE entity_id = $1`, to); err != nil {
-			return fmt.Errorf("pglease: rekey: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `UPDATE leases SET entity_id = $2 WHERE entity_id = $1`, from, to); err != nil {
-			return fmt.Errorf("pglease: rekey: %w", err)
-		}
-		return bumpVersion(ctx, tx)
-	})
-}
-
-// Drop implements [lease.Store.Drop].
-func (s *Store) Drop(ctx context.Context, id string) error {
-	return s.inTx(ctx, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `DELETE FROM leases WHERE entity_id = $1`, id)
+		l := moved[0]
+		token := nextToken(last, now)
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO leases (`+leaseColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			ON CONFLICT (entity_id) DO UPDATE SET
+				lease_hash = EXCLUDED.lease_hash, identity = EXCLUDED.identity,
+				holder_user = EXCLUDED.holder_user, holder_tool = EXCLUDED.holder_tool,
+				label = EXCLUDED.label, token = EXCLUDED.token, since = EXCLUDED.since,
+				expires = EXCLUDED.expires, status = EXCLUDED.status
+			WHERE leases.expires <= $11`,
+			to, l.LeaseHash, l.Holder.Identity, l.Holder.User, l.Holder.Tool, l.Holder.Label,
+			token, l.Since, l.Expires, l.Status, now)
 		if err != nil {
-			return fmt.Errorf("pglease: drop: %w", err)
+			return fmt.Errorf("pglease: rekey: %w", err)
 		}
 		if tag.RowsAffected() == 0 {
-			return nil
+			// to has a live lease: it stays, and the one on from is gone.
+			return bumpVersion(ctx, tx, nil)
 		}
-		return bumpVersion(ctx, tx)
+		return bumpVersion(ctx, tx, &token)
 	})
 }
 
@@ -320,18 +380,30 @@ func (s *Store) Version(ctx context.Context) (uint64, error) {
 // root, so nothing is closed here.
 func (s *Store) Close() error { return nil }
 
+// lockCounters locks the counter row, the serialization point every write
+// takes first, and returns the last token issued.
+func lockCounters(ctx context.Context, tx pgx.Tx) (int64, error) {
+	var token int64
+	if err := tx.QueryRow(ctx, `SELECT token FROM lease_counters FOR UPDATE`).Scan(&token); err != nil {
+		return 0, fmt.Errorf("pglease: lock counters: %w", err)
+	}
+	return token, nil
+}
+
 // bumpVersion moves the version inside tx, so a watcher sees it only once the
-// change is committed.
-func bumpVersion(ctx context.Context, tx pgx.Tx) error {
-	if _, err := tx.Exec(ctx, `UPDATE lease_counters SET version = version + 1`); err != nil {
+// change is committed, and stores token as the last one issued when it is
+// non-nil.
+func bumpVersion(ctx context.Context, tx pgx.Tx, token *int64) error {
+	if _, err := tx.Exec(ctx,
+		`UPDATE lease_counters SET version = version + 1, token = COALESCE($1::bigint, token)`, token); err != nil {
 		return fmt.Errorf("pglease: bump version: %w", err)
 	}
 	return nil
 }
 
-// microFloor is the token floor for a claim at now: now in microseconds, or
-// 0 before the Unix epoch.
-func microFloor(now time.Time) int64 { return max(now.UnixMicro(), 0) }
+// nextToken is [lease.NextToken] over the signed column: max(last+1, now in
+// microseconds), with a now before the Unix epoch counting as 0.
+func nextToken(last int64, now time.Time) int64 { return max(last+1, now.UnixMicro(), 0) }
 
 func scanLease(row pgx.CollectableRow) (lease.Lease, error) {
 	var l lease.Lease

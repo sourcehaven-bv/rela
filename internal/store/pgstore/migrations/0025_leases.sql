@@ -41,13 +41,14 @@ CREATE UNIQUE INDEX leases_hash_idx ON leases (lease_hash);
 -- Serves ListByHolder and the per-identity cap.
 CREATE INDEX leases_identity_idx ON leases (identity);
 
--- Serves the prune of expired leases on every claim.
+-- Serves the prune of expired leases on every claim, and NextExpiry.
 CREATE INDEX leases_expires_idx ON leases (expires);
 
 -- One row: the last token issued and the version watchers poll. A row rather
 -- than a sequence, because both must move inside the writing transaction: a
 -- sequence advances before commit, so a watcher could see the new version,
--- read the old rows, and then miss the change.
+-- read the old rows, and then miss the change. Every lease write locks this
+-- row first, which serializes the writes of one schema.
 CREATE TABLE lease_counters (
     singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
     token     BIGINT  NOT NULL,

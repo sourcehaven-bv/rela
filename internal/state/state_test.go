@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -49,6 +51,51 @@ func TestFSKV_Put_NestedKey_CreatesDirs(t *testing.T) {
 	}
 	if string(got) != "<html/>" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// State is per-user data, so on disk a value is 0600 and a directory Put
+// creates is 0700.
+func TestFSKV_Put_IsPrivateToTheOwner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix file modes")
+	}
+	root := t.TempDir()
+	rfs, err := storage.NewRootedFS(storage.NewSafeFS(storage.NewOsFS()), root)
+	if err != nil {
+		t.Fatalf("NewRootedFS: %v", err)
+	}
+	kv := NewFSKV(rfs)
+	ctx := context.Background()
+	if err := kv.Put(ctx, "top.json", []byte("{}")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := kv.Put(ctx, "nested/dir/value.json", []byte("{}")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	for name, want := range map[string]os.FileMode{
+		"top.json":              0o600,
+		"nested/dir/value.json": 0o600,
+		"nested":                0o700,
+		"nested/dir":            0o700,
+	} {
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(name)))
+		if err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("%s: mode %o, want %o", name, got, want)
+		}
+	}
+}
+
+func TestFSKV_Put_RejectedKeyCreatesNothing(t *testing.T) {
+	kv := newTestKV(t)
+	if err := kv.Put(context.Background(), "made//x.json", []byte("{}")); err == nil {
+		t.Fatal("Put accepted an empty segment")
+	}
+	if _, err := kv.fs.Stat("made"); !os.IsNotExist(err) {
+		t.Fatalf("a refused key created its directory: %v", err)
 	}
 }
 

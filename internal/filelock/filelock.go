@@ -41,6 +41,15 @@ const (
 	filePerm = 0o600
 )
 
+// ProcessPrivate is the locker for a KV no other process can open, such as an
+// in-memory one. It locks nothing: the store over the KV already excludes the
+// callers inside this process. Choosing it over an on-disk KV lets two
+// processes overwrite each other's writes.
+type ProcessPrivate struct{}
+
+// Lock returns at once with a release func that does nothing.
+func (ProcessPrivate) Lock(context.Context) (func(), error) { return func() {}, nil }
+
 // Locker is an exclusive lock on one lock file. It is safe for concurrent
 // use: every [Locker.Lock] opens the file afresh, and the OS lock belongs to
 // that open file.

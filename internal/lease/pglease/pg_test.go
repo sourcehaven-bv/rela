@@ -62,9 +62,9 @@ func TestSchemaIsolation(t *testing.T) {
 	require.NoError(t, err)
 
 	h := lease.Holder{Identity: "alice"}
-	_, err = a.Claim(ctx, "TKT-1", h, "h1", t0, t0.Add(time.Hour), "")
+	_, err = a.Claim(ctx, "TKT-1", h, leasetest.Hash("h1"), t0, t0.Add(time.Hour), "")
 	require.NoError(t, err)
-	_, err = b.Claim(ctx, "TKT-1", h, "h2", t0, t0.Add(time.Hour), "")
+	_, err = b.Claim(ctx, "TKT-1", h, leasetest.Hash("h2"), t0, t0.Add(time.Hour), "")
 	require.NoError(t, err, "a lease in one schema must not block a claim in another")
 }
 
@@ -84,13 +84,13 @@ func TestCrossProcess(t *testing.T) {
 
 	v, err := b.Version(ctx)
 	require.NoError(t, err)
-	_, err = a.Claim(ctx, "TKT-1", lease.Holder{Identity: "alice"}, "h1", t0, t0.Add(time.Hour), "")
+	_, err = a.Claim(ctx, "TKT-1", lease.Holder{Identity: "alice"}, leasetest.Hash("h1"), t0, t0.Add(time.Hour), "")
 	require.NoError(t, err)
 	v2, err := b.Version(ctx)
 	require.NoError(t, err)
 	require.NotEqual(t, v, v2, "node B must see node A's write in the version")
 
-	_, err = b.Claim(ctx, "TKT-1", lease.Holder{Identity: "bob"}, "h2", t0, t0.Add(time.Hour), "")
+	_, err = b.Claim(ctx, "TKT-1", lease.Holder{Identity: "bob"}, leasetest.Hash("h2"), t0, t0.Add(time.Hour), "")
 	var held *lease.HeldError
 	require.ErrorAs(t, err, &held)
 }
@@ -104,14 +104,14 @@ func TestReopen_TokenKeepsIncreasing(t *testing.T) {
 	first, err := pglease.New(pool)
 	require.NoError(t, err)
 	h := lease.Holder{Identity: "alice"}
-	l, err := first.Claim(ctx, "TKT-1", h, "h1", t0, t0.Add(time.Hour), "")
+	l, err := first.Claim(ctx, "TKT-1", h, leasetest.Hash("h1"), t0, t0.Add(time.Hour), "")
 	require.NoError(t, err)
-	require.NoError(t, first.Release(ctx, "h1", h.Identity, t0))
+	require.NoError(t, first.Release(ctx, leasetest.Hash("h1"), h.Identity, t0))
 	require.NoError(t, first.Close())
 
 	second, err := pglease.New(pool)
 	require.NoError(t, err)
-	l2, err := second.Claim(ctx, "TKT-1", h, "h2", t0, t0.Add(time.Hour), "")
+	l2, err := second.Claim(ctx, "TKT-1", h, leasetest.Hash("h2"), t0, t0.Add(time.Hour), "")
 	require.NoError(t, err)
 	require.Greater(t, l2.Token, l.Token)
 }
@@ -129,10 +129,10 @@ func TestStoreCap_CountsLiveLeasesOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	h := lease.Holder{Identity: "alice"}
-	_, err = s.Claim(ctx, "TKT-X", h, "hx", t0, t0.Add(time.Hour), "")
+	_, err = s.Claim(ctx, "TKT-X", h, leasetest.Hash("hx"), t0, t0.Add(time.Hour), "")
 	require.ErrorIs(t, err, lease.ErrFull)
 
-	_, err = s.Claim(ctx, "TKT-X", h, "hx", t0.Add(time.Minute), t0.Add(time.Hour), "")
+	_, err = s.Claim(ctx, "TKT-X", h, leasetest.Hash("hx"), t0.Add(time.Minute), t0.Add(time.Hour), "")
 	require.NoError(t, err, "an expired lease does not count toward the cap")
 }
 
