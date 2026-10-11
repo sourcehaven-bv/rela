@@ -5,7 +5,7 @@ title: 'Realtime 2/3: agents claim tickets through the rela CLI'
 kind: enhancement
 priority: medium
 effort: s
-status: ready
+status: backlog
 ---
 
 ## Description

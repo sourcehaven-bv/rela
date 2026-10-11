@@ -5,7 +5,7 @@ title: 'Realtime 2/2: presence over live views, avatars and claim badge'
 kind: enhancement
 priority: medium
 effort: m
-status: ready
+status: backlog
 ---
 
 ## Description

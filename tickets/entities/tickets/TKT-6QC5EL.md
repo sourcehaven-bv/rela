@@ -5,7 +5,7 @@ title: 'Realtime 2/1: advisory lease store with claim, renew, release'
 kind: enhancement
 priority: high
 effort: l
-status: ready
+status: backlog
 ---
 
 ## Description
