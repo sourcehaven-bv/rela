@@ -167,6 +167,10 @@ components:
   # other or the file they share. Both are handed the opened handle.
   sqlitedb:         { in: internal/sqlitedb }
   storeutil:        { in: internal/store/storeutil }
+  # Start-once, stop-and-wait background goroutine shared by the store
+  # backends' version sweeps (TKT-IPXEZQ). A leaf: standard library only, so
+  # it needs no deps entry.
+  bgloop:           { in: internal/store/bgloop }
 
   # Project bootstrap utilities
   projectsetup:     { in: internal/projectsetup }
@@ -1526,6 +1530,7 @@ deps:
       - search
       - store
       - storeutil
+      - bgloop
     canUse:
       - pgx
   sqlitestore:
@@ -1541,6 +1546,9 @@ deps:
       - sqlitedb
       - store
       - storeutil
+      # The sweep's start-once, stop-and-wait lifecycle, shared with pgstore
+      # (TKT-IPXEZQ). Standard library only.
+      - bgloop
       # Added by TKT-4NU9ZD (DEC-LFSYNY stage 4, content versioning) — the
       # stage this list's previous note said would have to justify itself.
       #
