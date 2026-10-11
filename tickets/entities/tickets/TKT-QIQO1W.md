@@ -27,3 +27,6 @@ same permission and face checks as `POST .../{commentID}/accept`.
 
 Stdio `rela mcp` registers only `list_comments`; the four write tools exist only
 on the remote server (decided on 2026-10-11).
+
+The MCP docs are generated from `docs-project/` (GUIDE-mcp-server,
+GUIDE-comments); edit those, not `docs/`.
