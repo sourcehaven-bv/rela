@@ -49,8 +49,9 @@ type Family struct {
 //
 // A miss (no such entity, or one the caller may not read) is
 // store.ErrNotFound itself, unwrapped, for WriteTarget, ok=false for Family,
-// and an absent key for Readable. [Service.Claim] returns that same value
-// when the entity goes away between its two reads.
+// and an absent key for Readable. [Service.Claim] answers every miss with
+// that same value, including an address that does not parse and an entity
+// that goes away between its two reads.
 type Gate interface {
 	// WriteTarget resolves addr (`ID` or `ID@face`) to the one face a write
 	// edits. A bare id of a faced type is an ambiguous-address error.
@@ -181,6 +182,10 @@ type ClaimRequest struct {
 	Label string
 	// Status is a short note on what the holder is doing.
 	Status string
+	// Type, when set, is the entity type the caller addressed, as in an
+	// HTTP route that names the type's plural. An entity of another type
+	// is not found, the same answer as for one that does not exist.
+	Type string
 }
 
 // Claimed is the result of a successful claim.
@@ -194,10 +199,15 @@ type Claimed struct {
 
 // Claim takes the lease on the entity at req.Addr for the principal on ctx.
 //
-// Errors: [ErrInvalid] for bad input (before any read); the gate's not-found
-// or ambiguous-address error; *acl.ForbiddenError without update access;
-// *[HeldError] when the entity has a live lease; [ErrLimit] or [ErrFull]
-// past a cap.
+// The checks run in a fixed order: the family read first, so that an entity
+// the caller may not read, or one of another type than req.Type, is not found
+// before the write target is resolved or update access is asked about; then
+// the write target; then update access on it.
+//
+// Errors: [ErrInvalid] for bad input (before any read); store.ErrNotFound or
+// the gate's ambiguous-address error; *acl.ForbiddenError without update
+// access; *[HeldError] when the entity has a live lease; [ErrLimit] or
+// [ErrFull] past a cap.
 func (s *Service) Claim(ctx context.Context, req ClaimRequest) (Claimed, error) {
 	p, err := caller(ctx)
 	if err != nil {
@@ -207,17 +217,20 @@ func (s *Service) Claim(ctx context.Context, req ClaimRequest) (Claimed, error) 
 	if err != nil {
 		return Claimed{}, err
 	}
+	addr, err := entity.ParseAddress(req.Addr)
+	if err != nil {
+		return Claimed{}, store.ErrNotFound
+	}
+	fam, ok, err := s.gate.Family(ctx, addr.ID())
+	if err != nil {
+		return Claimed{}, err
+	}
+	if !ok || (req.Type != "" && req.Type != fam.Type) {
+		return Claimed{}, store.ErrNotFound
+	}
 	ref, err := s.gate.WriteTarget(ctx, req.Addr)
 	if err != nil {
 		return Claimed{}, err
-	}
-	fam, ok, err := s.gate.Family(ctx, ref.ID)
-	if err != nil {
-		return Claimed{}, err
-	}
-	if !ok {
-		// Gone or hidden since WriteTarget: the value a gate miss is.
-		return Claimed{}, store.ErrNotFound
 	}
 	if d := s.authorize(ctx, fam.Type, ref); !d.Allow {
 		return Claimed{}, &acl.ForbiddenError{Decision: d}

@@ -173,6 +173,14 @@ func (w *watchHandler) handle(ctx context.Context, req *mcpgo.CallToolRequest) (
 	// the loop.
 	events, cancel := d.Watch.Changes.Subscribe(watchEventBuffer)
 	defer cancel()
+	// A lease change shows in show_entity without a store event. Without
+	// leases the channel stays nil and never fires.
+	var leaseWake <-chan struct{}
+	if d.Leases != nil {
+		wake, cancelWake := d.Leases.Subscribe()
+		defer cancelWake()
+		leaseWake = wake
+	}
 
 	run := &watchRun{w: w, d: d, entry: entry, targets: targets, shareKey: p.ShareKey(),
 		digests: make(map[string]string, len(targets))}
@@ -218,6 +226,8 @@ func (w *watchHandler) handle(ctx context.Context, req *mcpgo.CallToolRequest) (
 			if !open {
 				events = nil
 			}
+			dirty = true
+		case <-leaseWake:
 			dirty = true
 		case <-ticker.C:
 			if !dirty {

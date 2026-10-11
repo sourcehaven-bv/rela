@@ -88,14 +88,8 @@ type Deps struct {
 	Watcher      Watcher
 	ProjectRoot  string
 	Attachments  AttachmentDeps
-	// Comments backs list_comments, and CommentWriter the comment write
-	// tools (TKT-QIQO1W).
-	//
-	// Nil: accepted. A nil Comments means the project declares no
-	// `comments:` block and no comment tool is registered; a nil
-	// CommentWriter leaves out the write tools, as stdio `rela mcp` does.
-	Comments      CommentReader
-	CommentWriter CommentWriter
+	// Comments backs the comment tools (TKT-QIQO1W); see [CommentDeps].
+	Comments CommentDeps
 	// Actions backs list_actions and run_action (TKT-NW9QSN).
 	//
 	// Nil: accepted. The tools are then not registered, as under stdio
@@ -121,6 +115,14 @@ type Deps struct {
 	// call naming a world other than the generated `default` is refused
 	// there.
 	Worlds WorldSelector
+
+	// Leases backs the lease tools, the lease show_entity carries, and the
+	// lease wake of watch.
+	//
+	// Nil: accepted. No lease tool is registered, show_entity carries no
+	// lease, and watch wakes on store changes only. Wiring assigns it only
+	// when the service exists, so a typed nil never reaches the interface.
+	Leases LeaseService
 }
 
 // WatchDeps is what the watch tool needs beyond the read surface.
@@ -454,6 +456,7 @@ type handlerSet struct {
 	attach    attachmentHandler
 	comments  commentHandler
 	actions   actionHandler
+	leases    leaseHandler
 }
 
 // handlers builds the extracted handler groups a [Server] carries. One
@@ -468,8 +471,9 @@ func (d Deps) handlers() handlerSet {
 		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta, world: d.World},
 		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types, world: d.World},
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
-		comments:  commentHandler{reader: d.Comments, writer: d.CommentWriter},
+		comments:  commentHandler{reader: d.Comments.Reader, writer: d.Comments.Writer},
 		actions:   actionHandler{runner: d.Actions},
+		leases:    leaseHandler{svc: d.Leases},
 	}
 }
 

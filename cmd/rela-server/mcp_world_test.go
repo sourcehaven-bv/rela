@@ -321,6 +321,19 @@ func TestRemoteMCPDeps_PassesTheHostWorldSelector(t *testing.T) {
 	}
 }
 
+// The remote server gets the lease service of an assembled project
+// (TKT-27XVYS).
+func TestRemoteMCPDeps_PassesTheLeases(t *testing.T) {
+	svc := newWorldServices(t)
+	deps, err := remoteMCPDeps(svc, testHost(t, svc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps.Leases == nil {
+		t.Error("the remote server must get the lease service")
+	}
+}
+
 // The remote server gets every comment tool when the host carries the
 // operations, and none when commenting is off (TKT-QIQO1W).
 func TestRemoteMCPDeps_PassesTheHostComments(t *testing.T) {
@@ -331,7 +344,7 @@ func TestRemoteMCPDeps_PassesTheHostComments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deps.Comments != nil || deps.CommentWriter != nil {
+	if deps.Comments.Reader != nil || deps.Comments.Writer != nil {
 		t.Error("a host without comment operations must leave both nil, or the tools register over nothing")
 	}
 
@@ -340,7 +353,7 @@ func TestRemoteMCPDeps_PassesTheHostComments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deps.Comments == nil || deps.CommentWriter == nil {
+	if deps.Comments.Reader == nil || deps.Comments.Writer == nil {
 		t.Error("the remote server must get the read and the write comment tools")
 	}
 }

@@ -77,9 +77,9 @@ func newCommentServer(t *testing.T, fake *fakeComments, writes bool) *Server {
 	t.Helper()
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
-	deps.Comments = fake
+	deps.Comments.Reader = fake
 	if writes {
-		deps.CommentWriter = fake
+		deps.Comments.Writer = fake
 	}
 	srv, err := NewServer(deps, "test", WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}))
 	if err != nil {
@@ -118,7 +118,7 @@ func TestCommentTools_Registration(t *testing.T) {
 		t.Parallel()
 		meta, st := makeTestFixture(t)
 		deps := newTestDeps(t, meta, st)
-		deps.Comments = nil
+		deps.Comments.Reader = nil
 		srv, err := NewServer(deps, "test", WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}))
 		if err != nil {
 			t.Fatal(err)
@@ -277,7 +277,7 @@ func TestCommentTools_AfterAReloadDropsComments(t *testing.T) {
 	fake := &fakeComments{}
 	srv := newCommentServer(t, fake, true)
 	reloaded := srv.deps()
-	reloaded.Comments, reloaded.CommentWriter = nil, nil
+	reloaded.Comments = CommentDeps{}
 	if err := srv.ReloadDeps(reloaded); err != nil {
 		t.Fatalf("ReloadDeps: %v", err)
 	}

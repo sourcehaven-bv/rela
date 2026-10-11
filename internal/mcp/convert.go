@@ -33,6 +33,9 @@ type entityJSON struct {
 	// stops at the cap.
 	MentionedBy          []entitySummary `json:"mentioned_by,omitempty"`
 	MentionedByTruncated bool            `json:"mentioned_by_truncated,omitempty"`
+	// Lease is the live lease on the entity, on show_entity only. Omitted
+	// when the entity is not held or leases are not wired.
+	Lease *leaseJSON `json:"lease,omitempty"`
 }
 
 // faceJSON names another face of an entity and the address that reads it.

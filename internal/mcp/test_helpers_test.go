@@ -10,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
@@ -54,7 +55,8 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 		Families:    store.TrivialScope(),
 		// Read only, as stdio `rela mcp` wires it: list_comments without the
 		// write tools.
-		Comments: &fakeComments{},
+		Comments: CommentDeps{Reader: &fakeComments{}},
+		Leases:   newTestLeases(t, svc.GatedReads().Reader, svc.ACL(), lease.SystemClock{}),
 	}
 }
 

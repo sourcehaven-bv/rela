@@ -140,8 +140,10 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 	// Assigned only when set: a nil *MCPComments in the interface would
 	// register the tools over an absent service.
 	if host.Comments != nil {
-		deps.Comments = host.Comments
-		deps.CommentWriter = host.Comments
+		deps.Comments = relamcp.CommentDeps{Reader: host.Comments, Writer: host.Comments}
+	}
+	if leases := appbuild.Leases(svc); leases != nil {
+		deps.Leases = leases
 	}
 	if host.Actions != nil {
 		deps.Actions = host.Actions

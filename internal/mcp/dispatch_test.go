@@ -166,8 +166,14 @@ var toolCalls = map[string]struct {
 	// outcome (the dispatch and decode still succeeded).
 	wantErr bool
 }{
-	"list_entities":   {args: `{"type":"requirement","filter":"entity.status == 'accepted'","limit":2}`},
-	"show_entity":     {args: `{"id":"REQ-001"}`},
+	"list_entities": {args: `{"type":"requirement","filter":"entity.status == 'accepted'","limit":2}`},
+	"show_entity":   {args: `{"id":"REQ-001"}`},
+	// The lease calls are the deterministic ones: a successful claim
+	// returns a fresh lease id and time-based token.
+	"claim_entity":    {args: `{"id":"REQ-404","ttl_seconds":60}`, wantErr: true},
+	"renew_lease":     {args: `{"lease_id":"00000000000000000000000000000000","status":"x"}`, wantErr: true},
+	"release_lease":   {args: `{"lease_id":"00000000000000000000000000000000"}`},
+	"list_leases":     {args: `{}`},
 	"search_entities": {args: `{"query":"requirement","limit":5}`},
 	"list_worlds":     {args: `{}`},
 	"create_entity":   {args: `{"type":"requirement","properties":{"title":"Created via dispatch"}}`},

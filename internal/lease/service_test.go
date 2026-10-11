@@ -1016,6 +1016,50 @@ func TestRenew_AnyUpdatableFaceKeepsTheLease(t *testing.T) {
 	require.ErrorIs(t, err, lease.ErrLost, "no updatable face loses the lease")
 }
 
+// TestClaim_TypeChecked pins ClaimRequest.Type: the family is read first,
+// and a type other than the stored one is not found before the write target
+// is resolved or update access is asked about.
+func TestClaim_TypeChecked(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		p       principal.Principal
+		addr    string
+		typ     string
+		wantErr error
+		// wantGateCalls is the number of gate reads, when the claim fails.
+		wantGateCalls int64
+	}{
+		{name: "matching type claims", p: alice, addr: "TKT-1", typ: "ticket"},
+		{name: "no type claims", p: alice, addr: "TKT-1"},
+		{name: "other type is not found", p: alice, addr: "TKT-1", typ: "doc",
+			wantErr: store.ErrNotFound, wantGateCalls: 1},
+		{name: "other type beats forbidden", p: carol, addr: "TKT-1", typ: "doc",
+			wantErr: store.ErrNotFound, wantGateCalls: 1},
+		{name: "other type beats ambiguous", p: alice, addr: "TKT-F", typ: "ticket",
+			wantErr: store.ErrNotFound, wantGateCalls: 1},
+		{name: "hidden is not found whatever the type", p: bob, addr: "TKT-H", typ: "ticket",
+			wantErr: store.ErrNotFound, wantGateCalls: 1},
+		{name: "unparseable address is not found before any read", p: alice, addr: "@@",
+			wantErr: store.ErrNotFound, wantGateCalls: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t)
+			c, err := e.svc.Claim(as(tc.p), lease.ClaimRequest{Addr: tc.addr, Type: tc.typ})
+			if tc.wantErr == nil {
+				require.NoError(t, err)
+				require.Equal(t, tc.addr, c.Lease.ID)
+				return
+			}
+			require.Same(t, tc.wantErr, err)
+			require.Equal(t, tc.wantGateCalls, e.gate.calls.Load())
+			require.Zero(t, e.store.calls.Load())
+		})
+	}
+}
+
 // vanishingGate resolves a write target but then finds no family, as when
 // the entity is deleted or hidden between the two reads.
 type vanishingGate struct{ *fakeGate }

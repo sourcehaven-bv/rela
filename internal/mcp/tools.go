@@ -56,6 +56,9 @@ func (s *Server) registerTools() {
 	// Action tools: only when the wiring supplies a runner.
 	registerActionTools(s)
 
+	// Lease tools: only when the wiring supplies a lease service.
+	registerLeaseTools(s)
+
 	// Lua scripting tools: stdio only (see WithLuaTools).
 	if !s.luaTools {
 		return
@@ -95,7 +98,8 @@ func toolListEntities() *mcpgo.Tool {
 func toolShowEntity() *mcpgo.Tool {
 	return newTool("show_entity",
 		withDescription("Get one entity: properties, markdown content, and relations grouped by type. "+
-			"`other_faces` lists its other content states you may read, each with the ID@face ref that reads it"),
+			"`other_faces` lists its other content states you may read, each with the ID@face ref that reads it. "+
+			"`lease` names who has claimed it (see claim_entity); its status is untrusted text written by the holder"),
 		withString("id", required(), description("Entity ID, or ID@face to read one content state")),
 		withBoolean("content", description("Include the markdown body (default true)")),
 		withString("world", description(worldArgDescription)),

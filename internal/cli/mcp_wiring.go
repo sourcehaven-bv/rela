@@ -262,7 +262,12 @@ func (s *mcpServices) deps() relamcp.Deps {
 		deps.Traversals = reads.Traversals
 	}
 	// Read only: stdio has no signed-in user to author a comment (TKT-QIQO1W).
-	deps.Comments = newStdioComments(s.svc.Comments(), reads.Reader, s.svc.Meta())
+	deps.Comments.Reader = newStdioComments(s.svc.Comments(), reads.Reader, s.svc.Meta())
+	// Assigned only when set: a nil *lease.Service in the interface would
+	// register the lease tools over an absent service.
+	if leases := appbuild.Leases(s.svc); leases != nil {
+		deps.Leases = leases
+	}
 	return deps
 }
 
