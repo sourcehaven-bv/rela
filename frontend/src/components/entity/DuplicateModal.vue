@@ -129,6 +129,8 @@ function omittedReasonLabel(reason: string): string {
       return 'not visible to you'
     case 'file':
       return 'attached file'
+    case 'external-ref':
+      return 'link to another system'
     case 'state-machine':
       return 'starts at its initial value'
     case 'self-loop':

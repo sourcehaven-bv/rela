@@ -31,6 +31,10 @@ const columns: TableColumn[] = [
   { key: 'severity', header: 'When broken', width: 180 },
 ]
 
+function routeOf(row: { index: number }): string {
+  return configureRoute.rule(row.index)
+}
+
 function add() {
   const type = entityTypeNames(draft.currentSchema)[0]
   draft.appendAt(
@@ -55,7 +59,7 @@ function add() {
       name-label="Rule"
       intro="A rule is a check on records. A broken rule either blocks saving or shows a warning on the record."
       empty="No rules yet."
-      :to="(row) => configureRoute.rule(row.index)"
+      :to="routeOf"
     >
       <template #cell-severity="{ item }">
         <RlTag

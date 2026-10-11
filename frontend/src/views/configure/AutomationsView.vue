@@ -32,6 +32,10 @@ const columns: TableColumn[] = [
   { key: 'then', header: 'Then', width: 380 },
 ]
 
+function routeOf(row: { index: number }): string {
+  return configureRoute.automation(row.index)
+}
+
 function add() {
   const type = entityTypeNames(draft.currentSchema)[0]
   draft.appendAt(
@@ -56,7 +60,7 @@ function add() {
       name-label="Automation"
       intro="An automation does something by itself when a record is created or changes, such as creating a checklist."
       empty="No automations yet."
-      :to="(row) => configureRoute.automation(row.index)"
+      :to="routeOf"
     >
       <template #cell-then="{ item }">
         <RlText size="sm" tone="muted">{{ item.then || 'Nothing yet' }}</RlText>

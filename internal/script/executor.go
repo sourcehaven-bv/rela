@@ -201,6 +201,8 @@ func (e *Engine) execute(ctx context.Context, code string, deps lua.WriteDeps, s
 		// Ambient capabilities are an explicit per-execution grant (TKT-YH52OM);
 		// the zero value denies http/ai/secrets/write_file.
 		lua.WithCapabilities(caps),
+		// Automations and scheduled tasks run operator-authored scripts.
+		lua.WithExternalRefWrites(),
 		// Resolve identity here (the caller side) and pass it as a value, so
 		// the lua package never reads the principal from ctx (TKT-5U6NRR).
 		lua.WithPrincipal(principal.From(ctx)))

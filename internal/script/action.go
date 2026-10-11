@@ -144,6 +144,8 @@ func (e *Engine) ExecuteActionRequest(
 		lua.WithParams(params),
 		lua.WithRequest(inv.Request),
 		lua.WithActionMode(),
+		// Action scripts are operator-authored files under actions/.
+		lua.WithExternalRefWrites(),
 		lua.WithTimeout(inv.Timeout),
 		lua.WithCache(e.cache),
 		lua.WithContext(ctx),

@@ -39,10 +39,19 @@ import (
 // Validation includes the metamodel's ID-prefix check, which is a HARD
 // error, so an ID matching no declared prefix is refused.
 //
+// An external ref in e is refused, like on any create from an interactive
+// surface (TKT-SM20FG): a restore through the data-entry app must not
+// reinstate a link to another system. [Recreator.WriteExternalRefs] lets an
+// operator-shell caller opt in.
+//
 // It is a package function rather than a method for the reason given on
 // [CopiesForSource]: Manager's method count is pinned. [Recreator] adapts it
 // for consumers that need a method.
 func RecreateEntity(ctx context.Context, m *Manager, e *entity.Entity) (*entity.UpdateResult, error) {
+	return recreateEntity(ctx, m, e, false)
+}
+
+func recreateEntity(ctx context.Context, m *Manager, e *entity.Entity, allowRefs bool) (*entity.UpdateResult, error) {
 	ctx = withStoreAttribution(ctx)
 	if e == nil {
 		return nil, errors.New("entitymanager: RecreateEntity: entity is nil")
@@ -86,6 +95,9 @@ func RecreateEntity(ctx context.Context, m *Manager, e *entity.Entity) (*entity.
 		if err := m.deps.requireCreateFaceFor(e.Type, e.Face); err != nil {
 			return nil, err
 		}
+	}
+	if err := rejectExternalRefCreate(m.deps.Meta, e.Type, e.Properties, allowRefs); err != nil {
+		return nil, err
 	}
 	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
 		Op:      acl.OpCreate,
@@ -146,9 +158,14 @@ func persistRecreate(ctx context.Context, st store.Store, e *entity.Entity) erro
 }
 
 // Recreator adapts [RecreateEntity] to a method-shaped dependency.
-type Recreator struct{ M *Manager }
+type Recreator struct {
+	M *Manager
+	// WriteExternalRefs lets the recreate bring back external refs. Only the
+	// operator shell (`rela restore`) sets it.
+	WriteExternalRefs bool
+}
 
 // RecreateEntity calls [RecreateEntity] on the wrapped manager.
 func (r Recreator) RecreateEntity(ctx context.Context, e *entity.Entity) (*entity.UpdateResult, error) {
-	return RecreateEntity(ctx, r.M, e)
+	return recreateEntity(ctx, r.M, e, r.WriteExternalRefs)
 }

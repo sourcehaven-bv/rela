@@ -160,7 +160,7 @@ describe('<rela-editor> contract', () => {
     await settle()
     ed.value = 'plain\n'
     edit(ed)
-    expect(ed.value).toBe('- plain\n\n')
+    expect(ed.value).toBe('- plain\n')
   })
 
   it('does NOT emit input when value is set programmatically', async () => {
@@ -193,7 +193,7 @@ describe('<rela-editor> contract', () => {
     ed.addEventListener('input', () => seen.push(ed.value))
     edit(ed)
     expect(seen.length).toBeGreaterThan(0)
-    expect(new Set(seen)).toEqual(new Set(['- plain\n\n']))
+    expect(new Set(seen)).toEqual(new Set(['- plain\n']))
   })
 
   it('dispatches change on blur after an edit', async () => {
@@ -451,7 +451,7 @@ describe('<rela-editor> contract', () => {
     ed.remove()
     document.body.appendChild(ed)
     await settle()
-    expect(ed.value).toBe('- plain\n\n')
+    expect(ed.value).toBe('- plain\n')
   })
 
   it('renders a toolbar of formatting buttons, with the table group hidden', async () => {

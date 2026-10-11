@@ -48,6 +48,18 @@ func (b *sqlBuilder) jsonPath(prop string) string {
 	return quoteLiteral(`$."` + prop + `"`)
 }
 
+// jsonKeyPath is [jsonPath] one level deeper: the entry key of the object
+// held by prop, `'$."prop"."key"'`. A [store.PropKeyEqual] Key is already
+// restricted to [a-z0-9_]; it is checked again here because the path is
+// rendered, not bound.
+func (b *sqlBuilder) jsonKeyPath(prop, key string) string {
+	if prop == "" || key == "" || strings.ContainsAny(prop+key, `"\`) || !safeLiteral(prop+key) {
+		b.unsafe = true
+		return "'$'"
+	}
+	return quoteLiteral(`$."` + prop + `"."` + key + `"`)
+}
+
 // literal renders v as a SQL string literal, or marks the builder unsafe.
 func (b *sqlBuilder) literal(v string) string {
 	if !safeLiteral(v) {
@@ -142,6 +154,12 @@ func propCond(b *sqlBuilder, p store.PropPredicate) string {
 // the empty string and the empty array, and is never NULL itself, so a NOT
 // around it behaves.
 func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
+	if p.Op == store.PropKeyEqual {
+		// An object entry that is a JSON string equal to Value. On a
+		// non-object property the nested path is absent, so json_type is
+		// NULL and the row does not match.
+		return scalarEqualCond(alias, b.jsonKeyPath(p.Property, p.Key), b.arg(p.Value))
+	}
 	path := b.jsonPath(p.Property)
 	if p.Scalar && p.Op == store.PropEqual && p.Value != "" {
 		return scalarEqualCond(alias, path, b.arg(p.Value))
@@ -150,22 +168,30 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 	isEmpty := "(" + raw + " IS NULL OR " + raw + " = '' OR (" + typeExpr(alias, path) +
 		" = 'array' AND json_array_length(" + propsCol(alias) + ", " + path + ") = 0))"
 
-	switch {
-	case p.Value == "" && p.Op == store.PropEqual:
-		return isEmpty
-	case p.Value == "" && p.Op == store.PropNotEqual:
-		return "NOT " + isEmpty
-	case p.Op == store.PropNotEqualOrEmpty:
+	switch p.Op {
+	case store.PropEqual:
+		if p.Value == "" {
+			return isEmpty
+		}
+		return equalsCond(b, alias, path, p.Value)
+	case store.PropNotEqual:
+		if p.Value == "" {
+			return "NOT " + isEmpty
+		}
+		return "(NOT " + isEmpty + " AND NOT " + equalsCond(b, alias, path, p.Value) + ")"
+	case store.PropNotEqualOrEmpty:
 		if p.Value == "" {
 			return "1"
 		}
 		return "(" + isEmpty + " OR NOT " + equalsCond(b, alias, path, p.Value) + ")"
-	case p.Op == store.PropGreaterEqual, p.Op == store.PropLessEqual:
+	case store.PropGreaterEqual, store.PropLessEqual:
 		return orderedCond(b, alias, path, p.Op, p.Value)
-	case p.Op == store.PropNotEqual:
-		return "(NOT " + isEmpty + " AND NOT " + equalsCond(b, alias, path, p.Value) + ")"
 	default:
-		return equalsCond(b, alias, path, p.Value)
+		// PropKeyEqual returned above; anything else is unknown. The
+		// statement must not run: the store falls back to graphquerynaive,
+		// which answers [store.ErrInvalidQuery].
+		b.unsafe = true
+		return "0"
 	}
 }
 

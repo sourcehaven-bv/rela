@@ -130,12 +130,16 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// write and lives on entitymanager.VersionTags, not here.
 	// ResolveHeadersErr (TKT-K3RJLH) is ResolveHeaders with a failed read
 	// returned instead of answered as misses.
+	// FindByExternalRef (TKT-SM20FG) is ListEntityHeaders filtered by one
+	// property, then GetAddress; SyncReady reports whether history is
+	// served. Neither writes.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
 		"ResolveHeaders": true, "ResolveHeadersErr": true, "ListRelationsStrict": true, "WriteTarget": true,
 		"EntityVersions": true, "EntityVersion": true, "WithHistory": true,
 		"VersionByTag": true, "WithVersionTags": true,
+		"FindByExternalRef": true, "SyncReady": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))

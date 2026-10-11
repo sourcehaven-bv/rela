@@ -26,6 +26,8 @@ func (c *ScriptCmd) Run(ctx context.Context, svc *writeServices) error {
 		// protects nothing and would only break working scripts. Every
 		// network- or agent-reachable surface gets a narrow grant instead.
 		lua.WithCapabilities(lua.TrustedCapabilities()),
+		// Same boundary: an operator's script may write external refs.
+		lua.WithExternalRefWrites(),
 	}
 	if c.OutputDir != "" {
 		opts = append(opts, lua.WithOutputDir(c.OutputDir))

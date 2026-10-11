@@ -30,6 +30,10 @@ const columns: TableColumn[] = [
   { key: 'columns', header: 'Columns', field: 'columns', width: 100, align: 'end' },
 ]
 
+function routeOf(row: { id: string }): string {
+  return configureRoute.list(row.id)
+}
+
 function add(id: string, title: string, entityType: string) {
   draft.edit('screens', (tree) =>
     set(
@@ -55,7 +59,7 @@ function add(id: string, title: string, entityType: string) {
       name-label="List"
       intro="A list shows records of one entity type as a table. Its columns and their order are set per list."
       empty="No lists yet."
-      :to="(row) => configureRoute.list(row.id)"
+      :to="routeOf"
     />
   </ConfigurePage>
 </template>

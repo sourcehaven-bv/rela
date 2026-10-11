@@ -49,7 +49,10 @@ func (s *Store) CountMatched(ctx context.Context, q store.GraphQuery) (int, erro
 	if err := checkGraphQueryScope(q); err != nil {
 		return 0, err
 	}
-	matchedSQL, matchedArgs := buildGraphQuerySQL(q, true)
+	matchedSQL, matchedArgs, err := buildGraphQuerySQL(q, true)
+	if err != nil {
+		return 0, err
+	}
 	var matched int
 	if err := s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
 		return 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
@@ -86,7 +89,10 @@ func graphPages[T any](
 ) iter.Seq2[T, error] {
 	if q.Limit > 0 || q.Offset > 0 || len(q.OrderBy) > 0 {
 		return yieldAll(func() ([]T, error) {
-			sqlText, args := buildGraphQuerySQLSelect(q, sel)
+			sqlText, args, err := buildGraphQuerySQLSelect(q, sel)
+			if err != nil {
+				return nil, err
+			}
 			items, err := queryAll(ctx, db, sqlText, args, scan)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", errPrefix, err)
@@ -95,7 +101,10 @@ func graphPages[T any](
 		})
 	}
 	return pagedSeq(func(after *entity.Ref) ([]T, *entity.Ref, error) {
-		sqlText, args := buildGraphQueryPageSQL(q, sel, after)
+		sqlText, args, err := buildGraphQueryPageSQL(q, sel, after)
+		if err != nil {
+			return nil, nil, err
+		}
 		items, next, err := queryPage(ctx, db, sqlText, args, scan, key)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", errPrefix, err)
@@ -113,7 +122,10 @@ func (s *Store) GraphCount(ctx context.Context, q store.GraphQuery) (matched, to
 	if scopeErr := checkGraphQueryScope(q); scopeErr != nil {
 		return 0, 0, scopeErr
 	}
-	matchedSQL, matchedArgs := buildGraphQuerySQL(q, true)
+	matchedSQL, matchedArgs, err := buildGraphQuerySQL(q, true)
+	if err != nil {
+		return 0, 0, err
+	}
 	if err = s.db.QueryRow(ctx, matchedSQL, matchedArgs...).Scan(&matched); err != nil {
 		return 0, 0, fmt.Errorf("pgstore: graph count (matched): %w", err)
 	}
@@ -156,7 +168,10 @@ func (s *Store) MatchingFaces(
 	if len(ids) == 0 {
 		return out, nil
 	}
-	sqlText, args := buildMatchingFacesSQL(q, ids)
+	sqlText, args, err := buildMatchingFacesSQL(q, ids)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Query(ctx, sqlText, args...)
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: matching faces: %w", err)
@@ -182,14 +197,17 @@ func (s *Store) MatchingFaces(
 // [buildGraphQuerySQL] but selects only `e.id, e.face` and restricts the
 // candidate set via `e.id = ANY(:ids)`. Parameterised — ids never
 // reaches the SQL text.
-func buildMatchingFacesSQL(q store.GraphQuery, ids []string) (sqlText string, args []any) {
+func buildMatchingFacesSQL(q store.GraphQuery, ids []string) (sqlText string, args []any, err error) {
 	b := &sqlBuilder{}
 	typeArg := b.arg(q.EntityType)
 	// World-scoped RESULT rows (TKT-WAV8XP PR-C); relation traversal
 	// stays tail-unscoped to match graphquerynaive over ListRelations,
 	// and the recursive CTE seeds stay un-worlded on purpose (Q5).
 	with, source := graphSource(b, q, typeArg, "e.id = ANY("+b.arg(ids)+")")
-	return withClause(with) + "SELECT e.id, e.face FROM " + source, b.args
+	if b.err != nil {
+		return "", nil, b.err
+	}
+	return withClause(with) + "SELECT e.id, e.face FROM " + source, b.args, nil
 }
 
 // buildPredicateParts emits the CTE definitions and the WHERE-clause
@@ -385,6 +403,9 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 		return "TRUE"
 	}
 	propArg := b.arg(p.Property)
+	if p.Op == store.PropKeyEqual {
+		return keyEqualCond(b, alias, propArg, p)
+	}
 	txt := fmt.Sprintf("(%s.properties ->> %s)", alias, propArg)
 	jsn := fmt.Sprintf("(%s.properties -> %s)", alias, propArg)
 	if p.Scalar && p.Op == store.PropEqual && p.Value != "" {
@@ -397,20 +418,37 @@ func propCondOn(b *sqlBuilder, alias string, p store.PropPredicate) string {
 		"(%s IS NULL OR %s = '' OR (jsonb_typeof(%s) = 'array' AND jsonb_array_length(%s) = 0))",
 		txt, txt, jsn, jsn)
 
-	switch {
-	case p.Value == "" && p.Op == store.PropEqual:
-		return isEmpty
-	case p.Value == "" && p.Op == store.PropNotEqual:
-		return "NOT " + isEmpty
-	case p.Op == store.PropNotEqualOrEmpty:
-		return fmt.Sprintf("(%s OR NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
-	case p.Op == store.PropGreaterEqual, p.Op == store.PropLessEqual:
-		return orderedCond(b, txt, jsn, p.Op, p.Value)
-	case p.Op == store.PropNotEqual:
-		return fmt.Sprintf("(NOT %s AND NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
-	default:
+	switch p.Op {
+	case store.PropEqual:
+		if p.Value == "" {
+			return isEmpty
+		}
 		return equalsCond(b, txt, jsn, p.Value)
+	case store.PropNotEqual:
+		if p.Value == "" {
+			return "NOT " + isEmpty
+		}
+		return fmt.Sprintf("(NOT %s AND NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
+	case store.PropNotEqualOrEmpty:
+		return fmt.Sprintf("(%s OR NOT %s)", isEmpty, equalsCond(b, txt, jsn, p.Value))
+	case store.PropGreaterEqual, store.PropLessEqual:
+		return orderedCond(b, txt, jsn, p.Op, p.Value)
+	default:
+		// PropKeyEqual returned above; anything else is unknown.
+		return b.fail(store.UnknownPropOpError(p))
 	}
+}
+
+// keyEqualCond renders [store.PropKeyEqual]: the entry Key of an object
+// property is the string Value. The expressions spell exactly what the
+// derived external-ref index (createExternalRefIndex) indexes, so the
+// planner can use it. jsonb_typeof is 'string' only on an object entry that
+// is a JSON string; on a non-object property `->` yields NULL.
+func keyEqualCond(b *sqlBuilder, alias, propArg string, p store.PropPredicate) string {
+	keyArg := b.arg(p.Key)
+	entry := fmt.Sprintf("(%s.properties -> %s -> %s)", alias, propArg, keyArg)
+	txt := fmt.Sprintf("(%s.properties -> %s ->> %s)", alias, propArg, keyArg)
+	return fmt.Sprintf("(jsonb_typeof(%s) = 'string' AND %s = %s)", entry, txt, b.arg(p.Value))
 }
 
 // orderedCond renders [store.PropGreaterEqual] / [store.PropLessEqual] as
@@ -474,7 +512,7 @@ func equalsCond(b *sqlBuilder, txt, jsn, value string) string {
 // User data never reaches the SQL text. The same property holds
 // when BuildGraphQuerySQLForTest is invoked from tests — the
 // builder treats all input the same way.
-func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, args []any) {
+func buildGraphQuerySQL(q store.GraphQuery, countOnly bool) (sqlText string, args []any, err error) {
 	if countOnly {
 		return buildGraphQuerySQLSelect(q, graphSelectCount)
 	}
@@ -499,7 +537,7 @@ var graphSelectLists = map[graphSelect]string{
 	graphSelectHeaders: "e.id, e.type, e.face, e.properties, e.updated_at",
 }
 
-func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText string, args []any) {
+func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText string, args []any, err error) {
 	return buildGraphQueryPageSQL(q, sel, nil)
 }
 
@@ -512,7 +550,11 @@ func buildGraphQuerySQLSelect(q store.GraphQuery, sel graphSelect) (sqlText stri
 // narrows the seed of each candidate-rooted closure (see sqlBuilder.pageAfter).
 // The caller appends the page LIMIT, so q must set no Limit or Offset of its
 // own.
-func buildGraphQueryPageSQL(q store.GraphQuery, sel graphSelect, after *entity.Ref) (sqlText string, args []any) {
+//
+// An unknown property operator is [store.ErrInvalidQuery].
+func buildGraphQueryPageSQL(
+	q store.GraphQuery, sel graphSelect, after *entity.Ref,
+) (sqlText string, args []any, err error) {
 	b := &sqlBuilder{}
 	// $1 is always q.EntityType.
 	typeArg := b.arg(q.EntityType)
@@ -535,10 +577,13 @@ func buildGraphQueryPageSQL(q store.GraphQuery, sel graphSelect, after *entity.R
 	// and their recursive CTEs stay un-worlded on purpose (Q5): identity
 	// structure must not depend on the reader's world.
 	with, source := graphSource(b, q, typeArg, idAfter)
+	if b.err != nil {
+		return "", nil, b.err
+	}
 	if sel == graphSelectCount {
 		// count(*) counts the rows graphSource yields: one per id under
 		// InWorld, one per selected face under AllFaces and AtFaces.
-		return withClause(with) + "SELECT count(*) FROM " + source, b.args
+		return withClause(with) + "SELECT count(*) FROM " + source, b.args, nil
 	}
 
 	var sb strings.Builder
@@ -568,7 +613,7 @@ func buildGraphQueryPageSQL(q store.GraphQuery, sel graphSelect, after *entity.R
 	if q.Offset > 0 {
 		sb.WriteString(" OFFSET " + b.arg(q.Offset))
 	}
-	return sb.String(), b.args
+	return sb.String(), b.args, nil
 }
 
 // orderKeySQL renders one sort key: a byte-wise text comparison, or a rank
@@ -959,6 +1004,18 @@ type sqlBuilder struct {
 	// pageSeedOp is ">" when the page resumes after a whole family and ">="
 	// when it may resume inside one.
 	pageSeedOp string
+	// err is the first predicate the builder could not render. A builder
+	// that sees it set must not run the statement.
+	err error
+}
+
+// fail records err, keeping the first, and renders a condition that holds
+// for no row in case a caller builds on it anyway.
+func (b *sqlBuilder) fail(err error) string {
+	if b.err == nil {
+		b.err = err
+	}
+	return "FALSE"
 }
 
 func (b *sqlBuilder) arg(v any) string {

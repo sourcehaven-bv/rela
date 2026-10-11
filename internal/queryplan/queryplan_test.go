@@ -16,6 +16,9 @@ func testMeta() *metamodel.Metamodel {
 			"owner":  {Type: metamodel.PropertyTypeString},
 			"tags":   {Type: metamodel.PropertyTypeString, List: true},
 			"count":  {Type: metamodel.PropertyTypeInteger},
+			// An external ref is an object; its one store predicate is
+			// PropKeyEqual, which no planner here emits (D7).
+			"jira": {Type: metamodel.PropertyTypeExternalRef},
 		}},
 	}}
 }
@@ -92,6 +95,7 @@ func TestStaticIndexSpecsSkipsUnsupportedShapes(t *testing.T) {
 		"type:task prop:status=op*",        // glob
 		"type:task prop:tags=x",            // list
 		"type:task prop:count=3",           // typed
+		"type:task prop:jira=J-1",          // external ref (D7)
 		"type:task prop:missing=x",         // undeclared
 		"type:task prop:status=open words", // free text
 	}
