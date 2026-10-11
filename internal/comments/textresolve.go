@@ -177,7 +177,7 @@ func (b *Body) resolve(a *TextAnchor) TextMatch {
 // source, so a plain strings.Index finds nothing — which is exactly what made
 // "the selected text was not found" fire on those selections.
 //
-// quotefind walks the goldmark AST to build a rendered→source position map, so
+// quotefind walks the parsed markdown tree to build a rendered→source position map, so
 // it matches what the user actually saw against what is actually stored.
 //
 // # prefix and suffix are what pick the RIGHT occurrence

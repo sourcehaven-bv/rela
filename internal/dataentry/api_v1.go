@@ -444,7 +444,7 @@ func scopedSortedEntitiesScoped(
 	}
 
 	// Free-text search: intersect with hits from the searcher when ?q=... is
-	// present. Bleve scores are discarded — the list's configured sort wins
+	// present. Full-text scores are discarded — the list's configured sort wins
 	// over relevance ranking, same approach SearchView uses for filtering.
 	// Backend errors surface as HTTP 500 rather than rendering an empty list
 	// and pretending the search succeeded.

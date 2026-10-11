@@ -31,7 +31,7 @@ func withLogLevel(t *testing.T, level slog.Level) *bytes.Buffer {
 }
 
 // countingHandler simulates a store-backed handler: it records two
-// statements against the request's stats (as the pgx tracer would) and
+// statements against the request's stats (as the database driver's tracer would) and
 // writes a body.
 func countingHandler(t *testing.T, wantStats bool) http.Handler {
 	t.Helper()

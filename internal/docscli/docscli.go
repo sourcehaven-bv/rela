@@ -4,12 +4,12 @@
 // project's metamodel + acl.yaml.
 //
 // It lives outside internal/cli on purpose. The screenshot{} island drives a
-// headless Chrome via internal/docscapture, which links chromedp (+ cdproto,
-// gobwas — ~15 MB). Keeping that dependency here, reachable only from
-// cmd/rela-docs, is what keeps it OUT of the default `rela` / `rela-server`
-// binaries (CI asserts the isolation). The core doc engine (internal/docs)
-// stays browser-free; the concrete Capturer is injected via the build-tagged
-// NewCapturer seam in this package.
+// headless Chrome via internal/docscapture, which links a browser-automation
+// library and its protocol and websocket dependencies (~15 MB). Keeping that
+// dependency here, reachable only from cmd/rela-docs, is what keeps it OUT of
+// the default `rela` / `rela-server` binaries (CI asserts the isolation). The
+// core doc engine (internal/docs) stays browser-free; the concrete Capturer is
+// injected via the build-tagged NewCapturer seam in this package.
 package docscli
 
 import (
@@ -36,7 +36,8 @@ type Project interface {
 	Paths() *project.Context
 }
 
-// Root is the kong-parsed root for the rela-docs binary.
+// Root is the root struct whose tags the rela-docs CLI parser reads (see
+// cmd/rela-docs).
 type Root struct {
 	Build BuildCmd `cmd:"" help:"Render a manual (Markdown with rela Lua islands) to resolved Markdown."`
 }

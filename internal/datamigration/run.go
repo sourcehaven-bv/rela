@@ -61,7 +61,7 @@ type Deps struct {
 	// lives — see MigState.
 	State state.KV
 	// MigState records which migrations have run and the shape the content
-	// conforms to. Backend-selected (file, postgres, sqlite, memory) because
+	// conforms to. Backend-selected (one implementation per storage tier) because
 	// that record has to travel with the data it describes.
 	MigState StateStore
 	Audit    audit.Audit

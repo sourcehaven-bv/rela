@@ -1655,10 +1655,10 @@ func (m *Manager) deleteEntityInTx(
 		return res, capture, fmt.Errorf("delete entity: %w", delErr)
 	}
 	// The store's own scan is the final word on what went. A face it removed
-	// that the re-read above did not see is authorized now. On pg/sqlite a
-	// denial rolls the delete back. On fs the watcher indexes an external
-	// file edit without taking the Tx lock, so a face can land between the
-	// re-read and the delete, and fs cannot roll back: res is returned with
+	// that the re-read above did not see is authorized now. On a transactional
+	// backend a denial rolls the delete back. On fs the watcher indexes an
+	// external file edit without taking the Tx lock, so a face can land between
+	// the re-read and the delete, and fs cannot roll back: res is returned with
 	// the error so the caller can record what really went (issue #929).
 	if aErr := m.authorizeFamily(ctx, acl.OpDelete, id, res.DeletedEntities, authorized); aErr != nil {
 		return res, capture, aErr
@@ -2028,8 +2028,9 @@ func (m *Manager) recordPartialCascade(
 		return
 	}
 	// A face-authorization denial after the store delete returns the full
-	// result on every backend. pg/sqlite then roll back, so nothing may be
-	// recorded; fs cannot, so what it removed is recorded as removed.
+	// result on every backend. Transactional backends then roll back, so
+	// nothing may be recorded; fs cannot, so what it removed is recorded as
+	// removed.
 	if facesStillStored(ctx, m.deps.Store, res.DeletedEntities) {
 		return
 	}
@@ -2430,9 +2431,9 @@ func (m *Manager) RenameEntity(
 		return rErr
 	})
 	if txErr != nil {
-		// pg/sqlite rolled the rename back. fs and memstore cannot, so a
-		// denial after the store rename leaves it standing, and the logs must
-		// say so (the same reasoning as recordPartialCascade).
+		// A transactional backend rolled the rename back. fs and memstore
+		// cannot, so a denial after the store rename leaves it standing, and
+		// the logs must say so (the same reasoning as recordPartialCascade).
 		if res != nil && !familyStillStored(ctx, m.deps.Store, oldID) {
 			r.record(ctx, renamed)
 		}
@@ -2475,11 +2476,11 @@ type familyRename struct {
 // raised after the store rename, so the caller can record a rename a backend
 // could not roll back.
 //
-// The post-rename check still names oldID. On pg and sqlite the ACL's outer
-// handle sees the pre-rename graph, so a role conferred through a relation
-// still applies; on fs and memstore the relations are already re-keyed, so
-// such a role is lost and the face is denied. Both outcomes fail closed, and
-// the check only runs for a face no earlier check saw.
+// The post-rename check still names oldID. On a transactional backend the ACL's
+// outer handle sees the pre-rename graph, so a role conferred through a
+// relation still applies; on fs and memstore the relations are already
+// re-keyed, so such a role is lost and the face is denied. Both outcomes fail
+// closed, and the check only runs for a face no earlier check saw.
 func (r *familyRename) inTx(
 	ctx context.Context, tx store.Store,
 ) (*entity.RenameResult, []*entity.Entity, error) {

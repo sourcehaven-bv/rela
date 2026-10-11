@@ -40,10 +40,10 @@ import "context"
 // Provider is the unified interface for AI capabilities.
 //
 // Implementations must be safe to share across goroutines. Concurrency
-// at the Lua-binding layer is constrained: gopher-lua *lua.LState is
-// not safe for concurrent use, so callers should ensure ai.chat /
-// ai.embed are called serially per LState. The same Provider instance
-// can serve any number of LStates concurrently as long as the
+// at the Lua-binding layer is constrained: a Lua VM state is not safe
+// for concurrent use, so callers should ensure ai.chat / ai.embed are
+// called serially per VM state. The same Provider instance can serve
+// any number of VM states concurrently as long as the
 // implementation itself is thread-safe (the OpenAI-compat provider is,
 // because http.Client is).
 type Provider interface {
@@ -117,8 +117,8 @@ type EmbedRequest struct {
 type EmbedResponse struct {
 	// Embeddings contains one vector per input, in the same order as
 	// EmbedRequest.Input. Vectors are float64 to avoid silent
-	// precision loss at the JSON→Go→Lua boundary (gopher-lua's
-	// LNumber is float64).
+	// precision loss at the JSON→Go→Lua boundary (the Lua VM's
+	// number type is float64).
 	Embeddings [][]float64
 	Model      string
 	Usage      Usage

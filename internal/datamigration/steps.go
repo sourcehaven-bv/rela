@@ -518,7 +518,7 @@ type faceMove struct {
 // Each move is a CREATE at the target face followed by a DELETE of the source
 // row, so a failure between the two leaves the family holding BOTH — the row
 // duplicated rather than moved. A transaction makes the pair atomic where the
-// backend can promise it (pg, sqlite: rollback) and serializes it against other
+// backend can promise it (a transactional backend rolls back) and serializes it against other
 // writers everywhere.
 //
 // On fs/mem there is no rollback, so a mid-batch failure leaves earlier moves

@@ -165,8 +165,8 @@ func (e *Engine) ExecuteActionRequest(
 	}
 
 	// ctx is threaded into the runtime via lua.WithContext(ctx) above;
-	// RunActionString applies it to the LState. contextcheck can't follow that
-	// flow across the gopher-lua SetContext boundary.
+	// RunActionString applies it to the VM state. contextcheck can't follow
+	// that flow across the boundary into the Lua VM.
 	//nolint:contextcheck // ctx threaded via WithContext; see comment above
 	ret, err := runtime.RunActionString(scriptCode, scriptPath)
 	if errors.Is(err, lua.ErrNoReturnValue) {
@@ -177,7 +177,7 @@ func (e *Engine) ExecuteActionRequest(
 		// "actions/foo.lua") for display; SourceFS is rooted at the
 		// project so readSourceSlice can resolve that same path.
 		// Lua's chunkname (used as scriptPath here) is the bare filename;
-		// gopher-lua reports it back via the message handler as the
+		// the Lua VM reports it back via the message handler as the
 		// frame's Source. Re-prefix with actionsDir so frame paths line
 		// up with the SourceFS root and the displayed Path.
 		envelopePath := filepath.ToSlash(filepath.Join(actionsDir, scriptPath))

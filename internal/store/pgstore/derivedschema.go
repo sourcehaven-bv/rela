@@ -131,7 +131,7 @@ func listIndexName(spec store.DerivedObjectSpec) string {
 // sort keys under the collation the page orders by, and id as the
 // tiebreak. face is a key column rather than a partial guard
 // (TKT-7IZHP0 A9): a page in a world that ranks nothing for the type reads
-// one face (see store.FaceSelection.Lowered), which may be any face, and
+// one face (see store.FaceSelection.FlattenedWhenUnranked), which may be any face, and
 // with face second that page is a range scan.
 func createListIndexDDL(name string, spec store.DerivedObjectSpec) string {
 	columns := make([]string, 0, 3+len(spec.Properties)+len(spec.OrderBy))

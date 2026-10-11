@@ -61,7 +61,7 @@ func (l fileLayout) propertyOrder(entityType string) []string {
 }
 
 // absPath resolves a key to an absolute path. Used by the watcher
-// (which needs absolute paths for fsnotify) and the self-echo LRU
+// (which needs absolute paths for the file watcher) and the self-echo LRU
 // interaction points, where paths must match what SafeFS.OnPostWrite
 // observes.
 //
