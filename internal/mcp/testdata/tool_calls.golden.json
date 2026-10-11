@@ -54,6 +54,12 @@
     "text": "[]"
   },
   {
+    "tool": "list_comments",
+    "args": "{\"id\":\"REQ-001\"}",
+    "isError": false,
+    "text": "{\n  \"comments\": [\n    {\n      \"id\": \"c1\",\n      \"author\": \"alice\",\n      \"created_at\": \"2026-10-01T09:00:00Z\",\n      \"anchor\": {\n        \"kind\": \"property\",\n        \"ref\": \"title\"\n      },\n      \"body\": \"Shorter?\",\n      \"resolved\": false,\n      \"editable\": true,\n      \"deletable\": true\n    }\n  ]\n}"
+  },
+  {
     "tool": "list_entities",
     "args": "{\"type\":\"requirement\",\"filter\":\"entity.status == 'accepted'\",\"limit\":2}",
     "isError": false,
