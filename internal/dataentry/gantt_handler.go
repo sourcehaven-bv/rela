@@ -1128,6 +1128,7 @@ func emitGanttNode(f *ganttForest, id string, depth, maxDepth int, budget *gantt
 	out := v1.GanttNode{
 		ID:    n.id,
 		Type:  n.entType,
+		Face:  string(n.face),
 		Title: n.title,
 		Color: n.color,
 	}

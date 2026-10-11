@@ -124,12 +124,16 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// face out of the Family by header: it names the face a write would
 	// edit and performs none. EntityVersions and EntityVersion (TKT-EC7F65)
 	// read the history of the entity GetAddress reads; WithHistory returns a
-	// copy that serves it. None of the three writes.
+	// copy that serves it. None of the three writes. VersionByTag
+	// (TKT-VO6VG9) reads one of those versions by tag name, and
+	// WithVersionTags returns a copy that serves it; tagging itself is a
+	// write and lives on entitymanager.VersionTags, not here.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
 		"ResolveHeaders": true, "ListRelationsStrict": true, "WriteTarget": true,
 		"EntityVersions": true, "EntityVersion": true, "WithHistory": true,
+		"VersionByTag": true, "WithVersionTags": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))

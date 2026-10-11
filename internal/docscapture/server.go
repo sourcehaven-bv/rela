@@ -120,7 +120,7 @@ func standUp(ctx context.Context, projectDir string, seed []docs.SeedOp, needSPA
 	// the fs build that is what the temp dir already is; on postgres it is a
 	// private scratch schema, without which the manual's fixture seed would be
 	// written into the operator's live database.
-	scratchOpts, scratchCleanup, err := scratchBackend(dir)
+	scratchOpts, scratchCleanup, err := scratchBackend(ctx, dir)
 	if err != nil {
 		_ = os.RemoveAll(tmp)
 		return nil, err

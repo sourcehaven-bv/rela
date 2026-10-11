@@ -20,7 +20,8 @@ import "github.com/Sourcehaven-BV/rela/internal/store"
 // VersionStore satisfies the version capability interfaces in the store package
 // ([store.HistoryReader], [store.VersionWriter], [store.RelationHistoryReader],
 // [store.RelationVersionWriter], [store.VersionPurger],
-// [store.RelationVersionPurger]) and their umbrella [store.VersionService]. The
+// [store.RelationVersionPurger]) and their umbrella [store.VersionService], and
+// builds a [store.VersionTagger] through [store.VersionTaggerProvider]. The
 // postgres composition root builds one and injects it wherever versioning is
 // needed; the default build injects nil.
 type VersionStore struct {
@@ -51,4 +52,5 @@ var (
 	_ store.VersionPurger         = (*VersionStore)(nil)
 	_ store.RelationVersionPurger = (*VersionStore)(nil)
 	_ store.VersionService        = (*VersionStore)(nil)
+	_ store.VersionTaggerProvider = (*VersionStore)(nil)
 )

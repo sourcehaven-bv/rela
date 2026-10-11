@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -19,15 +18,18 @@ import (
 //
 //   - Runs the whole operation on ONE connection under sweepAdvisoryLockKey, so
 //     it is mutually exclusive with a reconciliation sweep tick (a purge racing
-//     a capture-insert is a lost-erasure hazard). Same session-scoped-lock
-//     discipline as the sweep itself.
+//     a capture-insert is a lost-erasure hazard) and with version tag writes.
+//     Same session-scoped-lock discipline as the sweep itself.
+//   - REFUSES if a version tag points at a target row, unless ForceTags; a
+//     forced purge drops those tags in the same transaction (TKT-VO6VG9).
 //   - REFUSES (deletes nothing) if the target set contains a `rename` row —
 //     purging one orphans/forks the lineage walk. v1 is non-rename-only.
 //   - REFUSES if a LIVE row still holds the content, unless ForceLive: otherwise
 //     the sweep re-captures it within one interval and the "erasure" is a lie. A
 //     ForceLive purge writes a no-content `purge` tombstone whose content_hash is
-//     the live hash, so the sweep's existing dedup suppresses re-capture until
-//     the live value genuinely changes again.
+//     the live hash. Deleting versions clears the row's stored hash (migration
+//     0021), so the sweep looks at the row once more, and its existing dedup
+//     suppresses re-capture until the live value genuinely changes again.
 //   - --all purges the FENCED lineage (the same rows ListVersions shows), never
 //     a naive WHERE id=$1 (which both misses pre-rename segments and destroys a
 //     reused id's unrelated history).
@@ -36,55 +38,72 @@ import (
 // never learns the principal another way and never echoes purged content.
 
 // PurgeVersions implements store.VersionPurger.
+//
+// It runs in one transaction under the version lock (withVersionLock, shared
+// with version tags), waiting for the lock rather than refusing when a sweep
+// tick holds it. The transaction makes the tag drop, the row delete and the
+// tombstone land together: a delete with no tombstone is an erasure the sweep
+// undoes, and a tag drop with no delete loses a tag for nothing.
 func (v *VersionStore) PurgeVersions(ctx context.Context, req store.VersionPurgeRequest) (*store.PurgeResult, error) {
-	pool, ok := v.db.(*pgxpool.Pool)
-	if !ok {
-		return nil, errors.New("pgstore: PurgeVersions requires a *pgxpool.Pool (session-scoped advisory lock)")
-	}
-	conn, err := pool.Acquire(ctx)
+	var res *store.PurgeResult
+	err := v.withVersionLock(ctx, func(tx pgx.Tx) error {
+		var err error
+		res, err = v.purgeVersionsLocked(ctx, tx, req)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Release()
+	return res, nil
+}
 
-	locked, err := tryAdvisoryLock(ctx, conn, sweepAdvisoryLockKey)
-	if err != nil {
-		return nil, err
-	}
-	if !locked {
-		return nil, errors.New("pgstore: purge could not acquire the version lock (a sweep is running); retry shortly")
-	}
-	defer advisoryUnlock(context.WithoutCancel(ctx), conn, sweepAdvisoryLockKey)
-
+// purgeVersionsLocked is PurgeVersions under the version lock, inside tx.
+func (v *VersionStore) purgeVersionsLocked(
+	ctx context.Context, tx pgx.Tx, req store.VersionPurgeRequest,
+) (*store.PurgeResult, error) {
 	// Resolve the target lineage ids (fenced) and the current live content hash.
-	ids, err := v.entityLineageIDsForPurge(ctx, conn, req.Ref.ID, req.Ref.Face)
+	ids, err := v.entityLineageIDsForPurge(ctx, tx, req.Ref.ID, req.Ref.Face)
 	if err != nil {
 		return nil, err
 	}
-	liveHash, liveExists, err := v.liveEntityHash(ctx, conn, req.Ref.ID, req.Ref.Face)
+	liveHash, liveExists, err := v.liveEntityHash(ctx, tx, req.Ref.ID, req.Ref.Face)
 	if err != nil {
 		return nil, err
 	}
 
-	targets, err := selectPurgeTargets(ctx, conn, entityPurgeQ,
+	targets, err := selectPurgeTargets(ctx, tx, entityPurgeQ,
 		[]any{ids, string(req.Ref.Face)}, req.Selector)
 	if err != nil {
 		return nil, err
 	}
 	res := &store.PurgeResult{Targets: targets, LiveRowExists: liveExists}
 	res.RenameInTargets = anyRename(targets)
+	// Resolved before the dry-run return so a preview names the tags it
+	// would drop.
+	if res.TaggedTargets, err = purgeTaggedTargets(ctx, tx, targets); err != nil {
+		return nil, err
+	}
 
 	if req.DryRun {
 		return res, nil
 	}
 	if res.RenameInTargets {
+		res.Refusal = store.PurgeRefusedRename
 		return res, nil // refuse: caller renders the reason from the flag
 	}
 	if liveExists && !req.ForceLive {
+		res.Refusal = store.PurgeRefusedLiveRow
 		return res, nil // refuse: sweep would re-capture; caller renders the reason
 	}
+	if len(res.TaggedTargets) > 0 && !req.ForceTags {
+		res.Refusal = store.PurgeRefusedTagged
+		return res, nil // refuse: a tag points at a target; caller renders the reason
+	}
 
-	n, err := deletePurgeTargets(ctx, conn, "entity_versions", "entity_id", ids, targets)
+	if tagErr := deletePurgeTags(ctx, tx, res.TaggedTargets); tagErr != nil {
+		return nil, tagErr
+	}
+	n, err := deletePurgeTargets(ctx, tx, "entity_versions", "entity_id", ids, targets)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +113,7 @@ func (v *VersionStore) PurgeVersions(ctx context.Context, req store.VersionPurge
 	// does not re-capture the live content (its content_hash = the live hash
 	// dedups against the sweep's lvc probe).
 	if liveExists && req.ForceLive {
-		if err := writeEntityPurgeTombstone(ctx, conn, req.Ref.ID, req.Ref.Face, liveHash); err != nil {
+		if err := writeEntityPurgeTombstone(ctx, tx, req.Ref.ID, req.Ref.Face, liveHash); err != nil {
 			return nil, err
 		}
 		res.TombstoneWritten = true
@@ -102,29 +121,29 @@ func (v *VersionStore) PurgeVersions(ctx context.Context, req store.VersionPurge
 	return res, nil
 }
 
-// PurgeRelationVersions implements store.RelationVersionPurger.
+// PurgeRelationVersions implements store.RelationVersionPurger. Like
+// PurgeVersions it runs in one transaction under the version lock, waiting
+// for it rather than refusing while a sweep tick holds it.
 func (v *VersionStore) PurgeRelationVersions(
 	ctx context.Context, req store.RelationVersionPurgeRequest,
 ) (*store.PurgeResult, error) {
-	pool, ok := v.db.(*pgxpool.Pool)
-	if !ok {
-		return nil, errors.New("pgstore: PurgeRelationVersions requires a *pgxpool.Pool")
-	}
-	conn, err := pool.Acquire(ctx)
+	var res *store.PurgeResult
+	err := v.withVersionLock(ctx, func(tx pgx.Tx) error {
+		var err error
+		res, err = v.purgeRelationVersionsLocked(ctx, tx, req)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Release()
+	return res, nil
+}
 
-	locked, err := tryAdvisoryLock(ctx, conn, sweepAdvisoryLockKey)
-	if err != nil {
-		return nil, err
-	}
-	if !locked {
-		return nil, errors.New("pgstore: purge could not acquire the version lock (a sweep is running); retry shortly")
-	}
-	defer advisoryUnlock(context.WithoutCancel(ctx), conn, sweepAdvisoryLockKey)
-
+// purgeRelationVersionsLocked is PurgeRelationVersions under the version
+// lock, inside tx.
+func (v *VersionStore) purgeRelationVersionsLocked(
+	ctx context.Context, conn pgx.Tx, req store.RelationVersionPurgeRequest,
+) (*store.PurgeResult, error) {
 	// Resolve which lifetime(s) of the key to purge. A reused key has multiple
 	// lifetimes (each recreate mints a fresh rel_record_id); purging without a
 	// selector would silently erase only the newest and leave older lifetimes'
@@ -157,9 +176,11 @@ func (v *VersionStore) PurgeRelationVersions(
 		return res, nil
 	}
 	if res.RenameInTargets {
+		res.Refusal = store.PurgeRefusedRename
 		return res, nil
 	}
 	if liveExists && !req.ForceLive {
+		res.Refusal = store.PurgeRefusedLiveRow
 		return res, nil
 	}
 
@@ -254,6 +275,7 @@ func (v *VersionStore) resolvePurgeLineage(
 		return nil, &store.PurgeResult{
 			MultiLifetimeRefused: true,
 			LifetimeCount:        len(lifetimes),
+			Refusal:              store.PurgeRefusedMultiLifetime,
 		}, nil
 
 	default:
@@ -310,9 +332,8 @@ func (v *VersionStore) entityLineageIDsForPurge(
 func (v *VersionStore) liveEntityHash(
 	ctx context.Context, q DBTX, id string, p entity.Face,
 ) (hash string, exists bool, err error) {
-	e, gErr := scanEntity(q.QueryRow(ctx,
-		`SELECT id, type, face, properties, content, updated_at
-		 FROM entities WHERE id = $1 AND face = $2`, id, string(p)))
+	// getEntitySQL keeps the column order in step with scanEntity.
+	e, gErr := scanEntity(q.QueryRow(ctx, getEntitySQL, id, string(p)))
 	if errors.Is(gErr, pgx.ErrNoRows) {
 		return "", false, nil
 	}
@@ -332,10 +353,7 @@ func (v *VersionStore) liveEntityHash(
 func (v *VersionStore) liveRelationHash(
 	ctx context.Context, q DBTX, k entity.RelationKey,
 ) (hash string, exists bool, err error) {
-	r, gErr := scanRelation(q.QueryRow(ctx,
-		`SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
-		 FROM relations WHERE from_id=$1 AND rel_type=$2 AND to_id=$3 AND from_face=$4`,
-		k.From, k.Type, k.To, string(k.FromFace)))
+	r, gErr := scanRelation(q.QueryRow(ctx, getRelationSQL, k.From, k.Type, k.To, string(k.FromFace)))
 	if errors.Is(gErr, pgx.ErrNoRows) {
 		return "", false, nil
 	}

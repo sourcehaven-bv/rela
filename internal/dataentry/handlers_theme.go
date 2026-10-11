@@ -118,7 +118,7 @@ func (h *appearanceHandler) handleAPIPutThemeLogo(w http.ResponseWriter, r *http
 	}
 
 	if err := h.logo.Save(r.Context(), bytes, ext); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to save logo: "+err.Error())
+		writeInternalJSONError(w, r, "failed to save logo", err)
 		return
 	}
 
@@ -134,7 +134,7 @@ func (h *appearanceHandler) handleAPIPutThemeLogo(w http.ResponseWriter, r *http
 // hit the endpoint.
 func (h *appearanceHandler) handleAPIDeleteThemeLogo(w http.ResponseWriter, r *http.Request) {
 	if err := h.logo.Delete(r.Context()); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to delete logo: "+err.Error())
+		writeInternalJSONError(w, r, "failed to delete logo", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

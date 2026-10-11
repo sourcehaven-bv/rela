@@ -992,3 +992,32 @@ func TestB10_DiagnosesUnvalidatedPolicy(t *testing.T) {
 		t.Errorf("B1 must not report a world token as an undeclared entity type; got %v", got)
 	}
 }
+
+// A version tag permission (TKT-VO6VG9) is consumed by the tag write path for
+// any namespace, so A7 must not report `tag:<ns>` as dead. A namespace no
+// tag name can carry (empty, nested, or outside the segment grammar) is
+// still flagged.
+func TestAudit_A7_TagPermissionsAreNotDead(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		perm string
+		dead bool
+	}{
+		{perm: "tag:sync"},
+		{perm: acl.TagPermission("board")},
+		{perm: "tag:", dead: true},
+		{perm: "tag:a/b", dead: true},
+		{perm: "tag:Sync", dead: true},
+		{perm: "tag:-sync", dead: true},
+	} {
+		t.Run(tc.perm, func(t *testing.T) {
+			t.Parallel()
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{
+				"connector": {Read: []string{"ticket"}, Permissions: []string{tc.perm}},
+			}}
+			if got := hasRule(Audit(p, nil, allPerms{}), "A7-dead-permission"); got != tc.dead {
+				t.Errorf("A7 for %q = %v, want %v", tc.perm, got, tc.dead)
+			}
+		})
+	}
+}

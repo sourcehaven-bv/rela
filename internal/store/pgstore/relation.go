@@ -17,12 +17,15 @@ import (
 
 // --- RelationReader ---
 
+// getRelationSQL reads one relation row in scanRelation's column order. Its
+// arguments are from, type, to and the tail face.
+const getRelationSQL = `SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
+	FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = $4`
+
 // GetRelation returns the relation at k, tail included, or
 // store.ErrNotFound.
 func (s *Store) GetRelation(ctx context.Context, k entity.RelationKey) (*entity.Relation, error) {
-	const q = `SELECT from_id, from_face, rel_type, to_id, properties, content, updated_at
-	           FROM relations WHERE from_id = $1 AND rel_type = $2 AND to_id = $3 AND from_face = $4`
-	r, err := scanRelation(s.db.QueryRow(ctx, q, k.From, k.Type, k.To, string(k.FromFace)))
+	r, err := scanRelation(s.db.QueryRow(ctx, getRelationSQL, k.From, k.Type, k.To, string(k.FromFace)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		r, err = revealedRelation(ctx, s, k)
 	}

@@ -29,6 +29,44 @@ func (g *Generator) buildEntitySchema(typeName string, def metamodel.EntityDef) 
 	props["content"] = &Schema{Type: "string", Description: "Markdown body content"}
 	props["_self"] = &Schema{Type: "string", Format: "uri-reference", Description: "Self link"}
 	props["_owner"] = ownerSchema()
+	props["_title"] = &Schema{Type: "string", Description: "Display title, resolved from the type's display property"}
+	props["_redacted"] = &Schema{
+		Type: "array", Items: StringSchema(),
+		Description: "Properties withheld from this reader; absent when nothing is withheld",
+	}
+	// Per-entity response metadata. Typed loosely: these are UI hints and
+	// provenance whose detailed shape is documented in the API reference.
+	for name, desc := range map[string]string{
+		"_fields":      "Per-property write affordances for this reader",
+		"_relations":   "Per-relation-type write affordances for this reader",
+		"_transitions": "Outgoing state-machine transitions per property, for this reader",
+		"_world":       "Which world resolved this face, and how (single-entity GET only)",
+		"mentions":     "Titles of the entity IDs referenced in content (single-entity GET only)",
+	} {
+		props[name] = &Schema{Type: "object", Description: desc}
+	}
+	for name, desc := range map[string]string{
+		"_copies":      "Copy definitions offered from this face (promote, translate)",
+		"_faces":       "The other faces of this entity the reader may see",
+		"inaccessible": "Properties that exist but whose value cannot be read (locked content)",
+		"warnings":     "Soft validation findings from the write that produced this response",
+	} {
+		props[name] = &Schema{Type: "array", Items: &Schema{Type: "object"}, Description: desc}
+	}
+	props["_versions"] = &Schema{
+		Type:        "object",
+		Description: "Version token per field, for a PATCH with preconditions",
+		Properties: map[string]*Schema{
+			"properties": {Type: "object", AdditionalProperties: StringSchema()},
+			"content":    StringSchema(),
+		},
+	}
+	// Sent on every per-entity response, as {} for a type without files.
+	props["_attachments"] = &Schema{
+		Type:                 "object",
+		AdditionalProperties: ArraySchema(Ref("Attachment")),
+		Description:          "Attached files by file property",
+	}
 
 	// Properties object
 	propSchema := g.buildPropertiesSchema(def)
@@ -320,16 +358,9 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 	// Entity actions
 	spec.Components.Schemas["EntityActions"] = &Schema{
 		Type: "object",
-		Properties: map[string]*Schema{
-			"delete": {
-				Type: "object",
-				Properties: map[string]*Schema{
-					"allowed": BooleanSchema(),
-					"reason":  StringSchema(),
-				},
-			},
-			"transitions": ArraySchema(StringSchema()),
-		},
+		Description: "Write affordances for this reader: verb (create, update, delete, rename) or " +
+			"action:<id> to whether it is offered. A UI hint; the server re-authorizes every write.",
+		AdditionalProperties: BooleanSchema(),
 	}
 
 	// Error response (RFC 7807)
@@ -344,8 +375,33 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 			"detail":   {Type: "string", Description: "Detailed explanation"},
 			"instance": {Type: "string", Description: "URI reference to the specific occurrence"},
 			"errors":   ArraySchema(Ref("FieldError")),
+			"conflicts": {
+				Type:        "object",
+				Description: "On a 412: the fields whose stored version differs from the precondition",
+			},
+			"versions": {
+				Type:        "object",
+				Description: "On a 412: the current version token of every visible field",
+			},
+			"faces": {
+				Type: "array", Items: StringSchema(),
+				Description: "On a face_required refusal: the addresses (ID@face) to retry with",
+			},
 		},
 		Required: []string{"type", "title", "status"},
+	}
+
+	// Attached file, as listed in an entity's _attachments
+	spec.Components.Schemas["Attachment"] = &Schema{
+		Type: "object",
+		Properties: map[string]*Schema{
+			"id":          StringSchema(),
+			"filename":    StringSchema(),
+			"size":        {Type: "integer", Description: "Size in bytes"},
+			"contentType": StringSchema(),
+			"href":        {Type: "string", Format: "uri-reference", Description: "Download link"},
+		},
+		Required: []string{"id", "filename", "size", "contentType", "href"},
 	}
 
 	// Field error for validation errors

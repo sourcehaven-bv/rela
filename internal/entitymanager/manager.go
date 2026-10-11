@@ -1726,8 +1726,9 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		captured *cascadeCapture
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		txCtx := store.ContextInTx(ctx)
 		var dErr error
-		res, captured, dErr = m.deleteEntityInTx(ctx, tx, id, cascade, authorized)
+		res, captured, dErr = m.deleteEntityInTx(txCtx, tx, id, cascade, authorized)
 		return dErr
 	})
 	if txErr != nil {
@@ -2138,24 +2139,24 @@ func (m *Manager) DeleteEntityFace(
 	if err != nil {
 		return nil, err
 	}
-
 	var (
 		res                *store.DeleteResult
 		lastFace           bool
 		incoming, outgoing []*entity.Relation
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		txCtx := store.ContextInTx(ctx)
 		// Re-read the face under the transaction (BUG-J3PBFN). The read above
 		// only answers not-found and denial early; the version and audit
 		// record must carry the row this transaction deletes, not one a
 		// concurrent update has since replaced. A row whose type changed in
 		// between is a different ACL subject and is authorized again.
-		inTx, rErr := readFaceToDelete(ctx, tx, id, face)
+		inTx, rErr := readFaceToDelete(txCtx, tx, id, face)
 		if rErr != nil {
 			return rErr
 		}
 		if inTx.Type != current.Type {
-			if aErr := m.authorizeAndAudit(ctx, acl.WriteRequest{
+			if aErr := m.authorizeAndAudit(txCtx, acl.WriteRequest{
 				Op:      acl.OpDelete,
 				Subject: acl.NewEntitySubject(inTx.Type, id, inTx.Face),
 			}); aErr != nil {
@@ -2168,7 +2169,7 @@ func (m *Manager) DeleteEntityFace(
 			callerLast bool
 			cErr       error
 		)
-		incoming, outgoing, callerLast, lastFace, cErr = faceDeleteEdges(ctx, tx, id, face, readableSiblings)
+		incoming, outgoing, callerLast, lastFace, cErr = faceDeleteEdges(txCtx, tx, id, face, readableSiblings)
 		if cErr != nil {
 			return cErr
 		}
@@ -2179,12 +2180,12 @@ func (m *Manager) DeleteEntityFace(
 			return ErrHasRelations
 		}
 		if len(incoming)+len(outgoing) > 0 {
-			if aErr := m.authorizeCascadeRelations(ctx, tx, id, nil, incoming, outgoing); aErr != nil {
+			if aErr := m.authorizeCascadeRelations(txCtx, tx, id, nil, incoming, outgoing); aErr != nil {
 				return aErr
 			}
 		}
 		var dErr error
-		res, dErr = tx.DeleteFace(ctx, entity.Ref{ID: id, Face: face})
+		res, dErr = tx.DeleteFace(txCtx, entity.Ref{ID: id, Face: face})
 		if dErr != nil {
 			return fmt.Errorf("delete face: %w", dErr)
 		}
@@ -2425,8 +2426,9 @@ func (m *Manager) RenameEntity(
 		renamed []*entity.Entity
 	)
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
+		txCtx := store.ContextInTx(ctx)
 		var rErr error
-		res, renamed, rErr = r.inTx(ctx, tx)
+		res, renamed, rErr = r.inTx(txCtx, tx)
 		return rErr
 	})
 	if txErr != nil {
@@ -2610,7 +2612,9 @@ func collectRenameAffectedRelations(ctx context.Context, st store.Store, id stri
 // CreateRelation creates the relation key names, validating endpoints and
 // the relation-type tuple against the metamodel. key.FromFace is the tail,
 // part of the relation's identity: two edges on one triple with different
-// tails are two relations (BUG-64MU2Q). **No automation.**
+// tails are two relations (BUG-64MU2Q). A caller that reports a type-allowlist
+// mismatch itself can let the write through with
+// [entity.RelationOptions.TolerateTypeMismatch]. **No automation.**
 func (m *Manager) CreateRelation(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
@@ -2619,9 +2623,9 @@ func (m *Manager) CreateRelation(
 	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
 	// peer must never let a write skip the ACL: if authz is deferred until
 	// after GetEntity, a denied caller (e.g. --read-only / ReadOnlyACL)
-	// gets a soft "entity not found" instead of a *acl.ForbiddenError,
-	// and the dataentry fallback then writes directly to the store,
-	// bypassing the ACL and audit. The source type feeds the type-level
+	// gets a soft "entity not found" instead of a *acl.ForbiddenError;
+	// before BUG-K6FEVB the dataentry fallback then wrote directly to the
+	// store, bypassing the ACL and audit. The source type feeds the type-level
 	// grant check; it is best-effort (empty if the source doesn't exist
 	// yet), mirroring UpdateRelation/DeleteRelation. Authorization must be
 	// decided from inputs that don't depend on peer existence.
@@ -2658,7 +2662,13 @@ func (m *Manager) CreateRelation(
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, source.typ, target.typ); vErr != nil {
-		return nil, fmt.Errorf("invalid relation: %w", vErr)
+		// A type-allowlist mismatch is the one tolerable failure: the caller
+		// opted in and reports it as a warning. An unknown relation type is
+		// never tolerated.
+		var mismatch *metamodel.InvalidRelationError
+		if !opts.TolerateTypeMismatch || !errors.As(vErr, &mismatch) {
+			return nil, fmt.Errorf("invalid relation: %w", vErr)
+		}
 	}
 	// Keyed on the TAIL too: two edges on the same triple with different
 	// tails are two relations, so a faced create must not be rejected by
@@ -2700,7 +2710,7 @@ func (m *Manager) CreateRelation(
 	// The GetRelation pre-check above is advisory; the store's atomic
 	// create is the real guard, and a conflict surfaces as
 	// ErrRelationAlreadyExists (BUG-ZWTDH9).
-	create := func(st store.Store) error {
+	create := func(ctx context.Context, st store.Store) error {
 		if err := CheckOwningEdge(ctx, m.deps.Meta, st, key); err != nil {
 			return err
 		}
@@ -2717,9 +2727,9 @@ func (m *Manager) CreateRelation(
 	// An owning edge reads its neighbors' edges to decide whether it may
 	// exist, so the reads and the write share one Tx for the same reason.
 	if relTypeIsOrdered(m.deps.Meta, relType) || metamodel.IsOwning(m.deps.Meta, relType) {
-		createErr = m.deps.Store.Tx(ctx, create)
+		createErr = m.deps.Store.Tx(ctx, func(st store.Store) error { return create(store.ContextInTx(ctx), st) })
 	} else {
-		createErr = create(m.deps.Store)
+		createErr = create(ctx, m.deps.Store)
 	}
 	if createErr != nil {
 		if errors.Is(createErr, store.ErrConflict) {
@@ -2778,11 +2788,12 @@ func (m *Manager) UpdateRelation(
 	var rel *entity.Relation
 	var oldProps map[string]any
 	err := m.deps.Store.Tx(ctx, func(view store.Store) error {
+		txCtx := store.ContextInTx(ctx)
 		// Addressed by TAIL as well as triple (BUG-64MU2Q): the default-tail
 		// edge is a DIFFERENT relation on a faced source, and the merge below
 		// would write the caller's properties onto it.
 		var gErr error
-		rel, gErr = view.GetRelation(ctx, key)
+		rel, gErr = view.GetRelation(txCtx, key)
 		if gErr != nil {
 			return fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound,
 				entity.FormatStateRef(from, key.FromFace), relType, to)
@@ -2806,7 +2817,7 @@ func (m *Manager) UpdateRelation(
 		// UpdateRelation, not upsert: the read above established the triple
 		// exists (else ErrRelationNotFound), so this is unambiguously an
 		// update (BUG-ZWTDH9).
-		_, wErr := view.UpdateRelation(ctx, key, store.RelationData{
+		_, wErr := view.UpdateRelation(txCtx, key, store.RelationData{
 			Properties: rel.Properties,
 			Content:    rel.Content,
 		})

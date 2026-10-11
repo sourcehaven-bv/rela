@@ -231,9 +231,12 @@ type sweepCandidate struct {
 	content    string
 	props      string
 	latestHash string
+	// latestVseq/latestOp identify the row latestHash came from (0/"" when
+	// there is none). The sweep ignores them; capture-now for a version tag
+	// tags that row when it already holds the live content.
+	latestVseq int64
+	latestOp   string
 	hasVersion bool
-	// liveHash is the row's content_hash column; nil means not known.
-	liveHash *string
 	// editorUser/editorTool are the row's last_edited_by_* columns; nil means
 	// the last write carried no attribution.
 	editorUser *string
@@ -243,8 +246,8 @@ type sweepCandidate struct {
 	origin originCols
 }
 
-// selectCandidates returns up to Batch entities that differ from their latest
-// version and have SETTLED (updated_at older than now-Idle) or whose latest
+// selectCandidates returns up to Batch entities whose stored content_hash is
+// NULL and that have SETTLED (updated_at older than now-Idle) or whose latest
 // version has aged past MaxStaleness.
 //
 // pgstore expresses the two "latest version" probes as LEFT JOIN LATERAL;
@@ -277,13 +280,17 @@ type sweepCandidate struct {
 // Ordering does not prevent that: an edit to a row whose capture is newer than
 // Batch others still waits behind them forever.
 //
-// So the WHERE clause selects exactly what the dedup would capture: no version
-// in this lifecycle, or a stored content_hash that is NULL or differs from that
-// version's. captureOne writes back the hash it computed, and a trigger clears
-// it when a hashed column changes (contentHashDDL), so a stored hash always
-// describes the row's current content. A purge tombstone carries the live hash,
-// so a purged row is clean too. The one exception is a row whose capture keeps
-// failing: it stays a candidate, and noteBatch reports a full batch of them.
+// So the WHERE clause selects only rows whose stored content_hash is NULL. A
+// non-NULL hash means the current lifecycle's latest version has that hash, so
+// the row has nothing to capture. captureOne writes the hash back after it
+// captures or skips the row, and triggers clear it whenever that could stop
+// being true: a hashed column changes, a version is inserted with another hash,
+// is a delete, or is purged, or a soft-deleted row is restored
+// (contentHashDDL). A skipped row gets its hash written back, so it drops out.
+// The one exception is a row whose capture keeps failing: it stays a
+// candidate, and noteBatch reports a full batch of them. The partial index
+// entities_unhashed_idx serves the scan, so a tick costs in proportion to the
+// rows that changed (TASK-Y73Y9 in Atlas).
 //
 // Timestamps would not do. A capture is written after the write it snapshots,
 // so lv_created is normally NEWER than updated_at, and an `lv_created <
@@ -294,32 +301,11 @@ type sweepCandidate struct {
 // The ORDER BY puts never-captured rows first and then the longest-uncaptured
 // ones, so a large backlog drains in a stable order.
 func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) {
-	const q = `
-		SELECT e.id, e.face, e.type, e.content, e.properties,
-		       e.last_edited_by_user, e.last_edited_by_tool,
-		       e.origin_kind, e.origin_source, e.origin_source_face,
-		       e.origin_source_type, e.origin_definition,
-		       (SELECT ev.content_hash FROM entity_versions ev
-		         WHERE ev.entity_id = e.id AND ev.face = e.face
-		           AND ev.vseq > COALESCE((SELECT max(d.vseq) FROM entity_versions d
-		                                    WHERE d.entity_id = e.id AND d.face = e.face
-		                                      AND d.op = 'delete'), 0)
-		         ORDER BY ev.vseq DESC LIMIT 1) AS latest_hash,
-		       (SELECT ev.vseq FROM entity_versions ev
-		         WHERE ev.entity_id = e.id AND ev.face = e.face
-		         ORDER BY ev.vseq DESC LIMIT 1) AS lv_vseq,
-		       (SELECT ev.op FROM entity_versions ev
-		         WHERE ev.entity_id = e.id AND ev.face = e.face
-		         ORDER BY ev.vseq DESC LIMIT 1) AS lv_op,
-		       (SELECT ev.created_at FROM entity_versions ev
-		         WHERE ev.entity_id = e.id AND ev.face = e.face
-		         ORDER BY ev.vseq DESC LIMIT 1) AS lv_created,
-		       e.content_hash
-		FROM entities e
-		WHERE (e.updated_at < ?
-		       OR (lv_created IS NOT NULL AND lv_created < ?))
-		  AND (latest_hash IS NULL OR e.content_hash IS NULL OR e.content_hash <> latest_hash)
-		ORDER BY lv_created IS NOT NULL, lv_created ASC, e.updated_at ASC
+	const q = candidateSelect + `
+		WHERE c.content_hash IS NULL
+		  AND (c.updated_at < ?
+		       OR (c.lv_created IS NOT NULL AND c.lv_created < ?))
+		ORDER BY c.lv_created IS NOT NULL, c.lv_created ASC, c.updated_at ASC
 		LIMIT ?`
 
 	settled, stale := s.windows()
@@ -331,30 +317,87 @@ func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) 
 
 	var out []sweepCandidate
 	for rows.Next() {
-		var (
-			c          sweepCandidate
-			latestHash *string
-			lvVseq     *int64
-			lvOp       *string
-			lvCreated  *string
-		)
-		dest := make([]any, 0, 12+originColumnCount)
-		dest = append(dest, &c.id, &c.face, &c.typ, &c.content, &c.props, &c.editorUser, &c.editorTool)
-		dest = append(dest, c.origin.scanTargets()...)
-		dest = append(dest, &latestHash, &lvVseq, &lvOp, &lvCreated, &c.liveHash)
-		if err := rows.Scan(dest...); err != nil {
+		c, err := scanCandidate(rows)
+		if err != nil {
 			return nil, err
 		}
-		if latestHash != nil {
-			c.latestHash = *latestHash
-		}
-		// hasVersion decides create-vs-update, and it means "this lifecycle
-		// already has a version". A lineage whose newest row is a delete is a
-		// re-creation, so the next capture is a CREATE again.
-		c.hasVersion = lvVseq != nil && lvOp != nil && *lvOp != string(store.VersionOpDelete)
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// candidateSelect reads entity rows (aliased c) with what a capture needs: the
+// live content, its attribution and origin columns, and the "latest version"
+// probes described on selectCandidates. Shared by the sweep and by capture-now
+// for a version tag, so both decide dedup and op the same way. The caller
+// appends the WHERE clause over c; the inner query exposes content_hash,
+// updated_at and lv_created for it.
+//
+// The latest current-lifecycle version is found once, as a vseq, and joined
+// for its hash and op, rather than repeating the delete-fence probe in two
+// more correlated subqueries.
+const candidateSelect = `
+		SELECT c.id, c.face, c.type, c.content, c.properties,
+		       c.last_edited_by_user, c.last_edited_by_tool,
+		       c.origin_kind, c.origin_source, c.origin_source_face,
+		       c.origin_source_type, c.origin_definition,
+		       lc.content_hash, c.latest_vseq, lc.op,
+		       c.lv_vseq, c.lv_op
+		FROM (
+		    SELECT e.id, e.face, e.type, e.content, e.properties, e.updated_at,
+		           e.last_edited_by_user, e.last_edited_by_tool,
+		           e.origin_kind, e.origin_source, e.origin_source_face,
+		           e.origin_source_type, e.origin_definition, e.content_hash,
+		           (SELECT ev.vseq FROM entity_versions ev
+		             WHERE ev.entity_id = e.id AND ev.face = e.face
+		               AND ev.vseq > COALESCE((SELECT max(d.vseq) FROM entity_versions d
+		                                        WHERE d.entity_id = e.id AND d.face = e.face
+		                                          AND d.op = 'delete'), 0)
+		             ORDER BY ev.vseq DESC LIMIT 1) AS latest_vseq,
+		           (SELECT ev.vseq FROM entity_versions ev
+		             WHERE ev.entity_id = e.id AND ev.face = e.face
+		             ORDER BY ev.vseq DESC LIMIT 1) AS lv_vseq,
+		           (SELECT ev.op FROM entity_versions ev
+		             WHERE ev.entity_id = e.id AND ev.face = e.face
+		             ORDER BY ev.vseq DESC LIMIT 1) AS lv_op,
+		           (SELECT ev.created_at FROM entity_versions ev
+		             WHERE ev.entity_id = e.id AND ev.face = e.face
+		             ORDER BY ev.vseq DESC LIMIT 1) AS lv_created
+		    FROM entities e
+		) c
+		LEFT JOIN entity_versions lc ON lc.vseq = c.latest_vseq`
+
+// scanCandidate scans one candidateSelect row.
+func scanCandidate(row scanner) (sweepCandidate, error) {
+	var (
+		c          sweepCandidate
+		latestHash *string
+		latestVseq *int64
+		latestOp   *string
+		lvVseq     *int64
+		lvOp       *string
+	)
+	dest := make([]any, 0, 12+originColumnCount)
+	dest = append(dest, &c.id, &c.face, &c.typ, &c.content, &c.props, &c.editorUser, &c.editorTool)
+	dest = append(dest, c.origin.scanTargets()...)
+	dest = append(dest, &latestHash, &latestVseq, &latestOp, &lvVseq, &lvOp)
+	if err := row.Scan(dest...); err != nil {
+		return sweepCandidate{}, err
+	}
+	if latestHash != nil {
+		c.latestHash = *latestHash
+	}
+	if latestVseq != nil {
+		c.latestVseq = *latestVseq
+	}
+	if latestOp != nil {
+		c.latestOp = *latestOp
+	}
+	// hasVersion decides create-vs-update, and it means "this lifecycle
+	// already has a version". A lineage whose newest row is a delete is a
+	// re-creation, so the next capture is a CREATE again.
+	c.hasVersion = lvVseq != nil && lvOp != nil && *lvOp != string(store.VersionOpDelete)
+	return c, nil
 }
 
 // windows renders the two time thresholds as on-disk timestamps.
@@ -370,13 +413,70 @@ func (s *sweep) windows() (settled, stale string) {
 	return sqlitedb.FormatTime(now.Add(-s.cfg.Idle)), sqlitedb.FormatTime(now.Add(-s.cfg.MaxStaleness))
 }
 
-// captureOne snapshots one entity if its content actually changed.
+// captureOne captures one sweep candidate and writes its hash back.
 func (s *sweep) captureOne(
 	ctx context.Context, c sweepCandidate, schemaHash string, projJSON []byte,
 ) error {
-	props, err := unmarshalProps(c.props)
+	_, contentHash, err := captureLive(ctx, s.store.db, c, schemaHash, projJSON)
 	if err != nil {
 		return err
+	}
+	// Write the hash back so the row stops being a candidate until a trigger
+	// clears it, whether or not a version was captured: a row whose content
+	// matches the latest version would otherwise be selected, and skipped, on
+	// every tick. Two guards make it a no-op when storing the hash would break
+	// what a stored hash promises, that the latest version has it. The content
+	// guard catches a hashed column changed since the candidate query read the
+	// row; stored on newer content, the hash would mark an uncaptured edit as
+	// clean. The latest-version guard catches a version written outside the
+	// sweep since the read, such as a delete followed by a re-create with the
+	// same content: the version triggers did not clear anything then, because
+	// the row's hash was still NULL.
+	_, err = s.store.db.ExecContext(ctx, `UPDATE entities SET content_hash = ?1
+		WHERE id = ?2 AND face = ?3 AND type = ?4 AND properties = ?5 AND content = ?6
+		  AND EXISTS (SELECT 1 FROM (
+		      SELECT op, content_hash FROM entity_versions
+		      WHERE entity_id = ?2 AND face = ?3 ORDER BY vseq DESC LIMIT 1) l
+		    WHERE l.op <> 'delete' AND l.content_hash = ?1)`,
+		contentHash, c.id, c.face, c.typ, c.props, c.content)
+	return err
+}
+
+// captureLive snapshots one entity if its content actually changed. It
+// returns the new row's vseq (0 when dedup skipped it) and the content hash.
+//
+// Shared by the sweep and by capture-now for a version tag (TKT-VO6VG9), so a
+// tagged capture is the version the sweep would have written: same op,
+// attribution, origin and hash. Capture-now does not write the hash back. A
+// row with a NULL hash stays a candidate: the next sweep dedups it against the
+// new version and writes the hash back then. A row with a stored hash keeps
+// it, which stays true: that hash is the live content's, and the new version
+// carries the same hash, so the version trigger leaves it alone.
+func captureLive(
+	ctx context.Context, q querier, c sweepCandidate, schemaHash string, projJSON []byte,
+) (vseq int64, contentHash string, err error) {
+	in, contentHash, err := c.versionInput(schemaHash, projJSON)
+	if err != nil {
+		return 0, "", err
+	}
+
+	// Dedup only within the CURRENT lifecycle: latestHash is empty when there is
+	// no post-delete version, so a re-creation with identical bytes still
+	// records rather than being swallowed.
+	if c.latestHash != "" && contentHash == c.latestHash {
+		return 0, contentHash, nil
+	}
+	vseq, err = insertVersion(ctx, q, in, contentHash)
+	return vseq, contentHash, err
+}
+
+// versionInput builds the version a capture of c writes, and its content
+// hash. Attribution comes from the row's last_edited_by_* columns, never from
+// whoever triggers the capture: they did not write these bytes.
+func (c sweepCandidate) versionInput(schemaHash string, projJSON []byte) (store.VersionInput, string, error) {
+	props, err := unmarshalProps(c.props)
+	if err != nil {
+		return store.VersionInput{}, "", err
 	}
 	user, tool := store.SweptPrincipal(c.editorUser, c.editorTool)
 	in := store.VersionInput{
@@ -392,35 +492,12 @@ func (s *sweep) captureOne(
 		// Copied off the live row, never guessed; not part of the content
 		// hash, as in pgstore's sweep.
 		Origin: scanOrigin(c.origin),
+		Op:     store.VersionOpCreate,
 	}
-	contentHash := contentHashOf(in)
-
-	// Dedup only within the CURRENT lifecycle: latestHash is empty when there is
-	// no post-delete version, so a re-creation with identical bytes still
-	// records rather than being swallowed.
-	if c.latestHash == "" || contentHash != c.latestHash {
-		if c.hasVersion {
-			in.Op = store.VersionOpUpdate
-		} else {
-			in.Op = store.VersionOpCreate
-		}
-		if insErr := insertVersion(ctx, s.store.db, in, contentHash); insErr != nil {
-			return insErr
-		}
+	if c.hasVersion {
+		in.Op = store.VersionOpUpdate
 	}
-	if c.liveHash != nil && *c.liveHash == contentHash {
-		return nil
-	}
-	// Write the hash back so the row stops being a candidate until it changes,
-	// whether or not a version was captured: a row whose stored hash is NULL
-	// while its content matches the latest version would otherwise be selected,
-	// and skipped, on every tick. The content guard makes it a no-op when a
-	// hashed column changed since the candidate query read the row; stored on
-	// newer content, the hash would mark an uncaptured edit as clean.
-	_, err = s.store.db.ExecContext(ctx, `UPDATE entities SET content_hash = ?
-		WHERE id = ? AND face = ? AND type = ? AND properties = ? AND content = ?`,
-		contentHash, c.id, c.face, c.typ, c.props, c.content)
-	return err
+	return in, contentHashOf(in), nil
 }
 
 // --- Relations ------------------------------------------------------------
@@ -437,8 +514,7 @@ type relationSweepCandidate struct {
 	props      string
 	latestHash string
 	hasVersion bool
-	// liveHash, editorUser and editorTool mirror sweepCandidate's.
-	liveHash   *string
+	// editorUser and editorTool mirror sweepCandidate's.
 	editorUser *string
 	editorTool *string
 }
@@ -458,12 +534,11 @@ func (s *sweep) selectRelationCandidates(ctx context.Context) ([]relationSweepCa
 		         ORDER BY rv.vseq DESC LIMIT 1) AS latest_hash,
 		       (SELECT rv.created_at FROM relation_versions rv
 		         WHERE rv.rel_record_id = r.rel_record_id
-		         ORDER BY rv.vseq DESC LIMIT 1) AS lv_created,
-		       r.content_hash
+		         ORDER BY rv.vseq DESC LIMIT 1) AS lv_created
 		FROM relations r
-		WHERE (r.updated_at < ?
+		WHERE r.content_hash IS NULL
+		  AND (r.updated_at < ?
 		       OR (lv_created IS NOT NULL AND lv_created < ?))
-		  AND (latest_hash IS NULL OR r.content_hash IS NULL OR r.content_hash <> latest_hash)
 		ORDER BY lv_created IS NOT NULL, lv_created ASC, r.updated_at ASC
 		LIMIT ?`
 
@@ -482,8 +557,7 @@ func (s *sweep) selectRelationCandidates(ctx context.Context) ([]relationSweepCa
 			lvCreated  *string
 		)
 		if err := rows.Scan(&c.recordID, &c.from, &c.fromFace, &c.relType, &c.to,
-			&c.content, &c.props, &c.editorUser, &c.editorTool, &latestHash, &lvCreated,
-			&c.liveHash); err != nil {
+			&c.content, &c.props, &c.editorUser, &c.editorTool, &latestHash, &lvCreated); err != nil {
 			return nil, err
 		}
 		if latestHash != nil {
@@ -525,15 +599,15 @@ func (s *sweep) captureRelation(
 			return insErr
 		}
 	}
-	if c.liveHash != nil && *c.liveHash == contentHash {
-		return nil
-	}
 	// As in captureOne. The key is the row's current one, so a rename since
-	// the read leaves nothing to match.
-	_, err = s.store.db.ExecContext(ctx, `UPDATE relations SET content_hash = ?
-		WHERE from_id = ? AND from_face = ? AND rel_type = ? AND to_id = ?
-		  AND properties = ? AND content = ?`,
-		contentHash, c.from, c.fromFace, c.relType, c.to, c.props, c.content)
+	// the read leaves nothing to match. The relation dedup does not fence on a
+	// delete version, so neither does the latest-version guard.
+	_, err = s.store.db.ExecContext(ctx, `UPDATE relations SET content_hash = ?1
+		WHERE from_id = ?2 AND from_face = ?3 AND rel_type = ?4 AND to_id = ?5
+		  AND properties = ?6 AND content = ?7
+		  AND ?1 = (SELECT content_hash FROM relation_versions
+		            WHERE rel_record_id = ?8 ORDER BY vseq DESC LIMIT 1)`,
+		contentHash, c.from, c.fromFace, c.relType, c.to, c.props, c.content, c.recordID)
 	return err
 }
 

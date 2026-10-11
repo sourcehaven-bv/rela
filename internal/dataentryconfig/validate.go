@@ -2289,6 +2289,10 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 
 		// Validate card fields
 		for i, f := range kanban.Card.Fields {
+			errs = append(errs, checkCardFieldCounts(kanbanID, i, f, kanban.EntityType, meta)...)
+			if f.Comments {
+				continue
+			}
 			if f.Relation != "" {
 				if _, ok := meta.GetRelationDef(f.Relation); !ok {
 					errs = append(errs, fmt.Sprintf(
@@ -3090,4 +3094,47 @@ func checkQueryScopeRef(
 	return []string{fmt.Sprintf(
 		"%s %q: query_scope %q is not declared on entity type %q (declared: %s, plus the implicit %q)",
 		kind, id, scope, entityType, strings.Join(declared, ", "), metamodel.AllQueryScopeName)}
+}
+
+// cardDisplayCount is the one accepted card field `display:` value.
+const cardDisplayCount = "count"
+
+// checkCardFieldCounts validates the two count shapes of a kanban card field:
+// `display: count` on a relation, and `comments: true` on its own.
+func checkCardFieldCounts(
+	kanbanID string, i int, f KanbanCardField, entityType string, meta *metamodel.Metamodel,
+) []string {
+	var errs []string
+	at := fmt.Sprintf("kanban %q: card.fields[%d]", kanbanID, i)
+	if f.Display != "" {
+		switch {
+		case f.Display != cardDisplayCount:
+			errs = append(errs, fmt.Sprintf("%s: display %q is not supported (only %q)", at, f.Display, cardDisplayCount))
+		case f.Relation == "":
+			errs = append(errs, fmt.Sprintf("%s: display: %s needs a relation", at, cardDisplayCount))
+		}
+	}
+	if f.Comments {
+		if f.Property != "" || f.Relation != "" {
+			errs = append(errs, at+": comments cannot be combined with property or relation")
+		}
+		if !metamodel.NewCommentPolicy(meta).Commentable(entityType) {
+			errs = append(errs, fmt.Sprintf("%s: comments are not enabled for entity type %q", at, entityType))
+		}
+	}
+	return errs
+}
+
+// refuseCardCounts rejects the kanban-only count shapes on the other surfaces
+// that share [KanbanCardField]. Calendar chips and gantt tooltips are not
+// served counts, so accepting the keys there would load and render nothing.
+func refuseCardCounts(prefix string, f KanbanCardField) []string {
+	var errs []string
+	if f.Display != "" {
+		errs = append(errs, prefix+": display is only supported on kanban card fields")
+	}
+	if f.Comments {
+		errs = append(errs, prefix+": comments is only supported on kanban card fields")
+	}
+	return errs
 }

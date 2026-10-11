@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { useQuery } from '@pinia/colada'
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
 import RlMenuSection from 'rela-components/components/overlay/RlMenuSection.vue'
 import RlMenuSeparator from 'rela-components/components/overlay/RlMenuSeparator.vue'
 import RlAvatar from 'rela-components/components/data/RlAvatar.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
-import { getMe } from '@/api'
+import { useMe } from '@/queries/me'
 import { apiUrl } from '@/api/base'
 import { useSpaceStore } from '@/stores/space'
 import { shouldDeferToBrowser } from '@/utils/openIntent'
@@ -28,12 +27,7 @@ import { shouldDeferToBrowser } from '@/utils/openIntent'
 const router = useRouter()
 const space = useSpaceStore()
 
-// Identity changes only with a new login, which is a page load.
-const { data: me } = useQuery({
-  key: ['me'],
-  query: getMe,
-  staleTime: Infinity,
-})
+const { data: me } = useMe()
 
 const name = computed(() => me.value?.person?.title || me.value?.email || me.value?.user || '')
 const org = computed(() => me.value?.org?.name || me.value?.org?.slug || '')

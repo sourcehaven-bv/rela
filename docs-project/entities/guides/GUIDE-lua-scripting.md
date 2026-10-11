@@ -364,6 +364,10 @@ rela.get_relations(e.id)               -- NOT a filter: a bare id is not a
 |----------|-------------|---------|
 | `rela.history(addr)` | The entity's versions, oldest first | table (array) or nil |
 | `rela.get_version(addr, n)` | The entity as it was at version `n` | table or nil |
+| `rela.version_by_tag(addr, name)` | The entity as it was at the tagged version | table or nil |
+| `rela.version_token(addr)` | A token for the entity's current state | string or nil |
+| `rela.tag_version(addr, name, opts?)` | Tag a version | number, or nil and `"conflict"` |
+| `rela.untag_version(addr, name)` | Delete a tag | boolean |
 
 Version history exists on the SQLite and PostgreSQL backends. On any other
 backend both functions raise `version history is not supported on this storage
@@ -373,7 +377,8 @@ because a script comparing against an old version would read "no history" as
 
 Each row of `rela.history` has `version`, `op` (`create`, `update`, `rename`,
 `delete`, or `purge` for a row whose content an operator purged), `type`, `face`, `created_at` (RFC 3339), `user`, `tool`,
-`triggered_by` and `prev_id` (set by a rename). There is no content hash: the
+`triggered_by`, `prev_id` (set by a rename) and `tags` (the names of the
+version tags that point at it). There is no content hash: the
 stored one covers fields the script may not see.
 `rela.get_version` returns the same table as `rela.get_entity`, plus `version`;
 its `mod_time` is when that version was captured.
@@ -396,6 +401,47 @@ Versions are captured by a background sweep. The newest version can lag the
 live entity by one sweep interval, and a new entity can have no version yet,
 which gives an empty history. A script that needs the version it saw before
 should store its `version` number and read it back with `rela.get_version`.
+
+#### Version tags
+
+A version tag names one version of an entity, so a script can find it again
+without storing the number. A sync script tags the version it pushed and diffs
+against it on the next run:
+
+```lua
+local base = rela.version_by_tag("TKT-1", "sync/jira")    -- nil on the first run
+local tok = rela.version_token("TKT-1")
+-- ... push the entity, comparing against base ...
+local v, why = rela.tag_version("TKT-1", "sync/jira", { expect = tok })
+if not v then rela.output("TKT-1 changed during the push: " .. why) end
+```
+
+- `rela.version_by_tag(addr, name)` returns the same table as
+  `rela.get_version`, or nil when the tag, the entity or the version is absent.
+- `rela.version_token(addr)` returns a token for the current state the script
+  can read, or nil. The token covers what the script can see: a script whose
+  read is redacted gets a token over its redacted read, and a tag with
+  `expect` compares it against the same read. Such a tag ignores changes to
+  fields the script cannot see.
+- `rela.tag_version(addr, name, opts)` tags the current state and returns its
+  version number. `opts.expect = token` tags it only while it still matches the
+  token, and returns nil and `"conflict"` otherwise. `opts.version = n` tags
+  version `n` instead. Tagging an existing name moves it.
+- `rela.untag_version(addr, name)` returns true, or false when there was no
+  such tag.
+
+Names are lowercase with at most one namespace segment (`reviewed`,
+`sync/jira`). A tag needs `update` on the entity, and a name `ns/...` also
+needs the permission `tag:ns`. An entity the script may not read fails like a
+missing one: `entity not found`. `allow_acl_bypass` does not cover tags:
+`admin` has no tag functions, and a tag inside `rela.bypass_acl` is still
+checked against the script's principal.
+
+`rela.tag_version` and `rela.untag_version` exist in action scripts,
+scheduled scripts, background automation actions and MCP scripts. They are
+absent in a synchronous automation, and a tag write inside a store
+transaction is refused (`ErrTagInTx`). Tag from a background action or a
+scheduled script.
 
 ### Mutation Functions
 

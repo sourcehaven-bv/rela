@@ -3,12 +3,15 @@
 package appbuild
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // The backend-neutral half of the version wiring, shared by every build that
@@ -92,6 +95,43 @@ func versionServiceFor(st store.Store) store.VersionService {
 		return nil
 	}
 	return nonNilCapability(s.VersionStore())
+}
+
+// versionTaggerFor returns the store's version tagger (TKT-VO6VG9), built
+// with the same metamodel projection the sweep stamps, so a version that
+// tagging the current state captures is the one the sweep would have written.
+// Returns a genuinely nil interface and no error for a store without the
+// capability, which the caller treats as "version tags are not available".
+// A backend that has the capability but refuses to build a tagger is an
+// error: reporting it as an unsupported backend would hide a wiring fault.
+//
+// Nil: meta is rejected with an error, because a capture without a
+// projection could not be rendered.
+func versionTaggerFor(st store.Store, meta *metamodel.Metamodel) (store.VersionTagger, error) {
+	p, ok := versionServiceFor(st).(store.VersionTaggerProvider)
+	if !ok {
+		return nil, nil //nolint:nilnil // no history means no tagger, which is not an error
+	}
+	if meta == nil {
+		return nil, errors.New("appbuild: version tags need the metamodel")
+	}
+	tg, err := p.VersionTagger(metaProjectionProvider{meta: meta})
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: build version tagger: %w", err)
+	}
+	return nonNilCapability(tg), nil
+}
+
+// versionTagReaderFor returns the tag lookup the script read surfaces resolve
+// rela.version_by_tag through: the store's version service, which answers
+// lookups without a projection. Nil, as a genuinely nil interface, when st
+// keeps no history or no tags.
+func versionTagReaderFor(st store.Store) visibility.VersionTagReader {
+	l, ok := versionServiceFor(st).(store.VersionTagLookup)
+	if !ok {
+		return nil
+	}
+	return nonNilCapability[visibility.VersionTagReader](l)
 }
 
 // sweepConfigFromEnv reads optional sweep-cadence overrides from the environment.

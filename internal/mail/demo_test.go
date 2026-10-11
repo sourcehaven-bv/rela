@@ -132,7 +132,7 @@ var demoClient = &http.Client{
 }
 
 func httpGet(url string) ([]byte, error) {
-	resp, err := demoClient.Get(url) //nolint:gosec,noctx // demo-only, fixed localhost URL
+	resp, err := demoClient.Get(url)
 	if err != nil {
 		return nil, err
 	}

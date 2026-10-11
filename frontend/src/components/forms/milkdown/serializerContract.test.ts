@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
@@ -27,6 +27,24 @@ function roundTrip(markdown: string): string {
  */
 function parse(markdown: string): { type: string } {
   return processor.runSync(processor.parse(markdown)) as { type: string }
+}
+
+/**
+ * Round-trips `markdown` twice, parsing each text once. The parse trees are
+ * reused for the semantic comparison, which halves the parse work of
+ * `roundTrip` plus `parse` on the corpus sweep. Stringify does not mutate
+ * the tree, and the transform step runs only after it.
+ */
+function checkCorpusBody(markdown: string) {
+  const srcTree = processor.parse(markdown)
+  const once = String(processor.stringify(srcTree))
+  const onceTree = processor.parse(once)
+  const twice = String(processor.stringify(onceTree))
+  const equal = isSemanticallyEqual(
+    processor.runSync(srcTree) as { type: string },
+    processor.runSync(onceTree) as { type: string }
+  )
+  return { once, twice, equal }
 }
 
 /** Strips YAML frontmatter, leaving the body the editor would receive. */
@@ -126,7 +144,7 @@ describe('serializer contract', () => {
     const all = roots.flatMap((r) => walk(r))
 
     /**
-     * The full sweep takes about a minute, which is too slow for the normal
+     * The full sweep takes over a minute, which is too slow for the normal
      * unit-test run. By default every Nth file is checked, which still covers
      * several hundred bodies of every entity type. Set RELA_FULL_CORPUS=1 to
      * sweep all of them; CI runs that variant.
@@ -140,42 +158,73 @@ describe('serializer contract', () => {
       expect(files.length).toBeGreaterThan(100)
     })
 
-    it('preserves meaning and converges for every entity body', () => {
-      const semanticDrift: string[] = []
-      const notIdempotent: string[] = []
-      let byteChurn = 0
-
-      for (const file of files) {
-        const src = body(readFileSync(file, 'utf8'))
-        if (!src.trim()) continue
-
-        const once = roundTrip(src)
-        const twice = roundTrip(once)
-
-        if (!isSemanticallyEqual(parse(src), parse(once))) semanticDrift.push(file)
-        if (once !== twice) notIdempotent.push(file)
-        if (once !== src) byteChurn++
+    /**
+     * One test per directory under each root, split into chunks of at most
+     * CHUNK files. The corpus grows with every ticket, and a single test over
+     * all of it outgrew its timeout (178 s of 180 s on CI). Chunks keep each
+     * test far below the cap however large one type grows.
+     */
+    const CHUNK = 250
+    const byDir = new Map<string, string[]>()
+    for (const file of files) {
+      const root = roots.find((r) => file.startsWith(r + '/'))
+      if (!root) throw new Error(`corpus file outside the roots: ${file}`)
+      const dir = relative(repoRoot, join(root, relative(root, file).split('/')[0]))
+      const list = byDir.get(dir)
+      if (list) list.push(file)
+      else byDir.set(dir, [file])
+    }
+    const groups: [string, string[]][] = []
+    for (const [dir, list] of byDir) {
+      const n = Math.ceil(list.length / CHUNK)
+      for (let i = 0; i < n; i++) {
+        const name = n > 1 ? `${dir} [${i + 1}/${n}]` : dir
+        groups.push([name, list.slice(i * CHUNK, (i + 1) * CHUNK)])
       }
+    }
 
-      // Reported for visibility; byte churn is handled by the write-back guard.
-      console.log(
-        `corpus: ${files.length}/${all.length} files, ${byteChurn} with byte churn, ` +
-          `${semanticDrift.length} semantic drift, ${notIdempotent.length} non-idempotent`
-      )
-      // A sampled pass is not the gate. RELA_STRINGIFY_OPTIONS decides how
-      // 3,939 stored files get rewritten, so a green run over one eighth of
-      // them should not read as clearance to change it.
-      if (!FULL) {
+    it.each(groups)(
+      'preserves meaning and converges for every entity body in %s',
+      (group, groupFiles) => {
+        const semanticDrift: string[] = []
+        const notIdempotent: string[] = []
+        let byteChurn = 0
+
+        for (const file of groupFiles) {
+          const src = body(readFileSync(file, 'utf8'))
+          if (!src.trim()) continue
+
+          const { once, twice, equal } = checkCorpusBody(src)
+
+          if (!equal) semanticDrift.push(file)
+          if (once !== twice) notIdempotent.push(file)
+          if (once !== src) byteChurn++
+        }
+
+        // Reported for visibility; byte churn is handled by the write-back guard.
+        console.log(
+          `corpus ${group}: ${groupFiles.length} files, ${byteChurn} with byte churn, ` +
+            `${semanticDrift.length} semantic drift, ${notIdempotent.length} non-idempotent`
+        )
+
+        expect(semanticDrift).toEqual([])
+        expect(notIdempotent).toEqual([])
+      },
+      120_000
+    )
+
+    // A sampled pass is not the gate. RELA_STRINGIFY_OPTIONS decides how
+    // every stored file gets rewritten, so a green run over one eighth of
+    // them should not read as clearance to change it.
+    if (!FULL) {
+      it('warns that the sweep is sampled', () => {
         console.warn(
-          `corpus: SAMPLED 1-in-${STRIDE}. This is NOT the full gate — run ` +
+          `corpus: SAMPLED 1-in-${STRIDE} of ${all.length}. This is NOT the full gate — run ` +
             `RELA_FULL_CORPUS=1 npm run test:run before changing ` +
             `RELA_STRINGIFY_OPTIONS or semanticShape. CI runs the full sweep.`
         )
-      }
-
-      expect(semanticDrift).toEqual([])
-      expect(notIdempotent).toEqual([])
-    }, 180_000)
+      })
+    }
   })
 })
 

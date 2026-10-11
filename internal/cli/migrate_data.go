@@ -311,6 +311,7 @@ func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
 		Audit:    svc.Audit,
 		ScriptFS: scriptFS,
 		Versions: versionCaptureFor(svc),
+		Comments: svc.Comments,
 		Lock:     lock,
 	})
 	if err != nil {
@@ -376,6 +377,7 @@ func (c *MigrateGCCmd) Run(ctx context.Context, svc *writeServices) error {
 		Audit:    svc.Audit,
 		Verdicts: gate,
 		Versions: versionCaptureFor(svc),
+		Comments: svc.Comments,
 		Grace:    c.Grace,
 		Lock:     lock,
 	})
@@ -455,6 +457,7 @@ func (c *MigrateAdoptFaceCmd) Run(ctx context.Context, svc *writeServices) error
 		Meta:     svc.Meta,
 		Audit:    svc.Audit,
 		Versions: versionCaptureFor(svc),
+		Comments: svc.Comments,
 		Lock:     migrationLock(svc),
 	}, datamigration.AdoptRequest{
 		Entity:   c.Entity,

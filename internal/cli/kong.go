@@ -74,7 +74,11 @@ var (
 // Raised 48 → 49 for `classification` (TKT-8UCV32), a sub-struct holding
 // sync and lint, so later verbs (report) nest under it.
 //
-//plimsoll:max-fields=49
+// Raised 49 → 50 for `history-tag` (TKT-VO6VG9). It sits beside history,
+// restore and history-purge, which are top-level too; nesting one history
+// verb under a sub-struct would split that family across two shapes.
+//
+//plimsoll:max-fields=50
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -137,6 +141,7 @@ type CLI struct {
 	RelationHistory RelationHistoryCmd `cmd:"" name:"relation-history" help:"Show a relation's version history (postgres build)."`
 	RelationRestore RelationRestoreCmd `cmd:"" name:"relation-restore" help:"Restore a relation to a past version (postgres build)."`
 
+	HistoryTag           HistoryTagCmd           `cmd:"" name:"history-tag" help:"Set, move or delete a version tag on an entity (postgres or sqlite build)."`
 	HistoryPurge         HistoryPurgeCmd         `cmd:"" name:"history-purge" help:"Hard-delete an entity's version history for compliance (postgres build; irreversible)."`
 	RelationHistoryPurge RelationHistoryPurgeCmd `cmd:"" name:"relation-history-purge" help:"Hard-delete a relation's version history for compliance (postgres build; irreversible)."`
 	Attach               AttachCmd               `cmd:"" help:"Attach file(s) to an entity."`
@@ -276,7 +281,7 @@ func requiresProject(cmd string) bool {
 		"detach", "import", "normalize", "script", "scheduler",
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
 		"sync", "history", "restore", "secrets",
-		"relation-history", "relation-restore", "history-purge", "relation-history-purge",
+		"relation-history", "relation-restore", "history-tag", "history-purge", "relation-history-purge",
 		"dev":
 		return true
 	case "migrate":

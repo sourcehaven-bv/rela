@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/sqlitestore"
@@ -110,4 +111,18 @@ func TestSQLiteSweepStartsFromTheSharedResolver(t *testing.T) {
 	// statements against a database the caller is about to close, which is a
 	// shutdown-time error message on every single run.
 	require.NoError(t, st.Close())
+}
+
+// TestSQLiteVersionTaggerIsReachable proves the tagger resolves on the sqlite
+// build with the metamodel projection, that a missing metamodel is an error
+// rather than a tagger that cannot capture or a silent "unsupported", and
+// that the lookup resolves without a projection.
+func TestSQLiteVersionTaggerIsReachable(t *testing.T) {
+	st := sqliteTestStore(t)
+	tg, err := versionTaggerFor(st, metamodel.DefaultMetamodel())
+	require.NoError(t, err)
+	require.NotNil(t, tg)
+	_, err = versionTaggerFor(st, nil)
+	require.Error(t, err)
+	require.NotNil(t, versionTagReaderFor(st))
 }

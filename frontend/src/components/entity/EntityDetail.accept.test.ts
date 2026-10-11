@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { PiniaColada } from '@pinia/colada'
+import { PiniaColada, useQueryCache } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
 import CommentsPanel from './CommentsPanel.vue'
 import TextSelectionComment from './TextSelectionComment.vue'
@@ -14,6 +14,7 @@ import type { ViewResponse } from '@/api'
 import { listComments, type Comment } from '@/api/comments'
 import type { CommitResult } from '@/composables/useAutoSave'
 import { _setEntityPluralForTest } from '@/api/entities'
+import { entityKeys } from '@/queries/entities'
 
 // Accepting a suggestion from the detail page (TKT-S5C0K3). The server writes
 // the body, so the page must first settle its own pending body save: one that
@@ -148,6 +149,20 @@ describe('EntityDetail accepting a suggestion', () => {
     expect(acceptMock).not.toHaveBeenCalled()
     expect(errorSpy).toHaveBeenCalled()
     expect(w.find('.content-body').text()).toContain(OLD)
+  })
+
+  // A kanban card shows its entity's comment count, and comment writes raise
+  // no store event, so a change here must refetch the lists itself.
+  it('refetches the type\'s lists when a comment changes', async () => {
+    const w = mount(EntityDetail, {
+      props: { entityType: 'ticket', entityId: 'TKT-1' },
+      global: { plugins: [pinia, PiniaColada] },
+    })
+    await flushPromises()
+    const invalidate = vi.spyOn(useQueryCache(), 'invalidateQueries')
+    w.findComponent(CommentsPanel).vm.$emit('changed')
+    await flushPromises()
+    expect(invalidate).toHaveBeenCalledWith({ key: entityKeys.list('ticket') })
   })
 
   // Comment threads are stored per face, and the server refuses to pick a

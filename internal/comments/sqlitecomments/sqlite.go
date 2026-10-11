@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/comments"
@@ -114,6 +115,56 @@ func (s *Store) List(ctx context.Context, target comments.Target) ([]comments.Co
 		return nil, fmt.Errorf("sqlitecomments: list %q: %w", target.Key(), err)
 	}
 	return out, nil
+}
+
+// countChunk bounds the placeholders in one Count query, well under SQLite's
+// SQLITE_MAX_VARIABLE_NUMBER on every build in use.
+const countChunk = 500
+
+// Count returns the thread size of each target that has comments: one GROUP BY
+// query per [countChunk] targets, so a list page costs one query.
+//
+// `target_key IN (...)` compares bytes (the column has the default BINARY
+// collation), so unlike the LIKE in [comments.FacePrefixPattern] it cannot
+// match a key that differs only in case.
+func (s *Store) Count(ctx context.Context, targets []comments.Target) (map[string]int, error) {
+	out := make(map[string]int, len(targets))
+	for start := 0; start < len(targets); start += countChunk {
+		chunk := targets[start:min(start+countChunk, len(targets))]
+		args := make([]any, len(chunk))
+		for i, t := range chunk {
+			args[i] = t.Key()
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		if err := s.countInto(ctx, out, placeholders, args); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) countInto(ctx context.Context, out map[string]int, placeholders string, args []any) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT target_key, count(*)
+		FROM comments
+		WHERE target_key IN (`+placeholders+`)
+		GROUP BY target_key`, args...)
+	if err != nil {
+		return fmt.Errorf("sqlitecomments: count: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key string
+		var n int
+		if err := rows.Scan(&key, &n); err != nil {
+			return fmt.Errorf("sqlitecomments: count: %w", err)
+		}
+		out[key] = n
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("sqlitecomments: count: %w", err)
+	}
+	return nil
 }
 
 // Get returns one comment as a single-row read.

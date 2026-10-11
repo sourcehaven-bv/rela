@@ -705,7 +705,8 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 
 	inputJSON, err := json.Marshal(input)
 	if err != nil {
-		http.Error(w, "Failed to build input: "+err.Error(), http.StatusInternalServerError)
+		slog.ErrorContext(r.Context(), "dataentry: command input failed", "err", err, "path", r.URL.Path)
+		http.Error(w, "Failed to build input", http.StatusInternalServerError)
 		return
 	}
 
