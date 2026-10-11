@@ -3,8 +3,10 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -391,5 +394,40 @@ func TestMaybeProvision_RefusesReservedSubjectDirectly(t *testing.T) {
 		if e.Properties["sub"] == principal.UserScheduler {
 			t.Fatalf("maybeProvision created person %s for a reserved subject", e.ID)
 		}
+	}
+}
+
+// An action provisions the unmatched caller before its script starts, over
+// HTTP and over the remote MCP mount (TKT-NW9QSN). The script is missing, so
+// the run fails after the provision seam; the stub proves the seam ran.
+func TestProvision_ActionProvisionsOnBothTransports(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{"HTTP", "/api/v1/_action/noop"},
+		{"MCP", MCPPath},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, st := provisionApp(t)
+			app.Cfg().Actions = map[string]dataentryconfig.Action{"noop": {Script: "missing.lua"}}
+			if err := app.SetRemoteMCP(func(host MCPHost) (http.Handler, error) {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					_, err := host.Actions.RunAction(r.Context(), "noop", script.ActionRunInput{})
+					http.Error(w, fmt.Sprint(err), http.StatusInternalServerError)
+				}), nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			rec := httptest.NewRecorder()
+			app.NewRouter().ServeHTTP(rec, provReq(t, http.MethodPost, tc.path, `{}`))
+			if !strings.Contains(rec.Body.String(), "action_failed") {
+				t.Fatalf("want the run to reach the script and fail there; got %d %s", rec.Code, rec.Body)
+			}
+			if got := len(listPersonsBySub(t, st)); got != 1 {
+				t.Errorf("%d person stubs after the action, want 1", got)
+			}
+		})
 	}
 }

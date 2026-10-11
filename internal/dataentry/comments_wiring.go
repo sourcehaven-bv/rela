@@ -70,7 +70,7 @@ func newCommentsHandler(app *App, patcher suggestionPatcher) *commentsHandler {
 // provision_seam_invariant_test.go holds every write route to.
 func (h *commentsHandler) withProvision(r *http.Request) *http.Request {
 	if h.provision != nil {
-		return r.WithContext(h.provision(r.Context()))
+		return r.WithContext(h.provisioned(r.Context()))
 	}
 	return r
 }
@@ -213,17 +213,7 @@ func (h *commentsHandler) liveAnchors(target comments.Target, ent *entity.Entity
 		return anchorContext{}
 	}
 
-	refs := make(map[string]bool, len(def.Properties)+len(ent.Properties))
-	// Declared properties count as live even when unset: a comment on an empty
-	// field is about a field that exists, and is not orphaned.
-	for name := range def.Properties {
-		refs[name] = true
-	}
-	// Properties present on the entity but absent from the schema (hand-edited
-	// frontmatter) also count: the value the comment discusses is right there.
-	for name := range ent.Properties {
-		refs[name] = true
-	}
+	refs := comments.LiveProperties(def.Properties, ent.Properties)
 	// The body is the REDACTED entity's content, so a text anchor can only ever
 	// resolve against text this principal may already read.
 	return anchorContext{properties: refs, body: comments.NewBody(ent.Content), loaded: true}

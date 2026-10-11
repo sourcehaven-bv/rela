@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Sourcehaven-BV/rela/internal/mcpwire"
+
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -40,7 +42,11 @@ func (c *McpCmd) Run() error {
 		Tool: principal.ToolMCP,
 	}
 	srv, srvErr := relamcp.NewServer(svc.Deps(), Version,
-		relamcp.WithPrincipal(mcpPrincipal), relamcp.WithLuaTools())
+		relamcp.WithPrincipal(mcpPrincipal), relamcp.WithLuaTools(),
+		// Bound to the startup piles service. A schema reload shares its
+		// backend (ForReassembly) and rebuilds only the owner check, which
+		// under the MCP server's NopACL never has person mapping to change.
+		mcpwire.Piles(svc.current()))
 	if srvErr != nil {
 		return fmt.Errorf("mcp startup: %w", srvErr)
 	}

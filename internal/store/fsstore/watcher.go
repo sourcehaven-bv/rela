@@ -224,6 +224,9 @@ func (s *FSStore) reconcileEntityPath(path string) {
 	}
 
 	s.echoes.Recorded(path, rawData)
+	// Before the marked check: a soft-deleted family's edit must be indexed
+	// too, or an unmark would bring back the targets of the old body.
+	noteMentions(s, e)
 	if watchMarkedEntity(s, entityMeta{ID: e.ID, Type: e.Type, Face: e.Face}, false) {
 		return // soft-deleted: the edit stays hidden with its family
 	}

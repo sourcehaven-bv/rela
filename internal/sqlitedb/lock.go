@@ -2,11 +2,17 @@ package sqlitedb
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
 	"time"
 )
+
+// ErrInUse marks the error Open returns when another process holds the
+// database. A command can test for it to name its own way around, such as
+// stopping the server for a moment.
+var ErrInUse = errors.New("sqlitedb: database in use by another process")
 
 // processLock is the single-writer guard: an exclusive advisory lock on a
 // sidecar file next to the database.
@@ -70,8 +76,8 @@ func acquireProcessLock(dbPath string) (*processLock, error) {
 			"sqlitedb: another process is using %s%s; "+
 				"this backend is single-process by design (see DEC-LFSYNY). "+
 				"Stop the other process, or use the PostgreSQL build for a "+
-				"multi-process deployment: %w",
-			dbPath, holder, err)
+				"multi-process deployment: %w: %w",
+			dbPath, holder, ErrInUse, err)
 	}
 
 	if err := writeHolder(file); err != nil {

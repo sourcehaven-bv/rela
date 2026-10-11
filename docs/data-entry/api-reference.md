@@ -1094,6 +1094,61 @@ for an ID that never existed.
 
 ---
 
+## Backlinks: GET /api/v1/{plural}/{id}/mentioned-by
+
+Lists the entities whose body mentions `{id}` as a code span holding the bare
+ID, such as `` `TKT-007` ``. Code spans in fenced or indented code blocks and
+inside link text do not count, and neither do relation bodies.
+
+| Query    | Meaning |
+| -------- | ------- |
+| `limit`  | Page size, 1 to 200. Default 50. |
+| `cursor` | The `next_cursor` of the previous page. |
+| `world`  | The world to read in, as on the entity GET. |
+
+```json
+{
+  "items": [
+    { "id": "TKT-001", "type": "ticket", "title": "Pick a store" },
+    { "id": "DOC-4", "face": "draft", "type": "document", "title": "Design" }
+  ],
+  "next_cursor": "DOC-4"
+}
+```
+
+Items are ordered by ID. `next_cursor` is the ID of the last item, and it is
+absent on the last page. Keep paging until `next_cursor` is absent.
+
+The server reads at most 10,000 index entries per request. Sources you may not
+read count toward that limit. If the limit is reached, the response has
+`"truncated": true` and no `next_cursor`, and further sources are not listed.
+Only a target mentioned by more than 10,000 entities you cannot read can reach
+the limit.
+
+Each source passes the same read gate as a list row, carries the title you may
+see, and appears at the face the world serves. A source whose served face does
+not itself mention `{id}` is left out. A hidden or missing `{id}` gets the same
+404 as the entity GET. A bad `limit` or `cursor` is a 400.
+
+### Backlinks in a view
+
+A view can collect backlinks with a `mentioned_by` traverse step and show them
+in a section of its own (see the data-entry guide). The `_views` response then
+carries three extra fields:
+
+| Field | Where | Meaning |
+| ----- | ----- | ------- |
+| `hideMentionedByPanel` | response | `true` when the page should leave out the built-in panel: the view collects backlinks, or `entity_views.<type>.mentioned_by_panel` is `false`. Omitted otherwise. |
+| `incomplete` | section | `true` when the section's backlinks collection holds only part of the matching sources. Omitted otherwise. |
+| `entityType`, `columns` | `groups[]` | Set on each group of a `columns_by_type` table. The group's rows are of `entityType`, and their cells are positional over the group's `columns`. |
+
+`incomplete` is set when more than 200 readable sources match, or when the
+backlink scan reaches its 10,000-entry limit. The second case is the same
+accepted signal as `truncated` above. `incomplete` differs from a nested
+section's `truncated`, which is never set by a budget.
+
+---
+
 ## Data-entry API: GET /api/v1/_apps/{id}/{path}
 
 Serves a custom app's files for embedding in a sandboxed iframe. See the
@@ -1306,3 +1361,97 @@ is persisted first. The bytes are removed afterwards, and only when no
 other face of the entity still references the file, so a failure leaves
 unreferenced bytes rather than a property pointing at a missing file.
 Deleting a whole face also removes the bytes no remaining face references.
+
+## Piles (`/_piles`)
+
+A pile is a private, named list of entity references kept per user (TKT-K3RJLH).
+Piles live outside the graph: they have no entity type, no audit record and no
+versioning. Only the owner can read a pile. Scripts, automations and MCP tools
+may add to another user's pile, but cannot read it (see the Lua and MCP guides).
+
+Every route needs an owner identity. A request with no usable identity (the
+`unknown` principal or a `system:*` one) gets 403. `GET /_sidebar` reports this
+as `piles_available`, and carries the operator's `piles:` block from
+`data-entry.yaml` (`actions`, `export`).
+
+### Shapes
+
+```ts
+interface PileSummary {
+  id: string       // "PIL-XXXXXXXX"
+  name: string     // 1-80 characters, unique per owner ignoring case
+  icon: string     // one of the `icons` that GET /_piles returns
+  count: number    // items this principal can read, in the request's world
+  created: string  // RFC 3339
+  updated: string
+}
+
+interface PileItem {
+  id: string       // bare entity id
+  face: string     // "" for the implicit face
+  address: string  // "ID" or "ID@face"; use it for links, removal and actions
+  type: string
+  title: string    // redacted like any other header
+}
+
+interface Pile extends PileSummary {
+  items: PileItem[] // newest first, readable items only
+}
+```
+
+### Routes
+
+| Method | Path | Body | Success |
+| --- | --- | --- | --- |
+| GET | `/_piles` | | 200 `{piles: PileSummary[], icons: string[]}`, oldest pile first |
+| POST | `/_piles` | `{name, icon?, items?: string[]}` | 201 `Pile` |
+| GET | `/_piles/{id}` | | 200 `Pile` |
+| PATCH | `/_piles/{id}` | `{name?, icon?}` | 200 `Pile` |
+| DELETE | `/_piles/{id}` | | 204 |
+| POST | `/_piles/{id}/items` | `{items: string[]}` | 200 `{added: number}` |
+| POST | `/_piles/{id}/items/_remove` | `{items: string[]}` | 204 |
+| GET | `/_piles/{id}/_export?transform=<name>` | | a file, like a list export |
+
+`items` holds addresses (`ID` or `ID@face`), at most 500 per request. Reads
+accept `?world=`; writes refuse it.
+
+Limits: 50 piles per user and 500 items per pile. An add that goes past 500
+drops the oldest items. A push from another user never drops items: it adds
+only what fits.
+
+### What a response never reveals
+
+- A hidden item is left out of every read: the item list, `count`, `_position`
+  and the export. It stays on the pile and comes back if access returns.
+- `_remove` answers 204 whether or not an address was on the pile, hidden or
+  deleted.
+- A pile id that belongs to another user gets the same 404 as one that never
+  existed.
+- `item_not_found` does not say which address failed.
+
+### Errors
+
+Errors are `application/problem+json` documents. The last segment of `type`
+names the error.
+
+| Status | Error | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | bad JSON, a bad name or icon, more than 500 items |
+| 403 | `no_owner` | no owner identity |
+| 404 | `pile_not_found` | an unknown, malformed or foreign pile id |
+| 404 | `item_not_found` | an added address does not exist or cannot be read |
+| 404 | `unknown_transform` | the transform is not registered, or not in `piles.export` |
+| 409 | `pile_limit` | the 51st pile |
+| 409 | `pile_name_taken` | the name is in use, ignoring case |
+| 409 | `ambiguous_address` | a bare id of a faced type; the detail names the faces |
+| 413 | `body_too_large` | the body is too large |
+
+A bare id of a faced type gets 409 even when the type has one face today, so a
+write that works now keeps working when a second face is published.
+
+### Stepping through a pile
+
+`GET /_position` takes a scope `{"source": "pile", "pile": "<pile id>"}` with no
+other fields. In a pile scope, `id` may be an `ID@face` address, and `prev` and
+`next` carry an `address`. The SPA links pile items as
+`/entity/<type>/<address>?from=pile&pile=<id>`.

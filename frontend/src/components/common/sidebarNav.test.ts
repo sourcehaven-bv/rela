@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { RouterLink } from 'vue-router'
 import type { SidebarGroup } from '@/types'
 import type { NavItemList } from '@/api/navItems'
-import { activeNavId, expandGeneratedItems, navId, toNavGroups } from './sidebarNav'
+import { activeNavId, expandGeneratedItems, navId, pilesNavGroup, toNavGroups } from './sidebarNav'
 
 /**
  * The nav id is the thing here that fails silently when it is wrong.
@@ -336,5 +336,20 @@ describe('expandGeneratedItems', () => {
       entries: [{ id: 'A B', type: 'topic', label: 'x' }],
     }))
     expect(group.items[0].href).toBe('/p/topic/A%20B')
+  })
+})
+
+describe('pilesNavGroup', () => {
+  const pile = (id: string, count: number, icon = 'star') => ({ id, name: id, icon, count, created: '', updated: '' })
+
+  it('lists each pile as a flyout button with its count', () => {
+    const group = pilesNavGroup([pile('PIL-1', 3), pile('PIL-2', 0, 'not-an-icon')])
+    expect(group.id).toBe('group:piles')
+    expect(group.addLabel).toBe('New pile')
+    expect(group.items.map((i) => i.id)).toEqual(['pile:PIL-1', 'pile:PIL-2'])
+    expect(group.items[0]).toMatchObject({ icon: 'star', opensFlyout: true, status: { count: 3 } })
+    // An empty pile shows no count, and an unknown icon falls back.
+    expect(group.items[1].status).toBeUndefined()
+    expect(group.items[1].icon).toBe('layers')
   })
 })

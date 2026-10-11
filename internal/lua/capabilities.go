@@ -3,6 +3,8 @@ package lua
 import (
 	"maps"
 	"slices"
+
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
 )
 
 // Capabilities declares which ambient, non-graph capabilities a Lua runtime
@@ -100,18 +102,49 @@ type Capabilities struct {
 	// config — the YAML decoder never populates it — so the broad grant can
 	// only come from a Go wiring site that names it.
 	AllSecrets bool
+
+	// Tokens names the token store connections whose access tokens
+	// rela.oauth may hand out (TKT-01KZSO). rela.oauth is registered only on
+	// a writer runtime whose grant names at least one connection, or holds
+	// [Capabilities.AllTokens].
+	//
+	// nil or empty means no connections.
+	Tokens []string
+
+	// AllTokens grants every connection. Like [Capabilities.AllSecrets] it
+	// is not settable from config and exists only for the operator shell
+	// (`rela script`, `rela flow`), where the caller can already run
+	// `rela token set`.
+	AllTokens bool
 }
 
 // Any reports whether this grant carries anything at all. The zero value
 // carries nothing, which is what makes it safe for [WithCapabilities] to treat
 // an empty grant as "no opinion" rather than as a revocation.
 func (c Capabilities) Any() bool {
-	return c.HTTP || c.AI || c.Mail || c.WriteFile || c.AllSecrets || len(c.Secrets) > 0
+	return c.HTTP || c.AI || c.Mail || c.WriteFile || c.AllSecrets || len(c.Secrets) > 0 ||
+		c.AllTokens || len(c.Tokens) > 0
 }
 
-// AllowsSecret reports whether name is exposed to the runtime.
+// AllowsSecret reports whether name is exposed to the runtime. The token
+// store key is never exposed, not even under [Capabilities.AllSecrets].
 func (c Capabilities) AllowsSecret(name string) bool {
+	if !secrets.ScriptReadable(name) {
+		return false
+	}
 	return c.AllSecrets || slices.Contains(c.Secrets, name)
+}
+
+// AllowsToken reports whether rela.oauth may hand out the access token of
+// the connection name.
+func (c Capabilities) AllowsToken(name string) bool {
+	return c.AllTokens || slices.Contains(c.Tokens, name)
+}
+
+// anyTokens reports whether the grant names any connection, which is what
+// registers rela.oauth.
+func (c Capabilities) anyTokens() bool {
+	return c.AllTokens || len(c.Tokens) > 0
 }
 
 // filterSecrets returns the subset of all whose keys this Capabilities grants.
@@ -121,11 +154,12 @@ func (c Capabilities) filterSecrets(all map[string]string) map[string]string {
 	if c.AllSecrets {
 		out := make(map[string]string, len(all))
 		maps.Copy(out, all)
+		delete(out, secrets.TokenKey)
 		return out
 	}
 	out := make(map[string]string, len(c.Secrets))
 	for _, name := range c.Secrets {
-		if v, ok := all[name]; ok {
+		if v, ok := all[name]; ok && secrets.ScriptReadable(name) {
 			out[name] = v
 		}
 	}
@@ -139,10 +173,22 @@ func (c Capabilities) filterSecrets(all map[string]string) map[string]string {
 // breaks working scripts. This is the same boundary `rela db migrate` and
 // `rela history-purge` run at.
 //
+// It grants every token connection too, but the docs build must not get
+// them: see [DocsCapabilities].
+//
 // Do NOT use this for a surface reachable over the network or by an agent.
 // In particular it must not be wired into the data-entry app, the scheduler,
 // the automation engine, or the MCP lua_eval / lua_run tools: those take input
 // from someone other than the person who owns the shell.
 func TrustedCapabilities() Capabilities {
-	return Capabilities{HTTP: true, AI: true, Mail: true, WriteFile: true, AllSecrets: true}
+	return Capabilities{HTTP: true, AI: true, Mail: true, WriteFile: true, AllSecrets: true, AllTokens: true}
+}
+
+// DocsCapabilities is [TrustedCapabilities] without token connections. A docs
+// build renders pages, and a page render has no reason to call an external
+// API as a connector; it must not spend or rotate a refresh token.
+func DocsCapabilities() Capabilities {
+	c := TrustedCapabilities()
+	c.AllTokens = false
+	return c
 }

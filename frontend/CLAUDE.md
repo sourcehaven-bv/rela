@@ -315,7 +315,8 @@ edit. Getting this wrong writes a diff for an entity someone only opened.
 code span becomes an `entityRef` node whose `id` is serialized and whose
 `title`/`entityType`/`inaccessible` are view-only and never reach the markdown.
 Titles come SOLELY from the server's per-principal `mentions` map (BUG-R9EHKV,
-`collectMentions` → `visibility.Reader.Filter`). Do not look a title up from
+`collectMentions` → `visibility.Resolver.ResolveIDsErr`, in the request's
+world). Do not look a title up from
 the graph, the entity store, or a cache: an entity the principal cannot read
 must produce no mention at all, and a redacted title must fall back to the ID.
 

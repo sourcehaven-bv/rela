@@ -515,7 +515,7 @@ func TestFilterEntities(t *testing.T) {
 	}
 
 	t.Run("filter by type", func(t *testing.T) {
-		result, err := app.views.filterEntities(entities, "type = function")
+		result, err := filterEntities(app.views.schema(), entities, "type = function")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -525,7 +525,7 @@ func TestFilterEntities(t *testing.T) {
 	})
 
 	t.Run("filter by type not equal", func(t *testing.T) {
-		result, err := app.views.filterEntities(entities, "type != function")
+		result, err := filterEntities(app.views.schema(), entities, "type != function")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -535,7 +535,7 @@ func TestFilterEntities(t *testing.T) {
 	})
 
 	t.Run("invalid expression returns error", func(t *testing.T) {
-		_, err := app.views.filterEntities(entities, "no operator here")
+		_, err := filterEntities(app.views.schema(), entities, "no operator here")
 		if err == nil {
 			t.Error("expected error for invalid expression")
 		}

@@ -264,7 +264,7 @@ func TestRunner_NilDepsRejected(t *testing.T) {
 // it. That is the whole rule, and it is what makes a data-only migration
 // representable (TKT-XCJ0Y2).
 func TestResolve_PlansByAppliedName(t *testing.T) {
-	v1, v2 := metaV1().ShapeProjection(), metaV2().ShapeProjection()
+	v1, v2 := metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(metaV2())
 	a := mustParse(t, testName("a"), mustFileYAML(t, metaV1(), metaV2(), v1ToV2Steps))
 
 	t.Run("unapplied file runs", func(t *testing.T) {
@@ -305,7 +305,7 @@ func TestResolve_PlansByAppliedName(t *testing.T) {
 // Files run in name order, which for timestamp-prefixed names is creation
 // order. LoadDir sorts them; Resolve must preserve that.
 func TestResolve_PreservesFileOrder(t *testing.T) {
-	v1, v2 := metaV1().ShapeProjection(), metaV2().ShapeProjection()
+	v1, v2 := metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(metaV2())
 	first := mustParse(t, "20260101000000-first.yaml", mustFileYAML(t, metaV1(), metaV2(), v1ToV2Steps))
 	second := mustParse(t, "20260202000000-second.yaml", mustFileYAML(t, metaV2(), metaV2(),
 		"  - set_default: {entity: task, property: state, value: todo}\n"))
@@ -322,7 +322,7 @@ func TestResolve_PreservesFileOrder(t *testing.T) {
 // The residual check is a diagnostic, not the planner: it is how an operator
 // learns they edited schema.yaml without writing the migration it needs.
 func TestResolve_RefusesAnUncoveredSchemaChange(t *testing.T) {
-	v1, v2 := metaV1().ShapeProjection(), metaV2().ShapeProjection()
+	v1, v2 := metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(metaV2())
 	if _, err := Resolve(v1, nil, v2, nil); err == nil {
 		t.Fatal("a needs-migration gap with no migration files must be refused")
 	}
@@ -338,7 +338,7 @@ func TestResolve_RefusesAnUncoveredSchemaChange(t *testing.T) {
 func TestResolve_AdditiveGapNeedsNoMigration(t *testing.T) {
 	m2 := metaV1()
 	m2.Entities["task"].Properties["estimate"] = metamodel.PropertyDef{Type: "integer"}
-	plan, err := Resolve(metaV1().ShapeProjection(), nil, m2.ShapeProjection(), nil)
+	plan, err := Resolve(metamodel.NewShapeProjection(metaV1()), nil, metamodel.NewShapeProjection(m2), nil)
 	if err != nil {
 		t.Fatalf("an additive gap must resolve with no migration: %v", err)
 	}

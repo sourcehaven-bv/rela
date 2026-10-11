@@ -117,6 +117,22 @@ func (r *UnrestrictedReader) ResolveHeaders(ctx context.Context, refs []entity.R
 	return r.res.ResolveHeaders(ctx, worldIn(ctx, r.world), refs)
 }
 
+// ResolveHeadersErr is [UnrestrictedReader.ResolveHeaders] with a failed
+// header read returned. See [ScriptReader.ResolveHeadersErr].
+func (r *UnrestrictedReader) ResolveHeadersErr(
+	ctx context.Context, refs []entity.Ref,
+) (map[entity.Ref]ResolvedHeader, error) {
+	return r.res.ResolveHeadersErr(ctx, worldIn(ctx, r.world), refs)
+}
+
+// MentionedBy pages the entities whose body mentions target, in the
+// reader's world. See [Resolver.MentionedBy].
+func (r *UnrestrictedReader) MentionedBy(
+	ctx context.Context, target, after string, limit int,
+) (MentionPage, error) {
+	return r.res.MentionedBy(ctx, worldIn(ctx, r.world), target, after, limit)
+}
+
 // ListEntities implements the script read surface: straight pass-through.
 func (r *UnrestrictedReader) ListEntities(
 	ctx context.Context, q store.EntityQuery,
@@ -144,4 +160,14 @@ func (r *UnrestrictedReader) ListRelationsStrict(
 	ctx context.Context, q store.RelationQuery,
 ) iter.Seq2[*entity.Relation, error] {
 	return r.st.ListRelations(ctx, q)
+}
+
+// CountEntities implements the script read surface: straight pass-through.
+func (r *UnrestrictedReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
+	return r.st.CountEntities(ctx, q)
+}
+
+// CountRelations implements the script read surface: straight pass-through.
+func (r *UnrestrictedReader) CountRelations(ctx context.Context, q store.RelationQuery) (int, error) {
+	return r.st.CountRelations(ctx, q)
 }

@@ -178,6 +178,33 @@ Notes:
   every property of a readable entity came through.)
 - Writes are unaffected: they go through the normal ACL, exactly as before.
 
+#### Connector identities (`integration:`)
+
+A task that keeps rela in step with another system runs as
+`integration:<name>`, for example `integration:basecamp`. The name after the
+prefix is 1 to 63 lowercase letters, digits, `_` or `-`, the same rule as a
+connection in `connections.yaml`, so one name identifies both the connector
+and its token:
+
+```yaml
+tasks:
+  - name: basecamp-pull
+    script: basecamp.lua
+    every: 5m
+    run_as: integration:basecamp
+    capabilities:
+      http: true
+      tokens: [basecamp]
+```
+
+Like `system:`, the `integration:` namespace is reserved: no web, MCP or API
+caller can claim it, so the connector's role (which usually holds write
+grants and `tag:sync`) is reachable only from this file and from
+`schema.yaml` automations. `tokens: [basecamp]` lets the script fetch the
+connection's access token with `rela.oauth.access_token`. See the Lua
+scripting guide, "OAuth Tokens" and "Sync connectors", and
+`examples/basecamp/` in the rela repository for a complete connector.
+
 ### Schedule Values
 
 | Value        | Meaning                                                    |
@@ -239,11 +266,14 @@ scripts always see the latest entities and relations, even if files were modifie
 
 ### Script Capabilities
 
-Scheduled scripts have the same capabilities as `rela script`:
+Scheduled scripts have the same bindings as `rela script`. Outbound HTTP,
+AI, mail, secrets, OAuth tokens and file writing are granted per task with a
+`capabilities:` block (see the Lua scripting guide, "Capabilities"):
 
 - **Entity CRUD**: `rela.create_entity()`, `rela.update_entity()`, `rela.delete_entity()`
 - **Graph queries**: `rela.list_entities()`, `rela.get_relations()`, `rela.trace_from()`, `rela.trace_to()`
-- **AI access**: `ai.chat()`, `ai.complete()` (requires `.rela/ai.yaml`)
+- **AI access**: `ai.chat()`, `ai.complete()` (requires `.rela/ai.yaml` and `ai: true`)
+- **OAuth tokens**: `rela.oauth.access_token()` (requires `tokens: [name]`)
 - **Output**: `rela.output()` (logged to stderr)
 - **File writing**: `rela.write_file()` (to the output directory)
 

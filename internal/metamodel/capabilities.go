@@ -1,6 +1,12 @@
 package metamodel
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+
+	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/secrets"
+)
 
 // Capabilities is the operator-authored declaration of which ambient, non-graph
 // capabilities a Lua script may reach (TKT-YH52OM). It is the YAML face of
@@ -51,6 +57,12 @@ type Capabilities struct {
 	// Secrets names the keys from .rela/secrets.yaml this script may read.
 	// A key not listed is absent from rela.secrets entirely.
 	Secrets []string `yaml:"secrets,omitempty"`
+
+	// Tokens names the token store connections whose access tokens the
+	// script may fetch through rela.oauth (TKT-01KZSO). A connection not
+	// listed cannot be read. Only surfaces that may write register
+	// rela.oauth; a read-only surface (a document render) refuses the key.
+	Tokens []string `yaml:"tokens,omitempty"`
 }
 
 // Any reports whether the block grants anything at all.
@@ -59,7 +71,7 @@ type Capabilities struct {
 // there is no "all secrets" spelling in YAML, so a config block can only grant
 // via the named list. See the AllSecrets field on lua.Capabilities.
 func (c Capabilities) Any() bool {
-	return c.HTTP || c.AI || c.Mail || c.WriteFile || len(c.Secrets) > 0
+	return c.HTTP || c.AI || c.Mail || c.WriteFile || len(c.Secrets) > 0 || len(c.Tokens) > 0
 }
 
 // Fields returns the grant as plain values.
@@ -75,8 +87,10 @@ func (c Capabilities) Any() bool {
 // Each consumer converts at its own boundary, but they all read the fields from
 // here, so adding a capability means changing this signature — a COMPILE error
 // at every consumer rather than a silent per-surface omission.
-func (c Capabilities) Fields() (http, ai, mail, writeFile bool, secrets []string) {
-	return c.HTTP, c.AI, c.Mail, c.WriteFile, c.Secrets
+//
+//nolint:gocritic // tooManyResultsChecker: one result per capability, so a new one breaks every consumer
+func (c Capabilities) Fields() (http, ai, mail, writeFile bool, secretNames, tokens []string) {
+	return c.HTTP, c.AI, c.Mail, c.WriteFile, c.Secrets, c.Tokens
 }
 
 // UnmarshalYAML decodes the mapping form and REFUSES a bare boolean.
@@ -105,5 +119,26 @@ func (c *Capabilities) UnmarshalYAML(unmarshal func(any) error) error {
 		return err
 	}
 	*c = Capabilities(p)
+	return c.validate()
+}
+
+// validate refuses a grant that names the token store key as a secret, or a
+// token connection outside the connection name grammar.
+func (c Capabilities) validate() error {
+	for _, name := range c.Secrets {
+		if !secrets.ScriptReadable(name) {
+			return fmt.Errorf("capabilities.secrets may not name %q: it is the token store "+
+				"key, and no script may read it. Grant `tokens: [<connection>]` instead", name)
+		}
+	}
+	for i, name := range c.Tokens {
+		if !principal.ValidIntegrationName(name) {
+			return fmt.Errorf("capabilities.tokens: invalid connection name %q: 1-63 lowercase "+
+				"letters, digits, '_' or '-', starting with a letter or digit", name)
+		}
+		if slices.Contains(c.Tokens[:i], name) {
+			return fmt.Errorf("capabilities.tokens: %q is listed twice", name)
+		}
+	}
 	return nil
 }

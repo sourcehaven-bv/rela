@@ -115,7 +115,8 @@ func (h *cascadeHost) WriteEntity(ctx context.Context, e *entity.Entity, set map
 	// check needs no computed comparison: next's computed values were just
 	// re-evaluated and may legitimately differ from stored's.
 	_, err := writeAutomationProperties(ctx, h.deps, e, set, func(_, next *entity.Entity) error {
-		if errs := h.deps.Meta.ValidateEntity(next.ID, next.Type, next.Properties); len(errs) > 0 {
+		v := metamodel.NewValidator(h.deps.Meta)
+		if errs := v.ValidateEntity(next.ID, next.Type, next.Properties); len(errs) > 0 {
 			// DEC-HWZHA: only HARD errors abort. Soft conditions (a required
 			// property left unset, an out-of-enum value) are tolerated on every
 			// other write path and must stay tolerated here, or a cascade would

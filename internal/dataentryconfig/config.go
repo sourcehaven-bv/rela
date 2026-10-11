@@ -95,10 +95,10 @@ func (d Direction) IsIncoming() bool {
 // accretion. Splitting it would churn the YAML shape for no design gain —
 // a breaking change to every project's config file, made to satisfy a lint.
 // A genuinely new top-level key therefore raises the pin by one; `spaces`
-// (TKT-GNKR5H), `account` (TKT-MJTD12) and `pages` (TKT-ITQ0HL) are the most
-// recent.
+// (TKT-GNKR5H), `account` (TKT-MJTD12), `pages` (TKT-ITQ0HL) and `piles`
+// (TKT-K3RJLH) are the most recent.
 //
-//plimsoll:max-fields=25
+//plimsoll:max-fields=26
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -141,6 +141,10 @@ type Config struct {
 	// Account configures the SPA's account menu. Nil: accepted, means no
 	// account links and no avatar. See [AccountConfig].
 	Account *AccountConfig `yaml:"account,omitempty" json:"account,omitempty"`
+
+	// Piles configures what a pile panel offers. Nil: accepted, means piles
+	// offer no actions and every registered transform. See [PilesConfig].
+	Piles *PilesConfig `yaml:"piles,omitempty" json:"piles,omitempty"`
 }
 
 // EntityViewConfig declares UX bindings for a metamodel entity type.
@@ -154,6 +158,12 @@ type EntityViewConfig struct {
 	// Duplicate narrows what a duplicate of this type carries over
 	// (TKT-Z8K2FS). Nil means every property the caller can see carries.
 	Duplicate *DuplicateConfig `yaml:"duplicate,omitempty" json:"duplicate,omitempty"`
+
+	// MentionedByPanel switches the built-in "Mentioned by" panel on this
+	// type's entity page (TKT-HF0D5W). Nil means shown. The panel also steps
+	// aside when the type's view collects backlinks itself through a
+	// `mentioned_by` traverse step, so the backlinks never show twice.
+	MentionedByPanel *bool `yaml:"mentioned_by_panel,omitempty" json:"mentioned_by_panel,omitempty"`
 }
 
 // DuplicateConfig narrows what the Duplicate affordance copies from a source
@@ -1924,7 +1934,21 @@ type ViewTraverse struct {
 	Recursive      bool   `yaml:"recursive,omitempty" json:"recursive,omitempty"`
 	MaxDepth       int    `yaml:"max_depth,omitempty" json:"max_depth,omitempty"`
 	Where          string `yaml:"where,omitempty" json:"where,omitempty"`
+
+	// MentionedBy collects the entities whose body mentions the entry, in
+	// place of following a relation (TKT-HF0D5W). It takes `from: entry`
+	// only, and no `follow`, `follow_incoming`, `recursive` or `max_depth`.
+	//
+	// The step reads the backlink index once per view, not once per fixpoint
+	// pass, and collects at most [MentionedByStepLimit] sources in id order.
+	// `where:` narrows while collecting, so the cap counts matching sources.
+	// A source the principal cannot read is never collected.
+	MentionedBy bool `yaml:"mentioned_by,omitempty" json:"mentioned_by,omitempty"`
 }
+
+// MentionedByStepLimit caps the sources one `mentioned_by` traverse step
+// collects. It matches the largest page the mentioned-by endpoint serves.
+const MentionedByStepLimit = 200
 
 // Render modes for view section fields (TKT-HOIX1). A field renders as a
 // view-oriented display value unless it opts in to inline editing.
@@ -1986,6 +2010,20 @@ type ViewSection struct {
 	// ignored.
 	ParentColumns map[string][]ListColumn `yaml:"parent_columns,omitempty" json:"parent_columns,omitempty"`
 	ChildColumns  map[string][]ListColumn `yaml:"child_columns,omitempty" json:"child_columns,omitempty"`
+
+	// FieldsByType and ColumnsByType give a FLAT section per-type
+	// definitions, for a collection that holds several entity types: the
+	// sources of a `mentioned_by` step, or a relation with several `to:`
+	// types (TKT-HF0D5W). Each row uses its own type's list. A type absent
+	// from the map uses Fields or Columns.
+	//
+	// FieldsByType serves `list`, `cards`, `content` and `properties`.
+	// ColumnsByType serves `table`, which then renders one group per type,
+	// each with its own header; it cannot be combined with `group_by`, and
+	// Columns is required when the map does not cover every type the
+	// collection can hold. The same key/property rules as ParentColumns apply.
+	FieldsByType  map[string][]ViewSectionField `yaml:"fields_by_type,omitempty" json:"fields_by_type,omitempty"`
+	ColumnsByType map[string][]ListColumn       `yaml:"columns_by_type,omitempty" json:"columns_by_type,omitempty"`
 
 	// Create opts this section into offering a "create related entity" button
 	// (TKT-R4BMJM). Nil — the default, and what every auto-generated view emits

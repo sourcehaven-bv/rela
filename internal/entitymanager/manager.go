@@ -919,7 +919,8 @@ func (m *Manager) CreateEntity(
 		// Recompute warnings against the post-automation state
 		// (DEC-HWZHA). The pre-write warnings from createCore reflect
 		// the entity before automation set any properties.
-		if errs := m.deps.Meta.ValidateEntity(created.ID, created.Type, created.Properties); len(errs) > 0 {
+		v := metamodel.NewValidator(m.deps.Meta)
+		if errs := v.ValidateEntity(created.ID, created.Type, created.Properties); len(errs) > 0 {
 			_, result.Warnings = partitionValidationErrors(errs)
 		}
 	}
@@ -1029,7 +1030,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	// share this half (it has no candidate entity until after the read), so
 	// the pre-check lives here rather than in updateCore, which re-runs the
 	// same partition on the merged result.
-	preErrs := m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties)
+	preErrs := metamodel.NewValidator(m.deps.Meta).ValidateEntity(e.ID, e.Type, e.Properties)
 	if hard, _ := partitionValidationErrors(preErrs); len(hard) > 0 {
 		return nil, newValidationError(hard)
 	}
@@ -1322,7 +1323,8 @@ func (m *Manager) updateCore(
 	// soft conditions populate Result.Warnings. If automation runs and
 	// mutates properties, we recompute warnings against the post-
 	// automation state.
-	preErrs := m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties)
+	metaValidator := metamodel.NewValidator(m.deps.Meta)
+	preErrs := metaValidator.ValidateEntity(e.ID, e.Type, e.Properties)
 	hard, soft := partitionValidationErrors(preErrs)
 	if len(hard) > 0 {
 		return nil, newValidationError(hard)
@@ -1338,7 +1340,7 @@ func (m *Manager) updateCore(
 		if len(autoResult.PropertiesSet) > 0 {
 			// Properties changed — recompute warnings against the
 			// post-automation state (DEC-HWZHA).
-			if errs := m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
+			if errs := metaValidator.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
 				_, result.Warnings = partitionValidationErrors(errs)
 			} else {
 				result.Warnings = nil

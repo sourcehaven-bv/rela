@@ -65,6 +65,21 @@ type LuaScriptRunner struct {
 	// reads occurred. Travels WITH elevatedReader — granting the capability
 	// without the trace is what the audit gap looked like before TKT-ACSBSA.
 	elevationRecorder lua.ElevationRecorder
+
+	// pileWriter backs rela.piles.add/remove in cascade scripts. Nil leaves
+	// them raising "not available"; see [LuaScriptRunner.WithPiles].
+	pileWriter lua.PileWriter
+}
+
+// WithPiles returns a copy of l whose scripts may add to and remove from
+// piles through w. Nil l stays nil.
+func (l *LuaScriptRunner) WithPiles(w lua.PileWriter) *LuaScriptRunner {
+	if l == nil {
+		return nil
+	}
+	c := *l
+	c.pileWriter = w
+	return &c
 }
 
 // ReadElevation is the read-side capability a wiring site grants to
@@ -153,6 +168,7 @@ func (l *LuaScriptRunner) Run(ctx context.Context, action autocascade.ScriptActi
 		// duplication of the interface is intentional per CLAUDE.md
 		// "interfaces at the call site".
 		EntityManager: m,
+		PileWriter:    l.pileWriter,
 	}
 	// TKT-D8T148: when the action declares allow_acl_bypass AND the mutator
 	// offers the elevated capability, expose the elevated handles so the script
@@ -190,8 +206,10 @@ func (l *LuaScriptRunner) Run(ctx context.Context, action autocascade.ScriptActi
 	// TKT-YH52OM: translate the action's declared capability grant. An
 	// automation runs on the write path of an ordinary HTTP request, so it is
 	// NOT an operator-shell surface: an undeclared capability stays absent.
-	http, ai, mail, writeFile, secrets := action.Capabilities.Fields()
-	caps := lua.Capabilities{HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets}
+	http, ai, mail, writeFile, secrets, tokens := action.Capabilities.Fields()
+	caps := lua.Capabilities{
+		HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets, Tokens: tokens,
+	}
 	var err error
 	switch {
 	case action.Code != "":

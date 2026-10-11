@@ -576,6 +576,11 @@ the entity's title, so the file stays readable outside rela and the title
 cannot go stale. Titles you see are the ones you are permitted to see: a
 reference to an entity your ACL role cannot read stays as the bare ID.
 
+A reference names an entity, not a face. For a type with faces it resolves in
+the world you are reading in, like any bare ID: the reference shows the title
+of the face that world serves among the faces you may read, and the link opens
+the entity in that same world.
+
 ### File Properties on Forms
 
 A `file`-type property renders a file control: pick or drag a file, see its
@@ -1887,6 +1892,44 @@ traverse:
 | `recursive`       | bool   | Follow the relation transitively                   |
 | `max_depth`       | int    | Maximum recursion depth                            |
 | `where`           | string | Filter expression to select matching entities      |
+| `mentioned_by`    | bool   | Collect the entities whose body mentions the entry (see below) |
+
+#### Backlinks: `mentioned_by`
+
+A `mentioned_by` step collects the entities whose markdown body mentions the
+entry as a code span holding its id, such as `` `FEAT-001` ``. These are the
+same backlinks the built-in "Mentioned by" panel lists. The step lets you place
+them in a section of your own and choose how they look.
+
+```yaml
+traverse:
+  - from: entry
+    mentioned_by: true
+    collect_as: mentions
+    where: "status != done"   # optional
+```
+
+- The step takes `from: entry` only. It cannot be combined with `follow`,
+  `follow_incoming`, `recursive` or `max_depth`, and it needs a `collect_as`
+  no other step uses.
+- It collects at most 200 sources, in id order. `where:` filters while the
+  step collects, so the 200 are matching sources. A bad `where:` on this step
+  is a load error.
+- When more matching sources exist, or the backlink index scan reaches its
+  limit, the section shows a note that only part of the list is shown. A
+  section `sort:` orders the collected sources; it does not pick which 200
+  are collected.
+- Sources you may not read are never collected, and each source appears at
+  the face the world serves.
+- Any type can mention the entry, so the collection can hold several types.
+  Use `fields_by_type` or `columns_by_type` on the section to give each type
+  its own fields or columns (see [Per-type fields and columns](#per-type-fields-and-columns)).
+- A view that collects backlinks hides the built-in "Mentioned by" panel on
+  that type's page, so the backlinks are not shown twice. A `mentioned_by`
+  collection that no section shows is a load error.
+- Side panels do not support `mentioned_by`.
+- A command with `kind: view` receives the same collection, so a script sees
+  at most 200 backlinks.
 
 #### Where Clause Syntax
 
@@ -1970,6 +2013,8 @@ sections:
 | `children`      | string | Collection to nest under each row (`nested` mode; required) |
 | `parent_columns`| map    | `nested` mode: columns for the source level, keyed by entity type |
 | `child_columns` | map    | `nested` mode: columns for the child level, keyed by entity type |
+| `fields_by_type`| map    | Per-type `fields`, keyed by entity type (`list`, `cards`, `content`, `properties`) |
+| `columns_by_type`| map   | Per-type `columns`, keyed by entity type (`table`) |
 | `sort`          | list   | Sort keys for a flat section (`list`, `table`, `cards`) |
 | `parent_sort`   | list   | `nested` mode: sort keys for the source level            |
 | `child_sort`    | list   | `nested` mode: sort keys for the child level             |
@@ -2035,6 +2080,48 @@ A relation field is valid only in a `source: entry` section with
 `display: properties`, on a relation that starts at the entry type. Set
 `property` or `relation`, not both. `widget` does not apply. Targets the
 reader may not read are left out.
+
+### Per-type fields and columns
+
+A collection can hold several entity types: the sources of a `mentioned_by`
+step, or a relation with several `to:` types. One `fields:` or `columns:` list
+then fits poorly, because each type has its own properties. `fields_by_type`
+and `columns_by_type` give each type its own list:
+
+```yaml
+sections:
+  - heading: Mentioned by
+    source: mentions
+    display: table
+    columns_by_type:
+      ticket:
+        - {property: title, link: detail}
+        - {property: status}
+      decision:
+        - {property: title, link: detail}
+        - {property: date}
+    columns:                      # every other type
+      - {property: title, link: detail}
+
+  - heading: Mentioned by (cards)
+    source: mentions
+    display: cards
+    fields_by_type:
+      ticket: [{property: status}, {property: priority}]
+```
+
+- A row uses its own type's list. A type absent from the map uses `fields:` or
+  `columns:`.
+- A `columns_by_type` table shows one group per type, ordered by type name,
+  each with its own header. It cannot be combined with `group_by`. It needs a
+  `columns:` fallback unless the map covers every type the collection can hold;
+  for a `mentioned_by` collection that is every type in the schema.
+- Load errors: a key that is not an entity type, or a type the collection can
+  never hold; a property the keyed type does not declare; an empty list; a
+  fallback property that none of the remaining types declares; the key on the
+  wrong display mode or on `source: entry`.
+- `display: nested` keeps its own per-level keys, `parent_columns` and
+  `child_columns`.
 
 ### Creating related entities from a section
 
@@ -2383,9 +2470,15 @@ entity_views:
 | ------------- | ------- | ----------------------------------------------------------------- |
 | `detail_view` | string  | View name (must reference a key under `views:`) used for entities of this type |
 | `duplicate`   | mapping | Narrows what a duplicate of this type copies — see below |
+| `mentioned_by_panel` | bool | `false` hides the built-in "Mentioned by" panel on this type's page |
 
-An entry may carry either field or both. An entry that declares neither is a
+An entry may carry any of these fields. An entry that declares none is a
 load error, since it configures nothing.
+
+The "Mentioned by" panel lists the entities whose body mentions the one on the
+page. It is shown by default. It is hidden when `mentioned_by_panel` is
+`false`, and when the type's view collects backlinks itself through a
+[`mentioned_by` step](#backlinks-mentioned_by).
 
 ### Duplicating an entity
 
@@ -4767,6 +4860,22 @@ rewrites the body while a form is open would conflict with the form's autosave.
 global write lock while it runs, so other writes wait. Keep regeneration within
 that limit, for example by reading only what the document needs.
 
+### Running actions from an MCP client
+
+The remote MCP server (see [mcp-server.md](mcp-server.md#action-tools)) offers
+two tools for actions. `list_actions` lists the actions the caller may run;
+with an entity `id` it lists the actions the entity's detail page offers.
+`run_action` runs one. It runs the same checks as
+`POST /api/v1/_action/{id}`: `permission`, `available_on`, `when` and the read
+gate on the entity. A refusal names the same error code as the HTTP answer.
+
+An action with `confirm` runs only when the call passes `confirm: true`. Without
+it, the tool returns the confirmation question, so the agent can ask the user
+first. A request body (`request`) is accepted only by an action whose `request`
+block sets `body: true`, within the same size limit. A script error shows the
+script path, line, message and correlation id, never the source or captured
+output.
+
 ### Lua Action Scripts
 
 Action scripts live in the `actions/` directory at the project root. They have full access
@@ -4938,6 +5047,124 @@ The following keys are reserved for built-in list navigation and cannot be used 
 - `set` properties must exist in the entity type's metamodel
 - `script` paths must end in `.lua` and be local paths (no `..` or absolute paths)
 - Keys must be unique within a list (no two actions on the same list can share a key)
+
+## Piles
+
+A pile is a private, named collection of entities. Use one to gather work you
+want to come back to: tickets to review, risks to discuss in a meeting, or
+search results to export. Each user keeps their own piles. Nobody else can
+see them.
+
+A pile is a stack. The newest item is at the top, and adding an item that is
+already on the pile does not add it again.
+
+### Adding to a pile
+
+You can add entities to a pile from three places:
+
+- **A list.** Select rows and choose **Add to pile** in the bulk bar. Pick an
+  existing pile or create a new one from the selection.
+- **Search.** Choose **Add results to pile** to put the search results on a
+  pile.
+- **The entity page.** Use **Add to pile** on the page of a single entity.
+
+A pile holds one face of an entity. When you add from a page or a row that
+shows a face, such as `POL-1@draft`, that face goes on the pile. An id alone
+is refused for a type with faces, and the message lists the faces you can
+pick from.
+
+A pile has a name and an icon. Names are unique per user, and the comparison
+ignores case.
+
+### Working with a pile
+
+Piles appear in the sidebar with a count of their items. Open a pile to see
+its items grouped by type, newest first. From there you can:
+
+- tick items and remove them. **Undo** puts them back, at the top of the pile
+  rather than where they were;
+- run an action on every item, or on the ticked items (see the `piles:`
+  block below);
+- export the pile;
+- rename it, delete it, or copy its ids.
+
+**Step through** opens the first item. The entity page then shows the pile
+name and your position, such as `Reading · 1 / 12`. Press P and N to move to
+the previous and next item. Stepping opens the face that is on the pile.
+
+### Configuring piles
+
+Piles work without any configuration. The optional `piles:` block in
+`data-entry.yaml` chooses what the pile menu offers:
+
+```yaml
+actions:
+  close-ticket:
+    label: "Close"
+    set:
+      status: closed
+
+piles:
+  # Actions the pile menu offers. Each runs once per item.
+  actions: [close-ticket]
+  # Transforms a pile can be exported with. Leave this out to offer every
+  # registered transform.
+  export: [docx, pdf]
+```
+
+- `actions` lists ids from the top-level `actions:` block. An action must have
+  a `label`, and it must not use `available_on`, because a pile can hold
+  entities of any type. The action runs through the normal action and update
+  paths, so it is authorized per item. The result reports how many items
+  succeeded and how many failed.
+- `export` lists names from the schema's `transforms:` registry.
+
+Config validation rejects an unknown action, an action with `available_on` or
+without a label, an unknown transform, and any unknown key inside the block.
+It warns when a `set:` action changes a property that no entity type declares,
+because that action would fail on every item.
+
+### Limits
+
+- A user can have at most 50 piles. Creating a 51st is refused.
+- A pile holds at most 500 items. When you add to a full pile, the oldest
+  items are dropped, so the pile keeps the 500 newest. An add never fails
+  because the pile is full.
+- A push by someone else follows stricter limits; see Privacy below.
+- Renaming an entity keeps it on every pile under its new id. Deleting an
+  entity removes it from every pile. Deleting one face removes only that face.
+
+### Privacy
+
+A pile belongs to its owner, and only the owner can read it. Another user who
+asks for your pile gets the same "not found" answer as for a pile that does not
+exist. Pile names are not written to the server logs.
+
+A pile never shows more than you may read. Every time you open a pile, each
+item is checked against your current access. An item you can no longer read
+is left out of the list, the count, stepping and the export. It is not
+removed: when your access returns, the item comes back. Removing an item gives
+the same answer whether the item is hidden, deleted, or was never on the pile.
+
+Piles need a user identity. When the server cannot tell who you are, the piles
+interface is hidden and the API answers with 403.
+
+Lua scripts, automations (the `add_to_pile` action) and MCP tools can put
+items on a pile. They may also put items on another user's pile, addressed by
+name. Such a push can only add. It cannot read the other user's piles, and
+the items are still checked against the owner's access when the owner reads
+them.
+
+A push by someone else never removes your items. On a full pile it adds only
+what fits and drops the rest. It creates a new pile only while you have fewer
+than 25 piles, so 25 of your 50 piles can only be filled by you. The server
+logs each such push with the pushing user, you as the target and the number of
+items. It does not log the pile name.
+
+One small signal remains. The 500-item limit counts every stored item,
+including items you cannot currently read. So you may notice that an old item
+stayed on a full pile longer than you expected. This never tells you which
+items are hidden, or how many.
 
 ## Calendars
 

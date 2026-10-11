@@ -34,7 +34,7 @@ func TestValidateEntity_EmptyRequiredProperty(t *testing.T) {
 		},
 	}
 
-	errs := meta.ValidateEntity("REQ-001", "requirement", map[string]any{
+	errs := NewValidator(meta).ValidateEntity("REQ-001", "requirement", map[string]any{
 		"title":  "", // Empty string - should only trigger ONE error
 		"status": "draft",
 	})
@@ -121,7 +121,7 @@ func TestValidateEntity_DateValidation_RFC3339(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := meta.ValidateEntity("TASK-001", "task", map[string]any{
+			errs := NewValidator(meta).ValidateEntity("TASK-001", "task", map[string]any{
 				"title":    "Test Task",
 				"due_date": tt.dateValue,
 			})
@@ -172,7 +172,7 @@ func TestValidateEntity_DatetimeValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := meta.ValidateEntity("EVT-001", "event", map[string]any{
+			errs := NewValidator(meta).ValidateEntity("EVT-001", "event", map[string]any{
 				"title":     "Standup",
 				"starts_at": tt.value,
 			})
@@ -203,13 +203,13 @@ func TestValidatePropertyValue_EnumEmptyString(t *testing.T) {
 	}
 
 	// Empty string should fail validation (not a valid enum value)
-	err := meta.ValidatePropertyValue("priority", propDef, "")
+	err := NewValidator(meta).ValidatePropertyValue("priority", propDef, "")
 	if err == nil {
 		t.Error("expected error for empty string in enum field, got nil")
 	}
 
 	// Valid value should pass
-	err = meta.ValidatePropertyValue("priority", propDef, "high")
+	err = NewValidator(meta).ValidatePropertyValue("priority", propDef, "high")
 	if err != nil {
 		t.Errorf("unexpected error for valid enum value: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 	}
 
 	t.Run("empty []string for optional list passes", func(t *testing.T) {
-		errs := meta.ValidateProperties(
+		errs := NewValidator(meta).ValidateProperties(
 			map[string]any{
 				"optional_tags": []string{},
 				"required_tags": []string{"bug"},
@@ -247,7 +247,7 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 	})
 
 	t.Run("empty []interface{} for optional list passes", func(t *testing.T) {
-		errs := meta.ValidateProperties(
+		errs := NewValidator(meta).ValidateProperties(
 			map[string]any{
 				"optional_tags": []any{},
 				"required_tags": []string{"bug"},
@@ -260,7 +260,7 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 	})
 
 	t.Run("missing optional list passes", func(t *testing.T) {
-		errs := meta.ValidateProperties(
+		errs := NewValidator(meta).ValidateProperties(
 			map[string]any{"required_tags": []string{"bug"}},
 			schema,
 		)
@@ -270,7 +270,7 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 	})
 
 	t.Run("empty []string for required list reports required error", func(t *testing.T) {
-		errs := meta.ValidateProperties(
+		errs := NewValidator(meta).ValidateProperties(
 			map[string]any{
 				"optional_tags": []string{"bug"},
 				"required_tags": []string{},
@@ -286,7 +286,7 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 	})
 
 	t.Run("non-empty list with valid items passes", func(t *testing.T) {
-		errs := meta.ValidateProperties(
+		errs := NewValidator(meta).ValidateProperties(
 			map[string]any{
 				"optional_tags": []string{"bug", "ui"},
 				"required_tags": []string{"infra"},
@@ -299,7 +299,7 @@ func TestValidateProperties_EmptyListForListProperty(t *testing.T) {
 	})
 
 	t.Run("non-empty list with invalid item still fails", func(t *testing.T) {
-		errs := meta.ValidateProperties(
+		errs := NewValidator(meta).ValidateProperties(
 			map[string]any{
 				"optional_tags": []string{"bogus"},
 				"required_tags": []string{"infra"},
@@ -348,7 +348,7 @@ func TestValidateEntity_IDPatternValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errs := meta.ValidateEntity(tt.id, "requirement", map[string]any{
+			errs := NewValidator(meta).ValidateEntity(tt.id, "requirement", map[string]any{
 				"title": "Test Requirement",
 			})
 
@@ -464,25 +464,25 @@ func TestValidatePropertyValue_Boolean(t *testing.T) {
 	propDef := &PropertyDef{Type: PropertyTypeBoolean}
 
 	// Valid boolean
-	err := meta.ValidatePropertyValue("enabled", propDef, true)
+	err := NewValidator(meta).ValidatePropertyValue("enabled", propDef, true)
 	if err != nil {
 		t.Errorf("unexpected error for bool: %v", err)
 	}
 
 	// Valid string boolean
-	err = meta.ValidatePropertyValue("enabled", propDef, "true")
+	err = NewValidator(meta).ValidatePropertyValue("enabled", propDef, "true")
 	if err != nil {
 		t.Errorf("unexpected error for string bool: %v", err)
 	}
 
 	// Invalid string
-	err = meta.ValidatePropertyValue("enabled", propDef, "yes")
+	err = NewValidator(meta).ValidatePropertyValue("enabled", propDef, "yes")
 	if err == nil {
 		t.Error("expected error for invalid bool string")
 	}
 
 	// Invalid type
-	err = meta.ValidatePropertyValue("enabled", propDef, 123)
+	err = NewValidator(meta).ValidatePropertyValue("enabled", propDef, 123)
 	if err == nil {
 		t.Error("expected error for invalid type")
 	}
@@ -495,26 +495,26 @@ func TestValidatePropertyValue_Integer(t *testing.T) {
 	// Valid int types
 	validValues := []any{42, int64(123), 99.0}
 	for _, val := range validValues {
-		err := meta.ValidatePropertyValue("count", propDef, val)
+		err := NewValidator(meta).ValidatePropertyValue("count", propDef, val)
 		if err != nil {
 			t.Errorf("unexpected error for %T: %v", val, err)
 		}
 	}
 
 	// Valid string
-	err := meta.ValidatePropertyValue("count", propDef, "456")
+	err := NewValidator(meta).ValidatePropertyValue("count", propDef, "456")
 	if err != nil {
 		t.Errorf("unexpected error for string int: %v", err)
 	}
 
 	// Invalid string
-	err = meta.ValidatePropertyValue("count", propDef, "not a number")
+	err = NewValidator(meta).ValidatePropertyValue("count", propDef, "not a number")
 	if err == nil {
 		t.Error("expected error for invalid int string")
 	}
 
 	// Invalid type
-	err = meta.ValidatePropertyValue("count", propDef, true)
+	err = NewValidator(meta).ValidatePropertyValue("count", propDef, true)
 	if err == nil {
 		t.Error("expected error for invalid type")
 	}
@@ -533,10 +533,10 @@ func TestValidatePropertyValue_File(t *testing.T) {
 	meta := &Metamodel{}
 	propDef := &PropertyDef{Type: PropertyTypeFile}
 
-	if err := meta.ValidatePropertyValue("design_doc", propDef, "attachments/REQ-001/design_doc/design.pdf"); err != nil {
+	if err := NewValidator(meta).ValidatePropertyValue("design_doc", propDef, "attachments/REQ-001/design_doc/design.pdf"); err != nil {
 		t.Errorf("valid file path rejected: %v", err)
 	}
-	if err := meta.ValidatePropertyValue("design_doc", propDef, 42); err == nil {
+	if err := NewValidator(meta).ValidatePropertyValue("design_doc", propDef, 42); err == nil {
 		t.Error("non-string should be rejected")
 	}
 }
@@ -550,11 +550,11 @@ func TestValidatePropertyValue_FileMax(t *testing.T) {
 			t.Fatalf("FileMax default = %d, want 1", single.FileMax())
 		}
 		// A single string is fine.
-		if err := meta.ValidatePropertyValue("doc", single, "attachments/X/doc/a.pdf"); err != nil {
+		if err := NewValidator(meta).ValidatePropertyValue("doc", single, "attachments/X/doc/a.pdf"); err != nil {
 			t.Errorf("single path rejected: %v", err)
 		}
 		// Two files in a max:1 property is too many.
-		if err := meta.ValidatePropertyValue("doc", single, []string{"a.pdf", "b.pdf"}); err == nil {
+		if err := NewValidator(meta).ValidatePropertyValue("doc", single, []string{"a.pdf", "b.pdf"}); err == nil {
 			t.Error("2 files in a max:1 property should be rejected")
 		}
 	})
@@ -564,18 +564,18 @@ func TestValidatePropertyValue_FileMax(t *testing.T) {
 		if multi.FileMax() != 3 {
 			t.Fatalf("FileMax = %d, want 3", multi.FileMax())
 		}
-		if err := meta.ValidatePropertyValue("docs", multi, []string{"a", "b", "c"}); err != nil {
+		if err := NewValidator(meta).ValidatePropertyValue("docs", multi, []string{"a", "b", "c"}); err != nil {
 			t.Errorf("3 files in a max:3 property rejected: %v", err)
 		}
-		if err := meta.ValidatePropertyValue("docs", multi, []string{"a", "b", "c", "d"}); err == nil {
+		if err := NewValidator(meta).ValidatePropertyValue("docs", multi, []string{"a", "b", "c", "d"}); err == nil {
 			t.Error("4 files in a max:3 property should be rejected")
 		}
 		// []interface{} of strings (form/JSON shape) also accepted.
-		if err := meta.ValidatePropertyValue("docs", multi, []any{"a", "b"}); err != nil {
+		if err := NewValidator(meta).ValidatePropertyValue("docs", multi, []any{"a", "b"}); err != nil {
 			t.Errorf("[]interface{} of strings rejected: %v", err)
 		}
 		// Non-string item rejected.
-		if err := meta.ValidatePropertyValue("docs", multi, []any{"a", 7}); err == nil {
+		if err := NewValidator(meta).ValidatePropertyValue("docs", multi, []any{"a", 7}); err == nil {
 			t.Error("non-string list item should be rejected")
 		}
 	})
@@ -589,19 +589,19 @@ func TestValidatePropertyValue_Enum(t *testing.T) {
 	}
 
 	// Valid value
-	err := meta.ValidatePropertyValue("size", propDef, "medium")
+	err := NewValidator(meta).ValidatePropertyValue("size", propDef, "medium")
 	if err != nil {
 		t.Errorf("unexpected error for valid enum: %v", err)
 	}
 
 	// Invalid value
-	err = meta.ValidatePropertyValue("size", propDef, "extra-large")
+	err = NewValidator(meta).ValidatePropertyValue("size", propDef, "extra-large")
 	if err == nil {
 		t.Error("expected error for invalid enum value")
 	}
 
 	// Invalid type
-	err = meta.ValidatePropertyValue("size", propDef, 123)
+	err = NewValidator(meta).ValidatePropertyValue("size", propDef, 123)
 	if err == nil {
 		t.Error("expected error for non-string enum")
 	}
@@ -618,19 +618,19 @@ func TestValidatePropertyValue_CustomType(t *testing.T) {
 	propDef := &PropertyDef{Type: "severity"}
 
 	// Valid value
-	err := meta.ValidatePropertyValue("severity", propDef, "high")
+	err := NewValidator(meta).ValidatePropertyValue("severity", propDef, "high")
 	if err != nil {
 		t.Errorf("unexpected error for valid custom type: %v", err)
 	}
 
 	// Invalid value
-	err = meta.ValidatePropertyValue("severity", propDef, "extreme")
+	err = NewValidator(meta).ValidatePropertyValue("severity", propDef, "extreme")
 	if err == nil {
 		t.Error("expected error for invalid custom type value")
 	}
 
 	// Invalid type
-	err = meta.ValidatePropertyValue("severity", propDef, 123)
+	err = NewValidator(meta).ValidatePropertyValue("severity", propDef, 123)
 	if err == nil {
 		t.Error("expected error for non-string custom type")
 	}
@@ -650,14 +650,14 @@ func TestValidatePropertyValue_CustomStatusType(t *testing.T) {
 
 	// All custom values should be accepted
 	for _, val := range []string{"draft", "review", "approved", "active", "completed", "on_hold", "superseded", "retired"} {
-		err := meta.ValidatePropertyValue("status", propDef, val)
+		err := NewValidator(meta).ValidatePropertyValue("status", propDef, val)
 		if err != nil {
 			t.Errorf("expected custom status value %q to be valid, got: %v", val, err)
 		}
 	}
 
 	// Values not in the custom type should be rejected
-	err := meta.ValidatePropertyValue("status", propDef, "proposed")
+	err := NewValidator(meta).ValidatePropertyValue("status", propDef, "proposed")
 	if err == nil {
 		t.Error("expected error for value not in custom status type")
 	}
@@ -676,13 +676,13 @@ func TestValidatePropertyValue_CustomPriorityType(t *testing.T) {
 	propDef := &PropertyDef{Type: "priority"}
 
 	// Custom values should be accepted
-	err := meta.ValidatePropertyValue("priority", propDef, "p1")
+	err := NewValidator(meta).ValidatePropertyValue("priority", propDef, "p1")
 	if err != nil {
 		t.Errorf("expected custom priority value to be valid, got: %v", err)
 	}
 
 	// Built-in values not in custom type should be rejected
-	err = meta.ValidatePropertyValue("priority", propDef, "high")
+	err = NewValidator(meta).ValidatePropertyValue("priority", propDef, "high")
 	if err == nil {
 		t.Error("expected error for value not in custom priority type")
 	}
@@ -695,7 +695,7 @@ func TestValidatePropertyValue_UndeclaredStatusType(t *testing.T) {
 	}
 	propDef := &PropertyDef{Type: "status"}
 
-	err := meta.ValidatePropertyValue("status", propDef, "draft")
+	err := NewValidator(meta).ValidatePropertyValue("status", propDef, "draft")
 	if err == nil {
 		t.Error("expected error for undeclared status type")
 	}
@@ -712,7 +712,7 @@ func TestValidatePropertyValue_UnknownType(t *testing.T) {
 	}
 	propDef := &PropertyDef{Type: "nonexistent"}
 
-	err := meta.ValidatePropertyValue("myprop", propDef, "any value")
+	err := NewValidator(meta).ValidatePropertyValue("myprop", propDef, "any value")
 	if err == nil {
 		t.Fatal("expected error for unknown property type, got nil")
 	}
@@ -758,7 +758,7 @@ func TestValidatePropertyValue_RegexValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := meta.ValidatePropertyValue("version", propDef, tt.value)
+			err := NewValidator(meta).ValidatePropertyValue("version", propDef, tt.value)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("expected error for %q, got nil", tt.value)
@@ -827,7 +827,7 @@ func TestValidatePropertyValue_MultipleRegexValidations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := meta.ValidatePropertyValue("schedule", propDef, tt.value)
+			err := NewValidator(meta).ValidatePropertyValue("schedule", propDef, tt.value)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("expected error for %q, got nil", tt.value)
@@ -869,13 +869,13 @@ func TestValidatePropertyValue_EnumWithRegexValidation(t *testing.T) {
 	propDef := &PropertyDef{Type: "constrained_status"}
 
 	// Valid enum value that also passes regex
-	err := meta.ValidatePropertyValue("status", propDef, "draft")
+	err := NewValidator(meta).ValidatePropertyValue("status", propDef, "draft")
 	if err != nil {
 		t.Errorf("expected valid value to pass, got: %v", err)
 	}
 
 	// Invalid enum value (not in list)
-	err = meta.ValidatePropertyValue("status", propDef, "pending")
+	err = NewValidator(meta).ValidatePropertyValue("status", propDef, "pending")
 	if err == nil {
 		t.Error("expected error for invalid enum value")
 	}
@@ -897,13 +897,13 @@ func TestValidatePropertyValue_TypeWithNoValidation(t *testing.T) {
 	propDef := &PropertyDef{Type: "alias_string"}
 
 	// Any string should be valid
-	err := meta.ValidatePropertyValue("field", propDef, "anything goes here!")
+	err := NewValidator(meta).ValidatePropertyValue("field", propDef, "anything goes here!")
 	if err != nil {
 		t.Errorf("expected any string to be valid, got: %v", err)
 	}
 
 	// But non-strings should fail
-	err = meta.ValidatePropertyValue("field", propDef, 123)
+	err = NewValidator(meta).ValidatePropertyValue("field", propDef, 123)
 	if err == nil {
 		t.Error("expected error for non-string value")
 	}
@@ -927,13 +927,13 @@ func TestValidatePropertyValue_RegexOnStringList(t *testing.T) {
 	propDef := &PropertyDef{Type: "semver", List: true}
 
 	// All valid
-	err := meta.ValidatePropertyValue("versions", propDef, []string{"1.0.0", "2.0.0"})
+	err := NewValidator(meta).ValidatePropertyValue("versions", propDef, []string{"1.0.0", "2.0.0"})
 	if err != nil {
 		t.Errorf("expected valid list, got: %v", err)
 	}
 
 	// One invalid
-	err = meta.ValidatePropertyValue("versions", propDef, []string{"1.0.0", "bad"})
+	err = NewValidator(meta).ValidatePropertyValue("versions", propDef, []string{"1.0.0", "bad"})
 	if err == nil {
 		t.Fatal("expected error for invalid list item")
 	}
@@ -945,7 +945,7 @@ func TestValidatePropertyValue_RegexOnStringList(t *testing.T) {
 	}
 
 	// Multiple invalid - should report all errors
-	err = meta.ValidatePropertyValue("versions", propDef, []string{"bad1", "1.0.0", "bad2"})
+	err = NewValidator(meta).ValidatePropertyValue("versions", propDef, []string{"bad1", "1.0.0", "bad2"})
 	if err == nil {
 		t.Fatal("expected error for invalid list items")
 	}
@@ -975,13 +975,13 @@ func TestValidatePropertyValue_RegexOnInterfaceList(t *testing.T) {
 	propDef := &PropertyDef{Type: "semver", List: true}
 
 	// All valid ([]interface{} as from YAML parsing)
-	err := meta.ValidatePropertyValue("versions", propDef, []any{"1.0.0", "2.0.0"})
+	err := NewValidator(meta).ValidatePropertyValue("versions", propDef, []any{"1.0.0", "2.0.0"})
 	if err != nil {
 		t.Errorf("expected valid list, got: %v", err)
 	}
 
 	// One invalid
-	err = meta.ValidatePropertyValue("versions", propDef, []any{"1.0.0", "bad"})
+	err = NewValidator(meta).ValidatePropertyValue("versions", propDef, []any{"1.0.0", "bad"})
 	if err == nil {
 		t.Fatal("expected error for invalid list item")
 	}
@@ -990,7 +990,7 @@ func TestValidatePropertyValue_RegexOnInterfaceList(t *testing.T) {
 	}
 
 	// Non-string item in list
-	err = meta.ValidatePropertyValue("versions", propDef, []any{"1.0.0", 123})
+	err = NewValidator(meta).ValidatePropertyValue("versions", propDef, []any{"1.0.0", 123})
 	if err == nil {
 		t.Fatal("expected error for non-string list item")
 	}
@@ -1021,7 +1021,7 @@ func TestValidatePropertyValue_EmptyListWithRegexOnly(t *testing.T) {
 	propDef := &PropertyDef{Type: "semver", List: true}
 
 	// Empty list should pass for regex-only types
-	err := meta.ValidatePropertyValue("versions", propDef, []string{})
+	err := NewValidator(meta).ValidatePropertyValue("versions", propDef, []string{})
 	if err != nil {
 		t.Errorf("expected empty list to pass for regex-only type, got: %v", err)
 	}
@@ -1051,7 +1051,7 @@ func TestValidatePropertyValue_Rrule(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := meta.ValidatePropertyValue("recurrence", propDef, tt.value)
+			err := NewValidator(meta).ValidatePropertyValue("recurrence", propDef, tt.value)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("expected error for %v, got nil", tt.value)
@@ -1081,21 +1081,21 @@ func TestValidateRelationProperties(t *testing.T) {
 	}
 
 	t.Run("unknown relation returns nil", func(t *testing.T) {
-		errs := m.ValidateRelationProperties("nope", map[string]any{"x": "y"})
+		errs := NewValidator(m).ValidateRelationProperties("nope", map[string]any{"x": "y"})
 		if errs != nil {
 			t.Errorf("expected nil, got %v", errs)
 		}
 	})
 
 	t.Run("relation without property schema returns nil", func(t *testing.T) {
-		errs := m.ValidateRelationProperties("plain", map[string]any{"anything": "goes"})
+		errs := NewValidator(m).ValidateRelationProperties("plain", map[string]any{"anything": "goes"})
 		if errs != nil {
 			t.Errorf("expected nil, got %v", errs)
 		}
 	})
 
 	t.Run("missing required property is reported", func(t *testing.T) {
-		errs := m.ValidateRelationProperties("blocks", map[string]any{
+		errs := NewValidator(m).ValidateRelationProperties("blocks", map[string]any{
 			"severity": "high",
 		})
 		if len(errs) != 1 {
@@ -1107,7 +1107,7 @@ func TestValidateRelationProperties(t *testing.T) {
 	})
 
 	t.Run("valid properties pass", func(t *testing.T) {
-		errs := m.ValidateRelationProperties("blocks", map[string]any{
+		errs := NewValidator(m).ValidateRelationProperties("blocks", map[string]any{
 			"reason":   "cascading dep",
 			"severity": "high",
 		})
@@ -1117,7 +1117,7 @@ func TestValidateRelationProperties(t *testing.T) {
 	})
 
 	t.Run("wrong type is reported", func(t *testing.T) {
-		errs := m.ValidateRelationProperties("blocks", map[string]any{
+		errs := NewValidator(m).ValidateRelationProperties("blocks", map[string]any{
 			"reason":   123, // should be string
 			"severity": "high",
 		})
@@ -1194,4 +1194,13 @@ func TestValidateIDPrefix(t *testing.T) {
 			t.Errorf("ValidateIDPrefix(%q) = nil, want error (%s)", tc.prefix, tc.why)
 		}
 	}
+}
+
+func TestNewValidator_RejectsNilMetamodel(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("NewValidator(nil) did not panic")
+		}
+	}()
+	NewValidator(nil)
 }

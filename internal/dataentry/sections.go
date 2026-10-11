@@ -221,6 +221,12 @@ type GroupData struct {
 	GroupName string
 	Rows      []SectionRowData
 	Entities  []SectionEntityData
+	// EntityType and Columns are set on the per-type groups of a
+	// `columns_by_type` table (TKT-HF0D5W): the group's rows are all of
+	// EntityType and its cells are positional over Columns. Both are empty
+	// on a `group_by` group, whose rows share the section's columns.
+	EntityType string
+	Columns    []ListColumn
 }
 
 // SectionAddInfo describes an "Add" button on a side-panel section.
@@ -262,7 +268,6 @@ type SectionData struct {
 	IsGrouped    bool
 	EmptyMessage string
 	IsEmpty      bool
-	Link         string // section-level link configuration (currently unused in templates)
 	Content      string
 	HasContent   bool
 	AddInfo      *SectionAddInfo
@@ -282,6 +287,11 @@ type SectionData struct {
 	// emitted somewhere in Tree. See [viewsHandler.buildNestedTree] for why it
 	// is not merely "the budget ran out".
 	Truncated bool
+
+	// Incomplete reports that the section's backlinks collection holds only
+	// part of the matching sources (TKT-HF0D5W, [viewResult.Incomplete]).
+	// It is separate from Truncated, whose contract excludes budget stops.
+	Incomplete bool
 }
 
 // SectionTreeNode is one row of a `display: nested` section: an entity plus
@@ -353,9 +363,73 @@ func rowSelfHref(m *metamodel.Metamodel, e *entity.Entity) string {
 	return selfHref(def.GetPlural(e.Type), e)
 }
 
+// buildTableSection fills a `display: table` section: flat rows, rows grouped
+// by `group_by`, or one group per entity type for `columns_by_type`.
+func (h *viewsHandler) buildTableSection(
+	ctx context.Context, s *Schema, sec ViewSection, entities []*entity.Entity, sd *SectionData,
+) {
+	sd.Columns = sec.Columns
+	if sec.ColumnsByType != nil {
+		sd.IsGrouped = true
+		for _, g := range groupByType(entities) {
+			cols := columnsFor(sec, g.entityType)
+			relValues := h.resolveRelationColumns(ctx, s, cols, g.entities)
+			gd := GroupData{GroupName: g.entityType, EntityType: g.entityType, Columns: cols}
+			if def, ok := s.Meta.GetEntityDef(g.entityType); ok && (def.Label != "" || def.LabelPlural != "") {
+				gd.GroupName = def.GetLabelPlural()
+			}
+			for _, e := range g.entities {
+				gd.Rows = append(gd.Rows, buildSectionRow(s, cols, e, relValues))
+			}
+			sd.Groups = append(sd.Groups, gd)
+		}
+		return
+	}
+	// Relation columns are resolved for the WHOLE section up front —
+	// one relation query per (column, row type) and one header batch
+	// for every target — instead of one relation query plus one
+	// entity load per row per column (TKT-1U8XYN).
+	relValues := h.resolveRelationColumns(ctx, s, sec.Columns, entities)
+	buildRow := func(e *entity.Entity) SectionRowData {
+		return buildSectionRow(s, sec.Columns, e, relValues)
+	}
+	if sec.GroupBy == "" {
+		for _, e := range entities {
+			sd.Rows = append(sd.Rows, buildRow(e))
+		}
+		return
+	}
+	sd.IsGrouped = true
+	groups := map[string][]*entity.Entity{}
+	var groupOrder []string
+	for _, e := range entities {
+		prop := strings.TrimPrefix(sec.GroupBy, "properties.")
+		groupKey := "(none)"
+		if v := e.Properties[prop]; v != nil {
+			groupKey = fmt.Sprintf("%v", v)
+		}
+		if _, seen := groups[groupKey]; !seen {
+			groupOrder = append(groupOrder, groupKey)
+		}
+		groups[groupKey] = append(groups[groupKey], e)
+	}
+	for _, gName := range groupOrder {
+		gd := GroupData{GroupName: gName}
+		// Grouping preserves the section's order within each
+		// group. Only re-sort by id when the author declared
+		// no `sort:` — otherwise this would discard the order
+		// they asked for, one group at a time.
+		if len(sec.Sort) == 0 {
+			sortStoreEntitiesByID(groups[gName])
+		}
+		for _, e := range groups[gName] {
+			gd.Rows = append(gd.Rows, buildRow(e))
+		}
+		sd.Groups = append(sd.Groups, gd)
+	}
+}
+
 // buildSections builds template-ready section data from view sections and a view result.
-//
-//nolint:gocognit // builds each section by its declared source and display mode; the branches are the distinct section kinds, not shared logic to extract.
 func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection, result *viewResult) []SectionData {
 	s := h.schema()
 	out := make([]SectionData, 0, len(sections))
@@ -366,10 +440,9 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			SectionID:    slugify(sec.Heading),
 			Display:      sec.Display,
 			EmptyMessage: sec.EmptyMessage,
-			Link:         sec.Link,
 		}
 
-		if sec.Source == "entry" { //nolint:nestif // entry-source sections branch by display mode and property shape; the nesting is the per-mode build, not extractable logic.
+		if sec.Source == "entry" {
 			e := result.Entry
 			entDef, _ := s.Meta.GetEntityDef(e.Type)
 
@@ -392,64 +465,23 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			// flat mode honors it rather than each arm remembering to.
 			entities, sd.RelationOrder = sortSectionRows(ctx, h, sec, result, entities, s.Meta)
 			sd.IsEmpty = len(entities) == 0
+			sd.Incomplete = result.Incomplete[sec.Source]
 			ctx = primeVerdicts(ctx, h.affordances.resolver(), entities)
 
 			switch sec.Display {
 			case "properties", "list", dataentryconfig.DisplayRelated:
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render, result.World)
+					sed := h.buildSectionEntityData(ctx, e, fieldsFor(sec, e.Type), eDef, sec.Render, result.World)
 					sd.Entities = append(sd.Entities, sed)
 				}
 			case "table":
-				sd.Columns = sec.Columns
-				// Relation columns are resolved for the WHOLE section up front —
-				// one relation query per (column, row type) and one header batch
-				// for every target — instead of one relation query plus one
-				// entity load per row per column (TKT-1U8XYN).
-				relValues := h.resolveRelationColumns(ctx, s, sec.Columns, entities)
-				buildRow := func(e *entity.Entity) SectionRowData {
-					return h.buildSectionRow(s, sec.Columns, e, relValues)
-				}
-				if sec.GroupBy != "" {
-					sd.IsGrouped = true
-					groups := map[string][]*entity.Entity{}
-					var groupOrder []string
-					for _, e := range entities {
-						prop := strings.TrimPrefix(sec.GroupBy, "properties.")
-						groupKey := "(none)"
-						if v := e.Properties[prop]; v != nil {
-							groupKey = fmt.Sprintf("%v", v)
-						}
-						if _, seen := groups[groupKey]; !seen {
-							groupOrder = append(groupOrder, groupKey)
-						}
-						groups[groupKey] = append(groups[groupKey], e)
-					}
-					for _, gName := range groupOrder {
-						gd := GroupData{GroupName: gName}
-						// Grouping preserves the section's order within each
-						// group. Only re-sort by id when the author declared
-						// no `sort:` — otherwise this would discard the order
-						// they asked for, one group at a time.
-						if len(sec.Sort) == 0 {
-							sortStoreEntitiesByID(groups[gName])
-						}
-						for _, e := range groups[gName] {
-							gd.Rows = append(gd.Rows, buildRow(e))
-						}
-						sd.Groups = append(sd.Groups, gd)
-					}
-				} else {
-					for _, e := range entities {
-						sd.Rows = append(sd.Rows, buildRow(e))
-					}
-				}
+				h.buildTableSection(ctx, s, sec, entities, &sd)
 
 			case "content", "cards":
 				for _, e := range entities {
 					eDef, _ := s.Meta.GetEntityDef(e.Type)
-					sed := h.buildSectionEntityData(ctx, e, sec.Fields, eDef, sec.Render, result.World)
+					sed := h.buildSectionEntityData(ctx, e, fieldsFor(sec, e.Type), eDef, sec.Render, result.World)
 					sed.Content = e.Content
 					sed.HasContent = e.Content != ""
 					sd.Entities = append(sd.Entities, sed)

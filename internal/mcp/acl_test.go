@@ -76,6 +76,10 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 		newEntity(visibleID, "ticket", "visible ticket"),
 		newEntity(hiddenID, "feature", hiddenTitle),
 	} {
+		if e.ID == hiddenID {
+			// A hidden backlink: show_entity on the ticket must not list it.
+			e.Content = "Depends on `" + visibleID + "`."
+		}
 		if err := st.CreateEntity(ctx, e); err != nil {
 			t.Fatalf("seed %s: %v", e.ID, err)
 		}
@@ -368,6 +372,13 @@ func (d denyEntityReader) WriteTarget(ctx context.Context, addr string) (entity.
 	return visibility.Unrestricted(d.raw).WithWorld(visibility.WorldOf(store.TrivialScope())).WriteTarget(ctx, addr)
 }
 
+func (d denyEntityReader) MentionedBy(
+	ctx context.Context, target, after string, limit int,
+) (visibility.MentionPage, error) {
+	return visibility.Unrestricted(d.raw).WithWorld(visibility.WorldOf(store.TrivialScope())).
+		MentionedBy(ctx, target, after, limit)
+}
+
 func (d denyEntityReader) ResolveHeaders(
 	ctx context.Context, refs []entity.Ref,
 ) map[entity.Ref]visibility.ResolvedHeader {
@@ -378,6 +389,12 @@ func (d denyEntityReader) ResolveHeaders(
 		}
 	}
 	return out
+}
+
+func (d denyEntityReader) ResolveHeadersErr(
+	ctx context.Context, refs []entity.Ref,
+) (map[entity.Ref]visibility.ResolvedHeader, error) {
+	return d.ResolveHeaders(ctx, refs), nil
 }
 
 func (d denyEntityReader) ListEntities(

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/fsstore"
@@ -442,7 +443,7 @@ func TestRenameFace_ReturnsAnIdentityEdgeToTheEntity(t *testing.T) {
 func TestMigrateFace_RefusesEdgesWhenScopesAreUnknown(t *testing.T) {
 	st := seedStore(t)
 	ctx := t.Context()
-	fp, tp := metaV1().ShapeProjection(), facedV1().ShapeProjection()
+	fp, tp := metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(facedV1())
 	fp.RelationScopes, tp.RelationScopes = false, false
 	fromYAML, err := marshalProjectionYAML("from_projection", fp)
 	if err != nil {

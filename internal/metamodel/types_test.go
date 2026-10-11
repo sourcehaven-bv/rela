@@ -1382,55 +1382,6 @@ func TestInverseDef_GetLabel(t *testing.T) {
 	}
 }
 
-func TestMetamodel_GetterMethods(t *testing.T) {
-	meta := &Metamodel{
-		Version:   "1.0",
-		Namespace: "test",
-		Types: map[string]CustomType{
-			"priority": {Values: []string{"high", "medium", "low"}},
-		},
-		Entities: map[string]EntityDef{
-			"requirement": {Label: "Requirement"},
-		},
-		Relations: map[string]RelationDef{
-			"implements": {Label: "implements"},
-		},
-	}
-
-	t.Run("GetVersion", func(t *testing.T) {
-		if got := meta.GetVersion(); got != "1.0" {
-			t.Errorf("GetVersion() = %q, want %q", got, "1.0")
-		}
-	})
-
-	t.Run("GetNamespace", func(t *testing.T) {
-		if got := meta.GetNamespace(); got != "test" {
-			t.Errorf("GetNamespace() = %q, want %q", got, "test")
-		}
-	})
-
-	t.Run("GetEntities", func(t *testing.T) {
-		got := meta.GetEntities()
-		if got == nil {
-			t.Error("GetEntities() returned nil")
-		}
-	})
-
-	t.Run("GetRelations", func(t *testing.T) {
-		got := meta.GetRelations()
-		if got == nil {
-			t.Error("GetRelations() returned nil")
-		}
-	})
-
-	t.Run("GetTypes", func(t *testing.T) {
-		got := meta.GetTypes()
-		if got == nil {
-			t.Error("GetTypes() returned nil")
-		}
-	})
-}
-
 func TestEntityDef_GetterMethods(t *testing.T) {
 	def := EntityDef{
 		Label:       "Requirement",

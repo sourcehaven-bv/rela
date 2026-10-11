@@ -171,11 +171,35 @@ func (s *Server) handleShowEntity(
 	view := entityView{relations: true, content: args.GetBool("content", true)}
 	ej := buildEntityJSON(ctx, e, d.Store, d.Meta, view)
 	ej.OtherFaces = otherFaces(ctx, d.Store, d.Meta, e)
+	if mErr := addMentionedBy(ctx, d.Store, d.Meta, &ej); mErr != nil {
+		return errorResult(fmt.Sprintf("read backlinks of %s: %v", e.ID, mErr)), nil
+	}
 	text, err := marshalJSON(ej)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
 	return textResult(text), nil
+}
+
+// showMentionLimit caps the backlinks show_entity lists.
+const showMentionLimit = 50
+
+// addMentionedBy fills ej's backlinks: the first page of entities whose body
+// mentions it, through the caller's gated reader.
+func addMentionedBy(ctx context.Context, st GraphReader, meta *metamodel.Metamodel, ej *entityJSON) error {
+	page, err := st.MentionedBy(ctx, ej.ID, "", showMentionLimit)
+	if errors.Is(err, visibility.ErrMentionsUnsupported) { // coverage-ignore: every store backend keeps the index
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, h := range page.Items {
+		src := &entity.Entity{ID: h.ID, Type: h.Type, Face: h.Face, Properties: h.Properties}
+		ej.MentionedBy = append(ej.MentionedBy, convertStoreEntitySummary(meta, src))
+	}
+	ej.MentionedByTruncated = page.Next != "" || page.Truncated
+	return nil
 }
 
 func (s *Server) handleSearchEntities(

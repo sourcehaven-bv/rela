@@ -288,6 +288,13 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	// "commenting disabled" state the 404 routes depend on.
 	app.comments = newCommentsHandler(app, svc.EntityManager())
 
+	// Piles handler over the app's current services (mirrors NewApp). The
+	// service stays nil until a test calls SetPiles.
+	var pilesErr error
+	if app.piles, pilesErr = newPilesHandler(app); pilesErr != nil {
+		panic(pilesErr)
+	}
+
 	// writeHandler mirrors production wiring (see NewApp): closures for the
 	// swappable acl/audit collaborators, values for the fixed service handles,
 	// and App's shared read/write helpers so both paths stay identical.

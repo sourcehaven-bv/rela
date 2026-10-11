@@ -49,6 +49,11 @@ func (DenyReader) Family(context.Context, string) (Family, bool, error) {
 	return Family{}, false, ErrReaderUnavailable
 }
 
+// MentionedBy implements the script read surface by refusing.
+func (DenyReader) MentionedBy(context.Context, string, string, int) (MentionPage, error) {
+	return MentionPage{}, ErrReaderUnavailable
+}
+
 // ResolveHeaders implements the script read surface: every address misses,
 // because the reader is unavailable. The batch has no error result, so the
 // refusal is logged instead of returned as [ErrReaderUnavailable].
@@ -57,6 +62,11 @@ func (DenyReader) ResolveHeaders(_ context.Context, refs []entity.Ref) map[entit
 		slog.Warn("visibility: reader unavailable; answering every address as not-found", "refs", len(refs))
 	}
 	return nil
+}
+
+// ResolveHeadersErr implements the script read surface: always refuses.
+func (DenyReader) ResolveHeadersErr(context.Context, []entity.Ref) (map[entity.Ref]ResolvedHeader, error) {
+	return nil, ErrReaderUnavailable
 }
 
 // ListEntities implements the script read surface: always refuses.
@@ -93,6 +103,16 @@ func (d DenyReader) ListRelationsStrict(
 	ctx context.Context, q store.RelationQuery,
 ) iter.Seq2[*entity.Relation, error] {
 	return d.ListRelations(ctx, q)
+}
+
+// CountEntities implements the script read surface: always refuses.
+func (DenyReader) CountEntities(context.Context, store.EntityQuery) (int, error) {
+	return 0, ErrReaderUnavailable
+}
+
+// CountRelations implements the script read surface: always refuses.
+func (DenyReader) CountRelations(context.Context, store.RelationQuery) (int, error) {
+	return 0, ErrReaderUnavailable
 }
 
 // DenyTracer refuses every traversal, the [DenyReader] counterpart for the

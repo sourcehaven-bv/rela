@@ -370,7 +370,7 @@ func pendingPlan(ctx context.Context, svc *appbuild.Services) ([]*datamigration.
 	if err != nil {
 		return nil, nil, err
 	}
-	plan, err := datamigration.Resolve(stored, st.AppliedNames(), svc.Meta().ShapeProjection(), files)
+	plan, err := datamigration.Resolve(stored, st.AppliedNames(), metamodel.NewShapeProjection(svc.Meta()), files)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -564,6 +564,11 @@ Load-bearing details:
   "Reserved `system:` identities" in [GUIDE-server-security]. This is also
   why a forged subject can never be provisioned into a stub's
   `principal_property`.
+- **`integration:` identities are reserved too.** Connector scripts run as
+  `integration:<name>` and hold the connector's write grants and
+  `tag:sync`. A request naming one is refused at the same boundary, so
+  those grants can only be used through `run_as` in operator-authored
+  config.
 - **The provisioned stub is bare — identity, not authority.** The
   `system:provisioner` role is `create`-only on the user type and nothing
   else, so provisioning gives the principal a graph *identity* but **no
@@ -1152,6 +1157,14 @@ rows are gated, each row is redacted before its title is taken, and
 related entity appears only when the principal may read that entity and its
 title. The response is `no-store`.
 
+**Backlinks are gated per source.** The "Mentioned by" panel and a view's
+`mentioned_by` step list only the sources the principal may read, each at
+the face the world serves. Their `truncated` and `incomplete` flags have one
+accepted exception: the index scan reads at most 10,000 entries, unreadable
+ones included, so a flag can be set when more than 10,000 sources you cannot
+read mention the entity. Short of that, the flags say only that more readable
+sources exist.
+
 The same holds for the rest of the app's configuration.
 `/api/v1/_config` serves lists, views, kanbans, documents and
 navigation in full — including a document's `permission:` value. Your
@@ -1400,7 +1413,14 @@ other surfaces and how each counts hidden entities.
   (`rela-server -mcp`) is JWT-authenticated and gated (TKT-4QSZ8Y): entity
   and relation reads, `search_entities`, trace and resources all read
   through `GatedReads`. Search drops hits that matched only hidden
-  properties. The Lua tools are not offered there at all. These residuals
+  properties. The per-type entity and relation counts are gated too
+  (TKT-QZTROQ). This covers the schema tool, the schema resource, the
+  summary prompt and `analyze` with `check: schema`. An entity count is the
+  length of the list the caller would get. A relation count includes only
+  edges whose two ends the caller may read, at any face. So `analyze`
+  reports a type the caller may not read as unused. A count that fails is
+  left out of the schema rather than shown as 0, and the summary prompt
+  fails. The Lua tools are not offered there at all. These residuals
   remain on the remote endpoint:
   - relation meta values are not field-redacted (TKT-0RBFN0), the same as
     on every other read path;

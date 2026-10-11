@@ -21,6 +21,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
+	"github.com/Sourcehaven-BV/rela/internal/tokenstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/validator"
 )
@@ -83,6 +84,21 @@ type writeServices struct {
 	// they move and drop its threads alongside the rows they relocate
 	// (BUG-6OZBP9). Nil: accepted — the project has commenting disabled.
 	Comments datamigration.CommentThreads
+	// Tokens manages connector tokens (TKT-01KZSO). Nil when the project
+	// has no token store; TokensErr then says why.
+	Tokens    tokenAdmin
+	TokensErr error
+}
+
+// tokenAdmin returns the token manager, or the reason the project has none.
+func (w *writeServices) tokenAdmin() (tokenAdmin, error) {
+	if w.Tokens == nil {
+		if w.TokensErr != nil {
+			return nil, w.TokensErr
+		}
+		return nil, tokenstore.ErrNotConfigured
+	}
+	return w.Tokens, nil
 }
 
 // entityWriter is the write surface the CLI's mutating subcommands call. See
@@ -199,6 +215,11 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	// interface would pass the engine's nil check and panic on first use.
 	if c := svc.Comments(); c != nil {
 		write.Comments = c
+	}
+	if broker, err := appbuild.Tokens(svc); err != nil {
+		write.TokensErr = err
+	} else {
+		write.Tokens = broker
 	}
 	return &cliBundles{
 		read:       &read,

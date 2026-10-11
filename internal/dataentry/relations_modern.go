@@ -288,12 +288,13 @@ func (h *writeHandler) collectEdgeWarnings(
 	}
 
 	// Per-property type validation for declared keys with provided values.
+	metaValidator := metamodel.NewValidator(meta)
 	for k, v := range ref.Meta {
 		propDef, known := relDef.Properties[k]
 		if !known {
 			continue // already warned above
 		}
-		if err := meta.ValidatePropertyValue(k, &propDef, v); err != nil {
+		if err := metaValidator.ValidatePropertyValue(k, &propDef, v); err != nil {
 			warnings = append(warnings, Warning{
 				Code:      "meta_type_mismatch",
 				Path:      edgePath + "/meta/" + v1.JSONPointerEscape(k),

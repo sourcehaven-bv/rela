@@ -776,6 +776,12 @@ type Config struct {
 	// invite a client-side re-implementation of the engine. Same reasoning as
 	// "no useACL() composable": the SPA renders what the server computed.
 	NextActionBands []dataentryconfig.NextActionBand `json:"next_action_bands,omitempty"`
+
+	// Piles is the data-entry.yaml `piles:` block (TKT-K3RJLH): the actions
+	// and transforms a pile panel offers. Null when the block is absent.
+	// Whether THIS principal may use piles is on `_sidebar`
+	// ([SidebarResponse.PilesAvailable]).
+	Piles *dataentryconfig.PilesConfig `json:"piles"`
 }
 
 // App is the client-facing view of a custom app. It deliberately omits the
@@ -1185,6 +1191,17 @@ type SidebarResponse struct {
 	// A UI hint, never authorization: POST /api/v1/{plural} re-authorizes,
 	// so a stale or forged map can only surface a button that then 403s.
 	InlineCreate map[string]string `json:"inline_create,omitempty"`
+
+	// PilesAvailable reports that piles are wired AND this principal has an
+	// owner identity to keep them under (TKT-K3RJLH). False hides the piles
+	// UI. It rides here for the reason InlineCreate does: this is the one
+	// principal-scoped boot payload. The `piles:` config itself is on
+	// `_config` ([Config.Piles]), which is principal-independent.
+	PilesAvailable bool `json:"piles_available"`
+	// Piles repeats the `piles:` block of `_config`, so the SPA can read
+	// both piles fields from this one boot payload. Null when the block is
+	// absent.
+	Piles *dataentryconfig.PilesConfig `json:"piles"`
 }
 
 // ConflictItem represents a conflicted file.
@@ -1269,7 +1286,10 @@ type TemplateRelation struct {
 // spans (see collectMentions). The SPA's markdown renderer consumes this
 // map to rewrite those code spans into titled in-app links. Mirrors the
 // Lua-side `rela.md.entity_refs` shape (TKT-LXYHQ) for SPA consumers
-// that don't go through the Lua document path.
+// that don't go through the Lua document path. Each ID resolves in the
+// request's world (`?world=`, else the default world), to the face that
+// world serves among the faces the caller may read; the title is that
+// face's.
 //
 // Wire stability: `mentions` is part of the public v1 API. The set of
 // `inaccessible_reason` values may grow as new locking mechanisms are
@@ -1304,6 +1324,13 @@ type ViewResponse struct {
 	// re-deriving which section maps to which relation. Omitted when no section
 	// opted in — which is every view that predates this field.
 	Create []ViewSectionCreate `json:"create,omitempty"`
+
+	// HideMentionedByPanel tells the page to leave out the built-in
+	// "Mentioned by" panel (TKT-HF0D5W): the view collects backlinks itself
+	// through a `mentioned_by` traverse step, or
+	// `entity_views.<type>.mentioned_by_panel` is false. Decided by the server
+	// from the view it executed, so the SPA does not re-derive view selection.
+	HideMentionedByPanel bool `json:"hideMentionedByPanel,omitempty"`
 }
 
 // ViewSection represents a section with resolved data.
@@ -1335,6 +1362,12 @@ type ViewSection struct {
 	// the preview cap sets both. This flag exists for what HasMoreChildren
 	// cannot express — a parent dropped entirely has no row to signal on.
 	Truncated bool `json:"truncated,omitempty"`
+	// Incomplete reports that a flat section's backlinks collection holds
+	// only part of the matching sources (TKT-HF0D5W): more exist than a
+	// `mentioned_by` step collects, or the backlink scan stopped at its
+	// budget. The scan-budget case is the signal docs/acl-security.md
+	// accepts for the mentioned-by endpoint.
+	Incomplete bool `json:"incomplete,omitempty"`
 
 	// RelationOrder is set when the section's rows are the entry's targets
 	// over one orderable relation, shown in relation order; see
@@ -1520,6 +1553,12 @@ type ViewGroup struct {
 	GroupName string       `json:"groupName"`
 	Rows      []ViewRow    `json:"rows,omitempty"`
 	Entities  []ViewEntity `json:"entities,omitempty"`
+	// EntityType and Columns are set on the per-type groups of a
+	// `columns_by_type` table (TKT-HF0D5W). Rows' cells are positional over
+	// Columns. Both are omitted on a `group_by` group, whose rows use the
+	// section's columns.
+	EntityType string       `json:"entityType,omitempty"`
+	Columns    []ViewColumn `json:"columns,omitempty"`
 }
 
 // ViewAddInfo describes an add button configuration. Despite the "View"
@@ -1563,9 +1602,15 @@ type ViewLinkInfo struct {
 // because a scope (notably a search scope) can span entity types, so the SPA
 // must build the target's detail route from *its* type, not the current
 // entity's. ID alone would break cross-type prev/next.
+//
+// Address is what the SPA links to: `ID@face` for a pile item that names a
+// face, because a pile holds that face and stepping must open it; the bare
+// `ID` otherwise, which the request's world resolves exactly as the list or
+// search page that produced the scope did.
 type PositionRef struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Address string `json:"address"`
 }
 
 // Position is the scope-navigator payload: the neighbors plus the counter
@@ -1605,6 +1650,29 @@ type Mention struct {
 	Title              string `json:"title"`
 	Inaccessible       bool   `json:"inaccessible,omitempty"`
 	InaccessibleReason string `json:"inaccessible_reason,omitempty"`
+}
+
+// MentionedByResponse is GET /api/v1/{plural}/{id}/mentioned-by
+// (TKT-Q6AKUN): the entities whose body mentions the addressed one, one page
+// at a time, in id order.
+type MentionedByResponse struct {
+	Items []MentionSource `json:"items"`
+	// NextCursor is passed back as ?cursor= for the following page: the id
+	// of the last item. Absent when there is none. A page may be short and
+	// still carry one: the server bounds the work one request does.
+	NextCursor string `json:"next_cursor,omitempty"`
+	// Truncated reports that the server stopped scanning with nothing more
+	// to show, so further sources may exist that no cursor reaches.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// MentionSource is one entity that mentions the addressed one, at the face
+// the request's world serves. Title and the inaccessible flags follow
+// [Mention].
+type MentionSource struct {
+	ID   string `json:"id"`
+	Face string `json:"face,omitempty"`
+	Mention
 }
 
 // Face is one content state an entity has, other than the one being served.

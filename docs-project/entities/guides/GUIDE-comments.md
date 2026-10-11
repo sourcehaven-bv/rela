@@ -309,6 +309,15 @@ writes the author from the request principal. That is not a validation nicety:
 accepting a client-supplied ID would let a caller overwrite someone else's
 comment by reusing it.
 
+## The MCP tools
+
+The MCP server offers the same operations as tools: `list_comments`,
+`add_comment`, `update_comment`, `delete_comment` and
+`accept_comment_suggestion`. On the remote server (`rela-server -mcp`) they
+call the HTTP routes' own operations, so the permissions, face rules and error
+codes are identical. Stdio `rela mcp` offers only `list_comments`. See
+[mcp-server.md](mcp-server.md#comment-tools).
+
 ## What comments deliberately do not do
 
 - **No entity type.** Comments never enter `store.Store`, `entitymanager`, the

@@ -334,8 +334,8 @@ func resolveNamedWorld(ctx context.Context, lookup WorldLookup, name, defaultNam
 //
 // Deliberately conservative, and the list has grown deliberately: the
 // collection list (`/{plural}`), the single-entity GET (`/{plural}/{id}`) and
-// exactly five underscore routes named one at a time below — `_views`,
-// `_history`, `_next_action`, `_search` and `_position`. Every other
+// the underscore routes named one at a time below — `_views`, `_history`,
+// `_next_action`, `_search`, `_position` and the `_piles` reads. Every other
 // underscore endpoint (analyze, documents, feeds) is refused, along
 // with every sub-resource of an entity except its export (relations,
 // attachments, the list export), because each reaches content through a path
@@ -415,12 +415,30 @@ func worldCapablePath(path string) bool {
 	if trimmed == "_search" || trimmed == "_position" {
 		return true
 	}
+	// The SIXTH, named by its read shapes: piles (TKT-K3RJLH). A pile's
+	// items are references, and every read of them (the list counts, one
+	// pile, the export, and the pile scope through `_position`) resolves
+	// them in ONE batch through the visibility resolver in the request's
+	// world. A named face is served as named and a bare item takes the face
+	// the world serves; nothing reaches the default-world entityReader.
+	// Refusing the world would count and show the default world's faces on a
+	// page bound to another one. Writes never get here with a world:
+	// attachWorld refuses `?world=` on every non-GET.
+	if isWorldCapablePilesPath(trimmed) {
+		return true
+	}
 	if strings.HasPrefix(trimmed, "_") {
 		return false
 	}
 	// The one entity sub-resource admitted, named exactly: the entity
 	// export (BUG-PLZDPR). See [isWorldCapableEntityExportPath].
 	if isWorldCapableEntityExportPath(trimmed) {
+		return true
+	}
+	// And the backlinks of one entity (TKT-Q6AKUN), for the same reason: the
+	// detail page lists them, so they must be read in the page's world. See
+	// [isWorldCapableMentionedByPath].
+	if isWorldCapableMentionedByPath(trimmed) {
 		return true
 	}
 	// `{plural}` or `{plural}/{id}` only. A third segment is a
@@ -499,6 +517,24 @@ func refuseWorldIncapablePath(w http.ResponseWriter, r *http.Request, requested,
 	return true
 }
 
+// isWorldCapablePilesPath matches the piles READ shapes exactly: `_piles`,
+// `_piles/{id}` and `_piles/{id}/_export`.
+func isWorldCapablePilesPath(trimmed string) bool {
+	parts := strings.Split(trimmed, "/")
+	if parts[0] != "_piles" {
+		return false
+	}
+	switch len(parts) {
+	case 1:
+		return true
+	case 2:
+		return parts[1] != ""
+	case 3:
+		return parts[1] != "" && parts[2] == "_export"
+	}
+	return false
+}
+
 // isWorldCapableViewPath matches `_views/{type}/{id}` — the entity view, whose
 // whole read path was world-scoped in TKT-WRLDAPI item 4b.
 //
@@ -531,6 +567,17 @@ func isWorldCapableEntityExportPath(trimmed string) bool {
 	parts := strings.Split(trimmed, "/")
 	return len(parts) == 3 && parts[0] != "" && parts[1] != "" &&
 		!strings.HasPrefix(parts[1], "_") && parts[2] == "_export"
+}
+
+// isWorldCapableMentionedByPath matches `{plural}/{id}/mentioned-by`. The
+// addressed entity is read with readAddressedOr404 and every source through
+// visibility.Resolver.MentionedBy, both in the world on ctx, so a source is
+// listed at the face the page's world serves. Refused, a world-bound page
+// would list backlinks computed in the default world.
+func isWorldCapableMentionedByPath(trimmed string) bool {
+	parts := strings.Split(trimmed, "/")
+	return len(parts) == 3 && parts[0] != "" && parts[1] != "" &&
+		!strings.HasPrefix(parts[1], "_") && parts[2] == "mentioned-by"
 }
 
 // isWorldCapableHistoryPath matches `_history/{type}/{id}` and

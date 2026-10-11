@@ -132,6 +132,14 @@ type ReadDeps struct {
 	// zero value is unset, and a list read in it fails with
 	// store.ErrInvalidQuery rather than reading the trivial world.
 	World store.WorldScope
+
+	// Piles backs rela.piles.list and rela.piles.items: the acting user's
+	// piles, whose items are read through VisibleReader. Wiring supplies
+	// [PileFuncs] over the piles service.
+	//
+	// Nil: accepted. The rela.piles functions then raise "piles are not
+	// available in this context", which is what a pure CLI run gets.
+	Piles PileReader
 }
 
 // ProjectFiles reads operator-authored project files by slash path relative
@@ -294,6 +302,13 @@ type WriteDeps struct {
 	ReadDeps
 	EntityManager Mutator
 
+	// PileWriter backs rela.piles.add and rela.piles.remove. Wiring supplies
+	// the same [PileFuncs] it puts in [ReadDeps.Piles].
+	//
+	// Nil: accepted. Both functions then raise "piles are not available in
+	// this context".
+	PileWriter PileWriter
+
 	// ElevatedManager, when non-nil, is a write handle whose mutations skip
 	// the ACL deny (TKT-D8T148). It is set ONLY for an allow_acl_bypass
 	// automation action.
@@ -360,6 +375,14 @@ type WriteDeps struct {
 	// a scheduled script. The synchronous automation cascade, document
 	// renders, export_render and the data-entry webhook leave it nil.
 	VersionTags VersionTagWriter
+
+	// OAuth backs rela.oauth (TKT-01KZSO). Whether rela.oauth exists is
+	// decided by [Capabilities.Tokens], not by this field.
+	//
+	// Nil: accepted; rela.oauth then reports `not_configured`. The fs and
+	// memory backends have no token store, and the synchronous automation
+	// cascade and document renders never get one.
+	OAuth OAuthTokens
 }
 
 // ElevationRecorder receives a notification when a rela.bypass_acl closure

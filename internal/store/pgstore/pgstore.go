@@ -160,8 +160,11 @@ type DBTX interface {
 // +1 exported / +1 method: SoftDelete, the optional store.SoftDeleteProvider
 // accessor. The work lives on softDeleter and free functions in softdelete.go.
 //
-//plimsoll:max-exported-methods=45
-//plimsoll:max-methods=55
+// +1 exported / +1 method (TKT-Q6AKUN): MentionSources, the optional
+// store.MentionIndex capability. Its helpers are free functions in mentions.go.
+//
+//plimsoll:max-exported-methods=46
+//plimsoll:max-methods=56
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles
@@ -176,6 +179,10 @@ type Store struct {
 	// no-ops, as for a New() store with no listener wiring.
 	originID string
 	schema   string
+	// mentionReindex fills mention_targets for rows written without it (see
+	// mentions.go). Nil unless Open started it. Close takes it under
+	// changeFeedMu, with the listener.
+	mentionReindex *mentionReindexer
 
 	// uniqueSpecs, when set (at wiring, via SetUniqueSpecProvider), yields the
 	// current metamodel's (type, property) unique pairs. The write path uses it
@@ -373,9 +380,12 @@ func (s *Store) Close() error {
 	s.closed = true
 	l := s.listener
 	s.listener = nil
+	mr := s.mentionReindex
+	s.mentionReindex = nil
 	s.changeFeedMu.Unlock()
 
-	l.stop() // nil-safe; blocks until the listener goroutine exits
+	mr.stop() // nil-safe; blocks until the reindex goroutine exits
+	l.stop()  // nil-safe; blocks until the listener goroutine exits
 
 	s.changeFeedMu.Lock()
 	defer s.changeFeedMu.Unlock()

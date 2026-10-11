@@ -144,6 +144,11 @@ var editable = map[File][]string{
 		"automations.[].do.[].create_entity.properties.*",
 		"automations.[].do.[].create_entity.relation",
 		"automations.[].do.[].create_entity.type",
+		// add_to_pile only pushes the triggering entity's ref onto a pile; the
+		// pile service caps foreign pushes and the owner's reads stay gated.
+		"automations.[].do.[].add_to_pile.create",
+		"automations.[].do.[].add_to_pile.owner",
+		"automations.[].do.[].add_to_pile.pile",
 		"automations.[].validate.[].check",
 		"automations.[].validate.[].message",
 		"automations.[].validate.[].severity",
@@ -294,6 +299,8 @@ var locked = map[File][]string{
 		// Access control and actions.
 		"nav.permission", "nav.action", "spaces.[].permission", "dashboard.cards.[].permission",
 		"lists.*.actions.**", "lists.*.export_render",
+		// The pile menu's actions and export transforms, like a list's.
+		"piles.actions.[]", "piles.export.[]",
 		// Not in the Configure space yet.
 		"views.*.export_render",
 		"git.**", "palette.**",

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/canonical"
@@ -303,6 +304,13 @@ func convertFromMetamodel(def metamodel.AutomationDef) (Automation, error) {
 				IfExists:   a.CreateEntity.IfExists,
 			}
 		}
+		if a.AddToPile != nil {
+			action.AddToPile = &AddToPileAction{
+				Pile:   a.AddToPile.Pile,
+				Owner:  a.AddToPile.Owner,
+				Create: a.AddToPile.CreatePile(),
+			}
+		}
 		auto.Do[i] = action
 	}
 
@@ -329,6 +337,7 @@ func (e *Engine) Process(ctx context.Context, event Event) *Result {
 		RelationsToCreate: make([]RelationToCreate, 0),
 		EntitiesToCreate:  make([]EntityToCreate, 0),
 		LuaToExecute:      make([]LuaToExecute, 0),
+		PilesToPush:       make([]PileToPush, 0),
 		Warnings:          make([]string, 0),
 		Errors:            make([]string, 0),
 	}
@@ -543,6 +552,10 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 		}
 	}
 
+	if action.AddToPile != nil && event.Entity != nil {
+		e.planPilePush(*action.AddToPile, event, result, automationName)
+	}
+
 	if action.CreateEntity != nil {
 		entityType := action.CreateEntity.Type
 		if entityType == "" {
@@ -604,6 +617,32 @@ func (e *Engine) executeAction(action Action, event Event, result *Result, autom
 			Background:     action.Background,
 		})
 	}
+}
+
+// planPilePush appends an add_to_pile action to result.PilesToPush with its
+// pile and owner interpolated.
+//
+// An owner template that interpolates to nothing ({{new.assignee}} on an
+// unassigned entity) skips the push. An empty owner means the acting user,
+// so pushing anyway would put the entity on the pile of whoever edited it,
+// not on nobody's. A pile name that interpolates to nothing is a warning.
+func (e *Engine) planPilePush(action AddToPileAction, event Event, result *Result, automationName string) {
+	owner := strings.TrimSpace(e.interpolate(action.Owner, event))
+	if action.Owner != "" && owner == "" {
+		return
+	}
+	pile := strings.TrimSpace(e.interpolate(action.Pile, event))
+	if pile == "" {
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("automation %q: add_to_pile: the pile name is empty", automationName))
+		return
+	}
+	result.PilesToPush = append(result.PilesToPush, PileToPush{
+		Pile:           pile,
+		Owner:          owner,
+		Create:         action.Create,
+		AutomationName: automationName,
+	})
 }
 
 // evaluateValidation checks a validation and adds warnings/errors to the result.

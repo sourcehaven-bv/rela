@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/filter"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 
 	"gopkg.in/yaml.v3"
 )
@@ -302,6 +303,11 @@ func validateTask(i int, t TaskConfig, seen map[string]struct{}) error {
 	if !t.Every.set {
 		return fmt.Errorf("task %q: every is required", t.Name)
 	}
+	if t.RunAs != "" {
+		if err := principal.ValidateRunAs(t.RunAs, anySystemIdentity); err != nil {
+			return fmt.Errorf("task %q: %w", t.Name, err)
+		}
+	}
 	if t.ForEach != nil {
 		if t.RunAs != "" {
 			return fmt.Errorf("task %q: run_as and for_each are mutually exclusive", t.Name)
@@ -324,6 +330,12 @@ func validateTask(i int, t TaskConfig, seen map[string]struct{}) error {
 	}
 	return nil
 }
+
+// anySystemIdentity lets a scheduled task run as any `system:` name. A task's
+// identity has always been operator-authored and may name its own `system:`
+// identity (system:digest), so the shared validator only adds the
+// `integration:` grammar and the space and control character checks here.
+func anySystemIdentity(string) bool { return true }
 
 // ValidateMetamodel checks the schema-dependent part of for_each config.
 func (c *Config) ValidateMetamodel(meta *metamodel.Metamodel) error {

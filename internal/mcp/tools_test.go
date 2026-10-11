@@ -333,6 +333,36 @@ func TestHandleShowEntity(t *testing.T) {
 	}
 }
 
+// TestHandleShowEntity_MentionedBy pins the backlinks block: an entity whose
+// body names REQ-001 as an `id` code span is listed under mentioned_by.
+func TestHandleShowEntity_MentionedBy(t *testing.T) {
+	t.Parallel()
+	s, st := makeTestServerWithStore(t)
+	ctx := context.Background()
+	src, err := st.GetEntity(ctx, entity.Ref{ID: "DEC-001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Content = "Settles `REQ-001`."
+	if err = st.UpdateEntity(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := s.handleShowEntity(ctx, makeToolRequest(map[string]any{"id": "REQ-001"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got entityJSON
+	if err := json.Unmarshal([]byte(getResultText(t, result)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.MentionedBy) != 1 || got.MentionedBy[0].ID != "DEC-001" || got.MentionedBy[0].Type != "decision" ||
+		got.MentionedByTruncated {
+
+		t.Errorf("mentioned_by = %+v (truncated %v), want DEC-001", got.MentionedBy, got.MentionedByTruncated)
+	}
+}
+
 func TestHandleShowEntity_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)
@@ -1104,8 +1134,8 @@ func TestHandleSchema_Overview(t *testing.T) {
 		t.Errorf("expected 1 relation type, got %d", len(parsed.RelationTypes))
 	}
 	for _, et := range parsed.EntityTypes {
-		if et.Name == "requirement" && et.Count != 3 {
-			t.Errorf("requirement count = %d, want 3", et.Count)
+		if et.Name == "requirement" && (et.Count == nil || *et.Count != 3) {
+			t.Errorf("requirement count = %v, want 3", et.Count)
 		}
 	}
 }
@@ -1151,7 +1181,7 @@ func TestHandleSchema_RelationType(t *testing.T) {
 	if err := json.Unmarshal([]byte(getResultText(t, result)), &parsed); err != nil {
 		t.Fatalf("failed to parse JSON: %v", err)
 	}
-	if parsed.Name != "addresses" || parsed.Count != 1 {
+	if parsed.Name != "addresses" || parsed.Count == nil || *parsed.Count != 1 {
 		t.Errorf("unexpected relation detail: %+v", parsed)
 	}
 }

@@ -856,3 +856,21 @@ func TestLuaHTTP_FullAPIFlow(t *testing.T) {
 		t.Fatalf("RunString: %v", err)
 	}
 }
+
+// A URL that does not parse is refused without quoting it: it may carry a
+// token in its query or a password in its userinfo.
+func TestValidateURL_ParseErrorDoesNotEchoURL(t *testing.T) {
+	for _, raw := range []string{
+		"https://user:s3cret-pass@host:port/x?token=s3cret-token",
+		"https://exa mple.com/?token=s3cret-token",
+		"https://host/%zz?access_token=s3cret-token",
+	} {
+		_, err := validateURL(raw)
+		if err == nil {
+			t.Fatalf("validateURL(%q) accepted", raw)
+		}
+		if strings.Contains(err.Error(), "s3cret") {
+			t.Errorf("error quotes the URL: %v", err)
+		}
+	}
+}

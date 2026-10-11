@@ -3,6 +3,8 @@ package datamigration
 import (
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 func TestParseFile_ValidRoundTrip(t *testing.T) {
@@ -17,10 +19,10 @@ func TestParseFile_ValidRoundTrip(t *testing.T) {
 	if len(f.Steps) != 3 {
 		t.Fatalf("parsed %d steps, want 3", len(f.Steps))
 	}
-	if f.FromProjection.Hash() != metaV1().ShapeProjection().Hash() {
+	if f.FromProjection.Hash() != metamodel.NewShapeProjection(metaV1()).Hash() {
 		t.Error("from_projection did not survive the round trip")
 	}
-	if f.ToProjection.Hash() != metaV2().ShapeProjection().Hash() {
+	if f.ToProjection.Hash() != metamodel.NewShapeProjection(metaV2()).Hash() {
 		t.Error("to_projection did not survive the round trip")
 	}
 }

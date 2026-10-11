@@ -11,15 +11,12 @@ import (
 
 // Metamodel represents the full metamodel configuration
 //
-// TODO(TKT-N0IKN9): 30 exported methods, over the 20 exported-method line.
-// This is the schema accessor — wide read-API by nature — but a ratchet
-// candidate: group the type/relation/property lookups behind focused accessors
-// (the attachment-scan accessors moved behind [AttachmentPolicy] this way).
+// TODO(TKT-N0IKN9): 21 exported methods, over the 20 exported-method line.
+// Validation lives on [Validator] and the projections are built by
+// [NewRenderProjection] and [NewShapeProjection]. The relation and
+// property-type lookups are next (TKT-H72Z2N part 2).
 //
-// 32nd exported method is ShapeProjection (TKT-0C57FS), the data-shape
-// sibling of RenderProjection.
-//
-//plimsoll:max-exported-methods=32
+//plimsoll:max-exported-methods=21
 type Metamodel struct {
 	Version   string `yaml:"version"`
 	Namespace string `yaml:"namespace"`
@@ -1491,6 +1488,7 @@ type AutomationAction struct {
 	Value          string                `yaml:"value,omitempty"`
 	CreateRelation *CreateRelationAction `yaml:"create_relation,omitempty"`
 	CreateEntity   *CreateEntityAction   `yaml:"create_entity,omitempty"`
+	AddToPile      *AddToPileAction      `yaml:"add_to_pile,omitempty"`
 	Lua            string                `yaml:"lua,omitempty"`      // Inline Lua code to execute
 	LuaFile        string                `yaml:"lua_file,omitempty"` // Path to Lua script in scripts/ directory
 
@@ -1542,6 +1540,22 @@ type CreateEntityAction struct {
 	Relation   string            `yaml:"relation,omitempty"`   // Optional: relation FROM trigger TO created entity
 	IfExists   string            `yaml:"if_exists,omitempty"`  // Behavior when relation already exists: skip (default), error, replace
 }
+
+// AddToPileAction puts the triggering entity on a user's pile (TKT-K3RJLH).
+// Pile and Owner support interpolation (e.g. "{{new.assignee}}").
+type AddToPileAction struct {
+	// Pile is the pile name. Required.
+	Pile string `yaml:"pile"`
+	// Owner is the user whose pile receives the entity: the acting user or
+	// an existing person entity. Empty means the acting user.
+	Owner string `yaml:"owner,omitempty"`
+	// Create makes the pile when it does not exist. Nil means true; read it
+	// through [AddToPileAction.CreatePile].
+	Create *bool `yaml:"create,omitempty"`
+}
+
+// CreatePile reports whether a missing pile is created. It defaults to true.
+func (a *AddToPileAction) CreatePile() bool { return a.Create == nil || *a.Create }
 
 // AutomationCheck specifies a validation condition.
 type AutomationCheck struct {

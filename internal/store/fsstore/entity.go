@@ -952,6 +952,11 @@ func (s *FSStore) renameEntity(_ context.Context, oldID, newID string) (*store.R
 }
 
 // writeEntity writes an entity to disk using temp-file + rename.
+// Caller must hold s.mu.
 func (s *FSStore) writeEntity(e *entity.Entity) error {
-	return s.codec.writeEntityFile(e)
+	if err := s.codec.writeEntityFile(e); err != nil {
+		return err
+	}
+	noteMentions(s, e)
+	return nil
 }

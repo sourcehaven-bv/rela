@@ -21,12 +21,12 @@ import (
 // a script runtime can reach — the always-present write-prep handle is gone.
 func cascadeScriptRunner(
 	engine *script.Engine, readDeps lua.ReadDeps, st store.Store, sink audit.Audit,
-	w worlds.Compiled,
+	w worlds.Compiled, pileWriter lua.PileWriter,
 ) *script.LuaScriptRunner {
 	return script.NewLuaScriptRunnerWithElevatedReads(engine, readDeps, script.ReadElevation{
 		Reader:   unrestrictedReader(st, w),
 		Recorder: NewElevationAuditor(sink),
-	})
+	}).WithPiles(pileWriter)
 }
 
 // NewElevationAuditor returns the elevated-read audit recorder over sink, or

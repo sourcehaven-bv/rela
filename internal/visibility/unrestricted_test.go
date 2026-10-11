@@ -127,17 +127,25 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// copy that serves it. None of the three writes. VersionByTag
 	// (TKT-VO6VG9) reads one of those versions by tag name, and
 	// WithVersionTags returns a copy that serves it; tagging itself is a
-	// write and lives on entitymanager.VersionTags, not here.
+	// write and lives on entitymanager.VersionTags, not here. CountEntities
+	// and CountRelations (TKT-QZTROQ) are the lengths of ListEntities and
+	// ListRelations, so they reveal no more than those lists do.
+	// ResolveHeadersErr (TKT-K3RJLH) is ResolveHeaders with a failed read
+	// returned instead of answered as misses.
 	// FindByExternalRef (TKT-SM20FG) is ListEntityHeaders filtered by one
 	// property, then GetAddress; SyncReady reports whether history is
 	// served. Neither writes.
+	// MentionedBy (TKT-Q6AKUN) reads headers of entities ListEntityHeaders
+	// already returns, filtered by their bodies.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
-		"ResolveHeaders": true, "ListRelationsStrict": true, "WriteTarget": true,
+		"ResolveHeaders": true, "ResolveHeadersErr": true, "ListRelationsStrict": true, "WriteTarget": true,
 		"EntityVersions": true, "EntityVersion": true, "WithHistory": true,
+		"CountEntities": true, "CountRelations": true,
 		"VersionByTag": true, "WithVersionTags": true,
 		"FindByExternalRef": true, "SyncReady": true,
+		"MentionedBy": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))

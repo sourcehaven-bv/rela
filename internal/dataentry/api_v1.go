@@ -161,6 +161,8 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
 	mux.HandleFunc("/api/v1/_comments/", a.comments.handleV1Comments)
+	mux.HandleFunc("/api/v1/_piles", a.piles.handleV1Piles)
+	mux.HandleFunc("/api/v1/_piles/", a.piles.handleV1Piles)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
 	a.registerCopyRoutes(mux)
@@ -221,7 +223,8 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 			a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
 		}
 	case 3:
-		// /{plural}/{id}/relations, /{plural}/{id}/_export or /{plural}/{id}/restore
+		// /{plural}/{id}/relations, /{plural}/{id}/_export, /{plural}/{id}/restore
+		// or /{plural}/{id}/mentioned-by
 		switch parts[2] {
 		case "relations":
 			a.handleV1EntityRelations(w, r, typeName, parts[1])
@@ -229,6 +232,8 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 			a.export.handleV1ExportEntity(w, r, typeName, parts[1])
 		case "restore":
 			a.write.handleV1RestoreEntity(w, r, typeName, parts[1])
+		case "mentioned-by":
+			handleV1MentionedBy(a, w, r, typeName, parts[1])
 		default:
 			writeV1Error(w, r, http.StatusNotFound, "not_found", "Resource not found", "")
 		}
@@ -1029,7 +1034,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// the caller's own grants, neither of which this validator ever covered.
 	// The response is `no-store` anyway, so a stale shared copy is not
 	// reachable.
-	result.Mentions = collectMentions(ctx, a.store, a.viewReader, a.Meta(), entity.Content)
+	result.Mentions = collectMentions(ctx, a.viewReader, a.Meta(), entity.Content)
 
 	// ETag for caching (visible-only path; deny-path above emits no ETag).
 	//
@@ -1826,6 +1831,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 
 	config := v1.Config{
 		NextActionBands: s.Cfg.NextActionBands,
+		Piles:           pilesWire(s.Cfg.Piles),
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,

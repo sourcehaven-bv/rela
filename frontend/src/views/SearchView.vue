@@ -18,6 +18,8 @@ import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 import RlKbd from 'rela-components/components/data/RlKbd.vue'
+import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
+import { entityRef } from '@/utils/entityRef'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,6 +40,12 @@ const filterMenuRef = ref<InstanceType<typeof AdHocFilterMenu> | null>(null)
 
 const query = ref('')
 const results = ref<Entity[]>([])
+
+// "Add results to pile" adds every result on screen, each by its ADDRESS so
+// the pile holds the face the search served (TKT-K3RJLH).
+function resultAddresses(): string[] {
+  return results.value.map((e) => entityRef(e))
+}
 const loading = ref(false)
 const searched = ref(false)
 const loadError = ref(false)
@@ -543,7 +551,10 @@ watch(
     />
 
     <section v-else-if="results.length > 0" class="search-results" aria-labelledby="search-results-heading">
-      <p id="search-results-heading" class="results-count">{{ results.length }} result{{ results.length !== 1 ? 's' : '' }} found</p>
+      <div class="results-head">
+        <p id="search-results-heading" class="results-count">{{ results.length }} result{{ results.length !== 1 ? 's' : '' }} found</p>
+        <AddToPileMenu :addresses="resultAddresses" label="Add results to pile" new-label="New pile from results…" />
+      </div>
 
       <ul class="results-list">
         <li v-for="(entity, index) in results" :key="entity.id" class="result-row">
@@ -753,8 +764,16 @@ watch(
   border-radius: 8px;
 }
 
-.results-count {
+.results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 16px;
+}
+
+.results-count {
+  margin: 0;
   color: var(--rl-color-text-muted);
   font-size: 14px;
 }

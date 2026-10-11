@@ -75,6 +75,9 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/tickets/TKT-1/_export", true,
 			"entity export resolves through the world like the entity GET (BUG-PLZDPR)"},
 		{"/api/v1/tickets/_export", false, "the LIST export is not world-scoped"},
+		{"/api/v1/tickets/TKT-1/mentioned-by", true,
+			"backlinks are read through the world like the entity GET (TKT-Q6AKUN)"},
+		{"/api/v1/tickets/_x/mentioned-by", false, "an underscore id segment is a route, not an entity"},
 		{"/api/v1/tickets/_x/_export", false, "an underscore id segment is a route, not an entity"},
 		{"/api/v1/_search", true,
 			"cross-type search takes the world on every executeQuery branch (BUG-SMPOZB)"},
@@ -92,6 +95,14 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/_documents/report", false, "document render and its cache key are world-blind"},
 		{"/api/v1/_position", true, "position recomputes a search or list page's set in its world (BUG-SMPOZB)"},
 		{"/api/v1/_analyze", false, "whole-graph, tracer-backed"},
+		{"/api/v1/_piles", true, "pile counts resolve items in the request's world (TKT-K3RJLH)"},
+		{"/api/v1/_piles/PIL-ABCD", true, "one pile's items resolve in the request's world"},
+		{"/api/v1/_piles/PIL-ABCD/_export", true, "the export is the same rows as the pile GET"},
+		{"/api/v1/_piles/PIL-ABCD/items", false, "an add is a write; only the read shapes are named"},
+		{"/api/v1/_piles/PIL-ABCD/items/_remove", false, "a removal is a write"},
+		{"/api/v1/_piles/", true, "a trailing slash is the list, which the handler serves as such"},
+		{"/api/v1/_piles/PIL-ABCD/_other", false, "the match is exact, not a prefix"},
+		{"/api/v1/_pilesx", false, "a longer name is not the piles route"},
 		// BUG-2: history WAS refused as "an orthogonal version axis". It is not
 		// orthogonal — `entity_versions` is keyed by content state (TKT-C1XUA8),
 		// so a draft and its published face have different histories, and
@@ -445,6 +456,13 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 		// `_position` (BUG-SMPOZB). Reads through resolveScope and the list
 		// pushdown, both world-scoped.
 		"handleV1EntityPosition": true,
+		// `_piles` (TKT-K3RJLH). Reads items through the pile resolver in
+		// the request's world, never through the entity reader.
+		"handleV1Piles": true,
+		// `{plural}/{id}/mentioned-by` (TKT-Q6AKUN). Reads the target through
+		// readAddressedOr404 and the sources through the view reader's
+		// resolver, both in the world on ctx.
+		"handleV1MentionedBy": true,
 	}
 
 	entries, err := os.ReadDir(".")

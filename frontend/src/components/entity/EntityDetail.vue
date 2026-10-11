@@ -49,6 +49,7 @@ import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommentsPanel from '@/components/entity/CommentsPanel.vue'
+import MentionedByPanel from '@/components/entity/MentionedByPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
 import TextCommentPopover from '@/components/entity/TextCommentPopover.vue'
@@ -58,6 +59,9 @@ import { shouldFlipPopover } from '@/utils/popoverFlip'
 import { applyHighlights, type HighlightRange } from '@/utils/commentHighlight'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
+import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
+import NewPileDialog from '@/components/piles/NewPileDialog.vue'
+import { useEntityPileActions } from '@/components/piles/useEntityPileActions'
 import SectionCreateButton from '@/components/entity/SectionCreateButton.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { buildCreateLinkQuery } from '@/utils/createLink'
@@ -200,8 +204,21 @@ const bareEntityId = computed(() => refBareId(props.entityId))
 // a list; backTarget answers "where do I go back to". Both can be active
 // at once.
 // Scope navigation is per ENTITY (`_position` walks a list by bare id).
+// A pile scope is the exception: a pile holds a face, so it walks by the
+// served address (TKT-K3RJLH).
 const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(
-  () => bareEntityId.value
+  () => bareEntityId.value,
+  () => servedRef.value
+)
+// Add to pile / Remove from pile. After a removal from the pile being stepped
+// through, move on to a neighbour, as the next item is what the user wants.
+const pileActions = useEntityPileActions(
+  () => servedRef.value,
+  () => {
+    const target = scopeTarget('next') ?? scopeTarget('prev')
+    if (target) void router.push(target)
+    else void loadScopeNav()
+  }
 )
 const backTarget = useBackTarget()
 
@@ -217,6 +234,10 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
   return loading.value ? 'pending' : 'loaded'
 })
 const viewData = ref<ViewResponse | null>(null)
+// The world viewData was fetched in. Reference links in the rendered content
+// carry it rather than the live `worldParam`, so a link opens its target in
+// the world its title was resolved in, also while a world switch refetches.
+const viewWorld = ref<string | undefined>(undefined)
 // Reordering the rows of a section table shown in relation order.
 // A move changes one section's row order and nothing else on the page, so
 // the reload after it fetches the view alone, without the route-load bar or
@@ -224,8 +245,12 @@ const viewData = ref<ViewResponse | null>(null)
 const sectionReorder = useSectionReorder({
   view: viewData,
   reload: async () => {
-    const view = await fetchView(props.entityType, props.entityId, worldParam.value)
-    if (view) viewData.value = view
+    const world = worldParam.value
+    const view = await fetchView(props.entityType, props.entityId, world)
+    if (view) {
+      viewData.value = view
+      viewWorld.value = world
+    }
   },
 })
 const loadedCommands = ref<Command[]>([])
@@ -489,6 +514,7 @@ const renderedEntryContent = computed(() => {
   return renderMarkdown(source, {
     refResolver: refResolver.value,
     interactive: true,
+    world: viewWorld.value,
   })
 })
 
@@ -971,7 +997,8 @@ async function loadView() {
     // neighbour (TKT-WRLDAPI item 4b). Without it this page rendered draft
     // content while the selector said "published" — the API was correct and
     // the page simply never asked.
-    const view = await fetchView(props.entityType, props.entityId, worldParam.value)
+    const fetchedWorld = worldParam.value
+    const view = await fetchView(props.entityType, props.entityId, fetchedWorld)
     // An owned entity is shown as part of its owner. Redirect before
     // rendering anything, so the page does not flash this entity's own view.
     const owner = view?.entry?._owner
@@ -987,6 +1014,7 @@ async function loadView() {
       return
     }
     viewData.value = view
+    viewWorld.value = fetchedWorld
     if (viewData.value?.entry) {
       // Seed the autosave baseline so the first toggle's no-op
       // suppression can compare against server state without waiting
@@ -1419,6 +1447,7 @@ const actions = computed<EntityAction[]>(() => {
       href: entityExportUrl(props.entityType, exportAddress, t.name, worldParam.value),
     })
   }
+  out.push(...pileActions.actions.value)
   if (canDuplicate.value) {
     out.push({ id: 'duplicate', label: 'Duplicate', group: 'manage', icon: 'copy', run: () => (showDuplicateModal.value = true) })
   }
@@ -2080,6 +2109,16 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             Next <RlKbd keys="N" />
           </RlButton>
           <RlButton v-else variant="secondary" size="sm" disabled>Next</RlButton>
+          <RlButton
+            v-if="pileActions.scopePileId.value"
+            variant="secondary"
+            size="sm"
+            icon="remove"
+            data-testid="remove-from-pile"
+            @click="pileActions.removeFromScopePile()"
+          >
+            Remove from pile
+          </RlButton>
         </template>
       </div>
 
@@ -2213,6 +2252,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             and the page's world, in which the export resolves the entry's links.
           -->
           <ExportMenu :url-for="exportUrlFor(entityRef(entry))" />
+          <AddToPileMenu :addresses="() => (entry ? [entityRef(entry)] : [])" size="md" new-label="Add to new pile…" />
           <!--
             Duplicate. Gated on `inline_create` rather than `_actions` (there is
             no `create` key on an entity response); the action list gates on the
@@ -2265,6 +2305,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         :world="worldParam || undefined"
         @close="showDuplicateModal = false"
         @created="handleDuplicated"
+      />
+      <NewPileDialog
+        v-if="pileActions.newPileOpen.value"
+        :items="[entityRef(entry)]"
+        @close="pileActions.newPileOpen.value = false"
       />
 
       <!-- Inaccessible (git-crypt encrypted) banner. Sits above the
@@ -2488,7 +2533,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           >
             <div
               class="markdown-content md-body"
-              v-html="renderMarkdown(section.content || '', refResolver)"
+              v-html="renderMarkdown(section.content || '', { refResolver, world: viewWorld })"
             />
           </div>
 
@@ -2529,7 +2574,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
               <div
                 v-if="ent.hasContent"
                 class="markdown-content md-body"
-                v-html="renderMarkdown(ent.content || '', refResolver)"
+                v-html="renderMarkdown(ent.content || '', { refResolver, world: viewWorld })"
               />
             </article>
           </div>
@@ -2685,12 +2730,19 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
           <div v-else-if="section.display === 'table'" class="table-wrapper">
             <template v-if="section.isGrouped && section.groups?.length">
-              <div v-for="group in section.groups" :key="group.groupName" class="table-group">
+              <div
+                v-for="group in section.groups"
+                :key="group.entityType || group.groupName"
+                class="table-group"
+              >
                 <h3 class="group-heading">{{ group.groupName }}</h3>
                 <table class="data-table">
                   <thead>
                     <tr>
-                      <th v-for="col in section.columns" :key="col.property || col.relation">
+                      <th
+                        v-for="col in group.columns ?? section.columns"
+                        :key="col.property || col.relation"
+                      >
                         {{ col.label || col.property || col.relation }}
                       </th>
                       <th class="actions-col" />
@@ -2715,14 +2767,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         >
                           <ViewTableCell
                             :values="cell.values"
-                            :property="section.columns?.[idx]?.property"
+                            :property="(group.columns ?? section.columns)?.[idx]?.property"
                             :entity-type="row.entityType"
                           />
                         </a>
                         <template v-else>
                           <ViewTableCell
                             :values="cell.values"
-                            :property="section.columns?.[idx]?.property"
+                            :property="(group.columns ?? section.columns)?.[idx]?.property"
                             :entity-type="row.entityType"
                           />
                         </template>
@@ -2909,6 +2961,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
               </details>
             </div>
           </div>
+
+          <!-- A backlinks collection the server could not fill completely
+               (TKT-HF0D5W). Without the note the list reads as complete. -->
+          <p v-if="section.incomplete" class="section-incomplete">
+            Only part of the matching entities are listed here.
+          </p>
         </section>
 
         <!-- External documents (renders only when configured for this type).
@@ -2916,6 +2974,16 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
         <DocumentsPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
+
+        <!-- Backlinks: entities whose body mentions this one. Self-gating:
+             renders nothing while nothing the reader can see mentions it.
+             Left out when the view shows backlinks itself or the operator
+             turned it off; the server decides (hideMentionedByPanel). -->
+        <MentionedByPanel
+          v-if="!viewData.hideMentionedByPanel"
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+        />
 
         <!-- Comment thread. Self-gating: renders nothing unless the schema
              marks this type commentable, so a project with no `comments:`
@@ -3454,7 +3522,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 }
 
 /* display: nested — parent rows that expand to their children. */
-.nested-truncated {
+.nested-truncated,
+.section-incomplete {
   margin: 0 0 8px;
   font-size: var(--font-size-sm);
   color: var(--rl-color-text);

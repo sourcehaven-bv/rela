@@ -31,6 +31,11 @@ import (
 // behavior can't drift between the read and view paths. This surface is
 // read-only — no entitymanager.
 type viewsHandler struct {
+	// pilesAvailable reports that piles are wired and the principal has an
+	// owner identity. Nil: accepted, answers false (a test handler without
+	// piles).
+	pilesAvailable func(ctx context.Context) bool
+
 	schema      func() *Schema
 	store       store.Store
 	reader      entityReader
@@ -263,6 +268,8 @@ func (h *viewsHandler) handleV1Sidebar(w http.ResponseWriter, r *http.Request) {
 	resp.Pages = sidebarPages(ctx, aclImpl, s.Cfg, s.Meta)
 	resp.LogoURL = h.logo.URL()
 	resp.InlineCreate = h.inlineCreateForms(ctx)
+	resp.PilesAvailable = h.pilesAvailable != nil && h.pilesAvailable(ctx)
+	resp.Piles = pilesWire(s.Cfg.Piles)
 
 	writeV1JSON(w, http.StatusOK, resp)
 }
@@ -849,8 +856,6 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 // is registered for entityType, a default is synthesized from the
 // metamodel (see buildDefaultViewConfig) and executed through the same
 // pipeline so the response shape is identical.
-//
-//nolint:gocognit,funlen // routes the views sub-API over method and path shape; each branch is a distinct view endpoint, not shared logic to factor out.
 func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
@@ -987,96 +992,12 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	resp.Entry.Versions.Relations = ""
 
 	for _, sec := range sections {
-		v1Sec := v1.ViewSection{
-			Heading:      sec.Heading,
-			SectionID:    sec.SectionID,
-			Display:      sec.Display,
-			IsEmpty:      sec.IsEmpty,
-			EmptyMessage: sec.EmptyMessage,
-			IsGrouped:    sec.IsGrouped,
-			Content:      sec.Content,
-			HasContent:   sec.HasContent,
-			// Already wire-shaped; nil for a section not in relation order.
-			RelationOrder: sec.RelationOrder,
-		}
-
-		// The opt-in create affordance. Nil for every section that did not
-		// declare `create:`, which keeps the response byte-identical there.
-		v1Sec.Create = sectionCreateToV1(sec.CreateInfo)
-
-		// Convert fields
-		for _, f := range sec.Fields {
-			v1Sec.Fields = append(v1Sec.Fields, v1.SectionField(f))
-		}
-
-		// Convert entities
-		for _, e := range sec.Entities {
-			v1e := sectionEntityToV1(e)
-			if sec.Display == dataentryconfig.DisplayRelated {
-				v1e.Owner = owner[e.ID]
-			}
-			v1Sec.Entities = append(v1Sec.Entities, v1e)
-		}
-
-		// Convert columns
-		for _, col := range sec.Columns {
-			v1Sec.Columns = append(v1Sec.Columns, v1.ViewColumn{
-				Property: col.Property,
-				Label:    col.Label,
-				Relation: col.Relation,
-				Link:     col.Link,
-			})
-		}
-
-		// Convert rows
-		for _, row := range sec.Rows {
-			v1Row := v1.ViewRow{
-				EntityID:   row.EntityID,
-				EntityType: row.EntityType,
-				EditFormID: row.EditFormID,
-				Content:    row.Content,
-				Self:       row.Self,
-			}
-			for _, cell := range row.Cells {
-				v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))
-			}
-			v1Sec.Rows = append(v1Sec.Rows, v1Row)
-		}
-
-		// Convert groups
-		for _, grp := range sec.Groups {
-			v1Grp := v1.ViewGroup{
-				GroupName: grp.GroupName,
-			}
-			for _, row := range grp.Rows {
-				v1Row := v1.ViewRow{
-					EntityID:   row.EntityID,
-					EntityType: row.EntityType,
-					EditFormID: row.EditFormID,
-					Content:    row.Content,
-				}
-				for _, cell := range row.Cells {
-					v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))
-				}
-				v1Grp.Rows = append(v1Grp.Rows, v1Row)
-			}
-			for _, e := range grp.Entities {
-				v1Grp.Entities = append(v1Grp.Entities, sectionEntityToV1(e))
-			}
-			v1Sec.Groups = append(v1Sec.Groups, v1Grp)
-		}
-
-		// Convert the nested tree
-		v1Sec.Truncated = sec.Truncated
-		for _, node := range sec.Tree {
-			v1Sec.Tree = append(v1Sec.Tree, sectionTreeNodeToV1(node))
-		}
-
-		resp.Sections = append(resp.Sections, v1Sec)
+		resp.Sections = append(resp.Sections, viewSectionToV1(sec, owner))
 	}
 
 	resp.Mentions = collectMentions(
-		r.Context(), h.store, h.viewReader, s.Meta, viewContentBlobs(result.Entry, sections)...)
+		r.Context(), h.viewReader, s.Meta, viewContentBlobs(result.Entry, sections)...)
+	resp.HideMentionedByPanel = hideMentionedByPanel(s.Cfg, viewCfg)
 
 	writeV1JSON(w, http.StatusOK, resp)
 }
@@ -1096,6 +1017,121 @@ func ownerRows(entry *entityPkg.Entity, sections []SectionData) []*entityPkg.Ent
 		}
 	}
 	return rows
+}
+
+// viewSectionToV1 converts one built section to its wire form. owner holds
+// the resolved owners of the rows of `related` sections (see [ownerRows]).
+func viewSectionToV1(sec SectionData, owner map[string]*v1.EntityOwner) v1.ViewSection {
+	v1Sec := v1.ViewSection{
+		Heading:      sec.Heading,
+		SectionID:    sec.SectionID,
+		Display:      sec.Display,
+		IsEmpty:      sec.IsEmpty,
+		EmptyMessage: sec.EmptyMessage,
+		IsGrouped:    sec.IsGrouped,
+		Content:      sec.Content,
+		HasContent:   sec.HasContent,
+		// Already wire-shaped; nil for a section not in relation order.
+		RelationOrder: sec.RelationOrder,
+	}
+
+	// The opt-in create affordance. Nil for every section that did not
+	// declare `create:`, which keeps the response byte-identical there.
+	v1Sec.Create = sectionCreateToV1(sec.CreateInfo)
+
+	// Convert fields
+	for _, f := range sec.Fields {
+		v1Sec.Fields = append(v1Sec.Fields, v1.SectionField(f))
+	}
+
+	// Convert entities
+	for _, e := range sec.Entities {
+		v1e := sectionEntityToV1(e)
+		if sec.Display == dataentryconfig.DisplayRelated {
+			v1e.Owner = owner[e.ID]
+		}
+		v1Sec.Entities = append(v1Sec.Entities, v1e)
+	}
+
+	v1Sec.Columns = viewColumnsToV1(sec.Columns)
+	for _, row := range sec.Rows {
+		v1Sec.Rows = append(v1Sec.Rows, viewRowToV1(row))
+	}
+
+	// Convert groups
+	for _, grp := range sec.Groups {
+		v1Grp := v1.ViewGroup{
+			GroupName:  grp.GroupName,
+			EntityType: grp.EntityType,
+			Columns:    viewColumnsToV1(grp.Columns),
+		}
+		for _, row := range grp.Rows {
+			v1Grp.Rows = append(v1Grp.Rows, viewRowToV1(row))
+		}
+		for _, e := range grp.Entities {
+			v1Grp.Entities = append(v1Grp.Entities, sectionEntityToV1(e))
+		}
+		v1Sec.Groups = append(v1Sec.Groups, v1Grp)
+	}
+
+	// Convert the nested tree
+	v1Sec.Truncated = sec.Truncated
+	v1Sec.Incomplete = sec.Incomplete
+	for _, node := range sec.Tree {
+		v1Sec.Tree = append(v1Sec.Tree, sectionTreeNodeToV1(node))
+	}
+
+	return v1Sec
+}
+
+// viewColumnsToV1 converts section columns to their wire form. Nil in,
+// nil out, so a section without columns omits the key.
+func viewColumnsToV1(cols []ListColumn) []v1.ViewColumn {
+	if cols == nil {
+		return nil
+	}
+	out := make([]v1.ViewColumn, 0, len(cols))
+	for _, col := range cols {
+		out = append(out, v1.ViewColumn{
+			Property: col.Property,
+			Label:    col.Label,
+			Relation: col.Relation,
+			Link:     col.Link,
+		})
+	}
+	return out
+}
+
+// viewRowToV1 converts one table row. Flat and grouped rows share it, so a
+// grouped row carries `_self` too (a faced row needs it for edit links).
+func viewRowToV1(row SectionRowData) v1.ViewRow {
+	v1Row := v1.ViewRow{
+		EntityID:   row.EntityID,
+		EntityType: row.EntityType,
+		EditFormID: row.EditFormID,
+		Content:    row.Content,
+		Self:       row.Self,
+	}
+	for _, cell := range row.Cells {
+		v1Row.Cells = append(v1Row.Cells, v1.ViewCell(cell))
+	}
+	return v1Row
+}
+
+// hideMentionedByPanel reports whether the entity page leaves out the
+// built-in "Mentioned by" panel for an entry of view's type (TKT-HF0D5W).
+func hideMentionedByPanel(cfg *Config, view ViewConfig) bool {
+	if cfg != nil {
+		if ev, ok := cfg.EntityViews[view.Entry.Type]; ok && ev.MentionedByPanel != nil && !*ev.MentionedByPanel {
+			return true
+		}
+	}
+	for _, t := range view.Traverse {
+		if t.MentionedBy {
+			return true
+		}
+	}
+	return false
 }
 
 // viewContentBlobs gathers every markdown body that will be rendered by

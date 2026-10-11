@@ -78,7 +78,10 @@ var (
 // restore and history-purge, which are top-level too; nesting one history
 // verb under a sub-struct would split that family across two shapes.
 //
-//plimsoll:max-fields=50
+// Raised 50 → 51 for `token` (TKT-01KZSO): a verb family of its own, like
+// secrets, with no existing group to nest under.
+//
+//plimsoll:max-fields=51
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -141,6 +144,7 @@ type CLI struct {
 	RelationHistory RelationHistoryCmd `cmd:"" name:"relation-history" help:"Show a relation's version history (postgres build)."`
 	RelationRestore RelationRestoreCmd `cmd:"" name:"relation-restore" help:"Restore a relation to a past version (postgres build)."`
 
+	Token                TokenCmd                `cmd:"" help:"Manage the OAuth tokens connector scripts use (sqlite or postgres build)."`
 	HistoryTag           HistoryTagCmd           `cmd:"" name:"history-tag" help:"Set, move or delete a version tag on an entity (postgres or sqlite build)."`
 	HistoryPurge         HistoryPurgeCmd         `cmd:"" name:"history-purge" help:"Hard-delete an entity's version history for compliance (postgres build; irreversible)."`
 	RelationHistoryPurge RelationHistoryPurgeCmd `cmd:"" name:"relation-history-purge" help:"Hard-delete a relation's version history for compliance (postgres build; irreversible)."`
@@ -218,7 +222,7 @@ func runKong() int {
 		// The filesystem build ignores it.
 		svc, err = appbuild.Discover(projectPath, script.NewEngine())
 		if err != nil {
-			fmt.Fprintln(os.Stderr, relaerrors.WrapDiscoverError(err))
+			fmt.Fprintln(os.Stderr, relaerrors.WrapDiscoverError(tokenLockHint(ktx.Command(), err)))
 			return 1
 		}
 		defer svc.Close()
@@ -282,7 +286,7 @@ func requiresProject(cmd string) bool {
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
 		"sync", "history", "restore", "secrets",
 		"relation-history", "relation-restore", "history-tag", "history-purge", "relation-history-purge",
-		"dev":
+		"dev", "token":
 		return true
 	case "migrate":
 		// Bare `rela migrate` (config-file migration) deliberately gets NO
