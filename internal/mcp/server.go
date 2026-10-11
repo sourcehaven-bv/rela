@@ -96,6 +96,11 @@ type Deps struct {
 	// CommentWriter leaves out the write tools, as stdio `rela mcp` does.
 	Comments      CommentReader
 	CommentWriter CommentWriter
+	// Actions backs list_actions and run_action (TKT-NW9QSN).
+	//
+	// Nil: accepted. The tools are then not registered, as under stdio
+	// `rela mcp`, which has no signed-in caller to run an action as.
+	Actions ActionRunner
 	// World is the world the list and count surfaces (list_entities, the
 	// schema resource's counts, the overview prompt, search) read in when a
 	// call names none. It is required; wiring passes
@@ -427,6 +432,7 @@ type handlerSet struct {
 	prompts   promptHandler
 	attach    attachmentHandler
 	comments  commentHandler
+	actions   actionHandler
 }
 
 // handlers builds the extracted handler groups a [Server] carries. One
@@ -442,6 +448,7 @@ func (d Deps) handlers() handlerSet {
 		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types, world: d.World},
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
 		comments:  commentHandler{reader: d.Comments, writer: d.CommentWriter},
+		actions:   actionHandler{runner: d.Actions},
 	}
 }
 

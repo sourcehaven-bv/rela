@@ -54,6 +54,12 @@ export interface RenderMarkdownOptions {
    * views aren't misled into thinking inert checkboxes are clickable.
    */
   interactive?: boolean
+  /**
+   * The world the page was read in, as sent to the API's `?world=`. When set,
+   * entity-reference links carry it, so the target opens in the same world
+   * the server resolved the reference in. Undefined: links carry no world.
+   */
+  world?: string
 }
 
 export function renderMarkdown(
@@ -101,7 +107,9 @@ export function renderMarkdown(
         return `<input data-cb-idx="${idx}" type="checkbox"${checkedAttr}> `
       },
     },
-    walkTokens: refResolver ? (token) => rewriteEntityRefToken(token, refResolver) : undefined,
+    walkTokens: refResolver
+      ? (token) => rewriteEntityRefToken(token, refResolver, options.world)
+      : undefined,
   })
 
   const rawHtml = instance.parse(content) as string
@@ -240,7 +248,10 @@ function squashWhitespace(text: string): string {
 // the eventual HTML escaping under marked's control: link text flows
 // through marked's text-renderer (which HTML-escapes) so a malicious entity
 // title cannot break out of the `<a>` element.
-function rewriteEntityRefToken(token: unknown, resolve: EntityRefResolver): void {
+//
+// The href names the bare id, never a face: the target page resolves it in
+// its world, which `world` keeps equal to the world of this page.
+function rewriteEntityRefToken(token: unknown, resolve: EntityRefResolver, world?: string): void {
   if (!isCodespanToken(token)) return
   let hit: EntityRef | null
   try {
@@ -258,7 +269,8 @@ function rewriteEntityRefToken(token: unknown, resolve: EntityRefResolver): void
   const visibleTitle = hit.title || (hit.inaccessible ? token.text : '')
   if (!visibleTitle) return
 
-  const href = relaBase() + `entity/${hit.type}/${token.text}`
+  const query = world ? `?world=${encodeURIComponent(world)}` : ''
+  const href = relaBase() + `entity/${hit.type}/${token.text}${query}`
   // Inaccessible targets get a trailing lock affordance; keep the
   // readable title when one was supplied (the lock only conveys "the
   // underlying file is encrypted") and only fall back to the bare ID

@@ -344,3 +344,27 @@ func TestRemoteMCPDeps_PassesTheHostComments(t *testing.T) {
 		t.Error("the remote server must get the read and the write comment tools")
 	}
 }
+
+// The remote server gets the action tools when the host carries the
+// operations, and none otherwise (TKT-NW9QSN).
+func TestRemoteMCPDeps_PassesTheHostActions(t *testing.T) {
+	svc := newWorldServices(t)
+	host := testHost(t, svc)
+
+	deps, err := remoteMCPDeps(svc, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps.Actions != nil {
+		t.Error("a host without action operations must leave Actions nil, or the tools register over nothing")
+	}
+
+	host.Actions = &dataentry.MCPActions{}
+	deps, err = remoteMCPDeps(svc, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps.Actions == nil {
+		t.Error("the remote server must get the action tools")
+	}
+}

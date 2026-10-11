@@ -1,32 +1,5 @@
 package metamodel
 
-// Schema output interface methods for Metamodel
-
-// GetVersion returns the metamodel version
-func (m *Metamodel) GetVersion() string {
-	return m.Version
-}
-
-// GetNamespace returns the metamodel namespace
-func (m *Metamodel) GetNamespace() string {
-	return m.Namespace
-}
-
-// GetEntities returns the entities map for JSON output
-func (m *Metamodel) GetEntities() any {
-	return m.Entities
-}
-
-// GetRelations returns the relations map for JSON output
-func (m *Metamodel) GetRelations() any {
-	return m.Relations
-}
-
-// GetTypes returns the custom types map for JSON output
-func (m *Metamodel) GetTypes() any {
-	return m.Types
-}
-
 // Methods implementing migration.MetamodelProvider interface
 
 // GetPropertyType returns the type of a property for an entity type (empty if not found).

@@ -582,6 +582,11 @@ the entity's title, so the file stays readable outside rela and the title
 cannot go stale. Titles you see are the ones you are permitted to see: a
 reference to an entity your ACL role cannot read stays as the bare ID.
 
+A reference names an entity, not a face. For a type with faces it resolves in
+the world you are reading in, like any bare ID: the reference shows the title
+of the face that world serves among the faces you may read, and the link opens
+the entity in that same world.
+
 ### File Properties on Forms
 
 A `file`-type property renders a file control: pick or drag a file, see its
@@ -4767,6 +4772,22 @@ rewrites the body while a form is open would conflict with the form's autosave.
 **Timeout.** Like every action, the script has 5 seconds. The action holds the
 global write lock while it runs, so other writes wait. Keep regeneration within
 that limit, for example by reading only what the document needs.
+
+### Running actions from an MCP client
+
+The remote MCP server (see [mcp-server.md](mcp-server.md#action-tools)) offers
+two tools for actions. `list_actions` lists the actions the caller may run;
+with an entity `id` it lists the actions the entity's detail page offers.
+`run_action` runs one. It runs the same checks as
+`POST /api/v1/_action/{id}`: `permission`, `available_on`, `when` and the read
+gate on the entity. A refusal names the same error code as the HTTP answer.
+
+An action with `confirm` runs only when the call passes `confirm: true`. Without
+it, the tool returns the confirmation question, so the agent can ask the user
+first. A request body (`request`) is accepted only by an action whose `request`
+block sets `body: true`, within the same size limit. A script error shows the
+script path, line, message and correlation id, never the source or captured
+output.
 
 ### Lua Action Scripts
 

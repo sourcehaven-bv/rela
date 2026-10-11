@@ -49,6 +49,9 @@ func (s *Server) registerTools() {
 	// Comment tools: only when the project enables commenting.
 	s.registerCommentTools()
 
+	// Action tools: only when the wiring supplies a runner.
+	registerActionTools(s)
+
 	// Lua scripting tools: stdio only (see WithLuaTools).
 	if !s.luaTools {
 		return

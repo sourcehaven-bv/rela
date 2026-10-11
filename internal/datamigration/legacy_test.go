@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 func writeLegacy(t *testing.T, kv *fakeKV, m legacyMarker) {
@@ -19,7 +21,7 @@ func writeLegacy(t *testing.T, kv *fakeKV, m legacyMarker) {
 
 func legacyFixture(t *testing.T, applied ...string) legacyMarker {
 	t.Helper()
-	proj := metaV1().ShapeProjection()
+	proj := metamodel.NewShapeProjection(metaV1())
 	raw, err := proj.JSON()
 	if err != nil {
 		t.Fatalf("projection JSON: %v", err)
@@ -57,7 +59,7 @@ func TestLegacyBridge_AdoptsLegacyMarkerOnUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ShapeProjection: %v", err)
 	}
-	if proj.Hash() != metaV1().ShapeProjection().Hash() {
+	if proj.Hash() != metamodel.NewShapeProjection(metaV1()).Hash() {
 		t.Error("the legacy projection did not carry across")
 	}
 }
@@ -69,7 +71,7 @@ func TestLegacyBridge_NewRecordWins(t *testing.T) {
 	writeLegacy(t, kv, legacyFixture(t, "20260901120000-first.yaml"))
 
 	next := newMigState()
-	current, err := NewState(metaV2().ShapeProjection(), []AppliedEntry{
+	current, err := NewState(metamodel.NewShapeProjection(metaV2()), []AppliedEntry{
 		{Name: "20260919143022-second.yaml"},
 	}, time.Now())
 	if err != nil {
@@ -102,7 +104,7 @@ func TestLegacyBridge_MirrorsWritesForRollback(t *testing.T) {
 		t.Fatalf("NewLegacyBridge: %v", err)
 	}
 
-	st, err := NewState(metaV2().ShapeProjection(), []AppliedEntry{
+	st, err := NewState(metamodel.NewShapeProjection(metaV2()), []AppliedEntry{
 		{Name: "20260919143022-applied.yaml", AppliedAt: time.Now()},
 	}, time.Now())
 	if err != nil {
@@ -120,7 +122,7 @@ func TestLegacyBridge_MirrorsWritesForRollback(t *testing.T) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("mirrored marker is not readable by the old format: %v", err)
 	}
-	if m.ShapeHash != metaV2().ShapeProjection().Hash() {
+	if m.ShapeHash != metamodel.NewShapeProjection(metaV2()).Hash() {
 		t.Errorf("mirrored shape_hash = %s, want the current shape", m.ShapeHash)
 	}
 	if len(m.Applied) != 1 || m.Applied[0] != "20260919143022-applied.yaml" {
