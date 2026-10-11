@@ -194,13 +194,13 @@ func TestValidateEntity_ExternalRefIsHard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	errs := m.ValidateEntity("TKT-1", "ticket", map[string]any{"basecamp": map[string]any{"id": 7}})
+	errs := NewValidator(m).ValidateEntity("TKT-1", "ticket", map[string]any{"basecamp": map[string]any{"id": 7}})
 	if len(errs) != 1 || errs[0].Type != ValidationErrorExternalRef || errs[0].IsSoft() {
 		t.Fatalf("errs = %v, want one hard external-ref error", errs)
 	}
 	// D10: `{}` is not "no value"; it is a ref without an id, refused at
 	// write so it never stores.
-	errs = m.ValidateEntity("TKT-1", "ticket", map[string]any{"basecamp": map[string]any{}})
+	errs = NewValidator(m).ValidateEntity("TKT-1", "ticket", map[string]any{"basecamp": map[string]any{}})
 	if len(errs) != 1 || errs[0].Type != ValidationErrorExternalRef {
 		t.Fatalf("errs = %v, want the empty map refused as a ref without an id", errs)
 	}
@@ -231,14 +231,14 @@ func TestShapeProjection_ExternalRefSystem(t *testing.T) {
 		}
 		return m
 	}
-	a, b := load("basecamp").ShapeProjection(), load("jira").ShapeProjection()
+	a, b := NewShapeProjection(load("basecamp")), NewShapeProjection(load("jira"))
 	if a.Hash() == b.Hash() {
 		t.Fatal("a system change must move the shape hash")
 	}
 	if r := CompareShapes(a, b); r.Tier() != TierMigration {
 		t.Fatalf("verdict = %v, want needs-migration", r.Tier())
 	}
-	if load("basecamp").RenderProjection().Hash() != load("jira").RenderProjection().Hash() {
+	if NewRenderProjection(load("basecamp")).Hash() != NewRenderProjection(load("jira")).Hash() {
 		t.Fatal("system must not join the render projection")
 	}
 }

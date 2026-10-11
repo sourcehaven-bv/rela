@@ -99,8 +99,8 @@ func metaV2() *metamodel.Metamodel {
 // projections are what step validation and validateDeltasResolved run on.
 func mustFileYAML(t *testing.T, from, to *metamodel.Metamodel, stepsYAML string) []byte {
 	t.Helper()
-	fp := from.ShapeProjection()
-	tp := to.ShapeProjection()
+	fp := metamodel.NewShapeProjection(from)
+	tp := metamodel.NewShapeProjection(to)
 	fromYAML, err := marshalProjectionYAML("from_projection", fp)
 	if err != nil {
 		t.Fatalf("marshal from projection: %v", err)

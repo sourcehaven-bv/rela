@@ -3,13 +3,15 @@ package datamigration
 import (
 	"strings"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
 func TestBuild_V1ToV2(t *testing.T) {
 	spec := Spec{
 		Description: "Status rework",
-		From:        metaV1().ShapeProjection(),
-		To:          metaV2().ShapeProjection(),
+		From:        metamodel.NewShapeProjection(metaV1()),
+		To:          metamodel.NewShapeProjection(metaV2()),
 		Steps: []SpecStep{
 			{RenameProperty: &RenamePropertySpec{Entity: "task", From: "status", To: "state"}},
 			{MapValues: &MapValuesSpec{Entity: "task", Property: "state", Mapping: map[string]string{"open": "todo", "wip": "doing"}}},
@@ -36,12 +38,12 @@ func TestBuild_Refuses(t *testing.T) {
 		want string
 	}{
 		{"step for a missing property", Spec{
-			Description: "x", From: metaV1().ShapeProjection(), To: metaV1().ShapeProjection(),
+			Description: "x", From: metamodel.NewShapeProjection(metaV1()), To: metamodel.NewShapeProjection(metaV1()),
 			Steps: []SpecStep{{RenameProperty: &RenamePropertySpec{Entity: "task", From: "nope", To: "x"}}},
 		}, "nope"},
-		{"no description", Spec{From: metaV1().ShapeProjection(), To: metaV2().ShapeProjection()}, "description"},
+		{"no description", Spec{From: metamodel.NewShapeProjection(metaV1()), To: metamodel.NewShapeProjection(metaV2())}, "description"},
 		{"two kinds in one step", Spec{
-			Description: "x", From: metaV1().ShapeProjection(), To: metaV1().ShapeProjection(),
+			Description: "x", From: metamodel.NewShapeProjection(metaV1()), To: metamodel.NewShapeProjection(metaV1()),
 			Steps: []SpecStep{{
 				RenameProperty: &RenamePropertySpec{Entity: "task", From: "due", To: "x"},
 				SetDefault:     &SetDefaultSpec{Entity: "task", Property: "due", Value: "x"},
@@ -59,7 +61,7 @@ func TestBuild_Refuses(t *testing.T) {
 }
 
 func TestBuild_NothingToMigrate(t *testing.T) {
-	p := metaV1().ShapeProjection()
+	p := metamodel.NewShapeProjection(metaV1())
 	d, err := Build(Spec{Description: "x", From: p, To: p}, testNow())
 	if err != nil || d != nil {
 		t.Fatalf("got %v, %v", d, err)

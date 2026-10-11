@@ -264,7 +264,7 @@ Please provide:
 4. Recommendations for improving the project's traceability`,
 		totalEntities, totalRelations, orphanCount,
 		entityCounts.String(), relCounts.String(),
-		meta.GetVersion(), meta.GetNamespace(),
+		meta.Version, meta.Namespace,
 		len(entityTypes), len(relTypes))
 
 	return &mcpgo.GetPromptResult{
@@ -306,7 +306,7 @@ func (h promptHandler) handleReviewEntityPrompt(
 	}
 
 	// Run validations for this entity
-	errs := meta.ValidateEntity(entity.ID, entity.Type, entity.Properties)
+	errs := metamodel.NewValidator(meta).ValidateEntity(entity.ID, entity.Type, entity.Properties)
 	var validationText string
 	if len(errs) == 0 {
 		validationText = "All validations passed"

@@ -133,7 +133,7 @@ func (g *GC) Tick(ctx context.Context, apply bool) (*GCResult, error) {
 		defer release()
 	}
 
-	live := g.deps.Meta().ShapeProjection()
+	live := metamodel.NewShapeProjection(g.deps.Meta())
 	ledger, err := LoadLedger(ctx, g.deps.State)
 	if err != nil {
 		return nil, err
@@ -255,7 +255,7 @@ func (g *GC) newCapturer() *capturer {
 		return nil
 	}
 	meta := g.deps.Meta()
-	proj := meta.RenderProjection()
+	proj := metamodel.NewRenderProjection(meta)
 	projJSON, err := proj.JSON()
 	if err != nil {
 		return nil
@@ -298,7 +298,7 @@ func (g *GC) Scan(ctx context.Context) (added []string, err error) {
 	}
 	defer release()
 
-	live := g.deps.Meta().ShapeProjection()
+	live := metamodel.NewShapeProjection(g.deps.Meta())
 	ledger, err := LoadLedger(ctx, g.deps.State)
 	if err != nil {
 		return nil, err

@@ -493,6 +493,8 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 		Description: "Property validation errors (required fields, invalid values, ID patterns)",
 	}
 
+	metaValidator := metamodel.NewValidator(meta)
+
 	// Streams: an issue is emitted as its row is scanned, so peak memory is
 	// proportional to the ISSUES found, not to the entities examined. The
 	// previous shape drained every entity into a slice purely to sort it —
@@ -505,7 +507,7 @@ func (svc analyzeService) analyzeProperties(ctx context.Context, meta *metamodel
 		if err != nil {
 			break
 		}
-		for _, verr := range meta.ValidateEntity(h.ID, h.Type, h.Properties) {
+		for _, verr := range metaValidator.ValidateEntity(h.ID, h.Type, h.Properties) {
 			section.Issues = append(section.Issues, AnalysisIssue{
 				EntityID:   h.ID,
 				Face:       h.Face,
