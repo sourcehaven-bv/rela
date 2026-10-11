@@ -38,15 +38,15 @@ import (
 //     strings). Non-string property values are compared via their string
 //     form and in practice only strings carry unique keys.
 //   - The scan alone is a check-then-write. Callers make it atomic by running
-//     the scan and the durable write through [writeWithUniqueCheck], which
-//     puts both in one [store.Transactor.Tx] on the transaction's view. That
-//     serializes against every other manager write that sets a unique
-//     property on every backend: fs/mem/sqlite writes all take the Tx
-//     mutex, and on PostgreSQL every such write goes through this same Tx.
-//     pgstore additionally backstops the write with a derived partial unique
-//     index (TKT-3Q0GP1) whose violation surfaces as
-//     [store.UniquePropertyError], mapped to the SAME 422 this scan
-//     produces. See docs/acl-security.md and docs/postgres-backend.md.
+//     the scan and the durable write through [writeWithUniqueCheck], which puts
+//     both in one [store.Transactor.Tx] on the transaction's view. That
+//     serializes against every other manager write that sets a unique property
+//     on every backend: single-process backends' writes all take the Tx mutex,
+//     and on the multi-process database backend every such write goes through
+//     this same Tx. That backend additionally backstops the write with a
+//     derived partial unique index (TKT-3Q0GP1) whose violation surfaces as
+//     [store.UniquePropertyError], mapped to the SAME 422 this scan produces.
+//     See docs/acl-security.md and docs/postgres-backend.md.
 //
 // st is the store to scan: the Tx view when called from inside a
 // transaction, never the outer store (an outer-store call inside a Tx
@@ -211,10 +211,10 @@ func uniqueValues(meta *metamodel.Metamodel, e *entity.Entity) []uniqueProp {
 // [store.Transactor.Tx], both against the transaction's view: write receives
 // that view and must issue every store call through it.
 //
-// The callback holds a schema-wide lock on pgstore and the write mutex on
-// fs/mem/sqlite, so write must be a plain store write — never a public
-// Manager call (automations, audit, cascades and version capture stay
-// outside), and never slow external I/O.
+// The callback holds a schema-wide lock on the multi-process database backend
+// and the write mutex on single-process backends, so write must be a plain
+// store write — never a public Manager call (automations, audit, cascades and
+// version capture stay outside), and never slow external I/O.
 func writeWithUniqueCheck(
 	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string, write func(st store.Store) error,
 ) error {

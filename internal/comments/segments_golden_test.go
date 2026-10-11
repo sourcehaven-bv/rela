@@ -15,11 +15,11 @@ import (
 // server computes for that range, and the text each resulting mark must show
 // once the SPA renders the body.
 //
-// The Go side cannot run the SPA's renderer, and the SPA cannot run goldmark,
-// so the two agree through this file:
+// The Go side cannot run the SPA's renderer, and the SPA cannot run the server's
+// markdown parser, so the two agree through this file:
 // frontend/src/utils/commentHighlight.golden.test.ts splices the segments in,
-// renders with marked, and checks the marks. A case where goldmark and marked
-// disagree on block structure fails there.
+// renders with marked, and checks the marks. A case where the server's parser and
+// marked disagree on block structure fails there.
 type segmentCase struct {
 	Name     string          `json:"name"`
 	Body     string          `json:"body"`
@@ -29,10 +29,10 @@ type segmentCase struct {
 	Marks    []string        `json:"marks"`
 }
 
-// segmentFixtures are the shapes where goldmark and marked could plausibly
-// disagree, or where a mark edge could break the markup it sits in. From and
-// To pick the range: the first occurrence of From through the end of the first
-// occurrence of To after it.
+// segmentFixtures are the shapes where the server's markdown parser and marked
+// could plausibly disagree, or where a mark edge could break the markup it sits
+// in. From and To pick the range: the first occurrence of From through the end
+// of the first occurrence of To after it.
 var segmentFixtures = []struct {
 	name, body, from, to string
 	marks                []string

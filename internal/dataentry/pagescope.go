@@ -45,7 +45,7 @@ func hasPageScope(query map[string][]string) bool {
 // active is false when the request names no page scope.
 //
 // ordering is non-nil when the rows are to be shown in relation order: the
-// tab reaches its rows over outgoing edges of a relation orderable on that
+// tab reaches its rows over edges of a relation orderable on the tab's
 // side, and the request names no sort of its own. The edge values come from
 // the relation query the scope runs anyway.
 //
@@ -55,7 +55,8 @@ func hasPageScope(query map[string][]string) bool {
 // errListLoad.
 //
 // Cost: one gated anchor read and ONE relation query, whatever the number of
-// rows.
+// rows. An incoming ordering adds one edge gate and one batch of source
+// reads for its movable check, also independent of the number of rows.
 func resolvePageScope(
 	ctx context.Context, a *App, query map[string][]string, typeName string,
 ) (ids map[string]bool, ordering *relationOrdering, active bool, err error) {
@@ -112,8 +113,18 @@ func resolvePageScope(
 			ids[r.To] = true
 		}
 	}
-	if !dir.IsIncoming() && len(parseSortParam(query)) == 0 {
-		ordering = newRelationOrdering(ctx, a.affordances, state.Meta, e, tab.Scope.Relation, rels)
+	if len(parseSortParam(query)) == 0 && orderPropertyOf(state.Meta, tab.Scope.Relation, dir.IsIncoming()) != "" {
+		if dir.IsIncoming() {
+			// Gated before the places fold into the order; see newRelationOrdering.
+			if rels, err = a.visibleReader.readableRelations(ctx, rels); err != nil {
+				return nil, nil, false, fmt.Errorf("%w: %w", errACLListQuery, err)
+			}
+		}
+		ordering, err = newRelationOrdering(ctx, a.affordances, state.Meta, e, tab.Scope.Relation,
+			dir.IsIncoming(), rels)
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("%w: %w", errACLListQuery, err)
+		}
 	}
 	return ids, ordering, true, nil
 }

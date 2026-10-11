@@ -23,9 +23,10 @@ import (
 //
 // # Why byte-wise rather than type-aware
 //
-// Properties are stored as JSON and every backend orders them as text: pgstore
-// emits `(properties ->> $n) COLLATE "C"`, and sqlite/fsstore/memstore route
-// GraphQuery through graphquerynaive. Ordering that a backend cannot express
+// Properties are stored as JSON and every backend orders them as text, byte by
+// byte: the database backends compare the extracted value under a binary
+// collation, and the other backends route GraphQuery through graphquerynaive,
+// which compares the same bytes in Go. Ordering that a backend cannot express
 // cannot be pushed down, and a sort that cannot be pushed down forces the whole
 // type to be loaded and sorted in Go — which defeats paging and is the cost
 // this rule exists to avoid.

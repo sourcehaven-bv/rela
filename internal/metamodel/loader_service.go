@@ -80,7 +80,7 @@ func (l *FSLoader) Subscribe(_ context.Context, onChange func()) (func(), error)
 		Extensions: []string{".yaml", ".yml"},
 		Debounce:   200 * time.Millisecond,
 		SkipHidden: true,
-		// coverage-ignore-start: os-fs-event: OnChange fires only on a real debounced fsnotify filesystem event, not
+		// coverage-ignore-start: os-fs-event: OnChange fires only on a real debounced file-watcher event, not
 		// reachable deterministically in
 		// a unit test
 		OnChange: func(_ []storage.ChangeEvent) {

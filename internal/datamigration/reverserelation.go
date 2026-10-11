@@ -16,12 +16,12 @@ import (
 //
 // # The rewrite is the store's job
 //
-// The step decides WHETHER a type may be reversed and the store decides HOW:
-// pgstore and sqlitestore do it in one UPDATE, others fall back to a loop
-// ([store.SwapRelationEndpoints] picks). That split is not only about speed.
-// A relation's endpoints are its ADDRESS, so a rewrite above the store must be
-// create-then-delete, and that shape destroys a self-edge, merges a
-// both-directions pair, and — where the backend has history — forks every
+// The step decides WHETHER a type may be reversed and the store decides HOW: a
+// backend with a native [store.BulkMigrator] does it in one UPDATE, others fall
+// back to a loop ([store.SwapRelationEndpoints] picks). That split is not only
+// about speed. A relation's endpoints are its ADDRESS, so a rewrite above the
+// store must be create-then-delete, and that shape destroys a self-edge, merges
+// a both-directions pair, and — where the backend has history — forks every
 // edge's version lineage. An in-place re-key has none of those properties: the
 // row survives, so it keeps its identity and its history.
 //

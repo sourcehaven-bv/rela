@@ -90,7 +90,7 @@ type ReadDeps struct {
 	// Files serves the project's operator-authored script files — scripts/,
 	// actions/, validations/ — by slash path relative to the project root.
 	// Read them through [ReadDeps.ReadProjectFile], never from disk directly:
-	// on the sqlite build they may live in the project's database
+	// on a backend that keeps the project in a database they may live there
 	// (FEAT-UP14BT), layered behind the files on disk.
 	//
 	// Nil: accepted — files are read from ProjectRoot on disk with os.Root
