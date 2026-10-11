@@ -45,8 +45,9 @@ Rules when touching storage backends:
   tests in `sharedbase_test.go`: assembly must never mutate `meta` or
   `aclPolicy` (they are pointers handed to every assembled `Services`, so a
   write leaks across tenants), and `Services.Close` must tear down only the
-  store and search closer it was assembled with — never anything shared, or
-  evicting one tenant breaks its siblings.
+  store, search closer and background services (the version sweep among them)
+  it was assembled with — never anything shared, or evicting one tenant breaks
+  its siblings.
 
 - **The metamodel is read from disk on fs and postgres** — `schema.yaml`,
   `templates/` and operator-authored config generally stay on the filesystem;

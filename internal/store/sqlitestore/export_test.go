@@ -22,15 +22,8 @@ func (s *Store) SweepNow(ctx context.Context, p store.ProjectionProvider, cfg st
 func (s *Store) SweepNowWithWrite(
 	ctx context.Context, p store.ProjectionProvider, cfg store.SweepConfig, write func(),
 ) error {
-	done := make(chan struct{})
-	close(done)
-	sctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	sw := &sweep{
-		store: s, provider: p, cfg: sweepDefaults(cfg), cancel: cancel, done: done,
-		beforeCapture: write,
-	}
-	return sw.tick(sctx)
+	sw := &sweep{store: s, provider: p, cfg: sweepDefaults(cfg), beforeCapture: write}
+	return sw.tick(ctx)
 }
 
 // ExplainGraphQuery returns SQLite's EXPLAIN QUERY PLAN for the statement
