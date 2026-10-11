@@ -11,11 +11,11 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 )
 
-// TestMigrateToVersionTags pins the v14→v15 rung (TKT-VO6VG9): a v14
+// TestMigrateToVersionTags pins the v15→v16 rung (TKT-VO6VG9): a v15
 // database, which has no version_tags table, gains it with its foreign key
 // to entity_versions, and a second open is harmless.
 func TestMigrateToVersionTags(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "v14.db")
+	path := filepath.Join(t.TempDir(), "v15.db")
 	db, err := sqlitedb.Open(context.Background(), sqlitedb.Options{Path: path})
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
@@ -23,7 +23,7 @@ func TestMigrateToVersionTags(t *testing.T) {
 	raw, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	defer func() { _ = raw.Close() }()
-	for _, q := range []string{`DROP TABLE version_tags`, `PRAGMA user_version = 14`} {
+	for _, q := range []string{`DROP TABLE version_tags`, `PRAGMA user_version = 15`} {
 		_, err = raw.Exec(q)
 		require.NoErrorf(t, err, "seed statement: %s", q)
 	}

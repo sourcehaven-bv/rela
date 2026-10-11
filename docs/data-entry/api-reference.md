@@ -71,6 +71,29 @@ unchanged: they always carry `content`, as do ETags computed over it. A row
 whose entity has an empty body looks the same with or without the flag, which
 is the reason the field is omitted rather than sent empty.
 
+## Comment counts on list rows
+
+`GET /api/v1/{plural}` accepts `comment_counts=true` (any value
+`strconv.ParseBool` accepts; anything else is `false`). Each row then carries
+`_comment_count`, the number of comments on that row's face, resolved ones
+included. The whole page costs one call to the comment store. If that call
+fails, the error is logged and the rows are served without counts.
+
+```text
+GET /api/v1/tickets?comment_counts=true
+```
+
+The field is absent, not `0`, when it is not served:
+
+- the request did not ask for it;
+- commenting is off, or not enabled for the row's type;
+- the principal does not hold `comment:read` as a global grant.
+
+The last rule is deliberate. A `comment:read` granted only by a local role (for
+example through an ownership relation) is checked per entity, which would cost
+one ACL walk per row. Such a principal gets no counts on list rows; the thread
+itself is still readable at `/api/v1/_comments/{type}/{id}`.
+
 ## Limiting search results
 
 `GET /api/v1/_search` accepts an optional `limit` (an integer from 1 to 100)
@@ -137,12 +160,26 @@ PATCH /api/v1/projects/PRJ-1/relations/contains/TASK-7
 {"position": {"before": "TASK-2"}}
 ```
 
+On a relation whose incoming side is orderable, add `"direction": "incoming"`.
+The path entity is then the target, and the edge moves among every edge into
+it. The last path segment and `before` or `after` name a source by its
+address:
+
+```text
+PATCH /api/v1/tasks/TASK-7/relations/contains/PRJ-3
+{"direction": "incoming", "position": {"after": "PRJ-1"}}
+```
+
+A source with faces can link to the target once per face. A bare id names the
+source's first place in the order, and `id@face` names the edge from that
+face.
+
 `position` names exactly one of these fields:
 
 | Field    | Moves the edge                                          |
 | -------- | ------------------------------------------------------- |
-| `before` | directly above the edge to this target id               |
-| `after`  | directly below the edge to this target id               |
+| `before` | directly above the edge to this target or source        |
+| `after`  | directly below the edge to this target or source        |
 | `step`   | one place up (`-1`) or down (`1`) in the complete order |
 
 The server computes the stored order value. `step` exists for a client that
@@ -158,19 +195,24 @@ change. This way a move neither reveals nor rewrites an edge the caller cannot
 see. On a content-scoped relation, address the source with its face, as in
 `POL-1@draft`; the response's `relation_order.anchor` already does.
 
+On the incoming side, a renumber writes the edges of other sources. The
+caller must therefore be allowed to update the edge from every source it can
+see, and `_order_in` must be writable on each. Otherwise the move answers
+`403` and writes nothing.
+
 | Answer | When |
 | --- | --- |
 | `204` | The edge moved. |
 | `400 order_position_invalid` | `position` names no field or several, or is sent together with `meta`. |
-| `400 relation_not_orderable` | The relation is not orderable on the outgoing side, or the request has `direction=incoming`. |
-| `403` | The caller may not write the edge, or `_order_out` is read-only for them. |
+| `400 relation_not_orderable` | The relation is not orderable on the side the request names. |
+| `403` | The caller may not write an edge the move may write, or the order property is read-only for them. |
 | `404` | The `before` or `after` target is not a sibling, or the caller cannot read it. Both give the same answer, so the route does not reveal whether an entity exists. |
 | `500 internal_error` | The store failed. The server logs the cause; the answer does not include it. |
 
 ### Reading the order
 
 A list read scoped to an entity page tab (`scope_page`, `scope_tab`,
-`anchor`) whose relation is orderable on the outgoing side returns its rows in
+`anchor`) whose relation is orderable on the tab's side returns its rows in
 the anchor's edge order when the request has no `sort`. The response then
 carries `meta.relation_order`:
 
@@ -178,10 +220,15 @@ carries `meta.relation_order`:
 "relation_order": {"relation": "contains", "anchor": "PRJ-1", "anchor_type": "project", "movable": true}
 ```
 
+On an incoming tab the object also has `"direction": "incoming"`. It may have
+`addresses`, which maps a row id to the address a move names that row by,
+such as `"POL-1": "POL-1@published"`. A row not in the map is named by its id.
+
 `movable` is `true` when the caller may move the anchor's edges with the
 route above. A request with `sort` gets that sort and no `relation_order`. A
 detail view section in relation order carries the same object as
-`relationOrder`. Neither appears when the caller cannot read `_order_out`.
+`relationOrder`. Neither appears when the caller cannot read the order
+property; on the incoming side, that is checked for every source.
 
 ## Relations field
 
@@ -303,6 +350,18 @@ are removed.
 
 Mixing the two shapes in one PATCH body returns 400 with a stable
 `shape_mixed` error code.
+
+## Server errors
+
+A 500 means the server failed, not the request. The server logs the cause,
+and the response does not include it, because a store or database error can
+name data the caller may not read.
+
+- On `/api/v1` endpoints, `code` and `title` say which operation failed and
+  `detail` ends in `check server logs`. A `relation_write_failed` detail also
+  names the relation, op and target, which all come from the request.
+- The settings and theme endpoints answer `{"error": "<what failed>; check
+  server logs"}`.
 
 ## Validation policy
 
@@ -1172,9 +1231,30 @@ PUT  /api/v1/{plural}/{id}/_attachments/{property}
 POST /api/v1/{plural}/{id}/_attachments/{property}
 ```
 
-`multipart/form-data` with a single `file` field. The response is the
-updated entity (its `_attachments` reflects the new file). Behavior depends
-on the property's `max`:
+The file travels in one of two forms, chosen by `Content-Type`:
+
+- **`multipart/form-data`** with a single `file` field. The browser SPA
+  uses this.
+- **Any other content type: the request body is the file.** The file name
+  comes from the `filename` query parameter or, failing that, the
+  `filename` parameter of a `Content-Disposition` header. A raw body with
+  neither answers `400 missing_filename`. This is the form for `curl -T`
+  and for generic OpenAPI clients such as restish, which need no multipart
+  envelope:
+
+  ```sh
+  curl -T shot.png -H 'Authorization: Bearer …' \
+    'https://rela.example/api/v1/tasks/TASK-1/_attachments/evidence?filename=shot.png'
+  ```
+
+A raw body is stored as sent, so one with a `Content-Encoding` other than
+`identity` answers `415 unsupported_content_encoding`. The declared content
+type of a raw body is not trusted. The upload policy
+inspects the bytes and the name, the same as for a multipart file. The name
+is reduced to its base name in both forms, so a path in it is dropped.
+
+The response is the updated entity (its `_attachments` reflects the new
+file). Behavior depends on the property's `max`:
 
 - **`max == 1`** (default): the upload **replaces** the existing file.
 - **`max > 1`**: the upload **appends**, up to `max`. A file whose
@@ -1207,8 +1287,10 @@ Size limits: the request is capped at ingress (`413 attachment_too_large`,
 `application/problem+json`) by a default of 64 MiB, overridable per
 deployment via the data-entry config key `app.max_attachment_bytes`. Every
 store backend also enforces `store.MaxAttachmentBytes` as a backstop, so no
-storage path is ever unbounded. Other failures: `400` for a malformed
-multipart body or a missing `file` field; `422` for a validation failure
+storage path is ever unbounded. A raw body over the cap is refused on its
+`Content-Length` before it is read, or when the cap is crossed if it has
+none. Other failures: `400` for a malformed multipart body, a missing `file`
+field or a raw body without a file name; `422` for a validation failure
 when persisting the property.
 
 ### Delete endpoint

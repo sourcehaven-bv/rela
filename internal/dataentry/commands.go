@@ -132,7 +132,7 @@ func (gatedAuthorizer) Authorize(ctx context.Context, cmd CommandConfig) bool {
 }
 
 // UngatedCommandAuthorizer returns the pass-through authorizer for an
-// in-process or strictly-loopback server (rela-desktop's Wails asset server,
+// in-process or strictly-loopback server (rela-desktop's desktop-shell asset server,
 // docscapture's local render harness) — hosts with no network listener where
 // the server host IS the user's machine. Exported so those cmd entry points can
 // wire it without the (ACL, bind) selection that only rela-server needs.
@@ -706,12 +706,13 @@ func (h *commandHandler) handleCommandExec(w http.ResponseWriter, r *http.Reques
 
 	inputJSON, err := json.Marshal(input)
 	if err != nil {
-		http.Error(w, "Failed to build input: "+err.Error(), http.StatusInternalServerError)
+		slog.ErrorContext(r.Context(), "dataentry: command input failed", "err", err, "path", r.URL.Path)
+		http.Error(w, "Failed to build input", http.StatusInternalServerError)
 		return
 	}
 
-	// Set up SSE response. Flusher is optional — Wails' asset server on
-	// macOS/Linux delivers each Write() immediately without needing Flush().
+	// Set up SSE response. Flusher is optional — the desktop shell's asset
+	// server on macOS/Linux delivers each Write() immediately without needing Flush().
 	flusher, _ := w.(http.Flusher)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

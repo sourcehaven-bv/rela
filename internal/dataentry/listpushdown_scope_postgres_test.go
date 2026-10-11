@@ -3,7 +3,6 @@
 package dataentry
 
 import (
-	"context"
 	"testing"
 )
 
@@ -12,6 +11,6 @@ import (
 // row gate and the ACL's HasInbound meet in one statement.
 func TestListPushdown_ScopeMatchesGoPath_Postgres(t *testing.T) {
 	_, dsn := conflictTestSchema(t)
-	app, d, counting := newScopePushdownAppOn(t, openPGStore(t, context.Background(), dsn))
+	app, d, counting := newScopePushdownAppOn(t, openPGStore(t, dsn))
 	assertScopeMatchesGoPath(t, app, d, counting)
 }

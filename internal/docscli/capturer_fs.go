@@ -15,9 +15,9 @@ import (
 // caller and shared with the api{} client, so a figure can photograph what an
 // earlier api{} island wrote.
 //
-// This is the sole edge that pulls internal/docscapture (and thus chromedp)
-// into a binary; it is reachable only from cmd/rela-docs, keeping chromedp out
-// of rela / rela-server.
+// This is the sole edge that pulls internal/docscapture (and thus its
+// browser-automation library) into a binary; it is reachable only from
+// cmd/rela-docs, keeping that library out of rela / rela-server.
 func NewCapturer(shared *docscapture.SharedProject) (docs.Capturer, error) {
 	return docscapture.New(shared)
 }

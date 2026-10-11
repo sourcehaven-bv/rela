@@ -91,6 +91,7 @@ components:
   conflict:         { in: internal/conflict }
   computed:         { in: internal/computed }
   datamigration:    { in: internal/datamigration }
+  configedit:       { in: internal/configedit }
   filemigstate:     { in: internal/datamigration/filemigstate }
   memmigstate:      { in: internal/datamigration/memmigstate }
   pgmigstate:       { in: internal/datamigration/pgmigstate }
@@ -167,6 +168,10 @@ components:
   # other or the file they share. Both are handed the opened handle.
   sqlitedb:         { in: internal/sqlitedb }
   storeutil:        { in: internal/store/storeutil }
+  # Start-once, stop-and-wait background goroutine shared by the store
+  # backends' version sweeps (TKT-IPXEZQ). A leaf: standard library only, so
+  # it needs no deps entry.
+  bgloop:           { in: internal/store/bgloop }
 
   # Project bootstrap utilities
   projectsetup:     { in: internal/projectsetup }
@@ -343,20 +348,30 @@ deps:
   # here is what lets `dataentry` take a plain http.Handler and stay off the
   # go-sdk (TKT-BDG8U9). It names `lua` only to pair the gated Lua read
   # bundle with the entity manager for the remote MCP Lua tools (TKT-4QSZ8Y).
+  # It mounts the Configure API (configedit) the same way: dataentry takes a
+  # plain http.Handler, and this wiring supplies configedit's collaborators
+  # (TKT-F5NGMG).
   cmdServer:
     mayDependOn:
       - acl
       - appbuild
       - audit
       - cmdexec
+      - config
+      - configedit
       - dataentry
       - dataentrywire
+      - datamigration
       - jwtauth
       - lua
       - mcp
+      - metamodel
       - principal
+      - projectsetup
       - scheduler
       - script
+      - storage
+      - store
     canUse:
       - http2
   cmdDesktop:
@@ -431,6 +446,8 @@ deps:
       - automation
       - bleveindex
       - cmdexec
+      # comments: stdio `rela mcp` backs list_comments (TKT-QIQO1W).
+      - comments
       - config
       - configsql
       - dataentryconfig
@@ -634,6 +651,9 @@ deps:
       - ai
       - attachment
       - audit
+      # comments: the comment tools (TKT-QIQO1W) speak its View/AddInput/
+      # OpError types; the gates themselves stay in dataentry.
+      - comments
       - config
       - dataentryconfig
       - entitymanager
@@ -830,6 +850,9 @@ deps:
       - autocascade
       - automation
       - bleveindex
+      # comments: only for WithComments, the optional collaborator a
+      # commenting-enabled test supplies (BUG-6OZBP9).
+      - comments
       - config
       - entity
       - entitymanager
@@ -1101,6 +1124,17 @@ deps:
       - docscapture
       - metamodel
       - project
+  # configedit edits schema.yaml and data-entry.yaml for the Configure space
+  # (TKT-F5NGMG). It knows files, the metamodel and the migration file format;
+  # validation, counting, migration state and the rebuild come in through its
+  # own small interfaces, which the composition root implements. dataentry
+  # must not import it: it mounts configedit as a plain http.Handler.
+  configedit:
+    mayDependOn:
+      - audit
+      - datamigration
+      - metamodel
+      - principal
   datamigration:
     mayDependOn:
       - audit
@@ -1525,6 +1559,7 @@ deps:
       - search
       - store
       - storeutil
+      - bgloop
     canUse:
       - pgx
   sqlitestore:
@@ -1540,6 +1575,9 @@ deps:
       - sqlitedb
       - store
       - storeutil
+      # The sweep's start-once, stop-and-wait lifecycle, shared with pgstore
+      # (TKT-IPXEZQ). Standard library only.
+      - bgloop
       # Added by TKT-4NU9ZD (DEC-LFSYNY stage 4, content versioning) — the
       # stage this list's previous note said would have to justify itself.
       #

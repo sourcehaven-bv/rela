@@ -92,3 +92,93 @@ func TestSweepWriteBackSkipsARowWrittenAfterTheRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, metas, 2, "the edit made during the tick was never captured")
 }
+
+// TestVersionTriggersClearContentHash pins migration 0021's version triggers
+// on a schema-pinned pool: a version written or purged outside the sweep
+// clears the live row's stored hash when the row may no longer match its
+// latest version (TASK-Y73Y9 in Atlas). The sweep selects only rows whose
+// hash is NULL, so a hash left standing would hide the row from it for good.
+func TestVersionTriggersClearContentHash(t *testing.T) {
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	v := s.VersionStore()
+	provider := stubProvider{hash: "schema-1", json: []byte(`{"v":1}`)}
+	cfg := store.SweepConfig{Interval: time.Hour, Idle: time.Nanosecond, MaxStaleness: time.Nanosecond, Batch: 10}
+
+	require.NoError(t, s.CreateEntity(ctx, entity.New("FEAT-1", "feature")))
+	require.NoError(t, s.CreateEntity(ctx, entity.New("FEAT-2", "feature")))
+	key := entity.RelationKey{From: "FEAT-1", Type: "depends-on", To: "FEAT-2"}
+	_, err = s.CreateRelation(ctx, key, &store.RelationData{Content: "v1"})
+	require.NoError(t, err)
+
+	hashed := func(q string) bool {
+		t.Helper()
+		var h *string
+		require.NoError(t, pool.QueryRow(ctx, q).Scan(&h))
+		return h != nil
+	}
+	const entityHash = `SELECT content_hash FROM entities WHERE id = 'FEAT-1'`
+	const relationHash = `SELECT content_hash FROM relations WHERE from_id = 'FEAT-1'`
+	sweep := func() {
+		t.Helper()
+		require.NoError(t, s.SweepNow(ctx, provider, cfg))
+		require.True(t, hashed(entityHash), "the sweep did not store the entity hash")
+		require.True(t, hashed(relationHash), "the sweep did not store the relation hash")
+	}
+	exec := func(q string) {
+		t.Helper()
+		_, err := pool.Exec(ctx, q)
+		require.NoError(t, err, q)
+	}
+
+	sweep()
+	require.NoError(t, v.WriteVersion(ctx, store.VersionInput{
+		EntityID: "FEAT-1", Op: store.VersionOpUpdate, Type: "feature", Content: "elsewhere",
+		SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+	}))
+	require.NoError(t, v.WriteRelationVersion(ctx, store.RelationVersionInput{
+		Key: key, Op: store.VersionOpUpdate, Content: "elsewhere",
+		SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+	}))
+	require.False(t, hashed(entityHash), "an entity version with another hash must clear the hash")
+	require.False(t, hashed(relationHash), "a relation version with another hash must clear the hash")
+
+	sweep()
+	exec(`DELETE FROM entity_versions WHERE vseq = (SELECT max(vseq) FROM entity_versions)`)
+	exec(`DELETE FROM relation_versions WHERE vseq = (SELECT max(vseq) FROM relation_versions)`)
+	require.False(t, hashed(entityHash), "a purged entity version must clear the hash")
+	require.False(t, hashed(relationHash), "a purged relation version must clear the hash")
+}
+
+// TestSweepWriteBackSkipsARowWithANewerVersion is the sqlitestore test of the
+// same name: the write-back's latest-version guard (TASK-Y73Y9 in Atlas).
+func TestSweepWriteBackSkipsARowWithANewerVersion(t *testing.T) {
+	pool := newScopedPool(t)
+	s, err := pgstore.New(pool)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	provider := stubProvider{hash: "schema-1", json: []byte(`{"v":1}`)}
+	cfg := store.SweepConfig{Interval: time.Hour, Idle: time.Nanosecond, MaxStaleness: time.Nanosecond, Batch: 10}
+
+	require.NoError(t, s.CreateEntity(ctx, entity.New("FEAT-1", "feature")))
+	require.NoError(t, s.SweepNow(ctx, provider, cfg))
+	_, err = pool.Exec(ctx, `UPDATE entities SET content_hash = NULL`)
+	require.NoError(t, err)
+
+	require.NoError(t, s.SweepNowWithWrite(ctx, provider, cfg, func() {
+		require.NoError(t, s.VersionStore().WriteVersion(ctx, store.VersionInput{
+			EntityID: "FEAT-1", Op: store.VersionOpDelete, Type: "feature",
+			SchemaHash: "schema-1", Projection: []byte(`{"v":1}`),
+		}))
+	}))
+	require.NoError(t, s.SweepNow(ctx, provider, cfg))
+
+	metas, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "FEAT-1"})
+	require.NoError(t, err)
+	require.Len(t, metas, 3, "the live row was not captured after the delete version")
+	require.Equal(t, store.VersionOpCreate, metas[2].Op)
+}

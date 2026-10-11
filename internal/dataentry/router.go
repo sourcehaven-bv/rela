@@ -62,6 +62,17 @@ type routerConfig struct {
 	// Info (method, path, status, wall and database time). See requestStats
 	// for why it never adds a header.
 	accessLog *slog.Logger
+
+	// spaFS, when non-nil, replaces the embedded SPA build. Tests only: the
+	// CI Test job does not build the frontend, so without it `/` answers 404
+	// and a client that reads the discovery Link header only on a 2xx (as
+	// restish does) never sees it.
+	spaFS fs.FS
+}
+
+// withSPAFS serves fsys as the SPA build. See routerConfig.spaFS.
+func withSPAFS(fsys fs.FS) RouterOption {
+	return func(c *routerConfig) { c.spaFS = fsys }
 }
 
 // WithAccessLog sends the per-request access log to l; nil turns it off.
@@ -103,6 +114,9 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 		panic("failed to mount embedded SPA filesystem (static/v2): " + err.Error())
 	}
 	// coverage-ignore-end
+	if cfg.spaFS != nil {
+		spaFS = cfg.spaFS
+	}
 
 	// SSE endpoints — excluded from reload-lock (long-lived connection)
 	mux.HandleFunc("/api/events", a.handleSSE)
@@ -191,7 +205,7 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// not a discovery probe to the SPA — which must be the customisation-aware
 	// handler, or operator custom.css would be dropped on every CalDAV-enabled
 	// deployment.
-	spa := spaHandlerWithCustom(spaFS, custom)
+	spa := withSpecLink(spaHandlerWithCustom(spaFS, custom))
 	if a.caldavAliases != nil {
 		if routes := newCalDAVRoutes(a); routes != nil {
 			routes.registerWellKnown(mux, spa)
@@ -280,12 +294,15 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// principal.
 	if a.jwtGate != nil {
 		handler = requireVerifiedJWT(handler, *a.jwtGate)
+		// The spec tells a generic client (restish) which header carries the
+		// credential. The generator outlives schema reloads, so this sticks.
+		a.State().OpenAPIGen.SetAuthHeader(a.jwtGate.HeaderName)
 	}
 	handler = stampAuditPrincipal(handler, resolver)
 	// Outermost of all: per-request query accounting must wrap the whole
 	// chain so the principal resolution and ACL compilation above (which
 	// read the store) are counted with the handler, not missed.
-	handler = requestStats(handler, cfg.accessLog)
+	handler = requestStats(handler, cfg.accessLog, (&routeWordCache{schema: a.State}).words)
 	return handler
 }
 
@@ -969,6 +986,23 @@ func stampAuditPrincipal(next http.Handler, resolve PrincipalResolver) http.Hand
 		}
 		ctx := principal.With(r.Context(), p)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// openAPISpecPath is where the generated OpenAPI spec is served.
+const openAPISpecPath = "/api/v1/_openapi.json"
+
+// withSpecLink announces the OpenAPI spec on a GET or HEAD of the site root
+// with an RFC 8631 `Link: rel="service-desc"` header. A generic client given
+// only the origin, such as restish, follows it to the spec. The spec itself
+// stays an /api/ path behind the same gate as every other API call.
+func withSpecLink(next http.Handler) http.Handler {
+	link := "<" + openAPISpecPath + `>; rel="service-desc"`
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			w.Header().Add("Link", link)
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

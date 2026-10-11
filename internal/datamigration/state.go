@@ -57,12 +57,13 @@ type State struct {
 //
 // One implementation per storage tier, selected by the composition root the
 // same way `comments.Store` is (TKT-OGTVJW): a file under the project's
-// `migrations/` on the filesystem tier, a row in the tenant's schema on
-// postgres, a row in `rela.db` on sqlite. The split exists because migration
-// state describes the DATA, so it has to travel with the data — a postgres
-// tenant's position cannot live in a file shared by every tenant on the box,
-// and a sqlite project's position cannot live beside the database file that is
-// meant to be shippable on its own.
+// `migrations/` on the filesystem tier, a row in the tenant's schema on the
+// multi-tenant database tier, and a row in the project's database file on the
+// single-process database tier. The split exists because migration state
+// describes the DATA, so it has to travel with the data. A tenant's position
+// cannot live in a file shared by every tenant on the box, and a project's
+// position cannot live beside its database file, which is meant to be shippable
+// on its own.
 //
 // Implementations must pass migstatetest.RunAll.
 //

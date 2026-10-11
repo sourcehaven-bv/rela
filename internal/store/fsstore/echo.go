@@ -11,7 +11,7 @@ import (
 // concern used by the filesystem watcher. The FS layer's post-write
 // hook calls Recorded with the bytes that landed on disk; fsstore
 // call sites that delete files call Forget; the watcher asks
-// IsEcho when fsnotify delivers a change event.
+// IsEcho when the file watcher delivers a change event.
 type echoTracker struct {
 	hashes *cache.LRU[string, string]
 }
@@ -35,7 +35,7 @@ func (e *echoTracker) Forget(path string) {
 }
 
 // IsEcho reports whether data (typically bytes just read off disk
-// after an fsnotify event) matches the most recent Recorded hash
+// after a file-watcher event) matches the most recent Recorded hash
 // for path. When true, the watcher should treat the event as a
 // self-write and skip reconciliation.
 func (e *echoTracker) IsEcho(path string, data []byte) bool {

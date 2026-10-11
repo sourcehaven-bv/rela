@@ -1687,10 +1687,10 @@ func (m *Manager) deleteEntityInTx(
 		return res, capture, fmt.Errorf("delete entity: %w", delErr)
 	}
 	// The store's own scan is the final word on what went. A face it removed
-	// that the re-read above did not see is authorized now. On pg/sqlite a
-	// denial rolls the delete back. On fs the watcher indexes an external
-	// file edit without taking the Tx lock, so a face can land between the
-	// re-read and the delete, and fs cannot roll back: res is returned with
+	// that the re-read above did not see is authorized now. On a transactional
+	// backend a denial rolls the delete back. On fs the watcher indexes an
+	// external file edit without taking the Tx lock, so a face can land between
+	// the re-read and the delete, and fs cannot roll back: res is returned with
 	// the error so the caller can record what really went (issue #929).
 	if aErr := m.authorizeFamily(ctx, acl.OpDelete, id, res.DeletedEntities, authorized); aErr != nil {
 		return res, capture, aErr
@@ -2061,8 +2061,9 @@ func (m *Manager) recordPartialCascade(
 		return
 	}
 	// A face-authorization denial after the store delete returns the full
-	// result on every backend. pg/sqlite then roll back, so nothing may be
-	// recorded; fs cannot, so what it removed is recorded as removed.
+	// result on every backend. Transactional backends then roll back, so
+	// nothing may be recorded; fs cannot, so what it removed is recorded as
+	// removed.
 	if facesStillStored(ctx, m.deps.Store, res.DeletedEntities) {
 		return
 	}
@@ -2464,9 +2465,9 @@ func (m *Manager) RenameEntity(
 		return rErr
 	})
 	if txErr != nil {
-		// pg/sqlite rolled the rename back. fs and memstore cannot, so a
-		// denial after the store rename leaves it standing, and the logs must
-		// say so (the same reasoning as recordPartialCascade).
+		// A transactional backend rolled the rename back. fs and memstore
+		// cannot, so a denial after the store rename leaves it standing, and
+		// the logs must say so (the same reasoning as recordPartialCascade).
 		if res != nil && !familyStillStored(ctx, m.deps.Store, oldID) {
 			r.record(ctx, renamed)
 		}
@@ -2509,11 +2510,11 @@ type familyRename struct {
 // raised after the store rename, so the caller can record a rename a backend
 // could not roll back.
 //
-// The post-rename check still names oldID. On pg and sqlite the ACL's outer
-// handle sees the pre-rename graph, so a role conferred through a relation
-// still applies; on fs and memstore the relations are already re-keyed, so
-// such a role is lost and the face is denied. Both outcomes fail closed, and
-// the check only runs for a face no earlier check saw.
+// The post-rename check still names oldID. On a transactional backend the ACL's
+// outer handle sees the pre-rename graph, so a role conferred through a
+// relation still applies; on fs and memstore the relations are already
+// re-keyed, so such a role is lost and the face is denied. Both outcomes fail
+// closed, and the check only runs for a face no earlier check saw.
 func (r *familyRename) inTx(
 	ctx context.Context, tx store.Store,
 ) (*entity.RenameResult, []*entity.Entity, error) {
@@ -2644,7 +2645,9 @@ func collectRenameAffectedRelations(ctx context.Context, st store.Store, id stri
 // CreateRelation creates the relation key names, validating endpoints and
 // the relation-type tuple against the metamodel. key.FromFace is the tail,
 // part of the relation's identity: two edges on one triple with different
-// tails are two relations (BUG-64MU2Q). **No automation.**
+// tails are two relations (BUG-64MU2Q). A caller that reports a type-allowlist
+// mismatch itself can let the write through with
+// [entity.RelationOptions.TolerateTypeMismatch]. **No automation.**
 func (m *Manager) CreateRelation(
 	ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 ) (*entity.Relation, error) {
@@ -2653,9 +2656,9 @@ func (m *Manager) CreateRelation(
 	// Authorize BEFORE the peer-existence lookups (BUG-K6FEVB). A missing
 	// peer must never let a write skip the ACL: if authz is deferred until
 	// after GetEntity, a denied caller (e.g. --read-only / ReadOnlyACL)
-	// gets a soft "entity not found" instead of a *acl.ForbiddenError,
-	// and the dataentry fallback then writes directly to the store,
-	// bypassing the ACL and audit. The source type feeds the type-level
+	// gets a soft "entity not found" instead of a *acl.ForbiddenError;
+	// before BUG-K6FEVB the dataentry fallback then wrote directly to the
+	// store, bypassing the ACL and audit. The source type feeds the type-level
 	// grant check; it is best-effort (empty if the source doesn't exist
 	// yet), mirroring UpdateRelation/DeleteRelation. Authorization must be
 	// decided from inputs that don't depend on peer existence.
@@ -2692,7 +2695,13 @@ func (m *Manager) CreateRelation(
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, source.typ, target.typ); vErr != nil {
-		return nil, fmt.Errorf("invalid relation: %w", vErr)
+		// A type-allowlist mismatch is the one tolerable failure: the caller
+		// opted in and reports it as a warning. An unknown relation type is
+		// never tolerated.
+		var mismatch *metamodel.InvalidRelationError
+		if !opts.TolerateTypeMismatch || !errors.As(vErr, &mismatch) {
+			return nil, fmt.Errorf("invalid relation: %w", vErr)
+		}
 	}
 	// Keyed on the TAIL too: two edges on the same triple with different
 	// tails are two relations, so a faced create must not be rejected by

@@ -117,6 +117,40 @@ func (s *Store) List(ctx context.Context, target comments.Target) ([]comments.Co
 	return out, nil
 }
 
+// Count returns the thread size of each target that has comments, in one
+// GROUP BY query served by the `(target_key, id)` primary key.
+func (s *Store) Count(ctx context.Context, targets []comments.Target) (map[string]int, error) {
+	out := make(map[string]int, len(targets))
+	if len(targets) == 0 {
+		return out, nil
+	}
+	keys := make([]string, len(targets))
+	for i, t := range targets {
+		keys[i] = t.Key()
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT target_key, count(*)
+		FROM comments
+		WHERE target_key = ANY($1)
+		GROUP BY target_key`, keys)
+	if err != nil {
+		return nil, fmt.Errorf("pgcomments: count: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key string
+		var n int
+		if err := rows.Scan(&key, &n); err != nil {
+			return nil, fmt.Errorf("pgcomments: count: %w", err)
+		}
+		out[key] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("pgcomments: count: %w", err)
+	}
+	return out, nil
+}
+
 // Get returns one comment as a single-row read.
 //
 // Served by the `PRIMARY KEY (target_key, id)` index, so this is an index
@@ -346,10 +380,11 @@ func scanComment(row pgx.Row) (comments.Comment, error) {
 	}
 	// Normalized to UTC because pgx returns a TIMESTAMPTZ in time.Local, and
 	// Comment marshals to JSON with whatever offset it carries. Left alone, one
-	// comment would serialize as "+01:00" from this node and "Z" from a sqlite
-	// one, and the offset would shift under the server's DST — a difference
-	// clients see even though both describe the same instant. sqlitecomments
-	// already returns UTC, so this is what makes the two agree.
+	// comment would serialize as "+01:00" from this node and "Z" from another
+	// comment backend, and the offset would shift under the server's DST — a
+	// difference clients see even though both describe the same instant. The
+	// other database comment backend already returns UTC, so this is what makes
+	// the two agree.
 	c.CreatedAt = c.CreatedAt.UTC()
 	if updatedAt != nil {
 		c.UpdatedAt = updatedAt.UTC()

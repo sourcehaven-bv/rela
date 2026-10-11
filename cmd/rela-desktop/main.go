@@ -674,7 +674,7 @@ func (d *Desktop) CloneProject(repoURL, baseDir string) map[string]any {
 
 	// repoName is the URL's last path segment, so a hostile URL can make it
 	// ".." — BaseDir makes Clone reject a targetDir that escapes baseDir.
-	// coverage-ignore-start: os-fs-event: git.Clone (go-git PlainClone) performs real network I/O against a remote repo
+	// coverage-ignore-start: os-fs-event: git.Clone performs real network I/O against a remote repo
 	// with no injectable
 	// transport here; the success path and downstream project handling are only reachable after an actual clone
 	err := git.Clone(git.CloneOptions{

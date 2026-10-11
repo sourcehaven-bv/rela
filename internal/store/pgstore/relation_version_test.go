@@ -284,7 +284,7 @@ func TestSweepCapturesSettledRelations(t *testing.T) {
 		`UPDATE relations SET updated_at = now() - interval '1 hour' WHERE from_id = 'SET-A'`)
 	require.NoError(t, err)
 
-	s.StartVersionSweep(stubProvider{hash: "schema-rel", json: []byte(`{"relations":{}}`)},
+	startVersionSweep(t, s, stubProvider{hash: "schema-rel", json: []byte(`{"relations":{}}`)},
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {

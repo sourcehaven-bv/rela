@@ -8,13 +8,15 @@ import { ListPage, RelationOrderPage } from "../pages";
  * feature's tasks, on a list tab, a board tab and a table section of the
  * feature's own page. Each surface shows the tasks in the feature's order,
  * and a move there survives a reload, because it was stored on the edge.
+ * The relation is orderable on both sides, so a task's page orders the
+ * features that contain it too (TKT-TY6TBU).
  */
 const CONTAINS_YAML = `relations:
   contains:
     from: [feature]
     to: [task]
     inverse: contained_in
-    orderable: outgoing
+    orderable: both
 `;
 
 const PAGES_YAML = `pages:
@@ -24,6 +26,11 @@ const PAGES_YAML = `pages:
     tabs:
       - { id: tasks, label: "Tasks", list: tasks, scope: { relation: contains, direction: outgoing } }
       - { id: board, label: "Board", kanban: task-board, scope: { relation: contains, direction: outgoing } }
+  task:
+    entity_type: task
+    label: "Task"
+    tabs:
+      - { id: features, label: "Features", list: features, scope: { relation: contains, direction: incoming } }
 `;
 
 const KANBAN_YAML = `kanbans:
@@ -132,6 +139,32 @@ test.describe("Relation order", () => {
 
     await appPage.reload();
     await expect.poll(() => order.sectionTitles("Parts")).toEqual(["Alpha step", "Gamma step", "Beta step"]);
+  });
+
+  test("an incoming list tab moves a source", async ({ api, appPage, serverUrl }) => {
+    const task = await api.createEntity("tasks", { properties: { title: "Shared step", status: STATUS.feature.draft } });
+    const features = [SEED.features.authentication, SEED.features.dashboardAnalytics, SEED.features.exportData];
+    for (const feature of features) {
+      await api.createRelation("features", feature, "contains", task.id);
+    }
+    const order = new RelationOrderPage(appPage);
+    await appPage.goto(`${serverUrl}/p/task/${task.id}/features`);
+    await expect.poll(() => order.listTitles()).toEqual(["User Authentication", "Dashboard Analytics", "Export Data"]);
+
+    await order.dragListRow("Export Data", "User Authentication", "before");
+    await expect
+      .poll(() => order.listTitles())
+      .toEqual(["Export Data", "User Authentication", "Dashboard Analytics"]);
+
+    await order.stepListRow("User Authentication", "ArrowDown");
+    await expect
+      .poll(() => order.listTitles())
+      .toEqual(["Export Data", "Dashboard Analytics", "User Authentication"]);
+
+    await appPage.reload();
+    await expect
+      .poll(() => order.listTitles())
+      .toEqual(["Export Data", "Dashboard Analytics", "User Authentication"]);
   });
 
   test("a list sorted by the reader offers no handles", async ({ appPage, serverUrl }) => {

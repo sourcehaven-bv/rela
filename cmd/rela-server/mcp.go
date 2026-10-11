@@ -1,11 +1,8 @@
 package main
 
 import (
-	"context"
 	"errors"
-	"log/slog"
 	"net/http"
-	"os"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
@@ -15,42 +12,13 @@ import (
 
 // mcpServerVersion is the version rela reports in the MCP `initialize` /
 // `server/discover` response. It is a distinct var from the CLI's Version
-// (which rela-server does not import — it has no cobra/kong surface) and is
+// (which rela-server does not import — it has no CLI command surface) and is
 // overridable at build time via
 // -ldflags "-X main.mcpServerVersion=$(git describe --tags)".
 //
 // It is informational: MCP clients log it, they do not gate on it. "dev" in
 // an unstamped build is honest rather than a wrong number.
 var mcpServerVersion = "dev"
-
-// wireIdentityAndMCP installs the identity source and, when -mcp is set, the
-// remote MCP endpoint. Extracted from main so the two stay in their required
-// order and main stays readable.
-//
-// **The order is load-bearing.** [wireRemoteMCP] refuses to enable MCP unless
-// a JWT gate is installed, so it must run AFTER wirePrincipalResolvers. Both
-// exit on failure rather than degrading: an invalid identity configuration
-// must not boot, and an operator who asked for MCP must not get a server
-// silently missing it.
-func wireIdentityAndMCP(app *dataentry.App, svc *appbuild.Services, f *serverFlags) {
-	mode, modeErr := validateIdentityFlags(f, os.Getenv(dataentry.EnvDataEntryUserVar))
-	if modeErr != nil {
-		slog.Error("invalid identity configuration", "error", modeErr)
-		os.Exit(1)
-	}
-
-	// Build the signed-JWT verifier once (nil when JWT identity is disabled) and
-	// share it between the identity gate and the webhook receiver so the JWKS
-	// is fetched a single time.
-	idv := buildIdentityVerifier(context.Background(), f)
-	wirePrincipalResolvers(app, f, idv, mode)
-	wireWebhookReceiver(app, f, idv)
-
-	if err := wireRemoteMCP(app, svc, f); err != nil {
-		slog.Error("failed to enable remote MCP", "error", err)
-		os.Exit(1)
-	}
-}
 
 // wireRemoteMCP enables the HTTP MCP endpoint when -mcp is set.
 //
@@ -164,6 +132,12 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 	}
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals
+	}
+	// Assigned only when set: a nil *MCPComments in the interface would
+	// register the tools over an absent service.
+	if host.Comments != nil {
+		deps.Comments = host.Comments
+		deps.CommentWriter = host.Comments
 	}
 	return deps, nil
 }

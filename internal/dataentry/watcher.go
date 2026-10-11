@@ -62,6 +62,7 @@ type sseEvent struct {
 type eventBroker struct {
 	mu      sync.Mutex
 	clients map[chan sseEvent]struct{}
+	closed  bool // set by close; later subscribers get a closed channel
 }
 
 func newEventBroker() *eventBroker {
@@ -71,9 +72,25 @@ func newEventBroker() *eventBroker {
 func (b *eventBroker) subscribe() chan sseEvent {
 	ch := make(chan sseEvent, 4)
 	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		close(ch)
+		return ch
+	}
 	b.clients[ch] = struct{}{}
-	b.mu.Unlock()
 	return ch
+}
+
+// close ends every stream. A subscriber reads what is already buffered,
+// then sees its channel closed and returns.
+func (b *eventBroker) close() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closed = true
+	for ch := range b.clients {
+		close(ch)
+		delete(b.clients, ch)
+	}
 }
 
 func (b *eventBroker) unsubscribe(ch chan sseEvent) {
@@ -151,14 +168,16 @@ func (b *eventBroker) broadcastGitStatus() {
 // subscription — the store-watcher lifecycle is owned by the store
 // (closed when the store is closed).
 //
-// coverage-ignore-func: requires real filesystem events via fsnotify
+// coverage-ignore-func: requires real filesystem events via the file watcher
 func (a *App) StartWatching() error {
-	// coverage-ignore-start: os-fs-event: startup wiring for fsnotify-backed config subscription, store watcher, and
-	// store-event SSE bridge
-	// (project marks it coverage-ignore)
+	// coverage-ignore-start: os-fs-event: startup wiring for file-watcher-backed config subscription, store
+	// watcher, and store-event SSE bridge (project marks it coverage-ignore)
 	// (1) data-entry.yaml subscription.
 	if sub, ok := a.cfgLoader.(config.Subscriber); ok {
 		stop, err := sub.Subscribe(context.Background(), ConfigFile, func() {
+			if a.reloadPaused.Load() > 0 {
+				return
+			}
 			// A rejection is already logged and broadcast; nothing more to do.
 			_ = a.reloadConfig()
 		})

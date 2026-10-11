@@ -187,7 +187,7 @@ func (s *security) reject(w http.ResponseWriter, r *http.Request, reason string)
 		"rule", reason,
 		"host", strconv.Quote(truncate(r.Host, maxLogFieldLen)),
 		"origin", strconv.Quote(truncate(origin, maxLogFieldLen)),
-		"path", strconv.Quote(truncate(r.URL.Path, maxLogFieldLen)),
+		"path", strconv.Quote(truncate(shapedPath(r), maxLogFieldLen)),
 	)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -307,6 +307,8 @@ var insensitivePathPrefixes = []string{
 // because documented curl usage of the data API relies on it. It matches:
 //
 //   - /api/v1/_schema — the schema handshake
+//   - /api/v1/_openapi.json — the OpenAPI spec a generic API client (restish)
+//     loads before it can call the data routes (TKT-3DLP0K); read-only config
 //   - /api/v1/{plural}[/...] — the entity/relation data routes, where {plural}
 //     is a real entity-type plural: a first segment that does NOT start with '_'
 //
@@ -324,6 +326,9 @@ func isNonBrowserExemptV1Path(path string) bool {
 	rest := path[len(base):]
 	if rest == "" {
 		return false
+	}
+	if rest == "_openapi.json" {
+		return true
 	}
 	first, _, _ := strings.Cut(rest, "/")
 	if first == "_schema" {

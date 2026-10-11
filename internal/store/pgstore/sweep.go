@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/bgloop"
 )
 
 // sweepAdvisoryLockKey gates the version-reconciliation sweep to a single runner
@@ -55,28 +56,88 @@ func sweepDefaults(c SweepConfig) SweepConfig {
 	return c
 }
 
-// sweep is the periodic version-reconciliation goroutine. It captures
-// create/update versions for entities that have settled (or exceeded the
-// staleness ceiling), under a non-blocking advisory lock so only one process in
-// the deployment sweeps at a time. rename/delete are captured synchronously
-// elsewhere (see the entitymanager version hook) — the sweep never sees them as
-// distinct ops.
+// VersionSweep is the periodic version-reconciliation service. It captures
+// create/update versions for entities and relations that have settled (or
+// exceeded the staleness ceiling), under a non-blocking advisory lock so only
+// one process in the deployment sweeps a schema at a time. Rename and delete
+// are captured synchronously elsewhere (see the entitymanager version hook), so
+// the sweep never sees them as distinct ops.
+//
+// It is a service of its own rather than a goroutine the store owns
+// (TKT-IPXEZQ): it needs nothing from [Store] but the pool, so the wiring site
+// that builds it also starts and stops it. That owner must call [VersionSweep.Stop]
+// before closing the pool; a tick still in flight would otherwise fail against
+// a closed pool.
+type VersionSweep struct {
+	loop *bgloop.Loop
+}
+
+// NewVersionSweep builds the sweep over st's pool. It does not start it; call
+// [VersionSweep.Start].
+//
+// Nil: st and provider are rejected. A sweep without a provider has no schema
+// projection to stamp on a version, and a missing store is a wiring fault.
+//
+// The store's handle must be a *pgxpool.Pool: a tick acquires ONE connection
+// and runs entirely on it, because the advisory lock is session-scoped. A store
+// over a bare connection or a transaction is rejected rather than left
+// unswept, which would silently stop create/update capture.
+func NewVersionSweep(st *Store, provider ProjectionProvider, cfg SweepConfig) (*VersionSweep, error) {
+	if st == nil {
+		return nil, errors.New("pgstore: version sweep needs a store")
+	}
+	if provider == nil {
+		return nil, errors.New("pgstore: version sweep needs a projection provider")
+	}
+	pool, ok := st.db.(*pgxpool.Pool)
+	if !ok {
+		return nil, errors.New("pgstore: version sweep needs a store built over a *pgxpool.Pool")
+	}
+	return newVersionSweep(&sweep{pool: pool, provider: provider, cfg: sweepDefaults(cfg)})
+}
+
+// newVersionSweep wraps worker in the shared start-once, stop-and-wait
+// lifecycle.
+func newVersionSweep(worker *sweep) (*VersionSweep, error) {
+	loop, err := bgloop.New(worker.run)
+	if err != nil { // coverage-ignore: defensive: worker.run is never nil
+		return nil, err
+	}
+	return &VersionSweep{loop: loop}, nil
+}
+
+// Start launches the sweep goroutine on a detached context, independent of any
+// request. Only the first call starts it: a second call, or a call after
+// [VersionSweep.Stop], does nothing. Build a new sweep to run again.
+func (v *VersionSweep) Start() { v.loop.Start() }
+
+// Stop signals the goroutine to exit and waits for it, so once Stop returns
+// the sweep issues no further statements. Canceling interrupts the current
+// statement; the advisory unlock still runs before Stop returns. Safe to call
+// more than once, concurrently, on a sweep that was never started, and on a
+// nil receiver.
+func (v *VersionSweep) Stop() {
+	if v == nil {
+		return
+	}
+	v.loop.Stop()
+}
+
+// sweep is the tick worker behind [VersionSweep]. Its fields are touched only
+// from the run goroutine (or a test calling tick directly), never concurrently,
+// so it needs no lock.
 type sweep struct {
 	pool     *pgxpool.Pool
 	provider ProjectionProvider
 	cfg      SweepConfig
-	cancel   context.CancelFunc
-	done     chan struct{}
 	// beforeCapture, when set, runs between the candidate query and the
 	// captures. Tests use it to write a row the query has already read.
 	beforeCapture func()
 	// more is set by a tick that filled its batch and made progress, so run
-	// starts the next tick at once rather than an Interval later. Touched only
-	// from the run goroutine.
+	// starts the next tick at once rather than an Interval later.
 	more bool
 	// consecutiveSkips counts ticks that could not take the lock, so sustained
-	// starvation escalates to a warning. Touched only from the run goroutine
-	// (tick is never called concurrently), so it needs no locking.
+	// starvation escalates to a warning.
 	consecutiveSkips int
 }
 
@@ -92,62 +153,8 @@ type sweep struct {
 // which is worth surfacing.
 const sweepSkipWarnAfter = 10
 
-// StartVersionSweep starts the periodic version-reconciliation sweep for this
-// store, capturing create/update versions for settled entities. The wiring
-// layer calls this after construction, supplying a ProjectionProvider derived
-// from the active metamodel (which the store itself does not hold). The sweep
-// is stopped by Store.Close.
-//
-// It requires the store's handle to be a *pgxpool.Pool (so a tick can acquire a
-// single connection for the session-scoped advisory lock). If it is not — e.g.
-// a store built over a bare handle in a unit test — the sweep does not start and
-// this is a no-op, so create/update versions simply won't be captured in that
-// configuration. Calling it more than once replaces the previous sweep.
-func (s *Store) StartVersionSweep(provider ProjectionProvider, cfg SweepConfig) {
-	pool, ok := s.db.(*pgxpool.Pool)
-	if !ok || provider == nil {
-		// A production deployment always injects a pool and a provider; hitting
-		// this branch silently disables create/update version capture, so log it
-		// loudly enough to diagnose a misconfiguration (unit-test stores over a
-		// bare handle land here by design and are expected).
-		slog.Warn("pgstore: version sweep not started",
-			"pool", ok, "provider", provider != nil)
-		return
-	}
-	s.mu.Lock()
-	prev := s.sweep
-	s.sweep = startSweep(pool, provider, cfg)
-	s.mu.Unlock()
-	prev.stop()
-}
-
-// startSweep launches the sweep goroutine. It runs until stop() is called. The
-// goroutine uses a detached lifetime context (cancelled by stop), independent
-// of any request ctx.
-func startSweep(pool *pgxpool.Pool, provider ProjectionProvider, cfg SweepConfig) *sweep {
-	sctx, cancel := context.WithCancel(context.Background())
-	s := &sweep{
-		pool:     pool,
-		provider: provider,
-		cfg:      sweepDefaults(cfg),
-		cancel:   cancel,
-		done:     make(chan struct{}),
-	}
-	go s.run(sctx)
-	return s
-}
-
-// stop signals the loop to exit and waits for it. Idempotent and nil-safe.
-func (s *sweep) stop() {
-	if s == nil {
-		return
-	}
-	s.cancel()
-	<-s.done
-}
-
+// run ticks every Interval until ctx is canceled.
 func (s *sweep) run(ctx context.Context) {
-	defer close(s.done)
 	ticker := time.NewTicker(s.cfg.Interval)
 	defer ticker.Stop()
 	for {
@@ -161,11 +168,23 @@ func (s *sweep) run(ctx context.Context) {
 			for first := true; first || (s.more && ctx.Err() == nil); first = false {
 				s.more = false
 				if err := s.tick(ctx); err != nil && ctx.Err() == nil {
-					slog.Warn("pgstore: version sweep tick failed", "error", err)
+					logTickError(err)
 				}
 			}
 		}
 	}
+}
+
+// logTickError reports a failed tick: at Warn, unless the pool is already
+// closed. That happens only during shutdown, when a host closed the pool
+// before stopping the sweep (an MCP reload racing Close is one such window),
+// and the next tick never comes.
+func logTickError(err error) {
+	if strings.Contains(err.Error(), "closed pool") {
+		slog.Debug("pgstore: version sweep tick after the pool closed", "error", err)
+		return
+	}
+	slog.Warn("pgstore: version sweep tick failed", "error", err)
 }
 
 // tick runs one reconciliation pass. The ENTIRE tick — advisory lock, the
@@ -205,8 +224,8 @@ func (s *sweep) tick(ctx context.Context) error {
 		return nil
 	}
 	s.consecutiveSkips = 0
-	// Unlock on a context detached from cancellation: when Close cancels the
-	// tick ctx mid-tick, the deferred unlock must still run its statement, or
+	// Unlock on a context detached from cancellation: when [VersionSweep.Stop]
+	// cancels the tick ctx mid-tick, the deferred unlock must still run its statement, or
 	// the session-scoped advisory lock rides the pooled connection back into the
 	// pool and locks out OTHER processes until that connection is recycled
 	// (pgxpool does not reset session state on Release).
@@ -297,9 +316,8 @@ type sweepCandidate struct {
 	latestVseq int64
 	latestOp   string
 	hasVersion bool
-	// liveHash is the row's content_hash column (nil = not known) and xmin
-	// the row version it was read at; see writeBackEntityHash.
-	liveHash   *string
+	// xmin is the row version the candidate query read; see
+	// writeBackEntityHash.
 	xmin       string
 	editorUser *string
 	editorTool *string
@@ -324,20 +342,22 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 	// entity with no version is captured only once it has settled — it debounces
 	// like any other, rather than being snapshotted the instant it is created.
 	//
-	// AND it is DIRTY: its stored content_hash is unknown (NULL) or differs
-	// from the current lifecycle's latest version, or that lifecycle has no
-	// version yet (BUG-1DWMYO). The gate must match the dedup in captureOne
-	// exactly. A row it lets through that the dedup then skips changes nothing
-	// the query keys on, so it is selected again on every tick; once Batch
-	// such rows exist they fill every tick and newer edits are never reached.
-	// Comparing the stored hash is exact by construction: the sweep writes back
-	// the hash it computed (writeBackEntityHash), and a trigger clears it when
-	// a hashed column changes (migration 0020). A purge tombstone carries the
-	// live hash, so a purged row is clean too. The one exception is a row
-	// whose capture keeps failing: it stays a candidate, and noteBatch reports
-	// a full batch of them. Timestamps would not do: a
-	// capture is written after the write it snapshots, so an edit racing a
-	// capture can be older than that capture's created_at.
+	// AND its stored content_hash is NULL (BUG-1DWMYO, TASK-Y73Y9 in Atlas).
+	// A non-NULL hash means the current lifecycle's latest version has that
+	// hash, so the row has nothing to capture. The sweep writes the hash back
+	// after it captures or skips the row (writeBackEntityHash), and triggers
+	// clear it whenever that could stop being true: a hashed column changes
+	// (migration 0020), or a version is inserted with another hash, is a
+	// delete, or is purged, or a soft-deleted row is restored (migration
+	// 0021). The gate must not select rows the dedup in captureOne then skips:
+	// such a row is selected again on every tick, and once Batch of them exist
+	// newer edits are never reached. A skipped row gets its hash written back,
+	// so it drops out. The one exception is a row whose capture keeps failing:
+	// it stays a candidate, and noteBatch reports a full batch of them.
+	// Timestamps would not do: a capture is written after the write it
+	// snapshots, so an edit racing a capture can be older than that capture's
+	// created_at. The partial index entities_unhashed_idx serves this scan, so
+	// a tick costs in proportion to the rows that changed.
 	//
 	// Two LATERALs, because delete and content-dedup need different "latest":
 	//   - `lv` is the latest version of ANY op — its created_at drives the
@@ -364,10 +384,9 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 	// faces with byte-identical content hash differently. That is the
 	// structural half of the same guarantee; the SQL scoping is the other.
 	const q = candidateSelect + `
-		WHERE (e.updated_at < now() - make_interval(secs => $1)
+		WHERE e.content_hash IS NULL
+		  AND (e.updated_at < now() - make_interval(secs => $1)
 		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - make_interval(secs => $2)))
-		  AND (lvc.content_hash IS NULL OR e.content_hash IS NULL
-		       OR e.content_hash <> lvc.content_hash)
 		ORDER BY e.updated_at ASC
 		LIMIT $3`
 	// Pass the windows as float seconds via make_interval, not Duration.String()
@@ -393,10 +412,9 @@ func (s *sweep) selectCandidates(ctx context.Context, conn *pgxpool.Conn) ([]swe
 
 // candidateSelect reads entity rows with what a capture needs: the live
 // content, its attribution and origin columns, the two "latest version"
-// probes described on selectCandidates, and the stored content_hash and xmin
-// that writeBackEntityHash uses. Shared by the sweep and by capture-now for a
-// version tag, so both decide dedup and op the same way. The caller appends
-// the WHERE clause.
+// probes described on selectCandidates, and the xmin that writeBackEntityHash
+// uses. Shared by the sweep and by capture-now for a version tag, so both
+// decide dedup and op the same way. The caller appends the WHERE clause.
 const candidateSelect = `
 		SELECT e.id, e.face, e.type, e.content, e.properties,
 		       e.last_edited_by_user, e.last_edited_by_tool,
@@ -404,7 +422,7 @@ const candidateSelect = `
 		       e.origin_source_type, e.origin_definition,
 		       lvc.content_hash, lvc.vseq, lvc.op,
 		       (lv.vseq IS NOT NULL AND lv.op <> 'delete') AS live_lineage,
-		       e.content_hash, e.xmin::text
+		       e.xmin::text
 		FROM entities e
 		LEFT JOIN LATERAL (
 		    SELECT vseq, op, created_at FROM entity_versions ev
@@ -429,11 +447,11 @@ func scanCandidate(row scanner) (sweepCandidate, error) {
 		latestVseq *int64
 		latestOp   *string
 	)
-	scanArgs := make([]any, 0, 13+originColumnCount)
+	scanArgs := make([]any, 0, 12+originColumnCount)
 	scanArgs = append(scanArgs, &c.id, &c.face, &c.typ, &c.content, &c.props,
 		&c.editorUser, &c.editorTool)
 	scanArgs = append(scanArgs, c.origin.scanTargets()...)
-	scanArgs = append(scanArgs, &latestHash, &latestVseq, &latestOp, &c.hasVersion, &c.liveHash, &c.xmin)
+	scanArgs = append(scanArgs, &latestHash, &latestVseq, &latestOp, &c.hasVersion, &c.xmin)
 	if err := row.Scan(scanArgs...); err != nil {
 		return sweepCandidate{}, err
 	}
@@ -470,8 +488,11 @@ func (s *sweep) captureOne(
 //
 // Shared by the sweep and by capture-now for a version tag (TKT-VO6VG9), so a
 // tagged capture is the version the sweep would have written: same op,
-// attribution, origin and hash. Capture-now does not write the hash back; the
-// next sweep finds the row clean against the new version and does.
+// attribution, origin and hash. Capture-now does not write the hash back. A
+// row with a NULL hash stays a candidate: the next sweep dedups it against the
+// new version and writes the hash back then. A row with a stored hash keeps
+// it, which stays true: that hash is the live content's, and the new version
+// carries the same hash, so the version trigger leaves it alone.
 func captureLive(
 	ctx context.Context, q DBTX, c sweepCandidate, schemaHash string, projJSON []byte,
 ) (vseq int64, contentHash string, err error) {
@@ -528,22 +549,29 @@ func (c sweepCandidate) versionInput(schemaHash string, projJSON []byte) (store.
 }
 
 // writeBackEntityHash stores the hash the sweep computed on the live row, so
-// the row stops being a candidate until it changes again (migration 0020).
+// the row stops being a candidate until a trigger clears it again.
 //
-// It runs whether or not a version was captured: a row whose stored hash is
-// NULL or wrong while its content matches the latest version would otherwise
-// be selected, and skipped, on every tick.
+// It runs whether or not a version was captured: a row whose content matches
+// the latest version would otherwise be selected, and skipped, on every tick.
 //
-// The xmin guard makes it a no-op when the row was written after the candidate
-// query read it. The hash describes the content that was read; stored on newer
-// content it would mark an uncaptured edit as clean. A concurrent writer still
-// in flight is waited for, and the guard is then checked against its row.
+// Two guards make it a no-op when storing the hash would break what a stored
+// hash promises, that the latest version has it:
+//
+//   - xmin: the row was written after the candidate query read it. The hash
+//     describes the content that was read; stored on newer content it would
+//     mark an uncaptured edit as clean. A concurrent writer still in flight is
+//     waited for, and the guard is then checked against its row.
+//   - the latest version: a version written outside the sweep since the read,
+//     such as a delete followed by a re-create, would otherwise be followed by
+//     a hash the version triggers never get to clear, because the row's hash
+//     was still NULL when that version was written.
 func writeBackEntityHash(ctx context.Context, conn *pgxpool.Conn, c sweepCandidate, hash string) error {
-	if c.liveHash != nil && *c.liveHash == hash {
-		return nil
-	}
 	_, err := conn.Exec(ctx, `UPDATE entities SET content_hash = $1
-		WHERE id = $2 AND face = $3 AND xmin = $4::xid`, hash, c.id, c.face, c.xmin)
+		WHERE id = $2 AND face = $3 AND xmin = $4::xid
+		  AND EXISTS (SELECT 1 FROM (
+		      SELECT op, content_hash FROM entity_versions
+		      WHERE entity_id = $2 AND face = $3 ORDER BY vseq DESC LIMIT 1) l
+		    WHERE l.op <> 'delete' AND l.content_hash = $1)`, hash, c.id, c.face, c.xmin)
 	return err
 }
 
@@ -562,8 +590,7 @@ type relationSweepCandidate struct {
 	props      []byte
 	latestHash string
 	hasVersion bool
-	// liveHash and xmin mirror sweepCandidate's.
-	liveHash   *string
+	// xmin mirrors sweepCandidate's.
 	xmin       string
 	editorUser *string
 	editorTool *string
@@ -571,8 +598,7 @@ type relationSweepCandidate struct {
 
 // selectRelationCandidates returns up to Batch relations that have settled (or
 // whose latest version aged past MaxStaleness) and whose stored content_hash is
-// unknown or differs from their latest version's, for the reason given at
-// selectCandidates.
+// NULL, for the reason given at selectCandidates.
 //
 // Unlike the entity query this needs only ONE LATERAL: the relation carries its
 // stable rel_record_id on the row, and a delete+recreate mints a FRESH
@@ -599,16 +625,15 @@ func (s *sweep) selectRelationCandidates(
 		       r.last_edited_by_user, r.last_edited_by_tool,
 		       lv.content_hash,
 		       (lv.vseq IS NOT NULL) AS has_version,
-		       r.content_hash, r.xmin::text
+		       r.xmin::text
 		FROM relations r
 		LEFT JOIN LATERAL (
 		    SELECT vseq, content_hash, created_at FROM relation_versions rv
 		    WHERE rv.rel_record_id = r.rel_record_id ORDER BY rv.vseq DESC LIMIT 1
 		) lv ON true
-		WHERE (r.updated_at < now() - make_interval(secs => $1)
+		WHERE r.content_hash IS NULL
+		  AND (r.updated_at < now() - make_interval(secs => $1)
 		       OR (lv.vseq IS NOT NULL AND lv.created_at < now() - make_interval(secs => $2)))
-		  AND (lv.vseq IS NULL OR r.content_hash IS NULL
-		       OR r.content_hash <> lv.content_hash)
 		ORDER BY r.updated_at ASC
 		LIMIT $3`
 	rows, err := conn.Query(ctx, q,
@@ -626,7 +651,7 @@ func (s *sweep) selectRelationCandidates(
 		)
 		if err := rows.Scan(&c.recordID, &c.from, &c.fromFace, &c.relType, &c.to,
 			&c.content, &c.props, &c.editorUser, &c.editorTool,
-			&latestHash, &c.hasVersion, &c.liveHash, &c.xmin); err != nil {
+			&latestHash, &c.hasVersion, &c.xmin); err != nil {
 			return nil, err
 		}
 		if latestHash != nil {
@@ -669,14 +694,15 @@ func (s *sweep) captureRelation(
 			return insErr
 		}
 	}
-	if c.liveHash != nil && *c.liveHash == contentHash {
-		return nil
-	}
 	// As writeBackEntityHash. The key is the row's current one: a rename
-	// re-keys it in place, which the xmin guard catches as well.
+	// re-keys it in place, which the xmin guard catches as well. The relation
+	// dedup does not fence on a delete version, so neither does this guard.
 	_, err = conn.Exec(ctx, `UPDATE relations SET content_hash = $1
 		WHERE from_id = $2 AND from_face = $3 AND rel_type = $4 AND to_id = $5
-		  AND xmin = $6::xid`, contentHash, c.from, c.fromFace, c.relType, c.to, c.xmin)
+		  AND xmin = $6::xid
+		  AND $1 = (SELECT content_hash FROM relation_versions
+		            WHERE rel_record_id = $7 ORDER BY vseq DESC LIMIT 1)`,
+		contentHash, c.from, c.fromFace, c.relType, c.to, c.xmin, c.recordID)
 	return err
 }
 

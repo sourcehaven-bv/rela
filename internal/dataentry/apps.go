@@ -23,8 +23,9 @@ import (
 // appsDir is the project directory holding custom apps. Each app is a
 // subdirectory containing an index.html (plus any sibling assets). Mirrors the
 // actions/ and scripts/ convention: a top-level project directory read through
-// the project files loader, never stored in the entity store. On the sqlite
-// build the project's database may carry it (FEAT-UP14BT).
+// the project files loader, never stored in the entity store. On a backend
+// that keeps the project in a database, that database may carry it
+// (FEAT-UP14BT).
 //
 // An app is live iff apps/<id>/index.html exists and <id> is a valid app id.
 // Unpublish by renaming the folder or removing its index.html.

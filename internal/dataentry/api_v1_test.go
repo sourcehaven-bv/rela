@@ -486,7 +486,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "A Ticket"}})
 		seedEntity(app, &entity.Entity{ID: "TKT-003", Type: "ticket", Properties: map[string]any{"title": "C Ticket"}})
 		// Searcher returns TKT-001 and TKT-003 only. List sort must reorder them
-		// (C → 003) — proving Bleve ranking is discarded.
+		// (C → 003) — proving full-text ranking is discarded.
 		app.searcher = &fakeSearcher{hits: []search.Hit{
 			{ID: "TKT-001", Type: "ticket"},
 			{ID: "TKT-003", Type: "ticket"},

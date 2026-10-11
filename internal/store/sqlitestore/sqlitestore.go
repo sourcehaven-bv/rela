@@ -93,12 +93,12 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // Interface-driven again, so the numbers move with store.Store rather than
 // with this type.
 //
-// Content versioning (TKT-4NU9ZD) added exactly TWO exported methods, and the
-// arithmetic is the point of the line rather than an obstacle to it.
-// VersionStore() and StartVersionSweep() are the OPTIONAL capabilities
-// store.VersionServiceProvider and store.VersionSweeper declare, so the wiring
-// site can discover them by type assertion — they have to be on the store.
-// Everything else the feature needs hangs off *VersionStore instead: the seven
+// Content versioning adds exactly ONE exported method here: VersionStore(),
+// the OPTIONAL capability store.VersionServiceProvider declares, which the
+// wiring site discovers by type assertion, so it has to be on the store. The
+// reconciliation sweep is a separate service, [VersionSweep], built and owned
+// by the wiring site; the store holds no state for it (TKT-IPXEZQ, -1
+// exported / -1 method when the old StartVersionSweep left). Everything else the feature needs hangs off *VersionStore instead: the seven
 // service methods, the lineage walks, the purge guardrails, and the
 // RelationRecordID accessor that pgstore also keeps off its Store for this
 // exact reason. The synchronous tick sweepNow is a free function taking the
@@ -134,8 +134,8 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // +1 exported / +1 method: SoftDelete, the optional store.SoftDeleteProvider
 // accessor. The work lives on softDeleter and free functions in softdelete.go.
 //
-//plimsoll:max-methods=54
-//plimsoll:max-exported-methods=36
+//plimsoll:max-methods=53
+//plimsoll:max-exported-methods=35
 type Store struct {
 	db *sql.DB
 
@@ -160,13 +160,6 @@ type Store struct {
 	// the two would make every ordinary write queue behind a tick for no
 	// correctness gain.
 	versionMu sync.Mutex
-
-	// sweepMu guards the sweep field only (swapping the goroutine handle), not
-	// the sweep's work — that is versionMu's job.
-	sweepMu sync.Mutex
-	// sweep is the running version-reconciliation goroutine, nil until
-	// StartVersionSweep is called. Stopped by Close.
-	sweep *sweep
 
 	subMu sync.Mutex
 	subs  map[int]chan store.Event
@@ -250,25 +243,16 @@ func (s *Store) write(ctx context.Context, q string, args ...any) (sql.Result, e
 
 // --- Lifecycle ------------------------------------------------------------
 
-// Close releases this store's subscribers and stops its version sweep.
+// Close releases this store's subscribers.
 //
 // It does NOT close the database: the store borrows a handle owned by
-// [sqlitedb.DB], and the wiring site that opened the file closes it. A
+// [sqlitedb.DB], and the wiring site that opened the file closes it. Nor does
+// it stop a [VersionSweep]: the sweep belongs to whoever built it. A
 // transaction view closes nothing at all.
 func (s *Store) Close() error {
 	if s.parent != nil {
 		return nil
 	}
-	// Stop the sweep BEFORE releasing anything else: a tick mid-flight would
-	// otherwise keep running against a handle the caller is about to close and
-	// log spurious failures on every shutdown. stop() waits for the goroutine
-	// to exit, so once it returns nothing else will touch the database.
-	s.sweepMu.Lock()
-	sw := s.sweep
-	s.sweep = nil
-	s.sweepMu.Unlock()
-	sw.stop()
-
 	s.subMu.Lock()
 	for id, ch := range s.subs {
 		delete(s.subs, id)

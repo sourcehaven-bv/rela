@@ -331,35 +331,57 @@ func readAddressedOr404(
 func writeTargetOr404(
 	w http.ResponseWriter, r *http.Request, vr visibleReader, entityType, addr string,
 ) (*entitypkg.Entity, bool) {
-	parsed, err := entitypkg.ParseAddress(addr)
+	e, err := vr.writeTarget(r.Context(), entityType, addr)
 	if err != nil {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		writeWriteTargetError(w, r, err)
 		return nil, false
 	}
-	world := worldFromContext(r.Context()).visibility()
-	ref, ok, err := vr.resolver.WriteTarget(r.Context(), world, entityType, parsed)
+	return e, true
+}
+
+// errWriteTargetNotFound is the miss [visibleReader.writeTarget] reports for
+// an unparsable, absent or unreadable address alike.
+var errWriteTargetNotFound = errors.New("write target not found")
+
+// writeTarget is the resolution behind [writeTargetOr404], without the
+// response, for a caller that answers on another transport. The error is
+// [errWriteTargetNotFound] for every miss, a
+// [*visibility.AmbiguousAddressError] for a bare id on a faced type, or the
+// gate error.
+func (vr visibleReader) writeTarget(ctx context.Context, entityType, addr string) (*entitypkg.Entity, error) {
+	parsed, err := entitypkg.ParseAddress(addr)
+	if err != nil {
+		return nil, errWriteTargetNotFound
+	}
+	world := worldFromContext(ctx).visibility()
+	ref, ok, err := vr.resolver.WriteTarget(ctx, world, entityType, parsed)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errWriteTargetNotFound
+	}
+	e, ok, err := rowOf(vr.resolver.Ref(ctx, world, entityType, ref))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errWriteTargetNotFound
+	}
+	return e, nil
+}
+
+// writeWriteTargetError answers an error from [visibleReader.writeTarget].
+func writeWriteTargetError(w http.ResponseWriter, r *http.Request, err error) {
 	var amb *visibility.AmbiguousAddressError
 	switch {
 	case errors.As(err, &amb):
 		writeFaceRequired(w, r, amb)
-		return nil, false
-	case err != nil:
-		writeGateError(w, r, err)
-		return nil, false
-	case !ok:
+	case errors.Is(err, errWriteTargetNotFound):
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return nil, false
-	}
-	e, ok, err := rowOf(vr.resolver.Ref(r.Context(), world, entityType, ref))
-	if err != nil {
+	default:
 		writeGateError(w, r, err)
-		return nil, false
 	}
-	if !ok {
-		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
-		return nil, false
-	}
-	return e, true
 }
 
 // writeFaceRequired answers a bare address that names no single face.

@@ -38,7 +38,7 @@ const searchIndexDir = "search"
 // segments accumulate for the life of the process. The in-memory fallback
 // reinstates that growth, so it is a degraded mode, not an equivalent one.
 func openSearchIndex(base *SharedBase) *bleveindex.Index {
-	if base.cfg.Paths != nil && base.cfg.Paths.CacheDir != "" {
+	if !base.opts.memorySearch && base.cfg.Paths != nil && base.cfg.Paths.CacheDir != "" {
 		path := filepath.Join(base.cfg.Paths.CacheDir, searchIndexDir)
 		idx, err := bleveindex.New(path)
 		if err == nil {
