@@ -48,17 +48,27 @@ paths:
   table in `rela.db` on sqlite (a shipped file must carry it). New backends
   pass `migstatetest.RunAll`.
 
-  **`Gate.Evaluate` classifies; `Gate.Persist` writes, and only the CLI calls
-  it.** A server writing a git-tracked file at boot would dirty a working tree
-  and need a writable project dir; it also removes the concurrent-start race
-  outright. A server may serve with an unrecorded ADDITIVE change — harmless by
-  construction. With no record AND migrations present the gate refuses
-  (`StatusUnbaselined`) rather than baselining over files that may still need
-  to run; `rela migrate baseline` is the explicit override.
+  **`Gate.Evaluate` classifies; `Gate.Persist` writes, and only the CLI and a
+  Configure save call it.** A server writing a git-tracked file at boot would
+  dirty a working tree and need a writable project dir; it also removes the
+  concurrent-start race outright. A server may serve with an unrecorded
+  ADDITIVE change — harmless by construction. With no record AND migrations
+  present the gate refuses (`StatusUnbaselined`) rather than baselining over
+  files that may still need to run; `rela migrate baseline` is the explicit
+  override.
+
+  The Configure save (TKT-F5NGMG, DEC-325POW) is the one server-side writer.
+  It is the CLI's flow run from the browser: it adopts the current shape
+  (`MigrationState.Adopt`), writes the generated migration file next to the
+  config, runs it, and persists — only on `rela-server --config-editing`, only
+  for a `config:edit` holder, only on the fs build, and audited as
+  `config-edit` plus the runner's `data-migration` records. Do not add a
+  second server-side writer, and never persist at boot or on a preview.
 
   Migration/GC writes are the third sanctioned raw-store exception (after
-  `db migrate` and `history-purge`): operator-shell trust, no ACL, explicit
-  audit records (`data-migration`/`data-gc`), `store.WithAttribution`, and
+  `db migrate` and `history-purge`): operator-shell trust (or, for a
+  Configure save, the `config:edit` grant, which is admin-equivalent), no
+  ACL, explicit audit records (`data-migration`/`data-gc`), `store.WithAttribution`, and
   synchronous pre-delete version capture on pg (the sweep cannot reconstruct
   deleted rows). Below the entitymanager no `AliasRewriter` fires, so the
   engine also keeps id-keyed side stores in step itself: a face move MOVES the

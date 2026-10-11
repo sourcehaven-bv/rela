@@ -26,9 +26,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
-	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/jwtauth"
-	"github.com/Sourcehaven-BV/rela/internal/scheduler"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 )
 
@@ -78,12 +76,42 @@ type serverFlags struct {
 	// Requires the JWT identity flags above (the webhook reuses that JWKS).
 	webhookAudience string
 	webhookAction   string
+	// configEditing mounts the Configure API (TKT-F5NGMG): principals
+	// holding config:edit may change schema.yaml and data-entry.yaml from
+	// the browser. Off by default; see [validateConfigEditing].
+	configEditing bool
 }
 
 // coverage-ignore-func: flag wiring — exercised at startup, not in tests
 // coverage-ignore-start: main-or-wiring: flag/DI startup wiring using the global flag.CommandLine and process env,
 // exercised only at process
 // start
+// registerIdentityFlags registers the JWT identity and inbound-IdP webhook
+// flags on f.
+func registerIdentityFlags(f *serverFlags) {
+	// JWT identity flags (env fallbacks $RELA_JWT_*). Verifying a SIGNED assertion
+	// is safer than --principal-header (which merely trusts the proxy set a header).
+	flag.StringVar(&f.jwtIssuer, "jwt-issuer", os.Getenv("RELA_JWT_ISSUER"),
+		"Expected issuer (iss) of the identity JWT. Set with -jwt-audience and -jwt-jwks-url to "+
+			"enable cryptographic principal verification.")
+	flag.StringVar(&f.jwtAudience, "jwt-audience", os.Getenv("RELA_JWT_AUDIENCE"),
+		"Expected audience (aud) of the identity JWT — this server's id, per the proxy config.")
+	flag.StringVar(&f.jwtJWKSURL, "jwt-jwks-url", os.Getenv("RELA_JWT_JWKS_URL"),
+		"HTTPS URL of the proxy's JWKS, used to verify the identity JWT's ES256 signature.")
+	flag.StringVar(&f.jwtHeader, "jwt-header", envOr("RELA_JWT_HEADER", "X-Auth-Assertion"),
+		"Request header carrying the signed identity JWT (a leading 'Bearer ' is stripped). "+
+			"Point it at whatever your proxy injects, e.g. X-Pratique-Assertion or Authorization.")
+	// Inbound-IdP webhook flags (env fallbacks $RELA_WEBHOOK_*). Enable POST
+	// /webhooks/idp: a signed-JWT callback that provisions a user via an action.
+	flag.StringVar(&f.webhookAudience, "webhook-audience", os.Getenv("RELA_WEBHOOK_AUDIENCE"),
+		"Expected audience (aud) of an inbound IdP webhook JWT — distinct from -jwt-audience so an "+
+			"identity assertion can't be replayed as a webhook. Set with -webhook-action to enable "+
+			"POST /webhooks/idp. Reuses the -jwt-issuer/-jwt-jwks-url trust root.")
+	flag.StringVar(&f.webhookAction, "webhook-action", envOr("RELA_WEBHOOK_ACTION", ""),
+		"Name of the action a verified IdP webhook dispatches to (e.g. idp-sync). The action "+
+			"receives event/user_id/org_id as params and provisions the user.")
+}
+
 func parseFlags() *serverFlags {
 	f := &serverFlags{}
 	flag.StringVar(&f.projectDir, "project", ".", "Path to the rela project directory")
@@ -156,27 +184,13 @@ func parseFlags() *serverFlags {
 			"authenticates). Loopback binds and deployments with an acl.yaml never "+
 			"need this. See docs/server-security.md. Also enabled by "+
 			"RELA_ALLOW_UNAUTHENTICATED_COMMANDS=1.")
-	// JWT identity flags (env fallbacks $RELA_JWT_*). Verifying a SIGNED assertion
-	// is safer than --principal-header (which merely trusts the proxy set a header).
-	flag.StringVar(&f.jwtIssuer, "jwt-issuer", os.Getenv("RELA_JWT_ISSUER"),
-		"Expected issuer (iss) of the identity JWT. Set with -jwt-audience and -jwt-jwks-url to "+
-			"enable cryptographic principal verification.")
-	flag.StringVar(&f.jwtAudience, "jwt-audience", os.Getenv("RELA_JWT_AUDIENCE"),
-		"Expected audience (aud) of the identity JWT — this server's id, per the proxy config.")
-	flag.StringVar(&f.jwtJWKSURL, "jwt-jwks-url", os.Getenv("RELA_JWT_JWKS_URL"),
-		"HTTPS URL of the proxy's JWKS, used to verify the identity JWT's ES256 signature.")
-	flag.StringVar(&f.jwtHeader, "jwt-header", envOr("RELA_JWT_HEADER", "X-Auth-Assertion"),
-		"Request header carrying the signed identity JWT (a leading 'Bearer ' is stripped). "+
-			"Point it at whatever your proxy injects, e.g. X-Pratique-Assertion or Authorization.")
-	// Inbound-IdP webhook flags (env fallbacks $RELA_WEBHOOK_*). Enable POST
-	// /webhooks/idp: a signed-JWT callback that provisions a user via an action.
-	flag.StringVar(&f.webhookAudience, "webhook-audience", os.Getenv("RELA_WEBHOOK_AUDIENCE"),
-		"Expected audience (aud) of an inbound IdP webhook JWT — distinct from -jwt-audience so an "+
-			"identity assertion can't be replayed as a webhook. Set with -webhook-action to enable "+
-			"POST /webhooks/idp. Reuses the -jwt-issuer/-jwt-jwks-url trust root.")
-	flag.StringVar(&f.webhookAction, "webhook-action", envOr("RELA_WEBHOOK_ACTION", ""),
-		"Name of the action a verified IdP webhook dispatches to (e.g. idp-sync). The action "+
-			"receives event/user_id/org_id as params and provisions the user.")
+	registerIdentityFlags(f)
+	flag.BoolVar(&f.configEditing, "config-editing", os.Getenv("RELA_CONFIG_EDITING") == "1",
+		"Let principals holding the config:edit permission change the data model and "+
+			"screens (schema.yaml, data-entry.yaml) from the browser. A save rewrites the "+
+			"files, runs the data migration it needs, and switches the running server over. "+
+			"Requires an acl.yaml and an identity source; refused with --read-only and on "+
+			"the sqlite and postgres builds. Also enabled by RELA_CONFIG_EDITING=1.")
 	// Note: there is no --database-url flag, and must not be. The postgres
 	// build takes the DSN from $RELA_DATABASE_URL (or, for an embedding
 	// caller, appbuild.WithDatabaseURL) — never from argv, so the credential
@@ -207,23 +221,15 @@ func discoverOptions(f *serverFlags) []appbuild.Option {
 	return opts
 }
 
-// discoverProject resolves the project dir and builds the services, exiting on
-// any failure (a daemon has nothing to fall back to). It warns when read-only.
-func discoverProject(f *serverFlags) *appbuild.Services {
+// discoverProject resolves the project dir and builds the services. A
+// Configure save calls it again, with [appbuild.WithInMemorySearch], to
+// build services over the new files while the old ones still serve.
+func discoverProject(f *serverFlags, extra ...appbuild.Option) (*appbuild.Services, error) {
 	absDir, err := filepath.Abs(f.projectDir)
 	if err != nil {
-		slog.Error("invalid project dir", "error", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("invalid project dir: %w", err)
 	}
-	svc, err := appbuild.Discover(absDir, script.NewEngine(), discoverOptions(f)...)
-	if err != nil {
-		slog.Error("failed to initialize project services", "error", err)
-		os.Exit(1)
-	}
-	if f.readOnly {
-		slog.Warn("rela-server is read-only; every write request will be refused")
-	}
-	return svc
+	return appbuild.Discover(absDir, script.NewEngine(), append(discoverOptions(f), extra...)...)
 }
 
 // applyCommandConfinement records the host-level command-confinement decision
@@ -336,18 +342,16 @@ func validateIdentityFlags(f *serverFlags, envUser string) (identityMode, error)
 // single exclusive source there is nothing to fall through to.
 //
 // coverage-ignore-func: startup wiring — the decision it acts on is validateIdentityFlags.
-// coverage-ignore-start: main-or-wiring: startup wiring that installs the identity source on the app and os.Exits on
-// SetJWTGate failure; the
+// coverage-ignore-start: main-or-wiring: wiring that installs the identity source on the app; the
 // pure decision it acts on (validateIdentityFlags) is tested separately
-func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier, mode identityMode) {
+func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier, mode identityMode) error {
 	if mode == identityJWT {
 		if idv == nil {
 			// Unreachable: identityJWT implies all three JWT flags are set, so
 			// buildIdentityVerifier either returned a verifier or exited. Checked
 			// anyway because the alternative — storing a nil verifier behind a
 			// non-nil interface — panics on the first request instead of here.
-			slog.Error("jwt identity selected but no verifier was built")
-			os.Exit(1)
+			return errors.New("jwt identity selected but no verifier was built")
 		}
 		if err := app.SetJWTGate(dataentry.JWTGateConfig{
 			Verifier:   assertionVerifierAdapter{idv},
@@ -357,13 +361,12 @@ func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Ver
 				return errors.Is(err, jwtauth.ErrKeysUnavailable)
 			},
 		}); err != nil {
-			slog.Error("failed to enable jwt identity", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("enable jwt identity: %w", err)
 		}
 		// Vary on the assertion header: under ACL, API responses are
 		// per-principal (TKT-VMD8), and the assertion determines the principal.
 		app.SetPrincipalHeader(f.jwtHeader)
-		return
+		return nil
 	}
 
 	app.SetPrincipalResolver(dataentry.ChainResolvers(
@@ -371,6 +374,7 @@ func wirePrincipalResolvers(app *dataentry.App, f *serverFlags, idv *jwtauth.Ver
 		dataentry.HeaderPrincipalResolver(f.principalHeader),
 	))
 	app.SetPrincipalHeader(f.principalHeader)
+	return nil
 }
 
 // coverage-ignore-end
@@ -405,35 +409,35 @@ func buildIdentityVerifier(ctx context.Context, f *serverFlags) *jwtauth.Verifie
 
 // coverage-ignore-end
 
-// wireWebhookReceiver enables POST /webhooks/idp when -webhook-audience and
-// -webhook-action are both set. It requires JWT identity (the webhook reuses that
-// verifier's JWKS/issuer); a webhook audience without JWT identity, or a build
-// failure, is fatal so a misconfiguration fails loud rather than silently leaving
-// the endpoint off.
+// buildWebhookVerifier returns the verifier for POST /webhooks/idp when
+// -webhook-audience and -webhook-action are both set, and nil when neither is.
+// It requires JWT identity (the webhook reuses that verifier's JWKS/issuer); a
+// webhook audience without JWT identity, or a build failure, is an error so a
+// misconfiguration fails loud rather than silently leaving the endpoint off.
+//
+// Built once per process: the verifier holds the replay set, which a rebuilt
+// app must share.
 //
 // coverage-ignore-func: startup wiring — exercised via the shim + verifier tests.
-// coverage-ignore-start: main-or-wiring: startup wiring; every guard branch terminates in os.Exit and the enable path
-// installs a real webhook
-// verifier on the app, reachable only at process start
-func wireWebhookReceiver(app *dataentry.App, f *serverFlags, idv *jwtauth.Verifier) {
+// coverage-ignore-start: main-or-wiring: startup wiring; the enable path builds a real webhook
+// verifier, reachable only at process start
+func buildWebhookVerifier(f *serverFlags, idv *jwtauth.Verifier) (*jwtauth.WebhookVerifier, error) {
 	if f.webhookAudience == "" && f.webhookAction == "" {
-		return // disabled
+		return nil, nil //nolint:nilnil // disabled is not an error
 	}
 	if f.webhookAudience == "" || f.webhookAction == "" {
-		slog.Error("webhook: both -webhook-audience and -webhook-action are required to enable POST /webhooks/idp")
-		os.Exit(1)
+		return nil, errors.New("webhook: both -webhook-audience and -webhook-action are required to enable POST /webhooks/idp")
 	}
 	if idv == nil {
-		slog.Error("webhook: -webhook-* requires JWT identity (-jwt-issuer/-jwt-audience/-jwt-jwks-url); the webhook reuses that JWKS")
-		os.Exit(1)
+		return nil, errors.New("webhook: -webhook-* requires JWT identity " +
+			"(-jwt-issuer/-jwt-audience/-jwt-jwks-url); the webhook reuses that JWKS")
 	}
 	wv, err := jwtauth.NewWebhookVerifier(idv, f.webhookAudience)
 	if err != nil {
-		slog.Error("webhook: failed to initialize verifier", "error", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("webhook: initialize verifier: %w", err)
 	}
-	app.SetWebhookReceiver(webhookVerifierAdapter{wv}, f.webhookAction)
 	slog.Info("idp webhook enabled", "audience", f.webhookAudience, "action", f.webhookAction)
+	return wv, nil
 }
 
 // assertionVerifierAdapter bridges the concrete jwtauth.Verifier to the
@@ -512,22 +516,18 @@ func main() {
 	// No svc.Close(): rela-server is a daemon — it runs until the process exits,
 	// at which point the OS reclaims file descriptors and goroutines. Per-project
 	// Close() *is* required in long-running hosts that switch projects (see
-	// rela-desktop); this is the daemon-lifetime case.
-	svc := discoverProject(f)
+	// rela-desktop); this is the daemon-lifetime case. A Configure save closes
+	// the services it replaces.
+	svc, err := discoverProject(f)
+	if err != nil {
+		slog.Error("failed to initialize project services", "error", err)
+		os.Exit(1)
+	}
+	if f.readOnly {
+		slog.Warn("rela-server is read-only; every write request will be refused")
+	}
 
-	fieldResolver := buildFieldResolver(svc)
-
-	commandAuthz := buildCommandAuthorizer(f, svc)
-
-	app, err := dataentry.NewApp(
-		svc.FS(), svc.Paths(), svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), svc.Versions(),
-		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), svc.ACL(),
-		fieldResolver,
-		svc.Audit(),
-		svc.State(),
-		commandAuthz,
-		appbuild.CompiledWorlds(svc),
-	)
+	srv, err := newServer(f, svc, accessLog)
 	if err != nil {
 		var configErr *dataentry.ConfigValidationError
 		if errors.As(err, &configErr) {
@@ -540,34 +540,7 @@ func main() {
 		slog.Error("failed to initialize", "error", err)
 		os.Exit(1)
 	}
-
-	if err := dataentrywire.Services(app, svc); err != nil {
-		slog.Error("failed to wire the data-entry app", "error", err)
-		os.Exit(1)
-	}
-
-	// Start file watcher for live-reload.
-	// The watcher goroutine is cleaned up on process exit.
-	if err := app.StartWatching(); err != nil {
-		slog.Warn("file watcher not started", "error", err)
-	} else {
-		slog.Info("file watcher started for live-reload")
-	}
-
-	addr := net.JoinHostPort(f.bind, f.port)
-	if err := app.SetSecurityConfig(dataentry.SecurityConfig{
-		BindAddress:    addr,
-		AllowedOrigins: f.allowedOrigins,
-	}); err != nil {
-		slog.Error("invalid security configuration", "error", err)
-		os.Exit(1)
-	}
-
-	// Identity sources are mutually exclusive — validate BEFORE building anything,
-	// so a conflicting config never reaches a running server.
-	wireIdentityAndMCP(app, svc, f)
-
-	srv := newHTTPServer(addr, app.NewRouter(dataentry.WithAccessLog(accessLog)))
+	httpSrv := newHTTPServer(srv.addr, srv)
 
 	if !isLoopbackHost(f.bind) {
 		slog.Warn("rela-server bound beyond loopback; see docs/server-security.md for threat model",
@@ -598,19 +571,13 @@ func main() {
 				"bind", f.bind)
 		}
 	}
-	// Start background scheduler if schedules.yaml exists.
-	// *appbuild.Services satisfies scheduler.WorkspaceProvider
-	// structurally (Paths / Config / State / LuaWriteDeps).
-	// The goroutine is cleaned up on process exit.
-	scheduler.StartBackground(context.Background(), svc, slog.Default())
-
 	if err := startPprofIfRequested(f.debugPprof); err != nil {
 		slog.Error("pprof startup failed", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("starting server", "name", app.Cfg().App.Name, "addr", "http://"+addr)
-	if err := serveUntilSignal(srv); err != nil {
+	slog.Info("starting server", "name", srv.cur.Load().app.Cfg().App.Name, "addr", "http://"+srv.addr)
+	if err := serveUntilSignal(httpSrv); err != nil {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
@@ -692,10 +659,10 @@ type commandAuthorizer = interface {
 }
 
 // buildCommandAuthorizer picks the command-exec authorizer once, from the
-// configured ACL plus the bind and the explicit override. Exits rather than
+// configured ACL plus the bind and the explicit override. Fails rather than
 // degrading: a server that cannot decide how to gate shell execution must not
 // start and quietly pick a default.
-func buildCommandAuthorizer(f *serverFlags, svc *appbuild.Services) commandAuthorizer {
+func buildCommandAuthorizer(f *serverFlags, svc *appbuild.Services) (commandAuthorizer, error) {
 	authz, err := dataentry.SelectCommandAuthorizer(
 		svc.ACL(), svc.ACLDeclarative(), isLoopbackHost(f.bind), f.allowUnauthCommands,
 		dataentry.CommandAuthNotifier{
@@ -703,10 +670,9 @@ func buildCommandAuthorizer(f *serverFlags, svc *appbuild.Services) commandAutho
 			OnRefuse:   func() { warnCommandsRefused(f.bind) },
 		})
 	if err != nil {
-		slog.Error("failed to select command authorizer", "error", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("select command authorizer: %w", err)
 	}
-	return authz
+	return authz, nil
 }
 
 // warnUnauthenticatedCommands is invoked by SelectCommandAuthorizer when the
@@ -740,23 +706,6 @@ func warnCommandsRefused(bind string) {
 		"See docs/server-security.md.",
 		"bind", bind)
 }
-
-// buildFieldResolver constructs the data-entry affordance resolver
-// from the active services. A predicate compile error in acl.yaml is
-// fatal — surfaced loudly rather than silently disabling a gate.
-// coverage-ignore-start: main-or-wiring: startup wiring taking the concrete *appbuild.Services and os.Exiting on a
-// resolver-build failure;
-// reachable only from main()
-func buildFieldResolver(svc *appbuild.Services) dataentry.FieldVerdictResolver {
-	resolver, err := dataentry.ResolverFromServices(svc)
-	if err != nil {
-		slog.Error("failed to build affordance resolver", "error", err)
-		os.Exit(1)
-	}
-	return resolver
-}
-
-// coverage-ignore-end
 
 // shouldWarnNoACL reports whether the operator should be told they
 // are running with no access control on a non-loopback bind.
