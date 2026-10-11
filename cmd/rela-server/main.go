@@ -224,12 +224,24 @@ func discoverOptions(f *serverFlags) []appbuild.Option {
 // discoverProject resolves the project dir and builds the services. A
 // Configure save calls it again, with [appbuild.WithInMemorySearch], to
 // build services over the new files while the old ones still serve.
+//
+// It refuses a schema that [appbuild.RequireSyncBackend] rejects. Startup
+// and the Configure rebuild both come through here, so a schema saved from
+// the browser cannot enable sync on a backend that refuses it at startup.
 func discoverProject(f *serverFlags, extra ...appbuild.Option) (*appbuild.Services, error) {
 	absDir, err := filepath.Abs(f.projectDir)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project dir: %w", err)
 	}
-	return appbuild.Discover(absDir, script.NewEngine(), append(discoverOptions(f), extra...)...)
+	svc, err := appbuild.Discover(absDir, script.NewEngine(), append(discoverOptions(f), extra...)...)
+	if err != nil {
+		return nil, err
+	}
+	if err = appbuild.RequireSyncBackend(svc); err != nil {
+		closeServices(svc)
+		return nil, err
+	}
+	return svc, nil
 }
 
 // applyCommandConfinement records the host-level command-confinement decision
@@ -521,10 +533,6 @@ func main() {
 	svc, err := discoverProject(f)
 	if err != nil {
 		slog.Error("failed to initialize project services", "error", err)
-		os.Exit(1)
-	}
-	if err := appbuild.RequireSyncBackend(svc); err != nil {
-		slog.Error("refusing to start", "error", err)
 		os.Exit(1)
 	}
 	if f.readOnly {
