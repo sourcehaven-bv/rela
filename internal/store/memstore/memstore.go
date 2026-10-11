@@ -83,8 +83,11 @@ import (
 // optional store.SoftDeleteProvider capability, found by type assertion. The
 // capability's methods live on softDeleter, not here.
 //
-//plimsoll:max-methods=49
-//plimsoll:max-exported-methods=31
+// +1 exported / +1 method (TKT-Q6AKUN): MentionSources, the optional
+// store.MentionIndex capability. Its helpers are free functions in mentions.go.
+//
+//plimsoll:max-methods=50
+//plimsoll:max-exported-methods=32
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it

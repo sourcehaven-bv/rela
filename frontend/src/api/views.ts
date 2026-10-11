@@ -115,6 +115,11 @@ export interface ViewGroup {
   groupName: string
   rows?: ViewRow[]
   entities?: ViewEntity[]
+  // Set on the per-type groups of a `columns_by_type` table (TKT-HF0D5W):
+  // this group's rows are of `entityType` and their cells are positional over
+  // `columns`. Absent on a `group_by` group, which uses the section's columns.
+  entityType?: string
+  columns?: ViewColumn[]
 }
 
 // One row of a `display: nested` section: an entity, its configured cells,
@@ -163,6 +168,9 @@ export interface ViewSection {
   // Set when the rows are the entry's targets over one orderable relation,
   // shown in that relation's order.
   relationOrder?: RelationOrder
+  // True when a backlinks collection holds only part of the matching sources
+  // (TKT-HF0D5W).
+  incomplete?: boolean
   // The section's opt-in create affordance. Absent unless the section's config
   // carries a `create:` block AND the principal may create something the
   // relation reaches — the detail page is read-only by default (TKT-651W).
@@ -235,6 +243,11 @@ export interface ViewResponse {
    * world, and that world resolves nothing for this entity.
    */
   _world_absent?: boolean
+  /**
+   * Leave out the built-in "Mentioned by" panel (TKT-HF0D5W): the view shows
+   * backlinks in its own section, or the operator turned the panel off.
+   */
+  hideMentionedByPanel?: boolean
 }
 
 // Fetch executed view data for an entity. The backend looks up the

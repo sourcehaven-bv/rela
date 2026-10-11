@@ -153,6 +153,13 @@ func (c *DB) init(ctx context.Context) error {
 	if _, err := c.db.ExecContext(ctx, contentHashDDL); err != nil {
 		return fmt.Errorf("sqlitedb: create content_hash triggers and indexes: %w", err)
 	}
+	// After the ladder rather than in schemaSQL: mentionsDDL indexes and
+	// triggers on entities.mention_targets, which a pre-v17 table gains only
+	// in the v17 rung. Every statement is IF NOT EXISTS, so this is a no-op on
+	// a database that already has it.
+	if _, err := c.db.ExecContext(ctx, mentionsDDL); err != nil {
+		return fmt.Errorf("sqlitedb: create mention index: %w", err)
+	}
 	return nil
 }
 
@@ -304,6 +311,10 @@ CREATE TABLE IF NOT EXISTS entities (
 	-- this row; NULL means not known. See contentHashDDL. Added to older
 	-- databases by the v14 rung.
 	content_hash       TEXT,
+	-- mention_targets is the JSON array of entity ids the body mentions
+	-- (TKT-Q6AKUN), written by the store with the body. NULL means not
+	-- indexed yet; see mentionsDDL. Added to older databases by the v17 rung.
+	mention_targets    TEXT,
 	PRIMARY KEY (id, face)
 ) STRICT;
 ` + entitiesTypeIDFaceIndexDDL + `
@@ -403,6 +414,7 @@ CREATE TABLE IF NOT EXISTS marked_entities (
 	origin_source_type TEXT,
 	origin_definition  TEXT,
 	content_hash       TEXT,
+	mention_targets    TEXT,
 	deleted_at  TEXT NOT NULL,
 	deleted_by  TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (id, face)
@@ -692,6 +704,41 @@ END;`
 func searchKey(row string) string {
 	return `(SELECT key FROM entity_search_key WHERE id = ` + row + `.id AND face = ` + row + `.face)`
 }
+
+// mentionsDDL is the backlink index (TKT-Q6AKUN). The store writes each row's
+// targets into entities.mention_targets as a JSON array, computed in Go with
+// the body; the triggers fan that array out into entity_mention_targets
+// inside the writing transaction, as the search triggers do for entity_search.
+//
+// An index row names its source by (id, face), not by the entities rowid,
+// which VACUUM may renumber (see searchDDL). A rename or a new face moves the
+// entries with the row. Every trigger first drops the entries of the row it
+// writes: an INSERT OR REPLACE on entities removes the old row without firing
+// the delete trigger, so its entries would otherwise outlive it.
+var mentionsDDL = `
+CREATE TABLE IF NOT EXISTS entity_mention_targets (
+	target      TEXT NOT NULL,
+	source_id   TEXT NOT NULL,
+	source_face TEXT NOT NULL,
+	PRIMARY KEY (target, source_id, source_face)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS entity_mention_targets_source_idx ON entity_mention_targets(source_id, source_face);
+-- The store's reindex pass reads this to find rows written before v17.
+CREATE INDEX IF NOT EXISTS entities_mentions_pending_idx ON entities(id, face) WHERE mention_targets IS NULL;
+CREATE TRIGGER IF NOT EXISTS entity_mentions_insert AFTER INSERT ON entities BEGIN
+	DELETE FROM entity_mention_targets WHERE source_id = NEW.id AND source_face = NEW.face;
+	INSERT OR IGNORE INTO entity_mention_targets(target, source_id, source_face)
+		SELECT value, NEW.id, NEW.face FROM json_each(NEW.mention_targets);
+END;
+CREATE TRIGGER IF NOT EXISTS entity_mentions_update AFTER UPDATE OF id, face, mention_targets ON entities BEGIN
+	DELETE FROM entity_mention_targets WHERE source_id = OLD.id AND source_face = OLD.face;
+	DELETE FROM entity_mention_targets WHERE source_id = NEW.id AND source_face = NEW.face;
+	INSERT OR IGNORE INTO entity_mention_targets(target, source_id, source_face)
+		SELECT value, NEW.id, NEW.face FROM json_each(NEW.mention_targets);
+END;
+CREATE TRIGGER IF NOT EXISTS entity_mentions_delete AFTER DELETE ON entities BEGIN
+	DELETE FROM entity_mention_targets WHERE source_id = OLD.id AND source_face = OLD.face;
+END;`
 
 // searchBody is the SQL for the indexed text of the entities row named row.
 func searchBody(row string) string {

@@ -553,6 +553,7 @@ type scriptEntityReaderFamily interface {
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
+	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
 }
 
 // scriptReads returns the principal-bound script reader and the traversal gate
@@ -844,6 +845,9 @@ type GatedGraphReader interface {
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
 	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
 	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
+	// MentionedBy pages the readable entities whose body mentions target
+	// ([visibility.Resolver.MentionedBy]).
+	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
 }
 
 // gatedGraphReader composes the ACL-gated row reader with the raw store for
@@ -920,6 +924,12 @@ func (g gatedGraphReader) ListEntityHeaders(
 	ctx context.Context, q store.EntityQuery,
 ) iter.Seq2[store.EntityHeader, error] {
 	return store.ListEntityHeaders(ctx, g.rows, q)
+}
+
+func (g gatedGraphReader) MentionedBy(
+	ctx context.Context, target, after string, limit int,
+) (visibility.MentionPage, error) {
+	return g.rows.MentionedBy(ctx, target, after, limit)
 }
 
 func (g gatedGraphReader) ListRelationsStrict(

@@ -3,12 +3,16 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// ShowCmd prints an entity and its incoming/outgoing relations.
+// ShowCmd prints an entity, its incoming/outgoing relations, and the
+// entities whose body mentions it.
 type ShowCmd struct {
 	ID string `arg:"" help:"Entity address: ID, or ID@face for a type with faces (e.g. REQ-001, DOC-1@draft)."`
 }
@@ -44,7 +48,41 @@ func (c *ShowCmd) Run(ctx context.Context, svc *readServices) error {
 		outgoing = append(outgoing, r)
 	}
 
-	return out.WriteEntity(e, incoming, outgoing)
+	mentionedBy, err := showMentionedBy(ctx, svc, e.ID)
+	if err != nil {
+		return err
+	}
+	return out.WriteEntity(e, incoming, outgoing, mentionedBy)
+}
+
+// showMentionLimit caps the backlinks `rela show` prints. The output says
+// when it cut the list short.
+const showMentionLimit = 50
+
+// showMentionedBy reads the first page of id's backlinks (TKT-Q6AKUN) as the
+// operator, in the default world, with each source at the face that world
+// serves.
+func showMentionedBy(ctx context.Context, svc *readServices, id string) (output.MentionedBy, error) {
+	res, err := visibility.NewAllowAllResolver(svc.Store,
+		visibility.WithFamilies(func() store.WorldScope { return svc.Families }))
+	if err != nil { // coverage-ignore: defensive: NewAllowAllResolver only fails on a nil loader
+		return output.MentionedBy{}, err
+	}
+	page, err := res.MentionedBy(ctx, visibility.WorldOf(svc.World), id, "", showMentionLimit)
+	if errors.Is(err, visibility.ErrMentionsUnsupported) { // coverage-ignore: every store backend keeps the index
+		return output.MentionedBy{}, nil
+	}
+	if err != nil {
+		return output.MentionedBy{}, fmt.Errorf("read backlinks of %s: %w", id, err)
+	}
+	backlinks := output.MentionedBy{Truncated: page.Next != "" || page.Truncated}
+	for _, h := range page.Items {
+		backlinks.Items = append(backlinks.Items, output.MentionSource{
+			ID: h.ID, Face: h.Face.String(), Type: h.Type,
+			Title: svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties),
+		})
+	}
+	return backlinks, nil
 }
 
 // entityNotFoundError is the typed "entity not found" error used by

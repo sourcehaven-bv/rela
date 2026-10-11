@@ -919,6 +919,7 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 
 	// Relation query functions
 	r.L.SetField(rela, "get_relations", r.L.NewFunction(r.luaGetRelations))
+	r.L.SetField(rela, "get_mentioned_by", r.L.NewFunction(mentionBindings{r: r}.getMentionedBy))
 
 	// Version history (database backends; raises elsewhere)
 	registerHistoryBindings(r, rela)

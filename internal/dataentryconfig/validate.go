@@ -818,6 +818,7 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 		// (it could start rejecting configs that load today) that belongs in
 		// its own ticket rather than riding along with a layout PR.
 		errs = append(errs, validateSidePanelSpans(formID, form.SidePanel)...)
+		errs = append(errs, validateSidePanelMentions(formID, form.SidePanel)...)
 	}
 
 	return errs
@@ -1094,12 +1095,13 @@ func validateEntityViews(cfg *Config, meta *metamodel.Metamodel) []string {
 		}
 		errs = append(errs, validateEntityDuplicate(meta, entityType, ev.Duplicate)...)
 
-		// An entry carrying only `duplicate:` is legitimate (TKT-Z8K2FS), so
-		// the empty-detail_view refusal applies only when nothing else is
+		// An entry carrying only `duplicate:` (TKT-Z8K2FS) or only
+		// `mentioned_by_panel:` (TKT-HF0D5W) is legitimate, so the
+		// empty-detail_view refusal applies only when nothing else is
 		// declared — otherwise the error's own advice ("omit the entry") would
 		// tell an operator to delete config that is doing something.
 		if ev.DetailView == "" {
-			if ev.Duplicate == nil {
+			if ev.Duplicate == nil && ev.MentionedByPanel == nil {
 				errs = append(errs, fmt.Sprintf(
 					"entity_views[%q]: entry declares nothing (omit the entry instead)", entityType))
 			}
@@ -1691,6 +1693,14 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 				}
 			}
 
+			if t.MentionedBy {
+				errs = append(errs, validateMentionsStep(viewID, i, t, view)...)
+				if t.CollectAs != "" {
+					collections[t.CollectAs] = "" // any type can mention the entry
+				}
+				continue
+			}
+
 			// Validate follow/follow_incoming relation
 			var relType string
 			if t.Follow != "" {
@@ -1744,6 +1754,8 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 		}
 
+		errs = append(errs, validateMentionsUsed(viewID, view)...)
+
 		// Validate sections
 		for i, s := range view.Sections {
 			// Validate source
@@ -1767,6 +1779,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 
 			errs = append(errs, validateNestedSection(viewID, i, s, view, collections, meta)...)
+			errs = append(errs, validateSectionByType(viewID, i, s, view, meta)...)
 
 			// Outside the source-resolution guard below for the same reason
 			// render/widget are: an opted-in section with a bad `create:` is
@@ -1890,6 +1903,9 @@ func collectionTypes(view ViewConfig, name string, meta *metamodel.Metamodel) []
 	}
 	if rule == nil {
 		return nil
+	}
+	if rule.MentionedBy {
+		return allEntityTypes(meta)
 	}
 	relType := rule.Follow
 	if relType == "" {
@@ -2120,6 +2136,12 @@ func validateNestedSection(
 			"view %q: section[%d] nests %q under %q, but the rule collecting %q traverses from %q "+
 				"(the children rule must start from the section's source)",
 			viewID, i, s.Children, s.Source, s.Children, child.From))
+	}
+	if child.MentionedBy {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] nests %q, which a mentioned_by step collects; "+
+				"backlinks carry no parent to nest under",
+			viewID, i, s.Children))
 	}
 	if child.Recursive {
 		errs = append(errs, fmt.Sprintf(

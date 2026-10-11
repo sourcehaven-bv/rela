@@ -221,13 +221,17 @@ func errViewEntryNotFound(entryID string) error {
 // on.
 //
 // A store FAULT is different and is logged: it would otherwise read as "this
-// world excludes everything", the RR-4TFZNL shape.
+// world excludes everything", the RR-4TFZNL shape. The first fault, of the
+// load or of the gate, is also returned beside the partial result. Relation
+// steps keep the partial collection; a backlinks step fails the view, since it
+// hides the built-in panel that would otherwise have shown the sources.
 func (h *viewsHandler) loadViewEntities(
 	ctx context.Context, ids []string, w viewWorld,
-) []*entityPkg.Entity {
+) ([]*entityPkg.Entity, error) {
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
+	var fault error
 	byID := make(map[string]*entityPkg.Entity, len(ids))
 
 	// ONE batched read for every world, the default one included
@@ -255,13 +259,16 @@ func (h *viewsHandler) loadViewEntities(
 			slog.Warn("dataentry: view traversal: loading collected entities failed; "+
 				"collection truncated",
 				"world", w.name, "ids", len(unique), "err", err)
+			fault = err
 			break
 		}
 		byID[hdr.ID] = headerEntity(hdr)
 	}
 
 	// SOURCE-GATE the traversal (BUG-9Z20WH). See [viewsHandler.gateLoadedEntities].
-	h.gateLoadedEntities(ctx, ids, byID)
+	if err := h.gateLoadedEntities(ctx, ids, byID); err != nil && fault == nil {
+		fault = err
+	}
 
 	out := make([]*entityPkg.Entity, 0, len(byID))
 	emitted := make(map[string]struct{}, len(byID))
@@ -276,7 +283,7 @@ func (h *viewsHandler) loadViewEntities(
 		emitted[id] = struct{}{}
 		out = append(out, e)
 	}
-	return out
+	return out, fault
 }
 
 // gateLoadedEntities is the collection-load half of the traversal source gate
@@ -310,10 +317,11 @@ func (h *viewsHandler) loadViewEntities(
 // every probe permits, so this is byte-identical to the ungated load.
 func (h *viewsHandler) gateLoadedEntities(
 	ctx context.Context, ids []string, byID map[string]*entityPkg.Entity,
-) {
+) error {
 	if len(byID) == 0 {
-		return
+		return nil
 	}
+	var fault error
 	idsByType := make(map[string][]string, 4)
 	for _, id := range ids {
 		if e, ok := byID[id]; ok {
@@ -329,6 +337,9 @@ func (h *viewsHandler) gateLoadedEntities(
 			for _, id := range typeIDs {
 				delete(byID, id)
 			}
+			if fault == nil {
+				fault = err
+			}
 			continue
 		}
 		for _, id := range typeIDs {
@@ -341,6 +352,7 @@ func (h *viewsHandler) gateLoadedEntities(
 			}
 		}
 	}
+	return fault
 }
 
 // provenanceFor labels how this world resolved e's face, or nil under the
@@ -456,12 +468,16 @@ func (h *viewsHandler) writeWorldAbsentView(
 		return
 	}
 
-	m := h.schema().Meta
+	sch := h.schema()
+	m := sch.Meta
 	def := m.Entities[e.Type]
 	resp := v1.ViewResponse{
 		Entry:       h.serializer.forWire(ctx, e, rels, m, def.GetPlural(e.Type)),
 		Sections:    []v1.ViewSection{},
 		WorldAbsent: true,
+		// No view sections render here, so a backlinks step cannot stand in
+		// for the panel; only the operator's entity_views switch hides it.
+		HideMentionedByPanel: hideMentionedByPanel(sch.Cfg, ViewConfig{Entry: ViewEntry{Type: e.Type}}),
 	}
 	writeV1JSON(w, http.StatusOK, resp)
 }

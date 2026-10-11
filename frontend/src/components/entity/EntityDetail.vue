@@ -48,6 +48,7 @@ import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
 import DocumentsPanel from '@/components/entity/DocumentsPanel.vue'
 import CommentsPanel from '@/components/entity/CommentsPanel.vue'
+import MentionedByPanel from '@/components/entity/MentionedByPanel.vue'
 import CommentIndicator from '@/components/entity/CommentIndicator.vue'
 import TextSelectionComment from '@/components/entity/TextSelectionComment.vue'
 import TextCommentPopover from '@/components/entity/TextCommentPopover.vue'
@@ -2683,12 +2684,19 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 
           <div v-else-if="section.display === 'table'" class="table-wrapper">
             <template v-if="section.isGrouped && section.groups?.length">
-              <div v-for="group in section.groups" :key="group.groupName" class="table-group">
+              <div
+                v-for="group in section.groups"
+                :key="group.entityType || group.groupName"
+                class="table-group"
+              >
                 <h3 class="group-heading">{{ group.groupName }}</h3>
                 <table class="data-table">
                   <thead>
                     <tr>
-                      <th v-for="col in section.columns" :key="col.property || col.relation">
+                      <th
+                        v-for="col in group.columns ?? section.columns"
+                        :key="col.property || col.relation"
+                      >
                         {{ col.label || col.property || col.relation }}
                       </th>
                       <th class="actions-col" />
@@ -2713,14 +2721,14 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         >
                           <ViewTableCell
                             :values="cell.values"
-                            :property="section.columns?.[idx]?.property"
+                            :property="(group.columns ?? section.columns)?.[idx]?.property"
                             :entity-type="row.entityType"
                           />
                         </a>
                         <template v-else>
                           <ViewTableCell
                             :values="cell.values"
-                            :property="section.columns?.[idx]?.property"
+                            :property="(group.columns ?? section.columns)?.[idx]?.property"
                             :entity-type="row.entityType"
                           />
                         </template>
@@ -2907,6 +2915,12 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
               </details>
             </div>
           </div>
+
+          <!-- A backlinks collection the server could not fill completely
+               (TKT-HF0D5W). Without the note the list reads as complete. -->
+          <p v-if="section.incomplete" class="section-incomplete">
+            Only part of the matching entities are listed here.
+          </p>
         </section>
 
         <!-- External documents (renders only when configured for this type).
@@ -2914,6 +2928,16 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
              container's flex `gap` for free instead of duplicating that
              spacing via its own margin. -->
         <DocumentsPanel :entity-type="entityType" :entity-id="entityRef(entry)" />
+
+        <!-- Backlinks: entities whose body mentions this one. Self-gating:
+             renders nothing while nothing the reader can see mentions it.
+             Left out when the view shows backlinks itself or the operator
+             turned it off; the server decides (hideMentionedByPanel). -->
+        <MentionedByPanel
+          v-if="!viewData.hideMentionedByPanel"
+          :entity-type="entityType"
+          :entity-id="entityRef(entry)"
+        />
 
         <!-- Comment thread. Self-gating: renders nothing unless the schema
              marks this type commentable, so a project with no `comments:`
@@ -3452,7 +3476,8 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
 }
 
 /* display: nested — parent rows that expand to their children. */
-.nested-truncated {
+.nested-truncated,
+.section-incomplete {
   margin: 0 0 8px;
   font-size: var(--font-size-sm);
   color: var(--rl-color-text);

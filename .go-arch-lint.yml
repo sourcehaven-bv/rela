@@ -90,6 +90,10 @@ components:
   mailrender:       { in: internal/mailrender }
   # HTML <-> markdown for sync connectors (TKT-LAMZ8F). A leaf like mailrender.
   htmlmd:           { in: internal/htmlmd }
+  # Which entity ids a markdown body mentions (TKT-Q6AKUN). A leaf: every store
+  # backend indexes with it and the data-entry renderer links with it, so the
+  # backlink index and the rendered links agree on what counts as a mention.
+  mentions:         { in: internal/mentions }
   mailtemplate:     { in: internal/mailtemplate }
   caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
@@ -531,6 +535,7 @@ deps:
       - dataentryconfig
   dataentry:
     mayDependOn:
+      - mentions
       - rootfs
       # The next-action engine and its per-user state. dataentry supplies the
       # ACL-gated CandidateFunc; it does NOT choose a userstate backend —
@@ -971,6 +976,9 @@ deps:
       - bluemonday
       - htmltomarkdown
       - nethtml
+  mentions:
+    canUse:
+      - goldmark
   # Project declarations assemble renderer models from an injected visible
   # reader. SMTP and app wiring remain outside this package.
   mailtemplate:
@@ -1592,6 +1600,7 @@ deps:
       - metamodel
   fsstore:
     mayDependOn:
+      - mentions
       - cache
       - frontmatter
       - graphquerynaive
@@ -1601,6 +1610,7 @@ deps:
       - storeutil
   memstore:
     mayDependOn:
+      - mentions
       - graphquerynaive
       - store
       - storeutil
@@ -1611,6 +1621,7 @@ deps:
       - store
   pgstore:
     mayDependOn:
+      - mentions
       # The postgres build carries its own next-action state backend: it is the
       # only one safe for a multi-process deployment, and it rides the pool
       # this package already owns rather than opening a second one.
@@ -1625,6 +1636,7 @@ deps:
       - pgx
   sqlitestore:
     mayDependOn:
+      - mentions
       # Still narrower than pgstore: no userstate. This backend keeps the
       # filesystem KV on purpose (TKT-L1A3PH), and each further entry should
       # have to justify widening this list.

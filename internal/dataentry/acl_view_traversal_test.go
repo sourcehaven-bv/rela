@@ -337,7 +337,7 @@ func TestACLViewTraversal_SourceGateMatchesLoaderResolution(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			gated := app.views.readableViewIDs(ctx, ids, tc.world)
-			loaded := collectIDs(app.views.loadViewEntities(ctx, ids, tc.world))
+			loaded := collectIDs(loaded(ctx, t, app, ids, tc.world))
 			if !slices.Equal(gated, loaded) {
 				t.Errorf("source gate and loader disagree about which rows exist:\n"+
 					"  gate   = %v\n  loader = %v\n"+
@@ -408,7 +408,17 @@ func TestACLViewTraversal_FrontierAppliesFaceGate(t *testing.T) {
 			"policy@published must not traverse THROUGH a draft-only entity", got)
 	}
 	// The loader agrees, which is the invariant the gate must preserve.
-	if got := collectIDs(app.views.loadViewEntities(ctx, ids, draftWorld)); len(got) != 0 {
+	if got := collectIDs(loaded(ctx, t, app, ids, draftWorld)); len(got) != 0 {
 		t.Errorf("loader admitted a face-denied node: %v", got)
 	}
+}
+
+// loaded calls loadViewEntities and fails the test on a fault.
+func loaded(ctx context.Context, t *testing.T, app *App, ids []string, w viewWorld) []*entity.Entity {
+	t.Helper()
+	out, err := app.views.loadViewEntities(ctx, ids, w)
+	if err != nil {
+		t.Fatalf("loadViewEntities: %v", err)
+	}
+	return out
 }

@@ -135,6 +135,8 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// FindByExternalRef (TKT-SM20FG) is ListEntityHeaders filtered by one
 	// property, then GetAddress; SyncReady reports whether history is
 	// served. Neither writes.
+	// MentionedBy (TKT-Q6AKUN) reads headers of entities ListEntityHeaders
+	// already returns, filtered by their bodies.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
@@ -143,6 +145,7 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 		"CountEntities": true, "CountRelations": true,
 		"VersionByTag": true, "WithVersionTags": true,
 		"FindByExternalRef": true, "SyncReady": true,
+		"MentionedBy": true,
 	}
 
 	typ := reflect.TypeOf(visibility.Unrestricted(seedStore(t)).WithWorld(visibility.WorldOf(store.TrivialScope())))

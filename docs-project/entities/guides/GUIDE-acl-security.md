@@ -1163,6 +1163,14 @@ rows are gated, each row is redacted before its title is taken, and
 related entity appears only when the principal may read that entity and its
 title. The response is `no-store`.
 
+**Backlinks are gated per source.** The "Mentioned by" panel and a view's
+`mentioned_by` step list only the sources the principal may read, each at
+the face the world serves. Their `truncated` and `incomplete` flags have one
+accepted exception: the index scan reads at most 10,000 entries, unreadable
+ones included, so a flag can be set when more than 10,000 sources you cannot
+read mention the entity. Short of that, the flags say only that more readable
+sources exist.
+
 The same holds for the rest of the app's configuration.
 `/api/v1/_config` serves lists, views, kanbans, documents and
 navigation in full — including a document's `permission:` value. Your

@@ -134,8 +134,11 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // +1 exported / +1 method: SoftDelete, the optional store.SoftDeleteProvider
 // accessor. The work lives on softDeleter and free functions in softdelete.go.
 //
-//plimsoll:max-methods=53
-//plimsoll:max-exported-methods=35
+// +1 exported / +1 method (TKT-Q6AKUN): MentionSources, the optional
+// store.MentionIndex capability. Its helpers are free functions in mentions.go.
+//
+//plimsoll:max-methods=54
+//plimsoll:max-exported-methods=36
 type Store struct {
 	db *sql.DB
 

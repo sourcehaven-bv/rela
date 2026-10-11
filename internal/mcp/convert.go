@@ -28,6 +28,11 @@ type entityJSON struct {
 	// OtherFaces lists the entity's other faces the caller may read, on
 	// show_entity only. Omitted when there are none.
 	OtherFaces []faceJSON `json:"other_faces,omitempty"`
+	// MentionedBy lists the entities whose body mentions this one, on
+	// show_entity only (TKT-Q6AKUN). MentionedByTruncated says the list
+	// stops at the cap.
+	MentionedBy          []entitySummary `json:"mentioned_by,omitempty"`
+	MentionedByTruncated bool            `json:"mentioned_by_truncated,omitempty"`
 }
 
 // faceJSON names another face of an entity and the address that reads it.

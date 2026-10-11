@@ -193,8 +193,11 @@ type attachMeta struct {
 // now take an entity.RelationKey that carries the tail.
 // +1 exported (soft delete): the SoftDelete accessor.
 //
-//plimsoll:max-methods=90
-//plimsoll:max-exported-methods=34
+// +1 exported / +1 method (TKT-Q6AKUN): MentionSources, the optional
+// store.MentionIndex capability. Its helpers are free functions in mentions.go.
+//
+//plimsoll:max-methods=91
+//plimsoll:max-exported-methods=35
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the
@@ -240,6 +243,9 @@ type FSStore struct {
 	// marked holds the soft-deleted families, out of the index above (see
 	// softdelete.go). Nil until the first mark.
 	marked map[string]*fsMarked
+	// mentions is the backlink index (see mentions.go). Empty until the
+	// first MentionSources call builds it.
+	mentions mentionIndex
 
 	// observers notified synchronously on entity writes
 	observers []store.EntityObserver
