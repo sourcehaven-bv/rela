@@ -171,7 +171,7 @@ func (w *watchHandler) handle(ctx context.Context, req *mcpgo.CallToolRequest) (
 
 	// Subscribe before the first pass, so a change during it still wakes
 	// the loop.
-	events, cancel := d.Changes.Subscribe(watchEventBuffer)
+	events, cancel := d.Watch.Changes.Subscribe(watchEventBuffer)
 	defer cancel()
 
 	run := &watchRun{w: w, d: d, entry: entry, targets: targets, shareKey: p.ShareKey(),
@@ -262,7 +262,7 @@ type watchRun struct {
 // A pass ends at its budget or at deadline, whichever is first. An error
 // means read access could not be resolved for the caller.
 func (r *watchRun) pass(ctx context.Context, deadline time.Time) (changed []int, incomplete bool, err error) {
-	rctx, err := r.d.Rebind(ctx)
+	rctx, err := r.d.Watch.Rebind(ctx)
 	if err != nil {
 		slog.Warn("mcp: watch: could not resolve read access", "err", err)
 		return nil, false, err

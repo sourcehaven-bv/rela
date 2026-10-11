@@ -360,7 +360,7 @@ func serverWithSource(t *testing.T, src ChangeSource) (srv *Server, st *memstore
 	t.Helper()
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
-	deps.Changes = src
+	deps.Watch.Changes = src
 	srv, err := NewServer(deps, "test", WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}))
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -598,7 +598,7 @@ func TestWatch_RebindFailureIsAnError(t *testing.T) {
 	t.Parallel()
 	meta, st := makeTestFixture(t)
 	deps := newTestDeps(t, meta, st)
-	deps.Rebind = func(context.Context) (context.Context, error) { return nil, errors.New("unstamped") }
+	deps.Watch.Rebind = func(context.Context) (context.Context, error) { return nil, errors.New("unstamped") }
 	srv, err := NewServer(deps, "test", WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}))
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -713,8 +713,7 @@ func watchPolicyServer(t *testing.T) (*mcpgo.ClientSession, store.Store) {
 		EntityManager: svc.EntityManager(),
 		Config:        svc.Config(),
 		Watcher:       nopWatcher{},
-		Changes:       st,
-		Rebind:        reads.Rebind,
+		Watch:         WatchDeps{Changes: st, Rebind: reads.Rebind},
 		ProjectRoot:   t.TempDir(),
 		Attachments:   testAttachmentDeps(t, svc, meta),
 		World:         store.TrivialScope(),
