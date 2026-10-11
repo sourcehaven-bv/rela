@@ -8,11 +8,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// startVersionSweepIfSupported is a no-op in builds with no versioning
-// backend: only pgstore and sqlitestore have a version-reconciliation sweep.
-// fsstore already gets content versioning from git, and memstore keeps nothing
-// past the process.
-func startVersionSweepIfSupported(_ store.Store, _ *metamodel.Metamodel) {}
+// newVersionSweep returns no sweep in builds with no versioning backend: only
+// pgstore and sqlitestore have a version-reconciliation sweep. fsstore already
+// gets content versioning from git, and memstore keeps nothing past the
+// process.
+func newVersionSweep(_ store.Store, _ *metamodel.Metamodel) (versionSweep, error) {
+	return nil, nil //nolint:nilnil // no versioning backend means no sweep, which is not an error
+}
 
 // versionServiceFor returns nil here — content versioning is a database-backed
 // service (fsstore uses git). Returning a GENUINELY nil interface (not a typed

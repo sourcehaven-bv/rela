@@ -164,7 +164,7 @@ func (d *Dir) Subscribe(_ context.Context, name string, onChange func()) (func()
 			}
 		},
 	})
-	if err != nil { // coverage-ignore: fsnotify.NewWatcher fails only on OS watch-descriptor exhaustion
+	if err != nil { // coverage-ignore: the file watcher fails to start only on OS watch-descriptor exhaustion
 		return nil, err
 	}
 	go watcher.Start()

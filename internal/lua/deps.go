@@ -90,7 +90,7 @@ type ReadDeps struct {
 	// Files serves the project's operator-authored script files — scripts/,
 	// actions/, validations/ — by slash path relative to the project root.
 	// Read them through [ReadDeps.ReadProjectFile], never from disk directly:
-	// on the sqlite build they may live in the project's database
+	// on a backend that keeps the project in a database they may live there
 	// (FEAT-UP14BT), layered behind the files on disk.
 	//
 	// Nil: accepted — files are read from ProjectRoot on disk with os.Root
@@ -132,6 +132,14 @@ type ReadDeps struct {
 	// zero value is unset, and a list read in it fails with
 	// store.ErrInvalidQuery rather than reading the trivial world.
 	World store.WorldScope
+
+	// Piles backs rela.piles.list and rela.piles.items: the acting user's
+	// piles, whose items are read through VisibleReader. Wiring supplies
+	// [PileFuncs] over the piles service.
+	//
+	// Nil: accepted. The rela.piles functions then raise "piles are not
+	// available in this context", which is what a pure CLI run gets.
+	Piles PileReader
 }
 
 // ProjectFiles reads operator-authored project files by slash path relative
@@ -293,6 +301,13 @@ func isEntityNotFound(err error) bool {
 type WriteDeps struct {
 	ReadDeps
 	EntityManager Mutator
+
+	// PileWriter backs rela.piles.add and rela.piles.remove. Wiring supplies
+	// the same [PileFuncs] it puts in [ReadDeps.Piles].
+	//
+	// Nil: accepted. Both functions then raise "piles are not available in
+	// this context".
+	PileWriter PileWriter
 
 	// ElevatedManager, when non-nil, is a write handle whose mutations skip
 	// the ACL deny (TKT-D8T148). It is set ONLY for an allow_acl_bypass

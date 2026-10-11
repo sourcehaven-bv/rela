@@ -185,6 +185,34 @@ resolved), the relations it takes part in, and its validation rules. With a
 relation type it returns that relation's endpoints, cardinality and properties.
 The full raw metamodel is the `rela://metamodel` resource.
 
+### Pile Tools
+
+A pile is a personal, named stack of entities. These tools are present only
+when the server is built with piles. Reads and removes act on the caller's
+own piles only.
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `list_piles` | Your piles with the number of items you can read | none |
+| `show_pile` | One of your piles: readable items, newest first | `pile` (name or id), `world?` |
+| `add_to_pile` | Put entities on top of a pile by name | `pile`, `ids`, `owner?`, `create?` (default true) |
+| `remove_from_pile` | Take entities off one of your piles | `pile` (name or id), `ids` |
+
+- `ids` takes addresses: `TKT-1` or `POL-1@draft`, up to 500 per call.
+- `add_to_pile` resolves each id like `update_entity`. You must be able to
+  read it, and a bare id of a type with several readable faces is refused,
+  naming the faces. Nothing is added unless every id resolves.
+- `owner` adds to another user's pile. It must be an existing entity of the
+  ACL's `user_entity_type` (a person). The push is write-only: `added` is
+  always `0`, and a missing pile (with `create: false`) is a silent no-op.
+- A push to another user's pile never removes their items. On a full pile it
+  adds only as many ids as there is room for, the first ones first, and drops
+  the rest. It creates a pile only while that user has fewer than 25 piles;
+  past that it is a silent no-op. Each such push is logged with the pushing
+  user, the target user and the number of ids, but not the pile name.
+- `remove_from_pile` reads no graph. A bare id removes every face of it that
+  is on the pile, and the answer is the same whether or not an id was on it.
+
 ### Lua Tools
 
 | Tool | Description | Parameters |
@@ -253,6 +281,44 @@ same ACL gate as `show_entity`:
 with a configured `scan_cmd` or command transform therefore rejects every MCP
 upload over stdio. `max_attachment_bytes` in `data-entry.yaml` applies only to
 the remote transport; stdio uses the 16 MiB tool limit.
+
+### Comment Tools
+
+These tools exist only when `schema.yaml` has a `comments:` block (see
+[comments.md](comments.md)). The remote server offers all five. Stdio
+`rela mcp` offers only `list_comments`, because it runs as the system principal
+rather than as a signed-in user.
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `list_comments` | List an entity's comments, oldest first | `id` |
+| `add_comment` | Add a comment on a property, section or passage | `id`, `body`, `anchor`, `ref?`, `quote?`, `replacement?` |
+| `update_comment` | Edit the body, or resolve or reopen | `id`, `comment_id`, `body?`, `resolved?` |
+| `delete_comment` | Delete a comment | `id`, `comment_id` |
+| `accept_comment_suggestion` | Apply a suggested replacement and resolve the comment | `id`, `comment_id` |
+
+`id` is `ID` or `ID@face`. Comments are kept per face, and a write to an
+entity with content states must name the face; a bare id is refused with the
+list of faces. The comment tools take no `world` argument: a bare id on a read
+resolves in the default world, and `ID@face` names any other face.
+
+`anchor` is `property` (with `ref` the property name), `section` (with `ref`
+the section slug) or `text`. A text comment passes the passage as `quote`, as
+it reads without markdown markup, plus optional `quote_prefix` and
+`quote_suffix` when it occurs more than once. `replacement` suggests new text
+for the quote; an empty string suggests deleting it.
+
+**Access control.** The tools run the same checks as the
+[HTTP routes](comments.md#the-http-surface): the entity read gate, the
+`comment:*` permissions, the per-face write target and the read-only switch. An
+error names the same code as the HTTP answer, for example `[face_required]`.
+`accept_comment_suggestion` also needs `update` permission on the entity; a
+denial is recorded in the audit log.
+
+`update_comment` needs at least one of `body` and `resolved`. The tool set is
+fixed when the server starts: a `comments:` block added later takes effect
+after a restart, and one removed later makes the tools answer that comments
+are not enabled.
 
 ## Resources
 

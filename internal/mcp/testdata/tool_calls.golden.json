@@ -1,5 +1,11 @@
 [
   {
+    "tool": "add_to_pile",
+    "args": "{\"pile\":\"Inbox\",\"ids\":[\"REQ-001\"]}",
+    "isError": false,
+    "text": "{\"added\":1}"
+  },
+  {
     "tool": "analyze",
     "args": "{\"check\":\"orphans\"}",
     "isError": false,
@@ -54,10 +60,22 @@
     "text": "[]"
   },
   {
+    "tool": "list_comments",
+    "args": "{\"id\":\"REQ-001\"}",
+    "isError": false,
+    "text": "{\n  \"comments\": [\n    {\n      \"id\": \"c1\",\n      \"author\": \"alice\",\n      \"created_at\": \"2026-10-01T09:00:00Z\",\n      \"anchor\": {\n        \"kind\": \"property\",\n        \"ref\": \"title\"\n      },\n      \"body\": \"Shorter?\",\n      \"resolved\": false,\n      \"editable\": true,\n      \"deletable\": true\n    }\n  ]\n}"
+  },
+  {
     "tool": "list_entities",
     "args": "{\"type\":\"requirement\",\"filter\":\"entity.status == 'accepted'\",\"limit\":2}",
     "isError": false,
     "text": "{\"total\":2,\"has_more\":false,\"entities\":[{\"id\":\"REQ-001\",\"type\":\"requirement\",\"title\":\"First requirement\",\"status\":\"accepted\"},{\"id\":\"REQ-003\",\"type\":\"requirement\",\"title\":\"Third requirement\",\"status\":\"accepted\"}]}"
+  },
+  {
+    "tool": "list_piles",
+    "args": "{}",
+    "isError": false,
+    "text": "{\"piles\":[{\"id\":\"PIL-AAAA\",\"name\":\"Mine\",\"icon\":\"star\",\"count\":2}]}"
   },
   {
     "tool": "list_relations",
@@ -90,6 +108,12 @@
     "text": "property \"title\" is not a file type (is string)"
   },
   {
+    "tool": "remove_from_pile",
+    "args": "{\"pile\":\"Mine\",\"ids\":[\"REQ-001\"]}",
+    "isError": false,
+    "text": "Removed from pile Mine"
+  },
+  {
     "tool": "rename_entity",
     "args": "{\"id\":\"REQ-003\",\"new_id\":\"REQ-099\"}",
     "isError": true,
@@ -112,6 +136,12 @@
     "args": "{\"id\":\"REQ-001\"}",
     "isError": false,
     "text": "{\"id\":\"REQ-001\",\"type\":\"requirement\",\"properties\":{\"status\":\"accepted\",\"title\":\"First requirement\"},\"relations\":{\"incoming\":{\"addresses\":[{\"id\":\"DEC-001\",\"title\":\"First decision\"}]}}}"
+  },
+  {
+    "tool": "show_pile",
+    "args": "{\"pile\":\"Mine\"}",
+    "isError": false,
+    "text": "{\"id\":\"PIL-AAAA\",\"name\":\"Mine\",\"icon\":\"star\",\"count\":2,\"items\":[{\"id\":\"REQ-002\",\"type\":\"requirement\",\"title\":\"Second requirement\",\"address\":\"REQ-002\"},{\"id\":\"REQ-001\",\"type\":\"requirement\",\"title\":\"First requirement\",\"address\":\"REQ-001\"}]}"
   },
   {
     "tool": "trace",

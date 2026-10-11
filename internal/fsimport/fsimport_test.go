@@ -660,7 +660,7 @@ func TestRun_CommentsOutOfOrder(t *testing.T) {
 	assert.Equal(t, 3, rep.Comments)
 }
 
-// sortedComments returns threads ordered by time, as sqlitecomments does.
+// sortedComments returns threads ordered by time, as the database comment stores do.
 type sortedComments struct{ comments.Store }
 
 func (s sortedComments) List(ctx context.Context, t comments.Target) ([]comments.Comment, error) {
@@ -678,4 +678,26 @@ func TestRun_KeepsOwnerOnlyConfig(t *testing.T) {
 	require.NoError(t, err, "errors: %v", rep.Errors)
 	assertMode(t, filepath.Join(target, ".rela", "config.yaml"), 0o600)
 	assertMode(t, filepath.Join(target, "scripts"), 0o700)
+}
+
+// Piles are one person's working set, kept node-local on purpose. Copying
+// them into a database that is shipped to other people would hand every
+// recipient the importer's piles.
+func TestRun_PilesAreNotCopied(t *testing.T) {
+	source := baseProject(t)
+	writeTree(t, source, map[string]string{
+		".rela/piles.json": `{"piles":[{"id":"PIL-AAAA1111","owner":"alice","name":"Inbox"}]}`,
+	})
+	b := newMemBackend(t)
+
+	rep, err := run(t, source, filepath.Join(filepath.Dir(source), "target"), b)
+	require.NoError(t, err, "errors: %v", rep.Errors)
+
+	skipped := map[string]string{}
+	for _, s := range rep.Skipped {
+		skipped[s.Path] = s.Reason
+	}
+	assert.Equal(t, "personal piles; not project data", skipped[".rela/piles.json"])
+	_, err = b.target.State.Get(context.Background(), "piles.json")
+	assert.ErrorIs(t, err, fs.ErrNotExist, "piles.json must not reach the target state store")
 }

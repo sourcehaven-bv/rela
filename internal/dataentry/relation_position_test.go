@@ -219,7 +219,11 @@ func TestRelationPosition_FacedAnchor(t *testing.T) {
 		t.Fatalf("get anchor: %v", err)
 	}
 	actx := asAlice(t, d, httptest.NewRequest(http.MethodGet, "/", http.NoBody)).Context()
-	order := newRelationOrdering(actx, app.write.affordances, meta, anchor, "cites", nil).wire()
+	ordering, err := newRelationOrdering(actx, app.write.affordances, meta, anchor, "cites", false, nil)
+	if err != nil {
+		t.Fatalf("ordering: %v", err)
+	}
+	order := ordering.wire()
 	if order == nil || order.Anchor != "POL-1@published" || !order.Movable {
 		t.Fatalf("order = %+v, want a movable order anchored at POL-1@published", order)
 	}

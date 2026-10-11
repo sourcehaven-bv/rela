@@ -44,7 +44,7 @@ func TestSweep_CapturesEachFaceInItsOwnLineage(t *testing.T) {
 	_, err = pool.Exec(ctx, `UPDATE entities SET updated_at = now() - interval '1 hour' WHERE id = 'PAGE-1'`)
 	require.NoError(t, err)
 
-	s.StartVersionSweep(stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
+	startVersionSweep(t, s, stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	// The concrete VersionStore already carries the face-aware methods; the
@@ -132,7 +132,7 @@ func TestSweep_CapturesStateTailedRelations(t *testing.T) {
 	_, err = pool.Exec(ctx, `UPDATE relations SET updated_at = now() - interval '1 hour'`)
 	require.NoError(t, err)
 
-	s.StartVersionSweep(stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
+	startVersionSweep(t, s, stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	// The default-tail edge is captured…
@@ -226,7 +226,7 @@ func TestFacesWithIdenticalContentDoNotDedupAgainstEachOther(t *testing.T) {
 		`UPDATE entities SET updated_at = now() - interval '1 hour' WHERE id = 'PAGE-9'`)
 	require.NoError(t, err)
 
-	s.StartVersionSweep(stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
+	startVersionSweep(t, s, stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	var sh store.HistoryReader = s.VersionStore()

@@ -3171,6 +3171,41 @@ card:
 
 Card fields use the same styling as lists — enum values are displayed with colors from `styles`.
 
+#### Counts on cards
+
+Two kinds of card field show a number with an icon instead of a value. They sit
+in one row under the other fields:
+
+```yaml
+card:
+  title: title
+  fields:
+    - relation: subtask-of
+      direction: incoming
+      display: count      # number of subtasks
+      label: subtasks
+    - comments: true      # number of comments
+```
+
+| Key              | Description                                                                             |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| `display: count` | On a `relation` field: show how many related entities the reader can see.               |
+| `comments: true` | Show how many comments the card's entity has. Use it without `property` or `relation`. |
+
+A count of zero shows nothing. The label shows beside the number, for example
+"2 subtasks"; it defaults to the relation's label, or "comments". With
+`show_label: false` only the number and icon show, and the label stays
+available to screen readers and as a tooltip.
+
+A hidden related entity is never counted. A comment count needs commenting to
+be enabled for the board's entity type, and is shown only to readers who hold
+`comment:read` across the project. A reader who has it only through a role on
+one entity sees no count on the card, but can still read the comments on the
+entity.
+
+`display` and `comments` are kanban-only: on a calendar or gantt field they are
+a config error.
+
 ### Drag and Drop
 
 Cards can be dragged between columns (and swimlanes if configured). Dropping a card updates
@@ -4148,9 +4183,11 @@ Every tab of an entity page needs a `scope:`:
 ### Rows in relation order
 
 When a tab's relation is [orderable](metamodel.md#ordered-relations-orderable)
-on the outgoing side, the tab shows its rows in the order of the page entity's
-edges. This order replaces the list's `default_sort:`. A user who may update
-the edges can change the order:
+on the tab's side, the tab shows its rows in the order of the page entity's
+edges. An `outgoing` tab shows the entities the page entity links to, in
+`_order_out` order. An `incoming` tab shows the entities that link to the page
+entity, in `_order_in` order. This order replaces the list's `default_sort:`. A
+user who may update the edges can change the order:
 
 - **List tab.** Each row has a handle. Drag the handle above or below another
   row, or focus it and press the up or down arrow key. Moving the top or bottom
@@ -4160,7 +4197,8 @@ the edges can change the order:
   with the keyboard still picks a column only.
 
 The same order shows on the entity's detail page, in a `display: table`
-section whose rows come from one non-recursive `follow:` from `entry`. A
+section whose rows come from one non-recursive `follow:` or `follow_incoming:`
+from `entry`. A
 section with `sort:`, `group_by:` or `display: nested`, or whose collection
 more than one rule writes, keeps its usual order.
 
@@ -4168,12 +4206,13 @@ The order applies only while nothing else orders the rows. A sort the user
 picks in a column header, or a grouping, shows the rows in that order instead,
 and the handles disappear until it is cleared. These limits also apply:
 
-- A tab ordered over an `incoming` relation is not offered, even when the
-  relation's incoming side is orderable.
 - A board with `swimlanes:` cannot be reordered.
-- A user who may not see the order property `_order_out` does not see the
-  relation order, and has no handles. Ordering by a value the user may not
-  read would reveal it.
+- A user who may not see the order property (`_order_out`, or `_order_in` on
+  an incoming tab) does not see the relation order, and has no handles.
+  Ordering by a value the user may not read would reveal it.
+- On an incoming tab, a move may renumber the edges of every source the user
+  can see. So the user needs update permission on all of those edges, not only
+  on the row they move. Without it the tab shows the order but has no handles.
 
 A row created from a list or board tab, with New or a section's Add, is linked
 to the page's entity over the tab's relation, so it appears in the tab. When
@@ -4813,6 +4852,124 @@ The following keys are reserved for built-in list navigation and cannot be used 
 - `script` paths must end in `.lua` and be local paths (no `..` or absolute paths)
 - Keys must be unique within a list (no two actions on the same list can share a key)
 
+## Piles
+
+A pile is a private, named collection of entities. Use one to gather work you
+want to come back to: tickets to review, risks to discuss in a meeting, or
+search results to export. Each user keeps their own piles. Nobody else can
+see them.
+
+A pile is a stack. The newest item is at the top, and adding an item that is
+already on the pile does not add it again.
+
+### Adding to a pile
+
+You can add entities to a pile from three places:
+
+- **A list.** Select rows and choose **Add to pile** in the bulk bar. Pick an
+  existing pile or create a new one from the selection.
+- **Search.** Choose **Add results to pile** to put the search results on a
+  pile.
+- **The entity page.** Use **Add to pile** on the page of a single entity.
+
+A pile holds one face of an entity. When you add from a page or a row that
+shows a face, such as `POL-1@draft`, that face goes on the pile. An id alone
+is refused for a type with faces, and the message lists the faces you can
+pick from.
+
+A pile has a name and an icon. Names are unique per user, and the comparison
+ignores case.
+
+### Working with a pile
+
+Piles appear in the sidebar with a count of their items. Open a pile to see
+its items grouped by type, newest first. From there you can:
+
+- tick items and remove them. **Undo** puts them back, at the top of the pile
+  rather than where they were;
+- run an action on every item, or on the ticked items (see the `piles:`
+  block below);
+- export the pile;
+- rename it, delete it, or copy its ids.
+
+**Step through** opens the first item. The entity page then shows the pile
+name and your position, such as `Reading · 1 / 12`. Press P and N to move to
+the previous and next item. Stepping opens the face that is on the pile.
+
+### Configuring piles
+
+Piles work without any configuration. The optional `piles:` block in
+`data-entry.yaml` chooses what the pile menu offers:
+
+```yaml
+actions:
+  close-ticket:
+    label: "Close"
+    set:
+      status: closed
+
+piles:
+  # Actions the pile menu offers. Each runs once per item.
+  actions: [close-ticket]
+  # Transforms a pile can be exported with. Leave this out to offer every
+  # registered transform.
+  export: [docx, pdf]
+```
+
+- `actions` lists ids from the top-level `actions:` block. An action must have
+  a `label`, and it must not use `available_on`, because a pile can hold
+  entities of any type. The action runs through the normal action and update
+  paths, so it is authorized per item. The result reports how many items
+  succeeded and how many failed.
+- `export` lists names from the schema's `transforms:` registry.
+
+Config validation rejects an unknown action, an action with `available_on` or
+without a label, an unknown transform, and any unknown key inside the block.
+It warns when a `set:` action changes a property that no entity type declares,
+because that action would fail on every item.
+
+### Limits
+
+- A user can have at most 50 piles. Creating a 51st is refused.
+- A pile holds at most 500 items. When you add to a full pile, the oldest
+  items are dropped, so the pile keeps the 500 newest. An add never fails
+  because the pile is full.
+- A push by someone else follows stricter limits; see Privacy below.
+- Renaming an entity keeps it on every pile under its new id. Deleting an
+  entity removes it from every pile. Deleting one face removes only that face.
+
+### Privacy
+
+A pile belongs to its owner, and only the owner can read it. Another user who
+asks for your pile gets the same "not found" answer as for a pile that does not
+exist. Pile names are not written to the server logs.
+
+A pile never shows more than you may read. Every time you open a pile, each
+item is checked against your current access. An item you can no longer read
+is left out of the list, the count, stepping and the export. It is not
+removed: when your access returns, the item comes back. Removing an item gives
+the same answer whether the item is hidden, deleted, or was never on the pile.
+
+Piles need a user identity. When the server cannot tell who you are, the piles
+interface is hidden and the API answers with 403.
+
+Lua scripts, automations (the `add_to_pile` action) and MCP tools can put
+items on a pile. They may also put items on another user's pile, addressed by
+name. Such a push can only add. It cannot read the other user's piles, and
+the items are still checked against the owner's access when the owner reads
+them.
+
+A push by someone else never removes your items. On a full pile it adds only
+what fits and drops the rest. It creates a new pile only while you have fewer
+than 25 piles, so 25 of your 50 piles can only be filled by you. The server
+logs each such push with the pushing user, you as the target and the number of
+items. It does not log the pile name.
+
+One small signal remains. The 500-item limit counts every stored item,
+including items you cannot currently read. So you may notice that an old item
+stayed on a full pile longer than you expected. This never tells you which
+items are hidden, or how many.
+
 ## Calendars
 
 A calendar lays date-bearing entities out in a **month** or **week** grid, with
@@ -5127,6 +5284,55 @@ clicking a bar re-roots the chart on that entity and rescales the time axis to
 its subtree, with breadcrumbs leading back out. The twisty beside a name
 expands a subtree in place instead. `default_depth` picks how many levels are
 open on first load; everything deeper stays one click away.
+
+### Scrolling through time
+
+Every day has the same width: 4px at the Quarter zoom, 12px at Month and
+40px at Week. A plan longer than the screen scrolls sideways; a shorter one is
+stretched to fill it. The tree column and the date axis stay in place while
+you scroll, and a bar's name stays beside the tree column while the bar
+scrolls past. A bar ends at the end of its end date, so a Monday-to-Friday
+task covers five full days.
+
+- **Now** scrolls today into the middle of the screen. The chart opens there
+  too when the plan covers today. When today lies just outside the plan, the
+  axis is extended to include it; when it is further away, **Now** is
+  disabled.
+- **‹** and **›** scroll one week, month or quarter, matching the zoom.
+- Changing the zoom keeps the day at the left edge where it was.
+- A plan spanning many years at a fine zoom is drawn with narrower days, and
+  the chart is flagged **compressed**.
+
+### Rescheduling by dragging
+
+You can change an entity's own `start` and `end` on the chart.
+
+- Drag the bar to move it. Both dates move by the same number of days.
+- Drag the left or right edge to change only the start or only the end. The
+  end cannot move before the start.
+- A short press without moving still drills in.
+- Press Escape during a drag to abandon it.
+
+The handles appear after the pointer rests on a bar, or when its name gets
+keyboard focus. At that moment the SPA reads the entity once. It shows the
+handles only when you may update the entity, both date fields are readable
+and writable for you, and both hold a value. A bar whose source maps only one
+of the two dates cannot be dragged, and a rolled-up span is never a drag
+target.
+
+From the keyboard, Tab from the bar's name to its start, move and end
+controls. The arrow keys move the chosen control one day, or a week with
+Shift. Enter saves and Escape cancels. Moving between the controls of one bar
+keeps the change, so you can adjust start and end and save both at once.
+
+Each gesture saves one change through the normal update path, so access
+rules, validation and the audit log apply. The save re-reads the entity first
+and sends field preconditions. If someone else changed a date since the chart
+loaded, or the save is refused, the chart shows a message and returns the bar
+to the stored dates. A `datetime` keeps its time of day and its offset; only
+the date part moves. Gantt nodes carry
+`face` on the wire when the type has faces, so the save goes to the face the
+chart shows.
 
 ### Planned versus rolled-up spans
 
@@ -7176,6 +7382,205 @@ history_face_unsupported` rather than serving the default face's record.
 Restoring a version is a write, so a world on a restore is refused like any
 other write. Name the face in the address instead: `ID@face` reads and
 restores that face's history, including a face that was deleted.
+
+## Configure space
+
+The Configure space lets an operator change the configuration from the web
+app. It edits two files:
+
+- the **data model** in `schema.yaml`: entity types, properties, choice lists,
+  relations, query scopes, rules, automations and comments;
+- the **screens** in `data-entry.yaml`: navigation, forms, lists, boards,
+  detail views, calendars, timelines and the dashboard.
+
+YAML never appears in the UI.
+
+### How editing works
+
+Edits collect in a **draft**. The browser keeps the draft for each project,
+so it survives a page reload. The draft stays until you save or discard it.
+
+Review lists every change in the draft. It also checks the draft the way the
+server does at startup. Every expression and filter is compiled: conditions on
+rules, automations, transitions and query scopes, and list and view filters.
+Review shows each problem with its location, and a save with a problem is
+refused with 422 before any file is written.
+
+Saving then does four things:
+
+1. It writes `schema.yaml` and `data-entry.yaml`.
+2. It generates and runs a data migration when existing records need one. See
+   [Saves that migrate data](#saves-that-migrate-data).
+3. It switches the running server to the new configuration. No restart is
+   needed.
+4. It writes an audit record.
+
+A save keeps the comments in both files. Lines you did not change stay
+byte-identical. The save merges your changes line by line into the file as it
+is on disk (a three-way merge).
+
+If a file changed on disk after the draft was read, the save is refused with
+409. Reload the configuration and try again.
+
+### Enabling it
+
+The Configure space is off by default. Turn it on with `--config-editing`, or
+set `RELA_CONFIG_EDITING=1`:
+
+```bash
+rela-server -project /path/to/project --config-editing
+```
+
+Without it, every `/api/v1/_configure` endpoint returns 404 and the app shows
+no Configure entry.
+
+The server refuses to start with `--config-editing` in these cases:
+
+- It also runs with `--read-only`.
+- The project has no `acl.yaml`. Without one, every principal holds every
+  permission.
+- It has no identity source. Set the `-jwt-*` flags, `--principal-header`, or
+  `$RELA_DATAENTRY_USER`.
+- Its only identity source is `$RELA_DATAENTRY_USER` and it binds beyond
+  loopback. That variable verifies nobody: every caller acts as that user.
+- It is the SQLite or PostgreSQL build. This version supports the filesystem
+  build only.
+- The schema file is the legacy `metamodel.yaml`. Rename it to `schema.yaml`
+  first; `rela migrate` does this.
+
+### Who may use it
+
+A principal needs the `config:edit` permission. A role grants it only by naming
+it in its `permissions:` list. The wildcard `*` does not grant it. A client
+acting for a user never holds it, whatever its scopes say.
+
+A principal without the permission gets 403, and the response names the
+permission. An unknown principal is refused.
+
+Treat `config:edit` as administrator access. A holder can change the data
+model. The data migrations a save runs rewrite records without per-record ACL
+checks. See [acl-security.md](acl-security.md#configuration-editing-configedit).
+
+### What cannot be edited in the app
+
+Some settings are **locked**. They run code, reach external commands, or
+control access, or the Configure space does not cover them yet. A draft that
+adds or changes a locked setting is refused with 422, and the response names
+its path. Edit the file directly instead.
+
+Locked in `schema.yaml`:
+
+- external commands and upload policy: `attachments`, `transforms`, and a
+  property's `accept`, `scan`, `scan_cmd` and `transform`;
+- Lua and what a script may reach: a validation's `lua`, `lua_file` and
+  `lua_args`, and an automation action's `lua`, `lua_file`,
+  `allow_acl_bypass`, `capabilities` and `create_entity.template`;
+- a transition's `guard`;
+- `version` and `includes`;
+- sections the Configure space does not cover yet, such as `copies`, `worlds`,
+  faces and computed properties.
+
+Locked in `data-entry.yaml`:
+
+- `permission:` on navigation entries, spaces and dashboard cards;
+- actions, and `export_render` on a list or a detail view;
+- `app.disable_custom_injection` and `app.max_attachment_bytes`;
+- `version`;
+- sections the Configure space does not cover yet, such as `documents`,
+  `feeds`, `pages`, `next_actions`, `palette`, `commands` and `webhooks`.
+
+You may remove a whole item, such as a property, a form or an automation. The
+exception is an item that holds a setting that restricts access or uploads:
+`accept`, `scan`, a transition `guard`, a `permission:`,
+`app.disable_custom_injection` or `app.max_attachment_bytes`. Change such an
+item in the file directly. For the same reason, the `from` and `to` of a
+transition with a `guard` cannot change in the app. Nor can the records that
+Lua code applies to: the `on:` block of an automation that runs Lua or may
+bypass the ACL, and the `entity_type`, `when` and `when_condition` of a
+validation that runs Lua.
+
+Other limits:
+
+- A schema that uses `includes:` cannot be edited in the app.
+- A file that uses YAML anchors, aliases or merge keys (`<<`) cannot be edited
+  in the app.
+- Renaming or removing a name that `acl.yaml` mentions is refused. Update
+  `acl.yaml` first.
+- Entity type names cannot be changed here. Use `rela rename entity`.
+- `acl.yaml`, schedules and mail settings are not part of the Configure space.
+
+### Saves that migrate data
+
+Some changes do not fit the records already stored. For those, the save
+generates a data migration:
+
+| Change | Migration step |
+| --- | --- |
+| Rename a property | `rename_property` |
+| Remove or rename a choice option that records use | `map_values`, to the option you choose |
+| Some changes to a property's type | `convert` |
+
+The save writes the migration to `migrations/<timestamp>-<slug>.yaml`, runs
+it, and records it in `migrations/applied.json`. This is the same as
+`rela migrate data --apply`. See
+[Data Migration](data-migration.md#migrations-from-the-configure-space).
+
+A save is refused while the migration record is not ready. That is the case
+when:
+
+- stored records do not match the current schema;
+- a migration file has not run yet;
+- the project has no baseline.
+
+Run `rela migrate status` and `rela migrate data` on the server first.
+
+Some changes need a migration the app cannot generate: relation changes, face
+changes, and changes to choice values a relation uses. The save refuses them
+with a message. Use `rela migrate gen` for those.
+
+### When a save fails
+
+A failure **before** the migration starts leaves nothing changed. Examples are
+an invalid result, a new configuration the server cannot start, or a lock held
+by another migration or GC run (409). The save restores every file it wrote,
+and the old configuration keeps serving.
+
+A failure **after** the migration started rolls forward. The files stay, and
+the new configuration serves. The response says the migration is incomplete.
+Retry to finish it. Every migration step is safe to repeat.
+
+### Switching to the new configuration
+
+After a save, the server builds a complete new instance from the files. It
+runs the migration on that instance and then serves it. Requests already
+running finish on the old instance, for up to 30 seconds, before it closes.
+
+The scheduler stops and starts again on the new configuration. Open browser
+tabs receive a `config-changed` live-update event and reload.
+
+After a switch, the search index is kept in memory until the next restart.
+The instance being replaced holds the lock on the on-disk index.
+
+### Audit
+
+Every save and every refused save writes an audit record with op
+`config-edit`. The record names the principal and the file hashes before and
+after. A completed save also lists the paths it changed, up to 50. A refused
+save names the locked paths the draft tried to change. A retry of an
+unfinished migration writes its own record. See [audit-log.md](audit-log.md).
+
+### API
+
+All endpoints are under `/api/v1/_configure` and exchange JSON.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/v1/_configure` | The current files as trees, and their version |
+| `POST /api/v1/_configure/preview` | Check a draft. Returns problems, a description of the changes and the planned migration steps. Writes nothing. |
+| `POST /api/v1/_configure/save` | Save a draft |
+| `POST /api/v1/_configure/migrate` | Finish a migration a save left incomplete |
+
+This version has no screen for migration history.
 
 ## Best Practices
 

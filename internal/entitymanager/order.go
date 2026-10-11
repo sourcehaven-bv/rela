@@ -177,13 +177,20 @@ func insertionIndex(
 		}
 		return min(max(from+pos.Step, 0), len(rest)), nil
 	}
-	ref := pos.Before + pos.After
-	if ref == OrderKeyOf(entity.Relation{From: moved.From, To: moved.To}, prop).Peer {
+	ref, tail, anyTail, err := orderRef(pos, moved, prop)
+	if err != nil {
+		return 0, err
+	}
+	if ref == OrderKeyOf(entity.Relation{From: moved.From, To: moved.To}, prop).Peer &&
+		(anyTail || tail == string(moved.FromFace)) {
+
 		return 0, fmt.Errorf("%w: an edge cannot move relative to itself", ErrInvalidOrderPosition)
 	}
+	// rest is in order, so a ref naming no tail matches the peer's first
+	// place: the one a list showing each peer once shows.
 	i := slices.IndexFunc(rest, func(r entity.Relation) bool {
 		k := OrderKeyOf(r, prop)
-		return k.Peer == ref && k.Tail == string(moved.FromFace)
+		return k.Peer == ref && (anyTail || k.Tail == tail)
 	})
 	if i < 0 {
 		return 0, ErrOrderRefNotSibling
@@ -192,6 +199,27 @@ func insertionIndex(
 		i++
 	}
 	return i, nil
+}
+
+// orderRef reads the sibling a Before or After names. On the outgoing side
+// it is a target id on the moved edge's own tail. On the incoming side it
+// is a source address: `id@face` names that tail, and a bare id any tail
+// (anyTail).
+func orderRef(
+	pos entity.OrderPosition, moved entity.RelationKey, prop string,
+) (peer, tail string, anyTail bool, err error) {
+	ref := pos.Before + pos.After
+	if prop != metamodel.OrderPropertyIn {
+		return ref, string(moved.FromFace), false, nil
+	}
+	addr, err := entity.ParseAddress(ref)
+	if err != nil {
+		return "", "", false, fmt.Errorf("%w: %w", ErrInvalidOrderPosition, err)
+	}
+	if named, ok := addr.Named(); ok {
+		return named.ID, string(named.Face), false, nil
+	}
+	return addr.ID(), "", true, nil
 }
 
 // slotValue returns a value that puts final[at] between its neighbors

@@ -445,6 +445,15 @@ type Store interface {
 	// [MaxPerTarget] rows with their bodies to find it.
 	Get(ctx context.Context, target Target, id string) (Comment, error)
 
+	// Count returns the number of comments on each target, keyed by
+	// [Target.Key]. A target with no comments is absent from the map.
+	//
+	// Batched because a list page shows a count per row: one call per page
+	// keeps the cost independent of the page size on the database backends
+	// (one GROUP BY query). Resolved comments are counted too; the count is
+	// the size of the thread, as the thread view shows it.
+	Count(ctx context.Context, targets []Target) (map[string]int, error)
+
 	// Add appends c to the target's thread. The caller has already set ID,
 	// Author and CreatedAt; implementations persist them as given rather
 	// than minting their own, so the values in an audit trail and the values
@@ -531,9 +540,9 @@ func ValidateBody(body string) error {
 // escaped anyway, since this function's correctness should not depend on a
 // grammar declared in another package.
 //
-// Note this handles WILDCARDS only. SQLite's LIKE is also ASCII
-// case-insensitive, which no pattern can express; sqlitecomments pairs this
-// with a byte-exact guard for that.
+// Note this handles WILDCARDS only. Some databases' LIKE is ASCII
+// case-insensitive, which no pattern can express; a backend with that LIKE
+// pairs this with a byte-exact guard (comments/sqlitecomments does).
 func FacePrefixPattern(id string) string {
 	r := strings.NewReplacer(`\`, `\\`, `_`, `\_`, `%`, `\%`)
 	return r.Replace(id) + entity.StateRefSeparator + "%"

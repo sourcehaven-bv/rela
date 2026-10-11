@@ -160,6 +160,14 @@ const (
 	// `op == "data-migration"`.
 	OpDataMigration = "data-migration"
 
+	// OpConfigEdit records one save from the in-app Configure space
+	// (TKT-F5NGMG), or one it refused: a rewrite of schema.yaml and/or
+	// data-entry.yaml by a principal holding config:edit. Summary carries
+	// the sha256 of each file before and after, the changed key paths and
+	// the migration file name, never file content. Isolate with
+	// `op == "config-edit"`.
+	OpConfigEdit = "config-edit"
+
 	// OpDataGC records one garbage-collection pass (TKT-0C57FS) that
 	// deleted schema-orphaned data after the drift grace period — deleted
 	// property values, entities or relations of types the schema no longer
@@ -201,7 +209,7 @@ const (
 	OpFSImport = "fs-import"
 
 	// OpConfigImport records a `rela db load` run storing a project's config
-	// files in its SQLite database, replacing the set it carried. One record
+	// files in its project database, replacing the set it carried. One record
 	// per run with the source and the file count, never file names or
 	// contents.
 	OpConfigImport = "config-import"

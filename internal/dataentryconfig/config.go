@@ -1,7 +1,7 @@
 // Package dataentryconfig contains the configuration types and validation logic
 // for the data-entry web application. This package is separated from the main
 // dataentry package so that the CLI can import config/validation without pulling
-// in the full web application layer (goldmark, templates, git, etc.).
+// in the full web application layer (the markdown renderer, templates, git, etc.).
 package dataentryconfig
 
 import (
@@ -95,10 +95,10 @@ func (d Direction) IsIncoming() bool {
 // accretion. Splitting it would churn the YAML shape for no design gain —
 // a breaking change to every project's config file, made to satisfy a lint.
 // A genuinely new top-level key therefore raises the pin by one; `spaces`
-// (TKT-GNKR5H), `account` (TKT-MJTD12) and `pages` (TKT-ITQ0HL) are the most
-// recent.
+// (TKT-GNKR5H), `account` (TKT-MJTD12), `pages` (TKT-ITQ0HL) and `piles`
+// (TKT-K3RJLH) are the most recent.
 //
-//plimsoll:max-fields=25
+//plimsoll:max-fields=26
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -141,6 +141,10 @@ type Config struct {
 	// Account configures the SPA's account menu. Nil: accepted, means no
 	// account links and no avatar. See [AccountConfig].
 	Account *AccountConfig `yaml:"account,omitempty" json:"account,omitempty"`
+
+	// Piles configures what a pile panel offers. Nil: accepted, means piles
+	// offer no actions and every registered transform. See [PilesConfig].
+	Piles *PilesConfig `yaml:"piles,omitempty" json:"piles,omitempty"`
 }
 
 // EntityViewConfig declares UX bindings for a metamodel entity type.
@@ -1414,6 +1418,14 @@ type KanbanCardField struct {
 	Property  string    `yaml:"property,omitempty" json:"property,omitempty"`
 	Relation  string    `yaml:"relation,omitempty" json:"relation,omitempty"`
 	Direction Direction `yaml:"direction,omitempty" json:"direction,omitempty"` // "outgoing" (default) or "incoming"
+	// Display "count" shows a relation field as the number of related
+	// entities the reader can see, with an icon, instead of their titles.
+	// Only valid with Relation; empty shows the titles.
+	Display string `yaml:"display,omitempty" json:"display,omitempty"`
+	// Comments shows the number of comments on the card's entity. It stands
+	// alone: no Property or Relation. The count is served only to a reader
+	// who holds `comment:read` across the project (TKT-WA25G2).
+	Comments bool `yaml:"comments,omitempty" json:"comments,omitempty"`
 	// Label overrides the displayed name. Left empty it is DERIVED from the
 	// property or relation name, so an author never restates `assignee` as
 	// "Assignee" — only a genuine rename needs writing down.
@@ -1442,6 +1454,9 @@ func (f KanbanCardField) LabelShown() bool {
 func (f KanbanCardField) DisplayLabel() string {
 	if f.Label != "" {
 		return f.Label
+	}
+	if f.Comments {
+		return "comments"
 	}
 	if f.Relation != "" {
 		return f.Relation
@@ -2599,10 +2614,11 @@ const dynamicNameSep = "--"
 //
 // # The composite URL segment is FORCED, not chosen
 //
-// go-webdav classifies a resource by its DEPTH below the mount prefix (root /
-// principal / home-set / calendar / object), so `calendars/project_tasks/PROJ-1/`
-// would be read as an OBJECT, not a collection. The pattern key and the driver
-// id must therefore share one path segment.
+// The CalDAV library dataentry serves through classifies a resource by its
+// DEPTH below the mount prefix (root / principal / home-set / calendar /
+// object), so `calendars/project_tasks/PROJ-1/` would be read as an OBJECT, not
+// a collection. The pattern key and the driver id must therefore share one path
+// segment.
 //
 // `--` is the separator because entity ids cannot contain it (they match
 // `^[A-Za-z0-9][A-Za-z0-9_-]*$`), so the split is unambiguous and needs no

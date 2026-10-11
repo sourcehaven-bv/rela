@@ -12,10 +12,10 @@ import "github.com/Sourcehaven-BV/rela/internal/store"
 //
 // It is constructed from the same [DBTX] the store uses (the shared pool). All
 // its methods are pure functions over that handle — they hold no lifecycle state
-// (no listener, no sweep, no subscriber fan-out); those stay on [Store]. The
-// reconciliation sweep ([Store.StartVersionSweep]) is the store's own goroutine
-// and does its inserts via the same free `insert*` helpers, not through this
-// service, so the two never contend on shared receiver state.
+// (no listener, no sweep, no subscriber fan-out). The reconciliation sweep
+// ([VersionSweep]) is a separate service that does its inserts via the same free
+// `insert*` helpers, not through this one, so the two never contend on shared
+// receiver state.
 //
 // VersionStore satisfies the version capability interfaces in the store package
 // ([store.HistoryReader], [store.VersionWriter], [store.RelationHistoryReader],
@@ -32,7 +32,7 @@ type VersionStore struct {
 // handle. The composition root calls this in the postgres recipe to obtain the
 // service it injects; it reads the same pool the store queries, so the two never
 // diverge. Returns a fresh lightweight wrapper each call (it holds only the
-// shared handle). (The reconciliation sweep is separate — see StartVersionSweep.)
+// shared handle). (The reconciliation sweep is separate; see [VersionSweep].)
 //
 // Returns the [store.VersionService] INTERFACE rather than the concrete type so
 // the capability is satisfiable without importing this package (TKT-L3FNEN).

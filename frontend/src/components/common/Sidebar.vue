@@ -21,7 +21,17 @@ import AccountMenu from './AccountMenu.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { spaceOf, stripSpace, useSpaceStore, withSpace } from '@/stores/space'
 import { usePageStore } from '@/stores/pages'
-import { activeNavId, expandEntityEntries, expandGeneratedItems, toNavGroups } from './sidebarNav'
+import {
+  activeNavId,
+  expandEntityEntries,
+  expandGeneratedItems,
+  PILE_NAV_PREFIX,
+  PILES_GROUP_ID,
+  pilesNavGroup,
+  toNavGroups,
+} from './sidebarNav'
+import { usePiles } from '@/composables/usePiles'
+import NewPileDialog from '@/components/piles/NewPileDialog.vue'
 import { useNavStatus } from '@/composables/useNavStatus'
 import { useNavItems } from '@/composables/useNavItems'
 import { useNavEntities } from '@/composables/useNavEntities'
@@ -117,8 +127,17 @@ const shownGroups = computed(() =>
   ])
 )
 
-const navGroups = computed(() =>
+const configNavGroups = computed(() =>
   toNavGroups(shownGroups.value, RouterLink, onFlyoutClick, navStatus.statusFor)
+)
+
+// The user's piles (TKT-K3RJLH), first among the groups, since they are the
+// user's own and not part of any space's configured navigation.
+const piles = usePiles()
+const creatingPile = ref(false)
+
+const navGroups = computed(() =>
+  piles.available.value ? [pilesNavGroup(piles.piles.value), ...configNavGroups.value] : configNavGroups.value
 )
 
 /*
@@ -129,7 +148,11 @@ const navGroups = computed(() =>
 const creating = ref<{ offer: SidebarCreate; page?: string } | null>(null)
 
 function onGroupAdd(group: NavGroup) {
-  const source = shownGroups.value[navGroups.value.findIndex((g) => g.id === group.id)]
+  if (group.id === PILES_GROUP_ID) {
+    creatingPile.value = true
+    return
+  }
+  const source = shownGroups.value[configNavGroups.value.findIndex((g) => g.id === group.id)]
   if (source?.items_create) creating.value = { offer: source.items_create, page: source.items_page }
 }
 
@@ -203,6 +226,8 @@ async function loadSidebar() {
     // Principal-scoped inline-create offers ride on this payload; see
     // SidebarData.inline_create for why the sidebar carries them.
     schemaStore.setInlineCreate(data.inline_create ?? {})
+    // So is whether this principal may use piles (TKT-K3RJLH).
+    schemaStore.setPiles(data)
   } catch (err) {
     // Suppress cancellation errors from rapid navigation in Firefox
     // (see BUG-6C3V and src/composables/usePageData.ts).
@@ -284,6 +309,11 @@ onUnmounted(() => {
  * is matched back by the id the mapping minted.
  */
 function onSelect(navItem: NavItem) {
+  if (navItem.id.startsWith(PILE_NAV_PREFIX)) {
+    const pileId = navItem.id.slice(PILE_NAV_PREFIX.length)
+    flyout.togglePile({ navId: navItem.id, title: navItem.label, pileId })
+    return
+  }
   const action = navItem.id.startsWith('action:') ? navItem.id.slice('action:'.length) : undefined
   if (!action) return
   const item = allItems.value.find((candidate) => candidate.action === action)
@@ -377,6 +407,7 @@ async function handleAction(item: SidebarItem, ev?: Event) {
     @close="creating = null"
     @created="onCreated"
   />
+  <NewPileDialog v-if="creatingPile" @close="creatingPile = false" />
 </template>
 
 <style scoped>

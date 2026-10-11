@@ -127,6 +127,9 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_schema", a.handleV1Schema)
 	mux.HandleFunc("/api/v1/_schema/", a.handleV1SchemaRoutes)
 	mux.HandleFunc("/api/v1/_config", a.handleV1Config)
+	configure := serveConfigure(a)
+	mux.HandleFunc(ConfigurePath, configure)
+	mux.HandleFunc(ConfigurePath+"/", configure)
 	mux.HandleFunc("/api/v1/_me", func(w http.ResponseWriter, r *http.Request) { handleV1Me(a, w, r) })
 	mux.HandleFunc("/api/v1/_feeds/", a.handleV1Feed)
 	if routes := newCalDAVRoutes(a); routes != nil {
@@ -154,10 +157,12 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_history/", func(w http.ResponseWriter, r *http.Request) { handleV1History(a, w, r) })
 	mux.HandleFunc("/api/v1/_relation_history/",
 		func(w http.ResponseWriter, r *http.Request) { handleV1RelationHistory(a, w, r) })
-	mux.HandleFunc("/api/v1/_openapi.json", a.handleV1OpenAPI)
+	mux.HandleFunc(openAPISpecPath, a.handleV1OpenAPI)
 	mux.HandleFunc("/api/v1/_commands", a.handleV1Commands)
 	mux.HandleFunc("/api/v1/_transforms", a.export.handleV1Transforms)
 	mux.HandleFunc("/api/v1/_comments/", a.comments.handleV1Comments)
+	mux.HandleFunc("/api/v1/_piles", a.piles.handleV1Piles)
+	mux.HandleFunc("/api/v1/_piles/", a.piles.handleV1Piles)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
 	a.registerCopyRoutes(mux)
@@ -445,7 +450,7 @@ func scopedSortedEntitiesScoped(
 	}
 
 	// Free-text search: intersect with hits from the searcher when ?q=... is
-	// present. Bleve scores are discarded — the list's configured sort wins
+	// present. Full-text scores are discarded — the list's configured sort wins
 	// over relevance ranking, same approach SearchView uses for filtering.
 	// Backend errors surface as HTTP 500 rather than rendering an empty list
 	// and pretending the search succeeded.
@@ -840,7 +845,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 		}
 	}
 
-	if !serveOwners(w, r, a, entities, data) {
+	if !serveListRowExtras(w, r, a, query, entities, data) {
 		return
 	}
 
@@ -1132,6 +1137,47 @@ func writeGateError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	writeV1Error(w, r, http.StatusInternalServerError, "acl_query_failed",
 		"ACL read-permission check failed", "check server logs")
+}
+
+// internalErrorDetail is the detail of every 500 this package answers.
+const internalErrorDetail = "check server logs"
+
+// writeInternalError answers a 500 for an internal failure. The cause goes
+// to the server log and the client gets [internalErrorDetail]: a store, file
+// or database error text can name paths, tables or rows the caller may not
+// read (GitHub #1774). TestNoInternalErrorDetail rejects a 500 whose detail
+// is not a literal.
+func writeInternalError(w http.ResponseWriter, r *http.Request, code, title string, err error) {
+	writeInternalErrorDetail(w, r, code, title, internalErrorDetail, err)
+}
+
+// writeInternalErrorDetail is [writeInternalError] with a detail the caller
+// built from the request alone, never from err.
+func writeInternalErrorDetail(w http.ResponseWriter, r *http.Request, code, title, detail string, err error) {
+	if !logInternalError(r, code, err) {
+		return
+	}
+	writeV1Error(w, r, http.StatusInternalServerError, code, title, detail)
+}
+
+// writeInternalJSONError is [writeInternalError] for the settings and theme
+// endpoints, which answer with the plain {"error": message} body.
+func writeInternalJSONError(w http.ResponseWriter, r *http.Request, message string, err error) {
+	if !logInternalError(r, message, err) {
+		return
+	}
+	writeJSONError(w, http.StatusInternalServerError, message+"; "+internalErrorDetail)
+}
+
+// logInternalError logs the cause of a 500. It reports false when the client
+// has gone away, in which case there is no one to answer.
+func logInternalError(r *http.Request, code string, err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	slog.ErrorContext(r.Context(), "dataentry: request failed",
+		"code", code, "err", err, "path", r.URL.Path, "method", r.Method)
+	return true
 }
 
 // --- Relation Handlers ---
@@ -1782,6 +1828,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 
 	config := v1.Config{
 		NextActionBands: s.Cfg.NextActionBands,
+		Piles:           pilesWire(s.Cfg.Piles),
 		App: v1.AppConfig{
 			Name:              s.Cfg.App.Name,
 			Description:       s.Cfg.App.Description,
@@ -2581,7 +2628,7 @@ func (a *App) handleV1Conflicts(w http.ResponseWriter, r *http.Request) {
 
 	result, err := conflict.DetectAll(ctx)
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "conflict_detection_failed", "Failed to detect conflicts", err.Error())
+		writeInternalError(w, r, "conflict_detection_failed", "Failed to detect conflicts", err)
 		return
 	}
 
@@ -2625,7 +2672,7 @@ func (a *App) handleV1ConflictRoutes(w http.ResponseWriter, r *http.Request) {
 
 	cf, err := conflict.ParseConflictedFile(absPath, a.State().Meta)
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "parse_failed", "Failed to parse conflict", err.Error())
+		writeInternalError(w, r, "parse_failed", "Failed to parse conflict", err)
 		return
 	}
 
@@ -2826,7 +2873,7 @@ func handleV1AnchoredDocument(a *App, w http.ResponseWriter, r *http.Request, do
 			writeV1ScriptError(w, se, a.allowFullScriptDetail(r), correlationID)
 			return
 		}
-		writeV1Error(w, r, http.StatusInternalServerError, "render_failed", "Document rendering failed", err.Error())
+		writeInternalError(w, r, "render_failed", "Document rendering failed", err)
 		return
 	}
 
@@ -2930,12 +2977,15 @@ func (a *App) handleV1OpenAPI(w http.ResponseWriter, r *http.Request) {
 
 	data, err := a.State().OpenAPIGen.GenerateJSON()
 	if err != nil {
-		writeV1Error(w, r, http.StatusInternalServerError, "generation_failed", "Failed to generate OpenAPI spec", err.Error())
+		writeInternalError(w, r, "generation_failed", "Failed to generate OpenAPI spec", err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	// no-cache, not no-store: a client may keep the spec (it is configuration,
+	// not data) but must fetch it again before reuse, since it changes when the
+	// schema is reloaded. There is no validator, so that fetch is a full one.
+	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(data)
 }
 

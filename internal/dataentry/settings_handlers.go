@@ -313,7 +313,7 @@ func (h *appearanceHandler) handleAPISaveSettings(w http.ResponseWriter, r *http
 	// The service persists and republishes the defaults atomically, so a
 	// concurrent reader can't observe defaults that disagree with disk.
 	if err := h.settings.Save(r.Context(), &ud); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to save settings: "+err.Error())
+		writeInternalJSONError(w, r, "failed to save settings", err)
 		return
 	}
 
@@ -359,7 +359,7 @@ func (h *appearanceHandler) handleAPISavePalette(w http.ResponseWriter, r *http.
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		writeJSONError(w, http.StatusInternalServerError, "failed to save palette: "+err.Error())
+		writeInternalJSONError(w, r, "failed to save palette", err)
 		return
 	}
 

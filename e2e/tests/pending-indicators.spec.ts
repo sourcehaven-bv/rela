@@ -119,14 +119,23 @@ test.describe("Pending indicators", () => {
     await pending.withColdLoadSpinner(async (spinner) => {
       // Sanity: it genuinely rotates first, so a typo cannot make the
       // reduced-motion half pass vacuously.
-      expect(await pending.spinnerAnimationKind(spinner)).toBe("spin");
+      //
+      // Polled, not read once. On loaded CI runners the spinner has been
+      // visible while its computed animation still read `none`, because the
+      // read raced the page load. Polling waits for the style to settle and
+      // still fails if the rule is missing, since the value never matches.
+      await expect
+        .poll(() => pending.spinnerAnimationKind(spinner))
+        .toBe("spin");
     });
 
     await appPage.emulateMedia({ reducedMotion: "reduce" });
     try {
       await pending.withColdLoadSpinner(async (spinner) => {
         // Still animating, just not rotating: the region stays marked busy.
-        expect(await pending.spinnerAnimationKind(spinner)).toBe("pulse");
+        await expect
+          .poll(() => pending.spinnerAnimationKind(spinner))
+          .toBe("pulse");
       });
     } finally {
       await appPage.emulateMedia({ reducedMotion: null });

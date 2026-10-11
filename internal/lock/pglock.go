@@ -74,8 +74,8 @@ func (l *BackendLocker) Acquire(ctx context.Context, key string) (func(), error)
 }
 
 // For returns the Locker suited to st: a [BackendLocker] when st offers
-// [KeyedLockBackend] (pgstore, whose deployments may run several processes),
-// a [MemoryLocker] otherwise (fs, memory and sqlite, which are single-process).
+// [KeyedLockBackend] (a database backend whose deployments may run several
+// processes), a [MemoryLocker] otherwise (the single-process backends).
 //
 // st is typed any so this package does not import store; the check is the
 // same capability type assertion appbuild uses for optional store features.

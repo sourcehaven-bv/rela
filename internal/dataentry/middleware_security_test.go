@@ -118,11 +118,12 @@ func TestIsSensitivePath_AppsCarveOut(t *testing.T) {
 }
 
 // TestIsNonBrowserExemptV1Path pins the exact scope of the non-browser /api/v1
-// CSRF exemption: the schema handshake + the entity/relation DATA routes
+// CSRF exemption: the schema handshake, the OpenAPI spec + the entity/relation DATA routes
 // ({plural}/...), but NONE of the underscore-prefixed SPA sub-surfaces.
 func TestIsNonBrowserExemptV1Path(t *testing.T) {
 	exempt := []string{
 		"/api/v1/_schema",
+		"/api/v1/_openapi.json",
 		"/api/v1/tickets",                              // POST create (collection)
 		"/api/v1/tickets/TKT-1",                        // GET/PATCH/DELETE
 		"/api/v1/tickets/TKT-1/relations/blocks/TKT-2", // relation read/write
@@ -141,8 +142,9 @@ func TestIsNonBrowserExemptV1Path(t *testing.T) {
 		"/api/v1/_config",
 		"/api/v1/_sidebar",
 		"/api/v1/_feeds/cal",
-		"/api/v1/", // no type segment
-		"/api/v1",  // no trailing slash
+		"/api/v1/_openapi.json/x", // the spec is one exact path
+		"/api/v1/",                // no type segment
+		"/api/v1",                 // no trailing slash
 		"/api/other/manifest",
 		"/api/v2/tickets/TKT-1",
 		"/other/tickets",

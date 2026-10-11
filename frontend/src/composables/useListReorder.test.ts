@@ -14,7 +14,12 @@ vi.mock('@/api/entities', async (orig) => ({
 }))
 
 const key = ['entities', 'task', 'list', 'p1'] as const
-const order: RelationOrder = { relation: 'has-task', anchor: 'PRJ-1', anchor_type: 'project', movable: true }
+const order: RelationOrder = {
+  relation: 'has-task',
+  anchor: 'PRJ-1',
+  anchor_type: 'project',
+  movable: true,
+}
 const row = (id: string) => ({ id, type: 'task', properties: {} }) as unknown as Entity
 
 function setup(opts: { order?: RelationOrder; active?: boolean } = {}) {
@@ -27,7 +32,10 @@ function setup(opts: { order?: RelationOrder; active?: boolean } = {}) {
     defineComponent({
       setup() {
         cache = useQueryCache()
-        cache.setQueryData(key, { data: ['a', 'b', 'c'].map(row), meta: {} } as ListResponse<Entity>)
+        cache.setQueryData(key, {
+          data: ['a', 'b', 'c'].map(row),
+          meta: {},
+        } as ListResponse<Entity>)
         api = useListReorder({
           order: () => opts.order ?? order,
           active: () => active.value,
@@ -38,7 +46,7 @@ function setup(opts: { order?: RelationOrder; active?: boolean } = {}) {
         return () => null
       },
     }),
-    { global: { plugins: [pinia, PiniaColada] } },
+    { global: { plugins: [pinia, PiniaColada] } }
   )
   const ids = () => cache.getQueryData<ListResponse<Entity>>(key)?.data.map((e) => e.id)
   return { api, ids, active, cache }
@@ -54,8 +62,25 @@ describe('useListReorder', () => {
     const done = api.onReorder({ itemId: 'c', targetId: 'a', placement: 'before' })
     await flushPromises()
     expect(ids()).toEqual(['c', 'a', 'b'])
-    expect(moveRelationMock).toHaveBeenCalledWith('project', 'PRJ-1', 'has-task', 'c', { before: 'a' })
+    expect(moveRelationMock).toHaveBeenCalledWith('project', 'PRJ-1', 'has-task', 'c', {
+      before: 'a',
+    })
     await done
+  })
+
+  it("sends an incoming move with its direction and the rows' addresses", async () => {
+    const { api } = setup({
+      order: { ...order, direction: 'incoming', addresses: { a: 'a@published' } },
+    })
+    await api.onReorder({ itemId: 'c', targetId: 'a', placement: 'before' })
+    expect(moveRelationMock).toHaveBeenCalledWith(
+      'project',
+      'PRJ-1',
+      'has-task',
+      'c',
+      { before: 'a@published' },
+      'incoming'
+    )
   })
 
   it('puts the rows back and reports a failed move', async () => {

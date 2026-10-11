@@ -2,12 +2,15 @@ package sqlitestore
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/bgloop"
 )
 
 // The version-reconciliation sweep (the SQLite half of TKT-9INY0Y).
@@ -53,77 +56,91 @@ func sweepDefaults(c store.SweepConfig) store.SweepConfig {
 	return c
 }
 
-// sweep is the periodic version-reconciliation goroutine.
-type sweep struct {
-	store    *Store
-	provider store.ProjectionProvider
-	cfg      store.SweepConfig
-	cancel   context.CancelFunc
-	done     chan struct{}
-	// beforeCapture, when set, runs between the candidate query and the
-	// captures. Tests use it to write a row the query has already read.
-	beforeCapture func()
-	// more is set by a tick that filled its batch and made progress, so run
-	// starts the next tick at once rather than an Interval later. Touched only
-	// from the run goroutine.
-	more bool
+// VersionSweep is the periodic version-reconciliation service: it captures
+// create/update versions for settled rows.
+//
+// It is a service of its own rather than a goroutine the store owns
+// (TKT-IPXEZQ). The wiring site that builds it also starts and stops it, and
+// must call [VersionSweep.Stop] before closing the database; a tick still in
+// flight would otherwise fail against a closed handle.
+type VersionSweep struct {
+	loop *bgloop.Loop
 }
 
-// StartVersionSweep implements [store.VersionSweeper]: it starts the periodic
-// reconciliation sweep that captures create/update versions for settled rows.
+// NewVersionSweep builds the sweep over st. It does not start it; call
+// [VersionSweep.Start].
 //
-// The wiring layer calls this after construction, supplying a ProjectionProvider
-// derived from the active metamodel (which the store deliberately does not
-// hold). The sweep is stopped by Store.Close. Calling it again replaces the
-// previous sweep.
+// It takes the store rather than the bare handle because a tick also holds
+// the store's versionMu, which purge and version tags take too; that mutex is
+// what keeps a purge from being undone by a capture in flight.
 //
-// A nil provider disables capture rather than stamping versions with no schema
-// projection — logged loudly, because silently not capturing history is the
-// failure mode hardest to notice.
-func (s *Store) StartVersionSweep(provider store.ProjectionProvider, cfg store.SweepConfig) {
+// Nil: st and provider are rejected. A sweep without a provider has no schema
+// projection to stamp on a version, and a missing store is a wiring fault. A
+// transaction view is rejected too: its versionMu is not the one purge takes.
+func NewVersionSweep(st *Store, provider store.ProjectionProvider, cfg store.SweepConfig) (*VersionSweep, error) {
+	if st == nil {
+		return nil, errors.New("sqlitestore: version sweep needs a store")
+	}
 	if provider == nil {
-		slog.Warn("sqlitestore: version sweep not started (no projection provider)")
-		return
+		return nil, errors.New("sqlitestore: version sweep needs a projection provider")
 	}
-	sctx, cancel := context.WithCancel(context.Background())
-	sw := &sweep{
-		store:    s,
-		provider: provider,
-		cfg:      sweepDefaults(cfg),
-		cancel:   cancel,
-		done:     make(chan struct{}),
+	if st.parent != nil {
+		return nil, errors.New("sqlitestore: version sweep needs the root store, not a transaction view")
 	}
-
-	s.sweepMu.Lock()
-	prev := s.sweep
-	s.sweep = sw
-	s.sweepMu.Unlock()
-
-	prev.stop()
-	go sw.run(sctx)
+	return newVersionSweep(&sweep{store: st, provider: provider, cfg: sweepDefaults(cfg)})
 }
 
-// stop signals the loop to exit and waits for it. Idempotent and nil-safe, so
-// Close can call it unconditionally.
+// newVersionSweep wraps worker in the shared start-once, stop-and-wait
+// lifecycle.
+func newVersionSweep(worker *sweep) (*VersionSweep, error) {
+	loop, err := bgloop.New(worker.run)
+	if err != nil { // coverage-ignore: defensive: worker.run is never nil
+		return nil, err
+	}
+	return &VersionSweep{loop: loop}, nil
+}
+
+// Start launches the sweep goroutine on a detached context, independent of any
+// request. Only the first call starts it: a second call, or a call after
+// [VersionSweep.Stop], does nothing. Build a new sweep to run again.
+func (v *VersionSweep) Start() { v.loop.Start() }
+
+// Stop signals the goroutine to exit and waits for it. Safe to call more than
+// once, concurrently, on a sweep that was never started, and on a nil
+// receiver.
 //
 // The wait is UNBOUNDED, and that is a deliberate trade on the shutdown path.
 // Canceling the context stops the loop from starting another tick, but a
-// statement already in flight runs to completion, so Close can block for as
+// statement already in flight runs to completion, so Stop can block for as
 // long as one selectCandidates takes. Waiting is still the right choice:
 // returning early would let a tick issue its remaining inserts against a
 // database the caller is about to close, which turns a slow shutdown into a
 // spurious error on every run — and, with the purge path, into a capture
 // landing after an erasure.
-func (s *sweep) stop() {
-	if s == nil {
+func (v *VersionSweep) Stop() {
+	if v == nil {
 		return
 	}
-	s.cancel()
-	<-s.done
+	v.loop.Stop()
 }
 
+// sweep is the tick worker behind [VersionSweep]. Its fields are touched only
+// from the run goroutine (or a test calling tick directly), never
+// concurrently, so it needs no lock of its own.
+type sweep struct {
+	store    *Store
+	provider store.ProjectionProvider
+	cfg      store.SweepConfig
+	// beforeCapture, when set, runs between the candidate query and the
+	// captures. Tests use it to write a row the query has already read.
+	beforeCapture func()
+	// more is set by a tick that filled its batch and made progress, so run
+	// starts the next tick at once rather than an Interval later.
+	more bool
+}
+
+// run ticks every Interval until ctx is canceled.
 func (s *sweep) run(ctx context.Context) {
-	defer close(s.done)
 	ticker := time.NewTicker(s.cfg.Interval)
 	defer ticker.Stop()
 	for {
@@ -137,11 +154,23 @@ func (s *sweep) run(ctx context.Context) {
 			for first := true; first || (s.more && ctx.Err() == nil); first = false {
 				s.more = false
 				if err := s.tick(ctx); err != nil && ctx.Err() == nil {
-					slog.Warn("sqlitestore: version sweep tick failed", "error", err)
+					logTickError(err)
 				}
 			}
 		}
 	}
+}
+
+// logTickError reports a failed tick: at Warn, unless the database is
+// already closed. That happens only during shutdown, when a host closed the
+// database before stopping the sweep (an MCP reload racing Close is one such
+// window), and the next tick never comes.
+func logTickError(err error) {
+	if strings.Contains(err.Error(), "database is closed") {
+		slog.Debug("sqlitestore: version sweep tick after the database closed", "error", err)
+		return
+	}
+	slog.Warn("sqlitestore: version sweep tick failed", "error", err)
 }
 
 // tick runs one reconciliation pass: entities first, then relations, in a fixed
@@ -237,8 +266,6 @@ type sweepCandidate struct {
 	latestVseq int64
 	latestOp   string
 	hasVersion bool
-	// liveHash is the row's content_hash column; nil means not known.
-	liveHash *string
 	// editorUser/editorTool are the row's last_edited_by_* columns; nil means
 	// the last write carried no attribution.
 	editorUser *string
@@ -248,8 +275,8 @@ type sweepCandidate struct {
 	origin originCols
 }
 
-// selectCandidates returns up to Batch entities that differ from their latest
-// version and have SETTLED (updated_at older than now-Idle) or whose latest
+// selectCandidates returns up to Batch entities whose stored content_hash is
+// NULL and that have SETTLED (updated_at older than now-Idle) or whose latest
 // version has aged past MaxStaleness.
 //
 // pgstore expresses the two "latest version" probes as LEFT JOIN LATERAL;
@@ -282,13 +309,17 @@ type sweepCandidate struct {
 // Ordering does not prevent that: an edit to a row whose capture is newer than
 // Batch others still waits behind them forever.
 //
-// So the WHERE clause selects exactly what the dedup would capture: no version
-// in this lifecycle, or a stored content_hash that is NULL or differs from that
-// version's. captureOne writes back the hash it computed, and a trigger clears
-// it when a hashed column changes (contentHashDDL), so a stored hash always
-// describes the row's current content. A purge tombstone carries the live hash,
-// so a purged row is clean too. The one exception is a row whose capture keeps
-// failing: it stays a candidate, and noteBatch reports a full batch of them.
+// So the WHERE clause selects only rows whose stored content_hash is NULL. A
+// non-NULL hash means the current lifecycle's latest version has that hash, so
+// the row has nothing to capture. captureOne writes the hash back after it
+// captures or skips the row, and triggers clear it whenever that could stop
+// being true: a hashed column changes, a version is inserted with another hash,
+// is a delete, or is purged, or a soft-deleted row is restored
+// (contentHashDDL). A skipped row gets its hash written back, so it drops out.
+// The one exception is a row whose capture keeps failing: it stays a
+// candidate, and noteBatch reports a full batch of them. The partial index
+// entities_unhashed_idx serves the scan, so a tick costs in proportion to the
+// rows that changed (TASK-Y73Y9 in Atlas).
 //
 // Timestamps would not do. A capture is written after the write it snapshots,
 // so lv_created is normally NEWER than updated_at, and an `lv_created <
@@ -300,9 +331,9 @@ type sweepCandidate struct {
 // ones, so a large backlog drains in a stable order.
 func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) {
 	const q = candidateSelect + `
-		WHERE (c.updated_at < ?
+		WHERE c.content_hash IS NULL
+		  AND (c.updated_at < ?
 		       OR (c.lv_created IS NOT NULL AND c.lv_created < ?))
-		  AND (lc.content_hash IS NULL OR c.content_hash IS NULL OR c.content_hash <> lc.content_hash)
 		ORDER BY c.lv_created IS NOT NULL, c.lv_created ASC, c.updated_at ASC
 		LIMIT ?`
 
@@ -325,10 +356,11 @@ func (s *sweep) selectCandidates(ctx context.Context) ([]sweepCandidate, error) 
 }
 
 // candidateSelect reads entity rows (aliased c) with what a capture needs: the
-// live content, its attribution and origin columns, the "latest version"
-// probes described on selectCandidates, and the stored content_hash. Shared by the sweep and by
-// capture-now for a version tag, so both decide dedup and op the same way.
-// The caller appends the WHERE clause over c.
+// live content, its attribution and origin columns, and the "latest version"
+// probes described on selectCandidates. Shared by the sweep and by capture-now
+// for a version tag, so both decide dedup and op the same way. The caller
+// appends the WHERE clause over c; the inner query exposes content_hash,
+// updated_at and lv_created for it.
 //
 // The latest current-lifecycle version is found once, as a vseq, and joined
 // for its hash and op, rather than repeating the delete-fence probe in two
@@ -339,7 +371,7 @@ const candidateSelect = `
 		       c.origin_kind, c.origin_source, c.origin_source_face,
 		       c.origin_source_type, c.origin_definition,
 		       lc.content_hash, c.latest_vseq, lc.op,
-		       c.lv_vseq, c.lv_op, c.content_hash
+		       c.lv_vseq, c.lv_op
 		FROM (
 		    SELECT e.id, e.face, e.type, e.content, e.properties, e.updated_at,
 		           e.last_edited_by_user, e.last_edited_by_tool,
@@ -374,10 +406,10 @@ func scanCandidate(row scanner) (sweepCandidate, error) {
 		lvVseq     *int64
 		lvOp       *string
 	)
-	dest := make([]any, 0, 13+originColumnCount)
+	dest := make([]any, 0, 12+originColumnCount)
 	dest = append(dest, &c.id, &c.face, &c.typ, &c.content, &c.props, &c.editorUser, &c.editorTool)
 	dest = append(dest, c.origin.scanTargets()...)
-	dest = append(dest, &latestHash, &latestVseq, &latestOp, &lvVseq, &lvOp, &c.liveHash)
+	dest = append(dest, &latestHash, &latestVseq, &latestOp, &lvVseq, &lvOp)
 	if err := row.Scan(dest...); err != nil {
 		return sweepCandidate{}, err
 	}
@@ -418,17 +450,23 @@ func (s *sweep) captureOne(
 	if err != nil {
 		return err
 	}
-	if c.liveHash != nil && *c.liveHash == contentHash {
-		return nil
-	}
-	// Write the hash back so the row stops being a candidate until it changes,
-	// whether or not a version was captured: a row whose stored hash is NULL
-	// while its content matches the latest version would otherwise be selected,
-	// and skipped, on every tick. The content guard makes it a no-op when a
-	// hashed column changed since the candidate query read the row; stored on
-	// newer content, the hash would mark an uncaptured edit as clean.
-	_, err = s.store.db.ExecContext(ctx, `UPDATE entities SET content_hash = ?
-		WHERE id = ? AND face = ? AND type = ? AND properties = ? AND content = ?`,
+	// Write the hash back so the row stops being a candidate until a trigger
+	// clears it, whether or not a version was captured: a row whose content
+	// matches the latest version would otherwise be selected, and skipped, on
+	// every tick. Two guards make it a no-op when storing the hash would break
+	// what a stored hash promises, that the latest version has it. The content
+	// guard catches a hashed column changed since the candidate query read the
+	// row; stored on newer content, the hash would mark an uncaptured edit as
+	// clean. The latest-version guard catches a version written outside the
+	// sweep since the read, such as a delete followed by a re-create with the
+	// same content: the version triggers did not clear anything then, because
+	// the row's hash was still NULL.
+	_, err = s.store.db.ExecContext(ctx, `UPDATE entities SET content_hash = ?1
+		WHERE id = ?2 AND face = ?3 AND type = ?4 AND properties = ?5 AND content = ?6
+		  AND EXISTS (SELECT 1 FROM (
+		      SELECT op, content_hash FROM entity_versions
+		      WHERE entity_id = ?2 AND face = ?3 ORDER BY vseq DESC LIMIT 1) l
+		    WHERE l.op <> 'delete' AND l.content_hash = ?1)`,
 		contentHash, c.id, c.face, c.typ, c.props, c.content)
 	return err
 }
@@ -438,8 +476,11 @@ func (s *sweep) captureOne(
 //
 // Shared by the sweep and by capture-now for a version tag (TKT-VO6VG9), so a
 // tagged capture is the version the sweep would have written: same op,
-// attribution, origin and hash. Capture-now does not write the hash back; the
-// next sweep finds the row clean against the new version and does.
+// attribution, origin and hash. Capture-now does not write the hash back. A
+// row with a NULL hash stays a candidate: the next sweep dedups it against the
+// new version and writes the hash back then. A row with a stored hash keeps
+// it, which stays true: that hash is the live content's, and the new version
+// carries the same hash, so the version trigger leaves it alone.
 func captureLive(
 	ctx context.Context, q querier, c sweepCandidate, schemaHash string, projJSON []byte,
 ) (vseq int64, contentHash string, err error) {
@@ -502,8 +543,7 @@ type relationSweepCandidate struct {
 	props      string
 	latestHash string
 	hasVersion bool
-	// liveHash, editorUser and editorTool mirror sweepCandidate's.
-	liveHash   *string
+	// editorUser and editorTool mirror sweepCandidate's.
 	editorUser *string
 	editorTool *string
 }
@@ -523,12 +563,11 @@ func (s *sweep) selectRelationCandidates(ctx context.Context) ([]relationSweepCa
 		         ORDER BY rv.vseq DESC LIMIT 1) AS latest_hash,
 		       (SELECT rv.created_at FROM relation_versions rv
 		         WHERE rv.rel_record_id = r.rel_record_id
-		         ORDER BY rv.vseq DESC LIMIT 1) AS lv_created,
-		       r.content_hash
+		         ORDER BY rv.vseq DESC LIMIT 1) AS lv_created
 		FROM relations r
-		WHERE (r.updated_at < ?
+		WHERE r.content_hash IS NULL
+		  AND (r.updated_at < ?
 		       OR (lv_created IS NOT NULL AND lv_created < ?))
-		  AND (latest_hash IS NULL OR r.content_hash IS NULL OR r.content_hash <> latest_hash)
 		ORDER BY lv_created IS NOT NULL, lv_created ASC, r.updated_at ASC
 		LIMIT ?`
 
@@ -547,8 +586,7 @@ func (s *sweep) selectRelationCandidates(ctx context.Context) ([]relationSweepCa
 			lvCreated  *string
 		)
 		if err := rows.Scan(&c.recordID, &c.from, &c.fromFace, &c.relType, &c.to,
-			&c.content, &c.props, &c.editorUser, &c.editorTool, &latestHash, &lvCreated,
-			&c.liveHash); err != nil {
+			&c.content, &c.props, &c.editorUser, &c.editorTool, &latestHash, &lvCreated); err != nil {
 			return nil, err
 		}
 		if latestHash != nil {
@@ -590,41 +628,23 @@ func (s *sweep) captureRelation(
 			return insErr
 		}
 	}
-	if c.liveHash != nil && *c.liveHash == contentHash {
-		return nil
-	}
 	// As in captureOne. The key is the row's current one, so a rename since
-	// the read leaves nothing to match.
-	_, err = s.store.db.ExecContext(ctx, `UPDATE relations SET content_hash = ?
-		WHERE from_id = ? AND from_face = ? AND rel_type = ? AND to_id = ?
-		  AND properties = ? AND content = ?`,
-		contentHash, c.from, c.fromFace, c.relType, c.to, c.props, c.content)
+	// the read leaves nothing to match. The relation dedup does not fence on a
+	// delete version, so neither does the latest-version guard.
+	_, err = s.store.db.ExecContext(ctx, `UPDATE relations SET content_hash = ?1
+		WHERE from_id = ?2 AND from_face = ?3 AND rel_type = ?4 AND to_id = ?5
+		  AND properties = ?6 AND content = ?7
+		  AND ?1 = (SELECT content_hash FROM relation_versions
+		            WHERE rel_record_id = ?8 ORDER BY vseq DESC LIMIT 1)`,
+		contentHash, c.from, c.fromFace, c.relType, c.to, c.props, c.content, c.recordID)
 	return err
 }
 
 // sweepNow runs one tick synchronously. It exists for tests, which must not
 // depend on a ticker interval elapsing; production always goes through run.
-//
-// The sweep it builds is fully formed — a closed done channel and a real
-// cancel — even though tick touches neither. A zero-valued sweep works only
-// for as long as nothing calls stop() on it, and stop() on a nil done channel
-// blocks its caller forever: a latent deadlock one refactor away, for the cost
-// of two lines here.
+// It builds only the tick worker: the lifecycle lives on [VersionSweep], so
+// there is no goroutine handle here to leave half-formed.
 func sweepNow(ctx context.Context, s *Store, provider store.ProjectionProvider, cfg store.SweepConfig) error {
-	done := make(chan struct{})
-	close(done)
-	sctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	sw := &sweep{
-		store:    s,
-		provider: provider,
-		cfg:      sweepDefaults(cfg),
-		cancel:   cancel,
-		done:     done,
-	}
-	return sw.tick(sctx)
+	sw := &sweep{store: s, provider: provider, cfg: sweepDefaults(cfg)}
+	return sw.tick(ctx)
 }
-
-// ensure the store satisfies the sweeper capability at compile time.
-var _ store.VersionSweeper = (*Store)(nil)

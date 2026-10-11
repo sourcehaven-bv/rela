@@ -57,6 +57,9 @@ import { shouldFlipPopover } from '@/utils/popoverFlip'
 import { applyHighlights, type HighlightRange } from '@/utils/commentHighlight'
 import CommandModal from '@/components/entity/CommandModal.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
+import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
+import NewPileDialog from '@/components/piles/NewPileDialog.vue'
+import { useEntityPileActions } from '@/components/piles/useEntityPileActions'
 import SectionCreateButton from '@/components/entity/SectionCreateButton.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { buildCreateLinkQuery } from '@/utils/createLink'
@@ -95,6 +98,8 @@ import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.v
 import type { RowMove } from 'rela-components/components/table/types'
 import OrderedSectionRow from '@/components/entity/OrderedSectionRow.vue'
 import { sectionRowLabel, useSectionReorder } from '@/composables/useSectionReorder'
+import { useQueryCache } from '@pinia/colada'
+import { entityKeys } from '@/queries/entities'
 
 const props = withDefaults(
   defineProps<{
@@ -197,8 +202,21 @@ const bareEntityId = computed(() => refBareId(props.entityId))
 // a list; backTarget answers "where do I go back to". Both can be active
 // at once.
 // Scope navigation is per ENTITY (`_position` walks a list by bare id).
+// A pile scope is the exception: a pile holds a face, so it walks by the
+// served address (TKT-K3RJLH).
 const { scopeNav, loadScopeNav, scopeTarget, navigateScope } = useScopeNavigation(
-  () => bareEntityId.value
+  () => bareEntityId.value,
+  () => servedRef.value
+)
+// Add to pile / Remove from pile. After a removal from the pile being stepped
+// through, move on to a neighbour, as the next item is what the user wants.
+const pileActions = useEntityPileActions(
+  () => servedRef.value,
+  () => {
+    const target = scopeTarget('next') ?? scopeTarget('prev')
+    if (target) void router.push(target)
+    else void loadScopeNav()
+  }
 )
 const backTarget = useBackTarget()
 
@@ -436,6 +454,14 @@ async function loadComments() {
     // this degrades to "no comments" rather than surfacing an error.
     comments.value = []
   }
+}
+
+// A comment write also changes the comment count a kanban card shows, and
+// comment writes raise no store event, so SSE never refreshes the board.
+const queryCache = useQueryCache()
+async function onCommentsChanged() {
+  void queryCache.invalidateQueries({ key: entityKeys.list(props.entityType) })
+  await loadComments()
 }
 
 const checkboxStats = computed(() => {
@@ -1408,6 +1434,7 @@ const actions = computed<EntityAction[]>(() => {
       href: entityExportUrl(props.entityType, exportAddress, t.name, worldParam.value),
     })
   }
+  out.push(...pileActions.actions.value)
   if (canDuplicate.value) {
     out.push({ id: 'duplicate', label: 'Duplicate', group: 'manage', icon: 'copy', run: () => (showDuplicateModal.value = true) })
   }
@@ -2027,6 +2054,16 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             Next <RlKbd keys="N" />
           </RlButton>
           <RlButton v-else variant="secondary" size="sm" disabled>Next</RlButton>
+          <RlButton
+            v-if="pileActions.scopePileId.value"
+            variant="secondary"
+            size="sm"
+            icon="remove"
+            data-testid="remove-from-pile"
+            @click="pileActions.removeFromScopePile()"
+          >
+            Remove from pile
+          </RlButton>
         </template>
       </div>
 
@@ -2160,6 +2197,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             and the page's world, in which the export resolves the entry's links.
           -->
           <ExportMenu :url-for="exportUrlFor(entityRef(entry))" />
+          <AddToPileMenu :addresses="() => (entry ? [entityRef(entry)] : [])" size="md" new-label="Add to new pile…" />
           <!--
             Duplicate. Gated on `inline_create` rather than `_actions` (there is
             no `create` key on an entity response); the action list gates on the
@@ -2212,6 +2250,11 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         :world="worldParam || undefined"
         @close="showDuplicateModal = false"
         @created="handleDuplicated"
+      />
+      <NewPileDialog
+        v-if="pileActions.newPileOpen.value"
+        :items="[entityRef(entry)]"
+        @close="pileActions.newPileOpen.value = false"
       />
 
       <!-- Inaccessible (git-crypt encrypted) banner. Sits above the
@@ -2331,7 +2374,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 :anchor="{ kind: 'property', ref: property }"
                 :comments="commentsForProperty(property)"
                 :flip="shouldFlipPopover(memoBuildSectionEditFields(section, entry), index)"
-                @changed="loadComments"
+                @changed="onCommentsChanged"
               />
             </template>
           </SectionEditForm>
@@ -2350,7 +2393,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                 :anchor="{ kind: 'property', ref: property.name }"
                 :comments="commentsForProperty(property.name)"
                 :flip="shouldFlipPopover(section.fields, index)"
-                @changed="loadComments"
+                @changed="onCommentsChanged"
               />
             </template>
           </PropertyDisplay>
@@ -2417,7 +2460,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                   :comments="openTextComments"
                   :position="textCommentPos"
                   :can-accept="canAccept"
-                  @changed="loadComments"
+                  @changed="onCommentsChanged"
                   @accept="acceptSuggestion"
                   @close="closeTextComment"
                 />
@@ -2870,7 +2913,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           :comments="comments"
           :section-ids="commentSectionIds"
           :can-accept="canAccept"
-          @changed="loadComments"
+          @changed="onCommentsChanged"
           @accept="acceptSuggestion"
         />
       </div>

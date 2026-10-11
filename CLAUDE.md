@@ -240,6 +240,7 @@ code outside its globs.
 | `comments.md`         | Comments stay out of the graph: no entity type, audit, versioning or search                        |
 | `versioning.md`       | History reads are gated like live reads; relation history on both endpoints                        |
 | `datamigration.md`    | Migration steps stay idempotent; files are named by timestamp, never sequence                      |
+| `configedit.md`       | Configure is the only server-side config writer; its allowlist is per key and default-locked       |
 
 ## Architecture
 
@@ -296,6 +297,7 @@ Domain and storage:
 | `internal/entitymanager` | Write path: automations, validation, audit, policy                                               |
 | `internal/audit`         | Append-only JSONL audit log of every successful write                                            |
 | `internal/jobs`          | Background-job seam: ephemeral (fs/desktop) or durable (postgres)                                |
+| `internal/piles`         | Per-user piles of entity refs, outside the graph; kvpiles (file-locked KV) or pgpiles (tenant schema) |
 | `internal/principal`     | Identity attribution (`Principal{User, Tool}`) on ctx                                            |
 | `internal/validator`     | Validation engine invoked by entitymanager                                                       |
 | `internal/markdown`      | Parse/write entity and relation markdown                                                         |

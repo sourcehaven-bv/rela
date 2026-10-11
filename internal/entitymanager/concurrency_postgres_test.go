@@ -22,6 +22,7 @@ import (
 func init() {
 	concBackends = append(concBackends,
 		concBackend{name: "postgres", open: func(t *testing.T) store.Store {
+			t.Helper()
 			return openConcPGStore(t, concPGSchema(t))
 		}},
 		// Two stores over one schema stand in for two rela-server processes:

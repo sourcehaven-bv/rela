@@ -200,7 +200,7 @@ func (s *Store) renameLocked(
 	// a coarse staleness signal, and a consumer re-snapshots by id either way.
 	// Precise old→new re-keying is the job of store.EntityObserver.EntityRenamed,
 	// a separate callback this backend does not yet implement (no derived index
-	// is wired to it here — search runs off bleve via the generic wrapper).
+	// is wired to it here — search runs off the full-text index via the generic wrapper).
 	// Emitting delete+put instead would make a consumer drop and rebuild state
 	// it could have re-keyed.
 	for _, r := range renamedStates {

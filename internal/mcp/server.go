@@ -88,6 +88,14 @@ type Deps struct {
 	Watcher      Watcher
 	ProjectRoot  string
 	Attachments  AttachmentDeps
+	// Comments backs list_comments, and CommentWriter the comment write
+	// tools (TKT-QIQO1W).
+	//
+	// Nil: accepted. A nil Comments means the project declares no
+	// `comments:` block and no comment tool is registered; a nil
+	// CommentWriter leaves out the write tools, as stdio `rela mcp` does.
+	Comments      CommentReader
+	CommentWriter CommentWriter
 	// World is the world the list and count surfaces (list_entities, the
 	// schema resource's counts, the overview prompt, search) read in when a
 	// call names none. It is required; wiring passes
@@ -149,6 +157,11 @@ type GraphReader interface {
 	// from headers only, in a cost that does not grow with len(refs)
 	// ([visibility.Resolver.ResolveHeaders]). A miss is absent.
 	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
+
+	// ResolveHeadersErr is ResolveHeaders with a failed header read
+	// returned ([visibility.Resolver.ResolveHeadersErr]), for a caller that
+	// must not answer a store fault as "nothing is readable".
+	ResolveHeadersErr(ctx context.Context, refs []entity.Ref) (map[entity.Ref]visibility.ResolvedHeader, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	// GetRelation reads the edge at k, tail included. It answers not-found
 	// unless the caller may read both endpoints and, for a content edge, the
@@ -317,6 +330,13 @@ type Server struct {
 	// asks for it with [WithLuaTools]; see that option for why.
 	luaTools bool
 
+	// pileReader and pileWriter back the pile tools, registered only when
+	// both are set ([WithPiles]). pilesSet records that WithPiles was used,
+	// so NewServer can refuse a half-wired capability.
+	pileReader PileReader
+	pileWriter PileWriter
+	pilesSet   bool
+
 	// state publishes the reloadable (Deps, handlerSet) pair. Read it per
 	// request via [Server.deps] / the s.<group>() accessors, never by
 	// caching the result across a call — a schema hot-reload (TKT-NU247U)
@@ -402,6 +422,7 @@ type handlerSet struct {
 	schemaRes schemaResourceHandler
 	prompts   promptHandler
 	attach    attachmentHandler
+	comments  commentHandler
 }
 
 // handlers builds the extracted handler groups a [Server] carries. One
@@ -416,6 +437,7 @@ func (d Deps) handlers() handlerSet {
 		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta, world: d.World},
 		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types, world: d.World},
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
+		comments:  commentHandler{reader: d.Comments, writer: d.CommentWriter},
 	}
 }
 
@@ -495,6 +517,9 @@ func NewServer(deps Deps, version string, opts ...Option) (*Server, error) {
 	}
 	if err := validateFor(s, deps); err != nil {
 		return nil, err
+	}
+	if s.pilesSet && (s.pileReader == nil || s.pileWriter == nil) {
+		return nil, errors.New("mcp.NewServer: WithPiles requires both a PileReader and a PileWriter")
 	}
 	setDeps(s, deps)
 

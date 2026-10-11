@@ -42,6 +42,22 @@ export interface Config {
    * engine (same reasoning as "no useACL() composable").
    */
   next_action_bands?: NextActionBand[]
+  /**
+   * Whether piles are offered to this principal (TKT-K3RJLH): the service is
+   * wired and the principal has an owner identity. Absent from a server
+   * without piles, which hides every piles affordance.
+   */
+  piles_available?: boolean
+  /** The `piles:` block of data-entry.yaml; null or absent when not declared. */
+  piles?: PilesConfig | null
+}
+
+/** The `piles:` block: what the pile panel offers beyond its own controls. */
+export interface PilesConfig {
+  /** Global action ids, run once per item. */
+  actions: string[]
+  /** Transform names; empty offers every registered transform. */
+  export: string[]
 }
 
 /** A custom app surfaced in the SPA (HTML fetched from /api/v1/_apps/{id}). */
@@ -470,6 +486,10 @@ export interface KanbanCardField {
   property?: string
   relation?: string
   direction?: 'outgoing' | 'incoming'
+  /** `count` shows a relation as the number of related entities, with an icon. */
+  display?: 'count'
+  /** Shows the number of comments on the card's entity. Stands alone. */
+  comments?: boolean
   /** Overrides the displayed name; derived from property/relation when unset. */
   label?: string
   /** Renders the label before the value. Defaults to true when unset. */
@@ -497,6 +517,7 @@ export function cardFieldLabel(
   relationLabel?: (relation: string) => string | undefined
 ): string {
   if (field.label) return field.label
+  if (field.comments) return 'comments'
   if (field.relation) return relationLabel?.(field.relation) || field.relation
   return field.property || ''
 }
@@ -923,6 +944,14 @@ export interface SidebarData {
    * may see (TKT-ITQ0HL). Absent when the config declares no pages.
    */
   pages?: Record<string, SidebarPage>
+  /**
+   * Whether piles are offered to this principal (TKT-K3RJLH): the service is
+   * wired and the principal has an owner identity. Absent from a server
+   * without piles, which hides every piles affordance.
+   */
+  piles_available?: boolean
+  /** The `piles:` block of data-entry.yaml; null or absent when not declared. */
+  piles?: PilesConfig | null
 }
 
 /**

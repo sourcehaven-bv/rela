@@ -59,6 +59,11 @@ func (DenyReader) ResolveHeaders(_ context.Context, refs []entity.Ref) map[entit
 	return nil
 }
 
+// ResolveHeadersErr implements the script read surface: always refuses.
+func (DenyReader) ResolveHeadersErr(context.Context, []entity.Ref) (map[entity.Ref]ResolvedHeader, error) {
+	return nil, ErrReaderUnavailable
+}
+
 // ListEntities implements the script read surface: always refuses.
 func (DenyReader) ListEntities(
 	context.Context, store.EntityQuery,
@@ -93,6 +98,16 @@ func (d DenyReader) ListRelationsStrict(
 	ctx context.Context, q store.RelationQuery,
 ) iter.Seq2[*entity.Relation, error] {
 	return d.ListRelations(ctx, q)
+}
+
+// CountEntities implements the script read surface: always refuses.
+func (DenyReader) CountEntities(context.Context, store.EntityQuery) (int, error) {
+	return 0, ErrReaderUnavailable
+}
+
+// CountRelations implements the script read surface: always refuses.
+func (DenyReader) CountRelations(context.Context, store.RelationQuery) (int, error) {
+	return 0, ErrReaderUnavailable
 }
 
 // DenyTracer refuses every traversal, the [DenyReader] counterpart for the

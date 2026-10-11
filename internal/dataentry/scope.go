@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -26,7 +27,7 @@ import (
 // and lets the descriptor rebuild a url.Values that the shared list pipeline
 // consumes verbatim.
 type ScopeDescriptor struct {
-	Source  string            `json:"source"`            // "list" | "search"
+	Source  string            `json:"source"`            // "list" | "search" | "pile"
 	Type    string            `json:"type"`              // entity type name (singular)
 	Filters map[string]string `json:"filters,omitempty"` // filter[...] bracket keys → value
 	Sort    string            `json:"sort,omitempty"`    // "-created,title" form
@@ -49,6 +50,10 @@ type ScopeDescriptor struct {
 	ScopePage string `json:"scope_page,omitempty"`
 	ScopeTab  string `json:"scope_tab,omitempty"`
 	Anchor    string `json:"anchor,omitempty"`
+
+	// Pile is the pile a `source: pile` scope walks (TKT-K3RJLH). It is the
+	// only field such a scope carries.
+	Pile string `json:"pile,omitempty"`
 }
 
 // knownScopeSources gates Source. Extending scope to a new origin is a
@@ -58,6 +63,7 @@ type ScopeDescriptor struct {
 var knownScopeSources = map[string]struct{}{
 	"list":   {},
 	"search": {},
+	"pile":   {},
 }
 
 // scopeFromParam decodes and validates the URL-encoded JSON `scope` param.
@@ -85,13 +91,30 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 	// narrowing of a possibly-mixed-type result, so it is validated only
 	// when present.
 	switch d.Source {
+	case "pile":
+		// A pile is its own ordered set: nothing else narrows or orders it.
+		if d.Pile == "" {
+			return ScopeDescriptor{}, false, "scope pile is required for source pile"
+		}
+		if d.Type != "" || len(d.Filters) > 0 || d.Sort != "" || d.Q != "" || d.QueryScope != "" ||
+			d.ScopePage != "" || d.ScopeTab != "" || d.Anchor != "" {
+
+			return ScopeDescriptor{}, false, "a pile scope takes only pile"
+		}
+		return d, true, ""
 	case "list":
 		if d.Type == "" {
 			return ScopeDescriptor{}, false, "scope type is required"
 		}
+		if d.Pile != "" {
+			return ScopeDescriptor{}, false, "pile needs source pile"
+		}
 	case "search":
 		if strings.TrimSpace(d.Q) == "" {
 			return ScopeDescriptor{}, false, "scope q is required for search"
+		}
+		if d.Pile != "" {
+			return ScopeDescriptor{}, false, "pile needs source pile"
 		}
 		// The search pipeline does not narrow to a page tab, so it would
 		// walk more rows than the tab showed. A tab sends source "list".
@@ -128,8 +151,14 @@ func scopeFromParam(raw string, meta entityTypeChecker) (scope ScopeDescriptor, 
 // cardinality from Total and harvests hidden {ID, Type} pairs from
 // prev/next — the exact leak shape TKT-VMD8 closes on the list path
 // (CRIT finding, TKT-VMD8 review).
+//
+// A pile scope is the pile's readable items in the request's world, newest
+// first, exactly the rows GET /_piles/{id} lists. Another user's pile is
+// [piles.ErrNotFound], like a missing one.
 func (a *App) resolveScope(ctx context.Context, scope ScopeDescriptor) ([]*entityPkg.Entity, error) {
 	switch scope.Source {
+	case "pile":
+		return a.piles.scopeEntities(ctx, scope.Pile)
 	case "search":
 		entities, err := a.queries.executeQuery(ctx, scope.Q)
 		if err != nil {
@@ -224,17 +253,15 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 
 	entities, err := a.resolveScope(r.Context(), scope)
 	if err != nil {
+		if scope.Source == "pile" {
+			writePilesError(w, r, err)
+			return
+		}
 		writeListPipelineError(w, r, err)
 		return
 	}
 
-	idx := -1
-	for i, e := range entities {
-		if e.ID == id {
-			idx = i
-			break
-		}
-	}
+	idx := scopeIndex(scope, entities, id)
 	if idx == -1 {
 		writeV1Error(w, r, http.StatusNotFound, "not_in_scope", "Entity not found in scope", "")
 		return
@@ -242,10 +269,10 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 
 	pos := v1.Position{Current: idx + 1, Total: len(entities)}
 	if idx > 0 {
-		pos.Prev = &v1.PositionRef{ID: entities[idx-1].ID, Type: entities[idx-1].Type}
+		pos.Prev = scopePositionRef(scope, entities[idx-1])
 	}
 	if idx < len(entities)-1 {
-		pos.Next = &v1.PositionRef{ID: entities[idx+1].ID, Type: entities[idx+1].Type}
+		pos.Next = scopePositionRef(scope, entities[idx+1])
 	}
 
 	writeV1JSON(w, http.StatusOK, pos)
@@ -266,7 +293,10 @@ func (a *App) handleV1EntityPosition(w http.ResponseWriter, r *http.Request) {
 func storePosition(
 	a *App, w http.ResponseWriter, r *http.Request, scope ScopeDescriptor, id string,
 ) (*v1.Position, bool) {
-	if scope.Source == "search" {
+	// An allowlist, not a denylist: only a list scope is a GraphQuery. A
+	// search or pile scope that reached the pushdown would be read as a
+	// list of an empty type.
+	if scope.Source != "list" {
 		return nil, false
 	}
 	query := scope.toQuery()
@@ -297,10 +327,37 @@ func storePosition(
 	}
 	pos := &v1.Position{Current: sp.Index, Total: sp.Total}
 	if sp.Prev != nil {
-		pos.Prev = &v1.PositionRef{ID: sp.Prev.ID, Type: sp.Prev.Type}
+		pos.Prev = &v1.PositionRef{ID: sp.Prev.ID, Type: sp.Prev.Type, Address: sp.Prev.ID}
 	}
 	if sp.Next != nil {
-		pos.Next = &v1.PositionRef{ID: sp.Next.ID, Type: sp.Next.Type}
+		pos.Next = &v1.PositionRef{ID: sp.Next.ID, Type: sp.Next.Type, Address: sp.Next.ID}
 	}
 	return pos, true
+}
+
+// scopeIndex finds id in entities. A list or search scope matches the bare
+// id, as it always has. A pile holds faces, so a pile scope matches a named
+// face exactly and a bare id at its first row.
+func scopeIndex(scope ScopeDescriptor, entities []*entityPkg.Entity, id string) int {
+	if scope.Source != "pile" {
+		return slices.IndexFunc(entities, func(e *entityPkg.Entity) bool { return e.ID == id })
+	}
+	ref, err := entityPkg.ParseRef(id)
+	if err != nil {
+		return -1
+	}
+	return slices.IndexFunc(entities, func(e *entityPkg.Entity) bool {
+		return e.ID == ref.ID && (ref.Face.IsImplicit() || e.Face == ref.Face)
+	})
+}
+
+// scopePositionRef is the wire neighbor for e. A pile neighbor links to
+// the face the pile serves; a list or search neighbor links to the bare
+// id, which the world resolves as the page that produced the scope did.
+func scopePositionRef(scope ScopeDescriptor, e *entityPkg.Entity) *v1.PositionRef {
+	addr := e.ID
+	if scope.Source == "pile" {
+		addr = entityPkg.FormatStateRef(e.ID, e.Face)
+	}
+	return &v1.PositionRef{ID: e.ID, Type: e.Type, Address: addr}
 }
