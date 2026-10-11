@@ -50,7 +50,7 @@
   },
   "devDependencies": {
     "@chromatic-com/storybook": "*",
-    "@milkdown/kit": "^7.22.1",
+    "@milkdown/kit": "^7.22.2",
     "@storybook/addon-a11y": "^10.6.0",
     "@storybook/addon-docs": "^10.6.0",
     "@storybook/addon-onboarding": "^10.6.0",
@@ -70,6 +70,6 @@
     "vue-tsc": "^3.3.12"
   },
   "peerDependencies": {
-    "@milkdown/kit": "^7.22.1"
+    "@milkdown/kit": "^7.22.2"
   }
 }
