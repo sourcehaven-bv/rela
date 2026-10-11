@@ -656,6 +656,7 @@ func (ce *copyEngine) buildCopyTarget(
 	if err := ce.confineFileValues(plan, src, target); err != nil {
 		return err
 	}
+	keepTargetExternalRefs(ce.m.deps.Meta, plan, target)
 
 	hard, _ := partitionValidationErrors(
 		ce.m.deps.Meta.ValidateEntity(target.ID, target.Type, target.Properties))
@@ -670,6 +671,22 @@ func (ce *copyEngine) buildCopyTarget(
 
 	plan.entity = target
 	return nil
+}
+
+// keepTargetExternalRefs makes a copy leave external refs alone
+// (TKT-SM20FG): each ref keeps the target's own value, or stays absent on a
+// new target. A ref names one remote object, so copying it would either fail
+// the (system, id) unique check or, across faces, give a second face a
+// mapping only a sync connector may write.
+func keepTargetExternalRefs(meta *metamodel.Metamodel, plan *copyPlan, target *entity.Entity) {
+	for _, prop := range metamodel.ExternalRefPropertyNames(meta, target.Type) {
+		delete(target.Properties, prop)
+		if plan.existing != nil {
+			if v, ok := plan.existing.Properties[prop]; ok {
+				target.Properties[prop] = v
+			}
+		}
+	}
 }
 
 // confineFileValues applies the file-property rule (see attachments.go) to a

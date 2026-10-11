@@ -1,14 +1,14 @@
 package bleveindex
 
 import (
-	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/blevesearch/bleve/v2/analysis"
 	"github.com/blevesearch/bleve/v2/analysis/analyzer/standard"
 	"github.com/blevesearch/bleve/v2/registry"
-	blevesearch "github.com/blevesearch/bleve/v2/search"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -17,68 +17,52 @@ import (
 // compile-time check: Index provides match provenance.
 var _ search.FieldMatcher = (*Index)(nil)
 
-// searchFuzziness mirrors the FuzzyQuery fuzziness used by Index.Search
-// (buildBoostedWordQuery). Keep the two in sync: a MatchedFields pass that is
-// LESS permissive than the query would drop a hit the query legitimately
-// surfaced from a visible field (a false drop). More permissive is safe.
+// searchFuzziness mirrors the FuzzyQuery fuzziness buildBoostedWordQuery
+// sets. Keep the two in sync (see [Index.MatchedFields]).
 const searchFuzziness = 1
 
-// MatchedFields reports which logical fields of e the query text matched, using
-// the same standard analyzer and fuzzy/wildcard/prefix rules as Index.Search,
-// so the provenance is faithful to what the index would match. It answers per
-// field (id / content / prop:<name>) rather than over the concatenated blob,
-// which is what lets the ACL seam distinguish a visible-field hit from a
-// hidden-field hit within the same entity.
+// MatchedFields reports which logical fields of e the query text matched
+// (id, content, prop:<name>), by the rules [Index.SearchAdmitted] uses:
 //
-// Superset-safety: the result is UNIONED with a plain case-insensitive
-// substring pass ([search.MatchTextFields]) so it can never under-report
-// relative to the simplest possible match — the fuzzy/analyzer path only ever
-// ADDS fields. This upholds the FieldMatcher "never omit a matched field"
-// contract (no false drops), at the cost of occasionally reporting an extra
-// field (which only ever KEEPS a hit — safe).
+//   - id: the trimmed text equals the id or is a prefix of it (the idExact
+//     and idPrefix queries), or a word matches a token of the id as the
+//     "all" field analyzes it.
+//   - every other field: a lowercased query word, unanalyzed, matches one of
+//     the field's standard-analyzer tokens. A word with '*' or '?' matches
+//     as a whole-token wildcard; any other word within one rune edit.
+//
+// It must not report a field the search did not match on. The
+// field-visibility filter keeps a hit when a visible field matched, so an extra visible field would
+// return a hit whose real match was a hidden property. An earlier version
+// unioned [search.MatchTextFields] and the query's analyzer tokens into the
+// result. Both over-report: "xxfoobar" holds the substring "foobar" but is
+// two edits from it, and the word "foo,bar" analyzes to "foo" and "bar" while
+// bleve matches the raw word.
 func (idx *Index) MatchedFields(e *entity.Entity, text string) map[string]struct{} {
-	if text == "" {
+	words := strings.Fields(strings.ToLower(text))
+	if len(words) == 0 {
 		return nil
 	}
-
-	// Base: exact substring per field — the guaranteed floor.
-	out := search.MatchTextFields(e, text)
-	if out == nil {
-		out = make(map[string]struct{})
-	}
-
 	analyzer := idx.textAnalyzer()
 	if analyzer == nil {
 		// coverage-ignore-start: defensive: textAnalyzer only returns nil if the bleve registry lacks the standard
-		// analyzer, which never happens
-		// with bleve linked (and OnceValue memoizes so it cannot be forced per-test)
-		return normalizeEmpty(out) // analyzer unavailable: substring floor only
+		// analyzer, which never happens with bleve linked
+		return nil // nothing can be attributed, so the field-visibility filter drops the hit
 		// coverage-ignore-end
 	}
-
-	queryTokens := analyzeTerms(analyzer, text)
-	rawTerms := strings.Fields(strings.ToLower(text))
-
-	// content
-	if fieldTextMatches(analyzer, e.Content, queryTokens, rawTerms) {
-		out[search.FieldContent] = struct{}{}
-	}
-	// id: keyword-analyzed in the index (case-sensitive prefix/exact), so match
-	// the raw id against the raw query, mirroring the idExact/idPrefix queries.
-	if idMatches(e.ID, strings.TrimSpace(text)) {
+	m := newWordMatcher(words)
+	out := make(map[string]struct{})
+	if idMatches(e.ID, strings.TrimSpace(text)) || m.matches(analyzeTerms(analyzer, e.ID)) {
 		out[search.FieldID] = struct{}{}
 	}
-	// properties: per-property, so a hidden prop's match is distinguishable.
+	if m.matches(analyzeTerms(analyzer, e.Content)) {
+		out[search.FieldContent] = struct{}{}
+	}
 	for name, v := range e.Properties {
-		s, ok := v.(string)
-		if !ok || s == "" {
-			continue
-		}
-		if fieldTextMatches(analyzer, s, queryTokens, rawTerms) {
+		if s, ok := v.(string); ok && s != "" && m.matches(analyzeTerms(analyzer, s)) {
 			out[search.PropFieldPrefix+name] = struct{}{}
 		}
 	}
-
 	return normalizeEmpty(out)
 }
 
@@ -86,7 +70,7 @@ func (idx *Index) MatchedFields(e *entity.Entity, text string) map[string]struct
 // The standard analyzer is stateless and safe to share across goroutines, and
 // MatchedFields runs once per surviving hit — building a fresh registry cache
 // per call (the previous shape) was needless hot-path allocation. Nil when the
-// registry cannot provide it; callers fall back to the substring floor.
+// registry cannot provide it; MatchedFields then reports no field.
 var cachedStandardAnalyzer = sync.OnceValue(func() analysis.Analyzer {
 	a, err := registry.NewCache().AnalyzerNamed(standard.Name)
 	if err != nil {
@@ -112,37 +96,48 @@ func analyzeTerms(a analysis.Analyzer, text string) []string {
 	return terms
 }
 
-// fieldTextMatches reports whether the field value matches the query under the
-// same rules Index.Search applies to text fields: a fuzzy (edit-distance
-// searchFuzziness) or wildcard token match. rawTerms carries the un-analyzed
-// query words for wildcard handling (wildcards aren't analyzer tokens).
-func fieldTextMatches(a analysis.Analyzer, fieldValue string, queryTokens, rawTerms []string) bool {
-	fieldTokens := analyzeTerms(a, fieldValue)
-	if len(fieldTokens) == 0 {
-		return false
-	}
-	fieldSet := make(map[string]struct{}, len(fieldTokens))
-	for _, ft := range fieldTokens {
-		fieldSet[ft] = struct{}{}
-	}
+// wordMatcher holds the per-word queries buildBoostedWordQuery issues for
+// one search: a fuzzy word, or a wildcard compiled the way bleve compiles a
+// WildcardQuery (whole-token regexp).
+type wordMatcher struct {
+	fuzzy     [][]rune
+	wildcards []*regexp.Regexp
+}
 
-	for _, qt := range queryTokens {
-		if _, exact := fieldSet[qt]; exact {
-			return true
+// wildcardReplacer is bleve's wildcardRegexpReplacer (search/query).
+var wildcardReplacer = strings.NewReplacer(
+	"+", `\+`, "(", `\(`, ")", `\)`, "^", `\^`, "$", `\$`, ".", `\.`,
+	"{", `\{`, "}", `\}`, "[", `\[`, "]", `\]`, "|", `\|`, `\`, `\\`,
+	"*", ".*", "?", ".",
+)
+
+func newWordMatcher(words []string) wordMatcher {
+	var m wordMatcher
+	for _, w := range words {
+		if !strings.ContainsAny(w, "*?") {
+			m.fuzzy = append(m.fuzzy, []rune(w))
+			continue
 		}
-		for ft := range fieldSet {
-			if withinEditDistance(qt, ft, searchFuzziness) {
+		re, err := regexp.Compile("^(?:" + wildcardReplacer.Replace(w) + ")$")
+		if err != nil {
+			continue // coverage-ignore: the replacer escapes every regexp metacharacter
+		}
+		m.wildcards = append(m.wildcards, re)
+	}
+	return m
+}
+
+// matches reports whether some word matches some of tokens.
+func (m wordMatcher) matches(tokens []string) bool {
+	for _, tok := range tokens {
+		rt := []rune(tok)
+		for _, w := range m.fuzzy {
+			if withinOneEdit(w, rt) {
 				return true
 			}
 		}
-	}
-	// Wildcards operate on the raw (pre-analysis) term against field tokens.
-	for _, rt := range rawTerms {
-		if !strings.ContainsAny(rt, "*?") {
-			continue
-		}
-		for ft := range fieldSet {
-			if wildcardMatch(rt, ft) {
+		for _, re := range m.wildcards {
+			if re.MatchString(tok) {
 				return true
 			}
 		}
@@ -159,23 +154,24 @@ func idMatches(id, rawQuery string) bool {
 	return id == rawQuery || strings.HasPrefix(id, rawQuery)
 }
 
-// withinEditDistance reports whether a and b are within max edits, using
-// bleve's own Levenshtein so the fuzzy match agrees with the index FuzzyQuery.
-//
-// LevenshteinDistanceMax returns (distance, exceededMax): the bool is true when
-// the computation short-circuited because the distance is GREATER than max, so
-// "within" means NOT exceeded and distance ≤ max.
-func withinEditDistance(a, b string, maxDist int) bool {
-	dist, exceeded := blevesearch.LevenshteinDistanceMax(a, b, maxDist)
-	return !exceeded && dist <= maxDist
-}
-
-// wildcardMatch reports whether a `*`/`?` pattern matches a token, mirroring
-// the index WildcardQuery. filepath.Match's glob semantics (`*` any run, `?`
-// one char) match bleve's wildcard operators for the single-token case.
-func wildcardMatch(pattern, token string) bool {
-	ok, err := filepath.Match(pattern, token)
-	return err == nil && ok
+// withinOneEdit reports whether a and b are at most searchFuzziness (one)
+// rune edits apart. The index's fuzzy automaton counts runes, so a byte
+// distance would disagree on non-ASCII text.
+func withinOneEdit(a, b []rune) bool {
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	if len(b)-len(a) > searchFuzziness {
+		return false
+	}
+	i := 0
+	for i < len(a) && a[i] == b[i] {
+		i++
+	}
+	if len(a) == len(b) {
+		return i == len(a) || slices.Equal(a[i+1:], b[i+1:])
+	}
+	return slices.Equal(a[i:], b[i+1:])
 }
 
 func normalizeEmpty(m map[string]struct{}) map[string]struct{} {

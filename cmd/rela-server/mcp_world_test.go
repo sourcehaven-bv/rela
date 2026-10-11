@@ -320,3 +320,27 @@ func TestRemoteMCPDeps_PassesTheHostWorldSelector(t *testing.T) {
 		t.Errorf("Resolve(POL-001) in current = %v", err)
 	}
 }
+
+// The remote server gets every comment tool when the host carries the
+// operations, and none when commenting is off (TKT-QIQO1W).
+func TestRemoteMCPDeps_PassesTheHostComments(t *testing.T) {
+	svc := newWorldServices(t)
+	host := testHost(t, svc)
+
+	deps, err := remoteMCPDeps(svc, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps.Comments != nil || deps.CommentWriter != nil {
+		t.Error("a host without comment operations must leave both nil, or the tools register over nothing")
+	}
+
+	host.Comments = &dataentry.MCPComments{}
+	deps, err = remoteMCPDeps(svc, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deps.Comments == nil || deps.CommentWriter == nil {
+		t.Error("the remote server must get the read and the write comment tools")
+	}
+}

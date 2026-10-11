@@ -853,6 +853,9 @@ func (m *Manager) CreateEntity(
 	if err := rejectFileCreate(m.deps.Meta, e.Type, e.Properties); err != nil {
 		return nil, err
 	}
+	if err := rejectExternalRefCreate(m.deps.Meta, e.Type, e.Properties, opts.WriteExternalRefs); err != nil {
+		return nil, err
+	}
 	if opts.ID != "" {
 		if def, ok := m.deps.Meta.GetEntityDef(e.Type); ok && !def.IsManualID() {
 			return nil, customIDNotAllowedError(e.Type, def, opts.ID)
@@ -974,6 +977,9 @@ func (m *Manager) ValidateCreate(
 	if err := rejectFileCreate(m.deps.Meta, e.Type, e.Properties); err != nil {
 		return nil, nil, err
 	}
+	if err := rejectExternalRefCreate(m.deps.Meta, e.Type, e.Properties, opts.WriteExternalRefs); err != nil {
+		return nil, nil, err
+	}
 	return buildCandidateEntity(ctx, m.deps, e.Type, createCoreOpts{
 		ID:              opts.ID,
 		IDPrefix:        opts.Prefix,
@@ -1047,6 +1053,9 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, err
 	}
 	if err := rejectFileChanges(m.deps.Meta, oldEntity, e); err != nil {
+		return nil, err
+	}
+	if err := rejectExternalRefChanges(m.deps.Meta, oldEntity, e, false); err != nil {
 		return nil, err
 	}
 	if len(metamodel.FileProperties(m.deps.Meta, e.Type)) > 0 {
@@ -1152,8 +1161,15 @@ func (m *Manager) PatchEntity(
 	if id == "" {
 		return nil, errors.New("entitymanager: PatchEntity: id is empty")
 	}
+	if expect, view, ok := claimExpectation(ctx); ok {
+		// A caller-view expectation (VersionTags.WriteAsSeen): one pinned
+		// attempt, never retried.
+		return m.patchEntityOnce(ctx, id, p, true, "", func(stored *entity.Entity) error {
+			return checkCallerToken(ctx, stored.Ref(), expect, view)
+		})
+	}
 	return patchWithRetry(ctx, p.ExpectedVersion == "", func(pinToRead bool) (*entity.UpdateResult, error) {
-		return m.patchEntityOnce(ctx, id, p, pinToRead, "")
+		return m.patchEntityOnce(ctx, id, p, pinToRead, "", nil)
 	})
 }
 
@@ -1180,8 +1196,13 @@ func patchWithRetry(
 // write is conditional on the version of the row it read, rather than on
 // p.ExpectedVersion. fileProp names the one file property the write may
 // change; only [Attachments.StampAttachments] passes one.
+//
+// check, when set, runs on the raw stored row before authorization, so a
+// face the caller cannot see fails like a missing one (see
+// [VersionTags.WriteAsSeen]).
 func (m *Manager) patchEntityOnce(
 	ctx context.Context, id string, p entity.Patch, pinToRead bool, fileProp string,
+	check func(stored *entity.Entity) error,
 ) (*entity.UpdateResult, error) {
 	// RAW read, deliberately ungated: this is write-prep, and the merge
 	// base must be the complete stored entity or hidden properties would
@@ -1210,6 +1231,11 @@ func (m *Manager) patchEntityOnce(
 	// (RR-0QWLRC). Matches RecreateEntity's guard.
 	if stored.IsLocked() {
 		return nil, fmt.Errorf("entitymanager: PatchEntity: entity %s has inaccessible fields", id)
+	}
+	if check != nil {
+		if err := check(stored); err != nil {
+			return nil, err
+		}
 	}
 
 	// Face from the STORED entity, not from `id`: `id` may be the fused
@@ -1245,6 +1271,9 @@ func (m *Manager) patchEntityOnce(
 	updated := stored.Clone()
 	p.Apply(updated)
 	pinStoredFileValues(m.deps.Meta, stored, updated, fileProp)
+	if err := rejectExternalRefChanges(m.deps.Meta, stored, updated, p.WriteExternalRefs); err != nil {
+		return nil, err
+	}
 
 	expected := p.ExpectedVersion
 	if pinToRead {
@@ -1410,6 +1439,9 @@ func (m *Manager) processUpdateAutomation(
 		return result, true, nil
 	}
 	if err := rejectComputedPresent(m.deps, e.Type, stringMapAny(result.PropertiesSet)); err != nil {
+		return nil, true, err
+	}
+	if err := rejectExternalRefPresent(m.deps.Meta, e.Type, stringMapAny(result.PropertiesSet)); err != nil {
 		return nil, true, err
 	}
 	for prop, val := range result.PropertiesSet {

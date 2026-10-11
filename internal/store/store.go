@@ -1508,15 +1508,6 @@ type SweepConfig struct {
 	Batch int
 }
 
-// VersionSweeper is a store that runs its own debounced reconciliation sweep to
-// capture create/update versions.
-//
-// Optional, type-asserted at the wiring site like [Formatter] and
-// [HistoryReader] — not part of [Store].
-type VersionSweeper interface {
-	StartVersionSweep(provider ProjectionProvider, cfg SweepConfig)
-}
-
 // VersionServiceProvider is a store that can hand out a [VersionService]
 // sharing its own connection or handle.
 //

@@ -17,7 +17,7 @@ func TestBuildVisibleSearchSQL_Keyset(t *testing.T) {
 	scope := map[string]search.TypeScope{"ticket": {AllowAll: true}}
 
 	t.Run("first page: LIMIT, no keyset", func(t *testing.T) {
-		sqlText, args, ok := buildVisibleSearchSQL(search.Query{Text: "alpha", World: store.TrivialScope()}, scope, nil, nil, 7)
+		sqlText, args, ok, _ := buildVisibleSearchSQL(search.Query{Text: "alpha", World: store.TrivialScope()}, scope, nil, nil, 7)
 		if !ok {
 			t.Fatal("expected a query")
 		}
@@ -31,7 +31,7 @@ func TestBuildVisibleSearchSQL_Keyset(t *testing.T) {
 
 	t.Run("text: resumes after rank and id", func(t *testing.T) {
 		after := &visibleKey{rank: 0.5, id: "T-9"}
-		sqlText, args, _ := buildVisibleSearchSQL(search.Query{Text: "alpha", World: store.TrivialScope()}, scope, nil, after, 7)
+		sqlText, args, _, _ := buildVisibleSearchSQL(search.Query{Text: "alpha", World: store.TrivialScope()}, scope, nil, after, 7)
 		if !strings.Contains(sqlText, " OR (") || !strings.Contains(sqlText, "e.id >") {
 			t.Errorf("want a (rank, id) keyset: %s", sqlText)
 		}
@@ -42,7 +42,7 @@ func TestBuildVisibleSearchSQL_Keyset(t *testing.T) {
 
 	t.Run("no text: resumes after id", func(t *testing.T) {
 		after := &visibleKey{id: "T-9"}
-		sqlText, _, _ := buildVisibleSearchSQL(search.Query{World: store.TrivialScope()}, scope, nil, after, 7)
+		sqlText, _, _, _ := buildVisibleSearchSQL(search.Query{World: store.TrivialScope()}, scope, nil, after, 7)
 		if !strings.Contains(sqlText, "AND e.id > $") || strings.Contains(sqlText, " OR (") {
 			t.Errorf("want an id-only keyset: %s", sqlText)
 		}
@@ -67,18 +67,18 @@ func TestBuildVisibleSearchSQL_Shape(t *testing.T) {
 	}
 
 	t.Run("empty scope: no query", func(t *testing.T) {
-		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, nil, nil, nil, 1); ok {
+		if _, _, ok, _ := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, nil, nil, nil, 1); ok {
 			t.Error("nil scope must not produce a query")
 		}
 		deny := map[string]search.TypeScope{"ticket": {}}
-		if _, _, ok := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, deny, nil, nil, 1); ok {
+		if _, _, ok, _ := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, deny, nil, nil, 1); ok {
 			t.Error("zero-value-only scope must not produce a query")
 		}
 	})
 
 	t.Run("wildcard allow: no visibility clause", func(t *testing.T) {
 		scope := map[string]search.TypeScope{search.WildcardType: {AllowAll: true}}
-		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, scope, nil, nil, 1)
+		sqlText, _, ok, _ := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, scope, nil, nil, 1)
 		if !ok {
 			t.Fatal("expected a query")
 		}
@@ -94,7 +94,7 @@ func TestBuildVisibleSearchSQL_Shape(t *testing.T) {
 			"doc":    {Query: docPred},
 			"ticket": {Query: pred()},
 		}
-		sqlText, _, ok := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, scope, nil, nil, 1)
+		sqlText, _, ok, _ := buildVisibleSearchSQL(search.Query{Text: "x", World: store.TrivialScope()}, scope, nil, nil, 1)
 		if !ok {
 			t.Fatal("expected a query")
 		}

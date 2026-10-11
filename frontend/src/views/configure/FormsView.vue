@@ -32,6 +32,10 @@ const columns: TableColumn[] = [
   { key: 'fields', header: 'Fields', field: 'fields', width: 90, align: 'end' },
 ]
 
+function routeOf(row: { id: string }): string {
+  return configureRoute.form(row.id)
+}
+
 function add(id: string, title: string, entityType: string) {
   draft.edit('screens', (tree) =>
     set(
@@ -57,7 +61,7 @@ function add(id: string, title: string, entityType: string) {
       name-label="Form"
       intro="A form is how people create or edit a record. The fields and their order are set per form."
       empty="No forms yet."
-      :to="(row) => configureRoute.form(row.id)"
+      :to="routeOf"
     />
   </ConfigurePage>
 </template>

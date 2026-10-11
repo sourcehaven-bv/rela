@@ -246,7 +246,7 @@ func TestPurgeTombstoneSuppressesSweepRecapture(t *testing.T) {
 
 	// Drive the sweep. If the tombstone works, it re-captures NOTHING (the live
 	// hash matches the tombstone's content_hash).
-	s.StartVersionSweep(stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
+	startVersionSweep(t, s, stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 	time.Sleep(300 * time.Millisecond)
 

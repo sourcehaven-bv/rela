@@ -102,7 +102,7 @@ func TestSweepAttributesRealEditor(t *testing.T) {
 	_, err = pool.Exec(ctx, `UPDATE relations SET updated_at = now() - interval '1 hour'`)
 	require.NoError(t, err)
 
-	s.StartVersionSweep(stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
+	startVersionSweep(t, s, stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {
@@ -156,7 +156,7 @@ func TestSweepAttributesLastEditorOfBurst(t *testing.T) {
 	_, err = pool.Exec(ctx, `UPDATE entities SET updated_at = now() - interval '1 hour' WHERE id = 'BURST-1'`)
 	require.NoError(t, err)
 
-	s.StartVersionSweep(stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
+	startVersionSweep(t, s, stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {

@@ -20,6 +20,16 @@ type stubProvider struct {
 
 func (p stubProvider) Projection() (hash string, projectionJSON []byte) { return p.hash, p.json }
 
+// startVersionSweep builds and starts a sweep over s, stopping it when the test
+// ends. The test owns the sweep the way appbuild owns it in production.
+func startVersionSweep(t *testing.T, s *pgstore.Store, p pgstore.ProjectionProvider, cfg pgstore.SweepConfig) {
+	t.Helper()
+	sw, err := pgstore.NewVersionSweep(s, p, cfg)
+	require.NoError(t, err)
+	sw.Start()
+	t.Cleanup(sw.Stop)
+}
+
 func newVersionInput(id, content string, props map[string]any) store.VersionInput {
 	return store.VersionInput{
 		EntityID:      id,
@@ -136,7 +146,7 @@ func TestSweepCapturesSettledEntities(t *testing.T) {
 	require.NoError(t, err)
 
 	// Start a fast sweep with a short idle so SET-1 qualifies and FRESH-1 doesn't.
-	s.StartVersionSweep(stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
+	startVersionSweep(t, s, stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {
@@ -229,7 +239,7 @@ func TestDeleteThenRecreateIdenticalContent(t *testing.T) {
 	require.NoError(t, s.CreateEntity(ctx, mkEntity("X", "same-content")))
 	_, err = pool.Exec(ctx, `UPDATE entities SET updated_at = now() - interval '1 hour' WHERE id = 'X'`)
 	require.NoError(t, err)
-	s.StartVersionSweep(stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
+	startVersionSweep(t, s, stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
 		pgstore.SweepConfig{Interval: 50 * time.Millisecond, Idle: time.Minute, MaxStaleness: time.Hour, Batch: 100})
 
 	require.Eventually(t, func() bool {

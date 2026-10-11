@@ -203,6 +203,13 @@ func FormatValue(v any) string {
 		return strings.Join(parts, ", ")
 	case []string:
 		return strings.Join(t, ", ")
+	case map[string]any:
+		// An external ref exports as its id (TKT-SM20FG); no other property
+		// type stores an object.
+		if id, ok := metamodel.ExternalRefID(t); ok {
+			return id
+		}
+		return fmt.Sprintf("%v", t)
 	default:
 		return fmt.Sprintf("%v", t)
 	}
