@@ -25,7 +25,7 @@ func TestRenameEntityType_RefusesDivergentFaceSets(t *testing.T) {
 	to.Entities["job"] = job
 
 	step := &renameEntityTypeStep{From: "task", To: "job"}
-	err := step.Validate(from.ShapeProjection(), to.ShapeProjection())
+	err := step.Validate(metamodel.NewShapeProjection(from), metamodel.NewShapeProjection(to))
 	if err == nil {
 		t.Fatal("renaming into a type declaring a different face set must be refused: " +
 			"every draft/published row would keep a coordinate `job` does not declare")
@@ -57,7 +57,7 @@ func TestGenerate_FacedRenameDraftsACommentedStep(t *testing.T) {
 	delete(to.Entities, "task")
 	to.Entities["job"] = job
 
-	d, err := Generate(from.ShapeProjection(), to.ShapeProjection(), "faced rename", testNow())
+	d, err := Generate(metamodel.NewShapeProjection(from), metamodel.NewShapeProjection(to), "faced rename", testNow())
 	if err != nil {
 		t.Fatalf("a faced rename must still draft, not fail as a generator bug: %v", err)
 	}

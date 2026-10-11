@@ -246,7 +246,7 @@ func buildCandidateEntity(
 	// (required-missing, type mismatch, invalid enum, malformed value)
 	// ride along on the result as warnings.
 	var warnings []entity.Warning
-	if errs := deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
+	if errs := metamodel.NewValidator(deps.Meta).ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
 		hard, soft := partitionValidationErrors(errs)
 		if len(hard) > 0 {
 			return nil, nil, newValidationError(hard)

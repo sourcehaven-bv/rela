@@ -108,7 +108,7 @@ const (
 	// must reject with a 422, not a tolerable hand-edit state. Unlike the
 	// other types, this one is raised by the entitymanager write path
 	// (which can query other entities), not by the pure per-entity
-	// [Metamodel.ValidateEntity].
+	// [Validator.ValidateEntity].
 	ValidationErrorUnique ValidationErrorType = "unique"
 	// ValidationErrorExternalRef reports a malformed `external_ref` value
 	// (TKT-SM20FG). It is HARD: a ref is written by a sync script, never
@@ -155,9 +155,27 @@ func (e *ValidationError) IsSoft() bool {
 	return false
 }
 
+// Validator checks entity, relation and property values against a
+// metamodel. The zero value is not usable; construct it with [NewValidator].
+type Validator struct {
+	meta *Metamodel
+}
+
+// NewValidator returns a Validator over m.
+//
+// Nil: rejected — panics. It panics rather than returning an error because it
+// is a value constructor called inline, not a wiring constructor: every caller
+// already holds a loaded metamodel, so a nil one is a programming bug.
+func NewValidator(m *Metamodel) Validator {
+	if m == nil {
+		panic("metamodel.NewValidator: nil metamodel")
+	}
+	return Validator{meta: m}
+}
+
 // ValidateProperties validates a properties map against a PropertySchema.
 // This is shared between entity and relation validation.
-func (m *Metamodel) ValidateProperties(props map[string]any, schema PropertySchema) []*ValidationError {
+func (v Validator) ValidateProperties(props map[string]any, schema PropertySchema) []*ValidationError {
 	var errs []*ValidationError
 
 	// Check required properties
@@ -187,7 +205,7 @@ func (m *Metamodel) ValidateProperties(props map[string]any, schema PropertySche
 			continue
 		}
 
-		if err := m.validatePropertyValue(propName, &propDef, val); err != nil {
+		if err := v.validatePropertyValue(propName, &propDef, val); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -196,10 +214,10 @@ func (m *Metamodel) ValidateProperties(props map[string]any, schema PropertySche
 }
 
 // ValidateEntity validates an entity's type, properties, and ID prefix against the metamodel.
-func (m *Metamodel) ValidateEntity(id, entityType string, properties map[string]any) []*ValidationError {
+func (v Validator) ValidateEntity(id, entityType string, properties map[string]any) []*ValidationError {
 	var errs []*ValidationError
 
-	def, ok := m.GetEntityDef(entityType)
+	def, ok := v.meta.GetEntityDef(entityType)
 	if !ok {
 		errs = append(errs, &ValidationError{
 			Type:    ValidationErrorUnknownType,
@@ -209,7 +227,7 @@ func (m *Metamodel) ValidateEntity(id, entityType string, properties map[string]
 	}
 
 	// Validate properties using shared function
-	errs = append(errs, m.ValidateProperties(properties, def)...)
+	errs = append(errs, v.ValidateProperties(properties, def)...)
 
 	// Validate ID matches prefix
 	prefixes := def.GetIDPrefixes()
@@ -233,10 +251,10 @@ func (m *Metamodel) ValidateEntity(id, entityType string, properties map[string]
 }
 
 // ValidateRelationProperties validates a relation's properties against the metamodel.
-func (m *Metamodel) ValidateRelationProperties(
+func (v Validator) ValidateRelationProperties(
 	relationType string, properties map[string]any,
 ) []*ValidationError {
-	def, ok := m.Relations[relationType]
+	def, ok := v.meta.Relations[relationType]
 	if !ok {
 		return nil // Unknown type - handled elsewhere
 	}
@@ -245,7 +263,7 @@ func (m *Metamodel) ValidateRelationProperties(
 		return nil // No properties defined for this relation type
 	}
 
-	return m.ValidateProperties(properties, &def)
+	return v.ValidateProperties(properties, &def)
 }
 
 // ValidatePropertyValue validates a single property value against its definition.
@@ -253,8 +271,8 @@ func (m *Metamodel) ValidateRelationProperties(
 //
 // Note: The explicit nil check is required because returning a nil *ValidationError
 // directly as error creates a non-nil interface with nil value (Go interface gotcha).
-func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef, val any) error {
-	err := m.validatePropertyValue(propName, propDef, val)
+func (v Validator) ValidatePropertyValue(propName string, propDef *PropertyDef, val any) error {
+	err := v.validatePropertyValue(propName, propDef, val)
 	if err != nil {
 		return err
 	}
@@ -264,7 +282,7 @@ func (m *Metamodel) ValidatePropertyValue(propName string, propDef *PropertyDef,
 // validatePropertyValue validates a single property value and returns a structured ValidationError.
 //
 //nolint:funlen // large switch for property type validation; splitting would reduce readability
-func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef, val any) *ValidationError {
+func (v Validator) validatePropertyValue(propName string, propDef *PropertyDef, val any) *ValidationError {
 	switch propDef.Type {
 	case PropertyTypeString:
 		if _, ok := val.(string); !ok {
@@ -430,7 +448,7 @@ func (m *Metamodel) validatePropertyValue(propName string, propDef *PropertyDef,
 
 	default:
 		// Custom type (enum defined in types section)
-		if customType, ok := m.Types[propDef.Type]; ok {
+		if customType, ok := v.meta.Types[propDef.Type]; ok {
 			return validateCustomTypeValue(propName, customType, val)
 		}
 		return &ValidationError{

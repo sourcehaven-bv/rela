@@ -6,6 +6,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -25,7 +26,7 @@ import (
 type VersionRecorder interface {
 	// RecordVersion persists one entity version. proj is the render-schema
 	// projection JSON the snapshot was taken under and projHash its content
-	// hash (from metamodel.RenderProjection().Hash()).
+	// hash (from metamodel.NewRenderProjection(meta).Hash()).
 	RecordVersion(ctx context.Context, v VersionRecord) error
 }
 
@@ -62,7 +63,7 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 	// keys (entity_id, face, vseq), so a state capture gets its own
 	// lineage instead of interleaving with the family's other faces, and
 	// the face travels on the record below.
-	proj := m.deps.Meta.RenderProjection()
+	proj := metamodel.NewRenderProjection(m.deps.Meta)
 	projJSON, err := proj.JSON()
 	// Never fail the write over versioning — log and skip this capture.
 	if err != nil { // coverage-ignore-start: defensive: RenderProjection.JSON is json.Marshal
@@ -148,7 +149,7 @@ func (m *Manager) recordRelationVersion(
 	// default tail's. Before this, a faced capture had to be dropped — a
 	// triple with no face names the default tail, so filing it would have
 	// interleaved two edges' histories.
-	proj := m.deps.Meta.RenderProjection()
+	proj := metamodel.NewRenderProjection(m.deps.Meta)
 	projJSON, err := proj.JSON()
 	if err != nil { // coverage-ignore-start: defensive: RenderProjection.JSON is json.Marshal over only
 		// strings/bools/slices/maps, which cannot error (see projection.go); no seam to inject a failing projection

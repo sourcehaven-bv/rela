@@ -32,7 +32,7 @@ type metaProjectionProvider struct {
 }
 
 func (p metaProjectionProvider) Projection() (hash string, projectionJSON []byte) {
-	proj := p.meta.RenderProjection()
+	proj := metamodel.NewRenderProjection(p.meta)
 	b, err := proj.JSON()
 	if err != nil {
 		// Unreachable short of a runtime bug (RenderProjection is trivially

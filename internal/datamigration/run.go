@@ -363,7 +363,7 @@ func newCapturer(v VersionCapture, meta *metamodel.Metamodel, tool, triggeredBy 
 	if v == nil {
 		return nil
 	}
-	proj := meta.RenderProjection()
+	proj := metamodel.NewRenderProjection(meta)
 	projJSON, err := proj.JSON()
 	if err != nil {
 		slog.Error("datamigration.capture_projection_marshal_failed", "error", err)
