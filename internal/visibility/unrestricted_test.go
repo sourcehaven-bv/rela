@@ -130,13 +130,15 @@ func TestUnrestricted_ExposesOnlyTheReadSurface(t *testing.T) {
 	// write and lives on entitymanager.VersionTags, not here. CountEntities
 	// and CountRelations (TKT-QZTROQ) are the lengths of ListEntities and
 	// ListRelations, so they reveal no more than those lists do.
+	// ResolveHeadersErr (TKT-K3RJLH) is ResolveHeaders with a failed read
+	// returned instead of answered as misses.
 	// FindByExternalRef (TKT-SM20FG) is ListEntityHeaders filtered by one
 	// property, then GetAddress; SyncReady reports whether history is
 	// served. Neither writes.
 	want := map[string]bool{
 		"GetAddress": true, "ListEntities": true, "ListRelations": true,
 		"ListEntityHeaders": true, "Family": true, "WithWorld": true,
-		"ResolveHeaders": true, "ListRelationsStrict": true, "WriteTarget": true,
+		"ResolveHeaders": true, "ResolveHeadersErr": true, "ListRelationsStrict": true, "WriteTarget": true,
 		"EntityVersions": true, "EntityVersion": true, "WithHistory": true,
 		"CountEntities": true, "CountRelations": true,
 		"VersionByTag": true, "WithVersionTags": true,

@@ -63,19 +63,24 @@ func TestStamped_DistinguishesAbsentFromUnknown(t *testing.T) {
 
 func TestSystemUser(t *testing.T) {
 	tests := []struct {
-		name string
-		env  string
-		want string
+		name     string
+		env      string
+		username string
+		want     string
 	}{
-		{"unset", "", "unknown"},
-		{"normal", "alice", "alice"},
-		{"trims whitespace", "  bob  ", "bob"},
-		{"whitespace-only is unknown", "   ", "unknown"},
-		{"newline-only is unknown", "\n", "unknown"},
+		{"unset", "", "", "unknown"},
+		{"normal", "alice", "", "alice"},
+		{"trims whitespace", "  bob  ", "", "bob"},
+		{"whitespace-only is unknown", "   ", "", "unknown"},
+		{"newline-only is unknown", "\n", "", "unknown"},
+		{"USERNAME when USER is unset", "", "carol", "carol"},
+		{"USERNAME when USER is blank", "  ", " dave ", "dave"},
+		{"USER wins over USERNAME", "alice", "carol", "alice"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("USER", tt.env)
+			t.Setenv("USERNAME", tt.username)
 			if got := principal.SystemUser(); got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}

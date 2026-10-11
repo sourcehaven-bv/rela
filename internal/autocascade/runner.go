@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
@@ -22,6 +23,12 @@ import (
 type Runner struct {
 	engine     *automation.Engine
 	background BackgroundScripts
+	// piles runs add_to_pile actions (see Deps.Piles).
+	//
+	// Nil: accepted; add_to_pile actions are then skipped.
+	piles PilePusher
+	// noPiles logs the skipped-actions warning once per Runner.
+	noPiles sync.Once
 }
 
 // Deps is the constructor input for [New]. Using a struct keeps the
@@ -36,6 +43,12 @@ type Deps struct {
 	// project without such actions never calls it, and one that has them
 	// gets an outcome error per action when it is nil.
 	Background BackgroundScripts
+	// Piles pushes the trigger entity for add_to_pile actions.
+	//
+	// Nil: accepted. Surfaces without per-user piles (the CLI, tests) skip
+	// those actions and log one warning; a pile push is best-effort and
+	// never fails a write, so its absence must not either.
+	Piles PilePusher
 }
 
 // New constructs a Runner. Required collaborators must be non-nil per
@@ -44,7 +57,7 @@ func New(d Deps) (*Runner, error) {
 	if d.Engine == nil {
 		return nil, errors.New("autocascade: New: Engine is required")
 	}
-	return &Runner{engine: d.Engine, background: d.Background}, nil
+	return &Runner{engine: d.Engine, background: d.Background, piles: d.Piles}, nil
 }
 
 // queueItem is one pending automation result to process during a BFS
@@ -100,6 +113,9 @@ func (r *Runner) Process(ctx context.Context, host Host, req Request) (Outcome, 
 
 		// Process relations for this trigger.
 		r.applyRelationCreations(ctx, host, item.trigger, item.autoResult.RelationsToCreate, &outcome)
+
+		// Push the trigger onto piles. Best-effort: never an outcome error.
+		r.pushPiles(ctx, item.trigger, item.autoResult.PilesToPush)
 
 		// Collect warnings/errors from this automation result.
 		outcome.Warnings = append(outcome.Warnings, item.autoResult.Warnings...)
@@ -219,7 +235,7 @@ func (r *Runner) runCreatedEntityAutomation(
 
 	// Return queue item if there's more work to do.
 	hasWork := len(newAutoResult.EntitiesToCreate) > 0 || len(newAutoResult.RelationsToCreate) > 0 ||
-		len(newAutoResult.LuaToExecute) > 0 ||
+		len(newAutoResult.LuaToExecute) > 0 || len(newAutoResult.PilesToPush) > 0 ||
 		len(newAutoResult.Warnings) > 0 || len(newAutoResult.Errors) > 0
 	if hasWork {
 		return &queueItem{created, newAutoResult}

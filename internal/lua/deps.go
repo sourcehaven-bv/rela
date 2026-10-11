@@ -132,6 +132,14 @@ type ReadDeps struct {
 	// zero value is unset, and a list read in it fails with
 	// store.ErrInvalidQuery rather than reading the trivial world.
 	World store.WorldScope
+
+	// Piles backs rela.piles.list and rela.piles.items: the acting user's
+	// piles, whose items are read through VisibleReader. Wiring supplies
+	// [PileFuncs] over the piles service.
+	//
+	// Nil: accepted. The rela.piles functions then raise "piles are not
+	// available in this context", which is what a pure CLI run gets.
+	Piles PileReader
 }
 
 // ProjectFiles reads operator-authored project files by slash path relative
@@ -293,6 +301,13 @@ func isEntityNotFound(err error) bool {
 type WriteDeps struct {
 	ReadDeps
 	EntityManager Mutator
+
+	// PileWriter backs rela.piles.add and rela.piles.remove. Wiring supplies
+	// the same [PileFuncs] it puts in [ReadDeps.Piles].
+	//
+	// Nil: accepted. Both functions then raise "piles are not available in
+	// this context".
+	PileWriter PileWriter
 
 	// ElevatedManager, when non-nil, is a write handle whose mutations skip
 	// the ACL deny (TKT-D8T148). It is set ONLY for an allow_acl_bypass

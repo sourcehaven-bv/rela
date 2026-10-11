@@ -125,8 +125,10 @@ func newGoldenServer(t *testing.T) *Server {
 		}
 	}
 
+	_, pf := newFakePiles(t)
 	srv, err := NewServer(newTestDeps(t, meta, st), "test",
-		WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}), WithLuaTools())
+		WithPrincipal(principal.Principal{User: "tester", Tool: principal.ToolMCP}), WithLuaTools(),
+		WithPiles(pf, pf))
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
