@@ -5,10 +5,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
+	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/comments/memcomments"
 	"github.com/Sourcehaven-BV/rela/internal/datamigration"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
@@ -56,6 +61,30 @@ func writeMigration(t *testing.T, root, name string, meta *metamodel.Metamodel, 
 	body := "description: test migration\nsteps:\n" + steps +
 		"from_projection: " + string(proj) + "\n" +
 		"to_projection: " + string(proj) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+		t.Fatalf("write migration: %v", err)
+	}
+}
+
+// writeMigrationShapes is writeMigration for a migration that changes the
+// shape from `from` to `to`.
+func writeMigrationShapes(t *testing.T, root, name string, from, to *metamodel.Metamodel, steps string) {
+	t.Helper()
+	dir := filepath.Join(root, datamigration.MigrationsDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir migrations: %v", err)
+	}
+	fromJSON, err := from.ShapeProjection().JSON()
+	if err != nil {
+		t.Fatalf("projection JSON: %v", err)
+	}
+	toJSON, err := to.ShapeProjection().JSON()
+	if err != nil {
+		t.Fatalf("projection JSON: %v", err)
+	}
+	body := "description: test migration\nsteps:\n" + steps +
+		"from_projection: " + string(fromJSON) + "\n" +
+		"to_projection: " + string(toJSON) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 		t.Fatalf("write migration: %v", err)
 	}
@@ -332,5 +361,132 @@ func TestMigrateBaseline_RefusesWhileTheMigrationLockIsHeld(t *testing.T) {
 	}
 	if st := readApplied(t, svc); st != nil {
 		t.Errorf("a contended baseline must record nothing, got %v", st.AppliedNames())
+	}
+}
+
+// migrateTestServicesWithComments is migrateTestServices with commenting
+// enabled, assembled through newCLIBundles so the CLI's own wiring of the
+// comment service is what the tests exercise (BUG-6OZBP9).
+func migrateTestServicesWithComments(
+	t *testing.T, meta *metamodel.Metamodel,
+) (svc *writeServices, threads *comments.Service, root string) {
+	t.Helper()
+	threads, err := comments.NewService(memcomments.New(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root = t.TempDir()
+	paths := &project.Context{Root: root, CacheDir: filepath.Join(root, ".rela")}
+	b, err := newCLIBundles(appbuildtest.New(meta,
+		appbuildtest.WithFS(storage.NewOsFS(), paths), appbuildtest.WithComments(threads)))
+	if err != nil {
+		t.Fatalf("build cli services: %v", err)
+	}
+	return b.write, threads, root
+}
+
+func commentAs(t *testing.T, threads *comments.Service, target comments.Target, body string) {
+	t.Helper()
+	ctx := principal.With(t.Context(), principal.Principal{User: "alice@example.com", Tool: "cli"})
+	if _, err := threads.Add(ctx, target, comments.AddRequest{
+		Anchor: comments.Anchor{Kind: comments.AnchorProperty, Ref: "title"},
+		Body:   body,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func threadLen(t *testing.T, threads *comments.Service, target comments.Target) int {
+	t.Helper()
+	list, err := threads.List(t.Context(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(list)
+}
+
+// personMeta is migrateTestMeta plus a person type, for the tests that drop it.
+func personMeta() *metamodel.Metamodel {
+	m := migrateTestMeta()
+	m.Entities["person"] = metamodel.EntityDef{Label: "Person", IDPrefix: "PER-",
+		Properties: map[string]metamodel.PropertyDef{"name": {Type: "string"}}}
+	return m
+}
+
+func TestMigrateAdoptFace_MovesCommentThreads(t *testing.T) {
+	meta := migrateTestMeta()
+	def := meta.Entities["task"]
+	def.Properties["status"] = metamodel.PropertyDef{Type: "string"}
+	def.Faces = map[string]metamodel.FaceDef{"draft": {}}
+	meta.Entities["task"] = def
+	svc, threads, _ := migrateTestServicesWithComments(t, meta)
+	if err := svc.Store.CreateEntity(t.Context(), &entity.Entity{
+		ID: "TSK-1", Type: "task", Properties: map[string]any{"title": "one", "status": "open"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stranded := comments.Target{Type: "task", ID: "TSK-1"}
+	commentAs(t, threads, stranded, "on the stranded row")
+
+	cmd := &MigrateAdoptFaceCmd{Entity: "task", Property: "status", Map: map[string]string{"open": "draft"}, Apply: true}
+	if err := cmd.Run(t.Context(), svc); err != nil {
+		t.Fatalf("migrate adopt-face --apply: %v", err)
+	}
+
+	if n := threadLen(t, threads, comments.Target{Type: "task", ID: "TSK-1", Face: "draft"}); n != 1 {
+		t.Fatalf("draft thread holds %d comment(s), want the moved one", n)
+	}
+	if n := threadLen(t, threads, stranded); n != 0 {
+		t.Fatalf("bare-row thread still holds %d comment(s)", n)
+	}
+}
+
+func TestMigrateData_DropEntitiesDropsCommentThreads(t *testing.T) {
+	meta := migrateTestMeta()
+	svc, threads, root := migrateTestServicesWithComments(t, meta)
+	baselineEmpty(t, svc)
+	if err := svc.Store.CreateEntity(t.Context(), &entity.Entity{
+		ID: "PER-1", Type: "person", Properties: map[string]any{"name": "p"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dropped := comments.Target{Type: "person", ID: "PER-1"}
+	commentAs(t, threads, dropped, "on a dropped person")
+
+	writeMigrationShapes(t, root, "20261006120000-drop-people.yaml", personMeta(), meta,
+		"  - drop_entities: {type: person}\n")
+	if err := (&MigrateDataCmd{Apply: true}).Run(t.Context(), svc); err != nil {
+		t.Fatalf("migrate data --apply: %v", err)
+	}
+	if _, err := svc.Store.GetEntity(t.Context(), entity.Ref{ID: "PER-1"}); err == nil {
+		t.Fatal("precondition: the migration kept PER-1, so this test asserts nothing")
+	}
+
+	if n := threadLen(t, threads, dropped); n != 0 {
+		t.Fatalf("dropped person's thread still holds %d comment(s)", n)
+	}
+}
+
+func TestMigrateGC_DropsCommentThreads(t *testing.T) {
+	meta := migrateTestMeta()
+	svc, threads, _ := migrateTestServicesWithComments(t, meta)
+	baselineEmpty(t, svc)
+	if err := svc.Store.CreateEntity(t.Context(), &entity.Entity{
+		ID: "PER-1", Type: "person", Properties: map[string]any{"name": "p"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	orphan := comments.Target{Type: "person", ID: "PER-1"}
+	commentAs(t, threads, orphan, "on an orphaned person")
+
+	if err := (&MigrateGCCmd{Scan: true, Apply: true, Grace: time.Nanosecond}).Run(t.Context(), svc); err != nil {
+		t.Fatalf("migrate gc --scan --apply: %v", err)
+	}
+	if _, err := svc.Store.GetEntity(t.Context(), entity.Ref{ID: "PER-1"}); err == nil {
+		t.Fatal("precondition: the GC kept PER-1, so this test asserts nothing")
+	}
+
+	if n := threadLen(t, threads, orphan); n != 0 {
+		t.Fatalf("collected person's thread still holds %d comment(s)", n)
 	}
 }

@@ -31,6 +31,12 @@ export interface MeResponse {
   roles?: string[]
   person?: MePerson
   links?: MeLinks
+  /**
+   * The server offers the Configure space and this principal may use it.
+   * Absent means no. It only decides whether the entry is shown; the
+   * Configure API checks the permission on every request itself.
+   */
+  can_configure?: boolean
 }
 
 /**

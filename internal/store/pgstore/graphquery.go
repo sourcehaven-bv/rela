@@ -979,7 +979,7 @@ func graphWorldScope(b *sqlBuilder, q store.GraphQuery) (where, distinctOn, rank
 		// candidate rather than vanishing.
 		return "(" + base + ") AND e.face = ANY(" + b.arg(vals) + ")"
 	}
-	sel := q.Faces.Lowered(q.EntityType)
+	sel := q.Faces.FlattenedWhenUnranked(q.EntityType)
 	w, ok := sel.World()
 	if !ok || w.IsTrivial() {
 		base := faceSelectionCond(sel, "e", &b.args)

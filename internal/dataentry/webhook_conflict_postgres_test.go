@@ -51,8 +51,9 @@ var conflictSchemaCounter atomic.Int64
 // caller's — these tests each want an INDEPENDENT pool anyway, since they stand
 // in for separate rela-server processes. The schema is already migrated by the
 // helper that created it.
-func openPGStore(t *testing.T, ctx context.Context, dsn string) store.Store {
+func openPGStore(t *testing.T, dsn string) store.Store {
 	t.Helper()
+	ctx := t.Context()
 	pool, poolCloser, err := pgstore.NewPool(ctx, dsn)
 	require.NoError(t, err)
 	st, _, err := pgstore.Open(ctx, pool, dsn)
@@ -64,7 +65,7 @@ func openPGStore(t *testing.T, ctx context.Context, dsn string) store.Store {
 	return st
 }
 
-func conflictTestSchema(t *testing.T) (*pgxpool.Pool, string) {
+func conflictTestSchema(t *testing.T) (pool *pgxpool.Pool, dsn string) {
 	t.Helper()
 	base := os.Getenv("RELA_TEST_DATABASE_URL")
 	if base == "" {
@@ -76,9 +77,9 @@ func conflictTestSchema(t *testing.T) (*pgxpool.Pool, string) {
 	// Pin every connection from this DSN to the test schema. Keeping `public`
 	// on the path is what pg_trgm needs; the schema itself comes first so every
 	// unqualified table resolves inside the test's own namespace.
-	dsn := dsnWithSchema(t, base, schema)
+	dsn = dsnWithSchema(t, base, schema)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	pool, err := pgxpool.New(ctx, dsn)
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS "`+schema+`"`)
@@ -185,7 +186,7 @@ func TestWebhookConflict_ConcurrentCreateLosesOnUnique(t *testing.T) {
 	ctx := context.Background()
 	meta := alertMetamodel()
 
-	st := openPGStore(t, ctx, dsn)
+	st := openPGStore(t, dsn)
 	reconcileUnique(t, st, meta)
 
 	const key = "b7a027ffdd51c19e22e7b7f00c894ef2f3d968896fb40e382df73339c8c645ac"
@@ -248,13 +249,13 @@ func TestWebhookConflict_ConcurrentCreateLosesOnUnique(t *testing.T) {
 // TestWebhookConflict_LoserRefindsAndProceeds pins the pipeline's response to
 // losing: after a UniquePropertyError the executor re-finds and takes the
 // UPDATE path, so the delivery still lands rather than being dropped. This is
-// the behaviour that makes the no-lock design safe.
+// the behavior that makes the no-lock design safe.
 func TestWebhookConflict_LoserRefindsAndProceeds(t *testing.T) {
 	_, dsn := conflictTestSchema(t)
 	ctx := context.Background()
 	meta := alertMetamodel()
 
-	st := openPGStore(t, ctx, dsn)
+	st := openPGStore(t, dsn)
 	reconcileUnique(t, st, meta)
 
 	hooks := map[string]dataentryconfig.Webhook{
@@ -285,7 +286,7 @@ func TestWebhookConflict_LoserRefindsAndProceeds(t *testing.T) {
 	// still answer 200 carrying the winner's id.
 	//
 	// Driving the real router is the point. The previous version of this test
-	// called st.CreateEntity directly and asserted the store's behaviour, so it
+	// called st.CreateEntity directly and asserted the store's behavior, so it
 	// could not observe that the pipeline never recognizes the conflict — which
 	// is exactly the defect it was supposed to guard (RR-HI9QIU / RR-SG8P1N).
 	const deliveries = 8
@@ -295,9 +296,7 @@ func TestWebhookConflict_LoserRefindsAndProceeds(t *testing.T) {
 	start := make(chan struct{})
 
 	for i := range deliveries {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			body := `{"title":"web01/http","key":"shared-alert-key"}`
 			req := httptest.NewRequest(http.MethodPost, "/hooks/alert", strings.NewReader(body))
@@ -311,7 +310,7 @@ func TestWebhookConflict_LoserRefindsAndProceeds(t *testing.T) {
 			}
 			_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 			ids[i] = resp.EntityID
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()
@@ -353,7 +352,7 @@ func TestWebhookConflict_BlindUpdateLosesAppends(t *testing.T) {
 	_, dsn := conflictTestSchema(t)
 	ctx := context.Background()
 
-	st := openPGStore(t, ctx, dsn)
+	st := openPGStore(t, dsn)
 
 	seed := entity.New("INC-APPEND", "incident")
 	seed.Properties = map[string]any{"title": "web01/http", "status": "open"}
@@ -405,7 +404,7 @@ func TestWebhookConflict_PipelineAppendsAllLand(t *testing.T) {
 	_, dsn := conflictTestSchema(t)
 	ctx := context.Background()
 
-	st := openPGStore(t, ctx, dsn)
+	st := openPGStore(t, dsn)
 
 	app := newPostgresHookApp(t, st, map[string]dataentryconfig.Webhook{
 		"alert": {
@@ -482,8 +481,8 @@ func TestWebhookConflict_CrossProcessAppendsAllLand(t *testing.T) {
 	}
 
 	// Two independent stores over one schema == two processes.
-	stA := openPGStore(t, ctx, dsn)
-	stB := openPGStore(t, ctx, dsn)
+	stA := openPGStore(t, dsn)
+	stB := openPGStore(t, dsn)
 
 	seed := entity.New("INC-XPROC", "incident")
 	seed.Properties = map[string]any{"title": "web01/http", "status": "open"}
@@ -540,8 +539,8 @@ func TestWebhookConflict_SchemaPinnedDSNIsIsolated(t *testing.T) {
 	require.NotEqual(t, dsnA, dsnB, "each test schema must get its own DSN")
 
 	ctx := context.Background()
-	stA := openPGStore(t, ctx, dsnA)
-	stB := openPGStore(t, ctx, dsnB)
+	stA := openPGStore(t, dsnA)
+	stB := openPGStore(t, dsnB)
 
 	e := entity.New("INC-ISOLATED", "incident")
 	e.Properties = map[string]any{"title": "only in A"}

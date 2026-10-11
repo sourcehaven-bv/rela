@@ -14,7 +14,7 @@ import (
 
 // Free-text search under a world (TKT-9KZGJO step 5).
 //
-// These run against the REAL searcher newTestAppV1 wires (a bleve index
+// These run against the REAL searcher newTestAppV1 wires (a full-text index
 // observing the memstore, keyed per face), not a stub. A stub could be made to
 // return whatever the assertion wanted; the claim here is about which face the
 // index actually scored and which entity the resolution actually dropped, and
@@ -59,7 +59,7 @@ func (searchWorlds) Lookup(name string) (store.WorldScope, bool) {
 //	TKT-DRAFT draft "sardine offboarding"   (no published face)
 //
 // The vocabulary is nonsense on purpose. Real words would be plausible
-// substrings of each other and of the ids, and a bleve hit that came from the
+// substrings of each other and of the ids, and a full-text hit that came from the
 // wrong place would still look like a pass.
 func seedFacedTickets(t *testing.T, app *App) {
 	t.Helper()

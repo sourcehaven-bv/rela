@@ -14,7 +14,8 @@ import (
 // conflicts.
 //
 // The long-running hosts call it at startup: rela-server, rela-desktop and
-// `rela scheduler`. It is not part of assembly, so read-only tooling (show,
+// `rela scheduler`. rela-server also calls it when a Configure save rebuilds
+// its services. It is not part of assembly, so read-only tooling (show,
 // list, analyze, migrations) still opens such a project on any backend.
 // A package function: Services sits at its plimsoll exported-method line.
 func RequireSyncBackend(s *Services) error {

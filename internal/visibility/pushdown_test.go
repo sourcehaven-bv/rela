@@ -314,3 +314,124 @@ func TestListPushdown_AllFacesScopedPrincipalGetsGrantedFaceRowsOnly(t *testing.
 		t.Fatalf("template left with selection %s after pushdown", rqr.Query.Faces)
 	}
 }
+
+// countPushdown counts exactly the rows listPushdown lists, for every kind of
+// read grant (TKT-QZTROQ): global, face-restricted global, relation-conferred
+// and none. The count runs in the store, not over the listed rows.
+func TestCountPushdown_EqualsListPushdown(t *testing.T) {
+	t.Parallel()
+	assertCountMatchesList(t, memstore.New())
+}
+
+// assertCountMatchesList seeds st with faced policies and checks, per
+// principal and world, that countPushdown counts the rows listPushdown
+// yields. Each backend renders the count in its own SQL, so each runs it.
+func assertCountMatchesList(t *testing.T, st store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	for _, e := range []*entity.Entity{
+		{ID: "POL-1", Type: "policy"},
+		{ID: "POL-2", Type: "policy", Face: "published"},
+		{ID: "POL-2", Type: "policy", Face: "draft"},
+		{ID: "POL-3", Type: "policy", Face: "published"},
+		{ID: "alice", Type: "user"},
+		{ID: "bob", Type: "user"},
+		{ID: "carol", Type: "user"},
+		{ID: "dave", Type: "user"},
+	} {
+		if err := st.CreateEntity(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, rel := range []entity.RelationKey{
+		{From: "alice", Type: "reviews", To: "POL-1"},
+		{From: "alice", Type: "reviews", To: "POL-2"},
+	} {
+		if _, err := st.CreateRelation(ctx, rel, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d, err := acl.NewDeclarative(&acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"reviewer":         {Read: []string{"policy@published"}},
+			"readers":          {Read: []string{"policy"}},
+			"publishedreaders": {Read: []string{"policy@published"}},
+		},
+		Assignments:   map[string]string{"bob": "readers", "carol": "publishedreaders"},
+		RoleRelations: map[string]acl.RoleRelationDef{"reviews": {Confers: "reviewer"}},
+	}, acl.NewStoreGraph(st), st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := func(_ context.Context, e *entity.Entity) *entity.Entity { return e }
+	// draftFirst prefers draft over published and drops POL-1, which has
+	// neither face. A face-restricted grant must rank among its own faces
+	// only, in the count as in the list.
+	draftFirst := store.InWorld(store.NewWorldScope(map[string]store.TypeResolution{
+		"policy": {Chain: []entity.Face{"draft", "published"}, Fallback: store.FallbackExclude},
+	}))
+
+	for _, tc := range []struct {
+		user  string
+		faces store.FaceSelection
+		world string
+		want  int
+	}{
+		{"alice", store.AllFaces(), "all", 1},   // relation-conferred, published only: POL-2@published
+		{"bob", store.AllFaces(), "all", 4},     // global read on every face
+		{"carol", store.AllFaces(), "all", 2},   // global read on published: POL-2, POL-3
+		{"dave", store.AllFaces(), "all", 0},    // no read
+		{"alice", draftFirst, "draft-first", 1}, // POL-2 at published, its only readable face
+		{"bob", draftFirst, "draft-first", 2},   // POL-2 at draft, POL-3
+		{"carol", draftFirst, "draft-first", 2}, // POL-2 at published, POL-3
+		{"dave", draftFirst, "draft-first", 0},
+	} {
+		t.Run(tc.user+"/"+tc.world, func(t *testing.T) {
+			t.Parallel()
+			req, err := d.ForPrincipal(principal.Principal{User: tc.user, Tool: principal.ToolDataEntry})
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := stubProvider{res: req.ReadQuery(ctx, "policy")}
+			q := store.EntityQuery{Type: "policy", Faces: tc.faces}
+
+			seq, ok := listPushdown(ctx, p, st, identity, q)
+			if !ok {
+				t.Fatal("list pushdown declined a composable query")
+			}
+			rows, err := drain(t, seq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			n, ok, err := countPushdown(ctx, p, st, q)
+			if !ok || err != nil {
+				t.Fatalf("countPushdown = (%d, %v, %v)", n, ok, err)
+			}
+			if n != len(rows) || n != tc.want {
+				t.Errorf("count = %d, list = %d, want %d", n, len(rows), tc.want)
+			}
+		})
+	}
+}
+
+// A DenyAll count is 0 without a store read, and a scope error is an error,
+// never a raw count.
+func TestCountPushdown_DenyAndScopeError(t *testing.T) {
+	t.Parallel()
+	spy := seededSpy()
+	q := store.EntityQuery{Type: "ticket", Faces: store.InWorld(store.TrivialScope())}
+
+	n, ok, err := countPushdown(context.Background(), stubProvider{res: acl.ReadQueryResult{DenyAll: true}}, spy, q)
+	if !ok || err != nil || n != 0 {
+		t.Errorf("DenyAll = (%d, %v, %v), want (0, true, nil)", n, ok, err)
+	}
+	if spy.graphCalls != 0 || spy.listCalls != 0 {
+		t.Errorf("DenyAll touched the store: graph=%d list=%d", spy.graphCalls, spy.listCalls)
+	}
+
+	boom := errors.New("boom")
+	_, ok, err = countPushdown(context.Background(), stubProvider{err: boom}, spy, q)
+	if !ok || !errors.Is(err, boom) {
+		t.Errorf("scope error = (ok=%v, err=%v), want (true, boom)", ok, err)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -15,7 +16,13 @@ type Config struct {
 	Title       string // API title (defaults to "Rela API")
 	Description string // API description
 	Version     string // API version (defaults to "1.0.0")
-	ServerURL   string // Server URL (optional)
+	ServerURL   string // Server URL (optional; defaults to "/", the origin serving the spec)
+
+	// AuthHeader is the request header the server reads its identity
+	// assertion from, when it requires one: "Authorization" is described as
+	// an HTTP bearer scheme, any other name as an API key in that header.
+	// Empty means the server is unauthenticated and no scheme is emitted.
+	AuthHeader string
 }
 
 // Generator builds OpenAPI specs from metamodels.
@@ -28,6 +35,10 @@ type Generator struct {
 	cachedSpec *Spec
 	cachedJSON []byte
 	cachedHash string
+	// gen counts changes to meta and cfg. A spec built from an older
+	// generation is returned but not cached, so a SetAuthHeader that lands
+	// mid-build cannot be overwritten by the stale result.
+	gen uint64
 }
 
 // New creates a new OpenAPI generator for the given metamodel.
@@ -54,15 +65,18 @@ func (g *Generator) Generate() *Spec {
 		g.mu.RUnlock()
 		return spec
 	}
+	startGen := g.gen
 	g.mu.RUnlock()
 
 	// Generate new spec
 	spec := g.generate()
 
 	g.mu.Lock()
-	g.cachedSpec = spec
-	g.cachedHash = hash
-	g.cachedJSON = nil // Invalidate JSON cache
+	if g.gen == startGen {
+		g.cachedSpec = spec
+		g.cachedHash = hash
+		g.cachedJSON = nil // Invalidate JSON cache
+	}
 	g.mu.Unlock()
 
 	return spec
@@ -91,7 +105,9 @@ func (g *Generator) GenerateJSON() ([]byte, error) {
 	// coverage-ignore-end
 
 	g.mu.Lock()
-	g.cachedJSON = data
+	if g.cachedSpec == spec {
+		g.cachedJSON = data
+	}
 	g.mu.Unlock()
 
 	return data, nil
@@ -110,6 +126,19 @@ func (g *Generator) Invalidate() {
 func (g *Generator) UpdateMetamodel(meta *metamodel.Metamodel) {
 	g.mu.Lock()
 	g.meta = meta
+	g.gen++
+	g.cachedSpec = nil
+	g.cachedJSON = nil
+	g.cachedHash = ""
+	g.mu.Unlock()
+}
+
+// SetAuthHeader sets [Config.AuthHeader] after construction, for a server
+// whose identity gate is configured once the generator already exists.
+func (g *Generator) SetAuthHeader(header string) {
+	g.mu.Lock()
+	g.cfg.AuthHeader = header
+	g.gen++
 	g.cachedSpec = nil
 	g.cachedJSON = nil
 	g.cachedHash = ""
@@ -118,12 +147,16 @@ func (g *Generator) UpdateMetamodel(meta *metamodel.Metamodel) {
 
 // generate builds a fresh OpenAPI spec from the metamodel.
 func (g *Generator) generate() *Spec {
+	g.mu.RLock()
+	cfg := g.cfg
+	g.mu.RUnlock()
+
 	spec := &Spec{
 		OpenAPI: "3.1.0",
 		Info: Info{
-			Title:       g.cfg.Title,
-			Description: g.cfg.Description,
-			Version:     g.cfg.Version,
+			Title:       cfg.Title,
+			Description: cfg.Description,
+			Version:     cfg.Version,
 		},
 		Paths: make(map[string]PathItem),
 		Components: &Components{
@@ -131,10 +164,15 @@ func (g *Generator) generate() *Spec {
 		},
 	}
 
-	// Add server if configured
-	if g.cfg.ServerURL != "" {
-		spec.Servers = []Server{{URL: g.cfg.ServerURL}}
+	// Paths are absolute (/api/v1/...), so the server is the origin. A
+	// relative "/" resolves against wherever the spec was fetched from, which
+	// stays right behind a proxy without trusting a forwarded Host.
+	serverURL := cfg.ServerURL
+	if serverURL == "" {
+		serverURL = "/"
 	}
+	spec.Servers = []Server{{URL: serverURL}}
+	addSecurity(spec, cfg.AuthHeader)
 
 	// Add system paths (static endpoints)
 	g.addSystemPaths(spec)
@@ -149,6 +187,10 @@ func (g *Generator) generate() *Spec {
 
 	// Add common schemas
 	g.addCommonSchemas(spec)
+
+	if cfg.AuthHeader != "" {
+		addUnauthorized(spec)
+	}
 
 	return spec
 }
@@ -225,4 +267,37 @@ func (g *Generator) computeMetamodelHash() string {
 	}
 
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// securitySchemeName names the one scheme addSecurity emits.
+const securitySchemeName = "identity"
+
+// addSecurity declares how a client authenticates, from [Config.AuthHeader].
+func addSecurity(spec *Spec, header string) {
+	if header == "" {
+		return
+	}
+	scheme := &SecurityScheme{Type: "apiKey", In: "header", Name: header}
+	if strings.EqualFold(header, "Authorization") {
+		scheme = &SecurityScheme{Type: "http", Scheme: "bearer"}
+	}
+	scheme.Description = "The identity assertion the server verifies. Behind an " +
+		"authenticating proxy, send the proxy's own credential instead."
+	spec.Components.SecuritySchemes = map[string]*SecurityScheme{securitySchemeName: scheme}
+	spec.Security = []SecurityRequirement{{securitySchemeName: {}}}
+}
+
+// addUnauthorized declares the 401 every operation can answer when the
+// server requires an identity assertion.
+func addUnauthorized(spec *Spec) {
+	for _, item := range spec.Paths {
+		for _, op := range []*Operation{item.Get, item.Put, item.Post, item.Patch, item.Delete} {
+			if op != nil {
+				op.Responses["401"] = Response{
+					Description: "Missing or invalid credential",
+					Content:     problemContent(),
+				}
+			}
+		}
+	}
 }

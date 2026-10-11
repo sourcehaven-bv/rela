@@ -2,6 +2,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useQueryCache } from '@pinia/colada'
 import { useGitStore, useEntitiesStore, useUIStore } from '@/stores'
 import { entityKeys } from '@/queries/entities'
+import { isConfigSaveInFlight } from '@/configure/saveGate'
 
 export type SSEEventType = 'refresh' | 'git' | 'git:status' | 'entity:changed'
 
@@ -158,6 +159,16 @@ export function useEvents() {
         uiStore.error(
           `Configuration not reloaded; the previous version is still in use.${detail ? ` ${detail}` : ''}`
         )
+      })
+
+      // A Configure save switched the configuration (TKT-F5NGMG). The server
+      // closes the stream after this event, and the schema, forms and lists
+      // this page holds were all built from the old configuration, so the
+      // only consistent next state is a fresh page. The tab that saved
+      // reloads itself once its save has answered.
+      eventSource.addEventListener('config-changed', () => {
+        if (isConfigSaveInFlight()) return
+        window.location.reload()
       })
 
       // Handle git events

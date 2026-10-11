@@ -212,9 +212,8 @@ func (l *FSLoader) Subscribe(_ context.Context, name string, onChange func()) (f
 			onChange()
 		},
 	})
-	// coverage-ignore-start: os-fs-event: storage.NewWatcher only errors when fsnotify.NewWatcher fails (OS fd/inotify
-	// exhaustion); no injection
-	// seam and valid Files/Dirs never trigger it
+	// coverage-ignore-start: os-fs-event: storage.NewWatcher only errors when the OS cannot create a watch (for
+	// example, file-descriptor or inotify exhaustion); no injection seam and valid Files/Dirs never trigger it
 	if err != nil {
 		return nil, err
 	}

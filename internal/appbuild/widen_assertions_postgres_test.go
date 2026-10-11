@@ -135,17 +135,6 @@ func (fakeNilUserState) UserState() (userstate.Store, error) {
 	return nil, nil //nolint:nilnil // deliberately exercising the (nil, nil) contract hole
 }
 
-type fakeSweeper struct {
-	fakeStore
-	started bool
-	gotCfg  pgstore.SweepConfig
-}
-
-func (f *fakeSweeper) StartVersionSweep(_ pgstore.ProjectionProvider, cfg pgstore.SweepConfig) {
-	f.started = true
-	f.gotCfg = cfg
-}
-
 // --- AC-3: a non-pgstore store satisfying the interfaces is wired identically
 
 func TestCapabilitiesDiscoveredByInterface_NotConcreteType(t *testing.T) {
@@ -168,14 +157,6 @@ func TestCapabilitiesDiscoveredByInterface_NotConcreteType(t *testing.T) {
 		reconcileDerivedSchemaIfSupported(t.Context(), f, dtb, derivedTestLoader(dtb))
 		if f.reconcileCalls != 1 {
 			t.Fatalf("Reconcile called %d times, want 1", f.reconcileCalls)
-		}
-	})
-
-	t.Run("version sweep", func(t *testing.T) {
-		f := &fakeSweeper{fakeStore: newFakeStore(t)}
-		startVersionSweepIfSupported(f, meta)
-		if !f.started {
-			t.Fatal("startVersionSweepIfSupported did not reach a non-pgstore store implementing StartVersionSweep")
 		}
 	})
 }
@@ -279,8 +260,13 @@ func TestResolversReturnUntypedNilWithoutCapability(t *testing.T) {
 		t.Errorf("stateKVFor = %#v, want untyped nil so the FSKV fallback engages", got)
 	}
 
-	// Must not panic, and must not start a sweep.
-	startVersionSweepIfSupported(plain, nil)
+	// A store that is not a pgstore gets no sweep, as an untyped nil the
+	// assembly's nil check sees.
+	if sw, err := newVersionSweep(plain, nil); err != nil || sw != nil {
+		t.Errorf("newVersionSweep = %#v, %v; want untyped nil, nil", sw, err)
+	}
+
+	// Must not panic.
 	dtb := derivedTestBase(nil)
 	reconcileDerivedSchemaIfSupported(t.Context(), plain, dtb, derivedTestLoader(dtb))
 }
@@ -345,6 +331,6 @@ var (
 var (
 	_ userStateProvider       = (*pgstore.Store)(nil)
 	_ derivedSchemaReconciler = (*pgstore.Store)(nil)
-	_ versionSweeper          = (*pgstore.Store)(nil)
+	_ versionSweep            = (*pgstore.VersionSweep)(nil)
 	_ versionServiceProvider  = (*pgstore.Store)(nil)
 )

@@ -35,6 +35,7 @@ type Entity struct {
 	Actions      map[string]bool     `json:"_actions,omitempty"`
 	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
 	EditState
+	RowCounts
 	// Redacted names the properties withheld from `Properties` by
 	// field-level ACL (`visible:`) on THIS response (DEC-T0XIWQ). It is the
 	// field-level sibling of Inaccessible, which says the same thing
@@ -170,6 +171,17 @@ type Entity struct {
 	// leave it nil. Each warning has a stable `code`, an RFC 6901
 	// JSON Pointer `path`, and a human-readable `detail`.
 	Warnings []Warning `json:"warnings,omitempty"`
+}
+
+// RowCounts groups derived counts a collection row carries on request. It is
+// embedded in [Entity] for the same reason as [EditState]: the fields serialize
+// flat, and Entity's own field count stays under the plimsoll cap.
+type RowCounts struct {
+	// CommentCount is the number of comments on this row's face, present only
+	// when the list request asked for it (`?comment_counts=1`), commenting is
+	// enabled for the type, and the principal holds `comment:read` across the
+	// project. Absent means "not served", never zero comments; zero is 0.
+	CommentCount *int `json:"_comment_count,omitempty"`
 }
 
 // EditState groups the per-entity fields an edit surface needs and a read
@@ -430,16 +442,27 @@ type ListMeta struct {
 	RelationOrder *RelationOrder `json:"relation_order,omitempty"`
 }
 
-// RelationOrder says that a collection lists the targets of one anchor's
-// edges over one relation, in the order those edges hold on the anchor's
-// outgoing order side. Movable reports whether this principal may move
-// them: a relation PATCH with a `position` body on
-// /{plural of AnchorType}/{Anchor}/relations/{Relation}/{row id}.
+// RelationOrder says that a collection lists the peers of one anchor's
+// edges over one relation, in the order those edges hold on one side of the
+// anchor: the targets in `_order_out` order, or, when Direction is
+// "incoming", the sources in `_order_in` order. Movable reports whether this
+// principal may move them: a relation PATCH with a `position` body on
+// /{plural of AnchorType}/{Anchor}/relations/{Relation}/{row}, with
+// `direction: "incoming"` on the incoming side.
+//
+// Addresses, on the incoming side, maps a row id to the address that names
+// the row in that PATCH, in the path and in `before`/`after`: `id@face` when
+// the row's place comes from an edge on that face of the source. A row
+// absent from it is named by its id.
 type RelationOrder struct {
 	Relation   string `json:"relation"`
 	Anchor     string `json:"anchor"`
 	AnchorType string `json:"anchor_type"`
 	Movable    bool   `json:"movable"`
+	// Direction is "incoming" on the incoming side, and absent on the
+	// outgoing side.
+	Direction string            `json:"direction,omitempty"`
+	Addresses map[string]string `json:"addresses,omitempty"`
 }
 
 // Schema is the JSON representation of the metamodel.
@@ -1676,8 +1699,12 @@ type GanttResponse struct {
 // view exists to show — would be silently absorbed. Nodes carry no relation
 // properties: edge meta has no redaction on this path.
 type GanttNode struct {
-	ID    string `json:"id"`
-	Type  string `json:"type"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	// Face is the content state the node was read at, absent for a faceless
+	// type. A client writing the node's dates addresses `id@face`, so the
+	// write lands on the face the chart showed.
+	Face  string `json:"face,omitempty"`
 	Title string `json:"title,omitempty"`
 	Color string `json:"color,omitempty"`
 	// Planned is the entity's own start/end, absent when it declares none.

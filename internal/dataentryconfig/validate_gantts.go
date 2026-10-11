@@ -58,6 +58,9 @@ func validateGanttTooltip(ganttID string, g Gantt, meta *metamodel.Metamodel) []
 	var errs []string
 	for i, f := range g.Tooltip.Fields {
 		prefix := fmt.Sprintf("gantt %q: tooltip.fields[%d]", ganttID, i)
+		if errs = append(errs, refuseCardCounts(prefix, f)...); f.Comments {
+			continue
+		}
 		if f.Relation != "" {
 			errs = append(errs, prefix+": relation fields are not supported on gantt tooltips — "+
 				"neighbor titles would bypass row-gating (use a property field)")

@@ -71,7 +71,7 @@ func newQueryService(app *App) *queryService {
 
 // executeQuery parses a search query and returns all matching entities.
 // It supports the same query syntax as the search page: type:, prop:, status:,
-// and free text. Free-text words use OR logic with fuzzy matching via Bleve;
+// and free text. Free-text words use OR logic with fuzzy matching via the full-text index;
 // results are ranked by score.
 //
 // It runs the search-view pipeline under the ctx principal's

@@ -72,7 +72,7 @@ func launch(parent context.Context, noSandbox bool) (*browser, error) {
 	// with "context canceled". The bound is applied with a timer instead: it
 	// stops us WAITING past launchTimeout without owning what we waited for.
 	done := make(chan error, 1)
-	go func() { done <- chromedp.Run(ctx) }()
+	go func() { done <- chromedp.Do(ctx) }()
 
 	timer := time.NewTimer(launchTimeout)
 	defer timer.Stop()

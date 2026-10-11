@@ -17,40 +17,38 @@ import (
 var focusJS string
 
 // pageSize returns the full scrollable page dimensions in CSS px.
-func pageSize(ctx context.Context) (rect, error) {
-	var d struct{ W, H float64 }
-	err := chromedp.Evaluate(
+func pageSize(ctx context.Context, t *chromedp.Target) (rect, error) {
+	d, err := chromedp.Evaluate[struct{ W, H float64 }](
 		`({W: Math.ceil(document.documentElement.scrollWidth),
 		   H: Math.ceil(Math.max(document.body.scrollHeight, document.documentElement.scrollHeight))})`,
-		&d,
-	).Do(ctx)
+	)(ctx, t)
 	return rect{W: d.W, H: d.H}, err
 }
 
 // resolveClip turns a clip spec into a page-coordinate rect. The spec is either
 // a predefined keyword ("focus" — the bounding box of the annotated targets) or
 // a CSS selector (that element's box). Fails loud if nothing matches.
-func resolveClip(ctx context.Context, clip string, annotations []docs.Annotation) (rect, error) {
+func resolveClip(ctx context.Context, t *chromedp.Target, clip string, annotations []docs.Annotation) (rect, error) {
 	if clip == clipFocus {
-		return focusRect(ctx, annotations)
+		return focusRect(ctx, t, annotations)
 	}
-	return selectorRect(ctx, clip)
+	return selectorRect(ctx, t, clip)
 }
 
 const clipFocus = "focus"
 
 // selectorRect returns the page-coordinate box of the first element matching a
 // CSS selector.
-func selectorRect(ctx context.Context, selector string) (rect, error) {
+func selectorRect(ctx context.Context, t *chromedp.Target, selector string) (rect, error) {
 	sel, err := json.Marshal(selector)
 	if err != nil {
 		return rect{}, err
 	}
-	var r *rect
 	expr := fmt.Sprintf(`(function(){var e=document.querySelector(%s);if(!e)return null;`+
 		`var b=e.getBoundingClientRect();`+
 		`return {X:b.left+window.scrollX,Y:b.top+window.scrollY,W:b.width,H:b.height};})()`, sel)
-	if err := chromedp.Evaluate(expr, &r).Do(ctx); err != nil {
+	r, err := chromedp.Evaluate[*rect](expr)(ctx, t)
+	if err != nil {
 		return rect{}, err
 	}
 	if r == nil || r.W == 0 || r.H == 0 {
@@ -61,7 +59,7 @@ func selectorRect(ctx context.Context, selector string) (rect, error) {
 
 // focusRect returns the union bounding box of every annotation's target element,
 // so clip="focus" crops to what the arrows point at. Requires annotations.
-func focusRect(ctx context.Context, annotations []docs.Annotation) (rect, error) {
+func focusRect(ctx context.Context, t *chromedp.Target, annotations []docs.Annotation) (rect, error) {
 	if len(annotations) == 0 {
 		return rect{}, errors.New(`clip="focus" needs at least one arrow/box to focus on`)
 	}
@@ -77,9 +75,9 @@ func focusRect(ctx context.Context, annotations []docs.Annotation) (rect, error)
 	if err != nil {
 		return rect{}, err
 	}
-	var r *rect
 	expr := strings.ReplaceAll(focusJS, "__SELS__", string(data))
-	if err := chromedp.Evaluate(expr, &r).Do(ctx); err != nil {
+	r, err := chromedp.Evaluate[*rect](expr)(ctx, t)
+	if err != nil {
 		return rect{}, err
 	}
 	if r == nil {

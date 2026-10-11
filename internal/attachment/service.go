@@ -633,7 +633,7 @@ func stampValue(maxCount int, refs []metamodel.FileRef) any {
 // max>1 the face's own names are taken, and the cap counts them:
 // [ErrAtCapacity] when full.
 func resolveAttachName(rawName string, own []metamodel.FileRef, maxCount int) (string, error) {
-	name := capNameLen(store.NormalizeFileName(rawName))
+	name := DisplayName(rawName)
 	if maxCount <= 1 {
 		return name, nil
 	}
@@ -644,6 +644,15 @@ func resolveAttachName(rawName string, own []metamodel.FileRef, maxCount int) (s
 		_, taken := ownRef(own, c)
 		return taken
 	}), nil
+}
+
+// DisplayName is the name an upload called rawName is stored under, before
+// any collision suffix: the base name with unsafe characters replaced
+// ([store.NormalizeFileName]), shortened to fit the storage key. Callers that
+// report on an upload (audit) use it so they name what rela evaluated, not
+// what the client sent.
+func DisplayName(rawName string) string {
+	return capNameLen(store.NormalizeFileName(rawName))
 }
 
 // maxNameBytes caps a display name so its storage key ("<token>-<name>",
