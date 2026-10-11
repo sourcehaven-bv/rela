@@ -139,6 +139,9 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 		deps.Comments = host.Comments
 		deps.CommentWriter = host.Comments
 	}
+	if host.Actions != nil {
+		deps.Actions = host.Actions
+	}
 	return deps, nil
 }
 

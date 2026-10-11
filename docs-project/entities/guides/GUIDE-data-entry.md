@@ -4680,6 +4680,22 @@ rewrites the body while a form is open would conflict with the form's autosave.
 global write lock while it runs, so other writes wait. Keep regeneration within
 that limit, for example by reading only what the document needs.
 
+### Running actions from an MCP client
+
+The remote MCP server (see [mcp-server.md](mcp-server.md#action-tools)) offers
+two tools for actions. `list_actions` lists the actions the caller may run;
+with an entity `id` it lists the actions the entity's detail page offers.
+`run_action` runs one. It runs the same checks as
+`POST /api/v1/_action/{id}`: `permission`, `available_on`, `when` and the read
+gate on the entity. A refusal names the same error code as the HTTP answer.
+
+An action with `confirm` runs only when the call passes `confirm: true`. Without
+it, the tool returns the confirmation question, so the agent can ask the user
+first. A request body (`request`) is accepted only by an action whose `request`
+block sets `body: true`, within the same size limit. A script error shows the
+script path, line, message and correlation id, never the source or captured
+output.
+
 ### Lua Action Scripts
 
 Action scripts live in the `actions/` directory at the project root. They have full access

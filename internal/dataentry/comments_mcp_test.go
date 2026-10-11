@@ -357,7 +357,7 @@ func TestCommentFailure_OpError(t *testing.T) {
 	cause := errors.New("open /srv/project/.rela/comments/TKT-001.yaml: permission denied")
 	for _, tc := range []struct {
 		name string
-		fail *commentFailure
+		fail *opFailure
 		code string
 	}{
 		{"gate", failGate(cause), "acl_query_failed"},
