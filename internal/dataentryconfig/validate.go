@@ -143,12 +143,11 @@ var sectionDisplayModesRenderingFields = map[string]bool{
 // view section field's `widget:` override (TKT-3R7RF3).
 //
 // This is an INDEPENDENT literal, deliberately not derived from
-// Metamodel.ResolveWidgetFromType (RR-Z0GGTO). That function is the table-cell
+// metamodel.ResolveWidgetFromType (RR-Z0GGTO). That function is the table-cell
 // resolver and has no `file` case — deriving from it would reject
 // `widget: file` on a `file` property, which is legal here. It also predates
-// the list/values precedence the SPA applies. Its godoc calls itself the single
-// source of truth for type→widget; on the section path that is not accurate,
-// and the two have already drifted.
+// the list/values precedence the SPA applies, and the two have already
+// drifted.
 //
 // The authority this DOES mirror is the SPA registry's supportedPropertyTypes
 // (frontend/src/widgets/registry.ts). The two are kept honest by a paired
@@ -224,8 +223,8 @@ func widgetAcceptsProperty(
 
 // widgetPropertyHasValues reports whether a property is constrained to a fixed
 // value set — either inline (`values:`) or via a custom type declared under
-// `types:` that carries values. Mirrors ResolveWidgetFromType's own membership
-// test (schema_output.go), which likewise requires len(Values) > 0 so a
+// `types:` that carries values. Mirrors the membership test in
+// metamodel.ResolveWidgetFromType, which likewise requires len(Values) > 0 so a
 // value-less custom type is not mistaken for an enum.
 func widgetPropertyHasValues(pd metamodel.PropertyDef, meta *metamodel.Metamodel) bool {
 	if len(pd.Values) > 0 {

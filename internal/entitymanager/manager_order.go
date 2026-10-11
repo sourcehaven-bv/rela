@@ -29,7 +29,7 @@ import (
 // runs the read and the create in one transaction.
 func (m *Manager) assignManagedOrder(ctx context.Context, st store.Store, rel *entity.Relation, relType string) error {
 	relDef, ok := m.deps.Meta.Relations[relType]
-	// Caller already validated the relation type via Meta.ValidateRelation. This
+	// Caller already validated the relation type via Validator.ValidateRelation. This
 	// branch is only reachable through a metamodel reload race; failing loudly
 	// surfaces the race rather than silently writing a relation with no managed
 	// order.
