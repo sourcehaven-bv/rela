@@ -519,6 +519,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 
 	scheduler.StartBackground(schedCtx, svc, slog.Default())
 	d.startNotifier(schedCtx, projectID(app.ProjectRoot()), svc, appbuild.CompiledWorlds(svc).DefaultWorld())
+	appbuild.WatchLeases(schedCtx, svc) // other processes' claims and expiries; stops with the scheduler
 
 	if d.win != nil {
 		d.win.SetTitle(name)

@@ -9,6 +9,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
+	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/piles/kvpiles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -20,15 +21,17 @@ import (
 )
 
 // refHolders are the services that hold references by entity id, plus the
-// piles backend, which a re-assembly shares.
+// piles and lease backends, which a re-assembly shares.
 type refHolders struct {
-	comments  *comments.Service
-	piles     *piles.Service
-	pileStore piles.Store
+	comments    *comments.Service
+	piles       *piles.Service
+	pileStore   piles.Store
+	leases      *lease.Service
+	leaseShared leaseShared
 }
 
-// buildRefHolders builds the two services that hold references by entity id:
-// comments and piles. Both ride the AliasRewriter hook rather than
+// buildRefHolders builds the services that hold references by entity id:
+// comments, piles and leases. All ride the AliasRewriter hook rather than
 // store.EntityObserver for the reason that hook documents: stores fire the
 // observer with the error discarded, which is fine for a rebuildable search
 // index but not for records that exist only in these services' own stores.
@@ -37,7 +40,7 @@ type refHolders struct {
 // current ACL; its backend comes from the predecessor on a re-assembly.
 func buildRefHolders(
 	base *SharedBase, st store.Store, commentStore comments.Store,
-	d *acl.Declarative, redactor visibility.FieldRedactor,
+	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
 ) (refHolders, error) {
 	var h refHolders
 	var err error
@@ -54,6 +57,9 @@ func buildRefHolders(
 		PersonType:  pilePersonType(d),
 	})
 	if err != nil {
+		return refHolders{}, err
+	}
+	if h.leases, h.leaseShared, err = buildLeases(base, st, base.leaseShared, d, redactor, writes); err != nil {
 		return refHolders{}, err
 	}
 	return h, nil

@@ -772,7 +772,12 @@ deps:
       - piles
       - kvpiles
       - pgpiles
-      # The cross-process lock for kvpiles over the on-disk cache KV.
+      # Advisory leases: the root picks the backend the same way as piles
+      # and builds the service over the gated reader (TKT-EIC19E).
+      - lease
+      - kvlease
+      - pglease
+      # The cross-process lock for kvpiles and kvlease over the on-disk cache KV.
       - filelock
       - datamigration
       # The migration-state backends, selected here for the same reason as the
@@ -1443,9 +1448,18 @@ deps:
   filelock:
     canUse:
       - xsys
-  # Advisory entity leases (TKT-6QC5EL). The domain package is a leaf: value
-  # types, errors and the Store contract. The single-process backend keeps
-  # one document in the node-local state KV.
+  # Advisory entity leases (TKT-6QC5EL). The domain package holds value
+  # types, errors, the Store contract and the Service (TKT-EIC19E), which
+  # checks access through consumer-side interfaces: entity for refs, acl for
+  # the write request, principal for the holder, store for ErrNotFound. It
+  # does not import visibility; the wiring site adapts the gated reader.
+  # The single-process backend keeps one document in the node-local state KV.
+  lease:
+    mayDependOn:
+      - acl
+      - entity
+      - principal
+      - store
   kvlease:
     mayDependOn:
       - lease

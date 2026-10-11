@@ -48,6 +48,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/hostconfig"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
+	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -189,6 +190,12 @@ type Services struct {
 	// pileStore is the backend under piles, which a re-assembly shares (see
 	// [SharedBase.ForReassembly]).
 	pileStore piles.Store
+	// leases is the advisory lease service (see [Leases]), built per
+	// assembly like piles. Nil only for a NewFromCollaborators build.
+	leases *lease.Service
+	// leaseShared is the backend and hub under leases, which a re-assembly
+	// shares. The backend is closed by Close, not by CloseAssembly.
+	leaseShared leaseShared
 	// comments is the commentary layer (internal/comments). Nil when the
 	// metamodel declares no `comments:` block — the feature then does not
 	// exist, and the data-entry app serves no comment routes.
@@ -1877,6 +1884,9 @@ type SharedBase struct {
 	// pileStore is the predecessor's piles backend, reused by a re-assembly
 	// for the same reason as attachLocker. Nil for a first assembly.
 	pileStore piles.Store
+	// leaseShared is the predecessor's lease backend and hub, reused for the
+	// same reason. Empty for a first assembly.
+	leaseShared leaseShared
 }
 
 // attachmentLocker is the predecessor's attachment lock on a re-assembly,
@@ -1907,9 +1917,9 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 // its attachment lock: an in-memory lock only excludes holders of the same
 // instance, so a fresh one would let an upload under the old schema race a
 // face delete under the new one.
-// It reuses the piles backend for the same reason: the KV piles backend
-// serializes writers with an in-process mutex. The piles SERVICE is rebuilt,
-// so its owner check follows the reloaded ACL.
+// It reuses the piles and lease backends for the same reason: the KV
+// backends serialize writers with an in-process mutex. The piles and lease
+// SERVICES are rebuilt, so their access checks follow the reloaded ACL.
 //
 // Nil: rejected by use — prev is dereferenced.
 func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
@@ -1917,6 +1927,7 @@ func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next.reassembly = true
 	next.attachLocker = prev.attachLocker
 	next.pileStore = prev.pileStore
+	next.leaseShared = prev.leaseShared
 	return &next
 }
 
@@ -2434,7 +2445,7 @@ func assemble(
 	}()
 
 	// Before automation: add_to_pile actions push through refs.piles.
-	refs, err := buildRefHolders(base, st, overrides.commentStore, aclDeclarative, fieldPol.redactor)
+	refs, err := buildRefHolders(base, st, overrides.commentStore, aclDeclarative, fieldPol.redactor, resolvedACL)
 	if err != nil {
 		return nil, err
 	}
@@ -2461,7 +2472,8 @@ func assemble(
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
-	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, refs.comments, refs.piles, autoJobs), templater,
+	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs)
+	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate)
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
@@ -2565,6 +2577,7 @@ func finishAssembly(
 ) (*Services, error) {
 	s.attachLocker = attachLocker
 	s.piles, s.pileStore = refs.piles, refs.pileStore
+	s.leases, s.leaseShared = refs.leases, refs.leaseShared
 	tags, err := buildVersionTags(s)
 	if err != nil {
 		return nil, err
@@ -2877,6 +2890,10 @@ func (s *Services) Close() error {
 		if s.searchCloser != nil {
 			_ = s.searchCloser.Close()
 			s.searchCloser = nil
+		}
+		// Neither backend fails on close; pglease leaves the pool to its owner.
+		if s.leaseShared.store != nil {
+			_ = s.leaseShared.store.Close()
 		}
 	})
 	return s.closeErr

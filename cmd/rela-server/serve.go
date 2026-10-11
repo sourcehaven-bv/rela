@@ -265,8 +265,9 @@ func (s *server) buildApp(svc *appbuild.Services) (*dataentry.App, error) {
 	return app, nil
 }
 
-// startScheduler starts g's background scheduler, unless it is running or g
-// is held.
+// startScheduler starts g's background scheduler and its lease watcher,
+// unless they are running or g is held. Both share one stop and one done, so
+// a pause, a resume and a retirement hand both over together.
 func (s *server) startScheduler(g *generation) {
 	g.schedMu.Lock()
 	defer g.schedMu.Unlock()
@@ -276,7 +277,15 @@ func (s *server) startScheduler(g *generation) {
 	ctx, cancel := context.WithCancel(context.Background())
 	g.schedStop = cancel
 	// *appbuild.Services satisfies scheduler.WorkspaceProvider structurally.
-	g.schedDone = scheduler.StartBackground(ctx, g.svc, slog.Default())
+	sched := scheduler.StartBackground(ctx, g.svc, slog.Default())
+	leases := appbuild.WatchLeases(ctx, g.svc)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-sched
+		<-leases
+	}()
+	g.schedDone = done
 }
 
 // haltScheduler stops g's scheduler, waits for it, and holds g so it is not
