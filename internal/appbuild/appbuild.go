@@ -2353,10 +2353,7 @@ func assemble(
 	// A recipe-supplied state store wins over the per-backend one, which wins
 	// over the filesystem. Same precedence as the config loader, and for the
 	// same reason.
-	backendKV := overrides.stateKV
-	if backendKV == nil {
-		backendKV = stateKVFor(st)
-	}
+	backendKV := overrides.backendKV(st)
 	migState, err := buildMigState(cfg.FS, cfg.Paths, overrides.migState, backendKV)
 	if err != nil {
 		return nil, err
@@ -2459,6 +2456,15 @@ func assemble(
 		resolvedACL, aclDeclarative, fieldPol.redactor, schedState,
 	)
 	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine, refs, sweep)
+}
+
+// backendKV returns the recipe-supplied state store, or the per-backend one
+// when the recipe supplies none.
+func (o backendOverrides) backendKV(st store.Store) state.KV {
+	if o.stateKV != nil {
+		return o.stateKV
+	}
+	return stateKVFor(st)
 }
 
 // versioningFor derives the store's versioning service and builds, without
