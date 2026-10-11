@@ -2442,7 +2442,6 @@ func assemble(
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(
 		base, st, stateKV, migState, cfgLoader, versions, commentSvc, mgr, jobQueue, readDeps.Host)
-
 	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, commentSvc, versions,
