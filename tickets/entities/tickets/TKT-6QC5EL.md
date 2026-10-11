@@ -1,23 +1,22 @@
 ---
 id: TKT-6QC5EL
 type: ticket
-title: 'Realtime 2/1: advisory lease store with claim, renew, release'
+title: 'Realtime 2/1a: lease storage (kv with file lock, postgres, conformance)'
 kind: enhancement
 priority: high
-effort: l
-status: backlog
+effort: m
+started: "2026-10-11"
+completed: "2026-10-11"
+status: done
 ---
 
 ## Description
 
-Phase 2 of FEAT-GWF8YH, first slice. Agents and people claim an entity for a
-time-limited, advisory lease with a fencing token. A store seam in the
-schedulerstate pattern (kv with a cross-process lock, postgres, conformance
-suite), a lease service, MCP tools
-claim_entity/renew_lease/release_lease/list_leases, HTTP routes, _lease on
-entity and list responses, a reaper, and lease changes as a wake source for live
-views and watch.
+Phase 2 of FEAT-GWF8YH, slice 1a. Storage for advisory leases, modelled on
+internal/piles: internal/lease value types, errors and Store interface;
+lease/kvlease (one JSON document in the cache-dir state.KV under a mutex plus a
+cross-process file lock, moved from kvpiles to internal/filelock); lease/pglease
+(migration 0024); lease/leasetest conformance. Nothing is wired in, so behaviour
+does not change.
 
-Out of scope: enforcing tokens on writes, admin force-break, SPA, presence.
-
-Plan: .ignored/phase2-plan.md (Ticket 1).
+Plan: .ignored/phase2-plan.md, section "Ticket 1 REVISED" (Model, AC1, AC2).
