@@ -93,10 +93,10 @@ type WorldResolved struct {
 // absent from the result contributes NOTHING to this world.
 //
 // This is THE implementation of the three rules for every Go caller:
-// [storeutil.WorldPrimes] (fs, mem, sqlite listings), the search resolvers,
-// and the data-entry provenance all delegate here. The only other copy is
-// the SQL form in pgstore, which cannot share Go and is pinned to this one by
-// the storetest conformance suite.
+// [storeutil.WorldPrimes] (the listings of backends that resolve in Go), the
+// search resolvers, and the data-entry provenance all delegate here. The only
+// other copies are the SQL forms in the database backends, which cannot share
+// Go and are pinned to this one by storetest.
 //
 // The three rules:
 //

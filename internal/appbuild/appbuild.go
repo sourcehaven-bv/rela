@@ -2796,8 +2796,8 @@ func (s *Services) Close() error {
 // KNOWN COST: this is EAGER, and the scheduler is currently the only consumer
 // of Services.Jobs. So every short-lived CLI command (show, list, trace, …)
 // builds and starts a queue it never enqueues to. On the default build that is
-// cheap (~14µs and a few goroutines); on the postgres build it is not — neoq's
-// backend runs a golang-migrate check and opens a SECOND connection pool before
+// cheap (~14µs and a few goroutines); on the postgres build it is not — the durable
+// job queue runs a schema-migration check and opens a SECOND connection pool before
 // Start adds a LISTEN connection and its workers, all on the startup path of a
 // command that may only be reading one entity.
 //

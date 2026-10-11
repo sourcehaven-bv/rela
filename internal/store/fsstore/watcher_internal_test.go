@@ -138,7 +138,7 @@ func TestSelfWriteIsSuppressed(t *testing.T) {
 	ch, cancel := s.Subscribe(16)
 	defer cancel()
 
-	// Simulate the fsnotify echo of the write we just did.
+	// Simulate the file watcher's echo of the write we just did.
 	path := "/entities/tickets/T-1.md"
 	s.handleExternalEvents([]storage.ChangeEvent{{Path: path, Op: storage.OpCreate}})
 
@@ -242,8 +242,8 @@ func TestHasPathPrefix(t *testing.T) {
 
 // TestNewInstallsSelfEchoRecorder pins that New itself wires the
 // echo tracker to the FS's post-write observer (BUG-S24X52): a write
-// made through the store, replayed to the reconciler as if fsnotify
-// had reported it, is recognized as a self-echo and produces no
+// made through the store, replayed to the reconciler as if the file
+// watcher had reported it, is recognized as a self-echo and produces no
 // second event. newTestStore deliberately does NOT call OnPostWrite.
 func TestNewInstallsSelfEchoRecorder(t *testing.T) {
 	s, fs := newTestStore(t)

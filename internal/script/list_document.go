@@ -88,7 +88,7 @@ func (e *Engine) runDocumentScript(
 	}
 	defer runtime.Close()
 
-	// RunFileContent (not RunString) so gopher-lua receives the script path
+	// RunFileContent (not RunString) so the Lua VM receives the script path
 	// as the chunkname — that lands in the message handler's frame captures
 	// and lets ScriptError.Source populate from the right file.
 	//nolint:contextcheck // ctx threaded via WithContext above

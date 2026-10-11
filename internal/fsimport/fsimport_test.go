@@ -660,7 +660,7 @@ func TestRun_CommentsOutOfOrder(t *testing.T) {
 	assert.Equal(t, 3, rep.Comments)
 }
 
-// sortedComments returns threads ordered by time, as sqlitecomments does.
+// sortedComments returns threads ordered by time, as the database comment stores do.
 type sortedComments struct{ comments.Store }
 
 func (s sortedComments) List(ctx context.Context, t comments.Target) ([]comments.Comment, error) {

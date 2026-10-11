@@ -72,8 +72,8 @@ func applyCopyEdges(ctx context.Context, meta *metamodel.Metamodel, view store.S
 		}
 		replaced[e.relType] = true
 		// COLLECT FIRST, then delete. Mutating the store while ranging its
-		// own iterator is backend-dependent: pgstore holds a pgx.Rows cursor
-		// on one pooled connection while the delete takes a second, which
+		// own iterator is backend-dependent: a pooled database backend holds a
+		// result cursor on one connection while the delete takes a second, which
 		// under pool pressure is a deadlock candidate.
 		var doomed []*entity.Relation
 		for rel, err := range view.ListRelations(ctx, store.RelationQuery{

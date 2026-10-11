@@ -12,7 +12,7 @@ import (
 )
 
 // batchSize is how many rows one target transaction carries. Large enough
-// that a sqlite import is not one fsync per row, small enough that a
+// that an import into a database is not one fsync per row, small enough that a
 // transaction never holds a project's worth of rows.
 const batchSize = 500
 

@@ -14,7 +14,7 @@ import (
 //
 // The backends disagreed about such values, and the lax side was the unsafe
 // one. fsstore refused them outright (yaml.v3 cannot marshal invalid UTF-8 as
-// a text scalar) while pgstore and sqlitestore, which serialize properties
+// a text scalar) while the database backends, which serialize properties
 // with encoding/json, silently substituted U+FFFD for each bad byte and
 // reported success — the write "succeeded" and the caller read back a value
 // they never wrote. memstore kept the bytes verbatim, agreeing with neither.

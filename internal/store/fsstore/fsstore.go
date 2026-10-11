@@ -44,7 +44,7 @@ const recentHashCapacity = 4096
 // Rooted is the primary write/read surface — every data I/O flows
 // through it, so path validation sits in one auditable place.
 // FS remains for raw operations that legitimately need absolute
-// paths (watcher self-echo reads from fsnotify events). It is expected
+// paths (watcher self-echo reads from file-watcher events). It is expected
 // to be the bottom-most FS — the one whose WriteFile puts bytes on disk
 // (SafeFS in production, MemFS in tests) — because [New] installs the
 // store's self-echo recorder on it through the postWriteObservable
@@ -203,7 +203,7 @@ type FSStore struct {
 	rooted *storage.RootedFS
 
 	// rawReader is the watcher's window into on-disk bytes for
-	// self-echo hashing. Receives fsnotify absolute paths, so it
+	// self-echo hashing. Receives the file watcher's absolute paths, so it
 	// cannot use RootedFS (which takes keys).
 	rawReader storage.FS
 

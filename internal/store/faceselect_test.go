@@ -73,9 +73,10 @@ func TestFaceSelection_Modes(t *testing.T) {
 	assert.False(t, store.AtFaces().Admits(""), "an empty set matches nothing")
 }
 
-// Lowered flattens a world to a face set exactly where the world ranks
-// nothing for the queried type (TKT-7IZHP0 A9), and leaves everything else.
-func TestFaceSelection_Lowered(t *testing.T) {
+// FlattenedWhenUnranked flattens a world to a face set exactly where the world
+// ranks nothing for the queried type (TKT-7IZHP0 A9), and leaves everything
+// else.
+func TestFaceSelection_FlattenedWhenUnranked(t *testing.T) {
 	world := store.NewWorldScope(map[string]store.TypeResolution{
 		"page": {Chain: []entity.Face{"published"}, Fallback: store.FallbackExclude},
 		"doc":  {Chain: []entity.Face{"published", "draft"}, Fallback: store.FallbackExclude},
@@ -98,7 +99,7 @@ func TestFaceSelection_Lowered(t *testing.T) {
 		{"", false, nil},
 	} {
 		t.Run(tc.typ, func(t *testing.T) {
-			got := sel.Lowered(tc.typ)
+			got := sel.FlattenedWhenUnranked(tc.typ)
 			faces, flat := got.Faces()
 			assert.Equal(t, tc.wantFlat, flat, got.String())
 			if tc.wantFlat {
@@ -109,5 +110,5 @@ func TestFaceSelection_Lowered(t *testing.T) {
 			}
 		})
 	}
-	assert.True(t, store.AllFaces().Lowered("page").IsAll())
+	assert.True(t, store.AllFaces().FlattenedWhenUnranked("page").IsAll())
 }

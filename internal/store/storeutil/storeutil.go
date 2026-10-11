@@ -45,7 +45,7 @@ func ValidateID(id string) error {
 //
 // memstore and fsstore key their entity index on [entity.FormatStateRef], so
 // without this check a lookup by "TKT-1@draft" hits the draft row by
-// coincidence of the key, while pgstore and sqlitestore match the string
+// coincidence of the key, while the database backends match the string
 // against the id column and find nothing. The coincidence hid four
 // unparsed-address bugs from memstore-only tests (BUG-R1PQY9). Refusing the
 // string in the entity getters makes every backend answer them the same: an
@@ -452,16 +452,16 @@ func MatchEntityQuery(entityType, id string, p entity.Face, q store.EntityQuery,
 
 // RankingWorld returns the world q's rows are ranked by: the world of an
 // InWorld selection, and the default world (which ranks nothing) for AllFaces
-// and AtFaces, whose rows are returned as matched. The fs, mem and sqlite
-// listings branch on its IsTrivial to buffer whole families only when a
+// and AtFaces, whose rows are returned as matched. The listings that resolve
+// worlds in Go branch on its IsTrivial to buffer whole families only when a
 // world needs resolving.
 func RankingWorld(q store.EntityQuery) store.WorldScope {
 	w, _ := q.Faces.World()
 	return w
 }
 
-// WorldCandidate is [store.WorldCandidate]; the fs/mem/sqlite listings build
-// it from index metadata rather than loaded entities.
+// WorldCandidate is [store.WorldCandidate]; the listings that resolve worlds
+// in Go build it from index metadata rather than loaded entities.
 type WorldCandidate = store.WorldCandidate
 
 // WorldPrimes selects, per bare id, the single state row that world w

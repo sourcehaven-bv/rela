@@ -28,7 +28,7 @@ func NewStoreGraph(s store.Store) *StoreGraph { return &StoreGraph{S: s} }
 // A missing edge ([store.ErrNotFound]) reports false silently. Any
 // other error (transient backend failure, context cancelled, etc.)
 // also reports false BUT is logged at [slog.Warn] with operator-facing
-// context (RR-K3OO) — without the log a pgx hiccup during ACL
+// context (RR-K3OO) — without the log a transient store error during ACL
 // evaluation silently undercounts a member's role-relations and
 // produces spurious denies the operator can't trace.
 //

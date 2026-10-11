@@ -380,10 +380,11 @@ func scanComment(row pgx.Row) (comments.Comment, error) {
 	}
 	// Normalized to UTC because pgx returns a TIMESTAMPTZ in time.Local, and
 	// Comment marshals to JSON with whatever offset it carries. Left alone, one
-	// comment would serialize as "+01:00" from this node and "Z" from a sqlite
-	// one, and the offset would shift under the server's DST — a difference
-	// clients see even though both describe the same instant. sqlitecomments
-	// already returns UTC, so this is what makes the two agree.
+	// comment would serialize as "+01:00" from this node and "Z" from another
+	// comment backend, and the offset would shift under the server's DST — a
+	// difference clients see even though both describe the same instant. The
+	// other database comment backend already returns UTC, so this is what makes
+	// the two agree.
 	c.CreatedAt = c.CreatedAt.UTC()
 	if updatedAt != nil {
 		c.UpdatedAt = updatedAt.UTC()
