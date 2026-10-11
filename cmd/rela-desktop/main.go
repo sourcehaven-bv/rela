@@ -441,6 +441,9 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 			_ = svc.Close()
 		}
 	}()
+	if syncErr := appbuild.RequireSyncBackend(svc); syncErr != nil {
+		return d.failLoad(syncErr)
+	}
 
 	// data-entry.yaml is read through the project's loader, not looked up on
 	// disk: a project may carry it in its database. Checked after the

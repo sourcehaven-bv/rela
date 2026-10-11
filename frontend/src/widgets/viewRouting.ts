@@ -152,6 +152,11 @@ function denseHintKind(propertyDef: PropertyDef | undefined): WidgetHintKind {
     case 'file':
       return 'text'
 
+    // external_ref -> text: a cell shows the ref's id, pre-formatted by
+    // formatCellValue (TKT-SM20FG). The link lives on the detail view.
+    case 'external_ref':
+      return 'text'
+
     case 'integer':
       return 'integer'
 

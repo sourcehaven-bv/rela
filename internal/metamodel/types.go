@@ -825,6 +825,17 @@ type PropertyDef struct {
 	// command) applied to this `file` property's uploads. Only meaningful for
 	// `type: file`.
 	Transform []TransformStep `yaml:"transform,omitempty"`
+
+	// System names the external system an `external_ref` property links to
+	// (TKT-SM20FG). Required on, and only valid on, `type: external_ref`. It
+	// must be a valid version tag segment, because the sync base of the
+	// system is the tag `sync/<system>`.
+	System string `yaml:"system,omitempty"`
+
+	// Sync marks an `external_ref` property as managed by a sync connector.
+	// A long-running host refuses to start when a sync ref exists without
+	// version history, because the merge base is a version tag.
+	Sync bool `yaml:"sync,omitempty"`
 }
 
 // TransformStep is one entry in a `transform:` pipeline. A step is EITHER an
@@ -1129,6 +1140,9 @@ const (
 	PropertyTypeEnum     = "enum"
 	PropertyTypeFile     = "file"
 	PropertyTypeRrule    = "rrule"
+	// PropertyTypeExternalRef links an entity to its counterpart in an
+	// external system: a map {id, url}. See [ExternalRefValue].
+	PropertyTypeExternalRef = "external_ref"
 )
 
 // ID types for entities
@@ -1264,7 +1278,8 @@ const DefaultDatetimeFormat = time.RFC3339
 func IsBuiltinType(t string) bool {
 	switch t {
 	case PropertyTypeString, PropertyTypeDate, PropertyTypeDatetime, PropertyTypeInteger,
-		PropertyTypeBoolean, PropertyTypeEnum, PropertyTypeFile, PropertyTypeRrule:
+		PropertyTypeBoolean, PropertyTypeEnum, PropertyTypeFile, PropertyTypeRrule,
+		PropertyTypeExternalRef:
 		return true
 	}
 	return false

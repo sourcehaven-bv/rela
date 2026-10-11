@@ -354,7 +354,7 @@ type FieldVerdicts struct {
 
 // fieldVerdicts overlays schema-intrinsic read-only fields onto the
 // policy-derived verdict. Computed properties are materialized for display but
-// can never be authored, regardless of ACL role.
+// can never be authored, regardless of ACL role; nor can external refs.
 func (svc affordanceService) fieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts {
 	v := svc.resolver().FieldVerdicts(ctx, e)
 	if e == nil {
@@ -369,7 +369,9 @@ func (svc affordanceService) fieldVerdicts(ctx context.Context, e *entityPkg.Ent
 		v.Writable = map[string]bool{}
 	}
 	for name, pd := range def.Properties {
-		if pd.Computed != "" {
+		// An external ref is written only by scripts, migrations and
+		// imports (TKT-SM20FG); the write path refuses it from here.
+		if pd.Computed != "" || pd.Type == metamodel.PropertyTypeExternalRef {
 			v.Writable[name] = false
 		}
 	}

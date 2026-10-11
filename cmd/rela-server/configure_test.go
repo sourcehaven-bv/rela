@@ -483,3 +483,26 @@ func TestConfigure_PreviewCompilesExpressions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(before), string(after))
 }
+
+// TestConfigure_PrepareRefusesSyncWithoutHistory pins the startup sync check
+// on the Configure rebuild: on the fs build, which keeps no version history,
+// a schema on disk that declares a sync-managed external ref does not build
+// a candidate, and the server keeps serving the old generation.
+func TestConfigure_PrepareRefusesSyncWithoutHistory(t *testing.T) {
+	srv, dir := configServer(t)
+	first := srv.cur.Load()
+
+	schema := strings.Replace(cfgSchema, "      notes:\n",
+		"      basecamp:\n        type: external_ref\n        system: basecamp\n        sync: true\n      notes:\n", 1)
+	require.NotEqual(t, cfgSchema, schema)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "schema.yaml"), []byte(schema), 0o644))
+
+	cand, err := configureHost{s: srv}.Prepare(context.Background())
+	require.Nil(t, cand)
+	var verr *configedit.ValidationError
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Contains(t, verr.Problems[0], "task.basecamp")
+	require.Contains(t, verr.Problems[0], "version history")
+	require.Same(t, first, srv.cur.Load())
+}

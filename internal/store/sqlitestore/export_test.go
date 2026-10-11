@@ -102,3 +102,10 @@ func (s *Store) ExecRaw(ctx context.Context, sqlText string) error {
 	_, err := s.db.ExecContext(ctx, sqlText)
 	return err
 }
+
+// GraphQueryPushesDownForTest reports whether q renders as one SQL
+// statement rather than falling back to graphquerynaive.
+func GraphQueryPushesDownForTest(q store.GraphQuery) bool {
+	_, _, ok := buildGraphQuerySQL(q, graphSelectRows)
+	return ok
+}

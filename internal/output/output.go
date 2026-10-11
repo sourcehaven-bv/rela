@@ -225,7 +225,7 @@ func (w *Writer) WriteEntity(entity *entity.Entity, incoming, outgoing []*entity
 	// Other properties
 	for key, value := range entity.Properties {
 		if key != "title" && key != "status" && key != "priority" && key != "description" {
-			fmt.Fprintf(w.Out, "%s: %v\n", key, value)
+			fmt.Fprintf(w.Out, "%s: %s\n", key, propertyText(value))
 		}
 	}
 
@@ -257,6 +257,27 @@ func (w *Writer) WriteEntity(entity *entity.Entity, incoming, outgoing []*entity
 	}
 
 	return nil
+}
+
+// propertyText renders one property value for `rela show`. An external ref
+// (TKT-SM20FG) prints as "<id> <url>"; output may not import metamodel, so
+// it is recognized by shape: an object whose only keys are a string id and
+// an optional string url.
+func propertyText(v any) string {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return fmt.Sprintf("%v", v)
+	}
+	id, idOK := m["id"].(string)
+	url, urlOK := m["url"].(string)
+	_, hasURL := m["url"]
+	if !idOK || id == "" || len(m) > 2 || (len(m) == 2 && !hasURL) || (hasURL && !urlOK) {
+		return fmt.Sprintf("%v", v)
+	}
+	if url == "" {
+		return id
+	}
+	return id + " " + url
 }
 
 func newBorderlessTable(w io.Writer) *tablewriter.Table {

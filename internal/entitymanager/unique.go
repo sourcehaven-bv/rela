@@ -71,43 +71,31 @@ func checkUniqueProperties(
 	// same entity. Excluding by bare id rather than by row is what makes the
 	// second half true. Whether an operator can ask for the stronger
 	// per-entity reading is TKT-HXT2P9.
-	var violations []*metamodel.ValidationError
-	compare := func(other *entity.Entity) {
-		if other.Face != e.Face {
-			return
-		}
-		if other.ID == excludeSelfID || other.ID == e.ID {
-			return
-		}
-		for _, up := range toCheck {
-			if other.GetString(up.name) == up.value {
-				// Client-facing message names only the property + type — NOT
-				// the colliding entity's ID or the value. For an identity key
-				// (e.g. persoon.email) leaking "PERS-X already has alice@corp"
-				// to whoever attempted the write is an enumeration oracle
-				// (confirms an entity/value is registered). The full detail is
-				// logged server-side instead, mirroring the RR-372L discipline.
-				slog.Warn("entitymanager: unique constraint violated",
-					"type", e.Type, "property", up.name,
-					"attempted_by", e.ID, "conflicts_with", other.ID)
-				violations = append(violations, &metamodel.ValidationError{
-					Type:     metamodel.ValidationErrorUnique,
-					Property: up.name,
-					Message: fmt.Sprintf(
-						"property %q must be unique for type %q; another entity already has this value",
-						up.name, e.Type),
-				})
-			}
+	scan := uniqueScan{meta: meta, e: e, excludeSelfID: excludeSelfID}
+	for _, up := range toCheck {
+		if up.system != "" {
+			scan.refs = append(scan.refs, up)
+		} else {
+			scan.scalar = append(scan.scalar, up)
 		}
 	}
-	q := store.EntityQuery{Type: e.Type, Faces: store.AllFaces()}
-	for other, err := range st.ListEntities(ctx, q) {
-		if err != nil {
-			// A partial scan cannot prove uniqueness — fail the write loud
-			// rather than admit a possible duplicate.
-			return fmt.Errorf("entitymanager: unique check for %s: %w", e.ID, err)
+	if len(scan.scalar) > 0 {
+		q := store.EntityQuery{Type: e.Type, Faces: store.AllFaces()}
+		for other, err := range st.ListEntities(ctx, q) {
+			if err != nil {
+				// A partial scan cannot prove uniqueness — fail the write loud
+				// rather than admit a possible duplicate.
+				return fmt.Errorf("entitymanager: unique check for %s: %w", e.ID, err)
+			}
+			scan.compare(other)
 		}
-		compare(other)
+	}
+	for _, ref := range scan.refs {
+		v, err := checkExternalRefUnique(ctx, meta, st, e, excludeSelfID, ref)
+		if err != nil {
+			return err
+		}
+		scan.violations = append(scan.violations, v...)
 	}
 	// A soft-deleted entity keeps its values reserved, so an undo cannot be
 	// refused because someone took the value in the meantime.
@@ -118,22 +106,75 @@ func checkUniqueProperties(
 		}
 		for _, me := range marked {
 			for _, other := range me.Entities {
-				if other.Type == e.Type {
-					compare(other)
-				}
+				scan.compareMarked(other)
 			}
 		}
 	}
-	if len(violations) > 0 {
-		return newValidationError(violations)
+	if len(scan.violations) > 0 {
+		return newValidationError(scan.violations)
 	}
 	return nil
 }
 
-// uniqueProp is one unique, non-list property e sets to a non-empty value.
+// uniqueScan collects the violations of one [checkUniqueProperties] call:
+// scalar are the `unique:` values e sets, refs its external refs.
+type uniqueScan struct {
+	meta          *metamodel.Metamodel
+	e             *entity.Entity
+	excludeSelfID string
+	scalar, refs  []uniqueProp
+	violations    []*metamodel.ValidationError
+}
+
+// compare records the scalar values other shares with e at e's face.
+func (s *uniqueScan) compare(other *entity.Entity) {
+	e := s.e
+	if other.Face != e.Face || other.ID == s.excludeSelfID || other.ID == e.ID {
+		return
+	}
+	for _, up := range s.scalar {
+		if other.GetString(up.name) != up.value {
+			continue
+		}
+		// Client-facing message names only the property + type — NOT
+		// the colliding entity's ID or the value. For an identity key
+		// (e.g. persoon.email) leaking "PERS-X already has alice@corp"
+		// to whoever attempted the write is an enumeration oracle
+		// (confirms an entity/value is registered). The full detail is
+		// logged server-side instead, mirroring the RR-372L discipline.
+		slog.Warn("entitymanager: unique constraint violated",
+			"type", e.Type, "property", up.name,
+			"attempted_by", e.ID, "conflicts_with", other.ID)
+		s.violations = append(s.violations, &metamodel.ValidationError{
+			Type:     metamodel.ValidationErrorUnique,
+			Property: up.name,
+			Message: fmt.Sprintf(
+				"property %q must be unique for type %q; another entity already has this value",
+				up.name, e.Type),
+		})
+	}
+}
+
+// compareMarked is [uniqueScan.compare] for a soft-deleted entity: scalar
+// values within e's type, and (D9) external ids of ANY type declaring the
+// system.
+func (s *uniqueScan) compareMarked(other *entity.Entity) {
+	if other.Type == s.e.Type {
+		s.compare(other)
+	}
+	for _, ref := range s.refs {
+		if v := markedRefViolation(s.meta, s.e, s.excludeSelfID, ref, other); v != nil {
+			s.violations = append(s.violations, v)
+		}
+	}
+}
+
+// uniqueProp is one unique, non-list property e sets to a non-empty value,
+// or one external ref e sets, with system its system and value its id.
 type uniqueProp struct {
-	name  string
-	value string
+	name   string
+	value  string
+	system string
 }
 
 // uniqueValues returns the unique, non-list properties e sets to a non-empty
@@ -146,6 +187,12 @@ func uniqueValues(meta *metamodel.Metamodel, e *entity.Entity) []uniqueProp {
 	}
 	var out []uniqueProp
 	for name, pd := range def.PropertyDefs() {
+		if pd.Type == metamodel.PropertyTypeExternalRef {
+			if id, ok := metamodel.ExternalRefID(e.Properties[name]); ok {
+				out = append(out, uniqueProp{name: name, value: id, system: pd.System})
+			}
+			continue
+		}
 		if !pd.Unique || pd.List {
 			continue
 		}
@@ -171,7 +218,8 @@ func uniqueValues(meta *metamodel.Metamodel, e *entity.Entity) []uniqueProp {
 func writeWithUniqueCheck(
 	ctx context.Context, deps Deps, e *entity.Entity, excludeSelfID string, write func(st store.Store) error,
 ) error {
-	if len(uniqueValues(deps.Meta, e)) == 0 {
+	capture := writeCaptureFor(ctx, e)
+	if capture == nil && len(uniqueValues(deps.Meta, e)) == 0 {
 		return write(deps.Store)
 	}
 	return deps.Store.Tx(ctx, func(view store.Store) error {
@@ -179,7 +227,13 @@ func writeWithUniqueCheck(
 		if err := checkUniqueProperties(txCtx, deps.Meta, view, e, excludeSelfID); err != nil {
 			return err
 		}
-		return write(view)
+		if err := write(view); err != nil {
+			return err
+		}
+		if capture == nil {
+			return nil
+		}
+		return capture.record(txCtx, view, e)
 	})
 }
 
@@ -216,4 +270,68 @@ func mapUniquePropertyConflict(err error) (ok bool, mapped error) {
 		Property: up.Property,
 		Message:  msg,
 	}})
+}
+
+// checkExternalRefUnique enforces (system, id) uniqueness for one external
+// ref of e (TKT-SM20FG): no other entity of ANY type declaring the system
+// holds the id at e's face. One [store.PropKeyEqual] header query per
+// declaring (type, property), so the scan is a lookup, not a type scan.
+// Faces of e's own family never collide, like `unique:`.
+func checkExternalRefUnique(
+	ctx context.Context, meta *metamodel.Metamodel, st store.Store, e *entity.Entity,
+	excludeSelfID string, ref uniqueProp,
+) ([]*metamodel.ValidationError, error) {
+	for _, holder := range metamodel.ExternalRefProps(meta, ref.system) {
+		q := store.GraphQuery{
+			EntityType: holder.Type,
+			Props: []store.PropPredicate{{
+				Property: holder.Property, Op: store.PropKeyEqual, Key: "id", Value: ref.value,
+			}},
+			Faces: store.AllFaces(),
+		}
+		for h, err := range store.GraphQueryHeaders(ctx, st, q) {
+			if err != nil {
+				return nil, fmt.Errorf("entitymanager: external ref check for %s: %w", e.ID, err)
+			}
+			if h.Face != e.Face || h.ID == excludeSelfID || h.ID == e.ID {
+				continue
+			}
+			return []*metamodel.ValidationError{externalRefViolation(e, ref, h.ID)}, nil
+		}
+	}
+	return nil, nil
+}
+
+// markedRefViolation reports a soft-deleted entity other that holds ref's
+// id at e's face, in any property declaring ref's system.
+func markedRefViolation(
+	meta *metamodel.Metamodel, e *entity.Entity, excludeSelfID string, ref uniqueProp, other *entity.Entity,
+) *metamodel.ValidationError {
+	if other.Face != e.Face || other.ID == excludeSelfID || other.ID == e.ID {
+		return nil
+	}
+	for _, holder := range metamodel.ExternalRefProps(meta, ref.system) {
+		if holder.Type != other.Type {
+			continue
+		}
+		if id, ok := metamodel.ExternalRefID(other.Properties[holder.Property]); ok && id == ref.value {
+			return externalRefViolation(e, ref, other.ID)
+		}
+	}
+	return nil
+}
+
+// externalRefViolation is the 422 for a taken (system, id). It names the
+// property only; the holder and the id go to the server log, because the
+// holder may be an entity the writer cannot read.
+func externalRefViolation(e *entity.Entity, ref uniqueProp, holderID string) *metamodel.ValidationError {
+	slog.Warn("entitymanager: external ref already linked",
+		"type", e.Type, "property", ref.name, "system", ref.system,
+		"attempted_by", e.ID, "conflicts_with", holderID)
+	return &metamodel.ValidationError{
+		Type:     metamodel.ValidationErrorUnique,
+		Property: ref.name,
+		Message: fmt.Sprintf(
+			"property %q must be unique; another entity is already linked to this external id", ref.name),
+	}
 }
