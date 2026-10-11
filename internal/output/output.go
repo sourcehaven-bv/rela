@@ -193,13 +193,37 @@ func (w *Writer) buildEntitySummary(total int, statusCounts map[string]int) stri
 	return fmt.Sprintf("%d %s", total, entityWord)
 }
 
+// MentionSource is one entity whose body mentions the shown one
+// (TKT-Q6AKUN), at the face the read world serves.
+type MentionSource struct {
+	ID    string `json:"id"`
+	Face  string `json:"face,omitempty"`
+	Type  string `json:"type"`
+	Title string `json:"title"`
+}
+
+// MentionedBy is the first page of an entity's backlinks, and whether the
+// page was cut short.
+type MentionedBy struct {
+	Items     []MentionSource
+	Truncated bool
+}
+
 // WriteEntity outputs a single entity with details
-func (w *Writer) WriteEntity(entity *entity.Entity, incoming, outgoing []*entity.Relation) error {
+func (w *Writer) WriteEntity(
+	entity *entity.Entity, incoming, outgoing []*entity.Relation, mentionedBy MentionedBy,
+) error {
 	if w.Format == FormatJSON {
+		items := mentionedBy.Items
+		if items == nil {
+			items = []MentionSource{}
+		}
 		data := map[string]any{
-			"entity":   entity,
-			"incoming": incoming,
-			"outgoing": outgoing,
+			"entity":                 entity,
+			"incoming":               incoming,
+			"outgoing":               outgoing,
+			"mentioned_by":           items,
+			"mentioned_by_truncated": mentionedBy.Truncated,
 		}
 		return w.writeJSON(data)
 	}
@@ -247,6 +271,21 @@ func (w *Writer) WriteEntity(entity *entity.Entity, incoming, outgoing []*entity
 			entity.ID,
 			color.HiBlackString(rel.Type),
 			color.GreenString(rel.To))
+	}
+
+	if len(mentionedBy.Items) > 0 {
+		fmt.Fprintln(w.Out)
+		fmt.Fprintln(w.Out, color.YellowString("Mentioned by:"))
+		for _, m := range mentionedBy.Items {
+			addr := m.ID
+			if m.Face != "" {
+				addr += "@" + m.Face
+			}
+			fmt.Fprintf(w.Out, "  ← %s %s\n", color.GreenString(addr), m.Title)
+		}
+		if mentionedBy.Truncated {
+			fmt.Fprintf(w.Out, "  %s\n", color.HiBlackString("(more not shown)"))
+		}
 	}
 
 	// Content

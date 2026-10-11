@@ -108,6 +108,7 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/tickets/", http.StatusOK},
 		{http.MethodGet, "/api/v1/tickets/TKT-001", http.StatusOK},
 		{http.MethodGet, "/api/v1/tickets/TKT-001/relations", 0},
+		{http.MethodGet, "/api/v1/tickets/TKT-001/mentioned-by", 0},
 
 		// Attachment download route. Probe with POST so the handler answers
 		// 405 (a JSON error) rather than a 404 — a GET against the fixture

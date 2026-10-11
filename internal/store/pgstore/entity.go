@@ -345,14 +345,16 @@ func (s *Store) CreateEntity(ctx context.Context, e *entity.Entity) error {
 		INSERT INTO entities (id, face, type, properties, content, search_text, updated_at,
 		                      last_edited_by_user, last_edited_by_tool,
 		                      origin_kind, origin_source, origin_source_face,
-		                      origin_source_type, origin_definition)
-		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9, $10, $11, $12, $13)
+		                      origin_source_type, origin_definition,
+		                      mention_targets, mentions_hash)
+		VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT (id, face) DO NOTHING
 		RETURNING updated_at`
+	targets, hash := mentionColumns(e.Content)
 	var updatedAt time.Time
 	err = tx.QueryRow(ctx, q, e.ID, e.Face, e.Type, props, e.Content, entitySearchText(e),
 		editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition).Scan(&updatedAt)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.ErrConflict
 	}
@@ -464,13 +466,15 @@ func (s *Store) updateEntityIf(
 		    updated_at = now(), seq = nextval('rela_seq'),
 		    last_edited_by_user = $7, last_edited_by_tool = $8,
 		    origin_kind = $9, origin_source = $10, origin_source_face = $11,
-		    origin_source_type = $12, origin_definition = $13
+		    origin_source_type = $12, origin_definition = $13,
+		    mention_targets = $14, mentions_hash = $15
 		WHERE id = $1 AND face = $2
 		RETURNING updated_at`
+	targets, hash := mentionColumns(e.Content)
 	var updatedAt time.Time
 	err = tx.QueryRow(ctx, q, e.ID, e.Face, e.Type, props, e.Content, entitySearchText(e),
 		editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition).Scan(&updatedAt)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, targets, hash).Scan(&updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", store.ErrNotFound
 	}

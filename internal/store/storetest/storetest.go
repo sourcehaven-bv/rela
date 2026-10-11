@@ -234,6 +234,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	t.Run("Freshness", func(t *testing.T) { RunFreshnessTests(t, f) })
 	t.Run("Tx", func(t *testing.T) { RunTxTests(t, f) })
 	t.Run("IteratorNesting", func(t *testing.T) { RunIteratorNestingTests(t, f, vsf) })
+	t.Run("Mentions", func(t *testing.T) { RunMentionTests(t, f) })
 
 	// The transaction tier is declared, not inferred. RunTxRollbackTests used
 	// to be reachable only by calling it separately, so a backend with genuine
@@ -241,6 +242,7 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 	// warning — indistinguishable from a backend that deliberately omits it.
 	if caps.TxRollback {
 		t.Run("TxRollback", func(t *testing.T) { RunTxRollbackTests(t, f) })
+		t.Run("MentionRollback", func(t *testing.T) { RunMentionRollbackTests(t, f) })
 	}
 	// Versioning is declared for the same reason, and the suite is stricter
 	// about it: it FAILS rather than skips when the capability is missing, so

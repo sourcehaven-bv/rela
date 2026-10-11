@@ -278,7 +278,7 @@ func RunIsolationTests(t *testing.T, f Factory) {
 // differing property kinds, plus a relation, so a backend that mangles nested
 // structure is caught by the hash comparison.
 func fixtureProjection() metamodel.ShapeProjection {
-	return fixtureMeta().ShapeProjection()
+	return metamodel.NewShapeProjection(fixtureMeta())
 }
 
 // otherProjection differs from fixtureProjection in shape, so the two hash
@@ -290,7 +290,7 @@ func otherProjection() metamodel.ShapeProjection {
 	props["priority"] = metamodel.PropertyDef{Type: "string"}
 	def.Properties = props
 	m.Entities["task"] = def
-	return m.ShapeProjection()
+	return metamodel.NewShapeProjection(m)
 }
 
 func fixtureMeta() *metamodel.Metamodel {

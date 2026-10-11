@@ -370,6 +370,38 @@ fixed when the server starts: a `comments:` block added later takes effect
 after a restart, and one removed later makes the tools answer that comments
 are not enabled.
 
+### Action Tools
+
+These tools exist only on the remote server (see
+[Remote MCP](#remote-mcp-over-http)). An action runs as the signed-in caller,
+and stdio `rela mcp` has none. They run the data-entry actions defined under
+`actions:` in `data-entry.yaml` (see
+[data-entry.md](data-entry.md#actions)).
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `list_actions` | List the actions you may run, or the ones offered on an entity | `id?` |
+| `run_action` | Run an action | `action`, `id?`, `request?`, `confirm?` |
+
+Without `id`, `list_actions` lists the actions that are not bound to an entity
+and whose `permission` you hold. With `id` it lists the actions the entity's
+detail page offers you. Each entry says whether the action asks for
+confirmation, whether it is bound to an entity and whether it accepts a
+request body.
+
+`run_action` runs the same checks as `POST /api/v1/_action/{id}`, and an error
+names the same code, for example `[permission_required]` or
+`[action_not_available]`. An entity-bound action needs `id`. An action with
+`confirm` runs only with `confirm: true`; without it the tool returns the
+question to ask the user. `request` is the request body and is accepted only by
+an action whose `request` block sets `body: true`. The result is
+`{message, message_type, redirect}`, or `{status, content_type, body}` for an
+action that answers with a body. A script error gives the script path, line,
+message and a correlation id that matches the server log.
+
+The action set follows `data-entry.yaml` reloads; the tools exist even when no
+action is defined.
+
 ## Resources
 
 Resources expose rela data as readable URIs.
@@ -486,7 +518,8 @@ gets through the web UI:
 **The Lua tools are not available remotely.** `lua_eval`, `lua_run` and
 `lua_list` exist only over stdio. A script is caller-supplied code that runs in
 the server process, so offering it over HTTP would let any remote caller use
-server CPU and memory at will. Every other tool is exposed remotely.
+server CPU and memory at will. Every other tool is exposed remotely. The
+action tools exist only remotely: they run as the signed-in caller.
 
 ### Differences from stdio
 

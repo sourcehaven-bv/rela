@@ -96,6 +96,11 @@ type Deps struct {
 	// CommentWriter leaves out the write tools, as stdio `rela mcp` does.
 	Comments      CommentReader
 	CommentWriter CommentWriter
+	// Actions backs list_actions and run_action (TKT-NW9QSN).
+	//
+	// Nil: accepted. The tools are then not registered, as under stdio
+	// `rela mcp`, which has no signed-in caller to run an action as.
+	Actions ActionRunner
 	// World is the world the list and count surfaces (list_entities, the
 	// schema resource's counts, the overview prompt, search) read in when a
 	// call names none. It is required; wiring passes
@@ -182,6 +187,10 @@ type GraphReader interface {
 	// error instead of hiding the edges it touches. Aggregates fold from it,
 	// so a fault never reads as a missing relation (TKT-5LW875).
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+
+	// MentionedBy pages the readable entities whose body mentions target
+	// as an `id` code span ([visibility.Resolver.MentionedBy]).
+	MentionedBy(ctx context.Context, target, after string, limit int) (visibility.MentionPage, error)
 }
 
 // TraversalBinder answers the `related(...)` calls of a list_entities filter
@@ -438,6 +447,7 @@ type handlerSet struct {
 	prompts   promptHandler
 	attach    attachmentHandler
 	comments  commentHandler
+	actions   actionHandler
 }
 
 // handlers builds the extracted handler groups a [Server] carries. One
@@ -453,6 +463,7 @@ func (d Deps) handlers() handlerSet {
 		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types, world: d.World},
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
 		comments:  commentHandler{reader: d.Comments, writer: d.CommentWriter},
+		actions:   actionHandler{runner: d.Actions},
 	}
 }
 

@@ -5,7 +5,9 @@ title: Basecamp connector syncs all to-dos and models projects
 kind: enhancement
 priority: medium
 effort: m
-status: backlog
+started: "2026-10-09"
+completed: "2026-10-09"
+status: done
 ---
 
 ## Description

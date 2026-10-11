@@ -152,7 +152,8 @@ func (c *MigrateStatusCmd) Run(ctx context.Context, svc *writeServices) error {
 			return sErr
 		}
 		if ok {
-			if _, rErr := datamigration.Resolve(stored, applied, svc.Meta.ShapeProjection(), files); rErr != nil {
+			live := metamodel.NewShapeProjection(svc.Meta)
+			if _, rErr := datamigration.Resolve(stored, applied, live, files); rErr != nil {
 				fmt.Println("the pending migrations do not cover this change — run `rela migrate gen`")
 			} else {
 				fmt.Println("pending migrations cover it — run `rela migrate data` to preview them")
@@ -193,7 +194,7 @@ func (c *MigrateGenCmd) Run(ctx context.Context, svc *writeServices) error {
 		fmt.Println("no recorded data shape yet — baseline adopted; edit schema.yaml first, then re-run `rela migrate gen`")
 		return nil
 	}
-	draft, err := datamigration.Generate(stored, svc.Meta.ShapeProjection(), c.Description, time.Now())
+	draft, err := datamigration.Generate(stored, metamodel.NewShapeProjection(svc.Meta), c.Description, time.Now())
 	if err != nil {
 		return err
 	}
@@ -275,7 +276,7 @@ func (c *MigrateDataCmd) Run(ctx context.Context, svc *writeServices) error {
 			"`rela migrate baseline --apply`.")
 		return relaerrors.NewExitError(1)
 	}
-	live := svc.Meta.ShapeProjection()
+	live := metamodel.NewShapeProjection(svc.Meta)
 	plan, err := datamigration.Resolve(stored, applied, live, files)
 	if err != nil {
 		return err
@@ -531,7 +532,7 @@ func (c *MigrateBaselineCmd) Run(ctx context.Context, svc *writeServices) error 
 		return nil
 	}
 
-	live := svc.Meta.ShapeProjection()
+	live := metamodel.NewShapeProjection(svc.Meta)
 	entries := make([]datamigration.AppliedEntry, 0, len(files))
 	now := time.Now().UTC()
 	for _, f := range files {

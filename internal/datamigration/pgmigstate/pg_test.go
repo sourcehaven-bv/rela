@@ -141,7 +141,7 @@ func fixtureProjection() metamodel.ShapeProjection {
 			}},
 		},
 	}
-	return m.ShapeProjection()
+	return metamodel.NewShapeProjection(m)
 }
 
 func newScopedPool(t *testing.T) *pgxpool.Pool {

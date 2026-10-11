@@ -4,16 +4,20 @@ import (
 	"bytes"
 	"encoding/json"
 	"testing"
+
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
-// Mock types for schema JSON testing
-type mockSchemaMetamodel struct{}
-
-func (m *mockSchemaMetamodel) GetVersion() string   { return "1.0" }
-func (m *mockSchemaMetamodel) GetNamespace() string { return "test" }
-func (m *mockSchemaMetamodel) GetEntities() any     { return map[string]any{} }
-func (m *mockSchemaMetamodel) GetRelations() any    { return map[string]any{} }
-func (m *mockSchemaMetamodel) GetTypes() any        { return map[string]any{} }
+// testSchemaMetamodel returns a minimal metamodel for schema JSON tests.
+func testSchemaMetamodel() *metamodel.Metamodel {
+	return &metamodel.Metamodel{
+		Version:   "1.0",
+		Namespace: "test",
+		Entities:  map[string]metamodel.EntityDef{},
+		Relations: map[string]metamodel.RelationDef{},
+		Types:     map[string]metamodel.CustomType{},
+	}
+}
 
 type mockSchemaEntityDef struct{}
 
@@ -54,8 +58,8 @@ func TestSchemaJSONOverview(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := schemaJSONWriter{out: buf}
 
-	mock := &mockSchemaMetamodel{}
-	if err := w.writeOverview(mock); err != nil {
+	meta := testSchemaMetamodel()
+	if err := w.writeOverview(meta); err != nil {
 		t.Fatalf("writeOverview failed: %v", err)
 	}
 
@@ -73,8 +77,8 @@ func TestSchemaJSONEntities(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := schemaJSONWriter{out: buf}
 
-	mock := &mockSchemaMetamodel{}
-	if err := w.writeEntities(mock); err != nil {
+	meta := testSchemaMetamodel()
+	if err := w.writeEntities(meta); err != nil {
 		t.Fatalf("writeEntities failed: %v", err)
 	}
 
@@ -89,8 +93,8 @@ func TestSchemaJSONRelations(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := schemaJSONWriter{out: buf}
 
-	mock := &mockSchemaMetamodel{}
-	if err := w.writeRelations(mock); err != nil {
+	meta := testSchemaMetamodel()
+	if err := w.writeRelations(meta); err != nil {
 		t.Fatalf("writeRelations failed: %v", err)
 	}
 
@@ -105,8 +109,8 @@ func TestSchemaJSONTypes(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := schemaJSONWriter{out: buf}
 
-	mock := &mockSchemaMetamodel{}
-	if err := w.writeTypes(mock); err != nil {
+	meta := testSchemaMetamodel()
+	if err := w.writeTypes(meta); err != nil {
 		t.Fatalf("writeTypes failed: %v", err)
 	}
 

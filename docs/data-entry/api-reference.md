@@ -1188,6 +1188,61 @@ for an ID that never existed.
 
 ---
 
+## Backlinks: GET /api/v1/{plural}/{id}/mentioned-by
+
+Lists the entities whose body mentions `{id}` as a code span holding the bare
+ID, such as `` `TKT-007` ``. Code spans in fenced or indented code blocks and
+inside link text do not count, and neither do relation bodies.
+
+| Query    | Meaning |
+| -------- | ------- |
+| `limit`  | Page size, 1 to 200. Default 50. |
+| `cursor` | The `next_cursor` of the previous page. |
+| `world`  | The world to read in, as on the entity GET. |
+
+```json
+{
+  "items": [
+    { "id": "TKT-001", "type": "ticket", "title": "Pick a store" },
+    { "id": "DOC-4", "face": "draft", "type": "document", "title": "Design" }
+  ],
+  "next_cursor": "DOC-4"
+}
+```
+
+Items are ordered by ID. `next_cursor` is the ID of the last item, and it is
+absent on the last page. Keep paging until `next_cursor` is absent.
+
+The server reads at most 10,000 index entries per request. Sources you may not
+read count toward that limit. If the limit is reached, the response has
+`"truncated": true` and no `next_cursor`, and further sources are not listed.
+Only a target mentioned by more than 10,000 entities you cannot read can reach
+the limit.
+
+Each source passes the same read gate as a list row, carries the title you may
+see, and appears at the face the world serves. A source whose served face does
+not itself mention `{id}` is left out. A hidden or missing `{id}` gets the same
+404 as the entity GET. A bad `limit` or `cursor` is a 400.
+
+### Backlinks in a view
+
+A view can collect backlinks with a `mentioned_by` traverse step and show them
+in a section of its own (see the data-entry guide). The `_views` response then
+carries three extra fields:
+
+| Field | Where | Meaning |
+| ----- | ----- | ------- |
+| `hideMentionedByPanel` | response | `true` when the page should leave out the built-in panel: the view collects backlinks, or `entity_views.<type>.mentioned_by_panel` is `false`. Omitted otherwise. |
+| `incomplete` | section | `true` when the section's backlinks collection holds only part of the matching sources. Omitted otherwise. |
+| `entityType`, `columns` | `groups[]` | Set on each group of a `columns_by_type` table. The group's rows are of `entityType`, and their cells are positional over the group's `columns`. |
+
+`incomplete` is set when more than 200 readable sources match, or when the
+backlink scan reaches its 10,000-entry limit. The second case is the same
+accepted signal as `truncated` above. `incomplete` differs from a nested
+section's `truncated`, which is never set by a budget.
+
+---
+
 ## Data-entry API: GET /api/v1/_apps/{id}/{path}
 
 Serves a custom app's files for embedding in a sandboxed iframe. See the

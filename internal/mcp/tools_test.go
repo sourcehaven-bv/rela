@@ -333,6 +333,36 @@ func TestHandleShowEntity(t *testing.T) {
 	}
 }
 
+// TestHandleShowEntity_MentionedBy pins the backlinks block: an entity whose
+// body names REQ-001 as an `id` code span is listed under mentioned_by.
+func TestHandleShowEntity_MentionedBy(t *testing.T) {
+	t.Parallel()
+	s, st := makeTestServerWithStore(t)
+	ctx := context.Background()
+	src, err := st.GetEntity(ctx, entity.Ref{ID: "DEC-001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.Content = "Settles `REQ-001`."
+	if err = st.UpdateEntity(ctx, src); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := s.handleShowEntity(ctx, makeToolRequest(map[string]any{"id": "REQ-001"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got entityJSON
+	if err := json.Unmarshal([]byte(getResultText(t, result)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.MentionedBy) != 1 || got.MentionedBy[0].ID != "DEC-001" || got.MentionedBy[0].Type != "decision" ||
+		got.MentionedByTruncated {
+
+		t.Errorf("mentioned_by = %+v (truncated %v), want DEC-001", got.MentionedBy, got.MentionedByTruncated)
+	}
+}
+
 func TestHandleShowEntity_NotFound(t *testing.T) {
 	t.Parallel()
 	s := makeTestServer(t)

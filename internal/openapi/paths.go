@@ -171,6 +171,45 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 		},
 	}
 
+	// Backlinks: the entities whose body mentions this one (TKT-Q6AKUN).
+	spec.Paths[basePath+"/{id}/mentioned-by"] = PathItem{
+		Parameters: []Parameter{
+			{Name: "id", In: "path", Required: true, Description: "Entity ID", Schema: StringSchema()},
+		},
+		Get: &Operation{
+			OperationID: fmt.Sprintf("get%sMentionedBy", capitalize(typeName)),
+			Summary:     "List the entities whose body mentions a " + def.Label,
+			Tags:        []string{tag},
+			Parameters: []Parameter{
+				{Name: "limit", In: "query", Description: "Page size, 1 to 200 (default 50)", Schema: IntegerSchema()},
+				{Name: "cursor", In: "query", Description: "next_cursor from the previous page", Schema: StringSchema()},
+			},
+			Responses: map[string]Response{
+				"200": {
+					Description: "One page of mentioning entities, in id order",
+					Content: jsonContent(&Schema{
+						Type: "object",
+						Properties: map[string]*Schema{
+							"items": ArraySchema(&Schema{
+								Type: "object",
+								Properties: map[string]*Schema{
+									"id":    StringSchema(),
+									"face":  StringSchema(),
+									"type":  StringSchema(),
+									"title": StringSchema(),
+								},
+							}),
+							"next_cursor": StringSchema(),
+							"truncated":   BooleanSchema(),
+						},
+					}),
+				},
+				"400": {Description: "Invalid limit or cursor", Content: jsonContent(Ref("Error"))},
+				"404": {Description: "Entity not found", Content: jsonContent(Ref("Error"))},
+			},
+		},
+	}
+
 	// Add relation type paths for valid outgoing relations
 	g.addRelationTypePaths(spec, typeName, def, basePath)
 

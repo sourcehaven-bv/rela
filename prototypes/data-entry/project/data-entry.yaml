@@ -435,6 +435,11 @@ views:
       - from: entry
         follow: tagged
         collect_as: labels
+      # TKT-HF0D5W — entities whose body mentions this ticket as `TKT-…`.
+      # Collecting them here hides the built-in "Mentioned by" panel.
+      - from: entry
+        mentioned_by: true
+        collect_as: mentions
     sections:
       # Ticket properties
       - heading: "Ticket"
@@ -514,6 +519,21 @@ views:
         fields:
           - property: name
         empty_message: "No labels"
+      # Backlinks can be any type, so each type gets its own columns and
+      # its own group; other types fall back to `columns:`.
+      - heading: "Mentioned by"
+        source: mentions
+        display: table
+        columns_by_type:
+          ticket:
+            - property: title
+              link: detail
+            - property: status
+            - property: assignee
+        columns:
+          - property: title
+            link: detail
+        empty_message: "No other entity mentions this ticket"
 # ──────────────────────────────────────────────
 # Dashboard: query-driven overview cards
 # ──────────────────────────────────────────────

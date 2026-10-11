@@ -5,24 +5,27 @@ import (
 	"log/slog"
 	"slices"
 
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/text"
-
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
+	mentionspkg "github.com/Sourcehaven-BV/rela/internal/mentions"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
-// collectMentions scans the supplied markdown blobs for inline code spans
-// whose entire content is an entity ID known to the store, and returns a
-// deduplicated map keyed by ID. Self-references (the viewer's own ID) are
-// included — the renderer treats them like any other reference and the SPA
-// route handles them as no-op navigation. Returns nil when no mentions
-// are found so callers can rely on JSON `omitempty` for empty maps.
+// collectMentions scans the supplied markdown blobs for mentions
+// ([mentionspkg.All]) and returns the ones the principal is served, keyed by
+// id. Self-references (the viewer's own ID) are included: the renderer treats
+// them like any other reference and the SPA route handles them as no-op
+// navigation. Returns nil when no mentions are found so callers can rely on
+// JSON `omitempty` for empty maps.
+//
+// Each id resolves to the face the request's world serves among the faces
+// the principal may read ([visibility.Resolver.ResolveIDsErr]), the same
+// resolution relation neighbors use, so a mention of an entity whose type
+// has faces links like any other. The header comes back gated and redacted
+// (DEC-ZBI39P): a mention of an entity the principal may not read is
+// dropped, and a survivor whose display property is hidden falls back to
+// its id (BUG-R9EHKV).
 //
 // A store failure is logged and drops every mention: a failed lookup must
 // not break the whole view-fetch response. The fall-through degrades to
@@ -30,46 +33,34 @@ import (
 // context skips the lookup: callers (HTTP handlers) have already bound the
 // request context, and a client that disconnected wants no answer.
 func collectMentions(
-	ctx context.Context, s store.EntityLister, vis visibility.Reader,
-	meta *metamodel.Metamodel, contents ...string,
+	ctx context.Context, vis visibility.Reader, meta *metamodel.Metamodel, contents ...string,
 ) map[string]v1.Mention {
-	candidates := scanCodeSpanCandidates(contents...)
-	if len(candidates) == 0 || ctx.Err() != nil {
+	seen := make(map[string]struct{})
+	for _, body := range contents {
+		for _, id := range mentionspkg.All(body) {
+			seen[id] = struct{}{}
+		}
+	}
+	if len(seen) == 0 || ctx.Err() != nil {
 		return nil
 	}
-
-	// Load the referenced entities, then route them through the read gate +
-	// redactor (DEC-ZBI39P) before deriving any title: a mention to an entity
-	// the principal may not read is dropped (row-gate), and a survivor whose
-	// display property is hidden falls back to its id (BUG-R9EHKV). Mentions
-	// are arbitrary code-span IDs in user markdown, so without this a `TKT-…`
-	// span pointing at a hidden entity leaked its title via DisplayTitle.
-	//
-	// Every candidate's default-face row is loaded content-free in one batch.
-	// An id with no such row is not a mention.
-	ids := make([]string, 0, len(candidates))
-	for id := range candidates {
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-	rows, err := loadDefaultFaceHeaders(ctx, s, ids)
+
+	served, err := vis.Resolver().ResolveIDsErr(ctx, worldFromContext(ctx).visibility(), ids)
 	if err != nil {
 		slog.WarnContext(ctx, "mentions: store lookup failed", "ids", len(ids), "err", err)
-	}
-	loaded := make([]*entityPkg.Entity, 0, len(rows))
-	for _, id := range ids {
-		if ent, ok := rows[id]; ok {
-			loaded = append(loaded, ent)
-		}
-	}
-
-	visible := vis.Filter(ctx, loaded)
-	out := make(map[string]v1.Mention, len(visible))
-	for _, ent := range visible {
-		out[ent.ID] = buildMention(ent, meta)
-	}
-	if len(out) == 0 {
 		return nil
+	}
+	if len(served) == 0 {
+		return nil
+	}
+	out := make(map[string]v1.Mention, len(served))
+	for id, h := range served {
+		out[id] = buildMention(headerEntity(h), meta)
 	}
 	return out
 }
@@ -136,76 +127,3 @@ func lockedReasonFor(e *entityPkg.Entity, displayProps []string) (string, bool) 
 	}
 	return "", false
 }
-
-// scanCodeSpanCandidates parses each markdown blob and returns the set of
-// distinct strings that appear as the entire text of an inline code span.
-// Code blocks (fenced and indented) are walked over by goldmark as
-// FencedCodeBlock / CodeBlock — never CodeSpan — so they are naturally
-// excluded.
-func scanCodeSpanCandidates(contents ...string) map[string]struct{} {
-	if len(contents) == 0 {
-		return nil
-	}
-	candidates := make(map[string]struct{})
-	parser := mentionsMarkdown.Parser()
-	for _, src := range contents {
-		if src == "" {
-			continue
-		}
-		source := []byte(src)
-		doc := parser.Parse(text.NewReader(source))
-		_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-			if !entering {
-				return ast.WalkContinue, nil
-			}
-			cs, ok := n.(*ast.CodeSpan)
-			if !ok {
-				return ast.WalkContinue, nil
-			}
-			text, complete := codeSpanText(cs, source)
-			if !complete {
-				return ast.WalkSkipChildren, nil
-			}
-			candidates[text] = struct{}{}
-			return ast.WalkSkipChildren, nil
-		})
-	}
-	delete(candidates, "")
-	return candidates
-}
-
-// codeSpanText concatenates the literal text segments inside a code span.
-// goldmark stores the content as one or more `*ast.Text` children whose
-// `Segment` slices the source bytes. Returns complete=false (and an
-// empty string) when the span contains any child that isn't a plain
-// text segment, so we never silently match a partial reconstruction
-// against an entity ID.
-func codeSpanText(cs *ast.CodeSpan, source []byte) (string, bool) {
-	var b []byte
-	for c := cs.FirstChild(); c != nil; c = c.NextSibling() {
-		t, ok := c.(*ast.Text)
-		if !ok {
-			return "", false
-		}
-		b = append(b, t.Segment.Value(source)...)
-	}
-	return string(b), true
-}
-
-// mentionsMarkdown is a goldmark instance used solely for AST walking.
-// Configured with the same GFM extension set as the document renderer
-// (internal/dataentry/document.go) so the parse matches what the SPA
-// will eventually render — in particular, table cell inlines (which GFM
-// enables) yield CodeSpan nodes we expect to scan.
-//
-// goldmark.Markdown is safe for concurrent use across goroutines: the
-// instance is configuration-only and each Parse call constructs its own
-// parser state from the source.
-var mentionsMarkdown = goldmark.New(
-	goldmark.WithExtensions(
-		extension.GFM,
-		extension.Table,
-		extension.Strikethrough,
-		extension.TaskList,
-	),
-)

@@ -75,6 +75,9 @@ func TestWorldCapablePath(t *testing.T) {
 		{"/api/v1/tickets/TKT-1/_export", true,
 			"entity export resolves through the world like the entity GET (BUG-PLZDPR)"},
 		{"/api/v1/tickets/_export", false, "the LIST export is not world-scoped"},
+		{"/api/v1/tickets/TKT-1/mentioned-by", true,
+			"backlinks are read through the world like the entity GET (TKT-Q6AKUN)"},
+		{"/api/v1/tickets/_x/mentioned-by", false, "an underscore id segment is a route, not an entity"},
 		{"/api/v1/tickets/_x/_export", false, "an underscore id segment is a route, not an entity"},
 		{"/api/v1/_search", true,
 			"cross-type search takes the world on every executeQuery branch (BUG-SMPOZB)"},
@@ -468,6 +471,10 @@ func TestWorldCapableRoutesDoNotUseUngatedReader(t *testing.T) {
 		// `_piles` (TKT-K3RJLH). Reads items through the pile resolver in
 		// the request's world, never through the entity reader.
 		"handleV1Piles": true,
+		// `{plural}/{id}/mentioned-by` (TKT-Q6AKUN). Reads the target through
+		// readAddressedOr404 and the sources through the view reader's
+		// resolver, both in the world on ctx.
+		"handleV1MentionedBy": true,
 	}
 
 	entries, err := os.ReadDir(".")

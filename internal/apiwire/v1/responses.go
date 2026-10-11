@@ -1269,7 +1269,10 @@ type TemplateRelation struct {
 // spans (see collectMentions). The SPA's markdown renderer consumes this
 // map to rewrite those code spans into titled in-app links. Mirrors the
 // Lua-side `rela.md.entity_refs` shape (TKT-LXYHQ) for SPA consumers
-// that don't go through the Lua document path.
+// that don't go through the Lua document path. Each ID resolves in the
+// request's world (`?world=`, else the default world), to the face that
+// world serves among the faces the caller may read; the title is that
+// face's.
 //
 // Wire stability: `mentions` is part of the public v1 API. The set of
 // `inaccessible_reason` values may grow as new locking mechanisms are
@@ -1304,6 +1307,13 @@ type ViewResponse struct {
 	// re-deriving which section maps to which relation. Omitted when no section
 	// opted in — which is every view that predates this field.
 	Create []ViewSectionCreate `json:"create,omitempty"`
+
+	// HideMentionedByPanel tells the page to leave out the built-in
+	// "Mentioned by" panel (TKT-HF0D5W): the view collects backlinks itself
+	// through a `mentioned_by` traverse step, or
+	// `entity_views.<type>.mentioned_by_panel` is false. Decided by the server
+	// from the view it executed, so the SPA does not re-derive view selection.
+	HideMentionedByPanel bool `json:"hideMentionedByPanel,omitempty"`
 }
 
 // ViewSection represents a section with resolved data.
@@ -1335,6 +1345,12 @@ type ViewSection struct {
 	// the preview cap sets both. This flag exists for what HasMoreChildren
 	// cannot express — a parent dropped entirely has no row to signal on.
 	Truncated bool `json:"truncated,omitempty"`
+	// Incomplete reports that a flat section's backlinks collection holds
+	// only part of the matching sources (TKT-HF0D5W): more exist than a
+	// `mentioned_by` step collects, or the backlink scan stopped at its
+	// budget. The scan-budget case is the signal docs/acl-security.md
+	// accepts for the mentioned-by endpoint.
+	Incomplete bool `json:"incomplete,omitempty"`
 
 	// RelationOrder is set when the section's rows are the entry's targets
 	// over one orderable relation, shown in relation order; see
@@ -1520,6 +1536,12 @@ type ViewGroup struct {
 	GroupName string       `json:"groupName"`
 	Rows      []ViewRow    `json:"rows,omitempty"`
 	Entities  []ViewEntity `json:"entities,omitempty"`
+	// EntityType and Columns are set on the per-type groups of a
+	// `columns_by_type` table (TKT-HF0D5W). Rows' cells are positional over
+	// Columns. Both are omitted on a `group_by` group, whose rows use the
+	// section's columns.
+	EntityType string       `json:"entityType,omitempty"`
+	Columns    []ViewColumn `json:"columns,omitempty"`
 }
 
 // ViewAddInfo describes an add button configuration. Despite the "View"
@@ -1611,6 +1633,29 @@ type Mention struct {
 	Title              string `json:"title"`
 	Inaccessible       bool   `json:"inaccessible,omitempty"`
 	InaccessibleReason string `json:"inaccessible_reason,omitempty"`
+}
+
+// MentionedByResponse is GET /api/v1/{plural}/{id}/mentioned-by
+// (TKT-Q6AKUN): the entities whose body mentions the addressed one, one page
+// at a time, in id order.
+type MentionedByResponse struct {
+	Items []MentionSource `json:"items"`
+	// NextCursor is passed back as ?cursor= for the following page: the id
+	// of the last item. Absent when there is none. A page may be short and
+	// still carry one: the server bounds the work one request does.
+	NextCursor string `json:"next_cursor,omitempty"`
+	// Truncated reports that the server stopped scanning with nothing more
+	// to show, so further sources may exist that no cursor reaches.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// MentionSource is one entity that mentions the addressed one, at the face
+// the request's world serves. Title and the inaccessible flags follow
+// [Mention].
+type MentionSource struct {
+	ID   string `json:"id"`
+	Face string `json:"face,omitempty"`
+	Mention
 }
 
 // Face is one content state an entity has, other than the one being served.

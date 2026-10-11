@@ -129,7 +129,7 @@ func TestEntityGetMentions_MatchesViewSurface(t *testing.T) {
 
 	fromGet := decodeEntityResponse(t,
 		getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "")).Mentions
-	direct := collectMentions(gateCtxFor(aliceCtx(), t, d), app.store, app.viewReader,
+	direct := collectMentions(gateCtxFor(aliceCtx(), t, d), app.viewReader,
 		app.State().Meta, content)
 
 	if len(fromGet) != len(direct) {

@@ -11,15 +11,12 @@ import (
 
 // Metamodel represents the full metamodel configuration
 //
-// TODO(TKT-N0IKN9): 30 exported methods, over the 20 exported-method line.
-// This is the schema accessor — wide read-API by nature — but a ratchet
-// candidate: group the type/relation/property lookups behind focused accessors
-// (the attachment-scan accessors moved behind [AttachmentPolicy] this way).
+// TODO(TKT-N0IKN9): 21 exported methods, over the 20 exported-method line.
+// Validation lives on [Validator] and the projections are built by
+// [NewRenderProjection] and [NewShapeProjection]. The relation and
+// property-type lookups are next (TKT-H72Z2N part 2).
 //
-// 32nd exported method is ShapeProjection (TKT-0C57FS), the data-shape
-// sibling of RenderProjection.
-//
-//plimsoll:max-exported-methods=32
+//plimsoll:max-exported-methods=21
 type Metamodel struct {
 	Version   string `yaml:"version"`
 	Namespace string `yaml:"namespace"`

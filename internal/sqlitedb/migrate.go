@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 16
+const schemaVersion = 17
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -191,6 +191,19 @@ var migrations = []migration{
 		to:    16,
 		apply: sqlSteps(versionTagsDDL),
 	},
+	{
+		// v16 → v17: the backlink column (TKT-Q6AKUN). init creates the
+		// index and triggers after the ladder. Existing rows keep a NULL
+		// mention_targets; sqlitestore fills them in Go, because extracting
+		// mentions needs a markdown parser this package does not have.
+		to:    17,
+		apply: addColumns(mentionColumns),
+	},
+}
+
+// mentionColumns are the backlink columns, on the live and the marked table.
+var mentionColumns = []addedColumn{
+	{"entities", "mention_targets"}, {"marked_entities", "mention_targets"},
 }
 
 // clearContentHashSQL marks every live row's hash as not known.

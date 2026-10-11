@@ -140,7 +140,7 @@ func ValidateResolved(e *entity.Entity, meta *metamodel.Metamodel) error {
 	if e == nil || meta == nil {
 		return nil
 	}
-	if errs := meta.ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
+	if errs := metamodel.NewValidator(meta).ValidateEntity(e.ID, e.Type, e.Properties); len(errs) > 0 {
 		return fmt.Errorf("validation failed: %w", errs[0])
 	}
 	return nil

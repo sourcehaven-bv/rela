@@ -95,6 +95,11 @@ func Open(ctx context.Context, db DBTX, dsn string, opts ...Option) (store.Store
 		st.listener = l
 	}
 
+	// Backfill and heal the mention index in the background (TKT-Q6AKUN): a
+	// first pass over a large table must not delay startup, and until a row is
+	// indexed it is merely not listed as a backlink.
+	st.mentionReindex = startMentionReindexer(ctx, st)
+
 	return st, search.New(st, backend), nil
 }
 

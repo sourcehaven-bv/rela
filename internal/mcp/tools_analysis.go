@@ -339,11 +339,12 @@ func (s *Server) handleAnalyzeProperties(
 
 	// Validate entity properties, every face: each holds its own values, and
 	// a faced type has no default row (BUG-95W7MV).
+	metaValidator := metamodel.NewValidator(meta)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			break
 		}
-		errs := meta.ValidateEntity(e.ID, e.Type, e.Properties)
+		errs := metaValidator.ValidateEntity(e.ID, e.Type, e.Properties)
 		if len(errs) > 0 {
 			errStrings := make([]string, len(errs))
 			for i, ve := range errs {

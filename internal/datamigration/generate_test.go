@@ -9,7 +9,7 @@ import (
 )
 
 func TestGenerate_NilWhenInSync(t *testing.T) {
-	cur := metaV1().ShapeProjection()
+	cur := metamodel.NewShapeProjection(metaV1())
 	d, err := Generate(cur, cur, "", testNow())
 	if err != nil || d != nil {
 		t.Fatalf("Generate on identical shapes = %v, %v; want nil, nil", d, err)
@@ -19,14 +19,14 @@ func TestGenerate_NilWhenInSync(t *testing.T) {
 func TestGenerate_NilWhenPurelyAdditive(t *testing.T) {
 	m2 := metaV1()
 	m2.Entities["task"].Properties["estimate"] = metamodel.PropertyDef{Type: "integer"}
-	d, err := Generate(metaV1().ShapeProjection(), m2.ShapeProjection(), "", testNow())
+	d, err := Generate(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(m2), "", testNow())
 	if err != nil || d != nil {
 		t.Fatalf("Generate on additive-only change = %v, %v; want nil, nil", d, err)
 	}
 }
 
 func TestGenerate_DraftForV1ToV2(t *testing.T) {
-	d, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), "status rework", testNow())
+	d, err := Generate(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(metaV2()), "status rework", testNow())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -57,10 +57,10 @@ func TestGenerate_DraftForV1ToV2(t *testing.T) {
 	// The draft round-trips through the parser (Generate already asserts
 	// this, but pin the embedded projections too).
 	f := mustParse(t, d.FileName, d.Content)
-	if f.FromProjection.Hash() != metaV1().ShapeProjection().Hash() {
+	if f.FromProjection.Hash() != metamodel.NewShapeProjection(metaV1()).Hash() {
 		t.Error("draft from_projection wrong")
 	}
-	if f.ToProjection.Hash() != metaV2().ShapeProjection().Hash() {
+	if f.ToProjection.Hash() != metamodel.NewShapeProjection(metaV2()).Hash() {
 		t.Error("draft to_projection wrong")
 	}
 }
@@ -69,7 +69,7 @@ func TestGenerate_DeletionsOnlyCommented(t *testing.T) {
 	m2 := metaV1()
 	delete(m2.Entities["task"].Properties, "tags")
 	delete(m2.Entities, "person")
-	d, err := Generate(metaV1().ShapeProjection(), m2.ShapeProjection(), "", testNow())
+	d, err := Generate(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(m2), "", testNow())
 	if err != nil || d == nil {
 		t.Fatalf("Generate: %v, %v", d, err)
 	}
@@ -106,7 +106,7 @@ func TestGenerate_ComputedChangesRecomputeEntityOnce(t *testing.T) {
 		Type: "integer", Computed: "entity.doubled * 2",
 	}
 
-	d, err := Generate(from.ShapeProjection(), live.ShapeProjection(), "add computed values", testNow())
+	d, err := Generate(metamodel.NewShapeProjection(from), metamodel.NewShapeProjection(live), "add computed values", testNow())
 	if err != nil || d == nil {
 		t.Fatalf("Generate: %v, %v", d, err)
 	}
@@ -126,7 +126,7 @@ func TestGenerate_ComputedChangesRecomputeEntityOnce(t *testing.T) {
 // silently across concurrent branches — two PRs cut from the same commit pick
 // the same index and git merges both cleanly (BUG-TY2XQC).
 func TestGenerate_NamesAreTimestamped(t *testing.T) {
-	d, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), "status rework", testNow())
+	d, err := Generate(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(metaV2()), "status rework", testNow())
 	if err != nil || d == nil {
 		t.Fatalf("Generate: %v, %v", d, err)
 	}
@@ -141,11 +141,11 @@ func TestGenerate_NamesAreTimestamped(t *testing.T) {
 // Two migrations drafted at different times sort in creation order, which is
 // what makes a plain name sort the run order.
 func TestGenerate_NamesSortChronologically(t *testing.T) {
-	first, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), "first", testNow())
+	first, err := Generate(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(metaV2()), "first", testNow())
 	if err != nil || first == nil {
 		t.Fatalf("Generate: %v, %v", first, err)
 	}
-	second, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), "second",
+	second, err := Generate(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(metaV2()), "second",
 		testNow().Add(time.Hour))
 	if err != nil || second == nil {
 		t.Fatalf("Generate: %v, %v", second, err)
@@ -158,7 +158,7 @@ func TestGenerate_NamesSortChronologically(t *testing.T) {
 // A draft must never carry a from/to hash: that is what made a data-only
 // migration unrepresentable.
 func TestGenerate_EmitsNoShapeHashes(t *testing.T) {
-	d, err := Generate(metaV1().ShapeProjection(), metaV2().ShapeProjection(), "x", testNow())
+	d, err := Generate(metamodel.NewShapeProjection(metaV1()), metamodel.NewShapeProjection(metaV2()), "x", testNow())
 	if err != nil || d == nil {
 		t.Fatalf("Generate: %v, %v", d, err)
 	}
@@ -185,7 +185,7 @@ func TestGenerate_ExternalRefStubs(t *testing.T) {
 	from.Entities["task"].Properties["jira"] = metamodel.PropertyDef{Type: "string"}
 	live := metaV1()
 	live.Entities["task"].Properties["jira"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeExternalRef, System: "jira"}
-	d, err := Generate(from.ShapeProjection(), live.ShapeProjection(), "jira refs", testNow())
+	d, err := Generate(metamodel.NewShapeProjection(from), metamodel.NewShapeProjection(live), "jira refs", testNow())
 	if err != nil || d == nil {
 		t.Fatalf("Generate: %v, %v", d, err)
 	}
@@ -203,7 +203,7 @@ func TestGenerate_ExternalRefStubs(t *testing.T) {
 
 	moved := metaV1()
 	moved.Entities["task"].Properties["jira"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeExternalRef, System: "linear"}
-	d, err = Generate(live.ShapeProjection(), moved.ShapeProjection(), "move system", testNow())
+	d, err = Generate(metamodel.NewShapeProjection(live), metamodel.NewShapeProjection(moved), "move system", testNow())
 	if err != nil || d == nil {
 		t.Fatalf("Generate: %v, %v", d, err)
 	}

@@ -111,6 +111,14 @@ type MCPHost struct {
 	// Nil: commenting is off (no `comments:` block), and the tools are not
 	// registered.
 	Comments *MCPComments
+
+	// Actions runs the data-entry API's action operations for the MCP action
+	// tools (TKT-NW9QSN). Set whenever the App serves writes: the action set
+	// reloads with data-entry.yaml, so the tools exist even while it is
+	// empty.
+	//
+	// Nil: the tools are not registered.
+	Actions *MCPActions
 }
 
 // MCPWorlds is the host's world functions as methods, the shape the MCP
@@ -151,6 +159,7 @@ func mcpHost(a *App) MCPHost {
 		},
 		DefaultWorld: func() string { return effectiveDefaultWorld(a) },
 		Comments:     mcpComments(a.comments),
+		Actions:      mcpActions(a.write),
 	}
 }
 

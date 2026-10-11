@@ -16,7 +16,7 @@ import (
 // entity of the same type may carry the same non-empty value.
 //
 // It is called at every entity-write choke point right after
-// [metamodel.Metamodel.ValidateEntity] — createCore (create), UpdateEntity
+// [metamodel.Validator.ValidateEntity] — createCore (create), UpdateEntity
 // (update), and RecreateEntity (history restore). excludeSelfID names the
 // entity's own ID so a re-save of an unchanged value does not collide with
 // itself or with its own sibling faces. Pass "" when the create mints a new

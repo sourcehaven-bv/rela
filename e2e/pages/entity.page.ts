@@ -626,6 +626,24 @@ export class EntityPage extends BasePage {
     await this.page.waitForURL(new RegExp(`/entity/${entityType}/${id}(\\?|$)`));
   }
 
+  // ── Mentioned by (TKT-Q6AKUN) ──────────────────────────────────────────
+  // The card lists the entities whose body mentions this one.
+
+  /** The "Mentioned by" card; absent when nothing mentions the entity. */
+  get mentionedByPanel(): Locator {
+    return this.page.getByRole('region', { name: 'Mentioned by' });
+  }
+
+  /** The card's link to one source entity. */
+  mentionedByLink(entityType: string, id: string): Locator {
+    return this.mentionedByPanel.locator(`a[href="/entity/${entityType}/${id}"]`);
+  }
+
+  async clickMentionedBy(entityType: string, id: string): Promise<void> {
+    await this.mentionedByLink(entityType, id).click();
+    await this.page.waitForURL(new RegExp(`/entity/${entityType}/${id}(\\?|$)`));
+  }
+
   // ── New-tab affordances (TKT-3CSZRG) ────────────────────────────────────
   // Navigable rows, cells and non-mutating nav controls are real <a href>
   // elements so the browser can open them in a tab. These helpers expose the

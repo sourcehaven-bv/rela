@@ -364,7 +364,7 @@ func (imp *Importer) validateEntityData(ed *EntityData) error {
 	}
 
 	// Validate against metamodel
-	errs := imp.meta.ValidateEntity(e.ID, e.Type, e.Properties)
+	errs := metamodel.NewValidator(imp.meta).ValidateEntity(e.ID, e.Type, e.Properties)
 	if len(errs) > 0 {
 		msgs := make([]string, len(errs))
 		for i, e := range errs {

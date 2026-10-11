@@ -659,7 +659,7 @@ func (ce *copyEngine) buildCopyTarget(
 	keepTargetExternalRefs(ce.m.deps.Meta, plan, target)
 
 	hard, _ := partitionValidationErrors(
-		ce.m.deps.Meta.ValidateEntity(target.ID, target.Type, target.Properties))
+		metamodel.NewValidator(ce.m.deps.Meta).ValidateEntity(target.ID, target.Type, target.Properties))
 	if len(hard) > 0 {
 		return newValidationError(hard)
 	}

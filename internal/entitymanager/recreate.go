@@ -8,6 +8,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -113,7 +114,8 @@ func recreateEntity(ctx context.Context, m *Manager, e *entity.Entity, allowRefs
 
 	// DEC-HWZHA: hard structural errors abort (the API layer maps these to
 	// 422); soft conditions surface as warnings on the result.
-	hard, soft := partitionValidationErrors(m.deps.Meta.ValidateEntity(e.ID, e.Type, e.Properties))
+	v := metamodel.NewValidator(m.deps.Meta)
+	hard, soft := partitionValidationErrors(v.ValidateEntity(e.ID, e.Type, e.Properties))
 	if len(hard) > 0 {
 		return nil, newValidationError(hard)
 	}
