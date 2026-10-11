@@ -35,6 +35,10 @@ const columns: TableColumn[] = [
   { key: 'usedBy', header: 'Used by', field: 'usedBy', width: 320 },
 ]
 
+function routeOf(row: { id: string }): string {
+  return configureRoute.choiceList(row.id)
+}
+
 const name = computed(() => machineName(label.value, '_'))
 const error = computed(() =>
   label.value.trim() && choiceListNames(draft.currentSchema).includes(name.value)
@@ -69,7 +73,7 @@ function add() {
       name-label="Choice list"
       intro="A choice list is a set of options, such as the statuses a ticket can have. Properties use it as their type."
       empty="No choice lists yet."
-      :to="(row) => configureRoute.choiceList(row.id)"
+      :to="routeOf"
     >
       <template #cell-usedBy="{ item }">
         <RlText size="sm" tone="muted">{{ item.usedBy || 'Not used' }}</RlText>

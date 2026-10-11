@@ -30,6 +30,10 @@ const columns: TableColumn[] = [
   { key: 'columnsBy', header: 'Columns by', field: 'columnsBy', width: 160 },
 ]
 
+function routeOf(row: { id: string }): string {
+  return configureRoute.board(row.id)
+}
+
 function add(id: string, title: string, entityType: string) {
   const choice = propertiesOf(draft.currentSchema, entityType).find(
     (p) => p.choiceList || p.inlineValues.length
@@ -63,7 +67,7 @@ function add(id: string, title: string, entityType: string) {
       name-label="Board"
       intro="A board shows records as cards in columns, one column per option of a choice, such as status."
       empty="No boards yet."
-      :to="(row) => configureRoute.board(row.id)"
+      :to="routeOf"
     />
   </ConfigurePage>
 </template>
