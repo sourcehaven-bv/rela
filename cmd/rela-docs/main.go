@@ -3,9 +3,10 @@
 // screenshot{} captures) to resolved Markdown.
 //
 // It is a separate binary from `rela` on purpose: the screenshot{} island
-// drives a headless Chrome via internal/docscapture, which links chromedp
-// (~15 MB). Shipping docs build here keeps that dependency out of the default
-// `rela` / `rela-server` binaries, which the common CRUD user never needs.
+// drives a headless Chrome via internal/docscapture, which links a
+// browser-automation library (~15 MB). Shipping docs build here keeps that
+// dependency out of the default `rela` / `rela-server` binaries, which the
+// common CRUD user never needs.
 //
 // Usage:
 //

@@ -7,6 +7,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // writeOpts is the parsed trailing options table shared by the create
@@ -18,21 +19,30 @@ type writeOpts struct {
 	// Content is the relation body. A pointer so "absent" and "set to the
 	// empty string" stay distinguishable, matching entity.RelationOptions.
 	Content *string
+	// Expect is the caller's token the target must still have
+	// (rela.update_entity only).
+	Expect store.EntityVersion
+	// Token asks the write to return the caller's token of the row as
+	// written. Expect implies it. Without either the write takes no token
+	// and pays for no read-back.
+	Token bool
 }
 
 // Known keys per binding. Package-level so the unknown-key rejection and its
 // test read the SAME set — an allowlist the test restates by hand drifts from
 // the parser it is meant to pin.
 var (
-	createEntityOptKeys   = []string{"face"}
+	createEntityOptKeys   = []string{"face", "token"}
 	createRelationOptKeys = []string{"face", "content"}
 	deleteRelationOptKeys = []string{"face"}
+	updateEntityOptKeys   = []string{"expect", "token"}
 
 	// Prebuilt lookup sets, so the rejection path does not rebuild a map per
 	// write — these bindings run inside script loops.
 	createEntityOptSet   = optKeySet(createEntityOptKeys)
 	createRelationOptSet = optKeySet(createRelationOptKeys)
 	deleteRelationOptSet = optKeySet(deleteRelationOptKeys)
+	updateEntityOptSet   = optKeySet(updateEntityOptKeys)
 )
 
 // optKeySet indexes an allowlist for membership testing.
@@ -124,6 +134,18 @@ func readWriteOptKeys(
 			}
 			body := string(str)
 			o.Content = &body
+		case "expect":
+			str, ok := raw.(lua.LString)
+			if !ok || str == "" {
+				return fmt.Errorf("option %q must be a non-empty token string", key)
+			}
+			o.Expect = store.EntityVersion(str)
+		case "token":
+			b, ok := raw.(lua.LBool)
+			if !ok {
+				return fmt.Errorf("option %q must be a boolean, got %s", key, raw.Type())
+			}
+			o.Token = bool(b)
 		}
 	}
 	return nil

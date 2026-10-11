@@ -19,10 +19,11 @@ import (
 // handler into the shared run-state store, never handed back through the
 // process that enqueued it (BUG-TKL08E).
 //
-// # Why not neoq's own scheduler
+// # Why not the job queue library's own scheduler
 //
-// neoq offers StartCron, and it is deliberately unused. It is an in-process
-// robfig/cron ticker that enqueues an empty job (memory_backend.go:160):
+// The job queue library that internal/jobs wraps offers StartCron, and it is
+// deliberately unused. It is an in-process cron ticker that enqueues an empty
+// job (its memory backend, memory_backend.go:160):
 //
 //   - No missed-run detection. It fires only while the process is alive, so a
 //     daily task would never run on a desktop app that is closed at the
@@ -34,8 +35,8 @@ import (
 //   - The enqueue error is discarded, so a task that fails to queue vanishes.
 //
 // Adopting it would also drop the retry ladder, the clock-jump guard
-// (BUG-ZKK2UL) and run_as attribution. What neoq is good at — worker pools,
-// retry mechanics, durability — is what this file uses it for.
+// (BUG-ZKK2UL) and run_as attribution. What the job queue library is good at —
+// worker pools, retry mechanics, durability — is what this file uses it for.
 
 // TaskKind is the job kind for a scheduled Lua script.
 //

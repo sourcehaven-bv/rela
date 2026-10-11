@@ -209,7 +209,8 @@ func draftActiveStep(
 		if warn := cardinalityNotSwapped(relType, current, live); warn != "" {
 			fmt.Fprintf(w, "  # WARNING — %s\n", warn)
 		}
-	case "relation_endpoint_narrowed", "relation_cardinality_tightened", "relation_symmetry_changed":
+	case "relation_endpoint_narrowed", "relation_cardinality_tightened", "relation_symmetry_changed",
+		"property_system_changed":
 		fmt.Fprintf(w, "  # TODO — %s: no declarative step can fix this; write a lua step or adjust the data by hand\n", d.Detail)
 	}
 }
@@ -237,7 +238,23 @@ func draftConvertStep(w *strings.Builder, d metamodel.ShapeDelta, live metamodel
 		return
 	}
 	fmt.Fprintf(w, "  # TODO — no built-in coercion to %q: write migrations/%s-%s.lua\n", ps.Type, owner, prop)
+	if ps.Type == metamodel.PropertyTypeExternalRef {
+		draftExternalRefScript(w, prop)
+	}
 	fmt.Fprintf(w, "  # - lua: {entity: %s, script: migrations/%s-%s.lua}\n", owner, owner, prop)
+}
+
+// draftExternalRefScript drafts the Lua for a string property that becomes
+// an external ref (TKT-SM20FG, D8): the old string is taken as the id. The
+// operator checks that guess, and adds a url if the system has one.
+func draftExternalRefScript(w *strings.Builder, prop string) {
+	fmt.Fprintf(w, "  #   GUESS — the stored string is the remote id; check it, then save as the script:\n")
+	fmt.Fprintf(w, "  #   function migrate(entity)\n")
+	fmt.Fprintf(w, "  #     local v = entity.properties[%q]\n", prop)
+	fmt.Fprintf(w, "  #     if type(v) ~= \"string\" then return nil end  -- already a ref, or empty\n")
+	fmt.Fprintf(w, "  #     if v == \"\" then return { unset = { %q } } end\n", prop)
+	fmt.Fprintf(w, "  #     return { properties = { [%q] = { id = v } } }\n", prop)
+	fmt.Fprintf(w, "  #   end\n")
 }
 
 // cardinalityNotSwapped reports bounds the operator left behind when swapping

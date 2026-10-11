@@ -49,8 +49,9 @@ type mcpServices struct {
 	// closed is set by Close. The watcher's Stop does NOT wait for an
 	// in-flight callback, so a change event can be mid-flight when shutdown
 	// begins; without this flag that callback would assemble a whole new
-	// service generation — job queue, mail worker, GC sweep — against a store
-	// Close has already torn down, and nothing would ever stop them.
+	// service generation — job queue, mail worker, GC sweep, version sweep —
+	// against a store Close has already torn down, and nothing would ever stop
+	// them.
 	closed bool
 	// attachUploads bounds this process's concurrent MCP uploads. It
 	// outlives reloads for the same reason.
@@ -138,23 +139,31 @@ func (s *mcpServices) reload() (relamcp.Deps, error) {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	// Re-check: Close may have run, or another reload may have landed, while
 	// this one was assembling. Either way the successor is already obsolete
 	// and must be retired rather than published — otherwise its job queue and
 	// mail worker outlive the process's teardown.
+	//
+	// When Close won, the successor's version sweep has been running since
+	// Assemble returned, against a store Close may already have torn down.
+	// Until next.CloseAssembly below stops it, a tick can fail on the closed
+	// handle; the sweep logs that at Debug, since it only happens on shutdown.
 	if s.closed || s.svc != old {
+		s.mu.Unlock()
 		next.CloseAssembly()
 		return relamcp.Deps{}, errors.New("reload schema: superseded before publish")
 	}
+	s.svc = next
+	deps := s.deps()
+	s.mu.Unlock()
 
 	// Retire the superseded assembly's background workers (job queue, mail,
-	// GC sweep) WITHOUT closing the store or searcher the new one now uses.
+	// GC sweep, version sweep) WITHOUT closing the store or searcher the new
+	// one now uses. Outside mu: stopping the version sweep waits, without a
+	// bound, for an in-flight tick, and nothing reaches old once next is
+	// published.
 	old.CloseAssembly()
-
-	s.svc = next
-	return s.deps(), nil
+	return deps, nil
 }
 
 // watchSchema subscribes to schema.yaml and publishes a rebuilt dependency
@@ -282,32 +291,39 @@ func (s *mcpServices) attachmentDeps() relamcp.AttachmentDeps {
 // the watcher and [appbuild.Services.Close] are idempotent.
 func (s *mcpServices) Close() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	// Set before anything is torn down: a reload callback already blocked on
 	// mu must observe this and abort rather than rebuild on a dead store.
+	// Once it is set no reload publishes, so the teardown below runs outside
+	// mu on the captured assemblies: stopping a version sweep waits, without
+	// a bound, for an in-flight tick.
 	s.closed = true
-	if s.stopSchemaWatch != nil {
-		s.stopSchemaWatch()
-		s.stopSchemaWatch = nil
+	stopSchemaWatch := s.stopSchemaWatch
+	s.stopSchemaWatch = nil
+	watcher, current, origin := s.watcher, s.svc, s.origin
+	s.mu.Unlock()
+
+	if stopSchemaWatch != nil {
+		stopSchemaWatch()
 	}
-	if s.watcher != nil {
-		s.watcher.Stop()
+	if watcher != nil {
+		watcher.Stop()
 	}
 	// Two steps, because after a reload the current assembly and the one that
 	// owns the shared resources are different objects.
 	//
 	// The CURRENT assembly holds this generation's background services (job
-	// queue, mail, GC sweep) and nothing else that is exclusively its own —
-	// its store and searcher are the origin's. Stop those workers only.
+	// queue, mail, GC sweep, version sweep) and nothing else that is
+	// exclusively its own — its store and searcher are the origin's. Stop
+	// those workers only.
 	//
 	// The ORIGIN assembly owns the store and the search closer, so it gets the
 	// full Close. When no reload has happened the two are the same object, and
 	// Close's internal sync.Once makes the pair collapse to exactly one
 	// teardown.
-	if s.svc != s.origin {
-		s.svc.CloseAssembly()
+	if current != origin {
+		current.CloseAssembly()
 	}
-	return s.origin.Close()
+	return origin.Close()
 }
 
 // --- Watcher adapter ---

@@ -33,7 +33,7 @@ func printDerivedDrift(outcomes []store.DerivedObjectOutcome, dryRun bool) (drif
 			fmt.Printf("  - %s %s\n", verb, o.Reason)
 		case store.DerivedUnenforced:
 			drift = true
-			if o.Spec.Kind == store.DerivedUnique {
+			if o.Spec.Kind == store.DerivedUnique || o.Spec.Kind == store.DerivedExternalRefUnique {
 				fmt.Printf("  ! NOT enforced: %s: %s (%d duplicate value group(s))\n",
 					describeDerived(o.Spec), o.Reason, o.BlockingCount)
 			} else {
@@ -55,6 +55,8 @@ func describeDerived(spec store.DerivedObjectSpec) string {
 	switch spec.Kind {
 	case store.DerivedUnique:
 		return fmt.Sprintf("unique constraint on %s.%s", spec.Type, spec.Property)
+	case store.DerivedExternalRefUnique:
+		return fmt.Sprintf("external-ref unique index on %s.%s", spec.Type, spec.Property)
 	case store.DerivedListIndex:
 		return fmt.Sprintf("list index on %s.%v ordered by %v", spec.Type, spec.Properties, spec.OrderBy)
 	default:

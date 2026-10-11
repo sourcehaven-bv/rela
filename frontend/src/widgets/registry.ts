@@ -11,6 +11,7 @@ import SelectWidget from './SelectWidget.vue'
 import MultiSelectWidget from './MultiSelectWidget.vue'
 import RruleWidget from './RruleWidget.vue'
 import FileWidget from './FileWidget.vue'
+import ExternalRefWidget from './ExternalRefWidget.vue'
 
 // defaultWidgetFor reproduces FieldRenderer's historical dispatch order
 // exactly (RR-0Z1P6). Order matters: `list` wins over `values`, which
@@ -25,6 +26,7 @@ export function defaultWidgetFor(propertyDef?: PropertyDef): string {
   if (propertyDef?.type === 'integer') return 'number'
   if (propertyDef?.type === 'rrule') return 'rrule'
   if (propertyDef?.type === 'file') return 'file'
+  if (propertyDef?.type === 'external_ref') return 'external-ref'
   return 'text'
 }
 
@@ -128,6 +130,11 @@ export const WIDGET_REGISTRATIONS: ReadonlyArray<{
   },
   { name: 'rrule', component: RruleWidget, supportedPropertyTypes: ['rrule'] },
   { name: 'file', component: FileWidget, supportedPropertyTypes: ['file'] },
+  {
+    name: 'external-ref',
+    component: ExternalRefWidget,
+    supportedPropertyTypes: ['external_ref'],
+  },
 ]
 
 function buildDefaultRegistry(): WidgetRegistry {

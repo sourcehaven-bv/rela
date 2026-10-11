@@ -54,13 +54,15 @@ func AtFaces(faces ...entity.Face) FaceSelection {
 	return FaceSelection{mode: selectFaces, faces: slices.Clone(faces)}
 }
 
-// Lowered returns s with a world flattened to a face set where the world
-// ranks nothing for entityType (see [WorldScope.FlatFaces]): the two select
-// the same rows, and the set needs no per-family ranking. Every other
-// selection, and a query over no single type, is returned unchanged.
-// SQL backends call it before they choose between the flat and the ranked
-// plan.
-func (s FaceSelection) Lowered(entityType string) FaceSelection {
+// FlattenedWhenUnranked returns s with a world replaced by a plain face set
+// when the world offers entityType at most one candidate face (its chain, plus
+// the implicit face under `otherwise: default`; see [WorldScope.FlatFaces]).
+// There is then nothing to rank: the face set selects the same rows as the
+// world, and a backend can filter it with an index range scan instead of
+// choosing one face per entity. Every other selection, and a query over no
+// single type, is returned unchanged. SQL backends call it before they choose
+// between the flat and the ranked plan.
+func (s FaceSelection) FlattenedWhenUnranked(entityType string) FaceSelection {
 	if s.mode != selectWorld || entityType == "" || !s.world.IsSet() {
 		return s
 	}

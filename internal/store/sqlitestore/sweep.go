@@ -2,12 +2,15 @@ package sqlitestore
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/store/bgloop"
 )
 
 // The version-reconciliation sweep (the SQLite half of TKT-9INY0Y).
@@ -53,77 +56,91 @@ func sweepDefaults(c store.SweepConfig) store.SweepConfig {
 	return c
 }
 
-// sweep is the periodic version-reconciliation goroutine.
-type sweep struct {
-	store    *Store
-	provider store.ProjectionProvider
-	cfg      store.SweepConfig
-	cancel   context.CancelFunc
-	done     chan struct{}
-	// beforeCapture, when set, runs between the candidate query and the
-	// captures. Tests use it to write a row the query has already read.
-	beforeCapture func()
-	// more is set by a tick that filled its batch and made progress, so run
-	// starts the next tick at once rather than an Interval later. Touched only
-	// from the run goroutine.
-	more bool
+// VersionSweep is the periodic version-reconciliation service: it captures
+// create/update versions for settled rows.
+//
+// It is a service of its own rather than a goroutine the store owns
+// (TKT-IPXEZQ). The wiring site that builds it also starts and stops it, and
+// must call [VersionSweep.Stop] before closing the database; a tick still in
+// flight would otherwise fail against a closed handle.
+type VersionSweep struct {
+	loop *bgloop.Loop
 }
 
-// StartVersionSweep implements [store.VersionSweeper]: it starts the periodic
-// reconciliation sweep that captures create/update versions for settled rows.
+// NewVersionSweep builds the sweep over st. It does not start it; call
+// [VersionSweep.Start].
 //
-// The wiring layer calls this after construction, supplying a ProjectionProvider
-// derived from the active metamodel (which the store deliberately does not
-// hold). The sweep is stopped by Store.Close. Calling it again replaces the
-// previous sweep.
+// It takes the store rather than the bare handle because a tick also holds
+// the store's versionMu, which purge and version tags take too; that mutex is
+// what keeps a purge from being undone by a capture in flight.
 //
-// A nil provider disables capture rather than stamping versions with no schema
-// projection — logged loudly, because silently not capturing history is the
-// failure mode hardest to notice.
-func (s *Store) StartVersionSweep(provider store.ProjectionProvider, cfg store.SweepConfig) {
+// Nil: st and provider are rejected. A sweep without a provider has no schema
+// projection to stamp on a version, and a missing store is a wiring fault. A
+// transaction view is rejected too: its versionMu is not the one purge takes.
+func NewVersionSweep(st *Store, provider store.ProjectionProvider, cfg store.SweepConfig) (*VersionSweep, error) {
+	if st == nil {
+		return nil, errors.New("sqlitestore: version sweep needs a store")
+	}
 	if provider == nil {
-		slog.Warn("sqlitestore: version sweep not started (no projection provider)")
-		return
+		return nil, errors.New("sqlitestore: version sweep needs a projection provider")
 	}
-	sctx, cancel := context.WithCancel(context.Background())
-	sw := &sweep{
-		store:    s,
-		provider: provider,
-		cfg:      sweepDefaults(cfg),
-		cancel:   cancel,
-		done:     make(chan struct{}),
+	if st.parent != nil {
+		return nil, errors.New("sqlitestore: version sweep needs the root store, not a transaction view")
 	}
-
-	s.sweepMu.Lock()
-	prev := s.sweep
-	s.sweep = sw
-	s.sweepMu.Unlock()
-
-	prev.stop()
-	go sw.run(sctx)
+	return newVersionSweep(&sweep{store: st, provider: provider, cfg: sweepDefaults(cfg)})
 }
 
-// stop signals the loop to exit and waits for it. Idempotent and nil-safe, so
-// Close can call it unconditionally.
+// newVersionSweep wraps worker in the shared start-once, stop-and-wait
+// lifecycle.
+func newVersionSweep(worker *sweep) (*VersionSweep, error) {
+	loop, err := bgloop.New(worker.run)
+	if err != nil { // coverage-ignore: defensive: worker.run is never nil
+		return nil, err
+	}
+	return &VersionSweep{loop: loop}, nil
+}
+
+// Start launches the sweep goroutine on a detached context, independent of any
+// request. Only the first call starts it: a second call, or a call after
+// [VersionSweep.Stop], does nothing. Build a new sweep to run again.
+func (v *VersionSweep) Start() { v.loop.Start() }
+
+// Stop signals the goroutine to exit and waits for it. Safe to call more than
+// once, concurrently, on a sweep that was never started, and on a nil
+// receiver.
 //
 // The wait is UNBOUNDED, and that is a deliberate trade on the shutdown path.
 // Canceling the context stops the loop from starting another tick, but a
-// statement already in flight runs to completion, so Close can block for as
+// statement already in flight runs to completion, so Stop can block for as
 // long as one selectCandidates takes. Waiting is still the right choice:
 // returning early would let a tick issue its remaining inserts against a
 // database the caller is about to close, which turns a slow shutdown into a
 // spurious error on every run — and, with the purge path, into a capture
 // landing after an erasure.
-func (s *sweep) stop() {
-	if s == nil {
+func (v *VersionSweep) Stop() {
+	if v == nil {
 		return
 	}
-	s.cancel()
-	<-s.done
+	v.loop.Stop()
 }
 
+// sweep is the tick worker behind [VersionSweep]. Its fields are touched only
+// from the run goroutine (or a test calling tick directly), never
+// concurrently, so it needs no lock of its own.
+type sweep struct {
+	store    *Store
+	provider store.ProjectionProvider
+	cfg      store.SweepConfig
+	// beforeCapture, when set, runs between the candidate query and the
+	// captures. Tests use it to write a row the query has already read.
+	beforeCapture func()
+	// more is set by a tick that filled its batch and made progress, so run
+	// starts the next tick at once rather than an Interval later.
+	more bool
+}
+
+// run ticks every Interval until ctx is canceled.
 func (s *sweep) run(ctx context.Context) {
-	defer close(s.done)
 	ticker := time.NewTicker(s.cfg.Interval)
 	defer ticker.Stop()
 	for {
@@ -137,11 +154,23 @@ func (s *sweep) run(ctx context.Context) {
 			for first := true; first || (s.more && ctx.Err() == nil); first = false {
 				s.more = false
 				if err := s.tick(ctx); err != nil && ctx.Err() == nil {
-					slog.Warn("sqlitestore: version sweep tick failed", "error", err)
+					logTickError(err)
 				}
 			}
 		}
 	}
+}
+
+// logTickError reports a failed tick: at Warn, unless the database is
+// already closed. That happens only during shutdown, when a host closed the
+// database before stopping the sweep (an MCP reload racing Close is one such
+// window), and the next tick never comes.
+func logTickError(err error) {
+	if strings.Contains(err.Error(), "database is closed") {
+		slog.Debug("sqlitestore: version sweep tick after the database closed", "error", err)
+		return
+	}
+	slog.Warn("sqlitestore: version sweep tick failed", "error", err)
 }
 
 // tick runs one reconciliation pass: entities first, then relations, in a fixed
@@ -613,27 +642,9 @@ func (s *sweep) captureRelation(
 
 // sweepNow runs one tick synchronously. It exists for tests, which must not
 // depend on a ticker interval elapsing; production always goes through run.
-//
-// The sweep it builds is fully formed — a closed done channel and a real
-// cancel — even though tick touches neither. A zero-valued sweep works only
-// for as long as nothing calls stop() on it, and stop() on a nil done channel
-// blocks its caller forever: a latent deadlock one refactor away, for the cost
-// of two lines here.
+// It builds only the tick worker: the lifecycle lives on [VersionSweep], so
+// there is no goroutine handle here to leave half-formed.
 func sweepNow(ctx context.Context, s *Store, provider store.ProjectionProvider, cfg store.SweepConfig) error {
-	done := make(chan struct{})
-	close(done)
-	sctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	sw := &sweep{
-		store:    s,
-		provider: provider,
-		cfg:      sweepDefaults(cfg),
-		cancel:   cancel,
-		done:     done,
-	}
-	return sw.tick(sctx)
+	sw := &sweep{store: s, provider: provider, cfg: sweepDefaults(cfg)}
+	return sw.tick(ctx)
 }
-
-// ensure the store satisfies the sweeper capability at compile time.
-var _ store.VersionSweeper = (*Store)(nil)

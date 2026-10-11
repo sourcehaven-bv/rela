@@ -22,14 +22,14 @@
 // # There is deliberately no raw-HTML or raw-CSS field
 //
 // Everything a script supplies is UNTRUSTED and goes through the same
-// goldmark -> bluemonday -> template -> douceur pipeline as entity content, in
-// that order, by reusing mailrender.Renderer wholesale rather than
-// reimplementing any step.
+// markdown renderer -> HTML sanitizer -> template -> CSS inliner pipeline as
+// entity content, in that order, by reusing mailrender.Renderer wholesale
+// rather than reimplementing any step.
 //
 // Adding an `html = ...` escape hatch here would reintroduce exactly the
 // sanitizer bypass this binding exists to give authors an alternative to, and
-// a `css = ...` field would hand untrusted values to douceur, which validates
-// nothing and runs last. Neither field belongs here. If one seems necessary,
+// a `css = ...` field would hand untrusted values to the CSS inliner, which
+// validates nothing and runs last. Neither field belongs here. If one seems necessary,
 // the honest answer is still mail.send.
 //
 // # Errors raise

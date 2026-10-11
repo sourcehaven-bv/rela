@@ -29,7 +29,10 @@ func (s *Store) GraphPosition(
 	if err := checkGraphQueryScope(q); err != nil {
 		return store.Position{}, false, err
 	}
-	sqlText, args := buildGraphPositionSQL(q, id)
+	sqlText, args, err := buildGraphPositionSQL(q, id)
+	if err != nil {
+		return store.Position{}, false, err
+	}
 
 	var (
 		pos                store.Position
@@ -37,7 +40,7 @@ func (s *Store) GraphPosition(
 		nextID, nextType   *string
 		rowNumber, matched int
 	)
-	err := s.db.QueryRow(ctx, sqlText, args...).Scan(&rowNumber, &matched, &prevID, &prevType, &nextID, &nextType)
+	err = s.db.QueryRow(ctx, sqlText, args...).Scan(&rowNumber, &matched, &prevID, &prevType, &nextID, &nextType)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.Position{}, false, nil
 	}
@@ -54,9 +57,12 @@ func (s *Store) GraphPosition(
 	return pos, true, nil
 }
 
-func buildGraphPositionSQL(q store.GraphQuery, id string) (sqlText string, args []any) {
+func buildGraphPositionSQL(q store.GraphQuery, id string) (sqlText string, args []any, err error) {
 	q.Limit, q.Offset = 0, 0
-	inner, args := buildGraphQuerySQLSelect(q, graphSelectHeaders)
+	inner, args, err := buildGraphQuerySQLSelect(q, graphSelectHeaders)
+	if err != nil {
+		return "", nil, err
+	}
 
 	var window strings.Builder
 	for _, spec := range q.OrderBy {
@@ -78,5 +84,5 @@ func buildGraphPositionSQL(q store.GraphQuery, id string) (sqlText string, args 
 		" lag(s.id) OVER w AS prev_id, lag(s.type) OVER w AS prev_type," +
 		" lead(s.id) OVER w AS next_id, lead(s.type) OVER w AS next_type" +
 		" FROM (" + inner + ") s WINDOW w AS (ORDER BY " + window.String() + ")" +
-		") p WHERE p.id = $" + strconv.Itoa(len(args)), args
+		") p WHERE p.id = $" + strconv.Itoa(len(args)), args, nil
 }

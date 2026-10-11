@@ -1,12 +1,12 @@
 // Package migstatetest is the conformance harness every
 // [datamigration.StateStore] implementation must pass.
 //
-// The point is that the four tiers (file, postgres, sqlite, memory) cannot
-// drift. Migration state decides which migrations run against a store, so a
-// backend that loses an applied entry re-runs a migration and a backend that
-// invents one skips it — and both failures are invisible until data is already
-// wrong. Holding every implementation to one executable contract is cheaper
-// than discovering the divergence per backend.
+// The point is that the storage tiers' implementations cannot drift.
+// Migration state decides which migrations run against a store, so a backend
+// that loses an applied entry re-runs a migration and a backend that invents
+// one skips it — and both failures are invisible until data is already wrong.
+// Holding every implementation to one executable contract is cheaper than
+// discovering the divergence per backend.
 package migstatetest
 
 import (

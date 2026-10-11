@@ -64,10 +64,11 @@ type DBTX interface {
 // Store is a PostgreSQL-backed store.Store.
 //
 // The exported surface is the mandated store.Store interface (a Required-interface
-// exception, so its count tracks the interface size) plus two version seams that
-// own or hand out lifecycle state and so stay here: StartVersionSweep (the store's
-// own reconciliation goroutine, owning s.mu/s.sweep) and VersionStore (a one-line
-// accessor handing out the versioning service over this store's shared pool).
+// exception, so its count tracks the interface size) plus VersionStore, a
+// one-line accessor handing out the versioning service over this store's shared
+// pool. The reconciliation sweep is not on the store: it is [VersionSweep],
+// built and owned by the wiring site, because it needs nothing from the store
+// but the pool (TKT-IPXEZQ, -1 exported / -1 method).
 // Content VERSIONING itself (entity + relation history reads, version writes,
 // purge) is NOT here: it lives in [VersionStore], a separate service injected by
 // the composition root, because a store "just stores" and versioning is a distinct
@@ -159,8 +160,8 @@ type DBTX interface {
 // +1 exported / +1 method: SoftDelete, the optional store.SoftDeleteProvider
 // accessor. The work lives on softDeleter and free functions in softdelete.go.
 //
-//plimsoll:max-exported-methods=46
-//plimsoll:max-methods=56
+//plimsoll:max-exported-methods=45
+//plimsoll:max-methods=55
 type Store struct {
 	db           DBTX
 	searchTitles SearchTitles
@@ -175,8 +176,6 @@ type Store struct {
 	// no-ops, as for a New() store with no listener wiring.
 	originID string
 	schema   string
-	listener *listener // nil unless a listener was started (see startListener)
-	sweep    *sweep    // nil unless a version-reconciliation sweep was started
 
 	// uniqueSpecs, when set (at wiring, via SetUniqueSpecProvider), yields the
 	// current metamodel's (type, property) unique pairs. The write path uses it
@@ -188,10 +187,15 @@ type Store struct {
 	// the concurrent write path never sees a torn value.
 	uniqueSpecs atomic.Pointer[[]store.DerivedObjectSpec]
 
-	mu          sync.Mutex // guards subscribers + nextSubID only
-	subscribers map[int]chan store.Event
-	nextSubID   int
-	closed      bool
+	// changeFeedMu guards the change-feed state below: the in-process
+	// subscriber fan-out, the cross-process listener handle and the closed
+	// flag. Nothing else is behind it. Open sets listener before the store is
+	// shared, so only Close reads it under the lock.
+	changeFeedMu sync.Mutex
+	subscribers  map[int]chan store.Event
+	nextSubID    int
+	listener     *listener // nil unless a listener was started (see startListener)
+	closed       bool
 
 	// txPending is nil on a normal store. On the tx-bound view a Tx
 	// callback receives (tx.go), it buffers in-process observer and
@@ -288,8 +292,8 @@ func (s *Store) LastModified(ctx context.Context) (time.Time, error) {
 // non-blocking send (dropped when the buffer is full), matching the
 // store.Watcher contract.
 func (s *Store) Subscribe(bufSize int) (events <-chan store.Event, cancel func()) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.changeFeedMu.Lock()
+	defer s.changeFeedMu.Unlock()
 
 	ch := make(chan store.Event, bufSize)
 	id := s.nextSubID
@@ -297,8 +301,8 @@ func (s *Store) Subscribe(bufSize int) (events <-chan store.Event, cancel func()
 	s.subscribers[id] = ch
 
 	cancel = func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
+		s.changeFeedMu.Lock()
+		defer s.changeFeedMu.Unlock()
 		if _, ok := s.subscribers[id]; ok {
 			delete(s.subscribers, id)
 			close(ch)
@@ -317,8 +321,8 @@ func (s *Store) emit(ev store.Event) {
 		s.txPending.add(func(p *Store) { p.emit(ev) })
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.changeFeedMu.Lock()
+	defer s.changeFeedMu.Unlock()
 	for _, ch := range s.subscribers {
 		select {
 		case ch <- ev:
@@ -335,8 +339,8 @@ func (s *Store) emitAll(evs []store.Event) {
 		s.txPending.add(func(p *Store) { p.emitAll(evs) })
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.changeFeedMu.Lock()
+	defer s.changeFeedMu.Unlock()
 	for _, ev := range evs {
 		for _, ch := range s.subscribers {
 			select {
@@ -352,31 +356,29 @@ func (s *Store) emitAll(evs []store.Event) {
 // Close tears down the change-feed listener (if any) and the watcher: it stops
 // the listener goroutine and closes its dedicated connection, then closes all
 // subscriber channels. It does NOT close the injected pool — the wiring layer
-// owns the pool's lifecycle.
+// owns the pool's lifecycle — and it does not stop a [VersionSweep], which
+// belongs to whoever built it.
 //
 // The listener is stopped FIRST (before subscriber channels close) so it can't
 // emit onto a closing channel; it uses its own connection, not the pool, so
 // closing it is independent of the pool's lifecycle.
 func (s *Store) Close() error {
 	// Stop the listener outside the lock — stop() blocks on the goroutine, which
-	// may call emit() (which takes s.mu); holding the lock here would deadlock.
-	s.mu.Lock()
+	// may call emit() (which takes s.changeFeedMu); holding the lock here would deadlock.
+	s.changeFeedMu.Lock()
 	if s.closed {
-		s.mu.Unlock()
+		s.changeFeedMu.Unlock()
 		return nil
 	}
 	s.closed = true
 	l := s.listener
 	s.listener = nil
-	sw := s.sweep
-	s.sweep = nil
-	s.mu.Unlock()
+	s.changeFeedMu.Unlock()
 
-	sw.stop() // nil-safe; blocks until the sweep goroutine exits
-	l.stop()  // nil-safe; blocks until the listener goroutine exits
+	l.stop() // nil-safe; blocks until the listener goroutine exits
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.changeFeedMu.Lock()
+	defer s.changeFeedMu.Unlock()
 	for id, ch := range s.subscribers {
 		close(ch)
 		delete(s.subscribers, id)

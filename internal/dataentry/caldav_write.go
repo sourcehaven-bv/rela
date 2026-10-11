@@ -425,7 +425,7 @@ func (b *caldavBackend) updateFromTodo(
 		// But "not found" here is not a trustworthy signal on its own:
 		// entitymanager collapses ANY GetEntity failure into ErrEntityNotFound
 		// (manager.go, "structural, not textual"), so malformed frontmatter from
-		// a bad merge, a transient EIO, or a dropped pgx connection all arrive
+		// a bad merge, a transient EIO, or a dropped database connection all arrive
 		// looking like a deletion. Answering those with staleWriteResponse would
 		// be unrecoverable: the 404 is deliberately permanent so the client
 		// DROPS its local copy, and the entity is still on disk — the user loses

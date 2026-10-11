@@ -16,14 +16,14 @@ import (
 // annotateAction injects an overlay drawing each annotation (arrow + text, or a
 // box) anchored to its target element, then verifies every anchor resolved. It
 // fails loud if any anchor matched no element (DR-S4 for annotations).
-func annotateAction(arrows []docs.Annotation) chromedp.Action {
-	return chromedp.ActionFunc(func(ctx context.Context) error {
+func annotateAction(arrows []docs.Annotation) chromedp.Action[chromedp.Void] {
+	return chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
 		script, err := annotateScript(arrows)
 		if err != nil {
 			return err
 		}
-		var missing []string
-		if err := chromedp.Evaluate(script, &missing).Do(ctx); err != nil {
+		missing, err := chromedp.Evaluate[[]string](script)(ctx, t)
+		if err != nil {
 			return err
 		}
 		if len(missing) > 0 {

@@ -44,6 +44,14 @@ func CheckEndpointShape(q store.GraphQuery) error {
 	if err := q.Faces.Validate(); err != nil {
 		return err
 	}
+	if err := store.ValidatePropPredicates(q.Props); err != nil {
+		return err
+	}
+	for _, br := range q.Narrowing {
+		if err := store.ValidatePropPredicates(br.Props); err != nil {
+			return err
+		}
+	}
 	for _, p := range []*store.RelationPredicate{q.HasInbound, q.HasOutbound} {
 		if err := checkEndpointShape(p, 0); err != nil {
 			return err
@@ -68,6 +76,9 @@ func checkEndpointShape(p *store.RelationPredicate, nesting int) error {
 	}
 	if nesting >= depthCap {
 		return fmt.Errorf("graphquerynaive: endpoint match nested deeper than %d hops", depthCap)
+	}
+	if err := store.ValidatePropPredicates(p.EndpointMatch.Props); err != nil {
+		return err
 	}
 	// An endpoint's own selection is optional (zero inherits the enclosing
 	// one), but a set one must be valid: InWorld of an unset scope would
@@ -419,14 +430,14 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 	// Property predicates first: they are pure in-memory checks on an
 	// entity already in hand, so a non-match skips the relation walks
 	// (which do I/O per candidate).
-	if !matchesProps(e, q.Props) {
-		return false, nil
+	if ok, err := matchesProps(e, q.Props); err != nil || !ok {
+		return false, err
 	}
 	// Caller-supplied narrowing, ANDed with everything else including Any.
 	// Checked here with the other in-memory predicates, and BEFORE the Any
 	// check below, which returns rather than falling through.
-	if !matchesNarrowing(e, q.Narrowing) {
-		return false, nil
+	if ok, err := matchesNarrowing(e, q.Narrowing); err != nil || !ok {
+		return false, err
 	}
 	if q.HasInbound != nil {
 		ok, err := matchesPredicate(ctx, r, e, *q.HasInbound, store.DirectionIncoming, q.Faces)
@@ -465,16 +476,16 @@ func matches(ctx context.Context, r Reader, e *entity.Entity, q store.GraphQuery
 // No branches means no constraint. An EMPTY branch holds, making the whole
 // disjunction vacuous — see [store.NarrowBranch]; a caller must drop the
 // Narrowing rather than emit one.
-func matchesNarrowing(e *entity.Entity, branches []store.NarrowBranch) bool {
+func matchesNarrowing(e *entity.Entity, branches []store.NarrowBranch) (bool, error) {
 	if len(branches) == 0 {
-		return true
+		return true, nil
 	}
 	for _, br := range branches {
-		if matchesProps(e, br.Props) {
-			return true
+		if ok, err := matchesProps(e, br.Props); err != nil || ok {
+			return ok, err
 		}
 	}
-	return false
+	return false, nil
 }
 
 // matchesAny reports whether at least one branch holds for e's stored face.
@@ -502,45 +513,60 @@ func matchesAny(
 // matchesProps reports whether every predicate holds (AND). Emptiness
 // and equality are delegated to internal/propmatch so this agrees
 // exactly with internal/filter and with the pgstore pushdown.
-func matchesProps(e *entity.Entity, props []store.PropPredicate) bool {
+func matchesProps(e *entity.Entity, props []store.PropPredicate) (bool, error) {
 	for _, p := range props {
-		if p.Scalar && p.Op == store.PropEqual && p.Value != "" {
-			value, ok := e.Properties[p.Property].(string)
-			if !ok || value != p.Value {
-				return false
-			}
-			continue
+		ok, err := matchesProp(e, p)
+		if err != nil || !ok {
+			return false, err
 		}
-		raw := e.Properties[p.Property]
+	}
+	return true, nil
+}
+
+// matchesProp decides one predicate of [matchesProps]. Every operator has
+// its own arm; an unknown one is [store.ErrInvalidQuery] rather than a
+// guess.
+func matchesProp(e *entity.Entity, p store.PropPredicate) (bool, error) {
+	raw := e.Properties[p.Property]
+	switch p.Op {
+	case store.PropKeyEqual:
+		return matchesKey(raw, p.Key, p.Value), nil
+	case store.PropEqual:
+		if p.Scalar && p.Value != "" {
+			value, ok := raw.(string)
+			return ok && value == p.Value, nil
+		}
+		return propmatch.Decide(raw, propmatch.OpEqual, p.Value) == propmatch.Match, nil
+	case store.PropNotEqual:
+		return propmatch.Decide(raw, propmatch.OpNotEqual, p.Value) == propmatch.Match, nil
+	case store.PropNotEqualOrEmpty:
 		// PropNotEqualOrEmpty is PropNotEqual widened to accept an unset
 		// property — the Lua `~=` reading. propmatch deliberately answers
 		// the filter-DSL question instead (empty is not in the population),
 		// so the empty case is decided here rather than by adding a second
 		// meaning to propmatch.Decide, which internal/filter also depends on.
-		if p.Op == store.PropNotEqualOrEmpty {
-			if propmatch.IsEmpty(raw) {
-				continue
-			}
-			if propmatch.Decide(raw, propmatch.OpNotEqual, p.Value) != propmatch.Match {
-				return false
-			}
-			continue
-		}
-		if p.Op == store.PropGreaterEqual || p.Op == store.PropLessEqual {
-			if !matchesOrdered(raw, p.Op, p.Value) {
-				return false
-			}
-			continue
-		}
-		op := propmatch.OpEqual
-		if p.Op == store.PropNotEqual {
-			op = propmatch.OpNotEqual
-		}
-		if propmatch.Decide(raw, op, p.Value) != propmatch.Match {
-			return false
-		}
+		return propmatch.IsEmpty(raw) || propmatch.Decide(raw, propmatch.OpNotEqual, p.Value) == propmatch.Match, nil
+	case store.PropGreaterEqual, store.PropLessEqual:
+		return matchesOrdered(raw, p.Op, p.Value), nil
+	default:
+		return false, store.UnknownPropOpError(p)
 	}
-	return true
+}
+
+// matchesKey decides [store.PropKeyEqual]: raw must be an object whose key
+// entry is the string value. Any other shape does not match.
+func matchesKey(raw any, key, value string) bool {
+	var entry any
+	switch m := raw.(type) {
+	case map[string]any:
+		entry = m[key]
+	case map[string]string:
+		entry = m[key]
+	default:
+		return false
+	}
+	s, ok := entry.(string)
+	return ok && s == value
 }
 
 // matchesOrdered decides [store.PropGreaterEqual] / [store.PropLessEqual]
@@ -733,8 +759,8 @@ func matchesEndpointRow(
 	ctx context.Context, r Reader, found *entity.Entity, p *store.EndpointPredicate,
 	sel store.FaceSelection, nesting int,
 ) (bool, error) {
-	if !matchesProps(found, p.Props) {
-		return false, nil
+	if ok, err := matchesProps(found, p.Props); err != nil || !ok {
+		return false, err
 	}
 	if p.HasInbound != nil {
 		ok, err := matchesPredicateAt(ctx, r, found, *p.HasInbound, store.DirectionIncoming, sel, nesting+1)

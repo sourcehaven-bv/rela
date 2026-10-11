@@ -46,10 +46,11 @@ type viewResult struct {
 	Parents map[string]map[string][]string
 
 	// EntryEdges maps a collection to the entry's own edges that reached it,
-	// for a collection a single flat `follow:` rule from `entry` writes: the
-	// one shape whose rows have one order (see sectionOrdering). Raw store
-	// edges, like Parents: a consumer reads only the edges of rows in the
-	// gated collection.
+	// for a collection a single flat `follow:` or `follow_incoming:` rule
+	// from `entry` writes: the one shape whose rows have one order (see
+	// sectionOrdering). Raw store edges, like Parents: a consumer reads only
+	// the edges of rows in the gated collection, and gates incoming edges
+	// before it orders by them.
 	//
 	// Nil: accepted — no collection qualifies.
 	EntryEdges map[string]entryEdges
@@ -58,6 +59,7 @@ type viewResult struct {
 // entryEdges is one collection's entry edges and the relation they are of.
 type entryEdges struct {
 	relation string
+	incoming bool
 	edges    []*entity.Relation
 }
 
@@ -309,11 +311,13 @@ func (h *viewsHandler) applyViewTraverse(
 		// order, each source's edges in store order.
 		var edges []*entity.Relation
 		foundIDs, byParent, edges = h.traverseViewMany(ctx, sourceIDs, sourceFaces, rule, w)
-		if rule.From == "entry" && rule.Follow != "" {
+		if rule.From == "entry" && rule.Follow+rule.FollowIncoming != "" {
 			if result.EntryEdges == nil {
 				result.EntryEdges = map[string]entryEdges{}
 			}
-			result.EntryEdges[rule.CollectAs] = entryEdges{relation: rule.Follow, edges: edges}
+			result.EntryEdges[rule.CollectAs] = entryEdges{
+				relation: rule.Follow + rule.FollowIncoming, incoming: rule.Follow == "", edges: edges,
+			}
 		}
 	}
 

@@ -36,6 +36,7 @@ const name = computed(() =>
   props.configuring ? 'Configure' : space.currentSpace?.label || props.appName
 )
 const hasMenu = computed(() => space.spaces.length > 1 || canConfigure.value || props.configuring)
+const configureHome = configureRoute.home()
 
 function homeOf(s: SidebarSpace): string {
   return withSpace(s.home, s.id)
@@ -91,9 +92,9 @@ function go(path: string, event: MouseEvent) {
       <RlMenuSeparator />
       <RlMenuItem
         icon="sliders"
-        :href="hrefOf(configureRoute.home())"
+        :href="hrefOf(configureHome)"
         :current="configuring"
-        @click="(e: MouseEvent) => go(configureRoute.home(), e)"
+        @click="(e: MouseEvent) => go(configureHome, e)"
       >Configure</RlMenuItem>
     </template>
   </RlMenu>

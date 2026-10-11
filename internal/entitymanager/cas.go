@@ -62,6 +62,9 @@ func writeAutomationProperties(
 	if err := rejectComputedPresent(deps, created.Type, stringMapAny(set)); err != nil {
 		return nil, err
 	}
+	if err := rejectExternalRefPresent(deps.Meta, created.Type, stringMapAny(set)); err != nil {
+		return nil, err
+	}
 	for attempt := 1; ; attempt++ {
 		stored, err := deps.Store.GetEntity(ctx, entity.Ref{ID: created.ID, Face: created.Face})
 		if err != nil {

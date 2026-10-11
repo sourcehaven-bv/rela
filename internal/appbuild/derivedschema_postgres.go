@@ -9,6 +9,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/queryplan"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/pgstore"
 )
@@ -71,29 +72,11 @@ func reconcileDerivedSchemaIfSupported(
 	logDerivedOutcomes(outcomes)
 }
 
-// uniqueSpecsFromMetamodel collects the (type, property) pairs the derived-schema
-// reconciler should enforce: every non-list property declared unique. Called at
-// store-open with the boot-time metamodel; it is NOT re-invoked on a live schema
-// reload (see Store.Reconcile's boot-only note).
+// uniqueSpecsFromMetamodel collects the specs the derived-schema reconciler
+// should enforce and the write path attributes violations to: every
+// `unique: true` property and every external ref ([queryplan.UniqueSpecs]).
+// Called at store-open with the boot-time metamodel; it is NOT re-invoked on
+// a live schema reload (see Store.Reconcile's boot-only note).
 func uniqueSpecsFromMetamodel(meta *metamodel.Metamodel) []store.DerivedObjectSpec {
-	if meta == nil {
-		return nil
-	}
-	var specs []store.DerivedObjectSpec
-	for _, typeName := range meta.EntityTypes() {
-		def, ok := meta.GetEntityDef(typeName)
-		if !ok {
-			continue
-		}
-		for propName, pd := range def.PropertyDefs() {
-			if pd.Unique && !pd.List {
-				specs = append(specs, store.DerivedObjectSpec{
-					Kind:     store.DerivedUnique,
-					Type:     typeName,
-					Property: propName,
-				})
-			}
-		}
-	}
-	return specs
+	return queryplan.UniqueSpecs(meta)
 }

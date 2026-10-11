@@ -43,7 +43,7 @@ const entityColumns = "id, type, face, properties, content, updated_at"
 // storeutil.PaginateWorldPrimes exists to avoid on the other backends.
 func buildEntitySelectSQL(q store.EntityQuery, keysetAfter, columns string) (sqlText string, args []any) {
 	b := &sqlBuilder{}
-	q.Faces = q.Faces.Lowered(q.Type)
+	q.Faces = q.Faces.FlattenedWhenUnranked(q.Type)
 	w := storeutil.RankingWorld(q)
 	if w.IsTrivial() {
 		where := entityWhere(b, q, keysetAfter)
@@ -163,7 +163,7 @@ func entityWhere(b *sqlBuilder, q store.EntityQuery, keysetAfter string) string 
 // how many unpublished drafts exist.
 func buildEntityCountSQL(q store.EntityQuery) (sqlText string, args []any) {
 	b := &sqlBuilder{}
-	q.Faces = q.Faces.Lowered(q.Type)
+	q.Faces = q.Faces.FlattenedWhenUnranked(q.Type)
 	w := storeutil.RankingWorld(q)
 	if w.IsTrivial() {
 		return "SELECT count(*) FROM entities" + entityWhere(b, q, ""), b.args
