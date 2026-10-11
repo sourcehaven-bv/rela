@@ -291,6 +291,26 @@ describe('EntityDetail world binding', () => {
       expect(w.find('.world-banner').exists()).toBe(false)
     })
 
+    // A reference in the body is resolved in the request's world, so its link
+    // must open the target in that world, not in the default one.
+    it.each([
+      [{ world: 'published' }, '/entity/policy/POL-2?world=published'],
+      [{}, '/entity/policy/POL-2'],
+    ])('links a body reference in the world of the request (%o)', async (query, href) => {
+      mockRoute.query = query
+      const w = await mountDetail({
+        ...viewResponse(),
+        sections: [section({
+          sectionId: 'content', display: 'content', hasContent: true, content: 'See `POL-2`.',
+        })],
+        mentions: { 'POL-2': { type: 'policy', title: 'Second policy' } },
+      })
+      rendersProof(w)
+      const link = w.findAll('a').find((a) => a.text() === 'Second policy')
+      expect(link?.attributes('href')).toBe(href)
+      w.unmount()
+    })
+
     it('renders the operator announcement alone when the world declares one', async () => {
       useSchemaStore().worlds.set('published', { readable: true, banner: 'In force' } as never)
       mockRoute.query = { world: 'published' }

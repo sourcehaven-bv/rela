@@ -582,6 +582,11 @@ the entity's title, so the file stays readable outside rela and the title
 cannot go stale. Titles you see are the ones you are permitted to see: a
 reference to an entity your ACL role cannot read stays as the bare ID.
 
+A reference names an entity, not a face. For a type with faces it resolves in
+the world you are reading in, like any bare ID: the reference shows the title
+of the face that world serves among the faces you may read, and the link opens
+the entity in that same world.
+
 ### File Properties on Forms
 
 A `file`-type property renders a file control: pick or drag a file, see its

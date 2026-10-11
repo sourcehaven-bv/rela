@@ -232,6 +232,10 @@ const pageState = computed<'pending' | 'loaded' | 'error'>(() => {
   return loading.value ? 'pending' : 'loaded'
 })
 const viewData = ref<ViewResponse | null>(null)
+// The world viewData was fetched in. Reference links in the rendered content
+// carry it rather than the live `worldParam`, so a link opens its target in
+// the world its title was resolved in, also while a world switch refetches.
+const viewWorld = ref<string | undefined>(undefined)
 // Reordering the rows of a section table shown in relation order.
 // A move changes one section's row order and nothing else on the page, so
 // the reload after it fetches the view alone, without the route-load bar or
@@ -239,8 +243,12 @@ const viewData = ref<ViewResponse | null>(null)
 const sectionReorder = useSectionReorder({
   view: viewData,
   reload: async () => {
-    const view = await fetchView(props.entityType, props.entityId, worldParam.value)
-    if (view) viewData.value = view
+    const world = worldParam.value
+    const view = await fetchView(props.entityType, props.entityId, world)
+    if (view) {
+      viewData.value = view
+      viewWorld.value = world
+    }
   },
 })
 const loadedCommands = ref<Command[]>([])
@@ -504,6 +512,7 @@ const renderedEntryContent = computed(() => {
   return renderMarkdown(source, {
     refResolver: refResolver.value,
     interactive: true,
+    world: viewWorld.value,
   })
 })
 
@@ -986,7 +995,8 @@ async function loadView() {
     // neighbour (TKT-WRLDAPI item 4b). Without it this page rendered draft
     // content while the selector said "published" — the API was correct and
     // the page simply never asked.
-    const view = await fetchView(props.entityType, props.entityId, worldParam.value)
+    const fetchedWorld = worldParam.value
+    const view = await fetchView(props.entityType, props.entityId, fetchedWorld)
     // An owned entity is shown as part of its owner. Redirect before
     // rendering anything, so the page does not flash this entity's own view.
     const owner = view?.entry?._owner
@@ -1002,6 +1012,7 @@ async function loadView() {
       return
     }
     viewData.value = view
+    viewWorld.value = fetchedWorld
     if (viewData.value?.entry) {
       // Seed the autosave baseline so the first toggle's no-op
       // suppression can compare against server state without waiting
@@ -2475,7 +2486,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
           >
             <div
               class="markdown-content md-body"
-              v-html="renderMarkdown(section.content || '', refResolver)"
+              v-html="renderMarkdown(section.content || '', { refResolver, world: viewWorld })"
             />
           </div>
 
@@ -2516,7 +2527,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
               <div
                 v-if="ent.hasContent"
                 class="markdown-content md-body"
-                v-html="renderMarkdown(ent.content || '', refResolver)"
+                v-html="renderMarkdown(ent.content || '', { refResolver, world: viewWorld })"
               />
             </article>
           </div>

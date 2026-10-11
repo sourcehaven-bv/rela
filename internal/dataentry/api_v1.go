@@ -1031,7 +1031,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// the caller's own grants, neither of which this validator ever covered.
 	// The response is `no-store` anyway, so a stale shared copy is not
 	// reachable.
-	result.Mentions = collectMentions(ctx, a.store, a.viewReader, a.Meta(), entity.Content)
+	result.Mentions = collectMentions(ctx, a.viewReader, a.Meta(), entity.Content)
 
 	// ETag for caching (visible-only path; deny-path above emits no ETag).
 	//
