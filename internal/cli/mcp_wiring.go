@@ -251,6 +251,8 @@ func (s *mcpServices) deps() relamcp.Deps {
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals
 	}
+	// Read only: stdio has no signed-in user to author a comment (TKT-QIQO1W).
+	deps.Comments = newStdioComments(s.svc.Comments(), reads.Reader, s.svc.Meta())
 	return deps
 }
 

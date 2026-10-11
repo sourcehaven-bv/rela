@@ -51,6 +51,9 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 		Attachments: testAttachmentDeps(t, svc, meta, audit.Nop{}),
 		World:       store.TrivialScope(),
 		Families:    store.TrivialScope(),
+		// Read only, as stdio `rela mcp` wires it: list_comments without the
+		// write tools.
+		Comments: &fakeComments{},
 	}
 }
 

@@ -103,6 +103,13 @@ type MCPHost struct {
 	// DefaultWorld names the world a read that names none runs in. Read
 	// per call because the schema hot-reloads.
 	DefaultWorld func() string
+
+	// Comments runs the data-entry API's comment operations for the MCP
+	// comment tools (TKT-QIQO1W).
+	//
+	// Nil: commenting is off (no `comments:` block), and the tools are not
+	// registered.
+	Comments *MCPComments
 }
 
 // MCPWorlds is the host's world functions as methods, the shape the MCP
@@ -142,6 +149,7 @@ func mcpHost(a *App) MCPHost {
 			return mcpWorldReadable(ctx, a, name)
 		},
 		DefaultWorld: func() string { return effectiveDefaultWorld(a) },
+		Comments:     mcpComments(a.comments),
 	}
 }
 
