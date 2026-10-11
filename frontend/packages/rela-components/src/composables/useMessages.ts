@@ -88,6 +88,22 @@ export interface Messages {
   /** Announced while a grabbed card is over a target cell in a swimlane board. */
   cardOverSwimlaneTarget: (args: { title: string; target: string; lane: string }) => string
 
+  /** A sortable row's handle, at rest: `Reorder Title, 2 of 5`. */
+  sortHandle: (args: { title: string; position: number; count: number }) => string
+  /** Announced when a sortable row is picked up or moved while held. */
+  sortGrabbed: (args: { title: string; position: number; count: number }) => string
+  /** Announced when a held row is put down. */
+  sortDropped: (args: { title: string; position: number; count: number }) => string
+  /** Announced when a held row is put back where it started. */
+  sortCancelled: (args: { title: string; position: number; count: number }) => string
+
+  /** The kind of a change in a change list, read before its label: `Added`. */
+  changeKind: (args: { kind: 'added' | 'changed' | 'removed' }) => string
+  /** Read before a change's old value, which is otherwise only struck through: `from`. */
+  changeBefore: () => string
+  /** Read before a change's new value: `to`. */
+  changeAfter: () => string
+
   /** A collapsed column's expand control: `Expand Done`. */
   expandSection: (args: { title: string }) => string
   /** A column heading's collapse control: `Collapse Done`. */
@@ -155,6 +171,16 @@ export const DEFAULT_MESSAGES: Messages = {
     `${title}, over ${target}. Press Enter to drop, Escape to cancel.`,
   cardOverSwimlaneTarget: ({ title, target, lane }) =>
     `${title}, over ${target} in ${lane}. Press Enter to drop, Escape to cancel.`,
+
+  sortHandle: ({ title, position, count }) => `Reorder ${title}, ${position} of ${count}`,
+  sortGrabbed: ({ title, position, count }) =>
+    `${title}, picked up, ${position} of ${count}. Use the up and down arrows to move it, Enter to drop, Escape to cancel.`,
+  sortDropped: ({ title, position, count }) => `${title}, dropped at ${position} of ${count}.`,
+  sortCancelled: ({ title, position, count }) => `${title}, put back at ${position} of ${count}.`,
+
+  changeKind: ({ kind }) => ({ added: 'Added', changed: 'Changed', removed: 'Removed' })[kind],
+  changeBefore: () => 'from',
+  changeAfter: () => 'to',
 
   expandSection: ({ title }) => `Expand ${title}`,
   collapseSection: ({ title }) => `Collapse ${title}`,

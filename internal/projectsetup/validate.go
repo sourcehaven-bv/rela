@@ -171,7 +171,13 @@ func validateDataEntry(path string, mm *metamodel.Metamodel, fs storage.FS) erro
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
 	}
+	return CheckDataEntry(data, mm)
+}
 
+// CheckDataEntry validates data-entry.yaml content against mm the way
+// `rela validate` does: structure, references, and every condition the
+// server compiles.
+func CheckDataEntry(data []byte, mm *metamodel.Metamodel) error {
 	var cfg dataentryconfig.Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("parsing YAML: %w", err)

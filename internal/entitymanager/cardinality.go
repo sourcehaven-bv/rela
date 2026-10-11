@@ -209,7 +209,7 @@ func (m *Manager) ReplaceRelations(
 	var deleted []*entity.Relation
 	err = m.deps.Store.Tx(ctx, func(view store.Store) error {
 		var txErr error
-		deleted, txErr = rp.write(ctx, view)
+		deleted, txErr = rp.write(store.ContextInTx(ctx), view)
 		return txErr
 	})
 	if err != nil {

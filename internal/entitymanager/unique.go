@@ -175,7 +175,8 @@ func writeWithUniqueCheck(
 		return write(deps.Store)
 	}
 	return deps.Store.Tx(ctx, func(view store.Store) error {
-		if err := checkUniqueProperties(ctx, deps.Meta, view, e, excludeSelfID); err != nil {
+		txCtx := store.ContextInTx(ctx)
+		if err := checkUniqueProperties(txCtx, deps.Meta, view, e, excludeSelfID); err != nil {
 			return err
 		}
 		return write(view)

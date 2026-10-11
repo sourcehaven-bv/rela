@@ -144,34 +144,44 @@ type WorkspaceProvider interface {
 // StartBackground starts the scheduler in a background goroutine if
 // schedules.yaml exists. It is a no-op if the file is missing. The scheduler
 // runs until ctx is cancelled. Errors are logged, not returned.
+//
+// The returned channel closes when the scheduler has stopped (at once when it
+// never started), so a caller that replaces the services it runs against can
+// wait for it before closing them.
 func StartBackground(
 	ctx context.Context,
 	ws WorkspaceProvider,
 	logger *slog.Logger,
-) {
+) <-chan struct{} {
+	done := make(chan struct{})
 	data, err := ws.Config().Load(ctx, ConfigFile)
 	if err != nil {
 		// No schedules.yaml — nothing to do.
-		return
+		close(done)
+		return done
 	}
 
 	cfg, err := ParseConfig(data)
 	if err != nil {
 		logger.Error("invalid schedules.yaml, scheduler not started", "error", err)
-		return
+		close(done)
+		return done
 	}
 
 	if len(cfg.Tasks) == 0 {
-		return
+		close(done)
+		return done
 	}
 
 	s, err := NewWithQueue(cfg, script.NewEngine(), ws, logger)
 	if err != nil {
 		logger.Error("scheduler not started", "error", err)
-		return
+		close(done)
+		return done
 	}
 
 	go func() {
+		defer close(done)
 		logger.Info("background scheduler starting", "tasks", len(cfg.Tasks))
 		if runErr := s.Run(ctx); runErr != nil {
 			// coverage-ignore-start: defensive: Scheduler.Run only ever returns nil (on ctx.Done or empty config), so
@@ -180,6 +190,7 @@ func StartBackground(
 			// coverage-ignore-end
 		}
 	}()
+	return done
 }
 
 // jobQueueProvider is the capability a WorkspaceProvider must carry to hand the

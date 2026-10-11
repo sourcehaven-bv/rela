@@ -957,6 +957,11 @@ type VersionMeta struct {
 	Origin Origin
 
 	CreatedAt time.Time
+
+	// Tags are the names of the version tags that point at this version, in
+	// name order (TKT-VO6VG9). Only tags of the face's current lifecycle are
+	// listed; see [VersionTagger]. Empty when the version carries none.
+	Tags []string
 }
 
 // VersionSnapshot is a full captured version: its metadata plus the entity
@@ -1336,6 +1341,11 @@ type VersionPurgeRequest struct {
 	DryRun        bool
 	PrincipalUser string
 	PrincipalTool string
+
+	// ForceTags lets the purge delete target rows that a version tag points
+	// at, dropping those tags in the same lock and transaction. Without it a
+	// tagged target makes the purge refuse (see [PurgeResult.TaggedTargets]).
+	ForceTags bool
 }
 
 // RelationVersionPurgeRequest is the relation analog, addressing a relation by
@@ -1389,6 +1399,38 @@ type PurgeResult struct {
 	// carries how many exist, for the operator message.
 	MultiLifetimeRefused bool
 	LifetimeCount        int
+
+	// TaggedTargets lists the version tags that point at a target row. It is
+	// filled before the dry-run return, so a preview names them. A non-empty
+	// list refuses the purge (Purged == 0) unless the request set ForceTags;
+	// a forced purge deletes these tags with the rows. Entity purges only:
+	// relation versions cannot be tagged.
+	TaggedTargets []PurgeTag
+
+	// Refusal names why a purge that was not a dry run deleted nothing
+	// despite resolving targets. Empty when it ran, and on a dry run, which
+	// reports the conditions through the flags above instead. A caller that
+	// asked for a deletion must check it: Purged == 0 alone does not tell
+	// "nothing matched" from "refused".
+	Refusal PurgeRefusal
+}
+
+// PurgeRefusal is the reason a purge deleted nothing. See
+// [PurgeResult.Refusal].
+type PurgeRefusal string
+
+// The reasons a purge refuses.
+const (
+	PurgeRefusedRename        PurgeRefusal = "the target set contains a rename row"
+	PurgeRefusedLiveRow       PurgeRefusal = "a live row still holds the content"
+	PurgeRefusedTagged        PurgeRefusal = "a version tag points at a target row"
+	PurgeRefusedMultiLifetime PurgeRefusal = "the key has more than one lifetime and none was selected"
+)
+
+// PurgeTag is one version tag on a purge target row.
+type PurgeTag struct {
+	Vseq int64
+	Name string
 }
 
 // VersionPurger hard-deletes entity version snapshot rows. Optional,
@@ -1397,8 +1439,9 @@ type VersionPurger interface {
 	// PurgeVersions resolves the request's target rows and, unless DryRun,
 	// deletes them — under mutual exclusion with the reconciliation sweep. It
 	// REFUSES (deleting nothing, PurgeResult flags the reason) when the target
-	// set contains a rename row, or when a live row still holds the content and
-	// ForceLive is not set. Returns the resolved/purged set for audit + display.
+	// set contains a rename row, when a live row still holds the content and
+	// ForceLive is not set, or when a version tag points at a target and
+	// ForceTags is not set. Returns the resolved/purged set for audit + display.
 	PurgeVersions(ctx context.Context, req VersionPurgeRequest) (*PurgeResult, error)
 }
 
@@ -1484,6 +1527,240 @@ type VersionSweeper interface {
 // downstream nil-check and panics at write time instead.
 type VersionServiceProvider interface {
 	VersionStore() VersionService
+}
+
+// --- Version tags (TKT-VO6VG9) ---
+//
+// A version tag is a name that points at one entity version row, kept beside
+// the versions rather than inside the entity: recording a version number in
+// the entity would itself change the entity and mint a new version. A sync
+// connector uses one as its 3-way merge base ("the version we last sent").
+//
+// A tag row holds the version's vseq, which is globally unique and never
+// renumbers, so it points at one row for good. The tags of a face are the tag
+// rows whose vseq lies in that face's fenced lineage AND in its current
+// lifecycle: after the newest delete that ends it. So a tag follows a rename,
+// and a deleted-then-recreated id, or an id that a rename reclaimed after a
+// delete, does not inherit the old lifecycle's tags. A name is unique per
+// lineage and face: setting it deletes every same-name row in the lineage
+// (all lifecycles) before inserting the new one.
+
+// Sentinel errors of the version tag capability.
+var (
+	// ErrInvalidVersionTag is returned for a tag name outside the grammar of
+	// [ParseVersionTagName], and for a malformed [TagRequest].
+	ErrInvalidVersionTag = errors.New("store: invalid version tag")
+	// ErrVersionNotTaggable is returned when the target version holds no
+	// content (a delete or purge row), predates the face's current
+	// lifecycle, or when the current state was purged.
+	ErrVersionNotTaggable = errors.New("store: version cannot be tagged")
+	// ErrTagInTx is returned when a tag write is attempted on a context
+	// marked by [ContextInTx]. See [VersionTagger].
+	ErrTagInTx = errors.New("store: version tags cannot be written inside a store transaction")
+)
+
+// versionTagMaxSegment is the longest a tag name segment may be.
+const versionTagMaxSegment = 63
+
+// VersionTagName is a validated version tag name. The zero value is not a
+// valid name; build one with [ParseVersionTagName].
+//
+// A name is one segment, or a namespace segment, a slash and a segment:
+// "sent-to-board", "sync/basecamp". A segment matches
+// [a-z0-9][a-z0-9._-]{0,62}. Names are refused, never escaped, because they
+// reach SQL parameters, Lua, the CLI and the audit log.
+type VersionTagName struct {
+	name string
+}
+
+// ParseVersionTagName validates s against the tag grammar.
+func ParseVersionTagName(s string) (VersionTagName, error) {
+	first, rest, namespaced := strings.Cut(s, "/")
+	if !validTagSegment(first) || (namespaced && !validTagSegment(rest)) {
+		return VersionTagName{}, fmt.Errorf("%w: %q must be a segment or namespace/segment, "+
+			"each segment [a-z0-9][a-z0-9._-]{0,62}", ErrInvalidVersionTag, s)
+	}
+	return VersionTagName{name: s}, nil
+}
+
+// validTagSegment reports whether seg matches [a-z0-9][a-z0-9._-]{0,62}. A
+// second slash falls through to here as an invalid character.
+func validTagSegment(seg string) bool {
+	if seg == "" || len(seg) > versionTagMaxSegment {
+		return false
+	}
+	for i := range len(seg) {
+		c := seg[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case i > 0 && (c == '.' || c == '_' || c == '-'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// String returns the name as written.
+func (n VersionTagName) String() string { return n.name }
+
+// IsZero reports whether n is the unset name.
+func (n VersionTagName) IsZero() bool { return n.name == "" }
+
+// Namespace returns the segment before the slash, or "" for a name in the
+// default namespace.
+func (n VersionTagName) Namespace() string {
+	ns, _, ok := strings.Cut(n.name, "/")
+	if !ok {
+		return ""
+	}
+	return ns
+}
+
+// TagRequest sets or moves one version tag.
+//
+// Attribution is boundary-populated, like [VersionPurgeRequest]: the store
+// never reads the principal from ctx. A request with neither PrincipalUser nor
+// PrincipalTool is refused rather than recorded as an unknown author.
+type TagRequest struct {
+	// Ref is the face whose lineage the tag belongs to.
+	Ref  entity.Ref
+	Name VersionTagName
+
+	// Expect is the compare-and-set token for [VersionTagger.TagCurrent]: when
+	// set, the tag is written only if [VersionOf] of the live row still equals
+	// it, else a *VersionConflictError. Empty means no precondition. Must be
+	// empty for TagVersion.
+	Expect EntityVersion
+
+	// Version is the 1-based ordinal for [VersionTagger.TagVersion], resolved
+	// under the same lock purge takes. Must be 0 for TagCurrent.
+	Version int
+
+	PrincipalUser string
+	PrincipalTool string
+}
+
+// UntagRequest deletes one version tag. Attribution as in [TagRequest].
+type UntagRequest struct {
+	Ref           entity.Ref
+	Name          VersionTagName
+	PrincipalUser string
+	PrincipalTool string
+}
+
+// VersionTagger names entity versions. Optional and backend-specific (pgstore
+// and sqlitestore), obtained through [VersionTaggerProvider].
+//
+// Writes serialize with the reconciliation sweep and with purge: pgstore
+// takes the sweep advisory lock (blocking, bounded by lock_timeout and ctx),
+// sqlitestore one write transaction. A write on a ctx marked by
+// [ContextInTx] fails with [ErrTagInTx]: it would run on a second connection
+// that cannot see the open transaction's writes (postgres) or wait on that
+// transaction's lock (sqlite). Tag from a background job or a scheduled
+// script, not from inside a write cascade.
+//
+// Absent entities, versions and tags read as [ErrNotFound]. The store does
+// no access control; callers gate reads and writes as for history.
+type VersionTagger interface {
+	// TagCurrent tags the live row's current state. When the newest version
+	// of the current lifecycle does not hold the live content, the store
+	// captures it first, exactly as the sweep would (same op rule, the live
+	// row's last_edited_by_* and origin_* columns, dedup by content hash), so
+	// a later sweep skips it. Fails with [ErrVersionNotTaggable] when the
+	// current state was purged.
+	TagCurrent(ctx context.Context, req TagRequest) (VersionMeta, error)
+
+	// TagVersion tags the version at req.Version. A delete or purge row, or a
+	// row before the face's current lifecycle, fails with
+	// [ErrVersionNotTaggable]. The ordinal is resolved under the lock, but a
+	// caller holding an ordinal from an earlier ListVersions may still name a
+	// row that a purge has since shifted.
+	TagVersion(ctx context.Context, req TagRequest) (VersionMeta, error)
+
+	// UntagVersion deletes the tag. ErrNotFound when the face's current
+	// lifecycle has no tag of that name.
+	UntagVersion(ctx context.Context, req UntagRequest) error
+
+	VersionTagLookup
+}
+
+// VersionTagLookup resolves version tags. A [VersionService] that can tag
+// implements it directly, without the projection [VersionTaggerProvider]
+// needs for writes, so a read surface type-asserts the VersionService to it.
+type VersionTagLookup interface {
+	// VersionByTag returns the tagged version: its snapshot, with the 1-based
+	// ordinal of the face's ListVersions order and its tags. The tag, the
+	// ordinal and the content come from one consistent read, so a purge or
+	// move running beside it cannot pair the tag with another row.
+	// ErrNotFound when absent.
+	VersionByTag(ctx context.Context, ref entity.Ref, name VersionTagName) (*VersionSnapshot, error)
+}
+
+// VersionTaggerProvider is a [VersionService] that can build a
+// [VersionTagger] over its own connection. Type-assert a VersionService to it
+// at the wiring site.
+//
+// The projection is required because tagging the current state may capture a
+// version, and a version is stamped with the render schema it was taken
+// under. Nil: rejected with an error, never replaced by a no-op provider.
+type VersionTaggerProvider interface {
+	VersionTagger(projection ProjectionProvider) (VersionTagger, error)
+}
+
+// inTxKey marks a context as running inside a [Transactor.Tx] callback.
+type inTxKey struct{}
+
+// ContextInTx marks ctx as running inside a store transaction. A Tx
+// implementation cannot do this itself, because its callback closes over
+// the caller's ctx, so the caller that opens the transaction marks the ctx
+// it uses inside. Store operations that must not run inside one (see
+// [VersionTagger]) refuse on a marked ctx.
+func ContextInTx(ctx context.Context) context.Context {
+	return context.WithValue(ctx, inTxKey{}, true)
+}
+
+// InTx reports whether ctx was marked by [ContextInTx].
+func InTx(ctx context.Context) bool {
+	v, _ := ctx.Value(inTxKey{}).(bool)
+	return v
+}
+
+// ValidateTagRequest checks the fields every backend requires of a tag
+// request: a name, an attributed principal and an addressable ref. current
+// selects the TagCurrent shape (Version 0) over the TagVersion shape (Version
+// >= 1, no Expect).
+func ValidateTagRequest(req TagRequest, current bool) error {
+	if err := validateTagTarget(req.Ref, req.Name, req.PrincipalUser, req.PrincipalTool); err != nil {
+		return err
+	}
+	switch {
+	case current && req.Version != 0:
+		return fmt.Errorf("%w: TagCurrent takes no version ordinal", ErrInvalidVersionTag)
+	case !current && req.Version < 1:
+		return fmt.Errorf("%w: TagVersion needs a version ordinal of 1 or more", ErrInvalidVersionTag)
+	case !current && req.Expect != "":
+		return fmt.Errorf("%w: TagVersion takes no expected token", ErrInvalidVersionTag)
+	}
+	return nil
+}
+
+// ValidateUntagRequest is [ValidateTagRequest] for an untag.
+func ValidateUntagRequest(req UntagRequest) error {
+	return validateTagTarget(req.Ref, req.Name, req.PrincipalUser, req.PrincipalTool)
+}
+
+func validateTagTarget(ref entity.Ref, name VersionTagName, user, tool string) error {
+	if name.IsZero() {
+		return fmt.Errorf("%w: missing tag name", ErrInvalidVersionTag)
+	}
+	if ref.ID == "" {
+		return fmt.Errorf("%w: missing entity id", ErrInvalidVersionTag)
+	}
+	if user == "" && tool == "" {
+		return fmt.Errorf("%w: a tag write must carry its principal", ErrInvalidVersionTag)
+	}
+	return nil
 }
 
 // EntityObserver receives notifications when entities are created, updated,

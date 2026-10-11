@@ -253,7 +253,8 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 
 	var result CopyResult
 	if err := tx.Tx(writeCtx, func(view store.Store) error {
-		res, cerr := applyCopy(writeCtx, ce.m.deps.Meta, view, plan)
+		txCtx := store.ContextInTx(writeCtx)
+		res, cerr := applyCopy(txCtx, ce.m.deps.Meta, view, plan)
 		if cerr != nil {
 			return cerr
 		}

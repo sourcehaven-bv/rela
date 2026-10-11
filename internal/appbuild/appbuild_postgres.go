@@ -112,3 +112,6 @@ func openBackend(
 		schedulerState: schedState,
 	}, poolCloser, nil
 }
+
+// DropStoreIndex is a no-op: this backend persists no file index.
+func DropStoreIndex(*Services) error { return nil }

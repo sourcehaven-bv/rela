@@ -185,3 +185,6 @@ func openBackend(base *SharedBase, db *sqlitedb.DB) (store.Store, search.Searche
 type dbCloser struct{ db *sqlitedb.DB }
 
 func (c dbCloser) Close() error { return c.db.Close() }
+
+// DropStoreIndex is a no-op: this backend persists no file index.
+func DropStoreIndex(*Services) error { return nil }

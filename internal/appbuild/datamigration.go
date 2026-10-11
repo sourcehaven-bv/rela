@@ -21,12 +21,10 @@ import (
 // no-ops where the versioning service is nil.
 //
 // The gate evaluates once per process start (and again inside the `rela
-// migrate` commands). There is no server-side metamodel hot-reload today —
-// a schema.yaml edit under a running server is picked up on restart, and the
-// gate verdict ages exactly as the served metamodel does, so the two can
-// never disagree. If live metamodel reload lands, the reload path must call
-// gate.Evaluate with the new metamodel (the Gate is built for it: verdicts
-// publish via atomic.Pointer and the sweep reads the latest one each tick).
+// migrate` commands). A Configure save builds new services from the new
+// files and then migrates them, so their boot verdict predates the
+// migration; it calls [ReevaluateDataGate] before serving them, and the
+// sweep reads the latest verdict each tick.
 //
 // Gate failures degrade to a warning: the gate must never fail boot
 // (DEC-HWZHA keeps writes soft either way). The returned stop function
@@ -36,7 +34,8 @@ func startDataMigration(
 	stateKV state.KV, migState datamigration.StateStore, meta *metamodel.Metamodel, st store.Store,
 	aud audit.Audit, versions store.VersionService, commentSvc *comments.Service, cacheDir string,
 	hasMigrations func(context.Context) (bool, error),
-) (stop func()) {
+) (stop func(), reevaluate func(context.Context) error) {
+	reevaluate = func(context.Context) error { return errors.New("datamigration: gate not started") }
 	// One lock per assembled store, shared by the gate and the GC sweep —
 	// and equivalent to the one the CLI builds for the same store, since
 	// LockFor derives it from the store/cache dir (TKT-CPCBR7).
@@ -49,7 +48,7 @@ func startDataMigration(
 	})
 	if err != nil {
 		slog.Warn("datamigration: gate not started", "error", err)
-		return func() {}
+		return func() {}, reevaluate
 	}
 	// Evaluate, never Persist. Recording an adoption is the CLI's job
 	// (TKT-XCJ0Y2): on the filesystem tier the record is a git-tracked file,
@@ -58,6 +57,10 @@ func startDataMigration(
 	// instances starting together have nothing to race over. A server may
 	// therefore serve with an unrecorded ADDITIVE change, which cannot
 	// invalidate stored content; the next `rela migrate` records it.
+	reevaluate = func(ctx context.Context) error {
+		_, evalErr := gate.Evaluate(ctx, meta)
+		return evalErr
+	}
 	if v, evalErr := gate.Evaluate(context.Background(), meta); evalErr != nil {
 		slog.Warn("datamigration: gate evaluation failed", "error", evalErr)
 	} else if v.Status != datamigration.StatusInSync {
@@ -71,12 +74,12 @@ func startDataMigration(
 	case "", "on", "1", "true":
 	default:
 		slog.Info("datamigration: gc sweep disabled via RELA_DATA_GC")
-		return func() {}
+		return func() {}, reevaluate
 	}
 	gc, err := datamigration.NewGC(gcDeps(st, meta, stateKV, aud, gate, versions, commentSvc, lock))
 	if err != nil {
 		slog.Warn("datamigration: gc sweep not started", "error", err)
-		return func() {}
+		return func() {}, reevaluate
 	}
 
 	// The first tick fires after one full interval, DELIBERATELY: services
@@ -113,7 +116,17 @@ func startDataMigration(
 	return func() {
 		cancel()
 		<-done
+	}, reevaluate
+}
+
+// ReevaluateDataGate re-classifies svc's stored data against its metamodel
+// and publishes the verdict the GC sweep acts on. Call it after running
+// migrations on services that were assembled before them.
+func ReevaluateDataGate(ctx context.Context, svc *Services) error {
+	if svc.reevaluateDataGate == nil {
+		return errors.New("datamigration: these services run no data gate")
 	}
+	return svc.reevaluateDataGate(ctx)
 }
 
 // envDuration reads a Go duration from the environment, falling back on

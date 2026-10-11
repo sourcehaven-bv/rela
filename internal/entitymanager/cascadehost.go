@@ -167,7 +167,7 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	// either (TKT-65LVAK): the count shares the Tx too, and an edge that
 	// exists already is the same no-op, not a refusal.
 	bounded := relTypeHasMax(h.deps.Meta, r.Type)
-	write := func(st store.Store) error {
+	write := func(ctx context.Context, st store.Store) error {
 		if bounded {
 			if _, gErr := st.GetRelation(ctx, r.Identity()); gErr == nil {
 				return store.ErrConflict
@@ -187,9 +187,9 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 	}
 	var err error
 	if bounded || metamodel.IsOwning(h.deps.Meta, r.Type) {
-		err = h.deps.Store.Tx(ctx, write)
+		err = h.deps.Store.Tx(ctx, func(st store.Store) error { return write(store.ContextInTx(ctx), st) })
 	} else {
-		err = write(h.deps.Store)
+		err = write(ctx, h.deps.Store)
 	}
 	if err != nil {
 		if errors.Is(err, store.ErrConflict) {
