@@ -12,9 +12,11 @@ import (
 // Related operations therefore share one tool with a selector argument
 // (trace direction, analyze check, schema type) rather than one tool each.
 func (s *Server) registerTools() {
-	// Entity tools
-	addTool(s, toolListEntities(), s.handleListEntities)
-	addTool(s, toolShowEntity(), s.handleShowEntity)
+	// Entity tools. The read tools a watch may replay are collected as
+	// they register; see watchableTools.
+	reads := map[string]mcpgo.ToolHandler{}
+	reads["list_entities"] = addTool(s, toolListEntities(), s.handleListEntities)
+	reads["show_entity"] = addTool(s, toolShowEntity(), s.handleShowEntity)
 	addTool(s, toolSearchEntities(), s.handleSearchEntities)
 	addTool(s, toolListWorlds(), func(ctx context.Context, _ *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		return handleListWorlds(ctx, s.deps()), nil
@@ -25,7 +27,9 @@ func (s *Server) registerTools() {
 	addTool(s, toolRenameEntity(), s.handleRenameEntity)
 
 	// Relation tools
-	addTool(s, toolListRelations(), s.handleListRelations)
+	reads["list_relations"] = addTool(s, toolListRelations(), s.handleListRelations)
+	s.watch = newWatchHandler(s, reads)
+	addTool(s, toolWatch(), s.watch.handle)
 	addTool(s, toolCreateRelation(), s.handleCreateRelation)
 	addTool(s, toolDeleteRelation(), s.handleDeleteRelation)
 

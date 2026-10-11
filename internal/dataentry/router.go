@@ -133,6 +133,9 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 
 	// REST API v1 - main API for Vue SPA
 	a.registerAPIV1Routes(inner)
+	// Live-view subscriptions for a stream (TKT-HJ5Z9Y). On `inner`, so the
+	// origin, CSRF and JWT checks apply like any other write.
+	inner.HandleFunc("/api/v1/_events/", a.live.handlePut)
 
 	// Remote MCP (TKT-BDG8U9) — opt-in, absent unless SetRemoteMCP enabled it.
 	registerMCPRoute(inner, a.mcpHandler)
@@ -253,7 +256,10 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// grant check happens before a resolver is constructed" STRUCTURAL: a
 	// handler cannot observe a non-default world on its context without the
 	// check having already passed, and cannot opt out of it.
-	handler = attachWorld(handler, a)
+	//
+	// responseGates applies this wrapper and attachACLRequest below, and
+	// liveReplayChain applies the same function to live-view replays. Add
+	// any wrapper that changes what a GET returns there, not here.
 
 	// Non-Declarative ACLs (NopACL, ReadOnlyACL) are deliberately outside this
 	// block, warning included. Neither can enforce `unmatched_principal` at all
@@ -275,8 +281,14 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 		// fires. If a future refactor reorders these, that invariant breaks
 		// quietly; keep SetJWTGate ahead of NewRouter.
 		warnUnmatchedRejectWithoutJWTGate(d.Policy(), a.jwtGate != nil)
-		handler = attachACLRequest(handler, d, a.jwtGate != nil)
 	}
+	handler = responseGates(handler, a)
+	replay := liveReplayChain(a)
+	a.live.replay.Store(&replay)
+	// Runs after the JWT gate and before attachACLRequest resolves the
+	// principal, so live-view replays start from the same identity a real
+	// request does.
+	handler = stashReplayPrincipal(handler)
 	// The JWT gate wraps BETWEEN attachACLRequest and stampAuditPrincipal, so at
 	// request time it runs after the stamper and before ACL. This ordering is
 	// load-bearing and the obvious alternative is wrong:
@@ -1070,4 +1082,29 @@ func spaHandler(fsys fs.FS) http.Handler {
 
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+// responseGates wraps h in the middleware that decides what a GET returns:
+// attachACLRequest outermost, then attachWorld, so at request time the ACL
+// request exists before the world check reads it. NewRouter and
+// liveReplayChain both call it, so a live-view replay passes the same gates
+// as the GET it stands for.
+func responseGates(h http.Handler, a *App) http.Handler {
+	h = attachWorld(h, a)
+	if d, ok := a.acl.(*acl.Declarative); ok && d != nil {
+		h = attachACLRequest(h, d, a.jwtGate != nil)
+	}
+	return h
+}
+
+// liveReplayChain is the handler a live-view replay runs through
+// (TKT-HJ5Z9Y): the v1 API routes on their own mux, so a replay cannot reach
+// the event stream, webhooks or the SPA, wrapped in responseGates. The
+// transport checks (host, origin, CSRF, request stats) are left out: they
+// judge the browser request, which the stream already passed, and do not
+// change a response body.
+func liveReplayChain(a *App) http.Handler {
+	api := http.NewServeMux()
+	a.registerAPIV1Routes(api)
+	return responseGates(api, a)
 }

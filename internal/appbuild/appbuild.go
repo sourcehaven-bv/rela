@@ -52,6 +52,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/rootfs"
@@ -763,6 +764,23 @@ func (s *Services) GatedReads() GatedReadBundle {
 		Searcher:   deps.Searcher,
 		Traversals: b,
 		LuaReads:   deps,
+		Rebind:     rebindFor(s.aclDeclarative),
+	}
+}
+
+// rebindFor returns the [GatedReadBundle.Rebind] for policy d: without a
+// policy it returns ctx unchanged, with one it replaces any attached
+// [acl.Request] by a fresh one for the ctx principal.
+func rebindFor(d *acl.Declarative) func(context.Context) (context.Context, error) {
+	if d == nil {
+		return func(ctx context.Context) (context.Context, error) { return ctx, nil }
+	}
+	return func(ctx context.Context) (context.Context, error) {
+		r, err := d.ForPrincipal(principal.From(ctx))
+		if err != nil {
+			return nil, err
+		}
+		return acl.WithRequest(ctx, r), nil
 	}
 }
 
@@ -786,6 +804,12 @@ type GatedReadBundle struct {
 	// searcher. It grants no capabilities and holds no elevated handle; a
 	// writer runtime pairs it with an EntityManager.
 	LuaReads lua.ReadDeps
+
+	// Rebind returns ctx with read access resolved again for its principal:
+	// an [acl.Request] attached upstream caches the principal's roles for
+	// its lifetime, so a consumer that reads repeatedly over one long call
+	// (the MCP watch tool) calls Rebind before each round of reads.
+	Rebind func(context.Context) (context.Context, error)
 }
 
 // gatedSearcher returns the search handle for an identity-bearing consumer.

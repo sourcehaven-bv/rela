@@ -830,6 +830,70 @@ per-id / opaque-cache-id and snapshot-versioned-ACL designs were
 considered and rejected as over-engineered for a staleness signal —
 see the TKT-POT9GQ design record and IDEA-CQMKMD.)
 
+**Resume tokens carry no count (TKT-3A1200).** Frames carry an `id:`
+resume token, and a reconnecting client receives one frame per readable
+type that changed since its token. The token is the position in an
+in-process change counter, encrypted with AES-GCM under a key made per
+process, so a client cannot read how many writes happened between two of its
+tokens, including writes to types it cannot see. The change feed behind it
+keeps only the last position per entity type, not an event history. As a
+result, whether a resume works depends only on whether the token is valid,
+never on how many writes happened, and a slow reader never falls behind and
+gets a different frame. A write to a hidden type produces no frame and does
+not change when frames are sent. A relation write, visible or not, can make
+a readable frame arrive earlier, within one 200 ms flush window, because it
+starts that window to re-derive the gate. This is a coarse signal that some
+relation changed; it names no entity and no type, and the earlier code had it
+too. A token is not bound to a principal:
+it grants nothing, and every resumed change is gated for the principal of the
+new connection, whose read gate is built from current membership.
+
+**Live views reveal what polling the GET would (TKT-HJ5Z9Y).** A
+`live:changed` frame is sent only when the subscribing principal's own
+response to a subscribed GET changed. The server finds that out by replaying
+the GET as that principal through the production handlers and the same
+`attachWorld` and `attachACLRequest` wrappers, so a hidden entity, a redacted
+field or a denied world shape the hash exactly as they shape the response.
+The frame carries only the client's own key. Checks run on a fixed 500 ms
+clock rather than on a window opened by the first change, so a write to a type
+the principal cannot read does not move when a frame arrives. The one
+exception is overload: a round with more pairs than its cap, or that runs past
+its time budget, frames the pairs it skipped without checking them, and any
+change starts a round. Under overload, a hidden write can therefore cause a
+frame for an unchanged response. That reveals at most that something was
+written in that 500 ms tick, never what or where. This holds only while a response is a pure function of the data
+the principal may read; `internal/dataentry/live_test.go` pins it for every
+subscribable shape, and a replay that is not byte-identical to the real GET
+fails `TestLive_ReplayMatchesGet`.
+
+The replay starts from the principal as the transport stamped it, before
+`principal_property` resolution, and is resolved again on every replay, so
+membership and access changes apply at once. The verified claims (roles,
+scopes, organization) are those from when the stream opened. A stream
+therefore keeps receiving frames computed for those claims until it closes,
+even after the token that opened it expires. TKT-5I6REX tracks ending a
+stream at token expiry. Subscriptions are bound to the identity that opened
+the stream: another identity, or the same one with different claims, cannot
+change them.
+
+**The MCP `watch` tool follows the same rules (TKT-FMS8BS).** It replays
+`show_entity`, `list_entities` and `list_relations` as the caller through the
+gated reader, and reports only the indices of the caller's own targets whose
+result changed. Checks run on a fixed 500 ms clock. Each check opens a fresh
+`acl.Request` for the caller, and world grants are checked against it, so a
+revoked membership or world grant applies at the next check rather than at
+the end of the call. Unlike live views, the check starts from the principal
+after `principal_property` resolution: a change to which user entity the
+caller maps to applies from the next call. Every check, and so every wait,
+ends at the call's timeout; a write the caller cannot read can start a check
+but cannot delay the answer past the timeout. `search_entities` cannot be
+watched: its ranking uses term statistics over the whole index, hidden
+documents included, so a hidden write can reorder visible hits. Polling search
+exposes that too; `watch` would turn it into a timed signal. The cursor holds
+digests keyed with a per-process secret and bound to the principal, so a
+cursor copied from a log cannot be used to test guesses about a result. A
+watch runs for at most 50 s on the principal it was authenticated as.
+
 **Audit isolation.** The stream deliberately does NOT carry audit
 records, principal identity, or attribution chains. A denied write
 produces a `denied-write` audit row server-side (with full attribution)

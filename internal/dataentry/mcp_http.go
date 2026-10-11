@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -153,9 +154,25 @@ func mcpHost(a *App) MCPHost {
 	}
 }
 
+// mcpWorldGate returns ctx with a read gate over the acl.Request on ctx.
+// attachACLRequest builds the same gate once per call; the MCP watch tool
+// replaces the Request on every pass (Deps.Rebind), and a world check through
+// the gate attached up front would keep the roles cached at call start.
+func mcpWorldGate(ctx context.Context) context.Context {
+	r := acl.FromContext(ctx)
+	if r == nil {
+		return ctx
+	}
+	gate, err := newACLReadGate(r)
+	if err != nil { // coverage-ignore: newACLReadGate only fails on a nil Request
+		return ctx
+	}
+	return withReadGate(ctx, gate)
+}
+
 // mcpSelectWorld resolves name for the ctx principal.
 func mcpSelectWorld(ctx context.Context, a *App, name string) (store.WorldScope, error) {
-	handle, err := resolveNamedWorld(ctx, a.worlds, name, effectiveDefaultWorld(a))
+	handle, err := resolveNamedWorld(mcpWorldGate(ctx), a.worlds, name, effectiveDefaultWorld(a))
 	switch {
 	case errors.Is(err, errWorldUnknown):
 		return store.WorldScope{}, fmt.Errorf("no such world %q; list_worlds names the worlds", name)
@@ -170,7 +187,7 @@ func mcpSelectWorld(ctx context.Context, a *App, name string) (store.WorldScope,
 // mcpWorldReadable reports whether the ctx principal may select name. An
 // unknown world is not readable.
 func mcpWorldReadable(ctx context.Context, a *App, name string) (bool, error) {
-	_, err := resolveNamedWorld(ctx, a.worlds, name, effectiveDefaultWorld(a))
+	_, err := resolveNamedWorld(mcpWorldGate(ctx), a.worlds, name, effectiveDefaultWorld(a))
 	switch {
 	case errors.Is(err, errWorldUnknown), errors.Is(err, errWorldDenied):
 		return false, nil

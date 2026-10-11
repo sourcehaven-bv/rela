@@ -12,7 +12,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
-	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -114,8 +113,10 @@ func gatedServer(t *testing.T) (*Server, context.Context) {
 		Config:        svc.Config(),
 		LuaWriteDeps:  lua.WriteDeps{ReadDeps: reads.LuaReads, EntityManager: svc.EntityManager()},
 		Watcher:       nopWatcher{},
+		Changes:       st,
+		Rebind:        reads.Rebind,
 		ProjectRoot:   t.TempDir(),
-		Attachments:   testAttachmentDeps(t, svc, meta, audit.Nop{}),
+		Attachments:   testAttachmentDeps(t, svc, meta),
 		World:         store.TrivialScope(),
 		Families:      store.TrivialScope(),
 	}

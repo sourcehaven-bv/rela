@@ -11,6 +11,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/changefeed"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -386,7 +387,10 @@ func newAppFromParts(cfg *Config, meta *metamodel.Metamodel, f *fixture, opts ..
 		scriptEngine:  script.NewEngine(),
 		fieldResolver: NopFieldVerdictResolver{},
 		auditSink:     audit.Nop{},
+		feed:          testFeed(),
+		sseTiming:     defaultSSETimings,
 	}
+	app.live = testLiveHub(app)
 	if meta != nil {
 		// Use an in-memory FS + project context so the workspace's
 		// templater has paths it can dereference. Without this,
@@ -443,6 +447,20 @@ func doRequest(t *testing.T, app *App, method, path string) *httptest.ResponseRe
 	return w
 }
 
+// testFeed returns an unstarted change feed, as NewApp builds one.
+// testLiveHub is the live-view hub NewApp would build for app.
+func testLiveHub(app *App) *liveHub {
+	return newLiveHub(func() *metamodel.Metamodel { return app.State().Meta })
+}
+
+func testFeed() *changefeed.Bus {
+	feed, err := changefeed.New()
+	if err != nil {
+		panic(err)
+	}
+	return feed
+}
+
 // newHandlerTestApp builds an App for handler tests.
 func newHandlerTestApp(t *testing.T) *App {
 	t.Helper()
@@ -492,7 +510,8 @@ func newHandlerTestApp(t *testing.T) *App {
 	// NewApp (which rejects a nil resolver). Without it, any handler that
 	// serializes entities for the wire panics — caught by the router walk
 	// test driving _search through the full router (TKT-TLQ94B).
-	app := &App{fieldResolver: NopFieldVerdictResolver{}}
+	app := &App{fieldResolver: NopFieldVerdictResolver{}, feed: testFeed(), sseTiming: defaultSSETimings}
+	app.live = testLiveHub(app)
 	rebindApp(app, fs, ctx, svc)
 	// Make sure kv hits the real filesystem through state.KV, matching production.
 	kvRoot, err := storage.NewRootedFS(fs, ctx.CacheDir)

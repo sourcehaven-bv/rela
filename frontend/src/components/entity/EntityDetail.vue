@@ -9,6 +9,9 @@ import { useScopeNavigation } from '@/composables'
 import { useBackTarget } from '@/composables/useBackTarget'
 import { isCancelledFetch } from '@/composables/usePageData'
 import { fetchView, getCommands, getErrorMessage } from '@/api'
+import { shouldDropHeldContent } from '@/api/errors'
+import { liveViewPath } from '@/api/live'
+import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { runAction } from '@/api/actions'
 import { useActionFeedback } from '@/composables/useActionFeedback'
 import { useWorld, worldQuery, DEFAULT_WORLD } from '@/composables/useWorld'
@@ -956,6 +959,60 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
     reportError(err, triggerEl, label)
   } finally {
     detailActionBusy.value = false
+  }
+}
+
+// Live view (TKT-HJ5Z9Y): the server says when this principal's view
+// response changed, including through related entities and access changes.
+// The refetch is background revalidation, so it shows no indicator; a refusal
+// drops the held view, any other failure keeps it.
+useLiveSubscription(
+  'entity-detail',
+  () => liveViewPath(props.entityType, props.entityId, worldParam.value),
+  () => void refreshView()
+)
+
+// A refresh waits while autosave holds or sends a change: the response would
+// replace optimistic state (a checkbox toggle in its debounce) that the next
+// edit is computed from. The deferred refresh runs once autosave is idle.
+// Both counts are reactive, which the watch below needs; isContentDirty is
+// not, and its post-save window would defer a refresh with nothing to rerun it.
+const autoSaveBusy = () =>
+  contentAutoSave.pendingCount.value > 0 || contentAutoSave.inFlightCount.value > 0
+let refreshDeferred = false
+let refreshSeq = 0
+watch(
+  () => !autoSaveBusy(),
+  (idle) => {
+    if (idle && refreshDeferred) void refreshView()
+  }
+)
+
+async function refreshView() {
+  if (autoSaveBusy()) {
+    refreshDeferred = true
+    return
+  }
+  refreshDeferred = false
+  // Only the latest refresh for the entity still on screen may land.
+  const seq = ++refreshSeq
+  const target = `${props.entityType}/${props.entityId}/${worldParam.value ?? ''}`
+  const current = () =>
+    seq === refreshSeq && target === `${props.entityType}/${props.entityId}/${worldParam.value ?? ''}`
+  try {
+    const view = await fetchView(props.entityType, props.entityId, worldParam.value)
+    if (!view || !current()) return
+    if (autoSaveBusy()) {
+      refreshDeferred = true
+      return
+    }
+    viewData.value = view
+    if (view.entry) contentAutoSave.recordServerSnapshot(view.entry)
+  } catch (err) {
+    if (current() && shouldDropHeldContent(err)) {
+      viewData.value = null
+      error.value = getErrorMessage(err, 'Failed to load entity')
+    }
   }
 }
 

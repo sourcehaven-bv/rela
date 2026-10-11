@@ -92,6 +92,7 @@ func newIncomingRelApp(t *testing.T, entities []*entity.Entity, relations []*ent
 	seedFromFixture(svc.Store(), f)
 
 	app := &App{fieldResolver: NopFieldVerdictResolver{}}
+	app.live = testLiveHub(app)
 	rebindApp(app, fs, ctx, svc)
 	app.schema.Publish(&Schema{
 		Cfg:        cfg,
