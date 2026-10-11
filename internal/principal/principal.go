@@ -41,6 +41,7 @@ package principal
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -455,7 +456,7 @@ const UserAutomation = "system:automation"
 
 // ReservedPrefix namespaces the [Principal.User] values that only rela's own
 // in-process entry points may assert. [UserScheduler] and [UserProvisioner] are
-// its current members.
+// its current members. [IntegrationPrefix] is the second reserved namespace.
 //
 // The whole prefix is reserved, not just the two constants above, so a future
 // `system:*` identity is safe by construction rather than depending on someone
@@ -463,8 +464,25 @@ const UserAutomation = "system:automation"
 // a `system:`-shaped subject cannot use it as an acting identity.
 const ReservedPrefix = "system:"
 
+// IntegrationPrefix namespaces the identities connectors run as
+// (TKT-01KZSO): `integration:basecamp` is the Basecamp connector. An operator
+// names one as `run_as` on a scheduled task or a background automation
+// action and grants it a role in acl.yaml. The rest of the name follows
+// [ValidIntegrationName], the same grammar as a token store connection name,
+// so one name identifies both the connection and the identity using it.
+//
+// It is reserved like [ReservedPrefix]: a connector's role usually holds
+// write grants and `tag:sync`, so a request asserting
+// `integration:basecamp` would borrow them.
+const IntegrationPrefix = "integration:"
+
 // IsReserved reports whether user names an internal identity under
-// [ReservedPrefix].
+// [ReservedPrefix] or [IntegrationPrefix].
+//
+// The comments service also refuses a reserved author, so neither a
+// `system:` job nor an `integration:` connector can write a comment. A
+// connector that needs to tell people something writes a property, such
+// as the Basecamp example's `sync_conflict`.
 //
 // **Request-path entry points MUST reject a reserved user.** These names are
 // grantable in acl.yaml — the DEC-O59WM4 migration binds [UserScheduler] to a
@@ -492,7 +510,76 @@ const ReservedPrefix = "system:"
 // ordering rather than by construction, and silently wrong for any future entry
 // point that passes a raw value (provisioning already does).
 func IsReserved(user string) bool {
-	return strings.HasPrefix(trimReservedNoise(user), ReservedPrefix)
+	u := trimReservedNoise(user)
+	return strings.HasPrefix(u, ReservedPrefix) || strings.HasPrefix(u, IntegrationPrefix)
+}
+
+// maxIntegrationName is the longest connection name: one leading character
+// plus up to 62 more.
+const maxIntegrationName = 63
+
+// ValidIntegrationName reports whether name may follow [IntegrationPrefix],
+// and so whether it may name a token store connection. A name is 1 to 63
+// characters of lowercase letters, digits, '_' and '-', starting with a
+// letter or digit. Windows reserved device names (con, nul, com1, ...) are
+// refused, because a connection name becomes a state key and the filesystem
+// state backend cannot store those.
+//
+// Refused, never escaped: a name that differed between the config, the
+// key and the principal would make one connection look like two.
+func ValidIntegrationName(name string) bool {
+	if name == "" || len(name) > maxIntegrationName {
+		return false
+	}
+	for i, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case (c == '_' || c == '-') && i > 0:
+		default:
+			return false
+		}
+	}
+	return !windowsReservedName[name]
+}
+
+// windowsReservedName lists the device names Windows refuses as a file name.
+var windowsReservedName = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
+	"com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
+	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+}
+
+// ValidateRunAs checks a `run_as` identity from operator-authored config.
+// The scheduler and background automation actions both call it, so the two
+// accept the same names.
+//
+// It refuses surrounding space and control characters, which would make the
+// principal differ from the acl.yaml name it is meant to match, and an
+// `integration:` name outside [ValidIntegrationName]. A `system:` name is
+// accepted only when allowSystem accepts it: each caller decides which of
+// rela's own identities its surface may use.
+//
+// Nil: allowSystem is accepted and refuses every `system:` name.
+func ValidateRunAs(runAs string, allowSystem func(string) bool) error {
+	if strings.TrimSpace(runAs) != runAs || runAs == "" {
+		return fmt.Errorf("invalid run_as %q: empty or surrounded by space", runAs)
+	}
+	if strings.ContainsFunc(runAs, unicode.IsControl) {
+		return fmt.Errorf("invalid run_as %q: control character", runAs)
+	}
+	if name, ok := strings.CutPrefix(runAs, IntegrationPrefix); ok {
+		if !ValidIntegrationName(name) {
+			return fmt.Errorf("invalid run_as %q: an integration name is 1-63 lowercase letters, "+
+				"digits, '_' or '-', starting with a letter or digit", runAs)
+		}
+		return nil
+	}
+	if strings.HasPrefix(runAs, ReservedPrefix) && (allowSystem == nil || !allowSystem(runAs)) {
+		return fmt.Errorf("invalid run_as %q: the %q identities are rela's own", runAs, ReservedPrefix)
+	}
+	return nil
 }
 
 // trimReservedNoise strips the leading characters that carry no identity but

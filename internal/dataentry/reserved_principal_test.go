@@ -34,6 +34,9 @@ var reservedUsers = []string{
 	principal.UserProvisioner,
 	"system:future",
 	"system:",
+	// A connector identity (TKT-01KZSO): its role usually holds write grants
+	// and tag:sync, so it is reserved the same way.
+	"integration:basecamp",
 }
 
 // capturePrincipal builds a handler that records the principal it was reached
@@ -348,19 +351,21 @@ func TestStampAuditPrincipal_RejectsControlCharPrefixedReserved(t *testing.T) {
 // blanket-read identity would be most valuable to an attacker.
 func TestRequireVerifiedJWT_ReservedSubjectRejectedOnMCPPath(t *testing.T) {
 	const header = "X-Auth-Assertion"
-	cfg := JWTGateConfig{
-		Verifier:   gateVerifier{validToken: "good.jwt.token", subject: principal.UserScheduler},
-		HeaderName: header,
-	}
-	h := newGateHandler(t, cfg)
+	for _, subject := range []string{principal.UserScheduler, "integration:basecamp"} {
+		cfg := JWTGateConfig{
+			Verifier:   gateVerifier{validToken: "good.jwt.token", subject: subject},
+			HeaderName: header,
+		}
+		h := newGateHandler(t, cfg)
 
-	req := httptest.NewRequest(http.MethodPost, MCPPath, http.NoBody)
-	req.Header.Set(header, "good.jwt.token")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
+		req := httptest.NewRequest(http.MethodPost, MCPPath, http.NoBody)
+		req.Header.Set(header, "good.jwt.token")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
 
-	if rec.Code == http.StatusOK {
-		t.Fatalf("reserved subject accepted on the MCP endpoint %q", MCPPath)
+		if rec.Code == http.StatusOK {
+			t.Fatalf("reserved subject %q accepted on the MCP endpoint %q", subject, MCPPath)
+		}
 	}
 }
 

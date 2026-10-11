@@ -245,3 +245,18 @@ func (s *Store) notify(ctx context.Context, q DBTX, ev store.Event) {
 	// pg_notify takes (text, text), both bound parameters — no injection surface.
 	_, _ = q.Exec(ctx, `SELECT pg_notify($1, $2)`, feedChannel, notifyPayload(s.originID, s.schema, ev))
 }
+
+// SchemaOf returns the schema st's tables live in, and false when st is not
+// a pgstore store. The token store binds sealed tokens and lock keys to it
+// (TKT-01KZSO). A package function so Store's method set stays the same.
+func SchemaOf(ctx context.Context, st any) (schema string, ok bool, err error) {
+	s, isPG := st.(*Store)
+	if !isPG {
+		return "", false, nil
+	}
+	schema, err = resolveSchema(ctx, s.db)
+	if err != nil {
+		return "", true, err
+	}
+	return schema, true, nil
+}

@@ -65,6 +65,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
+	"github.com/Sourcehaven-BV/rela/internal/tokenstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/userstate"
 	"github.com/Sourcehaven-BV/rela/internal/userstate/kvuserstate"
@@ -235,6 +236,10 @@ type Services struct {
 	// versionTags is the version tag writer (TKT-VO6VG9), built in
 	// finishAssembly over entityManager. See [VersionTags].
 	versionTags *entitymanager.VersionTags
+
+	// tokens is the connector token broker, or why there is none
+	// (TKT-01KZSO). See [Tokens].
+	tokens tokenSetup
 
 	// base is the SharedBase this Services was assembled from. Retained so a
 	// host can build a successor base from the same Config (see
@@ -546,6 +551,8 @@ type scriptEntityReaderFamily interface {
 	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
 	ResolveHeadersErr(ctx context.Context, refs []entity.Ref) (map[entity.Ref]visibility.ResolvedHeader, error)
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
+	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
 }
 
 // scriptReads returns the principal-bound script reader and the traversal gate
@@ -657,6 +664,7 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 		EntityManager: s.entityManager,
 		PileWriter:    pileWriterFor(s.piles),
 		VersionTags:   ScriptVersionTags(s),
+		OAuth:         ScriptOAuth(s),
 	}
 }
 
@@ -671,6 +679,7 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 		EntityManager: s.entityManager,
 		PileWriter:    pileWriterFor(s.piles),
 		VersionTags:   ScriptVersionTags(s),
+		OAuth:         ScriptOAuth(s),
 	}
 }
 
@@ -811,8 +820,8 @@ func gatedSearcher(
 }
 
 // GatedGraphReader is the row-and-tally read surface returned by
-// [Services.GatedReads]. Row reads are ACL-gated; the two counts are not —
-// see [gatedGraphReader] for why.
+// [Services.GatedReads]. Row reads and counts are ACL-gated — see
+// [gatedGraphReader].
 //
 // Resolve takes an entity ADDRESS (`ID` or `ID@face`) and reads the face it
 // names, or the face the reader's world resolves a bare id to. Family answers
@@ -838,19 +847,16 @@ type GatedGraphReader interface {
 }
 
 // gatedGraphReader composes the ACL-gated row reader with the raw store for
-// the two operations the gated reader does not provide.
+// the one operation the gated reader does not provide.
 //
 // The split is deliberate:
 //
 //   - Resolve / ListEntities / ListRelations go through `rows`, so a hidden
 //     entity is absent and a hidden edge is not listed.
-//   - CountEntities / CountRelations go to the raw store. A count is
-//     STRUCTURAL: it says how many rows of a declared type exist, never which.
-//     Entity *existence* is the secret the row gate protects; an aggregate
-//     tally of a type the metamodel already publishes is not. A count scoped
-//     to ONE entity is different, since it reveals that entity's hidden
-//     neighbors; cardinality analysis therefore folds its counts from
-//     ListRelationsStrict instead (TKT-5LW875).
+//   - CountEntities / CountRelations go through `rows` too, so a count is the
+//     length of the list it summarizes (TKT-QZTROQ). A count over the raw
+//     store told a caller how many rows exist of a type it may not read, and
+//     how many rows of a readable type are hidden from it.
 //   - GetRelation answers not-found unless both endpoints have a readable
 //     face ([visibility.Resolver.Family]), then reads the raw store. An edge
 //     at the zero tail is entity level, so the family check is the whole gate
@@ -960,11 +966,11 @@ func (g gatedGraphReader) readableFaces(ctx context.Context, id string) ([]entit
 }
 
 func (g gatedGraphReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
-	return g.raw.CountEntities(ctx, q)
+	return g.rows.CountEntities(ctx, q)
 }
 
 func (g gatedGraphReader) CountRelations(ctx context.Context, q store.RelationQuery) (int, error) {
-	return g.raw.CountRelations(ctx, q)
+	return g.rows.CountRelations(ctx, q)
 }
 
 // Collaborators bundles the fully-built dependencies of a [Services]
@@ -1273,6 +1279,11 @@ type options struct {
 	// backgroundAutomationJobs runs `background: true` automation actions
 	// on the job queue instead of in the foreground.
 	backgroundAutomationJobs bool
+
+	// tokenStore builds where connector refresh tokens live; see
+	// [WithTokenStore]. Nil means a sealed store on the database backends
+	// and none elsewhere.
+	tokenStore func(HostConfig) (tokenstore.Store, error)
 }
 
 // WithBackgroundAutomationJobs runs `background: true` automation actions
@@ -1819,6 +1830,9 @@ type SharedBase struct {
 	aclPolicy *acl.Policy
 	meta      *metamodel.Metamodel
 	worlds    worlds.Compiled
+	// conns is the parsed connections.yaml (TKT-01KZSO), empty when the
+	// file is absent. Parsed here so an invalid file fails the boot.
+	conns tokenstore.Connections
 	// reassembly marks a base built to re-assemble against an ALREADY-OPEN
 	// store, so [assemble] skips the store-open-only steps. Set by
 	// [SharedBase.ForReassembly]; false for a base that will open its own store.
@@ -1996,9 +2010,16 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("compile query scopes: %s", strings.Join(problems, "; "))
 	}
 
+	// An invalid connections.yaml fails the boot rather than leaving every
+	// connector without tokens behind a log line.
+	conns, err := loadConnections(context.Background(), cfg.configLoader())
+	if err != nil {
+		return nil, err
+	}
+
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
-		meta: meta, worlds: compiledWorlds,
+		meta: meta, worlds: compiledWorlds, conns: conns,
 	}, nil
 }
 
@@ -2449,12 +2470,12 @@ func assemble(
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(
 		base, st, stateKV, migState, cfgLoader, versions, refs.comments, mgr, jobQueue, readDeps.Host)
-
 	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
 		templater, cfgLoader, stateKV, migState, jobQueue, aliases, refs.comments, versions,
 		resolvedACL, aclDeclarative, fieldPol.redactor, schedState,
 	)
+	assembled.tokens = buildTokens(context.Background(), base, st, backendKV, readDeps.Host, attachLocker)
 	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine, refs, sweep)
 }
 
