@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 
 	"github.com/Sourcehaven-BV/rela/internal/docs"
@@ -51,23 +50,27 @@ func (c *Capturer) Inspect(ctx context.Context, spec docs.CaptureSpec, selector 
 	}
 	url := captureURL(trimSlash(c.proj.server.URL), spec)
 
-	var raw string
-	actions := []chromedp.Action{
+	steps := []chromedp.Action[chromedp.Void]{
 		// Same full-document teardown a capture does: one tab is reused for the
 		// whole build, and without this a navigation is a client-side route
 		// transition that can leave a watcher un-re-run and the page stuck
 		// pending. See the note in Capture.
 		chromedp.Navigate("about:blank"),
 		deviceMetricsOverride(),
-		network.SetExtraHTTPHeaders(network.Headers(map[string]any{roleHeader: spec.As})),
+		roleHeaderAction(spec.As),
 		chromedp.Navigate(url),
 		renderabilityGate(),
 		chromedp.Sleep(settleDelay),
-		readRegionText(selector, &raw),
 	}
 
 	//nolint:contextcheck // chromedp actions bind to the browser context (cctx), not the caller ctx
-	if err := chromedp.Run(cctx, actions...); err != nil {
+	raw, err := chromedp.Run(cctx, func(ctx context.Context, t *chromedp.Target) (string, error) {
+		if _, err := chromedp.Steps(steps...)(ctx, t); err != nil {
+			return "", err
+		}
+		return readRegionText(selector)(ctx, t)
+	})
+	if err != nil {
 		return nil, fmt.Errorf("inspect: %w", err)
 	}
 
@@ -94,7 +97,7 @@ func (c *Capturer) Inspect(ctx context.Context, spec docs.CaptureSpec, selector 
 // accessible name there rather than as child text — a kanban card's title is
 // its `aria-label`, and the card's own innerText is the truncated body. The
 // name is what a manual claims about.
-func readRegionText(selector string, out *string) chromedp.Action {
+func readRegionText(selector string) chromedp.Action[string] {
 	js := `(function(){
   var els = document.querySelectorAll(` + jsString(selector) + `);
   var out = [];
@@ -110,7 +113,7 @@ func readRegionText(selector string, out *string) chromedp.Action {
   }
   return JSON.stringify(out);
 })()`
-	return chromedp.Evaluate(js, out)
+	return chromedp.Evaluate[string](js)
 }
 
 // jsString renders s as a JavaScript string literal. The selectors it quotes
