@@ -162,6 +162,8 @@ func writeActionResponse(w http.ResponseWriter, resp *script.ActionResponse) {
 	hdr.Set("Content-Security-Policy", "sandbox; default-src 'none'")
 	hdr.Set("Cache-Control", "no-store")
 	w.WriteHeader(resp.Status)
+	// #nosec G705 -- hardened as the doc comment says: an allowlisted
+	// content type under nosniff and a sandbox CSP, never served as HTML.
 	if _, err := w.Write([]byte(resp.Body)); err != nil {
 		slog.Warn("dataentry: writing action response failed", "err", err)
 	}
