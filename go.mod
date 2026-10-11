@@ -36,7 +36,7 @@ require (
 	github.com/wneessen/go-mail v0.8.1
 	github.com/yuin/goldmark v1.8.6
 	github.com/yuin/gopher-lua v1.1.2
-	github.com/zalando/go-keyring v0.2.6
+	github.com/zalando/go-keyring v0.2.8
 	go.uber.org/goleak v1.3.0
 	golang.org/x/image v0.46.0
 	golang.org/x/net v0.60.0
@@ -47,7 +47,6 @@ require (
 )
 
 require (
-	al.essio.dev/pkg/shellescape v1.6.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
