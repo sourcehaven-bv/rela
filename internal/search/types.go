@@ -162,20 +162,20 @@ type Backend interface {
 
 // FieldMatcher is the optional match-provenance capability a Backend may
 // implement. MatchedFields reports, for a single already-loaded entity and
-// the same query text, which logical fields the match came from — using the
+// the same query text, which logical fields the match came from. It uses the
 // [FieldID] / [FieldContent] / [PropFieldPrefix] vocabulary and the backend's
-// OWN matcher, so provenance stays faithful to what Search actually matched.
+// own matching rules, so the answer is what Search actually matched. A
+// backend without it falls back to [MatchTextFields] (see
+// [Service.MatchedFields]).
 //
-// It answers per-entity (not per-corpus) because it runs only over the
-// candidate set the coarse Search already produced: the seam re-asks "which
-// fields?" for each surviving hit. A backend that cannot cheaply reproduce its
-// own per-field matching may leave this unimplemented; the field-visibility
-// filter then degrades (see [Visible.SearchVisibleFields]).
+// It answers per entity because it runs only over the hits Search already
+// produced.
 //
-// The returned set must be a SUPERSET-safe approximation of the true match:
-// it may report an extra field, but must not omit a field the coarse Search
-// genuinely matched on — omitting one could drop a hit the principal was
-// entitled to see (a false drop). When in doubt, report the field.
+// It must never report a field Search did not match on. The field-visibility
+// filter ([Visible.SearchVisibleFields]) keeps a hit when a visible field
+// matched, so an extra field can return a hit whose only match is a hidden
+// property. Leaving out a field that did match is safe: the hit is dropped,
+// which hides more, never less. When in doubt, leave the field out.
 type FieldMatcher interface {
 	Backend
 	MatchedFields(e *entity.Entity, text string) map[string]struct{}
