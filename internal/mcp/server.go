@@ -122,6 +122,13 @@ type Deps struct {
 	// Nil: accepted. No lease tool is registered, show_entity carries no
 	// lease, and watch wakes on store changes only. Wiring assigns it only
 	// when the service exists, so a typed nil never reaches the interface.
+	//
+	// The lease tools are registered once, by [NewServer]. A reload that
+	// takes Leases from nil to non-nil does not add them; one that takes it
+	// to nil leaves them answering that leases are off. A watch reads
+	// Leases when it starts, so a Configure save that builds a new lease
+	// hub leaves an already-waiting watch subscribed to the old hub until
+	// its timeout.
 	Leases LeaseService
 }
 

@@ -232,6 +232,8 @@ func (s *Service) Claim(ctx context.Context, req ClaimRequest) (Claimed, error) 
 	if err != nil {
 		return Claimed{}, err
 	}
+	// fam.Type is from the first read: a concurrent delete and recreate
+	// under another type is accepted, which an advisory lease tolerates.
 	if d := s.authorize(ctx, fam.Type, ref); !d.Allow {
 		return Claimed{}, &acl.ForbiddenError{Decision: d}
 	}

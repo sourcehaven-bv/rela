@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -74,6 +75,12 @@ func (c *leaseClock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.now
+}
+
+func (c *leaseClock) set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = t
 }
 
 func (c *leaseClock) advance(d time.Duration) {
@@ -244,7 +251,7 @@ func TestClaimEntity_NotFoundMatchesShowEntity(t *testing.T) {
 	t.Parallel()
 	e := newLeaseEnv(t)
 	cs := e.session(t, leaseAlice)
-	for _, id := range []string{"FEAT-1", "FEAT-404", "TKT-404"} {
+	for _, id := range []string{"FEAT-1", "FEAT-404", "TKT-404", "TKT-1@draft", "FEAT-1@draft", "TKT-1@", "@x"} {
 		t.Run(id, func(t *testing.T) {
 			t.Parallel()
 			show, showErr := callToolOn(t, cs, "show_entity", `{"id":"`+id+`"}`)
@@ -414,29 +421,59 @@ func TestRenewLease_StatusAndTTL(t *testing.T) {
 		{`"status":"second"`, "second"},
 		{`"status":""`, ""},
 	}
-	for _, s := range steps {
-		text, isError := callToolOn(t, cs, "renew_lease", `{"lease_id":"`+c.LeaseID+`",`+s.args+`}`)
+	// The steps share one lease and run in order, so they form one
+	// subtest. The padded lease id checks that it is trimmed.
+	t.Run("status steps", func(t *testing.T) {
+		t.Parallel()
+		for _, s := range steps {
+			text, isError := callToolOn(t, cs, "renew_lease", `{"lease_id":" `+c.LeaseID+` ",`+s.args+`}`)
+			if isError {
+				t.Fatalf("renew %s: %s", s.args, text)
+			}
+			var r renewResult
+			if err := json.Unmarshal([]byte(text), &r); err != nil || r.Token != c.Token ||
+				strings.Contains(text, "lease_id") {
+
+				t.Fatalf("renew result %q (%v)", text, err)
+			}
+			if got := status(); got != s.want {
+				t.Fatalf("after renew %s status = %q, want %q", s.args, got, s.want)
+			}
+		}
+	})
+	t.Run("ttl null is the default", func(t *testing.T) {
+		t.Parallel()
+		text, isError := callToolOn(t, cs, "renew_lease", `{"lease_id":"`+c.LeaseID+`","ttl_seconds":null}`)
 		if isError {
-			t.Fatalf("renew %s: %s", s.args, text)
+			t.Fatalf("renew with null ttl: %s", text)
 		}
 		var r renewResult
-		if err := json.Unmarshal([]byte(text), &r); err != nil || r.Token != c.Token || strings.Contains(text, "lease_id") {
-			t.Fatalf("renew result %q (%v)", text, err)
+		if err := json.Unmarshal([]byte(text), &r); err != nil {
+			t.Fatal(err)
 		}
-		if got := status(); got != s.want {
-			t.Fatalf("after renew %s status = %q, want %q", s.args, got, s.want)
+		if want := leaseTime(e.clock.Now().Add(lease.DefaultTTL)); r.ExpiresAt != want {
+			t.Fatalf("expires_at = %s, want %s", r.ExpiresAt, want)
 		}
+	})
+	for _, bad := range []string{
+		`"ttl_seconds":10`, `"ttl_seconds":0`, `"ttl_seconds":7200`, `"ttl_seconds":"60"`,
+		`"ttl_seconds":60.5`, `"status":5`,
+	} {
+		t.Run("bad "+bad, func(t *testing.T) {
+			t.Parallel()
+			if text, isError := callToolOn(t, cs, "renew_lease", `{"lease_id":"`+c.LeaseID+`",`+bad+`}`); !isError {
+				t.Errorf("renew %s = %q, want an error", bad, text)
+			}
+		})
 	}
-	for _, bad := range []string{`"ttl_seconds":10`, `"ttl_seconds":7200`, `"ttl_seconds":"60"`, `"status":5`} {
-		if text, isError := callToolOn(t, cs, "renew_lease", `{"lease_id":"`+c.LeaseID+`",`+bad+`}`); !isError {
-			t.Errorf("renew %s = %q, want an error", bad, text)
-		}
-	}
-	if text, isError := callToolOn(t, cs, "renew_lease", `{"lease_id":"not-a-lease"}`); !isError ||
-		!strings.Contains(text, "malformed lease id") {
+	t.Run("malformed lease id", func(t *testing.T) {
+		t.Parallel()
+		if text, isError := callToolOn(t, cs, "renew_lease", `{"lease_id":"not-a-lease"}`); !isError ||
+			!strings.Contains(text, "malformed lease id") {
 
-		t.Errorf("malformed lease id = %q", text)
-	}
+			t.Errorf("malformed lease id = %q", text)
+		}
+	})
 }
 
 // AC5 and AC7: show_entity carries the lease without expiry or lease id;
@@ -506,6 +543,129 @@ func TestWatch_WakesOnLeaseRelease(t *testing.T) {
 	got := mustWatch(t, bob, watchArgs(base.Cursor, 10, target))
 	if got.TimedOut || len(got.Changed) != 1 {
 		t.Fatalf("watch after release = %+v, want changed [0]", got)
+	}
+}
+
+// A wait ends on every lease change show_entity shows, and only on those.
+func TestWatch_LeaseChanges(t *testing.T) {
+	t.Parallel()
+	target := `{"tool":"show_entity","args":{"id":"TKT-1"}}`
+	cases := []struct {
+		name string
+		// setup runs before the baseline and returns the change to make
+		// while the watch waits.
+		setup       func(t *testing.T, e *leaseEnv) func() error
+		wantChanged bool
+	}{
+		{"claim ends the wait", func(_ *testing.T, e *leaseEnv) func() error {
+			return func() error {
+				_, err := e.leases.Claim(principal.With(context.Background(), leaseAlice),
+					lease.ClaimRequest{Addr: "TKT-1"})
+				return err
+			}
+		}, true},
+		{"status renew ends the wait", func(t *testing.T, e *leaseEnv) func() error {
+			t.Helper()
+			c := claimDirect(t, e)
+			status := "new status"
+			return func() error {
+				_, err := e.leases.Renew(principal.With(context.Background(), leaseAlice), c.LeaseID, 0, &status)
+				return err
+			}
+		}, true},
+		{"plain renew changes nothing", func(t *testing.T, e *leaseEnv) func() error {
+			t.Helper()
+			c := claimDirect(t, e)
+			return func() error {
+				_, err := e.leases.Renew(principal.With(context.Background(), leaseAlice), c.LeaseID, 0, nil)
+				return err
+			}
+		}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newLeaseEnv(t)
+			bob := e.session(t, leaseBob)
+			change := tc.setup(t, e)
+			base := mustWatch(t, bob, `{"targets":[`+target+`]}`)
+			later(t, 300*time.Millisecond, change)
+			timeout := 10.0
+			if !tc.wantChanged {
+				timeout = 2
+			}
+			got := mustWatch(t, bob, watchArgs(base.Cursor, timeout, target))
+			if tc.wantChanged && (got.TimedOut || len(got.Changed) != 1) {
+				t.Fatalf("watch = %+v, want changed [0]", got)
+			}
+			if !tc.wantChanged && (!got.TimedOut || len(got.Changed) != 0) {
+				t.Fatalf("watch = %+v, want a timeout", got)
+			}
+		})
+	}
+}
+
+// claimDirect claims TKT-1 as alice through the service.
+func claimDirect(t *testing.T, e *leaseEnv) lease.Claimed {
+	t.Helper()
+	c, err := e.leases.Claim(principal.With(context.Background(), leaseAlice), lease.ClaimRequest{Addr: "TKT-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// An expiry seen by the lease service's Watch ends a wait, although no
+// store event and no lease call happens.
+func TestWatch_WakesOnLeaseExpiry(t *testing.T) {
+	t.Parallel()
+	e := newLeaseEnv(t)
+	bob := e.session(t, leaseBob)
+	c := claimDirect(t, e)
+	// Watch arms its expiry timer one second out. The clock moves past the
+	// expiry before the timer fires, so the replay it causes sees no lease.
+	e.clock.set(c.Lease.Expires.Add(-time.Second))
+	target := `{"tool":"show_entity","args":{"id":"TKT-1"}}`
+	base := mustWatch(t, bob, `{"targets":[`+target+`]}`)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- e.leases.Watch(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("lease Watch: %v", err)
+		}
+	})
+	later(t, 200*time.Millisecond, func() error {
+		e.clock.advance(2 * time.Second)
+		return nil
+	})
+	got := mustWatch(t, bob, watchArgs(base.Cursor, 10, target))
+	if got.TimedOut || len(got.Changed) != 1 {
+		t.Fatalf("watch after expiry = %+v, want changed [0]", got)
+	}
+}
+
+// Without a lease service a waiting watch still wakes on a store write; the
+// nil lease channel in its select never fires.
+func TestWatch_NilLeasesWakesOnStoreWrite(t *testing.T) {
+	t.Parallel()
+	e := newLeaseEnv(t)
+	without := e.deps
+	without.Leases = nil
+	srv, err := NewServer(without, "test", WithPrincipal(leaseAlice))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := connect(t, srv)
+	target := `{"tool":"show_entity","args":{"id":"TKT-1"}}`
+	base := mustWatch(t, cs, `{"targets":[`+target+`]}`)
+	later(t, 300*time.Millisecond, func() error {
+		return setTitle(context.Background(), e.st, "TKT-1", "ticket", "retitled")
+	})
+	got := mustWatch(t, cs, watchArgs(base.Cursor, 10, target))
+	if got.TimedOut || len(got.Changed) != 1 {
+		t.Fatalf("watch after a store write = %+v, want changed [0]", got)
 	}
 }
 
@@ -650,6 +810,10 @@ func TestClaimEntity_InputErrors(t *testing.T) {
 		{"bad label", `{"id":"TKT-1","label":"has space"}`, "label"},
 		{"control in status", `{"id":"TKT-1","status":"a\nb"}`, "control characters"},
 		{"missing id", `{}`, "id"},
+		{"ttl zero", `{"id":"TKT-1","ttl_seconds":0}`, "ttl_seconds"},
+		{"ttl fractional", `{"id":"TKT-1","ttl_seconds":60.5}`, "ttl_seconds"},
+		{"label not a string", `{"id":"TKT-1","label":5}`, "label"},
+		{"status not a string", `{"id":"TKT-1","status":true}`, "status"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -665,27 +829,40 @@ func TestClaimEntity_InputErrors(t *testing.T) {
 func TestLeaseFailed_Texts(t *testing.T) {
 	t.Parallel()
 	ctx := principal.With(context.Background(), leaseAlice)
+	invalid := fmt.Errorf("%w: label too long", lease.ErrInvalid)
 	cases := []struct {
+		name string
 		err  error
 		want string
 	}{
-		{lease.ErrLost, leaseLostText},
-		{lease.ErrLimit, leaseLimitText},
-		{lease.ErrFull, leaseFullText},
-		{lease.ErrNoPrincipal, lease.ErrNoPrincipal.Error()},
-		{errLeaseStore, leaseFailedText},
+		{"lost", lease.ErrLost, leaseLostText},
+		{"wrapped lost", fmt.Errorf("x: %w", lease.ErrLost), leaseLostText},
+		{"limit", lease.ErrLimit, leaseLimitText},
+		{"full", lease.ErrFull, leaseFullText},
+		{"invalid", invalid, invalid.Error()},
+		{"no principal", lease.ErrNoPrincipal, lease.ErrNoPrincipal.Error()},
+		{"unexpected", errLeaseStore, leaseFailedText},
 	}
 	for _, tc := range cases {
-		res := leaseFailed(ctx, "test", tc.err)
-		if text := res.Content[0].(*mcpgo.TextContent).Text; !res.IsError || text != tc.want {
-			t.Errorf("leaseFailed(%v) = %q", tc.err, text)
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res := leaseFailed(ctx, "test", tc.err)
+			if text := res.Content[0].(*mcpgo.TextContent).Text; !res.IsError || text != tc.want {
+				t.Errorf("leaseFailed(%v) = %q, want %q", tc.err, text, tc.want)
+			}
+		})
+	}
+	t.Run("limit text names the shared cap", func(t *testing.T) {
+		t.Parallel()
+		if !strings.Contains(leaseLimitText, "32") || !strings.Contains(leaseLimitText, "every agent running as you") {
+			t.Errorf("limit text %q must name the shared cap", leaseLimitText)
 		}
-	}
-	if !strings.Contains(leaseLimitText, "32") || !strings.Contains(leaseLimitText, "every agent running as you") {
-		t.Errorf("limit text %q must name the shared cap", leaseLimitText)
-	}
-	amb := claimFailed(ctx, "DOC-1", &visibility.AmbiguousAddressError{ID: "DOC-1", Faces: []entity.Face{"a", "b"}})
-	if text := amb.Content[0].(*mcpgo.TextContent).Text; !strings.Contains(text, "DOC-1") {
-		t.Errorf("ambiguous text = %q", text)
-	}
+	})
+	t.Run("ambiguous address", func(t *testing.T) {
+		t.Parallel()
+		amb := claimFailed(ctx, "DOC-1", &visibility.AmbiguousAddressError{ID: "DOC-1", Faces: []entity.Face{"a", "b"}})
+		if text := amb.Content[0].(*mcpgo.TextContent).Text; !strings.Contains(text, "DOC-1") {
+			t.Errorf("ambiguous text = %q", text)
+		}
+	})
 }
