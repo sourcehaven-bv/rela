@@ -210,6 +210,8 @@ type Services struct {
 	// gcStop terminates this store's data-migration GC sweep goroutine
 	// (TKT-0C57FS). Per-assembled, torn down in Close like searchCloser.
 	gcStop func()
+	// reevaluateDataGate re-runs this store's gate; see ReevaluateDataGate.
+	reevaluateDataGate func(context.Context) error
 	// softDeleteStop stops the soft-delete GC ticker. It runs before the job
 	// queue closes, so no tick enqueues into a closed queue.
 	softDeleteStop func()
@@ -224,6 +226,10 @@ type Services struct {
 	// is the one mutator on an otherwise-immutable value and is safe only
 	// during single-threaded wiring. Constructing here, once, preserves that.
 	fieldRedactor visibility.FieldRedactor
+
+	// versionTags is the version tag writer (TKT-VO6VG9), built in
+	// finishAssembly over entityManager. See [VersionTags].
+	versionTags *entitymanager.VersionTags
 
 	// base is the SharedBase this Services was assembled from. Retained so a
 	// host can build a successor base from the same Config (see
@@ -572,7 +578,8 @@ func scriptReads(
 		slog.Error("appbuild: script reader unavailable; script reads REFUSED", "err", err)
 		return visibility.DenyReader{}, refuseTraversal
 	}
-	return sr.WithWorld(visibility.WorldOf(w.DefaultWorld())).WithHistory(versionServiceFor(st)), gate.GateTraversal
+	return sr.WithWorld(visibility.WorldOf(w.DefaultWorld())).WithHistory(versionServiceFor(st)).
+		WithVersionTags(versionTagReaderFor(st)), gate.GateTraversal
 }
 
 // refuseTraversal pairs with [visibility.DenyReader]: reads are refused, so
@@ -644,6 +651,7 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 		ReadDeps:      s.LuaReadDeps(),
 		EntityManager: s.entityManager,
 		PileWriter:    pileWriterFor(s.piles),
+		VersionTags:   ScriptVersionTags(s),
 	}
 }
 
@@ -657,6 +665,7 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 		ReadDeps:      s.luaReadDepsFor(redactor),
 		EntityManager: s.entityManager,
 		PileWriter:    pileWriterFor(s.piles),
+		VersionTags:   ScriptVersionTags(s),
 	}
 }
 
@@ -1248,6 +1257,9 @@ type options struct {
 	// building a Config already decides where the data lives.
 	databaseURL string
 
+	// memorySearch skips the on-disk search index; see [WithInMemorySearch].
+	memorySearch bool
+
 	// hostConfig builds where secrets and the AI and mail settings come
 	// from, given the assembled store's state. Nil means the project's .rela
 	// directory.
@@ -1273,6 +1285,17 @@ type HostConfig interface {
 	File(name string) ([]byte, error)
 	Secrets(scriptPath string) (map[string]string, error)
 	Path() string
+}
+
+// WithInMemorySearch builds the search index in memory instead of opening
+// the project's on-disk index. rela-server uses it when it rebuilds its
+// services after a Configure save: the services still serving hold the
+// on-disk index's lock, so opening it would wait for a timeout and then fall
+// back to memory anyway.
+//
+// Ignored by builds whose search backend is not bleve.
+func WithInMemorySearch() Option {
+	return func(o *options) { o.memorySearch = true }
 }
 
 // WithACL overrides the auto-loaded ACL with the supplied
@@ -2124,6 +2147,7 @@ func resolveVisibleSearcher(
 // may fail boot.
 type backgroundServices struct {
 	gcStop         func()
+	reevaluateGate func(context.Context) error
 	softDeleteStop func()
 	mailStop       func()
 	mail           *mailRuntime
@@ -2149,7 +2173,7 @@ func startBackgroundServices(
 		envDuration("RELA_SOFT_DELETE_DELAY", defaultSoftDeleteDelay),
 		envDuration("RELA_SOFT_DELETE_GC_INTERVAL", defaultSoftDeleteGCInterval))
 
-	gcStop := startDataMigration(
+	gcStop, reevaluateGate := startDataMigration(
 		stateKV, migState, base.meta, st, cfg.Audit, versions, commentSvc, cfg.Paths.CacheDir,
 		hasMigrationsVia(cfgLoader),
 	)
@@ -2162,6 +2186,7 @@ func startBackgroundServices(
 
 	return backgroundServices{
 		gcStop:         gcStop,
+		reevaluateGate: reevaluateGate,
 		softDeleteStop: softDeleteStop,
 		mailStop:       mailStop,
 		mail:           mailRuntime,
@@ -2447,6 +2472,11 @@ func finishAssembly(
 ) (*Services, error) {
 	s.attachLocker = attachLocker
 	s.piles, s.pileStore = refs.piles, refs.pileStore
+	tags, err := buildVersionTags(s)
+	if err != nil {
+		return nil, err
+	}
+	s.versionTags = tags
 	if err := autoJobs.bind(servicesJobRunner{s}, engine); err != nil {
 		return nil, err
 	}
@@ -2496,39 +2526,40 @@ func newServices(
 ) *Services {
 	cfg := base.cfg
 	return &Services{
-		base:            base,
-		gcStop:          background.gcStop,
-		softDeleteStop:  background.softDeleteStop,
-		mailStop:        background.mailStop,
-		mail:            background.mail,
-		host:            background.host,
-		fs:              cfg.FS,
-		paths:           cfg.Paths,
-		meta:            base.meta,
-		worlds:          base.worlds,
-		store:           st,
-		versions:        versions,
-		searcher:        searcher,
-		visibleSearcher: visible,
-		userState:       newUserState(st, stateKV),
-		entityManager:   mgr,
-		tracer:          tr,
-		validator:       val,
-		templater:       templater,
-		cfgLoader:       cfgLoader,
-		stateKV:         stateKV,
-		migState:        migState,
-		schedulerState:  schedState,
-		jobQueue:        jobQueue,
-		caldavAliases:   aliases,
-		comments:        commentSvc,
-		scriptEngine:    cfg.ScriptEngine,
-		searchCloser:    searchCloser,
-		acl:             resolvedACL,
-		aclDeclarative:  aclDeclarative,
-		aclPolicy:       base.aclPolicy,
-		audit:           cfg.Audit,
-		fieldRedactor:   fieldRedactor,
+		base:               base,
+		gcStop:             background.gcStop,
+		reevaluateDataGate: background.reevaluateGate,
+		softDeleteStop:     background.softDeleteStop,
+		mailStop:           background.mailStop,
+		mail:               background.mail,
+		host:               background.host,
+		fs:                 cfg.FS,
+		paths:              cfg.Paths,
+		meta:               base.meta,
+		worlds:             base.worlds,
+		store:              st,
+		versions:           versions,
+		searcher:           searcher,
+		visibleSearcher:    visible,
+		userState:          newUserState(st, stateKV),
+		entityManager:      mgr,
+		tracer:             tr,
+		validator:          val,
+		templater:          templater,
+		cfgLoader:          cfgLoader,
+		stateKV:            stateKV,
+		migState:           migState,
+		schedulerState:     schedState,
+		jobQueue:           jobQueue,
+		caldavAliases:      aliases,
+		comments:           commentSvc,
+		scriptEngine:       cfg.ScriptEngine,
+		searchCloser:       searchCloser,
+		acl:                resolvedACL,
+		aclDeclarative:     aclDeclarative,
+		aclPolicy:          base.aclPolicy,
+		audit:              cfg.Audit,
+		fieldRedactor:      fieldRedactor,
 	}
 }
 

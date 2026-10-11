@@ -126,6 +126,19 @@ const (
 	// showing who purged what and why. Isolate with `op == "purge-version"`.
 	OpPurgeVersion = "purge-version"
 
+	// OpTagVersion records setting or moving a version tag (TKT-VO6VG9): a
+	// name that points at one entity version, kept beside the history.
+	// Subject names the entity; Summary is `tag="<name>" version=<n>`, where
+	// n is the ordinal the tag now points at. Tagging the current state and
+	// tagging a numbered version record the same shape. Isolate with
+	// `op == "version-tag"`.
+	OpTagVersion = "version-tag"
+
+	// OpUntagVersion records deleting a version tag. Subject names the
+	// entity; Summary is `tag="<name>"`. Isolate with
+	// `op == "version-untag"`.
+	OpUntagVersion = "version-untag"
+
 	// OpCopyState records one invocation of a declared COPY DEFINITION —
 	// a mapped write of one entity content state (face) into another
 	// (TKT-C1XUA8). Subject names the TARGET face; Summary carries the
@@ -146,6 +159,14 @@ const (
 	// migrated CONTENT is never recorded. Isolate with
 	// `op == "data-migration"`.
 	OpDataMigration = "data-migration"
+
+	// OpConfigEdit records one save from the in-app Configure space
+	// (TKT-F5NGMG), or one it refused: a rewrite of schema.yaml and/or
+	// data-entry.yaml by a principal holding config:edit. Summary carries
+	// the sha256 of each file before and after, the changed key paths and
+	// the migration file name, never file content. Isolate with
+	// `op == "config-edit"`.
+	OpConfigEdit = "config-edit"
 
 	// OpDataGC records one garbage-collection pass (TKT-0C57FS) that
 	// deleted schema-orphaned data after the drift grace period — deleted

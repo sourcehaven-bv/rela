@@ -70,6 +70,11 @@ type Capabilities struct {
 	// Its batch must be smaller than the backlog [RunSweepBacklogTests] seeds.
 	SweepNow func(t *testing.T, s store.Store)
 
+	// VersionTags declares that the backend's version service is a
+	// [store.VersionTaggerProvider]. Setting it runs [RunVersionTagTests],
+	// which needs Versioning and SweepNow too.
+	VersionTags bool
+
 	// SoftDelete declares that the backend implements
 	// [store.SoftDeleteProvider]. Setting it runs [RunSoftDeleteTests], which
 	// fails rather than skips when the capability is missing.
@@ -256,6 +261,13 @@ func RunAll(t *testing.T, f Factory, sf SearchFactory, vsf VisibleSearchFactory,
 			require.NotNil(t, caps.SweepNow,
 				"store declared Capabilities.Versioning but no Capabilities.SweepNow driver")
 			RunSweepOriginTests(t, f, caps.SweepNow)
+		})
+	}
+	if caps.VersionTags {
+		t.Run("VersionTags", func(t *testing.T) {
+			require.True(t, caps.Versioning, "store declared Capabilities.VersionTags without Versioning")
+			require.NotNil(t, caps.SweepNow, "store declared Capabilities.VersionTags but no SweepNow driver")
+			RunVersionTagTests(t, f, caps.SweepNow)
 		})
 	}
 	if caps.SoftDelete {

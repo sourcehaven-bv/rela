@@ -1,4 +1,4 @@
--- pgstore schema, version 20: per-user piles (TKT-K3RJLH).
+-- pgstore schema, version 23: per-user piles (TKT-K3RJLH).
 --
 -- Backs internal/piles/pgpiles. A pile is a named, personal stack of entity
 -- references. The single-process tiers keep piles in one state.KV document,

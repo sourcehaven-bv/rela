@@ -119,6 +119,9 @@ func (h *writeHandler) handleV1Action(w http.ResponseWriter, r *http.Request) {
 	// reachable by anyone who may POST an action, so it is not an
 	// operator-shell surface and must not inherit a trusted default.
 	deps.Capabilities = luaCapabilities(action.Capabilities)
+	if h.versionTags != nil {
+		deps.VersionTags = h.versionTags()
+	}
 	var ent *entity.Entity
 	if payload.EntityID != "" && action.AvailableOn == nil {
 		if e, getErr := deps.VisibleReader.GetAddress(r.Context(), payload.EntityID); getErr == nil {

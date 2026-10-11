@@ -612,6 +612,37 @@ rela relation-restore TKT-42 blocks TKT-99 2
 
 ---
 
+### rela history-tag
+
+Set, move or delete a version tag: a name that points at one version of an
+entity. **PostgreSQL and SQLite builds.** The write goes through the normal
+write path, so it is authorized and audited.
+
+```bash
+rela history-tag <address> <name> [--version N | --expect TOKEN] [--delete]
+```
+
+**Arguments / flags:**
+
+- `address` — the entity: its ID, or `ID@face` for a type with faces
+- `name` — the tag name, lowercase, with at most one namespace segment
+  (`reviewed`, `sync/jira`). A name `ns/...` needs the permission `tag:ns`
+- `--version N` — tag version `N` (from `rela history`) instead of the current
+  state
+- `--expect TOKEN` — tag the current state only while it still matches the
+  version token; otherwise nothing is tagged and the command fails
+- `--delete` — delete the tag
+
+Tagging an existing name moves it. `rela history` lists each version's tags.
+
+**Examples:**
+
+```bash
+rela history-tag TKT-42 reviewed
+rela history-tag TKT-42 sync/jira --version 3
+rela history-tag TKT-42 reviewed --delete
+```
+
 ### rela history-purge
 
 Hard-delete an entity's version history for compliance (leaked secret, PII, GDPR
@@ -620,7 +651,7 @@ history. **PostgreSQL and SQLite builds.** Operator-only: the trust boundary is
 shell access to the database (no ACL check), like `rela db migrate`.
 
 ```bash
-rela history-purge <address> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live]
+rela history-purge <address> (--vseq N | --content-hash H | --all) --reason "..." [--commit] [--yes] [--force-live] [--force-tags]
 ```
 
 **Arguments / flags:**
@@ -643,9 +674,12 @@ rela history-purge <address> (--vseq N | --content-hash H | --all) --reason "...
   the sweep re-capturing the same content: the next edit, rename or delete
   records the live row again. For erasure that lasts, redact the live value
   or delete the row first.
+- `--force-tags` — purge rows that a version tag points at, deleting those
+  tags too. The dry run lists the tags a purge would hit.
 
 Purge **refuses** while the live row still holds the content (unless
-`--force-live`) and **refuses** a rename row. It is one necessary step, not
+`--force-live`), **refuses** a row a version tag points at (unless
+`--force-tags`), and **refuses** a rename row. It is one necessary step, not
 cryptographic erasure — PITR/backup lifecycle is the operator's responsibility.
 
 **SQLite builds v26.9.7 to v26.10.4:** a `--force-live` purge wrote its
@@ -2057,4 +2091,27 @@ Print version information.
 
 ```bash
 rela version
+```
+
+## rela-server
+
+`rela-server` is a separate binary. It serves the
+[data-entry web app](data-entry.md). Run `rela-server -h` for every flag; this
+section covers the flags documented in this reference.
+
+| Flag | Description |
+| ---- | ----------- |
+| `--config-editing` | Turn on the in-app [Configure space](data-entry.md#configure-space). Principals holding `config:edit` can then change `schema.yaml` and `data-entry.yaml` from the browser. Off by default. Env: `RELA_CONFIG_EDITING=1`. |
+
+The server refuses to start with `--config-editing` when any of these is true:
+
+- it also runs with `--read-only`;
+- the project has no `acl.yaml`;
+- it has no identity source (`-jwt-*` flags, `--principal-header`, or
+  `$RELA_DATAENTRY_USER`);
+- it is the SQLite or PostgreSQL build;
+- the schema file is the legacy `metamodel.yaml`.
+
+```bash
+rela-server -project /path/to/project --config-editing
 ```

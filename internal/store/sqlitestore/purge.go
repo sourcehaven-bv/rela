@@ -30,6 +30,8 @@ import (
 //     hash (contentHashDDL), so the sweep looks at the row once more, and its
 //     existing dedup suppresses re-capture until the live value genuinely
 //     changes again.
+//   - REFUSES if a version tag points at a target row, unless ForceTags; a
+//     forced purge drops those tags in the same transaction (TKT-VO6VG9).
 //   - `--all` purges the FENCED lineage (exactly the rows ListVersions shows),
 //     never a naive `WHERE entity_id = ?`, which would both miss pre-rename
 //     segments and destroy a reused id's unrelated history.
@@ -83,15 +85,26 @@ func (v *VersionStore) PurgeVersions(
 	}
 	res := &store.PurgeResult{Targets: targets, LiveRowExists: liveExists}
 	res.RenameInTargets = anyRename(targets)
+	// Resolved before the dry-run return so a preview names the tags it
+	// would drop.
+	if res.TaggedTargets, err = purgeTaggedTargets(ctx, v.db, targets); err != nil {
+		return nil, err
+	}
 
 	if req.DryRun {
 		return res, nil
 	}
 	if res.RenameInTargets {
+		res.Refusal = store.PurgeRefusedRename
 		return res, nil // refuse: the caller renders the reason from the flag
 	}
 	if liveExists && !req.ForceLive {
+		res.Refusal = store.PurgeRefusedLiveRow
 		return res, nil // refuse: the sweep would re-capture it
+	}
+	if len(res.TaggedTargets) > 0 && !req.ForceTags {
+		res.Refusal = store.PurgeRefusedTagged
+		return res, nil // refuse: a tag points at a target
 	}
 
 	// The delete and its tombstone commit TOGETHER or not at all.
@@ -103,6 +116,10 @@ func (v *VersionStore) PurgeVersions(
 	// mutual exclusion against a concurrent sweep, which is a different
 	// property and survives neither a crash nor an early return.
 	n, tombstoned, err := v.purgeTx(ctx, func(tx querier) (int, bool, error) {
+		// Tags first: the foreign key refuses to delete a tagged row.
+		if terr := deletePurgeTags(ctx, tx, res.TaggedTargets); terr != nil {
+			return 0, false, terr
+		}
 		deleted, derr := deletePurgeTargets(ctx, tx, "entity_versions", "entity_id", idArgs, targets)
 		if derr != nil {
 			return 0, false, derr
@@ -197,9 +214,11 @@ func (v *VersionStore) PurgeRelationVersions(
 		return res, nil
 	}
 	if res.RenameInTargets {
+		res.Refusal = store.PurgeRefusedRename
 		return res, nil
 	}
 	if liveExists && !req.ForceLive {
+		res.Refusal = store.PurgeRefusedLiveRow
 		return res, nil
 	}
 
@@ -294,6 +313,7 @@ func (v *VersionStore) resolvePurgeLineage(
 		return nil, &store.PurgeResult{
 			MultiLifetimeRefused: true,
 			LifetimeCount:        len(lifetimes),
+			Refusal:              store.PurgeRefusedMultiLifetime,
 		}, nil
 
 	default:

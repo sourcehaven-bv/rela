@@ -66,5 +66,6 @@ func familiesOption(w worlds.Compiled) visibility.ResolverOption {
 func unrestrictedReader(st store.Store, w worlds.Compiled) *visibility.UnrestrictedReader {
 	return visibility.Unrestricted(st, familiesOption(w)).
 		WithWorld(visibility.WorldOf(w.DefaultWorld())).
-		WithHistory(versionServiceFor(st))
+		WithHistory(versionServiceFor(st)).
+		WithVersionTags(versionTagReaderFor(st))
 }

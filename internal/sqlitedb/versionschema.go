@@ -212,3 +212,36 @@ INSERT OR IGNORE INTO rel_record_seq (id, next) VALUES (1, 1);
 // existing row and [backfillRelRecordIDs] assigns the real ids.
 const relRecordIDColumnDDL = `
 ALTER TABLE relations ADD COLUMN rel_record_id INTEGER NOT NULL DEFAULT 0;`
+
+// versionTagsDDL holds version tags (TKT-VO6VG9), the SQLite analog of
+// pgstore migration 0020. A tag names one entity version row, for example a
+// sync connector's merge base. It lives beside the versions rather than in the
+// entity, because recording a version number in the entity would itself mint
+// a newer version.
+//
+// A tag holds the version's vseq, not its ordinal: vseq is AUTOINCREMENT and
+// never reused, while ordinals are assigned at read time and shift when a
+// purge removes a row. Which tags a face has is decided at read time by the
+// lineage walk and the lifecycle fence (see store.VersionTagger).
+//
+// The foreign key is a backstop for purge: a tagged version row cannot be
+// deleted while the tag exists. It is enforced because the DSN sets
+// foreign_keys(1). vseq is entity_versions' INTEGER PRIMARY KEY, so no extra
+// index is needed for the reference, unlike on pgstore.
+//
+// face repeats the tagged row's face, so a tag row reads on its own. name is
+// unique per version; uniqueness per lineage and face is kept by the writer,
+// which deletes same-name rows across the lineage before inserting, in one
+// write transaction.
+//
+// Shared between schemaSQL (fresh databases) and the v12→v13 migration.
+const versionTagsDDL = `
+CREATE TABLE IF NOT EXISTS version_tags (
+	vseq           INTEGER NOT NULL REFERENCES entity_versions (vseq) ON DELETE RESTRICT,
+	face           TEXT NOT NULL DEFAULT '',
+	name           TEXT NOT NULL,
+	tagged_by_user TEXT NOT NULL DEFAULT '',
+	tagged_by_tool TEXT NOT NULL DEFAULT '',
+	tagged_at      TEXT NOT NULL,
+	PRIMARY KEY (vseq, name)
+) STRICT;`
