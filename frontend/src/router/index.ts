@@ -11,6 +11,7 @@ import { useNavigationPending } from '@/composables/useNavigationPending'
 import { relaBase } from '@/api/base'
 import { getSidebar } from '@/api/schema'
 import { spaceOf, useSpaceStore, withSpace } from '@/stores/space'
+import { CONFIGURE_PREFIX, configureRoute, isConfigurePath } from '@/configure/routes'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -178,6 +179,117 @@ routes.push({
   },
 })
 
+/*
+ * The Configure space (TKT-F5NGMG). Added after the space aliases on
+ * purpose: it configures every space and sits in none, so it has no
+ * `/s/<space>` form, and the guard below leaves its paths alone.
+ */
+routes.push({
+  path: CONFIGURE_PREFIX,
+  component: () => import('@/views/configure/ConfigureLayout.vue'),
+  children: [
+    { path: '', redirect: configureRoute.entityTypes() },
+    {
+      path: 'entity-types',
+      name: 'configure-entity-types',
+      component: () => import('@/views/configure/EntityTypesView.vue'),
+    },
+    {
+      path: 'entity-types/:name',
+      name: 'configure-entity-type',
+      component: () => import('@/views/configure/EntityTypeView.vue'),
+      props: true,
+    },
+    {
+      path: 'choice-lists',
+      name: 'configure-choice-lists',
+      component: () => import('@/views/configure/ChoiceListsView.vue'),
+    },
+    {
+      path: 'choice-lists/:name',
+      name: 'configure-choice-list',
+      component: () => import('@/views/configure/ChoiceListView.vue'),
+      props: true,
+    },
+    {
+      path: 'relations',
+      name: 'configure-relations',
+      component: () => import('@/views/configure/RelationsView.vue'),
+    },
+    {
+      path: 'relations/:name',
+      name: 'configure-relation',
+      component: () => import('@/views/configure/RelationView.vue'),
+      props: true,
+    },
+    {
+      path: 'rules',
+      name: 'configure-rules',
+      component: () => import('@/views/configure/RulesView.vue'),
+    },
+    {
+      path: 'rules/:index',
+      name: 'configure-rule',
+      component: () => import('@/views/configure/RuleView.vue'),
+      props: (route) => ({ index: Number(route.params.index) }),
+    },
+    {
+      path: 'automations',
+      name: 'configure-automations',
+      component: () => import('@/views/configure/AutomationsView.vue'),
+    },
+    {
+      path: 'automations/:index',
+      name: 'configure-automation',
+      component: () => import('@/views/configure/AutomationView.vue'),
+      props: (route) => ({ index: Number(route.params.index) }),
+    },
+    {
+      path: 'navigation',
+      name: 'configure-navigation',
+      component: () => import('@/views/configure/NavigationView.vue'),
+    },
+    {
+      path: 'forms',
+      name: 'configure-forms',
+      component: () => import('@/views/configure/FormsView.vue'),
+    },
+    {
+      path: 'forms/:name',
+      name: 'configure-form',
+      component: () => import('@/views/configure/FormView.vue'),
+      props: true,
+    },
+    {
+      path: 'lists',
+      name: 'configure-lists',
+      component: () => import('@/views/configure/ListsView.vue'),
+    },
+    {
+      path: 'lists/:name',
+      name: 'configure-list',
+      component: () => import('@/views/configure/ListView.vue'),
+      props: true,
+    },
+    {
+      path: 'boards',
+      name: 'configure-boards',
+      component: () => import('@/views/configure/BoardsView.vue'),
+    },
+    {
+      path: 'boards/:name',
+      name: 'configure-board',
+      component: () => import('@/views/configure/BoardView.vue'),
+      props: true,
+    },
+    {
+      path: 'dashboard',
+      name: 'configure-dashboard',
+      component: () => import('@/views/configure/DashboardView.vue'),
+    },
+  ],
+})
+
 const router = createRouter({
   history: createWebHistory(relaBase()),
   routes,
@@ -325,7 +437,7 @@ function scrollToAnchorWhenReady(hash: string, abort: () => boolean) {
  */
 router.beforeEach((to) => {
   const space = useSpaceStore()
-  if (!space.enabled || !space.current || spaceOf(to.path)) return
+  if (!space.enabled || !space.current || spaceOf(to.path) || isConfigurePath(to.path)) return
   return { path: withSpace(to.path, space.current), query: to.query, hash: to.hash }
 })
 

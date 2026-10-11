@@ -54,6 +54,27 @@ seqtrace-compare ref="origin/develop":
     SEQTRACE_LABEL=head SEQTRACE_OPEN=0 tools/seqtrace/demo/run.sh
     go run ./tools/seqtrace/cmd/seqtrace diff .ignored/seqtrace-demo/base/diagrams .ignored/seqtrace-demo/head/diagrams | tee .ignored/seqtrace-demo/compare.md
 
+# archplan (https://github.com/vloothuis/archplan): edit the target architecture
+# in a browser and plan the change with an agent. State lives in .archplan/.
+archplan_version := "v0.1.2"
+
+# Run archplan (default: open the editor). Uses `archplan` from PATH, else uvx.
+archplan *args="up --open":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v archplan >/dev/null; then exec archplan {{args}}; fi
+    exec uvx --from "git+https://github.com/vloothuis/archplan@{{archplan_version}}" archplan {{args}}
+
+# Export the as-is architecture model for archplan, with seqtrace call flows when a demo trace exists
+archplan-export:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=(-o .archplan/model.archmodel.json)
+    for f in .ignored/seqtrace-demo/head/diagrams/steps.json .ignored/seqtrace-demo/diagrams/steps.json; do
+        if [ -f "$f" ]; then args+=(-steps "$f"); break; fi
+    done
+    go run "github.com/vloothuis/archplan/exporters/archplan-go@{{archplan_version}}" "${args[@]}"
+
 # Build the desktop app
 build-desktop: build-frontend
     @echo "Building rela-desktop..."

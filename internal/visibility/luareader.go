@@ -51,6 +51,10 @@ type ScriptReader struct {
 	// history serves EntityVersions and EntityVersion; nil means none (see
 	// [ScriptReader.WithHistory]).
 	history store.HistoryReader
+
+	// tags serves VersionByTag; nil means none (see
+	// [ScriptReader.WithVersionTags]).
+	tags VersionTagReader
 }
 
 // Binder attaches a per-operation ACL scope to a ctx. [DeclarativeGate]

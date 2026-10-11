@@ -39,6 +39,11 @@ export function dayToDate(day: number): Date {
   return new Date(day * MS_PER_DAY)
 }
 
+/** isoDay is the inverse of parseDay: epoch days to "YYYY-MM-DD". */
+export function isoDay(day: number): string {
+  return dayToDate(day).toISOString().slice(0, 10)
+}
+
 /**
  * barSpan is the node's full extent: the union of its planned window and its
  * rolled envelope. The two stay separate on the wire so the breach is

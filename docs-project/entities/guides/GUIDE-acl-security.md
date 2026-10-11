@@ -1596,6 +1596,35 @@ one; erasure is the separate operator tool. Relation restore reads the raw froze
 meta, never the redacted view — a redacted read-modify-write would erase the
 caller's hidden meta on save.)
 
+## Version tag permissions (`tag:<ns>`)
+
+A [version tag](postgres-backend.md#version-tags) names one version of an
+entity. Setting, moving or deleting one needs `update` on the entity, checked
+without naming any field: a tag changes no property, so a role whose field
+grants are partial may still tag.
+
+A tag name in a namespace, `ns/name`, also needs the permission `tag:ns` on
+that entity. Grant it in a role's `permissions:` list:
+
+```yaml
+roles:
+  jira-sync:
+    read: [ticket]
+    update: [ticket]
+    permissions: ["tag:sync"]
+```
+
+This keeps a connector's tags, such as `sync/jira`, out of reach of users who
+can edit the entity. Names without a namespace need only `update`. `rela acl
+audit` does not report a `tag:` permission as unused, since the namespace is
+chosen by the scripts that tag.
+
+A script or API caller that cannot read the entity gets the same "entity not
+found" as for an entity that does not exist. A denied tag write is audited as
+`denied-write`; a successful one as `version-tag` or `version-untag`. The
+`admin` handle of `rela.bypass_acl` has no tag functions, so a script's tag
+writes always pass both checks.
+
 ## Command execution gating (`command:*`)
 
 Data-entry [commands](data-entry.md#commands) execute arbitrary shell via
@@ -1745,6 +1774,50 @@ relation read exposes, no more, and its history redaction is governed by the
 meta at all). See the property-level-redaction section above; the dual-endpoint
 gate bounds *which relations' histories* are reachable, and the live-world rule
 bounds *which meta fields* within a reachable one.
+
+## Configuration editing (`config:edit`)
+
+`config:edit` is a built-in global permission. It lets a principal use the
+in-app [Configure space](data-entry.md#configure-space), which edits
+`schema.yaml` and `data-entry.yaml`. The space exists only when `rela-server`
+runs with `--config-editing`.
+
+Treat `config:edit` as administrator access. A holder reshapes the data model
+that every other grant is written against. A save can also run a data
+migration, and a migration rewrites records without per-record ACL checks.
+
+Grant it to a role by name:
+
+```yaml
+# acl.yaml
+roles:
+  admin:
+    permissions: [config:edit]
+```
+
+Three rules keep the grant narrow:
+
+- **It must be named.** A role with `permissions: ["*"]` does not hold
+  `config:edit`.
+- **A client never holds it.** A client that acts for a user is restricted by
+  a ceiling (`client_baselines` / `scope_grants`). That ceiling never passes
+  `config:edit` on, whatever the baseline or scopes say. The Configure API
+  also refuses any token whose `principal_type` is set to something other
+  than `user`, so a client type with no baseline is refused as well.
+- **It needs an `acl.yaml`.** Without one, every principal holds every
+  permission, so `--config-editing` refuses to start. It also refuses to start
+  without an identity source, and the Configure API refuses an unknown
+  principal.
+
+A principal without the permission gets 403, and the response names
+`config:edit`. This follows the rule that configuration is not secret; only
+data is.
+
+The Configure space cannot change `acl.yaml`. It also refuses to rename or
+remove an entity type, property, relation or choice option that `acl.yaml`
+mentions. Settings that control access stay locked: a transition `guard`, and
+`permission:` on navigation entries, spaces and dashboard cards. Change those
+in the files directly.
 
 ## Where to read next
 

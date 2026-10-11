@@ -117,6 +117,12 @@ type writeHandler struct {
 	engine           func() *script.Engine
 	luaDeps          func() lua.WriteDeps
 	fullScriptDetail func(r *http.Request) bool
+	// versionTags is the tag writer an action script gets (TKT-VO6VG9).
+	// Kept out of luaDeps, which document renders, export_render and the
+	// webhook share: a tag is a deliberate act, so only an action the caller
+	// invoked may write one. Nil, or returning nil: the tag bindings are
+	// absent.
+	versionTags func() lua.VersionTagWriter
 
 	// visible is the read path's resolver. Every addressed write resolves its
 	// row through it first, so a row the caller may not read, at any face, is

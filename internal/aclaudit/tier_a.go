@@ -285,7 +285,10 @@ func checkDeadPermissions(p *acl.Policy, perms PermissionConsumer) []Finding {
 		rolePerms := append([]string(nil), p.Roles[name].Permissions...)
 		sort.Strings(rolePerms)
 		for _, perm := range rolePerms {
-			if used[perm] {
+			// tag:<ns> guards version tags in namespace ns (TKT-VO6VG9). The
+			// namespace is chosen by whoever writes the tag, so the name cannot
+			// be listed in advance; rela consumes every one of them.
+			if used[perm] || acl.IsTagPermission(perm) {
 				continue
 			}
 			f = append(f, Finding{

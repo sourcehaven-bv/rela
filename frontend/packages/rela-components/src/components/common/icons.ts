@@ -266,6 +266,9 @@ export const icons = {
   'thumbs-up': '<path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/><path d="M7 10v12"/>',
   'git-branch': '<path d="M15 6a9 9 0 0 0-9 9V3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>',
   'chart-no-axes-gantt': '<path d="M6 5h12"/><path d="M4 12h10"/><path d="M12 19h8"/>',
+  'grip-vertical': '<circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/>',
+  'arrow-up': '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  'arrow-down': '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
 } as const
 
 /** Every name in the set. A config string is checked against this. */
@@ -517,4 +520,7 @@ export const iconMeta: Record<IconName, { category: string; description: string 
   'thumbs-up': { category: 'Chrome', description: 'Reaction' },
   'git-branch': { category: 'Chrome', description: 'Subtask or branch relation' },
   'chart-no-axes-gantt': { category: 'Chrome', description: 'Timeline view' },
+  'grip-vertical': { category: 'Chrome', description: 'Drag handle on a reorderable row' },
+  'arrow-up': { category: 'Chrome', description: 'Move up' },
+  'arrow-down': { category: 'Chrome', description: 'Move down' },
 }
