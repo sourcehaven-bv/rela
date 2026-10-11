@@ -1015,7 +1015,8 @@ func (w *wrapperWrite) writeBoundedFallback(ctx context.Context, p boundedPlan) 
 	sErr := w.h.store.Tx(ctx, func(view store.Store) error {
 		txCtx := store.ContextInTx(ctx)
 		for _, c := range soft {
-			if capErr := entitymanager.CheckRelationCapacity(txCtx, view, meta, c.Key, leaving, pending); capErr != nil {
+			capErr := entitymanager.CheckRelationCapacity(txCtx, view, meta, c.Key, leaving, pending)
+			if capErr != nil {
 				return &entitymanager.RelationCreateError{Key: c.Key, Err: capErr}
 			}
 			if oErr := entitymanager.CheckOwningEdgeLeaving(txCtx, meta, view, c.Key, leaving); oErr != nil {
