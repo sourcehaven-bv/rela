@@ -7,6 +7,9 @@ import { readFromPage } from '@/utils/pageContext'
 import { usePageStore } from '@/stores/pages'
 import { defaultSortParam } from '@/utils/listParams'
 import { tabIsRelationOrdered } from '@/utils/relationOrder'
+import { listPiles } from '@/api/piles'
+import { knownPileName, rememberPileNames } from '@/composables/pileNames'
+import { useWorld } from '@/composables/useWorld'
 
 export interface ScopeNav {
   // Neighbours carry their type, not just id, so navigation builds the correct
@@ -21,12 +24,19 @@ export interface ScopeNav {
 /**
  * Composable for navigating between entities in a list context.
  * Preserves list filters and sorting while moving through items.
+ *
+ * `servedAddress` is the row on screen (`ID@face`), for a pile scope: a pile
+ * holds a face, so the position is looked up by address rather than by the
+ * bare `entityId` the list and search scopes walk.
  */
-export function useScopeNavigation(entityId: () => string) {
+export function useScopeNavigation(entityId: () => string, servedAddress?: () => string | null) {
   const route = useRoute()
   const router = useRouter()
   const schemaStore = useSchemaStore()
   const pageStore = usePageStore()
+  // The page's world: the position must be computed over the same set the
+  // page (list, search results, pile panel) showed.
+  const { worldParam } = useWorld()
 
   const scopeNav = ref<ScopeNav | null>(null)
 
@@ -37,19 +47,23 @@ export function useScopeNavigation(entityId: () => string) {
       return
     }
 
-    // Two scope origins share the `?from=` mechanism: the search view
-    // (`from=search`) and any configured list (`from=<listId>`). Each builds a
-    // ScopeDescriptor the server resolves into a position — see #844 and the
-    // backend scope.go. The descriptor is the single extension point: adding a
-    // new origin means adding a branch here plus a `source` on the backend.
-    const built = from === 'search' ? buildSearchScope() : buildListScope(from)
+    // Three scope origins share the `?from=` mechanism: the search view
+    // (`from=search`), a pile (`from=pile&pile=<id>`) and any configured list
+    // (`from=<listId>`). Each builds a ScopeDescriptor the server resolves
+    // into a position — see #844 and the backend scope.go. The descriptor is
+    // the single extension point: adding a new origin means adding a branch
+    // here plus a `source` on the backend.
+    const built =
+      from === 'search' ? buildSearchScope() : from === 'pile' ? await buildPileScope() : buildListScope(from)
     if (!built) {
       scopeNav.value = null
       return
     }
 
+    const id = built.scope.source === 'pile' ? (servedAddress?.() ?? entityId()) : entityId()
+
     try {
-      const pos = await getEntityPosition(entityId(), built.scope)
+      const pos = await getEntityPosition(id, built.scope, worldParam.value)
       scopeNav.value = {
         prev: pos.prev,
         next: pos.next,
@@ -74,6 +88,26 @@ export function useScopeNavigation(entityId: () => string) {
     const type = route.query.type as string | undefined
     if (type) scope.type = type
     return { scope, label: `Search: ${q}` }
+  }
+
+  // buildPileScope walks one of the user's piles. The descriptor carries the
+  // pile id and nothing else; the server refuses any other field. The label
+  // is the pile's name, from the sidebar's listing when it has loaded, else
+  // from one fetch of the list.
+  async function buildPileScope(): Promise<{ scope: ScopeDescriptor; label: string } | null> {
+    const pile = route.query.pile
+    if (typeof pile !== 'string' || !pile) return null
+    let name = knownPileName(pile)
+    if (name === undefined) {
+      try {
+        rememberPileNames((await listPiles(worldParam.value)).piles)
+        name = knownPileName(pile)
+      } catch {
+        // The position request decides whether the scope exists; a missing
+        // name only costs the label.
+      }
+    }
+    return { scope: { source: 'pile', pile }, label: name ?? 'Pile' }
   }
 
   // buildListScope reconstructs the scope EntityList rendered: list-config
@@ -153,8 +187,11 @@ export function useScopeNavigation(entityId: () => string) {
     const target = direction === 'prev' ? scopeNav.value.prev : scopeNav.value.next
     if (!target) return undefined
 
+    // A pile scope holds faces, so its neighbours are addressed by their
+    // address (`ID@face`); the other scopes walk entities by id.
+    const isPile = route.query.from === 'pile'
     return {
-      path: `/entity/${target.type}/${target.id}`,
+      path: `/entity/${target.type}/${isPile ? (target.address ?? target.id) : target.id}`,
       query: route.query,
     }
   }

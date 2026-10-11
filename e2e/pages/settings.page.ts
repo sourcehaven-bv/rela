@@ -152,15 +152,24 @@ export class SettingsPage extends BasePage {
 
   /** Set the value of the last-added property default row. If the input is a
    *  select, selects the first non-placeholder option (callers rarely care
-   *  which value, just that the change round-trips). If a text field, fills
-   *  the provided string. */
+   *  which value, just that the change round-trips). A date or number field
+   *  gets a valid value of its type, since `fill` rejects free text there. A
+   *  text field gets the provided string. Which control renders depends on
+   *  the property `addFirstAvailablePropertyDefault` picked, and that is not
+   *  always the same one. */
   async setLastPropertyDefaultValue(fallbackText: string): Promise<void> {
     const row = this.propertyDefaultsCard.locator('.settings-row').last();
     const input = row.locator('input, select').first();
     await expect(input).toBeVisible();
-    const tag = await input.evaluate((el) => el.tagName.toLowerCase());
-    if (tag === 'select') {
+    const kind = await input.evaluate((el) =>
+      el instanceof HTMLSelectElement ? 'select' : (el as HTMLInputElement).type,
+    );
+    if (kind === 'select') {
       await input.selectOption({ index: 1 });
+    } else if (kind === 'date') {
+      await input.fill('2026-01-01');
+    } else if (kind === 'number') {
+      await input.fill('1');
     } else {
       await input.fill(fallbackText);
     }

@@ -383,3 +383,28 @@ func TestScheduleIsDue_interval(t *testing.T) {
 		t.Error("expected due: 30m elapsed")
 	}
 }
+
+// TKT-01KZSO: a task may run as a connector identity, and the shared run_as
+// validator refuses a malformed one.
+func TestParseConfig_RunAsIntegration(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		runAs   string
+		wantErr bool
+	}{
+		{"integration:basecamp", false},
+		{"system:digest", false},
+		{"integration:Basecamp", true},
+		{"integration:", true},
+		{"\"\\x01bot\"", true},
+	} {
+		t.Run(tc.runAs, func(t *testing.T) {
+			t.Parallel()
+			body := "tasks:\n  - name: x\n    script: x.lua\n    every: day\n    run_as: " + tc.runAs + "\n"
+			_, err := ParseConfig([]byte(body))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ParseConfig(run_as %s) error = %v, wantErr %v", tc.runAs, err, tc.wantErr)
+			}
+		})
+	}
+}

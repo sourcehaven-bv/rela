@@ -42,12 +42,13 @@ func ValidateEntityProperties(
 	// query loads only default-state rows and would report a clean run over
 	// data it never looked at (TKT-4Y6CMV).
 	var scanErrs []error
+	metaValidator := metamodel.NewValidator(meta)
 	for e, err := range st.ListEntities(ctx, store.EntityQuery{Faces: store.AllFaces()}) {
 		if err != nil {
 			scanErrs = append(scanErrs, err)
 			continue
 		}
-		errs := meta.ValidateEntity(e.ID, e.Type, e.Properties)
+		errs := metaValidator.ValidateEntity(e.ID, e.Type, e.Properties)
 		if len(errs) > 0 {
 			out = append(out, PropertyError{
 				EntityID:   e.ID,
@@ -88,11 +89,12 @@ func ValidateRelationProperties(
 		return nil
 	}
 	var out []RelationPropertyError
+	metaValidator := metamodel.NewValidator(meta)
 	for rel, err := range st.ListRelations(ctx, store.RelationQuery{}) {
 		if err != nil {
 			continue
 		}
-		errs := meta.ValidateRelationProperties(rel.Type, rel.Properties)
+		errs := metaValidator.ValidateRelationProperties(rel.Type, rel.Properties)
 		if len(errs) > 0 {
 			out = append(out, RelationPropertyError{
 				RelationKey:  rel.From + "--" + rel.Type + "--" + rel.To,

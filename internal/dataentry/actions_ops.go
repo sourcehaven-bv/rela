@@ -96,6 +96,9 @@ func (o actionOps) run(
 	if h.versionTags != nil {
 		deps.VersionTags = h.versionTags()
 	}
+	if h.oauth != nil {
+		deps.OAuth = h.oauth()
+	}
 	var ent *entity.Entity
 	if payload.EntityID != "" && action.AvailableOn == nil {
 		if e, getErr := deps.VisibleReader.GetAddress(ctx, payload.EntityID); getErr == nil {

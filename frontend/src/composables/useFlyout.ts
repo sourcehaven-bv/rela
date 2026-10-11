@@ -22,7 +22,16 @@ export interface FlyoutList {
   href: string
 }
 
+/** A pile slid out from its sidebar row (TKT-K3RJLH). */
+export interface FlyoutPile {
+  navId: string
+  title: string
+  pileId: string
+}
+
+// A list and a pile are alternatives: one flyout at a time, whichever kind.
 const list = shallowRef<FlyoutList | null>(null)
+const pile = shallowRef<FlyoutPile | null>(null)
 /** The row opened in a second panel beside the list. */
 const entity = shallowRef<Entity | null>(null)
 
@@ -34,6 +43,23 @@ export function useFlyout() {
       return
     }
     list.value = next
+    pile.value = null
+    entity.value = null
+  }
+
+  /** Opens a pile, or closes it when that same pile is already open. */
+  function togglePile(next: FlyoutPile) {
+    if (pile.value?.navId === next.navId) {
+      close()
+      return
+    }
+    openPile(next)
+  }
+
+  /** Opens a pile, whatever is open now. */
+  function openPile(next: FlyoutPile) {
+    pile.value = next
+    list.value = null
     entity.value = null
   }
 
@@ -47,14 +73,18 @@ export function useFlyout() {
 
   function close() {
     list.value = null
+    pile.value = null
     entity.value = null
   }
 
   return {
     list: computed(() => list.value),
+    pile: computed(() => pile.value),
     entity: computed(() => entity.value),
-    openNavId: computed(() => list.value?.navId ?? null),
+    openNavId: computed(() => list.value?.navId ?? pile.value?.navId ?? null),
     toggle,
+    togglePile,
+    openPile,
     openEntity,
     closeEntity,
     close,
@@ -64,5 +94,6 @@ export function useFlyout() {
 /** Test seam: reset module state between cases. */
 export function resetFlyout() {
   list.value = null
+  pile.value = null
   entity.value = null
 }

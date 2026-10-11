@@ -31,59 +31,50 @@ interface UseListActionsOptions {
   onComplete: () => void
 }
 
+/** One entity an action runs on: its write address and its type. */
+export interface ActionTarget {
+  /** `ID` or `ID@face`: the row the action acts on. */
+  address: string
+  type: string
+}
+
+function interpolate(value: string): string {
+  return value.replace(/\{\{today\}\}/g, new Date().toISOString().slice(0, 10))
+}
+
 /**
- * Composable for handling keyboard-triggered list actions.
- * Registers keydown handlers for configured action keys and applies
- * mutations (set or script) to all selected entities.
+ * Runs one configured action once per target and reports the outcome: a
+ * `set:` action as a PATCH, anything else through the action endpoint with
+ * the target as its entity context. Targets may be of different types, as on
+ * a pile; each write goes to its own type and address.
+ *
+ * Never rejects. Failures are counted and toasted, and the first script error
+ * opens the shared script-error dialog.
  */
-export function useListActions(options: UseListActionsOptions) {
-  const schemaStore = useSchemaStore()
-  const entitiesStore = useEntitiesStore()
+export function useActionFanout() {
   const uiStore = useUIStore()
   const scriptErrorStore = useScriptErrorStore()
   const processing = ref(false)
 
-  const resolvedActions = computed(() => {
-    const list = schemaStore.getList(options.listId.value)
-    if (!list?.actions) return []
-    const result: { id: string; config: ActionConfig }[] = []
-    for (const actionId of list.actions) {
-      const config = schemaStore.getAction(actionId)
-      if (config) {
-        result.push({ id: actionId, config })
-      }
-    }
-    return result
-  })
-
-  function interpolate(value: string): string {
-    return value.replace(/\{\{today\}\}/g, new Date().toISOString().slice(0, 10))
-  }
-
-  async function executeAction(
+  async function run(
     actionId: string,
     action: ActionConfig,
+    targets: ActionTarget[],
     triggerEl?: HTMLElement | null,
-  ) {
-    const ids = Array.from(options.selectedIds.value)
-    if (ids.length === 0) return
-
+  ): Promise<{ successCount: number; errorCount: number }> {
+    if (targets.length === 0) return { successCount: 0, errorCount: 0 }
     processing.value = true
 
-    const list = schemaStore.getList(options.listId.value)
-    const entityType = list?.entity || ''
-
     const results = await Promise.allSettled(
-      ids.map((entityId) => {
+      targets.map(({ address, type }) => {
         if (action.set) {
           const properties: Record<string, unknown> = {}
           for (const [prop, val] of Object.entries(action.set)) {
             properties[prop] = interpolate(val)
           }
-          return updateEntity(entityType, options.addressOf?.(entityId) ?? entityId, { properties })
+          return updateEntity(type, address, { properties })
         }
-        // The address too: a script action acts on the face the row shows.
-        return runAction(actionId, options.addressOf?.(entityId) ?? entityId, entityType)
+        return runAction(actionId, address, type)
       }),
     )
 
@@ -109,6 +100,54 @@ export function useListActions(options: UseListActionsOptions) {
     } else {
       uiStore.success(`${action.label}: ${successCount} updated`)
     }
+    return { successCount, errorCount }
+  }
+
+  return { processing, run }
+}
+
+/**
+ * Composable for handling keyboard-triggered list actions.
+ * Registers keydown handlers for configured action keys and applies
+ * mutations (set or script) to all selected entities.
+ */
+export function useListActions(options: UseListActionsOptions) {
+  const schemaStore = useSchemaStore()
+  const entitiesStore = useEntitiesStore()
+  const fanout = useActionFanout()
+  const processing = fanout.processing
+
+  const resolvedActions = computed(() => {
+    const list = schemaStore.getList(options.listId.value)
+    if (!list?.actions) return []
+    const result: { id: string; config: ActionConfig }[] = []
+    for (const actionId of list.actions) {
+      const config = schemaStore.getAction(actionId)
+      if (config) {
+        result.push({ id: actionId, config })
+      }
+    }
+    return result
+  })
+
+  async function executeAction(
+    actionId: string,
+    action: ActionConfig,
+    triggerEl?: HTMLElement | null,
+  ) {
+    const ids = Array.from(options.selectedIds.value)
+    if (ids.length === 0) return
+
+    const list = schemaStore.getList(options.listId.value)
+    const entityType = list?.entity || ''
+
+    // The address too: a set or script action acts on the face the row shows.
+    const { successCount } = await fanout.run(
+      actionId,
+      action,
+      ids.map((entityId) => ({ address: options.addressOf?.(entityId) ?? entityId, type: entityType })),
+      triggerEl,
+    )
 
     options.onClearSelection()
 

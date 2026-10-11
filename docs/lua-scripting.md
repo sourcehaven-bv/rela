@@ -551,6 +551,51 @@ local ok, e, warnings = pcall(rela.update_entity, "TKT-001", {title = ""})
 -- ok=true, e is the entity, warnings is the validation findings.
 ```
 
+### Pile Functions
+
+A pile is a personal, named stack of entities. The `rela.piles` functions
+work on the piles of the user the script runs as.
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.piles.add{pile=, entities=, owner=?, create=?}` | Put entities on top of a pile by name | number added |
+| `rela.piles.remove{pile=, entities=}` | Take entities off one of your own piles | `true` |
+| `rela.piles.list()` | Your piles, as `{id, name, icon, count}` | array |
+| `rela.piles.items(name)` | The items of your pile, newest first, as `{id, face, address, type, title}` | array |
+
+- `entities` is an array of addresses (`"TKT-1"`, `"POL-1@draft"`) or entity
+  tables. Up to 500 per call.
+- `add` resolves each entity like the other write functions. The script must
+  be able to read it, and a bare id of a type with several readable faces
+  raises an error that names the faces.
+- `create` defaults to `true`: a missing pile is created.
+- `owner` puts the entities on another user's pile. It must be an existing
+  entity of the ACL's `user_entity_type` (a person). The push is write-only:
+  `add` then always returns `0`, and a missing pile (with `create = false`)
+  is a silent no-op. Scheduled scripts run as a system identity and must
+  pass `owner`.
+- A push to another user's pile never removes their items. On a full pile it
+  adds only as many entities as there is room for, the first ones first, and
+  drops the rest. It creates a pile only while that user has fewer than 25
+  piles; past that it is a silent no-op. The other 25 of the 50 piles are
+  left for the user. Each such push is logged with the pushing user, the
+  target user and the number of entities. The pile name is not logged.
+- `remove` reads no graph. `ID@face` removes that face; a bare id removes
+  every face of it that is on the pile. Ids not on the pile are ignored.
+- `list` counts and `items` returns only the items the script can read.
+- `add` and `remove` exist only on runtimes that may write.
+- Where piles are not available, such as `rela script` on the command line,
+  every function raises `piles are not available in this context`.
+
+```lua
+local ticket = rela.get_entity("TKT-12")
+rela.piles.add{pile = "Review", entities = {ticket, "POL-1@draft"}}
+
+for _, item in ipairs(rela.piles.items("Review")) do
+  print(item.address, item.title)
+end
+```
+
 ### Sync connectors
 
 A sync connector keeps an entity in step with its counterpart in another
@@ -599,6 +644,26 @@ The result also has `base_unknown` (no base given), `complete` (`theirs`
 reported every field in `fields`) and `retag` (nothing to do, but the tag
 should move to the current state). `retag` is true only for a complete
 report.
+
+**Rich text.** When the other system stores bodies as HTML, convert them
+with `rela.md.from_html(html)` on the way in and `rela.md.to_html(markdown)`
+on the way out. Both return the converted text and a boolean `lossy`. Both
+sanitize with the same allowlist: paragraphs, headings, bold, italic,
+strikethrough, lists, code, quotes, tables, rules and `http`, `https` and
+`mailto` links. Other elements, such as images and attachments, are dropped
+and their text kept, and `lossy` is true. Colors and other styling are
+dropped without setting `lossy`.
+
+`from_html` returns markdown that converts back to itself: the text does not
+change again on the next round trip, so a merge settles. To get there it may
+normalize the text once. Two adjacent lists become one list, and bold inside
+a word next to punctuation becomes literal asterisks. The other system may
+also store the HTML in its own form; the next pull then writes that form
+into rela once. Do not push a body when `lossy` is true for the other
+system's current HTML: the push would delete what rela could not represent.
+The Basecamp example records such a body as a conflict instead. Either
+function raises on input over 1 MiB or HTML nested too deeply to parse; call
+it with `pcall` when one bad body must not stop a whole run.
 
 Values compare by meaning for the property type: `3` and `"3"` are the same
 integer, a date ignores a midnight time, a list ignores order, and a body
@@ -738,9 +803,13 @@ A person picks a side through an [action](data-entry.md#actions) that runs
 as the connector's identity. The action writes or pushes the chosen value
 and moves the tag.
 
-**Access.** Give the connector its own role. It needs `read`, `create` and
-`update` on the synced types, `visible:` on every synced field and the ref,
-and the permission `tag:sync` to move `sync/...` tags:
+**Access.** Run the connector as its own identity, `integration:<name>`,
+set as `run_as` on its scheduled task and its background automation. No
+person or API client can claim an `integration:` name, so its role is
+reachable only from operator-authored config. Give that identity its own
+role. It needs `read`, `create` and `update` on the synced types,
+`visible:` on every synced field and the ref, and the permission
+`tag:sync` to move `sync/...` tags:
 
 ```yaml
 # acl.yaml
@@ -757,8 +826,12 @@ roles:
         - field: done
         - field: basecamp
 assignments:
-  system:basecamp-sync: basecamp-connector
+  integration:basecamp: basecamp-connector
 ```
+
+`examples/basecamp/` in the rela repository is a complete connector built
+this way: one script for both directions, the schema, ACL and schedule
+snippets, and a consent script for the first token.
 
 ### Elevated access — `rela.bypass_acl`
 
@@ -1168,6 +1241,7 @@ configuration is needed — unlike `ai.*`, the module works out of the box.
 | `http.put(url, body, opts?)` | PUT convenience | (response, nil) or (nil, err_table) |
 | `http.patch(url, body, opts?)` | PATCH convenience | (response, nil) or (nil, err_table) |
 | `http.delete(url, opts?)` | DELETE convenience | (response, nil) or (nil, err_table) |
+| `http.encode_query(tbl)` | Form-encode a table as `a=1&b=x%20y` | string |
 
 For request/response bodies, use `rela.json.encode` / `rela.json.decode` —
 see [JSON Functions](#json-functions).
@@ -1229,6 +1303,23 @@ Notes:
   authenticate with a token as the username.
 - Both are available on `http.request` and on every convenience method.
 
+#### http.encode_query
+
+`http.encode_query(tbl)` returns `tbl` as URL-encoded text, with the keys
+sorted. Use it for a query string, or for an
+`application/x-www-form-urlencoded` body, which is what OAuth token
+endpoints and many older APIs expect. `form` above makes a multipart body
+instead.
+
+```lua
+local url = "https://api.example.com/search?" ..
+  http.encode_query({q = "open bugs", page = 2, tag = {"a", "b"}})
+-- https://api.example.com/search?page=2&q=open+bugs&tag=a&tag=b
+```
+
+A value may be a string, number or boolean. An array value repeats the key.
+A whole number is written without a decimal point. Any other value raises.
+
 #### Response Shape
 
 `resp` is a table:
@@ -1239,6 +1330,18 @@ Notes:
 | `status` | string | Status line ("200 OK") |
 | `headers` | table | Lowercase keys, first-value-wins for multi-value headers |
 | `body` | string | Response body (capped at 10 MiB) |
+| `retry_after` | number | For a 429 or 503: the seconds the `Retry-After` header asks you to wait. Otherwise `0`. |
+
+A 429 or 503 is a response, not an error. `retry_after` reads both forms of
+the header, a number of seconds and an HTTP date. It is `0` when the header
+is missing or unreadable, which means the server named no wait.
+
+```lua
+local resp, err = http.get(url)
+if resp and resp.status_code == 429 then
+  error("rate limited; retry after " .. resp.retry_after .. " s", 0)
+end
+```
 
 #### Convenience Methods
 
@@ -1262,7 +1365,7 @@ table with `status_code` populated):
 |-------|------|-------|
 | `kind` | string | One of `timeout`, `canceled`, `network`, `bad_response` |
 | `message` | string | Human-readable summary |
-| `retry_after` | number | Always `0` for HTTP errors (populated by `ai` on rate limits) |
+| `retry_after` | number | Always `0` on an error table. A rate limit is a response; see `resp.retry_after` above. |
 | `details` | string | Unwrapped transport error (TLS cert, DNS record, etc.) when present |
 
 | `err.kind` | When |
@@ -1274,6 +1377,10 @@ table with `status_code` populated):
 
 Programming errors (missing URL, URL with userinfo, wrong argument types,
 invalid HTTP method, non-positive timeout) raise Lua errors.
+
+The `message` and `details` of a transport error never contain the request
+URL's query string or fragment. A query often carries a credential, and the
+message reaches script output, logs and the job queue.
 
 #### Redirects
 
@@ -1326,7 +1433,7 @@ configured in `.rela/mail.yaml`. A script cannot reach a destination the
 operator did not set up.
 
 **`mail.send` requires the `mail` capability.** Like `http` and `ai`, it is not
-granted by default — see [Capabilities](#capabilities--http-ai-mail-secrets-write_file)
+granted by default — see [Capabilities](#capabilities--http-ai-mail-secrets-tokens-write_file)
 below.
 
 ```yaml
@@ -1528,10 +1635,11 @@ not by the document config. Two `documents:` entries that share one
 script caches work across all its callers). If you need doc-scoped
 keys, include `rela.document.id` in your cache key explicitly.
 
-### Capabilities — `http`, `ai`, `mail`, `secrets`, `write_file`
+### Capabilities — `http`, `ai`, `mail`, `secrets`, `tokens`, `write_file`
 
-Five things a script can reach are **not** granted by default: outbound HTTP,
-the AI provider, outbound mail, named secrets, and `rela.write_file`.
+Six things a script can reach are **not** granted by default: outbound HTTP,
+the AI provider, outbound mail, named secrets, OAuth access tokens (see
+[OAuth Tokens](#oauth-tokens)), and `rela.write_file`.
 
 For `http`, `ai`, `secrets` and `write_file`, a script that has not been granted
 one does not merely fail the call — the binding is **absent**, so you get
@@ -1595,7 +1703,7 @@ Secrets are loaded from `.rela/secrets.yaml`, which lives inside the gitignored 
 directory.
 
 A script only sees the keys its `capabilities.secrets` list names (see
-[Capabilities](#capabilities--http-ai-mail-secrets-write_file) above); everything
+[Capabilities](#capabilities--http-ai-mail-secrets-tokens-write_file) above); everything
 below describes how the *values* are resolved once a key has been granted.
 
 #### Configuration
@@ -1716,6 +1824,101 @@ If `.rela/secrets.yaml` does not exist, `rela.secrets` is an empty table (no err
 - `.rela/` is gitignored by convention — secrets are not committed to version control
 - Treat Lua scripts as trusted code: any script can read all secrets available to it
 - For shared projects, each contributor maintains their own `.rela/secrets.yaml`
+
+### OAuth Tokens
+
+A connector that calls an OAuth 2 API needs an access token, which expires
+within hours, and a refresh token to get the next one. rela keeps both. The
+script asks for an access token by connection name and never sees the
+refresh token or the client secret.
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.oauth.access_token(name)` | A current access token, refreshed when it is about to expire | (token, nil) or (nil, err_table) |
+| `rela.oauth.invalidate(name, rejected)` | Report that the API answered 401 for `rejected` | (true, nil) or (nil, err_table) |
+
+```lua
+local token, err = rela.oauth.access_token("basecamp")
+if not token then error(err.kind .. ": " .. err.message, 0) end
+local resp = http.get(url, {headers = {Authorization = "Bearer " .. token}})
+if resp and resp.status_code == 401 then
+  rela.oauth.invalidate("basecamp", token)
+  -- ask for a new token and try once more
+end
+```
+
+`invalidate` clears the stored access token only if it is still the one
+you name. When two scripts both get a 401, the second does not throw away
+the fresh token the first one caused.
+
+**Grant.** A script reaches only the connections its `capabilities.tokens`
+lists. `rela.oauth` exists only when that list is not empty:
+
+```yaml
+# schedules.yaml
+tasks:
+  - name: basecamp-pull
+    script: basecamp.lua
+    every: 5m
+    run_as: integration:basecamp
+    capabilities: {http: true, tokens: [basecamp]}
+```
+
+`tokens:` works on scheduled tasks, data-entry actions and background
+automation actions. It is refused on a synchronous automation action,
+because a refresh is slow network I/O inside the save, and on a document,
+because a render is a GET. Calling `rela.oauth` inside a store transaction
+raises for the same reason. `rela script` and `rela flow` reach every
+connection; the docs build reaches none.
+
+**Errors.** `err.kind` is one of:
+
+| `err.kind` | When |
+|---|---|
+| `denied` | `capabilities.tokens` does not list the connection |
+| `not_configured` | No token store, the connection is not in `connections.yaml`, or no token is stored |
+| `needs_consent` | The provider refused the refresh token. Run the consent flow and store a new token. |
+| `error` | Anything else, such as the provider being unreachable |
+
+**Connections.** `connections.yaml` in the project root says how to refresh
+each connection. The client id and secret are secret names, read from
+`.rela/secrets.yaml`:
+
+```yaml
+connections:
+  basecamp:
+    token_url: https://launchpad.37signals.com/authorization/token
+    client_id_secret: basecamp_client_id
+    client_secret_secret: basecamp_client_secret
+    style: launchpad          # or rfc6749, the standard form
+    user_agent: "my-connector (ops@example.com)"
+```
+
+A connection name is 1 to 63 lowercase letters, digits, `_` or `-`.
+`token_url` must be https, except to a loopback address.
+
+**Where tokens are kept.**
+
+| Setup | Token store |
+|---|---|
+| SQLite build | `rela.db`, sealed with the `token_key` secret |
+| PostgreSQL build | the tenant's schema, sealed with `token_key`. Every server process shares it, and only one refreshes a connection at a time. |
+| Desktop app | the OS keychain, beside the project's secrets |
+| File or memory backend | none; `rela.oauth` reports `not_configured` |
+
+The desktop app keeps tokens only in the keychain. The `rela` command line
+and `rela-server` keep them only in `rela.db` (or the PostgreSQL schema).
+Neither reads the other's store, so moving a project between the desktop
+app and the command line or a server means setting the token again.
+
+`token_key` is 32 random bytes in base64 (`openssl rand -base64 32`), set in
+the global secrets or the `RELA_TOKEN_KEY` environment variable. No Lua
+script or child process can read it, not even a script granted every
+secret. Keep a copy: a token sealed with a lost key cannot be read.
+
+Store the first token with `rela token set <name>` (see the
+[CLI reference](cli-reference.md#rela-token)) or, in the desktop app, under
+Settings, Connections.
 
 ### Cache
 
@@ -2071,6 +2274,13 @@ What the walker visits and what it skips:
 | `image` | recurse into `alt_inlines` |
 | `text`, `raw_html`, `autolink`, breaks | left untouched |
 | inside `code_block` or `raw` block | left untouched (parser doesn't emit code-span inlines there) |
+
+#### `rela.md.from_html(html)` and `rela.md.to_html(markdown)`
+
+Convert rich text between HTML and markdown, for sync connectors. Each
+returns the converted text and a boolean that is true when something was
+dropped. See "Rich text" under [Sync connectors](#sync-connectors) for what
+they keep.
 
 ## Entity Structure
 

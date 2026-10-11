@@ -51,6 +51,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/lock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 	"github.com/Sourcehaven-BV/rela/internal/rootfs"
@@ -64,6 +65,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
+	"github.com/Sourcehaven-BV/rela/internal/tokenstore"
 	"github.com/Sourcehaven-BV/rela/internal/tracer"
 	"github.com/Sourcehaven-BV/rela/internal/userstate"
 	"github.com/Sourcehaven-BV/rela/internal/userstate/kvuserstate"
@@ -132,7 +134,14 @@ import (
 // method. The run-state backend is chosen here to match the job queue's reach,
 // the same per-recipe choice as [Services.MigState].
 //
-//plimsoll:max-exported-methods=36
+// 36 → 37 (TKT-K3RJLH): [Services.Piles], the per-user piles service. Its
+// backend is a per-recipe choice like [Services.UserState], and every surface
+// (data entry, Lua, automations, MCP) reaches it through this bundle. The same
+// method takes the total from 40 to 41. Still a ratchet target under
+// TKT-N0IKN9.
+//
+//plimsoll:max-exported-methods=37
+//plimsoll:max-methods=41
 type Services struct {
 	fs    storage.FS
 	paths *project.Context
@@ -171,6 +180,14 @@ type Services struct {
 	// durable PostgreSQL on the postgres build. Torn down in Close.
 	jobQueue      jobs.Queue
 	caldavAliases *caldavalias.Service
+	// piles is the per-user piles service, built per assembly so its owner
+	// check follows the current ACL.
+	//
+	// Nil: never, once assembled; every build has a backend.
+	piles *piles.Service
+	// pileStore is the backend under piles, which a re-assembly shares (see
+	// [SharedBase.ForReassembly]).
+	pileStore piles.Store
 	// comments is the commentary layer (internal/comments). Nil when the
 	// metamodel declares no `comments:` block — the feature then does not
 	// exist, and the data-entry app serves no comment routes.
@@ -219,6 +236,10 @@ type Services struct {
 	// versionTags is the version tag writer (TKT-VO6VG9), built in
 	// finishAssembly over entityManager. See [VersionTags].
 	versionTags *entitymanager.VersionTags
+
+	// tokens is the connector token broker, or why there is none
+	// (TKT-01KZSO). See [Tokens].
+	tokens tokenSetup
 
 	// base is the SharedBase this Services was assembled from. Retained so a
 	// host can build a successor base from the same Config (see
@@ -462,6 +483,7 @@ func (s *Services) LuaReadDeps() lua.ReadDeps {
 		Host:          s.host,
 		World:         s.worlds.DefaultWorld(),
 	}
+	deps.Piles = pileReaderFor(s.piles)
 	if s.base != nil && s.base.cfg.projectConfig != nil {
 		deps.Files = s.base.cfg.projectConfig
 	}
@@ -527,7 +549,10 @@ type scriptEntityReaderFamily interface {
 	Family(ctx context.Context, id string) (visibility.Family, bool, error)
 	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
 	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
+	ResolveHeadersErr(ctx context.Context, refs []entity.Ref) (map[entity.Ref]visibility.ResolvedHeader, error)
 	ListRelationsStrict(ctx context.Context, q store.RelationQuery) iter.Seq2[*entity.Relation, error]
+	CountEntities(ctx context.Context, q store.EntityQuery) (int, error)
+	CountRelations(ctx context.Context, q store.RelationQuery) (int, error)
 }
 
 // scriptReads returns the principal-bound script reader and the traversal gate
@@ -637,7 +662,9 @@ func (s *Services) LuaWriteDeps() lua.WriteDeps {
 	return lua.WriteDeps{
 		ReadDeps:      s.LuaReadDeps(),
 		EntityManager: s.entityManager,
+		PileWriter:    pileWriterFor(s.piles),
 		VersionTags:   ScriptVersionTags(s),
+		OAuth:         ScriptOAuth(s),
 	}
 }
 
@@ -650,7 +677,9 @@ func (s *Services) luaWriteDepsFor(redactor visibility.FieldRedactor) lua.WriteD
 	return lua.WriteDeps{
 		ReadDeps:      s.luaReadDepsFor(redactor),
 		EntityManager: s.entityManager,
+		PileWriter:    pileWriterFor(s.piles),
 		VersionTags:   ScriptVersionTags(s),
+		OAuth:         ScriptOAuth(s),
 	}
 }
 
@@ -791,8 +820,8 @@ func gatedSearcher(
 }
 
 // GatedGraphReader is the row-and-tally read surface returned by
-// [Services.GatedReads]. Row reads are ACL-gated; the two counts are not —
-// see [gatedGraphReader] for why.
+// [Services.GatedReads]. Row reads and counts are ACL-gated — see
+// [gatedGraphReader].
 //
 // Resolve takes an entity ADDRESS (`ID` or `ID@face`) and reads the face it
 // names, or the face the reader's world resolves a bare id to. Family answers
@@ -805,6 +834,7 @@ type GatedGraphReader interface {
 	// ([visibility.Resolver.WriteTarget]).
 	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
 	ResolveHeaders(ctx context.Context, refs []entity.Ref) map[entity.Ref]visibility.ResolvedHeader
+	ResolveHeadersErr(ctx context.Context, refs []entity.Ref) (map[entity.Ref]visibility.ResolvedHeader, error)
 	ListEntities(ctx context.Context, q store.EntityQuery) iter.Seq2[*entity.Entity, error]
 	// GetRelation reads the edge at k, tail included. It answers not-found
 	// unless the caller may read both endpoints and, for a content edge, the
@@ -817,19 +847,16 @@ type GatedGraphReader interface {
 }
 
 // gatedGraphReader composes the ACL-gated row reader with the raw store for
-// the two operations the gated reader does not provide.
+// the one operation the gated reader does not provide.
 //
 // The split is deliberate:
 //
 //   - Resolve / ListEntities / ListRelations go through `rows`, so a hidden
 //     entity is absent and a hidden edge is not listed.
-//   - CountEntities / CountRelations go to the raw store. A count is
-//     STRUCTURAL: it says how many rows of a declared type exist, never which.
-//     Entity *existence* is the secret the row gate protects; an aggregate
-//     tally of a type the metamodel already publishes is not. A count scoped
-//     to ONE entity is different, since it reveals that entity's hidden
-//     neighbors; cardinality analysis therefore folds its counts from
-//     ListRelationsStrict instead (TKT-5LW875).
+//   - CountEntities / CountRelations go through `rows` too, so a count is the
+//     length of the list it summarizes (TKT-QZTROQ). A count over the raw
+//     store told a caller how many rows exist of a type it may not read, and
+//     how many rows of a readable type are hidden from it.
 //   - GetRelation answers not-found unless both endpoints have a readable
 //     face ([visibility.Resolver.Family]), then reads the raw store. An edge
 //     at the zero tail is entity level, so the family check is the whole gate
@@ -867,6 +894,12 @@ func (g gatedGraphReader) ResolveHeaders(
 	ctx context.Context, refs []entity.Ref,
 ) map[entity.Ref]visibility.ResolvedHeader {
 	return g.rows.ResolveHeaders(ctx, refs)
+}
+
+func (g gatedGraphReader) ResolveHeadersErr(
+	ctx context.Context, refs []entity.Ref,
+) (map[entity.Ref]visibility.ResolvedHeader, error) {
+	return g.rows.ResolveHeadersErr(ctx, refs)
 }
 
 func (g gatedGraphReader) ListEntities(
@@ -933,11 +966,11 @@ func (g gatedGraphReader) readableFaces(ctx context.Context, id string) ([]entit
 }
 
 func (g gatedGraphReader) CountEntities(ctx context.Context, q store.EntityQuery) (int, error) {
-	return g.raw.CountEntities(ctx, q)
+	return g.rows.CountEntities(ctx, q)
 }
 
 func (g gatedGraphReader) CountRelations(ctx context.Context, q store.RelationQuery) (int, error) {
-	return g.raw.CountRelations(ctx, q)
+	return g.rows.CountRelations(ctx, q)
 }
 
 // Collaborators bundles the fully-built dependencies of a [Services]
@@ -1195,7 +1228,7 @@ func buildFieldPolicy(meta *metamodel.Metamodel, st store.Store, d *acl.Declarat
 // A condition's `related(...)` is answered ungated from st: an automation is
 // system policy, so what it sees must not depend on who made the write.
 func buildAutomation(
-	meta *metamodel.Metamodel, st store.Store, bg autocascade.BackgroundScripts,
+	meta *metamodel.Metamodel, st store.Store, bg autocascade.BackgroundScripts, pusher autocascade.PilePusher,
 ) (*automation.Engine, *autocascade.Runner, error) {
 	if len(meta.Automations) == 0 {
 		return nil, nil, nil
@@ -1208,7 +1241,7 @@ func buildAutomation(
 	if err != nil {
 		return nil, nil, fmt.Errorf("build automation engine: %w", err)
 	}
-	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine, Background: bg})
+	cascadeRunner, err := autocascade.New(autocascade.Deps{Engine: autoEngine, Background: bg, Piles: pusher})
 	// coverage-ignore-start: defensive: autocascade.New only errors on a nil Engine; autoEngine is freshly built by
 	// NewEngineFromMetamodel just
 	// above and is never nil
@@ -1246,6 +1279,11 @@ type options struct {
 	// backgroundAutomationJobs runs `background: true` automation actions
 	// on the job queue instead of in the foreground.
 	backgroundAutomationJobs bool
+
+	// tokenStore builds where connector refresh tokens live; see
+	// [WithTokenStore]. Nil means a sealed store on the database backends
+	// and none elsewhere.
+	tokenStore func(HostConfig) (tokenstore.Store, error)
 }
 
 // WithBackgroundAutomationJobs runs `background: true` automation actions
@@ -1792,6 +1830,9 @@ type SharedBase struct {
 	aclPolicy *acl.Policy
 	meta      *metamodel.Metamodel
 	worlds    worlds.Compiled
+	// conns is the parsed connections.yaml (TKT-01KZSO), empty when the
+	// file is absent. Parsed here so an invalid file fails the boot.
+	conns tokenstore.Connections
 	// reassembly marks a base built to re-assemble against an ALREADY-OPEN
 	// store, so [assemble] skips the store-open-only steps. Set by
 	// [SharedBase.ForReassembly]; false for a base that will open its own store.
@@ -1799,6 +1840,9 @@ type SharedBase struct {
 	// attachLocker is the predecessor's attachment lock, reused by a
 	// re-assembly. Nil for a first assembly, which takes lock.For(store).
 	attachLocker lock.Locker
+	// pileStore is the predecessor's piles backend, reused by a re-assembly
+	// for the same reason as attachLocker. Nil for a first assembly.
+	pileStore piles.Store
 }
 
 // attachmentLocker is the predecessor's attachment lock on a re-assembly,
@@ -1829,12 +1873,16 @@ func (b *SharedBase) IsReassembly() bool { return b.reassembly }
 // its attachment lock: an in-memory lock only excludes holders of the same
 // instance, so a fresh one would let an upload under the old schema race a
 // face delete under the new one.
+// It reuses the piles backend for the same reason: the KV piles backend
+// serializes writers with an in-process mutex. The piles SERVICE is rebuilt,
+// so its owner check follows the reloaded ACL.
 //
 // Nil: rejected by use — prev is dereferenced.
 func (b *SharedBase) ForReassembly(prev *Services) *SharedBase {
 	next := *b
 	next.reassembly = true
 	next.attachLocker = prev.attachLocker
+	next.pileStore = prev.pileStore
 	return &next
 }
 
@@ -1962,9 +2010,16 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("compile query scopes: %s", strings.Join(problems, "; "))
 	}
 
+	// An invalid connections.yaml fails the boot rather than leaving every
+	// connector without tokens behind a log line.
+	conns, err := loadConnections(context.Background(), cfg.configLoader())
+	if err != nil {
+		return nil, err
+	}
+
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
-		meta: meta, worlds: compiledWorlds,
+		meta: meta, worlds: compiledWorlds, conns: conns,
 	}, nil
 }
 
@@ -2050,7 +2105,7 @@ func buildEntityManager(
 	base *SharedBase, st store.Store, aliases entitymanager.AliasRewriter,
 	templater entitymanager.TemplateLoader, resolvedACL acl.ACL,
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
-	readDeps lua.ReadDeps, versions store.VersionService, tw TransitionWiring,
+	readDeps lua.ReadDeps, pileWriter lua.PileWriter, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
 ) (*entitymanager.Manager, error) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
@@ -2063,7 +2118,7 @@ func buildEntityManager(
 		Automations:   autoEngine,
 		Cascade:       cascadeRunner,
 		ScriptRunner: cascadeScriptRunner(base.cfg.ScriptEngine, readDeps, st, base.cfg.Audit,
-			base.worlds),
+			base.worlds, pileWriter),
 		VersionRecorder:         versionRecorderFor(versions),
 		RelationVersionRecorder: relationVersionRecorderFor(versions),
 		Computed:                computedSet,
@@ -2199,7 +2254,7 @@ func resolveACLAndRedactor(
 // see property values the same principal has redacted everywhere else.
 func (b *SharedBase) cascadeReadDeps(
 	st store.Store, tr tracer.Tracer, searcher search.Searcher, stateKV state.KV,
-	d *acl.Declarative, redactor visibility.FieldRedactor,
+	d *acl.Declarative, redactor visibility.FieldRedactor, pileSvc *piles.Service,
 ) (lua.ReadDeps, error) {
 	host, err := b.hostConfigFor(stateKV)
 	if err != nil {
@@ -2215,6 +2270,7 @@ func (b *SharedBase) cascadeReadDeps(
 		Files:         b.cfg.projectFiles(),
 		Host:          host,
 		World:         w.DefaultWorld(),
+		Piles:         pileReaderFor(pileSvc),
 	}, nil
 }
 
@@ -2318,10 +2374,7 @@ func assemble(
 	// A recipe-supplied state store wins over the per-backend one, which wins
 	// over the filesystem. Same precedence as the config loader, and for the
 	// same reason.
-	backendKV := overrides.stateKV
-	if backendKV == nil {
-		backendKV = stateKVFor(st)
-	}
+	backendKV := overrides.backendKV(st)
 	migState, err := buildMigState(cfg.FS, cfg.Paths, overrides.migState, backendKV)
 	if err != nil {
 		return nil, err
@@ -2346,27 +2399,23 @@ func assemble(
 		}
 	}()
 
-	autoJobs, autoEngine, cascadeRunner, err := buildAutomationWithJobs(base, st, stateKV, jobQueue)
+	// Before automation: add_to_pile actions push through refs.piles.
+	refs, err := buildRefHolders(base, st, overrides.commentStore, aclDeclarative, fieldPol.redactor)
+	if err != nil {
+		return nil, err
+	}
+	autoJobs, autoEngine, cascadeRunner, err := buildAutomationWithJobs(base, st, stateKV, jobQueue, refs.piles)
 	if err != nil {
 		return nil, err
 	}
 
 	// Build the static lua read deps once — the ScriptRunner (automation
 	// cascades) is constructed with these.
-	readDeps, err := base.cascadeReadDeps(st, tr, searcher, stateKV, aclDeclarative, fieldPol.redactor)
+	readDeps, err := base.cascadeReadDeps(st, tr, searcher, stateKV, aclDeclarative, fieldPol.redactor, refs.piles)
 	if err != nil {
 		return nil, err
 	}
 
-	// Comments are keyed by target entity id, so the service must learn about
-	// renames and deletes. It rides the AliasRewriter hook rather than
-	// store.EntityObserver for the reason that hook documents: stores fire the
-	// observer with the error discarded, which is fine for a rebuildable search
-	// index but not for records that exist ONLY in the comment store.
-	commentSvc, err := buildComments(cfg.FS, cfg.Paths, base.meta, overrides.commentStore)
-	if err != nil {
-		return nil, err
-	}
 	schedState := overrides.schedulerState
 	if schedState == nil {
 		if schedState, err = kvstate.New(stateKV); err != nil {
@@ -2378,8 +2427,9 @@ func assemble(
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
-	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, commentSvc, autoJobs), templater, resolvedACL,
-		autoEngine, cascadeRunner, readDeps, versions, tw, computedSet, attachLocker, fieldPol.gate)
+	mgr, err := buildEntityManager(base, st, newAliasFanout(aliases, refs.comments, refs.piles, autoJobs), templater,
+		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
+		attachLocker, fieldPol.gate)
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
 	// fail — unreachable with valid inputs (see the scupper in buildStateKV)
@@ -2419,14 +2469,23 @@ func assemble(
 	// (TKT-0C57FS). Never fails boot; the stop func is torn down in Close —
 	// per-assembled, like the search closer.
 	background := startBackgroundServices(
-		base, st, stateKV, migState, cfgLoader, versions, commentSvc, mgr, jobQueue, readDeps.Host)
-
+		base, st, stateKV, migState, cfgLoader, versions, refs.comments, mgr, jobQueue, readDeps.Host)
 	assembled := newServices(
 		base, st, background, searcher, visible, searchCloser, mgr, tr, val,
-		templater, cfgLoader, stateKV, migState, jobQueue, aliases, commentSvc, versions,
+		templater, cfgLoader, stateKV, migState, jobQueue, aliases, refs.comments, versions,
 		resolvedACL, aclDeclarative, fieldPol.redactor, schedState,
 	)
-	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine, sweep)
+	assembled.tokens = buildTokens(context.Background(), base, st, backendKV, readDeps.Host, attachLocker)
+	return finishAssembly(assembled, attachLocker, autoJobs, autoEngine, refs, sweep)
+}
+
+// backendKV returns the recipe-supplied state store, or the per-backend one
+// when the recipe supplies none.
+func (o backendOverrides) backendKV(st store.Store) state.KV {
+	if o.stateKV != nil {
+		return o.stateKV
+	}
+	return stateKVFor(st)
 }
 
 // versioningFor derives the store's versioning service and builds, without
@@ -2467,10 +2526,11 @@ type versionSweep interface {
 //
 // Nil: sweep is accepted and means the store has no sweep.
 func finishAssembly(
-	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *automation.Engine,
+	s *Services, attachLocker lock.Locker, autoJobs *automationJobs, engine *automation.Engine, refs refHolders,
 	sweep versionSweep,
 ) (*Services, error) {
 	s.attachLocker = attachLocker
+	s.piles, s.pileStore = refs.piles, refs.pileStore
 	tags, err := buildVersionTags(s)
 	if err != nil {
 		return nil, err
@@ -2492,14 +2552,14 @@ func finishAssembly(
 // The scheduler needs the state store and job queue, so this runs after
 // buildRuntimeServices.
 func buildAutomationWithJobs(
-	base *SharedBase, st store.Store, kv state.KV, q jobs.Queue,
+	base *SharedBase, st store.Store, kv state.KV, q jobs.Queue, pileSvc *piles.Service,
 ) (*automationJobs, *automation.Engine, *autocascade.Runner, error) {
 	autoJobs, err := newAutomationJobs(base.meta, kv, st, automationJobQueue(base, q))
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	// Errors only on a nil Engine, which buildAutomation never produces.
-	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st, autoJobs)
+	autoEngine, cascadeRunner, err := buildAutomation(base.meta, st, autoJobs, cascadePiles(pileSvc))
 	if err != nil { // coverage-ignore: defensive: see above
 		return nil, nil, nil, err
 	}

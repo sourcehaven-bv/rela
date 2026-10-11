@@ -523,6 +523,11 @@ func (c *Config) Validate() error {
 		if !strings.HasSuffix(c.Script, ".lua") {
 			return fmt.Errorf("script must be a .lua file, got %q", c.Script)
 		}
+		for _, name := range c.Capabilities.Secrets {
+			if !secrets.ScriptReadable(name) {
+				return fmt.Errorf("capabilities.secrets may not name %q: it is the token store key", name)
+			}
+		}
 		return c.validateCommon()
 	case "":
 		return fmt.Errorf("transport is required (%s)", transportList)

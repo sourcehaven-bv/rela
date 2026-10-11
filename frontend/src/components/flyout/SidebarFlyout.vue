@@ -19,13 +19,24 @@ import RlSlidePanelStack, { type SlidePanel } from 'rela-components/components/l
 import RlIconButton from 'rela-components/components/common/RlIconButton.vue'
 import EntityDetail from '@/components/entity/EntityDetail.vue'
 import FlyoutList from './FlyoutList.vue'
+import PilePanel from '@/components/piles/PilePanel.vue'
+import { usePiles } from '@/composables/usePiles'
 
 const route = useRoute()
 const router = useRouter()
 const flyout = useFlyout()
+const piles = usePiles()
 
 const panels = computed<SlidePanel[]>(() => {
   const result: SlidePanel[] = []
+  // A pile has no page of its own to expand to; its rows link to the items.
+  const pile = flyout.pile.value
+  if (pile) {
+    // The listed name, so a rename made in the panel retitles it.
+    const listed = piles.piles.value.find((p) => p.id === pile.pileId)
+    result.push({ id: 'pile', title: listed?.name ?? pile.title, size: 'md' })
+    return result
+  }
   const list = flyout.list.value
   if (!list) return result
   result.push({ id: 'list', title: list.title, size: 'md' })
@@ -37,7 +48,7 @@ const panels = computed<SlidePanel[]>(() => {
 
 /* Closing a panel closes what it opened, so the detail cannot outlive its list. */
 function onClose(id: string) {
-  if (id === 'list') flyout.close()
+  if (id === 'list' || id === 'pile') flyout.close()
   else flyout.closeEntity()
 }
 
@@ -60,6 +71,7 @@ watch(() => route.path, () => flyout.close())
   <RlSlidePanelStack :panels="panels" class="sidebar-flyout" manage-focus @close="onClose">
     <template #panel-actions="{ panel }">
       <RlIconButton
+        v-if="panel.id !== 'pile'"
         icon="maximize-2"
         :label="panel.id === 'list' ? 'Open the full list' : 'Open the full page'"
         @click="expand(panel.id)"
@@ -70,6 +82,11 @@ watch(() => route.path, () => flyout.close())
       <FlyoutList
         v-if="panel.id === 'list' && flyout.list.value"
         :list-id="flyout.list.value.listId"
+      />
+      <PilePanel
+        v-else-if="panel.id === 'pile' && flyout.pile.value"
+        :key="flyout.pile.value.pileId"
+        :pile-id="flyout.pile.value.pileId"
       />
       <EntityDetail
         v-else-if="panel.id === 'entity' && flyout.entity.value"

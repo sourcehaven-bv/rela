@@ -45,6 +45,7 @@ var validTopLevelKeys = map[string]bool{
 	"next_action_bands": true,
 	"next_actions":      true,
 	"account":           true,
+	"piles":             true,
 }
 
 // Known typos with suggestions
@@ -481,6 +482,7 @@ func ValidateConfig(data []byte, cfg *Config, meta *metamodel.Metamodel) error {
 	errs = append(errs, validateQueryScopes(cfg, meta)...)
 	errs = append(errs, validateNavEntities(cfg, meta)...)
 	errs = append(errs, validateAccount(data, cfg, meta)...)
+	errs = append(errs, validatePiles(data, cfg, meta)...)
 	errs = append(errs, validateCrossReferences(cfg)...)
 
 	if len(errs) > 0 {
@@ -1298,6 +1300,7 @@ func CollectConfigWarnings(cfg *Config, meta *metamodel.Metamodel) []string {
 	warnings = append(warnings, viewCommandPermissionWarnings(cfg)...)
 	warnings = append(warnings, inertSectionRenderWarnings(cfg)...)
 	warnings = append(warnings, inertWidgetWarnings(cfg, meta)...)
+	warnings = append(warnings, pilesSetWarnings(cfg, meta)...)
 	return warnings
 }
 
@@ -2762,6 +2765,19 @@ func isLoopbackHost(host string) bool {
 // error in the other; TestExportSegmentPremise asserts the two agree.
 const ReservedExportSegment = "_export"
 
+// validateDocumentTokens refuses `capabilities.tokens` on a document. A render
+// is a GET (see validateDocumentElevation), and a token refresh rotates a
+// stored credential: a prefetch or a reload would spend it. Connector work
+// belongs in a schedule or a background automation (TKT-01KZSO).
+func validateDocumentTokens(docID string, doc DocumentConfig) []string {
+	if len(doc.Capabilities.Tokens) == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"document %q: capabilities.tokens is not supported on a document; a render is a GET. "+
+			"Call the external API from a schedule or a background automation", docID)}
+}
+
 // Invariant: every document must have entity_type set, and exactly one of
 // {command, script} must be non-empty. entity_type is enforced at the HTTP
 // handler layer to reject cross-type render requests; the mutual exclusion
@@ -2797,6 +2813,8 @@ func validateDocuments(cfg *Config) []string {
 		// silently, and the failure would be a document that stops rendering
 		// with no error anywhere. Refusing at load costs an operator one
 		// rename and removes the whole class.
+		errs = append(errs, validateDocumentTokens(docID, doc)...)
+
 		if docID == ReservedExportSegment {
 			errs = append(errs, fmt.Sprintf(
 				"document %q: %q is reserved for the export route (/_documents/{document}/%s); rename the document",

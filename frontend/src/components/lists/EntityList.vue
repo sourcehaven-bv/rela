@@ -35,6 +35,7 @@ import SearchBox from './SearchBox.vue'
 import AdHocFilterMenu from './AdHocFilterMenu.vue'
 import BackButton from '@/components/common/BackButton.vue'
 import ExportMenu from '@/components/entity/ExportMenu.vue'
+import AddToPileMenu from '@/components/piles/AddToPileMenu.vue'
 import PageHeaderContent from '@/components/common/PageHeaderContent'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useCreateModal } from '@/composables/useCreateModal'
@@ -521,8 +522,15 @@ const hasRelationColumns = computed(() => {
 
 const hasActions = computed(() => resolvedActions.value.length > 0)
 // Rows are selectable when there is something to do with a selection: a
-// configured bulk action, or a row the principal may delete.
-const selectable = computed(() => hasActions.value || anyRowDeletable.value)
+// configured bulk action, a row the principal may delete, or a pile to add
+// the rows to (TKT-K3RJLH).
+const selectable = computed(() => hasActions.value || anyRowDeletable.value || schemaStore.pilesAvailable)
+
+// What "Add to pile" adds: each selected row's ADDRESS, so a pile holds the
+// face the list shows, as the bulk delete does.
+function selectedAddresses(): string[] {
+  return entities.value.filter((e) => selectedIds.value.has(e.id)).map((e) => entityRef(e))
+}
 
 // Build query params. Reads `page` (input state), never `meta` (query
 // output) — otherwise the query key would depend on its own result.
@@ -1567,6 +1575,12 @@ watch(searchQuery, () => {
           >
             Delete
           </RlButton>
+          <AddToPileMenu
+            :addresses="selectedAddresses"
+            variant="primary"
+            placement="top"
+            @added="clearActionSelection"
+          />
         </RlBulkActionBar>
       </div>
 

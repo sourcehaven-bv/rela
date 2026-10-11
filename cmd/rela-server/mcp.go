@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/Sourcehaven-BV/rela/internal/mcpwire"
+
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
@@ -94,7 +96,8 @@ func newRemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost) (*relamc
 		relamcp.WithPrincipal(principal.Principal{
 			User: principal.SystemUser(),
 			Tool: principal.ToolMCP,
-		}))
+		}),
+		mcpwire.Piles(svc))
 }
 
 // remoteMCPDeps builds the MCP dependencies for the remote endpoint. Every

@@ -360,6 +360,25 @@ func TestBuildGlobalInput(t *testing.T) {
 
 // --- buildCommandEnv ---
 
+// A data-entry command never inherits the token key or the database DSN.
+func TestBuildCommandEnv_WithholdsSecrets(t *testing.T) {
+	t.Setenv("RELA_TOKEN_KEY", "token-key-value")
+	t.Setenv("RELA_DATABASE_URL", "postgres://u:dsn-password@h/db")
+	app, entities := testAppInstance()
+	bindRepo(app, "/test/project")
+	cmd := CommandConfig{Script: "echo hi", Context: "entity"}
+	env := app.commands.buildCommandEnv(cmd, mustEntityInput(context.Background(), t, app, entities.ticket1))
+	envMap := envToMap(env)
+	for _, name := range []string{"RELA_TOKEN_KEY", "RELA_DATABASE_URL"} {
+		if _, ok := envMap[name]; ok {
+			t.Errorf("command environment holds %s", name)
+		}
+	}
+	if envMap["RELA_PROJECT_ROOT"] != "/test/project" {
+		t.Errorf("RELA_PROJECT_ROOT = %q", envMap["RELA_PROJECT_ROOT"])
+	}
+}
+
 func TestBuildCommandEnv(t *testing.T) {
 	app, entities := testAppInstance()
 	bindRepo(app, "/test/project")

@@ -212,7 +212,10 @@ func (h promptHandler) handleSummarizeProjectPrompt(
 	var entityCounts strings.Builder
 	totalEntities := 0
 	for _, t := range entityTypes {
-		count, _ := st.CountEntities(ctx, store.EntityQuery{Type: t, Faces: store.InWorld(h.world)})
+		count, err := st.CountEntities(ctx, store.EntityQuery{Type: t, Faces: store.InWorld(h.world)})
+		if err != nil {
+			return nil, fmt.Errorf("count %s: %w", t, err)
+		}
 		totalEntities += count
 		def, _ := meta.GetEntityDef(t)
 		label := t
@@ -228,7 +231,10 @@ func (h promptHandler) handleSummarizeProjectPrompt(
 	var relCounts strings.Builder
 	totalRelations := 0
 	for _, t := range relTypes {
-		count, _ := st.CountRelations(ctx, store.RelationQuery{Type: t})
+		count, err := st.CountRelations(ctx, store.RelationQuery{Type: t})
+		if err != nil {
+			return nil, fmt.Errorf("count %s: %w", t, err)
+		}
 		totalRelations += count
 		fmt.Fprintf(&relCounts, "- %s: %d\n", t, count)
 	}
@@ -264,7 +270,7 @@ Please provide:
 4. Recommendations for improving the project's traceability`,
 		totalEntities, totalRelations, orphanCount,
 		entityCounts.String(), relCounts.String(),
-		meta.GetVersion(), meta.GetNamespace(),
+		meta.Version, meta.Namespace,
 		len(entityTypes), len(relTypes))
 
 	return &mcpgo.GetPromptResult{
@@ -306,7 +312,7 @@ func (h promptHandler) handleReviewEntityPrompt(
 	}
 
 	// Run validations for this entity
-	errs := meta.ValidateEntity(entity.ID, entity.Type, entity.Properties)
+	errs := metamodel.NewValidator(meta).ValidateEntity(entity.ID, entity.Type, entity.Properties)
 	var validationText string
 	if len(errs) == 0 {
 		validationText = "All validations passed"

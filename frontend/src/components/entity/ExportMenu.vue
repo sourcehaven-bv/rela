@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { getTransforms, type TransformInfo } from '@/api/transforms'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
@@ -13,9 +13,20 @@ const props = defineProps<{
    * the menu stays agnostic about the export target.
    */
   urlFor: (transform: string) => string
+  /**
+   * The transform names to offer, when the target narrows them (a pile's
+   * `piles.export`). Absent or empty offers every registered transform.
+   */
+  allowed?: string[]
+  size?: 'sm' | 'md'
 }>()
 
 const transforms = ref<TransformInfo[]>([])
+
+const offered = computed(() => {
+  const allowed = props.allowed
+  return allowed?.length ? transforms.value.filter((t) => allowed.includes(t.name)) : transforms.value
+})
 let abort: AbortController | null = null
 
 onMounted(async () => {
@@ -45,9 +56,9 @@ function exportAs(t: TransformInfo) {
     click-outside listener, arrow-key navigation, and the panel's position
     (teleported, so a scrolling ancestor cannot clip it).
   -->
-  <RlMenu v-if="transforms.length" class="export-menu">
+  <RlMenu v-if="offered.length" class="export-menu">
     <template #trigger="{ toggle, attrs }">
-      <RlButton variant="secondary" v-bind="attrs" @click="toggle">
+      <RlButton variant="secondary" :size="size" v-bind="attrs" @click="toggle">
         Export
         <template #trailing>
           <RlIcon name="chevron-down" :size="14" aria-hidden="true" />
@@ -56,7 +67,7 @@ function exportAs(t: TransformInfo) {
     </template>
 
     <RlMenuItem
-      v-for="t in transforms"
+      v-for="t in offered"
       :key="t.name"
       class="export-menu-item"
       @click="exportAs(t)"

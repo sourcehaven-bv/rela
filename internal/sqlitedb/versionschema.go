@@ -47,7 +47,7 @@ package sqlitedb
 // written.
 const versionSchemaSQL = `
 -- schema_versions is the content-addressed store of render-schema projections.
--- hash is metamodel.RenderProjection().Hash(); projection is that projection as
+-- hash is metamodel.NewRenderProjection(meta).Hash(); projection is that projection as
 -- JSON. Deduplicated by hash, so an unchanged metamodel across many writes
 -- stores exactly one row. Never pruned: it is tiny after dedup and every
 -- version row's schema_hash must stay resolvable, including for versions whose

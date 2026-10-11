@@ -78,6 +78,12 @@ until the migration commits: seconds at twenty thousand rows, longer on a
 large table. Plan a maintenance window, or run `rela db migrate` as a deploy
 step, when the table is large.
 
+Migration 20 adds the `piles` and `pile_items` tables. A pile is one user's
+named stack of entity references. Like comments, piles live in the tenant's
+schema, so every rela-server process on that schema sees the same piles and
+another tenant sees none of them. They are not graph content: they are not
+audited, versioned or searched.
+
 ### Applying migrations explicitly
 
 If you would rather apply the schema as a separate, controlled step

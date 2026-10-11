@@ -840,6 +840,11 @@ func (r *Runtime) registerBindings(allowWrites bool) {
 	rela := r.L.NewTable()
 
 	r.registerReadBindings(rela)
+	pb := &pileBindings{
+		reader: r.deps.Piles, writer: r.deps.PileWriter,
+		rd: r.deps.VisibleReader, meta: r.deps.Meta, ctxFn: r.callerCtx,
+	}
+	pb.register(r.L, rela, allowWrites)
 	if allowWrites {
 		r.registerWriteBindings(rela)
 		// rela.bypass_acl is registered ONLY when an elevated handle was wired
@@ -966,6 +971,7 @@ func (r *Runtime) registerWriteBindings(rela *lua.LTable) {
 	r.L.SetField(rela, "create_relation", r.L.NewFunction(r.luaCreateRelation))
 	r.L.SetField(rela, "delete_relation", r.L.NewFunction(r.luaDeleteRelation))
 	registerVersionTagWriteBindings(r, rela)
+	registerOAuthModule(r, rela)
 	// write_file is additionally capability-gated (TKT-YH52OM): a writer
 	// runtime may mutate the graph without being entitled to touch the disk.
 	if r.caps.WriteFile {

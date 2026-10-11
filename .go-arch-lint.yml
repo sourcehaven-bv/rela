@@ -12,10 +12,12 @@ exclude:
   - internal/visibility/visibilitytest
   - internal/state/statetest
   - internal/lock/locktest
+  - internal/tokenstore/tokenstoretest
   - internal/jobs/jobstest
   - internal/mail/mailtest
   - internal/userstate/userstatetest
   - internal/comments/commentstest
+  - internal/piles/pilestest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -60,6 +62,7 @@ components:
   docs:             { in: internal/docs }
   docscapture:      { in: internal/docscapture }
   dataentrywire:    { in: internal/dataentrywire }
+  mcpwire:          { in: internal/mcpwire }
   # desktop.yaml: native notifications and the Dock badge. Wails-free; the
   # desktop shell delivers what it reports.
   desktopnotify:    { in: internal/desktopnotify }
@@ -85,6 +88,8 @@ components:
   calfeed:          { in: internal/calfeed }
   classification:   { in: internal/classification }
   mailrender:       { in: internal/mailrender }
+  # HTML <-> markdown for sync connectors (TKT-LAMZ8F). A leaf like mailrender.
+  htmlmd:           { in: internal/htmlmd }
   mailtemplate:     { in: internal/mailtemplate }
   caldavalias:      { in: internal/caldavalias }
   conflict:         { in: internal/conflict }
@@ -148,6 +153,9 @@ components:
   filecomments:     { in: internal/comments/filecomments }
   pgcomments:       { in: internal/comments/pgcomments }
   sqlitecomments:   { in: internal/comments/sqlitecomments }
+  piles:            { in: internal/piles }
+  kvpiles:          { in: internal/piles/kvpiles }
+  pgpiles:          { in: internal/piles/pgpiles }
   schedulerstate:   { in: internal/schedulerstate }
   kvschedstate:     { in: internal/schedulerstate/kvstate }
   pgschedstate:     { in: internal/schedulerstate/pgschedstate }
@@ -211,6 +219,9 @@ components:
   project:          { in: internal/project }
   state:            { in: internal/state }
   lock:             { in: internal/lock }
+  # OAuth refresh tokens for connector scripts, sealed into state.KV, and the
+  # Go-side refresher (TKT-01KZSO).
+  tokenstore:       { in: internal/tokenstore }
   storage:          { in: internal/storage }
 
   # Shared utilities
@@ -257,10 +268,14 @@ vendors:
   # quoted-printable, multipart — which is the part that is easy to get subtly
   # wrong. Granted only to mail.
   gomail:      { in: github.com/wneessen/go-mail }
-  # HTML sanitize + CSS inline for mail bodies. Both granted only to
-  # mailrender; the ORDER they run in is a security property documented on that
-  # package (sanitize the untrusted fragment, inline last).
+  # HTML sanitize + CSS inline for mail bodies, granted to mailrender; the
+  # ORDER they run in is a security property documented on that package
+  # (sanitize the untrusted fragment, inline last). htmlmd also sanitizes with
+  # bluemonday, in both conversion directions.
   bluemonday:  { in: github.com/microcosm-cc/bluemonday }
+  htmltomarkdown:
+    in:
+      - github.com/JohannesKaufmann/html-to-markdown/v2/**
   douceur:
     in:
       - github.com/aymerick/douceur
@@ -361,6 +376,7 @@ deps:
       - jwtauth
       - lua
       - mcp
+      - mcpwire
       - metamodel
       - principal
       - projectsetup
@@ -402,6 +418,9 @@ deps:
       - state
       - storage
       - store
+      # The keychain token store and the settings window's Connections
+      # section (TKT-01KZSO).
+      - tokenstore
     canUse:
       # The OS credential store for project secrets (see
       # docs/architecture/desktop-documents.md).
@@ -452,6 +471,7 @@ deps:
       - lua
       - markdown
       - mcp
+      - mcpwire
       - memstore
       - metamodel
       - output
@@ -481,6 +501,9 @@ deps:
       - storage
       - store
       - templating
+      # `rela token set|status|delete` (TKT-01KZSO) parses the operator's
+      # token input and reports the store's typed read errors.
+      - tokenstore
       - tracer
       - transform
       - validator
@@ -527,6 +550,9 @@ deps:
       # above, that is a wiring-site decision, so only the `comments` package
       # is granted here, never filecomments/memcomments.
       - comments
+      # The piles service (TKT-K3RJLH). Like comments, only the domain
+      # package: the backend (kvpiles/pgpiles) is the wiring site's choice.
+      - piles
       - cmdexec
       - config
       - conflict
@@ -710,6 +736,11 @@ deps:
       # manager and the attachment service must share one instance
       # (BUG-CTUW2N), so the composition root builds it once for both.
       - lock
+      # The connector token store (TKT-01KZSO): sealed into the database
+      # backend's state store, its broker shares the attachment lock. secrets
+      # names the global section's "no secrets file" error.
+      - tokenstore
+      - secrets
       - memuserstate
       - kvuserstate
       # Likewise the commentary layer: the root picks the backend and hands the
@@ -721,6 +752,11 @@ deps:
       - filecomments
       - pgcomments
       - sqlitecomments
+      # Per-user piles: the root picks the backend (pgpiles over the store's
+      # pool on postgres, kvpiles over the node-local cache KV elsewhere).
+      - piles
+      - kvpiles
+      - pgpiles
       - datamigration
       # The migration-state backends, selected here for the same reason as the
       # comment backends: the recipe owns the handle each one needs, and the
@@ -868,6 +904,8 @@ deps:
       - project
       - scheduler
       - storage
+      # `rela validate` checks connections.yaml (TKT-01KZSO).
+      - tokenstore
       # `rela validate` must check the pointer grammar too. The loader
       # checks world structure; grammar lives in the compiler because
       # metamodel may not import entity (TKT-WAV8XP).
@@ -927,6 +965,12 @@ deps:
       - goldmark
       - bluemonday
       - douceur
+  htmlmd:
+    canUse:
+      - goldmark
+      - bluemonday
+      - htmltomarkdown
+      - nethtml
   # Project declarations assemble renderer models from an injected visible
   # reader. SMTP and app wiring remain outside this package.
   mailtemplate:
@@ -1077,6 +1121,13 @@ deps:
     mayDependOn:
       - appbuild
       - dataentry
+  # MCP tool groups over appbuild services, shared by the stdio and remote
+  # servers. Separate from appbuild because mcp's tests import appbuild.
+  mcpwire:
+    mayDependOn:
+      - appbuild
+      - mcp
+      - piles
   docscapture:
     mayDependOn:
       - acl
@@ -1262,6 +1313,13 @@ deps:
   metamodel:
     mayDependOn:
       - migration
+      # principal: the shared run_as validator (TKT-01KZSO), so a background
+      # action and a scheduled task accept the same identities. principal is a
+      # leaf.
+      - principal
+      # secrets: ScriptReadable refuses the token store key in a
+      # capabilities.secrets list (TKT-01KZSO). secrets is a leaf.
+      - secrets
       - storage
     canUse:
       - rrulego
@@ -1338,6 +1396,31 @@ deps:
       - principal
     canUse:
       - textanchor
+  # piles are per-user stacks of entity references (TKT-K3RJLH). Like
+  # comments, not graph content: entity for the Ref type, principal for the
+  # owner, and deliberately NOT store or entitymanager.
+  piles:
+    mayDependOn:
+      - entity
+      - principal
+  # The single-process backend: one JSON document in the node-local state KV.
+  kvpiles:
+    mayDependOn:
+      - entity
+      - piles
+      - state
+    canUse:
+      # x/sys for flock/LockFileEx: the lock file that keeps several
+      # processes over one cache directory from losing each other's writes.
+      - xsys
+  # The postgres backend takes the store's pool as an injected handle, like
+  # pgcomments, so it has no reason to know a store exists.
+  pgpiles:
+    mayDependOn:
+      - entity
+      - piles
+    canUse:
+      - pgx
   memcomments:
     mayDependOn:
       - comments
@@ -1421,6 +1504,8 @@ deps:
       # deps at all, and `go list -deps` confirms it imports nothing internal),
       # so this arrow cannot close a cycle. lua still must not depend on mail.
       - mailrender
+      # rela.md.from_html / to_html (TKT-LAMZ8F); a leaf, no cycle possible.
+      - htmlmd
       - metamodel
       - principal
       - search
@@ -1622,6 +1707,11 @@ deps:
   state:
     mayDependOn:
       - storage
+  # Depends only on state: the lock, the secrets and the HTTP client are
+  # consumer-side interfaces the wiring site satisfies.
+  tokenstore:
+    mayDependOn:
+      - state
   fsimport:
     mayDependOn:
       - app

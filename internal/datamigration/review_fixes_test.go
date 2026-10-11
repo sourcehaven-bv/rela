@@ -101,7 +101,7 @@ func TestCompareShapes_CardinalityEffectiveValues(t *testing.T) {
 			fromMeta.Relations["assigned-to"] = rf
 			toMeta.Relations["assigned-to"] = rt
 
-			r := metamodel.CompareShapes(fromMeta.ShapeProjection(), toMeta.ShapeProjection())
+			r := metamodel.CompareShapes(metamodel.NewShapeProjection(fromMeta), metamodel.NewShapeProjection(toMeta))
 			var got []metamodel.ShapeDelta
 			for _, d := range r.Deltas {
 				if strings.HasPrefix(d.Kind, "relation_cardinality") {

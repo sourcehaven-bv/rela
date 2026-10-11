@@ -38,14 +38,14 @@ type entityTypeSummary struct {
 	Name       string   `json:"name"`
 	Label      string   `json:"label,omitempty"`
 	IDPrefixes []string `json:"id_prefixes,omitempty"`
-	Count      int      `json:"count"`
+	Count      *int     `json:"count,omitempty"`
 }
 
 type relationTypeSummary struct {
 	Name  string   `json:"name"`
 	From  []string `json:"from"`
 	To    []string `json:"to"`
-	Count int      `json:"count"`
+	Count *int     `json:"count,omitempty"`
 }
 
 type propertySchema struct {
@@ -73,7 +73,7 @@ type entityTypeDetail struct {
 	IDType          string                    `json:"id_type"`
 	IDPrefixes      []string                  `json:"id_prefixes,omitempty"`
 	DisplayProperty string                    `json:"display_property,omitempty"`
-	Count           int                       `json:"count"`
+	Count           *int                      `json:"count,omitempty"`
 	Properties      map[string]propertySchema `json:"properties"`
 	Outgoing        []relationEnd             `json:"outgoing,omitempty"`
 	Incoming        []relationEnd             `json:"incoming,omitempty"`
@@ -94,7 +94,7 @@ type relationTypeDetail struct {
 	MinIncoming *int                      `json:"min_incoming,omitempty"`
 	MaxIncoming *int                      `json:"max_incoming,omitempty"`
 	Properties  map[string]propertySchema `json:"properties,omitempty"`
-	Count       int                       `json:"count"`
+	Count       *int                      `json:"count,omitempty"`
 }
 
 func (h schemaResourceHandler) handleSchema(
@@ -145,7 +145,7 @@ func (h schemaResourceHandler) overview(ctx context.Context) any {
 		if def == nil {
 			continue
 		}
-		count, _ := h.store.CountEntities(ctx, store.EntityQuery{Type: name, Faces: store.InWorld(h.world)})
+		count := countOrNil(h.store.CountEntities(ctx, store.EntityQuery{Type: name, Faces: store.InWorld(h.world)}))
 		entities = append(entities, entityTypeSummary{
 			Name:       name,
 			Label:      labelUnlessName(def.GetLabel(), name),
@@ -162,7 +162,7 @@ func (h schemaResourceHandler) overview(ctx context.Context) any {
 		if def == nil {
 			continue
 		}
-		count, _ := h.store.CountRelations(ctx, store.RelationQuery{Type: name})
+		count := countOrNil(h.store.CountRelations(ctx, store.RelationQuery{Type: name}))
 		relations = append(relations, relationTypeSummary{
 			Name: name, From: def.GetFrom(), To: def.GetTo(), Count: count,
 		})
@@ -179,7 +179,7 @@ func (h schemaResourceHandler) overview(ctx context.Context) any {
 func (h schemaResourceHandler) entityDetail(
 	ctx context.Context, name string, def *metamodel.EntityDef,
 ) entityTypeDetail {
-	count, _ := h.store.CountEntities(ctx, store.EntityQuery{Type: name, Faces: store.InWorld(h.world)})
+	count := countOrNil(h.store.CountEntities(ctx, store.EntityQuery{Type: name, Faces: store.InWorld(h.world)}))
 	detail := entityTypeDetail{
 		Name:            name,
 		Label:           labelUnlessName(def.GetLabel(), name),
@@ -220,11 +220,21 @@ func (h schemaResourceHandler) entityDetail(
 	return detail
 }
 
+// countOrNil is a schema count, or nil when the count failed. A nil count is
+// left out of the JSON: a gated count that failed must not read as zero rows
+// (TKT-QZTROQ).
+func countOrNil(n int, err error) *int {
+	if err != nil {
+		return nil
+	}
+	return &n
+}
+
 // relationDetail describes one relation type.
 func (h schemaResourceHandler) relationDetail(
 	ctx context.Context, name string, def *metamodel.RelationDef,
 ) relationTypeDetail {
-	count, _ := h.store.CountRelations(ctx, store.RelationQuery{Type: name})
+	count := countOrNil(h.store.CountRelations(ctx, store.RelationQuery{Type: name}))
 	detail := relationTypeDetail{
 		Name:        name,
 		Label:       labelUnlessName(def.GetLabel(), name),

@@ -216,8 +216,12 @@ type appEntityWriter interface {
 // reached through this struct. Recorded because the load line interrupting
 // that habit is the whole point of it. Ratchet target, as above.
 //
-//plimsoll:max-methods=91
-//plimsoll:max-exported-methods=23
+// 91 -> 92 and 23 -> 24 exported for SetPiles (TKT-K3RJLH), on the same
+// terms as SetComments: one wiring setter, with the routes on pilesHandler.
+// Ratchet target, as above.
+//
+//plimsoll:max-methods=92
+//plimsoll:max-exported-methods=24
 type App struct {
 	// Primitives — immutable after NewApp.
 	fs    storage.FS
@@ -239,6 +243,10 @@ type App struct {
 	// resolves a tag for rela.version_by_tag. Both nil until
 	// [SetVersionTags], which leaves scripts without tags.
 	versionTags versionTagWiring
+
+	// oauth backs rela.oauth in action scripts (TKT-01KZSO). Nil until
+	// [SetOAuthTokens]; rela.oauth then reports not_configured.
+	oauth lua.OAuthTokens
 
 	// recreator brings a deleted face back at its own id on a history
 	// restore, create-only (see entitymanager.RecreateEntity).
@@ -270,6 +278,9 @@ type App struct {
 	// `comments:` block, which is the "feature absent" signal — the routes 404
 	// and no storage is touched.
 	comments *commentsHandler
+	// piles owns the piles routes (TKT-K3RJLH). Always non-nil; the service
+	// inside is nil until SetPiles, which is the "feature absent" signal.
+	piles    *pilesHandler
 	searcher search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search
@@ -568,7 +579,7 @@ func (a *App) Meta() *metamodel.Metamodel { return a.State().Meta }
 // (TKT-80EWGM), so a redacted read can no longer feed a write.
 func (a *App) luaWriteDeps() lua.WriteDeps {
 	redactor := appRedactor(a)
-	return lua.WriteDeps{
+	return a.piles.scriptPiles(lua.WriteDeps{
 		ReadDeps: lua.ReadDeps{
 			VisibleReader: a.scriptReader(redactor),
 			Tracer:        a.scriptTracer(redactor),
@@ -579,7 +590,7 @@ func (a *App) luaWriteDeps() lua.WriteDeps {
 			World:         defaultWorldScope(a.worlds),
 		},
 		EntityManager: a.entityManager,
-	}
+	})
 }
 
 // appRedactor returns the field-redaction seam over the affordance service
@@ -912,6 +923,14 @@ type versionTagWiring struct {
 func SetVersionTags(a *App, writer lua.VersionTagWriter, reader visibility.VersionTagReader) {
 	a.versionTags = versionTagWiring{writer: writer, reader: reader}
 }
+
+// SetOAuthTokens gives action scripts rela.oauth (TKT-01KZSO). Only an
+// action whose `capabilities.tokens` names a connection sees the binding. A
+// package function because App is at its plimsoll method cap. Call it before
+// serving.
+//
+// Nil: accepted; rela.oauth then reports not_configured.
+func SetOAuthTokens(a *App, t lua.OAuthTokens) { a.oauth = t }
 
 // scriptTraversalGate authorizes a validation rule's traversal under the same
 // tier as [gatedScriptReader], resolved at call time because a.acl is set
@@ -1415,6 +1434,14 @@ func NewApp(
 	// installed later by SetComments and stays nil when commenting is off.
 	app.comments = newCommentsHandler(app, em)
 
+	// pilesHandler owns the piles routes, extracted on the same terms. Its
+	// service is installed later by SetPiles.
+	pilesH, pilesErr := newPilesHandler(app)
+	if pilesErr != nil {
+		return nil, pilesErr
+	}
+	app.piles = pilesH
+
 	// attachmentHandler owns the entity-attachment routes. Constructed after
 	// the runner wiring above so it captures the resolved runner. The acl/
 	// audit/field-resolver deps are closures because tests swap those fields
@@ -1469,6 +1496,7 @@ func NewApp(
 		engine:           func() *script.Engine { return app.scriptEngine },
 		luaDeps:          app.luaWriteDeps,
 		versionTags:      func() lua.VersionTagWriter { return app.versionTags.writer },
+		oauth:            func() lua.OAuthTokens { return app.oauth },
 		fullScriptDetail: app.allowFullScriptDetail,
 		paths:            paths,
 		provision:        newProvisionSeam(app),
@@ -1691,12 +1719,14 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 		reader:      app.reader,
 		serializer:  app.serializer,
 		affordances: app.affordances,
-		viewReader:  app.viewReader,
-		visible:     app.visibleReader,
-		services:    app.Services,
-		logo:        logo,
-		gateRead:    app.gateReadOrNotFound,
-		aclImpl:     func() acl.ACL { return app.acl },
+		// Late-bound: SetPiles runs after this point in NewApp.
+		pilesAvailable: func(ctx context.Context) bool { return app.piles.available(ctx) },
+		viewReader:     app.viewReader,
+		visible:        app.visibleReader,
+		services:       app.Services,
+		logo:           logo,
+		gateRead:       app.gateReadOrNotFound,
+		aclImpl:        func() acl.ACL { return app.acl },
 		faceEdges: func(
 			ctx context.Context, e *entity.Entity,
 		) ([]*entity.Relation, error) {
