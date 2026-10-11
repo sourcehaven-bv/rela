@@ -124,7 +124,7 @@ func (s *Sealed) Put(ctx context.Context, name Name, t Token) error {
 	if err != nil { // coverage-ignore: a Token of strings and times always marshals
 		return fmt.Errorf("tokenstore: encode %q: %w", name, err)
 	}
-	out := make([]byte, headerSize, headerSize+len(plain)+s.aead.Overhead())
+	out := make([]byte, headerSize) // Seal grows it; a computed capacity could overflow
 	out[0] = sealVersion
 	copy(out[1:], s.keyID[:])
 	if _, err := rand.Read(out[1+keyIDSize : headerSize]); err != nil { // coverage-ignore: crypto/rand does not fail
