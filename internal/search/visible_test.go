@@ -133,3 +133,38 @@ func TestSearchVisibleFields_FailsClosedWithoutProvenance(t *testing.T) {
 		t.Errorf("want ErrScope on missing provenance, got %v", streamErr)
 	}
 }
+
+// TestSearchVisible_BleveHiddenOnlyMatchDropped: bleve matches the word
+// "foo,bar" against the hidden code "foobar" (one edit). The visible title
+// "foo visible" holds the analyzer token "foo" but not the word, so it must
+// not count as the match.
+func TestSearchVisible_BleveHiddenOnlyMatchDropped(t *testing.T) {
+	idx, err := bleveindex.NewMem()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = idx.Close() })
+	s := memstore.New(memstore.WithObserver(idx))
+	e := entity.New("TKT-1", "ticket")
+	e.SetString("title", "foo visible")
+	e.SetString("code", "foobar")
+	require.NoError(t, s.CreateEntity(t.Context(), e))
+	svc := search.New(s, idx)
+	v, err := search.NewVisible(svc, s)
+	require.NoError(t, err)
+
+	q := search.Query{Text: "foo,bar", World: store.TrivialScope()}
+	ungated := 0
+	for _, err := range svc.Search(t.Context(), q) {
+		require.NoError(t, err)
+		ungated++
+	}
+	require.Equal(t, 1, ungated, "fixture: bleve must match the hidden code")
+
+	scope := map[string]search.TypeScope{"ticket": {AllowAll: true}}
+	hidden := func(context.Context, search.Hit, *entity.Entity) (map[string]struct{}, error) {
+		return map[string]struct{}{search.PropFieldPrefix + "code": {}}, nil
+	}
+	for h, err := range v.SearchVisibleFields(t.Context(), q, scope, hidden) {
+		require.NoError(t, err)
+		t.Errorf("hit %s returned; its only match is the hidden code", h.ID)
+	}
+}

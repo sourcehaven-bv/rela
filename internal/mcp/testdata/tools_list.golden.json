@@ -268,6 +268,22 @@
     }
   },
   {
+    "name": "list_comments",
+    "description": "List the comments on an entity, oldest first. Each has its anchor, body, resolved state, and whether the anchor still resolves (detached), you may edit or delete it, and its suggested replacement can be accepted.",
+    "inputSchema": {
+      "properties": {
+        "id": {
+          "description": "Entity ID, or ID@face for an entity with content states. Writes to such an entity must name the face.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "list_entities",
     "description": "List entities as {id,type,title,status} summaries, sorted by ID. Result: {total,has_more,entities}.",
     "inputSchema": {

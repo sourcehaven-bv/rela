@@ -88,6 +88,14 @@ type Deps struct {
 	Watcher      Watcher
 	ProjectRoot  string
 	Attachments  AttachmentDeps
+	// Comments backs list_comments, and CommentWriter the comment write
+	// tools (TKT-QIQO1W).
+	//
+	// Nil: accepted. A nil Comments means the project declares no
+	// `comments:` block and no comment tool is registered; a nil
+	// CommentWriter leaves out the write tools, as stdio `rela mcp` does.
+	Comments      CommentReader
+	CommentWriter CommentWriter
 	// World is the world the list and count surfaces (list_entities, the
 	// schema resource's counts, the overview prompt, search) read in when a
 	// call names none. It is required; wiring passes
@@ -414,6 +422,7 @@ type handlerSet struct {
 	schemaRes schemaResourceHandler
 	prompts   promptHandler
 	attach    attachmentHandler
+	comments  commentHandler
 }
 
 // handlers builds the extracted handler groups a [Server] carries. One
@@ -428,6 +437,7 @@ func (d Deps) handlers() handlerSet {
 		schemaRes: schemaResourceHandler{store: d.Store, meta: d.Meta, world: d.World},
 		prompts:   promptHandler{store: d.Store, meta: d.Meta, tracer: d.Tracer, types: types, world: d.World},
 		attach:    attachmentHandler{store: d.Store, deps: d.Attachments},
+		comments:  commentHandler{reader: d.Comments, writer: d.CommentWriter},
 	}
 }
 

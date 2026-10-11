@@ -219,7 +219,7 @@ func (h pileHandler) handleList(ctx context.Context) *mcpgo.CallToolResult {
 		}
 		out.Piles = append(out.Piles, pileSummaryJSON{ID: p.ID, Name: p.Name, Icon: p.Icon, Count: count})
 	}
-	return jsonResult(out)
+	return pileJSONResult(out)
 }
 
 // handleShow serves show_pile: the readable items, newest first, from one
@@ -253,7 +253,7 @@ func (h pileHandler) handleShow(ctx context.Context, args toolRequest) *mcpgo.Ca
 		out.Items = append(out.Items, h.item(ref, rh))
 	}
 	out.Count = len(out.Items)
-	return jsonResult(out)
+	return pileJSONResult(out)
 }
 
 // item is the wire form of one readable pile item.
@@ -294,7 +294,7 @@ func (h pileHandler) handleAdd(ctx context.Context, args toolRequest) *mcpgo.Cal
 	if err != nil {
 		return errorResult(err.Error())
 	}
-	return jsonResult(struct {
+	return pileJSONResult(struct {
 		Added int `json:"added"`
 	}{added})
 }
@@ -414,8 +414,8 @@ func pileItemsMatching(items []entity.Ref, addrs []string) ([]entity.Ref, error)
 	return out, nil
 }
 
-// jsonResult marshals v as the tool's text result.
-func jsonResult(v any) *mcpgo.CallToolResult {
+// pileJSONResult marshals v as the tool's text result.
+func pileJSONResult(v any) *mcpgo.CallToolResult {
 	text, err := marshalJSON(v)
 	if err != nil { // coverage-ignore: defensive: the values are strings, ints and slices of them.
 		return errorResult(err.Error())

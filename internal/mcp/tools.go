@@ -46,6 +46,9 @@ func (s *Server) registerTools() {
 	// Pile tools: only when the wiring supplies piles (see WithPiles).
 	registerPileTools(s)
 
+	// Comment tools: only when the project enables commenting.
+	s.registerCommentTools()
+
 	// Lua scripting tools: stdio only (see WithLuaTools).
 	if !s.luaTools {
 		return

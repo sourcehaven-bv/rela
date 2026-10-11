@@ -235,7 +235,7 @@ func TestSweepCapturesWhileAnotherSchemaHoldsLock(t *testing.T) {
 		`UPDATE entities SET updated_at = now() - interval '1 hour' WHERE id = 'TENANT-B-1'`)
 	require.NoError(t, err)
 
-	sB.StartVersionSweep(
+	startVersionSweep(t, sB,
 		stubProvider{hash: "schema-abc", json: []byte(`{"entities":{},"types":{}}`)},
 		pgstore.SweepConfig{
 			Interval:     50 * time.Millisecond,

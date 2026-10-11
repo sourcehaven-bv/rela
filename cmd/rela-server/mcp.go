@@ -136,6 +136,12 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals
 	}
+	// Assigned only when set: a nil *MCPComments in the interface would
+	// register the tools over an absent service.
+	if host.Comments != nil {
+		deps.Comments = host.Comments
+		deps.CommentWriter = host.Comments
+	}
 	return deps, nil
 }
 

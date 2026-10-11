@@ -196,6 +196,9 @@ var toolCalls = map[string]struct {
 	"show_pile":        {args: `{"pile":"Mine"}`},
 	"add_to_pile":      {args: `{"pile":"Inbox","ids":["REQ-001"]}`},
 	"remove_from_pile": {args: `{"pile":"Mine","ids":["REQ-001"]}`},
+	// The write comment tools are not registered on this stdio-shaped
+	// server; tools_comments_test.go drives them.
+	"list_comments": {args: `{"id":"REQ-001"}`},
 }
 
 // TestDispatch_AnalyzeEveryCheck drives every analyze check through a real

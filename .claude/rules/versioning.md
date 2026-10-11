@@ -24,10 +24,12 @@ paths:
   and drop real events. Capture is **hybrid**: rename+delete are captured
   synchronously at the entitymanager boundary (they carry old→new id /
   pre-delete state the sweep can't reconstruct); create/update are captured by a
-  debounced reconciliation **sweep** goroutine (`sweep.go`, started/stopped like
-  the listener in the change feed, see `storage.md`). The sweep's candidate query
-  must not keep selecting rows its Go dedup skips: such a row is selected again
-  every tick, and a batch of those starves every row behind them (BUG-1DWMYO). It therefore selects only rows whose stored
+  debounced reconciliation **sweep** (`VersionSweep` in `sweep.go`). The sweep
+  is a service of its own, not store state (TKT-IPXEZQ): appbuild builds one
+  per assembly, starts it once assembly succeeds, and stops it in
+  `Services.Close`/`CloseAssembly`, before the store and its handle close.
+  The sweep's candidate query must not keep selecting rows its Go dedup skips:
+  such a row is selected again every tick, and a batch of those starves every row behind them (BUG-1DWMYO). It therefore selects only rows whose stored
   `content_hash` is NULL, never by stored columns or timestamps. A non-NULL hash
   means the current lifecycle's latest version has that hash: the sweep writes
   it back after capturing or skipping a row (unless the row or its latest

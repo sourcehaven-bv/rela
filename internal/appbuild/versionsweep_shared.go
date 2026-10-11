@@ -19,14 +19,14 @@ import (
 //
 // It lives in its own file rather than in either recipe because none of it is
 // backend-specific: the projection comes from the metamodel, the cadence from
-// the environment, and the two capabilities are named in store-package terms.
+// the environment, and the version capability is named in store-package terms.
 // Duplicating it per backend is how the recipes drift — the same reason
 // prepare/assemble exist.
 
-// metaProjectionProvider yields the current render-schema projection from the
-// metamodel, for a version sweep to stamp on create/update versions. It reads
-// the metamodel on each call so a metamodel reload is picked up on the next
-// sweep tick.
+// metaProjectionProvider yields the render-schema projection of one metamodel,
+// for a version sweep to stamp on create/update versions. It is bound to the
+// metamodel its assembly loaded: a reload assembles again, and that assembly
+// builds a new sweep with the new metamodel.
 type metaProjectionProvider struct {
 	meta *metamodel.Metamodel
 }
@@ -43,38 +43,37 @@ func (p metaProjectionProvider) Projection() (hash string, projectionJSON []byte
 	return proj.Hash(), b
 }
 
-// versionSweeper is the capability startVersionSweepIfSupported needs: a store
-// that runs its own debounced reconciliation sweep to capture create/update
-// versions.
-//
-// The signature names only store-package types, so any backend can satisfy it
-// without importing pgstore (TKT-L3FNEN).
-//
-// An ALIAS for store.VersionSweeper, not a locally-declared interface: the
-// consumer-side rule is about owning the minimum method list, and at one method
-// there is nothing to narrow. The local name exists so the call site and the
-// compile-time assertions in widen_assertions_postgres_test.go keep referring to
-// one identifier.
-type versionSweeper = store.VersionSweeper
-
 // versionServiceProvider is the capability versionServiceFor needs: a store that
 // can hand out a versioning service (history reads, version writes, purge)
 // sharing its own connection.
 //
 // Returns the store.VersionService interface, so a backend satisfies this
-// without importing pgstore (TKT-L3FNEN). An alias for the same reason as
-// versionSweeper above.
+// without importing pgstore (TKT-L3FNEN). An ALIAS for store.VersionServiceProvider,
+// not a locally-declared interface: the consumer-side rule is about owning the
+// minimum method list, and at one method there is nothing to narrow.
 type versionServiceProvider = store.VersionServiceProvider
 
-// startVersionSweepIfSupported starts the store's reconciliation sweep. A store
-// without the capability (should not happen in these builds) is left unswept.
-// The sweep cadence is taken from sweepConfigFromEnv so a test/dev deployment
-// can make create/update versions appear quickly (production uses the
-// zero-value defaults: 5m interval/idle).
-func startVersionSweepIfSupported(st store.Store, meta *metamodel.Metamodel) {
-	if s, ok := st.(versionSweeper); ok {
-		s.StartVersionSweep(metaProjectionProvider{meta: meta}, sweepConfigFromEnv())
+// newVersionSweep builds, but does not start, the reconciliation sweep for st:
+// the backend constructor (newBackendVersionSweep, one per build tag) fed the
+// metamodel projection and the cadence from sweepConfigFromEnv, so a test or
+// dev deployment can make create/update versions appear quickly (production
+// uses the zero-value defaults: 5m interval/idle).
+//
+// Returns a genuinely nil sweep and no error for a store this build has no
+// sweep for, such as the memstore the shared tests assemble over.
+//
+// Nil: meta is rejected with an error when st has a sweep, because every tick
+// stamps the metamodel projection.
+func newVersionSweep(st store.Store, meta *metamodel.Metamodel) (versionSweep, error) {
+	var provider store.ProjectionProvider
+	if meta != nil {
+		provider = metaProjectionProvider{meta: meta}
 	}
+	sw, err := newBackendVersionSweep(st, provider, sweepConfigFromEnv())
+	if err != nil {
+		return nil, fmt.Errorf("appbuild: build version sweep: %w", err)
+	}
+	return sw, nil
 }
 
 // versionServiceFor returns the store's versioning service (history reads,
