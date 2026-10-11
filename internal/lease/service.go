@@ -252,6 +252,7 @@ func (s *Service) Claim(ctx context.Context, req ClaimRequest) (Claimed, error) 
 	if err != nil {
 		return Claimed{}, err
 	}
+	slog.Info("lease: claimed", "user", p.User, "tool", p.Tool, "entity", ref.ID)
 	s.hub.wake()
 	return Claimed{LeaseID: id, Lease: public(l)}, nil
 }
@@ -311,7 +312,11 @@ func (s *Service) Renew(ctx context.Context, leaseID string, ttl time.Duration, 
 	}
 	// The same rule as the store's version: a plain extension wakes nobody,
 	// a new status or an earlier expiry does.
-	if (status != nil && *status != cur.Status) || l.Expires.Before(cur.Expires) {
+	statusChanged := status != nil && *status != cur.Status
+	if statusChanged {
+		slog.Info("lease: status changed", "user", p.User, "tool", p.Tool, "entity", l.ID)
+	}
+	if statusChanged || l.Expires.Before(cur.Expires) {
 		s.hub.wake()
 	}
 	return public(l), nil

@@ -29,6 +29,7 @@ func (g *Generator) buildEntitySchema(typeName string, def metamodel.EntityDef) 
 	props["content"] = &Schema{Type: "string", Description: "Markdown body content"}
 	props["_self"] = &Schema{Type: "string", Format: "uri-reference", Description: "Self link"}
 	props["_owner"] = ownerSchema()
+	props["_lease"] = leaseSchema()
 	props["_title"] = &Schema{Type: "string", Description: "Display title, resolved from the type's display property"}
 	props["_redacted"] = &Schema{
 		Type: "array", Items: StringSchema(),

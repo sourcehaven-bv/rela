@@ -197,7 +197,7 @@ func (a *App) startStoreEventBridge() {
 		slog.Warn("sse: change feed not started", "error", err)
 		return
 	}
-	a.live.start(a.feed)
+	a.live.start(a.feed, a.leases.wakeSource())
 }
 
 // StartGitFetch begins periodic git fetch in the background.

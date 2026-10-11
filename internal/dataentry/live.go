@@ -370,9 +370,16 @@ func (h *liveHub) identityTotalLocked(c *liveConn, n int) int {
 
 // --- worker ---
 
-// start runs the live worker on feed until stop. A second start before stop
-// is a no-op.
-func (h *liveHub) start(feed *changefeed.Bus) {
+// leaseWaker is the lease wake-up source the live worker listens to: a
+// claim, a status change, a release or an expiry may change a response's
+// `_lease`. A plain renew does not wake it.
+type leaseWaker interface {
+	Subscribe() (wake <-chan struct{}, cancel func())
+}
+
+// start runs the live worker on feed, and on leases when it is non-nil,
+// until stop. A second start before stop is a no-op.
+func (h *liveHub) start(feed *changefeed.Bus, leases leaseWaker) {
 	h.runMu.Lock()
 	defer h.runMu.Unlock()
 	if h.cancel != nil {
@@ -381,10 +388,16 @@ func (h *liveHub) start(feed *changefeed.Bus) {
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel, h.done = cancel, make(chan struct{})
 	sub := feed.Subscribe("")
+	var leaseWake <-chan struct{} // nil: never ready
+	unsubscribe := func() {}
+	if leases != nil {
+		leaseWake, unsubscribe = leases.Subscribe()
+	}
 	go func() {
 		defer close(h.done)
 		defer sub.Close()
-		h.run(ctx, sub)
+		defer unsubscribe()
+		h.run(ctx, sub, leaseWake)
 	}()
 }
 
@@ -409,13 +422,14 @@ type liveFeed interface {
 // run runs one round at a time: a changed round on each tick of a fixed
 // clock when anything changed since the last one, a round over the pending
 // subscriptions on a tick when nothing changed, and a baseline round when a
-// PUT asks for one.
+// PUT asks for one. A lease wake marks the round dirty like a write does.
 //
 // The clock is fixed so that a round's start never depends on when a change
 // arrived. If the first change started the window instead, a write to a
 // type the subscriber cannot read would move when its next frame arrives,
-// which polling would not reveal.
-func (h *liveHub) run(ctx context.Context, feed liveFeed) {
+// which polling would not reveal. The same holds for a lease on an entity
+// the subscriber cannot read.
+func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struct{}) {
 	tick := time.NewTicker(h.window)
 	defer tick.Stop()
 	dirty := false
@@ -424,6 +438,8 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed) {
 		case <-ctx.Done():
 			return
 		case <-feed.Wake():
+			dirty = true
+		case <-leaseWake:
 			dirty = true
 		case <-h.kick:
 			h.round(ctx, false) // baselines only; nothing changed

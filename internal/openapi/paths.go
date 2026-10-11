@@ -214,6 +214,7 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 	g.addRelationTypePaths(spec, typeName, def, basePath)
 
 	g.addAttachmentPaths(spec, typeName, def, basePath)
+	g.addLeasePath(spec, typeName, def, basePath)
 
 	// Clone action
 	clonePath := basePath + "/{id}/_actions/clone"

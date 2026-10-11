@@ -163,6 +163,11 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_comments/", a.comments.handleV1Comments)
 	mux.HandleFunc("/api/v1/_piles", a.piles.handleV1Piles)
 	mux.HandleFunc("/api/v1/_piles/", a.piles.handleV1Piles)
+	// A closure, not a method value: SetLeases may install the handler
+	// after the routes are registered.
+	leases := func(w http.ResponseWriter, r *http.Request) { a.leases.handleV1Leases(w, r) }
+	mux.HandleFunc(leasesPath, leases)
+	mux.HandleFunc(leasesPath+"/", leases)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
 	a.registerCopyRoutes(mux)
@@ -224,10 +229,12 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 	case 3:
 		// /{plural}/{id}/relations, /{plural}/{id}/_export, /{plural}/{id}/restore
-		// or /{plural}/{id}/mentioned-by
+		// /{plural}/{id}/mentioned-by or /{plural}/{id}/_lease
 		switch parts[2] {
 		case "relations":
 			a.handleV1EntityRelations(w, r, typeName, parts[1])
+		case "_lease":
+			a.leases.handleClaim(w, r, typeName, parts[1])
 		case "_export":
 			a.export.handleV1ExportEntity(w, r, typeName, parts[1])
 		case "restore":
@@ -1036,6 +1043,11 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// reachable.
 	result.Mentions = collectMentions(ctx, a.viewReader, a.Meta(), entity.Content)
 
+	// The advisory lease, after the read gate above and after the field
+	// version tokens, so it moves neither. It is not in the ETag either: a
+	// claim would then fail every If-Match the holder's client sends.
+	result.Lease = a.leases.entityLease(ctx, entity.ID)
+
 	// ETag for caching (visible-only path; deny-path above emits no ETag).
 	//
 	// The edges computed for the BODY above are reused rather than re-read.
@@ -1047,8 +1059,9 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	etag := entityETagWithEdges(entity, outgoing)
 	w.Header().Set("ETag", etag)
 
-	// Check If-None-Match
-	if r.Header.Get("If-None-Match") == etag {
+	// Check If-None-Match. Never 304 while the entity is held: the ETag
+	// does not cover the lease, so a client's cached copy may lack it.
+	if result.Lease == nil && r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
