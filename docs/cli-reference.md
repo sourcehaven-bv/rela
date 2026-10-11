@@ -2045,6 +2045,46 @@ On SQLite, `rela-server-sqlite` holds the database open. Stop it, run
 
 ---
 
+### rela lease
+
+Claim an advisory lease on an entity. A lease tells people and other agents
+that you are working on the entity. It does not block writes. A claim needs
+read and update access to the entity.
+
+```bash
+rela lease claim ID [--ttl 15m|900] [--label L] [--status S]
+rela lease renew LEASE_ID [--ttl 15m|900] [--status S]
+rela lease release LEASE_ID
+rela lease list
+```
+
+`claim` prints the lease id, a fencing token and the expiry time. Keep the
+lease id: only `claim` prints it, and you need it to renew or release the
+lease. `renew` and `release` also read it from stdin with `--lease-id-stdin`,
+which keeps it off the command line.
+
+| Option             | Description                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------ |
+| `--ttl`            | Lease duration, 30 seconds to 1 hour: `15m` or whole seconds (`900`). Default 15 minutes               |
+| `--label`          | Name that tells apart agents running as the same user                                                  |
+| `--status`         | Short note on what you are doing. On `renew`, leave it out to keep the status; `--status ""` clears it |
+| `--lease-id-stdin` | Read the lease id from stdin (`renew`, `release`)                                                      |
+
+`release` always succeeds, whether or not the lease still existed. `list`
+shows your own live leases with their entity id, start, expiry, status and
+label; it never shows a lease id.
+
+The command exits non-zero when the claim or renew fails:
+
+| Error              | Meaning                                                                   |
+| ------------------ | ------------------------------------------------------------------------- |
+| `lease held:`      | Someone else holds the entity; the error names the holder and their label |
+| `lease lost:`      | The lease expired, was released, or you lost access; claim again          |
+| `lease limit`      | You hold the most live leases one user may hold; release some             |
+| `entity not found` | The same answer `rela show` gives for the id                              |
+
+---
+
 ### rela validate
 
 Validate project configuration files.

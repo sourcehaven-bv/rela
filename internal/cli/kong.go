@@ -81,7 +81,11 @@ var (
 // Raised 50 → 51 for `token` (TKT-01KZSO): a verb family of its own, like
 // secrets, with no existing group to nest under.
 //
-//plimsoll:max-fields=51
+// Raised 51 → 52 for `lease` (TKT-B610IP): a verb family of its own
+// (claim, renew, release, list), like token, with no existing group to nest
+// under.
+//
+//plimsoll:max-fields=52
 type CLI struct {
 	// Global flags.
 	Project string `help:"Project directory (default: auto-detect from cwd)." env:"RELA_PROJECT"`
@@ -156,6 +160,7 @@ type CLI struct {
 	Scheduler            SchedulerCmd            `cmd:"" help:"Run scheduled Lua tasks."`
 	Renumber             RenumberCmd             `cmd:"" help:"Renumber managed order properties on orderable relations."`
 	Secrets              SecretsCmd              `cmd:"" help:"Inspect how project secrets are supplied."`
+	Lease                LeaseCmd                `cmd:"" help:"Claim, renew, release and list advisory leases on entities."`
 }
 
 // VersionCmd needs no services.
@@ -241,7 +246,7 @@ func runKong() int {
 	ktx.BindTo(ctx, (*context.Context)(nil))
 	ktx.Bind(out)
 	if bundles != nil {
-		ktx.Bind(bundles.read, bundles.write, bundles.attachment, bundles.renametype, bundles.analysis)
+		ktx.Bind(bundles.read, bundles.write, bundles.attachment, bundles.renametype, bundles.analysis, bundles.leases)
 		// The scheduler command's workspace is supplied here at the wiring
 		// site (consumer-side interface): appbuild.Services satisfies
 		// scheduler.WorkspaceProvider directly.
@@ -286,7 +291,7 @@ func requiresProject(cmd string) bool {
 		"rename", "analyze", "acl", "attach", "attachments", "gc", "renumber",
 		"sync", "history", "restore", "secrets",
 		"relation-history", "relation-restore", "history-tag", "history-purge", "relation-history-purge",
-		"dev", "token":
+		"dev", "token", "lease":
 		return true
 	case "migrate":
 		// Bare `rela migrate` (config-file migration) deliberately gets NO

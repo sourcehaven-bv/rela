@@ -481,6 +481,9 @@ deps:
       - entitymanager
       - filter
       - importer
+      # `rela lease` (TKT-B610IP) speaks its request, lease and error types;
+      # the access checks stay in lease.Service.
+      - lease
       - lua
       - markdown
       - mcp

@@ -37,6 +37,28 @@ rela --project=tickets analyze validations   # custom rules (checklists, 5-whys,
 project has a standing backlog of them, so judge your entity by the three gates
 above rather than by a clean `analyze all`.
 
+### Claiming tickets
+
+Several agents may work on the same ticket list. Claim a ticket before you
+move it to `in-progress`:
+
+```bash
+rela --project=tickets lease claim TKT-XXXX --label <agent> --status "planning the fix"
+```
+
+- The command prints a `lease_id`. Keep it. Only `claim` prints it, and you
+  need it for the next two steps.
+- The lease runs out after 15 minutes. While you work, renew it before then:
+  `rela --project=tickets lease renew <lease_id> --status "..."`.
+- Release the lease when you move the ticket to `review`, or when you stop
+  working on it: `rela --project=tickets lease release <lease_id>`.
+- `lease held:` means someone else is working on the ticket. The error names
+  their label. Do not take the ticket over; pick another one.
+- `lease lost:` means your lease ran out or was released. Claim the ticket
+  again before you continue.
+
+`rela --project=tickets lease list` shows the leases you hold.
+
 ## Rules for new code
 
 - **Define interfaces at the call site, not next to the implementation.**
