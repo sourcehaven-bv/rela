@@ -586,6 +586,9 @@ The body replaces the whole set; an empty list clears it. The answer is 204.
   (`/api/v1/{plural}`, the list query parameters including `filter[...]`),
   or a view (`/api/v1/_views/{type}/{id}`, query `world`). Any other path or
   query parameter is a 400.
+- A list path cannot carry the free-text `q`: its hits are gated after a
+  capped search over every entity, so a hidden write could change the visible
+  result and a frame would signal that write.
 - A stream holds at most 16 subscriptions (400 above that), and one user at
   most 64 across all their streams (429). Unauthenticated callers all share
   one identity, so for them only the per-stream limit applies.

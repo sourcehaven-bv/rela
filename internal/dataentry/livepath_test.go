@@ -19,16 +19,16 @@ func TestParseLivePath(t *testing.T) {
 		{"list with filter", "/api/v1/tickets?filter%5Bstatus%5D=open", "/api/v1/tickets?filter%5Bstatus%5D=open"},
 		{"list with filter op", "/api/v1/tickets?filter[status][ne]=done", "/api/v1/tickets?filter%5Bstatus%5D%5Bne%5D=done"},
 		{"view", "/api/v1/_views/ticket/TKT-1", "/api/v1/_views/ticket/TKT-1"},
-		// Every ListParams key in frontend/src/types/entity.ts, plus the
+		// Every ListParams key in frontend/src/types/entity.ts except the
 		// search box's q: EntityList subscribes the params it fetches with,
 		// and one refused path fails the whole PUT.
 		{
 			"list with every client parameter",
 			"/api/v1/tickets?page=1&per_page=25&cursor=c&sort=title&fields=title&include=*&comment_counts=true" +
 				"&world=main&list_id=l&query_scope=open&scope_page=p&scope_tab=t&anchor=A-1" +
-				"&relation=r&direction=incoming&q=text&filter[status]=open",
+				"&relation=r&direction=incoming&filter[status]=open",
 			"/api/v1/tickets?anchor=A-1&comment_counts=true&cursor=c&direction=incoming&fields=title" +
-				"&filter%5Bstatus%5D=open&include=%2A&list_id=l&page=1&per_page=25&q=text&query_scope=open" +
+				"&filter%5Bstatus%5D=open&include=%2A&list_id=l&page=1&per_page=25&query_scope=open" +
 				"&relation=r&scope_page=p&scope_tab=t&sort=title&world=main",
 		},
 	}
@@ -72,6 +72,10 @@ func TestParseLivePath(t *testing.T) {
 		{"view unknown query key", "/api/v1/_views/ticket/TKT-1?include=x"},
 		{"filter on entity", "/api/v1/tickets/TKT-1?filter[status]=open"},
 		{"malformed filter", "/api/v1/tickets?filter[st atus]=open"},
+		// q runs the unscoped searcher and gates its capped hits afterwards,
+		// so a hidden write can evict a visible row.
+		{"list free-text search", "/api/v1/tickets?q=text"},
+		{"list free-text search with filter", "/api/v1/tickets?filter[status]=open&q=text"},
 	}
 	for _, tc := range rejected {
 		t.Run("rejects "+tc.name, func(t *testing.T) {

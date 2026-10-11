@@ -37,13 +37,18 @@ type livePath struct {
 // frontend/src/types/entity.ts. A key outside the set is refused rather than
 // passed on, so a subscription cannot ask a read handler for anything the
 // SPA does not.
+//
+// The list's free-text q is deliberately absent. It queries the unscoped
+// searcher with a hit cap and gates the hits afterwards, so a hidden write can
+// push a visible row out of the result; a live frame would turn that into a
+// timed signal. The MCP watch tool refuses search_entities for the same reason.
 var (
 	liveEntityKeys = keySet("include", "fields", "world")
 	liveViewKeys   = keySet("world")
 	liveListKeys   = keySet(
 		"page", "per_page", "cursor", "sort", "fields", "include", "comment_counts",
 		"world", "list_id", "query_scope", "scope_page", "scope_tab", "anchor",
-		"relation", "direction", "q",
+		"relation", "direction",
 	)
 	// liveFilterKey matches the list filter parameters, filter[prop] and
 	// filter[prop][op]. The list handler validates the property and operator.

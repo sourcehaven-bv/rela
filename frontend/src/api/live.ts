@@ -32,9 +32,16 @@ export function liveEntityPath(
   return livePath(`/${getPlural(type)}/${id}`, params)
 }
 
-/** The subscription path for listEntities(type, params). */
-export function liveListPath(type: string, params?: ListParams): string {
-  return livePath(`/${getPlural(type)}`, params)
+/**
+ * The subscription path for listEntities(type, params), or null when the list
+ * has a free-text search. The server refuses `q`: its hits are gated after a
+ * capped search over every entity, so a hidden write can change them. One
+ * refused path fails the whole subscription set, so such a list stays off it.
+ */
+export function liveListPath(type: string, params?: ListParams): string | null {
+  const { q, ...rest } = params ?? {}
+  if (q) return null
+  return livePath(`/${getPlural(type)}`, rest)
 }
 
 /** The subscription path for fetchView(type, id, world). */

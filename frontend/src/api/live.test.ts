@@ -28,6 +28,11 @@ describe('live subscription paths', () => {
     expect(path).toBe('/api/v1/tickets?per_page=20&filter%5Bstatus%5D=open')
   })
 
+  it('does not subscribe a list with a free-text search', () => {
+    expect(liveListPath('ticket', { q: 'text', per_page: 20 })).toBeNull()
+    expect(liveListPath('ticket', { q: '', per_page: 20 })).toBe('/api/v1/tickets?per_page=20')
+  })
+
   it('builds a view path', () => {
     expect(liveViewPath('ticket', 'TKT-1')).toBe('/api/v1/_views/ticket/TKT-1')
     expect(liveViewPath('ticket', 'TKT-1', 'pub')).toBe('/api/v1/_views/ticket/TKT-1?world=pub')
