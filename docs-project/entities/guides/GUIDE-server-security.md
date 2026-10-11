@@ -258,6 +258,23 @@ of which matches an assignment key either).
 config read in-process, inside the trust boundary, and may name any
 `system:` identity.
 
+**`integration:` is reserved the same way.** Connector scripts run as
+`integration:<name>` (for example `integration:basecamp`), set as `run_as`
+on a scheduled task or a background automation action. A connector's role
+usually holds write grants and the `tag:sync` permission, so a request
+naming `integration:basecamp` is refused exactly like one naming
+`system:scheduler`, from every source in the table above. Only `run_as` in
+`schedules.yaml` and `schema.yaml` can reach it.
+
+A reserved identity cannot author comments either: the comment service
+refuses a `system:` or `integration:` author. A connector that needs to
+report something to people writes a property instead, such as the
+Basecamp example's `sync_conflict`.
+
+> **Upgrade note.** If your IdP issues subjects that begin with
+> `integration:`, those users can no longer authenticate either. The log
+> line is the same.
+
 ### Verified JWT identity (`--jwt-*`)
 
 A third, **stronger** attribution source: a signed identity assertion

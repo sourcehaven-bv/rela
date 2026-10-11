@@ -267,7 +267,7 @@ func Build(ctx context.Context, src string, opts Options) (string, error) {
 	rt := rlua.NewReader(readDeps, dr.out, rlua.WithContext(ctx), rlua.WithTimeout(deadline),
 		// The docs build runs from the operator shell / CI over in-repo
 		// scripts, the same trust boundary as `rela script` (TKT-YH52OM).
-		rlua.WithCapabilities(rlua.TrustedCapabilities()))
+		rlua.WithCapabilities(rlua.DocsCapabilities()))
 	defer rt.Close()
 	dr.rt = rt
 	// reads{}/hidden{} authorize with dr.ctx: a gopher-lua callback takes no

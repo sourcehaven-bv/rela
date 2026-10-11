@@ -42,6 +42,7 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 
 	// Version tags for action scripts (TKT-VO6VG9).
 	dataentry.SetVersionTags(app, appbuild.ScriptVersionTags(svc), appbuild.VersionTagReader(svc))
+	dataentry.SetOAuthTokens(app, appbuild.ScriptOAuth(svc))
 
 	if err := app.SetUserState(svc.UserState()); err != nil {
 		return fmt.Errorf("wire next-action state: %w", err)

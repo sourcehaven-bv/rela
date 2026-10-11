@@ -570,6 +570,11 @@ Load-bearing details:
   "Reserved `system:` identities" in [GUIDE-server-security]. This is also
   why a forged subject can never be provisioned into a stub's
   `principal_property`.
+- **`integration:` identities are reserved too.** Connector scripts run as
+  `integration:<name>` and hold the connector's write grants and
+  `tag:sync`. A request naming one is refused at the same boundary, so
+  those grants can only be used through `run_as` in operator-authored
+  config.
 - **The provisioned stub is bare — identity, not authority.** The
   `system:provisioner` role is `create`-only on the user type and nothing
   else, so provisioning gives the principal a graph *identity* but **no

@@ -437,8 +437,10 @@ func (a *automationJobs) runOnce(
 	ctx context.Context, p automationJobPayload, act metamodel.AutomationAction, user string,
 ) error {
 	deps := a.runner.ScheduledLuaWriteDeps()
-	http, ai, mail, writeFile, secrets := act.Capabilities.Fields()
-	deps.Capabilities = lua.Capabilities{HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets}
+	http, ai, mail, writeFile, secrets, tokens := act.Capabilities.Fields()
+	deps.Capabilities = lua.Capabilities{
+		HTTP: http, AI: ai, Mail: mail, WriteFile: writeFile, Secrets: secrets, Tokens: tokens,
+	}
 	e, err := deps.VisibleReader.GetAddress(ctx, entity.FormatStateRef(p.ID, p.Face))
 	if err != nil {
 		slog.Warn("automation job dropped: entity not found, or this identity cannot read it",
