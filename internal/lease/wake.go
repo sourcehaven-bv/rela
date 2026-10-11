@@ -71,32 +71,53 @@ func (s *Service) Subscribe() (wake <-chan struct{}, cancel func()) {
 // Long-running hosts start it once (rela-server, the desktop app, `rela
 // mcp`); one-shot CLI commands do not. A failed poll is logged and retried at
 // the next interval.
+//
+// The timer is armed from [Store.NextExpiry]. It is armed again after every
+// version change, and on every tick while it is not armed: after a failed
+// NextExpiry read, and on the first version read that succeeds after the
+// baseline read failed, since the timer may then miss changes made before.
+//
+// A plain renew moves no version, so the timer may fire for a lease that was
+// extended since. When it fires, the watcher asks the store again whether a
+// lease that was live when the timer was armed has expired by now, and wakes
+// only then. One case reads as no lapse although one happened: a write in
+// another process that removes the expired lease in the moment between its
+// expiry and the timer's read. Subscribers then learn of it at the next
+// change.
 func (s *Service) Watch(ctx context.Context) error {
 	ticker := time.NewTicker(s.poll)
 	defer ticker.Stop()
-	expiry := time.NewTimer(time.Hour)
-	expiry.Stop()
-	defer expiry.Stop()
+	w := &expiryWatch{s: s, timer: time.NewTimer(time.Hour)}
+	w.timer.Stop()
+	defer w.timer.Stop()
 
 	version, haveVersion := s.version(ctx)
-	s.arm(ctx, expiry)
+	w.arm(ctx, s.clock.Now())
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-expiry.C:
-			s.hub.wake()
-			s.arm(ctx, expiry)
+		case <-w.timer.C:
+			at := s.clock.Now()
+			if at.Before(w.target) {
+				at = w.target // the timer has waited out the delay
+			}
+			if w.lapsed(ctx, at) {
+				s.hub.wake()
+			}
+			w.arm(ctx, at)
 		case <-ticker.C:
 			v, ok := s.version(ctx)
-			if !ok || (haveVersion && v == version) {
-				continue
+			changed := ok && haveVersion && v != version
+			first := ok && !haveVersion
+			if ok {
+				version, haveVersion = v, true
 			}
-			changed := haveVersion
-			version, haveVersion = v, true
 			if changed {
 				s.hub.wake()
-				s.arm(ctx, expiry)
+			}
+			if changed || first || !w.armed {
+				w.arm(ctx, s.clock.Now())
 			}
 		}
 	}
@@ -114,19 +135,49 @@ func (s *Service) version(ctx context.Context) (uint64, bool) {
 	return v, true
 }
 
-// arm sets t to fire at the earliest live expiry, or stops it when there is
-// none. A failed read leaves t stopped; the next version change re-arms it.
-func (s *Service) arm(ctx context.Context, t *time.Timer) {
-	t.Stop()
-	now := s.clock.Now()
-	next, ok, err := s.store.NextExpiry(ctx, now)
+// expiryWatch is the expiry timer of one [Service.Watch] run.
+type expiryWatch struct {
+	s     *Service
+	timer *time.Timer
+	// armed reports that the last arm read the store. The timer is stopped
+	// when it is false, or when no lease was live.
+	armed bool
+	// from is the instant the timer was last armed at.
+	from time.Time
+	// target is the expiry the timer fires for.
+	target time.Time
+}
+
+// arm sets the timer to fire at the earliest expiry of a lease live at now,
+// or stops it when there is none. A failed read leaves the timer stopped and
+// armed false.
+func (w *expiryWatch) arm(ctx context.Context, now time.Time) {
+	w.timer.Stop()
+	next, ok, err := w.s.store.NextExpiry(ctx, now)
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Warn("lease: watch could not read the next expiry", "error", err)
 		}
+		w.armed = false
 		return
 	}
+	w.armed, w.from = true, now
 	if ok {
-		t.Reset(max(next.Sub(now), 0))
+		w.target = next
+		w.timer.Reset(max(next.Sub(now), 0))
 	}
+}
+
+// lapsed reports whether a lease that was live when the timer was armed has
+// expired by at. A failed read answers true: a needless wake costs a re-read,
+// a missed one leaves a lapsed lease on screen.
+func (w *expiryWatch) lapsed(ctx context.Context, at time.Time) bool {
+	next, ok, err := w.s.store.NextExpiry(ctx, w.from)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("lease: watch could not read the next expiry", "error", err)
+		}
+		return true
+	}
+	return ok && !next.After(at)
 }

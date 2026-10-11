@@ -179,6 +179,19 @@ func (s *Store) Renew(
 		if _, err := lockCounters(ctx, tx); err != nil {
 			return err
 		}
+		// The counter lock is held, so the row read here is the row updated
+		// below.
+		var oldExpires time.Time
+		var oldStatus string
+		err := tx.QueryRow(ctx, `
+			SELECT expires, status FROM leases WHERE lease_hash = $1 AND identity = $2 AND expires > $3`,
+			leaseHash, identity, now).Scan(&oldExpires, &oldStatus)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return lease.ErrLost
+		}
+		if err != nil {
+			return fmt.Errorf("pglease: renew: %w", err)
+		}
 		rows, err := tx.Query(ctx, `
 			UPDATE leases SET expires = $4, status = COALESCE($5::text, status)
 			WHERE lease_hash = $1 AND identity = $2 AND expires > $3
@@ -186,14 +199,14 @@ func (s *Store) Renew(
 		if err != nil {
 			return fmt.Errorf("pglease: renew: %w", err)
 		}
-		got, err := pgx.CollectRows(rows, scanLease)
+		got, err := pgx.CollectExactlyOneRow(rows, scanLease)
 		if err != nil {
 			return fmt.Errorf("pglease: renew: %w", err)
 		}
-		if len(got) == 0 {
-			return lease.ErrLost
+		out = got
+		if !until.Before(oldExpires) && (status == nil || *status == oldStatus) {
+			return nil // a plain extension; see the Version section of lease.Store
 		}
-		out = got[0]
 		return bumpVersion(ctx, tx, nil)
 	})
 	return out, err

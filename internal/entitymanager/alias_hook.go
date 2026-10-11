@@ -62,9 +62,10 @@ func (m *Manager) rewriteAliasesForRename(ctx context.Context, oldID, newID stri
 		return
 	}
 	if err := m.deps.AliasRewriter.EntityRenamed(ctx, oldID, newID); err != nil {
-		// Logged rather than returned: see the AliasRewriter doc. An operator
-		// seeing this should expect a duplicated entry in the affected client.
-		slog.Error("entitymanager: alias rewrite failed after rename; a synced client may duplicate this entry",
+		// Logged rather than returned: see the AliasRewriter doc. What the
+		// miss costs depends on the subscriber (a duplicated CalDAV entry, a
+		// comment or lease left on the old id); the error names which failed.
+		slog.Error("entitymanager: rewriting references by entity id failed after rename",
 			"old_id", oldID, "new_id", newID, "error", err)
 	}
 }

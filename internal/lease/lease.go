@@ -250,13 +250,20 @@ func CheckUntil(now, until time.Time) error {
 //
 // # Version
 //
-// [Store.Version] changes exactly when the set of live leases, or a field of
-// one that readers see, changes: a claim, a renew, the release of a live
-// lease, and a rekey or drop that moves or removes a live lease. Removing
-// expired leases alone does not change it, and neither does a refused write,
-// because no reader could see the difference. A lease that expires changes
-// what readers see without any write; watchers learn of that from
-// [Store.NextExpiry].
+// [Store.Version] changes exactly on a change that watchers act on: a claim,
+// the release of a live lease, a rekey or drop that moves or removes a live
+// lease, and a renew that changes the status or moves the expiry earlier.
+//
+// A renew that only extends a lease does not change it. Holders renew
+// often, and a wake for each renew would make every watcher re-read for a
+// change nobody needs to see at once. A renew that shortens a lease does
+// change it, because a watcher's expiry timer may be set for the old, later
+// expiry.
+//
+// Removing expired leases alone does not change the version, and neither
+// does a refused write, because no reader could see the difference. A lease
+// that expires changes what readers see without any write; watchers learn
+// of that from [Store.NextExpiry].
 type Store interface {
 	// Claim takes the lease on entity id for h until until, with leaseHash
 	// as its key and status as its note. It may first remove leases that are
@@ -269,8 +276,9 @@ type Store interface {
 		ctx context.Context, id string, h Holder, leaseHash string, now, until time.Time, status string,
 	) (Lease, error)
 	// Renew moves the expiry of the live lease with leaseHash to until, and
-	// replaces its status when status is non-nil. The token is kept. It
-	// returns [ErrLost] when no lease with that hash is live at now for
+	// replaces its status when status is non-nil. The token is kept. The
+	// version moves only when the status changes or the expiry moves
+	// earlier (see the Version section). It returns [ErrLost] when no lease with that hash is live at now for
 	// identity, and [ErrInvalid] for bad input (see [CheckRenew]).
 	Renew(ctx context.Context, leaseHash, identity string, now, until time.Time, status *string) (Lease, error)
 	// Lookup returns the lease with leaseHash that is live at now for

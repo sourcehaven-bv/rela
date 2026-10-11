@@ -412,12 +412,16 @@ func (s *Store) Renew(
 			return pruned, lease.ErrLost
 		}
 		l := d.Leases[id]
+		seen := until.Before(l.Expires) || (status != nil && *status != l.Status)
 		l.Expires = until
 		if status != nil {
 			l.Status = *status
 		}
 		d.Leases[id] = l
 		out = l.lease(id)
+		if !seen {
+			return quiet, nil // a plain extension; see the Version section of lease.Store
+		}
 		return visible, nil
 	})
 	return out, err

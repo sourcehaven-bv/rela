@@ -121,6 +121,7 @@ type Desktop struct {
 	settings         *ProjectSettings     // the Project Settings service; nil until main builds it
 	notify           *notifyHub           // notifications and Dock badge; nil in tests
 	stopScheduler    context.CancelFunc
+	leasesDone       <-chan struct{} // closed once the lease watcher stopped; nil when none runs
 }
 
 // cloneAuthState tracks an in-progress OAuth device flow.
@@ -387,15 +388,21 @@ func (d *Desktop) releaseLoadedProject() {
 	}
 	prevSvc := d.svc
 	prevStopScheduler := d.stopScheduler
+	prevLeasesDone := d.leasesDone
 	d.svc = nil
 	d.app = nil
 	d.handler = nil
 	d.stopScheduler = nil
+	d.leasesDone = nil
 	d.mu.Unlock()
 
-	// Scheduler first, so no in-flight tick lands on a closing store.
+	// Scheduler and lease watcher first, so no in-flight tick or poll lands
+	// on a closing store.
 	if prevStopScheduler != nil {
 		prevStopScheduler()
+	}
+	if prevLeasesDone != nil {
+		<-prevLeasesDone
 	}
 	if prevSvc != nil {
 		_ = prevSvc.Close()
@@ -502,6 +509,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	d.pendingSetupDir = ""
 	d.pendingSetupMeta = nil
 	d.stopScheduler = schedCancel
+	d.leasesDone = appbuild.WatchLeases(schedCtx, svc) // stops with the scheduler; awaited before svc closes
 	d.mu.Unlock()
 	handedOff = true
 
@@ -519,7 +527,6 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 
 	scheduler.StartBackground(schedCtx, svc, slog.Default())
 	d.startNotifier(schedCtx, projectID(app.ProjectRoot()), svc, appbuild.CompiledWorlds(svc).DefaultWorld())
-	appbuild.WatchLeases(schedCtx, svc) // other processes' claims and expiries; stops with the scheduler
 
 	if d.win != nil {
 		d.win.SetTitle(name)

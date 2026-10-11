@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
@@ -53,6 +54,16 @@ type fakeEntity struct {
 	faces []entity.Face
 	// readers and writers name the users who may read and update it.
 	readers, writers []string
+	// faceWriters, when set, replaces writers per face.
+	faceWriters map[entity.Face][]string
+}
+
+// ceilingKey carries ids hidden from one request, whatever its principal: a
+// session ceiling, which the lease identity does not see.
+type ceilingKey struct{}
+
+func withCeiling(ctx context.Context, hidden ...string) context.Context {
+	return context.WithValue(ctx, ceilingKey{}, hidden)
 }
 
 // fakeGate answers like the real gate: a miss is store.ErrNotFound whether
@@ -61,6 +72,10 @@ type fakeGate struct {
 	mu       sync.Mutex
 	entities map[string]*fakeEntity
 	calls    atomic.Int64
+	// batches counts Readable calls.
+	batches atomic.Int64
+	// onFamily, when set, runs once before the next Family answer.
+	onFamily func(id string)
 }
 
 func (g *fakeGate) put(id string, e *fakeEntity) {
@@ -82,7 +97,22 @@ func (g *fakeGate) readable(ctx context.Context, id string) (*fakeEntity, bool) 
 	if !ok || !slices.Contains(e.readers, principal.From(ctx).User) {
 		return nil, false
 	}
+	if hidden, _ := ctx.Value(ceilingKey{}).([]string); slices.Contains(hidden, id) {
+		return nil, false
+	}
 	return e, true
+}
+
+func (g *fakeGate) Readable(ctx context.Context, ids []string) (map[string]bool, error) {
+	g.calls.Add(1)
+	g.batches.Add(1)
+	out := map[string]bool{}
+	for _, id := range ids {
+		if _, ok := g.readable(ctx, id); ok {
+			out[id] = true
+		}
+	}
+	return out, nil
 }
 
 func (g *fakeGate) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
@@ -109,6 +139,13 @@ func (g *fakeGate) WriteTarget(ctx context.Context, addr string) (entity.Ref, er
 
 func (g *fakeGate) Family(ctx context.Context, id string) (lease.Family, bool, error) {
 	g.calls.Add(1)
+	g.mu.Lock()
+	hook := g.onFamily
+	g.onFamily = nil
+	g.mu.Unlock()
+	if hook != nil {
+		hook(id)
+	}
 	e, ok := g.readable(ctx, id)
 	if !ok {
 		return lease.Family{}, false, nil
@@ -126,8 +163,14 @@ func (a fakeAuth) AuthorizeWrite(ctx context.Context, req acl.WriteRequest) acl.
 	}
 	a.g.mu.Lock()
 	defer a.g.mu.Unlock()
-	e, ok := a.g.entities[sub.ID()]
-	if ok && slices.Contains(e.writers, principal.From(ctx).User) {
+	var writers []string
+	if e, ok := a.g.entities[sub.ID()]; ok {
+		writers = e.writers
+		if e.faceWriters != nil {
+			writers = e.faceWriters[sub.Face()]
+		}
+	}
+	if slices.Contains(writers, principal.From(ctx).User) {
 		return acl.Decision{Allow: true}
 	}
 	return acl.Decision{RuleKind: "role-grant", RuleID: "-", Reason: "no update grant"}
@@ -229,7 +272,7 @@ func (e *env) claim(t *testing.T, p principal.Principal, addr string) lease.Clai
 
 func (e *env) held(t *testing.T, id string) (lease.Lease, bool) {
 	t.Helper()
-	got, err := e.svc.Get(context.Background(), []string{id})
+	got, err := e.svc.GetReadable(context.Background(), []string{id})
 	require.NoError(t, err)
 	l, ok := got[id]
 	return l, ok
@@ -647,12 +690,12 @@ func TestWatch_WakesOnRemoteWriteAndExpiry(t *testing.T) {
 		default:
 		}
 		if c.LeaseID != "" {
-			if err := remote.svc.Release(as(alice), c.LeaseID); err != nil {
+			if relErr := remote.svc.Release(as(alice), c.LeaseID); relErr != nil {
 				return false
 			}
 		}
-		next, err := remote.svc.Claim(as(alice), lease.ClaimRequest{Addr: "TKT-1"})
-		if err == nil {
+		next, claimErr := remote.svc.Claim(as(alice), lease.ClaimRequest{Addr: "TKT-1"})
+		if claimErr == nil {
 			c = next
 		}
 		return false
@@ -665,12 +708,345 @@ func TestWatch_WakesOnRemoteWriteAndExpiry(t *testing.T) {
 	require.NoError(t, <-done)
 	drain(wake)
 	local.clock.Set(c.Lease.Expires.Add(-20 * time.Millisecond))
+	_, ok := local.held(t, "TKT-1")
+	require.True(t, ok, "the lease is live when the watcher arms")
 	ctx, cancel = context.WithCancel(context.Background())
 	defer cancel()
 	go func() { done <- watcher.Watch(ctx) }()
 	requireWoken(t, wake)
 	cancel()
 	require.NoError(t, <-done)
+
+	// The wake was for a real lapse: at the expiry the watcher fired for,
+	// the store has no live lease on the entity.
+	got, err := st.Get(context.Background(), []string{"TKT-1"}, c.Lease.Expires)
+	require.NoError(t, err)
+	require.Empty(t, got, "the lease the watcher woke for has expired")
+}
+
+// startWatch runs svc.Watch until the test ends.
+func startWatch(t *testing.T, svc *lease.Service) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- svc.Watch(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		require.NoError(t, <-done)
+	})
+}
+
+// newWatcher returns a service over st with its own hub and clock, as
+// another process would have, polling every 5ms.
+func newWatcher(t *testing.T, st lease.Store, g *fakeGate, clock *fakeClock) *lease.Service {
+	t.Helper()
+	svc, err := lease.NewService(lease.Deps{
+		Store: st, Gate: g, Authorizer: fakeAuth{g}, Clock: clock, Hub: lease.NewHub(),
+		PollInterval: 5 * time.Millisecond,
+	})
+	require.NoError(t, err)
+	return svc
+}
+
+// requireWatching makes changes through remote until the watcher's
+// subscriber is woken, so the watcher has taken its baseline.
+func requireWatching(t *testing.T, remote *env, wake <-chan struct{}) {
+	t.Helper()
+	var probe lease.Claimed
+	require.Eventually(t, func() bool {
+		select {
+		case <-wake:
+			return true
+		default:
+		}
+		if probe.LeaseID != "" {
+			require.NoError(t, remote.svc.Release(as(bob), probe.LeaseID))
+		}
+		probe = remote.claim(t, bob, "TKT-F@draft")
+		return false
+	}, 10*time.Second, 20*time.Millisecond)
+	require.NoError(t, remote.svc.Release(as(bob), probe.LeaseID))
+}
+
+// A plain renew in another process moves no version, so the watcher does
+// not wake; a status change does.
+func TestWatch_PlainRenewDoesNotWake(t *testing.T) {
+	t.Parallel()
+	kv := newKV(t)
+	st, err := kvlease.New(kv, filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	local, remote := newEnvOver(t, st, kv), newEnvOver(t, st, kv)
+	c := remote.claim(t, alice, "TKT-1")
+	watcher := newWatcher(t, st, local.gate, local.clock)
+	wake, unsub := watcher.Subscribe()
+	defer unsub()
+	startWatch(t, watcher)
+	requireWatching(t, remote, wake)
+	time.Sleep(50 * time.Millisecond) // let the probe's release be polled
+	drain(wake)
+
+	remote.clock.Set(t0.Add(time.Minute))
+	_, err = remote.svc.Renew(as(alice), c.LeaseID, 0, nil)
+	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
+	requireQuiet(t, wake, "a plain renew must not wake the watcher")
+
+	status := "reviewing"
+	_, err = remote.svc.Renew(as(alice), c.LeaseID, 0, &status)
+	require.NoError(t, err)
+	requireWoken(t, wake)
+}
+
+// The expiry timer fires for a lease that another process extended since:
+// the watcher re-arms without waking.
+func TestWatch_ExtendedLeaseRearmsWithoutWaking(t *testing.T) {
+	t.Parallel()
+	kv := newKV(t)
+	st, err := kvlease.New(kv, filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	local, remote := newEnvOver(t, st, kv), newEnvOver(t, st, kv)
+	c, err := remote.svc.Claim(as(alice), lease.ClaimRequest{Addr: "TKT-1", TTL: lease.MinTTL})
+	require.NoError(t, err)
+	local.clock.Set(c.Lease.Expires.Add(-300 * time.Millisecond))
+	watcher := newWatcher(t, st, local.gate, local.clock)
+	wake, unsub := watcher.Subscribe()
+	defer unsub()
+	startWatch(t, watcher)
+	// The probe's release re-arms the timer for TKT-1 before the renew.
+	requireWatching(t, remote, wake)
+	time.Sleep(50 * time.Millisecond)
+	drain(wake)
+
+	remote.clock.Set(t0.Add(time.Second))
+	_, err = remote.svc.Renew(as(alice), c.LeaseID, 0, nil)
+	require.NoError(t, err)
+	time.Sleep(600 * time.Millisecond)
+	requireQuiet(t, wake, "an extended lease did not lapse")
+}
+
+// expiryFails fails its first NextExpiry calls.
+type expiryFails struct {
+	lease.Store
+	left atomic.Int64
+}
+
+func (f *expiryFails) NextExpiry(ctx context.Context, now time.Time) (time.Time, bool, error) {
+	if f.left.Add(-1) >= 0 {
+		return time.Time{}, false, errors.New("next expiry unavailable")
+	}
+	return f.Store.NextExpiry(ctx, now)
+}
+
+// A failed NextExpiry leaves the timer unarmed; the next tick arms it even
+// though no version moved, so the expiry still wakes.
+func TestWatch_RearmsAfterFailedNextExpiry(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	c := e.claim(t, alice, "TKT-1")
+	flaky := &expiryFails{Store: e.store}
+	flaky.left.Store(1)
+	clock := &fakeClock{now: c.Lease.Expires.Add(-20 * time.Millisecond)}
+	watcher := newWatcher(t, flaky, e.gate, clock)
+	wake, unsub := watcher.Subscribe()
+	defer unsub()
+	startWatch(t, watcher)
+	requireWoken(t, wake)
+}
+
+// Mine leaves out a lease on an entity the caller's ceiling hides, though
+// the identity is the same, and gates all leases in one batch.
+func TestMine_GatedByCallerCeiling(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.claim(t, alice, "TKT-1")
+	e.claim(t, alice, "TKT-H")
+
+	all, err := e.svc.Mine(as(alice))
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+
+	before := e.gate.batches.Load()
+	got, err := e.svc.Mine(withCeiling(as(alice), "TKT-H"))
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, "TKT-1", got[0].ID)
+	require.Empty(t, got[0].LeaseHash)
+	require.Empty(t, got[0].Holder.Identity)
+	require.Equal(t, int64(1), e.gate.batches.Load()-before, "one batch gate call")
+}
+
+func TestZeroPrincipal_RefusedBeforeAnyRead(t *testing.T) {
+	t.Parallel()
+	valid := strings.Repeat("0", 32)
+	calls := []struct {
+		name string
+		call func(ctx context.Context, s *lease.Service) error
+	}{
+		{"claim", func(ctx context.Context, s *lease.Service) error {
+			_, err := s.Claim(ctx, lease.ClaimRequest{Addr: "TKT-1"})
+			return err
+		}},
+		{"renew", func(ctx context.Context, s *lease.Service) error {
+			_, err := s.Renew(ctx, valid, 0, nil)
+			return err
+		}},
+		{"release", func(ctx context.Context, s *lease.Service) error { return s.Release(ctx, valid) }},
+	}
+	callers := []struct {
+		name string
+		ctx  func() context.Context
+	}{
+		{"none stamped", context.Background},
+		{"zero", func() context.Context { return as(principal.Principal{}) }},
+		{"unknown", func() context.Context {
+			return as(principal.Principal{User: principal.Unknown, Tool: principal.Unknown})
+		}},
+	}
+	for _, c := range calls {
+		for _, who := range callers {
+			t.Run(c.name+"/"+who.name, func(t *testing.T) {
+				t.Parallel()
+				e := newEnv(t)
+				require.ErrorIs(t, c.call(who.ctx(), e.svc), lease.ErrNoPrincipal)
+				require.Zero(t, e.store.calls.Load(), "no store call")
+				require.Zero(t, e.gate.calls.Load(), "no gate call")
+			})
+		}
+	}
+}
+
+// cancelAware fails a write on a cancelled context, as a database backend
+// does.
+type cancelAware struct{ lease.Store }
+
+func (c cancelAware) Drop(ctx context.Context, id string, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.Store.Drop(ctx, id, now)
+}
+
+func (c cancelAware) Rekey(ctx context.Context, from, to string, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.Store.Rekey(ctx, from, to, now)
+}
+
+// The hooks run after the entity changed, so a requester that went away
+// must not leave the lease behind.
+func TestHooks_IgnoreCancellation(t *testing.T) {
+	t.Parallel()
+	cancelled := func() context.Context {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		return ctx
+	}
+	newCancelEnv := func(t *testing.T) *env {
+		t.Helper()
+		kv := newKV(t)
+		st, err := kvlease.New(kv, filelock.ProcessPrivate{})
+		require.NoError(t, err)
+		return newEnvOver(t, cancelAware{st}, kv)
+	}
+
+	t.Run("delete", func(t *testing.T) {
+		t.Parallel()
+		e := newCancelEnv(t)
+		e.claim(t, alice, "TKT-1")
+		require.NoError(t, e.svc.EntityDeleted(cancelled(), "TKT-1"))
+		_, ok := e.held(t, "TKT-1")
+		require.False(t, ok, "the delete drops the lease")
+	})
+	t.Run("rename", func(t *testing.T) {
+		t.Parallel()
+		e := newCancelEnv(t)
+		e.claim(t, alice, "TKT-1")
+		require.NoError(t, e.svc.EntityRenamed(cancelled(), "TKT-1", "TKT-2"))
+		_, moved := e.held(t, "TKT-2")
+		require.True(t, moved, "the rename moves the lease")
+	})
+}
+
+// A rename between the renew's lookup and its access check makes the check
+// miss on the old id; the renew checks the new id instead of releasing.
+func TestRenew_RechecksAfterConcurrentRename(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	c := e.claim(t, alice, "TKT-1")
+	e.gate.onFamily = func(string) {
+		e.gate.put("TKT-2", &fakeEntity{
+			typ: "ticket", faces: []entity.Face{entity.ImplicitFace},
+			readers: []string{"alice"}, writers: []string{"alice"},
+		})
+		e.gate.remove("TKT-1")
+		require.NoError(t, e.svc.EntityRenamed(context.Background(), "TKT-1", "TKT-2"))
+	}
+	l, err := e.svc.Renew(as(alice), c.LeaseID, 0, nil)
+	require.NoError(t, err)
+	require.Equal(t, "TKT-2", l.ID)
+	_, ok := e.held(t, "TKT-2")
+	require.True(t, ok)
+
+	e.gate.remove("TKT-2")
+	_, err = e.svc.Renew(as(alice), c.LeaseID, 0, nil)
+	require.ErrorIs(t, err, lease.ErrLost, "without a rename the miss releases the lease")
+}
+
+// A claim checks the face it names, a renew any readable face: losing
+// update on the claimed face while gaining it on another keeps the lease.
+func TestRenew_AnyUpdatableFaceKeepsTheLease(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	doc := func(writers map[entity.Face][]string) *fakeEntity {
+		return &fakeEntity{
+			typ: "doc", faces: []entity.Face{"draft", "published"},
+			readers: []string{"alice"}, faceWriters: writers,
+		}
+	}
+	e.gate.put("TKT-F", doc(map[entity.Face][]string{"draft": {"alice"}}))
+	c := e.claim(t, alice, "TKT-F@draft")
+
+	e.gate.put("TKT-F", doc(map[entity.Face][]string{"published": {"alice"}}))
+	_, err := e.svc.Renew(as(alice), c.LeaseID, 0, nil)
+	require.NoError(t, err, "update on another readable face keeps the lease")
+
+	e.gate.put("TKT-F", doc(map[entity.Face][]string{}))
+	_, err = e.svc.Renew(as(alice), c.LeaseID, 0, nil)
+	require.ErrorIs(t, err, lease.ErrLost, "no updatable face loses the lease")
+}
+
+// vanishingGate resolves a write target but then finds no family, as when
+// the entity is deleted or hidden between the two reads.
+type vanishingGate struct{ *fakeGate }
+
+func (vanishingGate) Family(context.Context, string) (lease.Family, bool, error) {
+	return lease.Family{}, false, nil
+}
+
+func TestClaim_EntityGoneBetweenReadsIsNotFound(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	svc, err := lease.NewService(lease.Deps{
+		Store: e.store, Gate: vanishingGate{e.gate}, Authorizer: fakeAuth{e.gate}, Clock: e.clock, Hub: lease.NewHub(),
+	})
+	require.NoError(t, err)
+	_, raced := svc.Claim(as(alice), lease.ClaimRequest{Addr: "TKT-1"})
+	_, missing := svc.Claim(as(alice), lease.ClaimRequest{Addr: "TKT-NOPE"})
+	require.Same(t, missing, raced, "the race path returns the gate's not-found value")
+	require.Zero(t, e.store.calls.Load())
+}
+
+func TestRelease_OneStoreCallThenWake(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	c := e.claim(t, alice, "TKT-1")
+	wake, cancel := e.svc.Subscribe()
+	defer cancel()
+	before := e.store.calls.Load()
+	require.NoError(t, e.svc.Release(as(alice), c.LeaseID))
+	require.Equal(t, int64(1), e.store.calls.Load()-before, "a release is one store call, no lookup")
+	requireWoken(t, wake)
 }
 
 func requireWoken(t *testing.T, ch <-chan struct{}) {
