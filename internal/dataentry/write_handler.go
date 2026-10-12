@@ -78,9 +78,10 @@ type entityMutator interface {
 		ctx context.Context, id string, patch entityPkg.Patch,
 	) (*entityPkg.UpdateResult, error)
 
-	// AuthorizeUpdate is the manager's own update check, asked before a
-	// PATCH spends work on the write. See entitymanager.Manager.AuthorizeUpdate.
-	AuthorizeUpdate(ctx context.Context, entityType string, ref entityPkg.Ref) error
+	// AuthorizeUpdate is the manager's own update check, read gate first,
+	// asked before a PATCH spends work on the write. See
+	// entitymanager.Manager.AuthorizeUpdate.
+	AuthorizeUpdate(ctx context.Context, row *entityPkg.Entity) error
 }
 
 // writeHandler owns the data-entry write nucleus: the entity/relation CRUD
@@ -734,6 +735,22 @@ func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
 	writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 }
 
+// writeEarlyUpdateError answers an error from the PATCH's early
+// [entityMutator.AuthorizeUpdate]. A row the manager's read gate refuses is
+// the uniform 404 the resolver read gives, so the early check cannot tell a
+// hidden row from a missing one. A denial is the write's 403. Anything else
+// is a failed gate query.
+func writeEarlyUpdateError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeForbiddenIfACLDenied(w, err) {
+		return
+	}
+	if errors.Is(err, entitymanager.ErrEntityNotFound) {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+	writeGateError(w, r, err)
+}
+
 // currentVersions returns the field tokens of e as this caller sees it: the
 // same face-scoped edges and redaction the GET applies.
 func (h *writeHandler) currentVersions(
@@ -915,8 +932,8 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// one by one by the manager.
 	entityChanged := req.Properties != nil || len(req.PropertiesUnset) > 0 || req.Content != nil
 	if entityChanged {
-		if err := h.manager.AuthorizeUpdate(r.Context(), entity.Type, ref); err != nil {
-			writePatchError(w, r, err)
+		if err := h.manager.AuthorizeUpdate(r.Context(), entity); err != nil {
+			writeEarlyUpdateError(w, r, err)
 			return
 		}
 	}

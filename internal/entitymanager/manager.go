@@ -1225,27 +1225,38 @@ func (m *Manager) PatchEntity(
 	})
 }
 
-// AuthorizeUpdate asks the question [Manager.PatchEntity] and
-// [Manager.UpdateEntity] ask before they update the entity of type
-// entityType at ref, without writing anything. It returns nil when the write
-// may proceed, and otherwise the same error those methods would return: an
-// [*acl.ForbiddenError], with the same `denied-write` audit row.
+// AuthorizeUpdate asks the questions [Manager.PatchEntity] and
+// [Manager.UpdateEntity] ask before they update row, without writing
+// anything. It returns nil when the write may proceed, and otherwise the
+// error those methods would return: [ErrEntityNotFound] for a row the
+// caller cannot read, or an [*acl.ForbiddenError] with the same
+// `denied-write` audit row.
 //
 // It is for a boundary that wants to refuse a denied caller before it spends
 // work on the write, such as reading edges or checking an If-Match header.
 // It is advisory: the write itself authorizes again against the stored row,
 // and that check stays the authority.
 //
-// It runs the manager's single write-authorization check, so cascade
-// writes, elevated handles and affordance probes behave exactly as they do
-// for the write. Any rule added to that check, such as one that requires
-// read access to the existing row, applies here without further change.
+// The checks run in the write's order: the read gate first, so a caller
+// who may update but not read the row gets the uniform not-found and never
+// a 403 that confirms the row exists; then the manager's single
+// write-authorization check, so cascade writes, elevated handles and
+// affordance probes behave exactly as they do for the write.
 //
-// entityType and ref must name the stored row. The caller reads them from a
-// row it loaded, because type, id and face are metadata that field
-// redaction does not change.
-func (m *Manager) AuthorizeUpdate(ctx context.Context, entityType string, ref entity.Ref) error {
-	return m.authorizeAndAudit(ctx, entityUpdateRequest(entityType, ref))
+// Only row's type, id and face are read. The caller passes a row it loaded,
+// and may pass its redacted view, because field redaction does not change
+// that metadata.
+//
+// Nil: rejected — row names the subject; there is no question to ask without
+// it.
+func (m *Manager) AuthorizeUpdate(ctx context.Context, row *entity.Entity) error {
+	if row == nil {
+		return errors.New("entitymanager: AuthorizeUpdate: nil row")
+	}
+	if err := requireReadableRow(ctx, faceGateOf(m), row.ID, []*entity.Entity{row}); err != nil {
+		return err
+	}
+	return m.authorizeAndAudit(ctx, entityUpdateRequest(row.Type, row.Ref()))
 }
 
 // entityUpdateRequest is the authorization question for updating the entity
