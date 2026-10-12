@@ -11,7 +11,9 @@ why3: Registered migrations are process-wide singletons and the MetamodelAware i
 why4: Per-run state was put on a shared registry object; nothing reset it and concurrent runs raced on it.
 why5: Test order hid it until CI enabled -shuffle=on; the interface shape allowed shared mutable state.
 prevention: MetamodelAware.WithMetamodel returns a per-run copy so the registry is never mutated; runner_test pins that a metamodel does not leak into a later run.
-status: ready
+started: "2026-10-12"
+completed: "2026-10-12"
+status: done
 ---
 
 Fix: bind the metamodel to a per-run copy via WithMetamodel instead of
