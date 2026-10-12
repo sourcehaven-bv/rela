@@ -19,6 +19,7 @@ exclude:
   - internal/comments/commentstest
   - internal/piles/pilestest
   - internal/lease/leasetest
+  - internal/channels/channelstest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -173,6 +174,12 @@ components:
   lease:            { in: internal/lease }
   kvlease:          { in: internal/lease/kvlease }
   pglease:          { in: internal/lease/pglease }
+  # Realtime channels (TKT-DD8B6I): message logs anchored to an entity.
+  channels:         { in: internal/channels }
+  filechannels:     { in: internal/channels/filechannels }
+  sqlchannels:      { in: internal/channels/sqlchannels }
+  sqlitechannels:   { in: internal/channels/sqlitechannels }
+  pgchannels:       { in: internal/channels/pgchannels }
   # In-memory presence tracker (TKT-MHXH87). A leaf: it reads no clock and
   # imports nothing of rela; the live hub keys and drives it.
   presence:         { in: internal/presence }
@@ -797,6 +804,12 @@ deps:
       - lease
       - kvlease
       - pglease
+      # Realtime channels: the sqlite recipe supplies its backend, postgres
+      # finds the pool through the store, and the rest use the file backend.
+      - channels
+      - filechannels
+      - pgchannels
+      - sqlitechannels
       # The cross-process lock for kvpiles and kvlease over the on-disk cache KV.
       - filelock
       - datamigration
@@ -1500,6 +1513,39 @@ deps:
   pglease:
     mayDependOn:
       - lease
+    canUse:
+      - pgx
+  # Realtime channels (TKT-DD8B6I). The domain package holds value types,
+  # validation and the Store contract; entity is for faces and refs. No
+  # channels package depends on store: a channel is not graph content, and
+  # the backends take an injected handle from the composition root, like
+  # the comment backends.
+  channels:
+    mayDependOn:
+      - entity
+  # The file backend: one directory per channel through the storage seam,
+  # with a YAML head and JSON-lines log segments.
+  filechannels:
+    mayDependOn:
+      - channels
+      - entity
+      - storage
+    canUse:
+      - yaml
+  # The SQL implementation shared by both database backends, over a narrow
+  # querier interface so it imports no driver.
+  sqlchannels:
+    mayDependOn:
+      - channels
+      - entity
+  # The adapters supply the handle and the dialect. sqlitechannels imports no
+  # driver either: the sqlite recipe hands it the open *sql.DB.
+  sqlitechannels:
+    mayDependOn:
+      - sqlchannels
+  pgchannels:
+    mayDependOn:
+      - sqlchannels
     canUse:
       - pgx
   memcomments:

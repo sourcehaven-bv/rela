@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/lease"
@@ -20,18 +21,19 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
-// refHolders are the services that hold references by entity id, plus the
-// piles and lease backends, which a re-assembly shares.
+// refHolders are the services and stores that hold references by entity
+// id, plus the piles and lease backends, which a re-assembly shares.
 type refHolders struct {
 	comments    *comments.Service
 	piles       *piles.Service
 	pileStore   piles.Store
 	leases      *lease.Service
 	leaseShared leaseShared
+	channels    channels.Store
 }
 
 // buildRefHolders builds the services that hold references by entity id:
-// comments, piles and leases. All ride the AliasRewriter hook rather than
+// comments, piles, leases and channels. All ride the AliasRewriter hook rather than
 // store.EntityObserver for the reason that hook documents: stores fire the
 // observer with the error discarded, which is fine for a rebuildable search
 // index but not for records that exist only in these services' own stores.
@@ -39,12 +41,12 @@ type refHolders struct {
 // The piles service is built per assembly, so its owner check follows the
 // current ACL; its backend comes from the predecessor on a re-assembly.
 func buildRefHolders(
-	base *SharedBase, st store.Store, commentStore comments.Store,
+	base *SharedBase, st store.Store, overrides backendOverrides,
 	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
 ) (refHolders, error) {
 	var h refHolders
 	var err error
-	if h.comments, err = buildComments(base.cfg.FS, base.cfg.Paths, base.meta, commentStore); err != nil {
+	if h.comments, err = buildComments(base.cfg.FS, base.cfg.Paths, base.meta, overrides.commentStore); err != nil {
 		return refHolders{}, err
 	}
 	if h.pileStore = base.pileStore; h.pileStore == nil {
@@ -60,6 +62,9 @@ func buildRefHolders(
 		return refHolders{}, err
 	}
 	if h.leases, h.leaseShared, err = buildLeases(base, st, base.leaseShared, d, redactor, writes); err != nil {
+		return refHolders{}, err
+	}
+	if h.channels, err = buildChannels(base.cfg.FS, base.cfg.Paths, st, overrides.channelStore); err != nil {
 		return refHolders{}, err
 	}
 	return h, nil

@@ -135,6 +135,9 @@ func recreateEntity(ctx context.Context, m *Manager, e *entity.Entity, allowRefs
 		return nil, err
 	}
 	m.recordEntityAudit(ctx, audit.OpCreateEntity, e, "created")
+	// A restore is a create to id-keyed side stores: what they hold under
+	// the id may belong to another entity that used it in between.
+	notifyAliasesOfCreate(ctx, m.deps.AliasRewriter, e.ID, e.Face)
 
 	return &entity.UpdateResult{Entity: e, Warnings: soft}, nil
 }

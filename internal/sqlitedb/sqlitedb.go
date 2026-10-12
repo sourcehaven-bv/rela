@@ -381,6 +381,7 @@ CREATE INDEX IF NOT EXISTS attachments_entity_idx ON attachments(entity_id);
 ` + projectFilesDDL + `
 ` + stateKVDDL + `
 ` + commentsDDL + `
+` + channelsDDL + `
 ` + migrationStateDDL + `
 ` + versionSchemaSQL + `
 ` + versionTagsDDL + `
@@ -652,6 +653,56 @@ CREATE TABLE IF NOT EXISTS comments (
 -- Serves List: one target's thread in contract order (oldest first, id
 -- breaking ties), as an index range scan rather than a sort.
 CREATE INDEX IF NOT EXISTS comments_thread_idx ON comments(target_key, created_at, id);`
+
+// channelsDDL holds the realtime channels of internal/channels/sqlchannels;
+// that package doc describes the tables. Like comments they live in the
+// database so a copied rela.db carries them, and there is no foreign key to
+// entities: the channel service owns their rename and delete lifecycle.
+// Shared between schemaSQL and the v17 to v18 rung.
+const channelsDDL = `
+CREATE TABLE IF NOT EXISTS channels (
+	id          INTEGER PRIMARY KEY,
+	anchor_id   TEXT NOT NULL,
+	anchor_face TEXT NOT NULL DEFAULT '',
+	type        TEXT NOT NULL,
+	name        TEXT NOT NULL DEFAULT '',
+	tomb        TEXT NOT NULL DEFAULT '',
+	state       TEXT NOT NULL,
+	title       TEXT NOT NULL DEFAULT '',
+	created_by  TEXT NOT NULL,
+	created_at  INTEGER NOT NULL,
+	closed_at   INTEGER NOT NULL DEFAULT 0,
+	archived_at INTEGER NOT NULL DEFAULT 0,
+	last_seq    INTEGER NOT NULL DEFAULT 0,
+	rev         INTEGER NOT NULL DEFAULT 0,
+	UNIQUE (anchor_id, anchor_face, type, name, tomb)
+) STRICT;
+CREATE INDEX IF NOT EXISTS channels_state_idx ON channels(tomb, state);
+
+CREATE TABLE IF NOT EXISTS channel_messages (
+	channel_id  INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+	seq         INTEGER NOT NULL,
+	rev         INTEGER NOT NULL,
+	reply_to    INTEGER NOT NULL DEFAULT 0,
+	reply_count INTEGER NOT NULL DEFAULT 0,
+	pending_at  INTEGER NOT NULL DEFAULT 0,
+	doc         TEXT NOT NULL,
+	PRIMARY KEY (channel_id, seq)
+) STRICT;
+CREATE INDEX IF NOT EXISTS channel_messages_rev_idx ON channel_messages(channel_id, rev);
+CREATE INDEX IF NOT EXISTS channel_messages_pending_idx ON channel_messages(pending_at) WHERE pending_at > 0;
+
+CREATE TABLE IF NOT EXISTS channel_audit (
+	id        INTEGER PRIMARY KEY,
+	anchor_id TEXT NOT NULL,
+	tomb      TEXT NOT NULL DEFAULT '',
+	record    TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS channel_audit_anchor_idx ON channel_audit(anchor_id, tomb, id);
+CREATE TABLE IF NOT EXISTS channel_types (
+	type        TEXT PRIMARY KEY,
+	anchor_mode TEXT NOT NULL
+) STRICT;`
 
 // searchDDL is the full-text search index (DEC-10Z731): an FTS5 table with
 // the trigram tokenizer, which answers case-insensitive substring queries as

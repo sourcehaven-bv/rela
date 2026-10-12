@@ -1,0 +1,121 @@
+package channels
+
+import (
+	"context"
+	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+)
+
+// Store persists channels, their messages and their audit trail.
+//
+// It is declared here, beside the types it speaks, because its consumers
+// are the channel service and the alias hook built on this package, and
+// every backend must satisfy exactly this contract: channelstest.RunAll is
+// the one definition of it.
+//
+// The store authorizes nothing and applies no lifecycle policy. It enforces
+// the caps, key grammar, gapless seq, the compare-and-set steps and thread
+// depth, because those must hold no matter which caller writes.
+//
+// Times are stored at microsecond precision in UTC (see [NormTime]).
+//
+// Nil: no method returns a nil error with a zero result for a missing
+// channel or message; that is [ErrNotFound]. List methods return an empty,
+// non-nil slice when nothing matches.
+type Store interface {
+	// Append adds a message and returns it with its seq and rev. A
+	// cardinality-one channel (empty name) is created on its first append;
+	// a named channel must exist, or the result is [ErrNotFound]. A reply
+	// names an existing, unremoved top-level message, whose reply count
+	// rises in the same step.
+	Append(ctx context.Context, key Key, msg NewMessage) (Message, error)
+
+	// Edit replaces a message's properties and sets its edit time. The old
+	// properties are not kept. A removed message is [ErrRemoved].
+	Edit(ctx context.Context, key Key, seq int64, props map[string]any, at time.Time) (Message, error)
+
+	// Remove erases a message's content and records the removal. Only the
+	// seq, the thread link and the removal survive, in storage as well as on
+	// read. Writes an audit record without the reason.
+	Remove(ctx context.Context, key Key, seq int64, removal Removal) (Message, error)
+
+	// SetAction moves the message's action named name from status expect to
+	// next, as one compare-and-set; a lost race is [ErrConflict]. A next
+	// status of [ActionNone] clears the action, which is how a failed side
+	// effect is reverted. Reaching [ActionDone] writes an audit record.
+	SetAction(ctx context.Context, key Key, seq int64, name string, expect ActionStatus, next Action) (Message, error)
+
+	// CreateMany creates a named channel of type typ on anchor, with a
+	// minted name, and returns it. The anchor may hold at most
+	// [MaxChannelsPerType] named channels of the type; the check and the
+	// create are one step. Writes an audit record.
+	CreateMany(ctx context.Context, anchor Anchor, typ, title string, by Author, at time.Time) (Channel, error)
+
+	// SetLifecycle moves the channel from state expect to t.To as one
+	// compare-and-set; a lost race is [ErrConflict]. Writes an audit record.
+	SetLifecycle(ctx context.Context, key Key, expect State, t Transition) (Channel, error)
+
+	// Delete removes the channel and every message in it, and writes a
+	// deletion record to the entity's audit trail, which survives.
+	Delete(ctx context.Context, key Key, by Author, at time.Time) error
+
+	// Rekey moves every channel and the audit trail of entity oldID to
+	// newID, as one step: afterwards nothing is found under oldID. An oldID
+	// without channels moves only its audit trail. A newID that already has
+	// channels is [ErrRekeyConflict] and nothing moves.
+	Rekey(ctx context.Context, oldID, newID string, at time.Time) error
+
+	// Tombstone moves channels out of reach without deleting them. An empty
+	// face takes every channel of the entity id, on every face, and files
+	// the audit trail away with them, so a new entity reusing the id starts
+	// clean. A face takes only the channels anchored to that face. An id
+	// without channels is not an error.
+	Tombstone(ctx context.Context, id string, face entity.Face, at time.Time) error
+
+	// Head returns the channel's metadata, including the last seq and rev a
+	// poller compares. It is cheap on every backend, and it reflects only
+	// completed writes.
+	Head(ctx context.Context, key Key) (Channel, error)
+
+	// Get returns one message.
+	Get(ctx context.Context, key Key, seq int64) (Message, error)
+
+	// Messages returns one page of messages; see [Page] for the cursors.
+	Messages(ctx context.Context, key Key, page Page) ([]Message, error)
+
+	// List returns the channels at exactly anchor, ordered by type and
+	// name. An empty typ matches every type; an empty state every state.
+	List(ctx context.Context, anchor Anchor, typ string, state State) ([]Channel, error)
+
+	// ListEntity returns every channel of entity id, on every face, ordered
+	// by face, type and name.
+	ListEntity(ctx context.Context, id string) ([]Channel, error)
+
+	// ListByLifecycle returns the channels in state that entered it before
+	// the given time (see [Channel.StateSince]), for the retention and
+	// archive sweeps.
+	ListByLifecycle(ctx context.Context, state State, before time.Time) ([]Channel, error)
+
+	// StalePending returns the actions left pending since before the given
+	// time, for the sweep that settles them.
+	StalePending(ctx context.Context, before time.Time) ([]PendingAction, error)
+
+	// Audit returns the live audit trail of entity id, oldest first.
+	Audit(ctx context.Context, id string) ([]AuditRecord, error)
+
+	// Keys returns the key of every live channel, for export and import
+	// between backends.
+	Keys(ctx context.Context) ([]Key, error)
+
+	// AnchorModes returns the anchor mode recorded for each channel type.
+	// A store that recorded nothing returns an empty map. Compare it with
+	// the configuration through [AnchorModeChanges].
+	AnchorModes(ctx context.Context) (map[string]AnchorMode, error)
+
+	// RecordAnchorModes records the anchor mode of each given type,
+	// replacing a mode already recorded for it. Types not given keep
+	// theirs. An invalid type is [ErrInvalidKey], an unknown mode
+	// [ErrInvalidMessage]; either way nothing is recorded.
+	RecordAnchorModes(ctx context.Context, modes map[string]AnchorMode) error
+}

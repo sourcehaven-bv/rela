@@ -188,6 +188,10 @@ func TestDBImportFS_SQLiteTablesAreAccounted(t *testing.T) {
 		"marked_entities":   "soft deletes; pending deletes are not copied",
 		"marked_relations":  "soft deletes; pending deletes are not copied",
 		"project_files":     "config stays on disk, which wins over a copy in the database",
+		"channels":          "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
+		"channel_messages":  "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
+		"channel_audit":     "not copied yet: fs channels live in .rela/channels (TKT-DD8B6I)",
+		"channel_types":     "not copied yet: recorded again when the server first starts on the database",
 	}
 	// The full-text index, FTS5's shadow tables and the backlink fan-out are
 	// filled by triggers on entities, so the entity copy fills them.

@@ -232,3 +232,47 @@ func TestAliasHook_NilIsANoOp(t *testing.T) {
 		t.Fatalf("DeleteEntity with no rewriter: %v", err)
 	}
 }
+
+// creatingRewriter also implements the optional create notification.
+type creatingRewriter struct {
+	recordingRewriter
+	creates   []string
+	createErr error
+}
+
+func (r *creatingRewriter) EntityCreated(_ context.Context, id string, face entity.Face) error {
+	r.creates = append(r.creates, entity.FormatStateRef(id, face))
+	return r.createErr
+}
+
+// TestAliasHook_FiresOnCreate: a subscriber that keeps references past an
+// entity's deletion hears about a create, so it can retire them before the
+// new entity on the reused id sees them. A failing subscriber does not fail
+// the create, which already happened.
+func TestAliasHook_FiresOnCreate(t *testing.T) {
+	for _, failing := range []bool{false, true} {
+		rw := &creatingRewriter{}
+		if failing {
+			rw.createErr = errors.New("boom")
+		}
+		mgr, _ := aliasHookManager(t, rw)
+		ctx := principal.With(t.Context(), principal.Principal{User: "alice", Tool: "test"})
+		_, err := mgr.CreateEntity(ctx, &entity.Entity{Type: "task", Properties: map[string]any{"title": "x"}},
+			entity.CreateOptions{ID: "TSK-1"})
+		if err != nil {
+			t.Fatalf("CreateEntity: %v", err)
+		}
+		if len(rw.creates) != 1 || rw.creates[0] != "TSK-1" {
+			t.Fatalf("creates = %v, want [TSK-1]", rw.creates)
+		}
+	}
+
+	// A subscriber without the optional method is simply not asked.
+	plain := &recordingRewriter{}
+	mgr, _ := aliasHookManager(t, plain)
+	ctx := principal.With(t.Context(), principal.Principal{User: "alice", Tool: "test"})
+	if _, err := mgr.CreateEntity(ctx, &entity.Entity{Type: "task", Properties: map[string]any{"title": "x"}},
+		entity.CreateOptions{ID: "TSK-2"}); err != nil {
+		t.Fatalf("CreateEntity: %v", err)
+	}
+}

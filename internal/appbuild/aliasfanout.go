@@ -27,7 +27,10 @@ type aliasFanout struct {
 	subscribers []entitymanager.AliasRewriter
 }
 
-var _ entitymanager.AliasRewriter = (*aliasFanout)(nil)
+var (
+	_ entitymanager.AliasRewriter  = (*aliasFanout)(nil)
+	_ entitymanager.CreateNotifier = (*aliasFanout)(nil)
+)
 
 // newAliasFanout returns a rewriter over the non-nil subscribers.
 //
@@ -114,6 +117,20 @@ func (f *aliasFanout) EntityFaceDeleted(ctx context.Context, entityID string, fa
 	for _, s := range f.subscribers {
 		if err := s.EntityFaceDeleted(ctx, entityID, face); err != nil {
 			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// EntityCreated notifies every subscriber that implements
+// [entitymanager.CreateNotifier] that an entity face was created.
+func (f *aliasFanout) EntityCreated(ctx context.Context, entityID string, face entity.Face) error {
+	var errs []error
+	for _, s := range f.subscribers {
+		if n, ok := s.(entitymanager.CreateNotifier); ok {
+			if err := n.EntityCreated(ctx, entityID, face); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 	return errors.Join(errs...)

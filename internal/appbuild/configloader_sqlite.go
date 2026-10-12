@@ -3,6 +3,7 @@
 package appbuild
 
 import (
+	"github.com/Sourcehaven-BV/rela/internal/channels/sqlitechannels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/comments/sqlitecomments"
 	"github.com/Sourcehaven-BV/rela/internal/config"
@@ -28,10 +29,17 @@ func backendServices(db *sqlitedb.DB) (backendOverrides, error) {
 	if err != nil {
 		return backendOverrides{}, err
 	}
+	// Channels go in the database for the reason comments do. They are not
+	// in dbServices: rela db load and dump do not carry them yet.
+	channelStore, err := sqlitechannels.New(db.DB())
+	if err != nil { // coverage-ignore: unreachable: db.DB() is non-nil
+		return backendOverrides{}, err
+	}
 	return backendOverrides{
 		stateKV:      data.kv,
 		migState:     data.migState,
 		commentStore: data.comments,
+		channelStore: channelStore,
 	}, nil
 }
 

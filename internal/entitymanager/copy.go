@@ -266,6 +266,9 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 
 	// AFTER the commit — see the godoc.
 	ce.recordCopyAudit(ctx, plan, result)
+	if result.Created && result.Entity != nil {
+		notifyAliasesOfCreate(ctx, ce.m.deps.AliasRewriter, result.Entity.ID, result.Entity.Face)
+	}
 
 	// Still under the lock taken above: names the target face no longer
 	// references lose their bytes when no other face references them.

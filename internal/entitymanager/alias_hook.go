@@ -99,3 +99,33 @@ func notifyAliasesOfFaceDelete(ctx context.Context, rw AliasRewriter, id string,
 			"id", id, "face", face, "error", err)
 	}
 }
+
+// CreateNotifier is the optional half of an [AliasRewriter] that learns an
+// entity id came into use. A subscriber that keeps references after the
+// entity is gone (realtime channels kept for retention) implements it, so a
+// new entity reusing the id does not inherit them.
+//
+// Optional, and type-asserted on Deps.AliasRewriter, because most
+// subscribers have nothing to do on a create.
+type CreateNotifier interface {
+	// EntityCreated notifies that the face of entity id was created. face
+	// is empty for an entity without faces.
+	EntityCreated(ctx context.Context, id string, face entity.Face) error
+}
+
+// notifyAliasesOfCreate notifies rw of a completed create when it
+// implements [CreateNotifier]. Failures are logged, as for a delete: the
+// create already happened.
+//
+// A function rather than a Manager method for the reason
+// notifyAliasesOfFaceDelete is one.
+func notifyAliasesOfCreate(ctx context.Context, rw AliasRewriter, id string, face entity.Face) {
+	n, ok := rw.(CreateNotifier)
+	if !ok {
+		return
+	}
+	if err := n.EntityCreated(ctx, id, face); err != nil {
+		slog.Error("entitymanager: alias create notification failed",
+			"id", id, "face", face, "error", err)
+	}
+}
