@@ -9,15 +9,16 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/changefeed"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/migration"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
-	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // storeWatcher is the optional capability dataentry needs from a
@@ -28,34 +29,15 @@ type storeWatcher interface {
 	StartWatching() error
 }
 
-// sseEvent represents a Server-Sent Event broadcast to subscribers.
-//
-// Two shapes flow through the broker:
-//
-//   - Non-entity events (refresh, config-error, git, git:status): Name + Data are the
-//     pre-rendered wire frame, delivered to every subscriber unchanged.
-//     They carry no entity identity, so there is nothing to gate.
-//   - Entity events (create/update/delete): EntityType is set and Name
-//     is empty. These are NOT pre-rendered. handleSSE applies the
-//     per-connection ACL read gate to EntityType and, if permitted,
-//     writes a type-scoped staleness frame (`event: entity:changed`,
-//     `data: {"type": <EntityType>}`). No entity id reaches the wire —
-//     the feed is a "your views of type T are stale, re-fetch" signal,
-//     and the re-fetch goes through the already-gated REST endpoints
-//     (TKT-POT9GQ). The per-connection gate is why entity events can't
-//     be pre-rendered in the principal-less pump goroutine.
-//
-// RelationChange marks a role-conferring relation write (member-of /
-// role-relation / containment edge — the types that can alter a
-// principal's read verdicts). It is never written to the wire; it
-// signals handleSSE to re-derive a fresh read gate and drop its cached
-// per-type verdicts so the next entity event re-resolves against
-// current membership (RR-K2WKEJ).
+// sseEvent is a non-entity frame (refresh, config-error, config-changed,
+// git, git:status) broadcast to every subscriber. Name and Data are the
+// pre-rendered wire frame; they carry no entity identity, so there is
+// nothing to gate. Entity changes do not travel through the broker: each
+// connection reads them from the change feed ([changefeed.Bus]) and gates
+// them itself (TKT-POT9GQ, TKT-3A1200).
 type sseEvent struct {
-	Name           string // non-entity frame type ("refresh", "config-error", "git", "git:status"); empty for entity/relation events
-	Data           string // pre-rendered JSON for non-entity frames
-	EntityType     string // set for entity create/update/delete events; gated per-connection
-	RelationChange bool   // set for relation writes; invalidates cached verdicts, never written to the wire
+	Name string
+	Data string
 }
 
 // eventBroker manages SSE client connections for live-reload notifications.
@@ -115,24 +97,6 @@ func (b *eventBroker) broadcastEvent(event sseEvent) {
 		}
 	}
 	b.mu.Unlock()
-}
-
-// broadcastEntityChange fans a type-scoped staleness event. create,
-// update, and delete all collapse to the same signal — "type T
-// changed, re-fetch" — because the client acts identically on all
-// three (invalidate active queries of that type). No entity id is
-// carried; handleSSE gates EntityType per-connection before writing
-// (TKT-POT9GQ).
-func (b *eventBroker) broadcastEntityChange(entityType string) {
-	b.broadcastEvent(sseEvent{EntityType: entityType})
-}
-
-// broadcastRelationChange signals subscribers to drop their cached
-// per-type read verdicts: member-of, role-relation, and containment
-// edge writes can all change what a principal may read. Never written
-// to the wire (RelationChange is the marker).
-func (b *eventBroker) broadcastRelationChange() {
-	b.broadcastEvent(sseEvent{RelationChange: true})
 }
 
 // broadcastConfigError tells subscribers that a data-entry.yaml reload was
@@ -201,79 +165,39 @@ func (a *App) StartWatching() error {
 			"store", fmt.Sprintf("%T", a.store))
 	}
 
-	// (3) Store-event -> SSE bridge. Subscribes to the store's change watcher
-	// and broadcasts entity changes to connected browsers. This is the path
-	// that makes a write by ANOTHER process visible live (the pgstore
-	// cross-process feed, TKT-WZYWM9) — and also surfaces fsstore's
-	// external-file-edit events, which previously had no consumer. Local API
-	// writes flow through here too, so the inline broadcasts in the write
-	// handlers were removed to avoid double-broadcasting.
+	// (3) Store-event -> change feed. Feeds the store's change watcher into
+	// the bus every SSE connection reads. This is the path that makes a
+	// write by ANOTHER process visible live (the pgstore cross-process feed,
+	// TKT-WZYWM9) and surfaces fsstore's external-file-edit events. Local API
+	// writes flow through here too, so the write handlers do not broadcast.
 	a.startStoreEventBridge()
 
 	return nil
 	// coverage-ignore-end
 }
 
-// storeEventBufSize is the buffer for the store-event subscription. The watcher
-// drops events on a full buffer (it's lossy by contract), but since each event
-// only triggers a re-fetch hint to the browser, a modest buffer plus the
-// browser's own re-snapshot keeps the UI consistent.
-const storeEventBufSize = 64
-
-// startStoreEventBridge subscribes to the store's change feed and pumps entity
-// events to the SSE broker. Entity create/update/delete are broadcast for
-// their type; a relation write is broadcast for the types at both of its ends
-// (attachments are not part of the live feed). Idempotent re-snapshot semantics: a
-// duplicate event just nudges the browser to re-fetch again, which is harmless.
+// startStoreEventBridge starts the change feed on the store's change watcher.
+// A feed that does not start (it was already started or closed) leaves SSE
+// connections working without entity changes, so the failure is logged
+// rather than returned.
 //
 // # Audit-isolation invariant
 //
-// The SSE broker NEVER carries audit records. The wire payload is
-// `{type, id}` — an entity marker only. Subject.ID / Subject.FromID
-// from `denied-write` audit rows must NOT be forwarded here: the
-// audit log is the only intended audience for principal-attribution
-// detail, and broadcasting it via SSE would leak the principal-to-
-// entity topology to every event subscriber.
+// The change feed NEVER carries audit records. It holds entity types only,
+// and the wire carries `{type}`. Subject.ID / Subject.FromID from
+// `denied-write` audit rows must NOT be forwarded to SSE: the audit log is the
+// only intended audience for principal-attribution detail, and broadcasting it
+// would leak the principal-to-entity topology to every subscriber.
 //
-// If a future feature needs an audit-aware SSE channel, it must
-// expose a SEPARATE broker, gated by per-subscriber ACL, with its
-// own redaction policy. The regression test
-// `TestSSE_DoesNotFlowAuditEvents` pins this invariant.
+// If a future feature needs an audit-aware SSE channel, it must expose a
+// SEPARATE feed, gated by per-subscriber ACL, with its own redaction policy.
+// The regression test `TestSSE_DoesNotFlowAuditEvents` pins this invariant.
 func (a *App) startStoreEventBridge() {
-	events, cancel := a.store.Subscribe(storeEventBufSize)
-	a.stopStoreWatch = cancel
-	go a.pumpStoreEvents(events)
-}
-
-// pumpStoreEvents maps store.Events to SSE entity broadcasts until the
-// subscription channel closes (on cancel / store Close).
-func (a *App) pumpStoreEvents(events <-chan store.Event) {
-	for ev := range events {
-		switch ev.Op {
-		case store.EventEntityCreated, store.EventEntityUpdated, store.EventEntityDeleted:
-			// All three collapse to one type-scoped staleness signal:
-			// the client acts identically (invalidate active queries of
-			// the type), and carrying no id keeps the feed from being a
-			// per-entity existence oracle (TKT-POT9GQ).
-			a.broker.broadcastEntityChange(ev.EntityType)
-		case store.EventRelationCreated, store.EventRelationUpdated, store.EventRelationDeleted:
-			// Relation writes are not surfaced as browser refreshes (no
-			// broadcast existed for them before), but they CAN change a
-			// principal's read verdicts (member-of / role-relation /
-			// containment edges). Signal connections to drop their
-			// cached per-type verdicts so the next entity event
-			// re-resolves against current membership (RR-K2WKEJ).
-			a.broker.broadcastRelationChange()
-			// An edge is also part of how both ends are shown: a board
-			// column or list section taken from a relation, a detail panel's
-			// relation fields. Mark both ends' types stale so those views
-			// re-fetch; the per-connection read gate applies as for any
-			// entity event.
-			for _, t := range relationEndTypes(a.State(), ev.RelationType) {
-				a.broker.broadcastEntityChange(t)
-			}
-		}
+	if err := a.feed.Start(a.store); err != nil {
+		slog.Warn("sse: change feed not started", "error", err)
+		return
 	}
+	a.live.start(a.feed)
 }
 
 // relationEndTypes is every entity type a relation of state's metamodel can
@@ -425,14 +349,28 @@ func (a *App) reloadConfig() error {
 // handleSSE serves Server-Sent Events for live-reload notifications.
 // Connected browsers receive events when project files change or entities
 // are modified. Event types on the wire:
-//   - refresh: Files changed, reload needed
+//   - ready: first frame on a connection. Its id is the resume token for
+//     the position the stream starts at. Data is {}.
+//   - refresh: files changed, reload needed. Also sent as the FIRST frame,
+//     in place of ready, with data {"reason":"resync"} when the presented
+//     resume token is unusable; the client cannot know what it missed and
+//     re-fetches everything.
 //   - config-error: a data-entry.yaml reload was rejected; the previous
 //     config keeps serving. Data is {"file": ..., "error": ...}
+//   - config-changed: a Configure save replaced the server; the stream ends.
 //   - git / git:status: Git status changed (git:status carries empty JSON)
 //   - entity:changed: Entities of a type changed; data is {"type": "..."}
 //     with NO id. Create/update/delete all collapse to this single
 //     type-scoped staleness signal, ACL-gated per connection — a
 //     connection only receives a type its principal may read (TKT-POT9GQ).
+//   - ping: sent every [ssePingInterval]; data is {}.
+//
+// ready, refresh-on-resync, the last entity:changed of a flush, and ping
+// carry an `id:` resume token. A client reconnects with it in the
+// Last-Event-ID header or the last_event_id query parameter (the SPA rebuilds
+// its EventSource by hand, so it cannot rely on the browser resending the
+// header) and receives one entity:changed frame per readable type that
+// changed since (TKT-3A1200).
 func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -453,11 +391,43 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 	ch := a.broker.subscribe()
 	defer a.broker.unsubscribe(ch)
 
-	// Send initial keepalive
-	fmt.Fprintf(w, ": connected\n\n")
-	flusher.Flush()
+	// The token is untrusted input. Subscribe checks its exact length before
+	// decoding, and anything it did not mint is a resync; the value is never
+	// echoed or logged.
+	token := r.Header.Get("Last-Event-ID")
+	if token == "" {
+		token = r.URL.Query().Get("last_event_id")
+	}
+	sub := a.feed.Subscribe(token)
+	defer sub.Close()
 
-	a.runSSELoop(w, r, flusher, ch)
+	rc := http.NewResponseController(w)
+	conn := &sseConn{w: w, flusher: flusher, setDeadline: rc.SetWriteDeadline, timing: a.sseTiming}
+	ready := map[string]string{}
+	var live liveFrames // nil: no live views on this stream
+	if r.URL.Path == "/api/v1/_events" {
+		// Live views are v1 only; the legacy stream has no connection id.
+		// Without the stashed principal a replay would run as the resolved
+		// one, so the stream goes without live views instead.
+		if owner, ok := replayPrincipalFrom(r.Context()); ok {
+			c := a.live.register(owner)
+			defer a.live.unregister(c)
+			ready["conn"] = c.id
+			live = c
+		} else {
+			slog.Error("live: stream has no stashed principal; live views are off for it")
+		}
+	}
+	first := "ready"
+	if sub.Resync() {
+		first, ready["reason"] = "refresh", "resync"
+	}
+	data, _ := json.Marshal(ready)
+	if conn.frame(first, sub.Token(sub.Start()), string(data)) != nil {
+		return
+	}
+
+	a.runSSELoop(conn, r, ch, sub, sub.Start(), live)
 }
 
 // sseFlushInterval bounds how long a coalesced type-change burst waits
@@ -469,101 +439,274 @@ func (a *App) handleSSE(w http.ResponseWriter, r *http.Request) {
 // later, invisible to users — not a correctness knob.
 const sseFlushInterval = 200 * time.Millisecond
 
+// ssePingInterval is how often an idle stream sends a ping frame. It keeps
+// proxies from closing the connection and refreshes the client's resume
+// token. It runs on a fixed timer, so a ping says nothing about activity.
+const ssePingInterval = 25 * time.Second
+
+// sseTimings holds the stream intervals; tests shorten them.
+type sseTimings struct {
+	flush time.Duration
+	ping  time.Duration
+}
+
+var defaultSSETimings = sseTimings{flush: sseFlushInterval, ping: ssePingInterval}
+
+// sseConn writes frames to one SSE connection. Every write first sets a
+// write deadline, so a client that stops reading is dropped instead of
+// holding its handler goroutine forever.
+type sseConn struct {
+	w           io.Writer
+	flusher     http.Flusher
+	setDeadline func(time.Time) error // nil when the writer has none (tests)
+	timing      sseTimings
+}
+
+// sseMissedPings is how many ping intervals a frame write may block before
+// the connection counts as dead. Two absorbs one slow write without letting a
+// stalled reader hold a stream open for long.
+const sseMissedPings = 2
+
+// errStreamEnded ends a stream that finished on purpose.
+var errStreamEnded = errors.New("sse: stream ended")
+
+// frame writes one event and flushes it. id may be empty. A returned error
+// means the connection is unusable and the stream must end.
+func (c *sseConn) frame(name, id, data string) error {
+	if c.setDeadline != nil {
+		err := c.setDeadline(time.Now().Add(sseMissedPings * c.timing.ping))
+		if err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return err
+		}
+	}
+	var err error
+	if id != "" {
+		_, err = fmt.Fprintf(c.w, "event: %s\nid: %s\ndata: %s\n\n", name, id, data)
+	} else {
+		_, err = fmt.Fprintf(c.w, "event: %s\ndata: %s\n\n", name, data)
+	}
+	if err != nil {
+		return err
+	}
+	c.flusher.Flush()
+	return nil
+}
+
+// liveFrames is what a stream needs from its live-view subscriptions: a
+// signal that some changed, and their keys.
+type liveFrames interface {
+	wake() <-chan struct{}
+	takeChanged() []string
+}
+
+// changeSource is what a stream needs from its change-feed subscription.
+type changeSource interface {
+	Wake() <-chan struct{}
+	Take() changefeed.Batch
+	Token(seq uint64) string
+}
+
 // runSSELoop is the per-connection event loop. It is split out from
-// handleSSE so tests can drive it with an in-memory writer.
+// handleSSE so tests can drive it with an in-memory writer. start is the
+// position the subscription began at.
 //
-// Entity events are gated per-connection: the connection's principal
+// Entity changes are gated per-connection: the connection's principal
 // read verdict for each entity type is resolved via the read gate and
 // cached. A pending set of "stale types" is accumulated and flushed on a
 // timer (coalescing bursts, AC5).
 //
-// A RelationChange marks a role-conferring relation write, which can
-// alter the principal's read scope (a member-of edge changes group
-// membership; a role-relation / containment edge changes inheritance).
-// It re-derives a FRESH read gate (a new acl.Request whose member-of
-// closure is walked against the current graph — the connection's
-// original Request memoizes that closure for its lifetime, RR-K2WKEJ)
-// and clears the cached verdicts so the next entity event re-resolves
-// against current membership. The re-derive is coalesced into the same
-// flush window so a burst of relation writes triggers one re-walk, not
-// one per edge.
+// A relation change can alter the principal's read scope (a member-of
+// edge changes group membership; a role-relation / containment edge
+// changes inheritance). It re-derives a FRESH read gate (a new
+// acl.Request whose member-of closure is walked against the current
+// graph — the connection's original Request memoizes that closure for its
+// lifetime, RR-K2WKEJ) and clears the cached verdicts so the next entity
+// event re-resolves against current membership. The re-derive is coalesced
+// into the same flush window so a burst of relation writes triggers one
+// re-walk, not one per edge.
+//
+// Resume tokens: cursor is the feed position taken so far; flushed is the
+// position whose changes have all been gated and written. The last frame
+// of a flush carries cursor, and a ping carries flushed, so a client that
+// resumes from any token it saw misses no change the feed counted. The
+// feed counts what the store delivered: a store that drops events on a
+// full buffer drops them for resume too. When a batch holds only types the
+// principal cannot read, nothing is written and flushed simply moves on,
+// so a hidden entity write produces no frame and does not move a frame in
+// time. A relation write of any kind starts a flush window to re-derive
+// the gate, so it can make a readable frame arrive up to one window early
+// (docs/acl-security.md).
 //
 // Non-entity events (refresh, git) pass through ungated and immediately.
-func (a *App) runSSELoop(w io.Writer, r *http.Request, flusher http.Flusher, ch <-chan sseEvent) {
-	gate := readGateFromContext(r.Context())
-	verdicts := make(map[string]bool) // entityType -> visible; cached per connection
-	pending := make(map[string]struct{})
-	regate := false // a coalesced relation change is pending → re-derive on flush
+// The stream ends on a closed broker channel, the request context, or
+// right after a config-changed frame, so that frame is the last one
+// written even when a flush or ping is due at the same moment.
+func (a *App) runSSELoop(
+	conn *sseConn, r *http.Request, ch <-chan sseEvent, feed changeSource, start uint64, live liveFrames,
+) {
+	st := &sseStream{
+		app:      a,
+		conn:     conn,
+		feed:     feed,
+		gate:     readGateFromContext(r.Context()),
+		verdicts: make(map[string]bool),
+		pending:  make(map[string]struct{}),
+		cursor:   start,
+		flushed:  start,
+	}
 
 	// One timer for the connection's lifetime, created stopped and reset
 	// to (re)arm the coalescing window. flushArmed tracks whether the
 	// timer is currently running so a burst doesn't keep resetting it.
-	flush := time.NewTimer(sseFlushInterval)
+	flush := time.NewTimer(conn.timing.flush)
 	if !flush.Stop() {
 		<-flush.C
 	}
 	defer flush.Stop()
 	flushArmed := false
-	armFlush := func() {
-		if !flushArmed {
-			flush.Reset(sseFlushInterval)
-			flushArmed = true
-		}
+	ping := time.NewTicker(conn.timing.ping)
+	defer ping.Stop()
+	var liveWake <-chan struct{} // nil: no live views on this stream
+	if live != nil {
+		liveWake = live.wake()
 	}
 
+	ctx := r.Context()
 	for {
+		var err error
 		select {
 		case event, ok := <-ch:
 			if !ok {
 				return
 			}
-			switch {
-			case event.RelationChange:
-				// Coalesce: re-derive the gate at most once per flush
-				// window (a bulk relation import otherwise walks member-of
-				// per edge per connection).
-				regate = true
-				armFlush()
-			case event.EntityType != "":
-				// While a re-gate is pending the current gate is known
-				// stale, so defer the visibility decision to the flush
-				// (which re-checks every pending type against the fresh
-				// gate). Otherwise filter at entry to avoid buffering
-				// types the principal can't read.
-				if regate || a.entityTypeVisible(r.Context(), gate, verdicts, event.EntityType) {
-					pending[event.EntityType] = struct{}{}
-					armFlush()
-				}
-			case event.Name != "":
-				// Non-entity frame (refresh, git, git:status): pre-rendered, ungated.
-				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Name, event.Data)
-				flusher.Flush()
-			default:
-				// A zero-value frame is a programming error (every
-				// production construction site sets exactly one
-				// discriminant). Drop it rather than emit a malformed
-				// empty frame.
-				slog.Warn("sse: dropping zero-value broker event")
+			err = st.broker(event)
+		case <-feed.Wake():
+			if st.take(ctx) && !flushArmed {
+				flush.Reset(conn.timing.flush)
+				flushArmed = true
 			}
 		case <-flush.C:
-			if regate {
-				gate = a.freshReadGate(r.Context(), gate)
-				clear(verdicts)
-				regate = false
-			}
-			for typ := range pending {
-				if a.entityTypeVisible(r.Context(), gate, verdicts, typ) {
-					data, _ := json.Marshal(map[string]string{"type": typ})
-					fmt.Fprintf(w, "event: entity:changed\ndata: %s\n\n", data)
-				}
-			}
-			flusher.Flush()
-			clear(pending)
 			flushArmed = false
-		case <-r.Context().Done():
+			err = st.flush(ctx)
+		case <-liveWake:
+			err = writeLiveChanged(conn, live.takeChanged())
+		case <-ping.C:
+			err = conn.frame("ping", feed.Token(st.flushed), "{}")
+		case <-ctx.Done():
+			return
+		}
+		if err != nil {
 			return
 		}
 	}
+}
+
+// writeLiveChanged writes one live:changed frame per key. The key is the
+// client's own label for a subscription, so the frame carries no data.
+func writeLiveChanged(conn *sseConn, keys []string) error {
+	for _, key := range keys {
+		data, _ := json.Marshal(map[string]string{"key": key})
+		if err := conn.frame("live:changed", "", string(data)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sseStream is the per-connection state of App.runSSELoop.
+type sseStream struct {
+	app      *App
+	conn     *sseConn
+	feed     changeSource
+	gate     readGate
+	verdicts map[string]bool     // entityType -> visible; cached per connection
+	pending  map[string]struct{} // types to write at the next flush
+	regate   bool                // a coalesced relation change is pending → re-derive on flush
+	cursor   uint64              // feed position taken so far
+	flushed  uint64              // feed position whose changes are all gated and written
+}
+
+// broker writes a non-entity frame: pre-rendered and ungated.
+func (st *sseStream) broker(event sseEvent) error {
+	if event.Name == "" {
+		// A zero-value frame is a programming error. Drop it rather than
+		// emit a malformed empty frame.
+		slog.Warn("sse: dropping zero-value broker event")
+		return nil
+	}
+	if err := st.conn.frame(event.Name, "", event.Data); err != nil {
+		return err
+	}
+	if event.Name == sseConfigChanged {
+		return errStreamEnded
+	}
+	return nil
+}
+
+// take collects the changes since the last take and reports whether a
+// flush is needed.
+func (st *sseStream) take(ctx context.Context) bool {
+	batch := st.feed.Take()
+	// Coalesce: re-derive the gate at most once per flush window (a bulk
+	// relation import otherwise walks member-of per edge per connection).
+	st.regate = st.regate || batch.Relation
+	// An edge is also part of how both ends are shown: a board column or
+	// list section taken from a relation, a detail panel's relation fields.
+	// Mark both ends' types stale so those views re-fetch; the read gate
+	// applies to them as to any entity type.
+	types := batch.Types
+	if len(batch.RelationTypes) > 0 {
+		state := st.app.State()
+		types = slices.Clone(types)
+		for _, rel := range batch.RelationTypes {
+			types = append(types, relationEndTypes(state, rel)...)
+		}
+	}
+	for _, typ := range types {
+		// While a re-gate is pending the current gate is known stale, so
+		// defer the visibility decision to the flush (which re-checks every
+		// pending type against the fresh gate). Otherwise filter at entry to
+		// avoid buffering types the principal can't read.
+		if st.regate || st.app.entityTypeVisible(ctx, st.gate, st.verdicts, typ) {
+			st.pending[typ] = struct{}{}
+		}
+	}
+	st.cursor = batch.Seq
+	if len(st.pending) == 0 && !st.regate {
+		st.flushed = st.cursor // nothing readable to write
+		return false
+	}
+	return true
+}
+
+// flush writes one entity:changed frame per pending readable type, the
+// last one carrying the resume token for the cursor.
+func (st *sseStream) flush(ctx context.Context) error {
+	if st.regate {
+		st.gate = st.app.freshReadGate(ctx, st.gate)
+		clear(st.verdicts)
+		st.regate = false
+	}
+	var visible []string
+	for typ := range st.pending {
+		if st.app.entityTypeVisible(ctx, st.gate, st.verdicts, typ) {
+			visible = append(visible, typ)
+		}
+	}
+	clear(st.pending)
+	slices.Sort(visible)
+	for i, typ := range visible {
+		id := ""
+		if i == len(visible)-1 {
+			id = st.feed.Token(st.cursor)
+		}
+		data, _ := json.Marshal(map[string]string{"type": typ})
+		if err := st.conn.frame("entity:changed", id, string(data)); err != nil {
+			return err
+		}
+	}
+	st.flushed = st.cursor
+	return nil
 }
 
 // freshReadGate returns a read gate whose member-of closure is resolved

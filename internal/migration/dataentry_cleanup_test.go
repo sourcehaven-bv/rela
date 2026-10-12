@@ -70,13 +70,6 @@ func (m *mockMetamodel) GetTypeDefault(typeName string) string {
 	return ""
 }
 
-func (m *mockMetamodel) IsEnumType(typeName string) bool {
-	if ct, ok := m.types[typeName]; ok {
-		return len(ct.values) > 0
-	}
-	return false
-}
-
 func (m *mockMetamodel) GetRelationLabel(relation string) string {
 	if rel, ok := m.relations[relation]; ok {
 		return rel.label

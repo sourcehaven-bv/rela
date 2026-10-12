@@ -485,6 +485,8 @@ export interface ListParams {
    */
   relation?: string
   direction?: 'incoming'
+  /** The search box's free-text query. A live subscription cannot carry it. */
+  q?: string
   [key: `filter[${string}]`]: string | undefined
 }
 

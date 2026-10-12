@@ -91,6 +91,9 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		// its own JSON 404.
 		{http.MethodGet, "/api/v1/_piles", http.StatusNotFound},
 		{http.MethodGet, "/api/v1/_piles/PIL-ABCD", http.StatusNotFound},
+		// Live-view subscriptions: an unknown stream id is the handler's own
+		// JSON 404.
+		{http.MethodPut, "/api/v1/_events/nope/subscriptions", http.StatusNotFound},
 		{http.MethodGet, "/api/v1/_conflicts", 0},
 		{http.MethodGet, "/api/v1/_conflicts/some-id", 0},
 		{http.MethodGet, "/api/v1/_documents/readme", 0},

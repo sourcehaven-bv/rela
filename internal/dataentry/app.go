@@ -18,6 +18,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/changefeed"
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -464,9 +465,18 @@ type App struct {
 	// StartWatching; nil when watching is not active.
 	stopConfigWatch func()
 
-	// stopStoreWatch cancels the store-event -> SSE bridge subscription. Set by
-	// StartWatching; nil when watching is not active.
-	stopStoreWatch func()
+	// feed numbers store change events for SSE connections and lets them
+	// resume (TKT-3A1200). Built in NewApp and never reassigned, so request
+	// goroutines read it without a lock; StartWatching starts it and
+	// StopWatching closes it.
+	feed *changefeed.Bus
+
+	// sseTiming holds the SSE flush and ping intervals.
+	sseTiming sseTimings
+	// live holds the live-view subscriptions and their replay worker
+	// (TKT-HJ5Z9Y). Built in NewApp; the worker runs between StartWatching
+	// and StopWatching.
+	live *liveHub
 
 	// configure serves /api/v1/_configure; nil keeps the routes absent. Set
 	// once by [SetConfigure] before NewRouter.
@@ -540,10 +550,13 @@ type App struct {
 }
 
 // StopWatching releases the data-entry.yaml subscription started by
-// [App.StartWatching]. The store-level watcher (when present) has its
+// [App.StartWatching] and stops the change feed; open SSE streams keep
+// running without entity changes until the broker closes. The store-level watcher (when present) has its
 // own lifecycle managed by the store and is stopped during store
 // close, not here — asymmetric on purpose: dataentry doesn't own the
 // store, only its config subscription.
+// StopWatching closes the change feed for good: an App cannot start watching
+// again afterwards (rela-server builds a new App per configuration).
 // StopWatching is lifecycle-only and must be called from a single goroutine
 // (it is the StartWatching counterpart). The stop fields are not synchronized;
 // concurrent Start/Stop is not supported.
@@ -552,9 +565,11 @@ func (a *App) StopWatching() {
 		a.stopConfigWatch()
 		a.stopConfigWatch = nil
 	}
-	if a.stopStoreWatch != nil {
-		a.stopStoreWatch()
-		a.stopStoreWatch = nil
+	if a.live != nil {
+		a.live.stop()
+	}
+	if a.feed != nil {
+		a.feed.Close()
 	}
 }
 
@@ -1192,6 +1207,11 @@ func NewApp(
 		return nil, err
 	}
 
+	feed, err := changefeed.New()
+	if err != nil {
+		return nil, err
+	}
+
 	scriptEngine := script.NewEngine()
 	app := &App{
 		fs:              fs,
@@ -1211,6 +1231,8 @@ func NewApp(
 		kv:              kv,
 		acl:             aclImpl,
 		broker:          newEventBroker(),
+		feed:            feed,
+		sseTiming:       defaultSSETimings,
 		scriptEngine:    scriptEngine,
 		fieldResolver:   fieldResolver,
 		auditSink:       auditSink,
@@ -1220,6 +1242,7 @@ func NewApp(
 		attachmentUploads: attachment.NewLimiter(attachment.DefaultMaxUploads),
 	}
 	families.app = app
+	app.live = newLiveHub(func() *metamodel.Metamodel { return app.State().Meta })
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
 	// Constructed after app because luaWriteDeps is a method on App.

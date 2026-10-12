@@ -154,5 +154,11 @@
     "args": "{\"id\":\"REQ-001\",\"properties\":{\"status\":\"done\"}}",
     "isError": false,
     "text": "Updated REQ-001\n\n{\"id\":\"REQ-001\",\"type\":\"requirement\",\"properties\":{\"status\":\"done\",\"title\":\"First requirement\"}}"
+  },
+  {
+    "tool": "watch",
+    "args": "{\"targets\":[{\"tool\":\"search_entities\",\"args\":{\"query\":\"x\"}}]}",
+    "isError": true,
+    "text": "targets[0]: tool must be one of show_entity, list_entities, list_relations"
   }
 ]

@@ -37,7 +37,7 @@ const (
 	WidgetRrule       = "rrule"
 	// WidgetFile is registered by the SPA (frontend/src/widgets/registry.ts)
 	// but had no Go constant until TKT-3R7RF3 needed to name it in the section
-	// field widget table. Note Metamodel.ResolveWidgetFromType has no `file`
+	// field widget table. Note metamodel.ResolveWidgetFromType has no `file`
 	// case and resolves a file property to "text" — a real divergence from the
 	// SPA's defaultWidgetFor, documented at sectionFieldWidgetTypes.
 	WidgetFile  = "file"

@@ -31,7 +31,7 @@ func assignManagedOrder(
 	ctx context.Context, st store.Store, meta *metamodel.Metamodel, rel *entity.Relation, relType string,
 ) error {
 	relDef, ok := meta.Relations[relType]
-	// Caller already validated the relation type via Meta.ValidateRelation. This
+	// Caller already validated the relation type via Validator.ValidateRelation. This
 	// branch is only reachable through a metamodel reload race; failing loudly
 	// surfaces the race rather than silently writing a relation with no managed
 	// order.

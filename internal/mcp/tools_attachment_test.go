@@ -130,6 +130,7 @@ func newAttachFixture(t *testing.T, opts attachOpts) attachFixture {
 		Config:        svc.Config(),
 		LuaWriteDeps:  svc.LuaWriteDeps(),
 		Watcher:       nopWatcher{},
+		Watch:         WatchDeps{Changes: svc.Store(), Rebind: reads.Rebind},
 		ProjectRoot:   t.TempDir(),
 		Attachments: AttachmentDeps{
 			Snapshot:   func() (AttachmentSnapshot, error) { return snap, nil },

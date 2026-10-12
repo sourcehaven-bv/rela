@@ -846,7 +846,7 @@ func (b *caldavBackend) disposeOnLastUnlink(dyn dataentryconfig.CalDAVDynamicCol
 		if !ok {
 			return false
 		}
-		required := def.GetMinOutgoing()
+		required := def.MinOutgoing
 		return required != nil && *required >= 1
 	}
 }

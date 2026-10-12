@@ -127,6 +127,7 @@ func remoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 		EntityManager: appbuild.FieldGatedEntityManager(svc),
 		Config:        svc.Config(),
 		Watcher:       noopWatcher{},
+		Watch:         relamcp.WatchDeps{Changes: svc.Store(), Rebind: reads.Rebind},
 		ProjectRoot:   svc.Paths().Root,
 		Attachments:   remoteAttachmentDeps(svc, host),
 		World:         reads.LuaReads.World,

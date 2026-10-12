@@ -2753,7 +2753,7 @@ func prepareRelationCreate(
 		}
 		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
 	}
-	if vErr := m.deps.Meta.ValidateRelation(relType, source.typ, target.typ); vErr != nil {
+	if vErr := metamodel.NewValidator(m.deps.Meta).ValidateRelation(relType, source.typ, target.typ); vErr != nil {
 		// A type-allowlist mismatch is the one tolerable failure: the caller
 		// opted in and reports it as a warning. An unknown relation type is
 		// never tolerated.

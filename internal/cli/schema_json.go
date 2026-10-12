@@ -3,8 +3,7 @@ package cli
 // JSON serialization for the `rela schema` subcommands. This is schema
 // serialization, not output formatting — none of it branches on the output
 // format — so it lives next to its only caller (schema.go) instead of on
-// output.Writer (TKT-NS3XPE). The definition interfaces are consumer-side: the
-// metamodel package satisfies them without importing this one.
+// output.Writer (TKT-NS3XPE).
 
 import (
 	"encoding/json"
@@ -12,34 +11,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
-
-// schemaEntityDef is the entity-definition view the schema JSON output needs.
-// Satisfied by *metamodel.EntityDef.
-type schemaEntityDef interface {
-	GetLabel() string
-	GetAliases() []string
-	GetIDPatterns() []string
-	GetProperties() any
-	GetRDFType() string
-	GetColor() string
-	GetBorderColor() string
-}
-
-// schemaRelationDef is the relation-definition view the schema JSON output
-// needs. Satisfied by *metamodel.RelationDef.
-type schemaRelationDef interface {
-	GetLabel() string
-	GetFrom() []string
-	GetTo() []string
-	GetDescription() string
-	GetInverse() any
-	IsSymmetric() bool
-	IsOwning() bool
-	GetMinOutgoing() *int
-	GetMaxOutgoing() *int
-	GetMinIncoming() *int
-	GetMaxIncoming() *int
-}
 
 // schemaJSONWriter serializes metamodel schema views as indented JSON.
 type schemaJSONWriter struct {
@@ -80,56 +51,56 @@ func (w schemaJSONWriter) writeTypes(m *metamodel.Metamodel) error {
 }
 
 // writeEntityDetail outputs a single entity type as JSON
-func (w schemaJSONWriter) writeEntityDetail(name string, def schemaEntityDef) error {
+func (w schemaJSONWriter) writeEntityDetail(name string, def *metamodel.EntityDef) error {
 	data := map[string]any{
 		"name":        name,
-		"label":       def.GetLabel(),
-		"aliases":     def.GetAliases(),
-		"id_patterns": def.GetIDPatterns(),
-		"properties":  def.GetProperties(),
+		"label":       def.Label,
+		"aliases":     def.Aliases,
+		"id_patterns": def.GetIDPrefixes(),
+		"properties":  def.Properties,
 	}
-	if rdfType := def.GetRDFType(); rdfType != "" {
+	if rdfType := def.RDFType; rdfType != "" {
 		data["rdf_type"] = rdfType
 	}
-	if entityColor := def.GetColor(); entityColor != "" {
+	if entityColor := def.Color; entityColor != "" {
 		data["color"] = entityColor
 	}
-	if borderColor := def.GetBorderColor(); borderColor != "" {
+	if borderColor := def.BorderColor; borderColor != "" {
 		data["border_color"] = borderColor
 	}
 	return w.writeJSON(data)
 }
 
 // writeRelationDetail outputs a single relation type as JSON
-func (w schemaJSONWriter) writeRelationDetail(name string, def schemaRelationDef) error {
+func (w schemaJSONWriter) writeRelationDetail(name string, def *metamodel.RelationDef) error {
 	data := map[string]any{
 		"name":  name,
-		"label": def.GetLabel(),
-		"from":  def.GetFrom(),
-		"to":    def.GetTo(),
+		"label": def.Label,
+		"from":  def.From,
+		"to":    def.To,
 	}
-	if desc := def.GetDescription(); desc != "" {
+	if desc := def.Description; desc != "" {
 		data["description"] = desc
 	}
-	if inv := def.GetInverse(); inv != nil {
+	if inv := def.Inverse; inv != nil {
 		data["inverse"] = inv
 	}
-	if def.IsSymmetric() {
+	if def.Symmetric {
 		data["symmetric"] = true
 	}
-	if def.IsOwning() {
+	if def.Owning {
 		data["owning"] = true
 	}
-	if minOut := def.GetMinOutgoing(); minOut != nil {
+	if minOut := def.MinOutgoing; minOut != nil {
 		data["min_outgoing"] = *minOut
 	}
-	if maxOut := def.GetMaxOutgoing(); maxOut != nil {
+	if maxOut := def.MaxOutgoing; maxOut != nil {
 		data["max_outgoing"] = *maxOut
 	}
-	if minIn := def.GetMinIncoming(); minIn != nil {
+	if minIn := def.MinIncoming; minIn != nil {
 		data["min_incoming"] = *minIn
 	}
-	if maxIn := def.GetMaxIncoming(); maxIn != nil {
+	if maxIn := def.MaxIncoming; maxIn != nil {
 		data["max_incoming"] = *maxIn
 	}
 	return w.writeJSON(data)

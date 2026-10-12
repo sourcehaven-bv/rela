@@ -1058,9 +1058,9 @@ func (w *wrapperWrite) splitDisallowed(
 	if err != nil {
 		return nil, nil, &gateFaultError{err: err}
 	}
-	meta := w.h.schema().Meta
+	validator := metamodel.NewValidator(w.h.schema().Meta)
 	for _, c := range creates {
-		if meta.ValidateRelation(c.Key.Type, types[c.Key.From], types[c.Key.To]) != nil {
+		if validator.ValidateRelation(c.Key.Type, types[c.Key.From], types[c.Key.To]) != nil {
 			soft = append(soft, c)
 		} else {
 			rest = append(rest, c)
