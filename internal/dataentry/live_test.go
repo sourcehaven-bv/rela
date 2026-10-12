@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -196,6 +197,20 @@ func changedKeys(t *testing.T, c *sseClient, n int) []string {
 	return keys
 }
 
+// requireChanged reads len(want) live:changed frames and fails unless their
+// keys are want, in any order. A round marks its keys one replay at a time,
+// so the stream can wake between two marks and split one round's keys over
+// two wakes; only the set is promised, not the order.
+func requireChanged(t *testing.T, c *sseClient, want ...string) {
+	t.Helper()
+	got := changedKeys(t, c, len(want))
+	slices.Sort(got)
+	want = slices.Sorted(slices.Values(want))
+	if !slices.Equal(got, want) {
+		t.Fatalf("changed keys = %v, want %v", got, want)
+	}
+}
+
 // liveQuiet asserts that no live:changed frame arrives within quietWindow.
 func liveQuiet(t *testing.T, c *sseClient) {
 	t.Helper()
@@ -321,9 +336,7 @@ func TestLive_WriteFramesChangedSubscriptions(t *testing.T) {
 	liveQuiet(t, c) // taking a baseline sends nothing
 
 	update(t, env.app, ticket1("renamed"))
-	if got := changedKeys(t, c, 2); got[0] != "detail" || got[1] != "list" {
-		t.Fatalf("changed keys = %v, want [detail list]", got)
-	}
+	requireChanged(t, c, "detail", "list")
 
 	update(t, env.app, feature("FEAT-1", "renamed"))
 	liveQuiet(t, c)
@@ -366,9 +379,7 @@ func TestLive_HiddenWriteSendsNoFrame(t *testing.T) {
 
 	// The stream is still live: a visible write frames.
 	update(t, env.app, ticket1("renamed"))
-	if got := changedKeys(t, c, 1); got[0] != "detail" {
-		t.Fatalf("changed keys = %v, want detail first", got)
-	}
+	requireChanged(t, c, "detail", "list", "view")
 }
 
 // AC5: losing access through a membership change frames the subscription,
