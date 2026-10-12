@@ -3,8 +3,8 @@ identity: signed assertion for stranger@example.test
 status: 200
 header X-Total-Count: 1
 header Link: </api/v1/policies?page=1&per_page=25>; rel="first", </api/v1/policies?page=1&per_page=25>; rel="last"
-reads: CountMatched=1 GraphQueryHeaders=2 ListEntityHeaders=1 ListRelations=5
-breadth: ListEntityHeaders=2/1 ListRelations=4/5
+reads: CountMatched=1 GraphQueryHeaders=2 ListEntityHeaders=1 ListRelations=3
+breadth: ListEntityHeaders=2/1 ListRelations=2/3
 bodies: GraphQuery=0/2 ListEntityHeaders=0/1
 versions: 
 body:

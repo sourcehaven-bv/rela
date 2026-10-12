@@ -2,8 +2,8 @@ request: GET /api/v1/tickets/TKT-1
 identity: header editor@example.test
 status: 200
 header ETag: "kKmOjnfNll8="
-reads: ListEntities=1 ListEntityHeaders=1 ListRelations=2
-breadth: ListEntities=1/1 ListEntityHeaders=3/1 ListRelations=0/2
+reads: ListEntities=1 ListEntityHeaders=1 ListRelations=1
+breadth: ListEntities=1/1 ListEntityHeaders=3/1 ListRelations=0/1
 bodies: ListEntities=1/1 ListEntityHeaders=0/1
 versions: 
 body:

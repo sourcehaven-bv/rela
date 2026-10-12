@@ -10,33 +10,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
-// The wire vocabulary must round-trip. ResolutionRule.String() is what a
-// provenance field carries over HTTP and into logs, and ParseResolutionRule is
-// how it comes back — a rule that stringifies to something Parse cannot read
-// would silently degrade to "unscoped" on the way home, turning "this is a
-// stand-in face" into "no world applied".
-func TestResolutionRule_RoundTrips(t *testing.T) {
-	t.Parallel()
-	for _, rule := range []store.ResolutionRule{
-		store.ResolutionUnscoped,
-		store.ResolutionChain,
-		store.ResolutionFallbackDefault,
-		store.ResolutionExcluded,
-	} {
-		assert.Equal(t, rule, store.ParseResolutionRule(rule.String()),
-			"rule %d did not survive String -> Parse", int(rule))
-	}
-}
-
-// An unknown name reads as Unscoped — the rule that applies when no resolution
-// was recorded. Documented as deliberate, and pinned because the alternative
-// (an out-of-range rule) would render as "ResolutionRule(7)" on the wire.
-func TestParseResolutionRule_UnknownIsUnscoped(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, store.ResolutionUnscoped, store.ParseResolutionRule("no-such-rule"))
-	assert.Equal(t, store.ResolutionUnscoped, store.ParseResolutionRule(""))
-}
-
 // An out-of-range value must still name itself. These enums have a zero that
 // means something specific, so a bare integer in a log line is exactly the
 // confusion the String methods exist to prevent.

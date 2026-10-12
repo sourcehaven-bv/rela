@@ -1,8 +1,8 @@
 request: DELETE /api/v1/tickets/TKT-6
 identity: header editor@example.test
 status: 204
-reads: GetEntity=1 GetRelation=1 GraphQueryHeaders=1 ListEntities=2 ListEntityHeaders=1 ListRelations=3
-breadth: ListEntities=2/2 ListEntityHeaders=1/1 ListRelations=0/3
-bodies: GetEntity=0/1 GraphQuery=0/1 ListEntities=0/2 ListEntityHeaders=0/1
+reads: GetEntity=1 GetRelation=1 GraphQueryHeaders=1 ListEntities=2 ListRelations=3
+breadth: ListEntities=2/2 ListRelations=0/3
+bodies: GetEntity=0/1 GraphQuery=0/1 ListEntities=0/2
 versions: 
 body:

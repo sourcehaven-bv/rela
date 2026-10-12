@@ -1,9 +1,9 @@
 request: GET /api/v1/tickets/TKT-4/_presence
 identity: header editor@example.test
 status: 200
-reads: GetEntity=1 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1
-breadth: ListEntityHeaders=1/1 ListRelations=0/1
-bodies: GetEntity=1/1 GraphQuery=0/1 ListEntityHeaders=0/1
+reads: GetEntity=1 GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GetEntity=1/1 GraphQuery=0/1
 versions: 
 body:
 {

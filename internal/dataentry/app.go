@@ -280,6 +280,10 @@ type App struct {
 	// `worlds` because the two are injected from different places: the world
 	// LOOKUP is a compiled map, this is a store-backed capability.
 	worldNeighbors *worldNeighbors
+	// faceEdges is the one gated read of a served face's edges, bound to
+	// worldNeighbors. Every single-entity response reads its edges through
+	// it. See [faceEdgeReader].
+	faceEdges faceEdgeReader
 	// comments owns the commentary routes (TKT-FIO205). Always non-nil; the
 	// SERVICE inside it is nil when the metamodel declares no enabled
 	// `comments:` block, which is the "feature absent" signal — the routes 404
@@ -1264,6 +1268,7 @@ func NewApp(
 	}
 	families.app = app
 	app.live = newLiveHub(func() *metamodel.Metamodel { return app.State().Meta })
+	app.faceEdges = faceEdgesOf(app)
 	// documentService needs scriptEngine (for Lua renders) and a closure
 	// that yields fresh lua.WriteDeps (so metamodel reloads propagate).
 	// Constructed after app because luaWriteDeps is a method on App.
@@ -1507,13 +1512,11 @@ func NewApp(
 		acl:         func() acl.ACL { return app.acl },
 		audit:       func() audit.Audit { return app.auditSink },
 		fields:      func() FieldVerdictResolver { return app.fieldResolver },
+		faceEdges:   app.faceEdges,
 		affordances: app.affordances,
 		owner:       app.attachmentOwner,
 		uploads:     app.attachmentUploads,
 		provision:   newProvisionSeam(app),
-		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.worldNeighbors, e)
-		},
 	}
 
 	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve
@@ -1535,9 +1538,7 @@ func NewApp(
 		visible:     app.visibleReader,
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
-		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.worldNeighbors, e)
-		},
+		faceEdges:   app.faceEdges,
 		readVisible: func(ctx context.Context, typeName string, ref entity.Ref) (*entity.Entity, bool, error) {
 			return app.visibleReader.addressRef(ctx, typeName, ref)
 		},
@@ -1760,11 +1761,9 @@ func buildStyleMap(
 // makes the mirror unnecessary rather than merely correct today.
 //
 // The late-bound closures are the reason this cannot be a plain value copy.
-// aclImpl exists because tests reassign app.acl after construction;
-// faceEdges for the sharper case that [SetWorldNeighbors] runs after this
-// point in NewApp, so capturing app.worldNeighbors eagerly would freeze the
-// nil it holds now and send every view down the bare-id arm — the
-// face-merging read this seam exists to close.
+// aclImpl exists because tests reassign app.acl after construction.
+// faceEdges is late-bound inside [faceEdgeReader], because
+// [SetWorldNeighbors] runs after this point in NewApp.
 func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 	return &viewsHandler{
 		schema:      app.State,
@@ -1781,13 +1780,7 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 		gateRead:       app.gateReadOrNotFound,
 		aclImpl:        func() acl.ACL { return app.acl },
 		viewConditions: func() ViewConditionFunc { return app.viewConditions },
-		faceEdges: func(
-			ctx context.Context, e *entity.Entity,
-		) ([]*entity.Relation, error) {
-			edges, _, err := servedFaceEdges(
-				ctx, app.worldNeighbors, e)
-			return edges, err
-		},
+		faceEdges:      app.faceEdges,
 	}
 }
 

@@ -46,22 +46,6 @@ func (r ResolutionRule) String() string {
 	}
 }
 
-// ParseResolutionRule is the inverse of [ResolutionRule.String] for the
-// wire vocabulary. An unknown name is [ResolutionUnscoped], the rule that
-// applies when no resolution was recorded.
-func ParseResolutionRule(name string) ResolutionRule {
-	switch name {
-	case ResolutionChain.String():
-		return ResolutionChain
-	case ResolutionFallbackDefault.String():
-		return ResolutionFallbackDefault
-	case ResolutionExcluded.String():
-		return ResolutionExcluded
-	default:
-		return ResolutionUnscoped
-	}
-}
-
 // WorldCandidate is one stored state row offered to [ResolveWorldPrimes]:
 // the bare id, its type, and its face. Backends and indexes pass their own
 // metadata rather than a loaded entity, so resolution costs no I/O.

@@ -258,7 +258,7 @@ func (h *commentsHandler) readTarget(
 // A thread is stored per face, so a write must land on the face the caller
 // names, never on the face a world ranks first. A named face is used as
 // given, subject to the read gate. A bare id resolves through
-// [visibility.Resolver.WriteTarget]: it names the implicit face of a faceless
+// [visibility.Resolver.WriteRow]: it names the implicit face of a faceless
 // type, and on a faced type it is a 422 `face_required` listing the readable
 // faces. Misses fail with the same uniform 404 as the read gate.
 func (h *commentsHandler) writeTarget(

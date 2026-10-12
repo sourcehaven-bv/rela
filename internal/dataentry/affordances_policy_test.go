@@ -89,11 +89,14 @@ func getAs(t *testing.T, app *App, user, id string) v1.Entity {
 
 // AC3 end-to-end: a field grant whose predicate evaluates false yields
 // _fields.status.writable=false on GET AND a 403 on the PATCH, with
-// the TKT-G7N5 wire rule_id (DR-C5 — not a new rule_kind).
+// the TKT-G7N5 wire rule_id (DR-C5 — not a new rule_kind). The role may
+// update tickets: a role that may not is refused by the row-level check
+// before any field verdict, like the manager does.
 func TestPolicyResolver_FieldPredicate_WireAndWrite(t *testing.T) {
 	const aclYAML = `
 roles:
   triager:
+    update: [ticket]
     fields:
       ticket:
         - field: status
@@ -138,6 +141,7 @@ func TestPolicyResolver_AuditCarriesAttribution(t *testing.T) {
 	const aclYAML = `
 roles:
   triager:
+    update: [ticket]
     fields:
       ticket:
         - field: status
