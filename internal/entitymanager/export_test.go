@@ -15,6 +15,12 @@ func CascadeHostDelete(ctx context.Context, m *Manager, id string, cascade bool)
 	return (&cascadeHost{deps: m.deps}).DeleteEntity(ctx, "", id, cascade)
 }
 
+// CascadeHostWriteRelation writes r through the cascade host m would hand
+// the runner, as an automation's create_relation does.
+func CascadeHostWriteRelation(ctx context.Context, m *Manager, r *entity.Relation) error {
+	return (&cascadeHost{deps: m.deps}).WriteRelation(ctx, r)
+}
+
 // CascadeHostCreate runs a cascade's create_entity through the cascade host.
 // Test-only: the metamodel refuses an automation whose create_entity names
 // an external ref, so the write-time backstop is reachable only from here.

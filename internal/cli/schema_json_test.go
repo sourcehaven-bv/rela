@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -18,40 +19,6 @@ func testSchemaMetamodel() *metamodel.Metamodel {
 		Types:     map[string]metamodel.CustomType{},
 	}
 }
-
-type mockSchemaEntityDef struct{}
-
-func (e *mockSchemaEntityDef) GetLabel() string        { return "Test Entity" }
-func (e *mockSchemaEntityDef) GetAliases() []string    { return []string{"test"} }
-func (e *mockSchemaEntityDef) GetIDPatterns() []string { return []string{"TEST-*"} }
-func (e *mockSchemaEntityDef) GetProperties() any      { return map[string]any{} }
-func (e *mockSchemaEntityDef) GetRDFType() string      { return "test:Entity" }
-func (e *mockSchemaEntityDef) GetColor() string        { return "#FF0000" }
-func (e *mockSchemaEntityDef) GetBorderColor() string  { return "#000000" }
-
-type mockSchemaRelationDef struct {
-	symmetric bool
-	desc      string
-	inverse   any
-	srcMin    *int
-	srcMax    *int
-	tgtMin    *int
-	tgtMax    *int
-}
-
-func (r *mockSchemaRelationDef) GetLabel() string  { return "Test Relation" }
-func (r *mockSchemaRelationDef) GetFrom() []string { return []string{"Entity1"} }
-func (r *mockSchemaRelationDef) GetTo() []string   { return []string{"Entity2"} }
-func (r *mockSchemaRelationDef) GetDescription() string {
-	return r.desc
-}
-func (r *mockSchemaRelationDef) GetInverse() any      { return r.inverse }
-func (r *mockSchemaRelationDef) IsSymmetric() bool    { return r.symmetric }
-func (r *mockSchemaRelationDef) IsOwning() bool       { return false }
-func (r *mockSchemaRelationDef) GetMinOutgoing() *int { return r.srcMin }
-func (r *mockSchemaRelationDef) GetMaxOutgoing() *int { return r.srcMax }
-func (r *mockSchemaRelationDef) GetMinIncoming() *int { return r.tgtMin }
-func (r *mockSchemaRelationDef) GetMaxIncoming() *int { return r.tgtMax }
 
 // TestSchemaJSONOverview tests schema overview output
 func TestSchemaJSONOverview(t *testing.T) {
@@ -120,75 +87,91 @@ func TestSchemaJSONTypes(t *testing.T) {
 	}
 }
 
-// TestSchemaJSONEntityDetail tests entity detail output
+// assertJSONDocument compares written JSON with want, ignoring key order.
+func assertJSONDocument(t *testing.T, got []byte, want string) {
+	t.Helper()
+	var gotDoc, wantDoc any
+	if err := json.Unmarshal(got, &gotDoc); err != nil {
+		t.Fatalf("parse output: %v", err)
+	}
+	if err := json.Unmarshal([]byte(want), &wantDoc); err != nil {
+		t.Fatalf("parse want: %v", err)
+	}
+	if !reflect.DeepEqual(gotDoc, wantDoc) {
+		t.Errorf("output:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestSchemaJSONEntityDetail pins every field of the entity detail output.
 func TestSchemaJSONEntityDetail(t *testing.T) {
 	buf := &bytes.Buffer{}
 	w := schemaJSONWriter{out: buf}
 
-	mockDef := &mockSchemaEntityDef{}
-	if err := w.writeEntityDetail("test", mockDef); err != nil {
+	def := &metamodel.EntityDef{
+		Label:       "Test Entity",
+		Aliases:     []string{"test"},
+		IDPrefix:    "TEST-",
+		RDFType:     "test:Entity",
+		Color:       "#FF0000",
+		BorderColor: "#000000",
+	}
+	if err := w.writeEntityDetail("test", def); err != nil {
 		t.Fatalf("writeEntityDetail failed: %v", err)
 	}
 
-	var result map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("failed to parse JSON output: %v", err)
-	}
-	if result["name"] != "test" {
-		t.Error("expected name in output")
-	}
+	assertJSONDocument(t, buf.Bytes(), `{
+		"name": "test", "label": "Test Entity", "aliases": ["test"],
+		"id_patterns": ["TEST-"], "properties": null,
+		"rdf_type": "test:Entity", "color": "#FF0000", "border_color": "#000000"
+	}`)
 }
 
-// TestSchemaJSONRelationDetail tests relation detail output
+// TestSchemaJSONRelationDetail pins the relation detail output with and
+// without the optional fields.
 func TestSchemaJSONRelationDetail(t *testing.T) {
-	buf := &bytes.Buffer{}
-	w := schemaJSONWriter{out: buf}
-
-	mockDef := &mockSchemaRelationDef{}
-	if err := w.writeRelationDetail("test_relation", mockDef); err != nil {
-		t.Fatalf("writeRelationDetail failed: %v", err)
+	srcMin, srcMax, tgtMin, tgtMax := 1, 5, 2, 10
+	tests := []struct {
+		name string
+		def  *metamodel.RelationDef
+		want string
+	}{
+		{
+			name: "required fields only",
+			def:  &metamodel.RelationDef{Label: "Test Relation", From: []string{"Entity1"}, To: []string{"Entity2"}},
+			want: `{"name": "test_relation", "label": "Test Relation", "from": ["Entity1"], "to": ["Entity2"]}`,
+		},
+		{
+			name: "all optional fields",
+			def: &metamodel.RelationDef{
+				Label:       "Test Relation",
+				From:        []string{"Entity1"},
+				To:          []string{"Entity2"},
+				Description: "Test description",
+				Inverse:     &metamodel.InverseDef{ID: "test_inverse", Label: "inverse of test"},
+				Symmetric:   true,
+				Owning:      true,
+				MinOutgoing: &srcMin,
+				MaxOutgoing: &srcMax,
+				MinIncoming: &tgtMin,
+				MaxIncoming: &tgtMax,
+			},
+			want: `{
+				"name": "test_relation", "label": "Test Relation", "from": ["Entity1"], "to": ["Entity2"],
+				"description": "Test description",
+				"inverse": {"ID": "test_inverse", "Label": "inverse of test"},
+				"symmetric": true, "owning": true,
+				"min_outgoing": 1, "max_outgoing": 5, "min_incoming": 2, "max_incoming": 10
+			}`,
+		},
 	}
-
-	var result map[string]any
-	if unmarshalErr := json.Unmarshal(buf.Bytes(), &result); unmarshalErr != nil {
-		t.Fatalf("failed to parse JSON output: %v", unmarshalErr)
-	}
-	if result["name"] != "test_relation" {
-		t.Error("expected name in output")
-	}
-
-	// Test with all optional fields
-	buf2 := &bytes.Buffer{}
-	w2 := schemaJSONWriter{out: buf2}
-
-	srcMin := 1
-	srcMax := 5
-	tgtMin := 2
-	tgtMax := 10
-	mockDef2 := &mockSchemaRelationDef{
-		desc:      "Test description",
-		inverse:   "test_inverse",
-		symmetric: true,
-		srcMin:    &srcMin,
-		srcMax:    &srcMax,
-		tgtMin:    &tgtMin,
-		tgtMax:    &tgtMax,
-	}
-	if err := w2.writeRelationDetail("test_relation2", mockDef2); err != nil {
-		t.Fatalf("writeRelationDetail with optional fields failed: %v", err)
-	}
-
-	var result2 map[string]any
-	if err := json.Unmarshal(buf2.Bytes(), &result2); err != nil {
-		t.Fatalf("failed to parse JSON output: %v", err)
-	}
-	if result2["description"] != "Test description" {
-		t.Error("expected description in output")
-	}
-	if result2["symmetric"] != true {
-		t.Error("expected symmetric in output")
-	}
-	if result2["min_outgoing"] != float64(1) {
-		t.Error("expected min_outgoing in output")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			w := schemaJSONWriter{out: buf}
+			if err := w.writeRelationDetail("test_relation", tc.def); err != nil {
+				t.Fatalf("writeRelationDetail failed: %v", err)
+			}
+			assertJSONDocument(t, buf.Bytes(), tc.want)
+		})
 	}
 }

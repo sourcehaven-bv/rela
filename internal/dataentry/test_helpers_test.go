@@ -138,6 +138,11 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	}
 	app.visibleReader = visible
 	app.reader = entityReader{store: svc.Store()}
+	// Wire the neighbor gate as the composition root does; the edge reads
+	// fail closed without it.
+	if err = SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
+		panic(err.Error())
+	}
 	app.entityManager = svc.EntityManager()
 	app.recreator = entitymanager.Recreator{M: svc.EntityManager()}
 	app.searcher = svc.Searcher()
@@ -274,6 +279,9 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		owner:       app.attachmentOwner,
 		uploads:     app.attachmentUploads,
 		provision:   newProvisionSeam(app),
+		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
+			return servedFaceEdges(ctx, app.worldNeighbors, e)
+		},
 	}
 
 	// Export handler over the app's current services (mirrors NewApp).
@@ -313,7 +321,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
+			return servedFaceEdges(ctx, app.worldNeighbors, e)
 		},
 		readVisible: func(ctx context.Context, typeName string, ref entity.Ref) (*entity.Entity, bool, error) {
 			return app.visibleReader.addressRef(ctx, typeName, ref)

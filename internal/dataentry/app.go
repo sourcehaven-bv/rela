@@ -89,6 +89,11 @@ type appEntityWriter interface {
 		ctx context.Context, key entity.RelationKey, opts entity.RelationOptions,
 	) (*entity.Relation, error)
 	DeleteRelation(ctx context.Context, key entity.RelationKey) error
+	// ReplaceRelations is how CalDAV moves a to-do between the collections
+	// of a single-valued membership relation (TKT-65LVAK).
+	ReplaceRelations(
+		ctx context.Context, creates []entitymanager.RelationCreate, removes []entity.RelationKey,
+	) ([]*entity.Relation, error)
 	// DeleteEntityFace is here for the script runtime's Mutator, which App
 	// hands a.entityManager as.
 	DeleteEntityFace(ctx context.Context, id string, face entity.Face, cascade bool) (*entity.DeleteResult, error)
@@ -1488,6 +1493,9 @@ func NewApp(
 		owner:       app.attachmentOwner,
 		uploads:     app.attachmentUploads,
 		provision:   newProvisionSeam(app),
+		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
+			return servedFaceEdges(ctx, app.worldNeighbors, e)
+		},
 	}
 
 	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve
@@ -1510,7 +1518,7 @@ func NewApp(
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
+			return servedFaceEdges(ctx, app.worldNeighbors, e)
 		},
 		readVisible: func(ctx context.Context, typeName string, ref entity.Ref) (*entity.Entity, bool, error) {
 			return app.visibleReader.addressRef(ctx, typeName, ref)
@@ -1758,7 +1766,7 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 			ctx context.Context, e *entity.Entity,
 		) ([]*entity.Relation, error) {
 			edges, _, err := servedFaceEdges(
-				ctx, app.reader, app.worldNeighbors, e)
+				ctx, app.worldNeighbors, e)
 			return edges, err
 		},
 	}

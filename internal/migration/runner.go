@@ -77,9 +77,9 @@ func DetectFromNodeWithMetamodel(doc *yaml.Node, ft FileType, meta MetamodelProv
 	migrations := ForFileType(ft)
 
 	for _, m := range migrations {
-		// Pass metamodel to migrations that need it
-		if ma, ok := m.(MetamodelAware); ok && meta != nil {
-			ma.SetMetamodel(meta)
+		// Bind the metamodel to a per-run copy; the registered instance is shared.
+		if ma, ok := m.(MetamodelAware); ok {
+			m = ma.WithMetamodel(meta)
 		}
 
 		if m.Detect(doc) {

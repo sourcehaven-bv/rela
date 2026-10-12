@@ -195,9 +195,14 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	}
 	entity = written.Entity
 
-	// The written face's own edges, not every face's (BUG-ISJHML).
-	rels := edgesOwnedBy(s.Meta, h.reader.outgoingRelations(ctx, entity.ID), entity.Face)
-	result := h.serializer.forWire(ctx, entity, rels, s.Meta, plural)
+	// The written face's own edges (BUG-ISJHML), through the neighbor gate
+	// the GET uses, so the response names no neighbor the caller cannot read.
+	rels, visibleNeighbors, rerr := h.faceEdges(ctx, entity)
+	if rerr != nil {
+		writeGateError(w, r, rerr)
+		return
+	}
+	result := h.serializer.forWireScoped(ctx, entity, rels, visibleNeighbors, s.Meta, plural)
 	writeV1JSON(w, http.StatusOK, result)
 }
 
