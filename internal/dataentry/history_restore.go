@@ -181,9 +181,14 @@ func writeRestoreResult(a *App,
 	if def, ok := meta.GetEntityDef(e.Type); ok {
 		plural = def.GetPlural(e.Type)
 	}
-	// The restored face's own edges, not every face's (BUG-ISJHML).
-	rels := edgesOwnedBy(meta, a.reader.outgoingRelations(r.Context(), e.ID), e.Face)
-	wire := a.serializer.forWire(r.Context(), e, rels, meta, plural)
+	// The restored face's own edges (BUG-ISJHML), through the neighbor gate
+	// the GET uses, so the response names no neighbor the caller cannot read.
+	rels, visibleNeighbors, rerr := servedFaceEdges(r.Context(), a.worldNeighbors, e)
+	if rerr != nil {
+		writeGateError(w, r, rerr)
+		return
+	}
+	wire := a.serializer.forWireScoped(r.Context(), e, rels, visibleNeighbors, meta, plural)
 	writeV1JSON(w, http.StatusOK, map[string]any{
 		"restored_from_version": restoredFrom,
 		"entity":                wire,

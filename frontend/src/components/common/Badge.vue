@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useSchemaStore } from '@/stores/schema'
 import type { EntityType } from '@/types'
+import { STYLE_PALETTE, styleClassFor } from '@/utils/styleColors'
 
 const props = defineProps<{
   value: string
@@ -10,21 +11,13 @@ const props = defineProps<{
   // store's resolution API — widget call sites hold the name, list/kanban
   // call sites hold the object.
   entityType?: string | EntityType
+  // Text to show instead of the value's label, keeping the value's colour: a
+  // relation field shows the target's title coloured by its status category
+  // (TKT-CADCFX).
+  text?: string
 }>()
 
 const schemaStore = useSchemaStore()
-
-// Map badge class names to CSS class names for styling
-// Colors are defined in CSS variables for light/dark mode support
-const badgeClassNames: Record<string, string> = {
-  'badge-blue': 'badge--blue',
-  'badge-purple': 'badge--purple',
-  'badge-green': 'badge--green',
-  'badge-gray': 'badge--gray',
-  'badge-red': 'badge--red',
-  'badge-orange': 'badge--orange',
-  'badge-yellow': 'badge--yellow',
-}
 
 // Look up style by (property, value). The server keys the styles map by
 // custom-type name, so resolution goes through the schema store's
@@ -37,13 +30,10 @@ const badgeClassNames: Record<string, string> = {
 // configured" answer.
 const badgeClass = computed(() => {
   if (!props.property) return 'badge--gray'
-  // Normalize: lowercase, spaces to underscores (keep underscores as-is)
-  const valueKey = props.value.toLowerCase().replace(/\s/g, '_')
+  // Value keys are normalized (lowercase, spaces to underscores) in styleKey.
   const propStyles = schemaStore.stylesForProperty(props.property, props.entityType)
-  if (propStyles && propStyles[valueKey]) {
-    return badgeClassNames[propStyles[valueKey]] || 'badge--gray'
-  }
-  return 'badge--gray'
+  const cls = styleClassFor(propStyles, props.value)
+  return (cls && STYLE_PALETTE[cls]?.badgeClass) || 'badge--gray'
 })
 
 // The metamodel-authored display label for this enum value, if any. Color
@@ -53,14 +43,14 @@ const badgeClass = computed(() => {
 const label = computed(() =>
   schemaStore.getEnumLabel(props.value, props.property, props.entityType),
 )
-const displayText = computed(() => label.value ?? props.value)
+const displayText = computed(() => props.text ?? label.value ?? props.value)
 </script>
 
 <template>
   <!-- When the metamodel supplies a label the author already chose the display
        form, so we suppress CSS capitalize; label text is interpolated (escaped),
        never v-html. -->
-  <span class="badge" :class="[badgeClass, { 'badge--labeled': label !== undefined }]">
+  <span class="badge" :class="[badgeClass, { 'badge--labeled': label !== undefined || text !== undefined }]">
     {{ displayText }}
     <!-- Optional trailing adornment (e.g. a dropdown caret when the badge is an
          interactive control). Empty for the common read-only badge. -->

@@ -261,6 +261,7 @@ const isEmpty = computed(() =>
 .rl-timeline__marker--amber { background: var(--rl-color-status-amber); }
 .rl-timeline__marker--red { background: var(--rl-color-status-red); }
 .rl-timeline__marker--blue { background: var(--rl-color-status-blue); }
+.rl-timeline__marker--purple { background: var(--rl-color-accent); }
 
 .rl-timeline__content {
   min-width: 0;

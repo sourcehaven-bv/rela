@@ -9,14 +9,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Metamodel represents the full metamodel configuration
-//
-// TODO(TKT-N0IKN9): 21 exported methods, over the 20 exported-method line.
-// Validation lives on [Validator] and the projections are built by
-// [NewRenderProjection] and [NewShapeProjection]. The relation and
-// property-type lookups are next (TKT-H72Z2N part 2).
-//
-//plimsoll:max-exported-methods=21
+// Metamodel is the decoded schema.yaml plus lookups by name ([Metamodel.GetEntityDef],
+// [Metamodel.GetRelationDef] and their kin). Validation lives on [Validator],
+// and the projections are built by [NewRenderProjection] and
+// [NewShapeProjection].
 type Metamodel struct {
 	Version   string `yaml:"version"`
 	Namespace string `yaml:"namespace"`
@@ -287,15 +283,6 @@ type TransitionDef struct {
 }
 
 // EntityDef defines an entity type in the metamodel
-//
-// TODO(TKT-N0IKN9): 24 exported methods, over the 20 exported-method line.
-// Schema value type; ratchet candidate alongside Metamodel. DisplayProperties
-// (TKT-NJTBQX) is the 24th — it reports the property set backing the display
-// title so the ACL locked-title guard can gate on templated display_property
-// (see internal/dataentry mentions); ratchet back down when this type is
-// decomposed.
-//
-//plimsoll:max-exported-methods=24
 type EntityDef struct {
 	Label         string                 `yaml:"label"`
 	LabelPlural   string                 `yaml:"label_plural,omitempty"`

@@ -173,6 +173,36 @@ func NewValidator(m *Metamodel) Validator {
 	return Validator{meta: m}
 }
 
+// ValidateRelation checks if a relation is valid between two entity types
+func (v Validator) ValidateRelation(relationType, fromType, toType string) error {
+	rel, ok := v.meta.GetRelationDef(relationType)
+	if !ok {
+		return &RelationNotFoundError{Name: relationType}
+	}
+
+	fromValid := slices.Contains(rel.From, fromType)
+	if !fromValid {
+		return &InvalidRelationError{
+			Relation: relationType,
+			From:     fromType,
+			To:       toType,
+			Message:  "source entity type not allowed",
+		}
+	}
+
+	toValid := slices.Contains(rel.To, toType)
+	if !toValid {
+		return &InvalidRelationError{
+			Relation: relationType,
+			From:     fromType,
+			To:       toType,
+			Message:  "target entity type not allowed",
+		}
+	}
+
+	return nil
+}
+
 // ValidateProperties validates a properties map against a PropertySchema.
 // This is shared between entity and relation validation.
 func (v Validator) ValidateProperties(props map[string]any, schema PropertySchema) []*ValidationError {

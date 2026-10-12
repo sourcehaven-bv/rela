@@ -987,7 +987,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// mixed-face response that reads as correct because the entity looks
 	// right and only its links are wrong.
 	outgoing, visibleNeighbors, werr := servedFaceEdges(
-		ctx, a.reader, a.worldNeighbors, entity)
+		ctx, a.worldNeighbors, entity)
 	if werr != nil {
 		// A neighbor-resolution fault is an infrastructure failure, not an
 		// empty link set. Rendering it as "this world links to nothing"
@@ -1053,7 +1053,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// RR-FRK1 duplication this PR is careful to avoid one function over — and
 	// it also opens a window in which the validator could describe a
 	// different edge set than the body it is validating.
-	etag := entityETagWithEdges(entity, outgoing)
+	etag := entityETagWithEdges(a.affordances.withoutHidden(ctx, entity), outgoing)
 	w.Header().Set("ETag", etag)
 
 	// Check If-None-Match. When leases are wired the GET never answers 304:
@@ -2471,11 +2471,13 @@ func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, t
 	w.Header().Set("Link", strings.Join(links, ", "))
 }
 
-// computeEntityETag reads the entity's edges itself. Callers that ALREADY hold
+// computeEntityETag reads the entity's edges itself and hashes the caller's
+// view of e ([affordanceService.withoutHidden]). Callers that ALREADY hold
 // the edges they served should use [entityETagWithEdges] instead — see the
 // duplication note at the single-entity GET's call site.
 func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string {
-	edges, err := etagEdges(ctx, a.reader, a.worldNeighbors, e)
+	e = a.affordances.withoutHidden(ctx, e)
+	edges, err := etagEdges(ctx, a.worldNeighbors, e)
 	if err != nil {
 		return etagUnresolved(ctx, e)
 	}
@@ -2494,7 +2496,8 @@ func etagUnresolved(ctx context.Context, e *entityPkg.Entity) string {
 }
 
 // entityETagWithEdges hashes e together with the edges the response actually
-// carried.
+// carried. e is the caller's view ([affordanceService.withoutHidden]), never
+// a row with hidden values in it.
 //
 // Taking the edges as a PARAMETER rather than reading them is what keeps the
 // validator and the body describing the same document: the GET computes them
