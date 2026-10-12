@@ -1069,7 +1069,7 @@ func TestDefaultWorld_ContentEdgesAreFaceScoped(t *testing.T) {
 		t.Fatalf("the default world must serve the DEFAULT face; got face %q", face.Face)
 	}
 
-	outgoing, _, err := servedFaceEdges(dctx, app.reader, app.worldNeighbors, face)
+	outgoing, _, err := servedFaceEdges(dctx, app.worldNeighbors, face)
 	if err != nil {
 		t.Fatalf("servedFaceEdges: %v", err)
 	}
@@ -1119,7 +1119,7 @@ func TestDefaultWorld_IdentityEdgesAreFaceIndependent(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
-	outgoing, _, err := servedFaceEdges(dctx, app.reader, app.worldNeighbors, face)
+	outgoing, _, err := servedFaceEdges(dctx, app.worldNeighbors, face)
 	if err != nil {
 		t.Fatalf("servedFaceEdges: %v", err)
 	}

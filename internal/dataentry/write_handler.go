@@ -501,10 +501,15 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// The created face's own edges, not every face's (BUG-ISJHML).
-	meta := h.schema().Meta
-	rels := edgesOwnedBy(meta, h.reader.outgoingRelations(r.Context(), created.ID), created.Face)
-	result := h.serializer.forWire(r.Context(), created, rels, meta, plural)
+	// The created face's own edges (BUG-ISJHML), through the neighbor gate
+	// the GET uses. A raw read would name a neighbor the caller cannot see,
+	// such as one an on-create automation linked.
+	rels, visibleNeighbors, rerr := h.faceEdges(r.Context(), created)
+	if rerr != nil {
+		writeGateError(w, r, rerr)
+		return
+	}
+	result := h.serializer.forWireScoped(r.Context(), created, rels, visibleNeighbors, h.schema().Meta, plural)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -34,6 +35,9 @@ type attachmentHandler struct {
 	acl        func() acl.ACL
 	audit      func() audit.Audit
 	fields     func() FieldVerdictResolver
+	// faceEdges is [servedFaceEdges] bound to the App's neighbor wiring, the
+	// same gated edge read the entity GET serves.
+	faceEdges func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error)
 	// affordances applies the `fields:` write check, the same one PATCH and
 	// PUT apply.
 	affordances affordanceService
