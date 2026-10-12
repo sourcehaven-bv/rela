@@ -118,6 +118,10 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		// dispatcher case shows as "Resource not found" instead.
 		{http.MethodGet, "/api/v1/tickets/TKT-001/_lease", http.StatusMethodNotAllowed},
 		{http.MethodPost, "/api/v1/tickets/TKT-001/_lease", http.StatusNotFound},
+		// Presence: the route's own 405 on a wrong method, and 200 on GET,
+		// so a dropped dispatcher case shows as "Resource not found".
+		{http.MethodPost, "/api/v1/tickets/TKT-001/_presence", http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api/v1/tickets/TKT-001/_presence", http.StatusOK},
 
 		// Attachment download route. Probe with POST so the handler answers
 		// 405 (a JSON error) rather than a 404 — a GET against the fixture

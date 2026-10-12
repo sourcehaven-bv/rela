@@ -52,7 +52,8 @@ type LeaseService interface {
 //	POST /api/v1/_leases/release        release (204, always)
 //	GET  /api/v1/_leases                the caller's leases (200)
 //
-// It also fills `_lease` on the single-entity GET and on list rows.
+// It also fills `_lease` on the single-entity GET, on list rows and on the
+// entry of a view.
 //
 // A nil *leasesHandler is "leases not wired": the claim route answers the
 // entity GET's uniform 404, the other routes a plain 404, and no response
@@ -79,6 +80,7 @@ func SetLeases(a *App, svc *lease.Service) error {
 		return errors.New("dataentry: SetLeases requires a lease service")
 	}
 	a.leases = &leasesHandler{svc: svc}
+	a.views.leases = a.leases
 	return nil
 }
 

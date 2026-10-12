@@ -581,11 +581,13 @@ The body replaces the whole set; an empty list clears it. The answer is 204.
 
 - `key` is the client's label: 1 to 64 characters of letters, digits and
   `_ : . -`, unique within the request.
-- `path` is one of three GETs: an entity
+- `path` is one of four GETs: an entity
   (`/api/v1/{plural}/{id}`, query `include`, `fields`, `world`), a list
   (`/api/v1/{plural}`, the list query parameters including `filter[...]`),
-  or a view (`/api/v1/_views/{type}/{id}`, query `world`). Any other path or
-  query parameter is a 400.
+  a view (`/api/v1/_views/{type}/{id}`, query `world`), or an entity's
+  presence (`/api/v1/{plural}/{id}/_presence`, query `world`). Any other path
+  or query parameter is a 400. Subscribing to a presence path is what makes
+  you a viewer; see [Presence](#presence-_presence).
 - A list path cannot carry the free-text `q`: its hits are gated after a
   capped search over every entity, so a hidden write could change the visible
   result and a frame would signal that write.
@@ -613,6 +615,51 @@ A change can land while a PUT takes its baseline. The round skips that
 subscription, and checks it on the first tick after the PUT stored the
 baseline. A frame then comes only if the response differs from the
 baseline.
+
+When only presence changed, the round checks only the presence subscriptions
+on the faces whose viewers changed, on the same clock.
+
+## Presence (`_presence`)
+
+Presence lists who else has an entity open (TKT-MHXH87).
+
+```http
+GET /api/v1/{plural}/{id}/_presence
+```
+
+```json
+{"viewers": [{"user": "bob@example.com", "tool": "data-entry", "since": "2026-10-12T10:00:00Z"}], "more": 3}
+```
+
+- `viewers` lists at most 20 viewers, oldest `since` first, then by `user`.
+  `more` counts the viewers past those 20 and is always present.
+- `since` is RFC 3339 UTC in whole seconds: when the viewer opened the entity.
+- Several tabs of one user and tool are one viewer. You are never listed, from
+  any tool.
+- Presence is per resolved face: `{id}` is an address (`ID` or `ID@face`), and
+  `world` picks the face of a bare id. Viewers of another face are not listed.
+- A hidden, absent or wrong-plural entity gets the entity GET's 404. A method
+  other than GET is a 405. The response is not cached (`no-store`).
+
+**Joining.** This GET never adds you. You become a viewer by subscribing to
+the same path on the live event stream (see [Live views](#live-views)), while
+the server's check of that subscription answers 200:
+
+- You join on the PUT's baseline read. Other subscribers get `live:changed`
+  within two ticks of the 500 ms clock, and a `GET` lists you from the next
+  tick on.
+- Closing the stream or dropping the subscription keeps you listed for 15
+  seconds. Subscribing again within that time keeps your `since`.
+- A check that answers 404, for example after you lost read access, removes
+  you at once. A check that does not finish in time, or that a round skips,
+  also removes you at once; the next successful check adds you back.
+- Unauthenticated callers are never listed.
+- A user is listed on at most 64 entities at a time, the 15-second tail
+  included, and a server lists at most 4096 viewers in all. Past either limit
+  the subscription still works but does not add you.
+
+Presence lives in the memory of one server process. A restart or a
+configuration reload clears it, and clients reconnect and join again.
 
 ## ETag / If-Match
 
@@ -1617,8 +1664,8 @@ lease is released and the renew answers `lease_lost`.
 
 ### `_lease` on responses
 
-The single-entity GET and every list row carry `_lease` while someone holds the
-entity:
+The single-entity GET, every list row and the `entry` of a view
+(`/api/v1/_views/{type}/{id}`) carry `_lease` while someone holds the entity:
 
 ```ts
 interface EntityLease {
@@ -1632,7 +1679,7 @@ interface EntityLease {
 
 `_lease` is absent when nobody holds the entity. It is set after the read
 gate, so a row the caller cannot read never shows one. No other response
-carries it: not views, includes, history or search.
+carries it: not view sections, includes, history or search.
 
 `_lease` has no expiry, so a plain renew changes no response. A live
 subscription gets `live:changed` when a lease is claimed, released or expires,

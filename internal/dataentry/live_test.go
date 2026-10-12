@@ -584,7 +584,8 @@ func TestLive_ReplayMatchesGet(t *testing.T) {
 					t.Fatalf("GET %s leaks a redacted value: %s", path, body)
 				}
 				want := fmt.Sprintf("%d:%x", code, sha256.Sum256(body))
-				got, ok := replayHash(context.Background(), handler, p, path)
+				res := replayHash(context.Background(), handler, p, path)
+				got, ok := res.hash, res.ok
 				if !ok || got != want {
 					t.Fatalf("%s: replay hash = %q (ok %v), GET hash = %q\nGET body: %s", path, got, ok, want, body)
 				}

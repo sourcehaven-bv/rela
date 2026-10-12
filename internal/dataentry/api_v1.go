@@ -225,13 +225,15 @@ func (a *App) handleV1DynamicRoutes(w http.ResponseWriter, r *http.Request) {
 			a.handleV1SingleEntity(w, r, typeName, plural, parts[1])
 		}
 	case 3:
-		// /{plural}/{id}/relations, /{plural}/{id}/_export, /{plural}/{id}/restore
-		// /{plural}/{id}/mentioned-by or /{plural}/{id}/_lease
+		// /{plural}/{id}/relations, /{plural}/{id}/_export, /{plural}/{id}/restore,
+		// /{plural}/{id}/mentioned-by, /{plural}/{id}/_lease or /{plural}/{id}/_presence
 		switch parts[2] {
 		case "relations":
 			a.handleV1EntityRelations(w, r, typeName, parts[1])
 		case "_lease":
 			a.leases.handleClaim(w, r, typeName, parts[1])
+		case "_presence":
+			handlePresence(w, r, a.visibleReader, a.live.presence, typeName, parts[1])
 		case "_export":
 			a.export.handleV1ExportEntity(w, r, typeName, parts[1])
 		case "restore":
