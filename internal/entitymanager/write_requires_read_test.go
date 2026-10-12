@@ -203,6 +203,33 @@ func TestWriteRequiresRead_Relation(t *testing.T) {
 			t.Errorf("delete of a visible relation: %v", err)
 		}
 	})
+
+	// A replace skips a remove whose head the caller cannot read, as it
+	// skips one already gone, and still removes the edges it can read.
+	t.Run("replace remove to a hidden head", func(t *testing.T) {
+		t.Parallel()
+		mgr, st := writeBlindManager(t, hiding)
+		hiddenKey := entity.RelationKey{From: "api", Type: "depends-on", To: "DEC-1"}
+		visibleKey := entity.RelationKey{From: "api", Type: "depends-on", To: "db"}
+		missingKey := entity.RelationKey{From: "api", Type: "depends-on", To: "DEC-404"}
+		if _, err := mgr.ReplaceRelations(writer(), nil,
+			[]entity.RelationKey{hiddenKey, visibleKey, missingKey}); err != nil {
+			t.Fatalf("replace: %v", err)
+		}
+		if _, err := st.GetRelation(writer(), hiddenKey); err != nil {
+			t.Errorf("hidden relation is gone: %v", err)
+		}
+		if _, err := st.GetRelation(writer(), visibleKey); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("visible relation after replace: %v, want it removed", err)
+		}
+		seer, seen := writeBlindManager(t, seeing)
+		if _, err := seer.ReplaceRelations(writer(), nil, []entity.RelationKey{hiddenKey}); err != nil {
+			t.Fatalf("replace as a reader of DEC-1: %v", err)
+		}
+		if _, err := seen.GetRelation(writer(), hiddenKey); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("readable relation after replace: %v, want it removed", err)
+		}
+	})
 }
 
 // A copy onto a stored target the caller cannot read is refused as a taken

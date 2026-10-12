@@ -35,8 +35,13 @@ All three build the update question with `entityUpdateRequest`.
 `AuthorizeUpdate` asks the same question through `authorizeAndAudit`
 without writing, for a boundary that wants to refuse a denied caller before
 it spends work (the data-entry PATCH). It is advisory: the write checks
-again. Because it goes through the one write check, a rule added there
-applies to it too.
+again. It runs the read gate first, as the writes do, so a row the caller
+cannot read answers not found rather than 403.
+
+`TestAuthorizeAndAuditFollowsReadGate` scans this package and fails when a
+function calls `authorizeAndAudit` with no read gate (`requireReadableRow`,
+`visibleEndpoint`, `lookupSource`) before it. A helper whose caller gates
+the row goes on its allowlist with a reason naming that caller.
 
 ### PatchEntity ordering is load-bearing
 

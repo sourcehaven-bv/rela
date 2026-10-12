@@ -202,7 +202,7 @@ func (m *Manager) ReplaceRelations(
 	if prepErr := rp.prepare(ctx); prepErr != nil {
 		return nil, prepErr
 	}
-	ids, err := lineageIDs(ctx, m.deps.RelationVersionRecorder, removeKeys)
+	ids, err := lineageIDs(ctx, m.deps.RelationVersionRecorder, rp.removes)
 	if err != nil {
 		return nil, err
 	}
@@ -285,15 +285,32 @@ func (rp *relationReplace) prepare(ctx context.Context) error {
 		}
 		rp.rels[i] = rel
 	}
+	kept := rp.removes[:0]
 	for _, r := range rp.removes {
-		// Best-effort source type, as in DeleteRelation: a lookup error leaves
-		// the family zero, whose empty type matches no grant.
-		source, _ := lookupFamily(ctx, m.deps.Store, r.From)
+		// As in DeleteRelation: a source that is missing or that the caller
+		// cannot read leaves the family zero, whose empty type matches no
+		// grant, so both are refused alike.
+		source, srcErr := lookupSource(ctx, m, r.From, r.FromFace)
 		if aclErr := m.authorizeAndAudit(ctx,
 			RelationDeleteRequest(m.deps.Meta, r.Type, source.typ, r.From, r.FromFace)); aclErr != nil {
 			return aclErr
 		}
+		if srcErr == nil {
+			_, srcErr = requireVisibleTarget(ctx, m, r.To)
+		}
+		if errors.Is(srcErr, store.ErrNotFound) {
+			// An edge whose target the caller cannot read stays, and is
+			// skipped like one that is already gone. It is no longer
+			// leaving, so it still counts against the bounds.
+			delete(rp.leaving, r)
+			continue
+		}
+		if srcErr != nil {
+			return srcErr
+		}
+		kept = append(kept, r)
 	}
+	rp.removes = kept
 	return invalid
 }
 

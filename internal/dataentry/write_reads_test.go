@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -304,5 +305,40 @@ func TestUpdate_ETagHidesHiddenFields(t *testing.T) {
 	}
 	if patchedA != patchedB {
 		t.Errorf("PATCH ETag moved with a hidden value: %q vs %q", patchedA, patchedB)
+	}
+}
+
+// managerHidesRow is a manager whose read gate refuses the PATCH target
+// even though the resolver served it, as when a policy reload lands between
+// the two reads. Only the early check is overridden.
+type managerHidesRow struct{ entityMutator }
+
+func (managerHidesRow) AuthorizeUpdate(_ context.Context, row *entity.Entity) error {
+	return fmt.Errorf("%w: %s", entitymanager.ErrEntityNotFound, row.ID)
+}
+
+// TestUpdate_EarlyCheckHiddenRowIs404 pins that a principal who may update
+// a row but not read it gets the uniform 404 from the early PATCH check,
+// never the 403 that would confirm the row exists. The real manager's side
+// is TestManager_AuthorizeUpdate; this pins the handler's mapping, and that
+// the answer matches the one for an id that does not exist.
+func TestUpdate_EarlyCheckHiddenRowIs404(t *testing.T) {
+	app, d, _, sink := writeReadsApp(t, 0, ticketRole(true))
+	app.write.manager = managerHidesRow{app.write.manager}
+	rec := patchAsAlice(t, app, d, `{"properties":{"title":"changed"}}`, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("PATCH = %d %s, want 404", rec.Code, rec.Body)
+	}
+	missing := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/api/v1/tickets/TKT-1",
+		strings.NewReader(`{"properties":{"title":"changed"}}`))
+	app.write.handleV1UpdateEntity(missing, asAlice(t, d, req), "ticket", "tickets", "TKT-404")
+	if got, want := rec.Body.String(), missing.Body.String(); got != want {
+		t.Errorf("hidden row answers %q, missing row %q", got, want)
+	}
+	for _, r := range sink.Records() {
+		if r.Op == audit.OpDeniedWrite {
+			t.Errorf("hidden row was audited as a denied write: %+v", r)
+		}
 	}
 }
