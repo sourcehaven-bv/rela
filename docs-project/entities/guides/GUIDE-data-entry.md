@@ -117,6 +117,37 @@ and on each of its relations. The caller must
 also be able to read the entity, or be the user who deleted it; anyone else
 gets the same `404` as for an ID that was never deleted.
 
+### Who else is viewing
+
+An entity page shows a round avatar in its header for each other person who
+has the same entity open. Hover over an avatar to see the person and the tool
+they use, for example `bob@example.com (data-entry)`. An agent connected over
+MCP carries a small sparkles mark. When more people are viewing than fit, a
+`+N` counts the rest.
+
+- You never see yourself, from any tool.
+- A person who closes the page stays listed for about 15 seconds.
+- Presence is per content state. On a type with faces, people looking at
+  another face are not shown.
+- Anyone who can read an entity can see who has it open. Nobody else can.
+- Presence needs a signed-in user. Visitors without an identity are never
+  listed.
+
+### Claims
+
+A claim says that a person or an agent is working on an entity. Claims do not
+block edits; they tell others to pick other work. A claim is made through the
+API (`POST /api/v1/{plural}/{id}/_lease`) or the MCP tool `claim_entity`.
+
+While an entity is claimed, its page, its list rows and its kanban cards show
+a badge such as **Claimed by bob@example.com (triage)**. The part in brackets
+is the label the claim gave, or the tool when it gave none. Hover over the
+badge to read the status note the claimer wrote.
+
+The badge appears and disappears without a reload. On a kanban board this
+holds for the first 100 cards; cards further down update on the next change
+to the entity or when you reload the page.
+
 ## Quick Start
 
 ### 1. Create data-entry.yaml

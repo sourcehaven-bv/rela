@@ -81,6 +81,9 @@ import type { CopyOffer, Face } from '@/types'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
 import EntityTitle from './EntityTitle.vue'
+import PresenceAvatars from './PresenceAvatars.vue'
+import LeaseBadge from '@/components/common/LeaseBadge.vue'
+import { usePresence } from '@/composables/usePresence'
 import EntityBody from './EntityBody.vue'
 import RelatedSectionRows from './RelatedSectionRows.vue'
 import { isFieldWritable, isPropertyRedacted } from '@/utils/affordances'
@@ -976,6 +979,19 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
 // response changed, including through related entities and access changes.
 // The refetch is background revalidation, so it shows no indicator; a refusal
 // drops the held view, any other failure keeps it.
+// Presence (TKT-MHXH87): the subscription inside usePresence is what lists
+// this user as a viewer of the face on screen. Presence is per face, so on a
+// type with faces it waits for the served address to name one; the server
+// refuses a bare id there, and that refusal would fail the page's whole
+// subscription set.
+const presence = usePresence(() => {
+  const addr = servedRef.value
+  if (!addr) return null
+  const faced = Object.keys(typeDef.value?.faces ?? {}).length > 0
+  if (faced && !refFace(addr)) return null
+  return { type: props.entityType, address: addr, world: worldParam.value }
+})
+
 useLiveSubscription(
   'entity-detail',
   () => liveViewPath(props.entityType, props.entityId, worldParam.value),
@@ -2206,6 +2222,10 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             :required="!!(titleProperty && typeDef?.properties[titleProperty]?.required)"
             @commit="saveTitle"
           />
+          <div v-if="entry?._lease || presence.viewers.value.length || presence.more.value" class="header-presence">
+            <PresenceAvatars :viewers="presence.viewers.value" :more="presence.more.value" />
+            <LeaseBadge :lease="entry?._lease" />
+          </div>
         </div>
         <!-- Desktop actions -->
         <div v-if="!props.hideActions" class="header-actions desktop-actions">
@@ -3190,6 +3210,18 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--rl-color-text-muted);
+}
+
+.header-presence {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.header-presence .lease-badge {
+  margin-left: 0;
 }
 
 .header-info h1 {

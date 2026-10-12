@@ -5,6 +5,8 @@ import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
 import { useEntitiesStore, useSchemaStore, useUIStore } from '@/stores'
 import { listAllEntities, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
+import { liveListPath } from '@/api/live'
+import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { beginOptimistic, rollbackOptimistic, settleOptimistic } from '@/queries/optimisticList'
 import type {
   Entity,
@@ -43,6 +45,7 @@ import { formatCellValue } from '@/utils/format'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import CardFieldList, { type ResolvedCardField } from '@/components/common/CardFieldList.vue'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
+import LeaseBadge from '@/components/common/LeaseBadge.vue'
 import { defaultRegistry } from '@/widgets/registry'
 import type { DenseRoutingHint } from '@/widgets/viewRouting'
 import RlButton from 'rela-components/components/common/RlButton.vue'
@@ -204,6 +207,25 @@ const boardQuery = useQuery({
   // boards, and another board's cards must not appear under this one's columns.
   placeholderData: (prev) => (heldBoardId === props.id ? prev : undefined),
 })
+
+// Live view (TKT-HJ5Z9Y). A board reads every page, but a subscription names
+// one GET, so it watches the first 100 cards, as a grouped list does. That
+// is what carries a claim or release (`_lease`), which changes no entity and
+// so sends no `entity:changed`; cards past the first 100 still refresh on
+// entity changes.
+useLiveSubscription(
+  'kanban-board',
+  () => {
+    const config = kanbanConfig.value
+    if (!config) return null
+    return liveListPath(config.entity, { ...boardParams.value, page: 1, per_page: 100 })
+  },
+  () =>
+    void queryCache.invalidateQueries({
+      key: entityKeys.listParams(kanbanConfig.value?.entity ?? '', boardParams.value),
+      exact: true,
+    })
+)
 
 const entities = computed(() => boardQuery.data.value?.data ?? [])
 const includedEntities = computed<Record<string, Entity>>(
@@ -922,7 +944,7 @@ const createModal = useCreateModal(async (entity) => {
                 only for a substitute, so an ordinary board shows nothing.
               -->
               <div class="card-title text-wrap-anywhere">
-                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" />
+                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" /><LeaseBadge :lease="item.entity._lease" />
               </div>
               <CardFieldList
                 :fields="resolvedCardFields(item.entity)"
@@ -962,7 +984,7 @@ const createModal = useCreateModal(async (entity) => {
                 only for a substitute, so an ordinary board shows nothing.
               -->
               <div class="card-title text-wrap-anywhere">
-                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" />
+                {{ item.title }}<WorldBadge :world="item.entity._world" :entity-type="item.entity.type" /><LeaseBadge :lease="item.entity._lease" />
               </div>
               <CardFieldList
                 :fields="resolvedCardFields(item.entity)"

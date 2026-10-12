@@ -33,6 +33,15 @@ export function liveEntityPath(
 }
 
 /**
+ * The subscription path for getPresence(type, address, world). Subscribing
+ * it is what lists the user as a viewer (TKT-MHXH87). `address` names the
+ * face (`ID@face`) on a type with faces; the server refuses a bare id there.
+ */
+export function livePresencePath(type: string, address: string, world?: string): string {
+  return livePath(`/${getPlural(type)}/${address}/_presence`, world ? { world } : undefined)
+}
+
+/**
  * The subscription path for listEntities(type, params), or null when the list
  * has a free-text search. The server refuses `q`: its hits are gated after a
  * capped search over every entity, so a hidden write can change them. One

@@ -445,11 +445,16 @@ function createTestProject(): string {
  *  discarded. A spawn failure is also an 'error' EVENT, not a throw; with no
  *  listener Node re-raises it as an unhandled error out of band, which is how
  *  a failed startup came to be reported as a bare, and entirely misleading,
- *  `spawn ... ENOENT`. (BUG-YJEIFH) */
+ *  `spawn ... ENOENT`. (BUG-YJEIFH)
+ *
+ *  A key set to `undefined` in extraEnv is removed from the child's
+ *  environment, so a spec can unset a variable the runner's shell exports.
+ *  `args` are appended to the server's flags. */
 export async function spawnServer(
   serverBinary: string,
   cwd: string,
   extraEnv: NodeJS.ProcessEnv = {},
+  args: string[] = [],
 ): Promise<{ proc: ChildProcess; url: string; logs: () => string }> {
   const attempts = 3;
   let lastErr: unknown;
@@ -462,6 +467,9 @@ export async function spawnServer(
     // Give each spawned server its own GOCOVERDIR subdir so parallel workers
     // never share a partial write; `go tool covdata` merges them afterwards.
     const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
+    for (const [k, v] of Object.entries(extraEnv)) {
+      if (v === undefined) delete spawnEnv[k];
+    }
     const coverRoot = process.env.RELA_E2E_COVERDIR;
     if (coverRoot) {
       const covDir = path.join(coverRoot, `srv-${port}-${Date.now()}`);
@@ -470,7 +478,7 @@ export async function spawnServer(
     }
     const proc: ChildProcess = spawn(
       serverBinary,
-      ["-port", String(port), "-allowed-origin", url],
+      ["-port", String(port), "-allowed-origin", url, ...args],
       { cwd, env: spawnEnv, stdio: ["ignore", "pipe", "pipe"] },
     );
     let stdout = "";

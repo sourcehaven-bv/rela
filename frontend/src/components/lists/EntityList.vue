@@ -43,6 +43,7 @@ import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
+import LeaseBadge from '@/components/common/LeaseBadge.vue'
 import WorldBanner from '@/components/common/WorldBanner.vue'
 import { listExportUrl } from '@/api/transforms'
 import { useBackTarget } from '@/composables/useBackTarget'
@@ -1516,6 +1517,8 @@ watch(searchQuery, () => {
         -->
         <template #meta="{ item }">
           <WorldBadge :world="(item as Entity)._world" :entity-type="(item as Entity).type" />
+          <!-- Who holds a claim on the row (TKT-4YPG4Q); absent when nobody does. -->
+          <LeaseBadge :lease="(item as Entity)._lease" />
         </template>
 
         <!--
