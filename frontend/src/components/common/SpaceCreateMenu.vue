@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
@@ -21,10 +21,14 @@ import type { Entity, SidebarCreate } from '@/types'
  * On an entity page the new entity is first linked to the page's entity, as
  * New in a tab links it, so it belongs to the page it was created from. The
  * link is awaited before the entity opens, so its page shows the relation.
+ * There the menu offers only the types it can link; when it can link none,
+ * the button is hidden, as it is for a space without `create:`.
  */
 const space = useSpaceStore()
 const router = useRouter()
 const pageLink = usePageCreateLink()
+
+const rows = computed(() => pageLink.offered(space.create))
 
 const creating = ref<SidebarCreate | null>(null)
 /* Fixed when the dialog opens: the dialog outlives a navigation to another page. */
@@ -47,15 +51,16 @@ function onCreatedAnother(entity: Entity) {
 </script>
 
 <template>
+  <!-- The dialog sits outside the menu's v-if: it stays open when a navigation empties the menu. -->
   <template v-if="space.create.length">
-    <RlMenu align="end">
+    <RlMenu v-if="rows.length" align="end">
       <template #trigger="{ toggle, attrs }">
         <RlButton variant="primary" data-testid="space-create" v-bind="attrs" @click="toggle">
           Create
           <template #trailing><RlIcon name="chevron-down" :size="12" /></template>
         </RlButton>
       </template>
-      <RlMenuItem v-for="row in space.create" :key="row.type" @click="open(row)">
+      <RlMenuItem v-for="row in rows" :key="row.type" @click="open(row)">
         {{ row.label }}
       </RlMenuItem>
     </RlMenu>

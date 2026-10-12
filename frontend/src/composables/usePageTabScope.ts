@@ -135,6 +135,10 @@ export function pageCreateLink(
  * when the row is saved. It is undefined when no entity page is open or the
  * page has no link for the type.
  *
+ * `offered` narrows the menu's rows to what the open page can link. On an
+ * entity page that is the types `target` resolves for on the open tab, so the
+ * offer can differ per tab. Off an entity page every row is offered.
+ *
  * `linkCreated` makes the link, then refreshes the type's lists: the row
  * already exists when the link lands, so its own refetch may have missed it.
  */
@@ -148,10 +152,14 @@ export function usePageCreateLink() {
     return page && s ? anchorLink(page, s, pageCreateLink(page, s.tab, type)) : undefined
   }
 
+  function offered<T extends { type: string }>(rows: T[]): T[] {
+    return pageStore.current ? rows.filter((r) => target(r.type)) : rows
+  }
+
   async function linkCreated(to: AnchorLink | undefined, entity: Entity): Promise<void> {
     if (!to || !(await linkToAnchor(to, entity))) return
     void queryCache.invalidateQueries({ key: entityKeys.list(entity.type) })
   }
 
-  return { target, linkCreated }
+  return { target, offered, linkCreated }
 }
