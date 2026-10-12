@@ -169,6 +169,9 @@ components:
   lease:            { in: internal/lease }
   kvlease:          { in: internal/lease/kvlease }
   pglease:          { in: internal/lease/pglease }
+  # In-memory presence tracker (TKT-MHXH87). A leaf: it reads no clock and
+  # imports nothing of rela; the live hub keys and drives it.
+  presence:         { in: internal/presence }
   schedulerstate:   { in: internal/schedulerstate }
   kvschedstate:     { in: internal/schedulerstate/kvstate }
   pgschedstate:     { in: internal/schedulerstate/pgschedstate }
@@ -574,6 +577,8 @@ deps:
       # Leases (TKT-4YPG4Q): the routes speak lease's request, lease and
       # error types. The backend (kvlease/pglease) is the wiring site's choice.
       - lease
+      # Presence over live views (TKT-MHXH87): the live hub owns a tracker.
+      - presence
       - cmdexec
       - config
       - conflict

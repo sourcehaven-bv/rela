@@ -1505,7 +1505,7 @@ take them.
   names no holder. A renew checks both again; a caller who lost access loses
   the lease.
 - **Hidden means nonexistent.** `_lease` is added after the read gate, on the
-  entity GET and on list rows only. A row the caller cannot read never shows
+  entity GET, on list rows and on a view's entry only. A row the caller cannot read never shows
   a lease, and a lease on a hidden entity sends no live-view frame.
 - **The status is outside `visible:`.** The holder's free-text `status` is not
   a property, so field redaction does not apply to it. Every principal who can
@@ -1531,6 +1531,51 @@ take them.
   the secret lease id in the body, and the list returns only the caller's
   own leases, which a cross-site page cannot read. A request with a cookie
   and a foreign origin is still refused.
+
+## Presence
+
+Presence shows who has an entity open (TKT-MHXH87). A client joins by
+subscribing to `/api/v1/{plural}/{id}/_presence` on the live event stream;
+`GET` on that path lists the other viewers. The data lives in memory on one
+server process and is gone when the server restarts or reloads its
+configuration.
+
+- **The disclosure is accepted.** Anyone who can read an entity on a face
+  learns which users have that face open now, or had it open in the last 15
+  seconds, and since when. There is no history beyond those 15 seconds.
+- **A plain `GET` is a one-way view.** It lists the viewers without adding the
+  caller, so a reader can watch who opens an entity without being seen. This
+  is part of the accepted disclosure: it shows no more than a viewer list
+  that includes the reader would.
+- **Presence is keyed by the resolved face.** Two readers of different faces
+  of one entity do not see each other, so a reader of a published face never
+  learns who has the draft open. On a type with faces, a bare id is a 422
+  `face_required`, as for a write, and only after the read gate admitted the
+  entity.
+- **Hidden means nonexistent.** The `GET` resolves the entity through the
+  same gate as the entity `GET`, so a hidden, absent or wrong-plural entity,
+  or a malformed address, gets the same 404 body. A subscription that gets a
+  404 is not recorded, and a presence change on an entity it cannot read
+  never sends it a frame: the server re-checks only the subscriptions on the
+  face whose viewers changed.
+- **The stream's principal is fixed for the connection.** A viewer is shown
+  with the identity that opened the stream, as every live-view frame is
+  computed for it (see "Live views reveal what polling the GET would").
+  Presence makes this existing property visible to other readers; it adds no
+  new access.
+- **Revocation takes effect when that subscription is next checked.** A
+  change to membership or access re-checks every subscription. A viewer who
+  lost read access gets a 404 on that check and leaves at once, with no grace
+  period. A check that does not finish in time also removes the viewer at
+  once; the next successful check adds them back. Under load a round checks
+  at most 256 subscriptions and skips the rest. A skipped subscription keeps
+  its place in the list until its check runs. Its check is queued for the
+  next tick of the 500 ms clock, with no further write needed, and each tick
+  checks up to 256 queued subscriptions. With no other change, n skipped
+  subscriptions are all checked within ceil(n/256) ticks, and the list
+  reflects a revocation one tick after its check.
+- **The anonymous principal never joins.** All unauthenticated callers share
+  it, so it would name nobody.
 
 ## What still leaks (deferred)
 

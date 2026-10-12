@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -98,7 +99,7 @@ func TestLiveHub_FallbackLeavesPending(t *testing.T) {
 	c.takeChanged()
 
 	replays.Store(0)
-	h.replayRound(context.Background(), true, true)
+	h.presenceRound(context.Background(), nil)
 	last := fmt.Sprintf("k%03d", liveRoundCap)
 	if got := replays.Load(); got != 1 {
 		t.Fatalf("pending round replays = %d, want 1", got)
@@ -145,7 +146,7 @@ func TestLiveHub_BaselineBeforeAnswer(t *testing.T) {
 		s := &liveSub{url: url, syncing: true}
 		c.subs[key] = s
 		c.mu.Unlock()
-		h.baseline(context.Background(), c, []*liveSub{s})
+		h.baseline(context.Background(), c, []keyedSub{{key: key, sub: s}})
 	}
 
 	put("taken", "/api/v1/tickets")
@@ -211,8 +212,9 @@ func TestReplayHash_StatusAndBodyOnly(t *testing.T) {
 	}
 	hash := func(h http.Handler) string {
 		t.Helper()
-		got, ok := replayHash(context.Background(), h, p, "/api/v1/tickets")
-		if !ok {
+		res := replayHash(context.Background(), h, p, "/api/v1/tickets")
+		got := res.hash
+		if !res.ok {
 			t.Fatal("replay did not finish")
 		}
 		return got
@@ -247,9 +249,9 @@ func TestLiveHub_ReplayLimitShared(t *testing.T) {
 	for u := range 3 {
 		c := h.register(principal.Principal{User: fmt.Sprintf("u%d", u), Tool: principal.ToolDataEntry})
 		seedSub(c, "seeded", "/api/v1/tickets")
-		added := make([]*liveSub, 8)
+		added := make([]keyedSub, 8)
 		for i := range added {
-			added[i] = &liveSub{url: fmt.Sprintf("/api/v1/tickets/TKT-%d", i), syncing: true}
+			added[i] = keyedSub{key: strconv.Itoa(i), sub: &liveSub{url: fmt.Sprintf("/api/v1/tickets/TKT-%d", i), syncing: true}}
 		}
 		wg.Go(func() { h.baseline(context.Background(), c, added) })
 	}

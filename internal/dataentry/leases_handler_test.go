@@ -710,8 +710,27 @@ func TestLease_NoNotModifiedAfterRelease(t *testing.T) {
 	}
 }
 
-// AC5: only the entity GET and list rows carry `_lease`. Views, history and
-// includes never do, for a held entity the reader can see or one it cannot.
+// viewWithoutEntryLease returns the view body b with its entry's `_lease`
+// removed.
+func viewWithoutEntryLease(t *testing.T, b []byte) []byte {
+	t.Helper()
+	var view map[string]any
+	if err := json.Unmarshal(b, &view); err != nil {
+		t.Fatalf("decode view %s: %v", b, err)
+	}
+	if entry, ok := view["entry"].(map[string]any); ok {
+		delete(entry, "_lease")
+	}
+	out, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// AC5: only the entity GET, list rows and a view's entry carry `_lease`.
+// View sections, history and includes never do, for a held entity the
+// reader can see or one it cannot.
 func TestLease_NotOnOtherSurfaces(t *testing.T) {
 	env := newLeaseEnv(t)
 	env.claim(t, "dave", "/api/v1/features/FEAT-1", `{"status":"secret work"}`)
@@ -728,6 +747,11 @@ func TestLease_NotOnOtherSurfaces(t *testing.T) {
 			"/api/v1/tickets/TKT-2/relations",
 		} {
 			_, b := env.get(t, user, path)
+			if strings.Contains(path, "/_views/") {
+				// A view's entry carries `_lease` (TKT-MHXH87); its sections
+				// do not.
+				b = viewWithoutEntryLease(t, b)
+			}
 			otherSurface := strings.Contains(path, "/_views/") || strings.Contains(path, "/_history/") ||
 				strings.Contains(path, "/relations")
 			hidden := user == "alice" && strings.Contains(path, "FEAT-1")
@@ -890,9 +914,10 @@ func TestLive_LeaseOnHiddenEntitySendsNoFrame(t *testing.T) {
 	}
 	liveQuiet(t, c)
 
-	// The stream is still live: a visible claim frames.
+	// The stream is still live: a visible claim frames, the view too since
+	// its entry carries `_lease` (TKT-MHXH87).
 	env.claim(t, "bob", "/api/v1/tickets/TKT-1", "")
-	requireChanged(t, c, "detail", "list")
+	requireChanged(t, c, "detail", "list", "view")
 }
 
 // syncBuffer is a bytes.Buffer safe for a logger in server goroutines and a

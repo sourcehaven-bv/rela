@@ -16,19 +16,20 @@ import (
 type liveShape int
 
 const (
-	liveEntity liveShape = iota + 1 // /api/v1/{plural}/{id}
-	liveList                        // /api/v1/{plural}
-	liveView                        // /api/v1/_views/{type}/{id}
+	liveEntity   liveShape = iota + 1 // /api/v1/{plural}/{id}
+	liveList                          // /api/v1/{plural}
+	liveView                          // /api/v1/_views/{type}/{id}
+	livePresence                      // /api/v1/{plural}/{id}/_presence
 )
 
 // livePath is a subscription path parsed into checked parts. The replay URL
 // is rebuilt from these parts by [livePath.String], never taken from the
-// client, so a subscription can only ever reach the three read handlers.
+// client, so a subscription can only ever reach the four read handlers.
 type livePath struct {
 	shape  liveShape
-	plural string // entity and list
+	plural string // entity, list and presence
 	typ    string // view: the entry entity's type
-	id     string // entity and view
+	id     string // entity, view and presence
 	query  url.Values
 }
 
@@ -45,7 +46,10 @@ type livePath struct {
 var (
 	liveEntityKeys = keySet("include", "fields", "world")
 	liveViewKeys   = keySet("world")
-	liveListKeys   = keySet(
+	// livePresenceKeys: the presence route reads no parameter but the world
+	// that picks the face.
+	livePresenceKeys = keySet("world")
+	liveListKeys     = keySet(
 		"page", "per_page", "cursor", "sort", "fields", "include", "comment_counts",
 		"world", "list_id", "query_scope", "scope_page", "scope_tab", "anchor",
 		"relation", "direction",
@@ -93,34 +97,9 @@ func parseLivePath(raw string, meta *metamodel.Metamodel) (livePath, error) {
 		return livePath{}, fmt.Errorf("%w: %w", errLivePath, err)
 	}
 
-	segs := strings.Split(rest, "/")
-	var lp livePath
-	var allowed map[string]bool
-	switch {
-	case len(segs) == 3 && segs[0] == "_views":
-		if !isSafePathSegment(segs[1]) || !meta.HasEntityType(segs[1]) {
-			return livePath{}, fmt.Errorf("%w: unknown view entity type", errLivePath)
-		}
-		if err := checkLiveID(segs[2]); err != nil {
-			return livePath{}, err
-		}
-		lp = livePath{shape: liveView, typ: segs[1], id: segs[2]}
-		allowed = liveViewKeys
-	case len(segs) == 1 || len(segs) == 2:
-		if strings.HasPrefix(segs[0], "_") || entityTypeForPlural(meta, segs[0]) == "" {
-			return livePath{}, fmt.Errorf("%w: not an entity collection", errLivePath)
-		}
-		lp = livePath{shape: liveList, plural: segs[0]}
-		allowed = liveListKeys
-		if len(segs) == 2 {
-			if err := checkLiveID(segs[1]); err != nil {
-				return livePath{}, err
-			}
-			lp = livePath{shape: liveEntity, plural: segs[0], id: segs[1]}
-			allowed = liveEntityKeys
-		}
-	default:
-		return livePath{}, fmt.Errorf("%w: not an entity, list or view", errLivePath)
+	lp, allowed, err := liveShapeOf(strings.Split(rest, "/"), meta)
+	if err != nil {
+		return livePath{}, err
 	}
 
 	for k := range query {
@@ -130,6 +109,53 @@ func parseLivePath(raw string, meta *metamodel.Metamodel) (livePath, error) {
 	}
 	lp.query = query
 	return lp, nil
+}
+
+// liveShapeOf parses the path segments after /api/v1/ into a shape and the
+// query keys it accepts.
+func liveShapeOf(segs []string, meta *metamodel.Metamodel) (livePath, map[string]bool, error) {
+	switch {
+	case len(segs) == 3 && segs[0] == "_views":
+		if !isSafePathSegment(segs[1]) || !meta.HasEntityType(segs[1]) {
+			return livePath{}, nil, fmt.Errorf("%w: unknown view entity type", errLivePath)
+		}
+		if err := checkLiveID(segs[2]); err != nil {
+			return livePath{}, nil, err
+		}
+		return livePath{shape: liveView, typ: segs[1], id: segs[2]}, liveViewKeys, nil
+	case len(segs) == 3 && segs[2] == "_presence":
+		if err := checkLivePlural(segs[0], meta); err != nil {
+			return livePath{}, nil, err
+		}
+		if err := checkLiveID(segs[1]); err != nil {
+			return livePath{}, nil, err
+		}
+		if err := checkPresenceFace(segs[0], segs[1], meta); err != nil {
+			return livePath{}, nil, err
+		}
+		return livePath{shape: livePresence, plural: segs[0], id: segs[1]}, livePresenceKeys, nil
+	case len(segs) == 1 || len(segs) == 2:
+		if err := checkLivePlural(segs[0], meta); err != nil {
+			return livePath{}, nil, err
+		}
+		if len(segs) == 1 {
+			return livePath{shape: liveList, plural: segs[0]}, liveListKeys, nil
+		}
+		if err := checkLiveID(segs[1]); err != nil {
+			return livePath{}, nil, err
+		}
+		return livePath{shape: liveEntity, plural: segs[0], id: segs[1]}, liveEntityKeys, nil
+	default:
+		return livePath{}, nil, fmt.Errorf("%w: not an entity, list, view or presence", errLivePath)
+	}
+}
+
+// checkLivePlural accepts the plural of an entity type.
+func checkLivePlural(seg string, meta *metamodel.Metamodel) error {
+	if strings.HasPrefix(seg, "_") || entityTypeForPlural(meta, seg) == "" {
+		return fmt.Errorf("%w: not an entity collection", errLivePath)
+	}
+	return nil
 }
 
 // checkLiveID accepts an entity address ("ID" or "ID@face") and refuses a
@@ -144,6 +170,22 @@ func checkLiveID(seg string) error {
 	return nil
 }
 
+// checkPresenceFace refuses a bare id on a type that declares faces.
+// Presence is per face, and the presence route answers such an address with
+// `face_required`, so the subscription could never join. Which types have
+// faces is in the metamodel, which is not a secret.
+func checkPresenceFace(plural, seg string, meta *metamodel.Metamodel) error {
+	addr, err := entity.ParseAddress(seg)
+	if err != nil {
+		// coverage-ignore: checkLiveID accepted seg.
+		return fmt.Errorf("%w: invalid entity id", errLivePath)
+	}
+	if _, named := addr.Named(); named || len(meta.Entities[entityTypeForPlural(meta, plural)].Faces) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: this type has faces; a presence path names one (ID@face)", errLivePath)
+}
+
 // String is the replay URL, rebuilt from the parsed parts.
 func (lp livePath) String() string {
 	var p string
@@ -154,9 +196,26 @@ func (lp livePath) String() string {
 		p = "/api/v1/" + url.PathEscape(lp.plural)
 	case liveView:
 		p = "/api/v1/_views/" + url.PathEscape(lp.typ) + "/" + url.PathEscape(lp.id)
+	case livePresence:
+		p = "/api/v1/" + url.PathEscape(lp.plural) + "/" + url.PathEscape(lp.id) + "/_presence"
 	}
 	if q := lp.query.Encode(); q != "" {
 		p += "?" + q
 	}
 	return p
+}
+
+// presenceID is the entity id a presence subscription names, without its
+// face, or "" for every other shape. A replay may join presence only for the
+// entity with this id (M4).
+func (lp livePath) presenceID() string {
+	if lp.shape != livePresence {
+		return ""
+	}
+	addr, err := entity.ParseAddress(lp.id)
+	if err != nil {
+		// coverage-ignore: parseLivePath accepted lp.id through checkLiveID.
+		return ""
+	}
+	return addr.ID()
 }

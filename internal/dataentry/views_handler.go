@@ -71,6 +71,9 @@ type viewsHandler struct {
 	faceEdges func(
 		ctx context.Context, e *entityPkg.Entity,
 	) ([]*entityPkg.Relation, error)
+	// leases fills the entry's `_lease`. Nil until [SetLeases] installs it,
+	// and nil means leases are not wired.
+	leases *leasesHandler
 }
 
 // currentACL resolves the active ACL, or nil when the handler was constructed
@@ -990,6 +993,11 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// relations.
 	resp.Entry.Versions = fieldVersionsOf(&resp.Entry, h.schema().Meta)
 	resp.Entry.Versions.Relations = ""
+	// The advisory lease on the entry, after the version tokens so it moves
+	// none of them. Only the entry gets one: it is the entity the row gate
+	// above admitted, and the page shows its claim badge. Section rows do
+	// not.
+	resp.Entry.Lease = h.leases.entityLease(r.Context(), result.Entry.ID)
 
 	for _, sec := range sections {
 		resp.Sections = append(resp.Sections, viewSectionToV1(sec, owner))

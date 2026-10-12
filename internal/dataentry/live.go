@@ -19,6 +19,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/changefeed"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/presence"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -33,6 +34,11 @@ import (
 // that principal's response changed. That holds only while a response is a
 // pure function of the data the principal can read, which the determinism
 // tests in live_test.go pin for every shape.
+//
+// Presence rides on the same machinery: a subscription to an entity's
+// `_presence` path joins the hub's tracker while its replays answer 200, and
+// a presence change runs a round over the subscriptions of that face only.
+// Lock order: h.mu, then c.mu, then the tracker's own lock.
 
 const (
 	liveWindow         = 500 * time.Millisecond // round clock: changes within one tick share a round
@@ -67,17 +73,28 @@ type liveHub struct {
 	conns map[string]*liveConn
 	// pending holds the subscriptions a changed round could not replay: it
 	// skipped them while their PUT took the baseline, or had no room or time
-	// for them ([liveHub.fallback]). The next tick replays them, so a
-	// change that round saw is compared against the baseline they end up
-	// with. A round that selects them takes the set. Guarded by mu.
+	// for them ([liveHub.fallback]). The next tick replays them, in a full
+	// round or in a presence round with the faces that changed, so a change
+	// that round saw is compared against the baseline they end up with. A
+	// round that selects them takes the set; the ones it skips again come
+	// back through fallback. Guarded by mu.
 	pending map[*liveSub]struct{}
+
+	// presence is who has which entity open. It lives and dies with the
+	// hub, so a new App starts with nobody present.
+	presence *presence.Tracker
+	// now is the presence clock; tests replace it before start.
+	now func() time.Time
 
 	kick chan struct{} // cap 1: a PUT asks for a baseline round
 
 	// rotate is where the next over-cap round starts in the sorted pairs, so
 	// the cap passes over every subscription in turn instead of always
-	// dropping the same tail. Worker goroutine only.
-	rotate int
+	// dropping the same tail. presenceRotate is the same for presence
+	// rounds, whose pairs are a subset: sharing one cursor would let them
+	// move where a full round cuts. Worker goroutine only.
+	rotate         int
+	presenceRotate int
 
 	// ticks counts the ticks the worker has finished, the round of each
 	// included. Tests wait on it instead of on the wall clock.
@@ -92,6 +109,7 @@ func newLiveHub(meta func() *metamodel.Metamodel) *liveHub {
 	return &liveHub{
 		meta: meta, window: liveWindow, slots: make(chan struct{}, liveParallel),
 		conns: make(map[string]*liveConn), kick: make(chan struct{}, 1),
+		presence: presence.New(), now: time.Now,
 	}
 }
 
@@ -119,11 +137,37 @@ type liveConn struct {
 // not, so a later change back to the baseline would send no frame. A changed
 // round that skips a syncing subscription therefore sets recheck, and the
 // PUT then leaves the subscription pending for the next tick's replay.
+//
+// A presence subscription (presenceID set) has three faces:
+//   - watching is the face its last finished replay resolved with a 200. A
+//     presence round over that face replays it, so it gets a frame when
+//     the viewers change even when it is not listed itself: refused by a
+//     cap, or anonymous.
+//   - joined is the face the tracker holds for its slot. It is empty while
+//     a cap refuses the join; each presence round over watching tries again.
+//   - left is the face it watched before a replay that did not finish. A
+//     presence round over that face replays it again so it can rejoin.
 type liveSub struct {
-	url     string // replay URL rebuilt by livePath.String
-	hash    string
-	syncing bool
-	recheck bool
+	url        string // replay URL rebuilt by livePath.String
+	presenceID string // livePath.presenceID
+	hash       string
+	syncing    bool
+	watching   string
+	joined     string
+	left       string
+	recheck    bool
+}
+
+// liveTarget is a subscription a PUT asks for.
+type liveTarget struct {
+	url        string
+	presenceID string
+}
+
+// keyedSub is a subscription with its key.
+type keyedSub struct {
+	key string
+	sub *liveSub
 }
 
 // register adds a stream owned by p and returns its connection.
@@ -147,10 +191,13 @@ func (h *liveHub) register(p principal.Principal) *liveConn {
 	return c
 }
 
-// unregister removes c. Safe to call more than once.
+// unregister removes c and leaves its presence with grace. Safe to call
+// more than once. A replay of c that finishes later commits nothing: every
+// commit checks under h.mu that c is still registered.
 func (h *liveHub) unregister(c *liveConn) {
 	h.mu.Lock()
 	delete(h.conns, c.id)
+	h.presence.LeaveConn(c.id, h.now())
 	h.mu.Unlock()
 }
 
@@ -231,7 +278,7 @@ func (h *liveHub) handlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	meta := h.meta()
-	next := make(map[string]string, len(req.Subscriptions))
+	next := make(map[string]liveTarget, len(req.Subscriptions))
 	for i, s := range req.Subscriptions {
 		at := fmt.Sprintf("subscriptions[%d]", i)
 		if !liveKeyPattern.MatchString(s.Key) {
@@ -248,7 +295,7 @@ func (h *liveHub) handlePut(w http.ResponseWriter, r *http.Request) {
 			writeV1Error(w, r, http.StatusBadRequest, "invalid_path", err.Error(), at+".path")
 			return
 		}
-		next[s.Key] = lp.String()
+		next[s.Key] = liveTarget{url: lp.String(), presenceID: lp.presenceID()}
 	}
 	added, ok := h.replace(c, next)
 	if !ok {
@@ -273,11 +320,12 @@ func (h *liveHub) handlePut(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// replace sets c's subscriptions to next (key to replay URL) and returns the
-// ones that need a baseline. It reports false, changing nothing, when c's
-// identity would hold more than liveMaxPerIdentity. Unauthenticated callers
-// all share one identity, so the cap does not apply to them.
-func (h *liveHub) replace(c *liveConn, next map[string]string) (added []*liveSub, ok bool) {
+// replace sets c's subscriptions to next and returns the ones that need a
+// baseline. It reports false, changing nothing, when c's identity would hold
+// more than liveMaxPerIdentity. Unauthenticated callers all share one
+// identity, so the cap does not apply to them. A dropped or changed
+// subscription leaves its presence with grace.
+func (h *liveHub) replace(c *liveConn, next map[string]liveTarget) (added []keyedSub, ok bool) {
 	// h.mu is held from the count to the commit, so concurrent PUTs on one
 	// identity's streams cannot each pass the cap against the others' old
 	// sets.
@@ -289,13 +337,19 @@ func (h *liveHub) replace(c *liveConn, next map[string]string) (added []*liveSub
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	subs := make(map[string]*liveSub, len(next))
-	for key, u := range next {
-		if old := c.subs[key]; old != nil && old.url == u {
+	for key, target := range next {
+		if old := c.subs[key]; old != nil && old.url == target.url {
 			subs[key] = old // unchanged: keep its baseline
 		} else {
-			s := &liveSub{url: u, syncing: true}
+			s := &liveSub{url: target.url, presenceID: target.presenceID, syncing: true}
 			subs[key] = s
-			added = append(added, s)
+			added = append(added, keyedSub{key: key, sub: s})
+		}
+	}
+	now := h.now()
+	for key, old := range c.subs {
+		if subs[key] != old && old.joined != "" {
+			h.presence.Leave(presence.Slot{Conn: c.id, Sub: key}, now, true)
 		}
 	}
 	c.subs = subs
@@ -309,15 +363,16 @@ func (h *liveHub) replace(c *liveConn, next map[string]string) (added []*liveSub
 
 // baseline takes the baseline of each added subscription of c before the PUT
 // answers. It reports false when a replay did not finish; that subscription
-// is left for a round.
-func (h *liveHub) baseline(ctx context.Context, c *liveConn, added []*liveSub) bool {
+// is left for a round. A presence subscription joins here when its replay
+// answered 200, unless a later PUT replaced it or the stream closed while the
+// replay ran.
+func (h *liveHub) baseline(ctx context.Context, c *liveConn, added []keyedSub) bool {
 	hp := h.replay.Load()
-	hashes := make([]string, len(added))
-	oks := make([]bool, len(added))
+	results := make([]replayResult, len(added))
 	if hp != nil {
 		var wg sync.WaitGroup
 	acquire:
-		for i, s := range added {
+		for i, ks := range added {
 			select {
 			case h.slots <- struct{}{}:
 			case <-ctx.Done():
@@ -325,7 +380,7 @@ func (h *liveHub) baseline(ctx context.Context, c *liveConn, added []*liveSub) b
 			}
 			wg.Go(func() {
 				defer func() { <-h.slots }()
-				hashes[i], oks[i] = replayHash(ctx, *hp, c.owner, s.url)
+				results[i] = replayHash(ctx, *hp, c.owner, ks.sub.url)
 			})
 		}
 		wg.Wait()
@@ -334,23 +389,74 @@ func (h *liveHub) baseline(ctx context.Context, c *liveConn, added []*liveSub) b
 	h.mu.Lock()
 	current := h.conns[c.id] == c
 	c.mu.Lock()
-	for i, s := range added {
+	for i, ks := range added {
+		s := ks.sub
 		s.syncing = false
-		if oks[i] {
-			s.hash = hashes[i]
+		if results[i].ok {
+			s.hash = results[i].hash
 		} else {
 			all = false
 		}
-		if s.recheck {
-			s.recheck = false
-			if current {
+		if current && c.subs[ks.key] == s {
+			h.applyPresenceLocked(c, ks.key, s, results[i])
+			if s.recheck {
 				h.addPendingLocked(s)
 			}
 		}
+		s.recheck = false
 	}
 	c.mu.Unlock()
 	h.mu.Unlock()
 	return all
+}
+
+// applyPresenceLocked joins or leaves presence for the subscription s of c
+// after a replay that ran, with result res. Callers hold h.mu and c.mu, and
+// have checked that c is registered and s is still its subscription under
+// key, so a replay that outlived its subscription or stream joins nothing.
+// A replay a round skipped ([liveHub.fallback]) does not come here: it
+// leaves the join as it was.
+//
+// A replay that did not finish leaves without grace: the hub cannot tell
+// whether the subscriber still may read the entity (M2). The next 200
+// rejoins. Any other status, or a probe that names another entity than the
+// path, leaves for good. The anonymous principal never joins: it is one
+// identity shared by every unauthenticated caller. It still watches the
+// face, as a subscription the caps refused does.
+func (h *liveHub) applyPresenceLocked(c *liveConn, key string, s *liveSub, res replayResult) {
+	if s.presenceID == "" {
+		return
+	}
+	slot := presence.Slot{Conn: c.id, Sub: key}
+	now := h.now()
+	leave := func() {
+		if s.joined != "" {
+			h.presence.Leave(slot, now, false)
+			s.joined = ""
+		}
+	}
+	if !res.ok {
+		if s.watching != "" {
+			s.left, s.watching = s.watching, ""
+		}
+		leave()
+		return
+	}
+	s.left = ""
+	face, who, ok := res.presenceJoin(s.presenceID)
+	if !ok {
+		s.watching = ""
+		leave()
+		return
+	}
+	s.watching = face
+	if who.User != principal.Unknown && c.owner.User != principal.Unknown &&
+		h.presence.Join(face, slot, who, now) {
+
+		s.joined = face
+		return
+	}
+	leave()
 }
 
 // identityTotalLocked is how many subscriptions c's owner would hold across
@@ -422,9 +528,8 @@ type liveFeed interface {
 }
 
 // run runs one round at a time: a changed round on each tick of a fixed
-// clock when anything changed since the last one, a round over the pending
-// subscriptions on a tick when nothing changed, and a baseline round when a
-// PUT asks for one. A lease wake marks the round dirty like a write does.
+// clock when anything changed since the last one, and a baseline round when
+// a PUT asks for one. A lease wake marks the round dirty like a write does.
 //
 // The clock is fixed so that a round's start never depends on when a change
 // arrived. If the first change started the window instead, a write to a
@@ -446,13 +551,16 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struc
 		case <-h.kick:
 			h.round(ctx, false) // baselines only; nothing changed
 		case <-tick.C:
+			// Presence expiry takes effect here, on the fixed clock, so
+			// when a viewer drops out never depends on when a replay ran.
+			faces := h.presence.TakeChanged(h.now())
 			switch {
 			case dirty:
 				dirty = false
 				feed.Take() // any change re-reads every subscription
 				h.round(ctx, true)
-			case h.hasPending():
-				h.replayRound(ctx, true, true)
+			case len(faces) > 0 || h.hasPending():
+				h.presenceRound(ctx, faces)
 			}
 			h.ticks.Add(1)
 		}
@@ -465,23 +573,35 @@ type replayPair struct {
 	owner principal.Principal
 	url   string
 	subs  []subRef
-	hash  string
-	ok    bool
+	res   replayResult
 }
 
 type subRef struct {
 	conn *liveConn
 	key  string
+	sub  *liveSub
 }
 
 // round replays the subscriptions and flags changed ones. When changed is
 // false only subscriptions without a baseline are replayed.
 func (h *liveHub) round(ctx context.Context, changed bool) {
-	h.replayRound(ctx, changed, false)
+	h.replayRound(ctx, changed, nil)
 }
 
-// replayRound replays what collect(changed, pendingOnly) selects.
-func (h *liveHub) replayRound(ctx context.Context, changed, pendingOnly bool) {
+// presenceRound replays only the presence subscriptions that watch, or
+// left, one of faces, the faces whose viewers changed, and the pending ones
+// an earlier round could not replay. A subscriber who got a 404 watches no
+// face, so a change of viewers never replays it.
+func (h *liveHub) presenceRound(ctx context.Context, faces []string) {
+	only := make(map[string]bool, len(faces))
+	for _, f := range faces {
+		only[f] = true
+	}
+	h.replayRound(ctx, true, only)
+}
+
+// replayRound replays what collect(changed, only) selects.
+func (h *liveHub) replayRound(ctx context.Context, changed bool, only map[string]bool) {
 	hp := h.replay.Load()
 	if hp == nil {
 		h.noReplay.Do(func() {
@@ -490,15 +610,19 @@ func (h *liveHub) replayRound(ctx context.Context, changed, pendingOnly bool) {
 		return
 	}
 	start := time.Now()
-	pairs := h.collect(changed, pendingOnly)
+	pairs := h.collect(changed, only)
 	if len(pairs) == 0 {
 		return
 	}
 	overflow := 0
 	if len(pairs) > liveRoundCap {
-		start := h.rotate % len(pairs)
+		cursor := &h.rotate
+		if only != nil {
+			cursor = &h.presenceRotate
+		}
+		start := *cursor % len(pairs)
 		pairs = append(pairs[start:], pairs[:start]...)
-		h.rotate = start + liveRoundCap
+		*cursor = start + liveRoundCap
 		overflow = len(pairs) - liveRoundCap
 		h.fallback(pairs[liveRoundCap:])
 		pairs = pairs[:liveRoundCap]
@@ -516,7 +640,7 @@ func (h *liveHub) replayRound(ctx context.Context, changed, pendingOnly bool) {
 		}
 		wg.Go(func() {
 			defer func() { <-h.slots }()
-			p.hash, p.ok = replayHash(ctx, *hp, p.owner, p.url)
+			p.res = replayHash(ctx, *hp, p.owner, p.url)
 		})
 	}
 	wg.Wait()
@@ -526,35 +650,55 @@ func (h *liveHub) replayRound(ctx context.Context, changed, pendingOnly bool) {
 		pairs = pairs[:started]
 	}
 
-	for _, p := range pairs {
-		if !p.ok {
-			continue
-		}
-		for _, ref := range p.subs {
-			ref.conn.mu.Lock()
-			s := ref.conn.subs[ref.key]
-			if s != nil && s.url == p.url {
-				if s.hash != p.hash {
-					// A late baseline frames too: the client may hold a
-					// newer response than the one it replaces.
-					ref.conn.markChanged(ref.key)
-				}
-				s.hash = p.hash
-			}
-			ref.conn.mu.Unlock()
-		}
-	}
+	h.commitRound(pairs)
 	slog.Debug("live: round", "replays", len(pairs), "overflow", overflow,
 		"duration_ms", time.Since(start).Milliseconds(),
 		"queries", stats.Queries(), "db_ms", stats.Duration().Milliseconds())
 }
 
+// commitRound stores the results of the replays that ran and frames the
+// subscriptions whose response moved.
+//
+// It holds h.mu across the whole loop, not per subscription (S1). The check
+// that a stream is still registered and the presence join that follows must
+// be one step against unregister, which leaves the stream's presence under
+// h.mu: a join that landed after that leave would hold an entry no stream
+// owns, and no grace would ever end it. The cost is that PUTs, stream
+// opens and closes, and the next collect wait for the commit. It does no
+// I/O, only map updates, one per subscription of at most liveRoundCap
+// pairs.
+func (h *liveHub) commitRound(pairs []*replayPair) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, p := range pairs {
+		for _, ref := range p.subs {
+			current := h.conns[ref.conn.id] == ref.conn
+			ref.conn.mu.Lock()
+			if s := ref.conn.subs[ref.key]; current && s == ref.sub {
+				if p.res.ok {
+					if s.hash != p.res.hash {
+						// A late baseline frames too: the client may hold
+						// a newer response than the one it replaces.
+						ref.conn.markChanged(ref.key)
+					}
+					s.hash = p.res.hash
+				}
+				h.applyPresenceLocked(ref.conn, ref.key, s, p.res)
+			}
+			ref.conn.mu.Unlock()
+		}
+	}
+}
+
 // collect groups the current subscriptions into distinct replays, in a
-// stable order; round rotates where the cap cuts it. A changed round takes
-// the pending set and marks the syncing subscriptions it skips for a
-// recheck; pendingOnly keeps only the pending ones. A baseline round
-// (changed false) saw no change, so it does neither.
-func (h *liveHub) collect(changed, pendingOnly bool) []*replayPair {
+// stable order; round rotates where the cap cuts it. A non-nil only keeps
+// the presence subscriptions that watch, or left, one of its faces, and the
+// pending ones. A changed round takes the pending set: a full round selects
+// those subscriptions anyway, and a baseline round (changed false) does
+// not, so it leaves the set alone. A changed round also marks the syncing
+// subscriptions it skips for a recheck; a presence round marks only the
+// presence ones, since a change of viewers moves no other response.
+func (h *liveHub) collect(changed bool, only map[string]bool) []*replayPair {
 	byKey := make(map[string]*replayPair)
 	h.mu.Lock()
 	var due map[*liveSub]struct{}
@@ -565,13 +709,13 @@ func (h *liveHub) collect(changed, pendingOnly bool) []*replayPair {
 		c.mu.Lock()
 		for key, s := range c.subs {
 			if s.syncing {
-				s.recheck = s.recheck || changed
+				s.recheck = s.recheck || changed && (only == nil || s.presenceID != "")
 				continue
 			}
 			if !changed && s.hash != "" {
 				continue
 			}
-			if _, ok := due[s]; pendingOnly && !ok {
+			if _, ok := due[s]; only != nil && !ok && !only[s.watching] && !only[s.left] {
 				continue
 			}
 			k := c.fp + " " + s.url
@@ -580,7 +724,7 @@ func (h *liveHub) collect(changed, pendingOnly bool) []*replayPair {
 				p = &replayPair{owner: c.owner, url: s.url}
 				byKey[k] = p
 			}
-			p.subs = append(p.subs, subRef{conn: c, key: key})
+			p.subs = append(p.subs, subRef{conn: c, key: key, sub: s})
 		}
 		c.mu.Unlock()
 	}
@@ -601,16 +745,25 @@ func (h *liveHub) collect(changed, pendingOnly bool) []*replayPair {
 // subscription is told it changed, so the client refetches. It keeps its
 // baseline and goes into pending, so the next tick replays it and frames
 // again if the response moved past that baseline. Without that replay a
-// later change back to the baseline would send no frame. Pending shrinks by
-// up to liveRoundCap replays a tick, and a replay whose result is unchanged
-// frames nothing, so the set empties and the rounds stop.
+// later change back to the baseline would send no frame.
+//
+// A presence subscription keeps its join as it was: no refresh, no leave
+// and no changed face. Leaving here would mark the face changed, and on a
+// face with more subscriptions than liveRoundCap every presence round would
+// skip some and so start the next. Revocation is checked when the skipped
+// replay next runs, from pending. Pending shrinks by up to liveRoundCap
+// replays a tick, so with no other change a skipped check runs within
+// ceil(n/liveRoundCap) ticks of n skipped pairs. A replay whose result is
+// unchanged joins nothing new and frames nothing, so the set empties and the
+// rounds stop.
 func (h *liveHub) fallback(pairs []*replayPair) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, p := range pairs {
 		for _, ref := range p.subs {
+			current := h.conns[ref.conn.id] == ref.conn
 			ref.conn.mu.Lock()
-			if s := ref.conn.subs[ref.key]; s != nil && s.url == p.url {
+			if s := ref.conn.subs[ref.key]; current && s == ref.sub {
 				ref.conn.markChanged(ref.key)
 				h.addPendingLocked(s)
 			}
@@ -634,38 +787,62 @@ func (h *liveHub) hasPending() bool {
 	return len(h.pending) > 0
 }
 
+// replayResult is the outcome of one replay. ok is false when the replay
+// did not finish (timeout, cancellation, panic); the other fields are then
+// zero.
+type replayResult struct {
+	hash   string // status and body
+	status int
+	ok     bool
+	probe  presenceProbe
+}
+
+// presenceJoin returns the face to join and who joins it, for a presence
+// subscription whose path names the entity id wantID. It reports false
+// unless the replay answered 200 and its probe names that same entity.
+func (r replayResult) presenceJoin(wantID string) (face string, who presence.Identity, ok bool) {
+	if wantID == "" || r.status != http.StatusOK || !r.probe.set || r.probe.id != wantID {
+		return "", presence.Identity{}, false
+	}
+	return r.probe.key, r.probe.who, true
+}
+
 // replayHash runs a GET of url as p through handler and hashes the status
-// and body. Headers are not hashed. It reports false when the replay did not
-// finish (timeout, cancellation), so the caller keeps the old hash.
+// and body. Headers are not hashed. The result is not ok when the replay did
+// not finish, so the caller keeps the old hash. Each call carries its own
+// presence probe.
 func replayHash(
 	ctx context.Context, handler http.Handler, p principal.Principal, url string,
-) (sum string, ok bool) {
+) (res replayResult) {
 	// net/http recovers a panicking handler per request; a replay runs on
 	// the worker, where a panic would end the process.
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("live: replay panicked", "url", url, "panic", r)
-			sum, ok = "", false
+			res = replayResult{}
 		}
 	}()
 	ctx, cancel := context.WithTimeout(principal.With(ctx, p), liveReplayTimeout)
 	defer cancel()
+	ctx, probe := withPresenceProbe(ctx)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		slog.Warn("live: build replay request", "err", err)
-		return "", false
+		return replayResult{}
 	}
 	hw := &hashWriter{h: sha256.New(), header: http.Header{}}
 	handler.ServeHTTP(hw, req)
 	if err := ctx.Err(); err != nil {
 		slog.Warn("live: replay did not finish", "err", err)
-		return "", false
+		return replayResult{}
 	}
 	status := hw.status
 	if status == 0 {
 		status = http.StatusOK
 	}
-	return fmt.Sprintf("%d:%x", status, hw.h.Sum(nil)), true
+	return replayResult{
+		hash: fmt.Sprintf("%d:%x", status, hw.h.Sum(nil)), status: status, ok: true, probe: *probe,
+	}
 }
 
 // hashWriter is a ResponseWriter that keeps only a hash of the body.

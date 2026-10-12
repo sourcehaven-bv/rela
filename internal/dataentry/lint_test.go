@@ -340,16 +340,17 @@ func mustReadPkgFile(t *testing.T, name string) string {
 	return string(body)
 }
 
-// TestLeaseAttachPointsStayTwo guards where `_lease` is set (TKT-4YPG4Q).
-// It may ride only the single-entity GET (api_v1.go) and list rows
-// (serveRowLeases in leases_handler.go): both set it on an entity the caller
-// has just read through the row gate, from one lease read. Other surfaces
-// (views, history, includes, live frames) do not carry it, so a third
-// `.Lease =` assignment is the moment to ask whether that surface gates its
-// rows first and keeps the cost at one lease read per page.
-func TestLeaseAttachPointsStayTwo(t *testing.T) {
+// TestLeaseAttachPointsStayThree guards where `_lease` is set (TKT-4YPG4Q,
+// TKT-MHXH87). It may ride only the single-entity GET (api_v1.go), list rows
+// (serveRowLeases in leases_handler.go) and a view's entry
+// (views_handler.go): each sets it on an entity the caller has just read
+// through the row gate, from one lease read. Other surfaces (view sections,
+// history, includes, live frames) do not carry it, so a fourth `.Lease =`
+// assignment is the moment to ask whether that surface gates its rows first
+// and keeps the cost at one lease read per page.
+func TestLeaseAttachPointsStayThree(t *testing.T) {
 	const needle = ".Lease ="
-	allowed := map[string]int{"api_v1.go": 1, "leases_handler.go": 1}
+	allowed := map[string]int{"api_v1.go": 1, "leases_handler.go": 1, "views_handler.go": 1}
 
 	root, err := os.Getwd()
 	if err != nil {
@@ -369,8 +370,8 @@ func TestLeaseAttachPointsStayTwo(t *testing.T) {
 			t.Fatalf("read %s: %v", base, err)
 		}
 		if got, want := strings.Count(string(body), needle), allowed[base]; got != want {
-			t.Errorf("%s has %d %q assignments, want %d: `_lease` is set only on the entity GET "+
-				"and in serveRowLeases", base, got, needle, want)
+			t.Errorf("%s has %d %q assignments, want %d: `_lease` is set only on the entity GET, "+
+				"in serveRowLeases and on a view's entry", base, got, needle, want)
 		}
 	}
 }

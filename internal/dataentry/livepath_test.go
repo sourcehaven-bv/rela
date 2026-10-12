@@ -19,6 +19,9 @@ func TestParseLivePath(t *testing.T) {
 		{"list with filter", "/api/v1/tickets?filter%5Bstatus%5D=open", "/api/v1/tickets?filter%5Bstatus%5D=open"},
 		{"list with filter op", "/api/v1/tickets?filter[status][ne]=done", "/api/v1/tickets?filter%5Bstatus%5D%5Bne%5D=done"},
 		{"view", "/api/v1/_views/ticket/TKT-1", "/api/v1/_views/ticket/TKT-1"},
+		{"presence", "/api/v1/tickets/TKT-1/_presence", "/api/v1/tickets/TKT-1/_presence"},
+		{"presence with face and world", "/api/v1/tickets/TKT-1@draft/_presence?world=main",
+			"/api/v1/tickets/TKT-1@draft/_presence?world=main"},
 		// Every ListParams key in frontend/src/types/entity.ts except the
 		// search box's q: EntityList subscribes the params it fetches with,
 		// and one refused path fails the whole PUT.
@@ -76,6 +79,10 @@ func TestParseLivePath(t *testing.T) {
 		// so a hidden write can evict a visible row.
 		{"list free-text search", "/api/v1/tickets?q=text"},
 		{"list free-text search with filter", "/api/v1/tickets?filter[status]=open&q=text"},
+		{"presence unknown query key", "/api/v1/tickets/TKT-1/_presence?include=x"},
+		{"presence on unknown plural", "/api/v1/nopes/TKT-1/_presence"},
+		{"presence on reserved collection", "/api/v1/_views/TKT-1/_presence"},
+		{"presence on sub-resource id", "/api/v1/tickets/_export/_presence"},
 	}
 	for _, tc := range rejected {
 		t.Run("rejects "+tc.name, func(t *testing.T) {
@@ -83,5 +90,39 @@ func TestParseLivePath(t *testing.T) {
 				t.Fatalf("parseLivePath(%q) = %v, want errLivePath", tc.raw, err)
 			}
 		})
+	}
+}
+
+// A presence path on a faced type names a face: the route would answer a
+// bare id with face_required, so the subscription could never join.
+func TestParseLivePath_PresenceOnFacedTypeNamesAFace(t *testing.T) {
+	meta := facedTicketApp(t).State().Meta
+	if _, err := parseLivePath("/api/v1/tickets/TKT-1/_presence", meta); !errors.Is(err, errLivePath) {
+		t.Fatalf("bare id on a faced type: err = %v, want errLivePath", err)
+	}
+	for _, ok := range []string{"/api/v1/tickets/TKT-1@draft/_presence", "/api/v1/tickets/TKT-1"} {
+		if _, err := parseLivePath(ok, meta); err != nil {
+			t.Fatalf("%s: %v", ok, err)
+		}
+	}
+}
+
+// presenceID is the bare entity id of a presence path and empty for every
+// other shape.
+func TestLivePath_PresenceID(t *testing.T) {
+	meta := newTestAppV1(t).State().Meta
+	for raw, want := range map[string]string{
+		"/api/v1/tickets/TKT-1/_presence":       "TKT-1",
+		"/api/v1/tickets/TKT-1@draft/_presence": "TKT-1",
+		"/api/v1/tickets/TKT-1":                 "",
+		"/api/v1/_views/ticket/TKT-1":           "",
+	} {
+		lp, err := parseLivePath(raw, meta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := lp.presenceID(); got != want {
+			t.Errorf("%s: presenceID = %q, want %q", raw, got, want)
+		}
 	}
 }

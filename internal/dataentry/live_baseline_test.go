@@ -160,3 +160,32 @@ func TestLive_LeaseDuringBaselineIsKept(t *testing.T) {
 		t.Fatalf("after the release: changed keys = %v, want [detail]", got)
 	}
 }
+
+// The same holds for a presence round. An anonymous watcher never joins, so
+// its own join cannot replay it: bob joins while its PUT takes the presence
+// baseline, and his leave later must still frame it.
+func TestPresence_JoinDuringBaselineIsKept(t *testing.T) {
+	env, clk := newPresenceEnv(t, func(app *App) { seedEntity(app, ticket1("one")) })
+	path := presencePath("tickets", "TKT-1")
+	anon, anonConn := env.open(t, "")
+	_, bobConn := env.open(t, "bob")
+
+	putDuringBaseline(t, env, "", anonConn, func() error {
+		if code, body := env.put(t, as("bob"), bobConn, liveSubEntry{"p", path}); code != http.StatusNoContent {
+			return fmt.Errorf("bob's PUT = %d %s", code, body)
+		}
+		return nil
+	}, liveSubEntry{"p", path})
+	// The watcher refetches now and sees bob.
+	waitViewers(t, env, "", path, "bob")
+	liveKeysAfterTicks(t, env, anon)
+
+	if code, body := env.put(t, as("bob"), bobConn); code != http.StatusNoContent {
+		t.Fatalf("bob's empty PUT = %d %s", code, body)
+	}
+	clk.advance(16 * time.Second) // past the grace
+	if got := liveKeysAfterTicks(t, env, anon); len(got) != 1 || got[0] != "p" {
+		t.Fatalf("after bob left: changed keys = %v, want [p]", got)
+	}
+	waitViewers(t, env, "", path)
+}
