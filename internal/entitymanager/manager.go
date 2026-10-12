@@ -166,7 +166,7 @@ type auditedDenial interface {
 }
 
 // checkFieldWrite asks the [FieldWriteGate] and records a refusal as a
-// denied write, like a row-level refusal (recordDeniedWrite). Without the
+// denied write, like a row-level refusal (deniedWriteRecord). Without the
 // record, a caller probing read-only fields over MCP or Lua would leave no
 // trace. A plain function: Manager is at its method cap.
 func checkFieldWrite(ctx context.Context, m *Manager, e *entity.Entity, set map[string]any, unset []string) error {
@@ -681,7 +681,7 @@ func requireCopyGates(d Deps) error {
 // Manager you hold, not of the context — see Manager.elevated. The real
 // principal is still preserved (`principal.From(ctx)`, unchanged) and the
 // bypass is recorded (recordACLBypass) so the audit trail is unambiguous about
-// which writes were elevated and on whose behalf. We do NOT recordDeniedWrite
+// which writes were elevated and on whose behalf. We do NOT record a denied-write row
 // on the bypass path — there is no denial to record.
 func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) error {
 	if m.cascadeWrite {
@@ -705,7 +705,7 @@ func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) e
 	if !isAffordanceProbe(ctx) {
 		// An affordance PROBE is not an attempted write, so recording it would
 		// make the audit log say something untrue. See [withAffordanceProbe].
-		m.recordDeniedWrite(ctx, decision, req)
+		m.deps.Audit.Record(deniedWriteRecord(ctx, decision, req))
 	}
 	return &acl.ForbiddenError{Decision: decision}
 }
@@ -765,7 +765,7 @@ func (m *Manager) mapTransitionError(ctx context.Context, subject acl.Subject, e
 			RuleID:   ge.Permission, // the specific right, queryable in audit (RR-F30CZ/N1)
 			Reason:   err.Error(),
 		}
-		m.recordDeniedWrite(ctx, decision, acl.WriteRequest{Op: acl.OpUpdate, Subject: subject})
+		m.deps.Audit.Record(deniedWriteRecord(ctx, decision, acl.WriteRequest{Op: acl.OpUpdate, Subject: subject}))
 		return &acl.ForbiddenError{Decision: decision}
 	}
 	return err
@@ -795,11 +795,11 @@ func (m *Manager) recordACLBypass(ctx context.Context, req acl.WriteRequest) {
 	})
 }
 
-// recordDeniedWrite emits one audit row describing the refused
-// attempt. Subject names the would-be target (entity or relation);
-// Summary carries the deny rule_kind / rule_id / reason and the
-// attempted op so jq filters can ask "what did Alice try to do?".
-func (m *Manager) recordDeniedWrite(ctx context.Context, d acl.Decision, req acl.WriteRequest) {
+// deniedWriteRecord is the `denied-write` audit row for a refused write.
+// Subject names the would-be target (entity or relation); Summary carries
+// the deny rule_kind / rule_id / reason and the attempted op so jq filters
+// can ask "what did Alice try to do?".
+func deniedWriteRecord(ctx context.Context, d acl.Decision, req acl.WriteRequest) audit.Record {
 	// RR-79HD: surface the target ID (entity ID, or relation
 	// from-ID) so forensic queries against the audit log can answer
 	// "which specific entity did Alice try to mutate?" without
@@ -820,14 +820,14 @@ func (m *Manager) recordDeniedWrite(ctx context.Context, d acl.Decision, req acl
 			ID:   s.ID(),
 		}
 	}
-	m.deps.Audit.Record(audit.Record{
+	return audit.Record{
 		Time:        time.Now().UTC(),
 		Op:          audit.OpDeniedWrite,
 		Subject:     subject,
 		Principal:   principal.From(ctx),
 		TriggeredBy: audit.TriggeredByFrom(ctx),
 		Summary:     formatDeniedSummary(d, req.Op),
-	})
+	}
 }
 
 // formatDeniedSummary builds the audit Summary for a denied-write row.
@@ -1097,10 +1097,7 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	// "default state" — so a role holding only a bare `update: [policy]`
 	// grant could write `policy@published`, inverting the invariant
 	// GrantsVerbOnState exists to hold (BUG-Y0GNSB).
-	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op:      acl.OpUpdate,
-		Subject: acl.NewEntitySubject(e.Type, e.ID, e.Face),
-	}); err != nil {
+	if err := m.authorizeAndAudit(ctx, entityUpdateRequest(e.Type, e.Ref())); err != nil {
 		return nil, err
 	}
 	if err := rejectComputedChanges(m.deps, oldEntity, e); err != nil {
@@ -1228,6 +1225,45 @@ func (m *Manager) PatchEntity(
 	})
 }
 
+// AuthorizeUpdate asks the question [Manager.PatchEntity] and
+// [Manager.UpdateEntity] ask before they update the entity of type
+// entityType at ref, without writing anything. It returns nil when the write
+// may proceed, and otherwise the same error those methods would return: an
+// [*acl.ForbiddenError], with the same `denied-write` audit row.
+//
+// It is for a boundary that wants to refuse a denied caller before it spends
+// work on the write, such as reading edges or checking an If-Match header.
+// It is advisory: the write itself authorizes again against the stored row,
+// and that check stays the authority.
+//
+// It runs the manager's single write-authorization check, so cascade
+// writes, elevated handles and affordance probes behave exactly as they do
+// for the write. Any rule added to that check, such as one that requires
+// read access to the existing row, applies here without further change.
+//
+// entityType and ref must name the stored row. The caller reads them from a
+// row it loaded, because type, id and face are metadata that field
+// redaction does not change.
+func (m *Manager) AuthorizeUpdate(ctx context.Context, entityType string, ref entity.Ref) error {
+	return m.authorizeAndAudit(ctx, entityUpdateRequest(entityType, ref))
+}
+
+// entityUpdateRequest is the authorization question for updating the entity
+// of type entityType at ref. Every update path builds it here so the early
+// check ([Manager.AuthorizeUpdate]) and the write cannot ask different
+// questions.
+//
+// The face comes from ref, because that is the row the store writes. A zero
+// face would authorize a faced write against the default face, so a role
+// holding only a bare `update: [policy]` grant could write
+// `policy@published` (BUG-Y0GNSB).
+func entityUpdateRequest(entityType string, ref entity.Ref) acl.WriteRequest {
+	return acl.WriteRequest{
+		Op:      acl.OpUpdate,
+		Subject: acl.NewEntitySubject(entityType, ref.ID, ref.Face),
+	}
+}
+
 // patchWithRetry runs one patch attempt, and with pinToRead retries it a
 // bounded number of times when another writer lands between its read and
 // its write. A free function so [Attachments.StampAttachments] shares the
@@ -1306,15 +1342,12 @@ func (m *Manager) patchEntityOnce(
 	// faced row — so the face actually being written is stored.Face, and
 	// authorizing without it would decide against the default face
 	// (BUG-Y0GNSB).
-	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op: acl.OpUpdate,
-		// stored.ID, not `id`: the caller may have passed the fused form
-		// ("POL-4@draft"), and the subject names the id and the face in
-		// SEPARATE fields — passing the fused string as the ID would make the
-		// row-gate key disagree with every other write path, which names the
-		// bare id (see UpdateEntity above).
-		Subject: acl.NewEntitySubject(stored.Type, stored.ID, stored.Face),
-	}); err != nil {
+	//
+	// stored.Ref(), not `id`: the caller may have passed the fused form
+	// ("POL-4@draft"), and the subject names the id and the face in SEPARATE
+	// fields. Passing the fused string as the ID would make the row-gate key
+	// disagree with every other write path, which names the bare id.
+	if err := m.authorizeAndAudit(ctx, entityUpdateRequest(stored.Type, stored.Ref())); err != nil {
 		return nil, err
 	}
 

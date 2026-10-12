@@ -772,21 +772,15 @@ var (
 	ruleFallbackDefault = store.ResolutionFallbackDefault.String()
 )
 
-// resolutionRule names the rule that produced a face stored at p, for an
-// entity of entityType, under scope. See [worldProvenance] for why this is a
-// total mapping rather than a walk.
+// resolutionRuleAt names the rule that produced a face stored at p, for an
+// entity of entityType, under scope, plus the chain POSITION of the served
+// coordinate — the rank the world got, not merely that it got something. See
+// [worldProvenance] for why this is a total mapping rather than a walk.
 //
 // entityType MUST be canonical: [store.WorldScope] is keyed on canonical
 // names only, and an alias reaching For() reads as an unknown type, which is
 // rule 1. The route resolves the type by iterating the metamodel's own keys,
 // so every caller on this path is canonical by construction.
-func resolutionRule(scope store.WorldScope, entityType string, p entity.Face) string {
-	rule, _ := resolutionRuleAt(scope, entityType, p)
-	return rule
-}
-
-// resolutionRuleAt is [resolutionRule] plus the chain POSITION of the served
-// coordinate — the rank the world got, not merely that it got something.
 //
 // The position is non-nil only for rule 2; the other rules did not resolve
 // through the chain, so there is no rank to report and a zero would read as

@@ -1,9 +1,9 @@
 request: POST /api/v1/_comments/ticket/TKT-1
 identity: header editor@example.test
 status: 201
-reads: GetEntity=1 ListEntityHeaders=1
-breadth: ListEntityHeaders=1/1
-bodies: GetEntity=1/1 ListEntityHeaders=0/1
+reads: GetEntity=1
+breadth: 
+bodies: GetEntity=1/1
 versions: 
 body:
 {

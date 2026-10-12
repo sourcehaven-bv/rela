@@ -63,14 +63,82 @@ func (r *Resolver) WriteTarget(
 	if err != nil || !ok {
 		return entity.Ref{}, false, err
 	}
-	if named, isNamed := addr.Named(); isNamed {
-		if !slices.Contains(fam.Faces, named.Face) {
-			return entity.Ref{}, false, nil
-		}
-		return named, true, nil
+	return pickWriteFace(addr, fam)
+}
+
+// writeAddress is the face a write to addr edits: the named face, or the
+// implicit face for a bare id. named reports which.
+func writeAddress(addr entity.Address) (target entity.Ref, named bool) {
+	if ref, ok := addr.Named(); ok {
+		return ref, true
 	}
-	if !slices.ContainsFunc(fam.Faces, entity.Face.IsImplicit) {
+	return entity.Ref{ID: addr.ID(), Face: entity.ImplicitFace}, false
+}
+
+// pickWriteFace applies the write-address rule ([Resolver.WriteTarget]) to
+// the faces of addr the principal may read. A named face outside fam is a
+// miss. A bare id whose implicit face is outside fam is an
+// [*AmbiguousAddressError] listing fam's faces.
+func pickWriteFace(addr entity.Address, fam Family) (entity.Ref, bool, error) {
+	target, named := writeAddress(addr)
+	switch {
+	case slices.Contains(fam.Faces, target.Face):
+		return target, true, nil
+	case named:
+		return entity.Ref{}, false, nil
+	default:
 		return entity.Ref{}, false, &AmbiguousAddressError{ID: addr.ID(), Faces: fam.Faces}
 	}
-	return entity.Ref{ID: addr.ID(), Face: entity.ImplicitFace}, true, nil
+}
+
+// WriteRow resolves addr to the one face a face-level write edits, as
+// [Resolver.WriteTarget] does, and reads that face, as [Resolver.Ref] does.
+// It answers what the pair answers, in one gate pass and, on a hit, one load
+// and no header read.
+//
+// The face it reads is the target: the named face, or the implicit face for
+// a bare id. Only when a bare id's implicit face is not there to read does
+// it read the family headers, to tell a miss from an
+// [*AmbiguousAddressError] listing the readable faces.
+//
+// The row is gated and redacted like every resolver read. It is the
+// caller's view of the target, never a write-prep base: the write itself
+// goes through entitymanager, which reads the raw stored row.
+func (r *Resolver) WriteRow(
+	ctx context.Context, w World, entityType string, addr entity.Address,
+) (Resolved, bool, error) {
+	if !w.denied && !w.scope.IsSet() {
+		return Resolved{}, false, fmt.Errorf("%w: visibility: WriteRow with an unset world (use WorldOf)",
+			store.ErrInvalidQuery)
+	}
+	faces, ok, err := r.admit(ctx, w, entityType, addr.ID())
+	if err != nil || !ok {
+		return Resolved{}, false, err
+	}
+	target, named := writeAddress(addr)
+	if faces.Contains(target.Face) {
+		// serve checks the loaded row's type. That stands for the whole
+		// family because every store keeps one type per id across its faces
+		// (storetest "TypeMismatchRejected"), so the per-header type check
+		// in familyOf has nothing more to find here.
+		if e, loaded := r.loadRef(ctx, entityType, target); loaded {
+			return r.serve(ctx, w, entityType, faces, e)
+		}
+	}
+	if named {
+		return Resolved{}, false, nil
+	}
+	headers, ok := r.headersOf(ctx, entityType, addr.ID())
+	if !ok {
+		return Resolved{}, false, nil
+	}
+	fam, ok, err := r.familyOf(entityType, addr.ID(), faces, headers)
+	if err != nil || !ok {
+		return Resolved{}, false, err
+	}
+	// A target the rule picks but the load did not return failed to load;
+	// that is a miss, like every other failed load. Otherwise this is the
+	// rule's ambiguity error.
+	_, _, err = pickWriteFace(addr, fam)
+	return Resolved{}, false, err
 }

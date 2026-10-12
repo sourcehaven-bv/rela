@@ -297,6 +297,14 @@ your session id or `"$(hostname)-$$"`:
   take the face the world ranks first; a write may not, because the world's
   first face is a presentation choice, not the author's intent. Rename and a
   bare-id delete act on the whole family instead (`authorizeFamily`).
+  A handler that also needs the target's gated row uses
+  `visibility.Resolver.WriteRow`, which applies the same rule and loads the
+  row in the same pass. That row only shapes the response and the early
+  authorization; it never feeds the write. The manager still diffs against
+  its own raw read of the stored row. The early authorization is
+  `entitymanager.Manager.AuthorizeUpdate`, which runs the manager's own write
+  check and audit. Don't rebuild the ACL request or the `denied-write` row in
+  a handler.
 
 ### Subsystem-specific rules (nested CLAUDE.md / godoc)
 

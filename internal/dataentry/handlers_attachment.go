@@ -195,9 +195,10 @@ func (h *attachmentHandler) handleV1PutAttachment(
 	}
 	entity = written.Entity
 
-	// The written face's own edges (BUG-ISJHML), through the neighbor gate
-	// the GET uses, so the response names no neighbor the caller cannot read.
-	rels, visibleNeighbors, rerr := h.faceEdges(ctx, entity)
+	// The written face's own edges, through the neighbor-gated seam the GET
+	// uses (BUG-ISJHML), so the response names no neighbor the caller
+	// cannot read.
+	rels, visibleNeighbors, rerr := h.faceEdges.read(ctx, entity)
 	if rerr != nil {
 		writeGateError(w, r, rerr)
 		return

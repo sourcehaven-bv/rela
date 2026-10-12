@@ -53,24 +53,28 @@ func NewRelationReader(lister RelationLister, classes ScopeClassifier) (*Relatio
 
 // Neighbors returns the edges of one resolved entity under its world.
 //
-// The dispatch is per relation TYPE, which is why it cannot be one query
-// (Q4). [store.RelationQuery] deliberately gained no world and no new
-// selector — DOFYR1's FromFace contract stays frozen — so the two
-// classes are queried separately and merged:
+// It issues ONE store query: every edge touching the entity in dir, at
+// every tail (a NIL [store.RelationQuery.FromFace]). That query is a
+// superset of each scope class's answer, so the dispatch is applied to the
+// rows rather than to the query, per relation TYPE (see place):
 //
-//   - IDENTITY-scoped types query with a NIL tail. An identity edge
+//   - IDENTITY-scoped edges are kept at every tail. An identity edge
 //     belongs to the entity, not to a face of it, so it must be visible
 //     from every face; filtering by the prime's face would hide an
 //     entity's role and containment edges whenever its prime is not the
 //     default state.
-//   - CONTENT-scoped types the entity is the SOURCE of query with the
-//     PRIME'S face, so a non-prime state's content edges stay invisible.
-//   - CONTENT-scoped types the entity is the TARGET of query with a NIL
+//   - CONTENT-scoped edges the entity is the SOURCE of are kept only when
+//     their tail IS the prime's face, so a non-prime state's content edges
+//     stay invisible.
+//   - CONTENT-scoped edges the entity is the TARGET of are kept at every
 //     tail. The tail of such an edge is a face of the OTHER entity, so
 //     filtering it by this entity's face selects an unrelated set
 //     (BUG-ISJHML): it hid every edge from a faced source to a faceless
 //     target, and let an edge through when the two faces merely shared a
 //     name.
+//
+// The result lists identity edges, then outgoing content edges, then
+// incoming content edges, each in store order.
 //
 // # Incoming content edges need the caller's Owns check
 //
@@ -84,13 +88,13 @@ func NewRelationReader(lister RelationLister, classes ScopeClassifier) (*Relatio
 // # The fallback trap
 //
 // When the prime came from `otherwise: default` (or from rule 1), its
-// face IS the zero Face — and as a FromFace VALUE the zero
-// face does not mean "unfiltered". It means DEFAULT-TAIL-ONLY, which
-// is a different filter from nil. That is correct for the content-scoped
-// query (the default face's own edges) and would be WRONG for the
-// identity-scoped one, which must stay nil. The two look identical in a
-// debugger — both are "the zero face" — which is why they are
-// separated structurally here and pinned by a named test.
+// face IS the zero Face. Compared as a VALUE, the zero face does not mean
+// "unfiltered": it means DEFAULT-TAIL-ONLY. That is correct for the
+// outgoing content edges (the default face's own edges) and would be WRONG
+// for the identity edges, which no face comparison may touch. The two look
+// identical in a debugger — both are "the zero face" — which is why the
+// query carries no tail at all and the comparison happens only on the
+// content arm, pinned by a named test.
 func (rr *RelationReader) Neighbors(
 	ctx context.Context, res Resolved, dir store.Direction,
 ) ([]*entity.Relation, error) {
@@ -102,60 +106,53 @@ func (rr *RelationReader) Neighbors(
 	}
 	id := res.Entity.ID
 
-	// Identity edges: NIL tail, deliberately. See the fallback trap above.
-	identityQ := store.RelationQuery{
-		Direction: dir,
-		FromFace:  nil,
-	}
-	setEndpoint(&identityQ, id, dir)
+	// NIL tail, deliberately. See the fallback trap above.
+	q := store.RelationQuery{Direction: dir, FromFace: nil}
+	setEndpoint(&q, id, dir)
 
-	// Merge, keeping each edge under the query whose scope class matches
-	// its type. The queries over-return: the nil-tail query also matches
-	// content edges, and the face query also matches identity edges
-	// stored with that tail. Classifying on the way out is what makes the
-	// merge exact rather than a union with duplicates.
-	var out []*entity.Relation
-	if err := collect(rr.lister.ListRelations(ctx, identityQ), func(rel *entity.Relation) {
-		if !rr.classes.IsContentScoped(rel.Type) {
-			out = append(out, rel)
+	var buckets [slotCount][]*entity.Relation
+	if err := collect(rr.lister.ListRelations(ctx, q), func(rel *entity.Relation) {
+		if sl := rr.place(rel, id, res.Face, dir); sl != slotNone {
+			buckets[sl] = append(buckets[sl], rel)
 		}
 	}); err != nil {
 		return nil, err
 	}
+	return slices.Concat(buckets[slotIdentity], buckets[slotOutgoing], buckets[slotIncoming]), nil
+}
 
-	// Outgoing content edges: the prime's face BY VALUE, including when
-	// that value is the zero face.
-	prime := res.Face
-	if dir != store.DirectionIncoming {
-		outQ := store.RelationQuery{Direction: store.DirectionOutgoing, From: id, FromFace: &prime}
-		if err := collect(rr.lister.ListRelations(ctx, outQ), func(rel *entity.Relation) {
-			if rr.classes.IsContentScoped(rel.Type) {
-				out = append(out, rel)
-			}
-		}); err != nil {
-			return nil, err
-		}
-	}
+// slot is where one edge lands in one entity's [RelationReader.Neighbors]
+// result.
+type slot int
 
-	// Incoming content edges: NIL tail, because the tail is the source's
-	// face. A self-edge is the entity's own outgoing edge, so it is taken
-	// from the query above when that ran, and held to the prime's face
-	// otherwise.
-	if dir != store.DirectionOutgoing {
-		inQ := store.RelationQuery{Direction: store.DirectionIncoming, To: id, FromFace: nil}
-		if err := collect(rr.lister.ListRelations(ctx, inQ), func(rel *entity.Relation) {
-			if !rr.classes.IsContentScoped(rel.Type) {
-				return
-			}
-			if rel.From == id && (dir == store.DirectionBoth || rel.FromFace != prime) {
-				return
-			}
-			out = append(out, rel)
-		}); err != nil {
-			return nil, err
-		}
+const (
+	slotIdentity slot = iota
+	slotOutgoing
+	slotIncoming
+	slotCount
+	slotNone slot = -1
+)
+
+// place applies the scope dispatch [RelationReader.Neighbors] documents to
+// one edge, for the entity id served at prime and read in dir.
+//
+// A content self-edge is the entity's own outgoing edge: it is held to the
+// prime's face in every direction, and listed once.
+func (rr *RelationReader) place(rel *entity.Relation, id string, prime entity.Face, dir store.Direction) slot {
+	out := dir != store.DirectionIncoming && rel.From == id
+	in := dir != store.DirectionOutgoing && rel.To == id
+	switch {
+	case !out && !in:
+		return slotNone
+	case !rr.classes.IsContentScoped(rel.Type):
+		return slotIdentity
+	case rel.From == id && rel.FromFace != prime:
+		return slotNone
+	case out:
+		return slotOutgoing
+	default:
+		return slotIncoming
 	}
-	return out, nil
 }
 
 // Owns reports whether rel may be served beside its SOURCE when the source
@@ -171,135 +168,60 @@ func (rr *RelationReader) Owns(rel *entity.Relation, sourceFace entity.Face) boo
 }
 
 // NeighborsForPage is [RelationReader.Neighbors] for a whole page of
-// resolved rows in ONE identity query, one outgoing content query per
-// distinct face on the page and one incoming content query, instead of up
-// to three queries per row (TKT-1U8XYN). The result is index-aligned with
-// rows: rows[i]'s edges are out[i], in the same order Neighbors would return
-// them (identity edges, then outgoing content edges, then incoming content
-// edges, each in store order), and a row the world excludes keeps a nil
-// entry.
+// resolved rows in ONE query (every edge touching any row, nil tail) instead
+// of one query per row (TKT-1U8XYN). The result is index-aligned with rows:
+// rows[i]'s edges are out[i], in the same order Neighbors would return them,
+// and a row the world excludes keeps a nil entry.
 //
-// The per-row contract is preserved exactly: an outgoing content edge counts
-// for a row only when the edge's tail face IS that row's face, and an
+// The per-row contract is preserved exactly: each edge is placed for each
+// row it touches by the same rule Neighbors applies, so an outgoing content
+// edge counts for a row only when its tail IS that row's face, and an
 // incoming content edge is returned at every tail for the caller to check
-// with [RelationReader.Owns], as Neighbors documents.
+// with [RelationReader.Owns].
 func (rr *RelationReader) NeighborsForPage(
 	ctx context.Context, rows []Resolved, dir store.Direction,
 ) ([][]*entity.Relation, error) {
-	pg := page{rows: rows, out: make([][]*entity.Relation, len(rows)), rowIdx: make(map[string][]int, len(rows))}
-	byFace := make(map[entity.Face][]string)
+	// rowIdx maps an id to every row serving it: a page may hold two faces
+	// of one entity, and each row gets its own edges.
+	rowIdx := make(map[string][]int, len(rows))
+	var ids []string
 	for i, res := range rows {
 		if !res.Found || res.Entity == nil {
 			continue
 		}
 		id := res.Entity.ID
-		if _, dup := pg.rowIdx[id]; !dup {
-			pg.ids = append(pg.ids, id)
+		if _, dup := rowIdx[id]; !dup {
+			ids = append(ids, id)
 		}
-		pg.rowIdx[id] = append(pg.rowIdx[id], i)
-		byFace[res.Face] = append(byFace[res.Face], id)
+		rowIdx[id] = append(rowIdx[id], i)
 	}
-	if len(pg.ids) == 0 {
-		return pg.out, nil
+	out := make([][]*entity.Relation, len(rows))
+	if len(ids) == 0 {
+		return out, nil
 	}
-	if err := rr.pageIdentity(ctx, &pg, dir); err != nil {
+	buckets := make([][slotCount][]*entity.Relation, len(rows))
+	give := func(rel *entity.Relation, id string) {
+		for _, i := range rowIdx[id] {
+			if sl := rr.place(rel, id, rows[i].Face, dir); sl != slotNone {
+				buckets[i][sl] = append(buckets[i][sl], rel)
+			}
+		}
+	}
+	q := store.RelationQuery{Direction: dir, FromFace: nil, EntityIDs: ids}
+	if err := collect(rr.lister.ListRelations(ctx, q), func(rel *entity.Relation) {
+		give(rel, rel.From)
+		if rel.To != rel.From {
+			give(rel, rel.To)
+		}
+	}); err != nil {
 		return nil, err
 	}
-	if dir != store.DirectionIncoming {
-		if err := rr.pageOutgoingContent(ctx, &pg, byFace); err != nil {
-			return nil, err
+	for i, b := range buckets {
+		if len(b[slotIdentity])+len(b[slotOutgoing])+len(b[slotIncoming]) > 0 {
+			out[i] = slices.Concat(b[slotIdentity], b[slotOutgoing], b[slotIncoming])
 		}
 	}
-	if dir != store.DirectionOutgoing {
-		if err := rr.pageIncomingContent(ctx, &pg, dir); err != nil {
-			return nil, err
-		}
-	}
-	return pg.out, nil
-}
-
-// page is the working state of one [RelationReader.NeighborsForPage] call.
-type page struct {
-	rows []Resolved
-	out  [][]*entity.Relation
-	// rowIdx maps an id to every row serving it: a page may hold two faces
-	// of one entity, and each row gets its own edges.
-	rowIdx map[string][]int
-	ids    []string
-}
-
-func (pg *page) give(id string, rel *entity.Relation) {
-	for _, i := range pg.rowIdx[id] {
-		pg.out[i] = append(pg.out[i], rel)
-	}
-}
-
-// pageIdentity reads the page's identity-scoped edges with a nil tail.
-func (rr *RelationReader) pageIdentity(ctx context.Context, pg *page, dir store.Direction) error {
-	identityQ := store.RelationQuery{Direction: dir, FromFace: nil, EntityIDs: pg.ids}
-	return collect(rr.lister.ListRelations(ctx, identityQ), func(rel *entity.Relation) {
-		if rr.classes.IsContentScoped(rel.Type) {
-			return
-		}
-		switch dir {
-		case store.DirectionOutgoing:
-			pg.give(rel.From, rel)
-		case store.DirectionIncoming:
-			pg.give(rel.To, rel)
-		default:
-			pg.give(rel.From, rel)
-			if rel.To != rel.From {
-				pg.give(rel.To, rel)
-			}
-		}
-	})
-}
-
-// pageOutgoingContent reads the outgoing content-scoped edges, one query per
-// distinct face on the page, keeping an edge only for a row served at its
-// tail face.
-func (rr *RelationReader) pageOutgoingContent(
-	ctx context.Context, pg *page, byFace map[entity.Face][]string,
-) error {
-	faces := make([]entity.Face, 0, len(byFace))
-	for f := range byFace {
-		faces = append(faces, f)
-	}
-	slices.Sort(faces)
-	for _, f := range faces {
-		face := f
-		outQ := store.RelationQuery{Direction: store.DirectionOutgoing, FromFace: &face, EntityIDs: byFace[f]}
-		if err := collect(rr.lister.ListRelations(ctx, outQ), func(rel *entity.Relation) {
-			if !rr.classes.IsContentScoped(rel.Type) {
-				return
-			}
-			for _, i := range pg.rowIdx[rel.From] {
-				if pg.rows[i].Face == face {
-					pg.out[i] = append(pg.out[i], rel)
-				}
-			}
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// pageIncomingContent reads the incoming content-scoped edges with a nil
-// tail; see [RelationReader.Neighbors] for the self-edge rule.
-func (rr *RelationReader) pageIncomingContent(ctx context.Context, pg *page, dir store.Direction) error {
-	inQ := store.RelationQuery{Direction: store.DirectionIncoming, FromFace: nil, EntityIDs: pg.ids}
-	return collect(rr.lister.ListRelations(ctx, inQ), func(rel *entity.Relation) {
-		if !rr.classes.IsContentScoped(rel.Type) {
-			return
-		}
-		for _, i := range pg.rowIdx[rel.To] {
-			if rel.From == rel.To && (dir == store.DirectionBoth || rel.FromFace != pg.rows[i].Face) {
-				continue
-			}
-			pg.out[i] = append(pg.out[i], rel)
-		}
-	})
+	return out, nil
 }
 
 // collect drains a relation iterator, aborting on the first error.

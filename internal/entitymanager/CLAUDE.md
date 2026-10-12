@@ -31,6 +31,13 @@ Attribution and authorization deliberately stay in the entry points —
 subject), so an authorize inside the core would double-authorize and emit
 two `denied-write` rows for one denial.
 
+All three build the update question with `entityUpdateRequest`.
+`AuthorizeUpdate` asks the same question through `authorizeAndAudit`
+without writing, for a boundary that wants to refuse a denied caller before
+it spends work (the data-entry PATCH). It is advisory: the write checks
+again. Because it goes through the one write check, a rule added there
+applies to it too.
+
 ### PatchEntity ordering is load-bearing
 
 ```text

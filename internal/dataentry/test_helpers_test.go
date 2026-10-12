@@ -143,6 +143,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	if err = SetWorldNeighbors(app, svc.Store(), appbuild.RelationScopes(svc)); err != nil {
 		panic(err.Error())
 	}
+	app.faceEdges = faceEdgesOf(app)
 	app.entityManager = svc.EntityManager()
 	app.recreator = entitymanager.Recreator{M: svc.EntityManager()}
 	app.searcher = svc.Searcher()
@@ -282,14 +283,12 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		acl:         func() acl.ACL { return app.acl },
 		audit:       func() audit.Audit { return app.auditSink },
 		fields:      func() FieldVerdictResolver { return app.fieldResolver },
+		faceEdges:   app.faceEdges,
 		affordances: app.affordances,
 		visible:     app.visibleReader,
 		owner:       app.attachmentOwner,
 		uploads:     app.attachmentUploads,
 		provision:   newProvisionSeam(app),
-		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.worldNeighbors, e)
-		},
 	}
 
 	// Export handler over the app's current services (mirrors NewApp).
@@ -328,9 +327,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		visible:     app.visibleReader,
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
-		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.worldNeighbors, e)
-		},
+		faceEdges:   app.faceEdges,
 		readVisible: func(ctx context.Context, typeName string, ref entity.Ref) (*entity.Entity, bool, error) {
 			return app.visibleReader.addressRef(ctx, typeName, ref)
 		},

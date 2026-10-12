@@ -262,7 +262,7 @@ func (v *VersionTags) authorizeTag(ctx context.Context, e *entity.Entity, name s
 		Reason:   fmt.Sprintf("tag %q requires permission %q on %q", name.String(), perm, e.ID),
 	}
 	if !isAffordanceProbe(ctx) {
-		v.m.recordDeniedWrite(ctx, decision, req)
+		v.m.deps.Audit.Record(deniedWriteRecord(ctx, decision, req))
 	}
 	return &acl.ForbiddenError{Decision: decision}
 }

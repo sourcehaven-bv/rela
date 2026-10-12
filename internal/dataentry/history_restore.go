@@ -181,9 +181,10 @@ func writeRestoreResult(a *App,
 	if def, ok := meta.GetEntityDef(e.Type); ok {
 		plural = def.GetPlural(e.Type)
 	}
-	// The restored face's own edges (BUG-ISJHML), through the neighbor gate
-	// the GET uses, so the response names no neighbor the caller cannot read.
-	rels, visibleNeighbors, rerr := servedFaceEdges(r.Context(), a.worldNeighbors, e)
+	// The restored face's own edges, through the neighbor-gated seam the GET
+	// uses (BUG-ISJHML), so the response names no neighbor the caller
+	// cannot read.
+	rels, visibleNeighbors, rerr := a.faceEdges.read(r.Context(), e)
 	if rerr != nil {
 		writeGateError(w, r, rerr)
 		return
