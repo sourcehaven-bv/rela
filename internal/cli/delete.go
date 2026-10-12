@@ -95,7 +95,7 @@ func (c *DeleteCmd) Run(ctx context.Context, svc *writeServices) error {
 		if errors.Is(err, entitymanager.ErrHasRelations) {
 			return fmt.Errorf("entity %s has relation(s); use --cascade to delete them too", c.ID)
 		}
-		return err
+		return anchorConflict(c.ID, err)
 	}
 
 	out.WriteSuccess("Deleted %s", c.ID)
@@ -177,4 +177,15 @@ func otherEntities(result *entity.DeleteResult, id string) int {
 		}
 	}
 	return len(seen)
+}
+
+// anchorConflict rewrites a channel guard refusal as the CLI's form of the
+// 409 the HTTP API returns: the write conflicts with a channel, and the
+// message names the channel type to resolve. Other errors pass through.
+func anchorConflict(id string, err error) error {
+	if blocked, ok := errors.AsType[*entitymanager.AnchorBlockedError](err); ok {
+		return fmt.Errorf("conflict: %s has a %s channel, and that type sets on_entity_delete: block; "+
+			"close or remove the channel first: %w", id, blocked.ChannelType, err)
+	}
+	return err
 }

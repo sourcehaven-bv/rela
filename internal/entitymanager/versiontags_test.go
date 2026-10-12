@@ -255,6 +255,7 @@ func TestVersionTags_NoFieldWrite(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: cs, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: denyAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -412,6 +413,7 @@ func TestManager_TxCallbacksMarkContext(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: cs, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

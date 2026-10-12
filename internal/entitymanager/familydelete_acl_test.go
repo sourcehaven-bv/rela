@@ -126,6 +126,7 @@ func newFacedPolicyFixture(
 		CopyReadGate:    entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility:  allowAllCopyVisibility(t, st),
 		VersionRecorder: rec,
+		AnchorGuard:     entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

@@ -89,7 +89,8 @@ func newDefaultStatusManager(t *testing.T) *entitymanager.Manager {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: memstore.New(), Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: set,
-		FieldGate: entitymanager.AllowAllFieldGate{},
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatal(err)

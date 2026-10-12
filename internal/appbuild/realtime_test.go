@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
+	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/script"
@@ -220,4 +221,24 @@ func TestRealtime_NilHolder(t *testing.T) {
 	var holder *appbuild.RealtimeConfig
 	require.Nil(t, holder.Load().Config)
 	require.NoError(t, holder.Reload(context.Background()))
+}
+
+// Boot refuses a realtime.yaml that changes the anchor or cardinality of a
+// channel type the channel store has recorded. TestCheckChannelTypeRecords
+// pins that the check writes nothing.
+func TestRealtime_BootRefusesRecordedShapeChange(t *testing.T) {
+	root := realtimeProject(t, map[string]string{"realtime.yaml": realtimeYAML})
+	base, err := realtimeBase(t, root)
+	require.NoError(t, err)
+	st := memstore.New()
+	svc, err := base.Assemble(st, search.New(st, search.NewLinearSearch()), nil, nil)
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, appbuild.Channels(svc).RecordTypes(ctx, map[string]channels.TypeRecord{
+		"room": {Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityMany},
+	}))
+	require.NoError(t, svc.Close())
+
+	_, err = base.Assemble(st, search.New(st, search.NewLinearSearch()), nil, nil)
+	require.ErrorContains(t, err, "room: anchor family and cardinality many are recorded, family and one configured")
 }

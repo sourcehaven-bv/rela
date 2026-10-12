@@ -74,17 +74,31 @@ type Store interface {
 	// Tombstone of oldID moves or files it.
 	Rekey(ctx context.Context, oldID, newID string, at time.Time) error
 
-	// Tombstone moves channels out of reach without deleting them. An empty
-	// face takes every channel of the entity id, on every face, and files
-	// the audit trail away with them, so a new entity reusing the id starts
-	// clean. A face takes only the channels anchored to that face. An id
-	// without channels is not an error.
+	// Tombstone moves channels out of reach without deleting them, and
+	// returns the handle of the batch it moved. An empty face takes every
+	// channel of the entity id, on every face, and files the audit trail
+	// away with them, so a new entity reusing the id starts clean. A face
+	// takes only the channels anchored to that face. An id without channels
+	// is not an error: nothing moves and the handle is zero.
 	//
-	// Nothing in this interface reads a tombstoned channel again: no list,
-	// sweep, Remove or Delete reaches it, so neither retention nor erasure
-	// does. Purging tombstoned content is the retention work of
-	// TKT-964SIS, which adds the method that reaches it.
-	Tombstone(ctx context.Context, id string, face entity.Face, at time.Time) error
+	// Nothing in this interface reads a tombstoned channel again, except
+	// [Store.Untombstone] given its handle: no list, sweep, Remove or Delete
+	// reaches it, so neither retention nor erasure does. Purging tombstoned
+	// content is the retention work of TKT-964SIS, which adds the method
+	// that reaches it.
+	Tombstone(ctx context.Context, id string, face entity.Face, at time.Time) (TombstoneHandle, error)
+
+	// Untombstone puts back exactly the batch h names, with the audit trail
+	// a whole-entity tombstone filed away, and records the restore in the
+	// trail. It is how a caller undoes a tombstone it took before a write
+	// that then failed.
+	//
+	// When live channels sit on the batch's anchor (any channel of the id
+	// for a whole-entity batch, any channel of the face for a face batch),
+	// it refuses with [*OccupiedError] and nothing changes. A batch already
+	// restored, or never filed, is [ErrNotFound]. The zero handle is a
+	// no-op.
+	Untombstone(ctx context.Context, h TombstoneHandle, at time.Time) error
 
 	// Head returns the channel's metadata, including the last seq and rev a
 	// poller compares. It is cheap on every backend, and it reflects only
@@ -121,14 +135,16 @@ type Store interface {
 	// between backends.
 	Keys(ctx context.Context) ([]Key, error)
 
-	// AnchorModes returns the anchor mode recorded for each channel type.
-	// A store that recorded nothing returns an empty map. Compare it with
-	// the configuration through [AnchorModeChanges].
-	AnchorModes(ctx context.Context) (map[string]AnchorMode, error)
+	// TypeRecords returns the record of each channel type the store holds
+	// one for (see [TypeRecord]). A store that recorded nothing returns an
+	// empty map. Compare it with the configuration through
+	// [TypeRecordChanges].
+	TypeRecords(ctx context.Context) (map[string]TypeRecord, error)
 
-	// RecordAnchorModes records the anchor mode of each given type,
-	// replacing a mode already recorded for it. Types not given keep
-	// theirs. An invalid type is [ErrInvalidKey], an unknown mode
-	// [ErrInvalidMessage]; either way nothing is recorded.
-	RecordAnchorModes(ctx context.Context, modes map[string]AnchorMode) error
+	// RecordTypes records each given type, replacing a record already held
+	// for it, and writes nothing for a type whose record is unchanged.
+	// Types not given keep theirs. An invalid type is [ErrInvalidKey], an
+	// unknown mode or cardinality [ErrInvalidMessage]; either way nothing
+	// is recorded.
+	RecordTypes(ctx context.Context, records map[string]TypeRecord) error
 }

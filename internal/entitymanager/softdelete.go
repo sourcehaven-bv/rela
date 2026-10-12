@@ -83,6 +83,10 @@ func SoftDeleteEntity(ctx context.Context, m *Manager, id string) (*entity.Delet
 	if aclErr := m.authorizeFamily(ctx, acl.OpDelete, id, family, authorized); aclErr != nil {
 		return nil, aclErr
 	}
+	// The rows stay restorable, so the channels stay; only a block refuses.
+	if gErr := checkSoftDelete(ctx, m, id); gErr != nil {
+		return nil, gErr
+	}
 
 	// Collect, authorize and mark under one serialization, for the reason
 	// DeleteEntity gives: an edge added between an outside check and the mark
@@ -500,7 +504,21 @@ func PurgeSoftDeleted(ctx context.Context, m *Manager, cutoff time.Time) (int, e
 		if !me.DeletedAt.Before(cutoff) {
 			break // oldest first, so the rest are newer
 		}
+		// The purge removes the rows for good, so the channels go now.
+		undo, gErr := guardPurge(ctx, m, me.ID)
+		if gErr != nil {
+			errs = append(errs, fmt.Errorf("purge %s: %w", me.ID, gErr))
+			continue
+		}
 		res, pErr := sd.SoftDelete().PurgeMarked(ctx, me.ID)
+		if pErr != nil {
+			// The entity is still marked, or was restored meanwhile: either
+			// way its channels belong with it. One another purge removed
+			// meanwhile keeps them detached.
+			undo.run(ctx, func(id string, _ entity.Face) bool {
+				return !errors.Is(pErr, store.ErrNotFound) || familyStillStored(ctx, m.deps.Store, id)
+			})
+		}
 		if errors.Is(pErr, store.ErrNotFound) {
 			continue // restored or purged meanwhile
 		}

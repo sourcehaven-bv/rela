@@ -235,6 +235,10 @@ type Services struct {
 	// stopped in stopBackgroundServices, so Close and CloseAssembly stop the
 	// sweep their own Assemble started and no sibling's.
 	versionSweep versionSweep
+	// channelReconcileStop stops the reconciler that detaches the channels of
+	// entities deleted outside the manager (see startChannelReconciler).
+	// Per-assembled like versionSweep.
+	channelReconcileStop func()
 	// fieldRedactor applies field-level `visible:` policy to the unattended
 	// and identity-bearing read paths (TKT-425426). Never nil after
 	// construction: [visibility.NopRedactor] when no policy declares
@@ -2215,7 +2219,13 @@ func buildEntityManager(
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, pileWriter lua.PileWriter, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
+	channelStore channels.Store,
 ) (*entitymanager.Manager, error) {
+	// Boot refuses a realtime.yaml that would strand stored channels.
+	anchorGuard, err := channelGuardFor(base, channelStore)
+	if err != nil {
+		return nil, err
+	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		AliasRewriter: aliases,
 		Store:         st,
@@ -2252,6 +2262,7 @@ func buildEntityManager(
 		// from this manager (entitymanager.AttachmentsOf), so the copy
 		// engine, face deletes and uploads exclude each other.
 		AttachmentLocker: attachLocker,
+		AnchorGuard:      anchorGuard,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -2545,7 +2556,7 @@ func assemble(
 		channelAliasesFor(refs.channels, st))
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
-		attachLocker, fieldPol.gate)
+		attachLocker, fieldPol.gate, refs.channels)
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
 	// fail — unreachable with valid inputs (see the scupper in buildStateKV)
@@ -2662,6 +2673,7 @@ func finishAssembly(
 		s.versionSweep = sweep
 		sweep.Start()
 	}
+	s.channelReconcileStop = startChannelReconciler(s.store, refs.channels)
 	return s, nil
 }
 
@@ -2913,6 +2925,10 @@ func (s *Services) stopBackgroundServices() {
 	if s.versionSweep != nil {
 		s.versionSweep.Stop()
 		s.versionSweep = nil
+	}
+	if s.channelReconcileStop != nil {
+		s.channelReconcileStop()
+		s.channelReconcileStop = nil
 	}
 	if s.jobQueue != nil {
 		closeJobQueue(s.jobQueue)

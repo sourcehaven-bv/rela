@@ -70,6 +70,7 @@ func aliasHookManager(t *testing.T, rw entitymanager.AliasRewriter) (*entitymana
 		ACL:           acl.NopACL{},
 		Transitions:   statemachine.EmptySet(),
 		AliasRewriter: rw,
+		AnchorGuard:   entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

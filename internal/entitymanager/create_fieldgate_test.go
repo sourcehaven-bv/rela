@@ -30,6 +30,7 @@ func TestFieldGated_DefaultHandleSkipsGate(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
 		Transitions: statemachine.EmptySet(), FieldGate: gate,
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +117,7 @@ func TestFieldGate_DenialIsAudited(t *testing.T) {
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: sink, ACL: acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   &recordingGate{denied: map[string]bool{"salary": true}},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -702,7 +702,8 @@ CREATE TABLE IF NOT EXISTS channel_audit (
 CREATE INDEX IF NOT EXISTS channel_audit_anchor_idx ON channel_audit(anchor_id, tomb, id);
 CREATE TABLE IF NOT EXISTS channel_types (
 	type        TEXT PRIMARY KEY,
-	anchor_mode TEXT NOT NULL
+	anchor_mode TEXT NOT NULL,
+	cardinality TEXT NOT NULL
 ) STRICT;`
 
 // searchDDL is the full-text search index (DEC-10Z731): an FTS5 table with

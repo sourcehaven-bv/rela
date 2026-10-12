@@ -92,6 +92,13 @@ type faceEdgeFixture struct {
 // edges POL-1@draft implements CTL-1 and POL-1@published implements CTL-2.
 func newFaceEdgeFixture(t *testing.T, b concBackend) faceEdgeFixture {
 	t.Helper()
+	return newFaceEdgeFixtureWith(t, b, entitymanager.NopAnchorGuard{})
+}
+
+// newFaceEdgeFixtureWith is newFaceEdgeFixture with guard as the manager's
+// anchor guard.
+func newFaceEdgeFixtureWith(t *testing.T, b concBackend, guard entitymanager.AnchorGuard) faceEdgeFixture {
+	t.Helper()
 	st := b.open(t)
 	meta, err := metamodel.Parse([]byte(faceEdgeMetaYAML))
 	if err != nil {
@@ -113,6 +120,7 @@ func newFaceEdgeFixture(t *testing.T, b concBackend) faceEdgeFixture {
 		CopyReadGate:    entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility:  allowAllCopyVisibility(t, st),
 		VersionRecorder: &fakeRecorder{},
+		AnchorGuard:     guard,
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -338,7 +346,8 @@ func TestDeleteEntityFace_SourceReadErrorAborts(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: failingTailStore{f.st}, Meta: meta, Templater: nopTemplater{}, Audit: f.aud,
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
-		FieldGate: entitymanager.AllowAllFieldGate{},
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

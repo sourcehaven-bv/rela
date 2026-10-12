@@ -94,6 +94,7 @@ func newCopyListManager(
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		CopyGuard:   g,
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	}
 	withMeta(copyListMeta)(t, &deps)
 	for _, opt := range opts {

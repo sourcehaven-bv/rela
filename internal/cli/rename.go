@@ -194,7 +194,7 @@ func (c *RenameIDCmd) Run(svc *writeServices) error {
 	result, err := svc.EntityManager.RenameEntity(
 		context.Background(), c.OldID, c.NewID, entity.RenameOptions{DryRun: c.DryRun})
 	if err != nil {
-		return err
+		return anchorConflict(c.OldID, err)
 	}
 	verb := "Renamed"
 	if c.DryRun {

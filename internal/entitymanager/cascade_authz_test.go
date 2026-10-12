@@ -62,6 +62,7 @@ func cascadeManager(t *testing.T, st store.Store) *entitymanager.Manager {
 		// what New requires of a policy-backed Deps (#1437).
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

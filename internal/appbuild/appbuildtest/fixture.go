@@ -251,6 +251,7 @@ func New(meta *metamodel.Metamodel, opts ...Option) *appbuild.Services {
 		CopyReadGate:     tw.ReadGate,
 		CopyVisibility:   tw.Visibility,
 		AttachmentLocker: lock.For(st),
+		AnchorGuard:      entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		panic(fmt.Sprintf("appbuildtest.New: build entitymanager: %v", err))

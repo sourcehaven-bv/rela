@@ -119,27 +119,42 @@ func TestCompiled_AccessorsReturnCopies(t *testing.T) {
 	}
 }
 
-func TestAnchorMismatches(t *testing.T) {
+func TestShapeMismatches(t *testing.T) {
 	c, err := Parse([]byte(golden(t)), testMeta(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored := map[string]Anchor{
-		"incident-room": AnchorFace,   // configured family: a mismatch
-		"page-threads":  AnchorFace,   // unchanged
-		"gone":          AnchorFamily, // no longer declared: not a mismatch
+	stored := map[string]TypeShape{
+		// configured family/one: an anchor mismatch
+		"incident-room": {Anchor: AnchorFace, Cardinality: CardinalityOne},
+		// configured face/many: a cardinality mismatch
+		"page-threads": {Anchor: AnchorFace, Cardinality: CardinalityOne},
+		// no longer declared: not a mismatch
+		"gone": {Anchor: AnchorFamily, Cardinality: CardinalityMany},
 	}
-	got := AnchorMismatches(c, stored)
-	want := []AnchorMismatch{{ChannelType: "incident-room", Stored: AnchorFace, Configured: AnchorFamily}}
+	got := ShapeMismatches(c, stored)
+	want := []ShapeMismatch{
+		{
+			ChannelType: "incident-room",
+			Stored:      TypeShape{Anchor: AnchorFace, Cardinality: CardinalityOne},
+			Configured:  TypeShape{Anchor: AnchorFamily, Cardinality: CardinalityOne},
+		},
+		{
+			ChannelType: "page-threads",
+			Stored:      TypeShape{Anchor: AnchorFace, Cardinality: CardinalityOne},
+			Configured:  TypeShape{Anchor: AnchorFace, Cardinality: CardinalityMany},
+		},
+	}
 	if !slices.Equal(got, want) {
-		t.Fatalf("AnchorMismatches = %+v; want %+v", got, want)
+		t.Fatalf("ShapeMismatches = %+v; want %+v", got, want)
 	}
-	err = AnchorMismatchError(got)
+	err = ShapeMismatchError(got)
 	assertProblem(t, err, "channel_types.incident-room.anchor", "migrating them to another anchor is not supported yet")
+	assertProblem(t, err, "channel_types.page-threads.cardinality", "cannot change from one to many")
 	if strings.Contains(err.Error(), "restart") {
 		t.Errorf("the refusal suggests a restart: %v", err)
 	}
-	if AnchorMismatchError(nil) != nil || AnchorMismatches(nil, stored) != nil || AnchorMismatches(c, nil) != nil {
+	if ShapeMismatchError(nil) != nil || ShapeMismatches(nil, stored) != nil || ShapeMismatches(c, nil) != nil {
 		t.Error("no mismatches expected for empty input")
 	}
 }

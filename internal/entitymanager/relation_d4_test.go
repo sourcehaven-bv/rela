@@ -65,6 +65,7 @@ func newD4Manager(t *testing.T, b concBackend) (*entitymanager.Manager, store.St
 		CopyReadGate:    entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility:  allowAllCopyVisibility(t, st),
 		VersionRecorder: &fakeRecorder{},
+		AnchorGuard:     entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

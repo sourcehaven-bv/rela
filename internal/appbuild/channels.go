@@ -73,9 +73,10 @@ func Channels(s *Services) channels.Store { return s.channels }
 // new entity that reuses the id. It is an alias subscriber (see
 // newAliasFanout) and a [entitymanager.CreateNotifier].
 //
-// A whole-entity delete leaves the channels in place: whether they are
-// deleted, kept for retention or detached is the delete policy's call, not
-// this hook's. The create hook is what makes keeping them safe.
+// It is the second line of defense. The first is channelGuard, which the
+// manager calls before the write: it applies the delete policy and clears
+// newID before a rename. These hooks run after the commit and sweep up
+// channels a concurrent first post created while the write ran.
 type channelAliases struct {
 	store channels.Store
 	// families reads the stored faces of an id, to tell a new entity from a
@@ -95,28 +96,23 @@ func channelAliasesFor(cs channels.Store, st store.EntityLister) *channelAliases
 	return &channelAliases{store: cs, families: st, now: time.Now}
 }
 
-// EntityRenamed moves the channels of oldID to newID. Channels already on
-// newID belong to an earlier entity with that id, so they are tombstoned
-// first. A sweep then tombstones any channel an append created under oldID
-// while the rename ran.
+// EntityRenamed moves the channels of oldID to newID. The guard already
+// detached what an earlier entity left on newID, before the rename. A sweep
+// then tombstones any channel an append created under oldID while the
+// rename ran.
 //
-// The hook runs after the rename commits. A message posted to newID in the
-// window before the first tombstone lands in a channel that the tombstone
-// then detaches, together with the earlier entity's leftovers; the poster
-// sees the message vanish. The window is the time between the commit and
-// this hook. Closing it needs the rename and the tombstone in one
-// transaction, which the store seam does not offer. The incarnation check
-// (see [channels.Channel.Incarnation]) keeps the reverse safe: a leftover
-// the tombstone misses is never served as the renamed entity's.
+// A channel on newID at this point was created by a post to the renamed
+// entity between the commit and this hook. The rekey then conflicts, and
+// that channel is detached so the renamed entity's own channels can move;
+// the poster sees the message vanish. Closing the window needs the rename
+// and the rekey in one transaction, which the store seam does not offer.
+// If the rekey still fails, the channels stay under oldID, where
+// EntityCreated detaches them before a new entity at oldID could read them.
 func (a *channelAliases) EntityRenamed(ctx context.Context, oldID, newID string) error {
 	at := a.now()
-	if err := a.store.Tombstone(ctx, newID, "", at); err != nil {
-		return fmt.Errorf("channels: clear %s before rename: %w", newID, err)
-	}
 	err := a.store.Rekey(ctx, oldID, newID, at)
 	if errors.Is(err, channels.ErrRekeyConflict) {
-		// An append landed on newID between the tombstone and the rekey.
-		if err = a.store.Tombstone(ctx, newID, "", at); err == nil {
+		if _, err = a.store.Tombstone(ctx, newID, "", at); err == nil {
 			err = a.store.Rekey(ctx, oldID, newID, at)
 		}
 	}
@@ -129,19 +125,29 @@ func (a *channelAliases) EntityRenamed(ctx context.Context, oldID, newID string)
 	return nil
 }
 
-// sweep tombstones channels created under oldID while the rename ran. They
-// cannot be moved: newID now holds the renamed entity's channels, so a
-// second Rekey would conflict.
-func (a *channelAliases) sweep(ctx context.Context, oldID string, at time.Time) error {
-	left, err := a.store.ListEntity(ctx, oldID)
+// sweep tombstones the channels left under id. After a rename they were
+// created under oldID while the rename ran, and cannot be moved: newID now
+// holds the renamed entity's channels, so a second Rekey would conflict.
+// After a delete they were created by a first post that landed after the
+// guard ran.
+func (a *channelAliases) sweep(ctx context.Context, id string, at time.Time) error {
+	left, err := a.store.ListEntity(ctx, id)
 	if err != nil || len(left) == 0 {
 		return err
 	}
-	return a.store.Tombstone(ctx, oldID, "", at)
+	_, err = a.store.Tombstone(ctx, id, "", at)
+	return err
 }
 
-// EntityDeleted does nothing; see the type doc.
-func (a *channelAliases) EntityDeleted(context.Context, string) error { return nil }
+// EntityDeleted detaches channels a concurrent first post created after the
+// guard detached the rest. The guard applied the delete policy; whatever is
+// left now belongs to an entity that no longer exists.
+func (a *channelAliases) EntityDeleted(ctx context.Context, id string) error {
+	if err := a.sweep(ctx, id, a.now()); err != nil {
+		return fmt.Errorf("channels: sweep %s after delete: %w", id, err)
+	}
+	return nil
+}
 
 // EntityFaceDeleted detaches the channels anchored to the deleted face.
 // Channels anchored to the whole entity stay.
@@ -149,7 +155,7 @@ func (a *channelAliases) EntityFaceDeleted(ctx context.Context, id string, face 
 	if face == "" {
 		return nil
 	}
-	if err := a.store.Tombstone(ctx, id, face, a.now()); err != nil {
+	if _, err := a.store.Tombstone(ctx, id, face, a.now()); err != nil {
 		return fmt.Errorf("channels: detach %s: %w", entity.FormatStateRef(id, face), err)
 	}
 	return nil
@@ -172,9 +178,9 @@ func (a *channelAliases) EntityCreated(ctx context.Context, id string, face enti
 	}
 	switch {
 	case len(headers) <= 1:
-		err = a.store.Tombstone(ctx, id, "", a.now())
+		_, err = a.store.Tombstone(ctx, id, "", a.now())
 	case face != "":
-		err = a.store.Tombstone(ctx, id, face, a.now())
+		_, err = a.store.Tombstone(ctx, id, face, a.now())
 	}
 	if err != nil {
 		return fmt.Errorf("channels: clear %s on create: %w", entity.FormatStateRef(id, face), err)

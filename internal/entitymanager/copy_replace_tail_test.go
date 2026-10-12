@@ -90,6 +90,7 @@ func TestCopyReplace_DeletesTheTargetTail(t *testing.T) {
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		CopyGuard:   allowGuard{allow: true},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
