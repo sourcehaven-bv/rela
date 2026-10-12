@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/changefeed"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // sseSink is a thread-safe io.Writer + http.Flusher that records the
@@ -35,30 +37,89 @@ func (s *sseSink) String() string {
 	return s.buf.String()
 }
 
-// runSSEConn drives runSSELoop on a goroutine with the given gated ctx,
-// feeding events through a returned channel. The caller sends events,
-// waits past the flush window, then reads the sink. cancel stops the
-// loop. The flush window is short in tests via the package constant.
-func runSSEConn(ctx context.Context, t *testing.T, app *App) (send chan<- sseEvent, sink *sseSink, stop func()) {
+// testEvent is what a test feeds a connection: a broker frame (Name set),
+// an entity change (EntityType set) or a relation change.
+type testEvent struct {
+	Name           string
+	Data           string
+	EntityType     string
+	RelationChange bool
+}
+
+// chanSource is a store change watcher whose events a test sends by hand.
+type chanSource struct{ ch chan store.Event }
+
+func (c chanSource) Subscribe(int) (events <-chan store.Event, cancel func()) { return c.ch, func() {} }
+
+// startTestFeed returns a started change feed and the channel that feeds it.
+func startTestFeed(t *testing.T) (feed *changefeed.Bus, events chan<- store.Event) {
 	t.Helper()
-	ch := make(chan sseEvent, 64)
+	feed, err := changefeed.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := chanSource{ch: make(chan store.Event, 64)}
+	if err := feed.Start(src); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(feed.Close)
+	return feed, src.ch
+}
+
+// runSSEConn drives runSSELoop on a goroutine with the given gated ctx.
+// Broker frames go to the loop's broker channel; entity and relation
+// changes go through a real change feed, as store events do in
+// production. The caller sends events, waits past the flush window, then
+// reads the sink. stop ends the loop.
+func runSSEConn(ctx context.Context, t *testing.T, app *App) (send chan<- testEvent, sink *sseSink, stop func()) {
+	t.Helper()
+	feed, storeEvents := startTestFeed(t)
+	sub := feed.Subscribe("")
+	broker := make(chan sseEvent, 64)
+	in := make(chan testEvent, 64)
 	sink = &sseSink{}
 	loopCtx, cancel := context.WithCancel(ctx)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_events", http.NoBody).WithContext(loopCtx)
+	conn := &sseConn{w: sink, flusher: sink, timing: defaultSSETimings}
 	done := make(chan struct{})
 	go func() {
-		app.runSSELoop(sink, req, sink, ch)
+		app.runSSELoop(conn, req, broker, sub, sub.Start(), nil)
 		close(done)
+	}()
+	go func() {
+		for ev := range in {
+			switch {
+			case ev.Name != "":
+				broker <- sseEvent{Name: ev.Name, Data: ev.Data}
+			case ev.RelationChange:
+				storeEvents <- store.Event{Op: store.EventRelationCreated, RelationType: "member-of", From: "TKT-1", To: "G"}
+			default:
+				storeEvents <- store.Event{Op: store.EventEntityUpdated, EntityType: ev.EntityType, EntityID: "TKT-1"}
+			}
+		}
 	}()
 	stop = func() {
 		cancel()
 		<-done
+		close(in)
+		sub.Close()
 	}
-	return ch, sink, stop
+	return in, sink, stop
 }
 
 // settle waits for one flush window plus slack so coalesced frames land.
 func settle() { time.Sleep(sseFlushInterval + 80*time.Millisecond) }
+
+// sseData returns the data payloads in an SSE transcript, one per frame.
+func sseData(out string) []string {
+	var data []string
+	for line := range strings.SplitSeq(out, "\n") {
+		if rest, ok := strings.CutPrefix(line, "data: "); ok {
+			data = append(data, rest)
+		}
+	}
+	return data
+}
 
 // TestSSEACL_PerTypeGating pins AC1: a principal with read:[ticket]
 // receives a ticket change nudge but NOT a feature change. AC3: no
@@ -74,8 +135,8 @@ func TestSSEACL_PerTypeGating(t *testing.T) {
 	send, sink, stop := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
 	defer stop()
 
-	send <- sseEvent{EntityType: "ticket"}
-	send <- sseEvent{EntityType: "feature"}
+	send <- testEvent{EntityType: "ticket"}
+	send <- testEvent{EntityType: "feature"}
 	settle()
 
 	out := sink.String()
@@ -108,8 +169,8 @@ func TestSSEACL_RoleRelationInheritance(t *testing.T) {
 	send, sink, stop := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
 	defer stop()
 
-	send <- sseEvent{EntityType: "ticket"}  // Query verdict → delivered
-	send <- sseEvent{EntityType: "feature"} // no grant → withheld
+	send <- testEvent{EntityType: "ticket"}  // Query verdict → delivered
+	send <- testEvent{EntityType: "feature"} // no grant → withheld
 	settle()
 
 	out := sink.String()
@@ -135,8 +196,8 @@ func TestSSEACL_DenyAllWithholds(t *testing.T) {
 	send, sink, stop := runSSEConn(gateCtxFor(principalCtx("bob"), t, d), t, app)
 	defer stop()
 
-	send <- sseEvent{EntityType: "ticket"}
-	send <- sseEvent{EntityType: "feature"}
+	send <- testEvent{EntityType: "ticket"}
+	send <- testEvent{EntityType: "feature"}
 	settle()
 
 	if out := sink.String(); strings.Contains(out, "entity:changed") {
@@ -151,16 +212,20 @@ func TestSSEACL_NoIDOnWire(t *testing.T) {
 	send, sink, stop := runSSEConn(aliceCtx(), t, app) // NopACL ctx → all visible
 	defer stop()
 
-	send <- sseEvent{EntityType: "ticket"}
+	send <- testEvent{EntityType: "ticket"}
 	settle()
 
 	out := sink.String()
 	if !strings.Contains(out, `"type":"ticket"`) {
 		t.Fatalf("expected a ticket change frame:\n%s", out)
 	}
-	for _, leak := range []string{"TKT-", "id", `"id"`} {
-		if strings.Contains(out, leak) {
-			t.Errorf("entity id token %q leaked onto the SSE wire:\n%s", leak, out)
+	// The `id:` field is the opaque resume token, not an entity id; the
+	// payloads must carry no id at all.
+	for _, data := range sseData(out) {
+		for _, leak := range []string{"TKT-", "id", `"id"`} {
+			if strings.Contains(data, leak) {
+				t.Errorf("entity id token %q leaked onto the SSE wire:\n%s", leak, out)
+			}
 		}
 	}
 }
@@ -173,7 +238,7 @@ func TestSSEACL_Debounce(t *testing.T) {
 	defer stop()
 
 	for range 20 {
-		send <- sseEvent{EntityType: "ticket"}
+		send <- testEvent{EntityType: "ticket"}
 	}
 	settle()
 
@@ -190,8 +255,8 @@ func TestSSEACL_DebounceMultiType(t *testing.T) {
 	defer stop()
 
 	for range 5 {
-		send <- sseEvent{EntityType: "ticket"}
-		send <- sseEvent{EntityType: "feature"}
+		send <- testEvent{EntityType: "ticket"}
+		send <- testEvent{EntityType: "feature"}
 	}
 	settle()
 
@@ -224,9 +289,9 @@ func TestSSEACL_TwoPrincipalsDifferentFrames(t *testing.T) {
 	defer bStop()
 
 	// The same store event reaches both connections.
-	for _, s := range []chan<- sseEvent{aSend, bSend} {
-		s <- sseEvent{EntityType: "ticket"}
-		s <- sseEvent{EntityType: "feature"}
+	for _, s := range []chan<- testEvent{aSend, bSend} {
+		s <- testEvent{EntityType: "ticket"}
+		s <- testEvent{EntityType: "feature"}
 	}
 	settle()
 
@@ -285,7 +350,7 @@ func TestSSEACL_VerdictCached(t *testing.T) {
 
 	// Three ticket events → the verdict is resolved ONCE (cached).
 	for range 3 {
-		send <- sseEvent{EntityType: "ticket"}
+		send <- testEvent{EntityType: "ticket"}
 	}
 	settle()
 	if c := rg.callCount("ticket"); c != 1 {
@@ -295,8 +360,8 @@ func TestSSEACL_VerdictCached(t *testing.T) {
 	// A relation change clears the cache; the next ticket event re-resolves.
 	// (app.acl is nil here → freshReadGate keeps the mock, so the same gate
 	// is re-queried — this pins the cache-clear, not the membership walk.)
-	send <- sseEvent{RelationChange: true}
-	send <- sseEvent{EntityType: "ticket"}
+	send <- testEvent{RelationChange: true}
+	send <- testEvent{EntityType: "ticket"}
 	settle()
 	if c := rg.callCount("ticket"); c != 2 {
 		t.Errorf("ReadQuery(ticket) called %d times after invalidation, want 2 (re-resolved)", c)
@@ -326,7 +391,7 @@ func TestSSEACL_MembershipChangeReGates(t *testing.T) {
 	defer stop()
 
 	// Before membership: alice has DenyAll on ticket → no nudge.
-	send <- sseEvent{EntityType: "ticket"}
+	send <- testEvent{EntityType: "ticket"}
 	settle()
 	if strings.Contains(sink.String(), "entity:changed") {
 		t.Fatalf("alice received a ticket nudge before gaining membership:\n%s", sink.String())
@@ -335,8 +400,8 @@ func TestSSEACL_MembershipChangeReGates(t *testing.T) {
 	// Grant: alice joins the editors group (member-of edge). This is a
 	// role-conferring relation write → RelationChange → re-derive gate.
 	seedRelation(app, entity.NewRelation("alice", "member-of", "editors"))
-	send <- sseEvent{RelationChange: true}
-	send <- sseEvent{EntityType: "ticket"}
+	send <- testEvent{RelationChange: true}
+	send <- testEvent{EntityType: "ticket"}
 	settle()
 	if !strings.Contains(sink.String(), `"type":"ticket"`) {
 		t.Errorf("alice should receive ticket nudges after joining the conferring group (re-gate), got:\n%s", sink.String())
@@ -362,7 +427,7 @@ func TestSSEACL_FailClosedOnZeroVerdict(t *testing.T) {
 	send, sink, stop := runSSEConn(ctx, t, app)
 	defer stop()
 
-	send <- sseEvent{EntityType: "ticket"}
+	send <- testEvent{EntityType: "ticket"}
 	settle()
 
 	if out := sink.String(); strings.Contains(out, "entity:changed") {
@@ -384,8 +449,8 @@ func TestSSEACL_NonEntityEventsPassThrough(t *testing.T) {
 	send, sink, stop := runSSEConn(gateCtxFor(principalCtx("bob"), t, d), t, app)
 	defer stop()
 
-	send <- sseEvent{Name: "refresh", Data: "refresh"}
-	send <- sseEvent{Name: "git:status", Data: "{}"}
+	send <- testEvent{Name: "refresh", Data: "refresh"}
+	send <- testEvent{Name: "git:status", Data: "{}"}
 	// give the immediate (non-debounced) writes a moment
 	time.Sleep(50 * time.Millisecond)
 
@@ -405,8 +470,8 @@ func TestSSEACL_NopACLAllTypesFlow(t *testing.T) {
 	send, sink, stop := runSSEConn(context.Background(), t, app)
 	defer stop()
 
-	send <- sseEvent{EntityType: "ticket"}
-	send <- sseEvent{EntityType: "feature"}
+	send <- testEvent{EntityType: "ticket"}
+	send <- testEvent{EntityType: "feature"}
 	settle()
 
 	out := sink.String()

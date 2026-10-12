@@ -25,7 +25,7 @@ vi.mock('@/stores', () => ({
 // instance the composable connected to and drive server-sent events
 // through its _emit helper.
 interface EmittingSource {
-  _emit: (type: string, data?: string) => void
+  _emit: (type: string, data?: string, lastEventId?: string) => void
 }
 const BaseEventSource = globalThis.EventSource as unknown as new (url: string) => EventSource
 let lastSource: EmittingSource | null = null
@@ -262,6 +262,47 @@ describe('useEvents', () => {
       expect(mockUIError).toHaveBeenCalledWith(
         'Configuration not reloaded; the previous version is still in use.'
       )
+    })
+  })
+
+  describe('resume token (TKT-3A1200)', () => {
+    function sourceUrl() {
+      return (lastSource as unknown as { url: string }).url
+    }
+
+    async function reconnect(vm: TestVm) {
+      vm.disconnect()
+      vm.connect()
+      await vi.runAllTimersAsync()
+    }
+
+    it('sends the last event id on reconnect', async () => {
+      const { vm } = await mountConnected()
+      lastSource!._emit('ready', '{}', 'tok-ready')
+      lastSource!._emit('entity:changed', JSON.stringify({ type: 'ticket' }), 'tok-change')
+
+      await reconnect(vm)
+
+      expect(sourceUrl()).toContain('?last_event_id=tok-change')
+    })
+
+    it('keeps the stored id when an event carries none', async () => {
+      const { vm } = await mountConnected()
+      lastSource!._emit('ping', '{}', 'tok-ping')
+      lastSource!._emit('refresh', 'refresh', '')
+
+      await reconnect(vm)
+
+      expect(sourceUrl()).toContain('?last_event_id=tok-ping')
+    })
+
+    it('escapes the token in the query', async () => {
+      const { vm } = await mountConnected()
+      lastSource!._emit('ready', '{}', 'a&b=c')
+
+      await reconnect(vm)
+
+      expect(sourceUrl()).toContain('?last_event_id=a%26b%3Dc')
     })
   })
 

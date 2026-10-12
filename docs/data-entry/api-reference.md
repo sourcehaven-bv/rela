@@ -506,13 +506,113 @@ The `title` is the owner's display title as this principal may read it.
 
 ## SSE events
 
-A successful PATCH that performs writes broadcasts:
+`GET /api/v1/_events` is a stream of staleness signals, not an event log. A
+write produces at most one `entity:changed` frame per entity type, with data
+`{"type": "<type>"}` and no entity id. The frame arrives after the write is
+stored, whichever process made it. A connection only receives types its
+principal may read. Writes that change nothing, and writes rejected with
+400, 403 or 422, produce no frame. Relation writes produce no
+`entity:changed` frame of their own. For changes that a per-type signal
+misses, such as a related entity or an access change, use
+[live views](#live-views).
 
-- One `entity:updated` event for the PATCHed entity, ONLY when entity properties or content actually changed
-- One `relation:created` / `relation:updated` / `relation:deleted` event per actual relation write (none on a no-op)
-- No events on 400/422 (handler returns before broadcast)
+Frames:
 
-A relations-only PATCH that produces all no-ops emits zero events.
+| Event            | Data                         | `id:` | Meaning                                              |
+| ---------------- | ---------------------------- | ----- | ---------------------------------------------------- |
+| `ready`          | `{"conn": "<id>"}`           | yes   | First frame; the stream starts at this position      |
+| `refresh`        | `{"reason":"resync", "conn": "<id>"}` | yes | First frame instead of `ready`: re-fetch everything |
+| `entity:changed` | `{"type": "<type>"}`         | last  | Entities of the type changed; re-fetch them          |
+| `live:changed`   | `{"key": "<key>"}`           | no    | A subscribed GET's response changed; re-fetch it     |
+| `ping`           | `{}`                         | yes   | Sent every 25 seconds                                |
+| `refresh`        | `refresh`                    | no    | Files changed; re-fetch everything                   |
+| `config-error`   | `{"file": ..., "error": ...}` | no   | A `data-entry.yaml` reload was rejected              |
+| `config-changed` | `config-changed`             | no    | A Configure save replaced the server; reload the page |
+| `git`, `git:status` | `git`, `{}`               | no    | Git status changed                                   |
+
+`conn` names the stream for [live views](#live-views). The legacy
+`GET /api/events` stream sends `ready` with `{}` and no live views.
+
+Changes within 200 ms are coalesced. In a burst, only the last
+`entity:changed` frame carries an `id:`.
+
+**Resuming.** The `id:` is an opaque resume token. To reconnect without
+missing changes, send the last token you received in the `Last-Event-ID`
+header or the `last_event_id` query parameter (the header wins when both are
+present). The server then sends one `entity:changed` frame for every readable
+type that changed since that token, however long the client was away. A
+token the server cannot use (malformed, from another server process, or from
+before a restart) yields a first frame of `refresh` with
+`{"reason":"resync"}`; the client must then re-fetch everything it shows.
+Tokens are encrypted, carry no authority, and do not reveal how many changes
+happened between them (TKT-3A1200).
+
+Resume covers every change the server received from its store. Under extreme
+write bursts the store can drop change notifications; a change lost that way
+is missed by live streams and by resume alike.
+
+### Live views
+
+A client can ask the stream to tell it when a specific GET response changes
+for it (TKT-HJ5Z9Y). After each change, the server repeats every subscribed
+GET as the subscribing user, through the same handlers and access checks as a
+real request, and compares a hash of the status and body with the previous
+one. When the hash moves, the stream sends `live:changed` with the client's
+own key. The frame carries nothing else; the client re-fetches the GET.
+
+This covers what `entity:changed` cannot: a view that shows related entities,
+a list column from another type, and gaining or losing access. A GET that
+starts returning 404 is a change.
+
+Set a stream's subscriptions with:
+
+```http
+PUT /api/v1/_events/{conn}/subscriptions
+Content-Type: application/json
+
+{"subscriptions": [
+  {"key": "detail", "path": "/api/v1/tickets/TKT-1"},
+  {"key": "list", "path": "/api/v1/tickets?per_page=25&filter[status]=open"},
+  {"key": "view", "path": "/api/v1/_views/ticket/TKT-1?world=published"}
+]}
+```
+
+The body replaces the whole set; an empty list clears it. The answer is 204.
+
+- `key` is the client's label: 1 to 64 characters of letters, digits and
+  `_ : . -`, unique within the request.
+- `path` is one of three GETs: an entity
+  (`/api/v1/{plural}/{id}`, query `include`, `fields`, `world`), a list
+  (`/api/v1/{plural}`, the list query parameters including `filter[...]`),
+  or a view (`/api/v1/_views/{type}/{id}`, query `world`). Any other path or
+  query parameter is a 400.
+- A list path cannot carry the free-text `q`: its hits are gated after a
+  capped search over every entity, so a hidden write could change the visible
+  result and a frame would signal that write.
+- A stream holds at most 16 subscriptions (400 above that), and one user at
+  most 64 across all their streams (429). Unauthenticated callers all share
+  one identity, so for them only the per-stream limit applies.
+- The PUT reads each new subscription once, as the baseline, before it
+  answers 204. Re-fetch once after the 204: that response is at least as new
+  as the baseline, so any later change is reported. If the baseline read does
+  not finish in time, a later check takes it and sends a frame.
+- `{conn}` is the id from `ready`. An unknown id, a closed stream and another
+  user's stream all give 404: wait for the next `ready`. A stream opened with
+  different credentials (for example, other roles) gives 409
+  `stream_principal_stale`: reconnect the stream.
+
+Checks run in rounds on a fixed 500 ms clock, when anything changed since the
+last round. Each distinct (user, path) pair is checked once per round however
+many streams subscribe to it. A round checks at most 256 pairs and starts no
+check after 10 seconds. The pairs it skips get a `live:changed` frame without
+a check, so the client re-fetches. The next round starts where the last one
+stopped, so every pair is checked in turn. A skipped pair is also checked on
+the next tick, even when nothing else changed.
+
+A change can land while a PUT takes its baseline. The round skips that
+subscription, and checks it on the first tick after the PUT stored the
+baseline. A frame then comes only if the response differs from the
+baseline.
 
 ## ETag / If-Match
 

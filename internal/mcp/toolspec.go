@@ -153,9 +153,11 @@ func enum(values ...string) propOption {
 // as list_entities' old `where`) is dropped silently, and the caller receives
 // an unfiltered answer it takes for a filtered one. A free function, like [setDeps], to keep
 // Server under its plimsoll load line.
-func addTool(s *Server, tool *mcpgo.Tool, handler mcpgo.ToolHandler) {
+//
+// It returns the wrapped handler, which the watch tool replays.
+func addTool(s *Server, tool *mcpgo.Tool, handler mcpgo.ToolHandler) mcpgo.ToolHandler {
 	known := declaredArguments(tool)
-	s.mcp.AddTool(tool, func(ctx context.Context, req *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	wrapped := func(ctx context.Context, req *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		var unknown []string
 		for name := range newToolRequest(req).GetArguments() {
 			if _, ok := known[name]; !ok {
@@ -168,7 +170,9 @@ func addTool(s *Server, tool *mcpgo.Tool, handler mcpgo.ToolHandler) {
 				strings.Join(unknown, ", "), tool.Name, strings.Join(slices.Sorted(maps.Keys(known)), ", "))), nil
 		}
 		return handler(ctx, req)
-	})
+	}
+	s.mcp.AddTool(tool, wrapped)
+	return wrapped
 }
 
 // declaredArguments returns the argument names in tool's input schema.

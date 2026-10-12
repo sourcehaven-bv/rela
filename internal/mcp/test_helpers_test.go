@@ -42,13 +42,14 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 		Config:        svc.Config(),
 		LuaWriteDeps:  svc.LuaWriteDeps(),
 		Watcher:       nopWatcher{},
+		Watch:         WatchDeps{Changes: st, Rebind: svc.GatedReads().Rebind},
 		// Note: this real empty dir (what lua_run walks) is
 		// intentionally distinct from LuaWriteDeps' ProjectRoot, which
 		// points at the fixture's in-memory /project. No current test
 		// resolves a Lua write relative to that root; align the two if
 		// one ever does.
 		ProjectRoot: t.TempDir(),
-		Attachments: testAttachmentDeps(t, svc, meta, audit.Nop{}),
+		Attachments: testAttachmentDeps(t, svc, meta),
 		World:       store.TrivialScope(),
 		Families:    store.TrivialScope(),
 		// Read only, as stdio `rela mcp` wires it: list_comments without the
@@ -58,10 +59,8 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 }
 
 // testAttachmentDeps wires the attachment tools over svc the way `rela mcp`
-// does (no command runner, store backstop limit), with sink as the audit log.
-func testAttachmentDeps(
-	t *testing.T, svc *appbuild.Services, meta *metamodel.Metamodel, sink audit.Audit,
-) AttachmentDeps {
+// does (no command runner, store backstop limit), with no audit log.
+func testAttachmentDeps(t *testing.T, svc *appbuild.Services, meta *metamodel.Metamodel) AttachmentDeps {
 	t.Helper()
 	owner, err := entitymanager.AttachmentsOf(svc.EntityManager())
 	if err != nil {
@@ -75,7 +74,7 @@ func testAttachmentDeps(
 		Snapshot:   func() (AttachmentSnapshot, error) { return snap, nil },
 		Uploads:    attachment.NewLimiter(attachment.DefaultMaxUploads),
 		Authorizer: svc.ACL(),
-		Audit:      sink,
+		Audit:      audit.Nop{},
 	}
 }
 

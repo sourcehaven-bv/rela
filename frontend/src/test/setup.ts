@@ -140,9 +140,10 @@ class MockEventSource {
     this.readyState = MockEventSource.CLOSED
   }
 
-  // Test helper: emit an event
-  _emit(type: string, data?: string) {
-    const event = new MessageEvent(type, { data })
+  // Test helper: emit an event. lastEventId mimics the browser, which
+  // reports the most recent `id:` field on every event.
+  _emit(type: string, data?: string, lastEventId = '') {
+    const event = new MessageEvent(type, { data, lastEventId })
     const typeListeners = this.listeners.get(type)
     if (typeListeners) {
       typeListeners.forEach((listener) => listener(event))
