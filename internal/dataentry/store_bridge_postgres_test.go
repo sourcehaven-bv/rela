@@ -61,22 +61,19 @@ func TestStoreEventBridgeCrossProcessSSE(t *testing.T) {
 	require.NoError(t, err)
 	bStore, _, err := pgstore.Open(ctx, bPool, dsn)
 	require.NoError(t, err)
-	app := &App{store: bStore, broker: newEventBroker()}
-	app.startStoreEventBridge()
 	t.Cleanup(func() {
-		app.StopWatching()
 		_ = bStore.Close()
 		_ = bPoolCloser.Close()
 	})
+	app := bridgeApp(t, bStore)
 
-	sse := app.broker.subscribe()
-	defer app.broker.unsubscribe(sse)
+	sub := app.feed.Subscribe("")
+	defer sub.Close()
 
-	// A writes; B's SSE feed must surface a cross-process entity change
-	// for the feature type (no id on the wire — TKT-POT9GQ).
+	// A writes; B's change feed must surface a cross-process entity change
+	// for the feature type (types only, no id — TKT-POT9GQ).
 	require.NoError(t, a.CreateEntity(ctx, entity.New("FEAT-1", "feature")))
-	ev := waitForEntityChange(t, sse, "feature")
-	require.Empty(t, ev.Data, "cross-process entity change must carry no id")
+	waitForEntityChange(t, sub, "feature")
 }
 
 // dsnWithSchema returns base re-serialized as a key/value DSN with search_path

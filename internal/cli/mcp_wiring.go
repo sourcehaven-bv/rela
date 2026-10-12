@@ -253,6 +253,7 @@ func (s *mcpServices) deps() relamcp.Deps {
 		LuaWriteDeps:  s.svc.LuaWriteDeps(),
 		LuaCache:      s.svc.ScriptEngine().LuaCache(),
 		Watcher:       s.watcher,
+		Watch:         relamcp.WatchDeps{Changes: s.svc.Store(), Rebind: reads.Rebind},
 		ProjectRoot:   s.svc.Paths().Root,
 		World:         reads.LuaReads.World,
 		Families:      appbuild.CompiledWorlds(s.svc).Families(),

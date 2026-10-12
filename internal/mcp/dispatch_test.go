@@ -199,6 +199,10 @@ var toolCalls = map[string]struct {
 	// The write comment tools are not registered on this stdio-shaped
 	// server; tools_comments_test.go drives them.
 	"list_comments": {args: `{"id":"REQ-001"}`},
+	// A successful watch returns a cursor keyed per process, which no golden
+	// can pin; the refusal of a non-watchable tool is stable.
+	// tools_watch_test.go covers the behavior.
+	"watch": {args: `{"targets":[{"tool":"search_entities","args":{"query":"x"}}]}`, wantErr: true},
 }
 
 // TestDispatch_AnalyzeEveryCheck drives every analyze check through a real

@@ -620,7 +620,7 @@ func TestHandleSSEHeaders(t *testing.T) {
 		close(done)
 	}()
 
-	// The first flush means headers and the initial keepalive are written.
+	// The first flush means headers and the initial ready frame are written.
 	w.awaitFlush(t)
 	cancel()
 	<-done
@@ -640,8 +640,8 @@ func TestHandleSSEHeaders(t *testing.T) {
 		t.Errorf("SSE must not set Access-Control-Allow-Credentials (security regression), got %q", got)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, ": connected") {
-		t.Errorf("expected initial keepalive comment, got %q", body)
+	if !strings.HasPrefix(body, "event: ready\nid: ") {
+		t.Errorf("expected an initial ready frame with a resume token, got %q", body)
 	}
 }
 

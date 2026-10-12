@@ -200,7 +200,7 @@ func (h *cascadeHost) WriteRelation(ctx context.Context, r *entity.Relation) err
 // ValidateRelation satisfies [autocascade.Host.ValidateRelation] by
 // delegating to the metamodel.
 func (h *cascadeHost) ValidateRelation(relType, fromType, toType string) error {
-	return h.deps.Meta.ValidateRelation(relType, fromType, toType)
+	return metamodel.NewValidator(h.deps.Meta).ValidateRelation(relType, fromType, toType)
 }
 
 // DeleteEntity satisfies [autocascade.Host.DeleteEntity]. The entityType

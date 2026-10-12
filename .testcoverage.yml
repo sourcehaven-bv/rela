@@ -31,6 +31,10 @@ override:
   # place the pointer grammar is enforced (TKT-WAV8XP).
   - path: ^internal/worlds$
     threshold: 85
+  # The resume token hides write counts from SSE clients, and the change feed
+  # decides what a reconnecting client is told it missed (TKT-3A1200).
+  - path: ^internal/changefeed$
+    threshold: 90
   # Outbound mail (TKT-332QZY). Both are security-relevant — mailrender is
   # the sanitize/inline pipeline whose ORDER is a security property, and mail
   # owns header-injection validation — so they are pinned above the default

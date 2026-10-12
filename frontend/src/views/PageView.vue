@@ -19,7 +19,7 @@
  */
 import { computed, defineAsyncComponent, onBeforeUnmount, watchEffect, type Component } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { useQuery } from '@pinia/colada'
+import { useQuery, useQueryCache } from '@pinia/colada'
 import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
 import { isIconName } from 'rela-components/components/common/icons'
 import type { ViewTab } from 'rela-components/components/layout/RlViewTabs.vue'
@@ -27,6 +27,8 @@ import { usePageFrame } from '@/composables/usePageHeader'
 import { useEntityPageEditing } from '@/composables/useEntityPageEditing'
 import { getEntity } from '@/api/entities'
 import { shouldDropHeldContent } from '@/api/errors'
+import { liveEntityPath } from '@/api/live'
+import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { entityKeys } from '@/queries/entities'
 import { usePageStore } from '@/stores/pages'
 import { useSpaceStore } from '@/stores/space'
@@ -110,6 +112,19 @@ const anchorQuery = useQuery({
   query: () => getEntity(anchorType.value as string, anchorId.value as string),
   enabled: () => !!anchorType.value && !!anchorId.value,
 })
+const queryCache = useQueryCache()
+// Live view (TKT-HJ5Z9Y) of the anchor, for changes entity:changed misses,
+// such as losing access to it.
+useLiveSubscription(
+  'page-anchor',
+  () =>
+    anchorType.value && anchorId.value ? liveEntityPath(anchorType.value, anchorId.value) : null,
+  () =>
+    void queryCache.invalidateQueries({
+      key: entityKeys.detail(anchorType.value ?? '', anchorId.value ?? ''),
+      exact: true,
+    })
+)
 const anchorGone = computed(() => shouldDropHeldContent(anchorQuery.error.value))
 const anchor = computed(() => (anchorGone.value ? undefined : anchorQuery.data.value))
 

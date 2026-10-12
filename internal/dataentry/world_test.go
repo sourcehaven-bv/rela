@@ -350,8 +350,9 @@ func TestWorldHandleIsConstructedOnce(t *testing.T) {
 // resolveWorld would consult nopReadGate, whose PermitsWorld returns true,
 // and every world would be permitted regardless of policy.
 //
-// This scans the router source for the two wrap calls and asserts
-// attachWorld is wrapped FIRST. Per the wrap-order note in router.go, the
+// This scans responseGates in the router source, the one place both wraps
+// happen for NewRouter and for live-view replays, and asserts attachWorld is
+// wrapped FIRST. Per the wrap-order note in router.go, the
 // LAST wrap is the OUTERMOST, so wrapping attachWorld first makes it the
 // INNERMOST of the pair and therefore the LATER to run.
 func TestGrantCheckPrecedesResolverConstruction(t *testing.T) {
@@ -361,8 +362,19 @@ func TestGrantCheckPrecedesResolverConstruction(t *testing.T) {
 		t.Fatalf("read router.go: %v", err)
 	}
 	body := string(src)
-	world := strings.Index(body, "handler = attachWorld(")
-	aclWrap := strings.Index(body, "handler = attachACLRequest(")
+	if !strings.Contains(body, "handler = responseGates(handler, a)") {
+		t.Fatal("NewRouter no longer wraps through responseGates — update this guard rather than deleting it")
+	}
+	start := strings.Index(body, "func responseGates(")
+	if start < 0 {
+		t.Fatal("responseGates not found — update this guard rather than deleting it")
+	}
+	body = body[start:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+	world := strings.Index(body, "h = attachWorld(")
+	aclWrap := strings.Index(body, "h = attachACLRequest(")
 	if world < 0 || aclWrap < 0 {
 		t.Fatalf("could not find both wrap sites (attachWorld=%d attachACL=%d) — "+
 			"if these were renamed, update this guard rather than deleting it",

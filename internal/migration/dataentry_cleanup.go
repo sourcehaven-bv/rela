@@ -12,7 +12,7 @@ func init() {
 
 // DataEntryCleanupMigration removes redundant properties from data-entry.yaml
 // that can be auto-resolved at runtime. When provided with a metamodel (via
-// SetMetamodel), it can detect and remove:
+// WithMetamodel), it can detect and remove:
 //   - widget matching the type→widget mapping
 //   - required matching metamodel property
 //   - default matching metamodel/type default
@@ -40,9 +40,9 @@ type DataEntryCleanupMigration struct {
 	meta MetamodelProvider
 }
 
-// SetMetamodel implements MetamodelAware.
-func (m *DataEntryCleanupMigration) SetMetamodel(meta MetamodelProvider) {
-	m.meta = meta
+// WithMetamodel implements MetamodelAware.
+func (m *DataEntryCleanupMigration) WithMetamodel(meta MetamodelProvider) Migration {
+	return &DataEntryCleanupMigration{meta: meta}
 }
 
 func (m *DataEntryCleanupMigration) Name() string {

@@ -158,6 +158,50 @@ there are several, the error lists them, for example
 | `create_relation` | Create a relation between entities | `from`, `type`, `to`, `content?`, `properties?` |
 | `delete_relation` | Delete a relation | `from`, `type`, `to` |
 
+### Watching for changes
+
+`watch` waits until the result of one or more read calls changes, so an agent
+does not have to poll. A target is a read call: `{tool, args}`, where `tool`
+is `show_entity`, `list_entities` or `list_relations` and `args` is the object
+that tool takes.
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `watch` | Wait for read results to change | `targets` (1-16), `cursor?`, `timeout?` (seconds, default 30, max 50; 0 checks once) |
+
+The result is `{cursor, changed, timed_out}`. `changed` lists the indices of
+the targets whose result changed. The agent then re-reads those targets with
+the normal tools. Use it in three steps:
+
+1. Call `watch` without a cursor. It returns at once with a cursor.
+2. Read what you need.
+3. Call `watch` with the cursor. It returns when a target's result changes,
+   or at the timeout. Pass the returned cursor to the next call.
+
+A change made between two calls is reported at once by the second call. A
+target added to a call that has a cursor starts from its current result and is
+included in the returned cursor.
+
+"Changed" means the result the caller would get changed. A write the caller
+cannot read does not end the wait. `show_entity` includes related entities'
+titles, so retitling a related entity changes it too. `search_entities` cannot
+be watched, because hidden entities can change its ranking; watch
+`list_entities` with a `filter` instead.
+
+A cursor only works in the process that issued it, and only for the same
+principal. After a server restart, or on another server instance, every
+target is reported changed once; re-read them and continue with the new
+cursor.
+
+If the server could not read every target in time, `watch` returns an error
+saying to retry later, rather than a cursor that would miss a change.
+
+Limits: 4 watches at once per identity and 32 per server. Over a limit,
+`watch` returns an error saying to retry later. A call answers by its timeout
+(at most 50 s). Behind a proxy, allow requests of at least 60 s. Send a
+`Content-Length` header: on remote MCP, a request without one is queued with
+uploads, and a waiting watch would hold one of their two slots.
+
 ### Graph Tools
 
 | Tool | Description | Parameters |

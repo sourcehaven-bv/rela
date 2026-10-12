@@ -111,6 +111,9 @@ type Deps struct {
 	// worlds.Compiled.Families. It is never a read world.
 	Families store.WorldScope
 
+	// Watch backs the watch tool. Both of its fields are required.
+	Watch WatchDeps
+
 	// Worlds lets a read tool name the world it reads in, and serves
 	// list_worlds.
 	//
@@ -118,6 +121,18 @@ type Deps struct {
 	// call naming a world other than the generated `default` is refused
 	// there.
 	Worlds WorldSelector
+}
+
+// WatchDeps is what the watch tool needs beyond the read surface.
+type WatchDeps struct {
+	// Changes pokes the watch tool when the store changes. Required; both
+	// wirings pass the store. It is read once per watch call.
+	Changes ChangeSource
+	// Rebind returns ctx with read access resolved again for its principal,
+	// so a watch does not reuse an upstream [acl.Request] whose cached roles
+	// may be stale. Required; wiring passes
+	// [appbuild.GatedReadBundle.Rebind].
+	Rebind func(context.Context) (context.Context, error)
 }
 
 // GraphReader is the read capability MCP requires of its store — the exact
@@ -259,6 +274,10 @@ func (d Deps) validate() error {
 		return errors.New("mcp: Deps.Config is required")
 	case d.Watcher == nil:
 		return errors.New("mcp: Deps.Watcher is required")
+	case d.Watch.Changes == nil:
+		return errors.New("mcp: Deps.Watch.Changes is required")
+	case d.Watch.Rebind == nil:
+		return errors.New("mcp: Deps.Watch.Rebind is required")
 	case d.ProjectRoot == "":
 		return errors.New("mcp: Deps.ProjectRoot is required")
 	case !d.World.IsSet():
@@ -345,6 +364,8 @@ type Server struct {
 	pileReader PileReader
 	pileWriter PileWriter
 	pilesSet   bool
+	// watch serves the watch tool; built in registerTools.
+	watch *watchHandler
 
 	// state publishes the reloadable (Deps, handlerSet) pair. Read it per
 	// request via [Server.deps] / the s.<group>() accessors, never by
@@ -578,7 +599,8 @@ func serverInstructions(meta *metamodel.Metamodel) string {
 	b.WriteString("Call schema (optionally with a type) before creating entities or filtering. " +
 		"Entity summaries carry a title resolved from the type's display property. " +
 		"Write results start with `WARNINGS (n):` when soft validation failed; the write still succeeded. " +
-		"In update_entity, a null property value removes the property; an empty string is ignored.")
+		"In update_entity, a null property value removes the property; an empty string is ignored. " +
+		"To wait for changes instead of polling, use watch.")
 	return b.String()
 }
 

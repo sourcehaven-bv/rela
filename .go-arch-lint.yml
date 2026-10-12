@@ -86,6 +86,10 @@ components:
   autocascade:      { in: internal/autocascade }
   automation:       { in: internal/automation }
   calfeed:          { in: internal/calfeed }
+  # Numbers store change events and answers "which types changed since this
+  # resume token" (TKT-3A1200). An UNGATED base source like store: it holds no
+  # entity ids, and only consumers that gate per principal may import it.
+  changefeed:       { in: internal/changefeed }
   classification:   { in: internal/classification }
   mailrender:       { in: internal/mailrender }
   # HTML <-> markdown for sync connectors (TKT-LAMZ8F). A leaf like mailrender.
@@ -549,6 +553,7 @@ deps:
       - audit
       - calfeed
       - caldavalias
+      - changefeed
       - canonical
       # The commentary layer (TKT-FIO205). dataentry owns the HTTP surface and
       # the ACL gating; it does NOT choose a comment backend — like userstate
@@ -1598,6 +1603,9 @@ deps:
   store:
     mayDependOn:
       - metamodel
+  changefeed:
+    mayDependOn:
+      - store
   fsstore:
     mayDependOn:
       - mentions

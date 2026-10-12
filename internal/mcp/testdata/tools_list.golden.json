@@ -605,5 +605,48 @@
       ],
       "type": "object"
     }
+  },
+  {
+    "name": "watch",
+    "description": "Wait until the result of read-tool calls changes. Call it first without cursor, then read, then call it again with the returned cursor; it returns when a target's result changes for you, or at the timeout. Result: {cursor,changed,timed_out}, changed being indices into targets. Re-read the changed targets yourself.",
+    "inputSchema": {
+      "properties": {
+        "cursor": {
+          "description": "Cursor from a previous watch",
+          "type": "string"
+        },
+        "targets": {
+          "description": "Up to 16 read calls: [{tool, args}], tool one of show_entity, list_entities, list_relations; args is the object that tool takes",
+          "items": {
+            "properties": {
+              "args": {
+                "type": "object"
+              },
+              "tool": {
+                "enum": [
+                  "show_entity",
+                  "list_entities",
+                  "list_relations"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "timeout": {
+          "description": "Seconds to wait (default 30, max 50; 0 checks once)",
+          "type": "number"
+        }
+      },
+      "required": [
+        "targets"
+      ],
+      "type": "object"
+    }
   }
 ]

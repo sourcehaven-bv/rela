@@ -13,6 +13,8 @@ import { useCreateTarget } from '@/composables/useCreateTarget'
 import { useListGrouping, type ListSection } from '@/composables/useListGrouping'
 import { listEntities, listAllEntities, getErrorMessage } from '@/api'
 import { entityKeys } from '@/queries/entities'
+import { liveListPath } from '@/api/live'
+import { useLiveSubscription } from '@/composables/useLiveSubscription'
 import { beginOptimisticRemove } from '@/queries/optimisticList'
 import { filterStateToApiParams } from '@/utils/filters'
 import { defaultSortParam, groupedSort, listBaseParams, sortParam } from '@/utils/listParams'
@@ -632,6 +634,19 @@ const listQuery = useQuery({
   placeholderData: (prev) => prev,
 })
 listQueryRef.value = listQuery
+// Live view (TKT-HJ5Z9Y): entity:changed already refetches on a write to the
+// list's own type; this also catches what that misses, such as a related
+// column or an access change. A grouped list subscribes its first page.
+useLiveSubscription(
+  'entity-list',
+  () => {
+    const config = listConfig.value
+    if (!config) return null
+    const params = config.group_by ? { ...queryParams.value, page: 1, per_page: 100 } : queryParams.value
+    return liveListPath(config.entity, params)
+  },
+  () => void queryCache.invalidateQueries({ key: listKey.value, exact: true })
+)
 watch(
   () => listQuery.data.value,
   (res) => {
