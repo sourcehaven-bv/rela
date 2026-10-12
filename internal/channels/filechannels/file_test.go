@@ -19,13 +19,17 @@ import (
 )
 
 // newDiskStore opens a Store over dir with its own file lock, as one
-// process would.
+// process would. It also gets its own semaphore: two stores in one process
+// over one directory normally share one, which would hide a broken file
+// lock from the two-instance tests. With separate semaphores only the file
+// lock keeps them apart, as it must keep two processes apart.
 func newDiskStore(t *testing.T, dir string) *Store {
 	t.Helper()
 	locker, err := filelock.New(filepath.Join(filepath.Dir(dir), filepath.Base(dir)+".lock"))
 	require.NoError(t, err)
-	s, err := newStore(storage.NewSafeFS(storage.NewOsFS()), dir, locker, SegmentSize)
+	s, err := newStore(storage.NewOsFS(), dir, locker, SegmentSize)
 	require.NoError(t, err)
+	s.sem = make(chan struct{}, 1)
 	return s
 }
 
@@ -306,4 +310,112 @@ func must(b []byte, err error) []byte {
 		panic(err)
 	}
 	return b
+}
+
+// Two stores over one directory in one process share a semaphore, so a
+// process-private locker still excludes them from each other.
+func TestStoresShareSemaphore(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "channels")
+	a, err := New(storage.NewOsFS(), dir, filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	b, err := New(storage.NewOsFS(), dir+"/../channels", filelock.ProcessPrivate{})
+	require.NoError(t, err)
+	require.Equal(t, a.sem, b.sem)
+}
+
+// Patches to one segment are folded into a rewrite once they pass the
+// threshold, so replies to an old message do not grow its segment forever.
+func TestPatchCompaction(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mfs := storage.NewMemFS()
+	s, err := newStore(mfs, "/channels", filelock.ProcessPrivate{}, 4)
+	require.NoError(t, err)
+	parent, err := s.Append(ctx, key, msg("parent"))
+	require.NoError(t, err)
+	maxPatches := 0
+	for range 40 {
+		reply := msg("reply")
+		reply.ReplyTo = parent.Seq
+		_, err = s.Append(ctx, key, reply)
+		require.NoError(t, err)
+		seg, segErr := s.segment(key, 0)
+		require.NoError(t, segErr)
+		maxPatches = max(maxPatches, patchCount(seg))
+	}
+	require.LessOrEqual(t, maxPatches, s.compactAfter())
+	got, err := s.Get(ctx, key, parent.Seq)
+	require.NoError(t, err)
+	require.Equal(t, 40, got.ReplyCount)
+}
+
+// lastMessage finds the last message record behind patch records, past a
+// torn line and beyond the first chunk it reads, on a filesystem that reads
+// at an offset and on one that does not.
+func TestLastMessageReadsFromTheEnd(t *testing.T) {
+	t.Parallel()
+	var body strings.Builder
+	body.WriteString(`{"k":"m","seq":1,"rev":1}` + "\n")
+	body.WriteString(`{"k":"m","seq":2,"rev":2}` + "\n")
+	for body.Len() < 3*tailChunk {
+		body.WriteString(`{"k":"p","seq":1,"rev":3,"p_reply_count":1}` + "\n")
+	}
+	body.WriteString("not json\n")
+	body.WriteString(`{"k":"m","seq":3,"rev":4,"props":{"body":"torn`)
+
+	stores := map[string]*Store{}
+	disk := filepath.Join(t.TempDir(), "channels")
+	stores["disk"] = newDiskStore(t, disk)
+	mem, err := newStore(storage.NewMemFS(), "/channels", filelock.ProcessPrivate{}, SegmentSize)
+	require.NoError(t, err)
+	stores["memory"] = mem
+	for name, s := range stores {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.NoError(t, s.rfs.MkdirAll(chanDir(key), 0o700))
+			require.NoError(t, s.rfs.WriteFile(segKey(key, 0), []byte(body.String()), filePerm))
+			seq, ok, err := s.lastMessage(segKey(key, 0))
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, int64(2), seq)
+
+			require.NoError(t, s.rfs.WriteFile(segKey(key, 1), []byte(`{"k":"p","seq":1,"rev":5}`+"\n"), filePerm))
+			last, err := s.lastSeq(key)
+			require.NoError(t, err)
+			require.Equal(t, int64(2), last, "a segment with no message record is walked past")
+
+			_, ok, err = s.lastMessage("missing.jsonl")
+			require.NoError(t, err)
+			require.False(t, ok)
+		})
+	}
+}
+
+// An audit trail with a torn final line is repaired by the next record,
+// which reads only the last byte when the trail is intact.
+func TestTornAuditIsRepaired(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "channels")
+	s := newDiskStore(t, dir)
+	_, err := s.Append(ctx, key, msg("one"))
+	require.NoError(t, err)
+	audit := filepath.Join(dir, auditKey("TKT-1"))
+	f, err := os.OpenFile(audit, os.O_WRONLY|os.O_APPEND, 0o600)
+	require.NoError(t, err)
+	_, err = f.WriteString(`{"at":"2026-10-12T09:00:00Z","op":"rem`)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	_, err = s.CreateMany(ctx, key.Anchor, channels.NewChannel{
+		Type: "topic", By: channels.Author{User: "a"}, At: time.Now(),
+	})
+	require.NoError(t, err)
+	recs, err := s.Audit(ctx, "TKT-1")
+	require.NoError(t, err)
+	require.Len(t, recs, 2)
+	data, err := os.ReadFile(audit)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"op":"rem`)
 }

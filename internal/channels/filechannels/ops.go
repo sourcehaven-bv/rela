@@ -2,13 +2,13 @@ package filechannels
 
 import (
 	"bytes"
+	"container/heap"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -58,6 +58,17 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 			ReplyCount: &count})
 	}
 	m.LastSeq = seq
+	if created {
+		// The create record goes before meta.yaml: a crash in between
+		// leaves a create record for a channel the next append creates
+		// again, so the trail may repeat a create but never misses one.
+		audit := channels.KeyAudit(k, channels.AuditCreate, nm.At)
+		audit.By = nm.Author
+		err = s.appendAudit(k.ID, audit)
+		if err != nil {
+			return channels.Message{}, err
+		}
+	}
 	err = s.writeMeta(k, m)
 	if err != nil {
 		return channels.Message{}, err
@@ -70,14 +81,9 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 	if patch != nil && s.idx(parent.Seq) == idx {
 		rec, patch = append(rec, patch...), nil
 	}
-	err = s.appendRecord(segKey(k, idx), cur, rec)
+	err = s.appendLog(k, idx, cur, rec)
 	if err == nil && patch != nil {
-		err = s.appendRecord(segKey(k, s.idx(parent.Seq)), parentSeg, patch)
-	}
-	if err == nil && created {
-		audit := channels.KeyAudit(k, channels.AuditCreate, nm.At)
-		audit.By = nm.Author
-		err = s.appendAudit(k.ID, audit)
+		err = s.appendLog(k, s.idx(parent.Seq), parentSeg, patch)
 	}
 	if err != nil {
 		return channels.Message{}, err
@@ -87,10 +93,16 @@ func (s *Store) Append(ctx context.Context, k channels.Key, nm channels.NewMessa
 
 // appendTarget returns the head of the channel an append goes to, or a new
 // head for an implicit channel's first message. created reports the latter.
+// A channel recorded with another incarnation is [channels.ErrStaleAnchor].
 func (s *Store) appendTarget(k channels.Key, nm channels.NewMessage) (m *meta, created bool, err error) {
 	m, err = s.readMeta(k)
 	if errors.Is(err, channels.ErrNotFound) && k.Name == "" {
-		return &meta{State: channels.StateOpen, CreatedBy: nm.Author, CreatedAt: nm.At}, true, nil
+		return &meta{
+			Incarnation: nm.Incarnation, State: channels.StateOpen, CreatedBy: nm.Author, CreatedAt: nm.At,
+		}, true, nil
+	}
+	if err == nil {
+		err = channels.CheckAppendIncarnation(k, m.Incarnation, nm.Incarnation)
 	}
 	return m, false, err
 }
@@ -269,7 +281,7 @@ func (s *Store) SetAction(
 	if err != nil {
 		return channels.Message{}, err
 	}
-	if err := s.appendRecord(segKey(k, idx), cur, encodeLine(l)); err != nil {
+	if err := s.appendLog(k, idx, cur, encodeLine(l)); err != nil {
 		return channels.Message{}, err
 	}
 	if next.Status == channels.ActionDone {
@@ -284,12 +296,13 @@ func (s *Store) SetAction(
 
 // CreateMany implements [channels.Store].
 func (s *Store) CreateMany(
-	ctx context.Context, a channels.Anchor, typ, title string, by channels.Author, at time.Time,
+	ctx context.Context, a channels.Anchor, nc channels.NewChannel,
 ) (channels.Channel, error) {
-	at, err := channels.PrepareChannel(a, typ, title, by, at)
+	nc, err := channels.PrepareChannel(a, nc)
 	if err != nil {
 		return channels.Channel{}, err
 	}
+	typ := nc.Type
 	unlock, err := s.lock(ctx)
 	if err != nil {
 		return channels.Channel{}, err
@@ -313,13 +326,16 @@ func (s *Store) CreateMany(
 	for taken[k.Name] { // coverage-ignore: a 64-bit collision is not reproducible
 		k.Name = channels.NewName()
 	}
-	m := &meta{State: channels.StateOpen, Title: title, CreatedBy: by, CreatedAt: at}
-	if err := s.writeMeta(k, m); err != nil {
+	m := &meta{
+		Incarnation: nc.Incarnation, State: channels.StateOpen, Title: nc.Title, CreatedBy: nc.By, CreatedAt: nc.At,
+	}
+	// The create record goes first, for the reason Append writes it first.
+	rec := channels.KeyAudit(k, channels.AuditCreate, nc.At)
+	rec.By = nc.By
+	if err := s.appendAudit(k.ID, rec); err != nil {
 		return channels.Channel{}, err
 	}
-	rec := channels.KeyAudit(k, channels.AuditCreate, at)
-	rec.By = by
-	if err := s.appendAudit(k.ID, rec); err != nil {
+	if err := s.writeMeta(k, m); err != nil {
 		return channels.Channel{}, err
 	}
 	return m.channel(k), nil
@@ -636,8 +652,13 @@ func (s *Store) beforeSeq(k channels.Key, idxs []int64, p channels.Page) ([]chan
 	return out, nil
 }
 
+// byRev reads the p.Limit messages with the lowest revs above p.AfterRev,
+// ordered by rev. A rev cursor cannot walk the log in order, because a patch
+// gives an old message a new rev, so it reads every segment whose highest
+// rev is above the cursor. It keeps only the best p.Limit candidates in a
+// heap, so memory and sorting stay bounded by the page, not the channel.
 func (s *Store) byRev(k channels.Key, m *meta, idxs []int64, p channels.Page) ([]channels.Message, error) {
-	out := []channels.Message{}
+	best := &revHeap{}
 	for _, idx := range idxs {
 		if idx < int64(len(m.SegRev)) && m.SegRev[idx] <= p.AfterRev {
 			continue
@@ -647,16 +668,42 @@ func (s *Store) byRev(k channels.Key, m *meta, idxs []int64, p channels.Page) ([
 			return nil, err
 		}
 		for _, msg := range fold(data, segKey(k, idx)) {
-			if msg.Rev > p.AfterRev {
-				out = append(out, msg)
+			if msg.Rev <= p.AfterRev {
+				continue
+			}
+			if best.Len() < p.Limit {
+				heap.Push(best, msg)
+			} else if msg.Rev < (*best)[0].Rev {
+				(*best)[0] = msg
+				heap.Fix(best, 0)
 			}
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Rev < out[j].Rev })
-	if len(out) > p.Limit {
-		out = out[:p.Limit]
+	out := make([]channels.Message, best.Len())
+	for i := len(out) - 1; i >= 0; i-- {
+		out[i], _ = heap.Pop(best).(channels.Message) // revHeap holds only messages
 	}
 	return out, nil
+}
+
+// revHeap is a max-heap of messages by rev: its root is the worst of the
+// candidates byRev keeps.
+type revHeap []channels.Message
+
+func (h revHeap) Len() int           { return len(h) }
+func (h revHeap) Less(i, j int) bool { return h[i].Rev > h[j].Rev }
+func (h revHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *revHeap) Push(x any) {
+	msg, _ := x.(channels.Message) // byRev pushes only messages
+	*h = append(*h, msg)
+}
+
+func (h *revHeap) Pop() any {
+	old := *h
+	msg := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return msg
 }
 
 // List implements [channels.Store].

@@ -77,6 +77,11 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"TimesRoundTrip", testTimes},
 		{"SecondInstance", testSecondInstance},
 		{"AnchorModes", testAnchorModes},
+		{"Incarnation", testIncarnation},
+		{"ArchiveFromOpen", testArchiveFromOpen},
+		{"AfterRevPagesInRevOrder", testAfterRevPaging},
+		{"ManyReplies", testManyReplies},
+		{"LongestAnchor", testLongestAnchor},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -580,7 +585,9 @@ func testCreateMany(t *testing.T, h Harness) {
 	t.Helper()
 	ctx := context.Background()
 	anchor := channels.Anchor{ID: "TKT-1"}
-	c, err := h.Store.CreateMany(ctx, anchor, "topic", "Release plan", Alice, T0)
+	c, err := h.Store.CreateMany(ctx, anchor, channels.NewChannel{
+		Type: "topic", Title: "Release plan", By: Alice, At: T0,
+	})
 	require.NoError(t, err)
 	require.NoError(t, c.Key.Validate())
 	require.NotEmpty(t, c.Key.Name)
@@ -594,17 +601,23 @@ func testCreateMany(t *testing.T, h Harness) {
 	m := mustAppend(t, h.Store, c.Key, text("first"))
 	require.Equal(t, int64(1), m.Seq)
 
-	other, err := h.Store.CreateMany(ctx, anchor, "topic", "", Alice, T0)
+	other, err := h.Store.CreateMany(ctx, anchor, channels.NewChannel{Type: "topic", Title: "", By: Alice, At: T0})
 	require.NoError(t, err)
 	require.NotEqual(t, c.Key.Name, other.Key.Name)
 
-	_, err = h.Store.CreateMany(ctx, anchor, "topic", strings.Repeat("é", channels.MaxTitleRunes+1), Alice, T0)
+	_, err = h.Store.CreateMany(ctx, anchor, channels.NewChannel{
+		Type: "topic", Title: strings.Repeat("é", channels.MaxTitleRunes+1), By: Alice, At: T0,
+	})
 	require.ErrorIs(t, err, channels.ErrTooLarge)
-	_, err = h.Store.CreateMany(ctx, anchor, "topic", strings.Repeat("é", channels.MaxTitleRunes), Alice, T0)
+	_, err = h.Store.CreateMany(ctx, anchor, channels.NewChannel{
+		Type: "topic", Title: strings.Repeat("é", channels.MaxTitleRunes), By: Alice, At: T0,
+	})
 	require.NoError(t, err, "the cap counts characters, not bytes")
-	_, err = h.Store.CreateMany(ctx, anchor, "Bad", "", Alice, T0)
+	_, err = h.Store.CreateMany(ctx, anchor, channels.NewChannel{Type: "Bad", Title: "", By: Alice, At: T0})
 	require.ErrorIs(t, err, channels.ErrInvalidKey)
-	_, err = h.Store.CreateMany(ctx, anchor, "topic", "", channels.Author{}, T0)
+	_, err = h.Store.CreateMany(ctx, anchor, channels.NewChannel{
+		Type: "topic", Title: "", By: channels.Author{}, At: T0,
+	})
 	require.ErrorIs(t, err, channels.ErrInvalidMessage)
 }
 
@@ -620,7 +633,7 @@ func testCreateManyCap(t *testing.T, h Harness) {
 	errs := make(chan error, channels.MaxChannelsPerType+10)
 	for range channels.MaxChannelsPerType + 10 {
 		wg.Go(func() {
-			_, err := h.Store.CreateMany(ctx, anchor, "topic", "", Alice, T0)
+			_, err := h.Store.CreateMany(ctx, anchor, channels.NewChannel{Type: "topic", Title: "", By: Alice, At: T0})
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
@@ -642,9 +655,11 @@ func testCreateManyCap(t *testing.T, h Harness) {
 	require.Equal(t, 10, refused)
 
 	// Another type or anchor has its own budget.
-	_, err := h.Store.CreateMany(ctx, anchor, "other", "", Alice, T0)
+	_, err := h.Store.CreateMany(ctx, anchor, channels.NewChannel{Type: "other", Title: "", By: Alice, At: T0})
 	require.NoError(t, err)
-	_, err = h.Store.CreateMany(ctx, channels.Anchor{ID: "TKT-1", Face: "draft"}, "topic", "", Alice, T0)
+	_, err = h.Store.CreateMany(ctx, channels.Anchor{ID: "TKT-1", Face: "draft"}, channels.NewChannel{
+		Type: "topic", Title: "", By: Alice, At: T0,
+	})
 	require.NoError(t, err)
 
 	list, err := h.Store.List(ctx, anchor, "topic", "")
@@ -661,7 +676,7 @@ func testList(t *testing.T, h Harness) {
 	mustAppend(t, h.Store, channels.Key{Anchor: fam, Type: "alerts"}, text("b"))
 	mustAppend(t, h.Store, channels.Key{Anchor: draft, Type: "room"}, text("c"))
 	mustAppend(t, h.Store, key("TKT-2", "room"), text("d"))
-	topic, err := h.Store.CreateMany(ctx, fam, "topic", "t", Alice, T0)
+	topic, err := h.Store.CreateMany(ctx, fam, channels.NewChannel{Type: "topic", Title: "t", By: Alice, At: T0})
 	require.NoError(t, err)
 	_, err = h.Store.SetLifecycle(ctx, channels.Key{Anchor: fam, Type: "alerts"}, channels.StateOpen,
 		channels.Transition{To: channels.StateClosed, By: Alice, At: T0})
@@ -741,7 +756,7 @@ func testRekey(t *testing.T, h Harness) {
 	mustAppend(t, h.Store, fam, text("one"))
 	mustAppend(t, h.Store, fam, text("two"))
 	mustAppend(t, h.Store, face, text("draft"))
-	topic, err := h.Store.CreateMany(ctx, fam.Anchor, "topic", "t", Alice, T0)
+	topic, err := h.Store.CreateMany(ctx, fam.Anchor, channels.NewChannel{Type: "topic", Title: "t", By: Alice, At: T0})
 	require.NoError(t, err)
 	mustAppend(t, h.Store, key("OLD-10", "room"), text("prefix neighbor"))
 
@@ -968,7 +983,9 @@ func testKeys(t *testing.T, h Harness) {
 	for _, k := range want {
 		mustAppend(t, h.Store, k, text("x"))
 	}
-	topic, err := h.Store.CreateMany(ctx, channels.Anchor{ID: "B-2"}, "topic", "", Alice, T0)
+	topic, err := h.Store.CreateMany(ctx, channels.Anchor{ID: "B-2"}, channels.NewChannel{
+		Type: "topic", Title: "", By: Alice, At: T0,
+	})
 	require.NoError(t, err)
 	want = append(want, topic.Key)
 	channels.SortKeys(want)
@@ -1062,3 +1079,160 @@ func testAnchorModes(t *testing.T, h Harness) {
 // Contains reports whether raw holds needle; a helper for backend tests
 // that inspect raw bytes themselves.
 func Contains(raw []byte, needle string) bool { return bytes.Contains(raw, []byte(needle)) }
+
+// testIncarnation pins the id-reuse guard: a channel records the
+// incarnation it was created in, keeps it across a rekey, and refuses an
+// append from another incarnation without writing anything.
+func testIncarnation(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	k := key("TKT-1", "room")
+	life1, life2 := text("one"), text("two")
+	life1.Incarnation, life2.Incarnation = "life-1", "life-2"
+
+	mustAppend(t, h.Store, k, life1)
+	head, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, "life-1", head.Incarnation)
+	require.NoError(t, channels.CheckIncarnation(head, "life-1"))
+	require.ErrorIs(t, channels.CheckIncarnation(head, "life-2"), channels.ErrNotFound)
+
+	_, err = h.Store.Append(ctx, k, life2)
+	require.ErrorIs(t, err, channels.ErrStaleAnchor)
+	_, err = h.Store.Append(ctx, k, text("no incarnation"))
+	require.ErrorIs(t, err, channels.ErrStaleAnchor)
+	after, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, head, after, "a refused append writes nothing")
+	mustAppend(t, h.Store, k, life1)
+
+	topic, err := h.Store.CreateMany(ctx, k.Anchor, channels.NewChannel{
+		Type: "topic", Incarnation: "life-1", By: Alice, At: T0,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "life-1", topic.Incarnation)
+	listed, err := h.Store.ListEntity(ctx, "TKT-1")
+	require.NoError(t, err)
+	for _, c := range listed {
+		require.Equal(t, "life-1", c.Incarnation, c.Key.String())
+	}
+
+	require.NoError(t, h.Store.Rekey(ctx, "TKT-1", "TKT-2", T0))
+	moved, err := h.Store.Head(ctx, key("TKT-2", "room"))
+	require.NoError(t, err)
+	require.Equal(t, "life-1", moved.Incarnation, "a rename keeps the entity, so it keeps the incarnation")
+
+	// A new entity on the id starts a new channel once the leftover is
+	// tombstoned.
+	require.NoError(t, h.Store.Tombstone(ctx, "TKT-2", "", T0))
+	fresh := mustAppend(t, h.Store, key("TKT-2", "room"), life2)
+	require.Equal(t, int64(1), fresh.Seq)
+	head, err = h.Store.Head(ctx, key("TKT-2", "room"))
+	require.NoError(t, err)
+	require.Equal(t, "life-2", head.Incarnation)
+
+	long := text("x")
+	long.Incarnation = strings.Repeat("i", channels.MaxTextBytes+1)
+	_, err = h.Store.Append(ctx, key("TKT-3", "room"), long)
+	require.ErrorIs(t, err, channels.ErrTooLarge)
+}
+
+// testArchiveFromOpen: archiving an open channel closes it in the same
+// instant, so the retention sweep that reads the close time sees one.
+func testArchiveFromOpen(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	k := key("TKT-1", "room")
+	mustAppend(t, h.Store, k, text("x"))
+	at := T0.Add(time.Hour)
+	c, err := h.Store.SetLifecycle(ctx, k, channels.StateOpen,
+		channels.Transition{To: channels.StateArchived, By: Bob, At: at})
+	require.NoError(t, err)
+	require.Equal(t, channels.NormTime(at), c.ClosedAt)
+	require.Equal(t, channels.NormTime(at), c.ArchivedAt)
+	head, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, c, head)
+}
+
+// testAfterRevPaging walks a channel by rev in small pages after changes to
+// old and new messages, and must see every change once, in rev order.
+func testAfterRevPaging(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	k := key("TKT-1", "room")
+	for i := range 12 {
+		mustAppend(t, h.Store, k, text(fmt.Sprintf("m%d", i+1)))
+	}
+	start, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	for _, seq := range []int64{11, 2, 7, 1} {
+		_, err = h.Store.Edit(ctx, k, seq, map[string]any{"body": "edited"}, T0)
+		require.NoError(t, err)
+	}
+	mustAppend(t, h.Store, k, text("m13"))
+
+	var walked []int64
+	cursor := start.Rev
+	for {
+		page, pageErr := h.Store.Messages(ctx, k, channels.Page{AfterRev: cursor, Limit: 2})
+		require.NoError(t, pageErr)
+		if len(page) == 0 {
+			break
+		}
+		require.LessOrEqual(t, len(page), 2)
+		for _, m := range page {
+			require.Greater(t, m.Rev, cursor)
+			cursor = m.Rev
+			walked = append(walked, m.Seq)
+		}
+	}
+	require.Equal(t, []int64{11, 2, 7, 1, 13}, walked)
+}
+
+// testManyReplies sends enough replies to one message that a backend which
+// patches the parent in place must compact, and checks the count and the
+// rev cursor survive it.
+func testManyReplies(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	k := key("TKT-1", "room")
+	parent := mustAppend(t, h.Store, k, text("parent"))
+	const n = 30
+	for range n {
+		reply := text("reply")
+		reply.ReplyTo = parent.Seq
+		mustAppend(t, h.Store, k, reply)
+	}
+	got, err := h.Store.Get(ctx, k, parent.Seq)
+	require.NoError(t, err)
+	require.Equal(t, n, got.ReplyCount)
+	require.Equal(t, "parent", got.Props["body"])
+	head, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	require.Equal(t, int64(n+1), head.LastSeq)
+	require.Equal(t, head.Rev, got.Rev, "the last reply's patch is the newest change")
+	page, err := h.Store.Messages(ctx, k, channels.Page{AfterRev: head.Rev - 1})
+	require.NoError(t, err)
+	require.Equal(t, []int64{parent.Seq}, seqs(page))
+}
+
+// testLongestAnchor uses the longest id and face the caps admit, through
+// every operation that names them, including the tombstone, whose stored
+// name is the longest.
+func testLongestAnchor(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	id := strings.Repeat("A", channels.MaxAnchorIDBytes)
+	face := entity.Face("f" + strings.Repeat("a", channels.MaxFaceBytes-1))
+	k := channels.Key{Anchor: channels.Anchor{ID: id, Face: face}, Type: strings.Repeat("t", 63)}
+	mustAppend(t, h.Store, k, text("x"))
+	_, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	require.NoError(t, h.Store.Tombstone(ctx, id, face, T0))
+	mustAppend(t, h.Store, k, text("y"))
+	require.NoError(t, h.Store.Tombstone(ctx, id, "", T0))
+	left, err := h.Store.ListEntity(ctx, id)
+	require.NoError(t, err)
+	require.Empty(t, left)
+}

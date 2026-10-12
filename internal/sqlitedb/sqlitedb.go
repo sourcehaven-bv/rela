@@ -667,6 +667,7 @@ CREATE TABLE IF NOT EXISTS channels (
 	type        TEXT NOT NULL,
 	name        TEXT NOT NULL DEFAULT '',
 	tomb        TEXT NOT NULL DEFAULT '',
+	incarnation TEXT NOT NULL DEFAULT '',
 	state       TEXT NOT NULL,
 	title       TEXT NOT NULL DEFAULT '',
 	created_by  TEXT NOT NULL,

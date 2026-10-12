@@ -192,7 +192,7 @@ func utc(t time.Time) time.Time {
 	return t.UTC()
 }
 
-const chanCols = `id, anchor_id, anchor_face, type, name, state, title, created_by,
+const chanCols = `id, anchor_id, anchor_face, type, name, incarnation, state, title, created_by,
 	created_at, closed_at, archived_at, last_seq, rev`
 
 // row is a channel row: the channel and its surrogate id.
@@ -206,7 +206,7 @@ func scanChannel(r interface{ Scan(...any) error }) (row, error) {
 	var face, by string
 	var created, closed, archived int64
 	c := &out.c
-	if err := r.Scan(&out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.State, &c.Title, &by,
+	if err := r.Scan(&out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
 		&created, &closed, &archived, &c.LastSeq, &c.Rev); err != nil {
 		return out, err
 	}
@@ -225,7 +225,7 @@ func (s *Store) wrap(err error, format string, args ...any) error {
 	for _, sentinel := range []error{
 		channels.ErrNotFound, channels.ErrInvalidKey, channels.ErrInvalidMessage, channels.ErrTooLarge,
 		channels.ErrTooManyChannels, channels.ErrConflict, channels.ErrRemoved, channels.ErrInvalidReply,
-		channels.ErrInvalidPage, channels.ErrRekeyConflict,
+		channels.ErrInvalidPage, channels.ErrRekeyConflict, channels.ErrStaleAnchor,
 	} {
 		if errors.Is(err, sentinel) {
 			return err
@@ -342,8 +342,13 @@ func (s *Store) appendTarget(
 ) (r row, created bool, err error) {
 	r, err = s.channelRow(ctx, q, k)
 	if errors.Is(err, channels.ErrNotFound) && k.Name == "" {
-		r, err = s.insertChannel(ctx, q, k, "", nm.Author, nm.At)
+		r, err = s.insertChannel(ctx, q, k, channels.NewChannel{
+			Incarnation: nm.Incarnation, By: nm.Author, At: nm.At,
+		})
 		return r, err == nil, err
+	}
+	if err == nil {
+		err = channels.CheckAppendIncarnation(k, r.c.Incarnation, nm.Incarnation)
 	}
 	return r, false, err
 }
@@ -367,14 +372,15 @@ func (s *Store) checkParent(ctx context.Context, q Querier, channelID int64, k c
 	return nil
 }
 
-func (s *Store) insertChannel(
-	ctx context.Context, q Querier, k channels.Key, title string, by channels.Author, at time.Time,
-) (row, error) {
+// insertChannel inserts the channel k. Only the title, incarnation, author
+// and time of nc are read; k carries the type.
+func (s *Store) insertChannel(ctx context.Context, q Querier, k channels.Key, nc channels.NewChannel) (row, error) {
 	_, err := q.Exec(ctx, `INSERT INTO channels
-		(anchor_id, anchor_face, type, name, tomb, state, title, created_by, created_at, closed_at, archived_at,
-		 last_seq, rev)
-		VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, 0, 0, 0, 0)`,
-		k.ID, string(k.Face), k.Type, k.Name, string(channels.StateOpen), title, mustJSON(by), micros(at))
+		(anchor_id, anchor_face, type, name, tomb, incarnation, state, title, created_by, created_at, closed_at,
+		 archived_at, last_seq, rev)
+		VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, 0, 0, 0, 0)`,
+		k.ID, string(k.Face), k.Type, k.Name, nc.Incarnation, string(channels.StateOpen), nc.Title,
+		mustJSON(nc.By), micros(nc.At))
 	if err != nil {
 		return row{}, err
 	}
@@ -486,12 +492,13 @@ func (s *Store) SetAction(
 
 // CreateMany implements [channels.Store].
 func (s *Store) CreateMany(
-	ctx context.Context, a channels.Anchor, typ, title string, by channels.Author, at time.Time,
+	ctx context.Context, a channels.Anchor, nc channels.NewChannel,
 ) (channels.Channel, error) {
-	at, err := channels.PrepareChannel(a, typ, title, by, at)
+	nc, err := channels.PrepareChannel(a, nc)
 	if err != nil {
 		return channels.Channel{}, err
 	}
+	typ := nc.Type
 	var out channels.Channel
 	werr := s.write(ctx, []string{a.ID}, func(q Querier) error {
 		var n int
@@ -504,13 +511,13 @@ func (s *Store) CreateMany(
 			return fmt.Errorf("%w: %s holds %d %s channels", channels.ErrTooManyChannels, a.ID, n, typ)
 		}
 		k := channels.Key{Anchor: a, Type: typ, Name: channels.NewName()}
-		r, err := s.insertChannel(ctx, q, k, title, by, at)
+		r, err := s.insertChannel(ctx, q, k, nc)
 		if err != nil {
 			return err
 		}
 		out = r.c
-		rec := channels.KeyAudit(k, channels.AuditCreate, at)
-		rec.By = by
+		rec := channels.KeyAudit(k, channels.AuditCreate, nc.At)
+		rec.By = nc.By
 		return s.audit(ctx, q, a.ID, rec)
 	})
 	return out, s.wrap(werr, "create %s channel on %s", typ, a.ID)

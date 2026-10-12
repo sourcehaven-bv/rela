@@ -28,9 +28,12 @@
 // rewrites the segment atomically through a temporary file, so the old
 // content is gone from disk: the erasure the channels package promises.
 //
-// The last seq comes from the log itself, never from meta.yaml. A crash
-// mid-append leaves a torn final line; readers ignore it, and the next
-// write to that segment cuts it off before appending.
+// The last seq comes from the log itself, never from meta.yaml: the last
+// complete message record of the newest segment, read from the end of the
+// file. A crash mid-append leaves a torn final line; readers ignore it, and
+// the next write to that segment cuts it off before appending. A segment
+// that collects [SegmentSize] times two patch records is rewritten in
+// folded form by the next patch.
 //
 // # Several processes, one directory
 //
@@ -114,7 +117,8 @@ var _ channels.Store = (*Store)(nil)
 var sems sync.Map
 
 // New returns a store rooted at dir on fsys. The directory is created on
-// the first write.
+// the first write. A bare [storage.OsFS] is wrapped in a [storage.SafeFS];
+// any other filesystem is used as given.
 //
 // Nil: fsys and locker rejected; a nil locker would hide the choice between
 // a file lock and filelock.ProcessPrivate.
@@ -128,6 +132,11 @@ func newStore(fsys storage.FS, dir string, locker Locker, segSize int64) (*Store
 	}
 	if locker == nil {
 		return nil, errors.New("filechannels: locker must be non-nil")
+	}
+	if osfs, ok := fsys.(*storage.OsFS); ok {
+		// A rewrite must replace a segment atomically, or a crash leaves
+		// it half written; SafeFS writes through a temporary file.
+		fsys = storage.NewSafeFS(osfs)
 	}
 	rfs, err := storage.NewRootedFS(fsys, dir)
 	if err != nil {
@@ -271,21 +280,22 @@ type pendingRef struct {
 // meta is meta.yaml. SegRev holds the highest rev written to each segment,
 // so a rev-cursor read skips segments with nothing newer.
 type meta struct {
-	State      channels.State       `yaml:"state"`
-	Title      string               `yaml:"title,omitempty"`
-	CreatedBy  channels.Author      `yaml:"created_by"`
-	CreatedAt  time.Time            `yaml:"created_at"`
-	ClosedAt   time.Time            `yaml:"closed_at,omitempty"`
-	ArchivedAt time.Time            `yaml:"archived_at,omitempty"`
-	LastSeq    int64                `yaml:"last_seq"`
-	Rev        int64                `yaml:"rev"`
-	SegRev     []int64              `yaml:"seg_rev,omitempty"`
-	Pending    map[int64]pendingRef `yaml:"pending,omitempty"`
+	Incarnation string               `yaml:"incarnation,omitempty"`
+	State       channels.State       `yaml:"state"`
+	Title       string               `yaml:"title,omitempty"`
+	CreatedBy   channels.Author      `yaml:"created_by"`
+	CreatedAt   time.Time            `yaml:"created_at"`
+	ClosedAt    time.Time            `yaml:"closed_at,omitempty"`
+	ArchivedAt  time.Time            `yaml:"archived_at,omitempty"`
+	LastSeq     int64                `yaml:"last_seq"`
+	Rev         int64                `yaml:"rev"`
+	SegRev      []int64              `yaml:"seg_rev,omitempty"`
+	Pending     map[int64]pendingRef `yaml:"pending,omitempty"`
 }
 
 func (m *meta) channel(k channels.Key) channels.Channel {
 	return channels.Channel{
-		Key: k, State: m.State, Title: m.Title, CreatedBy: m.CreatedBy,
+		Key: k, Incarnation: m.Incarnation, State: m.State, Title: m.Title, CreatedBy: m.CreatedBy,
 		CreatedAt: m.CreatedAt.UTC(), ClosedAt: utc(m.ClosedAt), ArchivedAt: utc(m.ArchivedAt),
 		LastSeq: m.LastSeq, Rev: m.Rev,
 	}
@@ -505,19 +515,20 @@ func (d *disk) segment(k channels.Key, idx int64) ([]byte, error) {
 }
 
 // lastSeq reads the highest seq in the log, walking back over segments
-// that hold no message.
+// that hold no message. It reads each segment from its end (see
+// disk.lastMessage), so its cost does not grow with the segment.
 func (d *disk) lastSeq(k channels.Key) (int64, error) {
 	idxs, err := d.segments(k)
 	if err != nil {
 		return 0, err
 	}
 	for i := len(idxs) - 1; i >= 0; i-- {
-		data, err := d.segment(k, idxs[i])
+		seq, ok, err := d.lastMessage(segKey(k, idxs[i]))
 		if err != nil {
 			return 0, err
 		}
-		if msgs := fold(data, segKey(k, idxs[i])); len(msgs) > 0 {
-			return msgs[len(msgs)-1].Seq, nil
+		if ok {
+			return seq, nil
 		}
 	}
 	return 0, nil
@@ -544,15 +555,64 @@ func (d *disk) loadMessage(k channels.Key, seq int64) ([]channels.Message, int, 
 }
 
 func (d *disk) appendAudit(id string, rec channels.AuditRecord) error {
-	cur, err := d.readFile(auditKey(id))
-	if err != nil {
-		return fmt.Errorf("filechannels: read audit of %s: %w", id, err)
-	}
 	b, err := json.Marshal(rec)
 	if err != nil { // coverage-ignore: invariant: plain data
 		return err
 	}
-	return d.appendRecord(auditKey(id), cur, append(b, '\n'))
+	return d.appendTo(auditKey(id), append(b, '\n'))
+}
+
+// appendTo appends rec to the file at key without reading it whole: only
+// its last byte is read, to find a torn final line. A torn file, and a
+// filesystem that cannot append in place, take the full read of
+// appendRecord.
+func (d *disk) appendTo(key string, rec []byte) error {
+	torn := false
+	if d.rfs.SupportsStreaming() {
+		var err error
+		torn, err = d.endsTorn(key)
+		if err != nil {
+			return fmt.Errorf("filechannels: read %s: %w", key, err)
+		}
+	}
+	var cur []byte
+	if torn || !d.rfs.SupportsStreaming() {
+		var err error
+		cur, err = d.readFile(key)
+		if err != nil {
+			return fmt.Errorf("filechannels: read %s: %w", key, err)
+		}
+	}
+	return d.appendRecord(key, cur, rec)
+}
+
+// compactAfter returns the number of patch records a segment may hold
+// before the next patch rewrites it compactly. Twice the segment size keeps
+// a segment at most about three times its compact length.
+func (d *disk) compactAfter() int { return int(2 * d.segSize) }
+
+// appendLog appends rec, which may hold patch records, to segment idx of k,
+// whose current bytes are cur. A segment that already holds compactAfter
+// patch records is rewritten in folded form instead, so replies and action
+// changes to old messages cannot grow it without bound.
+func (d *disk) appendLog(k channels.Key, idx int64, cur, rec []byte) error {
+	if patchCount(cur) < d.compactAfter() {
+		return d.appendRecord(segKey(k, idx), cur, rec)
+	}
+	return d.rewrite(k, idx, fold(append(complete(cur), rec...), segKey(k, idx)))
+}
+
+// patchPrefix starts every patch line: encodeLine writes the kind first,
+// and JSON escapes a newline inside a string, so the prefix cannot occur
+// inside a record.
+var patchPrefix = []byte(`{"k":"p"`)
+
+func patchCount(data []byte) int {
+	n := bytes.Count(data, append([]byte{'\n'}, patchPrefix...))
+	if bytes.HasPrefix(data, patchPrefix) {
+		n++
+	}
+	return n
 }
 
 // move renames from to to, creating the parent of to first.

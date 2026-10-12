@@ -47,6 +47,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -91,6 +92,12 @@ var (
 	// ErrRekeyConflict reports a rename whose target id already holds
 	// channels. Nothing moved; the caller tombstones the occupant and retries.
 	ErrRekeyConflict = errors.New("channels: target id already has channels")
+
+	// ErrStaleAnchor reports an append to a channel whose recorded
+	// incarnation is not the one the caller gave: the channel belongs to an
+	// earlier entity that used the same id. Nothing was written; the caller
+	// tombstones the leftover and retries. See [Channel.Incarnation].
+	ErrStaleAnchor = errors.New("channels: channel belongs to an earlier entity with this id")
 )
 
 // Caps enforced at the store boundary, so no backend and no caller above it
@@ -112,8 +119,16 @@ const (
 	// DefaultPageLimit is the page size when the request names none.
 	DefaultPageLimit = 50
 	// MaxTextBytes caps the free-text fields that are not content: the
-	// schema hash and the triggered-by label.
+	// schema hash, the triggered-by label and the incarnation.
 	MaxTextBytes = 200
+	// MaxAnchorIDBytes and MaxFaceBytes cap the anchor of a channel. The
+	// file backend writes both into one directory name of at most 255
+	// bytes, base32-encoded (8 characters per 5 bytes) and followed by a
+	// tombstone stamp, so every backend refuses a longer anchor alike.
+	MaxAnchorIDBytes = 100
+	MaxFaceBytes     = 32
+	// MaxPromotedTypeBytes caps the entity type an action names.
+	MaxPromotedTypeBytes = 64
 )
 
 // namePattern is the grammar of channel type, message type and action
@@ -163,10 +178,14 @@ type Anchor struct {
 	Face entity.Face `json:"face,omitempty"`
 }
 
-// Validate checks the id and face grammar.
+// Validate checks the id and face grammar and length.
 func (a Anchor) Validate() error {
 	if err := entity.ValidateID(a.ID); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidKey, err)
+	}
+	if len(a.ID) > MaxAnchorIDBytes || len(a.Face) > MaxFaceBytes {
+		return fmt.Errorf("%w: anchor id over %d bytes or face over %d bytes",
+			ErrInvalidKey, MaxAnchorIDBytes, MaxFaceBytes)
 	}
 	if a.Face != "" {
 		if _, err := entity.ParseFace(string(a.Face)); err != nil {
@@ -285,7 +304,12 @@ func (m Message) ActionStatus() ActionStatus {
 }
 
 // NewMessage is what a caller appends. The store assigns Seq and Rev.
+//
+// Incarnation identifies the anchor's lifetime (see [Channel.Incarnation]).
+// The append records it when it creates an implicit channel, and refuses
+// with [ErrStaleAnchor] when the channel exists with another one.
 type NewMessage struct {
+	Incarnation string
 	Type        string
 	Author      Author
 	At          time.Time
@@ -297,16 +321,66 @@ type NewMessage struct {
 
 // Channel is a channel's metadata. LastSeq and Rev are the head a poller
 // compares against.
+//
+// Incarnation is an opaque token, chosen by the caller, that identifies the
+// lifetime of the anchor the channel was created on. It is recorded once,
+// when the channel is created, and survives a rekey, because a rename keeps
+// the entity. Its job is to fail closed on id reuse. The hooks that
+// tombstone a deleted entity's channels run after the commit and can fail;
+// a channel they missed still carries the old incarnation, so a caller that
+// compares it with the live entity's (see [CheckIncarnation]) treats the
+// channel as nonexistent rather than handing it to the new entity.
+//
+// The same check covers two creates racing on one id. When two faces of a
+// new entity are created at once, each create hook sees two faces and
+// tombstones only its own face, so channels anchored to the whole family of
+// the deleted entity survive both hooks. They carry the deleted entity's
+// incarnation and so stay unreachable.
+//
+// The token must be stable for the anchor's life and differ between two
+// lives of one id: for a family anchor, an identity of the family; for a
+// face anchor, one of that face. The store only compares it for equality.
 type Channel struct {
-	Key        Key       `json:"key"`
-	State      State     `json:"state"`
-	Title      string    `json:"title,omitempty"`
-	CreatedBy  Author    `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
-	ClosedAt   time.Time `json:"closed_at,omitzero"`
-	ArchivedAt time.Time `json:"archived_at,omitzero"`
-	LastSeq    int64     `json:"last_seq"`
-	Rev        int64     `json:"rev"`
+	Key         Key       `json:"key"`
+	Incarnation string    `json:"incarnation,omitempty"`
+	State       State     `json:"state"`
+	Title       string    `json:"title,omitempty"`
+	CreatedBy   Author    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	ClosedAt    time.Time `json:"closed_at,omitzero"`
+	ArchivedAt  time.Time `json:"archived_at,omitzero"`
+	LastSeq     int64     `json:"last_seq"`
+	Rev         int64     `json:"rev"`
+}
+
+// CheckIncarnation reports a channel whose incarnation is not live, the
+// incarnation of the anchor as it exists now, as [ErrNotFound]: it was left
+// by an earlier entity with the same id. A caller runs it on every channel
+// it reads before serving it.
+func CheckIncarnation(c Channel, live string) error {
+	if c.Incarnation != live {
+		return fmt.Errorf("%w: channel %s belongs to an earlier entity", ErrNotFound, c.Key)
+	}
+	return nil
+}
+
+// CheckAppendIncarnation refuses an append to an existing channel whose
+// recorded incarnation is not the caller's, with [ErrStaleAnchor].
+func CheckAppendIncarnation(k Key, recorded, given string) error {
+	if recorded != given {
+		return fmt.Errorf("%w: %s", ErrStaleAnchor, k)
+	}
+	return nil
+}
+
+// NewChannel is what CreateMany creates: a named channel of Type with an
+// optional Title, recorded with the anchor's Incarnation.
+type NewChannel struct {
+	Type        string
+	Title       string
+	Incarnation string
+	By          Author
+	At          time.Time
 }
 
 // StateSince returns when the channel entered its current state: the close
@@ -331,7 +405,9 @@ type Transition struct {
 }
 
 // ApplyTransition sets c's state and timestamps for t. Reopening clears
-// both timestamps; closing clears the archive time.
+// both timestamps; closing clears the archive time. Archiving an open
+// channel closes it in the same instant, so an archived channel always has
+// a close time.
 func ApplyTransition(c *Channel, t Transition) {
 	c.State = t.To
 	switch t.To {
@@ -340,6 +416,9 @@ func ApplyTransition(c *Channel, t Transition) {
 	case StateClosed:
 		c.ClosedAt, c.ArchivedAt = t.At, time.Time{}
 	case StateArchived:
+		if c.ClosedAt.IsZero() {
+			c.ClosedAt = t.At
+		}
 		c.ArchivedAt = t.At
 	}
 }
@@ -458,8 +537,9 @@ func PrepareMessage(m NewMessage) (NewMessage, []byte, error) {
 	if m.ReplyTo < 0 {
 		return m, nil, fmt.Errorf("%w: negative reply_to", ErrInvalidReply)
 	}
-	if len(m.SchemaHash) > MaxTextBytes || len(m.TriggeredBy) > MaxTextBytes {
-		return m, nil, fmt.Errorf("%w: schema hash or triggered_by over %d bytes", ErrTooLarge, MaxTextBytes)
+	if len(m.SchemaHash) > MaxTextBytes || len(m.TriggeredBy) > MaxTextBytes || len(m.Incarnation) > MaxTextBytes {
+		return m, nil, fmt.Errorf("%w: schema hash, triggered_by or incarnation over %d bytes",
+			ErrTooLarge, MaxTextBytes)
 	}
 	props, raw, err := PrepareProps(m.Props)
 	if err != nil {
@@ -531,6 +611,9 @@ func PrepareAction(name string, next Action) (Action, error) {
 		if err := entity.ValidateID(next.Promoted.ID); err != nil {
 			return next, fmt.Errorf("%w: promoted id: %w", ErrInvalidMessage, err)
 		}
+		if err := checkPromotedType(next.Promoted.Type); err != nil {
+			return next, err
+		}
 	}
 	next.Name = name
 	next.At = NormTime(next.At)
@@ -558,21 +641,41 @@ func CheckActionCAS(cur *Action, name string, expect ActionStatus) error {
 	return nil
 }
 
-// PrepareChannel validates the inputs of a CreateMany call.
-func PrepareChannel(anchor Anchor, typ, title string, by Author, at time.Time) (time.Time, error) {
-	if err := (Key{Anchor: anchor, Type: typ}).Validate(); err != nil {
-		return at, err
+// checkPromotedType refuses an empty, oversized or unprintable entity type
+// in an action's promoted record. Entity type names have no grammar beyond
+// that, so this is a sanity cap rather than a schema check.
+func checkPromotedType(typ string) error {
+	if typ == "" || len(typ) > MaxPromotedTypeBytes || !utf8.ValidString(typ) {
+		return fmt.Errorf("%w: promoted type must be 1 to %d bytes of UTF-8", ErrInvalidMessage, MaxPromotedTypeBytes)
 	}
-	if utf8.RuneCountInString(title) > MaxTitleRunes {
-		return at, fmt.Errorf("%w: title over %d characters", ErrTooLarge, MaxTitleRunes)
+	for _, r := range typ {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("%w: promoted type holds a control character", ErrInvalidMessage)
+		}
 	}
-	if err := checkAuthor(by); err != nil {
-		return at, err
+	return nil
+}
+
+// PrepareChannel validates the inputs of a CreateMany call and returns
+// them with the time normalized.
+func PrepareChannel(anchor Anchor, nc NewChannel) (NewChannel, error) {
+	if err := (Key{Anchor: anchor, Type: nc.Type}).Validate(); err != nil {
+		return nc, err
 	}
-	if at.IsZero() {
-		return at, fmt.Errorf("%w: missing time", ErrInvalidMessage)
+	if utf8.RuneCountInString(nc.Title) > MaxTitleRunes {
+		return nc, fmt.Errorf("%w: title over %d characters", ErrTooLarge, MaxTitleRunes)
 	}
-	return NormTime(at), nil
+	if len(nc.Incarnation) > MaxTextBytes {
+		return nc, fmt.Errorf("%w: incarnation over %d bytes", ErrTooLarge, MaxTextBytes)
+	}
+	if err := checkAuthor(nc.By); err != nil {
+		return nc, err
+	}
+	if nc.At.IsZero() {
+		return nc, fmt.Errorf("%w: missing time", ErrInvalidMessage)
+	}
+	nc.At = NormTime(nc.At)
+	return nc, nil
 }
 
 // PrepareTransition validates a lifecycle change.

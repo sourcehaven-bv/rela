@@ -39,7 +39,7 @@ func buildChannels(
 	}
 	if fs == nil || paths == nil || paths.CacheDir == "" {
 		slog.Warn("channels: no cache directory; channels are kept in this process only")
-		return filechannels.New(storage.NewMemFS(), "/channels", filelock.ProcessPrivate{})
+		return memoryChannels(), nil
 	}
 	var locker filechannels.Locker = filelock.ProcessPrivate{}
 	if _, mem := fs.(*storage.MemFS); !mem {
@@ -50,6 +50,16 @@ func buildChannels(
 		locker = l
 	}
 	return filechannels.New(fs, filepath.Join(paths.CacheDir, channelsDir), locker)
+}
+
+// memoryChannels returns a file backend over an in-memory filesystem: the
+// channels live as long as the process.
+func memoryChannels() channels.Store {
+	s, err := filechannels.New(storage.NewMemFS(), "/channels", filelock.ProcessPrivate{})
+	if err != nil { // coverage-ignore: unreachable: both collaborators are non-nil
+		panic(err)
+	}
+	return s
 }
 
 // Channels returns the channel store of s. It is a package function rather
@@ -89,6 +99,15 @@ func channelAliasesFor(cs channels.Store, st store.EntityLister) *channelAliases
 // newID belong to an earlier entity with that id, so they are tombstoned
 // first. A sweep then tombstones any channel an append created under oldID
 // while the rename ran.
+//
+// The hook runs after the rename commits. A message posted to newID in the
+// window before the first tombstone lands in a channel that the tombstone
+// then detaches, together with the earlier entity's leftovers; the poster
+// sees the message vanish. The window is the time between the commit and
+// this hook. Closing it needs the rename and the tombstone in one
+// transaction, which the store seam does not offer. The incarnation check
+// (see [channels.Channel.Incarnation]) keeps the reverse safe: a leftover
+// the tombstone misses is never served as the renamed entity's.
 func (a *channelAliases) EntityRenamed(ctx context.Context, oldID, newID string) error {
 	at := a.now()
 	if err := a.store.Tombstone(ctx, newID, "", at); err != nil {

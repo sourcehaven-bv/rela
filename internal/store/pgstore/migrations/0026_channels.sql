@@ -1,10 +1,10 @@
 -- pgstore schema, version 26: realtime channels (TKT-DD8B6I).
 --
 -- Backs internal/channels/pgchannels through internal/channels/sqlchannels,
--- whose package doc describes the three tables. Numbered 26 because 24 and
--- 25 are taken by mention targets and leases on the branches this lands
--- beside; pgstore.Migrate applies every embedded version above the current
--- one, so a gap is harmless.
+-- whose package doc describes the four tables. Numbered 26 because 0024
+-- (mention targets) and 0025 (leases) land before it on the develop stack,
+-- which keeps the sequence gap-free there. Renumber it, rather than leave a
+-- gap, if that order changes.
 --
 -- Rows live in the tenant's schema like every other table here.
 --
@@ -25,6 +25,9 @@ CREATE TABLE channels (
     name        TEXT   COLLATE "C" NOT NULL DEFAULT '',
     -- Empty for a live channel; the tombstone stamp of a detached one.
     tomb        TEXT   COLLATE "C" NOT NULL DEFAULT '',
+    -- The anchor lifetime the channel was created in; see
+    -- channels.Channel.Incarnation.
+    incarnation TEXT   NOT NULL DEFAULT '',
     state       TEXT   NOT NULL,
     title       TEXT   NOT NULL DEFAULT '',
     created_by  TEXT   NOT NULL,

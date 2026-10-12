@@ -25,10 +25,11 @@ import (
 // non-nil slice when nothing matches.
 type Store interface {
 	// Append adds a message and returns it with its seq and rev. A
-	// cardinality-one channel (empty name) is created on its first append;
-	// a named channel must exist, or the result is [ErrNotFound]. A reply
-	// names an existing, unremoved top-level message, whose reply count
-	// rises in the same step.
+	// cardinality-one channel (empty name) is created on its first append,
+	// recording msg.Incarnation; a named channel must exist, or the result
+	// is [ErrNotFound]. An existing channel recorded with another
+	// incarnation is [ErrStaleAnchor]. A reply names an existing, unremoved
+	// top-level message, whose reply count rises in the same step.
 	Append(ctx context.Context, key Key, msg NewMessage) (Message, error)
 
 	// Edit replaces a message's properties and sets its edit time. The old
@@ -46,11 +47,11 @@ type Store interface {
 	// effect is reverted. Reaching [ActionDone] writes an audit record.
 	SetAction(ctx context.Context, key Key, seq int64, name string, expect ActionStatus, next Action) (Message, error)
 
-	// CreateMany creates a named channel of type typ on anchor, with a
-	// minted name, and returns it. The anchor may hold at most
-	// [MaxChannelsPerType] named channels of the type; the check and the
-	// create are one step. Writes an audit record.
-	CreateMany(ctx context.Context, anchor Anchor, typ, title string, by Author, at time.Time) (Channel, error)
+	// CreateMany creates a named channel on anchor, with a minted name, and
+	// returns it. The anchor may hold at most [MaxChannelsPerType] named
+	// channels of the type, counting channels of every incarnation; the
+	// check and the create are one step. Writes an audit record.
+	CreateMany(ctx context.Context, anchor Anchor, nc NewChannel) (Channel, error)
 
 	// SetLifecycle moves the channel from state expect to t.To as one
 	// compare-and-set; a lost race is [ErrConflict]. Writes an audit record.
@@ -61,9 +62,16 @@ type Store interface {
 	Delete(ctx context.Context, key Key, by Author, at time.Time) error
 
 	// Rekey moves every channel and the audit trail of entity oldID to
-	// newID, as one step: afterwards nothing is found under oldID. An oldID
-	// without channels moves only its audit trail. A newID that already has
+	// newID: afterwards nothing is found under oldID. An oldID without
+	// channels moves only its audit trail. A newID that already has
 	// channels is [ErrRekeyConflict] and nothing moves.
+	//
+	// The channels always move as one step, so they are never split
+	// between the two ids. The database backends move the audit trail in
+	// the same transaction. The file backend moves it in a second step
+	// after the channels: a crash between the two leaves the trail under
+	// oldID, where Audit(oldID) still reads it, and the next Rekey or
+	// Tombstone of oldID moves or files it.
 	Rekey(ctx context.Context, oldID, newID string, at time.Time) error
 
 	// Tombstone moves channels out of reach without deleting them. An empty
@@ -71,6 +79,11 @@ type Store interface {
 	// the audit trail away with them, so a new entity reusing the id starts
 	// clean. A face takes only the channels anchored to that face. An id
 	// without channels is not an error.
+	//
+	// Nothing in this interface reads a tombstoned channel again: no list,
+	// sweep, Remove or Delete reaches it, so neither retention nor erasure
+	// does. Purging tombstoned content is the retention work of
+	// TKT-964SIS, which adds the method that reaches it.
 	Tombstone(ctx context.Context, id string, face entity.Face, at time.Time) error
 
 	// Head returns the channel's metadata, including the last seq and rev a

@@ -6,11 +6,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
 var (
 	alice = Author{User: "alice"}
 	t0    = time.Date(2026, 10, 12, 9, 0, 0, 999, time.FixedZone("X", 3600))
+	// longFace is a valid face one byte over the cap.
+	longFace = entity.Face("f" + strings.Repeat("a", MaxFaceBytes))
 )
 
 func TestKeyValidateAndString(t *testing.T) {
@@ -28,6 +32,10 @@ func TestKeyValidateAndString(t *testing.T) {
 		{"reserved type", Key{Anchor: Anchor{ID: "TKT-1"}, Type: "lpt1"}, false, ""},
 		{"long type", Key{Anchor: Anchor{ID: "TKT-1"}, Type: "a" + strings.Repeat("b", 63)}, false, ""},
 		{"bad name", Key{Anchor: Anchor{ID: "TKT-1"}, Type: "room", Name: "a-b"}, false, ""},
+		{"longest id", Key{Anchor: Anchor{ID: strings.Repeat("A", MaxAnchorIDBytes)}, Type: "room"}, true,
+			strings.Repeat("A", MaxAnchorIDBytes) + "/room"},
+		{"long id", Key{Anchor: Anchor{ID: strings.Repeat("A", MaxAnchorIDBytes+1)}, Type: "room"}, false, ""},
+		{"long face", Key{Anchor: Anchor{ID: "TKT-1", Face: longFace}, Type: "room"}, false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,6 +85,7 @@ func TestPrepareMessage(t *testing.T) {
 		{"time", NewMessage{Type: "text", Author: alice}, ErrInvalidMessage},
 		{"reply", NewMessage{Type: "text", Author: alice, At: t0, ReplyTo: -1}, ErrInvalidReply},
 		{"hash", NewMessage{Type: "text", Author: alice, At: t0, SchemaHash: strings.Repeat("h", 201)}, ErrTooLarge},
+		{"incarnation", NewMessage{Type: "text", Author: alice, At: t0, Incarnation: strings.Repeat("i", 201)}, ErrTooLarge},
 		{"encode", NewMessage{Type: "text", Author: alice, At: t0, Props: map[string]any{"f": func() {}}}, ErrInvalidMessage},
 	}
 	for _, tc := range bad {
@@ -123,11 +132,19 @@ func TestPrepareAction(t *testing.T) {
 		{Status: "weird", By: alice, At: t0},
 		{Status: ActionDone, At: t0},
 		{Status: ActionDone, By: alice},
-		{Status: ActionDone, By: alice, At: t0, Promoted: &Promoted{ID: "a b"}},
+		{Status: ActionDone, By: alice, At: t0, Promoted: &Promoted{ID: "a b", Type: "task"}},
+		{Status: ActionDone, By: alice, At: t0, Promoted: &Promoted{ID: "T-1"}},
+		{Status: ActionDone, By: alice, At: t0, Promoted: &Promoted{ID: "T-1", Type: strings.Repeat("t", 65)}},
+		{Status: ActionDone, By: alice, At: t0, Promoted: &Promoted{ID: "T-1", Type: "ta\x00sk"}},
+		{Status: ActionDone, By: alice, At: t0, Promoted: &Promoted{ID: "T-1", Type: "\xff"}},
 	} {
 		_, err = PrepareAction("accept", next)
 		require.ErrorIs(t, err, ErrInvalidMessage)
 	}
+	_, err = PrepareAction("accept", Action{
+		Status: ActionDone, By: alice, At: t0, Promoted: &Promoted{ID: "T-1", Type: "mt_overleg"},
+	})
+	require.NoError(t, err, "an entity type may use characters a channel name may not")
 	_, err = PrepareAction("Accept", Action{})
 	require.ErrorIs(t, err, ErrInvalidMessage)
 
@@ -139,15 +156,28 @@ func TestPrepareAction(t *testing.T) {
 }
 
 func TestPrepareChannelAndRekey(t *testing.T) {
-	at, err := PrepareChannel(Anchor{ID: "TKT-1"}, "topic", "t", alice, t0)
+	nc, err := PrepareChannel(Anchor{ID: "TKT-1"}, NewChannel{Type: "topic", Title: "t", By: alice, At: t0})
 	require.NoError(t, err)
-	require.Equal(t, NormTime(t0), at)
-	_, err = PrepareChannel(Anchor{ID: "TKT-1"}, "topic", "t", alice, time.Time{})
+	require.Equal(t, NormTime(t0), nc.At)
+	_, err = PrepareChannel(Anchor{ID: "TKT-1"}, NewChannel{Type: "topic", Title: "t", By: alice})
 	require.ErrorIs(t, err, ErrInvalidMessage)
+	_, err = PrepareChannel(Anchor{ID: "TKT-1"}, NewChannel{
+		Type: "topic", Incarnation: strings.Repeat("i", MaxTextBytes+1), By: alice, At: t0,
+	})
+	require.ErrorIs(t, err, ErrTooLarge)
 
 	require.NoError(t, CheckRekey("A-1", "B-1"))
 	require.ErrorIs(t, CheckRekey("A-1", "a b"), ErrInvalidKey)
 	require.ErrorIs(t, CheckRekey("a b", "A-1"), ErrInvalidKey)
+}
+
+func TestIncarnation(t *testing.T) {
+	c := Channel{Key: Key{Anchor: Anchor{ID: "T-1"}, Type: "room"}, Incarnation: "life-1"}
+	require.NoError(t, CheckIncarnation(c, "life-1"))
+	require.ErrorIs(t, CheckIncarnation(c, "life-2"), ErrNotFound)
+	require.ErrorIs(t, CheckIncarnation(c, ""), ErrNotFound)
+	require.NoError(t, CheckAppendIncarnation(c.Key, "life-1", "life-1"))
+	require.ErrorIs(t, CheckAppendIncarnation(c.Key, "life-1", "life-2"), ErrStaleAnchor)
 }
 
 func TestLifecycleTimes(t *testing.T) {
@@ -162,6 +192,9 @@ func TestLifecycleTimes(t *testing.T) {
 	require.True(t, c.ArchivedAt.IsZero())
 	ApplyTransition(&c, Transition{To: StateOpen, At: t0.Add(4 * time.Hour)})
 	require.True(t, c.ClosedAt.IsZero())
+	ApplyTransition(&c, Transition{To: StateArchived, At: t0.Add(5 * time.Hour)})
+	require.Equal(t, t0.Add(5*time.Hour), c.ClosedAt, "archiving an open channel closes it too")
+	require.Equal(t, t0.Add(5*time.Hour), c.ArchivedAt)
 	require.True(t, NormTime(time.Time{}).IsZero())
 }
 

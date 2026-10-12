@@ -212,6 +212,9 @@ func TestBuildChannels(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 
+	if storeChannelsFor(st) != nil {
+		return // the postgres build never reaches the cache directory
+	}
 	disk := &project.Context{CacheDir: filepath.Join(t.TempDir(), ".rela")}
 	got, err = buildChannels(storage.NewSafeFS(storage.NewOsFS()), disk, st, nil)
 	require.NoError(t, err)

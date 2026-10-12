@@ -15,14 +15,15 @@ import (
 // every rela-server process on the schema sees one set of channels and one
 // gapless seq per channel.
 //
-// Nil: returned for a store that is not a pgstore, which then falls back to
-// the file backend in the cache directory, with a logged error because that
-// backend is node-local.
+// Nil: never returned. A store that is not a pgstore gets an in-memory
+// store with a logged error, as storePilesFor does. The cache directory is
+// not used: it is node-local, so processes sharing the database would each
+// see their own channels and their own seq.
 func storeChannelsFor(st store.Store) channels.Store {
 	db := pgstore.HandleFor(st)
 	if db == nil {
-		slog.Error("channels: store is not a pgstore; channels fall back to the cache directory")
-		return nil
+		slog.Error("channels: store is not a pgstore; channels are kept in memory and lost on restart")
+		return memoryChannels()
 	}
 	s, err := pgchannels.New(db)
 	if err != nil { // coverage-ignore: unreachable: db is non-nil here
