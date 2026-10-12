@@ -622,7 +622,7 @@ func validateCalDAVConstructible(
 			// Supplied by a literal.
 		case def.Default != "":
 			// Supplied by a metamodel property default.
-		case meta.GetTypeDefault(def.Type) != "":
+		case meta.Types[def.Type].Default != "":
 			// Supplied by the custom type's default (how `status` usually
 			// gets its value).
 		case c.Completion != nil && prop == c.Completion.StatusProperty:
