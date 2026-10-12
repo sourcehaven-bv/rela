@@ -704,6 +704,37 @@ func TestMdRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMdRoundTripHTMLComment(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "single line", input: "<!-- kort -->\n"},
+		{name: "multi line", input: "<!-- regel een\nregel twee -->\n"},
+		{name: "closer on own line", input: "<!-- toelichting\n-->\n\nTekst.\n"},
+		{
+			// Checklist-comment uit het atlas-taaktemplate (TASK-ZF91U):
+			// lege regel en een lijstregel vlak voor de `-->`.
+			name:  "list line before closer",
+			input: "## Checklist\n\n<!-- Voeg stappen toe.\n\nbijvoorbeeld:\n- [x] ~~Klaar~~ (naar TASK-XXXX) -->\n\n- [ ] Complete PDCA-cyclus doorlopen\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rt := newMdTestRuntime(t)
+			defer rt.Close()
+			code := fmt.Sprintf(`return rela.md.render(rela.md.parse(%q))`, tt.input)
+			require.NoError(t, rt.RunString(code))
+			assert.Equal(t, tt.input, lua.LVAsString(rt.L.Get(-1)))
+			rt.L.Pop(1)
+		})
+	}
+}
+
 func TestMdShiftHeaders(t *testing.T) {
 	t.Parallel()
 
