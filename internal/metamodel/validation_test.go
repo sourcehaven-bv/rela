@@ -379,13 +379,13 @@ func TestValidateRelationEntities(t *testing.T) {
 		},
 	}
 
-	err := meta.ValidateRelation("addresses", "decision", "requirement")
+	err := NewValidator(meta).ValidateRelation("addresses", "decision", "requirement")
 	if err != nil {
 		t.Errorf("ValidateRelation failed: %v", err)
 	}
 
 	// Invalid from type
-	err = meta.ValidateRelation("addresses", "requirement", "requirement")
+	err = NewValidator(meta).ValidateRelation("addresses", "requirement", "requirement")
 	if err == nil {
 		t.Error("expected error for invalid from type")
 	}

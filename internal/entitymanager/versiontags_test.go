@@ -631,3 +631,25 @@ func TestVersionTags_ExpectOnHiddenEntity(t *testing.T) {
 		t.Error("TagCurrent with expect and no view: want error")
 	}
 }
+
+// A tag write on a row the caller cannot read answers like one on a missing
+// row and records no denial (TKT-NXRFDU).
+func TestVersionTags_HiddenRowReadsAsMissing(t *testing.T) {
+	t.Parallel()
+	sink := audit.NewMemory()
+	mgr, cs := newManagerWithACL(t, hideOneACL{hidden: "DEC-001"}, sink)
+	seedEntity(t, cs, "decision", "A decision")
+	vt, err := entitymanager.NewVersionTags(mgr, &fakeTagger{}, &fakeTagGuard{})
+	if err != nil {
+		t.Fatalf("NewVersionTags: %v", err)
+	}
+	for _, id := range []string{"DEC-001", "DEC-404"} {
+		_, err := vt.TagVersion(taggerCtx(), entity.Ref{ID: id}, mustTagName(t, "reviewed"), 1)
+		if !errors.Is(err, entitymanager.ErrEntityNotFound) {
+			t.Errorf("TagVersion on %s = %v, want entity not found", id, err)
+		}
+	}
+	if n := countOps(sink.Records(), audit.OpDeniedWrite); n != 0 {
+		t.Errorf("denied-write rows = %d, want 0", n)
+	}
+}

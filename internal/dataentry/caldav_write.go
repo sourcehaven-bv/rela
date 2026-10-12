@@ -351,8 +351,10 @@ func (b *caldavBackend) updateFromTodo(
 		// DROPS its local copy, and the entity is still on disk — the user loses
 		// the only copy they were looking at, to a transient fault.
 		//
-		// So confirm the absence positively before acting on it.
-		if b.entityIsGone(ctx, m, entityID) {
+		// So confirm the absence positively before acting on it. A row the
+		// caller can no longer read is gone from their view too, and must get
+		// the same answer, or the 503 below would confirm that it exists.
+		if b.entityIsGone(ctx, m, entityID) || entityIsHidden(ctx, b.app, entityID) {
 			return nil, staleWriteResponse()
 		}
 		return nil, webdav.NewHTTPError(http.StatusServiceUnavailable,
@@ -552,6 +554,41 @@ func (b *caldavBackend) entityIsGone(ctx context.Context, _ *caldavMapper, addr 
 	return len(faces) == 0
 }
 
+// entityIsHidden reports whether the entity at addr is stored but the read
+// gate refuses the caller every face of it. It decides from the stored faces
+// and the ACL verdicts only, and any error makes it false: a failed read must
+// reach the retryable 503, not the permanent 404 that makes the client drop
+// its copy.
+func entityIsHidden(ctx context.Context, app *App, addr string) bool {
+	gate, ok := app.acl.(interface {
+		PermitsReadFace(ctx context.Context, entityType, entityID string, face entitypkg.Face) (bool, error)
+	})
+	if !ok {
+		return false
+	}
+	parsed, err := entitypkg.ParseAddress(addr)
+	if err != nil {
+		return false
+	}
+	typ, faces, err := loadStoredFaces(ctx, app.Services().Store, parsed.ID())
+	if err != nil || len(faces) == 0 {
+		return false
+	}
+	if named, isNamed := parsed.Named(); isNamed {
+		if !slices.Contains(faces, named.Face) {
+			return false
+		}
+		faces = []entitypkg.Face{named.Face}
+	}
+	for _, f := range faces {
+		readable, gErr := gate.PermitsReadFace(ctx, typ, parsed.ID(), f)
+		if gErr != nil || readable {
+			return false
+		}
+	}
+	return true
+}
+
 // staleWriteResponse answers a PUT whose alias points at an entity that is gone.
 //
 // # The alias table IS the tombstone
@@ -714,7 +751,7 @@ func (b *caldavBackend) disposeOnLastUnlink(dyn dataentryconfig.CalDAVDynamicCol
 		if !ok {
 			return false
 		}
-		required := def.GetMinOutgoing()
+		required := def.MinOutgoing
 		return required != nil && *required >= 1
 	}
 }
@@ -936,9 +973,11 @@ func caldavWriteError(err error) error {
 	}
 	// The entity is gone. Permanent from the client's perspective: 404 tells it
 	// to drop the resource, where 409 would make it retry the same doomed write
-	// every cycle.
+	// every cycle. The body is the one an unknown href gets: the manager also
+	// answers not-found for a row the caller cannot read, and its text names
+	// the id, so passing it on would tell the two apart.
 	if errors.Is(err, entitymanager.ErrEntityNotFound) || errors.Is(err, store.ErrNotFound) {
-		return webdav.NewHTTPError(http.StatusNotFound, err)
+		return webdav.NewHTTPError(http.StatusNotFound, errors.New("caldav: not found"))
 	}
 	return webdav.NewHTTPError(http.StatusConflict, err)
 }

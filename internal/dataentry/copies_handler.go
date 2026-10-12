@@ -278,6 +278,13 @@ func writeCopyError(w http.ResponseWriter, r *http.Request, err error) {
 			entityNotFoundTitle, "")
 		return
 	}
+	if errors.Is(err, entitymanager.ErrEntityAlreadyExists) {
+		// A target id that is taken by a row the caller cannot read. The
+		// answer is the one a create with that id gets, and names no type.
+		writeV1Error(w, r, http.StatusConflict, "conflict",
+			"Copy could not be applied", "the target id is already taken")
+		return
+	}
 	// Request-shape refusals the kernel names with a sentinel: coherent
 	// requests this definition cannot satisfy. Their text is safe — it names
 	// the definition and the ids the caller supplied, never store internals.

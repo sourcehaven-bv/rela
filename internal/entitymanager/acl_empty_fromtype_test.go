@@ -189,7 +189,10 @@ func createRelationAllowed(t *testing.T, createGrants []string, seedSource bool)
 	}
 
 	d, err := acl.NewDeclarative(&acl.Policy{
-		Roles:       map[string]acl.RoleDef{"writer": {Create: createGrants}},
+		// Read on every type, so a present source is readable: a source the
+		// caller cannot read is refused as absent (TKT-NXRFDU), which is not
+		// what this test is about.
+		Roles:       map[string]acl.RoleDef{"writer": {Read: []string{"*"}, Create: createGrants}},
 		Assignments: map[string]string{"alice": "writer"},
 	}, acl.NewStoreGraph(st), st)
 	if err != nil {

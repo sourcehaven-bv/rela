@@ -1484,6 +1484,9 @@ func NewApp(
 		owner:       app.attachmentOwner,
 		uploads:     app.attachmentUploads,
 		provision:   newProvisionSeam(app),
+		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
+			return servedFaceEdges(ctx, app.worldNeighbors, e)
+		},
 	}
 
 	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve
@@ -1506,7 +1509,7 @@ func NewApp(
 		denyAfford:  app.denyAffordance,
 		computeETag: app.computeEntityETag,
 		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
-			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
+			return servedFaceEdges(ctx, app.worldNeighbors, e)
 		},
 		readVisible: func(ctx context.Context, typeName string, ref entity.Ref) (*entity.Entity, bool, error) {
 			return app.visibleReader.addressRef(ctx, typeName, ref)
@@ -1754,7 +1757,7 @@ func newViewsHandler(app *App, st store.Store, logo *logoStore) *viewsHandler {
 			ctx context.Context, e *entity.Entity,
 		) ([]*entity.Relation, error) {
 			edges, _, err := servedFaceEdges(
-				ctx, app.reader, app.worldNeighbors, e)
+				ctx, app.worldNeighbors, e)
 			return edges, err
 		},
 	}

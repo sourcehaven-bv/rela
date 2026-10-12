@@ -1,7 +1,6 @@
 package metamodel
 
 import (
-	"slices"
 	"strings"
 )
 
@@ -74,36 +73,6 @@ func (m *Metamodel) InferEntityType(id string) string {
 		}
 	}
 	return ""
-}
-
-// ValidateRelation checks if a relation is valid between two entity types
-func (m *Metamodel) ValidateRelation(relationType, fromType, toType string) error {
-	rel, ok := m.GetRelationDef(relationType)
-	if !ok {
-		return &RelationNotFoundError{Name: relationType}
-	}
-
-	fromValid := slices.Contains(rel.From, fromType)
-	if !fromValid {
-		return &InvalidRelationError{
-			Relation: relationType,
-			From:     fromType,
-			To:       toType,
-			Message:  "source entity type not allowed",
-		}
-	}
-
-	toValid := slices.Contains(rel.To, toType)
-	if !toValid {
-		return &InvalidRelationError{
-			Relation: relationType,
-			From:     fromType,
-			To:       toType,
-			Message:  "target entity type not allowed",
-		}
-	}
-
-	return nil
 }
 
 // EntityTypes returns all entity type names
