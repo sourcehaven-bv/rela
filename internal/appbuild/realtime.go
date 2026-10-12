@@ -27,15 +27,15 @@ type RealtimeSnapshot struct {
 	// Config is the compiled realtime.yaml; nil when the project has none,
 	// which means realtime is off.
 	Config *realtimecfg.Compiled
-	// ReadOnly is set when a schema or acl.yaml reload made the file
+	// Degraded is set when a schema or acl.yaml reload made the file
 	// invalid. Config is then the last valid one, kept so existing channels
 	// stay readable, but it was checked against a schema and policy that no
 	// longer hold, so everything that reads entity data must fail closed:
 	// triggers and auto rules do not run, lifecycle operations with a
 	// condition are denied, and a role sourced from an entity property
 	// grants nobody.
-	ReadOnly bool
-	// Problem is why ReadOnly is set; nil otherwise.
+	Degraded bool
+	// Problem is why Degraded is set; nil otherwise.
 	Problem error
 }
 
@@ -104,7 +104,7 @@ func Realtime(svc *Services) *RealtimeConfig {
 }
 
 // WithRealtimeFallback makes a realtime.yaml that no longer loads keep
-// prev's configuration read-only (see [RealtimeSnapshot.ReadOnly]), instead
+// prev's configuration in degraded mode (see [RealtimeSnapshot.Degraded]), instead
 // of failing the build.
 // It is for a successor built by a schema hot reload (MCP's watchSchema):
 // the schema change is already on disk, so refusing it would leave the old
@@ -175,11 +175,14 @@ func newRealtimeConfig(cfg Config, o *options, loaded *acl.Policy,
 		return nil, err
 	}
 	slog.Error("realtime.yaml no longer loads against the reloaded schema; "+
-		"keeping the previous realtime config read-only", "error", err)
+		"keeping the previous realtime config in degraded mode", "error", err)
+	// Read the config and last under one lock, so a Reload of prev cannot
+	// land between them and pair one generation's config with another's.
 	prev.mu.Lock()
 	r.last = prev.last
+	prevConfig := prev.cur.Load().Config
 	prev.mu.Unlock()
-	r.cur.Store(&RealtimeSnapshot{Config: prev.Load().Config, ReadOnly: true, Problem: err})
+	r.cur.Store(&RealtimeSnapshot{Config: prevConfig, Degraded: true, Problem: err})
 	return r, nil
 }
 
@@ -205,4 +208,25 @@ func policyOnce(read func() (*acl.Policy, error)) func() (*acl.Policy, error) {
 		got, done = p, true
 		return got, nil
 	}
+}
+
+// RealtimePermissions returns the permissions realtime.yaml names, read
+// through r without validating the file (see [realtimecfg.ScanPermissions]).
+// `rela acl audit` uses it, so a realtime.yaml that no longer validates
+// still keeps its permissions from being reported dead. It returns
+// (nil, nil) when the file is absent, and an error only when the file
+// cannot be read or does not parse as YAML.
+func RealtimePermissions(ctx context.Context, r configReader) ([]string, error) {
+	data, err := r.Load(ctx, realtimecfg.FileName)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", realtimecfg.FileName, err)
+	}
+	perms, err := realtimecfg.ScanPermissions(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s does not parse: %w", realtimecfg.FileName, err)
+	}
+	return perms, nil
 }

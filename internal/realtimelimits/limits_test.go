@@ -34,8 +34,11 @@ func TestParseRate(t *testing.T) {
 }
 
 func TestRate_AtMostAndString(t *testing.T) {
-	if !(Rate{60, time.Hour}).AtMost(DefaultLogRate) {
-		t.Error("60/h should be at most 30/m")
+	if !(Rate{30, time.Hour}).AtMost(DefaultLogRate) {
+		t.Error("30/h should be at most 30/m")
+	}
+	if (Rate{1000, time.Hour}).AtMost(DefaultLogRate) {
+		t.Error("1000/h has a lower average than 30/m but a larger burst; it should not be at most 30/m")
 	}
 	if (Rate{1, time.Second}).AtMost(DefaultLogRate) {
 		t.Error("1/s should exceed 30/m")

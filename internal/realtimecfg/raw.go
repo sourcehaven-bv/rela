@@ -71,6 +71,7 @@ type rawProperty struct {
 
 type rawPromote struct {
 	Type   string            `yaml:"type"`
+	Face   string            `yaml:"face"`
 	Map    map[string]string `yaml:"map"`
 	Relate *rawRelate        `yaml:"relate"`
 }

@@ -12,6 +12,7 @@ func usesWholeEnv(t *testing.T) *Env {
 	}
 	mustDeclareVar(t, env, "entity", entity)
 	mustDeclareVar(t, env, "current_user", RecordType{"id": StringType})
+	mustDeclareVar(t, env, "name", StringType)
 	mustDeclareFunc(t, env, "len", FuncSig{Params: []Type{ListType{Elem: StringType}}, Return: NumberType})
 	mustDeclareFunc(t, env, "inspect", FuncSig{Params: []Type{RecordType{}}, Return: BoolType})
 	return env
@@ -53,6 +54,19 @@ func TestProgram_UsesWhole(t *testing.T) {
 		{"whole use beside an attribute", "entity.status == 'open' and inspect(entity)", true, []string{"status"}},
 		{"another variable only", "current_user.id == 'u'", false, nil},
 		{"traversal over another variable", "related(current_user, 'owns')", false, nil},
+	}
+	// A scalar variable compared to nil is a whole use of that variable.
+	prog, err := Compile(usesWholeEnv(t), "name == nil")
+	if err != nil {
+		t.Fatalf("compile name == nil: %v", err)
+	}
+	if !prog.UsesWhole("name") || prog.UsesWhole("entity") {
+		t.Errorf("name == nil: UsesWhole(name) = %v, UsesWhole(entity) = %v; want true, false",
+			prog.UsesWhole("name"), prog.UsesWhole("entity"))
+	}
+	// A record cannot be compared, so `entity == nil` never reaches UsesWhole.
+	if _, err := Compile(usesWholeEnv(t), "entity == nil"); err == nil {
+		t.Error("entity == nil compiled; UsesWhole's godoc says a record cannot be compared")
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

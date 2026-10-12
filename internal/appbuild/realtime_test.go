@@ -98,7 +98,7 @@ func TestRealtime_AbsentFileIsOff(t *testing.T) {
 	require.NoError(t, err)
 	snap := appbuild.Realtime(realtimeServices(t, base)).Load()
 	require.Nil(t, snap.Config)
-	require.False(t, snap.ReadOnly)
+	require.False(t, snap.Degraded)
 }
 
 // An invalid realtime.yaml fails the boot, as an invalid data-entry.yaml
@@ -210,7 +210,7 @@ func TestRealtime_SchemaReloadFallback(t *testing.T) {
 	next, err := realtimeBase(t, root, appbuild.WithRealtimeFallback(origin))
 	require.NoError(t, err)
 	snap := appbuild.Realtime(realtimeServices(t, next)).Load()
-	require.True(t, snap.ReadOnly)
+	require.True(t, snap.Degraded)
 	require.Same(t, prev, snap.Config)
 	require.ErrorContains(t, snap.Problem, `doc has no property "owner"`)
 }

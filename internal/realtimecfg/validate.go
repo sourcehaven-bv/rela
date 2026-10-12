@@ -91,7 +91,8 @@ func (v *validator) lowerRate(key, s string, limit realtimelimits.Rate) realtime
 		return limit
 	}
 	if !r.AtMost(limit) {
-		v.add(key, fmt.Sprintf("%s is above the limit of %s; realtime.yaml may only lower it", r, limit))
+		v.add(key, fmt.Sprintf("%s is above the limit of %s, on average or in one burst; "+
+			"realtime.yaml may only lower it", r, limit))
 		return limit
 	}
 	return r
@@ -133,7 +134,10 @@ func (v *validator) channelType(name string, raw *rawChannelType, limits Limits)
 	if raw.Read != nil {
 		read = *raw.Read
 	}
-	ct.Read = Role{Name: "read", Label: read.Label, Source: v.source(key+".read", &read, ct)}
+	ct.Read = Role{
+		Name: "read", Label: read.Label, Source: v.source(key+".read", &read, ct),
+		RequireAnchorRead: true,
+	}
 
 	switch {
 	case ct.Cardinality == CardinalityMany && (raw.Create == nil || len(raw.Create.Roles) == 0):
@@ -271,7 +275,7 @@ func (v *validator) identityProperty(key, entityType, prop string) {
 			entityType, prop, pd.Type))
 		return
 	}
-	if fieldRestricted(v.policy, entityType, prop) {
+	if v.policy.FieldRestricted(entityType, prop) {
 		v.add(key, fmt.Sprintf("%s.%s is restricted by a visible: grant in acl.yaml; "+
 			"a role decided by it would disclose its value", entityType, prop))
 	}
@@ -443,29 +447,44 @@ func (v *validator) property(key, name string, raw *rawProperty, limits Limits) 
 	return p
 }
 
-// promote checks a promote_to block: the entity type, each mapped entity
-// property and message property, and the relation linking the new entity
-// to every attach_to type. The mapping reads message properties only, never
-// the anchor entity.
+// promote checks a promote_to block: the entity type and its face, each
+// mapped entity property and message property and their types, that every
+// required entity property is filled, and the relation linking the new
+// entity to every attach_to type. The mapping reads message properties
+// only, never the anchor entity.
 func (v *validator) promote(key string, raw *rawPromote, mt *MessageType, ct *ChannelType) *Promote {
 	if raw == nil {
 		return nil
 	}
-	p := &Promote{Type: raw.Type, Map: map[string]string{}}
+	p := &Promote{Type: raw.Type, Face: raw.Face, Map: map[string]string{}}
 	def, ok := v.meta.GetEntityDef(raw.Type)
 	if !ok {
 		v.add(key+".type", fmt.Sprintf("unknown entity type %q", raw.Type))
 		return p
 	}
+	if canon := v.meta.ResolveAlias(raw.Type); canon != raw.Type {
+		v.add(key+".type", fmt.Sprintf("%q is an alias of %q; name the type itself", raw.Type, canon))
+	}
+	v.promoteFace(key+".face", raw)
 	for _, ep := range sortedKeys(raw.Map) {
 		mp := raw.Map[ep]
-		if _, ok := def.Properties[ep]; !ok {
-			v.add(key+".map."+ep, fmt.Sprintf("%s has no property %q", raw.Type, ep))
-		}
-		if _, ok := mt.Properties[mp]; !ok {
-			v.add(key+".map."+ep, fmt.Sprintf("message type %s has no property %q", mt.Name, mp))
-		}
 		p.Map[ep] = mp
+		v.promoteMapping(key+".map."+ep, raw.Type, ep, mp, def, mt)
+	}
+	for _, ep := range sortedKeys(def.Properties) {
+		pd := def.Properties[ep]
+		if !pd.Required || pd.Default != "" || pd.Computed != "" {
+			continue
+		}
+		mp, mapped := raw.Map[ep]
+		if !mapped {
+			v.add(key+".map", fmt.Sprintf("%s requires property %q; map a required message property to it", raw.Type, ep))
+			continue
+		}
+		if msgProp, ok := mt.Properties[mp]; ok && !msgProp.Required {
+			v.add(key+".map."+ep, fmt.Sprintf("%s requires property %q, but message property %s is optional; "+
+				"mark it required", raw.Type, ep, mp))
+		}
 	}
 	if raw.Relate != nil {
 		p.Relate = raw.Relate.Type
@@ -476,6 +495,66 @@ func (v *validator) promote(key string, raw *rawPromote, mt *MessageType, ct *Ch
 		}
 	}
 	return p
+}
+
+// promoteMapping checks that message property mp exists and can fill entity
+// property ep of entityType.
+func (v *validator) promoteMapping(key, entityType, ep, mp string, def *metamodel.EntityDef, mt *MessageType) {
+	pd, ok := def.Properties[ep]
+	if !ok {
+		v.add(key, fmt.Sprintf("%s has no property %q", entityType, ep))
+		return
+	}
+	if pd.Computed != "" {
+		v.add(key, fmt.Sprintf("%s.%s is computed; it cannot be set", entityType, ep))
+		return
+	}
+	msgProp, ok := mt.Properties[mp]
+	if !ok {
+		v.add(key, fmt.Sprintf("message type %s has no property %q", mt.Name, mp))
+		return
+	}
+	if !promotable(msgProp, pd) {
+		v.add(key, fmt.Sprintf("message property %s (%s) cannot fill %s.%s, a %s property",
+			mp, msgProp.Type, entityType, ep, pd.Type))
+	}
+}
+
+// promoteFace checks that a promote_to names a face exactly when its type
+// declares faces. A create of a faced type needs one, and taking the first
+// declared face would let a presentation order stand in for the operator's
+// intent.
+func (v *validator) promoteFace(key string, raw *rawPromote) {
+	faces := metamodel.FaceOrderOf(v.meta, raw.Type)
+	switch {
+	case len(faces) == 0 && raw.Face != "":
+		v.add(key, raw.Type+" declares no faces")
+	case len(faces) > 0 && raw.Face == "":
+		v.add(key, fmt.Sprintf("%s declares faces; name the face to create (%s)", raw.Type, strings.Join(faces, ", ")))
+	case len(faces) > 0 && !slices.Contains(faces, raw.Face):
+		v.add(key, fmt.Sprintf("%s has no face %q; use one of %s", raw.Type, raw.Face, strings.Join(faces, ", ")))
+	}
+}
+
+// promotable reports whether a message property's value can fill entity
+// property pd. Text and a ref (the entity id) fill a string; an enum fills a
+// string or the same enum type; every other type fills only its own type.
+func promotable(mp Property, pd metamodel.PropertyDef) bool {
+	switch mp.Type {
+	case PropertyString, PropertyMarkdown, PropertyRef:
+		return pd.Type == metamodel.PropertyTypeString
+	case PropertyEnum:
+		return pd.Type == metamodel.PropertyTypeString || pd.Type == mp.Enum
+	case PropertyInteger:
+		return pd.Type == metamodel.PropertyTypeInteger
+	case PropertyBoolean:
+		return pd.Type == metamodel.PropertyTypeBoolean
+	case PropertyDate:
+		return pd.Type == metamodel.PropertyTypeDate
+	case PropertyDatetime:
+		return pd.Type == metamodel.PropertyTypeDatetime
+	}
+	return false
 }
 
 func (v *validator) lifecycle(key string, raw *rawLifecycle, ct *ChannelType) Lifecycle {
@@ -507,6 +586,7 @@ func (v *validator) lifecycleOp(key string, raw *rawLifecycleOp, ct *ChannelType
 		}
 	}
 	if raw.Condition != "" {
+		op.RequireAnchorRead = true
 		for _, t := range ct.AttachTo {
 			if rule, ok := v.compileRule(key+".condition", t, raw.Condition); ok {
 				op.Conditions[t] = rule.Program
@@ -604,6 +684,10 @@ func (v *validator) trigger(name string, raw *rawTrigger, file *rawFile) *Trigge
 	}
 	if !v.meta.HasEntityType(raw.EntityType) {
 		v.add(key+".entity_type", fmt.Sprintf("unknown entity type %q", raw.EntityType))
+		return nil
+	}
+	if canon := v.meta.ResolveAlias(raw.EntityType); canon != raw.EntityType {
+		v.add(key+".entity_type", fmt.Sprintf("%q is an alias of %q; name the type itself", raw.EntityType, canon))
 		return nil
 	}
 	if raw.When == "" {

@@ -163,7 +163,7 @@ documents:
 // suppress A7 for every project that has no data-entry.yaml.
 func TestPermissionConsumerFor_MissingFileIsNotNil(t *testing.T) {
 	t.Parallel()
-	perms, err := permissionConsumerFor(emptyLoader(t), nil, nil)
+	perms, err := permissionConsumerFor(emptyLoader(t), nil)
 	if err != nil {
 		t.Fatalf("missing data-entry.yaml must not error: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestPermissionConsumerFor_MissingFileIsNotNil(t *testing.T) {
 // at this call site rather than inside aclaudit.
 func TestPermissionConsumerFor_UnreadableConfigYieldsUntypedNil(t *testing.T) {
 	t.Parallel()
-	perms, err := permissionConsumerFor(loaderWith(t, "navigation: [unclosed\n"), nil, nil)
+	perms, err := permissionConsumerFor(loaderWith(t, "navigation: [unclosed\n"), nil)
 	if err == nil {
 		t.Fatal("malformed data-entry.yaml must error so the caller can suppress A7")
 	}
@@ -316,7 +316,7 @@ channel_types:
         post: [lead]
     lifecycle:
       delete: { permission: records.delete }
-`), meta, nil)
+`), meta)
 	if err != nil {
 		t.Fatalf("permissionConsumerFor: %v", err)
 	}
@@ -326,10 +326,24 @@ channel_types:
 		t.Errorf("UsedPermissions() = %q, want %q", got, want)
 	}
 
-	// An invalid realtime.yaml is "could not look": the untyped nil skips A7.
-	perms, err = permissionConsumerFor(realtimeLoader(t, "version: 1\nchannel_types: {room: {attach_to: [nope]}}\n"),
-		meta, nil)
+	// A realtime.yaml that parses but does not validate still names its
+	// permissions: a schema change that breaks the file must not switch off
+	// the dead-permission check.
+	perms, err = permissionConsumerFor(realtimeLoader(t, "version: 1\nchannel_types: {room: {attach_to: [nope], "+
+		"roles: {lead: {permission: ticket.lead}}}}\n"), meta)
+	if err != nil {
+		t.Fatalf("invalid but parseable realtime.yaml: %v", err)
+	}
+	got = perms.UsedPermissions()
+	slices.Sort(got)
+	if want := []string{"report:read", "ticket.lead"}; !slices.Equal(got, want) {
+		t.Errorf("UsedPermissions() of an invalid realtime.yaml = %q, want %q", got, want)
+	}
+
+	// A realtime.yaml that does not parse is "could not look": the untyped
+	// nil skips A7.
+	perms, err = permissionConsumerFor(realtimeLoader(t, "version: [1\n"), meta)
 	if err == nil || perms != nil {
-		t.Fatalf("invalid realtime.yaml: (%#v, %v); want an untyped nil and an error", perms, err)
+		t.Fatalf("unparseable realtime.yaml: (%#v, %v); want an untyped nil and an error", perms, err)
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
@@ -87,6 +86,14 @@ func (v *validator) compileRule(key, entityType, src string) (Rule, bool) {
 		v.add(key, fmt.Sprintf("does not compile for %s: %v", entityType, err))
 		return Rule{}, false
 	}
+	ok := v.allowRule(key, entityType, prog)
+	return Rule{Program: prog, Fields: prog.Attributes("entity")}, ok
+}
+
+// allowRule holds a compiled rule to the allowlist [validator.compileRule]
+// describes and reports each violation. It reports false when there was
+// one.
+func (v *validator) allowRule(key, entityType string, prog *predicate.Program) bool {
 	ok := true
 	if len(prog.Traversals()) > 0 {
 		v.add(key, "may not follow relations (related); a rule reads only the entity's own properties")
@@ -102,57 +109,12 @@ func (v *validator) compileRule(key, entityType, src string) (Rule, bool) {
 		v.add(key, "may use the entity only as entity.<property>")
 		ok = false
 	}
-	fields := prog.Attributes("entity")
-	for _, f := range fields {
-		if fieldRestricted(v.policy, entityType, f) {
+	for _, f := range prog.Attributes("entity") {
+		if v.policy.FieldRestricted(entityType, f) {
 			v.add(key, fmt.Sprintf("reads %s.%s, which a visible: grant in acl.yaml restricts; "+
 				"a message posted by this rule would disclose its value to every channel reader", entityType, f))
 			ok = false
 		}
 	}
-	return Rule{Program: prog, Fields: fields}, ok
-}
-
-// fieldRestricted reports whether acl.yaml may hide property of entityType
-// from some reader. It is deliberately broad: a property named in any role's
-// `visible:` grant for the type counts, as does one a role's closed-world
-// `visible:` list leaves out, and one a client baseline's `visible:` or
-// `redact:` hides. A rule or role reading such a property would turn a
-// message into an oracle on its value.
-//
-// Nil: policy is accepted and restricts nothing (no acl.yaml).
-func fieldRestricted(policy *acl.Policy, entityType, property string) bool {
-	if policy == nil {
-		return false
-	}
-	for _, role := range policy.Roles {
-		for key := range role.Visible {
-			if appliesTo(key, entityType) {
-				// A role's visible: list is closed-world: a property it names
-				// is restricted by the design rule, and one it leaves out is
-				// hidden from that role. Either way every property of the
-				// type is restricted.
-				return true
-			}
-		}
-	}
-	for _, b := range policy.ClientBaselines {
-		for key, fields := range b.Visible {
-			if appliesTo(key, entityType) && !slices.Contains(fields, property) {
-				return true
-			}
-		}
-		for key, fields := range b.Redact {
-			if appliesTo(key, entityType) && slices.Contains(fields, property) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// appliesTo reports whether an acl.yaml grant key names entityType: the type
-// itself, one of its faces (type@face), or every type.
-func appliesTo(key, entityType string) bool {
-	return key == entityType || key == "*" || strings.HasPrefix(key, entityType+"@")
+	return ok
 }

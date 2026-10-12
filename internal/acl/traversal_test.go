@@ -227,6 +227,46 @@ func TestConditionallyVisible(t *testing.T) {
 	}
 }
 
+func TestFieldRestricted(t *testing.T) {
+	var nilPolicy *Policy
+	if nilPolicy.FieldRestricted("page", "title") {
+		t.Fatal("a nil policy restricted a field")
+	}
+	p := &Policy{
+		Roles: map[string]RoleDef{
+			"a": {Visible: map[string][]FieldGrant{"page@draft": {{Field: "title"}}}},
+		},
+		ClientBaselines: map[string]ClientBaseline{
+			"apps": {AppliesTo: []string{"app"}, Restriction: Restriction{
+				Visible: map[string][]string{"incident": {"title"}},
+				Redact:  map[string][]string{"datalek": {"notes"}},
+			}},
+		},
+	}
+	for _, tc := range []struct {
+		name, typ, prop string
+		want            bool
+	}{
+		{"listed under a face key of a role's visible:", "page", "title", true},
+		{"unlisted under a role's visible:", "page", "owner", true},
+		{"listed in a baseline's closed world", "incident", "title", false},
+		{"left out of a baseline's closed world", "incident", "owner", true},
+		{"named by a baseline's redact:", "datalek", "notes", true},
+		{"not named by a baseline's redact:", "datalek", "owner", false},
+		{"a type nothing gates", "risico", "owner", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := p.FieldRestricted(tc.typ, tc.prop); got != tc.want {
+				t.Fatalf("FieldRestricted(%s, %s) = %v; want %v", tc.typ, tc.prop, got, tc.want)
+			}
+		})
+	}
+	wild := &Policy{Roles: map[string]RoleDef{"w": {Visible: map[string][]FieldGrant{"*": {{Field: "title"}}}}}}
+	if !wild.FieldRestricted("risico", "title") {
+		t.Error(`a role's visible: on "*" restricts every type`)
+	}
+}
+
 // The gate must not write into the caller's Props backing array.
 //
 // Today readQuery never populates Query.Props (it constrains rows through

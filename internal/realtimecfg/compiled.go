@@ -10,7 +10,10 @@ import (
 )
 
 // Compiled is a validated realtime.yaml. It is never mutated after [Parse]
-// returns it, so one value may be shared by every reader.
+// returns it, so one value may be shared by every reader. Its fields are
+// unexported and every accessor returns a copy, so a caller cannot change
+// what another reader sees. A copy costs a few small maps; take it once per
+// operation.
 //
 // Nil: accepted by every method — a nil *Compiled is the project without a
 // realtime.yaml, where realtime is off.
@@ -39,29 +42,40 @@ func (c *Compiled) Limits() Limits {
 	return c.limits
 }
 
-// ChannelType returns the channel type called name.
-func (c *Compiled) ChannelType(name string) (*ChannelType, bool) {
+// ChannelType returns a copy of the channel type called name.
+func (c *Compiled) ChannelType(name string) (ChannelType, bool) {
 	if c == nil {
-		return nil, false
+		return ChannelType{}, false
 	}
 	ct, ok := c.channelTypes[name]
-	return ct, ok
+	if !ok {
+		return ChannelType{}, false
+	}
+	return ct.clone(), true
 }
 
-// ChannelTypes returns every channel type, sorted by name.
-func (c *Compiled) ChannelTypes() []*ChannelType {
+// ChannelTypes returns a copy of every channel type, sorted by name.
+func (c *Compiled) ChannelTypes() []ChannelType {
 	if c == nil {
 		return nil
 	}
-	return sortedValues(c.channelTypes)
+	out := make([]ChannelType, 0, len(c.channelTypes))
+	for _, ct := range sortedValues(c.channelTypes) {
+		out = append(out, ct.clone())
+	}
+	return out
 }
 
-// Triggers returns every trigger, sorted by name.
-func (c *Compiled) Triggers() []*Trigger {
+// Triggers returns a copy of every trigger, sorted by name.
+func (c *Compiled) Triggers() []Trigger {
 	if c == nil {
 		return nil
 	}
-	return sortedValues(c.triggers)
+	out := make([]Trigger, 0, len(c.triggers))
+	for _, t := range sortedValues(c.triggers) {
+		out = append(out, t.clone())
+	}
+	return out
 }
 
 // UsedPermissions returns every permission realtime.yaml names, sorted and
@@ -143,7 +157,9 @@ type ChannelType struct {
 	Cardinality Cardinality
 	Create      *Gate
 	// Read decides who receives the channel. Receiving a message type
-	// needs nothing more than this.
+	// needs nothing more than this. Its RequireAnchorRead is always set:
+	// whatever its source, Read admits only a principal who can also read
+	// the anchor entity.
 	Read           Role
 	Roles          map[string]Role
 	MessageTypes   map[string]*MessageType
@@ -153,10 +169,19 @@ type ChannelType struct {
 }
 
 // Role is a named set of principals, defined by exactly one source.
+//
+// When RequireAnchorRead is set, the role admits a principal only if the
+// principal matches Source AND can read the anchor entity (the
+// [SourceAttached] check). The channel's Read role always has it set, so no
+// source lets a principal who cannot read the entity receive its channel:
+// a role sourced from a permission, an entity property, a principal type or
+// the channel's creator would otherwise reveal the entity's channel to
+// someone the ACL hides the entity from.
 type Role struct {
-	Name   string
-	Label  string
-	Source Source
+	Name              string
+	Label             string
+	Source            Source
+	RequireAnchorRead bool
 }
 
 // SourceKind is the closed set of ways a role can match a principal. There
@@ -188,27 +213,55 @@ type Source struct {
 	PrincipalType string
 }
 
-// NeedsCeilingCheck reports whether the source matches on identity alone, so
-// the caller must also check that the request's client ceiling admits the
-// operation's base capability on the anchor (read for a read role, update of
-// the anchor's type for the rest). A permission or attached source is
-// already decided through acl.Request, which applies the ceiling.
-func (s Source) NeedsCeilingCheck() bool {
-	switch s.Kind {
-	case SourceEntityProperty, SourcePrincipalType, SourceCreator:
-		return true
-	default:
-		return false
-	}
+// Capability is the base capability an operation needs on the anchor
+// entity under the request's client ceiling.
+type Capability int
+
+// Base capabilities.
+const (
+	// CapabilityRead is what reading a channel needs: read of the anchor.
+	CapabilityRead Capability = iota + 1
+	// CapabilityUpdate is what every other operation needs (create, post,
+	// edit, delete, remove, lifecycle and actions): update of the anchor's
+	// type.
+	CapabilityUpdate
+)
+
+// NeedsCeilingCheck reports whether the caller must also check that the
+// request's client ceiling (client_baselines and scope_grants in acl.yaml)
+// admits capability on the anchor before the source admits a principal.
+//
+// Only an attached source on a read needs no extra check: "can read the
+// anchor" is decided by acl.Request, which applies the ceiling's read axis.
+// Every other case needs it:
+//   - entity property, principal type and creator sources match on identity
+//     alone and consult no ACL at all;
+//   - a permission source is decided by acl.Request, but the ceiling narrows
+//     a permission only through its permission axis (permissions,
+//     deny_permissions), never through read, update or deny_write, so a
+//     client baseline with deny_write would not stop it;
+//   - an attached source on a write proves read, not update.
+func (s Source) NeedsCeilingCheck(capability Capability) bool {
+	return s.Kind != SourceAttached || capability != CapabilityRead
 }
 
 // Gate is who may perform an operation: any listed role, or a holder of
 // Permission. Denied is the operator's message for a refusal.
+//
+// A gate is a write: every way through it also needs the request's client
+// ceiling to admit [CapabilityUpdate] on the anchor (Permission is narrowed
+// by the ceiling's permission axis only, like a [SourcePermission] role).
+//
+// When RequireAnchorRead is set, a principal must also be able to read the
+// anchor entity, whichever role or permission admits it. A lifecycle
+// operation with a `condition:` sets it: the allow-or-deny answer is one bit
+// about the entity, which a principal who cannot read it must not learn.
 type Gate struct {
-	Label      string
-	Roles      []string
-	Permission string
-	Denied     string
+	Label             string
+	Roles             []string
+	Permission        string
+	Denied            string
+	RequireAnchorRead bool
 }
 
 // Rule is a compiled program over the anchor entity, with the properties it
@@ -332,9 +385,12 @@ type Property struct {
 
 // Promote turns a message into an entity: Map names, per entity property,
 // the message property it is copied from, and Relate, when set, is the
-// relation type linking the new entity to the anchor.
+// relation type linking the new entity to the anchor. Face is the face the
+// new entity is created at; it is set exactly when Type declares faces, so
+// a promote never picks a face by rank.
 type Promote struct {
 	Type   string
+	Face   string
 	Map    map[string]string
 	Relate string
 }

@@ -68,7 +68,7 @@ triggers:
 | `anchor` | `family` (default): one channel per entity id, across its faces. `face`: one channel per face. `face` needs every `attach_to` type to declare faces. |
 | `cardinality` | `one` (default): one channel per entity, opened on first post. `many`: named channels that the `create` roles open. |
 | `create` | Who may open a channel. Only for `cardinality: many`, and required there. |
-| `read` | Who receives the channel. Default: `{ from: attached }`, everyone who can read the entity. |
+| `read` | Who receives the channel. Default: `{ from: attached }`, everyone who can read the entity. Whatever the source, a reader must also be able to read the entity. |
 | `roles` | Named groups of principals, used by every other key. |
 | `message_types` | The kinds of message, at least one. |
 | `lifecycle` | `close`, `reopen`, `archive` and `delete`. An operation you leave out is not offered. |
@@ -92,12 +92,27 @@ no way to deny.
 | `principal_type: t` | A principal whose verified principal type is `t`. |
 | `creator: true` | The principal that opened the channel. Only for `cardinality: many`. |
 
-A client ceiling (`client_baselines` in `acl.yaml`) narrows every role.
-`permission` and `attached` go through the ACL, which applies the ceiling.
-For `entity.<property>`, `principal_type` and `creator`, rela also checks
-that the ceiling lets the client read the entity (for `read`) or update its
-type (for posting, editing, removing, lifecycle and actions). To keep an
-agent client read-only in channels, give it a baseline without update:
+Every channel read requires that the principal can read the entity. The
+`read` role adds this to its source: `read: { permission: p }` admits a
+holder of `p` only if that principal can also read the entity. A channel
+never reveals itself to someone the ACL hides its entity from.
+
+A client ceiling (`client_baselines` and `scope_grants` in `acl.yaml`)
+narrows channel access in three ways:
+
+- Reading a channel needs read access to the entity. The ceiling's read
+  axis (`read`, `deny_read`, `worlds`, `deny_worlds`) narrows that.
+- Every other operation also needs the ceiling to admit update of the
+  entity's type (`update`, `deny_update`, `deny_write`), whichever role or
+  permission admits the principal. These operations are opening a channel,
+  posting, editing, deleting and removing messages, lifecycle operations
+  and actions.
+- A `permission:` role or gate is also narrowed by the ceiling's permission
+  axis (`permissions`, `deny_permissions`). That axis does not cover
+  writing: a client that keeps a permission still needs update access to
+  write.
+
+To keep an agent client read-only in channels, deny it writes:
 
 ```yaml
 client_baselines:
@@ -115,14 +130,16 @@ client_baselines:
 | `when` | A condition on the `message` record that a post must meet. |
 | `post` | The roles that may post. Receiving needs only `read`. |
 | `rate` | Posts per identity, such as `10/m`. It may only lower the limit. |
-| `promote_to` | Turns a message into an entity: `map` copies message properties to entity properties, and `relate` links the new entity to the channel's entity. Only for `log` messages. |
+| `promote_to` | Turns a message into an entity: `map` copies message properties to entity properties, and `relate` links the new entity to the channel's entity. Only for `log` messages. A type that declares faces needs `face`, the face to create. |
 | `actions` | Buttons on a message, each gated by `roles` or a `permission`. Only for `log` messages. |
 
 ## Lifecycle and periods
 
 Each lifecycle operation names `roles` or a `permission`. `from` is the
 state it starts from: `open`, `closed` or `archived`. `condition` must hold
-for the entity. `auto` runs `close` or `archive` without a request, when
+for the entity. An operation with a `condition` is open only to principals
+who can read the entity, because its answer says something about the
+entity. `auto` runs `close` or `archive` without a request, when
 `when` holds or `after` has passed. `retention` applies to `delete` only: a
 channel cannot be deleted before it ends. Retention never blocks removing a
 single message.
@@ -149,7 +166,10 @@ unknown entity type "nope"`. It checks:
 - entity types, relation types, enum types, properties and faces against
   `schema.yaml`;
 - that some role in `acl.yaml` grants each `permission`;
-- that every condition compiles.
+- that every condition compiles;
+- that each `promote_to` fills every required property of its type from a
+  required message property, maps each property to one of a matching type,
+  sets no computed property, and names a face when the type declares faces.
 
 Three more rules stop a message from revealing what `acl.yaml` hides:
 
@@ -164,7 +184,9 @@ Three more rules stop a message from revealing what `acl.yaml` hides:
 
 ## Limits
 
-These are the built-in limits. The `limits:` block may only lower them.
+These are the built-in limits. The `limits:` block may only lower them. A
+rate must be lower in both its average and its burst size, the count: `1000/h`
+averages less than `30/m` but allows 1000 posts at once, so it is refused.
 
 | Key | Default |
 | --- | --- |
@@ -179,13 +201,18 @@ These are the built-in limits. The `limits:` block may only lower them.
 - An invalid `realtime.yaml` stops the server from starting.
 - rela-server reloads the file when it changes. If the new file is invalid,
   the previous one keeps working, and open browsers get a `config-error`
-  event naming `realtime.yaml`. A change to `anchor:` of an existing channel
-  type is refused, because it would strand stored channels; restart instead.
+  event naming `realtime.yaml`.
+- A change to `anchor:` of a channel type that has stored channels is
+  refused, on reload and when the server starts, because the stored
+  channels are keyed by the old anchor. Migrating channels to another
+  anchor is not supported yet.
 - Saving `schema.yaml` in the Configure space checks `realtime.yaml` against
   the new schema and refuses the save if it breaks. The Configure space
   cannot edit `realtime.yaml` itself.
 - When the MCP server reloads a schema that breaks `realtime.yaml`, it keeps
-  the previous realtime configuration read-only and logs why. Triggers and
+  the previous realtime configuration in degraded mode and logs why. Triggers and
   automatic lifecycle rules do not run, operations with a `condition` are
   denied, and roles sourced from an entity property grant nobody.
-- `rela acl audit` counts the permissions in `realtime.yaml` as in use.
+- `rela acl audit` counts the permissions in `realtime.yaml` as in use,
+  also when the file does not load. Only a file that is not valid YAML makes
+  it skip the dead-permission check.

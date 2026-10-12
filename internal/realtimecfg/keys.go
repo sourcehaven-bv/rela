@@ -23,23 +23,46 @@ var refusedKeys = []struct {
 		"cannot be limited to humans; restrict agent clients with client_baselines in acl.yaml"},
 }
 
-// checkKeys walks the YAML tree beside the raw type it decodes into and
+// maxKeyNodes bounds how many nodes [keyChecker] visits. The walk follows
+// aliases, and an alias may point at a node that itself holds aliases, so
+// a small file can expand exponentially (the "billion laughs" file). A real
+// realtime.yaml has a few thousand nodes at most.
+const maxKeyNodes = 100_000
+
+// keyChecker walks the YAML tree beside the raw type it decodes into and
 // reports every key the type does not declare, and every value whose shape
 // (mapping, list or single value) does not match. yaml.v3's KnownFields
 // reports the first unknown key by line only; this names each one by its key
 // path, which is what the operator searches for.
+type keyChecker struct {
+	add    func(key, reason string)
+	visits int
+}
+
+// checkKeys runs a [keyChecker] over n. It stops after [maxKeyNodes] nodes
+// and reports the file as too large.
 func checkKeys(n *yaml.Node, t reflect.Type, path string, add func(key, reason string)) {
-	if n == nil {
+	k := &keyChecker{add: add}
+	k.walk(n, t, path)
+	if k.visits > maxKeyNodes {
+		add("", fmt.Sprintf("the file expands to more than %d nodes; remove nested aliases", maxKeyNodes))
+	}
+}
+
+func (k *keyChecker) walk(n *yaml.Node, t reflect.Type, path string) {
+	if n == nil || k.visits > maxKeyNodes {
 		return
 	}
+	k.visits++
+	add := k.add
 	switch n.Kind {
 	case yaml.DocumentNode:
 		for _, c := range n.Content {
-			checkKeys(c, t, path, add)
+			k.walk(c, t, path)
 		}
 		return
 	case yaml.AliasNode:
-		checkKeys(n.Alias, t, path, add)
+		k.walk(n.Alias, t, path)
 		return
 	default:
 		// Sequences, mappings and scalars are checked against t below.
@@ -65,7 +88,7 @@ func checkKeys(n *yaml.Node, t reflect.Type, path string, add func(key, reason s
 				add(child, unknownKeyReason(child))
 				continue
 			}
-			checkKeys(n.Content[i+1], ft, child, add)
+			k.walk(n.Content[i+1], ft, child)
 		}
 	case reflect.Map:
 		if n.Kind != yaml.MappingNode {
@@ -73,7 +96,7 @@ func checkKeys(n *yaml.Node, t reflect.Type, path string, add func(key, reason s
 			return
 		}
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			checkKeys(n.Content[i+1], t.Elem(), joinKey(path, n.Content[i].Value), add)
+			k.walk(n.Content[i+1], t.Elem(), joinKey(path, n.Content[i].Value))
 		}
 	case reflect.Slice:
 		if n.Kind != yaml.SequenceNode {
@@ -81,7 +104,7 @@ func checkKeys(n *yaml.Node, t reflect.Type, path string, add func(key, reason s
 			return
 		}
 		for i, c := range n.Content {
-			checkKeys(c, t.Elem(), fmt.Sprintf("%s[%d]", path, i), add)
+			k.walk(c, t.Elem(), fmt.Sprintf("%s[%d]", path, i))
 		}
 	default:
 		if n.Kind != yaml.ScalarNode {

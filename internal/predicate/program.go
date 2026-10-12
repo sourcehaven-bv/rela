@@ -53,8 +53,10 @@ func (p *Program) References(varName string) bool {
 // UsesWhole reports whether the program uses the variable as a whole value
 // rather than only through attribute access: passed to a host function, the
 // subject of a traversal, compared, or selected. `entity.status` is not a
-// whole use; `len(entity)`, `related(entity, 'x')`, `entity == nil` and
-// `entity or x` are.
+// whole use; `inspect(entity)` and `related(entity, 'x')` are, as is
+// `name == nil` for a scalar variable. A record cannot be compared or
+// selected (`entity == nil` does not compile), so for a record variable a
+// whole use is a call or a traversal.
 //
 // A caller that limits which fields a program may read needs this answer:
 // [Program.Attributes] lists the fields read directly, but a whole use hands

@@ -55,8 +55,13 @@ func (r Rate) PerSecond() float64 {
 	return float64(r.Count) / r.Per.Seconds()
 }
 
-// AtMost reports whether r allows no more events than limit does.
-func (r Rate) AtMost(limit Rate) bool { return r.PerSecond() <= limit.PerSecond() }
+// AtMost reports whether r allows no more events than limit does, both on
+// average and in one burst. A token bucket holds Count tokens, so a rate with
+// a lower average but a larger Count still admits a bigger burst: 1000/h
+// averages less than 30/m, yet lets 1000 posts through at once.
+func (r Rate) AtMost(limit Rate) bool {
+	return r.Count <= limit.Count && r.PerSecond() <= limit.PerSecond()
+}
 
 // String renders the rate the way [ParseRate] reads it.
 func (r Rate) String() string {

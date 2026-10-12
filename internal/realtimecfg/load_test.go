@@ -80,23 +80,20 @@ func TestParse_Golden(t *testing.T) {
 	if room.OnEntityDelete != OnDeleteBlock {
 		t.Errorf("on_entity_delete = %s", room.OnEntityDelete)
 	}
-	if room.Read.Source.Kind != SourceAttached || room.Read.Source.NeedsCeilingCheck() {
-		t.Errorf("read source = %+v", room.Read.Source)
+	if room.Read.Source.Kind != SourceAttached || !room.Read.RequireAnchorRead {
+		t.Errorf("read = %+v; want an attached source that requires anchor read", room.Read)
 	}
-	wantSources := map[string]struct {
-		kind    SourceKind
-		ceiling bool
-	}{
-		"lead":   {SourceEntityProperty, true},
-		"dpo":    {SourcePermission, false},
-		"member": {SourceAttached, false},
-		"agent":  {SourcePrincipalType, true},
+	for _, name := range []string{"lead", "dpo", "member", "agent"} {
+		if room.Roles[name].RequireAnchorRead {
+			t.Errorf("role %s requires anchor read; only Read and conditional gates do", name)
+		}
 	}
-	for name, want := range wantSources {
-		got := room.Roles[name].Source
-		if got.Kind != want.kind || got.NeedsCeilingCheck() != want.ceiling {
-			t.Errorf("role %s source = %+v (ceiling %v); want kind %d ceiling %v",
-				name, got, got.NeedsCeilingCheck(), want.kind, want.ceiling)
+	wantKinds := map[string]SourceKind{
+		"lead": SourceEntityProperty, "dpo": SourcePermission, "member": SourceAttached, "agent": SourcePrincipalType,
+	}
+	for name, want := range wantKinds {
+		if got := room.Roles[name].Source.Kind; got != want {
+			t.Errorf("role %s source kind = %d; want %d", name, got, want)
 		}
 	}
 	if room.Roles["lead"].Source.Property != "owner" || room.Roles["dpo"].Source.Permission != "privacy.officer" {
@@ -130,6 +127,10 @@ func TestParse_Golden(t *testing.T) {
 	if lc.Close == nil || len(lc.Close.Conditions) != 2 || len(lc.Close.Auto.When) != 2 {
 		t.Errorf("close = %+v", lc.Close)
 	}
+	if !lc.Close.RequireAnchorRead || lc.Reopen.RequireAnchorRead {
+		t.Errorf("RequireAnchorRead: close (with a condition) = %v, reopen (without) = %v; want true, false",
+			lc.Close.RequireAnchorRead, lc.Reopen.RequireAnchorRead)
+	}
 	if got := lc.Close.Auto.When["datalek"].Fields; !slices.Equal(got, []string{"status"}) {
 		t.Errorf("auto.when fields = %v", got)
 	}
@@ -150,6 +151,9 @@ func TestParse_Golden(t *testing.T) {
 	threads, _ := c.ChannelType("page-threads")
 	if threads.Anchor != AnchorFace || threads.Create == nil || threads.Roles["starter"].Source.Kind != SourceCreator {
 		t.Errorf("page-threads = %+v", threads)
+	}
+	if threads.Read.Source.Kind != SourceAttached || !threads.Read.RequireAnchorRead {
+		t.Errorf("default read = %+v; want attached, requiring anchor read", threads.Read)
 	}
 
 	trs := c.Triggers()
@@ -368,7 +372,42 @@ func TestParse_Invalid(t *testing.T) {
 		{"trigger required prop", []replace{{`summary: "Severity raised to high", `, ""}},
 			"triggers.breach-escalated.post.props", `required property "summary"`},
 		{"limit above built-in", []replace{{"post_rate: 20/m", "post_rate: 40/m"}}, "limits.post_rate", "may only lower"},
-		{"limit syntax", []replace{{"post_rate: 20/m", "post_rate: fast"}}, "limits.post_rate", ""},
+		{"limit syntax", []replace{{"post_rate: 20/m", "post_rate: fast"}}, "limits.post_rate", `must look like "30/m"`},
+		{"limit burst", []replace{{"post_rate: 20/m", "post_rate: 1000/h"}}, "limits.post_rate", "in one burst"},
+		{"signal_rate above built-in", []replace{{"page_limit: 100", "page_limit: 100\n  signal_rate: 5/s"}},
+			"limits.signal_rate", "may only lower"},
+		{"message_bytes zero", []replace{{"page_limit: 100", "page_limit: 100\n  message_bytes: 0"}},
+			"limits.message_bytes", "between 1 and 16384"},
+		{"anchor face partly faced", []replace{{"attach_to: [page]", "attach_to: [page, risico]"}},
+			"channel_types.page-threads.anchor", `"risico" declares none`},
+		{"delete_own from", []replace{{"from: open }", "from: gone }"}},
+			"channel_types.incident-room.message_ops.delete_own.from", "open, closed or archived"},
+		{"auto on delete", []replace{{"retention: 7y }", "retention: 7y, auto: { after: 1d } }"}},
+			"channel_types.incident-room.lifecycle.delete.auto", "only close and archive"},
+		{"read from restricted property", []replace{{"read: { from: attached, label", "read: { from: entity.notes, label"}},
+			"channel_types.incident-room.read.from", "visible: grant"},
+		{"trigger entity type alias", []replace{{"entity_type: datalek", "entity_type: breach"}},
+			"triggers.breach-escalated.entity_type", `alias of "datalek"`},
+		{"promote alias", []replace{{"promote_to: { type: decision }", "promote_to: { type: breach }"}},
+			"channel_types.incident-room.message_types.status-update.actions.accept.promote_to.type", "alias"},
+		{"promote faced without face", []replace{{"promote_to: { type: decision }", "promote_to: { type: memo, map: { title: summary } }"}},
+			"channel_types.incident-room.message_types.status-update.actions.accept.promote_to.face", "name the face"},
+		{"promote unknown face", []replace{{"promote_to: { type: decision }",
+			"promote_to: { type: memo, face: final, map: { title: summary } }"}},
+			"channel_types.incident-room.message_types.status-update.actions.accept.promote_to.face", `no face "final"`},
+		{"promote face on faceless type", []replace{{"promote_to: { type: decision }", "promote_to: { type: decision, face: draft }"}},
+			"channel_types.incident-room.message_types.status-update.actions.accept.promote_to.face", "declares no faces"},
+		{"promote required unmapped", []replace{{"promote_to: { type: decision }", "promote_to: { type: memo, face: draft }"}},
+			"channel_types.incident-room.message_types.status-update.actions.accept.promote_to.map", `requires property "title"`},
+		{"promote required from optional", []replace{{"promote_to: { type: decision }",
+			"promote_to: { type: memo, face: draft, map: { title: severity } }"}},
+			"channel_types.incident-room.message_types.status-update.actions.accept.promote_to.map.title", "is optional"},
+		{"promote type mismatch", []replace{{"promote_to: { type: decision }",
+			"promote_to: { type: memo, face: draft, map: { title: summary, level: summary } }"}},
+			"channel_types.incident-room.message_types.status-update.actions.accept.promote_to.map.level", "cannot fill memo.level"},
+		{"promote computed", []replace{{"promote_to: { type: decision }",
+			"promote_to: { type: memo, face: draft, map: { title: summary, double: summary } }"}},
+			"channel_types.incident-room.message_types.status-update.actions.accept.promote_to.map.double", "computed"},
 		{"limit int", []replace{{"page_limit: 100", "page_limit: 500"}}, "limits.page_limit", "between 1 and 200"},
 	}
 	meta, policy := testMeta(t), testPolicy(t)
@@ -448,42 +487,6 @@ func TestParse_Minimal(t *testing.T) {
 	}
 	if len(c.ChannelTypes()) != 0 || c.Limits() != defaultLimits() {
 		t.Errorf("minimal file compiled to %+v", c)
-	}
-}
-
-func TestFieldRestricted(t *testing.T) {
-	p, err := acl.ParsePolicy([]byte(`
-user_entity_type: risico
-roles:
-  a:
-    read: ["*"]
-    visible:
-      page@draft: [{field: title}]
-client_baselines:
-  apps:
-    applies_to: [app]
-    visible:
-      incident: [title]
-`), "acl.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cases := []struct {
-		typ, prop string
-		want      bool
-	}{
-		{"page", "title", true},      // face key under a role's visible:
-		{"incident", "title", false}, // listed in the baseline's closed world
-		{"incident", "owner", true},  // left out of the baseline's closed world
-		{"datalek", "owner", false},
-	}
-	for _, tc := range cases {
-		if got := fieldRestricted(p, tc.typ, tc.prop); got != tc.want {
-			t.Errorf("fieldRestricted(%s, %s) = %v; want %v", tc.typ, tc.prop, got, tc.want)
-		}
-	}
-	if fieldRestricted(nil, "page", "title") {
-		t.Error("a nil policy restricted a field")
 	}
 }
 

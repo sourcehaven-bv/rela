@@ -68,7 +68,7 @@ func (c *ACLAuditCmd) Run(svc *readServices) error {
 		return fmt.Errorf("acl.yaml invalid for this project: %w", vErr)
 	}
 
-	perms, permsErr := permissionConsumerFor(svc.Config, svc.Meta, policy)
+	perms, permsErr := permissionConsumerFor(svc.Config, svc.Meta)
 	if permsErr != nil {
 		out.WriteWarning(
 			"%v; skipping the dead-permission check, which cannot tell a dead permission "+
@@ -385,7 +385,10 @@ func navigationPermissions(entries []dataentryconfig.NavigationEntry) []string {
 // permissionConsumerFor returns the audit's view of the permissions referenced
 // by data-entry UI gates and by realtime.yaml, or a nil INTERFACE when either
 // file could not be read. Both are needed: a permission used only by a
-// realtime role would otherwise be reported dead.
+// realtime role would otherwise be reported dead. realtime.yaml is scanned,
+// not validated, like data-entry.yaml: a file that refers to a type the
+// schema dropped still names its permissions, so only a file that does not
+// parse as YAML skips the check.
 //
 // The return type is the interface, not *dataEntryPermissions, on purpose. A
 // helper returning the concrete type would force the caller to convert, and the
@@ -394,19 +397,23 @@ func navigationPermissions(entries []dataentryconfig.NavigationEntry) []string {
 // so aclaudit.Audit's `perms == nil` check would not fire and A7 would run
 // blind, which is the exact false positive BUG-919PM6 fixed. Returning the
 // interface makes the nil case unrepresentable any other way.
-func permissionConsumerFor(cfg config.Loader, meta *metamodel.Metamodel,
-	policy *acl.Policy,
-) (aclaudit.PermissionConsumer, error) {
+func permissionConsumerFor(cfg config.Loader, meta *metamodel.Metamodel) (aclaudit.PermissionConsumer, error) {
 	loaded, err := loadDataEntryPermissions(cfg, meta)
 	if err != nil {
 		return nil, fmt.Errorf("could not read %s (%w)", dataentryconfig.ConfigFile, err)
 	}
-	realtime, err := appbuild.LoadRealtime(context.Background(), cfg, meta, policy)
+	realtime, err := appbuild.RealtimePermissions(context.Background(), cfg)
 	if err != nil {
 		return nil, err
 	}
-	return combinedPermissions{loaded, realtime}, nil
+	return combinedPermissions{loaded, permissionList(realtime)}, nil
 }
+
+// permissionList is a fixed list of permissions in use.
+type permissionList []string
+
+// UsedPermissions returns the list.
+func (p permissionList) UsedPermissions() []string { return p }
 
 // combinedPermissions is every non-policy surface that names permissions.
 type combinedPermissions []aclaudit.PermissionConsumer
