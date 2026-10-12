@@ -37,3 +37,5 @@ manager so the handler-side early authorization picks it up.
 - Relation create, update and delete with an unreadable endpoint are refused as not found.
 - Migrations, cascades and bypass handles keep working.
 - docs/acl-security.md (from its GUIDE entity) states the rule.
+
+PR: https://github.com/sourcehaven-bv/rela/pull/1868

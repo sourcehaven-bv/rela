@@ -1998,7 +1998,7 @@ func visibleEndpoint(ctx context.Context, gate faceReadGate, fam entityFamily, f
 // it does for a missing source (BUG-K6FEVB order kept). On any error the
 // family is zero, whose empty type matches no grant, so a gate error can never
 // make the source count as readable.
-func (m *Manager) lookupSource(ctx context.Context, from string, tail entity.Face) (entityFamily, error) {
+func lookupSource(ctx context.Context, m *Manager, from string, tail entity.Face) (entityFamily, error) {
 	source, err := lookupFamily(ctx, m.deps.Store, from)
 	if err != nil {
 		return entityFamily{}, err
@@ -2015,7 +2015,7 @@ func (m *Manager) lookupSource(ctx context.Context, from string, tail entity.Fac
 
 // requireVisibleTarget reports store.ErrNotFound when the caller cannot see
 // the head to of a relation write, so it is refused like a missing one.
-func (m *Manager) requireVisibleTarget(ctx context.Context, to string) (entityFamily, error) {
+func requireVisibleTarget(ctx context.Context, m *Manager, to string) (entityFamily, error) {
 	target, err := lookupFamily(ctx, m.deps.Store, to)
 	if err != nil {
 		return entityFamily{}, err
@@ -2747,7 +2747,7 @@ func (m *Manager) CreateRelation(
 	//
 	// A source the caller cannot see is looked up as a missing one, so the
 	// face check and the ACL below answer as they do for a missing source.
-	source, srcErr := m.lookupSource(ctx, from, key.FromFace)
+	source, srcErr := lookupSource(ctx, m, from, key.FromFace)
 	// BEFORE the ACL, so an unvalidated coordinate never becomes an
 	// authorization coordinate — and so the check still runs on the
 	// bypassACL path, where authorizeAndAudit returns without consulting
@@ -2770,7 +2770,7 @@ func (m *Manager) CreateRelation(
 		return nil, missingEndpoint("source", from, srcErr)
 	}
 	// A head the caller cannot see is reported like a missing one.
-	target, err := m.requireVisibleTarget(ctx, to)
+	target, err := requireVisibleTarget(ctx, m, to)
 	if err != nil {
 		return nil, missingEndpoint("target", to, err)
 	}
@@ -2879,7 +2879,7 @@ func (m *Manager) UpdateRelation(
 	// it is best-effort (empty if the source doesn't exist).
 	// A lookup error leaves the family zero, whose empty type matches no grant;
 	// so does a source the caller cannot see.
-	source, srcErr := m.lookupSource(ctx, from, key.FromFace)
+	source, srcErr := lookupSource(ctx, m, from, key.FromFace)
 	// BEFORE the ACL, for the reason given in [Manager.CreateRelation].
 	if fErr := m.deps.requireRelationFaceFor(relType, source.typ, key.FromFace); fErr != nil {
 		return nil, fErr
@@ -2891,7 +2891,7 @@ func (m *Manager) UpdateRelation(
 	// A relation the caller cannot see is refused like a missing one, after
 	// the ACL check, and before the move below reads its siblings.
 	if srcErr == nil {
-		_, srcErr = m.requireVisibleTarget(ctx, to)
+		_, srcErr = requireVisibleTarget(ctx, m, to)
 	}
 	if srcErr != nil {
 		if !errors.Is(srcErr, store.ErrNotFound) {
@@ -2991,7 +2991,7 @@ func (m *Manager) DeleteRelation(ctx context.Context, key entity.RelationKey) er
 	// source doesn't exist).
 	// A lookup error leaves the family zero, whose empty type matches no grant;
 	// so does a source the caller cannot see.
-	source, srcErr := m.lookupSource(ctx, from, face)
+	source, srcErr := lookupSource(ctx, m, from, face)
 	if aclErr := m.authorizeAndAudit(ctx,
 		RelationDeleteRequest(m.deps.Meta, relType, source.typ, from, face)); aclErr != nil {
 		return aclErr
@@ -2999,7 +2999,7 @@ func (m *Manager) DeleteRelation(ctx context.Context, key entity.RelationKey) er
 	// A relation the caller cannot see is refused with the store's answer for
 	// a missing one, after the ACL check.
 	if srcErr == nil {
-		_, srcErr = m.requireVisibleTarget(ctx, key.To)
+		_, srcErr = requireVisibleTarget(ctx, m, key.To)
 	}
 	if srcErr != nil {
 		if !errors.Is(srcErr, store.ErrNotFound) {

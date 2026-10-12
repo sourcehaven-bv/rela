@@ -38,7 +38,9 @@ target, gate error, hidden source under a real policy),
 `TestVersionTags_HiddenRowReadsAsMissing`, and the CalDAV tests in
 caldav_write_requires_read_test.go (PUT and DELETE through the HTTP surface with
 a Declarative policy shared by router and manager). The CalDAV PUT test fails
-when the hidden check is removed. `go test ./...` passes; lint clean.
+when the hidden check is removed. `go test ./...` passes; lint clean. The new relation and
+CalDAV helpers are plain functions, so Manager and caldavBackend stay under
+the god-object load line.
 
 ## Quality
 

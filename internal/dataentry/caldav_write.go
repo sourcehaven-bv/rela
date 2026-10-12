@@ -354,7 +354,7 @@ func (b *caldavBackend) updateFromTodo(
 		// So confirm the absence positively before acting on it. A row the
 		// caller can no longer read is gone from their view too, and must get
 		// the same answer, or the 503 below would confirm that it exists.
-		if b.entityIsGone(ctx, m, entityID) || b.entityIsHidden(ctx, m, entityID) {
+		if b.entityIsGone(ctx, m, entityID) || entityIsHidden(ctx, b.app, entityID) {
 			return nil, staleWriteResponse()
 		}
 		return nil, webdav.NewHTTPError(http.StatusServiceUnavailable,
@@ -559,8 +559,8 @@ func (b *caldavBackend) entityIsGone(ctx context.Context, _ *caldavMapper, addr 
 // and the ACL verdicts only, and any error makes it false: a failed read must
 // reach the retryable 503, not the permanent 404 that makes the client drop
 // its copy.
-func (b *caldavBackend) entityIsHidden(ctx context.Context, _ *caldavMapper, addr string) bool {
-	gate, ok := b.app.acl.(interface {
+func entityIsHidden(ctx context.Context, app *App, addr string) bool {
+	gate, ok := app.acl.(interface {
 		PermitsReadFace(ctx context.Context, entityType, entityID string, face entitypkg.Face) (bool, error)
 	})
 	if !ok {
@@ -570,7 +570,7 @@ func (b *caldavBackend) entityIsHidden(ctx context.Context, _ *caldavMapper, add
 	if err != nil {
 		return false
 	}
-	typ, faces, err := loadStoredFaces(ctx, b.app.Services().Store, parsed.ID())
+	typ, faces, err := loadStoredFaces(ctx, app.Services().Store, parsed.ID())
 	if err != nil || len(faces) == 0 {
 		return false
 	}
