@@ -65,6 +65,12 @@ type liveHub struct {
 
 	mu    sync.Mutex
 	conns map[string]*liveConn
+	// pending holds the subscriptions a changed round could not replay: it
+	// skipped them while their PUT took the baseline, or had no room or time
+	// for them ([liveHub.fallback]). The next tick replays them, so a
+	// change that round saw is compared against the baseline they end up
+	// with. A round that selects them takes the set. Guarded by mu.
+	pending map[*liveSub]struct{}
 
 	kick chan struct{} // cap 1: a PUT asks for a baseline round
 
@@ -72,6 +78,10 @@ type liveHub struct {
 	// the cap passes over every subscription in turn instead of always
 	// dropping the same tail. Worker goroutine only.
 	rotate int
+
+	// ticks counts the ticks the worker has finished, the round of each
+	// included. Tests wait on it instead of on the wall clock.
+	ticks atomic.Uint64
 
 	runMu  sync.Mutex
 	cancel context.CancelFunc
@@ -103,10 +113,17 @@ type liveConn struct {
 // did not finish; the round that then takes it also sends a frame, because
 // the client may have fetched a newer response than the baseline. syncing is
 // set while the PUT takes the baseline, and rounds skip the subscription.
+//
+// A change can land after the PUT's replay read the data and before the
+// baseline is stored. The client's refetch shows it, but the baseline does
+// not, so a later change back to the baseline would send no frame. A changed
+// round that skips a syncing subscription therefore sets recheck, and the
+// PUT then leaves the subscription pending for the next tick's replay.
 type liveSub struct {
 	url     string // replay URL rebuilt by livePath.String
 	hash    string
 	syncing bool
+	recheck bool
 }
 
 // register adds a stream owned by p and returns its connection.
@@ -314,6 +331,8 @@ func (h *liveHub) baseline(ctx context.Context, c *liveConn, added []*liveSub) b
 		wg.Wait()
 	}
 	all := true
+	h.mu.Lock()
+	current := h.conns[c.id] == c
 	c.mu.Lock()
 	for i, s := range added {
 		s.syncing = false
@@ -322,8 +341,15 @@ func (h *liveHub) baseline(ctx context.Context, c *liveConn, added []*liveSub) b
 		} else {
 			all = false
 		}
+		if s.recheck {
+			s.recheck = false
+			if current {
+				h.addPendingLocked(s)
+			}
+		}
 	}
 	c.mu.Unlock()
+	h.mu.Unlock()
 	return all
 }
 
@@ -381,8 +407,9 @@ type liveFeed interface {
 }
 
 // run runs one round at a time: a changed round on each tick of a fixed
-// clock when anything changed since the last one, and a baseline round when
-// a PUT asks for one.
+// clock when anything changed since the last one, a round over the pending
+// subscriptions on a tick when nothing changed, and a baseline round when a
+// PUT asks for one.
 //
 // The clock is fixed so that a round's start never depends on when a change
 // arrived. If the first change started the window instead, a write to a
@@ -401,11 +428,15 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed) {
 		case <-h.kick:
 			h.round(ctx, false) // baselines only; nothing changed
 		case <-tick.C:
-			if dirty {
+			switch {
+			case dirty:
 				dirty = false
 				feed.Take() // any change re-reads every subscription
 				h.round(ctx, true)
+			case h.hasPending():
+				h.replayRound(ctx, true, true)
 			}
+			h.ticks.Add(1)
 		}
 	}
 }
@@ -428,6 +459,11 @@ type subRef struct {
 // round replays the subscriptions and flags changed ones. When changed is
 // false only subscriptions without a baseline are replayed.
 func (h *liveHub) round(ctx context.Context, changed bool) {
+	h.replayRound(ctx, changed, false)
+}
+
+// replayRound replays what collect(changed, pendingOnly) selects.
+func (h *liveHub) replayRound(ctx context.Context, changed, pendingOnly bool) {
 	hp := h.replay.Load()
 	if hp == nil {
 		h.noReplay.Do(func() {
@@ -436,7 +472,7 @@ func (h *liveHub) round(ctx context.Context, changed bool) {
 		return
 	}
 	start := time.Now()
-	pairs := h.collect(changed)
+	pairs := h.collect(changed, pendingOnly)
 	if len(pairs) == 0 {
 		return
 	}
@@ -496,14 +532,28 @@ func (h *liveHub) round(ctx context.Context, changed bool) {
 }
 
 // collect groups the current subscriptions into distinct replays, in a
-// stable order; round rotates where the cap cuts it.
-func (h *liveHub) collect(changed bool) []*replayPair {
+// stable order; round rotates where the cap cuts it. A changed round takes
+// the pending set and marks the syncing subscriptions it skips for a
+// recheck; pendingOnly keeps only the pending ones. A baseline round
+// (changed false) saw no change, so it does neither.
+func (h *liveHub) collect(changed, pendingOnly bool) []*replayPair {
 	byKey := make(map[string]*replayPair)
 	h.mu.Lock()
+	var due map[*liveSub]struct{}
+	if changed {
+		due, h.pending = h.pending, nil
+	}
 	for _, c := range h.conns {
 		c.mu.Lock()
 		for key, s := range c.subs {
-			if s.syncing || (!changed && s.hash != "") {
+			if s.syncing {
+				s.recheck = s.recheck || changed
+				continue
+			}
+			if !changed && s.hash != "" {
+				continue
+			}
+			if _, ok := due[s]; pendingOnly && !ok {
 				continue
 			}
 			k := c.fp + " " + s.url
@@ -531,18 +581,39 @@ func (h *liveHub) collect(changed bool) []*replayPair {
 
 // fallback handles replays a round had no room or time for: each
 // subscription is told it changed, so the client refetches. It keeps its
-// baseline, so the round that next replays it frames again if the response
-// moved past it; the cap rotates, so that round comes.
+// baseline and goes into pending, so the next tick replays it and frames
+// again if the response moved past that baseline. Without that replay a
+// later change back to the baseline would send no frame. Pending shrinks by
+// up to liveRoundCap replays a tick, and a replay whose result is unchanged
+// frames nothing, so the set empties and the rounds stop.
 func (h *liveHub) fallback(pairs []*replayPair) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	for _, p := range pairs {
 		for _, ref := range p.subs {
 			ref.conn.mu.Lock()
 			if s := ref.conn.subs[ref.key]; s != nil && s.url == p.url {
 				ref.conn.markChanged(ref.key)
+				h.addPendingLocked(s)
 			}
 			ref.conn.mu.Unlock()
 		}
 	}
+}
+
+// addPendingLocked leaves s for the next tick's replay. Callers hold h.mu.
+func (h *liveHub) addPendingLocked(s *liveSub) {
+	if h.pending == nil {
+		h.pending = make(map[*liveSub]struct{})
+	}
+	h.pending[s] = struct{}{}
+}
+
+// hasPending reports whether a subscription waits for a pending replay.
+func (h *liveHub) hasPending() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.pending) > 0
 }
 
 // replayHash runs a GET of url as p through handler and hashes the status

@@ -606,7 +606,13 @@ last round. Each distinct (user, path) pair is checked once per round however
 many streams subscribe to it. A round checks at most 256 pairs and starts no
 check after 10 seconds. The pairs it skips get a `live:changed` frame without
 a check, so the client re-fetches. The next round starts where the last one
-stopped, so every pair is checked in turn.
+stopped, so every pair is checked in turn. A skipped pair is also checked on
+the next tick, even when nothing else changed.
+
+A change can land while a PUT takes its baseline. The round skips that
+subscription, and checks it on the first tick after the PUT stored the
+baseline. A frame then comes only if the response differs from the
+baseline.
 
 ## ETag / If-Match
 

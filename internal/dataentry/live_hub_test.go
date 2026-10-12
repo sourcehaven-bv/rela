@@ -79,6 +79,38 @@ func TestLiveHub_RoundCapFallsBack(t *testing.T) {
 	}
 }
 
+// A subscription past the round cap is pending: the next tick replays only
+// it, so a change back to its kept baseline still frames.
+func TestLiveHub_FallbackLeavesPending(t *testing.T) {
+	var replays atomic.Int64
+	h := hubWith(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		replays.Add(1)
+		_, _ = w.Write([]byte("same"))
+	}))
+	c := h.register(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	for i := range liveRoundCap + 1 {
+		seedSub(c, fmt.Sprintf("k%03d", i), fmt.Sprintf("/api/v1/tickets/TKT-%03d", i))
+	}
+	h.round(context.Background(), true)
+	if !h.hasPending() {
+		t.Fatal("the subscription past the cap is not pending")
+	}
+	c.takeChanged()
+
+	replays.Store(0)
+	h.replayRound(context.Background(), true, true)
+	last := fmt.Sprintf("k%03d", liveRoundCap)
+	if got := replays.Load(); got != 1 {
+		t.Fatalf("pending round replays = %d, want 1", got)
+	}
+	if got := c.takeChanged(); len(got) != 1 || got[0] != last {
+		t.Fatalf("changed = %v, want [%s]", got, last)
+	}
+	if h.hasPending() {
+		t.Fatal("the round that replayed the pending subscription left it pending")
+	}
+}
+
 // A panicking replay is recovered: the server keeps running and the
 // subscription keeps its baseline.
 func TestLiveHub_PanickingReplayRecovered(t *testing.T) {
