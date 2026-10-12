@@ -1,8 +1,10 @@
 package dataentry
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -25,10 +27,12 @@ const liveFrameSlack = 50 * time.Millisecond
 // goroutine and must not fail the test itself.
 func hookBaseline(env *liveEnv, during func()) {
 	inner := *env.app.live.replay.Load()
-	var once sync.Once
+	var fired atomic.Bool // not a sync.Once: during may run replays itself
 	var wrapped http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		inner.ServeHTTP(w, r)
-		once.Do(during)
+		if fired.CompareAndSwap(false, true) {
+			during()
+		}
 	})
 	env.app.live.replay.Store(&wrapped)
 }
@@ -124,5 +128,35 @@ func TestLive_HiddenWriteDuringBaselineSendsNoFrame(t *testing.T) {
 		liveSubEntry{"view", "/api/v1/_views/ticket/TKT-1"})
 	if got := liveKeysAfterTicks(t, env, c); len(got) != 0 {
 		t.Fatalf("changed keys = %v after a hidden write, want none", got)
+	}
+}
+
+func TestLive_LeaseDuringBaselineIsKept(t *testing.T) {
+	env := newLeaseEnv(t)
+	c, conn := env.open(t, "carol")
+
+	var leaseID string
+	putDuringBaseline(t, env.liveEnv, "carol", conn, func() error {
+		res, b := env.do(t, "alice", http.MethodPost, "/api/v1/tickets/TKT-1/_lease", `{"ttl_seconds":30}`, nil)
+		if res.StatusCode != http.StatusCreated {
+			return fmt.Errorf("claim = %d %s", res.StatusCode, b)
+		}
+		var cl struct {
+			LeaseID string `json:"lease_id"`
+		}
+		if err := json.Unmarshal(b, &cl); err != nil {
+			return err
+		}
+		leaseID = cl.LeaseID
+		return nil
+	}, liveSubEntry{"detail", "/api/v1/tickets/TKT-1"})
+	// The client refetches now and shows the claim.
+	liveKeysAfterTicks(t, env.liveEnv, c)
+
+	if res, b := env.do(t, "alice", http.MethodPost, "/api/v1/_leases/release", leaseIDBody(leaseID), nil); res.StatusCode != http.StatusNoContent {
+		t.Fatalf("release = %d %s", res.StatusCode, b)
+	}
+	if got := liveKeysAfterTicks(t, env.liveEnv, c); len(got) != 1 || got[0] != "detail" {
+		t.Fatalf("after the release: changed keys = %v, want [detail]", got)
 	}
 }
