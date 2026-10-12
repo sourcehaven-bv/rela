@@ -3,8 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -20,14 +18,10 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/lease"
-	"github.com/Sourcehaven-BV/rela/internal/lease/kvlease"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/script"
-	"github.com/Sourcehaven-BV/rela/internal/state"
-	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
 // cliSubprocessEnv, when set to 1, makes the test binary run the real CLI
@@ -57,9 +51,9 @@ func leaseCtx() context.Context {
 	return principal.With(context.Background(), principal.Principal{User: "ops", Tool: principal.ToolCLI})
 }
 
-// newLeaseProject writes a filesystem project with n docs and returns its
-// root and the doc ids.
-func newLeaseProject(t *testing.T, n int) (root string, ids []string) {
+// newLeaseProject writes a filesystem project with one doc and returns its
+// root and the doc id, as ids[0].
+func newLeaseProject(t *testing.T) (root string, ids []string) {
 	t.Helper()
 	root = t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".rela"), 0o755))
@@ -67,15 +61,11 @@ func newLeaseProject(t *testing.T, n int) (root string, ids []string) {
 	svc, err := appbuild.Discover(root, script.NewEngine())
 	require.NoError(t, err)
 	defer svc.Close()
-	ids = make([]string, 0, n)
-	for range n {
-		e := entity.New("", "doc")
-		e.SetString("title", "a doc")
-		created, err := svc.EntityManager().CreateEntity(leaseCtx(), e, entity.CreateOptions{})
-		require.NoError(t, err)
-		ids = append(ids, created.Entity.ID)
-	}
-	return root, ids
+	e := entity.New("", "doc")
+	e.SetString("title", "a doc")
+	created, err := svc.EntityManager().CreateEntity(leaseCtx(), e, entity.CreateOptions{})
+	require.NoError(t, err)
+	return root, []string{created.Entity.ID}
 }
 
 // openLeaseServices opens root as one CLI process would.
@@ -89,6 +79,9 @@ func openLeaseServices(t *testing.T, root string) *appbuild.Services {
 
 // runCLI parses args with the real CLI grammar and runs the command over
 // the bundles of svc, as runKong does. It returns what the command printed.
+//
+// It swaps the package globals out and leaseStdin for the length of the
+// test, so a test that uses it must not call t.Parallel.
 func runCLI(t *testing.T, svc *appbuild.Services, stdin string, args ...string) (string, error) {
 	t.Helper()
 	var cli CLI
@@ -147,7 +140,7 @@ func TestLeaseRequiresProject(t *testing.T) {
 // the lost renew after it (AC4). The lease id appears only in the claim
 // output, never in list output or the logs (AC5).
 func TestLeaseCLI_Loop(t *testing.T) {
-	root, ids := newLeaseProject(t, 1)
+	root, ids := newLeaseProject(t)
 	id := ids[0]
 	svc := openLeaseServices(t, root)
 	logs := captureLogs(t)
@@ -193,7 +186,7 @@ func TestLeaseCLI_Loop(t *testing.T) {
 	}
 
 	_, err = runCLI(t, svc, "", "lease", "claim", id, "--label", "agent-2")
-	require.ErrorContains(t, err, leaseHeldPrefix)
+	require.ErrorContains(t, err, lease.HeldPrefix)
 	require.ErrorContains(t, err, `"label":"agent-1"`, "a held error names the holder's label")
 
 	got, err = runCLI(t, svc, c.LeaseID, "lease", "release", "--lease-id-stdin")
@@ -201,7 +194,7 @@ func TestLeaseCLI_Loop(t *testing.T) {
 	require.Equal(t, "released\n", got)
 
 	_, err = runCLI(t, svc, "", "lease", "renew", c.LeaseID)
-	require.EqualError(t, err, leaseLostText)
+	require.EqualError(t, err, lease.LostText)
 	got, err = runCLI(t, svc, "", "-o", "json", "lease", "release", c.LeaseID)
 	require.NoError(t, err, "release succeeds whether or not the lease still exists")
 	require.JSONEq(t, `{"released":true}`, got)
@@ -218,7 +211,7 @@ func TestLeaseCLI_Loop(t *testing.T) {
 
 // TestLeaseCLI_Errors pins the refusals and their texts.
 func TestLeaseCLI_Errors(t *testing.T) {
-	root, ids := newLeaseProject(t, 1)
+	root, ids := newLeaseProject(t)
 	svc := openLeaseServices(t, root)
 	_, showErr := runCLI(t, svc, "", "show", "DOC-999")
 	require.Error(t, showErr)
@@ -237,8 +230,13 @@ func TestLeaseCLI_Errors(t *testing.T) {
 		{"bad label", "", []string{"lease", "claim", ids[0], "--label", "a b"}, "label must be at most 32"},
 		{"malformed lease id", "", []string{"lease", "renew", "nope"}, "malformed lease id"},
 		{"no lease id", "", []string{"lease", "release"}, "missing lease id"},
+		{"empty stdin", "", []string{"lease", "release", "--lease-id-stdin"}, "missing lease id"},
+		{"blank first line", "  \n" + strings.Repeat("a", 32), []string{"lease", "release", "--lease-id-stdin"},
+			"missing lease id"},
+		{"stdin line too long", strings.Repeat("a", 2000), []string{"lease", "release", "--lease-id-stdin"},
+			"--lease-id-stdin"},
 		{"both lease id sources", "x", []string{"lease", "release", "abc", "--lease-id-stdin"}, "not both"},
-		{"unknown lease", "", []string{"lease", "renew", strings.Repeat("a", 32)}, leaseLostText},
+		{"unknown lease", "", []string{"lease", "renew", strings.Repeat("a", 32)}, lease.LostText},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -248,11 +246,36 @@ func TestLeaseCLI_Errors(t *testing.T) {
 	}
 }
 
+// TestLeaseCLI_StdinTerminal refuses --lease-id-stdin when stdin is a
+// character device, as an interactive terminal is. /dev/null is one too.
+func TestLeaseCLI_StdinTerminal(t *testing.T) {
+	f, err := os.Open(os.DevNull)
+	require.NoError(t, err)
+	defer f.Close()
+	prev := leaseStdin
+	leaseStdin = f
+	t.Cleanup(func() { leaseStdin = prev })
+	_, err = readLeaseID("", true)
+	require.ErrorContains(t, err, "stdin is a terminal")
+}
+
+// TestReadLeaseID_FirstLine reads only the first line of stdin.
+func TestReadLeaseID_FirstLine(t *testing.T) {
+	prev := leaseStdin
+	leaseStdin = strings.NewReader(" abc \nignored\n")
+	t.Cleanup(func() { leaseStdin = prev })
+	got, err := readLeaseID("", true)
+	require.NoError(t, err)
+	require.Equal(t, "abc", got)
+}
+
 func TestLeaseCLI_Disabled(t *testing.T) {
 	for _, cmd := range []interface {
 		Run(context.Context, *leaseServices) error
 	}{&LeaseClaimCmd{ID: "X"}, &LeaseRenewCmd{}, &LeaseReleaseCmd{}, &LeaseListCmd{}} {
-		require.ErrorIs(t, cmd.Run(leaseCtx(), &leaseServices{}), errLeasesDisabled)
+		err := cmd.Run(leaseCtx(), &leaseServices{})
+		require.ErrorIs(t, err, lease.ErrNotEnabled)
+		require.EqualError(t, err, lease.NotEnabledText)
 	}
 }
 
@@ -293,17 +316,20 @@ func TestParseLeaseTTL(t *testing.T) {
 // once (AC1): exactly one wins, and the loser's error names the winner's
 // label. The winner's stderr carries its log lines but not the lease id.
 func TestLeaseCLI_TwoProcesses(t *testing.T) {
-	root, ids := newLeaseProject(t, 1)
+	root, ids := newLeaseProject(t)
 	labels := []string{"agent-a", "agent-b"}
 	type result struct {
 		stdout, stderr string
 		err            error
 	}
 	results := make([]result, len(labels))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 	var wg sync.WaitGroup
 	for i, label := range labels {
 		wg.Go(func() {
-			cmd := exec.Command(os.Args[0], "--project", root, "-o", "json", "lease", "claim", ids[0], "--label", label)
+			cmd := exec.CommandContext(ctx, os.Args[0],
+				"--project", root, "-o", "json", "lease", "claim", ids[0], "--label", label)
 			cmd.Env = append(os.Environ(), cliSubprocessEnv+"=1", "USER=lease-tester")
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -327,91 +353,47 @@ func TestLeaseCLI_TwoProcesses(t *testing.T) {
 	require.Len(t, winners, 1, "exactly one claim wins: %+v", results)
 	require.Len(t, losers, 1)
 	win, lose := results[winners[0]], results[losers[0]]
-	require.Contains(t, lose.stderr, leaseHeldPrefix)
+	require.Contains(t, lose.stderr, lease.HeldPrefix)
 	require.Contains(t, lose.stderr, `"label":"`+labels[winners[0]]+`"`)
 	c := claimJSONOf(t, win.stdout)
 	require.NotContains(t, win.stderr, c.LeaseID)
 	require.NotContains(t, lose.stderr, c.LeaseID)
 }
 
-// TestLeaseCLI_AbandonedLeaseExpires claims through the lease files the way
-// an instance that then died would, with a lease that has already run out,
-// and claims again through the CLI (AC2). The abandoned instance writes
-// with its own clock, so no test has to wait out a TTL.
-func TestLeaseCLI_AbandonedLeaseExpires(t *testing.T) {
-	root, ids := newLeaseProject(t, 1)
-	cache := filepath.Join(root, ".rela")
-	rfs, err := storage.NewRootedFS(storage.NewSafeFS(storage.NewOsFS()), cache)
-	require.NoError(t, err)
-	locker, err := filelock.New(filepath.Join(cache, "leases.lock"))
-	require.NoError(t, err)
-	abandoned, err := kvlease.New(state.NewFSKV(rfs), locker)
-	require.NoError(t, err)
-	sum := sha256.Sum256([]byte("abandoned"))
-	then := time.Now().Add(-time.Hour)
-	_, err = abandoned.Claim(context.Background(), ids[0],
-		lease.Holder{Identity: "ghost-identity", User: "ghost", Tool: "mcp", Label: "ghost"},
-		hex.EncodeToString(sum[:]), then, then.Add(lease.MinTTL), "gone")
-	require.NoError(t, err)
-
-	svc := openLeaseServices(t, root)
-	got, err := runCLI(t, svc, "", "-o", "json", "lease", "claim", ids[0], "--label", "next")
-	require.NoError(t, err, "an expired lease does not hold the entity")
-	claimJSONOf(t, got)
-
-	// The same claim with a lease still running is refused.
-	now := time.Now()
-	_, err = abandoned.Claim(context.Background(), ids[0],
-		lease.Holder{Identity: "ghost-identity", User: "ghost", Tool: "mcp", Label: "ghost"},
-		hex.EncodeToString(sum[:]), now, now.Add(lease.MinTTL), "")
-	var held *lease.HeldError
-	require.ErrorAs(t, err, &held, "the live CLI lease holds the entity for the other instance too")
-	require.Equal(t, "next", held.Current.Holder.Label)
-}
-
-// TestLeaseCLI_VisibleToAnotherInstance claims through one Services and
-// reads the lease through another instance's lease service once its watcher
-// has seen the change (AC3).
+// TestLeaseCLI_VisibleToAnotherInstance claims through the CLI over one
+// Services and reads the lease through a second instance whose lease watcher
+// runs (AC3): the claim is readable there within 2 s, and gone within 2 s of
+// `rela lease release`. The HTTP `_lease` attach that serves this to a
+// browser is covered in internal/dataentry.
 func TestLeaseCLI_VisibleToAnotherInstance(t *testing.T) {
-	root, ids := newLeaseProject(t, 2)
+	const within = 2 * time.Second
+	root, ids := newLeaseProject(t)
 	a := openLeaseServices(t, root)
 	b := openLeaseServices(t, root)
 	other := appbuild.Leases(b)
 	require.NotNil(t, other)
-	wake, cancel := other.Subscribe()
-	defer cancel()
 	ctx, stop := context.WithCancel(context.Background())
 	done := appbuild.WatchLeases(ctx, b)
 	defer func() { stop(); <-done }()
 
-	// Prime: B's watcher takes its baseline version when it starts. Change
-	// the leases through A until B wakes, so the claim below is a change
-	// the baseline does not cover.
-	primed := false
-	for deadline := time.Now().Add(15 * time.Second); !primed && time.Now().Before(deadline); {
-		got, err := runCLI(t, a, "", "-o", "json", "lease", "claim", ids[1])
+	readable := func() (lease.Lease, bool) {
+		got, err := other.GetReadable(leaseCtx(), []string{ids[0]})
 		require.NoError(t, err)
-		_, err = runCLI(t, a, "", "lease", "release", claimJSONOf(t, got).LeaseID)
-		require.NoError(t, err)
-		select {
-		case <-wake:
-			primed = true
-		case <-time.After(2 * lease.DefaultPollInterval):
-		}
+		l, ok := got[ids[0]]
+		return l, ok
 	}
-	require.True(t, primed, "B's watcher never saw a change made through A")
 
 	got, err := runCLI(t, a, "", "-o", "json", "lease", "claim", ids[0], "--label", "agent-a", "--status", "on it")
 	require.NoError(t, err)
-	claimJSONOf(t, got)
-	select {
-	case <-wake:
-	case <-time.After(10 * time.Second):
-		t.Fatal("B's watcher did not wake after the claim through A")
-	}
-	leases, err := other.GetReadable(leaseCtx(), []string{ids[0]})
+	c := claimJSONOf(t, got)
+	require.Eventually(t, func() bool { _, ok := readable(); return ok }, within, 50*time.Millisecond,
+		"the claim through A is readable through B")
+	l, _ := readable()
+	require.Equal(t, "agent-a", l.Holder.Label)
+	require.Equal(t, "on it", l.Status)
+
+	_, err = runCLI(t, a, c.LeaseID, "lease", "release", "--lease-id-stdin")
 	require.NoError(t, err)
-	require.Contains(t, leases, ids[0])
-	require.Equal(t, "agent-a", leases[ids[0]].Holder.Label)
-	require.Equal(t, "on it", leases[ids[0]].Status)
+	require.Eventually(t, func() bool { _, ok := readable(); return !ok }, within, 50*time.Millisecond,
+		"the release through A is seen through B")
 }

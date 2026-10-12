@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,12 +14,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/output"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // LeaseCmd groups the advisory lease verbs. A lease tells people and other
@@ -47,48 +46,40 @@ type leaseService interface {
 // leaseServices is the binding the lease commands take.
 //
 // Nil Svc: accepted; the project was assembled without a lease backend, and
-// every command answers [errLeasesDisabled].
+// every command answers [lease.ErrNotEnabled].
 type leaseServices struct {
 	Svc leaseService
 }
 
-// Lease error texts, the same as the MCP lease tools give. None of them
-// carries a lease id.
 const (
-	leaseLostText = "lease lost: it expired, was released, or you no longer have access to the entity. " +
-		"Claim the entity again."
-	leaseFullText   = "the lease store is full; retry later"
-	leaseFailedText = "the lease operation failed; retry later"
-	leaseHeldPrefix = "lease held: "
-	// maxLeaseIDInput bounds what --lease-id-stdin reads.
+	// leaseListHint is the list command the lease limit text cites.
+	leaseListHint = "`rela lease list`"
+	// maxLeaseIDInput bounds the line --lease-id-stdin reads.
 	maxLeaseIDInput = 1024
 )
 
 var (
-	errLeasesDisabled = errors.New("leases are not enabled on this project")
-
-	// leaseLimitText answers [lease.ErrLimit].
-	leaseLimitText = fmt.Sprintf("lease limit reached: you hold %d live leases, the most one user may hold. "+
-		"The cap is shared by every agent running as you. Release leases you no longer need "+
-		"(`rela lease list` shows them) and claim again.", lease.MaxPerIdentity)
-
 	// errLeaseTTL answers a --ttl outside the range the service accepts.
 	errLeaseTTL = fmt.Errorf("--ttl: a duration from %s to %s (such as 15m), or whole seconds from %d to %d",
 		lease.MinTTL, lease.MaxTTL, int(lease.MinTTL/time.Second), int(lease.MaxTTL/time.Second))
 )
 
-// leaseTextError is an error whose text is one of the user-facing lease
-// texts above, which are full sentences.
-type leaseTextError string
+// leaseTextError shows a lease error as its [lease.UserText] and keeps the
+// error in its chain for errors.Is.
+type leaseTextError struct {
+	text string
+	err  error
+}
 
-func (e leaseTextError) Error() string { return string(e) }
+func (e *leaseTextError) Error() string { return e.text }
+func (e *leaseTextError) Unwrap() error { return e.err }
 
 // leaseStdin is where --lease-id-stdin reads; a variable so tests can feed it.
 var leaseStdin io.Reader = os.Stdin
 
 func (l *leaseServices) svc() (leaseService, error) {
 	if l == nil || l.Svc == nil {
-		return nil, errLeasesDisabled
+		return nil, &leaseTextError{text: lease.NotEnabledText, err: lease.ErrNotEnabled}
 	}
 	return l.Svc, nil
 }
@@ -281,36 +272,39 @@ func parseLeaseTTL(s string) (time.Duration, error) {
 }
 
 // readLeaseID returns the lease id from the argument or, with fromStdin,
-// from [leaseStdin]. Exactly one source must be given.
+// from the first line of [leaseStdin]. Exactly one source must be given. A
+// terminal on stdin is refused, so the id is never typed where it echoes.
 func readLeaseID(arg string, fromStdin bool) (string, error) {
 	switch {
 	case arg != "" && fromStdin:
 		return "", errors.New("give the lease id as an argument or with --lease-id-stdin, not both")
 	case fromStdin:
-		data, err := io.ReadAll(io.LimitReader(leaseStdin, maxLeaseIDInput))
-		if err != nil {
-			return "", fmt.Errorf("read stdin: %w", err)
-		}
-		return strings.TrimSpace(string(data)), nil
+		return readLeaseIDStdin()
 	case arg == "":
-		return "", errors.New("missing lease id: pass it as an argument or with --lease-id-stdin")
+		return "", errMissingLeaseID
 	}
 	return strings.TrimSpace(arg), nil
 }
 
-// heldJSON is the body of a `lease held:` error.
-type heldJSON struct {
-	Holder    holderJSON `json:"holder"`
-	Since     string     `json:"since"`
-	ExpiresAt string     `json:"expires_at"`
-	Status    string     `json:"status,omitempty"`
-}
+var errMissingLeaseID = errors.New("missing lease id: pass it as an argument or with --lease-id-stdin")
 
-// holderJSON names the holder in a `lease held:` error.
-type holderJSON struct {
-	User  string `json:"user"`
-	Tool  string `json:"tool"`
-	Label string `json:"label,omitempty"`
+func readLeaseIDStdin() (string, error) {
+	if f, ok := leaseStdin.(*os.File); ok && isTerminal(f) {
+		return "", errors.New("--lease-id-stdin: stdin is a terminal; redirect the lease id from a file")
+	}
+	sc := bufio.NewScanner(leaseStdin)
+	sc.Buffer(make([]byte, 0, maxLeaseIDInput), maxLeaseIDInput)
+	if !sc.Scan() {
+		if err := sc.Err(); err != nil {
+			return "", fmt.Errorf("--lease-id-stdin: %w", err)
+		}
+		return "", errMissingLeaseID
+	}
+	id := strings.TrimSpace(sc.Text())
+	if id == "" {
+		return "", errMissingLeaseID
+	}
+	return id, nil
 }
 
 // leaseClaimFailed answers a failed claim. A miss is the error `rela show`
@@ -320,43 +314,19 @@ func leaseClaimFailed(ctx context.Context, id string, err error) error {
 	if errors.Is(err, store.ErrNotFound) {
 		return classifyReadError(id, err)
 	}
-	if _, ok := errors.AsType[*visibility.AmbiguousAddressError](err); ok {
-		return err
-	}
-	if held, ok := errors.AsType[*lease.HeldError](err); ok {
-		cur := held.Current
-		text, mErr := json.Marshal(heldJSON{
-			Holder: holderJSON{User: cur.Holder.User, Tool: cur.Holder.Tool, Label: cur.Holder.Label},
-			Since:  leaseTime(cur.Since), ExpiresAt: leaseTime(cur.Expires), Status: cur.Status,
-		})
-		if mErr != nil { // coverage-ignore: a struct of strings always marshals
-			return errors.New(leaseFailedText)
-		}
-		return errors.New(leaseHeldPrefix + string(text))
-	}
-	if errors.Is(err, acl.ErrForbidden) {
-		return err
-	}
 	return leaseFailed(ctx, "claim", err, "entity", id)
 }
 
-// leaseFailed answers the lease errors every operation shares. An unexpected
+// leaseFailed answers a lease error with its [lease.UserText]. An unexpected
 // error is logged with the caller's user and tool, plus attrs, and answered
-// generically. Claim passes the entity id as attrs; renew and release know a
-// lease only by its id, which must never be logged.
+// with [lease.FailedText]. Claim passes the entity id as attrs; renew and
+// release know a lease only by its id, which must never be logged.
 func leaseFailed(ctx context.Context, op string, err error, attrs ...any) error {
-	switch {
-	case errors.Is(err, lease.ErrLost):
-		return leaseTextError(leaseLostText)
-	case errors.Is(err, lease.ErrLimit):
-		return errors.New(leaseLimitText)
-	case errors.Is(err, lease.ErrFull):
-		return errors.New(leaseFullText)
-	case errors.Is(err, lease.ErrInvalid), errors.Is(err, lease.ErrNoPrincipal):
-		return err
+	if text, ok := lease.UserText(err, leaseListHint); ok {
+		return &leaseTextError{text: text, err: err}
 	}
 	p := principal.From(ctx)
 	args := append([]any{"op", op, "user", p.User, "tool", p.Tool}, attrs...)
 	slog.Warn("cli: lease operation failed", append(args, "err", err)...)
-	return errors.New(leaseFailedText)
+	return errors.New(lease.FailedText)
 }
