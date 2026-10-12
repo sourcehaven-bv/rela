@@ -1012,18 +1012,6 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 	if e == nil {
 		return nil, errors.New("entitymanager: UpdateEntity: entity is nil")
 	}
-	// Face comes from the entity being written, because that is what the
-	// store keys on (stateKey(e.ID, e.Face)). Omitting it would authorize
-	// every faced write against the DEFAULT face — the zero Face means
-	// "default state" — so a role holding only a bare `update: [policy]`
-	// grant could write `policy@published`, inverting the invariant
-	// GrantsVerbOnState exists to hold (BUG-Y0GNSB).
-	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
-		Op:      acl.OpUpdate,
-		Subject: acl.NewEntitySubject(e.Type, e.ID, e.Face),
-	}); err != nil {
-		return nil, err
-	}
 	// Hard-validate BEFORE the existence probe. Order is load-bearing and
 	// predates the updateCore extraction: an invalid entity reports its
 	// validation error even when the id does not exist. PatchEntity cannot
@@ -1035,20 +1023,36 @@ func (m *Manager) UpdateEntity(ctx context.Context, e *entity.Entity) (*entity.U
 		return nil, newValidationError(hard)
 	}
 
-	// The pre-image is read at the face this write AUTHORIZED against, not
+	// The pre-image is read at the face this write is AUTHORIZED against, not
 	// at the zero coordinate. The old spelling read GetEntity(id), the zero
 	// face, so it decided against e.Face and then read a different row
 	// — the same authorize-here/write-there split BUG-HC6I2T removed from
 	// the create path, and on a faced type it simply never found anything.
 	oldEntity, getErr := m.deps.Store.GetEntity(ctx, entity.Ref{ID: e.ID, Face: e.Face})
 	if getErr != nil {
-		// Fails closed: only a genuine miss is reported as missing, so a
-		// transient store error cannot reach the not-found branch that
-		// returns before authorizing.
+		// Fails closed: only a genuine miss is reported as missing; any
+		// other store error is returned, never written past.
 		if !errors.Is(getErr, store.ErrNotFound) {
 			return nil, getErr
 		}
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, e.ID)
+	}
+	// A row the caller cannot read is refused exactly like the miss above,
+	// before the ACL check, so a 403 never confirms it exists.
+	if rErr := requireReadableRow(ctx, faceGateOf(m), e.ID, []*entity.Entity{oldEntity}); rErr != nil {
+		return nil, rErr
+	}
+	// Face comes from the entity being written, because that is what the
+	// store keys on (stateKey(e.ID, e.Face)). Omitting it would authorize
+	// every faced write against the DEFAULT face — the zero Face means
+	// "default state" — so a role holding only a bare `update: [policy]`
+	// grant could write `policy@published`, inverting the invariant
+	// GrantsVerbOnState exists to hold (BUG-Y0GNSB).
+	if err := m.authorizeAndAudit(ctx, acl.WriteRequest{
+		Op:      acl.OpUpdate,
+		Subject: acl.NewEntitySubject(e.Type, e.ID, e.Face),
+	}); err != nil {
+		return nil, err
 	}
 	if err := rejectComputedChanges(m.deps, oldEntity, e); err != nil {
 		return nil, err
@@ -1117,11 +1121,12 @@ func updateKeepingFileValues(
 //
 // **Ordering is load-bearing** (RR-32XA5V):
 //
-//	read → locked-check → authorize → field gate → merge → updateCore
+//	read → read gate → locked-check → authorize → field gate → merge → updateCore
 //
 // The read comes first because the ACL subject needs the entity's real
-// type and the caller supplied only an id — the same shape, and the same
-// accepted existence disclosure, as [Manager.DeleteEntity]. The field gate
+// type and the caller supplied only an id, as in [Manager.DeleteEntity].
+// A row the caller cannot read is then refused like an absent one, so the
+// write authorization never confirms that it exists. The field gate
 // runs strictly AFTER authorization: field verdicts are value-dependent,
 // so consulting them for an unauthorized caller would turn allow-vs-deny
 // into an oracle for stored property values and for entity existence.
@@ -1223,6 +1228,14 @@ func (m *Manager) patchEntityOnce(
 		// interface (the Lua bindings) must be able to tell this apart
 		// from other hard errors without matching on the message.
 		return nil, newEntityNotFound(id)
+	}
+	// A row the caller cannot read is refused like an absent one, before
+	// the locked check and the ACL check, so neither confirms it exists.
+	if rErr := requireReadableRow(ctx, faceGateOf(m), id, []*entity.Entity{stored}); rErr != nil {
+		if errors.Is(rErr, ErrEntityNotFound) {
+			return nil, newEntityNotFound(id)
+		}
+		return nil, rErr
 	}
 
 	// A locked (git-crypt) entity reads as a shell whose real property
@@ -1721,6 +1734,11 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	if len(family) == 0 {
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
+	// An entity none of whose faces the caller may read is reported missing,
+	// before the ACL check, so a 403 never confirms it exists.
+	if rErr := requireReadableRow(ctx, faceGateOf(m), id, family); rErr != nil {
+		return nil, rErr
+	}
 	// ACL check happens after the lookup so the request carries the
 	// real entity type; a deny on a non-existent entity would be more
 	// confusing than the ErrEntityNotFound returned above.
@@ -1948,6 +1966,68 @@ func readableRows(ctx context.Context, gate faceReadGate, family []*entity.Entit
 		}
 	}
 	return out, nil
+}
+
+// visibleEndpoint reports whether the caller can see fam as an endpoint of an
+// edge whose tail on fam is face: some readable face for the implicit tail,
+// that face for a named one. It is the read path's edge rule
+// (visibility.EndpointsReadable), applied to a family already looked up. A
+// nil gate sees every endpoint; a gate error is returned.
+func visibleEndpoint(ctx context.Context, gate faceReadGate, fam entityFamily, face entity.Face) (bool, error) {
+	if gate == nil {
+		return true, nil
+	}
+	for _, f := range fam.faces {
+		if !face.IsImplicit() && f != face {
+			continue
+		}
+		ok, err := gate.PermitsReadFace(ctx, fam.typ, fam.id, f)
+		if err != nil {
+			return false, fmt.Errorf("read gate for %s: %w", entity.FormatStateRef(fam.id, f), err)
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// lookupSource looks up the source family of a relation write. A source the
+// caller cannot see comes back exactly like a missing one: the zero family and
+// store.ErrNotFound. Every check after it, the ACL included, then answers as
+// it does for a missing source (BUG-K6FEVB order kept). On any error the
+// family is zero, whose empty type matches no grant, so a gate error can never
+// make the source count as readable.
+func (m *Manager) lookupSource(ctx context.Context, from string, tail entity.Face) (entityFamily, error) {
+	source, err := lookupFamily(ctx, m.deps.Store, from)
+	if err != nil {
+		return entityFamily{}, err
+	}
+	ok, err := visibleEndpoint(ctx, faceGateOf(m), source, tail)
+	if err != nil {
+		return entityFamily{}, err
+	}
+	if !ok {
+		return entityFamily{}, store.ErrNotFound
+	}
+	return source, nil
+}
+
+// requireVisibleTarget reports store.ErrNotFound when the caller cannot see
+// the head to of a relation write, so it is refused like a missing one.
+func (m *Manager) requireVisibleTarget(ctx context.Context, to string) (entityFamily, error) {
+	target, err := lookupFamily(ctx, m.deps.Store, to)
+	if err != nil {
+		return entityFamily{}, err
+	}
+	ok, gErr := visibleEndpoint(ctx, faceGateOf(m), target, entity.ImplicitFace)
+	if gErr != nil {
+		return entityFamily{}, gErr
+	}
+	if !ok {
+		return entityFamily{}, store.ErrNotFound
+	}
+	return target, nil
 }
 
 // requireReadableRow reports [ErrEntityNotFound] when family holds rows but
@@ -2664,7 +2744,10 @@ func (m *Manager) CreateRelation(
 	// grant check; it is best-effort (empty if the source doesn't exist
 	// yet), mirroring UpdateRelation/DeleteRelation. Authorization must be
 	// decided from inputs that don't depend on peer existence.
-	source, srcErr := lookupFamily(ctx, m.deps.Store, from)
+	//
+	// A source the caller cannot see is looked up as a missing one, so the
+	// face check and the ACL below answer as they do for a missing source.
+	source, srcErr := m.lookupSource(ctx, from, key.FromFace)
 	// BEFORE the ACL, so an unvalidated coordinate never becomes an
 	// authorization coordinate — and so the check still runs on the
 	// bypassACL path, where authorizeAndAudit returns without consulting
@@ -2684,17 +2767,12 @@ func (m *Manager) CreateRelation(
 	// Both fail closed: a transient store error must not be reported as a
 	// missing endpoint, which would read as an ordinary validation refusal.
 	if srcErr != nil {
-		if !errors.Is(srcErr, store.ErrNotFound) {
-			return nil, srcErr
-		}
-		return nil, fmt.Errorf("source %w: %s", ErrEntityNotFound, from)
+		return nil, missingEndpoint("source", from, srcErr)
 	}
-	target, err := lookupFamily(ctx, m.deps.Store, to)
+	// A head the caller cannot see is reported like a missing one.
+	target, err := m.requireVisibleTarget(ctx, to)
 	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("target %w: %s", ErrEntityNotFound, to)
+		return nil, missingEndpoint("target", to, err)
 	}
 	if vErr := m.deps.Meta.ValidateRelation(relType, source.typ, target.typ); vErr != nil {
 		// A type-allowlist mismatch is the one tolerable failure: the caller
@@ -2777,6 +2855,15 @@ func (m *Manager) CreateRelation(
 	return rel, nil
 }
 
+// missingEndpoint reports the lookup error of a relation endpoint. Only a
+// genuine miss becomes [ErrEntityNotFound]; any other error is returned as is.
+func missingEndpoint(side, id string, err error) error {
+	if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return fmt.Errorf("%s %w: %s", side, ErrEntityNotFound, id)
+}
+
 // UpdateRelation merges new properties into the relation key names,
 // applies MetaUnset, optionally replaces content, and persists. The tail in
 // key addresses the edge exactly, as in [Manager.CreateRelation].
@@ -2790,8 +2877,9 @@ func (m *Manager) UpdateRelation(
 	// missing relation must not let a denied caller skip the ACL and get
 	// a soft not-found. The source type feeds the type-level grant check;
 	// it is best-effort (empty if the source doesn't exist).
-	// A lookup error leaves the family zero, whose empty type matches no grant.
-	source, _ := lookupFamily(ctx, m.deps.Store, from)
+	// A lookup error leaves the family zero, whose empty type matches no grant;
+	// so does a source the caller cannot see.
+	source, srcErr := m.lookupSource(ctx, from, key.FromFace)
 	// BEFORE the ACL, for the reason given in [Manager.CreateRelation].
 	if fErr := m.deps.requireRelationFaceFor(relType, source.typ, key.FromFace); fErr != nil {
 		return nil, fErr
@@ -2799,6 +2887,18 @@ func (m *Manager) UpdateRelation(
 	if aclErr := m.authorizeAndAudit(ctx,
 		RelationUpdateRequest(m.deps.Meta, relType, source.typ, from, key.FromFace)); aclErr != nil {
 		return nil, aclErr
+	}
+	// A relation the caller cannot see is refused like a missing one, after
+	// the ACL check, and before the move below reads its siblings.
+	if srcErr == nil {
+		_, srcErr = m.requireVisibleTarget(ctx, to)
+	}
+	if srcErr != nil {
+		if !errors.Is(srcErr, store.ErrNotFound) {
+			return nil, srcErr
+		}
+		return nil, fmt.Errorf("%w: %s --%s--> %s", ErrRelationNotFound,
+			entity.FormatStateRef(from, key.FromFace), relType, to)
 	}
 
 	// Reject non-finite numeric values on managed order properties.
@@ -2889,11 +2989,23 @@ func (m *Manager) DeleteRelation(ctx context.Context, key entity.RelationKey) er
 	// Authorize BEFORE touching the store (BUG-K6FEVB). The source type
 	// feeds the type-level grant check; it is best-effort (empty if the
 	// source doesn't exist).
-	// A lookup error leaves the family zero, whose empty type matches no grant.
-	source, _ := lookupFamily(ctx, m.deps.Store, from)
+	// A lookup error leaves the family zero, whose empty type matches no grant;
+	// so does a source the caller cannot see.
+	source, srcErr := m.lookupSource(ctx, from, face)
 	if aclErr := m.authorizeAndAudit(ctx,
 		RelationDeleteRequest(m.deps.Meta, relType, source.typ, from, face)); aclErr != nil {
 		return aclErr
+	}
+	// A relation the caller cannot see is refused with the store's answer for
+	// a missing one, after the ACL check.
+	if srcErr == nil {
+		_, srcErr = m.requireVisibleTarget(ctx, key.To)
+	}
+	if srcErr != nil {
+		if !errors.Is(srcErr, store.ErrNotFound) {
+			return srcErr
+		}
+		return fmt.Errorf("delete relation: %w", store.ErrNotFound)
 	}
 	// Fetch pre-delete AFTER authz (BUG-K6FEVB: a denied delete must return
 	// ForbiddenError regardless of whether the relation exists) so the audit

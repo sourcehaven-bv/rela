@@ -915,6 +915,36 @@ principal who can read the type but not write to that specific
 record. That 403 still carries `rule_kind` / `rule_id` for
 operator debugging.
 
+### Writes need read access to the row
+
+The entity manager applies the same rule, so it also holds for writes
+that do not come through HTTP: the remote MCP, Lua scripts and actions,
+webhooks, scheduled tasks, automation jobs and CalDAV.
+
+- An update, patch, delete, soft delete, rename or version tag of a row
+  the caller cannot read fails as not found, before the write is
+  authorized. A whole-entity delete or rename passes this check when the
+  caller can read at least one face, and then needs the grant on every
+  face; a hidden face can therefore still change its answer (TKT-Z47F27).
+- A relation create, update or delete fails as not found when the caller
+  cannot see the edge. The head needs a readable face. The tail needs a
+  readable face, or the named face when the edge is tailed at one. A
+  source the caller cannot see is treated as missing before the write is
+  authorized, so the authorization answers as it does for a missing
+  source.
+- A copy from a source face the caller cannot read fails as not found. A
+  copy onto a stored target the caller cannot read is refused as an id
+  that is already taken. The refusal does not name the target's type.
+- A CalDAV `PUT` to a to-do the caller can no longer read gets the same
+  `404` as a `PUT` to a deleted one, and a CalDAV `DELETE` of one gets the
+  same `404` as for an unknown href.
+- An update that makes the row unreadable to the writer afterwards is
+  allowed.
+
+Writes without a read policy are exempt: a project without `acl.yaml`,
+`rela.bypass_acl`, automation cascades, and the writers that go to the
+store directly (data migrations, import, normalize).
+
 ### Invariants downstream maintainers MUST preserve
 
 - **No `ETag` on deny.** Suppressing it is what closes the

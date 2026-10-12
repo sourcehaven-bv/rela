@@ -223,6 +223,14 @@ func (v *VersionTags) prepare(
 	if err != nil {
 		return nil, principal.Principal{}, fmt.Errorf("entitymanager: read %s: %w", ref, err)
 	}
+	// A row the caller cannot read is refused like the miss above, before the
+	// check and the ACL, so neither confirms it exists.
+	if rErr := requireReadableRow(ctx, faceGateOf(v.m), ref.ID, []*entity.Entity{e}); rErr != nil {
+		if errors.Is(rErr, ErrEntityNotFound) {
+			return nil, principal.Principal{}, newEntityNotFound(ref.String())
+		}
+		return nil, principal.Principal{}, rErr
+	}
 	if check != nil {
 		if err := check(e); err != nil {
 			return nil, principal.Principal{}, err
