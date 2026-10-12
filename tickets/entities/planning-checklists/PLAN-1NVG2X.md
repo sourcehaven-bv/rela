@@ -3,7 +3,8 @@ id: PLAN-1NVG2X
 type: planning-checklist
 title: 'Planning: Realtime 3/2: channel store and backends'
 started: "2026-10-12"
-status: in-progress
+completed: "2026-10-12"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -32,6 +33,11 @@ selection per build tag, re-key on rename and on_entity_delete fan-out hooks
 7. Postgres tests use a schema-pinned DSN; sqlite single-process lock respected.
 8. arch-lint: channels does not import internal/store.
 9. Message JSON over 16 KiB or more than 32 properties is rejected at the store boundary.
+
+**Design review changes:** see .ignored/phase3-plan.md section "Design review
+folded in"; acceptance criteria there extend the list above (cross-process lock,
+erasure, tombstones, store API, allowlisted trigger programs, ceiling on
+identity roles, reload semantics).
 
 ## Research
 - [x] ~~For larger features: run `/research` to create a structured research doc~~ (N/A: RES-1UCUBA and DEC-34YERL)

@@ -3,7 +3,8 @@ id: PLAN-IVEAY3
 type: planning-checklist
 title: 'Planning: Realtime 3/1: realtime.yaml loader, validation and hot reload'
 started: "2026-10-12"
-status: in-progress
+completed: "2026-10-12"
+status: done
 ---
 
 <!-- @managed: claude-workflow v1 -->
@@ -35,6 +36,11 @@ use of the config (T2 to T7), session: (refused).
 8. rela acl audit does not report realtime.yaml permissions as dead.
 9. arch-lint forbids metamodel importing realtimecfg.
 10. limits may only lower built-in caps; a higher value fails.
+
+**Design review changes:** see .ignored/phase3-plan.md section "Design review
+folded in"; acceptance criteria there extend the list above (cross-process lock,
+erasure, tombstones, store API, allowlisted trigger programs, ceiling on
+identity roles, reload semantics).
 
 ## Research
 - [x] ~~For larger features: run `/research` to create a structured research doc~~ (N/A: RES-1UCUBA and DEC-34YERL)

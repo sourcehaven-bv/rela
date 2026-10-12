@@ -6,7 +6,7 @@ kind: enhancement
 priority: medium
 effort: m
 started: "2026-10-12"
-status: planning
+status: in-progress
 description: Load realtime.yaml (internal/realtimecfg) with strict parsing, cross-file reference validation against the metamodel, ACL permissions and predicates, hot reload with keep-previous on error, Configure locked, and acl audit awareness.
 ---
 
