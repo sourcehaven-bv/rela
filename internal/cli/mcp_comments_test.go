@@ -28,7 +28,7 @@ func TestStdioComments_NilWithoutCommentsBlock(t *testing.T) {
 	svc, err := mcpServicesForTest(t, seedProject(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
-	require.Nil(t, svc.Deps().Comments)
+	require.Nil(t, svc.Deps().Comments.Reader)
 }
 
 // TestStdioComments_ListOnly pins the stdio shape: list_comments is backed,
@@ -39,8 +39,8 @@ func TestStdioComments_ListOnly(t *testing.T) {
 	t.Cleanup(func() { _ = svc.Close() })
 
 	deps := svc.Deps()
-	require.NotNil(t, deps.Comments)
-	require.Nil(t, deps.CommentWriter, "stdio must not register the comment write tools")
+	require.NotNil(t, deps.Comments.Reader)
+	require.Nil(t, deps.Comments.Writer, "stdio must not register the comment write tools")
 
 	ctx := principal.With(t.Context(), principal.Principal{User: "alice", Tool: principal.ToolCLI})
 	require.NoError(t, svc.svc.Store().CreateEntity(ctx, &entity.Entity{
@@ -57,7 +57,7 @@ func TestStdioComments_ListOnly(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	list, err := deps.Comments.ListComments(ctx, "ITEM-1")
+	list, err := deps.Comments.Reader.ListComments(ctx, "ITEM-1")
 	require.NoError(t, err)
 	require.Len(t, list, 2)
 	byID := map[string]comments.View{list[0].ID: list[0], list[1].ID: list[1]}
@@ -65,7 +65,7 @@ func TestStdioComments_ListOnly(t *testing.T) {
 	require.True(t, byID[onGone.ID].Detached)
 	require.False(t, byID[onTitle.ID].Editable, "stdio offers no write, so no write affordance")
 
-	_, err = deps.Comments.ListComments(ctx, "ITEM-404")
+	_, err = deps.Comments.Reader.ListComments(ctx, "ITEM-404")
 	var opErr *comments.OpError
 	require.ErrorAs(t, err, &opErr)
 	require.Equal(t, "not_found", opErr.Code)

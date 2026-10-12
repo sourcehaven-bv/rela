@@ -33,6 +33,17 @@ type CommentWriter interface {
 	AcceptSuggestion(ctx context.Context, address, commentID string) (comments.Accepted, error)
 }
 
+// CommentDeps backs the comment tools: Reader list_comments, and Writer the
+// comment write tools.
+//
+// Nil: accepted for both. A nil Reader means the project declares no
+// `comments:` block and no comment tool is registered; a nil Writer leaves
+// out the write tools, as stdio `rela mcp` does.
+type CommentDeps struct {
+	Reader CommentReader
+	Writer CommentWriter
+}
+
 // commentHandler serves the comment tools.
 type commentHandler struct {
 	reader CommentReader
@@ -42,16 +53,16 @@ type commentHandler struct {
 func selComments(h handlerSet) commentHandler { return h.comments }
 
 // registerCommentTools registers the comment tools: list_comments when
-// [Deps.Comments] is set, the write tools when [Deps.CommentWriter] is. A
+// [CommentDeps.Reader] is set, the write tools when [CommentDeps.Writer] is. A
 // project without a `comments:` block lists none; stdio `rela mcp`, which
 // runs as the system principal rather than a signed-in user, lists only
 // list_comments.
 func (s *Server) registerCommentTools() {
 	d := s.deps()
-	if d.Comments != nil {
+	if d.Comments.Reader != nil {
 		addTool(s, toolListComments(), commentTool(s, false, commentHandler.handleListComments))
 	}
-	if d.CommentWriter == nil {
+	if d.Comments.Writer == nil {
 		return
 	}
 	addTool(s, toolAddComment(), commentTool(s, true, commentHandler.handleAddComment))

@@ -174,6 +174,7 @@ func (s *Server) handleShowEntity(
 	if mErr := addMentionedBy(ctx, d.Store, d.Meta, &ej); mErr != nil {
 		return errorResult(fmt.Sprintf("read backlinks of %s: %v", e.ID, mErr)), nil
 	}
+	ej.Lease = entityLease(ctx, d.Leases, e.ID)
 	text, err := marshalJSON(ej)
 	if err != nil {
 		return errorResult(err.Error()), nil

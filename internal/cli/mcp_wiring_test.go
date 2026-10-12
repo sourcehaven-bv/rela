@@ -105,6 +105,7 @@ func TestNewMCPServices_Succeeds(t *testing.T) {
 	assert.NotNil(t, deps.LuaCache)
 	assert.NotNil(t, deps.Watcher)
 	assert.NotEmpty(t, deps.ProjectRoot)
+	assert.NotNil(t, deps.Leases, "an assembled project has a lease service")
 }
 
 func TestNewMCPServices_WritesReachSearchIndex(t *testing.T) {

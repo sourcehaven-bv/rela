@@ -689,6 +689,9 @@ deps:
       - dataentryconfig
       - entitymanager
       - filter
+      # lease: the lease tools (TKT-27XVYS) speak its request, lease and
+      # error types; the access checks stay in lease.Service.
+      - lease
       - principal
       - lua
       - metamodel
