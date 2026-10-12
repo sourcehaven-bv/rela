@@ -357,8 +357,8 @@ func TestRenewLease_LostIsOneAnswer(t *testing.T) {
 				tc.end(t, e)
 			}
 			text, isError := callToolOn(t, cs, "renew_lease", `{"lease_id":"`+c.LeaseID+`"}`)
-			if !isError || text != leaseLostText {
-				t.Fatalf("renew = %q, want %q", text, leaseLostText)
+			if !isError || text != lease.LostText {
+				t.Fatalf("renew = %q, want %q", text, lease.LostText)
 			}
 			releaseOK(t, cs, c.LeaseID)
 			if show, _ := callToolOn(t, cs, "show_entity", `{"id":"TKT-1"}`); strings.Contains(show, `"lease"`) {
@@ -704,7 +704,7 @@ func TestLeaseTools_LeaseIDNeverLogged(t *testing.T) {
 	fcs := connect(t, srv)
 	for _, tool := range []string{"renew_lease", "release_lease"} {
 		text, isError := callToolOn(t, fcs, tool, `{"lease_id":"`+c.LeaseID+`"}`)
-		if !isError || text != leaseFailedText {
+		if !isError || text != lease.FailedText {
 			t.Fatalf("%s on a failing service = %q", tool, text)
 		}
 	}
@@ -786,7 +786,7 @@ func TestLeases_NilService(t *testing.T) {
 		{"release_lease", `{"lease_id":"` + strings.Repeat("a", 32) + `"}`},
 		{"list_leases", `{}`},
 	} {
-		if text, isError := callToolOn(t, wcs, call[0], call[1]); !isError || text != leasesDisabled {
+		if text, isError := callToolOn(t, wcs, call[0], call[1]); !isError || text != lease.NotEnabledText {
 			t.Errorf("%s after reload = %q", call[0], text)
 		}
 	}
@@ -828,6 +828,7 @@ func TestClaimEntity_InputErrors(t *testing.T) {
 
 func TestLeaseFailed_Texts(t *testing.T) {
 	t.Parallel()
+	leaseLimitText, _ := lease.UserText(lease.ErrLimit, leaseListHint)
 	ctx := principal.With(context.Background(), leaseAlice)
 	invalid := fmt.Errorf("%w: label too long", lease.ErrInvalid)
 	cases := []struct {
@@ -835,13 +836,13 @@ func TestLeaseFailed_Texts(t *testing.T) {
 		err  error
 		want string
 	}{
-		{"lost", lease.ErrLost, leaseLostText},
-		{"wrapped lost", fmt.Errorf("x: %w", lease.ErrLost), leaseLostText},
+		{"lost", lease.ErrLost, lease.LostText},
+		{"wrapped lost", fmt.Errorf("x: %w", lease.ErrLost), lease.LostText},
 		{"limit", lease.ErrLimit, leaseLimitText},
-		{"full", lease.ErrFull, leaseFullText},
+		{"full", lease.ErrFull, lease.FullText},
 		{"invalid", invalid, invalid.Error()},
 		{"no principal", lease.ErrNoPrincipal, lease.ErrNoPrincipal.Error()},
-		{"unexpected", errLeaseStore, leaseFailedText},
+		{"unexpected", errLeaseStore, lease.FailedText},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -860,7 +861,9 @@ func TestLeaseFailed_Texts(t *testing.T) {
 	})
 	t.Run("ambiguous address", func(t *testing.T) {
 		t.Parallel()
-		amb := claimFailed(ctx, "DOC-1", &visibility.AmbiguousAddressError{ID: "DOC-1", Faces: []entity.Face{"a", "b"}})
+		amb := claimFailed(ctx, "DOC-1", &lease.AmbiguousError{
+			Err: &visibility.AmbiguousAddressError{ID: "DOC-1", Faces: []entity.Face{"a", "b"}},
+		})
 		if text := amb.Content[0].(*mcpgo.TextContent).Text; !strings.Contains(text, "DOC-1") {
 			t.Errorf("ambiguous text = %q", text)
 		}

@@ -136,6 +136,7 @@ type cliBundles struct {
 	attachment *attachment.Service
 	renametype *renametype.Service
 	analysis   *analysis.Service
+	leases     *leaseServices
 }
 
 // newCLIBundles wires the focused services around an already-constructed
@@ -221,7 +222,13 @@ func newCLIBundles(svc *appbuild.Services) (*cliBundles, error) {
 	} else {
 		write.Tokens = broker
 	}
+	leases := &leaseServices{}
+	// Assigned only when present, for the same reason as Comments above.
+	if l := appbuild.Leases(svc); l != nil {
+		leases.Svc = l
+	}
 	return &cliBundles{
+		leases:     leases,
 		read:       &read,
 		write:      &write,
 		attachment: att,

@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
 
@@ -109,8 +110,14 @@ func (g leaseGate) Readable(ctx context.Context, ids []string) (map[string]bool,
 	return out, nil
 }
 
+// WriteTarget wraps an ambiguous address in [lease.AmbiguousError], keeping
+// the visibility error in its chain for callers that look for it.
 func (g leaseGate) WriteTarget(ctx context.Context, addr string) (entity.Ref, error) {
-	return g.rows.WriteTarget(ctx, addr)
+	ref, err := g.rows.WriteTarget(ctx, addr)
+	if _, ok := errors.AsType[*visibility.AmbiguousAddressError](err); ok {
+		return entity.Ref{}, &lease.AmbiguousError{Err: err}
+	}
+	return ref, err
 }
 
 func (g leaseGate) Family(ctx context.Context, id string) (lease.Family, bool, error) {

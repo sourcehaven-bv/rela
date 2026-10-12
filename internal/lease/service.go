@@ -54,7 +54,7 @@ type Family struct {
 // that goes away between its two reads.
 type Gate interface {
 	// WriteTarget resolves addr (`ID` or `ID@face`) to the one face a write
-	// edits. A bare id of a faced type is an ambiguous-address error.
+	// edits. A bare id of a faced type is an *[AmbiguousError].
 	WriteTarget(ctx context.Context, addr string) (entity.Ref, error)
 	// Family returns the readable faces of id.
 	Family(ctx context.Context, id string) (Family, bool, error)
@@ -205,7 +205,7 @@ type Claimed struct {
 // the write target; then update access on it.
 //
 // Errors: [ErrInvalid] for bad input (before any read); store.ErrNotFound or
-// the gate's ambiguous-address error; *acl.ForbiddenError without update
+// *[AmbiguousError] from the gate; *acl.ForbiddenError without update
 // access; *[HeldError] when the entity has a live lease; [ErrLimit] or
 // [ErrFull] past a cap.
 func (s *Service) Claim(ctx context.Context, req ClaimRequest) (Claimed, error) {

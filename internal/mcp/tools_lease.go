@@ -11,11 +11,9 @@ import (
 
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/lease"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
-	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // LeaseService is the advisory lease capability the lease tools, show_entity
@@ -33,23 +31,14 @@ type LeaseService interface {
 	Subscribe() (wake <-chan struct{}, cancel func())
 }
 
-// Lease tool error texts. None of them carries a lease id.
+// Lease tool argument names and the list hint the limit text cites. The
+// error texts are [lease.UserText]'s, shared with the CLI.
 const (
-	leasesDisabled = "leases are not enabled on this server"
-	leaseLostText  = "lease lost: it expired, was released, or you no longer have access to the entity. " +
-		"Claim the entity again."
-	leaseFullText   = "the lease store is full; retry later"
-	leaseFailedText = "the lease operation failed; retry later"
-	leaseHeldPrefix = "lease held: "
-	leaseTTLArg     = "ttl_seconds"
-	leaseStatusArg  = "status"
-	leaseIDArg      = "lease_id"
+	leaseTTLArg    = "ttl_seconds"
+	leaseStatusArg = "status"
+	leaseIDArg     = "lease_id"
+	leaseListHint  = "list_leases"
 )
-
-// leaseLimitText answers [lease.ErrLimit].
-var leaseLimitText = fmt.Sprintf("lease limit reached: you hold %d live leases, the most one user may hold. "+
-	"The cap is shared by every agent running as you. Release leases you no longer need "+
-	"(list_leases shows them) and claim again.", lease.MaxPerIdentity)
 
 // leaseStatusDescription marks status as text the holder wrote, so an agent
 // does not follow instructions in another holder's status.
@@ -88,7 +77,8 @@ func leaseTool(
 		h leaseHandler, ctx context.Context, req *mcpgo.CallToolRequest,
 	) (*mcpgo.CallToolResult, error) {
 		if h.svc == nil {
-			return errorResult(leasesDisabled), nil
+			text, _ := lease.UserText(lease.ErrNotEnabled, leaseListHint)
+			return errorResult(text), nil
 		}
 		return method(h, ctx, newToolRequest(req)), nil
 	})
@@ -165,21 +155,6 @@ type leaseJSON struct {
 	Label  string `json:"label,omitempty"`
 	Since  string `json:"since"`
 	Status string `json:"status,omitempty"`
-}
-
-// holderJSON names the holder in a `lease held:` error.
-type holderJSON struct {
-	User  string `json:"user"`
-	Tool  string `json:"tool"`
-	Label string `json:"label,omitempty"`
-}
-
-// heldJSON is the body of a `lease held:` error.
-type heldJSON struct {
-	Holder    holderJSON `json:"holder"`
-	Since     string     `json:"since"`
-	ExpiresAt string     `json:"expires_at"`
-	Status    string     `json:"status,omitempty"`
 }
 
 func leaseTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
@@ -287,45 +262,21 @@ func claimFailed(ctx context.Context, id string, err error) *mcpgo.CallToolResul
 	if errors.Is(err, store.ErrNotFound) {
 		return entityReadFailed("entity", id, err)
 	}
-	if amb, ok := errors.AsType[*visibility.AmbiguousAddressError](err); ok {
-		return errorResult(amb.Error())
-	}
-	if held, ok := errors.AsType[*lease.HeldError](err); ok {
-		cur := held.Current
-		text, mErr := marshalJSON(heldJSON{
-			Holder: holderJSON{User: cur.Holder.User, Tool: cur.Holder.Tool, Label: cur.Holder.Label},
-			Since:  leaseTime(cur.Since), ExpiresAt: leaseTime(cur.Expires), Status: cur.Status,
-		})
-		if mErr != nil { // coverage-ignore: a struct of strings always marshals
-			return errorResult(leaseFailedText)
-		}
-		return errorResult(leaseHeldPrefix + text)
-	}
-	if errors.Is(err, acl.ErrForbidden) {
-		return errorResult(err.Error())
-	}
 	return leaseFailed(ctx, "claim", err, "entity", id)
 }
 
-// leaseFailed answers the lease errors every operation shares. An
-// unexpected error is logged with the caller's user and tool, plus attrs,
-// and answered generically. Claim passes the entity id as attrs; renew and
+// leaseFailed answers a lease error with its [lease.UserText]. An unexpected
+// error is logged with the caller's user and tool, plus attrs, and answered
+// with [lease.FailedText]. Claim passes the entity id as attrs; renew and
 // release know a lease only by its id, which must never be logged.
 func leaseFailed(ctx context.Context, op string, err error, attrs ...any) *mcpgo.CallToolResult {
-	switch {
-	case errors.Is(err, lease.ErrLost):
-		return errorResult(leaseLostText)
-	case errors.Is(err, lease.ErrLimit):
-		return errorResult(leaseLimitText)
-	case errors.Is(err, lease.ErrFull):
-		return errorResult(leaseFullText)
-	case errors.Is(err, lease.ErrInvalid), errors.Is(err, lease.ErrNoPrincipal):
-		return errorResult(err.Error())
+	if text, ok := lease.UserText(err, leaseListHint); ok {
+		return errorResult(text)
 	}
 	p := principal.From(ctx)
 	args := append([]any{"op", op, "user", p.User, "tool", p.Tool}, attrs...)
 	slog.Warn("mcp: lease operation failed", append(args, "err", err)...)
-	return errorResult(leaseFailedText)
+	return errorResult(lease.FailedText)
 }
 
 // entityLease returns the lease show_entity shows on the entity with id, or
