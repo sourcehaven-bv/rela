@@ -76,6 +76,9 @@ func SoftDeleteEntity(ctx context.Context, m *Manager, id string) (*entity.Delet
 	if len(family) == 0 {
 		return nil, fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
+	if rErr := requireReadableRow(ctx, faceGateOf(m), id, family); rErr != nil {
+		return nil, rErr
+	}
 	authorized := make(familyAuthorization, len(family))
 	if aclErr := m.authorizeFamily(ctx, acl.OpDelete, id, family, authorized); aclErr != nil {
 		return nil, aclErr
