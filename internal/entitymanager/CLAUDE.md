@@ -34,12 +34,19 @@ two `denied-write` rows for one denial.
 ### PatchEntity ordering is load-bearing
 
 ```text
-read (raw) → IsLocked guard → authorize → field gate → merge → updateCore
+read (raw) → read gate → IsLocked guard → authorize → field gate → merge → updateCore
 ```
 
 - The **read comes first** because `acl.EntitySubject` needs the entity's
-  real type and the caller supplied only an id. Same shape, and the same
-  accepted existence disclosure, as `DeleteEntity`.
+  real type and the caller supplied only an id. Same shape as `DeleteEntity`.
+- The **read gate comes next**: a row the caller cannot read is refused as
+  not found, before any check that could confirm it exists. Every write to
+  an existing row (update, patch, delete, soft delete, rename, version tag,
+  copy source and target, and both endpoints of a relation write) follows
+  this rule. A relation's source is gated before the ACL check
+  (`lookupSource`), so a hidden source reaches the ACL as a missing one.
+  Handles without a face gate (`NopACL`, `bypass_acl`, cascades) skip it;
+  see `faceGateOf`.
 - The **field gate runs strictly after authorization**. Field verdicts are
   value-dependent, so consulting them for an unauthorized caller would leak
   both entity existence and stored property values through the

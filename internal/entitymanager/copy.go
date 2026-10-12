@@ -418,6 +418,10 @@ func (ce *copyEngine) planCopy(
 // the row exists (the earlier order) let a create-only principal overwrite
 // any entity by naming it as the target.
 //
+// A stored target the caller cannot read is refused as an id that is already
+// taken, the answer a plain create with that id gets. Its type is not
+// compared, so the refusal does not disclose it.
+//
 // Reading "does the target exist" must not fold a backend failure into "no":
 // a transient read error would otherwise become a CreateEntity over a live
 // face — a silent full overwrite whose audit record cheerfully says
@@ -426,6 +430,15 @@ func (ce *copyEngine) probeCopyTarget(ctx context.Context, plan *copyPlan) error
 	existing, err := ce.m.deps.Store.GetEntity(ctx, entity.Ref{ID: plan.targetID, Face: plan.targetTail})
 	switch {
 	case err == nil:
+		if gate := faceGateOf(ce.m); gate != nil {
+			readable, rErr := gate.PermitsReadFace(ctx, existing.Type, existing.ID, existing.Face)
+			if rErr != nil {
+				return fmt.Errorf("entitymanager: copy %q: read gate on target: %w", plan.name, rErr)
+			}
+			if !readable {
+				return fmt.Errorf("%w: %s", ErrEntityAlreadyExists, plan.targetID)
+			}
+		}
 		if existing.Type != plan.to.Type {
 			return fmt.Errorf("%w: %s is %q, definition targets %q",
 				ErrCopyTargetTypeMismatch, plan.targetID, existing.Type, plan.to.Type)
@@ -453,6 +466,10 @@ func (ce *copyEngine) readCopySource(
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
 		}
+		// Raw for the fields, gated for existence (see requireReadableSource).
+		if err := ce.requireReadableSource(ctx, plan); err != nil {
+			return nil, err
+		}
 		return e, nil
 	}
 
@@ -476,6 +493,24 @@ func (ce *copyEngine) readCopySource(
 		return nil, fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
 	}
 	return e, nil
+}
+
+// requireReadableSource reports [ErrCopySourceMissing] for a source face the
+// caller cannot read. It runs before the target probe, so no later refusal
+// tells a hidden source apart from an absent one. authorizeCopy repeats this
+// check; it stays as the guard of record.
+func (ce *copyEngine) requireReadableSource(ctx context.Context, plan *copyPlan) error {
+	if ce.m.deps.CopyReadGate == nil {
+		return nil
+	}
+	permitted, err := ce.m.deps.CopyReadGate.PermitsReadFace(ctx, plan.from.Type, plan.sourceID, plan.sourceTail)
+	if err != nil {
+		return err
+	}
+	if !permitted {
+		return fmt.Errorf("%w: %s", ErrCopySourceMissing, plan.sourceID)
+	}
+	return nil
 }
 
 // authorizeCopy authorizes the copy.
