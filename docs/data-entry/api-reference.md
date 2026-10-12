@@ -619,7 +619,8 @@ baseline.
 
 When only presence changed, the round checks only the presence subscriptions
 on the faces whose viewers changed, on the same clock. It has the same limits
-and its own rotation.
+and its own rotation. When nothing else changed, the skipped pairs and the
+subscriptions whose baseline missed a change are checked in this round.
 
 ## Presence (`_presence`)
 
@@ -660,8 +661,11 @@ the server's check of that subscription answers 200:
   you at once. A check that does not finish in time also removes you at once,
   and the next successful check adds you back with a new `since`.
 - A check that a round skips under load changes nothing: you stay listed
-  with your `since`. Revocation then takes effect when your check next runs,
-  and the rotation makes sure it does.
+  with your `since`. The skipped check runs in a presence round on the next
+  tick, without waiting for another change. Each round checks at most 256
+  pairs, so with no other change n skipped pairs are all checked within
+  ceil(n/256) ticks; revocation takes effect then, and a `GET` reflects it
+  one tick later. A check that comes back unchanged sends nothing.
 - Unauthenticated callers are never listed.
 - A user is listed on at most 64 entities at a time, the 15-second tail
   included, and a server lists at most 4096 viewers in all. Past either limit

@@ -1545,9 +1545,11 @@ configuration.
   period. A check that does not finish in time also removes the viewer at
   once; the next successful check adds them back. Under load a round checks
   at most 256 subscriptions and skips the rest. A skipped subscription keeps
-  its place in the list until its check runs, and the round rotates where it
-  stops, so every subscription is checked in turn. Normally that is the
-  round after the change.
+  its place in the list until its check runs. Its check is queued for the
+  next tick of the 500 ms clock, with no further write needed, and each tick
+  checks up to 256 queued subscriptions. With no other change, n skipped
+  subscriptions are all checked within ceil(n/256) ticks, and the list
+  reflects a revocation one tick after its check.
 - **The anonymous principal never joins.** All unauthenticated callers share
   it, so it would name nobody.
 

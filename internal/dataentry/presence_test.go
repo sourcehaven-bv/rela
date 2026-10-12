@@ -15,6 +15,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
+	"github.com/Sourcehaven-BV/rela/internal/changefeed"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/presence"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -778,6 +779,142 @@ func TestLiveHub_OverCapPresenceRoundSettles(t *testing.T) {
 	vs := h.presence.Viewers(face)
 	if len(vs) != n {
 		t.Fatalf("viewers = %d, want %d", len(vs), n)
+	}
+	for _, v := range vs {
+		if !v.Since.Equal(presenceT0) {
+			t.Fatalf("%s since %v, want %v: an untouched viewer restarted", v.User, v.Since, presenceT0)
+		}
+	}
+}
+
+// quietFeed is a change feed that never wakes: no write reaches the hub.
+type quietFeed struct{}
+
+func (quietFeed) Wake() <-chan struct{}  { return nil }
+func (quietFeed) Take() changefeed.Batch { return changefeed.Batch{} }
+
+// A viewer revoked while the round that would check it was over the cap is
+// still checked with no further write: the skipped replay stays pending and
+// the next presence round runs it. The viewer is gone within a few ticks,
+// nobody else's since restarts, and the rounds stop once nothing changes.
+func TestLiveHub_SkippedPresenceReplayIsRescheduled(t *testing.T) {
+	const n = liveRoundCap + 8
+	var (
+		revoked  string
+		mu       sync.Mutex
+		revoking bool
+		replayed = map[string]int{}
+	)
+	h := hubWith(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := principal.From(r.Context()).User
+		mu.Lock()
+		replayed[user]++
+		gone := revoking && user == revoked
+		mu.Unlock()
+		if gone {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		recordPresence(r.Context(), &entity.Entity{ID: "TKT-1", Type: "ticket"})
+	}))
+	clk := newFakeClock()
+	h.now = clk.Now
+	h.window = 5 * time.Millisecond
+	conns := make([]*liveConn, n)
+	for i := range n {
+		c := h.register(principal.Principal{User: fmt.Sprintf("u%03d", i), Tool: principal.ToolDataEntry})
+		ks := presenceSub()
+		addSub(c, ks)
+		h.baseline(context.Background(), c, []keyedSub{ks})
+		conns[i] = c
+	}
+	faces := h.presence.TakeChanged(clk.Now())
+	if len(faces) != 1 || h.presence.Len() != n {
+		t.Fatalf("fixture: faces %v, len %d", faces, h.presence.Len())
+	}
+	face := faces[0]
+
+	// The next presence round is over the cap and skips the pairs past it in
+	// collect's order. Revoke the last of those as it starts.
+	pairs := h.collect(true, map[string]bool{face: true})
+	mu.Lock()
+	revoked = pairs[len(pairs)-1].owner.User
+	clear(replayed)
+	revoking = true
+	mu.Unlock()
+	h.presenceRound(context.Background(), []string{face})
+	mu.Lock()
+	skipped := replayed[revoked] == 0
+	mu.Unlock()
+	if !skipped {
+		t.Fatalf("fixture: the over-cap round replayed %s; it must skip it", revoked)
+	}
+	if got := h.presence.TakeChanged(clk.Now()); len(got) != 0 {
+		t.Fatalf("fixture: faces changed by the over-cap round: %v", got)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); h.run(ctx, quietFeed{}, nil) }()
+	t.Cleanup(func() { cancel(); <-done })
+	waitHubTicks := func(k uint64) {
+		t.Helper()
+		target := h.ticks.Load() + k
+		deadline := time.Now().Add(5 * time.Second)
+		for h.ticks.Load() < target {
+			if time.Now().After(deadline) {
+				t.Fatalf("the live worker did not finish %d ticks", k)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	listed := func() bool {
+		for _, v := range h.presence.Viewers(face) {
+			if v.User == revoked {
+				return true
+			}
+		}
+		return false
+	}
+	// One tick replays the pending pair and leaves; the next publishes.
+	for tick := 0; listed(); tick++ {
+		if tick == 4 {
+			t.Fatalf("%s still listed after %d ticks with no write", revoked, tick)
+		}
+		waitHubTicks(1)
+	}
+
+	// Settle: the leave changed the face once, and that round overflows by
+	// a few pairs; those drain and then no replay runs.
+	settled := false
+	for range 8 {
+		mu.Lock()
+		clear(replayed)
+		mu.Unlock()
+		waitHubTicks(2)
+		mu.Lock()
+		quiet := len(replayed) == 0
+		mu.Unlock()
+		if quiet && !h.hasPending() {
+			settled = true
+			break
+		}
+	}
+	if !settled {
+		t.Fatal("presence rounds still run every tick")
+	}
+	for _, c := range conns {
+		c.takeChanged()
+	}
+	waitHubTicks(3)
+	for i, c := range conns {
+		if got := c.takeChanged(); len(got) != 0 {
+			t.Fatalf("u%03d framed %v after the rounds settled", i, got)
+		}
+	}
+	vs := h.presence.Viewers(face)
+	if len(vs) != n-1 {
+		t.Fatalf("viewers = %d, want %d", len(vs), n-1)
 	}
 	for _, v := range vs {
 		if !v.Since.Equal(presenceT0) {

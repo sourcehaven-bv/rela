@@ -73,9 +73,11 @@ type liveHub struct {
 	conns map[string]*liveConn
 	// pending holds the subscriptions a changed round could not replay: it
 	// skipped them while their PUT took the baseline, or had no room or time
-	// for them ([liveHub.fallback]). The next tick replays them, so a
-	// change that round saw is compared against the baseline they end up
-	// with. A round that selects them takes the set. Guarded by mu.
+	// for them ([liveHub.fallback]). The next tick replays them, in a full
+	// round or in a presence round with the faces that changed, so a change
+	// that round saw is compared against the baseline they end up with. A
+	// round that selects them takes the set; the ones it skips again come
+	// back through fallback. Guarded by mu.
 	pending map[*liveSub]struct{}
 
 	// presence is who has which entity open. It lives and dies with the
@@ -526,9 +528,8 @@ type liveFeed interface {
 }
 
 // run runs one round at a time: a changed round on each tick of a fixed
-// clock when anything changed since the last one, a round over the pending
-// subscriptions on a tick when nothing changed, and a baseline round when a
-// PUT asks for one. A lease wake marks the round dirty like a write does.
+// clock when anything changed since the last one, and a baseline round when
+// a PUT asks for one. A lease wake marks the round dirty like a write does.
 //
 // The clock is fixed so that a round's start never depends on when a change
 // arrived. If the first change started the window instead, a write to a
