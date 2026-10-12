@@ -1525,22 +1525,29 @@ configuration.
   that includes the reader would.
 - **Presence is keyed by the resolved face.** Two readers of different faces
   of one entity do not see each other, so a reader of a published face never
-  learns who has the draft open.
-- **Hidden means nonexistent.** The `GET` reads the entity through the same
-  call as the entity `GET`, so a hidden, absent or wrong-plural entity gets
-  the same 404 body. A subscription that gets a 404 is not recorded, and a
-  presence change on an entity it cannot read never sends it a frame: the
-  server re-checks only the subscriptions on the face whose viewers changed.
+  learns who has the draft open. On a type with faces, a bare id is a 422
+  `face_required`, as for a write, and only after the read gate admitted the
+  entity.
+- **Hidden means nonexistent.** The `GET` resolves the entity through the
+  same gate as the entity `GET`, so a hidden, absent or wrong-plural entity,
+  or a malformed address, gets the same 404 body. A subscription that gets a
+  404 is not recorded, and a presence change on an entity it cannot read
+  never sends it a frame: the server re-checks only the subscriptions on the
+  face whose viewers changed.
 - **The stream's principal is fixed for the connection.** A viewer is shown
   with the identity that opened the stream, as every live-view frame is
   computed for it (see "Live views reveal what polling the GET would").
   Presence makes this existing property visible to other readers; it adds no
   new access.
-- **Revocation takes effect within one round.** A change to membership or
-  access re-checks every subscription. A viewer who lost read access gets a
-  404 on that check and leaves at once, with no grace period. A check that
-  does not finish in time also removes the viewer at once; the next
-  successful check adds them back.
+- **Revocation takes effect when that subscription is next checked.** A
+  change to membership or access re-checks every subscription. A viewer who
+  lost read access gets a 404 on that check and leaves at once, with no grace
+  period. A check that does not finish in time also removes the viewer at
+  once; the next successful check adds them back. Under load a round checks
+  at most 256 subscriptions and skips the rest. A skipped subscription keeps
+  its place in the list until its check runs, and the round rotates where it
+  stops, so every subscription is checked in turn. Normally that is the
+  round after the change.
 - **The anonymous principal never joins.** All unauthenticated callers share
   it, so it would name nobody.
 

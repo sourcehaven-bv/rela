@@ -69,9 +69,11 @@ type entryRef struct {
 
 // Tracker is the presence state. The zero value is not usable; call [New].
 type Tracker struct {
-	mu          sync.Mutex
-	byKey       map[string]map[Identity]*entry
-	slots       map[Slot]entryRef
+	mu    sync.Mutex
+	byKey map[string]map[Identity]*entry
+	// slots is the entry each slot holds, indexed by connection, so
+	// LeaveConn touches only that connection's slots.
+	slots       map[string]map[string]entryRef
 	perIdentity map[Identity]int
 	total       int
 	changed     map[string]struct{}
@@ -85,7 +87,7 @@ type Tracker struct {
 func New() *Tracker {
 	return &Tracker{
 		byKey:       make(map[string]map[Identity]*entry),
-		slots:       make(map[Slot]entryRef),
+		slots:       make(map[string]map[string]entryRef),
 		perIdentity: make(map[Identity]int),
 		changed:     make(map[string]struct{}),
 		published:   make(map[string][]Viewer),
@@ -103,7 +105,7 @@ func (t *Tracker) Join(key string, slot Slot, who Identity, now time.Time) bool 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	ref := entryRef{key: key, who: who}
-	if cur, ok := t.slots[slot]; ok {
+	if cur, ok := t.slots[slot.Conn][slot.Sub]; ok {
 		if cur == ref {
 			return true
 		}
@@ -112,7 +114,7 @@ func (t *Tracker) Join(key string, slot Slot, who Identity, now time.Time) bool 
 	if e := t.byKey[key][who]; e != nil {
 		e.slots[slot] = struct{}{}
 		e.until = time.Time{}
-		t.slots[slot] = ref
+		t.setSlotLocked(slot, ref)
 		return true
 	}
 	if t.perIdentity[who] >= MaxPerIdentity {
@@ -131,7 +133,7 @@ func (t *Tracker) Join(key string, slot Slot, who Identity, now time.Time) bool 
 		t.byKey[key] = byWho
 	}
 	byWho[who] = &entry{since: now, slots: map[Slot]struct{}{slot: {}}}
-	t.slots[slot] = ref
+	t.setSlotLocked(slot, ref)
 	t.perIdentity[who]++
 	t.total++
 	t.changed[key] = struct{}{}
@@ -144,24 +146,37 @@ func (t *Tracker) Join(key string, slot Slot, who Identity, now time.Time) bool 
 func (t *Tracker) Leave(slot Slot, now time.Time, grace bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if ref, ok := t.slots[slot]; ok {
+	if ref, ok := t.slots[slot.Conn][slot.Sub]; ok {
 		t.detachLocked(slot, ref, now, grace)
 	}
 }
 
-// LeaveConn leaves, with grace, every slot of the stream conn.
+// LeaveConn leaves, with grace, every slot of the stream conn. Its cost is
+// proportional to that stream's slots.
 func (t *Tracker) LeaveConn(conn string, now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for slot, ref := range t.slots {
-		if slot.Conn == conn {
-			t.detachLocked(slot, ref, now, true)
-		}
+	for sub, ref := range t.slots[conn] {
+		t.detachLocked(Slot{Conn: conn, Sub: sub}, ref, now, true)
 	}
 }
 
+func (t *Tracker) setSlotLocked(slot Slot, ref entryRef) {
+	bySub := t.slots[slot.Conn]
+	if bySub == nil {
+		bySub = make(map[string]entryRef)
+		t.slots[slot.Conn] = bySub
+	}
+	bySub[slot.Sub] = ref
+}
+
 func (t *Tracker) detachLocked(slot Slot, ref entryRef, now time.Time, grace bool) {
-	delete(t.slots, slot)
+	if bySub := t.slots[slot.Conn]; bySub != nil {
+		delete(bySub, slot.Sub)
+		if len(bySub) == 0 {
+			delete(t.slots, slot.Conn)
+		}
+	}
 	e := t.byKey[ref.key][ref.who]
 	if e == nil {
 		return

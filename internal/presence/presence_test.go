@@ -131,6 +131,28 @@ func TestTracker_JoinLeave(t *testing.T) {
 }
 
 // Viewers sort by since, then user.
+// LeaveConn leaves every slot of its stream, on any key, and only those.
+func TestTracker_LeaveConnLeavesOnlyItsSlots(t *testing.T) {
+	tr := New()
+	tr.Join("K", slot("c1", "a"), id("alice"), t0)
+	tr.Join("L", slot("c1", "b"), id("alice"), t0)
+	tr.Join("K", slot("c2", "a"), id("bob"), t0)
+	tr.LeaveConn("c1", t0)
+	tr.TakeChanged(t0.Add(Grace))
+	if got := users(tr.Viewers("K")); !slices.Equal(got, []string{"bob"}) {
+		t.Fatalf("viewers of K = %v, want [bob]", got)
+	}
+	if got := tr.Viewers("L"); len(got) != 0 {
+		t.Fatalf("viewers of L = %v, want none", got)
+	}
+	// The stream's slots are gone: a second LeaveConn and a rejoin start
+	// afresh.
+	tr.LeaveConn("c1", t0.Add(Grace))
+	if !tr.Join("L", slot("c1", "b"), id("alice"), t0.Add(Grace)) || tr.Len() != 2 {
+		t.Fatalf("rejoin: len = %d, want 2", tr.Len())
+	}
+}
+
 func TestTracker_ViewerOrder(t *testing.T) {
 	tr := New()
 	tr.Join("K", slot("c1", "s"), id("carol"), t0.Add(time.Second))

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -88,7 +89,7 @@ func waitViewers(t *testing.T, env *liveEnv, user, path string, want ...string) 
 	for {
 		resp := presenceOf(t, env, user, path)
 		got := viewerUsers(resp)
-		if slices.Equal(got, want) || (len(got) == 0 && len(want) == 0) {
+		if slices.Equal(got, want) {
 			return resp
 		}
 		if time.Now().After(deadline) {
@@ -98,30 +99,75 @@ func waitViewers(t *testing.T, env *liveEnv, user, path string, want ...string) 
 	}
 }
 
-// settle waits long enough for several rounds to run.
-func presenceSettle() { time.Sleep(quietWindow) }
+// waitTicks waits until the live worker has finished n more ticks, the
+// round of each included. The first may have started before the call, so
+// n=2 covers one whole tick.
+func (e *liveEnv) waitTicks(t *testing.T, n uint64) {
+	t.Helper()
+	target := e.app.live.ticks.Load() + n
+	deadline := time.Now().Add(2 * time.Second)
+	for e.app.live.ticks.Load() < target {
+		if time.Now().After(deadline) {
+			t.Fatalf("the live worker did not finish %d ticks", n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// presenceFrameSlack covers delivery of a frame a round already marked: the
+// stream writes it as soon as it wakes, so this is transport time only.
+const presenceFrameSlack = 50 * time.Millisecond
+
+// presenceQuiet asserts that c gets no live:changed frame from the next two
+// whole ticks.
+func presenceQuiet(t *testing.T, env *liveEnv, c *sseClient) {
+	t.Helper()
+	env.waitTicks(t, 3)
+	deadline := time.After(presenceFrameSlack)
+	for {
+		select {
+		case f, ok := <-c.frames:
+			if !ok {
+				return
+			}
+			if f.event == "live:changed" {
+				t.Fatalf("unexpected frame %+v", f)
+			}
+		case <-deadline:
+			return
+		}
+	}
+}
 
 // AC1: every miss is the entity GET's 404, and a live subscription to it
 // records nobody. A wrong method is a 405.
 func TestPresence_MissIsTheEntityGet404(t *testing.T) {
 	env, _ := newPresenceEnv(t, aclTicketsOnly(t))
-	cases := []struct{ name, plural, id string }{
-		{"hidden", "features", "FEAT-1"},
-		{"absent", "tickets", "TKT-404"},
-		{"wrong plural", "features", "TKT-1"},
+	cases := []struct {
+		name, plural, id, query string
+		subscribable            bool // a PUT accepts the path
+	}{
+		{"hidden", "features", "FEAT-1", "", true},
+		{"absent", "tickets", "TKT-404", "", true},
+		{"wrong plural", "features", "TKT-1", "", true},
+		{"hidden in a world", "features", "FEAT-1", "?world=default", true},
+		{"malformed address", "tickets", "TKT-1@", "", false},
+		{"invalid face", "tickets", "TKT-1@-bad", "", false},
 	}
 	_, conn := env.open(t, "alice")
 	subs := make([]liveSubEntry, 0, len(cases))
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			code, got := env.get(t, "alice", presencePath(tc.plural, tc.id))
-			wantCode, want := env.get(t, "alice", "/api/v1/"+tc.plural+"/"+tc.id)
+			code, got := env.get(t, "alice", presencePath(tc.plural, tc.id)+tc.query)
+			wantCode, want := env.get(t, "alice", "/api/v1/"+tc.plural+"/"+tc.id+tc.query)
 			requireUniform404(t, code, got, wantCode, want)
 		})
-		subs = append(subs, liveSubEntry{fmt.Sprintf("p%d", i), presencePath(tc.plural, tc.id)})
+		if tc.subscribable {
+			subs = append(subs, liveSubEntry{fmt.Sprintf("p%d", i), presencePath(tc.plural, tc.id) + tc.query})
+		}
 	}
 	env.subscribe(t, "alice", conn, subs...)
-	presenceSettle()
+	env.waitTicks(t, 2)
 	if n := env.app.live.presence.Len(); n != 0 {
 		t.Fatalf("tracker holds %d entries after subscriptions to misses, want 0", n)
 	}
@@ -145,11 +191,11 @@ func TestPresence_JoinAndGraceLeave(t *testing.T) {
 	alice, aliceConn := env.open(t, "alice")
 	env.subscribe(t, "alice", aliceConn, liveSubEntry{"p", path})
 	waitViewers(t, env, "bob", path, "alice")
-	liveQuiet(t, alice) // nobody else joined: alice's response did not move
+	presenceQuiet(t, env, alice) // nobody else joined: alice's response did not move
 
 	// A plain GET by carol does not join.
 	presenceOf(t, env, "carol", path)
-	presenceSettle()
+	env.waitTicks(t, 2)
 	waitViewers(t, env, "alice", path)
 
 	bob, bobConn := env.open(t, "bob")
@@ -166,14 +212,14 @@ func TestPresence_JoinAndGraceLeave(t *testing.T) {
 	// Close: bob stays for the grace period.
 	bob.close()
 	clk.advance(10 * time.Second)
-	liveQuiet(t, alice)
+	presenceQuiet(t, env, alice)
 	waitViewers(t, env, "alice", path, "bob")
 
 	// Rejoin within grace keeps since and sends nothing.
 	_, bobConn = env.open(t, "bob")
 	env.subscribe(t, "bob", bobConn, liveSubEntry{"p", path})
 	clk.advance(10 * time.Second)
-	liveQuiet(t, alice)
+	presenceQuiet(t, env, alice)
 	if got := waitViewers(t, env, "alice", path, "bob").Viewers[0].Since; got != since {
 		t.Fatalf("since after a rejoin within grace = %s, want %s", got, since)
 	}
@@ -181,7 +227,7 @@ func TestPresence_JoinAndGraceLeave(t *testing.T) {
 	// Unsubscribe: gone at 15 s, not before.
 	env.subscribe(t, "bob", bobConn)
 	clk.advance(presence.Grace - time.Second)
-	liveQuiet(t, alice)
+	presenceQuiet(t, env, alice)
 	waitViewers(t, env, "alice", path, "bob")
 	clk.advance(time.Second)
 	if got := changedKeys(t, alice, 1); got[0] != "p" {
@@ -252,7 +298,9 @@ func TestPresence_RoundReplaysOnlyThatFace(t *testing.T) {
 	_, bobConn := env.open(t, "bob")
 	env.subscribe(t, "bob", bobConn, liveSubEntry{"p", feat})
 	waitViewers(t, env, "dave", feat, "bob")
-	presenceSettle()
+	// The tick that published bob, and the presence round it ran, are
+	// over before the counting handler goes in.
+	env.waitTicks(t, 2)
 
 	var mu sync.Mutex
 	var replayed []string
@@ -270,7 +318,7 @@ func TestPresence_RoundReplaysOnlyThatFace(t *testing.T) {
 	waitViewers(t, env, "bob", tkt, "alice")
 	waitViewers(t, env, "dave", feat, "bob")
 	waitViewers(t, env, "bob", feat, "dave")
-	liveQuiet(t, alice)
+	presenceQuiet(t, env, alice)
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -281,6 +329,37 @@ func TestPresence_RoundReplaysOnlyThatFace(t *testing.T) {
 		if r != "bob "+feat && r != "dave "+feat {
 			t.Errorf("a presence change on FEAT-1 replayed %q", r)
 		}
+	}
+}
+
+// Presence is per face, so a bare id of a faced type is the write path's
+// 422 face_required, naming the faces, once the read gate admitted the
+// entity. A caller who cannot read it gets the entity GET's 404 instead.
+func TestPresence_FacedTypeRequiresAFace(t *testing.T) {
+	get := func(app *App, d *acl.Declarative, path string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		app.handleV1DynamicRoutes(rec, req.WithContext(gateCtxFor(aliceCtx(), t, d)))
+		return rec
+	}
+
+	app, d, _ := facedAppWithPolicy(t, acl.RoleDef{Read: allTicketFaces})
+	rec := get(app, d, presencePath("tickets", "TKT-1"))
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "face_required") ||
+		!strings.Contains(rec.Body.String(), "TKT-1@draft") {
+
+		t.Fatalf("bare presence = %d %s, want 422 face_required naming the faces", rec.Code, rec.Body)
+	}
+	if rec := get(app, d, presencePath("tickets", "TKT-1@draft")); rec.Code != http.StatusOK {
+		t.Fatalf("faced presence = %d %s, want 200", rec.Code, rec.Body)
+	}
+
+	hidden, hd, _ := facedAppWithPolicy(t, acl.RoleDef{Read: []string{"feature"}})
+	for _, addr := range []string{"TKT-1", "TKT-1@draft"} {
+		got := get(hidden, hd, presencePath("tickets", addr))
+		want := get(hidden, hd, "/api/v1/tickets/"+addr)
+		requireUniform404(t, got.Code, got.Body.Bytes(), want.Code, want.Body.Bytes())
 	}
 }
 
@@ -332,15 +411,24 @@ func TestPresence_MergeExcludeAndCap(t *testing.T) {
 	}
 }
 
-// AC6: the anonymous principal never joins.
+// AC6: the anonymous principal never joins, but still gets a frame when
+// someone else does.
 func TestPresence_UnknownNeverJoins(t *testing.T) {
 	env, _ := newPresenceEnv(t, func(app *App) { seedEntity(app, ticket1("one")) })
-	_, conn := env.open(t, "")
-	env.subscribe(t, "", conn, liveSubEntry{"p", presencePath("tickets", "TKT-1")})
-	presenceSettle()
+	path := presencePath("tickets", "TKT-1")
+	anon, conn := env.open(t, "")
+	env.subscribe(t, "", conn, liveSubEntry{"p", path})
+	env.waitTicks(t, 2)
 	if n := env.app.live.presence.Len(); n != 0 {
 		t.Fatalf("tracker holds %d entries for the anonymous principal, want 0", n)
 	}
+
+	_, bobConn := env.open(t, "bob")
+	env.subscribe(t, "bob", bobConn, liveSubEntry{"p", path})
+	if got := changedKeys(t, anon, 1); got[0] != "p" {
+		t.Fatalf("anonymous frames = %v, want [p]", got)
+	}
+	waitViewers(t, env, "", path, "bob")
 }
 
 // AC7: retiring an app drops its presence with it; on the new app a
@@ -452,7 +540,8 @@ func TestPresence_ViewEntryLease(t *testing.T) {
 
 // S2: churning subscriptions by one identity never hold more than
 // presence.MaxPerIdentity entries, in-grace ones included, and never block
-// another identity.
+// another identity. A subscription the cap refused still gets a frame when
+// someone else joins its face.
 func TestPresence_ChurnByOneIdentityIsCapped(t *testing.T) {
 	const rounds, perPut = 5, liveMaxPerConn
 	env, _ := newPresenceEnv(t, func(app *App) {
@@ -462,7 +551,7 @@ func TestPresence_ChurnByOneIdentityIsCapped(t *testing.T) {
 		}
 	})
 	alice := presence.Identity{User: "alice", Tool: principal.ToolDataEntry}
-	_, conn := env.open(t, "alice")
+	aliceStream, conn := env.open(t, "alice")
 	for r := range rounds {
 		subs := make([]liveSubEntry, perPut)
 		for i := range subs {
@@ -476,9 +565,17 @@ func TestPresence_ChurnByOneIdentityIsCapped(t *testing.T) {
 	if n := env.app.live.presence.Count(alice); n != presence.MaxPerIdentity {
 		t.Fatalf("alice holds %d entries, want the cap %d", n, presence.MaxPerIdentity)
 	}
+	liveDrain(aliceStream)
 	_, bobConn := env.open(t, "bob")
 	env.subscribe(t, "bob", bobConn, liveSubEntry{"p", presencePath("tickets", "TKT-80")})
 	waitViewers(t, env, "carol", presencePath("tickets", "TKT-80"), "bob")
+	// alice's p15 watches TKT-80, which the cap kept her off.
+	if got := changedKeys(t, aliceStream, 1); got[0] != "p15" {
+		t.Fatalf("alice's frames = %v, want [p15]", got)
+	}
+	if n := env.app.live.presence.Count(alice); n != presence.MaxPerIdentity {
+		t.Fatalf("alice holds %d entries after the retry, want the cap %d", n, presence.MaxPerIdentity)
+	}
 }
 
 // --- hub-level: the commit rules (S1, M2, M4) ---
@@ -600,43 +697,91 @@ func TestLiveHub_ProbeHonouredOnlyForPresence(t *testing.T) {
 	})
 }
 
-// M2: an unfinished replay and a fallback leave without grace; the next
+// joinedHub is a hub with alice's presence subscription on TKT-1 joined
+// and published. It returns the face.
+func joinedHub(t *testing.T) (*liveHub, *liveConn, string) {
+	t.Helper()
+	h := hubWith(probeHandler("TKT-1", http.StatusOK, nil, nil))
+	c := h.register(hubAlice)
+	ks := presenceSub()
+	addSub(c, ks)
+	h.baseline(context.Background(), c, []keyedSub{ks})
+	faces := h.presence.TakeChanged(h.now())
+	if len(faces) != 1 || h.presence.Len() != 1 {
+		t.Fatalf("fixture: faces %v, len %d", faces, h.presence.Len())
+	}
+	return h, c, faces[0]
+}
+
+// M2: a replay that ran and did not finish leaves without grace; the next
 // presence round over that face rejoins.
 func TestLiveHub_UnfinishedReplayLeavesWithoutGrace(t *testing.T) {
-	cases := []struct {
-		name  string
-		leave func(h *liveHub)
-	}{
-		{"fallback", func(h *liveHub) { h.fallback(h.collect(true, nil)) }},
-		{"replay did not finish", func(h *liveHub) {
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-			h.round(ctx, true)
-		}},
+	h, _, face := joinedHub(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.round(ctx, true)
+	if n := h.presence.Len(); n != 0 {
+		t.Fatalf("tracker holds %d entries after the leave, want 0 (no grace)", n)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h := hubWith(probeHandler("TKT-1", http.StatusOK, nil, nil))
-			c := h.register(hubAlice)
-			ks := presenceSub()
-			addSub(c, ks)
-			h.baseline(context.Background(), c, []keyedSub{ks})
-			faces := h.presence.TakeChanged(h.now())
-			if len(faces) != 1 || h.presence.Len() != 1 {
-				t.Fatalf("fixture: faces %v, len %d", faces, h.presence.Len())
-			}
+	if got := h.presence.TakeChanged(h.now()); !slices.Equal(got, []string{face}) {
+		t.Fatalf("changed = %v, want [%s]", got, face)
+	}
+	h.presenceRound(context.Background(), []string{face})
+	if n := h.presence.Len(); n != 1 {
+		t.Fatalf("tracker holds %d entries after the presence round, want 1", n)
+	}
+}
 
-			tc.leave(h)
-			if n := h.presence.Len(); n != 0 {
-				t.Fatalf("tracker holds %d entries after the leave, want 0 (no grace)", n)
-			}
-			if got := h.presence.TakeChanged(h.now()); !slices.Equal(got, faces) {
-				t.Fatalf("changed = %v, want %v", got, faces)
-			}
-			h.presenceRound(context.Background(), faces)
-			if n := h.presence.Len(); n != 1 {
-				t.Fatalf("tracker holds %d entries after the presence round, want 1", n)
-			}
-		})
+// A replay a round skipped keeps the join as it was: the subscription is
+// framed, and the tracker sees no leave and no changed face.
+func TestLiveHub_FallbackKeepsTheJoin(t *testing.T) {
+	h, c, _ := joinedHub(t)
+	h.fallback(h.collect(true, nil))
+	if n := h.presence.Len(); n != 1 {
+		t.Fatalf("tracker holds %d entries after a fallback, want 1", n)
+	}
+	if got := h.presence.TakeChanged(h.now()); len(got) != 0 {
+		t.Fatalf("changed after a fallback = %v, want none", got)
+	}
+	if got := c.takeChanged(); !slices.Equal(got, []string{"p"}) {
+		t.Fatalf("framed = %v, want [p]", got)
+	}
+}
+
+// Overload: with more pairs on one face than a round replays, the skipped
+// ones keep their join, so the face settles within a few ticks and no
+// viewer's since restarts.
+func TestLiveHub_OverCapPresenceRoundSettles(t *testing.T) {
+	clk := newFakeClock()
+	h := hubWith(probeHandler("TKT-1", http.StatusOK, nil, nil))
+	h.now = clk.Now
+	const n = liveRoundCap + 8
+	for i := range n {
+		c := h.register(principal.Principal{User: fmt.Sprintf("u%03d", i), Tool: principal.ToolDataEntry})
+		ks := presenceSub()
+		addSub(c, ks)
+		h.baseline(context.Background(), c, []keyedSub{ks})
+	}
+	faces := h.presence.TakeChanged(clk.Now())
+	if len(faces) != 1 || h.presence.Len() != n {
+		t.Fatalf("fixture: faces %v, len %d", faces, h.presence.Len())
+	}
+	face := faces[0]
+	for tick := 0; len(faces) > 0; tick++ {
+		if tick == 3 {
+			t.Fatalf("faces still changing after %d ticks: %v", tick, faces)
+		}
+		clk.advance(liveWindow)
+		h.presenceRound(context.Background(), faces)
+		faces = h.presence.TakeChanged(clk.Now())
+	}
+	vs := h.presence.Viewers(face)
+	if len(vs) != n {
+		t.Fatalf("viewers = %d, want %d", len(vs), n)
+	}
+	for _, v := range vs {
+		if !v.Since.Equal(presenceT0) {
+			t.Fatalf("%s since %v, want %v: an untouched viewer restarted", v.User, v.Since, presenceT0)
+		}
 	}
 }

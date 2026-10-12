@@ -130,6 +130,9 @@ func liveShapeOf(segs []string, meta *metamodel.Metamodel) (livePath, map[string
 		if err := checkLiveID(segs[1]); err != nil {
 			return livePath{}, nil, err
 		}
+		if err := checkPresenceFace(segs[0], segs[1], meta); err != nil {
+			return livePath{}, nil, err
+		}
 		return livePath{shape: livePresence, plural: segs[0], id: segs[1]}, livePresenceKeys, nil
 	case len(segs) == 1 || len(segs) == 2:
 		if err := checkLivePlural(segs[0], meta); err != nil {
@@ -165,6 +168,22 @@ func checkLiveID(seg string) error {
 		return fmt.Errorf("%w: invalid entity id", errLivePath)
 	}
 	return nil
+}
+
+// checkPresenceFace refuses a bare id on a type that declares faces.
+// Presence is per face, and the presence route answers such an address with
+// `face_required`, so the subscription could never join. Which types have
+// faces is in the metamodel, which is not a secret.
+func checkPresenceFace(plural, seg string, meta *metamodel.Metamodel) error {
+	addr, err := entity.ParseAddress(seg)
+	if err != nil {
+		// coverage-ignore: checkLiveID accepted seg.
+		return fmt.Errorf("%w: invalid entity id", errLivePath)
+	}
+	if _, named := addr.Named(); named || len(meta.Entities[entityTypeForPlural(meta, plural)].Faces) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: this type has faces; a presence path names one (ID@face)", errLivePath)
 }
 
 // String is the replay URL, rebuilt from the parsed parts.

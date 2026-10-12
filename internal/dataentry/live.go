@@ -88,8 +88,11 @@ type liveHub struct {
 
 	// rotate is where the next over-cap round starts in the sorted pairs, so
 	// the cap passes over every subscription in turn instead of always
-	// dropping the same tail. Worker goroutine only.
-	rotate int
+	// dropping the same tail. presenceRotate is the same for presence
+	// rounds, whose pairs are a subset: sharing one cursor would let them
+	// move where a full round cuts. Worker goroutine only.
+	rotate         int
+	presenceRotate int
 
 	// ticks counts the ticks the worker has finished, the round of each
 	// included. Tests wait on it instead of on the wall clock.
@@ -133,15 +136,21 @@ type liveConn struct {
 // round that skips a syncing subscription therefore sets recheck, and the
 // PUT then leaves the subscription pending for the next tick's replay.
 //
-// A presence subscription (presenceID set) is joined to the face in joined
-// while its replays answer 200. left is the face it was taken off when a
-// replay did not finish or fell back; a presence round over that face
-// replays it again so it can rejoin.
+// A presence subscription (presenceID set) has three faces:
+//   - watching is the face its last finished replay resolved with a 200. A
+//     presence round over that face replays it, so it gets a frame when
+//     the viewers change even when it is not listed itself: refused by a
+//     cap, or anonymous.
+//   - joined is the face the tracker holds for its slot. It is empty while
+//     a cap refuses the join; each presence round over watching tries again.
+//   - left is the face it watched before a replay that did not finish. A
+//     presence round over that face replays it again so it can rejoin.
 type liveSub struct {
 	url        string // replay URL rebuilt by livePath.String
 	presenceID string // livePath.presenceID
 	hash       string
 	syncing    bool
+	watching   string
 	joined     string
 	left       string
 	recheck    bool
@@ -400,40 +409,52 @@ func (h *liveHub) baseline(ctx context.Context, c *liveConn, added []keyedSub) b
 }
 
 // applyPresenceLocked joins or leaves presence for the subscription s of c
-// after a replay with result res. Callers hold h.mu and c.mu, and have
-// checked that c is registered and s is still its subscription under key,
-// so a replay that outlived its subscription or stream joins nothing.
+// after a replay that ran, with result res. Callers hold h.mu and c.mu, and
+// have checked that c is registered and s is still its subscription under
+// key, so a replay that outlived its subscription or stream joins nothing.
+// A replay a round skipped ([liveHub.fallback]) does not come here: it
+// leaves the join as it was.
 //
-// A replay that did not finish, and a fallback, leave without grace: the
-// hub cannot tell whether the subscriber still may read the entity (M2). The
-// next 200 rejoins. Any other status, or a probe that names another entity
-// than the path, leaves for good. The anonymous principal never joins: it is
-// one identity shared by every unauthenticated caller.
+// A replay that did not finish leaves without grace: the hub cannot tell
+// whether the subscriber still may read the entity (M2). The next 200
+// rejoins. Any other status, or a probe that names another entity than the
+// path, leaves for good. The anonymous principal never joins: it is one
+// identity shared by every unauthenticated caller. It still watches the
+// face, as a subscription the caps refused does.
 func (h *liveHub) applyPresenceLocked(c *liveConn, key string, s *liveSub, res replayResult) {
 	if s.presenceID == "" {
 		return
 	}
 	slot := presence.Slot{Conn: c.id, Sub: key}
 	now := h.now()
-	if !res.ok {
+	leave := func() {
 		if s.joined != "" {
 			h.presence.Leave(slot, now, false)
-			s.left, s.joined = s.joined, ""
+			s.joined = ""
 		}
+	}
+	if !res.ok {
+		if s.watching != "" {
+			s.left, s.watching = s.watching, ""
+		}
+		leave()
 		return
 	}
 	s.left = ""
 	face, who, ok := res.presenceJoin(s.presenceID)
-	if ok && who.User != principal.Unknown && c.owner.User != principal.Unknown &&
+	if !ok {
+		s.watching = ""
+		leave()
+		return
+	}
+	s.watching = face
+	if who.User != principal.Unknown && c.owner.User != principal.Unknown &&
 		h.presence.Join(face, slot, who, now) {
 
 		s.joined = face
 		return
 	}
-	if s.joined != "" {
-		h.presence.Leave(slot, now, false)
-		s.joined = ""
-	}
+	leave()
 }
 
 // identityTotalLocked is how many subscriptions c's owner would hold across
@@ -566,10 +587,10 @@ func (h *liveHub) round(ctx context.Context, changed bool) {
 	h.replayRound(ctx, changed, nil)
 }
 
-// presenceRound replays only the presence subscriptions on faces, the
-// faces whose viewers changed, and the pending ones an earlier round could
-// not replay. A subscriber who got a 404 is joined to no
-// face, so a presence round never replays it.
+// presenceRound replays only the presence subscriptions that watch, or
+// left, one of faces, the faces whose viewers changed, and the pending ones
+// an earlier round could not replay. A subscriber who got a 404 watches no
+// face, so a change of viewers never replays it.
 func (h *liveHub) presenceRound(ctx context.Context, faces []string) {
 	only := make(map[string]bool, len(faces))
 	for _, f := range faces {
@@ -594,9 +615,13 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only map[string
 	}
 	overflow := 0
 	if len(pairs) > liveRoundCap {
-		start := h.rotate % len(pairs)
+		cursor := &h.rotate
+		if only != nil {
+			cursor = &h.presenceRotate
+		}
+		start := *cursor % len(pairs)
 		pairs = append(pairs[start:], pairs[:start]...)
-		h.rotate = start + liveRoundCap
+		*cursor = start + liveRoundCap
 		overflow = len(pairs) - liveRoundCap
 		h.fallback(pairs[liveRoundCap:])
 		pairs = pairs[:liveRoundCap]
@@ -624,7 +649,26 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only map[string
 		pairs = pairs[:started]
 	}
 
+	h.commitRound(pairs)
+	slog.Debug("live: round", "replays", len(pairs), "overflow", overflow,
+		"duration_ms", time.Since(start).Milliseconds(),
+		"queries", stats.Queries(), "db_ms", stats.Duration().Milliseconds())
+}
+
+// commitRound stores the results of the replays that ran and frames the
+// subscriptions whose response moved.
+//
+// It holds h.mu across the whole loop, not per subscription (S1). The check
+// that a stream is still registered and the presence join that follows must
+// be one step against unregister, which leaves the stream's presence under
+// h.mu: a join that landed after that leave would hold an entry no stream
+// owns, and no grace would ever end it. The cost is that PUTs, stream
+// opens and closes, and the next collect wait for the commit. It does no
+// I/O, only map updates, one per subscription of at most liveRoundCap
+// pairs.
+func (h *liveHub) commitRound(pairs []*replayPair) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	for _, p := range pairs {
 		for _, ref := range p.subs {
 			current := h.conns[ref.conn.id] == ref.conn
@@ -643,21 +687,16 @@ func (h *liveHub) replayRound(ctx context.Context, changed bool, only map[string
 			ref.conn.mu.Unlock()
 		}
 	}
-	h.mu.Unlock()
-	slog.Debug("live: round", "replays", len(pairs), "overflow", overflow,
-		"duration_ms", time.Since(start).Milliseconds(),
-		"queries", stats.Queries(), "db_ms", stats.Duration().Milliseconds())
 }
 
 // collect groups the current subscriptions into distinct replays, in a
 // stable order; round rotates where the cap cuts it. A non-nil only keeps
-// the presence subscriptions joined to, or taken off, one of its faces,
-// and the pending ones. A changed round takes the pending set: a full
-// round selects those subscriptions anyway, and a baseline round (changed
-// false) does not, so it leaves the set alone. A changed round also marks
-// the syncing subscriptions it skips for a recheck; a presence round marks
-// only the presence ones, since a change of viewers moves no other
-// response.
+// the presence subscriptions that watch, or left, one of its faces, and the
+// pending ones. A changed round takes the pending set: a full round selects
+// those subscriptions anyway, and a baseline round (changed false) does
+// not, so it leaves the set alone. A changed round also marks the syncing
+// subscriptions it skips for a recheck; a presence round marks only the
+// presence ones, since a change of viewers moves no other response.
 func (h *liveHub) collect(changed bool, only map[string]bool) []*replayPair {
 	byKey := make(map[string]*replayPair)
 	h.mu.Lock()
@@ -675,7 +714,7 @@ func (h *liveHub) collect(changed bool, only map[string]bool) []*replayPair {
 			if !changed && s.hash != "" {
 				continue
 			}
-			if _, ok := due[s]; only != nil && !ok && !only[s.joined] && !only[s.left] {
+			if _, ok := due[s]; only != nil && !ok && !only[s.watching] && !only[s.left] {
 				continue
 			}
 			k := c.fp + " " + s.url
@@ -705,11 +744,17 @@ func (h *liveHub) collect(changed bool, only map[string]bool) []*replayPair {
 // subscription is told it changed, so the client refetches. It keeps its
 // baseline and goes into pending, so the next tick replays it and frames
 // again if the response moved past that baseline. Without that replay a
-// later change back to the baseline would send no frame. Pending shrinks by
-// up to liveRoundCap replays a tick, and a replay whose result is unchanged
-// frames nothing, so the set empties and the rounds stop.
-// A presence subscription leaves without grace, as for an unfinished
-// replay.
+// later change back to the baseline would send no frame.
+//
+// A presence subscription keeps its join as it was: no refresh, no leave
+// and no changed face. Leaving here would mark the face changed, and on a
+// face with more subscriptions than liveRoundCap every presence round would
+// skip some and so start the next. Revocation is checked when the skipped
+// replay next runs, from pending. Pending shrinks by up to liveRoundCap
+// replays a tick, so with no other change a skipped check runs within
+// ceil(n/liveRoundCap) ticks of n skipped pairs. A replay whose result is
+// unchanged joins nothing new and frames nothing, so the set empties and the
+// rounds stop.
 func (h *liveHub) fallback(pairs []*replayPair) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -720,7 +765,6 @@ func (h *liveHub) fallback(pairs []*replayPair) {
 			if s := ref.conn.subs[ref.key]; current && s == ref.sub {
 				ref.conn.markChanged(ref.key)
 				h.addPendingLocked(s)
-				h.applyPresenceLocked(ref.conn, ref.key, s, replayResult{})
 			}
 			ref.conn.mu.Unlock()
 		}

@@ -586,8 +586,9 @@ The body replaces the whole set; an empty list clears it. The answer is 204.
   (`/api/v1/{plural}`, the list query parameters including `filter[...]`),
   a view (`/api/v1/_views/{type}/{id}`, query `world`), or an entity's
   presence (`/api/v1/{plural}/{id}/_presence`, query `world`). Any other path
-  or query parameter is a 400. Subscribing to a presence path is what makes
-  you a viewer; see [Presence](#presence-_presence).
+  or query parameter is a 400, and so is a presence path with a bare id on a
+  type that has faces. Subscribing to a presence path is what makes you a
+  viewer; see [Presence](#presence-_presence).
 - A list path cannot carry the free-text `q`: its hits are gated after a
   capped search over every entity, so a hidden write could change the visible
   result and a frame would signal that write.
@@ -617,7 +618,8 @@ baseline. A frame then comes only if the response differs from the
 baseline.
 
 When only presence changed, the round checks only the presence subscriptions
-on the faces whose viewers changed, on the same clock.
+on the faces whose viewers changed, on the same clock. It has the same limits
+and its own rotation.
 
 ## Presence (`_presence`)
 
@@ -636,10 +638,14 @@ GET /api/v1/{plural}/{id}/_presence
 - `since` is RFC 3339 UTC in whole seconds: when the viewer opened the entity.
 - Several tabs of one user and tool are one viewer. You are never listed, from
   any tool.
-- Presence is per resolved face: `{id}` is an address (`ID` or `ID@face`), and
-  `world` picks the face of a bare id. Viewers of another face are not listed.
-- A hidden, absent or wrong-plural entity gets the entity GET's 404. A method
-  other than GET is a 405. The response is not cached (`no-store`).
+- Presence is per face. `{id}` is an address that resolves as a write's
+  does: on a type with faces it must name one (`ID@face`), and a bare id is a
+  422 `face_required` listing the faces you can read. On a type without
+  faces, use the bare id. Viewers of another face are not listed.
+- A hidden, absent or wrong-plural entity, a malformed address, and an entity
+  hidden in the `world` you name all get the entity GET's 404. The 422 comes
+  only for an entity you can read. A method other than GET is a 405. The
+  response is not cached (`no-store`).
 
 **Joining.** This GET never adds you. You become a viewer by subscribing to
 the same path on the live event stream (see [Live views](#live-views)), while
@@ -651,12 +657,17 @@ the server's check of that subscription answers 200:
 - Closing the stream or dropping the subscription keeps you listed for 15
   seconds. Subscribing again within that time keeps your `since`.
 - A check that answers 404, for example after you lost read access, removes
-  you at once. A check that does not finish in time, or that a round skips,
-  also removes you at once; the next successful check adds you back.
+  you at once. A check that does not finish in time also removes you at once,
+  and the next successful check adds you back with a new `since`.
+- A check that a round skips under load changes nothing: you stay listed
+  with your `since`. Revocation then takes effect when your check next runs,
+  and the rotation makes sure it does.
 - Unauthenticated callers are never listed.
 - A user is listed on at most 64 entities at a time, the 15-second tail
   included, and a server lists at most 4096 viewers in all. Past either limit
-  the subscription still works but does not add you.
+  you are not listed, and each change in that face's viewers tries again.
+- A subscription that is not listed, because it is unauthenticated or over a
+  limit, still gets `live:changed` when the viewers of its face change.
 
 Presence lives in the memory of one server process. A restart or a
 configuration reload clears it, and clients reconnect and join again.

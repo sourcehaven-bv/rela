@@ -32,8 +32,12 @@ func presenceIdentity(p principal.Principal) presence.Identity {
 	return presence.Identity{User: p.User, Tool: p.Tool, RawUser: p.RawUser, OrgID: p.OrgID()}
 }
 
-// handlePresence serves GET /api/v1/{plural}/{id}/_presence. Every miss is
-// the entity GET's uniform 404: it reads the entity through the same call.
+// handlePresence serves GET /api/v1/{plural}/{id}/_presence. Presence is
+// per face, so the address resolves as a write's does ([writeTargetOr404]):
+// every miss is the entity GET's uniform 404, and a bare id of a faced type
+// is a 422 `face_required` listing the readable faces. That answer comes only
+// after the read gate admitted the entity, so it tells a caller nothing
+// about an entity it cannot read.
 //
 // The caller is left out on user, raw user and organization, whatever the
 // tool, so your own desktop app never shows up as someone else.
@@ -43,7 +47,7 @@ func handlePresence(
 	if !allowMethod(w, r, http.MethodGet) {
 		return
 	}
-	e, found := readAddressedOr404(w, r, vr, typeName, addr)
+	e, found := writeTargetOr404(w, r, vr, typeName, addr)
 	if !found {
 		return
 	}
@@ -84,7 +88,7 @@ func withPresenceProbe(ctx context.Context) (context.Context, *presenceProbe) {
 }
 
 // recordPresence fills the request's probe, when it has one, from e. Pass
-// only the entity [readAddressedOr404] returned.
+// only the entity [writeTargetOr404] returned.
 func recordPresence(ctx context.Context, e *entityPkg.Entity) {
 	p, _ := ctx.Value(presenceProbeKey{}).(*presenceProbe)
 	if p == nil {

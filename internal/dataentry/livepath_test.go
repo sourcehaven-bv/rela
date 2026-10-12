@@ -93,6 +93,20 @@ func TestParseLivePath(t *testing.T) {
 	}
 }
 
+// A presence path on a faced type names a face: the route would answer a
+// bare id with face_required, so the subscription could never join.
+func TestParseLivePath_PresenceOnFacedTypeNamesAFace(t *testing.T) {
+	meta := facedTicketApp(t).State().Meta
+	if _, err := parseLivePath("/api/v1/tickets/TKT-1/_presence", meta); !errors.Is(err, errLivePath) {
+		t.Fatalf("bare id on a faced type: err = %v, want errLivePath", err)
+	}
+	for _, ok := range []string{"/api/v1/tickets/TKT-1@draft/_presence", "/api/v1/tickets/TKT-1"} {
+		if _, err := parseLivePath(ok, meta); err != nil {
+			t.Fatalf("%s: %v", ok, err)
+		}
+	}
+}
+
 // presenceID is the bare entity id of a presence path and empty for every
 // other shape.
 func TestLivePath_PresenceID(t *testing.T) {
