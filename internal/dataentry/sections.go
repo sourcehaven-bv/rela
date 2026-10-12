@@ -268,10 +268,14 @@ type SectionData struct {
 	IsGrouped    bool
 	EmptyMessage string
 	IsEmpty      bool
-	Content      string
-	HasContent   bool
-	AddInfo      *SectionAddInfo
-	LinkInfo     *SectionLinkInfo
+	// HideEmpty is the section's `hide_empty:` setting. The section is
+	// dropped from the response by [omitHiddenEmpty], not here, because the
+	// affordance resolvers index sections in step with the view config.
+	HideEmpty  bool
+	Content    string
+	HasContent bool
+	AddInfo    *SectionAddInfo
+	LinkInfo   *SectionLinkInfo
 	// RelationOrder is set when the rows are shown in relation order; see
 	// sectionOrdering.
 	RelationOrder *v1.RelationOrder
@@ -440,6 +444,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			SectionID:    slugify(sec.Heading),
 			Display:      sec.Display,
 			EmptyMessage: sec.EmptyMessage,
+			HideEmpty:    sec.HideEmpty,
 		}
 
 		if sec.Source == "entry" {
@@ -495,6 +500,24 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 		out = append(out, sd)
 	}
 
+	return out
+}
+
+// omitHiddenEmpty drops the sections that opted into `hide_empty` and have
+// no rows (TKT-JT101B). Call it after every resolver that indexes sections in step with
+// the view config (resolveSectionCreate), because it breaks that alignment.
+//
+// An Incomplete section stays: its collection, or one it was traversed from,
+// holds only part of the matching sources, so "empty" is not known to be
+// true.
+func omitHiddenEmpty(sections []SectionData) []SectionData {
+	out := sections[:0:0]
+	for _, sec := range sections {
+		if sec.HideEmpty && sec.IsEmpty && !sec.Incomplete {
+			continue
+		}
+		out = append(out, sec)
+	}
 	return out
 }
 
