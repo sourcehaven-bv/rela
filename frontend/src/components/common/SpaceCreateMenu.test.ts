@@ -185,6 +185,32 @@ describe('SpaceCreateMenu rows', () => {
     expect(wrapper.find('[data-testid="menu"]').exists()).toBe(false)
   })
 
+  it('keeps the button busy and offers nothing while an entity page opens', () => {
+    usePageStore().current = { page: 'topic', tab: 'board', entity: 'TOPIC-1' }
+    usePageStore().opening = true
+    const wrapper = mountMenu()
+    const button = wrapper.find('[data-testid="space-create"]')
+    expect(button.attributes('aria-busy')).toBe('true')
+    expect(button.attributes('aria-disabled')).toBe('true')
+    expect(rowLabels(wrapper)).toEqual([])
+  })
+
+  it('does not open from the keyboard while an entity page opens', async () => {
+    usePageStore().opening = true
+    const wrapper = mount(SpaceCreateMenu, {
+      global: { plugins: [pinia, PiniaColada], stubs: { InlineCreateFormModal: ModalStub } },
+    })
+    const button = wrapper.find('[data-testid="space-create"]')
+    await button.trigger('keydown', { key: 'ArrowDown' })
+    await button.trigger('click')
+    expect(button.attributes('aria-expanded')).toBe('false')
+    usePageStore().opening = false
+    await flushPromises()
+    await button.trigger('keydown', { key: 'ArrowDown' })
+    expect(button.attributes('aria-expanded')).toBe('true')
+    wrapper.unmount()
+  })
+
   it('hides the button on an entity page that can link none of the types', () => {
     usePageStore().current = { page: 'topic', tab: 'board', entity: 'TOPIC-1' }
     useSpaceStore().set({ create: [rows[1]!] })

@@ -208,17 +208,21 @@ const anchorMissing = computed(() => !!anchorType.value && (!anchorId.value || a
 /*
  * The tab on screen, published for the space's Create menu, which sits
  * outside the page and links a new row to the anchor. Only once the anchor
- * has loaded: a link names the face on screen.
+ * has loaded: a link names the face on screen. Until then `opening` tells
+ * the menu an entity page is on its way.
  */
 watchEffect(() => {
   const tab = activeTab.value
-  pageStore.current =
+  const current =
     anchorId.value && anchor.value && tab
       ? { page: props.page, tab: tab.id, entity: anchorId.value, ref: entityRef(anchor.value) }
       : undefined
+  pageStore.current = current
+  pageStore.opening = !!anchorId.value && !current && !anchorGone.value
 })
 onBeforeUnmount(() => {
   pageStore.current = undefined
+  pageStore.opening = false
 })
 </script>
 

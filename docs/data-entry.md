@@ -4422,9 +4422,12 @@ The relation is chosen when the create dialog opens. Each item made with
 
 On an entity page, the Create menu offers only the types it can link by these
 rules. A type for which no link is made is left out, so the offer can change
-from tab to tab. When no type can be linked, the Create button is hidden, as it
-is in a space without `create:`. Outside an entity page the menu offers every
-type of the space.
+from tab to tab. A type the page links over two different relations is also
+left out, unless the open tab has one of them. To create it, open such a tab,
+or create it outside the entity page. When no type can be linked, the Create
+button is hidden, as it is in a space without `create:`. Until the page's
+entity has loaded, the button is shown as busy and does not open. Outside an
+entity page the menu offers every type of the space.
 
 An entity page is not a navigation destination: a `page:` entry or a space's
 `home:` that names one is a config error. It opens from an entity, by URL.
@@ -4510,7 +4513,7 @@ has `scope`: `"relation"` with the `relation` and the resolved `direction`, or
 `"root"`. `links` lists, per entity type, the relation a new item of that type
 is linked over. A list or board tab has at most one entry. A timeline tab has
 one per hierarchy relation and child type. A tab without links leaves it out. The Create menu reads these to link a new
-item, and to choose which types it offers:
+item, and to choose which types it offers once the page's entity has loaded:
 
 ```json
 {

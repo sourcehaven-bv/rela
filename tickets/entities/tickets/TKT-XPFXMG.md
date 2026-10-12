@@ -5,7 +5,9 @@ title: Create menu on an entity page offers only types it can link
 kind: enhancement
 priority: medium
 effort: s
-status: ready
+started: "2026-10-12"
+completed: "2026-10-12"
+status: done
 ---
 
 ## Description

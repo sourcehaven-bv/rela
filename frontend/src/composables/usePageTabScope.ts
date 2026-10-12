@@ -137,7 +137,9 @@ export function pageCreateLink(
  *
  * `offered` narrows the menu's rows to what the open page can link. On an
  * entity page that is the types `target` resolves for on the open tab, so the
- * offer can differ per tab. Off an entity page every row is offered.
+ * offer can differ per tab. Until an entity page's anchor has loaded nothing
+ * is offered, so a row cannot be opened before its link is known. Off an
+ * entity page every row is offered.
  *
  * `linkCreated` makes the link, then refreshes the type's lists: the row
  * already exists when the link lands, so its own refetch may have missed it.
@@ -153,6 +155,7 @@ export function usePageCreateLink() {
   }
 
   function offered<T extends { type: string }>(rows: T[]): T[] {
+    if (pageStore.opening) return []
     return pageStore.current ? rows.filter((r) => target(r.type)) : rows
   }
 

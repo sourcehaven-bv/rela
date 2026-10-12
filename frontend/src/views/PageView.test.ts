@@ -129,10 +129,49 @@ describe('PageView on an entity page', () => {
     expect(usePageStore().current).toBeUndefined()
   })
 
+  it('marks the page as opening while the anchor loads', async () => {
+    let resolve!: (e: unknown) => void
+    getEntityMock.mockReturnValue(new Promise((r) => (resolve = r)))
+    await mountPage({ page: 'topic', entity: 'TOP-1', tab: 'board' })
+    expect(usePageStore().opening).toBe(true)
+    expect(usePageStore().current).toBeUndefined()
+    resolve({ id: 'TOP-1', type: 'topic', properties: {} })
+    await flushPromises()
+    expect(usePageStore().opening).toBe(false)
+    expect(usePageStore().current).toMatchObject({ tab: 'board', entity: 'TOP-1' })
+  })
+
+  it('clears opening when it leaves before the anchor loads', async () => {
+    getEntityMock.mockReturnValue(new Promise(() => {}))
+    const wrapper = await mountPage({ page: 'topic', entity: 'TOP-1', tab: 'board' })
+    expect(usePageStore().opening).toBe(true)
+    wrapper.unmount()
+    expect(usePageStore().opening).toBe(false)
+  })
+
+  it('opens again when it moves to another entity', async () => {
+    getEntityMock.mockResolvedValueOnce({
+      id: 'TOP-1', type: 'topic', properties: {}, _self: '/api/v1/topics/TOP-1@draft',
+    })
+    const wrapper = await mountPage({ page: 'topic', entity: 'TOP-1', tab: 'board' })
+    expect(usePageStore().current).toMatchObject({ entity: 'TOP-1', ref: 'TOP-1@draft' })
+    let resolve!: (e: unknown) => void
+    getEntityMock.mockReturnValueOnce(new Promise((r) => (resolve = r)))
+    await wrapper.setProps({ entity: 'TOP-2' })
+    await flushPromises()
+    expect(usePageStore().opening).toBe(true)
+    expect(usePageStore().current).toBeUndefined()
+    resolve({ id: 'TOP-2', type: 'topic', properties: {} })
+    await flushPromises()
+    expect(usePageStore().opening).toBe(false)
+    expect(usePageStore().current).toEqual({ page: 'topic', tab: 'board', entity: 'TOP-2', ref: 'TOP-2' })
+  })
+
   it('publishes no tab while the anchor is hidden or missing', async () => {
     getEntityMock.mockRejectedValue(new ApiError('Entity not found', { kind: 'http', status: 404, original: null }))
     await mountPage({ page: 'topic', entity: 'TOP-X', tab: 'board' })
     expect(usePageStore().current).toBeUndefined()
+    expect(usePageStore().opening).toBe(false)
   })
 
   it('shows an empty state when the anchor is hidden or missing', async () => {

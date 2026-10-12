@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { test as base, expect, SEED } from "./fixtures";
-import { SpacesPage } from "../pages";
+import { PageTabsPage, SpacesPage } from "../pages";
 
 /**
  * The space's Create menu on an entity page (BUG-PFLS22): a new item is linked
@@ -90,8 +90,11 @@ test.describe("Create menu on an entity page", () => {
     await spaces.openCreateMenu();
     await expect(spaces.menuItems).toHaveText([/Task/, /Bug/]);
 
+    await appPage.keyboard.press("Escape");
+
     // Two candidate relations for a task, and none on this tab: Task is left out.
-    await appPage.goto(`${serverUrl}/s/work/p/feature/${FEATURE}/blockers`);
+    await new PageTabsPage(appPage).selectTab("Blockers");
+    await expect(appPage).toHaveURL(/\/blockers$/);
     await spaces.openCreateMenu();
     await expect(spaces.menuItems).toHaveText([/Bug/]);
   });
