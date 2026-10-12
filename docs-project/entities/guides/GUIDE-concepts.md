@@ -233,6 +233,39 @@ rela analyze cardinality
 This checks all `min_outgoing`, `max_outgoing`, `min_incoming`, and `max_incoming`
 constraints defined on relations.
 
+The maximums are also enforced on write. A write that would give an entity
+more edges than `max_outgoing` or `max_incoming` allows is refused. This holds
+for the CLI, MCP, Lua scripts, the API, the web UI, CalDAV, automations and
+copies. The API answers 422 `cardinality_exceeded` on an entity PATCH, on a
+POST of one relation, and on a relation restore from history.
+
+Only new edges are refused. Data that is already over a bound stays readable
+and editable, for example from a hand-edited file or a bound added later.
+`analyze cardinality` reports it.
+
+Some bulk paths do not check the bounds: `rela import`, data migrations, and
+restoring a soft-deleted entity with its edges. Run `analyze cardinality`
+after them.
+
+To re-point a bounded relation, change it in one PATCH. Send the new edges as
+`"data": [...]`, or send the old ones in `remove` and the new ones in `add`.
+This works on either side: use the inverse name to change the edges from the
+target. The removed edges do not count against the bound. On Postgres and
+SQLite the change is one transaction, so a failure leaves the edges as they
+were. The file and memory stores do not roll back. They create the new edges
+before they remove the old ones, so a failure part way leaves an extra edge,
+which `analyze cardinality` reports, and never a missing one.
+
+A new edge whose types the relation does not allow is still written, with a
+warning. In a re-point, rela writes such an edge first and then makes the rest
+of the change. These are two steps, so this case is not atomic on any store:
+if the second step fails, the new edge stays as an extra edge.
+
+In CalDAV, moving a to-do to another collection works the same way when the
+membership relation allows one edge per to-do. Only a to-do put into a new
+collection moves. An edit of a to-do in a collection it has left does not move
+it back; the server refuses the membership and keeps the edit.
+
 ### Orphan Detection
 
 Orphans are entities with no relations—they're disconnected from the

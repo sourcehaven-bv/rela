@@ -6,7 +6,7 @@ const meta: Meta<typeof RlStatusDot> = {
   component: RlStatusDot,
   parameters: { layout: 'padded' },
   argTypes: {
-    color: { control: { type: 'select' }, options: ['green', 'amber', 'red', 'grey', 'blue'] },
+    color: { control: { type: 'select' }, options: ['green', 'amber', 'red', 'grey', 'blue', 'purple'] },
     size: { control: { type: 'range', min: 6, max: 24, step: 1 } },
   },
   args: { color: 'green', size: 8 },
@@ -19,7 +19,7 @@ export const Playground: Story = {}
 export const AllColors: Story = {
   render: () => ({
     components: { RlStatusDot },
-    setup: () => ({ colors: ['green', 'amber', 'red', 'grey', 'blue'] as const }),
+    setup: () => ({ colors: ['green', 'amber', 'red', 'grey', 'blue', 'purple'] as const }),
     template: `
       <div style="display:flex; gap:12px; align-items:center">
         <RlStatusDot v-for="c in colors" :key="c" :color="c" />
