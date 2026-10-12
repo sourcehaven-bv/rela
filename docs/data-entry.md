@@ -2192,6 +2192,13 @@ form's own default template.
 | ---------- | ---- | ------------------------------------------------------ |
 | `template` | str  | Template variant to preselect (`templates/entities/<type>--<variant>.md`) |
 
+A create form for a type with more than one template shows a **Template**
+dropdown, and `template` sets its starting choice. The dropdown names each
+variant after its file name, with `-` and `_` shown as spaces:
+`task--corrective_action.md` appears as "Corrective action". The base
+`<type>.md`, if there is one, appears as "Default". Switching templates after
+you have entered values asks first, because the new template replaces them.
+
 When `in:` includes `header`, the section also contributes an entry to a menu at
 the top of the page. That menu is the union of the sections that opted in. It is
 deduped by relation, so two sections over one relation produce a single entry.

@@ -63,6 +63,7 @@ import HelpModal from '@/components/ui/HelpModal.vue'
 import { useDelayedPending } from '@/composables/useDelayedPending'
 import { PENDING_TIMINGS } from '@/composables/pendingTimings'
 import RlButton from 'rela-components/components/common/RlButton.vue'
+import RlSelect from 'rela-components/components/form/RlSelect.vue'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 import RlKbd from 'rela-components/components/data/RlKbd.vue'
 
@@ -1222,11 +1223,45 @@ function selectTemplate(name: string) {
   }
 }
 
+// Bumped to remount the template select when a switch is declined: the
+// native control has already moved to the new option, and an unchanged
+// `selectedTemplate` gives Vue nothing to patch it back with.
+const templateSelectKey = ref(0)
+
+// A native select fires `change` on every arrow-key step in some browsers,
+// so a keyboard user browsing the options would otherwise wipe what they
+// typed without being asked. Switching an untouched form needs no prompt.
+async function onTemplateChange(name: string) {
+  checkDirty()
+  if (dirty.value) {
+    const ok = await confirm({
+      title: 'Switch template?',
+      message: 'The new template replaces what you have entered in this form.',
+      confirmLabel: 'Switch',
+      danger: true,
+    })
+    if (!ok) {
+      templateSelectKey.value++
+      return
+    }
+  }
+  selectTemplate(name)
+  checkDirty()
+}
+
+// The variant name is a file-name identifier (`<type>--<variant>.md`), so
+// `-` and `_` stand in for spaces: `corrective_action` reads "Corrective action".
 function getTemplateLabel(name: string): string {
   if (name === '') return 'Default'
-  // Capitalize first letter
-  return name.charAt(0).toUpperCase() + name.slice(1)
+  const words = name.replace(/[-_]+/g, ' ').trim()
+  // A name of separators only has no words; show it as written.
+  if (words === '') return name
+  return words.charAt(0).toUpperCase() + words.slice(1)
 }
+
+const templateOptions = computed(() =>
+  templates.value.map((t) => ({ value: t.name, label: getTemplateLabel(t.name) }))
+)
 
 // TKT-7YHKD1 "Create & add another": return the create-mode form to a blank
 // state IN PLACE, without navigating and without remounting the component.
@@ -1338,7 +1373,7 @@ async function resetCreateForm() {
 
   // Re-apply the template the user actually has selected, from the templates
   // already loaded at mount. NOT loadTemplates(): that refetches over HTTP per
-  // record and force-selects templates[0], discarding the user's pill choice.
+  // record and force-selects templates[0], discarding the user's template choice.
   const chosen = templates.value.find((t) => t.name === selectedTemplate.value)
   if (chosen) applyTemplate(chosen)
 
@@ -2726,16 +2761,13 @@ defineExpose({
 
       <!-- Template selector (create mode only) -->
       <div v-if="!isEdit && templates.length > 1" class="template-selector">
-        <button
-          v-for="tpl in templates"
-          :key="tpl.name"
-          type="button"
-          class="template-pill"
-          :class="{ active: selectedTemplate === tpl.name }"
-          @click="selectTemplate(tpl.name)"
-        >
-          {{ getTemplateLabel(tpl.name) }}
-        </button>
+        <RlSelect
+          :key="templateSelectKey"
+          label="Template"
+          :model-value="selectedTemplate"
+          :options="templateOptions"
+          @update:model-value="onTemplateChange"
+        />
       </div>
 
       <RlStatusRegion v-if="showBlockLoader">Loading…</RlStatusRegion>
@@ -3282,32 +3314,8 @@ defineExpose({
 /* Buttons are RlButton; only their placement is declared here. */
 
 .template-selector {
-  display: flex;
-  gap: 8px;
+  max-width: 320px;
   margin-bottom: 20px;
-}
-
-.template-pill {
-  padding: 8px 16px;
-  border-radius: 20px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  border: 1px solid var(--rl-color-border, #e2e8f0);
-  background: var(--rl-color-bg, #f8fafc);
-  color: var(--rl-color-text, #1e293b);
-  transition: all 0.15s;
-}
-
-.template-pill:hover {
-  border-color: var(--rl-color-accent, #6366f1);
-  background: var(--rl-color-bg-raised);
-}
-
-.template-pill.active {
-  background: var(--rl-color-accent, #6366f1);
-  border-color: var(--rl-color-accent, #6366f1);
-  color: white;
 }
 
 @media (max-width: 768px) {
@@ -3356,8 +3364,7 @@ defineExpose({
   }
 
   .template-selector {
-    flex-wrap: wrap;
-    gap: 6px;
+    max-width: none;
   }
 }
 </style>

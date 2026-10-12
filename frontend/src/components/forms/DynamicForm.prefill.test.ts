@@ -319,9 +319,7 @@ describe('DynamicForm — single-valued relation prefill', () => {
       relations: { has_status: [{ id: 'ST-3', type: 'status' }] },
     })
 
-    const pill = wrapper.findAll('.template-pill').find((b) => b.text() === 'Urgent')
-    expect(pill).toBeDefined()
-    await pill?.trigger('click')
+    await wrapper.find('.template-selector select').setValue('urgent')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
