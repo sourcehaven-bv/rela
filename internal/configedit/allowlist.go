@@ -198,6 +198,9 @@ var editable = map[File][]string{
 
 		"kanbans.*.card.**",
 		"kanbans.*.column_property",
+		// A relation-backed board picks its columns, their order and their
+		// colors by naming a relation and properties, like lists.*.group_by.
+		"kanbans.*.columns_from.**",
 		"kanbans.*.columns.[].**",
 		"kanbans.*.condition",
 		"kanbans.*.create_form",

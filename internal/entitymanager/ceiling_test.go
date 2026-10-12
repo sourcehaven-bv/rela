@@ -30,8 +30,11 @@ roles:
     create: [requirement]
     update: [requirement]
     delete: [requirement]
+  reader:
+    read: [requirement]
 assignments:
   alice: editor
+  bob: reader
 client_baselines:
   apps:
     applies_to: [app]
@@ -163,7 +166,9 @@ func TestCeiling_NeverGrantsPastTheUser(t *testing.T) {
 	t.Parallel()
 	mgr, id := ceilingManager(t)
 
-	// bob holds no assignment at all, but presents the write scope.
+	// bob may read but holds no write grant, and presents the write scope.
+	// Without the read grant the write would fail as not found instead
+	// (TKT-NXRFDU), which is not what this test is about.
 	ctx := principal.With(context.Background(), principal.VerifiedFrom(
 		"bob", principal.ToolDataEntry, principal.Claims{
 			PrincipalType: "app",

@@ -1434,6 +1434,12 @@ func (c *mdASTConverter) extractRawContent(n ast.Node, source []byte) string {
 		if lines.Len() > 0 {
 			start := lines.At(0).Start
 			end := lines.At(lines.Len() - 1).Stop
+			// goldmark keeps the closing line of a multi-line HTML block
+			// (e.g. the one with `-->`) out of Lines(); without it the
+			// block re-renders unterminated.
+			if hb, ok := n.(*ast.HTMLBlock); ok && hb.HasClosure() {
+				end = hb.ClosureLine.Stop
+			}
 			return string(source[start:end])
 		}
 	}

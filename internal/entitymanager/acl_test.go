@@ -362,12 +362,17 @@ types:
 	// The policy: assignment to a ticket via `assigned-to` confers the
 	// editor role, which grants write on tickets. There is no global
 	// editor assignment — alice's only path to editing tickets is
-	// through her local edges.
+	// through her local edges. She reads every ticket through the global
+	// viewer role: a ticket she cannot read would be refused as not found
+	// (TKT-NXRFDU), and this test is about the write denial.
 	policy, err := acl.LoadPolicyBytes([]byte(`
 roles:
   editor: { create: [ticket], update: [ticket], delete: [ticket], read: [ticket] }
+  viewer: { read: [ticket] }
 role_relations:
   assigned-to: { confers: editor }
+assignments:
+  alice: viewer
 `))
 	if err != nil {
 		t.Fatalf("LoadPolicyBytes: %v", err)

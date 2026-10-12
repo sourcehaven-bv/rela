@@ -1058,6 +1058,25 @@ func (svc affordanceService) hiddenProperties(ctx context.Context, e *entityPkg.
 	return out
 }
 
+// withoutHidden returns e as an ETag may hash it: a shallow copy without the
+// properties field-level ACL hides from the caller, or e itself when none
+// are hidden. A digest over a hidden value lets the caller guess that value
+// offline (BUG-J01V0Q), so every entity ETag hashes this view.
+func (svc affordanceService) withoutHidden(ctx context.Context, e *entityPkg.Entity) *entityPkg.Entity {
+	hidden := svc.hiddenProperties(ctx, e)
+	if len(hidden) == 0 {
+		return e
+	}
+	view := *e
+	view.Properties = make(map[string]any, len(e.Properties))
+	for k, v := range e.Properties {
+		if _, h := hidden[k]; !h {
+			view.Properties[k] = v
+		}
+	}
+	return &view
+}
+
 // redactedPropertyNames returns the sorted names of properties withheld by
 // field-level ACL, for the `_redacted` wire field (DEC-T0XIWQ). Always
 // non-nil — an empty slice is the closed-world "evaluated, nothing redacted"

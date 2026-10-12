@@ -12,6 +12,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { useSchemaStore, useEntitiesStore } from '@/stores'
 import DynamicForm from './DynamicForm.vue'
+import { getTemplates } from '@/api'
 import type { Entity } from '@/types'
 
 const push = vi.fn()
@@ -52,6 +53,7 @@ const RELATION_TYPES: Record<string, unknown> = {
   blocks: { label: 'blocks', inverse: { id: 'blockedBy' } },
   refs: { label: 'refs' },
   mirrors: { label: 'mirrors', symmetric: true, inverse: { id: 'mirrors' } },
+  has_status: { label: 'has status', to: ['status'], max_outgoing: 1 },
 }
 
 const FORM = {
@@ -63,6 +65,7 @@ const FORM = {
     { relation: 'blocks', direction: 'incoming', widget: 'cards' },
     { relation: 'mirrors', direction: 'outgoing', widget: 'cards' },
     { relation: 'refs', direction: 'outgoing', widget: 'select' },
+    { relation: 'has_status', direction: 'outgoing', widget: 'select' },
   ],
 }
 
@@ -81,7 +84,7 @@ afterEach(() => {
 
 async function mountWithPrefill(prefill: {
   properties: Record<string, unknown>
-  content: string
+  content?: string
   relations: Record<string, { id: string; type: string }[]>
 }) {
   const schema = useSchemaStore()
@@ -282,5 +285,66 @@ describe('DynamicForm — duplicate prefill', () => {
     expect(relationsBody(create).unrendered).toEqual({
       add: [{ type: 'ticket', id: 'TKT-77' }],
     })
+  })
+})
+
+// A board column's or list section's Add prefills a single-valued relation
+// (TKT-KJ3Q07). A template that defaults the same relation must not add a
+// second target: the server refuses two targets on `max_outgoing: 1`.
+describe('DynamicForm — single-valued relation prefill', () => {
+  const templates = [
+    { name: 'default', properties: {}, content: '', relations: [{ relation: 'has_status', target: 'ST-1' }] },
+    { name: 'urgent', properties: {}, content: 'urgent body', relations: [{ relation: 'has_status', target: 'ST-2' }] },
+  ]
+
+  it('replaces the template value instead of adding to it', async () => {
+    vi.mocked(getTemplates).mockResolvedValueOnce(templates as never)
+    const { wrapper, create } = await mountWithPrefill({
+      properties: {},
+      relations: { has_status: [{ id: 'ST-3', type: 'status' }] },
+    })
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(relationsBody(create).has_status).toEqual({
+      add: [{ type: 'status', id: 'ST-3' }],
+    })
+  })
+
+  it('keeps the prefill when the user picks another template', async () => {
+    vi.mocked(getTemplates).mockResolvedValueOnce(templates as never)
+    const { wrapper, create } = await mountWithPrefill({
+      properties: {},
+      relations: { has_status: [{ id: 'ST-3', type: 'status' }] },
+    })
+
+    const pill = wrapper.findAll('.template-pill').find((b) => b.text() === 'Urgent')
+    expect(pill).toBeDefined()
+    await pill?.trigger('click')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const payload = create.mock.calls[0]?.[1] as { content?: string }
+    expect(relationsBody(create).has_status).toEqual({
+      add: [{ type: 'status', id: 'ST-3' }],
+    })
+    // The picked template's body stands; the prefill brought none.
+    expect(payload.content).toBe('urgent body')
+  })
+
+  it('still adds to a multi-valued relation', async () => {
+    vi.mocked(getTemplates).mockResolvedValueOnce([
+      { name: 'default', properties: {}, content: '', relations: [{ relation: 'refs', target: 'TKT-1' }] },
+    ] as never)
+    const { wrapper } = await mountWithPrefill({
+      properties: {},
+      relations: { refs: [{ id: 'TKT-5', type: 'ticket' }] },
+    })
+
+    // The baseline is taken after the prefill, so it holds the form's relations.
+    const vm = wrapper.vm as unknown as { _originalData: () => string }
+    const baseline = JSON.parse(vm._originalData()) as { relations: Record<string, string[]> }
+    expect(baseline.relations.refs).toEqual(['TKT-1', 'TKT-5'])
   })
 })

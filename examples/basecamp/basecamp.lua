@@ -387,11 +387,12 @@ local function link_one(current, from, rtype, to)
   local old = rela.get_relations({from = from, type = rtype})
   local have = false
   for _, r in ipairs(old) do have = have or r.to == to end
-  -- Create first, so a failure leaves the old link rather than none.
-  if not have then rela.create_relation(from, rtype, to) end
+  -- Delete first: max_outgoing is 1, so a create while the old link
+  -- exists is refused.
   for _, r in ipairs(old) do
     if r.to ~= to then rela.delete_relation(from, rtype, r.to) end
   end
+  if not have then rela.create_relation(from, rtype, to) end
   current[from] = to
 end
 
