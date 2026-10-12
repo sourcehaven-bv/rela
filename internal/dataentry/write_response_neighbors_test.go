@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -193,4 +194,14 @@ func TestHistoryRestore_ResponseHidesUnreadableNeighbor(t *testing.T) {
 	}
 	assertHidesSecret(t, rec.Body.Bytes(), "")
 	assertHidesSecret(t, body.Entity, "FEAT-0")
+}
+
+// TestServedFaceEdges_UnwiredFailsClosed: without the neighbor gate the edge
+// read errors rather than returning ungated edges a response would serialize.
+func TestServedFaceEdges_UnwiredFailsClosed(t *testing.T) {
+	e := &entity.Entity{ID: "TKT-1", Type: "ticket"}
+	rels, visible, err := servedFaceEdges(t.Context(), nil, e)
+	if !errors.Is(err, errNeighborsUnwired) || rels != nil || visible != nil {
+		t.Fatalf("servedFaceEdges(nil wiring) = %v, %v, %v; want errNeighborsUnwired", rels, visible, err)
+	}
 }

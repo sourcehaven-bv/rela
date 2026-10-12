@@ -183,7 +183,7 @@ func writeRestoreResult(a *App,
 	}
 	// The restored face's own edges (BUG-ISJHML), through the neighbor gate
 	// the GET uses, so the response names no neighbor the caller cannot read.
-	rels, visibleNeighbors, rerr := servedFaceEdges(r.Context(), a.reader, a.worldNeighbors, e)
+	rels, visibleNeighbors, rerr := servedFaceEdges(r.Context(), a.worldNeighbors, e)
 	if rerr != nil {
 		writeGateError(w, r, rerr)
 		return

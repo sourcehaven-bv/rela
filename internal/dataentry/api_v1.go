@@ -983,7 +983,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	// mixed-face response that reads as correct because the entity looks
 	// right and only its links are wrong.
 	outgoing, visibleNeighbors, werr := servedFaceEdges(
-		ctx, a.reader, a.worldNeighbors, entity)
+		ctx, a.worldNeighbors, entity)
 	if werr != nil {
 		// A neighbor-resolution fault is an infrastructure failure, not an
 		// empty link set. Rendering it as "this world links to nothing"
@@ -2465,7 +2465,7 @@ func addPaginationLinks(w http.ResponseWriter, _ *http.Request, page, perPage, t
 // duplication note at the single-entity GET's call site.
 func (a *App) computeEntityETag(ctx context.Context, e *entityPkg.Entity) string {
 	e = a.affordances.withoutHidden(ctx, e)
-	edges, err := etagEdges(ctx, a.reader, a.worldNeighbors, e)
+	edges, err := etagEdges(ctx, a.worldNeighbors, e)
 	if err != nil {
 		return etagUnresolved(ctx, e)
 	}
