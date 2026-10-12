@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -633,6 +634,18 @@ func countReplays(app *App) *atomic.Int64 {
 	return &n
 }
 
+// holdReplays blocks every replay until the returned release is called.
+func holdReplays(app *App) (release func()) {
+	gate := make(chan struct{})
+	inner := *app.live.replay.Load()
+	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-gate
+		inner.ServeHTTP(w, r)
+	})
+	app.live.replay.Store(&h)
+	return sync.OnceFunc(func() { close(gate) })
+}
+
 // AC9: one round replays each distinct (principal, path) once, however many
 // writes it coalesces and however many streams share the subscription.
 // Principals that differ only in scopes do not share.
@@ -656,12 +669,17 @@ func TestLive_ReplaySharing(t *testing.T) {
 	}
 
 	replays.Store(0)
+	// Rounds run one at a time, so holding replays until the burst ends
+	// keeps a slow machine from spreading the burst over more ticks.
+	release := holdReplays(env.app)
 	for i := range 20 {
 		update(t, env.app, ticket1(fmt.Sprintf("b%d", i)))
 	}
+	release()
 	changedKeys(t, c1, 1)
 	changedKeys(t, c2, 1)
-	// The clock is fixed, so a burst may straddle one tick boundary.
+	// A round may start before the burst and be held mid-burst, so the
+	// burst takes at most two rounds.
 	if got := replays.Load(); got > 2 {
 		t.Fatalf("20 writes in a burst: %d replays, want at most 2", got)
 	}
