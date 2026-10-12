@@ -1496,6 +1496,48 @@ A relation or property the path names that does not exist is a startup error.
 See [Where `related(...)` works](metamodel.md#where-related-works) for the
 other surfaces and how each counts hidden entities.
 
+## Leases
+
+A lease is an advisory claim on an entity: "this user or agent is working on
+it until this time". Leases are served over the data-entry API
+(`POST /api/v1/{plural}/{id}/_lease`, `/api/v1/_leases`) and over MCP
+(`claim_entity`). They never block a write. The ACL decides who may see and
+take them.
+
+- **A claim needs read access, then update access.** The read check comes
+  first. An entity the caller cannot read gets the same 404 as one that does
+  not exist, with the same body as the entity GET, so a claim is not an
+  existence oracle. A caller who can read but not update gets 403, and the 403
+  names no holder. A renew checks both again; a caller who lost access loses
+  the lease.
+- **Hidden means nonexistent.** `_lease` is added after the read gate, on the
+  entity GET and on list rows only. A row the caller cannot read never shows
+  a lease, and a lease on a hidden entity sends no live-view frame.
+- **The status is outside `visible:`.** The holder's free-text `status` is not
+  a property, so field redaction does not apply to it. Every principal who can
+  read the entity sees the status together with the holder's user name. Holders
+  should not write anything there that a reader of the entity may not see.
+- **The cap of 32 live leases is per principal, not per session.** A
+  principal is a user and a tool, such as the data-entry app or MCP. So all of
+  one user's browser tabs share one cap, and all agents running as that user
+  over MCP share another. An agent that needs its own budget should run as its
+  own user. A label tells agents apart, but does not split the cap.
+- **Server clocks must agree.** With more than one `rela-server` process,
+  each process decides expiry with its own clock. Keep the clocks well within
+  30 seconds of each other, the shortest lease, or a lease can expire early
+  on one server.
+- **The lease id is a secret.** Only the claim answer carries it. It never
+  appears in a GET, a list, a live-view frame or a log line, and the request
+  log never records request bodies.
+- **Scripts and agents may call the lease routes without a browser origin.**
+  `/api/v1/_leases` (renew, release, list) is exempt from the same-origin
+  check for a request with no cookie, no `Origin` and no `Sec-Fetch-*`
+  header, as the data routes and the claim route are. A cross-site page
+  gains nothing from it: renew and release act only on the lease named by
+  the secret lease id in the body, and the list returns only the caller's
+  own leases, which a cross-site page cannot read. A request with a cookie
+  and a foreign origin is still refused.
+
 ## What still leaks (deferred)
 
 - **`/api/v1/_position` per-id semantics** — `_position` is gated on

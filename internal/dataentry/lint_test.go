@@ -339,3 +339,38 @@ func mustReadPkgFile(t *testing.T, name string) string {
 	}
 	return string(body)
 }
+
+// TestLeaseAttachPointsStayTwo guards where `_lease` is set (TKT-4YPG4Q).
+// It may ride only the single-entity GET (api_v1.go) and list rows
+// (serveRowLeases in leases_handler.go): both set it on an entity the caller
+// has just read through the row gate, from one lease read. Other surfaces
+// (views, history, includes, live frames) do not carry it, so a third
+// `.Lease =` assignment is the moment to ask whether that surface gates its
+// rows first and keeps the cost at one lease read per page.
+func TestLeaseAttachPointsStayTwo(t *testing.T) {
+	const needle = ".Lease ="
+	allowed := map[string]int{"api_v1.go": 1, "leases_handler.go": 1}
+
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		base := e.Name()
+		if e.IsDir() || !strings.HasSuffix(base, ".go") || strings.HasSuffix(base, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(root, base))
+		if err != nil {
+			t.Fatalf("read %s: %v", base, err)
+		}
+		if got, want := strings.Count(string(body), needle), allowed[base]; got != want {
+			t.Errorf("%s has %d %q assignments, want %d: `_lease` is set only on the entity GET "+
+				"and in serveRowLeases", base, got, needle, want)
+		}
+	}
+}

@@ -35,7 +35,7 @@ type Entity struct {
 	Actions      map[string]bool     `json:"_actions,omitempty"`
 	Inaccessible []InaccessibleField `json:"inaccessible,omitempty"`
 	EditState
-	RowCounts
+	Activity
 	// Redacted names the properties withheld from `Properties` by
 	// field-level ACL (`visible:`) on THIS response (DEC-T0XIWQ). It is the
 	// field-level sibling of Inaccessible, which says the same thing
@@ -173,15 +173,20 @@ type Entity struct {
 	Warnings []Warning `json:"warnings,omitempty"`
 }
 
-// RowCounts groups derived counts a collection row carries on request. It is
-// embedded in [Entity] for the same reason as [EditState]: the fields serialize
-// flat, and Entity's own field count stays under the plimsoll cap.
-type RowCounts struct {
+// Activity groups what people are doing around an entity, computed per
+// request: its comment count and its lease. It is embedded in [Entity] for the
+// same reason as [EditState]: the fields serialize flat, and Entity's own
+// field count stays under the plimsoll cap.
+type Activity struct {
 	// CommentCount is the number of comments on this row's face, present only
 	// when the list request asked for it (`?comment_counts=1`), commenting is
 	// enabled for the type, and the principal holds `comment:read` across the
 	// project. Absent means "not served", never zero comments; zero is 0.
 	CommentCount *int `json:"_comment_count,omitempty"`
+	// Lease is the live advisory lease on the entity. It is set only on the
+	// single-entity GET and on list rows, after the read gate, and is absent
+	// when nobody holds the entity.
+	Lease *EntityLease `json:"_lease,omitempty"`
 }
 
 // EditState groups the per-entity fields an edit surface needs and a read

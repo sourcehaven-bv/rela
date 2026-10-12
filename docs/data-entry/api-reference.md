@@ -618,7 +618,9 @@ baseline.
 
 The handler honors `If-Match: <etag>` for optimistic concurrency control.
 The ETag is computed against the entity's current `properties + content`.
-Mismatch → 412 Precondition Failed.
+Mismatch → 412 Precondition Failed. It does not cover `_lease`; see
+[Leases](#leases-_lease-_leases) for why the GET never answers 304 when the
+server has leases.
 
 The precondition is re-checked by the store, atomically with the write
 (TKT-34XS2R). Previously the compare and the write were separate steps made
@@ -1555,3 +1557,115 @@ write that works now keeps working when a second face is published.
 other fields. In a pile scope, `id` may be an `ID@face` address, and `prev` and
 `next` carry an `address`. The SPA links pile items as
 `/entity/<type>/<address>?from=pile&pile=<id>`.
+
+## Leases (`_lease`, `/_leases`)
+
+A lease is an advisory claim that says "this person or agent is working on this
+entity until this time" (TKT-4YPG4Q). Leases do not block writes. They tell
+other people and agents that someone is busy, so they can pick other work. The
+same leases are served over MCP (`claim_entity`, `renew_lease`,
+`release_lease`, `list_leases`).
+
+A lease covers the whole entity: every face of it. It lasts 15 minutes unless
+the claim names another duration (30 to 3600 seconds). The holder renews it
+before it expires, or releases it when done.
+
+### Routes
+
+| Method | Path | Body | Success |
+| --- | --- | --- | --- |
+| POST | `/{plural}/{id}/_lease` | `{ttl_seconds?, label?, status?}` | 201 `{lease_id, token, expires_at}` |
+| POST | `/_leases/renew` | `{lease_id, ttl_seconds?, status?}` | 200 `{token, expires_at, status?}` |
+| POST | `/_leases/release` | `{lease_id}` | 204 |
+| GET | `/_leases` | | 200 `{data: [{id, since, expires_at, status?, label?}]}` |
+
+- `{id}` is an address: `ID`, or `ID@face` for a type with faces. The lease
+  covers every face either way.
+- `label` tells apart agents that run as the same user: up to 32 letters,
+  digits, `_`, `.` or `-`.
+- `status` is a short note of at most 140 characters, without control
+  characters. Everyone who can read the entity sees it. On renew, an absent
+  `status` keeps the current one and `""` clears it.
+- `lease_id` is the secret that renews and releases the lease. The claim
+  answer is the only response that carries it. Keep it out of URLs and logs.
+- `token` is a fencing token that grows with every claim. A renew keeps it.
+- `expires_at` and `since` are RFC 3339 times.
+- `GET /_leases` lists the caller's own live leases, oldest first, on entities
+  the caller can read now. It never carries a lease id.
+
+Every lease route accepts a request without a browser origin and without a
+cookie, so a script or agent can claim, renew and release over HTTP. A request
+that carries a cookie needs a same-origin `Origin`, as on the other routes.
+Renew and release need the secret `lease_id`, and the list returns only your
+own leases, so a cross-site page gains nothing from them. The routes are in
+the OpenAPI spec.
+
+### Who may claim
+
+A claim needs read access to the entity and then update access to the face
+the address names. The order matters:
+
+- An entity the caller cannot read gets the same 404 as one that does not
+  exist, with the same body as `GET /{plural}/{id}`. So does an entity of
+  another type than `{plural}`, and a server without leases.
+- A caller who can read but not update gets 403. The body names no holder.
+  When `_actions.update` is `false` on the entity, a claim is refused.
+- A bare id of a type with faces gets 422 `face_required`, as a `PATCH` does.
+
+A renew checks read and update access again. When the caller lost either, the
+lease is released and the renew answers `lease_lost`.
+
+### `_lease` on responses
+
+The single-entity GET and every list row carry `_lease` while someone holds the
+entity:
+
+```ts
+interface EntityLease {
+  user: string
+  tool: string
+  label?: string
+  since: string   // RFC 3339
+  status?: string // free text the holder wrote; show it as text, never as HTML
+}
+```
+
+`_lease` is absent when nobody holds the entity. It is set after the read
+gate, so a row the caller cannot read never shows one. No other response
+carries it: not views, includes, history or search.
+
+`_lease` has no expiry, so a plain renew changes no response. A live
+subscription gets `live:changed` when a lease is claimed, released or expires,
+and when its status changes.
+
+A list page reads the leases of all its rows at once, so `_lease` costs the
+same at any page size.
+
+### ETag
+
+The ETag does not cover `_lease`, so a claim does not make the holder's
+`If-Match` fail. When the server has leases, the entity GET never answers 304:
+a copy cached before a claim or a release would show the wrong lease. The ETag
+is still sent, and a claim or release does not change it.
+
+### Errors
+
+Errors are `application/problem+json` documents. The last segment of `type`
+names the error.
+
+| Status | Error | When |
+| --- | --- | --- |
+| 400 | `invalid_request` | bad JSON, an unknown field, data after the JSON object, a malformed `lease_id`, a bad label or status, `ttl_seconds` out of range |
+| 403 | `forbidden` | read access without update access (the write path's 403 body) |
+| 403 | `no_principal` | no signed-in user |
+| 404 | `not_found` | the entity does not exist, cannot be read, or is of another type |
+| 409 | `lease_held` | someone holds the entity; the body adds `holder {user, tool, label?}`, `since`, `expires_at` and `status?` |
+| 409 | `lease_lost` | renew of a lease that expired, was released, belongs to someone else, or whose entity was deleted or became unreadable |
+| 409 | `lease_limit` | the caller holds 32 live leases as this user through this tool (data-entry or MCP); every session and agent of that user through the same tool shares the cap |
+| 413 | `body_too_large` | the body is over 4 KiB |
+| 422 | `face_required` | a bare id of a type with faces |
+| 503 | `lease_store_full` | the server holds 2048 live leases; `Retry-After: 30` |
+
+A claim on an entity you already hold is `lease_held` naming you: renew
+instead. Release answers 204 whether or not the lease existed, so it says
+nothing about other people's leases.

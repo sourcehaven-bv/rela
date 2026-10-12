@@ -29,6 +29,8 @@ func (g *Generator) addSystemPaths(spec *Spec) {
 		},
 	}
 
+	g.addLeaseRoutes(spec)
+
 	// The SSE stream and the git routes are left out: they are browser
 	// surfaces outside the non-browser CSRF exemption, so a generic client
 	// would get 403 origin_missing from every call.
@@ -214,6 +216,7 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 	g.addRelationTypePaths(spec, typeName, def, basePath)
 
 	g.addAttachmentPaths(spec, typeName, def, basePath)
+	g.addLeasePath(spec, typeName, def, basePath)
 
 	// Clone action
 	clonePath := basePath + "/{id}/_actions/clone"

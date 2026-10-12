@@ -25,8 +25,8 @@ func wantCommentCounts(query map[string][]string) bool {
 }
 
 // serveListRowExtras fills the per-page values a list row carries beyond its
-// entity: the owner always, the comment count on request. It reports false
-// after writing the error response.
+// entity: the owner and the lease always, the comment count on request. It
+// reports false after writing the error response.
 func serveListRowExtras(
 	w http.ResponseWriter, r *http.Request, a *App, query map[string][]string,
 	rows []*entityPkg.Entity, data []v1.Entity,
@@ -37,6 +37,7 @@ func serveListRowExtras(
 	if wantCommentCounts(query) {
 		a.comments.serveCommentCounts(r.Context(), rows, data)
 	}
+	a.leases.serveRowLeases(r.Context(), rows, data)
 	return true
 }
 

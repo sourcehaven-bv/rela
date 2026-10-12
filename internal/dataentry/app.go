@@ -286,7 +286,11 @@ type App struct {
 	comments *commentsHandler
 	// piles owns the piles routes (TKT-K3RJLH). Always non-nil; the service
 	// inside is nil until SetPiles, which is the "feature absent" signal.
-	piles    *pilesHandler
+	piles *pilesHandler
+	// leases owns the lease routes and `_lease` (TKT-4YPG4Q). Nil until
+	// [SetLeases], which is the "feature absent" signal; its methods accept
+	// a nil receiver.
+	leases   *leasesHandler
 	searcher search.Searcher
 	// visibleSearcher is the ACL-scoped search seam (TKT-BA8BSX):
 	// executeQuery routes free-text searches through it so /_search

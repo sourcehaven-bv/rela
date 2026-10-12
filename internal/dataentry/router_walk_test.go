@@ -91,6 +91,11 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		// its own JSON 404.
 		{http.MethodGet, "/api/v1/_piles", http.StatusNotFound},
 		{http.MethodGet, "/api/v1/_piles/PIL-ABCD", http.StatusNotFound},
+		// Leases: no service is wired in the fixture, so the handler answers
+		// its own JSON 404 (the claim route the entity GET's 404).
+		{http.MethodGet, "/api/v1/_leases", http.StatusNotFound},
+		{http.MethodPost, "/api/v1/_leases/renew", http.StatusNotFound},
+		{http.MethodPost, "/api/v1/_leases/release", http.StatusNotFound},
 		// Live-view subscriptions: an unknown stream id is the handler's own
 		// JSON 404.
 		{http.MethodPut, "/api/v1/_events/nope/subscriptions", http.StatusNotFound},
@@ -109,6 +114,10 @@ func TestRouterWalk_AllAPIRoutesReachHandlers(t *testing.T) {
 		{http.MethodGet, "/api/v1/tickets/TKT-001", http.StatusOK},
 		{http.MethodGet, "/api/v1/tickets/TKT-001/relations", 0},
 		{http.MethodGet, "/api/v1/tickets/TKT-001/mentioned-by", 0},
+		// A wrong method is the claim route's own 405, so a dropped
+		// dispatcher case shows as "Resource not found" instead.
+		{http.MethodGet, "/api/v1/tickets/TKT-001/_lease", http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/v1/tickets/TKT-001/_lease", http.StatusNotFound},
 
 		// Attachment download route. Probe with POST so the handler answers
 		// 405 (a JSON error) rather than a 404 — a GET against the fixture

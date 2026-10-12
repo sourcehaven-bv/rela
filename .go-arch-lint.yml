@@ -568,6 +568,9 @@ deps:
       # The piles service (TKT-K3RJLH). Like comments, only the domain
       # package: the backend (kvpiles/pgpiles) is the wiring site's choice.
       - piles
+      # Leases (TKT-4YPG4Q): the routes speak lease's request, lease and
+      # error types. The backend (kvlease/pglease) is the wiring site's choice.
+      - lease
       - cmdexec
       - config
       - conflict
