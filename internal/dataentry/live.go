@@ -372,7 +372,9 @@ func (h *liveHub) identityTotalLocked(c *liveConn, n int) int {
 
 // leaseWaker is the lease wake-up source the live worker listens to: a
 // claim, a status change, a release or an expiry may change a response's
-// `_lease`. A plain renew does not wake it.
+// `_lease`. A renew that only extends the lease does not wake it. A renew
+// that moves the expiry earlier does, and that round sends no frame:
+// `_lease` has no expiry, so no response changes.
 type leaseWaker interface {
 	Subscribe() (wake <-chan struct{}, cancel func())
 }

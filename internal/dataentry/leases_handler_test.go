@@ -115,6 +115,16 @@ func (a *revocableAuth) revoke(user string) {
 // nil), authorized by auth.
 func newLeaseService(t *testing.T, app *App, d *acl.Declarative, auth lease.WriteAuthorizer, clock lease.Clock) *lease.Service {
 	t.Helper()
+	return newLeaseServiceOver(t, app, d, auth, clock, func(s lease.Store) lease.Store { return s })
+}
+
+// newLeaseServiceOver is newLeaseService with the lease store passed
+// through wrap.
+func newLeaseServiceOver(
+	t *testing.T, app *App, d *acl.Declarative, auth lease.WriteAuthorizer, clock lease.Clock,
+	wrap func(lease.Store) lease.Store,
+) *lease.Service {
+	t.Helper()
 	opts := []appbuildtest.Option{appbuildtest.WithStore(app.store)}
 	if d != nil {
 		opts = append(opts, appbuildtest.WithDeclarative(d))
@@ -130,7 +140,7 @@ func newLeaseService(t *testing.T, app *App, d *acl.Declarative, auth lease.Writ
 		t.Fatal(err)
 	}
 	leases, err := lease.NewService(lease.Deps{
-		Store: backend, Gate: testLeaseGate{rows: svc.GatedReads().Reader}, Authorizer: auth, Clock: clock,
+		Store: wrap(backend), Gate: testLeaseGate{rows: svc.GatedReads().Reader}, Authorizer: auth, Clock: clock,
 		Hub: lease.NewHub(), PollInterval: 10 * time.Millisecond,
 	})
 	if err != nil {
@@ -402,12 +412,16 @@ func TestLeaseRenewReleaseList(t *testing.T) {
 	t.Run("input errors are 400", func(t *testing.T) {
 		for _, body := range []string{`{`, `{"lease_id":"nope"}`, `[]`, ``,
 			fmt.Sprintf(`{"lease_id":%q,"ttl_seconds":5}`, c.LeaseID),
-			fmt.Sprintf(`{"lease_id":%q,"status":"a\nb"}`, c.LeaseID)} {
+			fmt.Sprintf(`{"lease_id":%q,"status":"a\nb"}`, c.LeaseID),
+			fmt.Sprintf(`{"lease_id":%q,"ttl":60}`, c.LeaseID),
+			fmt.Sprintf(`{"leaseid":%q}`, c.LeaseID),
+			fmt.Sprintf(`{"lease_id":%q}{}`, c.LeaseID)} {
 			if resp, b := renew("alice", body); resp.StatusCode != http.StatusBadRequest {
 				t.Errorf("renew %q = %d %s, want 400", body, resp.StatusCode, b)
 			}
 		}
-		for _, body := range []string{`{`, `{"ttl_seconds":99999999999}`, `{"label":"has space"}`, `{"ttl_seconds":"x"}`} {
+		for _, body := range []string{`{`, `{"ttl_seconds":99999999999}`, `{"label":"has space"}`, `{"ttl_seconds":"x"}`,
+			`{"ttl":60}`, `{"ttl_secs":60}`, `{"statuss":"x"}`, `{} {}`, `{}x`} {
 			if resp, b := env.do(t, "bob", http.MethodPost, "/api/v1/tickets/TKT-2/_lease", body, nil); resp.StatusCode != http.StatusBadRequest {
 				t.Errorf("claim %q = %d %s, want 400", body, resp.StatusCode, b)
 			}
@@ -502,6 +516,10 @@ func TestLeaseRenew_LostCases(t *testing.T) {
 // stubLeases answers every call with err.
 type stubLeases struct{ err error }
 
+// installLeases wires svc into app the way SetLeases does, for a test
+// double SetLeases does not accept.
+func installLeases(app *App, svc LeaseService) { app.leases = &leasesHandler{svc: svc} }
+
 func (s stubLeases) Claim(context.Context, lease.ClaimRequest) (lease.Claimed, error) {
 	return lease.Claimed{}, s.err
 }
@@ -538,9 +556,7 @@ func TestLease_ErrorMapping(t *testing.T) {
 			logs := withLogLevel(t, slog.LevelDebug)
 			app := newTestAppV1(t)
 			seedEntity(app, ticket1("one"))
-			if err := SetLeases(app, stubLeases{err: tc.err}); err != nil {
-				t.Fatal(err)
-			}
+			installLeases(app, stubLeases{err: tc.err})
 			router := app.NewRouter()
 			for _, rq := range []struct{ method, path, body string }{
 				{http.MethodPost, "/api/v1/tickets/TKT-1/_lease", ""},
@@ -586,8 +602,8 @@ func TestLease_OnEntityGetAndListRows(t *testing.T) {
 		t.Fatalf("unheld GET = %d etag=%q %s", resp.StatusCode, etag, b)
 	}
 	inm := http.Header{"If-None-Match": {etag}}
-	if cond, _ := env.do(t, "carol", http.MethodGet, "/api/v1/tickets/TKT-1", "", inm); cond.StatusCode != http.StatusNotModified {
-		t.Fatalf("unheld conditional GET = %d, want 304", cond.StatusCode)
+	if cond, _ := env.do(t, "carol", http.MethodGet, "/api/v1/tickets/TKT-1", "", inm); cond.StatusCode != http.StatusOK {
+		t.Fatalf("unheld conditional GET = %d, want 200 (no 304 while leases are wired)", cond.StatusCode)
 	}
 
 	c := env.claim(t, "alice", "/api/v1/tickets/TKT-1", `{"label":"a1","status":"busy"}`)
@@ -632,15 +648,31 @@ func TestLease_OnEntityGetAndListRows(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("PATCH with the pre-claim ETag = %d %s, want 200", resp.StatusCode, b)
 	}
+}
 
-	// Released, the entity answers 304 again.
-	if rel, b := env.do(t, "alice", http.MethodPost, "/api/v1/_leases/release", leaseIDBody(c.LeaseID), nil); rel.StatusCode != http.StatusNoContent {
-		t.Fatalf("release = %d %s", rel.StatusCode, b)
+// The ETag does not cover `_lease`, so with leases wired the entity GET
+// never answers 304: a copy cached while the entity was held would keep a
+// `_lease` that a release has removed.
+func TestLease_NoNotModifiedAfterRelease(t *testing.T) {
+	env := newLeaseEnv(t)
+	c := env.claim(t, "alice", "/api/v1/tickets/TKT-1", `{"status":"busy"}`)
+	resp, b := env.do(t, "carol", http.MethodGet, "/api/v1/tickets/TKT-1", "", nil)
+	etag := resp.Header.Get("ETag")
+	if resp.StatusCode != http.StatusOK || etag == "" || leaseOf(t, b) == nil {
+		t.Fatalf("held GET = %d etag=%q %s, want 200 with _lease", resp.StatusCode, etag, b)
 	}
-	resp, _ = env.do(t, "carol", http.MethodGet, "/api/v1/tickets/TKT-1", "", nil)
-	inm = http.Header{"If-None-Match": {resp.Header.Get("ETag")}}
-	if cond, _ := env.do(t, "carol", http.MethodGet, "/api/v1/tickets/TKT-1", "", inm); cond.StatusCode != http.StatusNotModified {
-		t.Fatalf("conditional GET after release = %d, want 304", cond.StatusCode)
+	if rel, relBody := env.do(t, "alice", http.MethodPost, "/api/v1/_leases/release", leaseIDBody(c.LeaseID), nil); rel.StatusCode != http.StatusNoContent {
+		t.Fatalf("release = %d %s", rel.StatusCode, relBody)
+	}
+	resp, b = env.do(t, "carol", http.MethodGet, "/api/v1/tickets/TKT-1", "", http.Header{"If-None-Match": {etag}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("conditional GET with the held copy's ETag = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("ETag"); got != etag {
+		t.Fatalf("ETag moved on release: %q -> %q", etag, got)
+	}
+	if l := leaseOf(t, b); l != nil {
+		t.Fatalf("_lease after release = %v, want absent", l)
 	}
 }
 
@@ -690,31 +722,35 @@ func TestLease_NotOnOtherSurfaces(t *testing.T) {
 	}
 }
 
-// countingLeases counts GetReadable calls.
-type countingLeases struct {
-	LeaseService
+// countingLeaseStore counts lease store Get calls.
+type countingLeaseStore struct {
+	lease.Store
 	gets atomic.Int64
 }
 
-func (c *countingLeases) GetReadable(ctx context.Context, ids []string) (map[string]lease.Lease, error) {
+func (c *countingLeaseStore) Get(ctx context.Context, ids []string, now time.Time) (map[string]lease.Lease, error) {
 	c.gets.Add(1)
-	return c.LeaseService.GetReadable(ctx, ids)
+	return c.Store.Get(ctx, ids, now)
 }
 
-// AC6: a list page costs one lease read, at 10 rows and at 50.
+// AC6: a list page costs one lease store read, at 10 rows and at 50.
 func TestLease_ListCostIsOneReadPerPage(t *testing.T) {
-	counter := &countingLeases{}
+	counter := &countingLeaseStore{}
+	var svc *lease.Service
 	env := newLiveEnv(t, func(app *App) {
 		for i := range 60 {
 			seedEntity(app, &entity.Entity{ID: fmt.Sprintf("TKT-%03d", i), Type: "ticket",
 				Properties: map[string]any{"title": "t"}})
 		}
-		counter.LeaseService = newLeaseService(t, app, nil, acl.NopACL{}, lease.SystemClock{})
-		if err := SetLeases(app, counter); err != nil {
+		svc = newLeaseServiceOver(t, app, nil, acl.NopACL{}, lease.SystemClock{}, func(s lease.Store) lease.Store {
+			counter.Store = s
+			return counter
+		})
+		if err := SetLeases(app, svc); err != nil {
 			t.Fatal(err)
 		}
 	})
-	env.claimAll(t, counter)
+	env.claimAll(t, svc)
 	for _, n := range []int{10, 50} {
 		counter.gets.Store(0)
 		code, b := env.get(t, "alice", fmt.Sprintf("/api/v1/tickets?per_page=%d", n))
@@ -722,7 +758,7 @@ func TestLease_ListCostIsOneReadPerPage(t *testing.T) {
 			t.Fatalf("list of %d = %d, %d leases", n, code, bytes.Count(b, []byte(`"_lease"`)))
 		}
 		if got := counter.gets.Load(); got != 1 {
-			t.Errorf("list of %d rows read leases %d times, want 1", n, got)
+			t.Errorf("list of %d rows read the lease store %d times, want 1", n, got)
 		}
 	}
 }
@@ -895,16 +931,20 @@ collect:
 	}
 }
 
-// AC11: a cookie-bearing cross-origin POST is refused on every lease route,
-// and /_leases is not exempt from the same-origin check even without one.
+// AC11: a cookie-bearing cross-origin request is refused on every lease
+// route. An origin-less, cookie-less request, the shape a script or agent
+// sends with a token, reaches renew, release and the list: /_leases is
+// non-browser exempt like the data routes.
 func TestLease_CrossOriginRefused(t *testing.T) {
 	app := newSecuredTestApp(t)
-	if err := SetLeases(app, stubLeases{}); err != nil {
-		t.Fatal(err)
-	}
+	installLeases(app, stubLeases{})
 	h := app.NewRouter()
-	send := func(path string, hdr map[string]string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(leaseIDBody(strings.Repeat("a", 32))))
+	send := func(method, path string, hdr map[string]string) *httptest.ResponseRecorder {
+		var body io.Reader = http.NoBody
+		if method == http.MethodPost {
+			body = strings.NewReader(leaseIDBody(strings.Repeat("a", 32)))
+		}
+		r := httptest.NewRequest(method, path, body)
 		r.Host = "127.0.0.1:8080"
 		for k, v := range hdr {
 			r.Header.Set(k, v)
@@ -913,18 +953,34 @@ func TestLease_CrossOriginRefused(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w
 	}
-	for _, path := range []string{"/api/v1/tickets/TKT-001/_lease", "/api/v1/_leases/renew", "/api/v1/_leases/release"} {
-		w := send(path, map[string]string{"Origin": "https://evil.example", "Cookie": "session=abc"})
+	browser := map[string]string{"Origin": "https://evil.example", "Cookie": "session=abc"}
+	for _, rq := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/tickets/TKT-001/_lease"},
+		{http.MethodPost, "/api/v1/_leases/renew"},
+		{http.MethodPost, "/api/v1/_leases/release"},
+		{http.MethodGet, "/api/v1/_leases"},
+	} {
+		w := send(rq.method, rq.path, browser)
 		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "origin") {
-			t.Errorf("cross-origin POST %s = %d %s, want 403", path, w.Code, w.Body)
+			t.Errorf("cross-origin %s %s = %d %s, want 403", rq.method, rq.path, w.Code, w.Body)
+		}
+		if w := send(rq.method, rq.path, map[string]string{"Cookie": "session=abc"}); w.Code != http.StatusForbidden {
+			t.Errorf("origin-less cookie %s %s = %d %s, want 403", rq.method, rq.path, w.Code, w.Body)
 		}
 	}
-	for _, path := range []string{"/api/v1/_leases/renew", "/api/v1/_leases/release"} {
-		if w := send(path, nil); w.Code != http.StatusForbidden {
-			t.Errorf("origin-less POST %s = %d %s, want 403: /_leases must not be CSRF-exempt", path, w.Code, w.Body)
+	for _, rq := range []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodPost, "/api/v1/_leases/renew", http.StatusOK},
+		{http.MethodPost, "/api/v1/_leases/release", http.StatusNoContent},
+		{http.MethodGet, "/api/v1/_leases", http.StatusOK},
+	} {
+		if w := send(rq.method, rq.path, nil); w.Code != rq.want {
+			t.Errorf("origin-less %s %s = %d %s, want %d", rq.method, rq.path, w.Code, w.Body, rq.want)
 		}
-		if isCSRFExempt(httptest.NewRequest(http.MethodPost, path, http.NoBody)) {
-			t.Errorf("%s is CSRF-exempt", path)
+		if !isCSRFExempt(httptest.NewRequest(rq.method, rq.path, http.NoBody)) {
+			t.Errorf("%s is not CSRF-exempt for a non-browser request", rq.path)
 		}
 	}
 }

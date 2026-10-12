@@ -1,6 +1,7 @@
 package dataentry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -63,12 +64,17 @@ type leasesHandler struct {
 	svc LeaseService
 }
 
-// SetLeases installs the advisory lease service. It is a package function
-// rather than an App method because App is at its plimsoll method cap.
+// SetLeases installs the advisory lease service. Call it before
+// [App.StartWatching] and [App.NewRouter]: the live worker takes its wake-up
+// source when it starts, and the router binds the lease routes when it is
+// built. It is a package function rather than an App method because App is
+// at its plimsoll method cap.
 //
 // Nil: rejected — a deployment without leases simply never calls this, so a
-// nil here is a wiring bug.
-func SetLeases(a *App, svc LeaseService) error {
+// nil here is a wiring bug. The parameter is the concrete pointer so that a
+// nil *lease.Service is caught here rather than stored as a non-nil
+// interface holding a nil pointer.
+func SetLeases(a *App, svc *lease.Service) error {
 	if svc == nil {
 		return errors.New("dataentry: SetLeases requires a lease service")
 	}
@@ -267,7 +273,10 @@ func leaseTTL(w http.ResponseWriter, r *http.Request, seconds int) (time.Duratio
 }
 
 // decodeLeaseBody reads a JSON body of at most [leaseBodyLimit] bytes into
-// dst. An empty body is accepted only when emptyOK.
+// dst. An empty body is accepted only when emptyOK. The decode is strict, as
+// on the entity create path: an unknown field is a 400 rather than silently
+// ignored, so a misspelled ttl_seconds does not claim for the default
+// duration, and data after the JSON value is a 400 too.
 func decodeLeaseBody(w http.ResponseWriter, r *http.Request, dst any, emptyOK bool) bool {
 	data, err := io.ReadAll(io.LimitReader(r.Body, leaseBodyLimit+1))
 	switch {
@@ -277,11 +286,18 @@ func decodeLeaseBody(w http.ResponseWriter, r *http.Request, dst any, emptyOK bo
 	case len(data) > leaseBodyLimit:
 		writeV1Error(w, r, http.StatusRequestEntityTooLarge, "body_too_large", "Request body too large", "")
 		return false
-	case strings.TrimSpace(string(data)) == "" && emptyOK:
+	case len(bytes.TrimSpace(data)) == 0 && emptyOK:
 		return true
 	}
-	if err := json.Unmarshal(data, dst); err != nil {
-		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid JSON", "")
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid JSON", err.Error())
+		return false
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid JSON",
+			"unexpected data after the JSON object")
 		return false
 	}
 	return true
@@ -333,8 +349,8 @@ func writeLeaseError(w http.ResponseWriter, r *http.Request, err error) {
 			"the lease expired, was released, or you no longer have access to the entity; claim it again")
 	case errors.Is(err, lease.ErrLimit):
 		writeV1Error(w, r, http.StatusConflict, "lease_limit", "Too many leases",
-			"a user may hold at most "+strconv.Itoa(lease.MaxPerIdentity)+
-				" live leases, shared by every session and agent running as that user")
+			"at most "+strconv.Itoa(lease.MaxPerIdentity)+" live leases per user and tool, "+
+				"shared by every session and agent running as that user through the same tool")
 	case errors.Is(err, lease.ErrFull):
 		w.Header().Set("Retry-After", leaseFullRetryAfter)
 		writeV1Error(w, r, http.StatusServiceUnavailable, "lease_store_full", "The lease store is full",

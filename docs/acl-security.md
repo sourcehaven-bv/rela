@@ -1492,8 +1492,15 @@ take them.
   on one server.
 - **The lease id is a secret.** Only the claim answer carries it. It never
   appears in a GET, a list, a live-view frame or a log line, and the request
-  log never records request bodies. The `/api/v1/_leases` routes need a
-  same-origin request, like every other `/_` route.
+  log never records request bodies.
+- **Scripts and agents may call the lease routes without a browser origin.**
+  `/api/v1/_leases` (renew, release, list) is exempt from the same-origin
+  check for a request with no cookie, no `Origin` and no `Sec-Fetch-*`
+  header, as the data routes and the claim route are. A cross-site page
+  gains nothing from it: renew and release act only on the lease named by
+  the secret lease id in the body, and the list returns only the caller's
+  own leases, which a cross-site page cannot read. A request with a cookie
+  and a foreign origin is still refused.
 
 ## What still leaks (deferred)
 

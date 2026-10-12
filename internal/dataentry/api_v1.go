@@ -163,11 +163,8 @@ func (a *App) registerAPIV1Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/_comments/", a.comments.handleV1Comments)
 	mux.HandleFunc("/api/v1/_piles", a.piles.handleV1Piles)
 	mux.HandleFunc("/api/v1/_piles/", a.piles.handleV1Piles)
-	// A closure, not a method value: SetLeases may install the handler
-	// after the routes are registered.
-	leases := func(w http.ResponseWriter, r *http.Request) { a.leases.handleV1Leases(w, r) }
-	mux.HandleFunc(leasesPath, leases)
-	mux.HandleFunc(leasesPath+"/", leases)
+	mux.HandleFunc(leasesPath, a.leases.handleV1Leases)
+	mux.HandleFunc(leasesPath+"/", a.leases.handleV1Leases)
 	mux.HandleFunc("/api/v1/_templates/", a.handleV1Templates)
 	mux.HandleFunc("/api/v1/_views/", a.views.handleV1Views)
 	a.registerCopyRoutes(mux)
@@ -1059,9 +1056,11 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 	etag := entityETagWithEdges(entity, outgoing)
 	w.Header().Set("ETag", etag)
 
-	// Check If-None-Match. Never 304 while the entity is held: the ETag
-	// does not cover the lease, so a client's cached copy may lack it.
-	if result.Lease == nil && r.Header.Get("If-None-Match") == etag {
+	// Check If-None-Match. When leases are wired the GET never answers 304:
+	// the ETag does not cover `_lease`, so a copy cached before a claim or a
+	// release would carry the wrong lease. The ETag is still sent, unchanged
+	// by the lease, so If-Match keeps working.
+	if a.leases == nil && r.Header.Get("If-None-Match") == etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}

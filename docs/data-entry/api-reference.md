@@ -619,8 +619,8 @@ baseline.
 The handler honors `If-Match: <etag>` for optimistic concurrency control.
 The ETag is computed against the entity's current `properties + content`.
 Mismatch → 412 Precondition Failed. It does not cover `_lease`; see
-[Leases](#leases-_lease-_leases) for why the GET skips 304 while an entity is
-held.
+[Leases](#leases-_lease-_leases) for why the GET never answers 304 when the
+server has leases.
 
 The precondition is re-checked by the store, atomically with the write
 (TKT-34XS2R). Previously the compare and the write were separate steps made
@@ -1593,9 +1593,12 @@ before it expires, or releases it when done.
 - `GET /_leases` lists the caller's own live leases, oldest first, on entities
   the caller can read now. It never carries a lease id.
 
-The `/_leases` routes are a browser surface: like the other `/_` routes, they
-need a same-origin request. The claim route is a data route, so a client
-without a browser origin and without a cookie can call it.
+Every lease route accepts a request without a browser origin and without a
+cookie, so a script or agent can claim, renew and release over HTTP. A request
+that carries a cookie needs a same-origin `Origin`, as on the other routes.
+Renew and release need the secret `lease_id`, and the list returns only your
+own leases, so a cross-site page gains nothing from them. The routes are in
+the OpenAPI spec.
 
 ### Who may claim
 
@@ -1641,8 +1644,9 @@ same at any page size.
 ### ETag
 
 The ETag does not cover `_lease`, so a claim does not make the holder's
-`If-Match` fail. To keep a cached copy from hiding a lease, the entity GET
-never answers 304 while the entity is held.
+`If-Match` fail. When the server has leases, the entity GET never answers 304:
+a copy cached before a claim or a release would show the wrong lease. The ETag
+is still sent, and a claim or release does not change it.
 
 ### Errors
 
@@ -1651,13 +1655,13 @@ names the error.
 
 | Status | Error | When |
 | --- | --- | --- |
-| 400 | `invalid_request` | bad JSON, a malformed `lease_id`, a bad label or status, `ttl_seconds` out of range |
+| 400 | `invalid_request` | bad JSON, an unknown field, data after the JSON object, a malformed `lease_id`, a bad label or status, `ttl_seconds` out of range |
 | 403 | `forbidden` | read access without update access (the write path's 403 body) |
 | 403 | `no_principal` | no signed-in user |
 | 404 | `not_found` | the entity does not exist, cannot be read, or is of another type |
 | 409 | `lease_held` | someone holds the entity; the body adds `holder {user, tool, label?}`, `since`, `expires_at` and `status?` |
 | 409 | `lease_lost` | renew of a lease that expired, was released, belongs to someone else, or whose entity was deleted or became unreadable |
-| 409 | `lease_limit` | the caller holds 32 live leases |
+| 409 | `lease_limit` | the caller holds 32 live leases as this user through this tool (data-entry or MCP); every session and agent of that user through the same tool shares the cap |
 | 413 | `body_too_large` | the body is over 4 KiB |
 | 422 | `face_required` | a bare id of a type with faces |
 | 503 | `lease_store_full` | the server holds 2048 live leases; `Retry-After: 30` |
