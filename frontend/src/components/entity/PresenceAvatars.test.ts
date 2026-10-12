@@ -21,7 +21,7 @@ describe('PresenceAvatars', () => {
     })
     const titles = w.findAll('.presence-avatar').map((a) => a.attributes('title'))
     expect(titles).toEqual(['alice@example.com (data-entry)', 'bot'])
-    expect(w.attributes('aria-label')).toBe('Also viewing: alice@example.com, bot')
+    expect(w.attributes('aria-label')).toBe('Also viewing: alice@example.com (data-entry), bot')
   })
 
   it('marks an agent with a badge', () => {
@@ -36,7 +36,24 @@ describe('PresenceAvatars', () => {
     const w = mount(PresenceAvatars, { props: { viewers, more: 3, max: 5 } })
     expect(w.findAll('.presence-avatar')).toHaveLength(5)
     expect(w.find('.presence-avatars__more').text()).toBe('+5')
-    expect(w.attributes('aria-label')).toBe('Also viewing: a, b, c, d, e, f, g and 3 more')
+    expect(w.attributes('aria-label')).toBe(
+      'Also viewing: a (data-entry), b (data-entry), c (data-entry), d (data-entry), ' +
+        'e (data-entry), f (data-entry), g (data-entry) and 3 more'
+    )
+  })
+
+  it('shows 5 avatars by default and +N for the server maximum of 20 plus more', () => {
+    const viewers = Array.from({ length: 20 }, (_, i) => viewer(`user${i}`))
+    const w = mount(PresenceAvatars, { props: { viewers, more: 3 } })
+    expect(w.findAll('.presence-avatar')).toHaveLength(5)
+    expect(w.find('.presence-avatars__more').text()).toBe('+18')
+  })
+
+  it('announces an agent and tells one person in two tools apart', () => {
+    const w = mount(PresenceAvatars, {
+      props: { viewers: [viewer('bob'), viewer('bob', 'mcp')] },
+    })
+    expect(w.attributes('aria-label')).toBe('Also viewing: bob (data-entry), bob (mcp)')
   })
 
   it('shows +N from more alone', () => {

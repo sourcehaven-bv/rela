@@ -118,7 +118,7 @@ describe('EntityDetail presence and claim', () => {
     }
     const w = await mountDetail('task', 'T-1', view({ _lease: lease }))
     const badge = w.find('.detail-header .lease-badge')
-    expect(badge.text()).toBe('Claimed by bob@example.com (agent)')
+    expect(badge.find('.lease-badge__text').text()).toBe('Claimed by bob@example.com (agent)')
     expect(badge.attributes('title')).toContain('<img src=x onerror=alert(1)>')
     expect(w.find('.detail-header img').exists()).toBe(false)
   })
@@ -141,6 +141,13 @@ describe('EntityDetail presence and claim', () => {
 
   it('does not subscribe a bare id on a type with faces', async () => {
     await mountDetail('policy', 'POL-1', view({ id: 'POL-1', type: 'policy' }))
+    expect(subs.get('entity-presence')?.()).toBeNull()
+    expect(getPresenceMock).not.toHaveBeenCalled()
+  })
+
+  it('does not subscribe while the type is unknown', async () => {
+    _setEntityPluralForTest('unloaded', 'unloadeds')
+    await mountDetail('unloaded', 'U-1', view({ id: 'U-1', type: 'unloaded' }))
     expect(subs.get('entity-presence')?.()).toBeNull()
     expect(getPresenceMock).not.toHaveBeenCalled()
   })

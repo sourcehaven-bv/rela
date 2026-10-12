@@ -213,6 +213,14 @@ const boardQuery = useQuery({
 // is what carries a claim or release (`_lease`), which changes no entity and
 // so sends no `entity:changed`; cards past the first 100 still refresh on
 // entity changes.
+//
+// Opening a board therefore loads it twice. The query loads it once; then,
+// when the server accepts the subscription PUT, useLiveSubscription runs the
+// invalidate below once as the baseline refetch, and every page loads again.
+// The double load is accepted. The server takes its baseline when it accepts
+// the PUT, and the API contract asks the client to refetch at that moment: a
+// claim landing between the board's own fetch and the baseline would
+// otherwise never show.
 useLiveSubscription(
   'kanban-board',
   () => {

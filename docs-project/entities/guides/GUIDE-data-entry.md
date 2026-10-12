@@ -120,12 +120,17 @@ gets the same `404` as for an ID that was never deleted.
 ### Who else is viewing
 
 An entity page shows a round avatar in its header for each other person who
-has the same entity open. Hover over an avatar to see the person and the tool
-they use, for example `bob@example.com (data-entry)`. An agent connected over
-MCP carries a small sparkles mark. When more people are viewing than fit, a
-`+N` counts the rest.
+has the same entity open. Each avatar names the person and the tool they use,
+for example `bob@example.com (data-entry)`. A mouse user sees that name as a
+tooltip; a screen reader announces the whole group, with every person and
+tool. An agent connected over MCP carries a small sparkles mark and is
+announced with its tool. The header shows at most five avatars, and a `+N`
+counts the rest.
 
 - You never see yourself, from any tool.
+- Every place that shows an entity's page counts as viewing it: the entity
+  page itself, and previews such as the calendar preview, the flyout and the
+  side panel.
 - A person who closes the page stays listed for about 15 seconds.
 - Presence is per content state. On a type with faces, people looking at
   another face are not shown.
@@ -141,8 +146,9 @@ API (`POST /api/v1/{plural}/{id}/_lease`) or the MCP tool `claim_entity`.
 
 While an entity is claimed, its page, its list rows and its kanban cards show
 a badge such as **Claimed by bob@example.com (triage)**. The part in brackets
-is the label the claim gave, or the tool when it gave none. Hover over the
-badge to read the status note the claimer wrote.
+is the label the claim gave, or the tool when it gave none. The status note
+the claimer wrote is in the badge's tooltip for a mouse user, and a screen
+reader reads it with the badge.
 
 The badge appears and disappears without a reload. On a kanban board this
 holds for the first 100 cards; cards further down update on the next change

@@ -24,7 +24,11 @@ describe('LeaseBadge', () => {
     ['the tool when there is no label', lease(), 'Claimed by bob@example.com (mcp)'],
     ['only the user when there is neither', lease({ tool: '' }), 'Claimed by bob@example.com'],
   ])('names %s', (_name, l, text) => {
-    expect(mount(LeaseBadge, { props: { lease: l } }).text()).toBe(text)
+    expect(
+      mount(LeaseBadge, { props: { lease: l } })
+        .find('.lease-badge__text')
+        .text()
+    ).toBe(text)
   })
 
   it('puts the status in the title as text', () => {
@@ -39,9 +43,22 @@ describe('LeaseBadge', () => {
     const w = mount(LeaseBadge, {
       props: { lease: lease({ user: '<i>eve</i>', label: '<script>x</script>' }) },
     })
-    expect(w.text()).toBe('Claimed by <i>eve</i> (<script>x</script>)')
+    expect(w.find('.lease-badge__text').text()).toBe('Claimed by <i>eve</i> (<script>x</script>)')
     expect(w.find('i').exists()).toBe(false)
     expect(w.find('script').exists()).toBe(false)
+  })
+
+  it('gives screen readers the status in a visually hidden span', () => {
+    const status = '<b>fixing</b>'
+    const w = mount(LeaseBadge, { props: { lease: lease({ label: 'a', status }) } })
+    expect(w.find('.lease-badge__text').text()).toBe('Claimed by bob@example.com (a)')
+    expect(w.find('.rl-visually-hidden').text()).toBe(`, status: ${status}`)
+    expect(w.find('b').exists()).toBe(false)
+  })
+
+  it('has no hidden status span without a status', () => {
+    const w = mount(LeaseBadge, { props: { lease: lease() } })
+    expect(w.find('.rl-visually-hidden').exists()).toBe(false)
   })
 
   it('uses the badge text as the title when there is no status', () => {

@@ -207,6 +207,31 @@ export interface TransitionOption {
 // There is deliberately no 'excluded': a world that excludes an entity
 // produces no response to carry provenance on. It is a 404, indistinguishable
 // from a genuine miss, because existence in a world IS the publication bit.
+export interface EntityWorld {
+  name: string
+  face: string
+  via: 'unscoped' | 'chain' | 'fallback-default'
+
+  /**
+   * 0-based index, within the world's candidate chain for this entity type,
+   * of the coordinate actually served. Present only when `via` is 'chain'.
+   *
+   * `via` alone cannot answer "did I get the world's first choice". Under
+   * `select: [published, draft]` a real published face and a draft standing
+   * in for a missing one BOTH report 'chain', so a reader shown draft bytes
+   * under a `published` world had no way to tell — observed live, with the
+   * page framing the draft as read-only published content.
+   *
+   * 0 is the world's first choice. Anything greater is a WITHIN-CHAIN
+   * FALLBACK and must be labelled as a substitute, exactly as
+   * 'fallback-default' is.
+   *
+   * Optional so a response from an older server (which omits it) is not
+   * mistaken for position 0 — the strongest claim the field makes.
+   */
+  chain_position?: number
+}
+
 // EntityLease is who holds an advisory claim on an entity (TKT-4YPG4Q).
 // `status` is free text the holder wrote: render it as text, never as HTML.
 export interface EntityLease {
@@ -231,31 +256,6 @@ export interface PresenceViewer {
 export interface PresenceResponse {
   viewers: PresenceViewer[]
   more: number
-}
-
-export interface EntityWorld {
-  name: string
-  face: string
-  via: 'unscoped' | 'chain' | 'fallback-default'
-
-  /**
-   * 0-based index, within the world's candidate chain for this entity type,
-   * of the coordinate actually served. Present only when `via` is 'chain'.
-   *
-   * `via` alone cannot answer "did I get the world's first choice". Under
-   * `select: [published, draft]` a real published face and a draft standing
-   * in for a missing one BOTH report 'chain', so a reader shown draft bytes
-   * under a `published` world had no way to tell — observed live, with the
-   * page framing the draft as read-only published content.
-   *
-   * 0 is the world's first choice. Anything greater is a WITHIN-CHAIN
-   * FALLBACK and must be labelled as a substitute, exactly as
-   * 'fallback-default' is.
-   *
-   * Optional so a response from an older server (which omits it) is not
-   * mistaken for position 0 — the strongest claim the field makes.
-   */
-  chain_position?: number
 }
 
 // Face is one content state this entity HAS, other than the one being served.

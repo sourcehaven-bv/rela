@@ -84,7 +84,7 @@ describe('EntityList claim badge', () => {
     expect(w.text()).toContain('Free task')
     const badges = w.findAll('.lease-badge')
     expect(badges).toHaveLength(1)
-    expect(badges[0]!.text()).toBe('Claimed by bob@example.com (agent-1)')
+    expect(badges[0]!.find('.lease-badge__text').text()).toBe('Claimed by bob@example.com (agent-1)')
     expect(badges[0]!.attributes('title')).toContain('<b>fixing</b>')
     expect(badges[0]!.find('b').exists()).toBe(false)
   })

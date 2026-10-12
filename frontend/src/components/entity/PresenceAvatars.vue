@@ -35,8 +35,12 @@ function viewerTitle(v: PresenceViewer): string {
   return v.tool ? `${v.user} (${v.tool})` : v.user
 }
 
+// The group's accessible name lists every viewer the client has, not just the
+// avatars on screen, and uses the same `user (tool)` text as the titles: an
+// agent is announced as one, and one person in two tools is two entries that
+// a listener can tell apart.
 const description = computed(() => {
-  const names = props.viewers.map((v) => v.user).join(', ')
+  const names = props.viewers.map(viewerTitle).join(', ')
   if (!props.more) return `Also viewing: ${names}`
   return names
     ? `Also viewing: ${names} and ${props.more} more`

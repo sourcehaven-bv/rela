@@ -37,8 +37,14 @@ export class PresencePage extends BasePage {
     await expect(this.avatarOf(user)).toHaveCount(0, { timeout });
   }
 
+  /** No avatar of `user` in any tool. */
+  async expectNotListed(user: string) {
+    await expect(this.avatars.locator(`.presence-avatar[title^="${user}"]`)).toHaveCount(0);
+  }
+
   async expectDetailBadge(text: string, timeout = 15_000) {
-    await expect(this.detailBadge).toHaveText(text, { timeout });
+    // The visible text only; the badge also holds a visually hidden status.
+    await expect(this.detailBadge.locator('.lease-badge__text')).toHaveText(text, { timeout });
   }
 
   async expectNoDetailBadge(timeout = 15_000) {
@@ -50,7 +56,12 @@ export class PresencePage extends BasePage {
   }
 
   async expectListBadge(rowText: string, text: string, timeout = 15_000) {
-    await expect(this.listBadge(rowText)).toHaveText(text, { timeout });
+    await expect(this.listBadge(rowText).locator('.lease-badge__text')).toHaveText(text, { timeout });
+  }
+
+  async expectNoListBadge(rowText: string, timeout = 15_000) {
+    await expect(this.page.getByRole('row').filter({ hasText: rowText }).first()).toBeVisible({ timeout });
+    await expect(this.listBadge(rowText)).toHaveCount(0, { timeout });
   }
 
   private cardBadge(cardText: string): Locator {
@@ -58,7 +69,7 @@ export class PresencePage extends BasePage {
   }
 
   async expectCardBadge(cardText: string, text: string, timeout = 15_000) {
-    await expect(this.cardBadge(cardText)).toHaveText(text, { timeout });
+    await expect(this.cardBadge(cardText).locator('.lease-badge__text')).toHaveText(text, { timeout });
   }
 
   async expectNoCardBadge(cardText: string, timeout = 15_000) {

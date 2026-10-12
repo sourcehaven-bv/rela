@@ -9,7 +9,10 @@
  *
  * The visible text is "Claimed by {user} ({label})", with the tool standing
  * in when the claim carries no label. It truncates to fit a title cell or a
- * card; the title attribute holds the full text and the status.
+ * card; the title attribute holds the full text and the status for a mouse
+ * user. A title is not announced reliably and cannot be reached by keyboard
+ * or touch, so the status is also in a visually hidden span that screen
+ * readers read with the badge.
  */
 import { computed } from 'vue'
 import type { EntityLease } from '@/types'
@@ -32,11 +35,15 @@ const title = computed(() => {
 </script>
 
 <template>
-  <span v-if="lease" class="lease-badge" :title="title">{{ text }}</span>
+  <span v-if="lease" class="lease-badge" :title="title"
+    ><span class="lease-badge__text">{{ text }}</span
+    ><span v-if="lease.status" class="rl-visually-hidden">, status: {{ lease.status }}</span></span
+  >
 </template>
 
 <style scoped>
 .lease-badge {
+  position: relative;
   display: inline-block;
   max-width: 16rem;
   overflow: hidden;

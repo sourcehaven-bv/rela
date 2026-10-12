@@ -5,6 +5,7 @@ import { PiniaColada } from '@pinia/colada'
 import KanbanView from './KanbanView.vue'
 import { useSchemaStore } from '@/stores/schema'
 import { _setEntityPluralForTest } from '@/api/entities'
+import { api } from '@/api/client'
 import type { Entity, EntityLease, ListResponse } from '@/types'
 
 // A claim changes no entity, so it sends no `entity:changed`; the board learns
@@ -26,9 +27,10 @@ vi.mock('@/composables/useLiveSubscription', async (orig) => ({
   },
 }))
 
+let routeQuery: Record<string, string> = {}
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ push: vi.fn() }),
-  useRoute: () => ({ query: {}, path: '/kanban/board' }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRoute: () => ({ query: routeQuery, path: '/kanban/board' }),
   RouterLink: { props: ['to'], template: '<a><slot /></a>' },
 }))
 vi.mock('@/composables/useBackTarget', () => ({ useBackTarget: () => null }))
@@ -96,6 +98,7 @@ beforeEach(() => {
   _setEntityPluralForTest('task', 'tasks')
   listAllEntitiesMock.mockReset()
   subscriptions.length = 0
+  routeQuery = {}
 })
 afterEach(() => {
   document.body.innerHTML = ''
@@ -106,6 +109,60 @@ describe('KanbanView live subscription and claim badge', () => {
     await mountBoard([card('T-1')])
     const sub = subscriptions.find((s) => s.label === 'kanban-board')
     expect(sub?.path()).toBe('/api/v1/tasks?page=1&per_page=100')
+  })
+
+  it('subscribes the exact GET listEntities sends for page 1, with a world and a filter', async () => {
+    routeQuery = { world: 'draft', 'filter[status]': 'open' }
+    // Run the real paging loop down to the HTTP client and record what it sends.
+    const sent: string[] = []
+    const axios = api.getAxios()
+    const adapter = axios.defaults.adapter
+    axios.defaults.adapter = async (config) => {
+      sent.push(axios.getUri({ baseURL: '/api/v1', url: config.url, params: config.params }))
+      return {
+        data: {
+          data: [card('T-1')],
+          meta: { total: 1, page: 1, per_page: 100, has_more: false },
+          included: {},
+          _actions: { create: true },
+        },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      }
+    }
+    const real = await vi.importActual<typeof import('@/api')>('@/api')
+    listAllEntitiesMock.mockImplementation(real.listAllEntities)
+    try {
+      const schema = useSchemaStore()
+      schema.kanbans.set('board', {
+        entity: 'task',
+        title: 'Board',
+        column_property: 'status',
+        columns: [{ value: 'open', label: 'Open' }],
+        card: { title: 'title' },
+      } as never)
+      schema.entityTypes.set('task', {
+        name: 'task',
+        label: 'Task',
+        properties: { title: { type: 'string' }, status: { type: 'enum', values: ['open'] } },
+      } as never)
+      mount(KanbanView, {
+        props: { id: 'board' },
+        attachTo: document.body,
+        global: { plugins: [pinia, PiniaColada] },
+      })
+      await flushPromises()
+    } finally {
+      axios.defaults.adapter = adapter
+    }
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain('world=draft')
+    expect(sent[0]).toContain('status')
+    const sub = subscriptions.find((s) => s.label === 'kanban-board')
+    expect(sub?.path()).toBe(sent[0])
   })
 
   it('refetches the board when the subscription reports a change', async () => {
@@ -121,13 +178,15 @@ describe('KanbanView live subscription and claim badge', () => {
     await flushPromises()
 
     const badge = w.find('.kanban-card .lease-badge')
-    expect(badge.text()).toBe('Claimed by bob@example.com (triage)')
+    expect(badge.find('.lease-badge__text').text()).toBe('Claimed by bob@example.com (triage)')
     expect(badge.attributes('title')).toContain('<img src=x onerror=alert(1)>')
     expect(w.find('.kanban-card img').exists()).toBe(false)
   })
 
   it('shows the badge on a swimlane card', async () => {
     const w = await mountBoard([card('T-1', LEASE)], true)
-    expect(w.find('.kanban-card .lease-badge').text()).toBe('Claimed by bob@example.com (triage)')
+    expect(w.find('.kanban-card .lease-badge__text').text()).toBe(
+      'Claimed by bob@example.com (triage)'
+    )
   })
 })

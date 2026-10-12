@@ -60,11 +60,14 @@ test.describe("presence", () => {
 
     await alice.expectViewer(BOB);
     await bob.expectViewer(ALICE);
+    // The caller is never listed: once bob shows, alice's own avatar does not.
+    await alice.expectNotListed(ALICE);
+    await bob.expectNotListed(BOB);
 
-    // Closing the page closes the stream; the server keeps bob listed for 15
-    // seconds, then drops him.
+    // Closing the page closes the stream; the server keeps bob listed for a
+    // 15 second grace, then drops him. The wait starts at the close.
     await bobContext.close();
-    await alice.expectNoViewer(BOB, 45_000);
+    await alice.expectNoViewer(BOB, 25_000);
   });
 
   test("shows the claim badge on the entity, the list and the board", async ({ alice, serverUrl }) => {
@@ -73,21 +76,32 @@ test.describe("presence", () => {
       await alice.openEntity("feature", FEATURE);
       await alice.expectNoDetailBadge();
 
-      const lease = await bobAgent.claim("features", FEATURE, {
-        label: "e2e",
-        status: "<img src=x onerror=alert(1)>",
-      });
+      const status = "<img src=x onerror=alert(1)>";
       const text = `Claimed by ${BOB} (e2e)`;
-      // The live view subscription carries the claim to the open page.
+      const claim = () => bobAgent.claim("features", FEATURE, { label: "e2e", status });
+
+      // The live view subscription carries the claim and the release to the
+      // open page, without a reload.
+      let lease = await claim();
+      await alice.expectDetailBadge(text);
+      await bobAgent.release(lease);
+      await alice.expectNoDetailBadge();
+
+      lease = await claim();
       await alice.expectDetailBadge(text);
 
+      // The list's subscription does the same.
       await alice.open("/list/features");
       await alice.expectListBadge(FEATURE_TITLE, text);
+      await bobAgent.release(lease);
+      await alice.expectNoListBadge(FEATURE_TITLE);
 
+      lease = await claim();
+      await alice.expectListBadge(FEATURE_TITLE, text);
+
+      // And the board's.
       await alice.open("/kanban/feature-board");
       await alice.expectCardBadge(FEATURE_TITLE, text);
-
-      // The board's own subscription carries the release.
       await bobAgent.release(lease);
       await alice.expectNoCardBadge(FEATURE_TITLE);
 

@@ -983,11 +983,13 @@ async function runDetailAction(action: DetailAction, ev?: Event) {
 // this user as a viewer of the face on screen. Presence is per face, so on a
 // type with faces it waits for the served address to name one; the server
 // refuses a bare id there, and that refusal would fail the page's whole
-// subscription set.
+// subscription set. An unknown type (schema not loaded yet) is not ready
+// either: without it the page cannot tell whether the type has faces.
 const presence = usePresence(() => {
   const addr = servedRef.value
-  if (!addr) return null
-  const faced = Object.keys(typeDef.value?.faces ?? {}).length > 0
+  const def = typeDef.value
+  if (!addr || !def) return null
+  const faced = Object.keys(def.faces ?? {}).length > 0
   if (faced && !refFace(addr)) return null
   return { type: props.entityType, address: addr, world: worldParam.value }
 })
