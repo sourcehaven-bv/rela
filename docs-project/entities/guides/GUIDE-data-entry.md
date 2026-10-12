@@ -145,7 +145,7 @@ block edits; they tell others to pick other work. A claim is made through the
 API (`POST /api/v1/{plural}/{id}/_lease`) or the MCP tool `claim_entity`.
 
 While an entity is claimed, its page, its list rows and its kanban cards show
-a badge such as **Claimed by bob@example.com (triage)**. The part in brackets
+a badge such as **Claimed by `bob@example.com` (triage)**. The part in brackets
 is the label the claim gave, or the tool when it gave none. The status note
 the claimer wrote is in the badge's tooltip for a mouse user, and a screen
 reader reads it with the badge.
