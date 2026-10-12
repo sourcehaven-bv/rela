@@ -10,7 +10,9 @@ import (
 )
 
 // MetamodelProvider provides metamodel data for context-aware migrations.
-// This interface is satisfied by *metamodel.Metamodel.
+// This package cannot import internal/metamodel, which imports it, so the
+// wiring site supplies an adapter over the loaded metamodel
+// (projectsetup.migrationSchema).
 type MetamodelProvider interface {
 	// GetPropertyType returns the type of a property for an entity type (empty if not found).
 	GetPropertyType(entityType, property string) string
@@ -20,8 +22,6 @@ type MetamodelProvider interface {
 	GetPropertyDefault(entityType, property string) string
 	// GetTypeDefault returns the default value for a custom type.
 	GetTypeDefault(typeName string) string
-	// IsEnumType returns whether a type is an enum-like type (has values).
-	IsEnumType(typeName string) bool
 	// GetRelationLabel returns the label for a relation (empty if not found).
 	GetRelationLabel(relation string) string
 	// GetRelationFrom returns the "from" entity types for a relation.

@@ -220,7 +220,7 @@ func (h promptHandler) handleSummarizeProjectPrompt(
 		def, _ := meta.GetEntityDef(t)
 		label := t
 		if def != nil {
-			label = def.GetLabel()
+			label = def.Label
 		}
 		fmt.Fprintf(&entityCounts, "- %s: %d\n", label, count)
 	}
