@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/mcpwire"
 
 	relaerrors "github.com/Sourcehaven-BV/rela/internal/errors"
@@ -56,6 +57,15 @@ func (c *McpCmd) Run() error {
 	// schema it booted with.
 	svc.watchSchema(srv)
 
-	return srv.Serve(context.Background())
+	// The lease watcher lives as long as Serve: it wakes lease subscribers
+	// for claims made by other processes and for expiries. It runs on the
+	// startup assembly, whose lease backend and hub every reload shares.
+	life, stop := context.WithCancel(context.Background())
+	watched := appbuild.WatchLeases(life, svc.current())
+	defer func() {
+		stop()
+		<-watched
+	}()
+	return srv.Serve(life)
 	// coverage-ignore-end
 }
