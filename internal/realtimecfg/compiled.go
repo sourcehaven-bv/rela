@@ -1,0 +1,382 @@
+package realtimecfg
+
+import (
+	"slices"
+	"sort"
+	"time"
+
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
+	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
+)
+
+// Compiled is a validated realtime.yaml. It is never mutated after [Parse]
+// returns it, so one value may be shared by every reader.
+//
+// Nil: accepted by every method — a nil *Compiled is the project without a
+// realtime.yaml, where realtime is off.
+type Compiled struct {
+	limits       Limits
+	channelTypes map[string]*ChannelType
+	triggers     map[string]*Trigger
+	permissions  []string
+}
+
+// Limits are the effective caps: the built-in ones from [realtimelimits],
+// lowered where realtime.yaml says so.
+type Limits struct {
+	LogRate           realtimelimits.Rate
+	EphemeralRate     realtimelimits.Rate
+	MessageBytes      int
+	ChannelsPerEntity int
+	PageLimit         int
+}
+
+// Limits returns the effective caps. A nil Compiled has the built-in ones.
+func (c *Compiled) Limits() Limits {
+	if c == nil {
+		return defaultLimits()
+	}
+	return c.limits
+}
+
+// ChannelType returns the channel type called name.
+func (c *Compiled) ChannelType(name string) (*ChannelType, bool) {
+	if c == nil {
+		return nil, false
+	}
+	ct, ok := c.channelTypes[name]
+	return ct, ok
+}
+
+// ChannelTypes returns every channel type, sorted by name.
+func (c *Compiled) ChannelTypes() []*ChannelType {
+	if c == nil {
+		return nil
+	}
+	return sortedValues(c.channelTypes)
+}
+
+// Triggers returns every trigger, sorted by name.
+func (c *Compiled) Triggers() []*Trigger {
+	if c == nil {
+		return nil
+	}
+	return sortedValues(c.triggers)
+}
+
+// UsedPermissions returns every permission realtime.yaml names, sorted and
+// without duplicates. It satisfies the dead-permission check's consumer
+// interface in `rela acl audit`.
+func (c *Compiled) UsedPermissions() []string {
+	if c == nil {
+		return nil
+	}
+	return slices.Clone(c.permissions)
+}
+
+func sortedValues[V any](m map[string]*V) []*V {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]*V, 0, len(names))
+	for _, name := range names {
+		out = append(out, m[name])
+	}
+	return out
+}
+
+// Anchor says what a channel is attached to.
+type Anchor string
+
+const (
+	// AnchorFamily attaches one channel to an entity id across its faces.
+	// It is gated on the face the reader can see.
+	AnchorFamily Anchor = "family"
+	// AnchorFace gives each face of an entity its own channel.
+	AnchorFace Anchor = "face"
+)
+
+// Cardinality says how many channels of a type one entity has.
+type Cardinality string
+
+const (
+	// CardinalityOne is one implicit channel per entity, created on first
+	// write.
+	CardinalityOne Cardinality = "one"
+	// CardinalityMany lets the create roles open named channels.
+	CardinalityMany Cardinality = "many"
+)
+
+// OnEntityDelete says what happens to an entity's channels when the entity
+// is deleted.
+type OnEntityDelete string
+
+const (
+	// OnDeleteDetach keeps the channels, detached from the deleted entity.
+	OnDeleteDetach OnEntityDelete = "detach"
+	// OnDeleteDelete deletes the channels with the entity.
+	OnDeleteDelete OnEntityDelete = "delete"
+	// OnDeleteBlock refuses to delete an entity that has channels.
+	OnDeleteBlock OnEntityDelete = "block"
+)
+
+// State is a channel's lifecycle state.
+type State string
+
+// Channel states.
+const (
+	StateOpen     State = "open"
+	StateClosed   State = "closed"
+	StateArchived State = "archived"
+)
+
+// ChannelType is one entry of `channel_types:`.
+type ChannelType struct {
+	Name     string
+	Label    string
+	AttachTo []string
+	Anchor   Anchor
+	// Cardinality decides whether Create is set: only a "many" type has
+	// create roles.
+	Cardinality Cardinality
+	Create      *Gate
+	// Read decides who receives the channel. Receiving a message type
+	// needs nothing more than this.
+	Read           Role
+	Roles          map[string]Role
+	MessageTypes   map[string]*MessageType
+	Lifecycle      Lifecycle
+	MessageOps     MessageOps
+	OnEntityDelete OnEntityDelete
+}
+
+// Role is a named set of principals, defined by exactly one source.
+type Role struct {
+	Name   string
+	Label  string
+	Source Source
+}
+
+// SourceKind is the closed set of ways a role can match a principal. There
+// is no deny source: a role only ever admits.
+type SourceKind int
+
+// Role sources.
+const (
+	// SourcePermission matches a principal holding Permission on the anchor
+	// entity (acl.Request.HoldsPermissionForEntity).
+	SourcePermission SourceKind = iota + 1
+	// SourceAttached matches a principal who can read the anchor entity.
+	SourceAttached
+	// SourceEntityProperty matches a principal named by the anchor's
+	// Property.
+	SourceEntityProperty
+	// SourcePrincipalType matches the principal's verified principal_type.
+	SourcePrincipalType
+	// SourceCreator matches the principal who created the channel.
+	SourceCreator
+)
+
+// Source is the compiled form of a role's `from:`, `permission:`,
+// `principal_type:` or `creator:` key.
+type Source struct {
+	Kind          SourceKind
+	Permission    string
+	Property      string
+	PrincipalType string
+}
+
+// NeedsCeilingCheck reports whether the source matches on identity alone, so
+// the caller must also check that the request's client ceiling admits the
+// operation's base capability on the anchor (read for a read role, update of
+// the anchor's type for the rest). A permission or attached source is
+// already decided through acl.Request, which applies the ceiling.
+func (s Source) NeedsCeilingCheck() bool {
+	switch s.Kind {
+	case SourceEntityProperty, SourcePrincipalType, SourceCreator:
+		return true
+	default:
+		return false
+	}
+}
+
+// Gate is who may perform an operation: any listed role, or a holder of
+// Permission. Denied is the operator's message for a refusal.
+type Gate struct {
+	Label      string
+	Roles      []string
+	Permission string
+	Denied     string
+}
+
+// Rule is a compiled program over the anchor entity, with the properties it
+// reads. Triggers and auto rules evaluate it; Fields lists every property
+// the program depends on, because the program may read nothing else.
+type Rule struct {
+	Program *predicate.Program
+	Fields  []string
+}
+
+// Lifecycle holds the declared lifecycle operations. A nil operation is not
+// offered.
+type Lifecycle struct {
+	Close   *LifecycleOp
+	Reopen  *LifecycleOp
+	Archive *LifecycleOp
+	Delete  *LifecycleOp
+}
+
+// LifecycleOp is one lifecycle operation.
+type LifecycleOp struct {
+	Gate
+	// Conditions is the compiled `condition:`, one program per attach_to
+	// type. Empty when the operation has no condition.
+	Conditions map[string]*predicate.Program
+	// From is the state the operation starts from; empty means any state
+	// the operation applies to.
+	From      State
+	Auto      *Auto
+	Retention Period
+}
+
+// Auto runs a lifecycle operation without a request: when When holds for
+// the anchor entity, or After has passed since the previous state change.
+type Auto struct {
+	// When holds one rule per attach_to type; empty when only After is set.
+	When  map[string]Rule
+	After Period
+}
+
+// MessageOps holds the declared message operations. A nil operation is not
+// offered.
+type MessageOps struct {
+	EditOwn   *EditOwn
+	DeleteOwn *DeleteOwn
+	Remove    *Remove
+}
+
+// EditOwn lets an author edit their own message, within Within of posting
+// when set.
+type EditOwn struct {
+	Gate
+	Within Period
+}
+
+// DeleteOwn lets an author delete their own message while the channel is in
+// From, when set.
+type DeleteOwn struct {
+	Gate
+	From State
+}
+
+// Remove lets a moderator remove any message.
+type Remove struct {
+	Gate
+	ReasonRequired bool
+}
+
+// Persist is where a message type's messages are kept.
+type Persist string
+
+const (
+	// PersistLog appends messages to the channel's log.
+	PersistLog Persist = "log"
+	// PersistEphemeral keeps signals in memory only, for TTL.
+	PersistEphemeral Persist = "ephemeral"
+)
+
+// MessageType is one entry of a channel type's `message_types:`.
+type MessageType struct {
+	Name       string
+	Label      string
+	Persist    Persist
+	TTL        time.Duration
+	Rate       realtimelimits.Rate
+	Properties map[string]Property
+	// When is the compiled `when:` over the `message` record, or nil.
+	When      *predicate.Program
+	Post      []string
+	PromoteTo *Promote
+	Actions   map[string]*Action
+}
+
+// PropertyType is the type of a message property.
+type PropertyType string
+
+// Message property types. PropertyEnum takes its values from an enum type
+// declared in schema.yaml.
+const (
+	PropertyString   PropertyType = "string"
+	PropertyMarkdown PropertyType = "markdown"
+	PropertyInteger  PropertyType = "integer"
+	PropertyBoolean  PropertyType = "boolean"
+	PropertyDate     PropertyType = "date"
+	PropertyDatetime PropertyType = "datetime"
+	PropertyRef      PropertyType = "ref"
+	PropertyEnum     PropertyType = "enum"
+)
+
+// Property is one message property.
+type Property struct {
+	Name     string
+	Label    string
+	Type     PropertyType
+	Enum     string
+	Values   []string
+	Required bool
+	Max      int
+	To       []string
+}
+
+// Promote turns a message into an entity: Map names, per entity property,
+// the message property it is copied from, and Relate, when set, is the
+// relation type linking the new entity to the anchor.
+type Promote struct {
+	Type   string
+	Map    map[string]string
+	Relate string
+}
+
+// Action is a button on a message.
+type Action struct {
+	Name string
+	Gate
+	PromoteTo *Promote
+}
+
+// TriggerOn is the change a trigger reacts to.
+type TriggerOn string
+
+// Trigger events.
+const (
+	TriggerEnter  TriggerOn = "enter"
+	TriggerLeave  TriggerOn = "leave"
+	TriggerChange TriggerOn = "change"
+)
+
+// Trigger posts a message into an entity's channel when the entity starts
+// matching (enter), stops matching (leave), or changes a property its rule
+// reads while matching (change).
+type Trigger struct {
+	Name       string
+	EntityType string
+	On         TriggerOn
+	When       Rule
+	Channel    string
+	PostType   string
+	// Props are literal values: a trigger posts operator text and a
+	// reference to the entity, never a value read from it.
+	Props map[string]string
+}
+
+func defaultLimits() Limits {
+	return Limits{
+		LogRate:           realtimelimits.DefaultLogRate,
+		EphemeralRate:     realtimelimits.DefaultEphemeralRate,
+		MessageBytes:      realtimelimits.MaxMessageBytes,
+		ChannelsPerEntity: realtimelimits.MaxChannelsPerAnchor,
+		PageLimit:         realtimelimits.MaxPageLimit,
+	}
+}

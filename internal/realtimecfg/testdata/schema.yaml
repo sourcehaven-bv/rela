@@ -1,0 +1,60 @@
+version: "1.0"
+types:
+  severity:
+    values: [low, medium, high]
+entities:
+  datalek:
+    label: Data breach
+    id_prefix: DL
+    aliases: [breach]
+    properties:
+      title: {type: string}
+      owner: {type: string}
+      status: {type: string}
+      severity: {type: severity}
+      notes: {type: string}
+      due: {type: date}
+      count: {type: integer}
+  incident:
+    label: Incident
+    id_prefix: INC
+    properties:
+      title: {type: string}
+      owner: {type: string}
+      status: {type: string}
+      severity: {type: severity}
+  risico:
+    label: Risk
+    id_prefix: RISK
+    properties:
+      title: {type: string}
+      owner: {type: string}
+  maatregel:
+    label: Measure
+    id_prefix: MEA
+    properties:
+      title: {type: string}
+  timeline-entry:
+    label: Timeline entry
+    id_prefix: TL
+    properties:
+      title: {type: string}
+  decision:
+    label: Decision
+    id_prefix: DEC
+    properties:
+      title: {type: string}
+  page:
+    label: Page
+    id_prefix: PAGE
+    properties:
+      title: {type: string}
+      owner: {type: string}
+    faces:
+      published: {}
+      draft: {}
+relations:
+  about:
+    label: about
+    from: [timeline-entry]
+    to: [datalek, incident]

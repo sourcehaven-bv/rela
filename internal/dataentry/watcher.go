@@ -99,11 +99,12 @@ func (b *eventBroker) broadcastEvent(event sseEvent) {
 	b.mu.Unlock()
 }
 
-// broadcastConfigError tells subscribers that a data-entry.yaml reload was
-// rejected and the previous config is still serving. The frame carries the
-// file name and the error's public message, never a host path.
-func (b *eventBroker) broadcastConfigError(ce *configError) {
-	data, _ := json.Marshal(map[string]string{"file": ConfigFile, "error": ce.public})
+// broadcastConfigError tells subscribers that a reload of file
+// (data-entry.yaml or realtime.yaml) was rejected and the previous config is
+// still serving. The frame carries the file name and the error's public
+// message, never a host path.
+func (b *eventBroker) broadcastConfigError(file string, ce *configError) {
+	data, _ := json.Marshal(map[string]string{"file": file, "error": ce.public})
 	b.broadcastEvent(sseEvent{Name: "config-error", Data: string(data)})
 }
 
@@ -116,7 +117,8 @@ func (b *eventBroker) broadcastGitStatus() {
 // independent things:
 //
 //  1. Subscribes to `data-entry.yaml` via the config loader so SPA
-//     reloads pick up dashboard / palette / form config changes.
+//     reloads pick up dashboard / palette / form config changes, and to
+//     `realtime.yaml` when [SetRealtime] wired a holder.
 //  2. Asks the store to start watching its own entity/relation files
 //     (feature-detected via [storeWatcher] — fsstore implements it;
 //     in-memory backends don't). The store's observer chain handles
@@ -149,6 +151,9 @@ func (a *App) StartWatching() error {
 			return err
 		}
 		a.stopConfigWatch = stop
+		if err := watchRealtime(a, sub); err != nil {
+			return err
+		}
 	}
 
 	// (2) Store-level watcher (fsstore). Errors are logged, not
@@ -316,7 +321,7 @@ func (a *App) reloadConfig() error {
 
 	reject := func(ce *configError) error {
 		slog.Warn("config reload rejected; keeping previous config", "error", ce.err)
-		a.broker.broadcastConfigError(ce)
+		a.broker.broadcastConfigError(ConfigFile, ce)
 		return ce
 	}
 

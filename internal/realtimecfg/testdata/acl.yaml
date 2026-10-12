@@ -1,0 +1,14 @@
+user_entity_type: risico
+roles:
+  officer:
+    read: ["*"]
+    permissions: [privacy.officer, incident.decide, records.delete]
+  auditor:
+    read: ["*"]
+    visible:
+      risico: [{field: title}]
+client_baselines:
+  apps:
+    applies_to: [app]
+    redact:
+      datalek: [notes]

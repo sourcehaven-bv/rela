@@ -163,7 +163,7 @@ documents:
 // suppress A7 for every project that has no data-entry.yaml.
 func TestPermissionConsumerFor_MissingFileIsNotNil(t *testing.T) {
 	t.Parallel()
-	perms, err := permissionConsumerFor(emptyLoader(t), nil)
+	perms, err := permissionConsumerFor(emptyLoader(t), nil, nil)
 	if err != nil {
 		t.Fatalf("missing data-entry.yaml must not error: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestPermissionConsumerFor_MissingFileIsNotNil(t *testing.T) {
 // at this call site rather than inside aclaudit.
 func TestPermissionConsumerFor_UnreadableConfigYieldsUntypedNil(t *testing.T) {
 	t.Parallel()
-	perms, err := permissionConsumerFor(loaderWith(t, "navigation: [unclosed\n"), nil)
+	perms, err := permissionConsumerFor(loaderWith(t, "navigation: [unclosed\n"), nil, nil)
 	if err == nil {
 		t.Fatal("malformed data-entry.yaml must error so the caller can suppress A7")
 	}
@@ -272,5 +272,64 @@ func TestDataEntryPermissions_NilMetamodelKeepsDataEntryPermissions(t *testing.T
 	perms := (&dataEntryPermissions{cfg: cfg, meta: nil}).UsedPermissions()
 	if !slices.Contains(perms, "run-report") {
 		t.Errorf("a nil metamodel must not suppress the data-entry surfaces; got %q", perms)
+	}
+}
+
+// realtimeLoader serves a data-entry.yaml with one gated document and the
+// given realtime.yaml.
+func realtimeLoader(t *testing.T, realtime string) config.Loader {
+	t.Helper()
+	const root = "/project"
+	fs := storage.NewMemFS()
+	if err := fs.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", root, err)
+	}
+	for name, body := range map[string]string{
+		dataentryconfig.ConfigFile: "documents:\n  report:\n    script: r.lua\n    permission: report:read\n",
+		"realtime.yaml":            realtime,
+	} {
+		if err := fs.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	return config.NewFSLoader(fs, root)
+}
+
+// A permission used only by a realtime.yaml role or gate is in use: the
+// composite consumer reports it alongside the data-entry ones, so the
+// dead-permission check does not advise deleting it.
+func TestPermissionConsumerFor_IncludesRealtime(t *testing.T) {
+	t.Parallel()
+	meta, err := metamodel.Parse([]byte("version: \"1.0\"\nentities:\n  ticket:\n    label: Ticket\n" +
+		"    id_prefix: TKT\n    properties:\n      title: {type: string}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	perms, err := permissionConsumerFor(realtimeLoader(t, `version: 1
+channel_types:
+  room:
+    attach_to: [ticket]
+    roles:
+      lead: { permission: ticket.lead }
+    message_types:
+      note:
+        post: [lead]
+    lifecycle:
+      delete: { permission: records.delete }
+`), meta, nil)
+	if err != nil {
+		t.Fatalf("permissionConsumerFor: %v", err)
+	}
+	got := perms.UsedPermissions()
+	slices.Sort(got)
+	if want := []string{"records.delete", "report:read", "ticket.lead"}; !slices.Equal(got, want) {
+		t.Errorf("UsedPermissions() = %q, want %q", got, want)
+	}
+
+	// An invalid realtime.yaml is "could not look": the untyped nil skips A7.
+	perms, err = permissionConsumerFor(realtimeLoader(t, "version: 1\nchannel_types: {room: {attach_to: [nope]}}\n"),
+		meta, nil)
+	if err == nil || perms != nil {
+		t.Fatalf("invalid realtime.yaml: (%#v, %v); want an untyped nil and an error", perms, err)
 	}
 }

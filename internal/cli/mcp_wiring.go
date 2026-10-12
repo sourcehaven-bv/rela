@@ -125,7 +125,11 @@ func (s *mcpServices) reload() (relamcp.Deps, error) {
 	old := s.svc
 	s.mu.Unlock()
 
-	base, err := appbuild.NewSharedBase(old.Base().Config(), appbuild.WithACL(acl.NopACL{}))
+	// A realtime.yaml the new schema breaks does not block the reload: the
+	// successor keeps the old realtime config with triggers and auto rules
+	// off, and appbuild logs why (fail closed).
+	base, err := appbuild.NewSharedBase(old.Base().Config(), appbuild.WithACL(acl.NopACL{}),
+		appbuild.WithRealtimeFallback(old))
 	if err != nil {
 		return relamcp.Deps{}, fmt.Errorf("reload schema: %w", err)
 	}

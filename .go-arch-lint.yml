@@ -119,6 +119,10 @@ components:
   templating:       { in: internal/templating }
   predicate:        { in: internal/predicate }
   predicatefns:     { in: internal/predicatefns }
+  # realtime.yaml loader (TKT-EYCIKU) and the built-in realtime caps it and
+  # the channel service share.
+  realtimecfg:      { in: internal/realtimecfg }
+  realtimelimits:   { in: internal/realtimelimits }
   # The pure three-way merge behind Lua rela.sync.merge (TKT-SM20FG): no
   # I/O, reads the metamodel only to type the synced fields.
   syncmerge:        { in: internal/syncmerge }
@@ -742,6 +746,8 @@ deps:
   appbuild:
     mayDependOn:
       - rootfs
+      # Loads realtime.yaml at boot and holds the compiled config.
+      - realtimecfg
       # hostconfig.Dir: the default source of secrets and AI/mail settings.
       - hostconfig
       # The sqlite recipe OPENS the database and hands the same handle to both
@@ -1304,6 +1310,15 @@ deps:
       - predicate
       - filter
       - metamodel
+  # realtime.yaml consumes the schema and acl.yaml; neither knows it exists.
+  # GUARD: metamodel and acl must never list realtimecfg.
+  realtimecfg:
+    mayDependOn:
+      - acl
+      - metamodel
+      - predicate
+      - predicatefns
+      - realtimelimits
   syncmerge:
     mayDependOn:
       - metamodel
@@ -1349,6 +1364,8 @@ deps:
       - validationgraph
 
   # Core domain
+  # GUARD: never realtimecfg. realtime.yaml refers to the schema, never the
+  # reverse (TKT-EYCIKU).
   metamodel:
     mayDependOn:
       - migration

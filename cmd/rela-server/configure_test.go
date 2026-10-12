@@ -506,3 +506,47 @@ func TestConfigure_PrepareRefusesSyncWithoutHistory(t *testing.T) {
 	require.Contains(t, verr.Problems[0], "version history")
 	require.Same(t, first, srv.cur.Load())
 }
+
+// cfgRealtime reads task.state, so a schema that drops the status enum or the
+// property breaks it.
+const cfgRealtime = `version: 1
+channel_types:
+  room:
+    attach_to: [task]
+    roles:
+      member: { from: attached }
+    message_types:
+      note:
+        properties: { state: { type: status } }
+        post: [member]
+`
+
+// TestConfigure_RealtimeAgainstCandidateSchema pins that the Configure save
+// validates realtime.yaml against the candidate schema: a schema that breaks
+// it is refused at preview and save with a problem naming realtime.yaml, and
+// the rebuild refuses it too, so the old generation keeps serving.
+func TestConfigure_RealtimeAgainstCandidateSchema(t *testing.T) {
+	srv, dir := configServer(t)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "realtime.yaml"), []byte(cfgRealtime), 0o644))
+
+	broken := strings.Replace(cfgSchema, "types:\n  status:\n    values: [open, doing, done]\n", "", 1)
+	broken = strings.Replace(broken, "      state:\n        type: status\n", "", 1)
+	require.NotEqual(t, cfgSchema, broken)
+
+	_, err := configureHost{s: srv}.Validate([]byte(broken), []byte(cfgDataEntry))
+	var verr *configedit.ValidationError
+	require.ErrorAs(t, err, &verr)
+	require.Len(t, verr.Problems, 1)
+	require.Contains(t, verr.Problems[0], "realtime.yaml: channel_types.room.message_types.note.properties.state.type")
+
+	_, err = configureHost{s: srv}.Validate([]byte(cfgSchema), []byte(cfgDataEntry))
+	require.NoError(t, err)
+
+	first := srv.cur.Load()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "schema.yaml"), []byte(broken), 0o644))
+	cand, err := configureHost{s: srv}.Prepare(context.Background())
+	require.Nil(t, cand)
+	require.ErrorAs(t, err, &verr)
+	require.Contains(t, verr.Problems[0], "realtime.yaml")
+	require.Same(t, first, srv.cur.Load())
+}

@@ -52,6 +52,14 @@ override:
   - path: ^internal/htmlmd$
     threshold: 80
 
+  # realtime.yaml loader (TKT-EYCIKU): its load-time checks are what keep a
+  # trigger or role from disclosing a hidden field, so pinned above the
+  # default floor (~95% today). The caps package is tiny and fully covered.
+  - path: ^internal/realtimecfg$
+    threshold: 90
+  - path: ^internal/realtimelimits$
+    threshold: 95
+
   # Data classification overlay (TKT-8UCV32): a parser and a file rewriter
   # whose mistakes silently mislabel data, so pinned above the default floor.
   - path: ^internal/classification$

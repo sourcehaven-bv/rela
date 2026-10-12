@@ -1,0 +1,63 @@
+version: 1
+limits:
+  post_rate: 20/m
+  page_limit: 100
+channel_types:
+  incident-room:
+    label: Incident room
+    attach_to: [datalek, incident]
+    cardinality: one
+    read: { from: attached, label: Anyone who can read the breach }
+    roles:
+      lead:   { from: entity.owner, label: the incident lead }
+      dpo:    { permission: privacy.officer, label: the privacy officer }
+      member: { from: attached }
+      agent:  { principal_type: agent }
+    message_types:
+      text:
+        label: Message
+        properties: { body: { type: markdown, required: true, max: 8000 } }
+        post: [lead, dpo, member, agent]
+      status-update:
+        persist: log
+        properties:
+          severity: { type: severity }
+          summary:  { type: string, required: true }
+          affects:  { type: ref, to: [maatregel, risico] }
+        when: "message.severity ~= ''"
+        post: [lead]
+        promote_to: { type: timeline-entry, map: { title: summary }, relate: { type: about } }
+        actions:
+          accept: { label: Accept, permission: incident.decide,
+                    denied: Only the lead can decide, promote_to: { type: decision } }
+      typing: { persist: ephemeral, ttl: 5s, rate: 1/s, post: [lead, dpo, member, agent] }
+    lifecycle:
+      close:   { roles: [lead], condition: "entity.status == 'closed'", denied: "Close the breach first",
+                 auto: { when: "entity.status == 'closed'" } }
+      reopen:  { roles: [lead, dpo] }
+      archive: { roles: [lead], from: closed, auto: { after: 30d } }
+      delete:  { permission: records.delete, from: archived, retention: 7y }
+    message_ops:
+      edit_own:   { roles: [lead, dpo, member, agent], within: 15m }
+      delete_own: { roles: [lead, dpo, member], from: open }
+      remove:     { roles: [lead], reason_required: true }
+    on_entity_delete: block
+  page-threads:
+    attach_to: [page]
+    anchor: face
+    cardinality: many
+    create: { label: New thread, roles: [editor] }
+    roles:
+      editor:  { permission: privacy.officer }
+      starter: { creator: true }
+    message_types:
+      text:
+        properties: { body: { type: string, required: true } }
+        post: [editor, starter]
+triggers:
+  breach-escalated:
+    entity_type: datalek
+    on: enter
+    when: "entity.severity == 'high' and days_between(entity.due, today()) < 3"
+    channel: incident-room
+    post: { type: status-update, props: { summary: "Severity raised to high", severity: high } }
