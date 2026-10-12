@@ -71,6 +71,35 @@ describe('buildSectionEditFields', () => {
     }
   })
 
+  it('builds a relation field with its targets (TKT-CADCFX)', () => {
+    const fields: ViewSectionField[] = [
+      {
+        relation: 'heeft_status',
+        label: 'Status',
+        render: 'input',
+        targets: [{ id: 'ST-1', title: 'Backlog' }],
+      },
+    ]
+    const out = buildSectionEditFields(fields, makeEntity(), schemaResolver)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({
+      kind: 'relation',
+      property: 'relation:heeft_status',
+      relation: 'heeft_status',
+      targets: [{ id: 'ST-1', title: 'Backlog' }],
+      verdict: { writable: true },
+    })
+    expect(sectionShouldRouteToInlineEdit(fields, makeEntity(), schemaResolver)).toBe(true)
+  })
+
+  it('makes a relation field read-only when the relation verdict denies it', () => {
+    const fields: ViewSectionField[] = [{ relation: 'heeft_status', label: 'Status', render: 'input' }]
+    const entry = makeEntity({ _relations: { heeft_status: { removable: false } } })
+    const out = buildSectionEditFields(fields, entry, schemaResolver)
+    expect(out[0].verdict?.writable).toBe(false)
+    expect(sectionShouldRouteToInlineEdit(fields, entry, schemaResolver)).toBe(false)
+  })
+
   it('attaches per-field verdict from entry._fields', () => {
     const entry = makeEntity({ _fields: { status: { writable: false } } })
     const out = buildSectionEditFields(makeFields(), entry, schemaResolver)

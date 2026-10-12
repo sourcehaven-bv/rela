@@ -14,11 +14,12 @@ import (
 // SPA hands the section heading. A token rather than a CSS value, for the
 // reason ValidCalendarColors gives.
 var ValidGroupColors = map[string]bool{
-	"green": true,
-	"amber": true,
-	"red":   true,
-	"grey":  true,
-	"blue":  true,
+	"green":  true,
+	"amber":  true,
+	"red":    true,
+	"grey":   true,
+	"blue":   true,
+	"purple": true,
 }
 
 // DateBucketKeys are the bucket keys `labels:` may override, in the order the
@@ -81,8 +82,22 @@ func validateListGroupBy(
 		}
 	}
 
+	if g.Relation != "" {
+		if g.Property != "" {
+			errs = append(errs, prefix+": property and relation are mutually exclusive")
+		}
+		if len(g.Groups) > 0 || g.Buckets != "" {
+			errs = append(errs, prefix+": groups and buckets do not apply to a relation")
+		}
+		return append(errs, validateRelationColumns(prefix, entityType, relationColumnsSource{
+			Relation: g.Relation, OfferedBy: g.OfferedBy, OrderBy: g.OrderBy, StyleFrom: g.StyleFrom,
+		}, meta)...)
+	}
+	if g.OfferedBy != "" || g.OrderBy != "" || g.StyleFrom != "" {
+		errs = append(errs, prefix+": offered_by, order_by and style_from need relation")
+	}
 	if g.Property == "" {
-		return append(errs, prefix+": property is required")
+		return append(errs, prefix+": property or relation is required")
 	}
 	propDef, ok := entDef.Properties[g.Property]
 	if !ok {

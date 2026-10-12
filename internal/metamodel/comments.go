@@ -40,8 +40,8 @@ const CommentWildcard = "*"
 // CommentPolicy is the resolved view over a metamodel's comment configuration.
 //
 // Constructed with [NewCommentPolicy] rather than living as methods on
-// [Metamodel]: that type carries a plimsoll directive capping its exported
-// surface, and a policy view is the established way to add accessors without
+// [Metamodel]: that type is kept under the plimsoll exported-method line, and
+// a policy view is the established way to add accessors without
 // growing it (the [AttachmentPolicy] precedent).
 type CommentPolicy struct {
 	meta *Metamodel

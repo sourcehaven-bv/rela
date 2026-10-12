@@ -96,10 +96,9 @@ type worldNeighbors struct {
 // package functions (resolveWorld, attachWorld, worldCapablePath, and this),
 // which is the discipline recorded on the App type doc.
 //
-// Not calling this is a valid state: relations then behave as they did before
-// TKT-WRLDAPI item 4 — present under the default world, absent under any
-// other. That is safe but incomplete, which is why the composition root wires
-// it whenever it calls [NewApp].
+// The composition root must call this whenever it calls [NewApp]. Without it
+// every per-entity edge read fails closed ([servedFaceEdges]), so entity
+// responses error rather than serve ungated neighbors.
 //
 // classes classifies a relation type as content- or identity-scoped; it is
 // supplied by the wiring site because the dispatch it feeds
@@ -760,9 +759,9 @@ func worldBoundRelations(ctx context.Context) bool {
 // a validator that a later If-None-Match matches against a body that does have
 // edges. The caller folds a sentinel instead. See the call site.
 func etagEdges(
-	ctx context.Context, reader entityReader, wn *worldNeighbors, e *entityPkg.Entity,
+	ctx context.Context, wn *worldNeighbors, e *entityPkg.Entity,
 ) ([]*entityPkg.Relation, error) {
-	edges, _, err := servedFaceEdges(ctx, reader, wn, e)
+	edges, _, err := servedFaceEdges(ctx, wn, e)
 	return edges, err
 }
 
@@ -804,30 +803,27 @@ func etagEdges(
 // identity-vs-content dispatch rather than growing a second, subtly
 // different copy on the default path.
 //
-// # The one surviving fallback
+// # No unwired fallback
 //
-// wn is nil only in a deployment that never called [SetWorldNeighbors]. Such
-// a build has no content states wired at all, so a bare-id query cannot
-// merge faces and the pre-worlds reader remains exactly right. That is a
-// wiring-shaped fallback, not a per-request one.
+// wn is nil only when the composition root never called
+// [SetWorldNeighbors]. That is a wiring error, and it fails closed: a raw
+// bare-id read here would return edges with no neighbor gate, and every
+// caller serializes the result, so the response would name neighbors the
+// caller cannot read (BUG-J01V0Q).
 //
-// Returns the edges plus the gated neighbor-id set (nil on the unwired
-// path, where the caller's pre-existing gating applies unchanged).
+// Returns the edges plus the gated neighbor-id set.
 func servedFaceEdges(
-	ctx context.Context, reader entityReader, wn *worldNeighbors, e *entityPkg.Entity,
+	ctx context.Context, wn *worldNeighbors, e *entityPkg.Entity,
 ) (outgoing []*entityPkg.Relation, visible map[string]bool, err error) {
 	if wn == nil {
-		if !worldScopeFrom(ctx).IsTrivial() {
-			// A world-bound request on a build with no neighbor wiring: the
-			// bare-id read would return the UNION of every face's edges
-			// beside a world-resolved entry — the mixed-face response this
-			// whole file exists to prevent. Nothing is the honest answer.
-			return nil, nil, nil
-		}
-		return reader.outgoingRelations(ctx, e.ID), nil, nil
+		return nil, nil, errNeighborsUnwired
 	}
 	return worldOutgoingForEntity(ctx, wn, e)
 }
+
+// errNeighborsUnwired reports an App whose neighbor gate was never wired
+// ([SetWorldNeighbors]); see [servedFaceEdges].
+var errNeighborsUnwired = errors.New("dataentry: neighbor gate not wired (SetWorldNeighbors)")
 
 // servedFacePageEdges is [servedFaceEdges] for a whole list page: each row's
 // edges come from THAT ROW'S OWN FACE, in every world including the default
@@ -840,10 +836,10 @@ func servedFaceEdges(
 // The returned slices are index-aligned with entities: a row with no links
 // keeps a nil entry rather than shifting its neighbors onto another row.
 //
-// The nil-wn arm is the same wiring-shaped fallback [servedFaceEdges]
-// documents — a deployment with no content states, where a bare-id query
-// cannot merge faces. It gates the page's neighbor ids in ONE type-batched
-// pass (RR-HJV8CP + RR-FRK1) rather than per row: a neighbor id may appear in
+// The nil-wn arm serves an App whose neighbor wiring is missing. Unlike
+// [servedFaceEdges] it need not fail closed, because it gates the neighbors
+// itself: it reads by bare id and gates the page's neighbor ids in ONE
+// type-batched pass (RR-HJV8CP + RR-FRK1) rather than per row. A neighbor id may appear in
 // a row's relations map only if its entity is visible to the caller, so
 // `relations` and the visibility-filtered `included` map can never disagree.
 // Outgoing targets and incoming sources are gated together — an entity's

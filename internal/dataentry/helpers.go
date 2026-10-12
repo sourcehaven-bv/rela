@@ -286,7 +286,7 @@ func resolveWidget(prop metamodel.PropertyDef, meta *metamodel.Metamodel) string
 		return WidgetMultiSelect
 	}
 
-	return meta.ResolveWidgetFromType(prop.Type)
+	return metamodel.ResolveWidgetFromType(meta, prop.Type)
 }
 
 // coalesce returns the first non-empty string.

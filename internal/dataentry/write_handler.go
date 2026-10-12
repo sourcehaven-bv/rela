@@ -63,6 +63,11 @@ type entityMutator interface {
 	// type. The zero tail is the implicit-tail edge, so this also covers
 	// every identity-scoped and faceless removal.
 	DeleteRelation(ctx context.Context, key entityPkg.RelationKey) error
+	// ReplaceRelations creates and deletes edges in one transaction
+	// (TKT-65LVAK). See entitymanager.Manager.ReplaceRelations.
+	ReplaceRelations(
+		ctx context.Context, creates []entitymanager.RelationCreate, removes []entityPkg.RelationKey,
+	) ([]*entityPkg.Relation, error)
 
 	// PatchEntity is how the webhook pipeline writes: it names only the
 	// properties a hook actually sets, so a property the hook does not mention
@@ -501,10 +506,15 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// The created face's own edges, not every face's (BUG-ISJHML).
-	meta := h.schema().Meta
-	rels := edgesOwnedBy(meta, h.reader.outgoingRelations(r.Context(), created.ID), created.Face)
-	result := h.serializer.forWire(r.Context(), created, rels, meta, plural)
+	// The created face's own edges (BUG-ISJHML), through the neighbor gate
+	// the GET uses. A raw read would name a neighbor the caller cannot see,
+	// such as one an on-create automation linked.
+	rels, visibleNeighbors, rerr := h.faceEdges(r.Context(), created)
+	if rerr != nil {
+		writeGateError(w, r, rerr)
+		return
+	}
+	result := h.serializer.forWireScoped(r.Context(), created, rels, visibleNeighbors, h.schema().Meta, plural)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}
@@ -1363,7 +1373,7 @@ func (h *writeHandler) handleV1CreateRelation(
 		entityPkg.RelationOptions{Properties: req.Meta},
 	)
 	if err != nil {
-		if writeForbiddenIfACLDenied(w, err) {
+		if writeForbiddenIfACLDenied(w, err) || writeCardinalityIfExceeded(w, r, err) {
 			return
 		}
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "relation_failed", "Failed to create relation", err.Error())
@@ -1371,6 +1381,19 @@ func (h *writeHandler) handleV1CreateRelation(
 	}
 
 	w.WriteHeader(http.StatusCreated)
+}
+
+// writeCardinalityIfExceeded answers a create the relation's max_outgoing or
+// max_incoming refused (TKT-65LVAK) with 422 cardinality_exceeded, and
+// reports whether it did.
+func writeCardinalityIfExceeded(w http.ResponseWriter, r *http.Request, err error) bool {
+	var ce *entitymanager.CardinalityError
+	if !errors.As(err, &ce) {
+		return false
+	}
+	writeV1Error(w, r, http.StatusUnprocessableEntity, "cardinality_exceeded",
+		"Relation cardinality exceeded", ce.Error())
+	return true
 }
 
 func (h *writeHandler) handleV1UpdateRelation(

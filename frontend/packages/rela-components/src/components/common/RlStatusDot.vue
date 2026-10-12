@@ -27,4 +27,6 @@ withDefaults(defineProps<{ color?: StatusColor; size?: number }>(), {
 .rl-status-dot--red   { background: var(--rl-color-status-red); }
 .rl-status-dot--grey  { background: var(--rl-color-status-grey); }
 .rl-status-dot--blue  { background: var(--rl-color-status-blue); }
+/* The accent, as the app's purple badge uses. */
+.rl-status-dot--purple { background: var(--rl-color-accent); }
 </style>

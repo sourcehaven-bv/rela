@@ -45,6 +45,7 @@ type Bus struct {
 	head    uint64            // sequence number of the last counted change
 	typeSeq map[string]uint64 // entity type -> sequence number of its last change
 	relSeq  uint64            // sequence number of the last relation change
+	relType map[string]uint64 // relation type -> sequence number of its last change
 	subs    map[*Subscription]struct{}
 	started bool
 	closed  bool
@@ -63,6 +64,7 @@ func New() (*Bus, error) {
 	return &Bus{
 		seal:    s,
 		typeSeq: make(map[string]uint64),
+		relType: make(map[string]uint64),
 		subs:    make(map[*Subscription]struct{}),
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
@@ -142,6 +144,9 @@ func (b *Bus) publish(ev store.Event) {
 	case store.EventRelationCreated, store.EventRelationUpdated, store.EventRelationDeleted:
 		b.head++
 		b.relSeq = b.head
+		if ev.RelationType != "" {
+			b.relType[ev.RelationType] = b.head
+		}
 	default:
 		return
 	}
@@ -177,7 +182,11 @@ func (b *Bus) Subscribe(token string) *Subscription {
 type Batch struct {
 	Types    []string // entity types with a change, sorted
 	Relation bool     // a relation changed; it may alter what a principal can read
-	Seq      uint64   // the position this batch brings the subscription to
+	// RelationTypes are the relation types with a change, sorted. A consumer
+	// uses them to mark the types at both ends stale, since an edge is part
+	// of how both ends are shown.
+	RelationTypes []string
+	Seq           uint64 // the position this batch brings the subscription to
 }
 
 // Subscription follows a Bus from a position. Its methods are safe for
@@ -216,6 +225,12 @@ func (s *Subscription) Take() Batch {
 	}
 	slices.Sort(out.Types)
 	out.Relation = b.relSeq > s.cursor
+	for typ, seq := range b.relType {
+		if seq > s.cursor {
+			out.RelationTypes = append(out.RelationTypes, typ)
+		}
+	}
+	slices.Sort(out.RelationTypes)
 	s.cursor = b.head
 	out.Seq = s.cursor
 	return out

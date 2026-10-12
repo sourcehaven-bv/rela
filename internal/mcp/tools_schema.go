@@ -148,7 +148,7 @@ func (h schemaResourceHandler) overview(ctx context.Context) any {
 		count := countOrNil(h.store.CountEntities(ctx, store.EntityQuery{Type: name, Faces: store.InWorld(h.world)}))
 		entities = append(entities, entityTypeSummary{
 			Name:       name,
-			Label:      labelUnlessName(def.GetLabel(), name),
+			Label:      labelUnlessName(def.Label, name),
 			IDPrefixes: def.GetIDPrefixes(),
 			Count:      count,
 		})
@@ -164,7 +164,7 @@ func (h schemaResourceHandler) overview(ctx context.Context) any {
 		}
 		count := countOrNil(h.store.CountRelations(ctx, store.RelationQuery{Type: name}))
 		relations = append(relations, relationTypeSummary{
-			Name: name, From: def.GetFrom(), To: def.GetTo(), Count: count,
+			Name: name, From: def.From, To: def.To, Count: count,
 		})
 	}
 
@@ -182,7 +182,7 @@ func (h schemaResourceHandler) entityDetail(
 	count := countOrNil(h.store.CountEntities(ctx, store.EntityQuery{Type: name, Faces: store.InWorld(h.world)}))
 	detail := entityTypeDetail{
 		Name:            name,
-		Label:           labelUnlessName(def.GetLabel(), name),
+		Label:           labelUnlessName(def.Label, name),
 		Description:     def.Description,
 		IDType:          def.GetIDType(),
 		IDPrefixes:      def.GetIDPrefixes(),
@@ -198,11 +198,11 @@ func (h schemaResourceHandler) entityDetail(
 		if rel == nil {
 			continue
 		}
-		if slices.Contains(rel.GetFrom(), name) {
-			detail.Outgoing = append(detail.Outgoing, relationEnd{Relation: relName, Types: rel.GetTo()})
+		if slices.Contains(rel.From, name) {
+			detail.Outgoing = append(detail.Outgoing, relationEnd{Relation: relName, Types: rel.To})
 		}
-		if slices.Contains(rel.GetTo(), name) {
-			detail.Incoming = append(detail.Incoming, relationEnd{Relation: relName, Types: rel.GetFrom()})
+		if slices.Contains(rel.To, name) {
+			detail.Incoming = append(detail.Incoming, relationEnd{Relation: relName, Types: rel.From})
 		}
 	}
 
@@ -237,16 +237,16 @@ func (h schemaResourceHandler) relationDetail(
 	count := countOrNil(h.store.CountRelations(ctx, store.RelationQuery{Type: name}))
 	detail := relationTypeDetail{
 		Name:        name,
-		Label:       labelUnlessName(def.GetLabel(), name),
-		Description: def.GetDescription(),
-		From:        def.GetFrom(),
-		To:          def.GetTo(),
-		Symmetric:   def.IsSymmetric(),
+		Label:       labelUnlessName(def.Label, name),
+		Description: def.Description,
+		From:        def.From,
+		To:          def.To,
+		Symmetric:   def.Symmetric,
 		Owning:      def.Owning,
-		MinOutgoing: def.GetMinOutgoing(),
-		MaxOutgoing: def.GetMaxOutgoing(),
-		MinIncoming: def.GetMinIncoming(),
-		MaxIncoming: def.GetMaxIncoming(),
+		MinOutgoing: def.MinOutgoing,
+		MaxOutgoing: def.MaxOutgoing,
+		MinIncoming: def.MinIncoming,
+		MaxIncoming: def.MaxIncoming,
 		Count:       count,
 	}
 	if def.Inverse != nil {

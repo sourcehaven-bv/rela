@@ -415,7 +415,7 @@ func (imp *Importer) validateRelationData(rd *RelationData, known knownEntities)
 	}
 
 	// Validate relation against metamodel
-	return imp.meta.ValidateRelation(rd.Relation, fromType, toType)
+	return metamodel.NewValidator(imp.meta).ValidateRelation(rd.Relation, fromType, toType)
 }
 
 // requireFace enforces that an imported row names exactly the faces its type

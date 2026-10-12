@@ -14,8 +14,8 @@ import (
 // EntityDef.Faces and Metamodel.Worlds are maps, so YAML order is lost when
 // they unmarshal. The order is recorded beside them at load, from the same
 // yaml.Node pass that records PropertyOrder, and read through [FaceOrderOf]
-// and [WorldOrderOf]. Both are free functions rather than methods because
-// EntityDef and Metamodel are at their plimsoll exported-method lines.
+// and [WorldOrderOf]. Both are free functions rather than methods to keep
+// EntityDef and Metamodel under the plimsoll exported-method line.
 //
 // A metamodel built in Go, without YAML, records no order; the accessors
 // then fall back to sorted names. A LOADED metamodel must record one for
