@@ -1461,6 +1461,9 @@ func NewApp(
 		owner:       app.attachmentOwner,
 		uploads:     app.attachmentUploads,
 		provision:   newProvisionSeam(app),
+		faceEdges: func(ctx context.Context, e *entity.Entity) ([]*entity.Relation, map[string]bool, error) {
+			return servedFaceEdges(ctx, app.reader, app.worldNeighbors, e)
+		},
 	}
 
 	// writeHandler owns the entity/relation CRUD + clone + conflict-resolve
