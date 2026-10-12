@@ -16,7 +16,7 @@
 // project, and each builds its own Store over the same cache-directory
 // document. The mutex only excludes callers of one instance, so the Locker
 // must exclude every other process too: over an on-disk KV that is a
-// [FileLocker] on a lock file next to the document. Several MACHINES are out
+// filelock.Locker on a lock file next to the document. Several MACHINES are out
 // of scope; the postgres build uses pgpiles for that.
 //
 // # Node-local, not in the project database
@@ -55,18 +55,11 @@ type Store struct {
 
 // Locker excludes every other writer of the document for the span of one
 // read-modify-write: other processes over the same KV included. Lock blocks
-// until the lock is held or ctx ends, and returns the release func.
+// until the lock is held or ctx ends, and returns the release func. A KV no
+// other process can open takes filelock.ProcessPrivate.
 type Locker interface {
 	Lock(ctx context.Context) (unlock func(), err error)
 }
-
-// ProcessPrivate is the [Locker] for a KV no other process can open, such as
-// an in-memory one. It locks nothing beyond the Store's own mutex; choosing it
-// over an on-disk KV loses writes between processes.
-type ProcessPrivate struct{}
-
-// Lock returns at once: the Store's mutex already excludes this process.
-func (ProcessPrivate) Lock(context.Context) (func(), error) { return func() {}, nil }
 
 var _ piles.Store = (*Store)(nil)
 
@@ -101,7 +94,7 @@ func (it storedItem) ref() entity.Ref { return entity.Ref{ID: it.ID, Face: entit
 //
 // Nil: both rejected. A nil KV would defer the failure to the first pile
 // anyone creates, far from the wiring mistake that caused it; a nil locker
-// would hide the choice between [FileLocker] and [ProcessPrivate].
+// would hide the choice between filelock.Locker and filelock.ProcessPrivate.
 func New(kv state.KV, locker Locker) (*Store, error) {
 	if kv == nil {
 		return nil, errors.New("kvpiles: state KV must be non-nil")

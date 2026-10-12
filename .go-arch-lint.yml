@@ -18,6 +18,7 @@ exclude:
   - internal/userstate/userstatetest
   - internal/comments/commentstest
   - internal/piles/pilestest
+  - internal/lease/leasetest
   - internal/schedulerstate/schedulerstatetest
   - frontend
   - e2e
@@ -164,6 +165,10 @@ components:
   piles:            { in: internal/piles }
   kvpiles:          { in: internal/piles/kvpiles }
   pgpiles:          { in: internal/piles/pgpiles }
+  filelock:         { in: internal/filelock }
+  lease:            { in: internal/lease }
+  kvlease:          { in: internal/lease/kvlease }
+  pglease:          { in: internal/lease/pglease }
   schedulerstate:   { in: internal/schedulerstate }
   kvschedstate:     { in: internal/schedulerstate/kvstate }
   pgschedstate:     { in: internal/schedulerstate/pgschedstate }
@@ -767,6 +772,8 @@ deps:
       - piles
       - kvpiles
       - pgpiles
+      # The cross-process lock for kvpiles over the on-disk cache KV.
+      - filelock
       - datamigration
       # The migration-state backends, selected here for the same reason as the
       # comment backends: the recipe owns the handle each one needs, and the
@@ -1417,21 +1424,37 @@ deps:
       - entity
       - principal
   # The single-process backend: one JSON document in the node-local state KV.
+  # The cross-process lock is a filelock.Locker the wiring site supplies.
   kvpiles:
     mayDependOn:
       - entity
       - piles
       - state
-    canUse:
-      # x/sys for flock/LockFileEx: the lock file that keeps several
-      # processes over one cache directory from losing each other's writes.
-      - xsys
   # The postgres backend takes the store's pool as an injected handle, like
   # pgcomments, so it has no reason to know a store exists.
   pgpiles:
     mayDependOn:
       - entity
       - piles
+    canUse:
+      - pgx
+  # The cross-process lock file shared by the cache-directory KV backends
+  # (kvpiles, kvlease). x/sys for flock/LockFileEx.
+  filelock:
+    canUse:
+      - xsys
+  # Advisory entity leases (TKT-6QC5EL). The domain package is a leaf: value
+  # types, errors and the Store contract. The single-process backend keeps
+  # one document in the node-local state KV.
+  kvlease:
+    mayDependOn:
+      - lease
+      - state
+  # The postgres backend takes the store's pool as an injected handle, like
+  # pgpiles.
+  pglease:
+    mayDependOn:
+      - lease
     canUse:
       - pgx
   memcomments:

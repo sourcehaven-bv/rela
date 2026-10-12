@@ -8,6 +8,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/piles/kvpiles"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -85,7 +86,7 @@ func pileBackend(fs storage.FS, paths *project.Context, st store.Store) (piles.S
 
 // pilesLockFile is the lock file next to the piles document in the cache
 // directory. Every process that opens the project locks it (see
-// [kvpiles.FileLocker]).
+// [filelock.Locker]).
 const pilesLockFile = "piles.lock"
 
 // pilesLocker returns the cross-process lock for the cache-directory KV over
@@ -95,9 +96,9 @@ const pilesLockFile = "piles.lock"
 // scripts and the scheduler.
 func pilesLocker(fs storage.FS, cacheDir string) (kvpiles.Locker, error) {
 	if _, mem := fs.(*storage.MemFS); mem {
-		return kvpiles.ProcessPrivate{}, nil
+		return filelock.ProcessPrivate{}, nil
 	}
-	return kvpiles.NewFileLocker(filepath.Join(cacheDir, pilesLockFile))
+	return filelock.New(filepath.Join(cacheDir, pilesLockFile))
 }
 
 // pilePersonType is the ACL's person type when person mapping is configured
@@ -119,7 +120,7 @@ func pilePersonType(d *acl.Declarative) string {
 // so lasts for the process only. It is the fallback where the no-op KV would
 // otherwise accept every write and keep none, as newUserState does.
 func memoryPiles() piles.Store {
-	s, err := kvpiles.New(memoryKV(), kvpiles.ProcessPrivate{})
+	s, err := kvpiles.New(memoryKV(), filelock.ProcessPrivate{})
 	if err != nil { // coverage-ignore: unreachable: both arguments are non-nil
 		panic(err)
 	}

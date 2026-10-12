@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/piles/kvpiles"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -21,7 +22,7 @@ func newService(t *testing.T, opts piles.Options) *piles.Service {
 	t.Helper()
 	rfs, err := storage.NewRootedFS(storage.NewMemFS(), "/")
 	require.NoError(t, err)
-	st, err := kvpiles.New(state.NewFSKV(rfs), kvpiles.ProcessPrivate{})
+	st, err := kvpiles.New(state.NewFSKV(rfs), filelock.ProcessPrivate{})
 	require.NoError(t, err)
 	if opts.Clock == nil {
 		opts.Clock = func() time.Time { return time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC) }
@@ -344,7 +345,7 @@ func (c *clashingStore) CreatePile(
 func TestService_CreateRetriesIDClash(t *testing.T) {
 	rfs, err := storage.NewRootedFS(storage.NewMemFS(), "/")
 	require.NoError(t, err)
-	backend, err := kvpiles.New(state.NewFSKV(rfs), kvpiles.ProcessPrivate{})
+	backend, err := kvpiles.New(state.NewFSKV(rfs), filelock.ProcessPrivate{})
 	require.NoError(t, err)
 
 	st := &clashingStore{Store: backend, clashes: 2}

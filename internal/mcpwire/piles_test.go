@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/mcp"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
 	"github.com/Sourcehaven-BV/rela/internal/piles/kvpiles"
@@ -18,7 +19,7 @@ import (
 func TestPileFuncs_MapsService(t *testing.T) {
 	rfs, err := storage.NewRootedFS(storage.NewMemFS(), "/")
 	require.NoError(t, err)
-	backend, err := kvpiles.New(state.NewFSKV(rfs), kvpiles.ProcessPrivate{})
+	backend, err := kvpiles.New(state.NewFSKV(rfs), filelock.ProcessPrivate{})
 	require.NoError(t, err)
 	svc, err := piles.NewService(backend, piles.Options{})
 	require.NoError(t, err)

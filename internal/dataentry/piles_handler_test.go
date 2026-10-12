@@ -14,6 +14,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/piles"
@@ -35,7 +36,7 @@ func newPilesService(t *testing.T) *piles.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := kvpiles.New(state.NewFSKV(rfs), kvpiles.ProcessPrivate{})
+	st, err := kvpiles.New(state.NewFSKV(rfs), filelock.ProcessPrivate{})
 	if err != nil {
 		t.Fatal(err)
 	}

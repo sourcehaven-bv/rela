@@ -1,6 +1,6 @@
 //go:build windows
 
-package kvpiles
+package filelock
 
 import (
 	"errors"
@@ -8,6 +8,10 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+// oNoFollow is zero on windows: the os package has no O_NOFOLLOW open flag
+// there, so the symlink refusal is unix-only.
+const oNoFollow = 0
 
 // tryLock takes an exclusive, immediately-failing lock on the whole file and
 // reports whether it got it.

@@ -1,6 +1,6 @@
 //go:build !windows
 
-package kvpiles
+package filelock
 
 import (
 	"errors"
@@ -8,6 +8,9 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+// oNoFollow refuses to open the lock file through a symlink.
+const oNoFollow = unix.O_NOFOLLOW
 
 // tryLock takes an exclusive, non-blocking BSD lock and reports whether it
 // got it. flock rather than fcntl: a POSIX record lock is dropped when the
