@@ -200,6 +200,27 @@ func (a *App) startStoreEventBridge() {
 	a.live.start(a.feed)
 }
 
+// relationEndTypes is every entity type a relation of state's metamodel can
+// start or end at, each once. Unknown relation types yield nothing.
+func relationEndTypes(state *Schema, relation string) []string {
+	if state == nil || state.Meta == nil {
+		return nil
+	}
+	def, ok := state.Meta.Relations[relation]
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range append(append([]string{}, def.From...), def.To...) {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // StartGitFetch begins periodic git fetch in the background.
 // Returns a stop function to shut down the fetcher.
 //
@@ -629,7 +650,19 @@ func (st *sseStream) take(ctx context.Context) bool {
 	// Coalesce: re-derive the gate at most once per flush window (a bulk
 	// relation import otherwise walks member-of per edge per connection).
 	st.regate = st.regate || batch.Relation
-	for _, typ := range batch.Types {
+	// An edge is also part of how both ends are shown: a board column or
+	// list section taken from a relation, a detail panel's relation fields.
+	// Mark both ends' types stale so those views re-fetch; the read gate
+	// applies to them as to any entity type.
+	types := batch.Types
+	if len(batch.RelationTypes) > 0 {
+		state := st.app.State()
+		types = slices.Clone(types)
+		for _, rel := range batch.RelationTypes {
+			types = append(types, relationEndTypes(state, rel)...)
+		}
+	}
+	for _, typ := range types {
 		// While a re-gate is pending the current gate is known stale, so
 		// defer the visibility decision to the flush (which re-checks every
 		// pending type against the fresh gate). Otherwise filter at entry to

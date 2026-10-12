@@ -148,10 +148,13 @@ func TestBus_SubscribeAndTake(t *testing.T) {
 			if !slices.Equal(got.Types, tc.wantTypes) || got.Relation != tc.wantRel {
 				t.Fatalf("Take = %+v, want types %v relation %v", got, tc.wantTypes, tc.wantRel)
 			}
+			if wantRelTypes := relTypesFor(tc.wantRel); !slices.Equal(got.RelationTypes, wantRelTypes) {
+				t.Fatalf("Take.RelationTypes = %v, want %v", got.RelationTypes, wantRelTypes)
+			}
 			if got.Seq != 5 {
 				t.Fatalf("Take.Seq = %d, want head 5", got.Seq)
 			}
-			if again := s.Take(); len(again.Types) != 0 || again.Relation {
+			if again := s.Take(); len(again.Types) != 0 || again.Relation || len(again.RelationTypes) != 0 {
 				t.Fatalf("second Take = %+v, want empty", again)
 			}
 		})
@@ -298,4 +301,13 @@ func TestBus_ConcurrentSubscribe(t *testing.T) {
 		}
 		s.Close()
 	}
+}
+
+// relTypesFor is the relation types a Take reports when the one relation
+// event sent by TestBus_SubscribeAndTake is in range.
+func relTypesFor(rel bool) []string {
+	if rel {
+		return []string{"member-of"}
+	}
+	return nil
 }

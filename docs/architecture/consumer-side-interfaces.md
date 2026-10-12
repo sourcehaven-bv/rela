@@ -76,7 +76,7 @@ directly. Returning the wide type is a soft leak.
 ```go
 // Wrong: leaks the whole metamodel + store surface for two narrow uses.
 type Host interface {
-    Meta() *metamodel.Metamodel  // only used for meta.ValidateRelation(...)
+    Meta() *metamodel.Metamodel  // only used for relation validation
     Store() store.Store          // only used for store.GetEntity(ctx, ref)
 }
 

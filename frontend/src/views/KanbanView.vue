@@ -24,6 +24,7 @@ import EntityDetailPanel from '@/components/entity/EntityDetailPanel.vue'
 import { useDetailPanel } from '@/composables/useDetailPanel'
 import { useCreateModal } from '@/composables/useCreateModal'
 import { usePageTabScope } from '@/composables/usePageTabScope'
+import { useRelationColumns, OTHER_COLUMN } from '@/composables/useRelationColumns'
 import { useListReorder } from '@/composables/useListReorder'
 import { useKanbanCollapse } from '@/composables/useKanbanCollapse'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
@@ -48,7 +49,7 @@ import type { DenseRoutingHint } from '@/widgets/viewRouting'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlBoard from 'rela-components/components/board/RlBoard.vue'
 import RlSwimlaneBoard from 'rela-components/components/board/RlSwimlaneBoard.vue'
-import type { Section, Swimlane } from 'rela-components/types'
+import type { Section, StatusColor, Swimlane } from 'rela-components/types'
 import type { BoardDropPosition } from 'rela-components/composables/useBoardDnd'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
 
@@ -143,10 +144,21 @@ const { filters, writeToQuery } = useUrlFilterSync({
 // A `display: count` relation field needs no titles: it counts the ids the
 // `relations` map already carries.
 const hasRelationFields = computed(
-  () => kanbanConfig.value?.card.fields?.some((f) => !!f.relation && f.display !== 'count') ?? false
+  () =>
+    !!kanbanConfig.value?.columns_from ||
+    (kanbanConfig.value?.card.fields?.some((f) => !!f.relation && f.display !== 'count') ?? false)
 )
 const hasCommentCounts = computed(
   () => kanbanConfig.value?.card.fields?.some((f) => f.comments) ?? false
+)
+
+// A relation-backed board (`columns_from`) takes its columns from the
+// targets of a single-valued relation instead of an enum (TKT-KJ3Q07).
+const columnsFrom = computed(() => kanbanConfig.value?.columns_from)
+const relationColumns = useRelationColumns(
+  columnsFrom,
+  computed(() => props.pageScope),
+  computed(() => worldParam.value)
 )
 
 // A tab of an entity page narrows the board to the anchor's cards.
@@ -245,6 +257,20 @@ const entityType = computed(() => {
 
 const columns = computed(() => {
   if (!kanbanConfig.value) return []
+
+  // Relation-backed: the targets, then an Other column for cards whose
+  // target is not offered here, shown only when a card lands in it.
+  if (columnsFrom.value) {
+    const cols: KanbanColumn[] = relationColumns.columns.value.map((c) => ({
+      value: c.value,
+      label: c.label,
+    }))
+    const hasOther = entities.value.some(
+      (e) => relationColumns.columnOf(e) === OTHER_COLUMN
+    )
+    if (hasOther) cols.push({ value: OTHER_COLUMN, label: 'Other' })
+    return cols
+  }
 
   // Use defined columns or generate from unique values
   if (kanbanConfig.value.columns?.length) {
@@ -351,6 +377,7 @@ const boardLabel = computed(() => `${kanbanConfig.value?.title || 'Kanban'} boar
 // via Badge). `column.label` defaults to the value for auto-generated columns
 // (see the columns computed), so treat label===value as "no explicit label".
 function columnTitle(column: { value: string; label?: string }): string {
+  if (columnsFrom.value) return column.label ?? column.value
   if (column.label && column.label !== column.value) return column.label
   const property = kanbanConfig.value?.column_property
   const entityTypeName = kanbanConfig.value?.entity
@@ -370,7 +397,9 @@ const entitiesByColumn = computed(() => {
   }
 
   for (const entity of filteredEntities.value) {
-    const val = String(entity.properties[property] || '')
+    const val = columnsFrom.value
+      ? relationColumns.columnOf(entity)
+      : String(entity.properties[property] || '')
     if (grouped[val]) {
       grouped[val].push(entity)
     }
@@ -423,6 +452,13 @@ function iconFor(name?: string) {
   return hasIcon(name) ? resolveIcon(name) : undefined
 }
 
+// A relation-backed column's colour, from its target's `style_from` value.
+const relationColumnColors = computed(() => {
+  const colors = new Map<string, StatusColor>()
+  for (const c of relationColumns.columns.value) if (c.color) colors.set(c.value, c.color)
+  return colors
+})
+
 // Folded columns, remembered per board. Only declared columns carry a config
 // default; an inferred column starts open.
 const columnCollapse = useKanbanCollapse(
@@ -435,6 +471,7 @@ const boardSections = computed((): Section<BoardCard>[] =>
     id: column.value,
     title: columnTitle(column),
     icon: iconFor(column.icon),
+    color: columnsFrom.value ? relationColumnColors.value.get(column.value) : undefined,
     collapsed: columnCollapse.isCollapsed(column.value),
     items: (entitiesByColumn.value[column.value] ?? []).map(toCard),
   }))
@@ -481,25 +518,36 @@ function toggleLane(lane: Swimlane<BoardCard>) {
 interface MoveCardVars {
   entity: Entity
   updates: Record<string, string>
+  /** Relation-backed board: the card's single edge is re-pointed at `target`. */
+  relation?: { name: string; target: { type: string; id: string } }
 }
 
 const entitiesStore = useEntitiesStore()
 
 const { mutateAsync: moveCard } = useMutation({
-  mutation: ({ entity, updates }: MoveCardVars) => {
+  mutation: ({ entity, updates, relation }: MoveCardVars) => {
     const config = kanbanConfig.value
     if (!config) throw new Error(`unknown kanban view: ${props.id}`)
+    // A full linkage (`data`) replaces the edge set in one PATCH, so the card
+    // leaves its old column as it enters the new one.
+    if (relation) {
+      return entitiesStore.update(config.entity, entityRef(entity), {
+        relations: { [relation.name]: { data: [relation.target] } },
+      })
+    }
     // To the card's ADDRESS, face included — see utils/entityRef. Through the
     // entities store so the edit form, which reads its cache, sees the move
     // without waiting for the SSE invalidation.
     return entitiesStore.update(config.entity, entityRef(entity), { properties: updates })
   },
-  onMutate({ entity, updates }: MoveCardVars) {
+  onMutate({ entity, updates, relation }: MoveCardVars) {
     return beginOptimistic(
       queryCache,
       entityKeys.list(kanbanConfig.value?.entity ?? ''),
       entity.id,
-      (e) => ({ ...e, properties: { ...e.properties, ...updates } })
+      relation
+        ? (e) => ({ ...e, relations: { ...e.relations, [relation.name]: [relation.target.id] } })
+        : (e) => ({ ...e, properties: { ...e.properties, ...updates } })
     )
   },
   onError(err, _vars, context) {
@@ -695,6 +743,30 @@ async function onMove({
   const entity = item.entity
   if (!config) return
 
+  if (config.columns_from) {
+    const target = relationColumns.targetType.value
+    // Other is where unoffered cards wait; dropping into it would mean
+    // "some status this page does not offer", which names no target.
+    if (!target || to.id === OTHER_COLUMN) return
+    if (relationColumns.columnOf(entity) !== to.id) {
+      if (!canUpdate(entity)) {
+        uiStore.error('You may not move this card to another column')
+        return
+      }
+      try {
+        await moveCard({
+          entity,
+          updates: {},
+          relation: { name: config.columns_from.relation, target: { type: target, id: to.id } },
+        })
+      } catch {
+        return // reported by the mutation
+      }
+    }
+    if (at) await reorder.onReorder({ itemId: entity.id, ...at })
+    return
+  }
+
   const colProp = config.column_property
   const swimProp = config.swimlane_property
 
@@ -827,6 +899,31 @@ const createModal = useCreateModal(async (entity) => {
   refreshAfterCreate()
 })
 
+// A relation-backed board offers Add in each column. The new card starts with
+// an edge to the column's target, so it lands in the column it was added
+// from; on a page tab it is linked to the anchor as well (linkCreated above).
+// The Other column names no target, so its Add opens the plain form.
+const showColumnAdd = computed(
+  () => !!columnsFrom.value && !!kanbanConfig.value?.create_form && canCreate()
+)
+const createPrefill = ref<{
+  properties: Record<string, unknown>
+  relations?: Record<string, { id: string; type: string }[]>
+}>()
+function onColumnAdd(section: Section<BoardCard>) {
+  const relation = columnsFrom.value?.relation
+  const target = relationColumns.targetType.value
+  createPrefill.value =
+    relation && target && section.id !== OTHER_COLUMN
+      ? { properties: {}, relations: { [relation]: [{ id: section.id, type: target }] } }
+      : undefined
+  createModal.show()
+}
+// A column's prefill belongs to the one dialog it opened; New opens without.
+watch(createModal.open, (open) => {
+  if (!open) createPrefill.value = undefined
+})
+
 // No lifecycle plumbing: the query fetches on mount, re-keys when
 // props.id switches boards, and refetches in the background when
 // useEvents invalidates ['entities', <type>] on SSE entity events.
@@ -938,13 +1035,14 @@ const createModal = useCreateModal(async (entity) => {
       role="group"
       :aria-label="boardLabel"
       :sections="boardSections"
-      :show-add="false"
+      :show-add="showColumnAdd"
       :show-add-section="false"
       :can-move="boardCanMove"
       :reorder="reorder.reorderable.value"
       :selected-id="selectedEntityId ?? undefined"
       collapsible
       @move="onMove"
+      @add="onColumnAdd"
       @collapse-section="collapseColumn"
       @expand-section="expandColumn"
     >
@@ -984,7 +1082,8 @@ const createModal = useCreateModal(async (entity) => {
       :form-id="kanbanConfig.create_form"
       :entity-type="kanbanConfig.entity"
       :world="worldParam"
-      add-another
+      :prefill="createPrefill"
+      :add-another="!createPrefill"
       @close="createModal.close"
       @created="createModal.created"
       @created-another="createModal.createdAnother"

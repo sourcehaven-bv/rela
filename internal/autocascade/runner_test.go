@@ -124,7 +124,7 @@ func (h *stubHost) ValidateRelation(relType, fromType, toType string) error {
 	if h.meta == nil {
 		return nil // permissive by default; tests opt in by setting meta
 	}
-	return h.meta.ValidateRelation(relType, fromType, toType)
+	return metamodel.NewValidator(h.meta).ValidateRelation(relType, fromType, toType)
 }
 
 func (h *stubHost) FindExistingRelationTarget(
