@@ -1,6 +1,6 @@
 //go:build !postgres
 
-package main
+package dataentrywire
 
 import (
 	"context"
@@ -15,7 +15,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/attachment"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
@@ -70,7 +69,7 @@ func TestRemoteMCPDeps_UsesGatedHandles(t *testing.T) {
 	}
 	defer svc.Close()
 
-	deps, err := dataentrywire.RemoteMCPDeps(svc, testHost(t, svc))
+	deps, err := RemoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
 		t.Fatalf("RemoteMCPDeps: %v", err)
 	}
@@ -99,7 +98,7 @@ func assertNoLuaTools(t *testing.T, svc *appbuild.Services) {
 
 	host := testHost(t, svc)
 	host.AttachmentUploads = attachment.NewLimiter(attachment.DefaultMaxUploads)
-	srv, err := dataentrywire.RemoteMCPServer(svc, host, mcpServerVersion)
+	srv, err := RemoteMCPServer(svc, host, "test")
 	if err != nil {
 		t.Fatalf("RemoteMCPServer: %v", err)
 	}

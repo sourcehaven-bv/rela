@@ -1,6 +1,6 @@
 //go:build !postgres
 
-package main
+package dataentrywire
 
 import (
 	"context"
@@ -13,7 +13,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
-	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -201,7 +200,7 @@ func searchIDs(t *testing.T, svc *appbuild.Services, s search.Searcher) []string
 // hide a type the role may not read.
 func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := dataentrywire.RemoteMCPDeps(svc, testHost(t, svc))
+	deps, err := RemoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
 		t.Fatalf("RemoteMCPDeps: %v", err)
 	}
@@ -261,7 +260,7 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 // adopted face and then hide it, so the entity would vanish.
 func TestRemoteMCPDeps_FaceRestrictedReaderGetsTheFaceTheyMayRead(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := dataentrywire.RemoteMCPDeps(svc, testHost(t, svc))
+	deps, err := RemoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
 		t.Fatalf("RemoteMCPDeps: %v", err)
 	}
@@ -284,7 +283,7 @@ func TestRemoteMCPDeps_FaceRestrictedReaderGetsTheFaceTheyMayRead(t *testing.T) 
 
 func TestRemoteMCPDeps_RequiresTheHostWorldFunctions(t *testing.T) {
 	svc := newWorldServices(t)
-	if _, err := dataentrywire.RemoteMCPDeps(svc, dataentry.MCPHost{}); err == nil {
+	if _, err := RemoteMCPDeps(svc, dataentry.MCPHost{}); err == nil {
 		t.Error("RemoteMCPDeps accepted a host with no world functions; a world argument could not be authorized")
 	}
 }
@@ -293,7 +292,7 @@ func TestRemoteMCPDeps_RequiresTheHostWorldFunctions(t *testing.T) {
 // and a bare id read on the selected world's ctx resolves in that world.
 func TestRemoteMCPDeps_PassesTheHostWorldSelector(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := dataentrywire.RemoteMCPDeps(svc, testHost(t, svc))
+	deps, err := RemoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
 		t.Fatalf("RemoteMCPDeps: %v", err)
 	}
@@ -326,7 +325,7 @@ func TestRemoteMCPDeps_PassesTheHostWorldSelector(t *testing.T) {
 // (TKT-27XVYS).
 func TestRemoteMCPDeps_PassesTheLeases(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := dataentrywire.RemoteMCPDeps(svc, testHost(t, svc))
+	deps, err := RemoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +340,7 @@ func TestRemoteMCPDeps_PassesTheHostComments(t *testing.T) {
 	svc := newWorldServices(t)
 	host := testHost(t, svc)
 
-	deps, err := dataentrywire.RemoteMCPDeps(svc, host)
+	deps, err := RemoteMCPDeps(svc, host)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +349,7 @@ func TestRemoteMCPDeps_PassesTheHostComments(t *testing.T) {
 	}
 
 	host.Comments = &dataentry.MCPComments{}
-	deps, err = dataentrywire.RemoteMCPDeps(svc, host)
+	deps, err = RemoteMCPDeps(svc, host)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +364,7 @@ func TestRemoteMCPDeps_PassesTheHostActions(t *testing.T) {
 	svc := newWorldServices(t)
 	host := testHost(t, svc)
 
-	deps, err := dataentrywire.RemoteMCPDeps(svc, host)
+	deps, err := RemoteMCPDeps(svc, host)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +373,7 @@ func TestRemoteMCPDeps_PassesTheHostActions(t *testing.T) {
 	}
 
 	host.Actions = &dataentry.MCPActions{}
-	deps, err = dataentrywire.RemoteMCPDeps(svc, host)
+	deps, err = RemoteMCPDeps(svc, host)
 	if err != nil {
 		t.Fatal(err)
 	}
