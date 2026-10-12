@@ -21,7 +21,15 @@ func TestDetectFromNodeWithMetamodel_DoesNotLeakMetamodelAcrossRuns(t *testing.T
 		return DetectFromNodeWithMetamodel(&doc, FileTypeDataEntry, meta)
 	}
 
-	detect(&mockMetamodel{})
+	// With this metamodel the text widget on a string property is redundant, so
+	// the first run must detect it. A leaked metamodel would make the second run
+	// detect it too.
+	meta := &mockMetamodel{entities: map[string]mockEntityDef{
+		"ticket": {properties: map[string]mockPropertyDef{"title": {propType: "string"}}},
+	}}
+	if len(detect(meta)) == 0 {
+		t.Fatal("run with a metamodel detected nothing; the test cannot observe a leak")
+	}
 
 	for _, d := range detect(nil) {
 		if strings.Contains(d.Description, "using metamodel") {
