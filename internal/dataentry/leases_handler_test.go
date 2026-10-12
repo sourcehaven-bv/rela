@@ -78,13 +78,43 @@ func (g testLeaseGate) Readable(ctx context.Context, ids []string) (map[string]b
 }
 
 // shiftedClock is the wall clock moved by an offset, so a test can jump
-// to just before an expiry and let real time carry it past.
-type shiftedClock struct{ offset atomic.Int64 }
+// to just before an expiry and let real time carry it past. It can also be
+// frozen, so a test can hold it still while a watcher arms its timer.
+type shiftedClock struct {
+	offset atomic.Int64
+	frozen atomic.Pointer[time.Time] // nil: running
+}
 
-func (c *shiftedClock) Now() time.Time { return time.Now().Add(time.Duration(c.offset.Load())) }
+func (c *shiftedClock) Now() time.Time {
+	if t := c.frozen.Load(); t != nil {
+		return *t
+	}
+	return time.Now().Add(time.Duration(c.offset.Load()))
+}
 
-// shiftTo moves the clock so that it reads t now.
-func (c *shiftedClock) shiftTo(t time.Time) { c.offset.Store(int64(time.Until(t))) }
+// shiftTo moves the clock so that it reads t now, and lets it run.
+func (c *shiftedClock) shiftTo(t time.Time) {
+	c.offset.Store(int64(time.Until(t)))
+	c.frozen.Store(nil)
+}
+
+// freezeAt stops the clock at t.
+func (c *shiftedClock) freezeAt(t time.Time) { c.frozen.Store(&t) }
+
+// expiryHook runs a function once, after the next lease store NextExpiry
+// call returns, so a test can act at the moment a watcher arms its timer.
+type expiryHook struct {
+	lease.Store
+	then atomic.Pointer[func()]
+}
+
+func (e *expiryHook) NextExpiry(ctx context.Context, now time.Time) (time.Time, bool, error) {
+	next, ok, err := e.Store.NextExpiry(ctx, now)
+	if f := e.then.Swap(nil); f != nil {
+		(*f)()
+	}
+	return next, ok, err
+}
 
 // revocableAuth is the app's ACL with update access revocable per user, so
 // a test can take away access after a claim.
@@ -155,6 +185,7 @@ type leaseEnv struct {
 	leases *lease.Service
 	clock  *shiftedClock
 	auth   *revocableAuth
+	expiry *expiryHook
 }
 
 // leasePolicy: alice and bob read and update tickets; carol reads tickets;
@@ -175,7 +206,7 @@ func leasePolicy(t *testing.T, app *App) *acl.Declarative {
 // blocks TKT-2), applies leasePolicy and wires a lease service.
 func newLeaseEnv(t *testing.T) *leaseEnv {
 	t.Helper()
-	env := &leaseEnv{clock: &shiftedClock{}}
+	env := &leaseEnv{clock: &shiftedClock{}, expiry: &expiryHook{}}
 	env.liveEnv = newLiveEnv(t, func(app *App) {
 		seedEntity(app, ticket1("one"))
 		seedEntity(app, &entity.Entity{ID: "TKT-2", Type: "ticket", Properties: map[string]any{"title": "two"}})
@@ -185,7 +216,10 @@ func newLeaseEnv(t *testing.T) *leaseEnv {
 		d := leasePolicy(t, app)
 		app.acl = d
 		env.auth = &revocableAuth{ACL: d, revoked: map[string]bool{}}
-		env.leases = newLeaseService(t, app, d, env.auth, env.clock)
+		env.leases = newLeaseServiceOver(t, app, d, env.auth, env.clock, func(s lease.Store) lease.Store {
+			env.expiry.Store = s
+			return env.expiry
+		})
 		if err := SetLeases(app, env.leases); err != nil {
 			t.Fatal(err)
 		}
@@ -809,15 +843,21 @@ func TestLive_LeaseChangesFrameOnce(t *testing.T) {
 	}
 	once("release")
 
-	cl = env.claim(t, "alice", "/api/v1/tickets/TKT-1", `{"ttl_seconds":30}`)
+	env.claim(t, "alice", "/api/v1/tickets/TKT-1", `{"ttl_seconds":30}`)
 	once("second claim")
-	exp, err := time.Parse(time.RFC3339, cl.ExpiresAt)
-	if err != nil {
-		t.Fatal(err)
+	// The exact expiry comes from the store: expires_at on the wire is
+	// whole seconds, up to a second earlier.
+	exp, ok, err := env.expiry.Store.NextExpiry(context.Background(), env.clock.Now())
+	if err != nil || !ok {
+		t.Fatalf("next expiry = %v, %v, %v", exp, ok, err)
 	}
-	// Just before the expiry, then the watcher: its timer fires as real time
-	// carries the clock past the expiry.
-	env.clock.shiftTo(exp.Add(-150 * time.Millisecond))
+	// The watcher arms its timer only for a lease live when it starts, so
+	// the clock holds just before the expiry until the watcher has read the
+	// next expiry, and then moves past it. The timer fires 50ms later and
+	// finds the lease lapsed, however late the watcher got to run.
+	env.clock.freezeAt(exp.Add(-50 * time.Millisecond))
+	pastExpiry := func() { env.clock.shiftTo(exp.Add(time.Millisecond)) }
+	env.expiry.then.Store(&pastExpiry)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -852,9 +892,7 @@ func TestLive_LeaseOnHiddenEntitySendsNoFrame(t *testing.T) {
 
 	// The stream is still live: a visible claim frames.
 	env.claim(t, "bob", "/api/v1/tickets/TKT-1", "")
-	if got := changedKeys(t, c, 2); got[0] != "detail" || got[1] != "list" {
-		t.Fatalf("changed keys = %v, want [detail list]", got)
-	}
+	requireChanged(t, c, "detail", "list")
 }
 
 // syncBuffer is a bytes.Buffer safe for a logger in server goroutines and a
