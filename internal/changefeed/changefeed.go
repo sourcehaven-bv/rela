@@ -186,7 +186,7 @@ type Batch struct {
 	// uses them to mark the types at both ends stale, since an edge is part
 	// of how both ends are shown.
 	RelationTypes []string
-	Seq      uint64   // the position this batch brings the subscription to
+	Seq           uint64 // the position this batch brings the subscription to
 }
 
 // Subscription follows a Bus from a position. Its methods are safe for
