@@ -81,8 +81,8 @@ func TestHideEmpty_KeepsCreateOnLaterSection(t *testing.T) {
 // partly filled is not known to be empty, so it stays.
 func TestOmitHiddenEmpty_KeepsIncomplete(t *testing.T) {
 	got := omitHiddenEmpty([]SectionData{
-		{Heading: "a", HideEmpty: true, IsEmpty: true, Incomplete: true},
-		{Heading: "b", HideEmpty: true, IsEmpty: true},
+		{Heading: "a", hideEmpty: true, IsEmpty: true, Incomplete: true},
+		{Heading: "b", hideEmpty: true, IsEmpty: true},
 	})
 	if len(got) != 1 || got[0].Heading != "a" {
 		t.Fatalf("got %+v, want only the incomplete section", got)

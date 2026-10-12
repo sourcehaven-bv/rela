@@ -30,6 +30,9 @@ Refused at config load:
 
 A section whose collection is incomplete (`mentioned_by` limit) stays.
 
+The setting travels on `SectionData` as an unexported field, so the struct
+stays within the god-object lint's limit of 20 exported fields.
+
 ## Acceptance criteria
 
 - [x] An empty section with `hide_empty: true` is absent from the `_views` response.
