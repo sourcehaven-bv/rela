@@ -392,8 +392,7 @@ forms:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := &DataEntryCleanupMigration{}
-			m.SetMetamodel(meta)
+			m := &DataEntryCleanupMigration{meta: meta}
 
 			var doc yaml.Node
 			if err := yaml.Unmarshal([]byte(tt.yaml), &doc); err != nil {
@@ -644,8 +643,7 @@ forms:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := &DataEntryCleanupMigration{}
-			m.SetMetamodel(meta)
+			m := &DataEntryCleanupMigration{meta: meta}
 
 			var doc yaml.Node
 			if err := yaml.Unmarshal([]byte(tt.input), &doc); err != nil {
@@ -786,10 +784,9 @@ func TestRelationLabelStrippedOnlyWhenMetamodelSupplied(t *testing.T) {
 		if err := yaml.Unmarshal(fmt.Appendf(nil, relYAML, "Blocked By"), &doc); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		m := &DataEntryCleanupMigration{}
-		m.SetMetamodel(&mockMetamodel{
+		m := &DataEntryCleanupMigration{meta: &mockMetamodel{
 			relations: map[string]mockRelationDef{"blocked_by": {label: "Blocked By"}},
-		})
+		}}
 
 		if !m.Detect(&doc) {
 			t.Fatal("Detect() = false; a label duplicating the metamodel label is redundant")
@@ -811,8 +808,7 @@ func TestRelationLabelStrippedOnlyWhenMetamodelSupplied(t *testing.T) {
 		// No metamodel label for this relation, so the only thing "Blocked By"
 		// could match is titleCase("blocked_by") — which is no longer a reason
 		// to strip it.
-		m := &DataEntryCleanupMigration{}
-		m.SetMetamodel(&mockMetamodel{})
+		m := &DataEntryCleanupMigration{meta: &mockMetamodel{}}
 
 		if err := m.Apply(&doc); err != nil {
 			t.Fatalf("Apply: %v", err)
@@ -884,8 +880,7 @@ forms:
         widget: cards
 `
 
-	m := &DataEntryCleanupMigration{}
-	m.SetMetamodel(meta)
+	m := &DataEntryCleanupMigration{meta: meta}
 
 	var doc yaml.Node
 	if err := yaml.Unmarshal([]byte(input), &doc); err != nil {
