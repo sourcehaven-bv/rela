@@ -2,7 +2,7 @@
 id: TKT-1TZ6ZO
 type: ticket
 title: Check whether list ?q= matches on visible:-redacted field values
-kind: bug
+kind: chore
 priority: high
 effort: s
 status: backlog

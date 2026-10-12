@@ -6,7 +6,7 @@ kind: enhancement
 priority: medium
 effort: l
 started: "2026-10-12"
-status: in-progress
+status: ready
 description: 'internal/channels Store with a conformance suite and file, sqlite and postgres backends: gapless per-channel seq, append-only messages with patch records, re-key on rename and delete policy fan-out. No graph store import.'
 ---
 
