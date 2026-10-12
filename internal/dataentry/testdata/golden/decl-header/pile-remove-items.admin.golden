@@ -1,0 +1,14 @@
+request: POST /api/v1/_piles/PIL-GOLDC/items/_remove
+identity: header admin@example.test
+status: 404
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/pile_not_found",
+  "title": "Pile not found",
+  "status": 404,
+  "instance": "/api/v1/_piles/PIL-GOLDC/items/_remove"
+}

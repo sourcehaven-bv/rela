@@ -173,7 +173,7 @@ func TestStandaloneDocument_UngatedByDefault(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// bob holds no roles and no permissions at all.
 	rec := httptest.NewRecorder()
@@ -210,7 +210,7 @@ func TestStandaloneDocument_PermissionGate(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "directie", "bob": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Denied: bob's role grants no report:sales.
 	rec := httptest.NewRecorder()
@@ -276,7 +276,7 @@ func TestAnchoredDocument_PermissionGate(t *testing.T) {
 			"alice": "lead", "bob": "viewer", "carol": "auditor",
 		},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	get := func(t *testing.T, ctx context.Context) *httptest.ResponseRecorder {
 		t.Helper()
@@ -350,7 +350,7 @@ func TestAnchoredDocument_GateOrderingNoTypeOracle(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"outsider": {}},
 		Assignments: map[string]string{"bob": "outsider"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Whether bob aims at a right-type or wrong-type id, the response must be
 	// the same 404 — no type information either way.
@@ -417,7 +417,7 @@ func TestSidebarAndConfig_PrincipalIndependent(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "directie", "bob": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	bodyFor := func(t *testing.T, ctx context.Context, path string,
 		h func(http.ResponseWriter, *http.Request),

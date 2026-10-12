@@ -49,7 +49,7 @@ func pushdownApp(t *testing.T) (*App, *acl.Declarative) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"*"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return app, d
 }
 
@@ -197,7 +197,7 @@ func TestListPushdown_ScopedTotalForGatedPrincipal(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"bob": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	resp, rec := listEntitiesAs(principalCtx("bob"), t, app, d, "ticket", "tickets", "filter%5Bstatus%5D=open&per_page=2")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)

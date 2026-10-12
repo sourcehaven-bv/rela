@@ -39,13 +39,13 @@ func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}
-	app.fieldResolver = &policyResolver{inner: resolver}
+	setTestResolver(t, app, &policyResolver{inner: resolver})
 	// Also install the policy as the app's ACL. buildAppWithACLAndAudit seeds
 	// NopACL, but a test that hands this helper a policy is modeling a
 	// CONFIGURED deployment, and code that switches on the ACL implementation
 	// (revealIsPrivileged, permitsGatedUIElement) would otherwise see "no
 	// policy" while the field resolver enforced one.
-	app.acl = declarative
+	setTestACL(t, app, declarative)
 	return app
 }
 

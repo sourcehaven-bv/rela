@@ -1,0 +1,14 @@
+request: POST /api/v1/_copies/publish
+identity: header viewer@example.test
+status: 404
+reads: GetEntity=1 GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GetEntity=0/1 GraphQuery=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/not_found",
+  "title": "Entity not found",
+  "status": 404,
+  "instance": "/api/v1/_copies/publish"
+}

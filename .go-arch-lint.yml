@@ -1160,6 +1160,10 @@ deps:
     mayDependOn:
       - appbuild
       - dataentry
+      # The remote MCP server mounted on the data-entry router.
+      - mcp
+      - mcpwire
+      - principal
   # MCP tool groups over appbuild services, shared by the stdio and remote
   # servers. Separate from appbuild because mcp's tests import appbuild.
   mcpwire:

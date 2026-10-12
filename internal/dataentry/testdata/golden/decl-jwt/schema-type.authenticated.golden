@@ -1,0 +1,62 @@
+request: GET /api/v1/_schema/types/ticket
+identity: a signed assertion for each authenticated principal, all answered alike
+status: 200
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "label": "Ticket",
+  "plural": "tickets",
+  "primary": "title",
+  "id_type": "sequential",
+  "id_prefix": "TKT",
+  "id_prefixes": [
+    "TKT"
+  ],
+  "properties": {
+    "budget": {
+      "type": "string",
+      "required": false
+    },
+    "closed_on": {
+      "type": "datetime",
+      "required": false
+    },
+    "due": {
+      "type": "date",
+      "required": false
+    },
+    "note": {
+      "type": "string",
+      "required": false
+    },
+    "screenshot": {
+      "type": "file",
+      "required": false
+    },
+    "secret": {
+      "type": "string",
+      "required": false
+    },
+    "start": {
+      "type": "date",
+      "required": false
+    },
+    "status": {
+      "type": "ticket_status",
+      "required": false,
+      "values": [
+        "open",
+        "closed",
+        "archived"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "required": true
+    }
+  },
+  "commentable": true
+}

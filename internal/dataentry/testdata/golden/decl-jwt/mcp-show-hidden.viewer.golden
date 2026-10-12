@@ -1,0 +1,11 @@
+request: POST /api/v1/_mcp
+identity: signed assertion for viewer@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=1
+breadth: ListEntityHeaders=1/1 ListRelations=0/1 MatchingFaces=1/1
+bodies: GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"entity not found: TKT-4"}],"isError":true}}
+

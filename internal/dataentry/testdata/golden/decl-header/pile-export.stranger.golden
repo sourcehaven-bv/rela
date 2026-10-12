@@ -1,0 +1,14 @@
+request: GET /api/v1/_piles/PIL-GOLDC/_export?transform=copy
+identity: header stranger@example.test
+status: 403
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/no_owner",
+  "title": "Piles need a signed-in user",
+  "status": 403,
+  "instance": "/api/v1/_piles/PIL-GOLDC/_export"
+}

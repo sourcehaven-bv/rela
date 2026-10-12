@@ -43,7 +43,7 @@ func TestViewCondition_HiddenPropertyMakesCurrentUserConditionFalse(t *testing.T
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(principalCtx("alice"), t, d)
 
 	// Baseline: with the assignee visible the row is a member of the list.
@@ -56,7 +56,7 @@ func TestViewCondition_HiddenPropertyMakesCurrentUserConditionFalse(t *testing.T
 	// Hide the assignee. The reader may still READ the ticket, so this is
 	// purely a field-level restriction — and the row must now drop out,
 	// because a value the reader cannot see must not decide membership.
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"assignee": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"assignee": false}}})
 	require.Empty(t, listIDsCtx(ctx, t, app, "/api/v1/tickets?list_id=mine"),
 		"a hidden property must not satisfy a per-user condition: "+
 			"row presence would leak the value one bit at a time")
@@ -83,7 +83,7 @@ func TestViewCondition_RedactionDoesNotWidenTheList(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(principalCtx("alice"), t, d)
 
 	visible := listIDsCtx(ctx, t, app, "/api/v1/tickets?list_id=not_mine")
@@ -95,7 +95,7 @@ func TestViewCondition_RedactionDoesNotWidenTheList(t *testing.T) {
 	// accepted consequence of evaluating post-redaction: it reveals nothing
 	// about the hidden value (every row is treated identically), whereas the
 	// pre-redaction behavior revealed it per row.
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"assignee": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"assignee": false}}})
 	hidden := listIDsCtx(ctx, t, app, "/api/v1/tickets?list_id=not_mine")
 	require.ElementsMatch(t, []string{"TKT-alice", "TKT-bob"}, hidden,
 		"a hidden property binds Nil uniformly, so no row is distinguishable from another")

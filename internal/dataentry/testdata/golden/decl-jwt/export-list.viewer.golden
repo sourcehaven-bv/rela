@@ -1,0 +1,13 @@
+request: GET /api/v1/tickets/_export?transform=copy
+identity: signed assertion for viewer@example.test
+status: 200
+reads: GetRelation=4 GraphQueryHeaders=2 ListEntityHeaders=2 ListRelations=7 MatchingFaces=2
+breadth: ListEntityHeaders=5/2 ListRelations=0/7 MatchingFaces=6/2
+bodies: GraphQuery=2/2 ListEntityHeaders=0/2
+versions: 
+body:
+| title | status | secret | Policies | Watchers |
+| --- | --- | --- | --- | --- |
+| Alpha | open | alpha-secret |  | Vera Viewer |
+| Bravo | closed |  |  | Vera Viewer |
+| Charlie | open | charlie-secret |  | Vera Viewer |

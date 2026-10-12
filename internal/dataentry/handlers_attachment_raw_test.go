@@ -113,7 +113,7 @@ func TestAttachmentUpload_RawBody(t *testing.T) {
 			app := newTestAppV1(t)
 			seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
 			d := writeACL(t, app)
-			app.acl = d
+			setTestACL(t, app, d)
 
 			rec := putRawAttachmentAs(aliceCtx(), t, app, d, tc.upload)
 			if rec.Code != http.StatusOK {
@@ -189,7 +189,7 @@ func TestAttachmentUpload_RawBodyRefusals(t *testing.T) {
 				app.State().Cfg.App.MaxAttachmentBytes = tc.maxBytes
 			}
 			d := writeACL(t, app)
-			app.acl = d
+			setTestACL(t, app, d)
 
 			rec := putRawAttachmentAs(aliceCtx(), t, app, d, tc.upload)
 			if rec.Code != tc.wantCode {
@@ -219,7 +219,7 @@ func TestAttachmentUpload_RawBodyGatedAndAudited(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "editor", "carol": "reader"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	carol := principal.With(context.Background(), principal.Principal{User: "carol", Tool: principal.ToolDataEntry})
 	upload := rawUpload{query: "?filename=x.txt", data: []byte("data")}
 
@@ -264,7 +264,7 @@ func TestAttachmentUpload_RejectionAuditsNormalizedName(t *testing.T) {
 	sink := audit.NewMemory()
 	app.auditSink = sink
 	d := writeACL(t, app)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	long := strings.Repeat("a", 4096)
 	png := []byte("\x89PNG\r\n\x1a\n" + strings.Repeat("\x00", 32))

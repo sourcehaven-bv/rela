@@ -50,7 +50,7 @@ func TestACLSidePanel_GatesHiddenEntity(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Visible: alice may read tickets → 200.
 	rec := sidePanelAs(aliceCtx(), t, app, d, "TKT-001")
@@ -109,7 +109,7 @@ func TestACLSidePanel_GatesUngrantedFace(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket@published"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// The bare id addresses the DRAFT face, which this grant excludes.
 	if rec := sidePanelAs(aliceCtx(), t, app, d, "TKT-001"); rec.Code != http.StatusNotFound {
@@ -170,7 +170,7 @@ func TestACLSidePanel_AddButtonFollowsCreatePermission(t *testing.T) {
 				}},
 				Assignments: map[string]string{"alice": "r"},
 			}, app.store)
-			app.acl = d
+			setTestACL(t, app, d)
 
 			rec := sidePanelAs(aliceCtx(), t, app, d, "TKT-001")
 			if rec.Code != http.StatusOK {

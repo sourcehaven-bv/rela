@@ -1,0 +1,14 @@
+request: PATCH /api/v1/tickets/TKT-3
+identity: header editor@example.test
+status: 403
+reads: GetEntity=2 GetRelation=3 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1
+breadth: ListEntityHeaders=1/1 ListRelations=0/1
+bodies: GetEntity=0/2 GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "error": "forbidden",
+  "reason": "transition guard denied: status \"open\"→\"closed\" requires permission \"close-ticket\"",
+  "rule_id": "close-ticket",
+  "rule_kind": "transition-guard"
+}

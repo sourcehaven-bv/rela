@@ -1,0 +1,11 @@
+request: POST /api/v1/_mcp
+identity: signed assertion for viewer@example.test
+status: 200
+reads: GetRelation=3 GraphQuery=1 GraphQueryHeaders=1 ListRelations=1 MatchingFaces=3
+breadth: ListRelations=0/1 MatchingFaces=3/3
+bodies: GraphQuery=2/2
+versions: 
+body:
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"total\":3,\"has_more\":false,\"entities\":[{\"id\":\"TKT-1\",\"type\":\"ticket\",\"title\":\"Alpha\",\"status\":\"open\"},{\"id\":\"TKT-2\",\"type\":\"ticket\",\"title\":\"Bravo\",\"status\":\"closed\"},{\"id\":\"TKT-3\",\"type\":\"ticket\",\"title\":\"Charlie\",\"status\":\"open\"}]}"}]}}
+

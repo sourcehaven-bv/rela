@@ -160,7 +160,7 @@ func TestV1ConflictResolvePathTraversal(t *testing.T) {
 func TestV1ConflictResolveACLDenied(t *testing.T) {
 	app, root := newConflictTestApp(t)
 	path := writeProjectFile(t, root, "entities/ticket/TKT-001.md", conflictedTicket)
-	app.acl = acl.ReadOnlyACL{}
+	setTestACL(t, app, acl.ReadOnlyACL{})
 	sink := audit.NewMemory()
 	app.auditSink = sink
 

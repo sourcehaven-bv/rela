@@ -353,15 +353,15 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 // Note this also gives the "SetJWTGate MUST run before NewRouter" ordering
 // invariant a runtime voice: a future refactor that reorders them makes this
 // warning fire, where previously it failed silently.
-func warnUnmatchedRejectWithoutJWTGate(p *acl.Policy, jwtWired bool) {
+func warnUnmatchedRejectWithoutJWTGate(p *acl.Policy, verifiedIdentity bool) {
 	if p == nil || p.EffectiveUnmatchedPrincipal() != acl.UnmatchedReject {
 		return
 	}
-	if p.RejectEffective(jwtWired) {
+	if p.RejectEffective(verifiedIdentity) {
 		return
 	}
 	switch {
-	case !jwtWired:
+	case !verifiedIdentity:
 		slog.Warn("acl: unmatched_principal: reject is configured but no JWT gate is wired; " +
 			"the setting has NO effect and unmatched principals are treated as anonymous. " +
 			"Wire a JWT gate (SetJWTGate before NewRouter), or remove the key to make the " +

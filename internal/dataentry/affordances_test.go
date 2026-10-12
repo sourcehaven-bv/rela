@@ -63,7 +63,7 @@ func TestTranslateVerb_UnknownPanics(t *testing.T) {
 // AC1: read-only principal sees all per-item verbs as false.
 func TestComputeActions_ReadOnly(t *testing.T) {
 	app := newTestAppV1(t)
-	app.acl = acl.ReadOnlyACL{}
+	setTestACL(t, app, acl.ReadOnlyACL{})
 
 	e := &entity.Entity{ID: "TKT-001", Type: "ticket"}
 	got := app.affordances.computeActions(t.Context(), e)
@@ -117,7 +117,7 @@ func TestComputeActions_NopACL(t *testing.T) {
 // AC4: collection-scope verb computed under ReadOnlyACL is false.
 func TestComputeCollectionActions_ReadOnly(t *testing.T) {
 	app := newTestAppV1(t)
-	app.acl = acl.ReadOnlyACL{}
+	setTestACL(t, app, acl.ReadOnlyACL{})
 
 	got := app.affordances.computeCollectionActions(t.Context(), "ticket")
 	if got["create"] {
@@ -146,7 +146,7 @@ func TestComputeActions_MixedTypeDeclarative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Declarative looks up the principal by Principal.User against
 	// Assignments. Stamp a matching User on ctx.

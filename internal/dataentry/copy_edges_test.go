@@ -165,7 +165,7 @@ func copyEdgesApp(t *testing.T, p copyEdgesPolicy) (*App, *acl.Declarative, *sto
 	svc := appbuildtest.New(meta, opts...)
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
-	app.acl = d
+	setTestACL(t, app, d)
 	app.schema.Publish(&Schema{Cfg: &Config{}, Meta: meta})
 	app.setWorlds(fixedWorlds{scope: policyPublishedScope()})
 	if err := SetWorldNeighbors(app, st, appbuild.RelationScopes(svc)); err != nil {
@@ -175,7 +175,7 @@ func copyEdgesApp(t *testing.T, p copyEdgesPolicy) (*App, *acl.Declarative, *sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	app.fieldResolver = &policyResolver{inner: resolver}
+	setTestResolver(t, app, &policyResolver{inner: resolver})
 	st.Reset()
 	return app, d, st
 }

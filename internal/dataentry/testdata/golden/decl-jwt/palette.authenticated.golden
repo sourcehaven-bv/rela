@@ -1,0 +1,9 @@
+request: GET /api/v1/_palette
+identity: a signed assertion for each authenticated principal, all answered alike
+status: 200
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{}

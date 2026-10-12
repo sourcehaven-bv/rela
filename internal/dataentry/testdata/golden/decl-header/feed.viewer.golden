@@ -1,0 +1,28 @@
+request: GET /api/v1/_feeds/due.ics
+identity: header viewer@example.test
+status: 200
+reads: GetRelation=3 GraphQueryHeaders=2 ListRelations=1 MatchingFaces=1
+breadth: ListRelations=0/1 MatchingFaces=3/1
+bodies: GraphQuery=2/2
+versions: 
+body:
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Sourcehaven//rela//EN
+CALSCALE:GREGORIAN
+X-WR-CALNAME:Due tickets
+BEGIN:VEVENT
+UID:ticket--TKT-1@rela
+DTSTAMP:<now>
+DTSTART;VALUE=DATE:20250117
+SUMMARY:Alpha
+URL:http://127.0.0.1:8080/entity/ticket/TKT-1
+END:VEVENT
+BEGIN:VEVENT
+UID:ticket--TKT-3@rela
+DTSTAMP:<now>
+DTSTART;VALUE=DATE:20250214
+SUMMARY:Charlie
+URL:http://127.0.0.1:8080/entity/ticket/TKT-3
+END:VEVENT
+END:VCALENDAR

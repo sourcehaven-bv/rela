@@ -1,0 +1,14 @@
+request: POST /api/v1/_conflicts/resolve
+identity: header outsider@example.test
+status: 403
+reads: GetRelation=1 GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "error": "forbidden",
+  "reason": "no role grants update on type \"ticket\"",
+  "rule_id": "-",
+  "rule_kind": "role-grant"
+}

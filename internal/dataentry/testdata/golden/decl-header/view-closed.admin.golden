@@ -1,0 +1,187 @@
+request: GET /api/v1/_views/ticket/TKT-2
+identity: header admin@example.test
+status: 200
+reads: GetRelation=11 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=3 ListRelations=9 MatchingFaces=1
+breadth: ListEntities=1/1 ListEntityHeaders=3/3 ListRelations=6/9 MatchingFaces=1/1
+bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/3
+versions: 
+body:
+{
+  "entry": {
+    "_self": "/api/v1/tickets/TKT-2",
+    "id": "TKT-2",
+    "type": "ticket",
+    "_title": "Bravo",
+    "properties": {
+      "budget": "bravo-budget",
+      "closed_on": "2025-01-10T17:00:00Z",
+      "due": "2025-01-10",
+      "note": "bravo-note",
+      "secret": "bravo-secret",
+      "start": "2025-01-08",
+      "status": "closed",
+      "title": "Bravo"
+    },
+    "content": "Follows `TKT-1`.",
+    "_actions": {
+      "action:close": true,
+      "delete": true,
+      "rename": false,
+      "update": true
+    },
+    "_fields": {},
+    "_relations": {},
+    "_versions": {
+      "properties": {
+        "budget": "418cac17",
+        "closed_on": "950dec75",
+        "due": "d016cd43",
+        "note": "97007d5c",
+        "screenshot": "bd93bb95",
+        "secret": "98f6927b",
+        "start": "65e19ffe",
+        "status": "bda3e634",
+        "title": "fc5b20b1"
+      },
+      "content": "e19ccde5"
+    },
+    "_redacted": [],
+    "_attachments": {},
+    "_transitions": {
+      "status": [
+        {
+          "to": "archived",
+          "label": "Archive",
+          "allowed": true
+        },
+        {
+          "to": "open",
+          "label": "Reopen",
+          "allowed": true
+        }
+      ]
+    },
+    "_copies": [],
+    "_faces": []
+  },
+  "sections": [
+    {
+      "heading": "Ticket",
+      "sectionId": "ticket",
+      "display": "properties",
+      "isEmpty": false,
+      "fields": [
+        {
+          "property": "status",
+          "label": "status",
+          "values": [
+            "closed"
+          ],
+          "propType": "ticket_status",
+          "render": "display"
+        },
+        {
+          "property": "secret",
+          "label": "secret",
+          "values": [
+            "bravo-secret"
+          ],
+          "propType": "string",
+          "render": "display"
+        },
+        {
+          "property": "note",
+          "label": "note",
+          "values": [
+            "bravo-note"
+          ],
+          "propType": "string",
+          "render": "display"
+        }
+      ],
+      "isGrouped": false,
+      "hasContent": false
+    },
+    {
+      "heading": "",
+      "sectionId": "",
+      "display": "content",
+      "isEmpty": false,
+      "isGrouped": false,
+      "content": "Follows `TKT-1`.",
+      "hasContent": true
+    },
+    {
+      "heading": "Children",
+      "sectionId": "children",
+      "display": "table",
+      "isEmpty": true,
+      "columns": [
+        {
+          "property": "title",
+          "link": "detail"
+        },
+        {
+          "property": "status"
+        },
+        {
+          "property": "secret"
+        }
+      ],
+      "isGrouped": false,
+      "hasContent": false
+    },
+    {
+      "heading": "Policies",
+      "sectionId": "policies",
+      "display": "list",
+      "isEmpty": true,
+      "isGrouped": false,
+      "hasContent": false
+    },
+    {
+      "heading": "Watchers",
+      "sectionId": "watchers",
+      "display": "list",
+      "isEmpty": false,
+      "entities": [
+        {
+          "id": "PERS-viewer",
+          "title": "Vera Viewer",
+          "type": "person",
+          "fields": [
+            {
+              "property": "title",
+              "label": "title",
+              "values": [
+                "Vera Viewer"
+              ],
+              "propType": "string",
+              "render": "display"
+            }
+          ],
+          "hasContent": false,
+          "_props": {
+            "email": "viewer@example.test",
+            "title": "Vera Viewer"
+          },
+          "_fields": {},
+          "_world": {
+            "name": "published",
+            "face": "",
+            "via": "unscoped"
+          },
+          "_self": "/api/v1/persons/PERS-viewer"
+        }
+      ],
+      "isGrouped": false,
+      "hasContent": false
+    }
+  ],
+  "mentions": {
+    "TKT-1": {
+      "type": "ticket",
+      "title": "Alpha"
+    }
+  }
+}

@@ -39,8 +39,8 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 			return fmt.Errorf("wire piles: %w", err)
 		}
 	}
-	// Leases are absent only for a Services built from collaborators; the
-	// lease routes then 404 and no response carries `_lease`.
+	// Without a lease service the lease routes 404 and no response carries
+	// `_lease`.
 	if l := appbuild.Leases(svc); l != nil {
 		if err := dataentry.SetLeases(app, l); err != nil {
 			return fmt.Errorf("wire leases: %w", err)

@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
+	"github.com/Sourcehaven-BV/rela/internal/dataentrywire"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -200,9 +201,9 @@ func searchIDs(t *testing.T, svc *appbuild.Services, s search.Searcher) []string
 // hide a type the role may not read.
 func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := remoteMCPDeps(svc, testHost(t, svc))
+	deps, err := dataentrywire.RemoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
-		t.Fatalf("remoteMCPDeps: %v", err)
+		t.Fatalf("RemoteMCPDeps: %v", err)
 	}
 	ctx := aliceCtx()
 
@@ -260,9 +261,9 @@ func TestRemoteMCPDeps_FacedEntitiesResolveThroughTheWorld(t *testing.T) {
 // adopted face and then hide it, so the entity would vanish.
 func TestRemoteMCPDeps_FaceRestrictedReaderGetsTheFaceTheyMayRead(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := remoteMCPDeps(svc, testHost(t, svc))
+	deps, err := dataentrywire.RemoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
-		t.Fatalf("remoteMCPDeps: %v", err)
+		t.Fatalf("RemoteMCPDeps: %v", err)
 	}
 	carol := principal.With(context.Background(), principal.Principal{User: "carol", Tool: principal.ToolMCP})
 
@@ -283,8 +284,8 @@ func TestRemoteMCPDeps_FaceRestrictedReaderGetsTheFaceTheyMayRead(t *testing.T) 
 
 func TestRemoteMCPDeps_RequiresTheHostWorldFunctions(t *testing.T) {
 	svc := newWorldServices(t)
-	if _, err := remoteMCPDeps(svc, dataentry.MCPHost{}); err == nil {
-		t.Error("remoteMCPDeps accepted a host with no world functions; a world argument could not be authorized")
+	if _, err := dataentrywire.RemoteMCPDeps(svc, dataentry.MCPHost{}); err == nil {
+		t.Error("RemoteMCPDeps accepted a host with no world functions; a world argument could not be authorized")
 	}
 }
 
@@ -292,12 +293,12 @@ func TestRemoteMCPDeps_RequiresTheHostWorldFunctions(t *testing.T) {
 // and a bare id read on the selected world's ctx resolves in that world.
 func TestRemoteMCPDeps_PassesTheHostWorldSelector(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := remoteMCPDeps(svc, testHost(t, svc))
+	deps, err := dataentrywire.RemoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
-		t.Fatalf("remoteMCPDeps: %v", err)
+		t.Fatalf("RemoteMCPDeps: %v", err)
 	}
 	if deps.Worlds == nil {
-		t.Fatal("remoteMCPDeps left Worlds nil; the world argument would be refused remotely")
+		t.Fatal("RemoteMCPDeps left Worlds nil; the world argument would be refused remotely")
 	}
 	scope, err := deps.Worlds.SelectWorld(aliceCtx(), "current")
 	if err != nil || scope.IsTrivial() {
@@ -325,7 +326,7 @@ func TestRemoteMCPDeps_PassesTheHostWorldSelector(t *testing.T) {
 // (TKT-27XVYS).
 func TestRemoteMCPDeps_PassesTheLeases(t *testing.T) {
 	svc := newWorldServices(t)
-	deps, err := remoteMCPDeps(svc, testHost(t, svc))
+	deps, err := dataentrywire.RemoteMCPDeps(svc, testHost(t, svc))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +341,7 @@ func TestRemoteMCPDeps_PassesTheHostComments(t *testing.T) {
 	svc := newWorldServices(t)
 	host := testHost(t, svc)
 
-	deps, err := remoteMCPDeps(svc, host)
+	deps, err := dataentrywire.RemoteMCPDeps(svc, host)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +350,7 @@ func TestRemoteMCPDeps_PassesTheHostComments(t *testing.T) {
 	}
 
 	host.Comments = &dataentry.MCPComments{}
-	deps, err = remoteMCPDeps(svc, host)
+	deps, err = dataentrywire.RemoteMCPDeps(svc, host)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +365,7 @@ func TestRemoteMCPDeps_PassesTheHostActions(t *testing.T) {
 	svc := newWorldServices(t)
 	host := testHost(t, svc)
 
-	deps, err := remoteMCPDeps(svc, host)
+	deps, err := dataentrywire.RemoteMCPDeps(svc, host)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +374,7 @@ func TestRemoteMCPDeps_PassesTheHostActions(t *testing.T) {
 	}
 
 	host.Actions = &dataentry.MCPActions{}
-	deps, err = remoteMCPDeps(svc, host)
+	deps, err = dataentrywire.RemoteMCPDeps(svc, host)
 	if err != nil {
 		t.Fatal(err)
 	}

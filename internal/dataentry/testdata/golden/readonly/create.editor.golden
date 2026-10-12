@@ -1,0 +1,14 @@
+request: POST /api/v1/tickets/
+identity: header editor@example.test
+status: 403
+reads: 
+breadth: 
+bodies: 
+versions: 
+body:
+{
+  "error": "forbidden",
+  "reason": "this rela instance is configured read-only",
+  "rule_id": "read-only-acl",
+  "rule_kind": "read-only"
+}

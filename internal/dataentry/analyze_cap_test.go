@@ -130,11 +130,13 @@ func TestAnalyzeResult_ReportsTruncatedChecks(t *testing.T) {
 }
 
 // A capped run must not scan the whole store: the cap exists to bound WORK,
-// not merely output. Asserted by counting rows the analyzer pulled.
+// not merely output. Asserted by counting rows the analyzer pulled. Five
+// times the cap is enough to tell a stop from a drain; each seeded row is
+// indexed one at a time, so more rows only make the test slow.
 func TestAnalyzeProperties_StopsScanningAtCap(t *testing.T) {
 	g := newFixture()
 	meta := capMeta()
-	const seeded = 5000
+	const seeded = 5 * maxSectionIssues
 	for i := range seeded {
 		g.AddNode(&entity.Entity{
 			ID: fmt.Sprintf("D-%05d", i), Type: "doc",
@@ -151,7 +153,7 @@ func TestAnalyzeProperties_StopsScanningAtCap(t *testing.T) {
 		t.Fatalf("expected %d issues, got %d", maxSectionIssues, len(section.Issues))
 	}
 	// One row past the cap is read to DETECT truncation; anything close to
-	// the full 5000 means the early break regressed.
+	// the full seeded count means the early break regressed.
 	if counter.rows > maxSectionIssues+2 {
 		t.Errorf("scanned %d rows for a %d-issue cap — the analyzer should stop "+
 			"once truncation is detected, not drain the store", counter.rows, maxSectionIssues)

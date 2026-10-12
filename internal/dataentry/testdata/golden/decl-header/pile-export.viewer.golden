@@ -1,0 +1,11 @@
+request: GET /api/v1/_piles/PIL-GOLDC/_export?transform=copy
+identity: header viewer@example.test
+status: 200
+reads: GetRelation=1 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=2
+breadth: ListEntityHeaders=2/1 ListRelations=0/1 MatchingFaces=3/2
+bodies: GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+| ID | Type | Title |
+| --- | --- | --- |
+| TKT-1 | Ticket | Alpha |

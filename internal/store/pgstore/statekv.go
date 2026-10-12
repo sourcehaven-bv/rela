@@ -77,7 +77,7 @@ func NewStateKV(db DBTX) (*StateKV, error) {
 // (see the rawStateStore interface in appbuild, which does the widening on the
 // consumer side where it belongs).
 func StateStoreFor(st store.Store) *StateKV {
-	s, ok := st.(*Store)
+	s, ok := store.Innermost(st).(*Store)
 	if !ok {
 		return nil
 	}

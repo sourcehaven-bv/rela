@@ -108,7 +108,7 @@ func gatedNavPolicy() *acl.Policy {
 func TestNavPermission_NopACLShowsEverything(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedNavConfig(app)
-	app.acl = acl.NopACL{}
+	setTestACL(t, app, acl.NopACL{})
 
 	labels := sidebarLabels(t.Context(), t, app)
 	for _, want := range []string{"Open", "Audit", "Secrets", "Keys", "Public", "Private"} {
@@ -124,7 +124,7 @@ func TestNavPermission_HolderSeesEverything(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedNavConfig(app)
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	labels := sidebarLabels(gateCtxFor(aliceCtx(), t, d), t, app)
 	for _, want := range []string{"Open", "Audit", "Secrets", "Keys", "Public", "Private"} {
@@ -142,7 +142,7 @@ func TestNavPermission_NonHolderFiltered(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedNavConfig(app)
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	shape := sidebarShape(gateCtxFor(principalCtx("bob"), t, d), t, app)
 
@@ -206,7 +206,7 @@ func TestNavPermission_ReadOnlyShowsEverything(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestAppV1(t)
 			installGatedNavConfig(app)
-			app.acl = tc.impl
+			setTestACL(t, app, tc.impl)
 
 			labels := sidebarLabels(t.Context(), t, app)
 			for _, want := range []string{"Open", "Audit", "Secrets", "Keys", "Public", "Private"} {
@@ -235,7 +235,7 @@ func TestNavPermission_ReadOnlyShowsEverything(t *testing.T) {
 func TestNavPermission_ReadOnlyArmIsExplicit(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedNavConfig(app)
-	app.acl = acl.ReadOnlyACL{}
+	setTestACL(t, app, acl.ReadOnlyACL{})
 
 	// A gate that denies every permission. If the arm were removed and the
 	// predicate consulted the gate, this would hide the entries.
@@ -293,7 +293,7 @@ func TestNavPermission_FilterIsPresentationOnly(t *testing.T) {
 		},
 		Assignments: map[string]string{"bob": "viewer", "carol": "auditor"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rowsFor := func(t *testing.T, ctx context.Context) int {
 		t.Helper()
@@ -346,7 +346,7 @@ func TestNavPermission_ConfigUnfiltered(t *testing.T) {
 	app := newTestAppV1(t)
 	installGatedNavConfig(app)
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	bodyFor := func(t *testing.T, ctx context.Context) string {
 		t.Helper()

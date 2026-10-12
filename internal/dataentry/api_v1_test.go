@@ -4285,7 +4285,7 @@ func TestV1Views_MentionsAbsentWhenNoRefs(t *testing.T) {
 // properties are omitted.
 func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = NopFieldVerdictResolver{}
+	setTestResolver(t, app, NopFieldVerdictResolver{})
 
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
@@ -4358,9 +4358,9 @@ func TestV1Affordance_PerEntityGet_NoneProfile(t *testing.T) {
 // tell the three cases apart without inferring anything from absence.
 func TestV1Affordance_PerEntityGet_RedactedNamesHiddenFields(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{Visible: map[string]bool{"title": false}},
-	}
+	})
 	// `status` is stored; `title` is stored but hidden; the ticket type's other
 	// declared properties are simply unset — the BUG-MLT9DE case.
 	seedEntity(app, &entity.Entity{
@@ -4418,7 +4418,7 @@ func TestV1Affordance_PerEntityGet_RedactedNamesHiddenFields(t *testing.T) {
 // ambiguity the field exists to remove.
 func TestV1Affordance_PerEntityGet_RedactedEmptyWhenNothingHidden(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = NopFieldVerdictResolver{}
+	setTestResolver(t, app, NopFieldVerdictResolver{})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4452,7 +4452,7 @@ func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 	// option-filter on `status`. The newTestAppV1 metamodel declares
 	// `title` and `status` on ticket; we add `priority` to the entity
 	// via the seed.
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Writable: map[string]bool{"status": false},
 			Visible:  map[string]bool{"priority": false},
@@ -4464,7 +4464,7 @@ func TestV1Affordance_PerEntityGet_DemoFixture(t *testing.T) {
 				"blocks":     {Creatable: false, Removable: true},
 			},
 		},
-	}
+	})
 
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-002",
@@ -4553,11 +4553,11 @@ func TestV1Affordance_PatchEcho_StripsHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Visible: map[string]bool{"title": false}, // hide the title field
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4606,11 +4606,11 @@ func TestV1Affordance_Includes_StripHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Visible: map[string]bool{"title": false}, // hide title on every entity
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4646,11 +4646,11 @@ func TestV1Affordance_CollectionList_StripHidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Visible: map[string]bool{"title": false},
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4677,10 +4677,10 @@ func seedDemoTicketForPatch(t *testing.T) *App {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = newVerdicts().
+	setTestResolver(t, app, newVerdicts().
 		ReadOnly("status").
 		EnumDeny("title", "forbidden-title").
-		Build()
+		Build())
 	seedEntity(app, &entity.Entity{
 		ID:   "TKT-001",
 		Type: "ticket",
@@ -4698,11 +4698,11 @@ func TestV1Affordance_PatchHiddenAndUnknownField_SameShape(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Visible: map[string]bool{"title": false}, // hide a declared field
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4791,11 +4791,11 @@ func TestV1Affordance_PatchReadOnlyField_Forbidden(t *testing.T) {
 func TestV1Affordance_AffordanceDenial_EmitsAudit(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Writable: map[string]bool{"status": false},
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4862,13 +4862,13 @@ func TestV1Affordance_PatchFilteredListEnum_Forbidden(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{
+	setTestResolver(t, app, fakeResolver{
 		fv: FieldVerdicts{
 			Options: map[string]map[string]bool{
 				"tags": {"forbidden-tag": false},
 			},
 		},
-	}
+	})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -4917,7 +4917,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().Hidden("title").Build()
+		setTestResolver(t, app, newVerdicts().Hidden("title").Build())
 
 		code, body := createTicketRaw(t, app, `{"properties":{"title":"new"}}`)
 		if code != http.StatusForbidden {
@@ -4932,7 +4932,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = NopFieldVerdictResolver{}
+		setTestResolver(t, app, NopFieldVerdictResolver{})
 
 		code, body := createTicketRaw(t, app, `{"properties":{"bogus_field":"v"}}`)
 		if code != http.StatusForbidden {
@@ -4947,7 +4947,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+		setTestResolver(t, app, newVerdicts().ReadOnly("status").Build())
 
 		code, body := createTicketRaw(t, app, `{"properties":{"title":"ok","status":"open"}}`)
 		if code != http.StatusForbidden {
@@ -4962,7 +4962,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().EnumDeny("title", "forbidden-title").Build()
+		setTestResolver(t, app, newVerdicts().EnumDeny("title", "forbidden-title").Build())
 
 		code, body := createTicketRaw(t, app, `{"properties":{"title":"forbidden-title"}}`)
 		if code != http.StatusForbidden {
@@ -4977,7 +4977,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+		setTestResolver(t, app, newVerdicts().ReadOnly("status").Build())
 
 		// `title` is writable; `status` is omitted, so the read-only gate
 		// never fires. The create must succeed end-to-end.
@@ -4996,7 +4996,7 @@ func TestHandleV1CreateEntity_FieldAffordances(t *testing.T) {
 func TestHandleV1CreateEntity_AffordanceDenial_EmitsAudit(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
-	app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+	setTestResolver(t, app, newVerdicts().ReadOnly("status").Build())
 
 	code, body := createTicketRaw(t, app, `{"properties":{"title":"ok","status":"open"}}`)
 	if code != http.StatusForbidden {
@@ -5053,7 +5053,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+		setTestResolver(t, app, newVerdicts().ReadOnly("status").Build())
 
 		code, rec := dryRunCreateRaw(t, app, `{"properties":{"title":"x"}}`)
 		if code != http.StatusOK {
@@ -5076,7 +5076,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().Hidden("status").Build()
+		setTestResolver(t, app, newVerdicts().Hidden("status").Build())
 
 		code, rec := dryRunCreateRaw(t, app, `{"properties":{"title":"x"}}`)
 		if code != http.StatusOK {
@@ -5101,7 +5101,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 		app := newTestAppV1(t)
 		app.broker = newEventBroker()
 		bindRepo(app, t.TempDir())
-		app.fieldResolver = newVerdicts().EnumDeny("status", "done").Build()
+		setTestResolver(t, app, newVerdicts().EnumDeny("status", "done").Build())
 
 		code, rec := dryRunCreateRaw(t, app, `{"properties":{"title":"x"}}`)
 		if code != http.StatusOK {
@@ -5121,7 +5121,7 @@ func TestHandleV1DryRunCreate_Affordances(t *testing.T) {
 func TestHandleV1DryRunCreate_PersistsNothing(t *testing.T) {
 	sink := audit.NewMemory()
 	app := buildAppWithACLAndAudit(t, acl.NopACL{}, sink)
-	app.fieldResolver = newVerdicts().ReadOnly("status").Build()
+	setTestResolver(t, app, newVerdicts().ReadOnly("status").Build())
 
 	before := countStoreEntities(t, app)
 
@@ -5189,7 +5189,7 @@ func TestHandleV1DryRunCreate_ResponseIncludesAllVisibleDeclaredProps(t *testing
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
 	// Hide one field; the rest should all appear in `properties`.
-	app.fieldResolver = newVerdicts().Hidden("status").Build()
+	setTestResolver(t, app, newVerdicts().Hidden("status").Build())
 
 	code, rec := dryRunCreateRaw(t, app, `{"properties":{}}`)
 	if code != http.StatusOK {
@@ -5253,7 +5253,7 @@ func seedTicketWithRelationVerdicts(t *testing.T, rv RelationVerdicts) *App {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{rv: rv}
+	setTestResolver(t, app, fakeResolver{rv: rv})
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",
 		Type:       "ticket",
@@ -5346,7 +5346,7 @@ func TestV1Affordance_PerRelationCreate_IncomingResolvesAgainstSource(t *testing
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = byTypeResolver{
+	setTestResolver(t, app, byTypeResolver{
 		rvByType: map[string]RelationVerdicts{
 			"ticket": {
 				Types: map[string]RelationVerdict{
@@ -5355,7 +5355,7 @@ func TestV1Affordance_PerRelationCreate_IncomingResolvesAgainstSource(t *testing
 			},
 			// concept verdict: implicit defaults (everything permitted).
 		},
-	}
+	})
 	// The test metamodel doesn't declare `affects`, but the demo
 	// metamodel does. We seed both ticket + concept entities; the
 	// relation create path doesn't validate against the metamodel
@@ -5492,7 +5492,7 @@ func TestV1Affordance_CollectionGet_NoFieldVerdicts(t *testing.T) {
 	app := newTestAppV1(t)
 	app.broker = newEventBroker()
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = DemoFieldVerdictResolver{}
+	setTestResolver(t, app, DemoFieldVerdictResolver{})
 
 	seedEntity(app, &entity.Entity{
 		ID:         "TKT-001",

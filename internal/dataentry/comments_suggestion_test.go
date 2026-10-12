@@ -245,7 +245,7 @@ func TestCommentSuggestion_AcceptRefusals(t *testing.T) {
 	t.Run("read-only instance", func(t *testing.T) {
 		app := commentsApp(t)
 		id := postSuggestion(t, app, suggestPath, suggestQuote, suggestReplace)
-		app.acl = acl.ReadOnlyACL{}
+		setTestACL(t, app, acl.ReadOnlyACL{})
 
 		rec := accept(t, app, suggestPath, id, suggestAuthor)
 		require.Equal(t, http.StatusForbidden, rec.Code)
@@ -412,7 +412,7 @@ func suggestionACLApp(t *testing.T, policy *acl.Policy) (*App, *acl.Declarative,
 		appbuildtest.WithDeclarative(d), appbuildtest.WithAudit(sink))
 	app := newAppFromParts(testConfig(), meta, &fixture{})
 	rebindApp(app, fs, paths, svc)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	csvc, err := comments.NewService(memcomments.New(), nil)
 	require.NoError(t, err)
@@ -537,7 +537,7 @@ func TestCommentSuggestion_AcceptPreservesHiddenProperty(t *testing.T) {
 		Assignments: map[string]string{"bob": "editor"},
 	}
 	app, d, _ := suggestionACLApp(t, policy)
-	app.fieldResolver = mustFieldResolver(t, app, d)
+	setTestResolver(t, app, mustFieldResolver(t, app, d))
 
 	rec := postCommentsAs(t, app, d, suggestPath,
 		suggestionJSON(suggestQuote, suggestReplace), "bob")

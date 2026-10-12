@@ -109,7 +109,7 @@ func provisionAppWithSubject(t *testing.T, subject string) (*App, store.Store) {
 		appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d))
 	rebindApp(app, fs, pctx, svc)
 	app.broker = newEventBroker()
-	app.acl = d
+	setTestACL(t, app, d)
 
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"},

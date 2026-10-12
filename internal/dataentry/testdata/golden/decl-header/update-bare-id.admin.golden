@@ -1,0 +1,19 @@
+request: PATCH /api/v1/policies/POL-1
+identity: header admin@example.test
+status: 422
+reads: GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1
+breadth: ListEntityHeaders=1/1 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/face_required",
+  "title": "Address one face",
+  "status": 422,
+  "detail": "POL-1 has faces; address one: POL-1@draft, POL-1@published",
+  "instance": "/api/v1/policies/POL-1",
+  "faces": [
+    "POL-1@draft",
+    "POL-1@published"
+  ]
+}

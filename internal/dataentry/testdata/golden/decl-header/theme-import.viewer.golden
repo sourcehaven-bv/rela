@@ -1,0 +1,11 @@
+request: POST /api/v1/_theme/import
+identity: header viewer@example.test
+status: 400
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "error": "invalid multipart body: request Content-Type isn't multipart/form-data"
+}

@@ -31,7 +31,7 @@ func e2eAssertionApp(t *testing.T, id AssertedIdentity, policy *acl.Policy) *App
 		ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"},
 	})
 
-	app.acl = mustNewACL(t, policy, app.store)
+	setTestACL(t, app, mustNewACL(t, policy, app.store))
 
 	v := stubVerifier{
 		validToken: "good",
@@ -164,7 +164,7 @@ func TestE2E_ClaimsSurvivePrincipalPropertyReStamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Drive the resolver + the ACL middleware, which is where the re-stamp runs,
 	// and capture the principal the downstream handler would see.
@@ -238,7 +238,7 @@ func TestE2E_UnmatchedPrincipalStillCarriesClaims(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	app.acl = d
+	setTestACL(t, app, d)
 
 	v := stubVerifier{
 		validToken: "good",
@@ -264,10 +264,10 @@ func TestE2E_HeaderModeUnaffected(t *testing.T) {
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"},
 	})
-	app.acl = mustNewACL(t, &acl.Policy{
+	setTestACL(t, app, mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
-	}, app.store)
+	}, app.store))
 	app.SetPrincipalResolver(ChainResolvers(HeaderPrincipalResolver("X-Forwarded-User")))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-001", http.NoBody)

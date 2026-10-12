@@ -51,7 +51,7 @@ func TestACLSearch_TypeLevelGrant(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := searchAs(aliceCtx(), t, app, d, "alpha")
 	if rec.Code != http.StatusOK {
@@ -97,7 +97,7 @@ func TestACLSearch_RoleRelationInheritance(t *testing.T) {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := searchAs(aliceCtx(), t, app, d, "alpha")
 	if rec.Code != http.StatusOK {
@@ -131,7 +131,7 @@ func TestACLSearch_VisibleHitRelatedToHidden(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := searchAs(aliceCtx(), t, app, d, "alpha")
 	if rec.Code != http.StatusOK {
@@ -163,7 +163,7 @@ func TestACLSearch_DenyAllShortCircuit(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// bob: no roles → empty scope → short-circuit before the backend.
 	_, rec := searchAs(principalCtx("bob"), t, app, d, "anything")
@@ -234,7 +234,7 @@ func aclSearchQueryVerdictWorld(t *testing.T, app *App) *acl.Declarative {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return d
 }
 

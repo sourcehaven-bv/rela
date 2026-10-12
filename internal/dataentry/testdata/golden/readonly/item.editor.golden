@@ -1,0 +1,77 @@
+request: GET /api/v1/tickets/TKT-1
+identity: header editor@example.test
+status: 200
+header ETag: "kKmOjnfNll8="
+reads: ListEntities=1 ListEntityHeaders=1 ListRelations=2
+breadth: ListEntities=1/1 ListEntityHeaders=3/1 ListRelations=0/2
+bodies: ListEntities=1/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "_self": "/api/v1/tickets/TKT-1",
+  "id": "TKT-1",
+  "type": "ticket",
+  "_title": "Alpha",
+  "properties": {
+    "budget": "alpha-budget",
+    "due": "2025-01-17",
+    "note": "alpha-note",
+    "screenshot": "attachments/TKT-1/screenshot/shot.txt",
+    "secret": "alpha-secret",
+    "start": "2025-01-06",
+    "status": "open",
+    "title": "Alpha"
+  },
+  "content": "Alpha body.",
+  "relations": {
+    "contains": [
+      "TKT-2",
+      "TKT-4"
+    ],
+    "implements": [
+      "POL-1"
+    ]
+  },
+  "_actions": {
+    "action:close": true,
+    "delete": false,
+    "rename": false,
+    "update": false
+  },
+  "_fields": {},
+  "_relations": {},
+  "_versions": {
+    "properties": {
+      "budget": "5b54b9ce",
+      "closed_on": "d0157d88",
+      "due": "c1ee3c4c",
+      "note": "de45c27d",
+      "screenshot": "d886cf2d",
+      "secret": "876e2e6a",
+      "start": "b514b118",
+      "status": "38959bb8",
+      "title": "b6e0b3e0"
+    },
+    "content": "301b71f6",
+    "relations": "d407409a"
+  },
+  "_redacted": [],
+  "_attachments": {
+    "screenshot": [
+      {
+        "id": "shot.txt",
+        "filename": "shot.txt",
+        "size": 10,
+        "contentType": "text/plain; charset=utf-8",
+        "href": "/api/v1/tickets/TKT-1/_attachments/screenshot/shot.txt"
+      }
+    ]
+  },
+  "_world": {
+    "name": "published",
+    "face": "",
+    "via": "unscoped"
+  },
+  "_copies": [],
+  "_faces": []
+}

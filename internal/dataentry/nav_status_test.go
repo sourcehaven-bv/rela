@@ -158,7 +158,7 @@ func TestNavStatus_CountsOnlyReadableRows(t *testing.T) {
 		RoleRelations:       map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	installNavStatusConfig(app,
 		map[string]dataentryconfig.List{"all": {EntityType: "ticket"}},
@@ -177,7 +177,7 @@ func TestNavStatus_PermissionGatedEntryIsOmitted(t *testing.T) {
 	wireRealViewConditions(t, app)
 	seedEntity(app, &entity.Entity{ID: "TKT-1", Type: "ticket", Properties: map[string]any{"title": "T"}})
 	d := mustNewACL(t, gatedNavPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	installNavStatusConfig(app,
 		map[string]dataentryconfig.List{"all": {EntityType: "ticket"}},

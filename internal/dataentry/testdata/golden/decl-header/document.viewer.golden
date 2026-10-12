@@ -1,0 +1,13 @@
+request: GET /api/v1/_documents/report
+identity: header viewer@example.test
+status: 200
+reads: GetRelation=3 GraphQuery=1 GraphQueryHeaders=1 ListRelations=1 MatchingFaces=3
+breadth: ListRelations=0/1 MatchingFaces=3/3
+bodies: GraphQuery=2/2
+versions: 
+body:
+{
+  "html": "\u003cul\u003e\n\u003cli\u003eTKT-1 Alpha\u003c/li\u003e\n\u003cli\u003eTKT-2 Bravo\u003c/li\u003e\n\u003cli\u003eTKT-3 Charlie\u003c/li\u003e\n\u003c/ul\u003e\n",
+  "cached": false,
+  "entity_ids": []
+}

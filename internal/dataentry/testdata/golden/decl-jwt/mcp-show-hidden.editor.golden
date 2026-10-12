@@ -1,0 +1,11 @@
+request: POST /api/v1/_mcp
+identity: signed assertion for editor@example.test
+status: 200
+reads: GetRelation=3 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=4 ListRelations=3 MatchingFaces=2 MentionSources=1
+breadth: ListEntities=1/1 ListEntityHeaders=7/4 ListRelations=0/3 MatchingFaces=2/2
+bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/4 MentionSources=0/1
+versions: 
+body:
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"id\":\"TKT-4\",\"type\":\"ticket\",\"properties\":{\"due\":\"2025-03-28\",\"secret\":\"delta-secret\",\"start\":\"2025-01-20\",\"status\":\"open\",\"title\":\"Delta\"},\"content\":\"Hidden child.\",\"relations\":{\"incoming\":{\"contains\":[{\"id\":\"TKT-1\",\"title\":\"Alpha\"}],\"watches\":[{\"id\":\"PERS-editor\",\"title\":\"Eddie Editor\"}]}}}"}]}}
+

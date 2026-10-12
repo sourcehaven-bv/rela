@@ -316,11 +316,12 @@ func TestCommandAuthorizationHasNoACLTypeSwitch(t *testing.T) {
 // TestCommandTestsDriveAuthorizerNotACL is the RR-CWBZVT guard. Command-auth
 // tests must set app.commands.authz directly, never reassign app.acl expecting
 // command authorization to follow — the authorizer is fixed at wiring, so an
-// `app.acl =` in these tests would silently exercise the wrong impl and a
-// security canary (e.g. read-only-denied) could pass vacuously.
+// `app.acl =` or `setTestACL(` in these tests would silently exercise the
+// wrong impl and a security canary (e.g. read-only-denied) could pass
+// vacuously.
 func TestCommandTestsDriveAuthorizerNotACL(t *testing.T) {
 	body := mustReadPkgFile(t, "commands_test.go")
-	if strings.Contains(body, "app.acl =") {
+	if strings.Contains(body, "app.acl =") || strings.Contains(body, "setTestACL(") {
 		t.Errorf("commands_test.go reassigns app.acl — command-auth tests must set " +
 			"app.commands.authz directly (RR-CWBZVT). Reassigning app.acl exercises the wrong " +
 			"authorizer because it is chosen once at the wiring seam, not re-derived per request.")

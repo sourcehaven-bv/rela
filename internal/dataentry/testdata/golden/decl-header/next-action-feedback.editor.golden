@@ -1,0 +1,15 @@
+request: POST /api/v1/_next_action
+identity: header editor@example.test
+status: 400
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/unknown_source",
+  "title": "Unknown next-action source",
+  "status": 400,
+  "detail": "none",
+  "instance": "/api/v1/_next_action"
+}

@@ -1,0 +1,11 @@
+request: GET /api/v1/_nav_items
+identity: header outsider@example.test
+status: 200
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "items": {}
+}

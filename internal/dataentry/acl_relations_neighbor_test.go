@@ -55,7 +55,7 @@ func seedNeighborLeakFixture(t *testing.T, app *App) *acl.Declarative {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return d
 }
 

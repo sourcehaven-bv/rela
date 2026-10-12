@@ -489,7 +489,7 @@ func TestHandleCommandFile_ReauthorizesPerDownload(t *testing.T) {
 		}
 
 		d := commandPolicyACL(t, app)
-		app.acl = d
+		setTestACL(t, app, d)
 		// The download re-check goes through the wired authorizer, not the ACL
 		// field, so the gated impl is installed at the seam (RR-CWBZVT).
 		app.commands.authz = mustGatedAuthorizer(t, d)
@@ -528,7 +528,7 @@ func TestHandleCommandFile_ReauthorizesPerDownload(t *testing.T) {
 		// The grant that minted the token is gone. The token itself is
 		// untouched and unexpired — only the live policy changed. A --read-only
 		// restart resolves to denyAuthorizer at the seam (SelectCommandAuthorizer).
-		app.acl = acl.ReadOnlyACL{}
+		setTestACL(t, app, acl.ReadOnlyACL{})
 		app.commands.authz = denyAuthorizer{}
 		w := downloadFile(principalCtx("alice"), t, app, d, token)
 		if w.Code != http.StatusNotFound {

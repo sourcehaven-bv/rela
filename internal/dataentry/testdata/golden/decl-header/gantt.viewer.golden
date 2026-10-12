@@ -1,0 +1,43 @@
+request: GET /api/v1/_gantts/plan
+identity: header viewer@example.test
+status: 200
+reads: GetRelation=3 GraphQueryHeaders=2 ListRelations=2 MatchingFaces=3
+breadth: ListRelations=0/2 MatchingFaces=3/3
+bodies: GraphQuery=2/2
+versions: 
+body:
+{
+  "roots": [
+    {
+      "id": "TKT-1",
+      "type": "ticket",
+      "title": "Alpha",
+      "planned": {
+        "start": "2025-01-06",
+        "end": "2025-01-17"
+      },
+      "rolled": {
+        "start": "2025-01-08"
+      },
+      "children": [
+        {
+          "id": "TKT-2",
+          "type": "ticket",
+          "title": "Bravo",
+          "planned": {
+            "start": "2025-01-08"
+          }
+        }
+      ]
+    },
+    {
+      "id": "TKT-3",
+      "type": "ticket",
+      "title": "Charlie",
+      "planned": {
+        "start": "2025-02-03",
+        "end": "2025-02-14"
+      }
+    }
+  ]
+}

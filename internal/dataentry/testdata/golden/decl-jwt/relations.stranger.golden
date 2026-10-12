@@ -1,0 +1,36 @@
+request: GET /api/v1/tickets/TKT-1/relations
+identity: signed assertion for stranger@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=6 ListRelations=3
+breadth: ListEntities=1/1 ListEntityHeaders=9/6 ListRelations=0/3
+bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/6
+versions: 
+body:
+{
+  "contains": [
+    {
+      "direction": "outgoing",
+      "id": "TKT-2",
+      "type": "ticket"
+    },
+    {
+      "direction": "outgoing",
+      "id": "TKT-4",
+      "type": "ticket"
+    }
+  ],
+  "implements": [
+    {
+      "direction": "outgoing",
+      "id": "POL-1",
+      "type": "policy"
+    }
+  ],
+  "watches_inverse": [
+    {
+      "direction": "incoming",
+      "id": "PERS-viewer",
+      "type": "person"
+    }
+  ]
+}

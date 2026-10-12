@@ -147,7 +147,7 @@ func decodeFieldProblem(t *testing.T, rec *httptest.ResponseRecorder) v1.Error {
 
 func TestV1GetEntity_Versions(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket", Content: "body",
 		Properties: map[string]any{"title": "secret", "status": "open"},
@@ -309,7 +309,7 @@ func TestV1UpdateEntity_Preconditions(t *testing.T) {
 // answer is the same whatever token is sent.
 func TestV1UpdateEntity_PreconditionOnHiddenFieldIsNotAnOracle(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "secret"}})
 
 	codes := map[int]bool{}

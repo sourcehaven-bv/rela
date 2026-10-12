@@ -28,12 +28,12 @@ func TestQueryBudget_ListPageACLRelatedWhenIsSizeIndependent(t *testing.T) {
 			}},
 			Assignments: map[string]string{"T1": "editor"},
 		}, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		res, err := ResolverFromProfile("", app.Meta(), app.store, d)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app.fieldResolver = res
+		setTestResolver(t, app, res)
 		counting.Reset()
 
 		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=100")
@@ -67,12 +67,12 @@ func TestQueryBudget_GetEntityACLRelatedWhenBindsOnce(t *testing.T) {
 			}},
 			Assignments: map[string]string{"T1": "editor"},
 		}, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		res, err := ResolverFromProfile("", app.Meta(), app.store, d)
 		if err != nil {
 			t.Fatal(err)
 		}
-		app.fieldResolver = res
+		setTestResolver(t, app, res)
 		counting.Reset()
 		rec := getEntityAs(ctx, t, app, d, "ticket", "tickets", "TKT-0001", "")
 		if rec.Code != http.StatusOK {

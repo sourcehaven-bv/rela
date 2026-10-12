@@ -1154,6 +1154,10 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if err != nil {
 		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
 	}
+	refs, err := collaboratorRefHolders(c, fieldRedactor, compiledWorlds)
+	if err != nil {
+		return nil, fmt.Errorf("appbuild.NewFromCollaborators: %w", err)
+	}
 	return &Services{
 		fs:              c.FS,
 		paths:           c.Paths,
@@ -1181,7 +1185,44 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		audit:          c.Audit,
 		fieldRedactor:  fieldRedactor,
 		comments:       c.Comments,
+		piles:          refs.piles,
+		leases:         refs.leases,
+		leaseShared:    refs.leaseShared,
+		caldavAliases:  refs.aliases,
 	}, nil
+}
+
+// collaboratorRefs are the services [NewFromCollaborators] builds itself.
+type collaboratorRefs struct {
+	piles       *piles.Service
+	aliases     *caldavalias.Service
+	leases      *lease.Service
+	leaseShared leaseShared
+}
+
+// collaboratorRefHolders builds the piles service, the CalDAV alias table and
+// the lease service the way assembly builds them, so a Services assembled
+// from collaborators offers them as a deployment's does.
+func collaboratorRefHolders(
+	c Collaborators, redactor visibility.FieldRedactor, w worlds.Compiled,
+) (collaboratorRefs, error) {
+	var refs collaboratorRefs
+	pileStore, err := pileBackend(c.FS, c.Paths, c.Store)
+	if err != nil {
+		return refs, fmt.Errorf("piles backend: %w", err)
+	}
+	if refs.piles, err = newPilesService(pileStore, c.Declarative, redactor, c.Store, w); err != nil {
+		return refs, fmt.Errorf("piles: %w", err)
+	}
+	if _, refs.aliases, err = buildStateAndAliases(c.FS, c.Paths, c.StateKV); err != nil {
+		return refs, fmt.Errorf("caldav aliases: %w", err)
+	}
+	refs.leases, refs.leaseShared, err = buildLeases(
+		c.FS, c.Paths, w, c.Store, leaseShared{}, c.Declarative, redactor, c.ACL)
+	if err != nil {
+		return refs, fmt.Errorf("leases: %w", err)
+	}
+	return refs, nil
 }
 
 // buildFieldRedactor constructs the field-level `visible:` redactor shared by

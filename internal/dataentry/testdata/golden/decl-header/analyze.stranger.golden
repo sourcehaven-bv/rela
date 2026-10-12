@@ -1,0 +1,14 @@
+request: GET /api/v1/_analyze
+identity: header stranger@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListEntityHeaders=4 ListRelations=2 MatchingFaces=4
+breadth: ListEntityHeaders=0/4 ListRelations=0/2 MatchingFaces=24/4
+bodies: GraphQuery=0/1 ListEntityHeaders=0/4
+versions: 
+body:
+{
+  "errors": 0,
+  "warnings": 0,
+  "issues": [],
+  "byCheck": {}
+}

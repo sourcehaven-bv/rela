@@ -52,17 +52,26 @@ func buildRefHolders(
 			return refHolders{}, err
 		}
 	}
-	h.piles, err = piles.NewService(h.pileStore, piles.Options{
-		OwnerExists: pileOwnerExists(d, redactor, st, base.worlds),
-		PersonType:  pilePersonType(d),
-	})
-	if err != nil {
+	if h.piles, err = newPilesService(h.pileStore, d, redactor, st, base.worlds); err != nil {
 		return refHolders{}, err
 	}
-	if h.leases, h.leaseShared, err = buildLeases(base, st, base.leaseShared, d, redactor, writes); err != nil {
+	if h.leases, h.leaseShared, err = buildLeases(
+		base.cfg.FS, base.cfg.Paths, base.worlds, st, base.leaseShared, d, redactor, writes); err != nil {
 		return refHolders{}, err
 	}
 	return h, nil
+}
+
+// newPilesService builds the piles service over backend, with the owner check
+// and person type of the current ACL. Assembly and [NewFromCollaborators]
+// both build it here.
+func newPilesService(
+	backend piles.Store, d *acl.Declarative, redactor visibility.FieldRedactor, st store.Store, w worlds.Compiled,
+) (*piles.Service, error) {
+	return piles.NewService(backend, piles.Options{
+		OwnerExists: pileOwnerExists(d, redactor, st, w),
+		PersonType:  pilePersonType(d),
+	})
 }
 
 // pileBackend returns the piles backend for st: the store's own (see

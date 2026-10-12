@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
@@ -79,14 +80,21 @@ var forbiddenWebhookHeaderPrefixes = []string{
 // to carry an authenticated identity in that deployment — precisely the one the
 // floor must cover. Registration is process-global because config load has no
 // handle on server flags; that is acceptable for a value fixed at startup.
-var extraForbiddenWebhookHeaders = map[string]bool{}
+// extraForbiddenWebhookHeadersMu guards it, because a process that builds
+// several apps (a test binary, say) registers from several goroutines.
+var (
+	extraForbiddenWebhookHeaders   = map[string]bool{}
+	extraForbiddenWebhookHeadersMu sync.RWMutex
+)
 
 // ForbidWebhookHeader registers a header name that webhook configs may not
 // expose, in addition to the built-in list. Call it at wiring time, before
 // config load. Case-insensitive; an empty name is ignored.
 func ForbidWebhookHeader(name string) {
 	if name = strings.ToLower(strings.TrimSpace(name)); name != "" {
+		extraForbiddenWebhookHeadersMu.Lock()
 		extraForbiddenWebhookHeaders[name] = true
+		extraForbiddenWebhookHeadersMu.Unlock()
 	}
 }
 
@@ -95,7 +103,13 @@ func ForbidWebhookHeader(name string) {
 // the wiring-time registrations, and the family prefixes.
 func isForbiddenWebhookHeader(name string) bool {
 	lower := strings.ToLower(name)
-	if forbiddenWebhookHeaders[lower] || extraForbiddenWebhookHeaders[lower] {
+	if forbiddenWebhookHeaders[lower] {
+		return true
+	}
+	extraForbiddenWebhookHeadersMu.RLock()
+	extra := extraForbiddenWebhookHeaders[lower]
+	extraForbiddenWebhookHeadersMu.RUnlock()
+	if extra {
 		return true
 	}
 	for _, prefix := range forbiddenWebhookHeaderPrefixes {

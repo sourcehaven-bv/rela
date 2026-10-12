@@ -115,9 +115,9 @@ func TestRelationPosition_NotASiblingIsTheUniform404(t *testing.T) {
 func TestRelationPosition_OrderFieldNotWritable(t *testing.T) {
 	app := newOrderableRelationsTestApp(t, metamodel.OrderableOutgoing)
 	seedOrderableFixture(t, app)
-	app.fieldResolver = fakeResolver{rv: RelationVerdicts{Types: map[string]RelationVerdict{
+	setTestResolver(t, app, fakeResolver{rv: RelationVerdicts{Types: map[string]RelationVerdict{
 		"has-step": {Creatable: true, Removable: true, Fields: map[string]bool{metamodel.OrderPropertyOut: false}},
-	}}}
+	}}})
 	rec := patchPosition(t, app, "STP-Z", `{"position":{"step":1}}`)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("got %d, want 403: %s", rec.Code, rec.Body)

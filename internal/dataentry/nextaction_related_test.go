@@ -80,7 +80,7 @@ func TestNextAction_RelatedCondition(t *testing.T) {
 			Roles:       map[string]acl.RoleDef{"reader": {Read: []string{"ticket"}}},
 			Assignments: map[string]string{"alice": "reader"},
 		}, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		withNextActions(t, app, oneBand, map[string]dataentryconfig.NextActionSource{
 			"s": {Band: "b", Query: "type:ticket", Condition: "related(entity, 'implements')", Suggest: "{id}"},
 		})

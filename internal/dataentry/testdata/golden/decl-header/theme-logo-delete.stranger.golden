@@ -1,0 +1,8 @@
+request: DELETE /api/v1/_theme/logo
+identity: header stranger@example.test
+status: 204
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:

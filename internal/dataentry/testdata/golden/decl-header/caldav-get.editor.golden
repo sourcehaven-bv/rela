@@ -1,0 +1,22 @@
+request: GET /api/v1/_caldav/principal/calendars/tickets/ticket--TKT-1@rela.ics
+identity: header editor@example.test
+status: 200
+header ETag: "PHHB4CN3VEJICP5G"
+reads: GetRelation=6 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=1
+breadth: ListEntityHeaders=0/1 ListRelations=0/1 MatchingFaces=6/1
+bodies: GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+BEGIN:VCALENDAR
+CALSCALE:GREGORIAN
+PRODID:-//Sourcehaven//rela//EN
+VERSION:2.0
+BEGIN:VTODO
+DTSTAMP:<now>
+DUE;VALUE=DATE:20250117
+STATUS:NEEDS-ACTION
+SUMMARY:Alpha
+UID:ticket--TKT-1@rela
+URL:http://127.0.0.1:8080/entity/ticket/TKT-1
+END:VTODO
+END:VCALENDAR

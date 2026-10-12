@@ -187,7 +187,7 @@ func TestDeniedWorldIsByteIdenticalToAnEmptyWorld(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// (a) A world the principal MAY read, which happens to hold nothing.
 	empty := listUnderWorld(t, app, worldHandle{name: "published",
@@ -793,7 +793,7 @@ func TestWorldListGetParity_ACLGatedPrincipal(t *testing.T) {
 			"owned-by": {Confers: "viewer"},
 		},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// The conferring edges run FROM alice (readQuery composes HasInbound with
 	// the principal as the endpoint): alice owns both tickets, so both are in her
@@ -960,10 +960,10 @@ func TestWorldGrantCheckThroughTheRealRouter(t *testing.T) {
 	})
 	// A policy granting read on ticket but NO world grant, so `published`
 	// is denied.
-	app.acl = mustNewACL(t, &acl.Policy{
+	setTestACL(t, app, mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
-	}, app.store)
+	}, app.store))
 	app.setWorlds(stubWorlds{
 		names:          map[string]bool{"published": true},
 		resolveDefault: true,
@@ -1204,10 +1204,10 @@ func appForWorldGrant(t *testing.T, granted bool) *App {
 	if granted {
 		role.Worlds = []string{"published"}
 	}
-	app.acl = mustNewACL(t, &acl.Policy{
+	setTestACL(t, app, mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": role},
 		Assignments: map[string]string{"alice": "viewer"},
-	}, app.store)
+	}, app.store))
 	app.setWorlds(stubWorlds{
 		names:          map[string]bool{"published": true},
 		resolveDefault: true,

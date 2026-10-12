@@ -43,7 +43,7 @@ func TestAction_EntityIDRespectsReadGate(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	body := `{"entity_id":"TKT-SECRET","entity_type":"ticket"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_action/echo",
@@ -83,7 +83,7 @@ func TestAction_EntityIDCrossTypeEscalation(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"featreader": {Read: []string{"feature"}}},
 		Assignments: map[string]string{"bob": "featreader"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// He claims the ticket is a feature.
 	body := `{"entity_id":"TKT-SECRET","entity_type":"feature"}`
@@ -119,7 +119,7 @@ func TestAction_EntityIDPermittedStillWorks(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	body := `{"entity_id":"TKT-OK","entity_type":"ticket"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/_action/echo",
@@ -159,10 +159,10 @@ func TestAction_HiddenFieldRedacted(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestACL(t, app, d)
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"status": false},
-	}}
+	}})
 
 	rec := postAction(aliceCtx(), t, app, d, "peek", `{"entity_id":"TKT-MIX"}`)
 	if strings.Contains(rec.Body.String(), "SUPERSECRET") {
@@ -194,7 +194,7 @@ func TestAction_DeniedAndAbsentAreIndistinguishable(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"outsider": {}},
 		Assignments: map[string]string{"mallory": "outsider"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	denied := postAction(principalCtx("mallory"), t, app, d, "echo", `{"entity_id":"TKT-EXISTS"}`)
 	absent := postAction(principalCtx("mallory"), t, app, d, "echo", `{"entity_id":"TKT-NOPE"}`)
@@ -234,7 +234,7 @@ func TestAction_RunsWhenEntityDeniedButUnused(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"outsider": {}},
 		Assignments: map[string]string{"mallory": "outsider"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := postAction(principalCtx("mallory"), t, app, d, "sideeffect", `{"entity_id":"TKT-HIDDEN"}`)
 	if rec.Code != http.StatusOK {
@@ -267,7 +267,7 @@ func TestAction_EntityTypeIsIgnored(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Same id, three different claims — including a nonsense one. All must
 	// resolve identically, because only the stored type is consulted.

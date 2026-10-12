@@ -1,0 +1,11 @@
+request: POST /api/v1/_mcp
+identity: signed assertion for editor@example.test
+status: 200
+reads: GetEntity=1 GetRelation=3 GraphQueryHeaders=1 ListEntities=2 ListEntityHeaders=4 ListRelations=1 MatchingFaces=2
+breadth: ListEntities=2/2 ListEntityHeaders=4/4 ListRelations=0/1 MatchingFaces=2/2
+bodies: GetEntity=0/1 GraphQuery=0/1 ListEntities=0/2 ListEntityHeaders=0/4
+versions: 
+body:
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"Updated TKT-3\n\n{\"id\":\"TKT-3\",\"type\":\"ticket\",\"properties\":{\"budget\":\"charlie-budget\",\"due\":\"2025-02-14\",\"note\":\"edited\",\"secret\":\"charlie-secret\",\"start\":\"2025-02-03\",\"status\":\"open\",\"title\":\"Charlie\"}}"}]}}
+

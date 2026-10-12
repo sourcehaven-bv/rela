@@ -60,7 +60,7 @@ client_baselines:
 	if err != nil {
 		t.Fatalf("LoadPolicyBytes: %v", err)
 	}
-	app.acl = mustNewACL(t, policy, app.store)
+	setTestACL(t, app, mustNewACL(t, policy, app.store))
 	app.SetPrincipalResolver(ChainResolvers(JWTPrincipalResolver(stubVerifier{
 		validToken: "good", subject: "usr_alice", principalType: "app",
 	}, assertionHeader)))

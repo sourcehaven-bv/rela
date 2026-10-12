@@ -109,7 +109,7 @@ func recursiveLinksView() ViewConfig {
 func TestACLViewTraversal_HiddenIntermediaryBlocksReachability(t *testing.T) {
 	app := traversalLeakApp()
 	d := mustNewACL(t, ticketReaderPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	ctx := gateCtxFor(aliceCtx(), t, d)
 	result, err := app.views.executeView(ctx, recursiveLinksView(), "TKT-ENTRY", defaultViewWorld())
@@ -160,7 +160,7 @@ func TestACLViewTraversal_NopACLReturnsFullChain(t *testing.T) {
 func TestACLViewTraversal_WhereCannotProbeHiddenProperty(t *testing.T) {
 	app := traversalLeakApp()
 	d := mustNewACL(t, ticketReaderPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	view := ViewConfig{
 		Entry: ViewEntry{Type: "ticket"},
@@ -196,7 +196,7 @@ func TestACLViewTraversal_EntryGateBlocksHiddenEntry(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"secret"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	ctx := gateCtxFor(aliceCtx(), t, d)
 	// executeView entry type must match; use a secret-typed view whose entry is
@@ -228,7 +228,7 @@ func TestACLViewTraversal_ViewsAPIDoesNotLeakReachableDescendant(t *testing.T) {
 	app := newAppFromParts(cfg, meta, traversalLeakFixture(meta))
 
 	d := mustNewACL(t, ticketReaderPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := viewsAs(aliceCtx(), t, app, d, "ticket", "TKT-ENTRY")
 	if rec.Code != http.StatusOK {
@@ -256,7 +256,7 @@ func TestACLViewTraversal_SidePanelDoesNotLeakReachableDescendant(t *testing.T) 
 	}
 
 	d := mustNewACL(t, ticketReaderPolicy(), app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := sidePanelAs(aliceCtx(), t, app, d, "TKT-ENTRY")
 	if rec.Code != http.StatusOK {
@@ -370,7 +370,7 @@ func TestACLViewTraversal_FrontierAppliesFaceGate(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"policy@published", "note"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	draftWorld := viewWorld{name: "draftworld", scope: store.NewWorldScope(

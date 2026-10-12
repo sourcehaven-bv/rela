@@ -1,0 +1,104 @@
+description: >
+  Grants for the golden wire-parity corpus. admin sees and writes everything;
+  editor writes tickets but reads only published policies; viewer reads only
+  the tickets it watches, with `when:`-gated fields; outsider is a known person
+  with no grants; an unknown principal is rejected when identity is verified.
+
+user_entity_type: person
+principal_property: email
+unmatched_principal: reject
+
+# Membership is gated, as any policy that grants a world read must gate it.
+role_relations:
+  member-of:
+    requires_permission: manage-roles
+  watches:
+    confers: watcher
+
+roles:
+  admin:
+    read: ["*", "world:published", "world:editorial"]
+    create: ["*"]
+    update: ["*"]
+    delete: ["*"]
+    rename: ["*"]
+    permissions:
+      - manage-roles
+      - report:all
+      - run:commands
+      - publish-policy
+      - history:read
+      - history:read-redacted
+      - comment:read
+      - comment:add
+      - comment:update-any
+      - comment:delete-any
+      - close-ticket
+  editor:
+    read: [ticket, person, "policy@published", "world:published"]
+    create: [ticket]
+    update: [ticket]
+    delete: [ticket]
+    permissions: [run:commands, comment:read, comment:add]
+    # Closed-world per type: the editor may not write note, may not set
+    # status to archived, and may add but not remove an implements edge.
+    fields:
+      ticket:
+        - field: title
+        - field: status
+        - field: secret
+        - field: start
+        - field: due
+          when: "entity.status == 'open'"
+        - field: screenshot
+        - field: closed_on
+        - field: budget
+    options:
+      ticket:
+        - field: status
+          option: open
+        - field: status
+          option: closed
+    relations:
+      ticket:
+        - relation: implements
+          create: true
+          remove: false
+        - relation: contains
+  viewer:
+    read: [person, "policy@published", "world:published"]
+    permissions: [run:commands, comment:read, plan-work]
+  watcher:
+    read: [ticket]
+    visible:
+      ticket:
+        - field: title
+        - field: status
+        - field: start
+        - field: due
+          when: "entity.status == 'open'"
+        - field: screenshot
+        - field: closed_on
+        - field: secret
+          when: "entity.status == 'open'"
+        - field: note
+          when: "related(entity, 'contains', { status = 'closed' })"
+
+# An alternative to a write grant on ticket: the viewer, which may not update
+# tickets, may still link one ticket into another through plan-work.
+relation_grants:
+  contains:
+    create: plan-work
+
+# The identity provider asserts `staff` for the stranger (goldenVerifier), so
+# with a JWT gate it holds the editor role yet has no person: reads follow the
+# role, writes are rejected.
+asserted_role_assignments:
+  staff: editor
+
+# Keyed by person id: a login resolves to its person through
+# principal_property before roles are looked up.
+assignments:
+  PERS-admin: admin
+  PERS-editor: editor
+  PERS-viewer: viewer

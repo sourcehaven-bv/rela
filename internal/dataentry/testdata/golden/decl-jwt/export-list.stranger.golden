@@ -1,0 +1,16 @@
+request: GET /api/v1/tickets/_export?transform=copy
+identity: signed assertion for stranger@example.test
+status: 200
+reads: GetRelation=8 GraphQueryHeaders=1 ListEntityHeaders=3 ListRelations=13 MatchingFaces=1
+breadth: ListEntityHeaders=7/3 ListRelations=0/13 MatchingFaces=6/1
+bodies: GraphQuery=0/1 ListEntityHeaders=0/3
+versions: 
+body:
+| title | status | secret | Policies | Watchers |
+| --- | --- | --- | --- | --- |
+| Alpha | open | alpha-secret |  | Vera Viewer |
+| Bravo | closed | bravo-secret |  | Vera Viewer |
+| Charlie | open | charlie-secret |  | Vera Viewer |
+| Delta | open | delta-secret |  | Eddie Editor |
+| Echo | closed | echo-secret |  |  |
+| Foxtrot | open | foxtrot-secret |  |  |

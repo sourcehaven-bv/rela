@@ -97,7 +97,7 @@ func TestSidebar_CalendarHiddenWithoutPermission(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	items := sidebarItemsByLabel(gateCtxFor(aliceCtx(), t, d), t, app)
 	if _, ok := items["Schedule"]; ok {

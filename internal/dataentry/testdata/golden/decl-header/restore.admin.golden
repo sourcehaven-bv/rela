@@ -1,0 +1,45 @@
+request: POST /api/v1/_history/ticket/TKT-3/1/restore
+identity: header admin@example.test
+status: 200
+reads: GetEntity=1 GetRelation=9 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=1 ListRelations=3
+breadth: ListEntities=1/1 ListEntityHeaders=1/1 ListRelations=0/3
+bodies: GetEntity=0/1 GraphQuery=0/1 ListEntities=0/1 ListEntityHeaders=0/1
+versions: GetVersion=1
+body:
+{
+  "entity": {
+    "_self": "/api/v1/tickets/TKT-3",
+    "id": "TKT-3",
+    "type": "ticket",
+    "_title": "Charlie",
+    "properties": {
+      "secret": "charlie-secret",
+      "status": "open",
+      "title": "Charlie"
+    },
+    "content": "Charlie, first draft.",
+    "_actions": {
+      "action:close": true,
+      "delete": true,
+      "rename": false,
+      "update": true
+    },
+    "_fields": {},
+    "_relations": {},
+    "_redacted": [],
+    "_attachments": {},
+    "_transitions": {
+      "status": [
+        {
+          "to": "closed",
+          "label": "Close",
+          "guard": "close-ticket",
+          "allowed": true
+        }
+      ]
+    },
+    "_copies": [],
+    "_faces": []
+  },
+  "restored_from_version": 1
+}

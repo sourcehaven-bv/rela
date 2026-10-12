@@ -81,7 +81,7 @@ func newBodyWatchApp(t *testing.T, n int) (*App, *storetest.BodyWatch, *acl.Decl
 		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"*"}}},
 		Assignments: map[string]string{"T1": "editor"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	watch.Reset()
 	return app, watch, d, principalCtx("P1")
 }

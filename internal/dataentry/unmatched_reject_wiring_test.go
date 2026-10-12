@@ -161,7 +161,7 @@ func newRejectApp(t *testing.T) *App {
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
-	app.acl = d
+	setTestACL(t, app, d)
 	return app
 }
 
@@ -234,7 +234,7 @@ func TestUnmatchedReject_WarnsWhenLookupDisabled(t *testing.T) {
 func TestUnmatchedReject_TypedNilDeclarativeDoesNotPanic(t *testing.T) {
 	app := newTestAppV1(t)
 	var d *acl.Declarative
-	app.acl = d // typed nil: non-nil interface, nil pointer
+	setTestACL(t, app, d) // typed nil: non-nil interface, nil pointer
 
 	defer func() {
 		if r := recover(); r != nil {

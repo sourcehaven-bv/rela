@@ -98,14 +98,14 @@ func TestFaceGrant_IncludedNeighboursAreFaceGated(t *testing.T) {
 		Assignments: map[string]string{"bob": "admin"},
 	}, app.store)
 
-	app.acl = admin
+	setTestACL(t, app, admin)
 	rec := getEntityAs(principalCtx("bob"), t, app, admin, "ticket", "tickets", "TKT-1", "include=implements")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "SECRET FEATURE") {
 		t.Fatalf("precondition: an unrestricted principal sees the included neighbor; got %d %s",
 			rec.Code, rec.Body)
 	}
 
-	app.acl = viewer
+	setTestACL(t, app, viewer)
 	rec = getEntityAs(aliceCtx(), t, app, viewer, "ticket", "tickets", "TKT-1", "include=implements")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("TKT-1 itself is readable; got %d %s", rec.Code, rec.Body)
@@ -141,14 +141,14 @@ func TestFaceGrant_AttachmentDownloadIsFaceGated(t *testing.T) {
 		return rec
 	}
 
-	app.acl = admin
+	setTestACL(t, app, admin)
 	if rec := download(principalCtx("bob"), admin); rec.Code != http.StatusOK ||
 		!strings.Contains(rec.Body.String(), "draft bytes") {
 
 		t.Fatalf("precondition: an unrestricted principal downloads the file; got %d %s", rec.Code, rec.Body)
 	}
 
-	app.acl = viewer
+	setTestACL(t, app, viewer)
 	if rec := download(aliceCtx(), viewer); rec.Code != http.StatusNotFound {
 		t.Errorf("a file on the DRAFT face served to a ticket@published principal: got %d, want 404; body=%s",
 			rec.Code, rec.Body)
@@ -176,13 +176,13 @@ func TestFaceGrant_FacesAffordanceOmitsUnreadableFaces(t *testing.T) {
 		return body.Faces, rec.Code
 	}
 
-	app.acl = admin
+	setTestACL(t, app, admin)
 	got, code := faces(principalCtx("bob"), admin)
 	if code != http.StatusOK || len(got) != 1 {
 		t.Fatalf("precondition: an unrestricted principal is offered the other (draft) face; got %d %v", code, got)
 	}
 
-	app.acl = viewer
+	setTestACL(t, app, viewer)
 	got, code = faces(aliceCtx(), viewer)
 	if code != http.StatusOK {
 		t.Fatalf("the published face is readable; got %d", code)
@@ -213,14 +213,14 @@ func TestFaceGrant_HistoryIsFaceGatedUnderTheDefaultWorld(t *testing.T) {
 		return rec
 	}
 
-	app.acl = admin
+	setTestACL(t, app, admin)
 	if rec := history(principalCtx("bob"), admin, "TKT-1@draft/1"); rec.Code != http.StatusOK ||
 		!strings.Contains(rec.Body.String(), "SECRET DRAFT BODY") {
 
 		t.Fatalf("precondition: an unrestricted principal reads the snapshot; got %d %s", rec.Code, rec.Body)
 	}
 
-	app.acl = viewer
+	setTestACL(t, app, viewer)
 	for _, path := range []string{"TKT-1@draft", "TKT-1@draft/1", "TKT-1", "TKT-1/1"} {
 		rec := history(aliceCtx(), viewer, path)
 		if rec.Code != http.StatusNotFound {
@@ -269,10 +269,10 @@ func TestEntityView_DeniedWorldIsIndistinguishableFromAnEmptyOne(t *testing.T) {
 		if worldGranted {
 			read = append(read, "world:published")
 		}
-		app.acl = mustNewACL(t, &acl.Policy{
+		setTestACL(t, app, mustNewACL(t, &acl.Policy{
 			Roles:       map[string]acl.RoleDef{"viewer": {Read: read}},
 			Assignments: map[string]string{"alice": "viewer"},
-		}, app.store)
+		}, app.store))
 		// The world EXCLUDES everything (no resolveDefault), so for the
 		// granted principal TKT-1 genuinely has no face in it.
 		app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
@@ -335,11 +335,11 @@ func TestFaceGrant_GetFallsThroughToThePermittedFace(t *testing.T) {
 		return e, found
 	}
 
-	app.acl = admin
+	setTestACL(t, app, admin)
 	if e, found := get(principalCtx("bob"), admin); !found || e.Face != "review" {
 		t.Fatalf("precondition: an unrestricted reader gets the chain's first face; got %v %v", e, found)
 	}
-	app.acl = viewer
+	setTestACL(t, app, viewer)
 	e, found := get(aliceCtx(), viewer)
 	if !found || e.Face != "published" {
 		t.Errorf("a ticket@published reader must be served the published face — the "+
@@ -386,7 +386,7 @@ func facedAppWithPolicy(t *testing.T, role acl.RoleDef) (*App, *acl.Declarative,
 	svc := appbuildtest.New(app.State().Meta, appbuildtest.WithStore(app.store),
 		appbuildtest.WithFS(app.fs, app.paths), appbuildtest.WithACL(d))
 	rebindApp(app, app.fs, app.paths, svc)
-	app.acl = d
+	setTestACL(t, app, d)
 	return app, d, svc
 }
 
@@ -436,10 +436,10 @@ func TestFaceGrant_RenameAffordanceMatchesTheWrite(t *testing.T) {
 // asking only about it hid the create button from every face-granted role.
 func TestFaceGrant_CollectionCreateIsPerFace(t *testing.T) {
 	app := facedTicketApp(t)
-	app.acl = mustNewACL(t, &acl.Policy{
+	setTestACL(t, app, mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"*"}, Create: []string{"ticket@draft"}}},
 		Assignments: map[string]string{"alice": "editor"},
-	}, app.store)
+	}, app.store))
 
 	got := app.affordances.computeCollectionActions(aliceCtx(), "ticket")
 	want := map[string]bool{"create": true, "create@draft": true, "create@published": false}
