@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title type="text">Atom feed</title>
+  <subtitle>All the news</subtitle>
+  <link rel="self" href="https://example.org/atom.xml"/>
+  <link href="https://example.org/"/>
+  <entry>
+    <id>tag:example.org,2026:1</id>
+    <title>XHTML entry</title>
+    <link rel="edit" href="https://example.org/edit/1"/>
+    <link rel="alternate" href="https://example.org/e/1"/>
+    <published>2026-10-13T08:00:00Z</published>
+    <updated>2026-10-13T09:00:00.5Z</updated>
+    <author><name>Carol</name></author>
+    <author><email>dan@example.org</email></author>
+    <category term="news"/>
+    <summary type="text">1 &lt; 2 &amp; more</summary>
+    <content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml">Hi <b>there</b> &amp; <a href="https://x.test/?a=1&amp;b=2">link</a><br/>end</div></content>
+  </entry>
+  <entry>
+    <id>tag:example.org,2026:2</id>
+    <title>HTML entry</title>
+    <updated>2026-10-13</updated>
+    <content type="html">&lt;p&gt;escaped html&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <id>tag:example.org,2026:3</id>
+    <title>Out of line</title>
+    <content src="https://example.org/3.pdf" type="application/pdf"/>
+  </entry>
+</feed>
