@@ -489,7 +489,7 @@ func (v *validator) promote(key string, raw *rawPromote, mt *MessageType, ct *Ch
 	if raw.Relate != nil {
 		p.Relate = raw.Relate.Type
 		for _, t := range ct.AttachTo {
-			if err := v.meta.ValidateRelation(raw.Relate.Type, raw.Type, t); err != nil {
+			if err := metamodel.NewValidator(v.meta).ValidateRelation(raw.Relate.Type, raw.Type, t); err != nil {
 				v.add(key+".relate.type", fmt.Sprintf("cannot link %s to %s: %v", raw.Type, t, err))
 			}
 		}
