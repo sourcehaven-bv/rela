@@ -31,7 +31,7 @@ func TestACLGet_TypeLevelReadGrant(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := aliceCtx()
 
 	// Visible.
@@ -103,7 +103,7 @@ func TestACLGet_ETagSuppressedOnDeny(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "viewer-tickets", "bob": "viewer-empty"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Alice gets a valid response with an ETag.
 	aliceRec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "")
@@ -141,7 +141,7 @@ func TestACLGet_IncludeFilter(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "include=*")
 	if rec.Code != http.StatusOK {

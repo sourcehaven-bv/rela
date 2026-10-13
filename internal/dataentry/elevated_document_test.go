@@ -190,7 +190,7 @@ func TestElevatedDocument_DeniedPrincipalNeverReachesRenderer(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := httptest.NewRecorder()
 	app.handleV1Documents(rec, standaloneDocReq(gateCtxFor(principalCtx("bob"), t, d), "benchmark"))
@@ -223,7 +223,7 @@ func TestElevatedDocument_PermittedPrincipalRenders(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "analyst"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := httptest.NewRecorder()
 	app.handleV1Documents(rec, standaloneDocReq(gateCtxFor(principalCtx("alice"), t, d), "benchmark"))
@@ -249,7 +249,7 @@ func TestElevatedDocument_NopACLRefusesEndToEnd(t *testing.T) {
 			Permission:     "report:sales",
 		},
 	}
-	app.acl = acl.NopACL{}
+	setTestACL(t, app, acl.NopACL{})
 
 	rec := httptest.NewRecorder()
 	app.handleV1Documents(rec, standaloneDocReq(principalCtx("anyone"), "benchmark"))

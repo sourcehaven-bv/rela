@@ -1,0 +1,61 @@
+request: PATCH /api/v1/tickets/TKT-3
+identity: header admin@example.test
+status: 200
+header ETag: "PasNV9mBSqk="
+reads: GetEntity=2 GetRelation=10 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=3 ListRelations=5
+breadth: ListEntities=1/1 ListEntityHeaders=3/3 ListRelations=0/5
+bodies: GetEntity=0/2 GraphQuery=0/1 ListEntities=0/1 ListEntityHeaders=0/3
+versions: 
+body:
+{
+  "_self": "/api/v1/tickets/TKT-3",
+  "id": "TKT-3",
+  "type": "ticket",
+  "_title": "Charlie",
+  "properties": {
+    "budget": "charlie-budget",
+    "due": "2025-02-14",
+    "note": "edited",
+    "secret": "charlie-secret",
+    "start": "2025-02-03",
+    "status": "open",
+    "title": "Charlie"
+  },
+  "_actions": {
+    "action:close": true,
+    "delete": true,
+    "rename": false,
+    "update": true
+  },
+  "_fields": {},
+  "_relations": {},
+  "_versions": {
+    "properties": {
+      "budget": "e8ee49d0",
+      "closed_on": "a4a6effe",
+      "due": "663732fb",
+      "note": "c6ff6726",
+      "screenshot": "b6751a8e",
+      "secret": "dfbe2a6a",
+      "start": "a09f1ac5",
+      "status": "46e441a3",
+      "title": "f2955e70"
+    },
+    "content": "33561e37",
+    "relations": "4a76ee9e"
+  },
+  "_redacted": [],
+  "_attachments": {},
+  "_transitions": {
+    "status": [
+      {
+        "to": "closed",
+        "label": "Close",
+        "guard": "close-ticket",
+        "allowed": true
+      }
+    ]
+  },
+  "_copies": [],
+  "_faces": []
+}

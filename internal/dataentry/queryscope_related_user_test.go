@@ -63,7 +63,7 @@ func newRelatedUserApp(t *testing.T) (*App, *acl.Declarative, *storetest.Countin
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	app.acl = d
+	setTestACL(t, app, d)
 	return app, d, counting
 }
 
@@ -251,7 +251,7 @@ func TestQueryScope_RelatedToCurrentUserUnreadableUserType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
-	app.acl = d
+	setTestACL(t, app, d)
 	for _, tc := range []struct {
 		scope string
 		want  []string

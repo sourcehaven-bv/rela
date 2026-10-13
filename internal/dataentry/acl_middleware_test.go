@@ -93,7 +93,7 @@ func TestACLMiddleware_RouterChainOrder(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Install a resolver that returns a stamped principal for every
 	// request. With the CORRECT wrap order (stamp outermost → ACL

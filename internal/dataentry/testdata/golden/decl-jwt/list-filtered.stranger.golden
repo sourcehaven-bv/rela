@@ -1,0 +1,146 @@
+request: GET /api/v1/tickets/?filter[status]=open&sort=-title
+identity: signed assertion for stranger@example.test
+status: 200
+header X-Total-Count: 4
+header Link: </api/v1/tickets?page=1&per_page=25>; rel="first", </api/v1/tickets?page=1&per_page=25>; rel="last"
+reads: CountMatched=1 GetRelation=4 GraphQueryHeaders=2 ListEntityHeaders=1 ListRelations=4 MatchingFaces=1
+breadth: ListEntityHeaders=7/1 ListRelations=12/4 MatchingFaces=4/1
+bodies: GraphQuery=2/2 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "data": [
+    {
+      "_self": "/api/v1/tickets/TKT-6",
+      "id": "TKT-6",
+      "type": "ticket",
+      "_title": "Foxtrot",
+      "properties": {
+        "budget": "foxtrot-budget",
+        "secret": "foxtrot-secret",
+        "status": "open",
+        "title": "Foxtrot"
+      },
+      "_actions": {
+        "delete": false,
+        "rename": false,
+        "update": false
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    {
+      "_self": "/api/v1/tickets/TKT-4",
+      "id": "TKT-4",
+      "type": "ticket",
+      "_title": "Delta",
+      "properties": {
+        "budget": "delta-budget",
+        "due": "2025-03-28",
+        "note": "delta-note",
+        "secret": "delta-secret",
+        "start": "2025-01-20",
+        "status": "open",
+        "title": "Delta"
+      },
+      "relations": {
+        "contains_inverse": [
+          "TKT-1"
+        ],
+        "watches_inverse": [
+          "PERS-editor"
+        ]
+      },
+      "_actions": {
+        "delete": false,
+        "rename": false,
+        "update": false
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    {
+      "_self": "/api/v1/tickets/TKT-3",
+      "id": "TKT-3",
+      "type": "ticket",
+      "_title": "Charlie",
+      "properties": {
+        "budget": "charlie-budget",
+        "due": "2025-02-14",
+        "note": "charlie-note",
+        "secret": "charlie-secret",
+        "start": "2025-02-03",
+        "status": "open",
+        "title": "Charlie"
+      },
+      "relations": {
+        "watches_inverse": [
+          "PERS-viewer"
+        ]
+      },
+      "_actions": {
+        "delete": false,
+        "rename": false,
+        "update": false
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    {
+      "_self": "/api/v1/tickets/TKT-1",
+      "id": "TKT-1",
+      "type": "ticket",
+      "_title": "Alpha",
+      "properties": {
+        "budget": "alpha-budget",
+        "due": "2025-01-17",
+        "note": "alpha-note",
+        "screenshot": "attachments/TKT-1/screenshot/shot.txt",
+        "secret": "alpha-secret",
+        "start": "2025-01-06",
+        "status": "open",
+        "title": "Alpha"
+      },
+      "relations": {
+        "contains": [
+          "TKT-2",
+          "TKT-4"
+        ],
+        "implements": [
+          "POL-1"
+        ],
+        "watches_inverse": [
+          "PERS-viewer"
+        ]
+      },
+      "_actions": {
+        "delete": false,
+        "rename": false,
+        "update": false
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    }
+  ],
+  "meta": {
+    "total": 4,
+    "page": 1,
+    "per_page": 25,
+    "has_more": false
+  },
+  "_actions": {
+    "create": false
+  }
+}

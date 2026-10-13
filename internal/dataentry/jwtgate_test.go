@@ -583,7 +583,7 @@ func TestJWTGate_RouterChainOrder(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"usr_alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	if err := app.SetJWTGate(JWTGateConfig{
 		Verifier:   gateVerifier{validToken: "good.jwt.token", subject: "usr_alice"},
@@ -651,10 +651,10 @@ func TestJWTGate_AssertedRolesReachACL(t *testing.T) {
 		t.Helper()
 		app := newTestAppV1(t)
 		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"}})
-		app.acl = mustNewACL(t, &acl.Policy{
+		setTestACL(t, app, mustNewACL(t, &acl.Policy{
 			Roles:         map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 			AssertedRoles: map[string]acl.RoleList{"admin": {"viewer"}},
-		}, app.store)
+		}, app.store))
 		return app
 	}
 

@@ -1,0 +1,11 @@
+request: PUT /api/v1/_palette
+identity: header stranger@example.test
+status: 200
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "ok": true
+}

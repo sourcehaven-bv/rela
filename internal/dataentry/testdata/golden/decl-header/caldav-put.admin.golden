@@ -1,0 +1,10 @@
+request: PUT /api/v1/_caldav/principal/calendars/tickets/ticket--TKT-3@rela.ics
+identity: header admin@example.test
+status: 201
+header ETag: "RLRSS476RTWRWH3S"
+header Location: /api/v1/_caldav/principal/calendars/tickets/ticket--TKT-3@rela.ics
+reads: GetEntity=1 GetRelation=2 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1
+breadth: ListEntityHeaders=1/1 ListRelations=0/1
+bodies: GetEntity=0/1 GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:

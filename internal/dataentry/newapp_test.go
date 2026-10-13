@@ -1,10 +1,16 @@
 package dataentry
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/config"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/templating"
 )
 
@@ -47,5 +53,31 @@ func TestNewApp_RejectsMissingConfigCollaborators(t *testing.T) {
 				t.Fatal("NewApp returned an app alongside its error")
 			}
 		})
+	}
+}
+
+// NewApp refuses a nil ACL even when every other collaborator is real. The
+// ACL type switches in the handlers have no nil arm to fall back on, and a
+// missing ACL must not read as "no restrictions".
+func TestNewApp_RejectsNilACL(t *testing.T) {
+	root := t.TempDir()
+	paths := &project.Context{Root: root, CacheDir: filepath.Join(root, ".rela")}
+	fsys := storage.NewSafeFS(storage.NewOsFS())
+	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"ticket": {Label: "Ticket", IDPrefix: "TKT-", Properties: map[string]metamodel.PropertyDef{}},
+	}}
+	svc := appbuildtest.New(meta, appbuildtest.WithFS(fsys, paths))
+	t.Cleanup(func() { _ = svc.Close() })
+
+	app, err := NewApp(
+		svc.FS(), svc.Paths(), svc.ProjectFiles(), svc.Templater(), svc.Meta(), svc.Store(), stubVersionService{},
+		svc.EntityManager(), svc.Searcher(), svc.VisibleSearcher(), nil,
+		NopFieldVerdictResolver{}, svc.Audit(), svc.State(), UngatedCommandAuthorizer(), appbuild.CompiledWorlds(svc),
+	)
+	if err == nil || !strings.Contains(err.Error(), "acl is required") {
+		t.Fatalf("NewApp with a nil ACL: err = %v, want it to contain %q", err, "acl is required")
+	}
+	if app != nil {
+		t.Fatal("NewApp returned an app alongside its error")
 	}
 }

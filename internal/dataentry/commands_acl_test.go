@@ -71,7 +71,7 @@ func TestCommandExec_RowGatesTheEntity(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "viewer", "bob": "nothing"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// alice may read tickets.
 	if rec := execEntityCommandAs(aliceCtx(), t, app, d, "TKT-ACL1"); rec.Code != http.StatusOK {
@@ -97,9 +97,9 @@ func TestCommandExec_RowGatesTheEntity(t *testing.T) {
 func TestCommandExec_RedactsHiddenPropertyValue(t *testing.T) {
 	app := newHandlerTestApp(t)
 	bindRepo(app, t.TempDir())
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"status": false},
-	}}
+	}})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-ACL1", Type: "ticket",
 		Properties: map[string]any{"title": "visible title", "status": "SECRET-STATUS"},
@@ -113,7 +113,7 @@ func TestCommandExec_RedactsHiddenPropertyValue(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "viewer", "bob": "nothing"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := execEntityCommandAs(aliceCtx(), t, app, d, "TKT-ACL1")
 	if rec.Code != http.StatusOK {

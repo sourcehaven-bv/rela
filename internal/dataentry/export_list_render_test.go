@@ -69,7 +69,7 @@ func adminListCtx(t *testing.T, app *App) context.Context {
 		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"ticket", "feature"}}},
 		Assignments: map[string]string{"alice": "admin"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return gateCtxFor(aliceCtx(), t, d)
 }
 
@@ -226,7 +226,7 @@ func TestExport_List_RenderOverride_DeniedSeesNoRows(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"feature"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	ctx := gateCtxFor(aliceCtx(), t, d)
 
 	rec := exportListURL(ctx, app, "transform=copy&list=tickets")

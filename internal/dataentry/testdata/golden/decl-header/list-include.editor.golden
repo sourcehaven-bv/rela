@@ -1,0 +1,345 @@
+request: GET /api/v1/tickets/?include=*
+identity: header editor@example.test
+status: 200
+header X-Total-Count: 6
+header Link: </api/v1/tickets?page=1&per_page=25>; rel="first", </api/v1/tickets?page=1&per_page=25>; rel="last"
+reads: CountMatched=1 GetRelation=54 GraphQueryHeaders=2 ListEntityHeaders=6 ListRelations=22 MatchingFaces=4
+breadth: ListEntityHeaders=18/6 ListRelations=18/22 MatchingFaces=10/4
+bodies: GraphQuery=4/2 ListEntityHeaders=0/6
+versions: 
+body:
+{
+  "data": [
+    {
+      "_self": "/api/v1/tickets/TKT-1",
+      "id": "TKT-1",
+      "type": "ticket",
+      "_title": "Alpha",
+      "properties": {
+        "budget": "alpha-budget",
+        "due": "2025-01-17",
+        "note": "alpha-note",
+        "screenshot": "attachments/TKT-1/screenshot/shot.txt",
+        "secret": "alpha-secret",
+        "start": "2025-01-06",
+        "status": "open",
+        "title": "Alpha"
+      },
+      "relations": {
+        "contains": [
+          "TKT-2",
+          "TKT-4"
+        ],
+        "implements": [
+          "POL-1"
+        ],
+        "watches_inverse": [
+          "PERS-viewer"
+        ]
+      },
+      "_actions": {
+        "delete": true,
+        "rename": false,
+        "update": true
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    {
+      "_self": "/api/v1/tickets/TKT-2",
+      "id": "TKT-2",
+      "type": "ticket",
+      "_title": "Bravo",
+      "properties": {
+        "budget": "bravo-budget",
+        "closed_on": "2025-01-10T17:00:00Z",
+        "due": "2025-01-10",
+        "note": "bravo-note",
+        "secret": "bravo-secret",
+        "start": "2025-01-08",
+        "status": "closed",
+        "title": "Bravo"
+      },
+      "relations": {
+        "contains_inverse": [
+          "TKT-1"
+        ],
+        "watches_inverse": [
+          "PERS-viewer"
+        ]
+      },
+      "_actions": {
+        "delete": true,
+        "rename": false,
+        "update": true
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    {
+      "_self": "/api/v1/tickets/TKT-3",
+      "id": "TKT-3",
+      "type": "ticket",
+      "_title": "Charlie",
+      "properties": {
+        "budget": "charlie-budget",
+        "due": "2025-02-14",
+        "note": "charlie-note",
+        "secret": "charlie-secret",
+        "start": "2025-02-03",
+        "status": "open",
+        "title": "Charlie"
+      },
+      "relations": {
+        "watches_inverse": [
+          "PERS-viewer"
+        ]
+      },
+      "_actions": {
+        "delete": true,
+        "rename": false,
+        "update": true
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    {
+      "_self": "/api/v1/tickets/TKT-4",
+      "id": "TKT-4",
+      "type": "ticket",
+      "_title": "Delta",
+      "properties": {
+        "due": "2025-03-28",
+        "secret": "delta-secret",
+        "start": "2025-01-20",
+        "status": "open",
+        "title": "Delta"
+      },
+      "relations": {
+        "contains_inverse": [
+          "TKT-1"
+        ],
+        "watches_inverse": [
+          "PERS-editor"
+        ]
+      },
+      "_actions": {
+        "delete": true,
+        "rename": false,
+        "update": true
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    {
+      "_self": "/api/v1/tickets/TKT-5",
+      "id": "TKT-5",
+      "type": "ticket",
+      "_title": "Echo",
+      "properties": {
+        "budget": "echo-budget",
+        "closed_on": "2025-02-20T17:00:00Z",
+        "due": "2025-02-20",
+        "secret": "echo-secret",
+        "status": "closed",
+        "title": "Echo"
+      },
+      "relations": {
+        "implements": [
+          "POL-1"
+        ]
+      },
+      "_actions": {
+        "delete": true,
+        "rename": false,
+        "update": true
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    {
+      "_self": "/api/v1/tickets/TKT-6",
+      "id": "TKT-6",
+      "type": "ticket",
+      "_title": "Foxtrot",
+      "properties": {
+        "budget": "foxtrot-budget",
+        "secret": "foxtrot-secret",
+        "status": "open",
+        "title": "Foxtrot"
+      },
+      "_actions": {
+        "delete": true,
+        "rename": false,
+        "update": true
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    }
+  ],
+  "meta": {
+    "total": 6,
+    "page": 1,
+    "per_page": 25,
+    "has_more": false
+  },
+  "included": {
+    "PERS-editor": {
+      "_self": "/api/v1/persons/PERS-editor",
+      "id": "PERS-editor",
+      "type": "person",
+      "_title": "Eddie Editor",
+      "properties": {
+        "email": "editor@example.test",
+        "title": "Eddie Editor"
+      },
+      "_actions": {
+        "delete": false,
+        "rename": false,
+        "update": false
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    "PERS-viewer": {
+      "_self": "/api/v1/persons/PERS-viewer",
+      "id": "PERS-viewer",
+      "type": "person",
+      "_title": "Vera Viewer",
+      "properties": {
+        "email": "viewer@example.test",
+        "title": "Vera Viewer"
+      },
+      "_actions": {
+        "delete": false,
+        "rename": false,
+        "update": false
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    "POL-1": {
+      "_self": "/api/v1/policies/POL-1@published",
+      "id": "POL-1",
+      "type": "policy",
+      "_title": "Access",
+      "properties": {
+        "stage": "done",
+        "title": "Access"
+      },
+      "_actions": {
+        "delete": false,
+        "rename": false,
+        "update": false
+      },
+      "_world": {
+        "name": "published",
+        "face": "published",
+        "via": "chain",
+        "chain_position": 0
+      }
+    },
+    "TKT-1": {
+      "_self": "/api/v1/tickets/TKT-1",
+      "id": "TKT-1",
+      "type": "ticket",
+      "_title": "Alpha",
+      "properties": {
+        "budget": "alpha-budget",
+        "due": "2025-01-17",
+        "note": "alpha-note",
+        "screenshot": "attachments/TKT-1/screenshot/shot.txt",
+        "secret": "alpha-secret",
+        "start": "2025-01-06",
+        "status": "open",
+        "title": "Alpha"
+      },
+      "_actions": {
+        "delete": true,
+        "rename": false,
+        "update": true
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    "TKT-2": {
+      "_self": "/api/v1/tickets/TKT-2",
+      "id": "TKT-2",
+      "type": "ticket",
+      "_title": "Bravo",
+      "properties": {
+        "budget": "bravo-budget",
+        "closed_on": "2025-01-10T17:00:00Z",
+        "due": "2025-01-10",
+        "note": "bravo-note",
+        "secret": "bravo-secret",
+        "start": "2025-01-08",
+        "status": "closed",
+        "title": "Bravo"
+      },
+      "_actions": {
+        "delete": true,
+        "rename": false,
+        "update": true
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    },
+    "TKT-4": {
+      "_self": "/api/v1/tickets/TKT-4",
+      "id": "TKT-4",
+      "type": "ticket",
+      "_title": "Delta",
+      "properties": {
+        "due": "2025-03-28",
+        "secret": "delta-secret",
+        "start": "2025-01-20",
+        "status": "open",
+        "title": "Delta"
+      },
+      "_actions": {
+        "delete": true,
+        "rename": false,
+        "update": true
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    }
+  },
+  "_actions": {
+    "create": true
+  }
+}

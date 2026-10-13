@@ -1,0 +1,8 @@
+request: POST /api/v1/tickets/TKT-3/relations/contains
+identity: header admin@example.test
+status: 201
+reads: GetRelation=3 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=4 ListRelations=1
+breadth: ListEntities=1/1 ListEntityHeaders=4/4 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=0/1 ListEntityHeaders=0/4
+versions: 
+body:

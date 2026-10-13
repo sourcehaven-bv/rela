@@ -1,0 +1,49 @@
+request: GET /api/v1/_feeds/due.ics
+identity: header editor@example.test
+status: 200
+reads: GetRelation=6 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=1
+breadth: ListEntityHeaders=0/1 ListRelations=0/1 MatchingFaces=6/1
+bodies: GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Sourcehaven//rela//EN
+CALSCALE:GREGORIAN
+X-WR-CALNAME:Due tickets
+BEGIN:VEVENT
+UID:ticket--TKT-1@rela
+DTSTAMP:<now>
+DTSTART;VALUE=DATE:20250117
+SUMMARY:Alpha
+URL:http://127.0.0.1:8080/entity/ticket/TKT-1
+END:VEVENT
+BEGIN:VEVENT
+UID:ticket--TKT-2@rela
+DTSTAMP:<now>
+DTSTART;VALUE=DATE:20250110
+SUMMARY:Bravo
+URL:http://127.0.0.1:8080/entity/ticket/TKT-2
+END:VEVENT
+BEGIN:VEVENT
+UID:ticket--TKT-3@rela
+DTSTAMP:<now>
+DTSTART;VALUE=DATE:20250214
+SUMMARY:Charlie
+URL:http://127.0.0.1:8080/entity/ticket/TKT-3
+END:VEVENT
+BEGIN:VEVENT
+UID:ticket--TKT-4@rela
+DTSTAMP:<now>
+DTSTART;VALUE=DATE:20250328
+SUMMARY:Delta
+URL:http://127.0.0.1:8080/entity/ticket/TKT-4
+END:VEVENT
+BEGIN:VEVENT
+UID:ticket--TKT-5@rela
+DTSTAMP:<now>
+DTSTART;VALUE=DATE:20250220
+SUMMARY:Echo
+URL:http://127.0.0.1:8080/entity/ticket/TKT-5
+END:VEVENT
+END:VCALENDAR

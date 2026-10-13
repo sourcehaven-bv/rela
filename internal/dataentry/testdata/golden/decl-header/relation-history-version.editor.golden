@@ -1,0 +1,27 @@
+request: GET /api/v1/_relation_history/ticket/TKT-1/implements/POL-1/2
+identity: header editor@example.test
+status: 200
+reads: GetEntity=1 GraphQueryHeaders=1 ListEntityHeaders=5 ListRelations=1
+breadth: ListEntityHeaders=5/5 ListRelations=0/1
+bodies: GetEntity=1/1 GraphQuery=0/1 ListEntityHeaders=0/5
+versions: GetRelationVersion=1
+body:
+{
+  "created_at": "2025-03-01T11:00:00Z",
+  "from": "TKT-1",
+  "op": "update",
+  "principal": {
+    "tool": "",
+    "user": "admin@example.test"
+  },
+  "relation": {
+    "content": "",
+    "from": "TKT-1",
+    "meta": null,
+    "to": "POL-1",
+    "type": "implements"
+  },
+  "to": "POL-1",
+  "type": "implements",
+  "version": 2
+}

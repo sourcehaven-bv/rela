@@ -1,0 +1,17 @@
+request: GET /api/v1/_me
+identity: signed assertion for viewer@example.test
+status: 200
+reads: GetRelation=1 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=1 ListRelations=1
+breadth: ListEntities=1/1 ListEntityHeaders=1/1 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "user": "PERS-viewer",
+  "email": "viewer@example.test",
+  "person": {
+    "type": "person",
+    "id": "PERS-viewer",
+    "title": "Vera Viewer"
+  }
+}

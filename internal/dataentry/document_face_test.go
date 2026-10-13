@@ -193,7 +193,7 @@ func TestAnchoredDocument_FaceGate(t *testing.T) {
 // world serves (published here). The addressed face renders too.
 func TestAnchoredDocument_BareIDRouted(t *testing.T) {
 	app, d := facedDocumentApp(t)
-	app.acl = d
+	setTestACL(t, app, d)
 	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
 		return principal.Principal{User: "alice", Tool: principal.ToolDataEntry}
 	})

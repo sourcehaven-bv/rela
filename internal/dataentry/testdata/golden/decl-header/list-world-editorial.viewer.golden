@@ -1,0 +1,24 @@
+request: GET /api/v1/policies/?world=editorial
+identity: header viewer@example.test
+status: 200
+header X-Total-Count: 0
+header Link: </api/v1/policies?page=1&per_page=25>; rel="first", </api/v1/policies?page=1&per_page=25>; rel="last"
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "data": [],
+  "meta": {
+    "total": 0,
+    "page": 1,
+    "per_page": 25,
+    "has_more": false
+  },
+  "_actions": {
+    "create": false,
+    "create@draft": false,
+    "create@published": false
+  }
+}

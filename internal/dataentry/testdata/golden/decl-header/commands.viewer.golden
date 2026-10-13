@@ -1,0 +1,9 @@
+request: GET /api/v1/_commands
+identity: header viewer@example.test
+status: 200
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+[]

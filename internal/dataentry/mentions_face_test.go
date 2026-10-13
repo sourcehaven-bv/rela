@@ -128,7 +128,7 @@ func TestMentions_FacedTargetsResolveInTheRequestWorld(t *testing.T) {
 // hidden display property falls back to the id.
 func TestMentions_FacedTargetRedactsHiddenTitle(t *testing.T) {
 	app := mentionsFaceApp(t, rankedPolicyWorld(), []string{"policy", "feature", "world:published"})
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
 
 	for _, path := range mentionsFacePaths {
 		got := routedMentions(t, app, path)

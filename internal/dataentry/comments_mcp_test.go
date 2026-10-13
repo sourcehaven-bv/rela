@@ -111,7 +111,7 @@ func TestMCPComments_ReadOnly(t *testing.T) {
 	ctx := mcpCtx(t, "alice@example.com", nil)
 	created, err := ops.AddComment(ctx, "TKT-001", comments.AddInput{Kind: comments.AnchorProperty, Ref: "status", Body: "x"})
 	require.NoError(t, err)
-	app.acl = acl.ReadOnlyACL{}
+	setTestACL(t, app, acl.ReadOnlyACL{})
 
 	_, err = ops.AddComment(ctx, "TKT-001", comments.AddInput{Kind: comments.AnchorProperty, Ref: "status", Body: "x"})
 	require.Contains(t, requireOpCode(t, err, "forbidden").Title, "read-only")

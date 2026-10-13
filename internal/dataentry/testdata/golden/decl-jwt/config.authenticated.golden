@@ -1,0 +1,402 @@
+request: GET /api/v1/_config
+identity: a signed assertion for each authenticated principal, all answered alike
+status: 200
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "app": {
+    "name": "Golden parity",
+    "description": "",
+    "default_world": "published",
+    "history_enabled": true
+  },
+  "about_description": "Fixture for the golden wire-parity corpus (golden_parity_test.go). Small on purpose: every type, relation and grant here exists so that some case can show a principal-dependent difference on the wire.\n",
+  "styles": {
+    "policy_stage": {
+      "done": "badge-purple",
+      "to-do": "badge-blue"
+    },
+    "ticket_status": {
+      "archived": "badge-green",
+      "closed": "badge-purple",
+      "open": "badge-blue"
+    }
+  },
+  "forms": {
+    "ticket_form": {
+      "entity": "ticket",
+      "title": "Ticket",
+      "body": true,
+      "fields": [
+        {
+          "property": "title"
+        },
+        {
+          "property": "status"
+        },
+        {
+          "property": "secret"
+        },
+        {
+          "property": "note"
+        },
+        {
+          "property": "start"
+        },
+        {
+          "property": "due"
+        }
+      ],
+      "relations": [
+        {
+          "relation": "implements",
+          "direction": "outgoing",
+          "label": "Policies",
+          "widget": "multi-select"
+        }
+      ]
+    }
+  },
+  "lists": {
+    "open_tickets": {
+      "entity": "ticket",
+      "title": "Open tickets",
+      "columns": [
+        {
+          "property": "title",
+          "sortable": true,
+          "link": "detail"
+        }
+      ],
+      "filters": [
+        {
+          "property": "status",
+          "operator": "=",
+          "value": "open"
+        }
+      ]
+    },
+    "people": {
+      "entity": "person",
+      "title": "People",
+      "columns": [
+        {
+          "property": "title",
+          "sortable": true,
+          "link": "detail"
+        }
+      ]
+    },
+    "policies": {
+      "entity": "policy",
+      "title": "Policies",
+      "columns": [
+        {
+          "property": "title",
+          "sortable": true,
+          "link": "detail"
+        },
+        {
+          "property": "stage",
+          "sortable": true
+        }
+      ]
+    },
+    "tickets": {
+      "entity": "ticket",
+      "title": "Tickets",
+      "columns": [
+        {
+          "property": "title",
+          "sortable": true,
+          "link": "detail"
+        },
+        {
+          "property": "status",
+          "sortable": true
+        },
+        {
+          "property": "secret",
+          "sortable": true
+        },
+        {
+          "relation": "implements",
+          "direction": "outgoing",
+          "label": "Policies"
+        },
+        {
+          "relation": "watches",
+          "direction": "incoming",
+          "label": "Watchers"
+        }
+      ],
+      "filter_controls": [
+        {
+          "property": "status"
+        }
+      ],
+      "create_form": "ticket_form",
+      "edit_form": "ticket_form"
+    }
+  },
+  "views": {
+    "ticket": {
+      "title": "Ticket",
+      "entry": {
+        "type": "ticket"
+      },
+      "traverse": [
+        {
+          "from": "entry",
+          "follow": "contains",
+          "collect_as": "children"
+        },
+        {
+          "from": "entry",
+          "follow": "implements",
+          "collect_as": "policies"
+        },
+        {
+          "from": "entry",
+          "follow_incoming": "watches",
+          "collect_as": "watchers"
+        }
+      ],
+      "sections": [
+        {
+          "heading": "Ticket",
+          "source": "entry",
+          "display": "properties",
+          "fields": [
+            {
+              "property": "status"
+            },
+            {
+              "property": "secret"
+            },
+            {
+              "property": "note"
+            }
+          ]
+        },
+        {
+          "source": "entry",
+          "display": "content"
+        },
+        {
+          "heading": "Children",
+          "source": "children",
+          "display": "table",
+          "columns": [
+            {
+              "property": "title",
+              "link": "detail"
+            },
+            {
+              "property": "status"
+            },
+            {
+              "property": "secret"
+            }
+          ]
+        },
+        {
+          "heading": "Policies",
+          "source": "policies",
+          "display": "list",
+          "fields": [
+            {
+              "property": "title"
+            },
+            {
+              "property": "stage"
+            }
+          ]
+        },
+        {
+          "heading": "Watchers",
+          "source": "watchers",
+          "display": "list",
+          "fields": [
+            {
+              "property": "title"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "kanbans": {},
+  "gantts": {
+    "plan": {
+      "title": "Plan",
+      "hierarchy": [
+        "contains"
+      ],
+      "multi_parent": "first",
+      "on_cycle": "error",
+      "default_depth": 3,
+      "max_depth": 10,
+      "max_nodes": 2000,
+      "sources": {
+        "ticket": {
+          "start": "start",
+          "end": "due"
+        }
+      }
+    }
+  },
+  "dashboard": {
+    "title": "Golden",
+    "cards": [
+      {
+        "title": "Tickets",
+        "query": "type:ticket",
+        "display": "count"
+      },
+      {
+        "title": "By status",
+        "query": "type:ticket",
+        "display": "breakdown",
+        "group_by": "status"
+      },
+      {
+        "title": "Open",
+        "query": "type:ticket prop:status=open",
+        "display": "table",
+        "columns": [
+          {
+            "property": "title",
+            "link": "detail"
+          },
+          {
+            "property": "secret"
+          }
+        ]
+      },
+      {
+        "title": "Admin only",
+        "query": "type:ticket",
+        "display": "count",
+        "permission": "report:all"
+      }
+    ]
+  },
+  "actions": {
+    "close": {
+      "script": "close.lua",
+      "label": "Close"
+    }
+  },
+  "navigation": [
+    {
+      "label": "Tickets",
+      "list": "tickets"
+    },
+    {
+      "label": "Open tickets",
+      "list": "open_tickets"
+    },
+    {
+      "label": "Policies",
+      "list": "policies"
+    },
+    {
+      "label": "People",
+      "list": "people"
+    },
+    {
+      "label": "Plan",
+      "gantt": "plan"
+    },
+    {
+      "label": "Report",
+      "document": "report"
+    },
+    {
+      "label": "Elevated report",
+      "document": "elevated_report"
+    },
+    {
+      "label": "Dashboard",
+      "dashboard": true
+    }
+  ],
+  "documents": {
+    "elevated_report": {
+      "title": "Elevated report",
+      "permission": "report:all",
+      "allow_acl_bypass": "read",
+      "script": "docs/elevated.lua"
+    },
+    "report": {
+      "title": "Report",
+      "script": "docs/report.lua"
+    }
+  },
+  "palette": {
+    "light": {
+      "--accent-color": "#4772fb",
+      "--badge-blue": "#4772fb",
+      "--badge-gray": "#6b7280",
+      "--badge-green": "#06ce90",
+      "--badge-orange": "#f4aa83",
+      "--badge-purple": "#8b5cf6",
+      "--badge-red": "#e5484d",
+      "--badge-yellow": "#f9d975",
+      "--bg-color": "#f3f2ef",
+      "--border-color": "#d2d1cf",
+      "--card-bg": "#f7f7f5",
+      "--error-color": "#e5484d",
+      "--error-ring": "var(--error-color)",
+      "--focus-ring": "var(--accent-color)",
+      "--focus-ring-gap": "var(--bg-color)",
+      "--hover-bg": "#ecebe6",
+      "--info-color": "#4772fb",
+      "--input-bg": "#f7f7f5",
+      "--muted-text": "#666666",
+      "--sidebar-bg": "#164155",
+      "--sidebar-text": "#e8e8e8",
+      "--success-color": "#06ce90",
+      "--text-color": "#191919",
+      "--warning-color": "#f4aa83"
+    },
+    "dark": {
+      "--accent-color": "#6f93ff",
+      "--badge-blue": "#6f93ff",
+      "--badge-gray": "#8fa4b0",
+      "--badge-green": "#34d39c",
+      "--badge-orange": "#f4aa83",
+      "--badge-purple": "#c4b5fd",
+      "--badge-red": "#f87171",
+      "--badge-yellow": "#f9d975",
+      "--bg-color": "#0f1f28",
+      "--border-color": "#303d44",
+      "--card-bg": "#12252f",
+      "--error-color": "#f87171",
+      "--error-ring": "var(--error-color)",
+      "--focus-ring": "var(--accent-color)",
+      "--focus-ring-gap": "var(--bg-color)",
+      "--hover-bg": "#0b161d",
+      "--info-color": "#6f93ff",
+      "--input-bg": "#12252f",
+      "--muted-text": "#ffffff",
+      "--sidebar-bg": "#091821",
+      "--sidebar-text": "#e8e8e8",
+      "--success-color": "#34d39c",
+      "--text-color": "#ece9e0",
+      "--warning-color": "#f9d975"
+    }
+  },
+  "next_action_bands": [
+    {
+      "id": "due",
+      "label": "Due",
+      "prominence": "notice"
+    }
+  ],
+  "piles": null
+}

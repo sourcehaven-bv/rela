@@ -214,7 +214,7 @@ func newLeaseEnv(t *testing.T) *leaseEnv {
 		seedRelation(app, entity.NewRelation("TKT-1", "implements", "FEAT-1"))
 		seedRelation(app, entity.NewRelation("TKT-1", "blocks", "TKT-2"))
 		d := leasePolicy(t, app)
-		app.acl = d
+		setTestACL(t, app, d)
 		env.auth = &revocableAuth{ACL: d, revoked: map[string]bool{}}
 		env.leases = newLeaseServiceOver(t, app, d, env.auth, env.clock, func(s lease.Store) lease.Store {
 			env.expiry.Store = s

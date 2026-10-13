@@ -34,7 +34,7 @@ func TestACLAnalyze_FiltersHiddenIssues(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
@@ -86,9 +86,9 @@ func TestACLAnalyze_FiltersHiddenIssues(t *testing.T) {
 func TestACLAnalyze_RedactsHiddenPrimaryTitle(t *testing.T) {
 	app := newTestAppV1(t)
 	// title is the ticket's display property; hide it for everyone.
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"title": false},
-	}}
+	}})
 	// Orphan ticket → trips the orphans warning, producing an issue with a title.
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket",
@@ -99,7 +99,7 @@ func TestACLAnalyze_RedactsHiddenPrimaryTitle(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
@@ -138,9 +138,9 @@ func TestACLAnalyze_RedactsHiddenTemplatedTitle(t *testing.T) {
 	app := newAppFromParts(&Config{}, meta, newFixture())
 	app.broker = newEventBroker()
 	// Hide the achternaam placeholder for everyone.
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"achternaam": false},
-	}}
+	}})
 	// Orphan persoon → orphans warning with a templated title.
 	seedEntity(app, &entity.Entity{
 		ID: "PERS-001", Type: "persoon",
@@ -151,7 +151,7 @@ func TestACLAnalyze_RedactsHiddenTemplatedTitle(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"persoon"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
@@ -215,9 +215,9 @@ func TestACLAnalyze_GatedReadClosesMessageLeak(t *testing.T) {
 	app.broker = newEventBroker()
 	// Hide `status` — the property whose invalid value the Properties check would
 	// otherwise quote in its message.
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"status": false},
-	}}
+	}})
 	// status holds an INVALID enum value → Properties check fires "Invalid value
 	// \"SECRET-STATUS\" (allowed: [open closed])".
 	seedEntity(app, &entity.Entity{
@@ -229,7 +229,7 @@ func TestACLAnalyze_GatedReadClosesMessageLeak(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_analyze", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))

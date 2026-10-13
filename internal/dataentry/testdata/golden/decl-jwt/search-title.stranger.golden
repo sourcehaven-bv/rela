@@ -1,0 +1,44 @@
+request: GET /api/v1/_search?q=Alpha
+identity: signed assertion for stranger@example.test
+status: 200
+reads: GetEntity=2 GetRelation=2 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=1
+breadth: ListEntityHeaders=1/1 ListRelations=0/1 MatchingFaces=1/1
+bodies: GetEntity=2/2 GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "data": [
+    {
+      "_self": "/api/v1/tickets/TKT-1",
+      "id": "TKT-1",
+      "type": "ticket",
+      "_title": "Alpha",
+      "properties": {
+        "budget": "alpha-budget",
+        "due": "2025-01-17",
+        "note": "alpha-note",
+        "screenshot": "attachments/TKT-1/screenshot/shot.txt",
+        "secret": "alpha-secret",
+        "start": "2025-01-06",
+        "status": "open",
+        "title": "Alpha"
+      },
+      "_actions": {
+        "delete": false,
+        "rename": false,
+        "update": false
+      },
+      "_world": {
+        "name": "published",
+        "face": "",
+        "via": "unscoped"
+      }
+    }
+  ],
+  "meta": {
+    "total": 1,
+    "page": 1,
+    "per_page": 1,
+    "has_more": false
+  }
+}

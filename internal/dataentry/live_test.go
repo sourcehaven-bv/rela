@@ -349,10 +349,10 @@ func aclTicketsOnly(t *testing.T) func(app *App) {
 		seedEntity(app, ticket1("one"))
 		seedEntity(app, feature("FEAT-1", "hidden"))
 		seedRelation(app, entity.NewRelation("TKT-1", "implements", "FEAT-1"))
-		app.acl = mustNewACL(t, &acl.Policy{
+		setTestACL(t, app, mustNewACL(t, &acl.Policy{
 			Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 			Assignments: map[string]string{"alice": "viewer"},
-		}, app.store)
+		}, app.store))
 	}
 }
 
@@ -390,10 +390,10 @@ func TestLive_LosingAccessFrames(t *testing.T) {
 		seedEntity(app, &entity.Entity{ID: "alice", Type: "person", Properties: map[string]any{"title": "Alice"}})
 		seedEntity(app, &entity.Entity{ID: "editors", Type: "person", Properties: map[string]any{"title": "Editors"}})
 		seedRelation(app, entity.NewRelation("alice", "member-of", "editors"))
-		app.acl = mustNewACL(t, &acl.Policy{
+		setTestACL(t, app, mustNewACL(t, &acl.Policy{
 			Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 			Assignments: map[string]string{"editors": "viewer"},
-		}, app.store)
+		}, app.store))
 	})
 	c, conn := env.open(t, "alice")
 	env.subscribe(t, "alice", conn, liveSubEntry{"detail", "/api/v1/tickets/TKT-1"})
@@ -545,7 +545,7 @@ func TestLive_ReplayMatchesGet(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		app.acl = d
+		setTestACL(t, app, d)
 	}
 	cases := []struct {
 		name  string
@@ -611,7 +611,7 @@ func TestLive_PrincipalPropertyFrames(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		app.acl = d
+		setTestACL(t, app, d)
 	})
 	c, conn := env.open(t, "alice@example.com")
 	env.subscribe(t, "alice@example.com", conn, liveSubEntry{"detail", "/api/v1/tickets/TKT-1"})

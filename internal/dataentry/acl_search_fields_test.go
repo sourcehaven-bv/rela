@@ -32,8 +32,8 @@ func buildFieldPolicyApp(t *testing.T, aclYAML string) (*App, *acl.Declarative) 
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}
-	app.acl = d
-	app.fieldResolver = &policyResolver{inner: resolver}
+	setTestACL(t, app, d)
+	setTestResolver(t, app, &policyResolver{inner: resolver})
 	return app, d
 }
 

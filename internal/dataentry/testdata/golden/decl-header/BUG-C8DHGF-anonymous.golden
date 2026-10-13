@@ -1,0 +1,15 @@
+request: every corpus request
+identity: none
+status: 500
+reads: 
+breadth: 
+bodies: 
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/acl_unstamped_principal",
+  "title": "Principal could not be resolved under ACL",
+  "status": 500,
+  "detail": "principal stamper produced an unstamped identity; check server logs",
+  "instance": "<request path>"
+}

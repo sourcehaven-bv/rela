@@ -1,0 +1,14 @@
+request: PATCH /api/v1/tickets/TKT-2
+identity: header viewer@example.test
+status: 403
+reads: GetEntity=2 GetRelation=2 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=4
+breadth: ListEntityHeaders=1/1 ListRelations=0/1 MatchingFaces=4/4
+bodies: GetEntity=2/2 GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "error": "forbidden",
+  "reason": "no role grants update on type \"ticket\"",
+  "rule_id": "-",
+  "rule_kind": "role-grant"
+}

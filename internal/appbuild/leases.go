@@ -15,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // leasesLockFile is the lock file next to the lease document in the cache
@@ -46,19 +47,20 @@ type leaseShared struct {
 // The service is per assembly, so its access checks follow the current ACL:
 // reads go through the gated reader [Services.GatedReads] wraps, built from
 // the same inputs, so a claim answers not-found exactly where show_entity
-// does; updates go through writes, the resolved write ACL.
+// does; updates go through writes, the resolved write ACL. Assembly and
+// [NewFromCollaborators] both build it here.
 func buildLeases(
-	base *SharedBase, st store.Store, shared leaseShared,
+	fs storage.FS, paths *project.Context, w worlds.Compiled, st store.Store, shared leaseShared,
 	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
 ) (*lease.Service, leaseShared, error) {
 	if shared.store == nil {
-		backend, err := leaseBackend(base.cfg.FS, base.cfg.Paths, st)
+		backend, err := leaseBackend(fs, paths, st)
 		if err != nil {
 			return nil, leaseShared{}, err
 		}
 		shared = leaseShared{store: backend, hub: lease.NewHub()}
 	}
-	rows, _ := scriptReads(st, d, redactor, base.worlds)
+	rows, _ := scriptReads(st, d, redactor, w)
 	svc, err := lease.NewService(lease.Deps{
 		Store:      shared.store,
 		Gate:       leaseGate{rows: rows},

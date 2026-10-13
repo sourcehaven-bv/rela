@@ -22,9 +22,9 @@ import (
 // the id, not the hidden value.
 func TestACLMentions_RedactsHiddenPrimaryTitle(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"title": false},
-	}}
+	}})
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
 		Properties: map[string]any{"title": "SECRET-MENTION"}})
 
@@ -32,7 +32,7 @@ func TestACLMentions_RedactsHiddenPrimaryTitle(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	got := collectMentions(gateCtxFor(aliceCtx(), t, d), app.viewReader,
 		app.State().Meta, "see `TKT-001`")
@@ -52,7 +52,7 @@ func TestACLMentions_DropsUnreadable(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	got := collectMentions(gateCtxFor(aliceCtx(), t, d), app.viewReader,
 		app.State().Meta, "see `FEAT-001`")
@@ -66,9 +66,9 @@ func TestACLMentions_DropsUnreadable(t *testing.T) {
 // property must not leak, and an unreadable target must not appear.
 func TestACLSettings_RelationTargetsRedactHiddenTitle(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"title": false},
-	}}
+	}})
 	// implements targets features; feature's display property is its title.
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature",
 		Properties: map[string]any{"title": "SECRET-TARGET"}})
@@ -77,7 +77,7 @@ func TestACLSettings_RelationTargetsRedactHiddenTitle(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket", "feature"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))
@@ -104,7 +104,7 @@ func TestACLSettings_RelationTargetsDropUnreadable(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/settings", http.NoBody)
 	req = req.WithContext(gateCtxFor(aliceCtx(), t, d))

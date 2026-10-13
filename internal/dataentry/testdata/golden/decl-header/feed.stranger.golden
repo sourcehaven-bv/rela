@@ -1,0 +1,14 @@
+request: GET /api/v1/_feeds/due.ics
+identity: header stranger@example.test
+status: 200
+reads: GraphQueryHeaders=2 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/2
+versions: 
+body:
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Sourcehaven//rela//EN
+CALSCALE:GREGORIAN
+X-WR-CALNAME:Due tickets
+END:VCALENDAR

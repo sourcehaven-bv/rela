@@ -69,7 +69,7 @@ func TestFaceGateParity_SurfacesAgreeUnderOneWorld(t *testing.T) {
 				}
 			}
 			d := mustNewACL(t, tc.policy, app.store)
-			app.acl = d
+			setTestACL(t, app, d)
 			wctx := withWorld(aliceCtx(), worldHandle{name: "draft-first", scope: store.NewWorldScope(
 				map[string]store.TypeResolution{"ticket": {
 					Chain:    []entity.Face{"draft", "published"},
@@ -193,7 +193,7 @@ func TestFaceGateParity_RelationFilterComparesTheServedFace(t *testing.T) {
 			"reviews": {Confers: "reviewer"},
 		},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	wctx := withWorld(gateCtxFor(aliceCtx(), t, d), worldHandle{name: "draft-first", scope: store.NewWorldScope(
 		map[string]store.TypeResolution{"ticket": {
 			Chain:    []entity.Face{"draft", "published"},

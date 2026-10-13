@@ -69,7 +69,7 @@ func seedGatedTickets(t *testing.T, app *App) *acl.Declarative {
 		RoleRelations:       map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return d
 }
 
@@ -125,7 +125,7 @@ func TestNavItems_TruncatedIsPostFilter(t *testing.T) {
 	require.Len(t, items["0"].Entries, 2)
 	require.False(t, items["0"].Truncated, "a hidden row must not show up as a truncation")
 
-	app.acl = acl.NopACL{}
+	setTestACL(t, app, acl.NopACL{})
 	items, _ = navItemsAs(principalCtx("alice"), t, app)
 	require.Len(t, items["0"].Entries, 2)
 	require.True(t, items["0"].Truncated)
@@ -136,14 +136,14 @@ func TestNavItems_TruncatedIsPostFilter(t *testing.T) {
 func TestNavItems_RedactedTitleDoesNotLeak(t *testing.T) {
 	app := newTestAppV1(t)
 	wireRealViewConditions(t, app)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
 		Properties: map[string]any{"title": "SECRET-TITLE", "status": "open"}})
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	installNavItemsGroup(app, dataentryconfig.List{EntityType: "ticket"}, dataentryconfig.NavItemsFrom{
 		Initial: &dataentryconfig.NavItemsInitial{Property: "title"},
 	})
@@ -188,7 +188,7 @@ func TestNavItems_RelationInitial(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "full", "bob": "tickets"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	installNavItemsGroup(app, dataentryconfig.List{EntityType: "ticket"}, dataentryconfig.NavItemsFrom{
 		Initial: &dataentryconfig.NavItemsInitial{Relation: "implements"},
 	})
@@ -209,7 +209,7 @@ func TestNavItems_RelationInitial(t *testing.T) {
 func TestNavItems_RelationInitialRedactsTheNeighbour(t *testing.T) {
 	app := newTestAppV1(t)
 	wireRealViewConditions(t, app)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "One"}})
 	seedEntity(app, &entity.Entity{ID: "FEAT-1", Type: "feature", Properties: map[string]any{"title": "Quiet"}})
 	seedRelation(app, entity.NewRelation("TKT-001", "implements", "FEAT-1"))
@@ -267,7 +267,7 @@ func TestNavItems_CreateOffer(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "author", "carol": "reader"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	cases := []struct {
 		user string

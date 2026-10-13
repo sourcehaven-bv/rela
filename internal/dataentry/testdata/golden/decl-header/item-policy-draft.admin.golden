@@ -1,0 +1,57 @@
+request: GET /api/v1/policies/POL-1@draft
+identity: header admin@example.test
+status: 200
+header ETag: "lcEMCEIdvTo="
+reads: GetEntity=3 GetRelation=10 GraphQueryHeaders=1 ListEntities=2 ListEntityHeaders=2 ListRelations=3
+breadth: ListEntities=2/2 ListEntityHeaders=2/2 ListRelations=0/3
+bodies: GetEntity=0/3 GraphQuery=0/1 ListEntities=0/2 ListEntityHeaders=0/2
+versions: 
+body:
+{
+  "_self": "/api/v1/policies/POL-1@draft",
+  "id": "POL-1",
+  "type": "policy",
+  "_title": "Access (draft)",
+  "properties": {
+    "stage": "to-do",
+    "title": "Access (draft)"
+  },
+  "_actions": {
+    "delete": false,
+    "rename": true,
+    "update": false
+  },
+  "_fields": {},
+  "_relations": {},
+  "_versions": {
+    "properties": {
+      "stage": "98530fcb",
+      "title": "04619f2f"
+    },
+    "content": "4bbf5675",
+    "relations": "f156d90d"
+  },
+  "_redacted": [],
+  "_attachments": {},
+  "_world": {
+    "name": "published",
+    "face": "draft",
+    "via": "unscoped"
+  },
+  "_transitions": {},
+  "_copies": [
+    {
+      "name": "publish",
+      "label": "Publish",
+      "targetFace": "policy@published",
+      "allowed": true
+    }
+  ],
+  "_faces": [
+    {
+      "face": "published",
+      "label": "Published",
+      "ref": "POL-1@published"
+    }
+  ]
+}

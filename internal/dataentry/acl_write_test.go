@@ -25,7 +25,7 @@ func TestACLWrite_PatchOnHiddenIs404(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"none": {}},
 		Assignments: map[string]string{"bob": "none"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	bobCtx := principal.With(context.Background(), principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
 
 	// Valid body, hidden target — must 404.
@@ -89,7 +89,7 @@ func TestACLWrite_DeleteOnHiddenIs404(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"none": {}},
 		Assignments: map[string]string{"bob": "none"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	bobCtx := principal.With(context.Background(), principal.Principal{User: "bob", Tool: principal.ToolDataEntry})
 
 	rec := deleteEntityAs(bobCtx, t, app, d, "ticket", "tickets", "TKT-001")
@@ -187,7 +187,7 @@ func TestACLWrite_RelationTargetIsReadGated(t *testing.T) {
 			}},
 			Assignments: map[string]string{"bob": "r"},
 		}, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 		ctx := gateCtxFor(principal.With(context.Background(),
 			principal.Principal{User: "bob", Tool: principal.ToolDataEntry}), t, d)
 		return app, ctx

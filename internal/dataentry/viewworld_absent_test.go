@@ -124,10 +124,10 @@ func TestEntityView_AbsenceNeverLeaksToADeniedPrincipal(t *testing.T) {
 		Properties: map[string]any{"title": "exists, but not for bob"},
 	})
 	// A policy that grants NOTHING on ticket, so every read of it is denied.
-	app.acl = mustNewACL(t, &acl.Policy{
+	setTestACL(t, app, mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"nobody": {}},
 		Assignments: map[string]string{"bob": "nobody"},
-	}, app.store)
+	}, app.store))
 	app.setWorlds(stubWorlds{names: map[string]bool{"published": true}})
 	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
 		return principal.Principal{User: "bob", Tool: principal.ToolDataEntry}

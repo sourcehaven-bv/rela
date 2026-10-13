@@ -45,7 +45,7 @@ func TestServeConfigure_Gate(t *testing.T) {
 			if tc.declared {
 				d, err := acl.NewDeclarative(&acl.Policy{}, acl.NewStoreGraph(app.store), app.store)
 				require.NoError(t, err)
-				app.acl = d
+				setTestACL(t, app, d)
 			}
 			reached := false
 			if tc.mounted {

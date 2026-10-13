@@ -70,7 +70,7 @@ func TestRelationField_DropsUnreadableTarget(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	sections := app.views.buildSections(gateCtxFor(aliceCtx(), t, d), relationFieldSection("Feature"),
 		&viewResult{Entry: tkt})

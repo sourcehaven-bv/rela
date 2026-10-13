@@ -1,0 +1,15 @@
+request: POST /api/v1/_leases/renew
+identity: header viewer@example.test
+status: 409
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/lease_lost",
+  "title": "Lease lost",
+  "status": 409,
+  "detail": "the lease expired, was released, or you no longer have access to the entity; claim it again",
+  "instance": "/api/v1/_leases/renew"
+}

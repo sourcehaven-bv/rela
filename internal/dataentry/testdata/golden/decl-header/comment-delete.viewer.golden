@@ -1,0 +1,14 @@
+request: DELETE /api/v1/_comments/ticket/TKT-1/c-visible
+identity: header viewer@example.test
+status: 403
+reads: GetEntity=1 GetRelation=2 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=4
+breadth: ListEntityHeaders=1/1 ListRelations=0/1 MatchingFaces=4/4
+bodies: GetEntity=1/1 GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/forbidden",
+  "title": "This action requires comment:delete-own or comment:delete-any",
+  "status": 403,
+  "instance": "/api/v1/_comments/ticket/TKT-1/c-visible"
+}

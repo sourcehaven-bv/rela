@@ -1,0 +1,13 @@
+request: GET /api/v1/_documents/elevated_report
+identity: header admin@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListEntities=1 ListRelations=1
+breadth: ListEntities=0/1 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=4/1
+versions: 
+body:
+{
+  "html": "\u003cul\u003e\n\u003cli\u003eTKT-1\u003c/li\u003e\n\u003cli\u003eTKT-2\u003c/li\u003e\n\u003cli\u003eTKT-3\u003c/li\u003e\n\u003cli\u003eTKT-4\u003c/li\u003e\n\u003cli\u003eTKT-5\u003c/li\u003e\n\u003cli\u003eTKT-6\u003c/li\u003e\n\u003c/ul\u003e\n",
+  "cached": false,
+  "entity_ids": []
+}

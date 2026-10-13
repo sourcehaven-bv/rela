@@ -338,8 +338,9 @@ func (p *Policy) PrincipalPropertyLookupEnabled() bool {
 // be silently inert (TKT-M60ZF5 / issue #1274):
 //
 //   - the mode is "reject";
-//   - a JWT gate is wired — reject keys on identity having come from the
-//     fail-closed gate, and without one every principal looks unverified;
+//   - verifiedIdentity is true: the caller wired a fail-closed identity gate
+//     (a JWT gate in the data-entry server). Reject keys on identity having
+//     come from that gate, and without one every principal looks unverified;
 //   - the principal_property lookup is enabled — with it disabled the resolver
 //     never attempts a match, so "unmatched" is not a thing that can be
 //     observed rather than something that is always true.
@@ -353,10 +354,10 @@ func (p *Policy) PrincipalPropertyLookupEnabled() bool {
 // Note LoadPolicy rejects "reject" without the lookup, but NewDeclarative does
 // NOT call Validate — so any construction path that skips LoadPolicy can hold a
 // policy in exactly that state. That is why this is checked rather than assumed.
-func (p *Policy) RejectEffective(jwtWired bool) bool {
+func (p *Policy) RejectEffective(verifiedIdentity bool) bool {
 	return p != nil &&
 		p.effectiveUnmatchedPrincipal() == UnmatchedReject &&
-		jwtWired &&
+		verifiedIdentity &&
 		p.principalPropertyLookupEnabled()
 }
 

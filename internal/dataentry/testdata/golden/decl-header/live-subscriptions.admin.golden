@@ -1,0 +1,14 @@
+request: PUT /api/v1/_events/nope/subscriptions
+identity: header admin@example.test
+status: 404
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/stream_not_found",
+  "title": "No such event stream",
+  "status": 404,
+  "instance": "/api/v1/_events/nope/subscriptions"
+}

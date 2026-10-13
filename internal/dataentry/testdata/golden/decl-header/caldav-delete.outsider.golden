@@ -1,0 +1,9 @@
+request: DELETE /api/v1/_caldav/principal/calendars/tickets/ticket--TKT-6@rela.ics
+identity: header outsider@example.test
+status: 403
+reads: GraphQueryHeaders=1 ListEntityHeaders=1
+breadth: ListEntityHeaders=1/1
+bodies: GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+403 Forbidden: caldav: this collection does not permit deletion (no on_delete configured)

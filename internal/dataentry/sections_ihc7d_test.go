@@ -74,7 +74,7 @@ func TestCopyVisibleProperties_EmptyHidden(t *testing.T) {
 func TestBuildSectionEntityData_PopulatesPropsAndFieldVerdicts(t *testing.T) {
 	app := testViewApp()
 	// Override the resolver so 'status' is read-only on tickets.
-	app.fieldResolver = (&verdictBuilder{}).ReadOnly("status").Build()
+	setTestResolver(t, app, (&verdictBuilder{}).ReadOnly("status").Build())
 	st := app.State()
 	e := &entity.Entity{
 		ID:         "TKT-001",
@@ -111,7 +111,7 @@ func TestBuildSectionEntityData_PopulatesPropsAndFieldVerdicts(t *testing.T) {
 func TestBuildSectionEntityData_HiddenAbsentFromBothMaps(t *testing.T) {
 	// RR-FD1B invariant: hidden ⇒ absent from BOTH _props and _fields.
 	app := testViewApp()
-	app.fieldResolver = (&verdictBuilder{}).Hidden("status").Build()
+	setTestResolver(t, app, (&verdictBuilder{}).Hidden("status").Build())
 	st := app.State()
 	e := &entity.Entity{
 		ID:         "TKT-001",
@@ -132,7 +132,7 @@ func TestBuildSectionEntityData_KeySetInvariant(t *testing.T) {
 	// RR-FD1B: keys(Props) ⊆ keys(e.Properties) \ hidden(e);
 	//          keys(FieldVerdicts) ∩ hidden(e) == ∅.
 	app := testViewApp()
-	app.fieldResolver = (&verdictBuilder{}).Hidden("priority").ReadOnly("status").Build()
+	setTestResolver(t, app, (&verdictBuilder{}).Hidden("priority").ReadOnly("status").Build())
 	st := app.State()
 	e := &entity.Entity{
 		ID:   "TKT-001",

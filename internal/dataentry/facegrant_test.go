@@ -49,7 +49,7 @@ func TestFaceGrantParity_ListAndGetAgree(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket@published"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	req, rerr := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
 	if rerr != nil {
 		t.Fatalf("ForPrincipal: %v", rerr)
@@ -121,7 +121,7 @@ func TestFaceGrant_BareGrantReadsEveryFace(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	req, _ := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
 	gate, gerr := newACLReadGate(req)
 	if gerr != nil {
@@ -173,7 +173,7 @@ func TestFaceGrant_ViewEntryIsFaceGated(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket@published"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	req, rerr := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
 	if rerr != nil {
 		t.Fatalf("ForPrincipal: %v", rerr)
@@ -241,7 +241,7 @@ func TestFaceGrant_RelationReadsAreFaceGated(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Precondition: a principal who may read the draft face DOES see the edge,
 	// so a 404 below means the face gate fired rather than the fixture being
@@ -250,14 +250,14 @@ func TestFaceGrant_RelationReadsAreFaceGated(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"admin": {Read: []string{"*"}}},
 		Assignments: map[string]string{"bob": "admin"},
 	}, app.store)
-	app.acl = full
+	setTestACL(t, app, full)
 	rec := relationsAs(principalCtx("bob"), t, app, full, "ticket", "tickets", "TKT-1")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "FEAT-1") {
 		t.Fatalf("precondition: an unrestricted principal must see the edge; got %d body=%s",
 			rec.Code, rec.Body)
 	}
 
-	app.acl = d
+	setTestACL(t, app, d)
 	rec = relationsAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-1")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("relations of the DRAFT face served to a principal granted only "+

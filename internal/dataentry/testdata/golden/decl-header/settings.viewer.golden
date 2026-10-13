@@ -1,0 +1,135 @@
+request: GET /api/v1/_settings
+identity: header viewer@example.test
+status: 200
+reads: GetRelation=7 GraphQueryHeaders=1 ListEntities=3 ListRelations=1 MatchingFaces=4
+breadth: ListEntities=0/3 ListRelations=0/1 MatchingFaces=18/4
+bodies: GraphQuery=0/1 ListEntities=8/3
+versions: 
+body (allProperties, allRelations, entityTypes sorted):
+{
+  "userDefaults": {
+    "defaults": {},
+    "relationDefaults": {},
+    "overrides": null
+  },
+  "allProperties": [
+    {
+      "name": "budget",
+      "type": "string",
+      "values": null
+    },
+    {
+      "name": "closed_on",
+      "type": "datetime",
+      "values": null
+    },
+    {
+      "name": "due",
+      "type": "date",
+      "values": null
+    },
+    {
+      "name": "email",
+      "type": "string",
+      "values": null
+    },
+    {
+      "name": "note",
+      "type": "string",
+      "values": null
+    },
+    {
+      "name": "screenshot",
+      "type": "file",
+      "values": null
+    },
+    {
+      "name": "secret",
+      "type": "string",
+      "values": null
+    },
+    {
+      "name": "stage",
+      "type": "policy_stage",
+      "values": [
+        "to-do",
+        "done"
+      ]
+    },
+    {
+      "name": "start",
+      "type": "date",
+      "values": null
+    },
+    {
+      "name": "status",
+      "type": "ticket_status",
+      "values": [
+        "open",
+        "closed",
+        "archived"
+      ]
+    },
+    {
+      "name": "title",
+      "type": "string",
+      "values": null
+    }
+  ],
+  "allRelations": [
+    {
+      "name": "contains",
+      "label": "",
+      "targetType": "ticket",
+      "targets": [
+        {
+          "id": "TKT-1",
+          "title": "Alpha"
+        },
+        {
+          "id": "TKT-2",
+          "title": "Bravo"
+        },
+        {
+          "id": "TKT-3",
+          "title": "Charlie"
+        }
+      ]
+    },
+    {
+      "name": "implements",
+      "label": "",
+      "targetType": "policy",
+      "targets": [
+        {
+          "id": "POL-1",
+          "title": "Access"
+        }
+      ]
+    },
+    {
+      "name": "watches",
+      "label": "",
+      "targetType": "ticket",
+      "targets": [
+        {
+          "id": "TKT-1",
+          "title": "Alpha"
+        },
+        {
+          "id": "TKT-2",
+          "title": "Bravo"
+        },
+        {
+          "id": "TKT-3",
+          "title": "Charlie"
+        }
+      ]
+    }
+  ],
+  "entityTypes": [
+    "person",
+    "policy",
+    "ticket"
+  ]
+}

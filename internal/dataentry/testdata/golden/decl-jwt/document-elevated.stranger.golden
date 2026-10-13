@@ -1,0 +1,14 @@
+request: GET /api/v1/_documents/elevated_report
+identity: signed assertion for stranger@example.test
+status: 403
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/permission_required",
+  "title": "document \"elevated_report\" requires the \"report:all\" permission",
+  "status": 403,
+  "instance": "/api/v1/_documents/elevated_report"
+}

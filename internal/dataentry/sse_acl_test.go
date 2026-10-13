@@ -130,7 +130,7 @@ func TestSSEACL_PerTypeGating(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	send, sink, stop := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
 	defer stop()
@@ -164,7 +164,7 @@ func TestSSEACL_RoleRelationInheritance(t *testing.T) {
 		RoleRelations:       map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	send, sink, stop := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
 	defer stop()
@@ -190,7 +190,7 @@ func TestSSEACL_DenyAllWithholds(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// bob has no assignment → DenyAll on everything.
 	send, sink, stop := runSSEConn(gateCtxFor(principalCtx("bob"), t, d), t, app)
@@ -281,7 +281,7 @@ func TestSSEACL_TwoPrincipalsDifferentFrames(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "t-viewer", "bob": "f-viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	aSend, aSink, aStop := runSSEConn(gateCtxFor(principalCtx("alice"), t, d), t, app)
 	defer aStop()
@@ -385,7 +385,7 @@ func TestSSEACL_MembershipChangeReGates(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"editors": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	send, sink, stop := runSSEConn(gateCtxFor(aliceCtx(), t, d), t, app)
 	defer stop()
@@ -444,7 +444,7 @@ func TestSSEACL_NonEntityEventsPassThrough(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	send, sink, stop := runSSEConn(gateCtxFor(principalCtx("bob"), t, d), t, app)
 	defer stop()

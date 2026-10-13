@@ -1,0 +1,14 @@
+request: DELETE /api/v1/tickets/TKT-6
+identity: header editor@example.test
+status: 403
+reads: GetEntity=1 ListEntities=1 ListEntityHeaders=1
+breadth: ListEntities=1/1 ListEntityHeaders=1/1
+bodies: GetEntity=0/1 ListEntities=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "error": "forbidden",
+  "reason": "this rela instance is configured read-only",
+  "rule_id": "read-only-acl",
+  "rule_kind": "read-only"
+}

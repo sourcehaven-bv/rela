@@ -41,7 +41,7 @@ func TestEntityGetMentions_ResolvesReadableRef(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket", "feature"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	got := decodeEntityResponse(t, getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", ""))
 	m, ok := got.Mentions["FEAT-001"]
@@ -73,7 +73,7 @@ func TestEntityGetMentions_DropsUnreadable(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "")
 	got := decodeEntityResponse(t, rec)
@@ -90,9 +90,9 @@ func TestEntityGetMentions_DropsUnreadable(t *testing.T) {
 // its id and be flagged, never expose the hidden value.
 func TestEntityGetMentions_RedactsHiddenPrimaryTitle(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"title": false},
-	}}
+	}})
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature",
 		Properties: map[string]any{"title": "SECRET-FEATURE-TITLE"}})
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
@@ -102,7 +102,7 @@ func TestEntityGetMentions_RedactsHiddenPrimaryTitle(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket", "feature"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "")
 	if body := rec.Body.String(); strings.Contains(body, "SECRET-FEATURE-TITLE") {
@@ -125,7 +125,7 @@ func TestEntityGetMentions_MatchesViewSurface(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket", "feature"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	fromGet := decodeEntityResponse(t,
 		getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "")).Mentions
@@ -157,7 +157,7 @@ func TestEntityGetMentions_AbsentWithoutRefs(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := getEntityAs(aliceCtx(), t, app, d, "ticket", "tickets", "TKT-001", "")
 	if got := decodeEntityResponse(t, rec); len(got.Mentions) != 0 {

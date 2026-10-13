@@ -1,0 +1,32 @@
+request: POST /api/v1/_piles
+identity: header admin@example.test
+status: 201
+reads: GetRelation=4 GraphQueryHeaders=1 ListEntityHeaders=2 ListRelations=1 MatchingFaces=2
+breadth: ListEntityHeaders=4/2 ListRelations=0/1 MatchingFaces=4/2
+bodies: GraphQuery=0/1 ListEntityHeaders=0/2
+versions: 
+body:
+{
+  "id": "<minted>",
+  "name": "New",
+  "icon": "layers",
+  "count": 2,
+  "created": "<now>",
+  "updated": "<now>",
+  "items": [
+    {
+      "id": "TKT-1",
+      "face": "",
+      "address": "TKT-1",
+      "type": "ticket",
+      "title": "Alpha"
+    },
+    {
+      "id": "TKT-4",
+      "face": "",
+      "address": "TKT-4",
+      "type": "ticket",
+      "title": "Delta"
+    }
+  ]
+}
