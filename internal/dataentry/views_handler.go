@@ -951,6 +951,11 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	// an ungated link-existing affordance the view path must not carry.
 	h.resolveSectionCreate(r.Context(), viewCfg, sections, result.Entry)
 
+	// After resolveSectionCreate, which indexes sections in step with the
+	// view config. Before ownerRows and the header create menu, so a hidden
+	// section contributes nothing.
+	sections = omitHiddenEmpty(sections)
+
 	// Build response
 	entityDef := s.Meta.Entities[result.Entry.Type]
 	plural := entityDef.GetPlural(result.Entry.Type)

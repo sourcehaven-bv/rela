@@ -400,6 +400,47 @@ func hasCreateForm(cfg *Config, entityType string) bool {
 	return false
 }
 
+// validateSectionHideEmpty refuses `hide_empty` (TKT-JT101B) where it contradicts the
+// rest of the section. Each refusal names the conflicting key, because the
+// alternative is a section that silently does one of the two things the
+// author wrote.
+func validateSectionHideEmpty(viewID string, i int, s ViewSection) []string {
+	if !s.HideEmpty {
+		return nil
+	}
+	var errs []string
+	// The empty message only ever shows on an empty section, which
+	// hide_empty removes. Setting both means one of them is dead.
+	if s.EmptyMessage != "" {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] sets both hide_empty and empty_message; "+
+				"a hidden section shows no message (remove one of them)",
+			viewID, i))
+	}
+	// An empty section is where a create button is most needed. Hiding it
+	// would remove the only way to add the first entity from this view.
+	if s.Create != nil {
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] sets both hide_empty and create; "+
+				"hiding the empty section would also hide its create button",
+			viewID, i))
+	}
+	// A section on the entry shows the entry's own properties or body. It
+	// has no collection that could be empty. A section with no source would
+	// read a collection that never exists, so it would always hide.
+	switch s.Source {
+	case "entry":
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] sets hide_empty on source: entry, which is never empty",
+			viewID, i))
+	case "":
+		errs = append(errs, fmt.Sprintf(
+			"view %q: section[%d] sets hide_empty but no source; hide_empty needs a collected source",
+			viewID, i))
+	}
+	return errs
+}
+
 // validateSectionRender checks the section-level `render:` and each field's,
 // independently of whether the section's source resolves (RR-4ICH8M).
 func validateSectionRender(viewID string, i int, s ViewSection) []string {
@@ -732,13 +773,14 @@ func validateNavStatus(nav NavigationEntry, label string, cfg *Config) []string 
 	return errs
 }
 
-// validateSidePanelSpans checks `span` on a form's side-panel section fields.
+// validateSidePanelSections checks a form's side-panel sections: `span` on
+// their fields, and the section keys a side panel cannot honor.
 //
 // Side panels reuse ViewSection/ViewSectionField and render through the same
 // buildSections path as a view, so a span authored there reaches the wire — but
 // no other validator descends into form.SidePanel, so it would otherwise go
 // unchecked. Nil panel is the common case and yields nothing.
-func validateSidePanelSpans(formID string, panel *SidePanelConfig) []string {
+func validateSidePanelSections(formID string, panel *SidePanelConfig) []string {
 	if panel == nil {
 		return nil
 	}
@@ -754,6 +796,15 @@ func validateSidePanelSpans(formID string, panel *SidePanelConfig) []string {
 			errs = append(errs, fmt.Sprintf(
 				"form %q: side_panel section[%d] uses display: %s, which a side panel cannot render",
 				formID, i, DisplayNested))
+		}
+		// The side-panel path never omits sections, so hide_empty would do
+		// nothing there (TKT-JT101B). It is not added because a side-panel
+		// section collected from the entry carries Add and Link buttons,
+		// which would disappear with it.
+		if sec.HideEmpty {
+			errs = append(errs, fmt.Sprintf(
+				"form %q: side_panel section[%d] sets hide_empty, which a side panel does not support",
+				formID, i))
 		}
 		for j, f := range sec.Fields {
 			errs = append(errs, validateSpan(f.Span,
@@ -816,7 +867,7 @@ func validateForms(cfg *Config, meta *metamodel.Metamodel) []string {
 		// been validated either, and fixing that is a wider behavior change
 		// (it could start rejecting configs that load today) that belongs in
 		// its own ticket rather than riding along with a layout PR.
-		errs = append(errs, validateSidePanelSpans(formID, form.SidePanel)...)
+		errs = append(errs, validateSidePanelSections(formID, form.SidePanel)...)
 		errs = append(errs, validateSidePanelMentions(formID, form.SidePanel)...)
 	}
 
@@ -1784,6 +1835,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 			// render/widget are: an opted-in section with a bad `create:` is
 			// wrong regardless of whether its source collection resolves.
 			errs = append(errs, validateSectionCreate(viewID, i, s, view, cfg, meta)...)
+			errs = append(errs, validateSectionHideEmpty(viewID, i, s)...)
 
 			// Spans are checked unconditionally — deliberately NOT inside the
 			// `sourceType != ""` guard below, which only runs when the source

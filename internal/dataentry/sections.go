@@ -292,6 +292,12 @@ type SectionData struct {
 	// part of the matching sources (TKT-HF0D5W, [viewResult.Incomplete]).
 	// It is separate from Truncated, whose contract excludes budget stops.
 	Incomplete bool
+
+	// hideEmpty is the section's `hide_empty:` setting. The section is
+	// dropped from the response by [omitHiddenEmpty], not here, because the
+	// affordance resolvers index sections in step with the view config.
+	// Unexported: it never leaves this package.
+	hideEmpty bool
 }
 
 // SectionTreeNode is one row of a `display: nested` section: an entity plus
@@ -440,6 +446,7 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 			SectionID:    slugify(sec.Heading),
 			Display:      sec.Display,
 			EmptyMessage: sec.EmptyMessage,
+			hideEmpty:    sec.HideEmpty,
 		}
 
 		if sec.Source == "entry" {
@@ -495,6 +502,24 @@ func (h *viewsHandler) buildSections(ctx context.Context, sections []ViewSection
 		out = append(out, sd)
 	}
 
+	return out
+}
+
+// omitHiddenEmpty drops the sections that opted into `hide_empty` and have
+// no rows (TKT-JT101B). Call it after every resolver that indexes sections in step with
+// the view config (resolveSectionCreate), because it breaks that alignment.
+//
+// An Incomplete section stays: its collection, or one it was traversed from,
+// holds only part of the matching sources, so "empty" is not known to be
+// true.
+func omitHiddenEmpty(sections []SectionData) []SectionData {
+	out := sections[:0:0]
+	for _, sec := range sections {
+		if sec.hideEmpty && sec.IsEmpty && !sec.Incomplete {
+			continue
+		}
+		out = append(out, sec)
+	}
 	return out
 }
 

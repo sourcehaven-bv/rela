@@ -2057,6 +2057,7 @@ sections:
 | `child_sort`    | list   | `nested` mode: sort keys for the child level             |
 | `group_by`      | string | Property to group entities by                           |
 | `empty_message` | string | Text shown when the collection is empty                 |
+| `hide_empty`    | bool   | Leave the section out when the collection is empty (see below) |
 | `link`          | bool   | Link entity titles to their detail pages                |
 | `create`        | map    | Offer a "create related entity" button (see below)      |
 
@@ -2245,6 +2246,42 @@ from a `recursive:` traverse rule, or from a rule that starts at another
 collection rather than `entry`, has no single entity to link the new one to;
 declaring `create:` on one is refused at config load rather than silently
 producing no button.
+
+### Hiding empty sections
+
+An empty section normally stays on the page and shows its `empty_message`, or
+"No items". Set `hide_empty: true` to leave the whole section out instead,
+heading included, when its collection has no rows. Use it for a section that
+only matters on some entities:
+
+```yaml
+sections:
+  - heading: Corrective action for
+    source: subjects
+    display: list
+    hide_empty: true
+```
+
+The section also drops out of the jump bar. It comes back the next time the
+page loads with a row in the collection.
+
+The server decides, after access control: a section whose rows you may not
+read is empty for you, and hides for you. A collection that rela could only
+partly fill is not known to be empty, so its section stays. That is a
+`mentioned_by` collection that hit its limit, or a collection traversed from
+one.
+
+`hide_empty` is refused at config load in these cases:
+
+- **With `empty_message`.** A hidden section shows no message, so one of the
+  two keys would have no effect.
+- **With `create:`.** An empty section is where the create button is most
+  needed. Hiding it would remove the button exactly then.
+- **With `source: entry`.** A section on the entry shows its properties or its
+  body. It has no collection that can be empty.
+- **Without `source:`.** The section has no collection to check.
+- **In a form's `side_panel`.** The side panel does not support it. Its
+  sections carry Add and Link buttons, which would disappear with the section.
 
 ### Field Render Modes
 

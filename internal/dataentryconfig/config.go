@@ -1977,6 +1977,22 @@ type ViewSection struct {
 	EmptyMessage string             `yaml:"empty_message,omitempty" json:"empty_message,omitempty"`
 	Link         string             `yaml:"link,omitempty" json:"link,omitempty"`
 
+	// HideEmpty leaves the whole section, heading included, out of the view
+	// when its source collection is empty (TKT-JT101B). False keeps the default: an empty
+	// section renders its EmptyMessage (or "No items").
+	//
+	// Validation refuses it in three places where hiding would be wrong
+	// rather than merely unusual (see validateSectionHideEmpty):
+	//   - with EmptyMessage, which only ever shows on an empty section;
+	//   - with Create, whose button would vanish exactly when the section is
+	//     empty, which is when it is most needed;
+	//   - on a section whose source is the entry, which is never "empty",
+	//     or that has no source.
+	//
+	// A side-panel section refuses it too: that path never omits sections,
+	// and its Add and Link buttons would disappear with an empty section.
+	HideEmpty bool `yaml:"hide_empty,omitempty" json:"hide_empty,omitempty"`
+
 	// Children names a SECOND collection to nest under each row of Source,
 	// making this section two levels deep. Required by `display: nested` and
 	// meaningless without it.
