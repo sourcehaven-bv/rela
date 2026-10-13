@@ -18,7 +18,7 @@ import (
 // script defines
 //
 //	function migrate(entity)
-//	  -- entity = { id, type, content, properties = {...} }
+//	  -- entity = { id, type, face, content, properties = {...} }
 //	  return { properties = {a="b"}, unset = {"old"}, content = "..." }
 //	end
 //
@@ -26,7 +26,9 @@ import (
 // write handle. That is the load-bearing property: a migration's input is by
 // definition invalid under the new schema, so routing writes through the
 // entitymanager (validation, automations, state machines) would reject or
-// mutate mid-migration state. No rela.* module, no I/O, no os/io/debug
+// mutate mid-migration state. The only rela.* functions are the reads in
+// luareads.go (rela.get_entity, rela.get_faces, rela.get_relations), which
+// see the store as it was before the step. No I/O, no os/io/debug
 // libraries: the sandbox mirrors internal/lua's openSafeLibraries. Returning
 // nil leaves the entity unchanged. Scripts MUST be idempotent — crash
 // recovery re-runs the whole step.
@@ -71,6 +73,10 @@ func (s *luaStep) Run(ctx context.Context, x *Exec) (StepResult, error) {
 	// loop) is interruptible via Ctrl-C / ctx cancellation instead of
 	// wedging the migration with the marker still un-advanced.
 	ls.SetContext(ctx)
+	// Installed before the script loads so top-level code can read too. The
+	// reads see the pre-step store only because forEachEntity runs every
+	// migrate() call before it writes anything.
+	installGraphReads(ctx, ls, x.Store)
 	if loadErr := ls.DoString(string(src)); loadErr != nil {
 		return res, fmt.Errorf("load script: %w", loadErr)
 	}
@@ -132,15 +138,19 @@ func newSandboxedState() *lua.LState {
 // into this package.)
 //
 // Deliberately NARROWER than its counterpart: a migration step is a pure
-// property transform (patch in, patch out), so it gets no `face`, `mod_time`
-// or `redacted`. `face` in particular would be inert here — a step cannot
-// choose which row it rewrites, the engine applies the returned patch to the
-// row it was handed. Adding it would suggest an influence the step does not
-// have.
+// property transform (patch in, patch out), so it gets no `mod_time` or
+// `redacted`.
+//
+// It does carry `face` (TKT-ZO6GRZ). A step cannot choose which row it
+// rewrites — the engine applies the patch to the row it was handed — but a
+// step that reads the graph needs the face to ask about this row: its own
+// edges (`from_face`) or its own stored state (`get_entity(id .. "@" ..
+// face)`). The empty string for a faceless type.
 func entityToTable(ls *lua.LState, e *entity.Entity) *lua.LTable {
 	t := ls.NewTable()
 	t.RawSetString("id", lua.LString(e.ID))
 	t.RawSetString("type", lua.LString(e.Type))
+	t.RawSetString("face", lua.LString(e.Face.String()))
 	t.RawSetString("content", lua.LString(e.Content))
 	props := ls.NewTable()
 	for k, v := range e.Properties {

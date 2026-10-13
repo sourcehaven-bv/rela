@@ -424,7 +424,7 @@ cross-record derivations), a `lua:` step runs an operator-authored **pure transf
 ```lua
 -- migrations/0002-split-name.lua
 function migrate(entity)
-  -- entity = { id, type, content, properties = {...} }
+  -- entity = { id, type, face, content, properties = {...} }
   local name = entity.properties.name
   if name == nil then return nil end          -- nil = leave unchanged
   local first, last = string.match(name, "^(%S+)%s+(.*)$")
@@ -443,6 +443,85 @@ by definition invalid under the new schema, so the normal write path
 `io`, `os`, or file access. Use `entity: "*"` (quoted) to transform every
 entity, including entities whose type the new schema no longer knows.
 Scripts must be idempotent, like every other step.
+
+#### Reading the graph
+
+A script can read other entities and relations, for example to classify an
+entity by what it is linked to. Three functions are available:
+
+| Function | Returns |
+|----------|---------|
+| `rela.get_entity(id)` | the entity as a table, or `nil` if there is none |
+| `rela.get_faces(id)` | every stored face of the entity, as an array of tables (empty if there is none) |
+| `rela.get_relations({from=, to=, type=})` | an array of relations |
+
+`rela.get_entity` and `rela.get_relations` take the same arguments as in
+[Lua scripting](lua-scripting.md), but check them more strictly (see below).
+This example sets `soort` on every task. A task with a `gaat_over` relation to
+an `ncr` entity becomes `corrective_action`; every other task becomes
+`general`:
+
+```lua
+-- migrations/20261013120000-taak-soort.lua
+function migrate(taak)
+  local soort = "general"
+  for _, r in ipairs(rela.get_relations({ from = taak.id, type = "gaat_over" })) do
+    local target = rela.get_entity(r.to)
+    if target ~= nil and target.type == "ncr" then
+      soort = "corrective_action"
+    end
+  end
+  if taak.properties.soort == soort then return nil end  -- already done
+  return { properties = { soort = soort } }
+end
+```
+
+An entity table has `id`, `type`, `face`, `content` and `properties`. The
+entity passed to `migrate()` has the same fields. A relation table has
+`from`, `type`, `to`, `from_face`, `content` and `properties`.
+
+These rules apply to the reads:
+
+- **No writes.** `rela` holds only these three functions. The script still
+  changes the graph only through the patch it returns.
+- **A step does not see its own patches.** The runner calls `migrate()` for
+  every entity before it writes any patch. So the result for one entity never
+  depends on whether another entity was already patched in the same step.
+  This also holds for the entity being migrated: `rela.get_entity(e.id)`
+  returns the stored row, not the table passed to `migrate()`. A later step
+  reads the results of earlier steps.
+- **A dry run writes nothing.** In `rela migrate data` without `--apply`,
+  every step therefore reads the store as it was before the run, including
+  steps that come after a step that would change it. The dry-run counts of
+  such a step can differ from what `--apply` does.
+- **Other writers are not locked out.** The migration lock stops other
+  migration and garbage-collection runs, not ordinary edits. Run a migration
+  that reads the graph while nobody else is editing.
+- **Reads see raw data.** They ignore access rules and validation, and they
+  return entities whose type the new schema no longer knows.
+- **Faces.** `rela.get_relations` returns the edges of every face; compare
+  `r.from_face` with `e.face` to keep only the edges of the row being
+  migrated. `rela.get_entity("ID@face")` reads one face. A bare id returns the
+  only stored row of that entity; if the entity has more than one face, the
+  call raises an error that lists them. Relations point at bare ids, so use
+  `rela.get_faces(r.to)` when the target type has faces.
+- **Mistakes raise.** A filter value that is not a string or is empty, an
+  unknown option name, an empty options table, and an argument that is not a
+  table all stop the step with an error. They are never treated as "no
+  filter". An empty table is what `{ from = e.properties.owner }` becomes when
+  `owner` is missing. To read every relation, call `rela.get_relations()`
+  without an argument.
+
+To keep a step idempotent, base its decisions on data the step does not
+change itself, such as relations or other entity types. If a run stops
+halfway, the re-run sees the patches that were already written, so a step
+that reads what it writes can decide differently the second time.
+
+Each call reads the store. On PostgreSQL and SQLite a filtered call uses an
+index. On the filesystem backend each call scans the in-memory index of all
+entities or relations, so a step that reads for every entity takes time in
+proportion to entities times relations. That is fine for a few thousand
+entities.
 
 ## Workflow
 

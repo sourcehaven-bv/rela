@@ -1070,6 +1070,20 @@ jobs:
           fi
           echo "OK: scheduler run-state backends ran against PostgreSQL with no skips."
 
+      # Lua migration graph reads (TKT-ZO6GRZ): the pre-step read rule,
+      # checked against a real pgstore. Untagged, like pgcomments; only the
+      # DSN decides whether the pgstore case runs, so a skip fails the step.
+      - name: Run migration graph-read tests (race) against PostgreSQL
+        run: |
+          set -euo pipefail
+          go test -race -v -run 'TestLuaReads_' ./internal/datamigration/ 2>&1 | tee migreads-test.log
+          if grep -q -- '--- SKIP' migreads-test.log; then
+            echo "::error::migration graph-read tests SKIPPED in the Postgres Backend job."
+            grep -- '--- SKIP' migreads-test.log
+            exit 1
+          fi
+          echo "OK: migration graph reads ran against PostgreSQL with no skips."
+
       # The step above covers the STORE under -tags postgres. Nothing covered
       # the WIRING: `internal/appbuild` and `internal/cli` were compiled with
       # the tag but never run with it, so every build-agnostic composition-root

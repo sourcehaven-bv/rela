@@ -241,6 +241,15 @@ type Exec struct {
 // normalize.go pattern: never mutate while iterating). Entities fn reports
 // changed are written back in Tx batches; in dry-run they are only counted.
 //
+// # Every fn call finishes before the first write
+//
+// The lua step's graph reads (rela.get_entity, rela.get_relations) rely on
+// this order. Because nothing of the step is stored until fn has seen every
+// entity, every read inside the step sees the store as it was before the
+// step, whatever order the rows come in. Writing as the loop goes would make
+// one entity's answer depend on whether another was patched first.
+// TestLuaReads_SeePreStepStateInEitherOrder pins it.
+//
 // # Every content state, not just the bare row
 //
 // The query selects AllFaces, so a step sees each FACE of an entity as its own
