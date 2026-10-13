@@ -52,17 +52,31 @@ const topicPage: SidebarPage = {
   ],
 }
 
-/* Opens the Create menu's Task row; `save` then emits the dialog's result. */
-async function openTaskDialog() {
-  const wrapper = mount(SpaceCreateMenu, {
+/* The menu, open: the trigger and every row are rendered. */
+const MenuStub = {
+  template:
+    '<div data-testid="menu"><slot name="trigger" :toggle="() => {}" :attrs="{}" /><slot /></div>',
+}
+
+function mountMenu() {
+  return mount(SpaceCreateMenu, {
     global: {
       plugins: [pinia, PiniaColada],
-      stubs: { InlineCreateFormModal: ModalStub, RlMenu: { template: '<div><slot /></div>' } },
+      stubs: { InlineCreateFormModal: ModalStub, RlMenu: MenuStub },
     },
   })
-  const row = wrapper.findAll('[role="menuitem"], button').find((el) => el.text() === 'Task')
+}
+
+const rowLabels = (wrapper: ReturnType<typeof mountMenu>) =>
+  wrapper.findAll('[role="menuitem"]').map((el) => el.text())
+
+/* Opens the Create menu's Task row; `save` then emits the dialog's result. */
+async function openTaskDialog() {
+  const wrapper = mountMenu()
+  const row = wrapper.findAll('[role="menuitem"]').find((el) => el.text() === 'Task')
   await row!.trigger('click')
   return {
+    wrapper,
     async save(entity: Entity, event: 'created' | 'created-another' = 'created') {
       wrapper.findComponent(ModalStub).vm.$emit(event, entity)
       await flushPromises()
@@ -129,11 +143,87 @@ describe('SpaceCreateMenu on an entity page', () => {
     expect(createRelationMock).not.toHaveBeenCalled()
     expect(pushMock).toHaveBeenCalledWith(`/entity/task/${task.id}`)
   })
+})
 
-  it('links nothing for a type the page has no link for', async () => {
+describe('SpaceCreateMenu rows', () => {
+  const rows = [
+    { type: 'task', label: 'Task', form: 'create_task' },
+    { type: 'note', label: 'Note', form: 'create_note' },
+  ]
+
+  beforeEach(() => {
+    useSpaceStore().set({ create: rows })
+  })
+
+  it('offers every type outside an entity page', () => {
+    expect(rowLabels(mountMenu())).toEqual(['Task', 'Note'])
+  })
+
+  it('offers only the types it can link on an entity page', () => {
     usePageStore().current = { page: 'topic', tab: 'board', entity: 'TOPIC-1' }
-    useSpaceStore().set({ create: [{ type: 'note', label: 'Task', form: 'create_note' }] })
-    await createFromMenu({ ...task, id: 'NOTE-1', type: 'note' })
-    expect(createRelationMock).not.toHaveBeenCalled()
+    expect(rowLabels(mountMenu())).toEqual(['Task'])
+  })
+
+  it('offers what the open tab can link', async () => {
+    const blocks = { type: 'task', relation: 'blocks', direction: 'incoming' as const }
+    usePageStore().set({
+      topic: {
+        ...topicPage,
+        tabs: [
+          { ...topicPage.tabs[0]! },
+          { id: 'blockers', label: 'Blockers', view: 'list', links: [blocks] },
+          { id: 'notes', label: 'Notes', view: 'list' },
+        ],
+      },
+    })
+    usePageStore().current = { page: 'topic', tab: 'blockers', entity: 'TOPIC-1' }
+    const wrapper = mountMenu()
+    expect(rowLabels(wrapper)).toEqual(['Task'])
+    // Two relations for a task on the page, and none on this tab: no link, so no row.
+    usePageStore().current = { page: 'topic', tab: 'notes', entity: 'TOPIC-1' }
+    await flushPromises()
+    expect(wrapper.find('[data-testid="menu"]').exists()).toBe(false)
+  })
+
+  it('keeps the button busy and offers nothing while an entity page opens', () => {
+    usePageStore().current = { page: 'topic', tab: 'board', entity: 'TOPIC-1' }
+    usePageStore().opening = true
+    const wrapper = mountMenu()
+    const button = wrapper.find('[data-testid="space-create"]')
+    expect(button.attributes('aria-busy')).toBe('true')
+    expect(button.attributes('aria-disabled')).toBe('true')
+    expect(rowLabels(wrapper)).toEqual([])
+  })
+
+  it('does not open from the keyboard while an entity page opens', async () => {
+    usePageStore().opening = true
+    const wrapper = mount(SpaceCreateMenu, {
+      global: { plugins: [pinia, PiniaColada], stubs: { InlineCreateFormModal: ModalStub } },
+    })
+    const button = wrapper.find('[data-testid="space-create"]')
+    await button.trigger('keydown', { key: 'ArrowDown' })
+    await button.trigger('click')
+    expect(button.attributes('aria-expanded')).toBe('false')
+    usePageStore().opening = false
+    await flushPromises()
+    await button.trigger('keydown', { key: 'ArrowDown' })
+    expect(button.attributes('aria-expanded')).toBe('true')
+    wrapper.unmount()
+  })
+
+  it('hides the button on an entity page that can link none of the types', () => {
+    usePageStore().current = { page: 'topic', tab: 'board', entity: 'TOPIC-1' }
+    useSpaceStore().set({ create: [rows[1]!] })
+    expect(mountMenu().find('[data-testid="space-create"]').exists()).toBe(false)
+  })
+
+  it('keeps an open dialog when a navigation empties the menu', async () => {
+    usePageStore().current = { page: 'topic', tab: 'board', entity: 'TOPIC-1' }
+    const dialog = await openTaskDialog()
+    usePageStore().set({ topic: { ...topicPage, tabs: [] } })
+    await flushPromises()
+    expect(dialog.wrapper.find('[data-testid="menu"]').exists()).toBe(false)
+    await dialog.save(task)
+    expect(createRelationMock).toHaveBeenCalledWith(...linkArgs('TOPIC-1'))
   })
 })

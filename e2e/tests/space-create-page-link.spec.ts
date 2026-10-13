@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { test as base, expect, SEED } from "./fixtures";
-import { SpacesPage } from "../pages";
+import { PageTabsPage, SpacesPage } from "../pages";
 
 /**
  * The space's Create menu on an entity page (BUG-PFLS22): a new item is linked
@@ -9,7 +9,8 @@ import { SpacesPage } from "../pages";
  *
  * The feature page offers two relations for a task: `implements` on the Tasks
  * tab and `contains` on the Timeline tab. The open tab's relation wins. The
- * Blockers tab has neither, so the page has two candidates and no link is made.
+ * Blockers tab has neither, so the page has two candidates and no link can be
+ * made: the menu offers only the types it can link, so it leaves Task out.
  */
 const CONTAINS_YAML = `relations:
   contains:
@@ -23,7 +24,7 @@ const SPACE_YAML = `spaces:
     label: "Work"
     home:
       list: features
-    create: [task]
+    create: [task, bug]
     navigation:
       - label: "Features"
         list: features
@@ -83,12 +84,18 @@ test.describe("Create menu on an entity page", () => {
     expect(await api.listRelations("tasks", id, "implements")).toEqual([]);
   });
 
-  test("two candidate relations on the page make no link", async ({ appPage, serverUrl, api }) => {
+  test("the menu offers only the types the page can link", async ({ appPage, serverUrl }) => {
     const spaces = new SpacesPage(appPage);
-    await appPage.goto(`${serverUrl}/s/work/p/feature/${FEATURE}/blockers`);
-    const id = await spaces.createFromMenu("Task", "tasks", "Created on the blockers tab");
+    await appPage.goto(`${serverUrl}/s/work/p/feature/${FEATURE}/tasks`);
+    await spaces.openCreateMenu();
+    await expect(spaces.menuItems).toHaveText([/Task/, /Bug/]);
 
-    expect(await api.listRelations("tasks", id, "implements")).toEqual([]);
-    expect((await api.listRelations("features", FEATURE, "contains")).map((r) => r.id)).not.toContain(id);
+    await appPage.keyboard.press("Escape");
+
+    // Two candidate relations for a task, and none on this tab: Task is left out.
+    await new PageTabsPage(appPage).selectTab("Blockers");
+    await expect(appPage).toHaveURL(/\/blockers$/);
+    await spaces.openCreateMenu();
+    await expect(spaces.menuItems).toHaveText([/Bug/]);
   });
 });

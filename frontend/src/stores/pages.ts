@@ -24,10 +24,19 @@ export const usePageStore = defineStore('pages', () => {
    */
   const current = ref<PageScope>()
 
+  /**
+   * An entity page is on screen but its anchor has not loaded, so `current`
+   * is not set yet. The Create menu offers nothing meanwhile: it cannot tell
+   * yet which types it can link, and a row opened now would not be linked.
+   * It also holds when the anchor fails to load for another reason than
+   * being hidden or missing, such as a server or network error.
+   */
+  const opening = ref(false)
+
   function set(next: Record<string, SidebarPage> | undefined) {
     pages.value = next ?? {}
     loaded.value = true
   }
 
-  return { pages, loaded, current, set }
+  return { pages, loaded, current, opening, set }
 })
