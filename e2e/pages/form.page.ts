@@ -948,24 +948,26 @@ export class FormPage extends BasePage {
     return this.page.locator(".template-selector");
   }
 
-  get templatePills(): Locator {
-    return this.page.locator(".template-pill");
-  }
-
-  async templatePillCount(): Promise<number> {
-    return this.templatePills.count();
+  /** The template dropdown, found by its accessible label. */
+  get templateSelect(): Locator {
+    return this.templateSelector.getByLabel("Template");
   }
 
   async templateSelectorVisible(): Promise<boolean> {
     return this.templateSelector.isVisible().catch(() => false);
   }
 
-  async clickTemplatePill(index: number) {
-    await this.templatePills.nth(index).click();
+  /** The visible labels of the template options, in order. */
+  async templateOptionLabels(): Promise<string[]> {
+    return this.templateSelect.locator("option").allTextContents();
   }
 
-  async expectTemplatePillActive(index: number) {
-    await expect(this.templatePills.nth(index)).toHaveClass(/active/);
+  async selectTemplate(label: string) {
+    await this.templateSelect.selectOption({ label });
+  }
+
+  async expectTemplateSelected(label: string) {
+    await expect(this.templateSelect.locator("option:checked")).toHaveText(label);
   }
 
   // --- Relation picker (non-cards widget) ---

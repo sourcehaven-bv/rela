@@ -1987,9 +1987,9 @@ to: FEAT-001
 
 /**
  * Feature-entity templates. The Vue form picks these up via GET
- * /api/v1/_templates/feature and renders one pill per template; clicking a
- * pill pre-fills the form. Two variants let the template-pill test assert
- * active-state switching. (The base `feature.md` is picked up as a default.)
+ * /api/v1/_templates/feature and lists them in a template dropdown; choosing
+ * one pre-fills the form. Two variants make the dropdown appear and let the
+ * template test assert switching. (The base `feature.md` is the default.)
  */
 const SEED_TEMPLATES: Record<string, string> = {
   "templates/entities/feature.md": `---
