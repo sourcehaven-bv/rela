@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { registerEntityPlurals } from './entities'
 import { api } from './client'
-import { liveEntityPath, liveListPath, liveViewPath } from './live'
+import { liveEntityPath, liveListPath, livePresencePath, liveViewPath } from './live'
 
 // A subscription must name the request the page actually made, so each
 // helper is checked against what the API client itself would send.
@@ -36,5 +36,12 @@ describe('live subscription paths', () => {
   it('builds a view path', () => {
     expect(liveViewPath('ticket', 'TKT-1')).toBe('/api/v1/_views/ticket/TKT-1')
     expect(liveViewPath('ticket', 'TKT-1', 'pub')).toBe('/api/v1/_views/ticket/TKT-1?world=pub')
+  })
+
+  it('builds a presence path', () => {
+    expect(livePresencePath('ticket', 'TKT-1')).toBe('/api/v1/tickets/TKT-1/_presence')
+    expect(livePresencePath('ticket', 'TKT-1@draft', 'pub')).toBe(
+      '/api/v1/tickets/TKT-1@draft/_presence?world=pub'
+    )
   })
 })

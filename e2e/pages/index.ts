@@ -29,3 +29,4 @@ export { SpacesPage } from './spaces.page';
 export { ConfigurePage } from './configure.page';
 export { RelationOrderPage } from './relation-order.page';
 export { PilesPage } from './piles.page';
+export { PresencePage, LeaseClient } from './presence.page';

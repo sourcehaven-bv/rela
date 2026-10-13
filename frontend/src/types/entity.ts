@@ -96,6 +96,11 @@ export interface Entity {
   // (internal/dataentry/sections.go is the single call site), so a detail page
   // wanting entry provenance reads it from the entity GET.
   _world?: EntityWorld
+  // The advisory claim on this entity, while someone holds one (TKT-4YPG4Q).
+  // Present on the single-entity GET, list rows and a view's `entry`; absent
+  // when nobody holds the entity. Set after the read gate, so a row the
+  // caller cannot read never carries one.
+  _lease?: EntityLease
   // Declared copies offered for this face (TKT-WRLDAPI item 5). Rides the
   // entity response alongside `_actions` rather than a separate endpoint.
   // `[]` is a real answer ("this face offers no copies"); absent means the
@@ -225,6 +230,32 @@ export interface EntityWorld {
    * mistaken for position 0 — the strongest claim the field makes.
    */
   chain_position?: number
+}
+
+// EntityLease is who holds an advisory claim on an entity (TKT-4YPG4Q).
+// `status` is free text the holder wrote: render it as text, never as HTML.
+export interface EntityLease {
+  user: string
+  tool: string
+  label?: string
+  /** RFC 3339. */
+  since: string
+  status?: string
+}
+
+// PresenceViewer is one other person with the entity's face open
+// (TKT-MHXH87). `since` is RFC 3339 UTC in whole seconds.
+export interface PresenceViewer {
+  user: string
+  tool: string
+  since: string
+}
+
+// PresenceResponse is `GET /{plural}/{id}/_presence`: at most 20 viewers,
+// oldest first, and `more` counting the rest. The caller is never listed.
+export interface PresenceResponse {
+  viewers: PresenceViewer[]
+  more: number
 }
 
 // Face is one content state this entity HAS, other than the one being served.
