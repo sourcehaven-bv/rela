@@ -129,9 +129,12 @@ dashboard:
 next_action_bands:
   - {id: due, label: "Due", prominence: notice}
 next_actions:
+  # One candidate: the engine picks among several by a hash of the date, so a
+  # wider query would make the recordings change every day. TKT-4 is hidden
+  # from the viewer, so the viewer's empty answer records the row gate.
   open-ticket:
     band: due
-    query: "type:ticket prop:status=open"
+    query: "type:ticket prop:status=open prop:title=Delta"
     suggest: "{title} is open."
     cooldown: 1h
     actions:

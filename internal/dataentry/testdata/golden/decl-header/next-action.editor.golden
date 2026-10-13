@@ -1,17 +1,17 @@
 request: GET /api/v1/_next_action
 identity: header editor@example.test
 status: 200
-reads: GetRelation=4 GraphQueryHeaders=2 ListRelations=1 MatchingFaces=1
-breadth: ListRelations=0/1 MatchingFaces=4/1
-bodies: GraphQuery=2/2
+reads: GetRelation=1 GraphQueryHeaders=2 ListRelations=1 MatchingFaces=1
+breadth: ListRelations=0/1 MatchingFaces=1/1
+bodies: GraphQuery=1/2
 versions: 
 body:
 {
   "suggestion": {
     "source": "open-ticket",
     "band": "due",
-    "entity_id": "TKT-6",
-    "message": "Foxtrot is open.",
+    "entity_id": "TKT-4",
+    "message": "Delta is open.",
     "actions": [
       {
         "label": "Open",
