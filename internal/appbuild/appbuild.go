@@ -39,6 +39,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/autocascade"
 	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/caldavalias"
+	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
 	"github.com/Sourcehaven-BV/rela/internal/computed"
 	"github.com/Sourcehaven-BV/rela/internal/config"
@@ -196,6 +197,9 @@ type Services struct {
 	// leaseShared is the backend and hub under leases, which a re-assembly
 	// shares. The backend is closed by Close, not by CloseAssembly.
 	leaseShared leaseShared
+	// channels is the realtime channel store (see [Channels]). Stateless
+	// over its backend, so every assembly builds its own.
+	channels channels.Store
 	// comments is the commentary layer (internal/comments). Nil when the
 	// metamodel declares no `comments:` block — the feature then does not
 	// exist, and the data-entry app serves no comment routes.
@@ -2407,6 +2411,12 @@ type backendOverrides struct {
 	// memory and desktop tiers.
 	commentStore comments.Store
 
+	// channelStore replaces the file channel store. Supplied by the sqlite
+	// recipe so channels travel with rela.db, for the reason comments do.
+	// Postgres needs no override: storeChannelsFor finds the pool through
+	// the store, which also serves a multi-tenant assembly.
+	channelStore channels.Store
+
 	// schedulerState replaces the state.KV-backed scheduler run-state
 	// (BUG-TKL08E). Supplied by the postgres recipe, whose job queue is
 	// durable and shared: a run queued by one process may execute on
@@ -2503,7 +2513,7 @@ func assemble(
 	}()
 
 	// Before automation: add_to_pile actions push through refs.piles.
-	refs, err := buildRefHolders(base, st, overrides.commentStore, aclDeclarative, fieldPol.redactor, resolvedACL)
+	refs, err := buildRefHolders(base, st, overrides, aclDeclarative, fieldPol.redactor, resolvedACL)
 	if err != nil {
 		return nil, err
 	}
@@ -2530,7 +2540,8 @@ func assemble(
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
-	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs)
+	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
+		channelAliasesFor(refs.channels, st))
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate)
@@ -2636,6 +2647,7 @@ func finishAssembly(
 	s.attachLocker = attachLocker
 	s.piles, s.pileStore = refs.piles, refs.pileStore
 	s.leases, s.leaseShared = refs.leases, refs.leaseShared
+	s.channels = refs.channels
 	tags, err := buildVersionTags(s)
 	if err != nil {
 		return nil, err

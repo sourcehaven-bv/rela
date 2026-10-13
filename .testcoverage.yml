@@ -39,6 +39,12 @@ override:
   # tracker, and its sweep decides when a viewer leaves; ~99% today.
   - path: ^internal/presence$
     threshold: 90
+  # Channels (TKT-DD8B6I) hold message content that exists nowhere else, and
+  # the erasure guarantees live in these packages.
+  - path: ^internal/channels$
+    threshold: 88
+  - path: ^internal/channels/(filechannels|sqlchannels|sqlitechannels)$
+    threshold: 80
   # Outbound mail (TKT-332QZY). Both are security-relevant — mailrender is
   # the sanitize/inline pipeline whose ORDER is a security property, and mail
   # owns header-injection validation — so they are pinned above the default
@@ -136,6 +142,7 @@ exclude:
     - ^internal/comments/commentstest # shared conformance test kit (exercised via the file + memory backends)
     - ^internal/piles/pilestest # shared conformance test kit (exercised via the kv + pg backends)
     - ^internal/lease/leasetest # shared conformance test kit (exercised via the kv + pg backends)
+    - ^internal/channels/channelstest # shared conformance test kit (exercised via the file, sqlite and pg backends)
     - ^internal/datamigration/migstatetest # shared conformance test kit (exercised via the file/memory/sqlite/pg backends)
     - ^internal/tokenstore/tokenstoretest # shared conformance test kit (exercised via Sealed over FSKV, sqlite and pg state stores, and the desktop keychain store)
     - ^internal/appbuild/backendtest # build-tagged test backend supplier; the postgres half only compiles under -tags postgres
@@ -143,6 +150,7 @@ exclude:
     - ^internal/comments/pgcomments # same live-DB gate as pgstore: reads 3% when the suite skips, ~76% in the postgres CI job
     - ^internal/piles/pgpiles # same live-DB gate as pgstore: reads ~0% when the suite skips
     - ^internal/lease/pglease # same live-DB gate as pgstore: reads ~0% when the suite skips
+    - ^internal/channels/pgchannels # same live-DB gate as pgstore: reads ~10% when the suite skips; the SQL itself is sqlchannels, covered via SQLite
     - ^internal/datamigration/pgmigstate # same live-DB gate as pgstore: reads 8% when the suite skips, ~77% in the postgres CI job
     - ^internal/schedulerstate/pgschedstate # same live-DB gate as pgstore: reads 1% when the suite skips, ~83% with a live DB
     - ^internal/entitymanager/entitymanagertest # shared test doubles (PanicOnUse etc.), exercised via consumers

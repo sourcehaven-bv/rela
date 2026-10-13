@@ -91,3 +91,10 @@ func (v validatedFS) Open(path ValidatedPath) (io.ReadCloser, error) {
 func (v validatedFS) OpenForWrite(path ValidatedPath, perm os.FileMode) (io.WriteCloser, error) {
 	return os.OpenFile(path.p, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 }
+
+// OpenForAppend opens path for appending, creating it if missing. It
+// bypasses the wrapped FS for the reason [validatedFS.OpenForWrite] gives,
+// and is guarded by [RootedFS.SupportsStreaming] the same way.
+func (v validatedFS) OpenForAppend(path ValidatedPath, perm os.FileMode) (io.WriteCloser, error) {
+	return os.OpenFile(path.p, os.O_WRONLY|os.O_CREATE|os.O_APPEND, perm)
+}

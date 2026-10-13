@@ -3,6 +3,7 @@ package entitymanager
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
@@ -55,12 +56,26 @@ type AliasRewriter interface {
 	EntityFaceDeleted(ctx context.Context, entityID string, face entity.Face) error
 }
 
+// aliasHookWait bounds one alias notification.
+const aliasHookWait = 30 * time.Second
+
+// aliasHookContext is the context an alias notification runs on. The write
+// it reports has committed, so a client that disconnects must not cancel the
+// notification: a cancelled create hook would let a new entity inherit what
+// a deleted one left under its id. The timeout keeps a stuck subscriber from
+// holding the request forever.
+func aliasHookContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), aliasHookWait)
+}
+
 // rewriteAliasesForRename notifies the alias rewriter of a completed rename.
 // No-op when none is wired.
 func (m *Manager) rewriteAliasesForRename(ctx context.Context, oldID, newID string) {
 	if m.deps.AliasRewriter == nil {
 		return
 	}
+	ctx, cancel := aliasHookContext(ctx)
+	defer cancel()
 	if err := m.deps.AliasRewriter.EntityRenamed(ctx, oldID, newID); err != nil {
 		// Logged rather than returned: see the AliasRewriter doc. What the
 		// miss costs depends on the subscriber (a duplicated CalDAV entry, a
@@ -79,6 +94,8 @@ func (m *Manager) notifyAliasesOfDelete(ctx context.Context, id string) {
 	if m.deps.AliasRewriter == nil {
 		return
 	}
+	ctx, cancel := aliasHookContext(ctx)
+	defer cancel()
 	if err := m.deps.AliasRewriter.EntityDeleted(ctx, id); err != nil {
 		slog.Error("entitymanager: alias delete-notification failed",
 			"id", id, "error", err)
@@ -94,8 +111,42 @@ func notifyAliasesOfFaceDelete(ctx context.Context, rw AliasRewriter, id string,
 	if rw == nil {
 		return
 	}
+	ctx, cancel := aliasHookContext(ctx)
+	defer cancel()
 	if err := rw.EntityFaceDeleted(ctx, id, face); err != nil {
 		slog.Error("entitymanager: alias face-delete notification failed",
+			"id", id, "face", face, "error", err)
+	}
+}
+
+// CreateNotifier is the optional half of an [AliasRewriter] that learns an
+// entity id came into use. A subscriber that keeps references after the
+// entity is gone (realtime channels kept for retention) implements it, so a
+// new entity reusing the id does not inherit them.
+//
+// Optional, and type-asserted on Deps.AliasRewriter, because most
+// subscribers have nothing to do on a create.
+type CreateNotifier interface {
+	// EntityCreated notifies that the face of entity id was created. face
+	// is empty for an entity without faces.
+	EntityCreated(ctx context.Context, id string, face entity.Face) error
+}
+
+// notifyAliasesOfCreate notifies rw of a completed create when it
+// implements [CreateNotifier]. Failures are logged, as for a delete: the
+// create already happened.
+//
+// A function rather than a Manager method for the reason
+// notifyAliasesOfFaceDelete is one.
+func notifyAliasesOfCreate(ctx context.Context, rw AliasRewriter, id string, face entity.Face) {
+	n, ok := rw.(CreateNotifier)
+	if !ok {
+		return
+	}
+	ctx, cancel := aliasHookContext(ctx)
+	defer cancel()
+	if err := n.EntityCreated(ctx, id, face); err != nil {
+		slog.Error("entitymanager: alias create notification failed",
 			"id", id, "face", face, "error", err)
 	}
 }

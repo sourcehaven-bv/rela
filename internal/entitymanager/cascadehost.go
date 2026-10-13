@@ -78,6 +78,7 @@ func (h *cascadeHost) CreateEntity(
 	})
 	if err == nil {
 		h.recordCascade(ctx, audit.OpCreateEntity, entitySubject(e), "created")
+		notifyAliasesOfCreate(ctx, h.deps.AliasRewriter, e.ID, e.Face)
 	}
 	return e, err
 }

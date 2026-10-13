@@ -892,6 +892,7 @@ func (m *Manager) CreateEntity(
 	// already reflect it. Recording after the cascade left a window
 	// where a committed write produced no audit record.
 	m.recordEntityAudit(ctx, audit.OpCreateEntity, created, "created")
+	notifyAliasesOfCreate(ctx, m.deps.AliasRewriter, created.ID, created.Face)
 
 	runAutomation := m.deps.Automations != nil && !opts.SkipAutomation
 	if !runAutomation {

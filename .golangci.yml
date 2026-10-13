@@ -377,6 +377,11 @@ linters:
       - linters:
           - mnd
         path: internal/lease/leasetest/
+      # The channel conformance kit counts messages and offsets times in its
+      # assertions; the literals are the expected values the test reads as.
+      - linters:
+          - mnd
+        path: internal/channels/channelstest/
       - linters:
           - lll
         source: ^//|`.*`|".*"
