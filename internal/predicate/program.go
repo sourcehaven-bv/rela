@@ -17,6 +17,7 @@ type Program struct {
 	env         *Env
 	attributes  map[string]map[string]struct{}
 	vars        map[string]struct{}
+	wholeVars   map[string]struct{}
 	funcs       map[string]struct{}
 	traversals  []TraversalSpec
 	sqlPortable bool
@@ -46,6 +47,23 @@ func (p *Program) Attributes(recordVar string) []string {
 // with or without one.
 func (p *Program) References(varName string) bool {
 	_, ok := p.vars[varName]
+	return ok
+}
+
+// UsesWhole reports whether the program uses the variable as a whole value
+// rather than only through attribute access: passed to a host function, the
+// subject of a traversal, compared, or selected. `entity.status` is not a
+// whole use; `inspect(entity)` and `related(entity, 'x')` are, as is
+// `name == nil` for a scalar variable. A record cannot be compared or
+// selected (`entity == nil` does not compile), so for a record variable a
+// whole use is a call or a traversal.
+//
+// A caller that limits which fields a program may read needs this answer:
+// [Program.Attributes] lists the fields read directly, but a whole use hands
+// every field to code the caller cannot see into, so the field list is no
+// longer the complete dependency set.
+func (p *Program) UsesWhole(varName string) bool {
+	_, ok := p.wholeVars[varName]
 	return ok
 }
 
@@ -97,6 +115,7 @@ func (p *Program) SQLPortable() bool { return p.sqlPortable }
 func (p *Program) inspect() {
 	p.attributes = map[string]map[string]struct{}{}
 	p.vars = map[string]struct{}{}
+	p.wholeVars = map[string]struct{}{}
 	p.funcs = map[string]struct{}{}
 	p.traversals = nil
 	p.sqlPortable = true
@@ -105,13 +124,18 @@ func (p *Program) inspect() {
 		switch x := n.(type) {
 		case *constNode:
 		case *varNode:
+			// Reached only where the variable is not the object of an
+			// attribute access; that case returns below without visiting it.
 			p.vars[x.name] = struct{}{}
+			p.wholeVars[x.name] = struct{}{}
 		case *attrNode:
 			if v, ok := x.obj.(*varNode); ok {
 				if p.attributes[v.name] == nil {
 					p.attributes[v.name] = map[string]struct{}{}
 				}
 				p.attributes[v.name][x.name] = struct{}{}
+				p.vars[v.name] = struct{}{}
+				return
 			}
 			visit(x.obj)
 		case *callNode:

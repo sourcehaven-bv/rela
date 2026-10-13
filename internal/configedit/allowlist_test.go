@@ -267,3 +267,17 @@ func TestChangedPaths(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+// TestCheckEdit_RealtimeLocked pins that realtime.yaml is locked for the
+// Configure space: the allowlist has no editable key for it, so any change
+// is refused. Its roles and triggers decide who reads and posts into
+// channels, which is not a browser edit.
+func TestCheckEdit_RealtimeLocked(t *testing.T) {
+	const realtime = File("realtime.yaml")
+	before := treeOf(t, "version: 1\n")
+	after := treeOf(t, "version: 1\nchannel_types:\n  room:\n    attach_to: [ticket]\n")
+	got := CheckEdit(realtime, before, after)
+	if len(got) != 1 || got[0].File != realtime || got[0].Path != "channel_types.room.attach_to" || got[0].Change != "added" {
+		t.Fatalf("CheckEdit(realtime.yaml) = %+v; want the added attach_to refused", got)
+	}
+}

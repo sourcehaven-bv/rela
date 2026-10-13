@@ -256,7 +256,7 @@ func copyProjectSchema(src, dst string) error {
 	// docscapture -> project, and a local type here already binds the name.
 	for _, name := range []string{
 		"schema.yaml", "metamodel.yaml",
-		"data-entry.yaml", "acl.yaml", "schedules.yaml",
+		"data-entry.yaml", "acl.yaml", "schedules.yaml", "realtime.yaml",
 	} {
 		if err := copyIfExists(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
 			return err

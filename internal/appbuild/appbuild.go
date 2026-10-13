@@ -211,6 +211,8 @@ type Services struct {
 	aclDeclarative *acl.Declarative
 	aclPolicy      *acl.Policy
 	audit          audit.Audit
+	// realtime is the base's realtime.yaml holder; see [Realtime].
+	realtime *RealtimeConfig
 	// mailStop drains and stops the mail worker. Per-assembled like gcStop,
 	// and bounded by the outbox's drain timeout so it cannot hang shutdown.
 	mailStop func()
@@ -1366,6 +1368,11 @@ type options struct {
 	// [WithTokenStore]. Nil means a sealed store on the database backends
 	// and none elsewhere.
 	tokenStore func(HostConfig) (tokenstore.Store, error)
+
+	// realtimeFallback is the predecessor whose realtime config a schema
+	// reload keeps when realtime.yaml no longer loads; see
+	// [WithRealtimeFallback].
+	realtimeFallback *Services
 }
 
 // WithBackgroundAutomationJobs runs `background: true` automation actions
@@ -1915,6 +1922,10 @@ type SharedBase struct {
 	// conns is the parsed connections.yaml (TKT-01KZSO), empty when the
 	// file is absent. Parsed here so an invalid file fails the boot.
 	conns tokenstore.Connections
+	// realtime is the compiled realtime.yaml holder, loaded here so an
+	// invalid file fails the boot. It is shared by every Services assembled
+	// from this base, like meta: it derives from config files only.
+	realtime *RealtimeConfig
 	// reassembly marks a base built to re-assemble against an ALREADY-OPEN
 	// store, so [assemble] skips the store-open-only steps. Set by
 	// [SharedBase.ForReassembly]; false for a base that will open its own store.
@@ -2103,9 +2114,15 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, err
 	}
 
+	// An invalid realtime.yaml fails the boot too, as data-entry.yaml does.
+	rt, err := newRealtimeConfig(cfg, &o, aclPolicy, meta)
+	if err != nil {
+		return nil, err
+	}
+
 	return &SharedBase{
 		cfg: cfg, opts: o, acl: resolvedACL, aclPolicy: aclPolicy,
-		meta: meta, worlds: compiledWorlds, conns: conns,
+		meta: meta, worlds: compiledWorlds, conns: conns, realtime: rt,
 	}, nil
 }
 
@@ -2710,6 +2727,7 @@ func newServices(
 		acl:                resolvedACL,
 		aclDeclarative:     aclDeclarative,
 		aclPolicy:          base.aclPolicy,
+		realtime:           base.realtime,
 		audit:              cfg.Audit,
 		fieldRedactor:      fieldRedactor,
 	}

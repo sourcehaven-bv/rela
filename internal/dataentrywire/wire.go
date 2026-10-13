@@ -21,6 +21,7 @@ import (
 )
 
 // Services wires app to the services in svc: CalDAV aliases, comments, piles, leases,
+// the realtime.yaml holder,
 // the worlds' relation scopes, version tags, next-action user state, and the
 // predicate compilers behind next-action sources, list and kanban
 // `condition:`, and `query_scopes:`.
@@ -44,6 +45,14 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 	if l := appbuild.Leases(svc); l != nil {
 		if err := dataentry.SetLeases(app, l); err != nil {
 			return fmt.Errorf("wire leases: %w", err)
+		}
+	}
+
+	// The realtime holder is absent only for a Services built from
+	// collaborators; realtime.yaml is then not watched.
+	if r := appbuild.Realtime(svc); r != nil {
+		if err := dataentry.SetRealtime(app, r); err != nil {
+			return fmt.Errorf("wire realtime config: %w", err)
 		}
 	}
 

@@ -30,6 +30,7 @@ var configRootFiles = []string{
 	"schedules.yaml",
 	"mail-templates.yaml",
 	"classification.yaml",
+	"realtime.yaml",
 }
 
 // configDirs are the project directories a database carries, recursively.

@@ -469,6 +469,13 @@ type App struct {
 	// StartWatching; nil when watching is not active.
 	stopConfigWatch func()
 
+	// realtime reloads realtime.yaml; nil when realtime is not wired. Set
+	// once by [SetRealtime] before StartWatching.
+	realtime realtimeReloader
+	// stopRealtimeWatch releases the realtime.yaml subscription, like
+	// stopConfigWatch.
+	stopRealtimeWatch func()
+
 	// feed numbers store change events for SSE connections and lets them
 	// resume (TKT-3A1200). Built in NewApp and never reassigned, so request
 	// goroutines read it without a lock; StartWatching starts it and
@@ -568,6 +575,10 @@ func (a *App) StopWatching() {
 	if a.stopConfigWatch != nil {
 		a.stopConfigWatch()
 		a.stopConfigWatch = nil
+	}
+	if a.stopRealtimeWatch != nil {
+		a.stopRealtimeWatch()
+		a.stopRealtimeWatch = nil
 	}
 	if a.live != nil {
 		a.live.stop()
