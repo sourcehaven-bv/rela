@@ -1230,7 +1230,9 @@ deps:
       - store
     canUse:
       # The lua: migration step runs a sandboxed pure transform on a bare
-      # gopher-lua state (no rela.* bindings) — see luastep.go.
+      # gopher-lua state. Its only rela.* bindings are two raw store reads
+      # (get_entity, get_relations); no internal/lua runtime — see
+      # luastep.go and luareads.go.
       - gopherlua
   # Migration-state backends (TKT-XCJ0Y2). Same shape as the comments
   # backends: one implementation per storage tier, each selected by the
