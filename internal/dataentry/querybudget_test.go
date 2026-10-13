@@ -249,7 +249,7 @@ func newBudgetAppOn(t *testing.T, n int, base store.Store) (*App, *storetest.Cou
 		}},
 		Assignments: map[string]string{"T1": "editor"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	counting.Reset()
 	return app, counting, d, principalCtx("P1")
 }
@@ -811,7 +811,7 @@ func TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly(t *testing.
 		Roles:       map[string]acl.RoleDef{"editor": {Read: []string{"*"}}},
 		Assignments: map[string]string{"T1": "editor"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	breadth.Reset()
 
 	rec := viewsAs(principalCtx("P1"), t, app, d, "program", "PRG1")

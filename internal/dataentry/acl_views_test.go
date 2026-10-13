@@ -47,7 +47,7 @@ func TestACLViews_GatesHiddenEntity(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Visible: alice may read tickets.
 	rec := viewsAs(aliceCtx(), t, app, d, "ticket", "TKT-001")
@@ -89,9 +89,9 @@ func TestACLViews_RedactsHiddenPropertyValue(t *testing.T) {
 	// view, so its value flows into a section's fields[].values — the exact
 	// surface that leaked. (Hiding a property the default view does NOT render
 	// would make the test vacuous.)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"status": false},
-	}}
+	}})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket",
 		Properties: map[string]any{"title": "visible title", "status": "SECRET-STATUS"},
@@ -101,7 +101,7 @@ func TestACLViews_RedactsHiddenPropertyValue(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := viewsAs(aliceCtx(), t, app, d, "ticket", "TKT-001")
 	if rec.Code != http.StatusOK {
@@ -119,9 +119,9 @@ func TestACLViews_RedactsHiddenPropertyValue(t *testing.T) {
 // against raw properties and emitted the hidden value as the section title.
 func TestACLViews_RedactsHiddenPrimaryTitle(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"title": false},
-	}}
+	}})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket",
 		Properties: map[string]any{"title": "SECRET-TITLE"},
@@ -131,7 +131,7 @@ func TestACLViews_RedactsHiddenPrimaryTitle(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	rec := viewsAs(aliceCtx(), t, app, d, "ticket", "TKT-001")
 	if rec.Code != http.StatusOK {
@@ -154,9 +154,9 @@ func TestACLViews_RelationColumnRedactsHiddenNeighborTitle(t *testing.T) {
 	app := newTestAppV1(t)
 	// Hide `title` everywhere; feature's only property is its display title, so a
 	// followed `implements` edge would otherwise leak the feature's title.
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"title": false},
-	}}
+	}})
 	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket",
 		Properties: map[string]any{"title": "ticket title"}})
 	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature",
@@ -167,7 +167,7 @@ func TestACLViews_RelationColumnRedactsHiddenNeighborTitle(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket", "feature"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	titles := relationColumnValuesFor(gateCtxFor(aliceCtx(), t, d), app, "TKT-001", "ticket", "implements", dataentryconfig.DirectionOutgoing)
 	for _, tt := range titles {
@@ -194,7 +194,7 @@ func TestACLViews_RelationColumnDropsUnreadableNeighbor(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	titles := relationColumnValuesFor(gateCtxFor(aliceCtx(), t, d), app, "TKT-001", "ticket", "implements", dataentryconfig.DirectionOutgoing)
 	if len(titles) != 0 {
@@ -208,9 +208,9 @@ func TestACLViews_RelationColumnDropsUnreadableNeighbor(t *testing.T) {
 // a script through App.scriptReader exactly as document rendering does.
 func TestACLScript_RedactedVisibleToLua(t *testing.T) {
 	app := newTestAppV1(t)
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{
 		Visible: map[string]bool{"status": false},
-	}}
+	}})
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket",
 		Properties: map[string]any{"title": "visible title", "status": "SECRET-STATUS"},
@@ -220,7 +220,7 @@ func TestACLScript_RedactedVisibleToLua(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	reader := app.scriptReader(appRedactor(app))
 	e, err := reader.GetAddress(aliceCtx(), "TKT-001")

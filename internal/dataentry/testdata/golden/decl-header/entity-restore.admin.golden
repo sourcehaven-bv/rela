@@ -1,0 +1,8 @@
+request: POST /api/v1/tickets/TKT-7/restore
+identity: header admin@example.test
+status: 204
+reads: GetRelation=1 GraphQueryHeaders=1 ListRelations=6
+breadth: ListRelations=0/6
+bodies: GraphQuery=0/1
+versions: 
+body:

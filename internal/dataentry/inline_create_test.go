@@ -102,7 +102,7 @@ func TestInlineCreate_GatedByCreatePermission(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "author", "bob": "reader"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	alice := inlineCreateMap(gateCtxFor(aliceCtx(), t, d), t, app)
 	if alice["ticket"] != "create_ticket" {
@@ -132,7 +132,7 @@ func TestInlineCreate_CreateWithoutReadIsOffered(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "submitter"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	got := inlineCreateMap(gateCtxFor(aliceCtx(), t, d), t, app)
 	if got["ticket"] != "create_ticket" {

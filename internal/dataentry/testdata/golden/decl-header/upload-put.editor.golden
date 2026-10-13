@@ -1,0 +1,70 @@
+request: PUT /api/v1/tickets/TKT-3/_attachments/screenshot
+identity: header editor@example.test
+status: 200
+reads: GetEntity=2 GetRelation=12 GraphQueryHeaders=1 ListEntities=2 ListEntityHeaders=2 ListRelations=3
+breadth: ListEntities=2/2 ListEntityHeaders=2/2 ListRelations=0/3
+bodies: GetEntity=0/2 GraphQuery=0/1 ListEntities=0/2 ListEntityHeaders=0/2
+versions: 
+body:
+{
+  "_self": "/api/v1/tickets/TKT-3",
+  "id": "TKT-3",
+  "type": "ticket",
+  "_title": "Charlie",
+  "properties": {
+    "budget": "charlie-budget",
+    "due": "2025-02-14",
+    "note": "charlie-note",
+    "screenshot": "attachments/TKT-3/screenshot<minted>new.txt",
+    "secret": "charlie-secret",
+    "start": "2025-02-03",
+    "status": "open",
+    "title": "Charlie"
+  },
+  "_actions": {
+    "action:close": true,
+    "delete": true,
+    "rename": false,
+    "update": true
+  },
+  "_fields": {
+    "note": {
+      "writable": false
+    },
+    "status": {
+      "options": {
+        "archived": false
+      }
+    }
+  },
+  "_relations": {
+    "implements": {
+      "removable": false
+    }
+  },
+  "_redacted": [],
+  "_attachments": {
+    "screenshot": [
+      {
+        "id": "new.txt",
+        "filename": "new.txt",
+        "size": 8,
+        "contentType": "text/plain; charset=utf-8",
+        "href": "/api/v1/tickets/TKT-3/_attachments/screenshot/new.txt"
+      }
+    ]
+  },
+  "_transitions": {
+    "status": [
+      {
+        "to": "closed",
+        "label": "Close",
+        "guard": "close-ticket",
+        "allowed": false,
+        "reason": "guard"
+      }
+    ]
+  },
+  "_copies": [],
+  "_faces": []
+}

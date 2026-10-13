@@ -1,0 +1,45 @@
+request: GET /api/v1/policies/POL-1
+identity: signed assertion for viewer@example.test
+status: 200
+header ETag: "uxW5+JZfTSE="
+reads: GetRelation=9 GraphQueryHeaders=1 ListEntities=3 ListEntityHeaders=1 ListRelations=3
+breadth: ListEntities=3/3 ListEntityHeaders=1/1 ListRelations=0/3
+bodies: GraphQuery=0/1 ListEntities=0/3 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "_self": "/api/v1/policies/POL-1@published",
+  "id": "POL-1",
+  "type": "policy",
+  "_title": "Access",
+  "properties": {
+    "stage": "done",
+    "title": "Access"
+  },
+  "_actions": {
+    "delete": false,
+    "rename": false,
+    "update": false
+  },
+  "_fields": {},
+  "_relations": {},
+  "_versions": {
+    "properties": {
+      "stage": "63a6a032",
+      "title": "9665f693"
+    },
+    "content": "4bbf5675",
+    "relations": "f156d90d"
+  },
+  "_redacted": [],
+  "_attachments": {},
+  "_world": {
+    "name": "published",
+    "face": "published",
+    "via": "chain",
+    "chain_position": 0
+  },
+  "_transitions": {},
+  "_copies": [],
+  "_faces": []
+}

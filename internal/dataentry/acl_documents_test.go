@@ -51,7 +51,7 @@ func TestACLDocuments_GatesHiddenEntity(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// Denied: bob has no role → 404, and the renderer (echo LEAKED) must NOT run.
 	rec := documentsAs(principalCtx("bob"), t, app, d, "ticket-summary", "TKT-001")

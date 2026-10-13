@@ -91,7 +91,7 @@ func rejectApp(t *testing.T, mode string) *App {
 		appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d))
 	rebindApp(app, fs, pctx, svc)
 	app.broker = newEventBroker()
-	app.acl = d
+	setTestACL(t, app, d)
 
 	seedEntity(app, &entity.Entity{
 		ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T1"},

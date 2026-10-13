@@ -1,0 +1,61 @@
+request: POST /api/v1/tickets/
+identity: header editor@example.test
+status: 201
+header Location: /api/v1/tickets/TKT-008
+reads: GetRelation=8 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=7 ListRelations=4
+breadth: ListEntities=0/1 ListEntityHeaders=9/7 ListRelations=0/4
+bodies: GraphQuery=0/1 ListEntities=4/1 ListEntityHeaders=0/7
+versions: 
+body:
+{
+  "_self": "/api/v1/tickets/TKT-008",
+  "id": "TKT-008",
+  "type": "ticket",
+  "_title": "Golf",
+  "properties": {
+    "secret": "golf-secret",
+    "status": "open",
+    "title": "Golf"
+  },
+  "relations": {
+    "implements": [
+      "POL-1"
+    ]
+  },
+  "_actions": {
+    "action:close": true,
+    "delete": true,
+    "rename": false,
+    "update": true
+  },
+  "_fields": {
+    "note": {
+      "writable": false
+    },
+    "status": {
+      "options": {
+        "archived": false
+      }
+    }
+  },
+  "_relations": {
+    "implements": {
+      "removable": false
+    }
+  },
+  "_redacted": [],
+  "_attachments": {},
+  "_transitions": {
+    "status": [
+      {
+        "to": "closed",
+        "label": "Close",
+        "guard": "close-ticket",
+        "allowed": false,
+        "reason": "guard"
+      }
+    ]
+  },
+  "_copies": [],
+  "_faces": []
+}

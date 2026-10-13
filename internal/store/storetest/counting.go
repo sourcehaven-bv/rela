@@ -2,7 +2,6 @@ package storetest
 
 import (
 	"context"
-	"errors"
 	"iter"
 	"maps"
 	"sort"
@@ -22,45 +21,52 @@ import (
 // Reads are counted; writes pass through uncounted (a test seeds through
 // the same handle, and seeding is not the thing under measurement). The
 // optional capabilities a consumer type-asserts are forwarded: the header
-// readers, the matched counter and the mention index (counted), and the transaction view (its
-// reads counted too).
+// readers, the matched counter and the mention index (counted), soft delete
+// (a write, so uncounted), and the transaction view (its reads counted too).
 //
 // Its exported methods are the store read surface it decorates plus the
-// optional capabilities above, so the count moves with store.Store rather than
-// with this type.
+// optional capabilities above, plus Unwrap for store.Decorator, so the count
+// moves with store.Store rather than with this type.
 //
-//plimsoll:max-exported-methods=21
+//plimsoll:max-exported-methods=23
 type Counting struct {
 	store.Store
 
+	// counts is shared by pointer with every transaction view, so a read
+	// inside Tx takes the same lock as a read outside it.
+	counts *callCounts
+}
+
+// callCounts is the counter state of a [Counting] and its transaction views.
+type callCounts struct {
 	mu    sync.Mutex
 	calls map[string]int
 }
 
 // NewCounting wraps s.
 func NewCounting(s store.Store) *Counting {
-	return &Counting{Store: s, calls: map[string]int{}}
+	return &Counting{Store: s, counts: &callCounts{calls: map[string]int{}}}
 }
 
 func (c *Counting) hit(method string) {
-	c.mu.Lock()
-	c.calls[method]++
-	c.mu.Unlock()
+	c.counts.mu.Lock()
+	c.counts.calls[method]++
+	c.counts.mu.Unlock()
 }
 
 // Reset clears the counters.
 func (c *Counting) Reset() {
-	c.mu.Lock()
-	c.calls = map[string]int{}
-	c.mu.Unlock()
+	c.counts.mu.Lock()
+	c.counts.calls = map[string]int{}
+	c.counts.mu.Unlock()
 }
 
 // Reads returns the total number of read calls since the last Reset.
 func (c *Counting) Reads() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.counts.mu.Lock()
+	defer c.counts.mu.Unlock()
 	n := 0
-	for _, v := range c.calls {
+	for _, v := range c.counts.calls {
 		n += v
 	}
 	return n
@@ -68,10 +74,10 @@ func (c *Counting) Reads() int {
 
 // Calls returns a copy of the per-method counters.
 func (c *Counting) Calls() map[string]int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := make(map[string]int, len(c.calls))
-	maps.Copy(out, c.calls)
+	c.counts.mu.Lock()
+	defer c.counts.mu.Unlock()
+	out := make(map[string]int, len(c.counts.calls))
+	maps.Copy(out, c.counts.calls)
 	return out
 }
 
@@ -199,16 +205,24 @@ func (c *Counting) MentionSources(
 	ctx context.Context, target string, after entity.Ref, limit int,
 ) ([]entity.Ref, error) {
 	c.hit("MentionSources")
-	idx, ok := c.Store.(store.MentionIndex)
-	if !ok {
-		return nil, errors.New("storetest: the wrapped store keeps no mention index")
-	}
-	return idx.MentionSources(ctx, target, after, limit)
+	return mentionSourcesOf(ctx, c.Store, target, after, limit)
+}
+
+// Unwrap returns the wrapped store, so a lookup keyed on the backend type
+// (the database handle piles and state share) still finds it; see
+// [store.Decorator].
+func (c *Counting) Unwrap() store.Store { return c.Store }
+
+// SoftDelete forwards the wrapped store's soft-delete capability. See
+// [forwardedSoftDeleter] for a store without one.
+func (c *Counting) SoftDelete() store.SoftDeleter {
+	return forwardedSoftDeleter(c.Store)
 }
 
 // Tx forwards the transaction, wrapping the view so reads inside it count.
+// The view shares the parent's counter state, lock included.
 func (c *Counting) Tx(ctx context.Context, fn func(store.Store) error) error {
 	return c.Store.Tx(ctx, func(view store.Store) error {
-		return fn(&Counting{Store: view, calls: c.calls})
+		return fn(&Counting{Store: view, counts: c.counts})
 	})
 }

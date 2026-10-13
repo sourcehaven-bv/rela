@@ -174,7 +174,7 @@ func buildSecretNoteApp(t *testing.T, policyYAML, user string) *App {
 	svc = appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx), appbuildtest.WithDeclarative(d))
 	rebindApp(app, fs, ctx, svc)
 	app.broker = newEventBroker()
-	app.acl = d
+	setTestACL(t, app, d)
 	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
 		return principal.Principal{User: user, Tool: principal.ToolDataEntry}
 	})

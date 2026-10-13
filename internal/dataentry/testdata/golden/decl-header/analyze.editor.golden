@@ -1,0 +1,41 @@
+request: GET /api/v1/_analyze
+identity: header editor@example.test
+status: 200
+reads: GetRelation=39 GraphQueryHeaders=1 ListEntities=3 ListEntityHeaders=8 ListRelations=2 MatchingFaces=5
+breadth: ListEntities=3/3 ListEntityHeaders=6/8 ListRelations=0/2 MatchingFaces=20/5
+bodies: GraphQuery=0/1 ListEntities=0/3 ListEntityHeaders=0/8
+versions: 
+body:
+{
+  "errors": 0,
+  "warnings": 3,
+  "issues": [
+    {
+      "entityId": "PERS-admin",
+      "entityType": "person",
+      "title": "Ada Admin",
+      "message": "No relations",
+      "severity": "warning",
+      "checkType": "Orphans"
+    },
+    {
+      "entityId": "PERS-outsider",
+      "entityType": "person",
+      "title": "Otto Outsider",
+      "message": "No relations",
+      "severity": "warning",
+      "checkType": "Orphans"
+    },
+    {
+      "entityId": "TKT-6",
+      "entityType": "ticket",
+      "title": "Foxtrot",
+      "message": "No relations",
+      "severity": "warning",
+      "checkType": "Orphans"
+    }
+  ],
+  "byCheck": {
+    "Orphans": 3
+  }
+}

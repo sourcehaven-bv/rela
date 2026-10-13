@@ -309,7 +309,7 @@ func TestExportDocument_PermissionGate(t *testing.T) {
 				Roles:       map[string]acl.RoleDef{"reader": {Read: []string{"ticket"}}},
 				Assignments: map[string]string{"bob": "reader"},
 			}, app.store)
-			app.acl = d
+			setTestACL(t, app, d)
 
 			r := httptest.NewRequest(http.MethodGet, tc.url, http.NoBody).
 				WithContext(gateCtxFor(principalCtx("bob"), t, d))
@@ -356,7 +356,7 @@ func TestExportDocument_ElevatedGateAppliesToExport(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			app, fake := newDocExportApp(t, elevated)
-			app.acl = tc.aclImpl
+			setTestACL(t, app, tc.aclImpl)
 
 			rec := docExportReq(t, app, "/api/v1/_documents/sales/_export?transform=copy")
 
@@ -403,7 +403,7 @@ func TestExportDocument_NoExistenceOracle(t *testing.T) {
 				Roles:       map[string]acl.RoleDef{"outsider": {}},
 				Assignments: map[string]string{"bob": "outsider"},
 			}, app.store)
-			app.acl = d
+			setTestACL(t, app, d)
 
 			probe := func(id string) *httptest.ResponseRecorder {
 				r := httptest.NewRequest(http.MethodGet, route.url(id), http.NoBody).

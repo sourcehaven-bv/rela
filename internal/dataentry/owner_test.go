@@ -77,7 +77,7 @@ func TestOwner_ListAndSearchRows(t *testing.T) {
 	seedRelation(app, entity.NewRelation("TASK-1", "subtask", "TASK-2"))
 	seedRelation(app, entity.NewRelation("TASK-3", "relates", "TASK-2"))
 	d := readAll(t, app, "task", "project")
-	app.acl = d
+	setTestACL(t, app, d)
 
 	owners := ownersOfList(aliceCtx(), t, app, d)
 	want := &v1.EntityOwner{ID: "TASK-1", Type: "task", Title: "Plan launch", Relation: "subtask"}
@@ -156,7 +156,7 @@ func TestOwner_Irregular(t *testing.T) {
 				seedRelation(app, entity.NewRelation(e[0], e[1], e[2]))
 			}
 			d := readAll(t, app, tc.read...)
-			app.acl = d
+			setTestACL(t, app, d)
 
 			got := map[string]string{}
 			for id, o := range ownersOfList(aliceCtx(), t, app, d) {
@@ -194,7 +194,7 @@ func TestOwner_ReadBudget(t *testing.T) {
 			rows = append(rows, &entity.Entity{ID: id, Type: "task"})
 		}
 		d := readAll(t, app, "task")
-		app.acl = d
+		setTestACL(t, app, d)
 		counting := storetest.NewCounting(app.store)
 		headerCalls := 0
 		o := appOwners(app)
@@ -240,7 +240,7 @@ func TestOwner_ViewCarriesOwnerAndRelatedSection(t *testing.T) {
 	})
 	seedRelation(app, entity.NewRelation("TASK-1", "subtask", "TASK-2"))
 	d := readAll(t, app, "task")
-	app.acl = d
+	setTestACL(t, app, d)
 
 	decode := func(id string) v1.ViewResponse {
 		t.Helper()

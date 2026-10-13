@@ -58,7 +58,7 @@ func mentionedByApp(t *testing.T, readTypes ...string) (*App, *acl.Declarative) 
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: readTypes}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return app, d
 }
 
@@ -103,7 +103,7 @@ func TestMentionedBy_HiddenTargetIs404(t *testing.T) {
 
 func TestMentionedBy_RedactsHiddenTitle(t *testing.T) {
 	app, d := mentionedByApp(t, "ticket", "feature")
-	app.fieldResolver = fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}}
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}})
 	rec := getMentionedByAs(aliceCtx(), t, app, d, http.MethodGet, "FEAT-001", "")
 	got := decodeMentionedBy(t, rec)
 	if len(got.Items) != 2 {

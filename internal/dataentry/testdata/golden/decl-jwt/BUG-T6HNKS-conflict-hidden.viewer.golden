@@ -1,0 +1,42 @@
+request: GET /api/v1/_conflicts/entities/ticket/TKT-4.md
+identity: signed assertion for viewer@example.test
+status: 200
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "path": "entities/ticket/TKT-4.md",
+  "entity_type": "ticket",
+  "entity_id": "TKT-4",
+  "property_diffs": [
+    {
+      "property": "note",
+      "ours_value": "delta-note",
+      "theirs_value": "delta-note",
+      "is_same": true
+    },
+    {
+      "property": "secret",
+      "ours_value": "delta-secret",
+      "theirs_value": "delta-secret-theirs",
+      "is_same": false
+    },
+    {
+      "property": "status",
+      "ours_value": "open",
+      "theirs_value": "open",
+      "is_same": true
+    },
+    {
+      "property": "title",
+      "ours_value": "Delta",
+      "theirs_value": "Delta",
+      "is_same": true
+    }
+  ],
+  "content_same": true,
+  "content_ours": "Hidden child.",
+  "content_theirs": "Hidden child."
+}

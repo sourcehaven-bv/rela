@@ -1,0 +1,61 @@
+request: POST /api/v1/tickets/TKT-1/_actions/clone
+identity: header editor@example.test
+status: 201
+header Location: /api/v1/tickets/TKT-008
+reads: GetRelation=7 GraphQueryHeaders=1 ListEntities=2 ListEntityHeaders=1 ListRelations=1
+breadth: ListEntities=1/2 ListEntityHeaders=1/1 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=5/2 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "_self": "/api/v1/tickets/TKT-008",
+  "id": "TKT-008",
+  "type": "ticket",
+  "_title": "Alpha",
+  "properties": {
+    "budget": "alpha-budget",
+    "due": "2025-01-17",
+    "note": "alpha-note",
+    "secret": "alpha-secret",
+    "start": "2025-01-06",
+    "status": "open",
+    "title": "Alpha"
+  },
+  "content": "Alpha body.",
+  "_actions": {
+    "action:close": true,
+    "delete": true,
+    "rename": false,
+    "update": true
+  },
+  "_fields": {
+    "note": {
+      "writable": false
+    },
+    "status": {
+      "options": {
+        "archived": false
+      }
+    }
+  },
+  "_relations": {
+    "implements": {
+      "removable": false
+    }
+  },
+  "_redacted": [],
+  "_attachments": {},
+  "_transitions": {
+    "status": [
+      {
+        "to": "closed",
+        "label": "Close",
+        "guard": "close-ticket",
+        "allowed": false,
+        "reason": "guard"
+      }
+    ]
+  },
+  "_copies": [],
+  "_faces": []
+}

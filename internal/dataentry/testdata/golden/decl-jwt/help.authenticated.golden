@@ -1,0 +1,54 @@
+request: GET /api/help/ticket
+identity: a signed assertion for each authenticated principal, all answered alike
+status: 200
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+
+<div class="help-content">
+<h4>Properties</h4><table class="help-table"><thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>budget</code></td><td>string</td><td></td><td></td></tr>
+<tr><td><code>closed_on</code></td><td>datetime</td><td></td><td></td></tr>
+<tr><td><code>due</code></td><td>date</td><td></td><td></td></tr>
+<tr><td><code>note</code></td><td>string</td><td></td><td></td></tr>
+<tr><td><code>screenshot</code></td><td>file</td><td></td><td></td></tr>
+<tr><td><code>secret</code></td><td>string</td><td></td><td></td></tr>
+<tr><td><code>start</code></td><td>date</td><td></td><td></td></tr>
+<tr><td><code>status</code></td><td>ticket_status</td><td></td><td></td></tr>
+<tr><td><code>title</code></td><td>string</td><td>Yes</td><td></td></tr>
+</tbody></table>
+<h4>Outgoing Relations</h4><table class="help-table"><thead><tr><th>Name</th><th>Target</th><th>Cardinality</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>contains</code></td><td>ticket</td><td></td><td><p>Work breakdown, walked by the gantt.</p>
+</td></tr>
+<tr><td><code>implements</code></td><td>policy</td><td></td><td><p>A ticket implements a policy.</p>
+</td></tr>
+</tbody></table>
+<h4>Incoming Relations</h4><table class="help-table"><thead><tr><th>Name</th><th>Source</th><th>Cardinality</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>contains</code></td><td>ticket</td><td></td><td><p>Work breakdown, walked by the gantt.</p>
+</td></tr>
+<tr><td><code>watches</code></td><td>person</td><td></td><td><p>A person watches a ticket. Confers the watcher role on it.</p>
+</td></tr>
+</tbody></table>
+<h4>Values: <code>status</code></h4><table class="help-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>open</code></td><td></td></tr>
+<tr><td><code>closed</code></td><td></td></tr>
+<tr><td><code>archived</code></td><td></td></tr>
+</tbody></table>
+<h4>Lifecycle: <code>status</code></h4>
+<pre class="mermaid">stateDiagram-v2
+    state &#34;open&#34; as s0
+    state &#34;closed&#34; as s1
+    state &#34;archived&#34; as s2
+    [*] --&gt; s0
+    s0 --&gt; s1: Close
+    s1 --&gt; s0: Reopen
+    s1 --&gt; s2: Archive
+</pre>
+<table class="help-table"><thead><tr><th>Move</th><th>From &rarr; To</th><th>When to use</th></tr></thead><tbody>
+<tr><td>Close</td><td><code>open</code> &rarr; <code>closed</code></td><td></td></tr>
+<tr><td>Reopen</td><td><code>closed</code> &rarr; <code>open</code></td><td></td></tr>
+<tr><td>Archive</td><td><code>closed</code> &rarr; <code>archived</code></td><td></td></tr>
+</tbody></table>
+</div>

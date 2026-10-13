@@ -1,0 +1,14 @@
+request: GET /api/v1/_documents/report/_export?transform=copy
+identity: header editor@example.test
+status: 200
+reads: GetRelation=6 GraphQueryHeaders=1 ListEntities=1 ListRelations=1 MatchingFaces=1
+breadth: ListEntities=0/1 ListRelations=0/1 MatchingFaces=1/1
+bodies: GraphQuery=0/1 ListEntities=4/1
+versions: 
+body:
+- TKT-1 Alpha
+- TKT-2 Bravo
+- TKT-3 Charlie
+- TKT-4 Delta
+- TKT-5 Echo
+- TKT-6 Foxtrot

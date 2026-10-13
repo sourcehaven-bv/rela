@@ -62,7 +62,7 @@ func etagRedactionApp(t *testing.T, salary string) (*App, *acl.Declarative) {
 		appbuildtest.WithDeclarative(d))
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
-	app.acl = d
+	setTestACL(t, app, d)
 	app.schema.Publish(&Schema{Cfg: &Config{}, Meta: meta})
 	res, err := ResolverFromProfile("", meta, st, d)
 	if err != nil {

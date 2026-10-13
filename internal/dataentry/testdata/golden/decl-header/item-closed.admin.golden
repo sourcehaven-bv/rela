@@ -1,0 +1,78 @@
+request: GET /api/v1/tickets/TKT-2
+identity: header admin@example.test
+status: 200
+header ETag: "CIpF5cPF9ow="
+reads: GetRelation=8 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=1 ListRelations=3 MatchingFaces=2
+breadth: ListEntities=1/1 ListEntityHeaders=1/1 ListRelations=0/3 MatchingFaces=2/2
+bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "_self": "/api/v1/tickets/TKT-2",
+  "id": "TKT-2",
+  "type": "ticket",
+  "_title": "Bravo",
+  "properties": {
+    "budget": "bravo-budget",
+    "closed_on": "2025-01-10T17:00:00Z",
+    "due": "2025-01-10",
+    "note": "bravo-note",
+    "secret": "bravo-secret",
+    "start": "2025-01-08",
+    "status": "closed",
+    "title": "Bravo"
+  },
+  "content": "Follows `TKT-1`.",
+  "_actions": {
+    "action:close": true,
+    "delete": true,
+    "rename": false,
+    "update": true
+  },
+  "_fields": {},
+  "_relations": {},
+  "_versions": {
+    "properties": {
+      "budget": "418cac17",
+      "closed_on": "950dec75",
+      "due": "d016cd43",
+      "note": "97007d5c",
+      "screenshot": "bd93bb95",
+      "secret": "98f6927b",
+      "start": "65e19ffe",
+      "status": "bda3e634",
+      "title": "fc5b20b1"
+    },
+    "content": "e19ccde5",
+    "relations": "c27686ea"
+  },
+  "_redacted": [],
+  "_attachments": {},
+  "_world": {
+    "name": "published",
+    "face": "",
+    "via": "unscoped"
+  },
+  "_transitions": {
+    "status": [
+      {
+        "to": "archived",
+        "label": "Archive",
+        "allowed": true
+      },
+      {
+        "to": "open",
+        "label": "Reopen",
+        "allowed": true
+      }
+    ]
+  },
+  "mentions": {
+    "TKT-1": {
+      "type": "ticket",
+      "title": "Alpha"
+    }
+  },
+  "_copies": [],
+  "_faces": []
+}

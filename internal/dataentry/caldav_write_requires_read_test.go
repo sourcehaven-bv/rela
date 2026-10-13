@@ -62,7 +62,7 @@ func caldavAppWithRowPolicy(t *testing.T) *App {
 	svc := appbuildtest.New(meta, appbuildtest.WithStore(app.store),
 		appbuildtest.WithFS(app.fs, app.paths), appbuildtest.WithDeclarative(d))
 	rebindApp(app, app.fs, app.paths, svc)
-	app.acl = d
+	setTestACL(t, app, d)
 	app.SetPrincipalResolver(func(*http.Request) principal.Principal {
 		return principal.Principal{User: hiddenCalDAVUser, Tool: principal.ToolDataEntry}
 	})

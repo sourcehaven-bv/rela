@@ -333,7 +333,7 @@ func TestComments_MethodNotAllowed(t *testing.T) {
 // guarantee is kept.
 func TestComments_ReadOnlyInstanceRefusesWrites(t *testing.T) {
 	app := commentsApp(t)
-	app.acl = acl.ReadOnlyACL{}
+	setTestACL(t, app, acl.ReadOnlyACL{})
 
 	t.Run("add refused", func(t *testing.T) {
 		rec := doComments(t, app, http.MethodPost,
@@ -774,7 +774,7 @@ func TestComments_FacedThreadUnderRelationConferredGrant(t *testing.T) {
 			}},
 			RoleRelations: map[string]acl.RoleRelationDef{"owned-by": {Confers: "viewer"}},
 		}, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 
 		rec := doCommentsAs(t, app, d, http.MethodPost, draftPath, note, "alice")
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -798,7 +798,7 @@ func TestComments_FacedThreadUnderRelationConferredGrant(t *testing.T) {
 			}},
 			Assignments: map[string]string{"alice": "viewer"},
 		}, app.store)
-		app.acl = d
+		setTestACL(t, app, d)
 
 		rec := doCommentsAs(t, app, d, http.MethodGet, draftPath, "", "alice")
 		require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
@@ -834,7 +834,7 @@ func TestComments_FaceLimitedConferredGrant(t *testing.T) {
 		}},
 		RoleRelations: map[string]acl.RoleRelationDef{"owned-by": {Confers: "viewer"}},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	routes := []struct {
 		name string

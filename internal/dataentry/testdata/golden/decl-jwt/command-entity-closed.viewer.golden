@@ -1,0 +1,14 @@
+request: POST /api/command/entity_ids?entity_id=TKT-2
+identity: signed assertion for viewer@example.test
+status: 200
+reads: GetRelation=1 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=2 ListRelations=2 MatchingFaces=3
+breadth: ListEntities=1/1 ListEntityHeaders=4/2 ListRelations=0/2 MatchingFaces=4/3
+bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/2
+versions: 
+body:
+event: log
+data: {"type":"log","text":"{\"context\":\"entity\",\"entity\":{\"id\":\"TKT-2\",\"type\":\"ticket\",\"properties\":{\"closed_on\":\"2025-01-10T17:00:00Z\",\"start\":\"2025-01-08\",\"status\":\"closed\",\"title\":\"Bravo\"},\"content\":\"Follows `TKT-1`.\",\"updated_at\":\"<now>\",\"redacted\":[\"budget\",\"due\",\"note\",\"secret\"]},\"relations\":[{\"from\":\"PERS-viewer\",\"relation\":\"watches\",\"to\":\"TKT-2\",\"updated_at\":\"<now>\"},{\"from\":\"TKT-1\",\"relation\":\"contains\",\"to\":\"TKT-2\",\"updated_at\":\"<now>\"}],\"project\":{\"root\":\"\u003cproject\u003e\",\"metamodel\":\".\"}}"}
+
+event: done
+data: {"success":true}
+

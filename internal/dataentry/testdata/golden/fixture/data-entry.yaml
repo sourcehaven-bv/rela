@@ -1,0 +1,150 @@
+version: "1.0"
+app:
+  name: "Golden parity"
+lists:
+  tickets:
+    entity_type: ticket
+    title: "Tickets"
+    create_form: ticket_form
+    edit_form: ticket_form
+    columns:
+      - {property: title, sortable: true, link: detail}
+      - {property: status, sortable: true}
+      - {property: secret, sortable: true}
+      - {relation: implements, label: "Policies", direction: outgoing}
+      - {relation: watches, label: "Watchers", direction: incoming}
+    filter_controls:
+      - {property: status, widget: select}
+  open_tickets:
+    entity_type: ticket
+    title: "Open tickets"
+    columns:
+      - {property: title, sortable: true, link: detail}
+    filters:
+      - {property: status, operator: "=", value: open}
+  policies:
+    entity_type: policy
+    title: "Policies"
+    columns:
+      - {property: title, sortable: true, link: detail}
+      - {property: stage, sortable: true}
+  people:
+    entity_type: person
+    title: "People"
+    columns:
+      - {property: title, sortable: true, link: detail}
+forms:
+  ticket_form:
+    entity_type: ticket
+    title: "Ticket"
+    body: true
+    fields:
+      - {property: title}
+      - {property: status}
+      - {property: secret}
+      - {property: note}
+      - {property: start}
+      - {property: due}
+    relations:
+      - {relation: implements, direction: outgoing, widget: multi-select, label: "Policies"}
+views:
+  ticket:
+    title: "Ticket"
+    entry: {type: ticket}
+    traverse:
+      - {from: entry, follow: contains, collect_as: children}
+      - {from: entry, follow: implements, collect_as: policies}
+      - {from: entry, follow_incoming: watches, collect_as: watchers}
+    sections:
+      - {heading: "Ticket", source: entry, display: properties, fields: [{property: status}, {property: secret}, {property: note}]}
+      - {source: entry, display: content}
+      - heading: "Children"
+        source: children
+        display: table
+        columns:
+          - {property: title, link: detail}
+          - {property: status}
+          - {property: secret}
+      - {heading: "Policies", source: policies, display: list, fields: [{property: title}, {property: stage}]}
+      - {heading: "Watchers", source: watchers, display: list, fields: [{property: title}]}
+gantts:
+  plan:
+    title: "Plan"
+    hierarchy: [contains]
+    default_depth: 3
+    sources:
+      ticket: {start: start, end: due}
+documents:
+  report:
+    title: "Report"
+    script: docs/report.lua
+  elevated_report:
+    title: "Elevated report"
+    script: docs/elevated.lua
+    allow_acl_bypass: read
+    permission: report:all
+feeds:
+  due:
+    meta: {name: "Due tickets"}
+    sources:
+      - {entity_type: ticket, date: due}
+caldav:
+  static:
+    tickets:
+      meta: {name: "Tickets"}
+      component: vtodo
+      entity_type: ticket
+      due: due
+      summary: title
+      completion: {status_property: status, completed_value: closed, pending_value: open, completed_at: closed_on}
+commands:
+  # Both commands echo the stdin they receive, so a recording shows what the
+  # script was given. The project root is a fresh directory per run, so the
+  # script masks it.
+  dump_ids:
+    label: "Dump ids"
+    script: "sed 's/\"root\":\"[^\"]*\"/\"root\":\"<project>\"/'; echo"
+    context: list
+    permission: run:commands
+  entity_ids:
+    label: "Entity ids"
+    script: "sed 's/\"root\":\"[^\"]*\"/\"root\":\"<project>\"/'; echo"
+    context: entity
+    permission: run:commands
+actions:
+  close:
+    label: "Close"
+    script: close.lua
+    available_on: {entity_types: [ticket]}
+dashboard:
+  title: "Golden"
+  cards:
+    - {title: "Tickets", query: "type:ticket", display: count}
+    - {title: "By status", query: "type:ticket", display: breakdown, group_by: status}
+    - title: "Open"
+      query: "type:ticket prop:status=open"
+      display: table
+      columns: [{property: title, link: detail}, {property: secret}]
+    - {title: "Admin only", query: "type:ticket", display: count, permission: report:all}
+next_action_bands:
+  - {id: due, label: "Due", prominence: notice}
+next_actions:
+  # One candidate: the engine picks among several by a hash of the date, so a
+  # wider query would make the recordings change every day. TKT-4 is hidden
+  # from the viewer, so the viewer's empty answer records the row gate.
+  open-ticket:
+    band: due
+    query: "type:ticket prop:status=open prop:title=Delta"
+    suggest: "{title} is open."
+    cooldown: 1h
+    actions:
+      - {navigate: "/entity/ticket/{id}", label: "Open"}
+navigation:
+  - {label: "Tickets", list: tickets}
+  - {label: "Open tickets", list: open_tickets}
+  - {label: "Policies", list: policies}
+  - {label: "People", list: people}
+  - {label: "Plan", gantt: plan}
+  - {label: "Report", document: report}
+  - {label: "Elevated report", document: elevated_report}
+  - {label: "Dashboard", dashboard: true}

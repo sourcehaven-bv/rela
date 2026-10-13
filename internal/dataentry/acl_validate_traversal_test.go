@@ -41,7 +41,7 @@ func TestGatedValidator_TraversalIgnoresHiddenEntity(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "viewer", "bob": "admin"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	for _, tc := range []struct {
 		user string

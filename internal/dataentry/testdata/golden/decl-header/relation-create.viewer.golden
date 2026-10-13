@@ -1,0 +1,14 @@
+request: POST /api/v1/tickets/TKT-2/relations/implements
+identity: header viewer@example.test
+status: 403
+reads: GetRelation=2 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=3 ListRelations=1 MatchingFaces=2
+breadth: ListEntities=1/1 ListEntityHeaders=3/3 ListRelations=0/1 MatchingFaces=2/2
+bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/3
+versions: 
+body:
+{
+  "error": "forbidden",
+  "reason": "no role grants create on relations from type \"ticket\"",
+  "rule_id": "-",
+  "rule_kind": "role-grant"
+}

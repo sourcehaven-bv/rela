@@ -1,0 +1,14 @@
+request: GET /api/v1/_conflicts/TKT-1
+identity: header editor@example.test
+status: 404
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/conflict_not_found",
+  "title": "Conflicted file not found",
+  "status": 404,
+  "instance": "/api/v1/_conflicts/TKT-1"
+}

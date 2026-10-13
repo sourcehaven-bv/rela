@@ -32,7 +32,7 @@ func TestACLList_TypeLevelReadGrant(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", "")
 	if rec.Code != http.StatusOK {
@@ -72,7 +72,7 @@ func TestACLList_RoleRelationInheritance(t *testing.T) {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", "")
 	if rec.Code != http.StatusOK {
@@ -114,7 +114,7 @@ func TestACLList_PaginationLeakSurfaces(t *testing.T) {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", "per_page=3&page=2")
 	if rec.Code != http.StatusOK {
@@ -174,7 +174,7 @@ func TestACLList_DenyAllShape(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"feature"}}},
 		Assignments: map[string]string{"mallory": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(principalCtx("mallory"), t, app, d, "ticket", "tickets", "")
 	if rec.Code != http.StatusOK {
@@ -206,7 +206,7 @@ func TestACLList_DenyAllSearchShortCircuit(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"feature"}}},
 		Assignments: map[string]string{"mallory": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(principalCtx("mallory"), t, app, d, "ticket", "tickets", "q=alpha")
 	if rec.Code != http.StatusOK {
@@ -244,7 +244,7 @@ func TestACLList_SearchAfterACLOrdering(t *testing.T) {
 		},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", "q=alpha")
 	if rec.Code != http.StatusOK {
@@ -290,7 +290,7 @@ func TestACLList_QueryErrorMapping(t *testing.T) {
 			"editor-of": {Confers: "editor"},
 		},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	// The gate context is built from the REAL store (so the ACL
 	// resolver works), then the app's store is swapped for a failing
@@ -333,7 +333,7 @@ func TestACLPosition_SearchScopeGated(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	scope := url.QueryEscape(`{"source":"search","q":"alpha"}`)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/_position?id=TKT-001&scope="+scope, http.NoBody)

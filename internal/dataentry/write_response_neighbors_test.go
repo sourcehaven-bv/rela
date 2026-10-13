@@ -105,7 +105,7 @@ func hiddenNeighborApp(t *testing.T) (*App, *acl.Declarative, store.Store) {
 		appbuildtest.WithDeclarative(d))
 	app := newAppFromParts(&Config{}, nil, newFixture())
 	rebindApp(app, fs, paths, svc)
-	app.acl = d
+	setTestACL(t, app, d)
 	app.schema.Publish(&Schema{Cfg: &Config{}, Meta: meta})
 	if err := SetWorldNeighbors(app, st, appbuild.RelationScopes(svc)); err != nil {
 		t.Fatal(err)

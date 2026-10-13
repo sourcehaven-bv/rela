@@ -159,7 +159,7 @@ func TestViewMentions_CapAndWhere(t *testing.T) {
 				Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket", "feature"}}},
 				Assignments: map[string]string{"alice": "viewer"},
 			}, app.store)
-			app.acl = d
+			setTestACL(t, app, d)
 			app.Cfg().Views["fv"] = backlinksView(tc.where, ViewSection{Display: "list"})
 
 			sec := featureView(t, app, d).Sections[0]

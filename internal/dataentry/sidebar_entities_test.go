@@ -134,7 +134,7 @@ func TestSidebarEntities_RowsAreACLGated(t *testing.T) {
 		},
 		Assignments: map[string]string{"alice": "viewer", "bob": "lead"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	installNav(app, []dataentryconfig.NavigationEntry{{Group: "Features", Items: []dataentryconfig.NavigationEntry{
 		{Entities: "feature"},
 	}}})

@@ -144,7 +144,7 @@ func newScopePushdownAppOn(t *testing.T, base store.Store) (*App, *acl.Declarati
 		RoleRelations: map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
 		Assignments:   map[string]string{"alice": "all", "bob": "browse", "dave": "tickets", "erin": "features"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	return app, d, counting
 }
 

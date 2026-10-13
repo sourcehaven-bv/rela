@@ -1,0 +1,38 @@
+request: GET /api/v1/_dashboard
+identity: signed assertion for viewer@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListRelations=1
+breadth: ListRelations=0/1
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "title": "Golden",
+  "cards": [
+    {
+      "title": "Tickets",
+      "query": "type:ticket",
+      "display": "count"
+    },
+    {
+      "title": "By status",
+      "query": "type:ticket",
+      "display": "breakdown",
+      "group_by": "status"
+    },
+    {
+      "title": "Open",
+      "query": "type:ticket prop:status=open",
+      "display": "table",
+      "columns": [
+        {
+          "property": "title",
+          "link": "detail"
+        },
+        {
+          "property": "secret"
+        }
+      ]
+    }
+  ]
+}

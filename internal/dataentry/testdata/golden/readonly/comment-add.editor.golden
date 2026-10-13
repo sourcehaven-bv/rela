@@ -1,0 +1,14 @@
+request: POST /api/v1/_comments/ticket/TKT-1
+identity: header editor@example.test
+status: 403
+reads: 
+breadth: 
+bodies: 
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/forbidden",
+  "title": "this rela instance is configured read-only",
+  "status": 403,
+  "instance": "/api/v1/_comments/ticket/TKT-1"
+}

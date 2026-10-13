@@ -1,0 +1,14 @@
+request: GET /api/v1/_comments/ticket/TKT-99
+identity: header admin@example.test
+status: 404
+reads: GraphQueryHeaders=1 ListEntities=1 ListRelations=1
+breadth: ListEntities=1/1 ListRelations=0/1
+bodies: GraphQuery=0/1 ListEntities=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/not_found",
+  "title": "Entity not found",
+  "status": 404,
+  "instance": "/api/v1/_comments/ticket/TKT-99"
+}

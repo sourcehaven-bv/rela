@@ -1,0 +1,15 @@
+request: GET /api/v1/_me
+identity: signed assertion for stranger@example.test
+status: 200
+reads: GraphQueryHeaders=1 ListEntityHeaders=1
+breadth: ListEntityHeaders=1/1
+bodies: GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "user": "stranger@example.test",
+  "email": "stranger@example.test",
+  "roles": [
+    "staff"
+  ]
+}

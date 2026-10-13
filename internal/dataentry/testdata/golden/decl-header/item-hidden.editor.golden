@@ -1,0 +1,77 @@
+request: GET /api/v1/tickets/TKT-4
+identity: header editor@example.test
+status: 200
+header ETag: "IDjILXoRbMg="
+reads: GetRelation=8 GraphQueryHeaders=1 ListEntities=1 ListRelations=3 MatchingFaces=1
+breadth: ListEntities=1/1 ListRelations=0/3 MatchingFaces=1/1
+bodies: GraphQuery=0/1 ListEntities=1/1
+versions: 
+body:
+{
+  "_self": "/api/v1/tickets/TKT-4",
+  "id": "TKT-4",
+  "type": "ticket",
+  "_title": "Delta",
+  "properties": {
+    "due": "2025-03-28",
+    "secret": "delta-secret",
+    "start": "2025-01-20",
+    "status": "open",
+    "title": "Delta"
+  },
+  "content": "Hidden child.",
+  "_actions": {
+    "action:close": true,
+    "delete": true,
+    "rename": false,
+    "update": true
+  },
+  "_fields": {
+    "status": {
+      "options": {
+        "archived": false
+      }
+    }
+  },
+  "_relations": {
+    "implements": {
+      "removable": false
+    }
+  },
+  "_versions": {
+    "properties": {
+      "closed_on": "fac7a217",
+      "due": "bf50d62b",
+      "screenshot": "39e94aa8",
+      "secret": "e2905b9a",
+      "start": "141ef927",
+      "status": "a3440a61",
+      "title": "aa48dd6f"
+    },
+    "content": "12b08f88",
+    "relations": "427a4020"
+  },
+  "_redacted": [
+    "budget",
+    "note"
+  ],
+  "_attachments": {},
+  "_world": {
+    "name": "published",
+    "face": "",
+    "via": "unscoped"
+  },
+  "_transitions": {
+    "status": [
+      {
+        "to": "closed",
+        "label": "Close",
+        "guard": "close-ticket",
+        "allowed": false,
+        "reason": "guard"
+      }
+    ]
+  },
+  "_copies": [],
+  "_faces": []
+}

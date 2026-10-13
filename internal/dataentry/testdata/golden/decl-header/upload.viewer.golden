@@ -1,0 +1,14 @@
+request: POST /api/v1/tickets/TKT-3/_attachments/screenshot
+identity: header viewer@example.test
+status: 403
+reads: GetEntity=1 GetRelation=2 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=3
+breadth: ListEntityHeaders=1/1 ListRelations=0/1 MatchingFaces=3/3
+bodies: GetEntity=0/1 GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "error": "forbidden",
+  "reason": "no role grants update on type \"ticket\"",
+  "rule_id": "-",
+  "rule_kind": "role-grant"
+}

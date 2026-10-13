@@ -86,7 +86,7 @@ func TestSearchLimit_CountsOnlyVisibleRows(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	ctx := gateCtxFor(aliceCtx(), t, d)
 	resp, rec := searchLimited(ctx, t, app, "type:ticket,feature sort:modified:desc", "2")

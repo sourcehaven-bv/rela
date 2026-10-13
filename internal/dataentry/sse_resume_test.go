@@ -320,7 +320,7 @@ func TestSSEResume_HiddenTypesWithheld(t *testing.T) { // AC5
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 	srv := sseServer(t, app, func(ctx context.Context) context.Context {
 		// Keep the request context: its cancellation is how the handler
 		// learns the client went away.

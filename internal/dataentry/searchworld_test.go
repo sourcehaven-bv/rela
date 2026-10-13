@@ -197,10 +197,10 @@ func TestSearch_FaceGrantIsHonored(t *testing.T) {
 
 	search := func(t *testing.T, user string, read []string, path string) string {
 		t.Helper()
-		app.acl = mustNewACL(t, &acl.Policy{
+		setTestACL(t, app, mustNewACL(t, &acl.Policy{
 			Roles:       map[string]acl.RoleDef{"r": {Read: read}},
 			Assignments: map[string]string{user: "r"},
-		}, app.store)
+		}, app.store))
 		app.SetPrincipalResolver(func(*http.Request) principal.Principal {
 			return principal.Principal{User: user, Tool: principal.ToolDataEntry}
 		})

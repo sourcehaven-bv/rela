@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -92,17 +93,12 @@ func CheckFieldWrite(v FieldVerdicts, declared map[string]bool, set map[string]a
 		return nil
 	}
 
-	keys := make([]string, 0, len(set))
-	for k := range set {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(set)) {
 		if d := check(k, set[k], true); d != nil {
 			return d
 		}
 	}
-	for _, k := range unset {
+	for _, k := range slices.Sorted(slices.Values(unset)) {
 		if d := check(k, nil, false); d != nil {
 			return d
 		}

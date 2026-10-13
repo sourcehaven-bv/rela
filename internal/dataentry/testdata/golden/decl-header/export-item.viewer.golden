@@ -1,0 +1,23 @@
+request: GET /api/v1/tickets/TKT-2/_export?transform=copy
+identity: header viewer@example.test
+status: 200
+reads: GetRelation=3 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=1 ListRelations=3 MatchingFaces=4
+breadth: ListEntities=1/1 ListEntityHeaders=2/1 ListRelations=0/3 MatchingFaces=4/4
+bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/1
+versions: 
+body:
+# Bravo
+
+**start:** 2025-01-08
+
+**closed_on:** 2025-01-10T17:00:00Z
+
+## contains_inverse
+
+- Alpha
+
+## watches_inverse
+
+- Vera Viewer
+
+Follows `TKT-1`.

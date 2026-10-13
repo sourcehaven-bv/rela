@@ -1,0 +1,12 @@
+request: POST /api/v1/_theme/logo
+identity: header stranger@example.test
+status: 200
+reads: GraphQueryHeaders=1
+breadth: 
+bodies: GraphQuery=0/1
+versions: 
+body:
+{
+  "logoUrl": "/api/v1/_theme/logo?v=ffc9f5e4fdee",
+  "ok": true
+}

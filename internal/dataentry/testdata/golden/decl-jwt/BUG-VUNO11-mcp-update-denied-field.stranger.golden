@@ -1,0 +1,11 @@
+request: POST /api/v1/_mcp
+identity: signed assertion for stranger@example.test
+status: 200
+reads: GetEntity=1 GetRelation=1 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=3 ListRelations=1 MatchingFaces=1
+breadth: ListEntities=1/1 ListEntityHeaders=3/3 ListRelations=0/1 MatchingFaces=1/1
+bodies: GetEntity=0/1 GraphQuery=0/1 ListEntities=0/1 ListEntityHeaders=0/3
+versions: 
+body:
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"forbidden: verified principal resolves to no user entity; writes are rejected (rule_kind=unmatched-principal rule_id=reject)"}],"isError":true}}
+

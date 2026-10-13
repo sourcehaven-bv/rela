@@ -132,7 +132,7 @@ func TestPageScope_HiddenAnchorIsIndistinguishable(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	bodies := map[string]string{}
 	for _, anchor := range []string{"FEAT-1", "FEAT-NOPE", "TKT-001"} {
@@ -176,7 +176,7 @@ func TestPageScope_NeverWidens(t *testing.T) {
 		RoleRelations:       map[string]acl.RoleRelationDef{"editor-of": {Confers: "editor"}},
 		InheritRolesThrough: []string{"belongs-to"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", pageScopeQuery("FEAT-1"))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -244,7 +244,7 @@ func TestPageScope_SidebarWire(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"*"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	app.acl = d
+	setTestACL(t, app, d)
 
 	resp, _ := sidebarFor(gateCtxFor(principalCtx("alice"), t, d), t, app, "")
 	require.Equal(t, v1.SidebarPage{Label: "Feature", EntityType: "feature", Badge: "title", Tabs: []v1.SidebarPageTab{{

@@ -1,0 +1,14 @@
+request: POST /api/v1/_comments/ticket/TKT-1
+identity: header viewer@example.test
+status: 403
+reads: GetEntity=1 GetRelation=1 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=3
+breadth: ListEntityHeaders=1/1 ListRelations=0/1 MatchingFaces=3/3
+bodies: GetEntity=1/1 GraphQuery=0/1 ListEntityHeaders=0/1
+versions: 
+body:
+{
+  "type": "https://rela.dev/errors/forbidden",
+  "title": "Adding a comment requires the comment:add permission",
+  "status": 403,
+  "instance": "/api/v1/_comments/ticket/TKT-1"
+}
