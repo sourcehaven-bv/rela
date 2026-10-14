@@ -121,7 +121,7 @@ type Desktop struct {
 	settings         *ProjectSettings     // the Project Settings service; nil until main builds it
 	notify           *notifyHub           // notifications and Dock badge; nil in tests
 	stopScheduler    context.CancelFunc
-	leasesDone       <-chan struct{} // closed once the lease watcher stopped; nil when none runs
+	leasesDone       <-chan struct{} // closed once the scheduler and lease watcher stopped; nil when none runs
 }
 
 // cloneAuthState tracks an in-progress OAuth device flow.
@@ -509,7 +509,7 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 	d.pendingSetupDir = ""
 	d.pendingSetupMeta = nil
 	d.stopScheduler = schedCancel
-	d.leasesDone = appbuild.WatchLeases(schedCtx, svc) // stops with the scheduler; awaited before svc closes
+	d.leasesDone = startBackground(schedCtx, svc)
 	d.mu.Unlock()
 	handedOff = true
 
@@ -525,7 +525,6 @@ func (d *Desktop) loadProject(dir string, keepExisting bool) string {
 		stopScheduler: schedCancel,
 	})
 
-	scheduler.StartBackground(schedCtx, svc, slog.Default())
 	d.startNotifier(schedCtx, projectID(app.ProjectRoot()), svc, appbuild.CompiledWorlds(svc).DefaultWorld())
 
 	if d.win != nil {
@@ -1419,4 +1418,19 @@ func desktopPrincipalResolver() dataentry.PrincipalResolver {
 			return principal.Principal{User: principal.SystemUser(), Tool: principal.ToolDesktop}
 		},
 	)
+}
+
+// startBackground starts svc's scheduler and lease watcher. Both stop with
+// ctx; the returned channel closes once both have, and is awaited before svc
+// closes.
+func startBackground(ctx context.Context, svc *appbuild.Services) <-chan struct{} {
+	sched := scheduler.StartBackground(ctx, svc, slog.Default())
+	leases := appbuild.WatchLeases(ctx, svc)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-sched
+		<-leases
+	}()
+	return done
 }

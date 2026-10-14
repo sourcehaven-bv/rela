@@ -50,6 +50,7 @@ func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) 
 	if err != nil {
 		return err
 	}
+	s.WatchConfig()
 	return s.Run(ctx)
 	// coverage-ignore-end
 }

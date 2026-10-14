@@ -38,7 +38,7 @@ const (
 )
 
 func (s *Scheduler) taskNamed(name string) (TaskConfig, bool) {
-	for _, task := range s.config.Tasks {
+	for _, task := range s.config.Load().Tasks {
 		if task.Name == name {
 			return task, true
 		}
