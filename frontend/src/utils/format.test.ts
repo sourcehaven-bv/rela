@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatValue,
+  formatAmount,
   formatCellValue,
+  numericValue,
   formatDate,
   formatDatetime,
   utcISOToLocalInput,
@@ -346,5 +348,44 @@ describe('format', () => {
       expect(typeof result).toBe('string')
       expect(result).toMatch(/2024/)
     })
+  })
+})
+
+describe('formatAmount', () => {
+  // Intl separates the symbol with a no-break space; compare on plain spaces.
+  const plain = (s: string) => s.replace(/\u00a0/g, ' ')
+
+  it('formats a whole amount as money without decimals', () => {
+    expect(plain(formatAmount(3500, 'EUR', 'nl-NL'))).toBe('€ 3.500')
+    expect(plain(formatAmount(3500, 'EUR', 'en-US'))).toBe('€3,500')
+  })
+
+  it('shows two decimals for an amount that is not whole', () => {
+    expect(plain(formatAmount(12.5, 'EUR', 'nl-NL'))).toBe('€ 12,50')
+  })
+
+  it('formats a plain number without a currency', () => {
+    expect(formatAmount(11500, undefined, 'nl-NL')).toBe('11.500')
+  })
+
+  it('formats zero and negative amounts', () => {
+    expect(plain(formatAmount(0, 'EUR', 'nl-NL'))).toBe('€ 0')
+    expect(plain(formatAmount(-1200, 'EUR', 'nl-NL'))).toBe('€ -1.200')
+  })
+})
+
+describe('numericValue', () => {
+  it.each([
+    [3500, 3500],
+    ['42', 42],
+    ['', undefined],
+    ['  ', undefined],
+    ['abc', undefined],
+    [null, undefined],
+    [undefined, undefined],
+    [Number.NaN, undefined],
+    [true, undefined],
+  ])('reads %j as %j', (input, want) => {
+    expect(numericValue(input)).toBe(want)
   })
 })

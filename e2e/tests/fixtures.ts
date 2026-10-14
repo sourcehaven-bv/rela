@@ -968,6 +968,10 @@ entities:
       evidence:
         type: file
         max: 3
+      # kanban-totals.spec.ts: an amount for the bug-pipeline board's column
+      # total and currency card field. No seed bug sets it.
+      estimate:
+        type: integer
 
   # BUG-L1DHC5: a dedicated type whose file property is REQUIRED. Separate from
   # 'bug' on purpose — a required property on a shared type makes every other
@@ -1588,6 +1592,13 @@ views:
         display: list
         create: {}
 
+# kanban-totals.spec.ts: board column colours come from these. in_progress is
+# left unstyled on purpose, to show a column without a style keeps no colour.
+styles:
+  feature_status:
+    draft: blue
+    done: green
+
 kanbans:
   feature-board:
     entity_type: feature
@@ -1656,6 +1667,32 @@ kanbans:
       - value: critical
     card:
       title: title
+
+  # kanban-totals.spec.ts (TKT-SVLQQ6): column colours from styles:, a
+  # column total and a currency card field. Not in the sidebar, so it changes
+  # no navigation count. Swimlane-free: column_total refuses swimlanes.
+  bug-pipeline:
+    entity_type: bug
+    title: "Bug Pipeline"
+    column_property: status
+    columns:
+      - value: draft
+        label: New
+      - value: in_progress
+        label: In Progress
+        collapsed: true
+      - value: done
+        label: Fixed
+    column_total:
+      property: estimate
+      label: Totaal
+      currency: EUR
+    card:
+      title: title
+      fields:
+        - property: estimate
+          currency: EUR
+          show_label: false
 
   # kanban-card-counts.spec.ts: count card fields. Not in the sidebar, so it
   # changes no navigation count. FEAT-001 is implemented by TASK-001 (seed).

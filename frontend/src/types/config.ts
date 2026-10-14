@@ -457,12 +457,26 @@ export interface KanbanConfig {
   swimlane_property?: string
   swimlanes?: KanbanSwimlane[]
   card: KanbanCard
+  /** A line under each column heading with the sum of a property (TKT-SVLQQ6). */
+  column_total?: KanbanColumnTotal
   edit_form?: string
   create_form?: string
   filters?: Array<{ property: string; operator: string; value: string }>
   filter_controls?: FilterControl[]
   /** Named query scope; see the field of the same name on ListConfig. */
   query_scope?: string
+}
+
+/**
+ * The sum of an integer property over a column's cards. The server refuses it
+ * on a swimlane board, so the board never has to place it per lane.
+ */
+export interface KanbanColumnTotal {
+  property: string
+  /** Text before the amount; "Total" when unset. */
+  label?: string
+  /** ISO 4217 code; the amount renders as money when set. */
+  currency?: string
 }
 
 export interface KanbanColumnsFrom {
@@ -511,6 +525,8 @@ export interface KanbanCardField {
   display?: 'count'
   /** Shows the number of comments on the card's entity. Stands alone. */
   comments?: boolean
+  /** ISO 4217 code: renders an integer property as money. Kanban only. */
+  currency?: string
   /** Overrides the displayed name; derived from property/relation when unset. */
   label?: string
   /** Renders the label before the value. Defaults to true when unset. */

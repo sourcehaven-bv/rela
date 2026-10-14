@@ -22,6 +22,7 @@ const emit = defineEmits<{ expand: [section: Section<T>] }>()
     <RlStatusDot v-else :color="section.color" />
     <span class="rl-board-column-collapsed__title">{{ section.title }}</span>
     <RlCount :value="section.count ?? section.items.length" />
+    <span v-if="section.summary" class="rl-board-column-collapsed__summary">{{ section.summary }}</span>
   </button>
 </template>
 
@@ -52,6 +53,14 @@ const emit = defineEmits<{ expand: [section: Section<T>] }>()
   font-size: var(--rl-font-size-md);
   font-weight: var(--rl-font-weight-medium);
   color: var(--rl-color-text);
+  writing-mode: vertical-rl;
+}
+
+/* Runs down the rail like the title, so a long amount fits the narrow rail. */
+.rl-board-column-collapsed__summary {
+  font-size: var(--rl-font-size-sm);
+  color: var(--rl-color-text-muted);
+  font-variant-numeric: tabular-nums;
   writing-mode: vertical-rl;
 }
 

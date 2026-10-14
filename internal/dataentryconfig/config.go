@@ -1108,6 +1108,9 @@ type Kanban struct {
 	SwimlaneProperty string             `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
 	Swimlanes        []KanbanSwimlane   `yaml:"swimlanes,omitempty" json:"swimlanes,omitempty"`
 	Card             KanbanCard         `yaml:"card" json:"card"`
+	// ColumnTotal adds a line under each column heading with the sum of a
+	// numeric property over the column's cards (TKT-SVLQQ6).
+	ColumnTotal *KanbanColumnTotal `yaml:"column_total,omitempty" json:"column_total,omitempty"`
 	EditForm         string             `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
 	CreateForm       string             `yaml:"create_form,omitempty" json:"create_form,omitempty"`
 	Filters          []FilterConfig     `yaml:"filters,omitempty" json:"filters,omitempty"`
@@ -1149,6 +1152,21 @@ type KanbanColumnsFrom struct {
 	OfferedBy string `yaml:"offered_by,omitempty" json:"offered_by,omitempty"`
 	OrderBy   string `yaml:"order_by,omitempty" json:"order_by,omitempty"`
 	StyleFrom string `yaml:"style_from,omitempty" json:"style_from,omitempty"`
+}
+
+// KanbanColumnTotal sums an integer property over each column's cards.
+//
+// The SPA computes the sum: the board already holds every card, and the cards
+// it holds are the ones the server gated and redacted for the reader, so the
+// total discloses nothing the reader cannot already see. It is refused on a
+// swimlane board, which has no single heading per column to put it under.
+//
+// Label defaults to "Total". Currency, when set, is an ISO 4217 code such as
+// EUR; the amount then renders as money in the reader's locale.
+type KanbanColumnTotal struct {
+	Property string `yaml:"property" json:"property"`
+	Label    string `yaml:"label,omitempty" json:"label,omitempty"`
+	Currency string `yaml:"currency,omitempty" json:"currency,omitempty"`
 }
 
 // KanbanColumn defines a column in the kanban board.
@@ -1453,6 +1471,9 @@ type KanbanCardField struct {
 	// alone: no Property or Relation. The count is served only to a reader
 	// who holds `comment:read` across the project (TKT-WA25G2).
 	Comments bool `yaml:"comments,omitempty" json:"comments,omitempty"`
+	// Currency renders an integer property as an amount of money, such as
+	// "€ 3.500" for EUR in a Dutch locale. An ISO 4217 code. Kanban only.
+	Currency string `yaml:"currency,omitempty" json:"currency,omitempty"`
 	// Label overrides the displayed name. Left empty it is DERIVED from the
 	// property or relation name, so an author never restates `assignee` as
 	// "Assignee" — only a genuine rename needs writing down.

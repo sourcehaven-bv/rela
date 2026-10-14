@@ -88,6 +88,7 @@ const SETTING_LABELS: Record<string, string> = {
   edit_form: 'Edit form',
   column_property: 'Columns from',
   swimlane_property: 'Rows from',
+  column_total: 'Column total',
   min_outgoing: 'At least',
   max_outgoing: 'At most',
   min_incoming: 'At least, the other way round',

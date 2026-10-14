@@ -202,6 +202,8 @@ var editable = map[File][]string{
 		// colors by naming a relation and properties, like lists.*.group_by.
 		"kanbans.*.columns_from.**",
 		"kanbans.*.columns.[].**",
+		// The sum under each column heading (TKT-SVLQQ6).
+		"kanbans.*.column_total.**",
 		"kanbans.*.condition",
 		"kanbans.*.create_form",
 		"kanbans.*.edit_form",

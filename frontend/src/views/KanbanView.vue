@@ -42,7 +42,8 @@ import { worldText } from '@/utils/worldText'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { hasIcon, resolveIcon } from '@/utils/icons'
-import { formatCellValue } from '@/utils/format'
+import { formatAmount, formatCellValue, numericValue } from '@/utils/format'
+import { styleStatusColor } from '@/utils/styleColors'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import CardFieldList, { type ResolvedCardField } from '@/components/common/CardFieldList.vue'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
@@ -489,6 +490,32 @@ const relationColumnColors = computed(() => {
   return colors
 })
 
+// An enum column's colour, from the app `styles:` entry for its value, the
+// colour the value's badge shows. A value with no style has none.
+const enumColumnStyles = computed(() => {
+  const config = kanbanConfig.value
+  if (!config || columnsFrom.value) return undefined
+  return schemaStore.stylesForProperty(config.column_property, config.entity)
+})
+
+function columnColor(value: string): StatusColor | undefined {
+  if (columnsFrom.value) return relationColumnColors.value.get(value)
+  return styleStatusColor(enumColumnStyles.value, value)
+}
+
+// The line under each column heading for `column_total:` (TKT-SVLQQ6): the
+// sum of the property over the cards in the column. Summed here because the
+// board already holds every card, and only the cards the server served to
+// this reader, so the total shows nothing the cards do not. A card without a
+// numeric value adds nothing. The server refuses the key on a swimlane board.
+function columnSummary(items: Entity[]): string | undefined {
+  const total = kanbanConfig.value?.column_total
+  if (!total || hasSwimmlanes.value) return undefined
+  let sum = 0
+  for (const entity of items) sum += numericValue(entity.properties[total.property]) ?? 0
+  return `${total.label || 'Total'}: ${formatAmount(sum, total.currency)}`
+}
+
 // Folded columns, remembered per board. Only declared columns carry a config
 // default; an inferred column starts open.
 const columnCollapse = useKanbanCollapse(
@@ -497,14 +524,18 @@ const columnCollapse = useKanbanCollapse(
 )
 
 const boardSections = computed((): Section<BoardCard>[] =>
-  columns.value.map((column) => ({
-    id: column.value,
-    title: columnTitle(column),
-    icon: iconFor(column.icon),
-    color: columnsFrom.value ? relationColumnColors.value.get(column.value) : undefined,
-    collapsed: columnCollapse.isCollapsed(column.value),
-    items: (entitiesByColumn.value[column.value] ?? []).map(toCard),
-  }))
+  columns.value.map((column) => {
+    const items = entitiesByColumn.value[column.value] ?? []
+    return {
+      id: column.value,
+      title: columnTitle(column),
+      icon: iconFor(column.icon),
+      color: columnColor(column.value),
+      collapsed: columnCollapse.isCollapsed(column.value),
+      summary: columnSummary(items),
+      items: items.map(toCard),
+    }
+  })
 )
 
 function sectionId(section: string | Section<BoardCard>): string {
@@ -628,6 +659,12 @@ function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
       .join(', ')
   }
   if (!field.property) return ''
+  // `currency:` renders the integer as money (TKT-SVLQQ6). Validated at load
+  // to sit on an integer property; a value that is not a number shows nothing.
+  if (field.currency) {
+    const amount = numericValue(entity.properties[field.property])
+    return amount === undefined ? '' : formatAmount(amount, field.currency)
+  }
   // Formatted via the shared cell formatter so cards agree with list cells
   // (dates render human-readably, booleans as Yes/No, rrules as text). This
   // used to be a bare String(v || ''), which showed raw ISO datetimes and
@@ -713,7 +750,8 @@ function resolvedCardFields(entity: Entity): ResolvedCardField[] {
 
     // Relation fields have no PropertyDef and so no widget: they render as
     // joined target titles, the contract shared with list relation columns.
-    const entry = field.property && !field.relation
+    // An amount is already formatted text, so it skips the number widget.
+    const entry = field.property && !field.relation && !field.currency
       ? cardFieldWidgets.value.get(field.property)
       : undefined
 

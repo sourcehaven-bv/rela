@@ -41,6 +41,36 @@ export function formatDate(value: string, locale?: string): string | null {
   return date.toLocaleDateString(locale, DATE_FORMAT_OPTIONS)
 }
 
+/**
+ * An amount in the reader's locale, as money when `currency` (an ISO 4217
+ * code such as EUR) is given: 3500 with EUR reads "€ 3.500" in nl-NL. A
+ * whole number shows no decimals; any other shows two.
+ *
+ * `locale` defaults to the browser's, as formatDate's does. Tests pass one.
+ */
+export function formatAmount(value: number, currency?: string, locale?: string): string {
+  const digits = Number.isInteger(value) ? 0 : 2
+  return new Intl.NumberFormat(locale, {
+    ...(currency ? { style: 'currency', currency } : {}),
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value)
+}
+
+/**
+ * A stored property value as a number, or undefined when it is not one.
+ * Integer properties arrive as JSON numbers; a numeric string is accepted too,
+ * so a value written by hand into a Markdown file still counts.
+ */
+export function numericValue(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : undefined
+  }
+  return undefined
+}
+
 const DATETIME_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   dateStyle: 'medium',
   timeStyle: 'short',

@@ -3217,6 +3217,7 @@ kanbans:
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
 | `card`             | object | Card display configuration                                 |
+| `column_total`     | object | Sum of a property under each column heading (see below)    |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
 | `create_form`      | string | Form name for the "New" button                             |
 | `filters`          | list   | Static filters (same as lists)                             |
@@ -3312,6 +3313,10 @@ kanbans:
 
 Entities with column property values not in the explicit list are hidden from the board.
 
+Each column heading has a coloured dot. Its colour comes from the
+[`styles:`](#styles) entry for the column's value, the same colour the value's
+badge shows. A value without a style keeps the neutral grey dot.
+
 ### Columns from a relation (`columns_from`)
 
 `columns_from` takes the columns from the targets of a relation instead of
@@ -3387,6 +3392,54 @@ default, so they start expanded.
 
 You cannot drop a card onto a collapsed column. Expand it first.
 
+### Column totals
+
+`column_total` shows a line under each column heading with the sum of a
+property over the cards in that column, for example the value of the deals
+in each stage of a sales pipeline:
+
+```yaml
+kanbans:
+  pipeline:
+    entity_type: opportunity
+    column_property: stage
+    column_total:
+      property: value
+      label: Totaal
+      currency: EUR
+    card:
+      title: title
+      fields:
+        - property: value
+          currency: EUR
+          show_label: false
+```
+
+This shows "Totaal: € 11.500" under a column whose cards have the values
+3500 and 8000.
+
+| Key        | Type   | Description |
+|------------|--------|-------------|
+| `property` | string | Required. An `integer` property of the board's entity type. |
+| `label`    | string | Optional. Text before the amount. Defaults to "Total". |
+| `currency` | string | Optional. An ISO 4217 code, such as `EUR` or `USD`. The amount then shows as money. Without it, the amount shows as a plain number. |
+
+The amount uses the number format of the reader's browser language. A whole
+amount shows no decimals.
+
+The total covers the cards on the board: the cards the reader may see, after
+the board's filters. A card without a value adds nothing, and an empty column
+shows a total of 0. A collapsed column shows its total on its narrow strip.
+
+Config load checks that the property exists and is an `integer` property, and
+that `currency` is three upper-case letters. It does not check the code
+against a list: the browser formats every well-formed code, and shows a code
+it does not know as the code itself, such as "XYZ 3.500".
+
+`column_total` cannot be used on a board with swimlanes. A swimlane board has
+a heading per column in every lane, so there is no single place for the total.
+Config load reports it as an error.
+
 ### Swimlanes
 
 Add a second grouping dimension with swimlanes. This creates a grid where columns are horizontal
@@ -3431,6 +3484,25 @@ card:
 | `fields` | list   | Additional properties displayed as badges on the card |
 
 Card fields use the same styling as lists — enum values are displayed with colors from `styles`.
+
+#### Amounts on cards
+
+`currency:` on a card field shows an `integer` property as money, such as
+"€ 3.500" for `currency: EUR` in a Dutch browser:
+
+```yaml
+card:
+  title: title
+  fields:
+    - property: value
+      currency: EUR
+```
+
+The code is an ISO 4217 code, checked the same way as for
+[column totals](#column-totals). The field must name an `integer` property;
+it cannot be combined with `relation`, `display` or `comments`. A card
+without a value shows nothing for the field. `currency` is kanban-only: on a
+calendar or gantt field it is a config error.
 
 #### Counts on cards
 

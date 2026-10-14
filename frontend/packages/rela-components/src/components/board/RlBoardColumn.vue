@@ -123,6 +123,7 @@ function onRelease() {
       :collapsible="collapsible"
       @collapse="emit('collapse', section)"
     />
+    <p v-if="section.summary" class="rl-board-column__summary">{{ section.summary }}</p>
 
     <div class="rl-board-column__cards">
       <template v-for="item in section.items" :key="item.id">
@@ -216,6 +217,15 @@ function onRelease() {
 
 .rl-board-column__heading { padding: 0 var(--rl-space-1) var(--rl-space-3); }
 
+/* Pulls up under the heading, so the heading's gap sits below the line. */
+.rl-board-column__summary {
+  margin: calc(var(--rl-space-2) * -1) 0 var(--rl-space-3);
+  padding: 0 var(--rl-space-1);
+  font-size: var(--rl-font-size-sm);
+  color: var(--rl-color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /*
  * The column a held card would land in. Drawn as a tinted, outlined well
  * behind the whole column rather than as a line between two cards, because
@@ -242,6 +252,7 @@ function onRelease() {
 
 /* The cards stay above the well. */
 .rl-board-column__heading,
+.rl-board-column__summary,
 .rl-board-column__cards,
 .rl-board-column__add {
   position: relative;
