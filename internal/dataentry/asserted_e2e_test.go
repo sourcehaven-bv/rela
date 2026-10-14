@@ -17,7 +17,7 @@ import (
 //
 // Unit tests on the resolver and on acl.computeGlobals both pass even when a
 // field is silently DROPPED between them — and there is a real dropper in the
-// path: resolvePrincipalEntity rebuilds the Principal field by field, so a
+// path: access.Opener.Open rebuilds the Principal field by field, so a
 // plain composite literal there loses org and roles while every unit test
 // stays green. These tests run the whole chain: HTTP request → resolver →
 // principal_property re-stamp → ACL decision → audit record.
@@ -137,7 +137,7 @@ func TestE2E_AssertedClaimsReachTheWritePath(t *testing.T) {
 
 func TestE2E_ClaimsSurvivePrincipalPropertyReStamp(t *testing.T) {
 	// The specific regression this file exists for. With principal_property
-	// enabled AND a matching entity, resolvePrincipalEntity rebuilds the
+	// enabled AND a matching entity, access.Opener.Open rebuilds the
 	// Principal — replacing User with the entity ID. Everything it does not
 	// explicitly carry over is lost, silently.
 	app := newTestAppV1(t)
@@ -191,7 +191,7 @@ func TestE2E_ClaimsSurvivePrincipalPropertyReStamp(t *testing.T) {
 	}
 	// ...and the assertion claims survived it.
 	if want := []string{"admin"}; !slices.Equal(got.Roles(), want) {
-		t.Errorf("Roles = %v, want %v — resolvePrincipalEntity dropped the claims "+
+		t.Errorf("Roles = %v, want %v — principal resolution dropped the claims "+
 			"when it rebuilt the Principal", got.Roles(), want)
 	}
 	if got.OrgID() != "org_acme" {

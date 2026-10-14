@@ -579,7 +579,7 @@ func TestValidateID(t *testing.T) {
 // DEC-O59WM4 migration, is `read: ["*"]`.
 //
 // Widening the grammar is not forbidden; doing so without revisiting
-// internal/dataentry/router.go's resolvePrincipalEntity is.
+// the principal resolution in internal/access/opener.go is.
 func TestValidateID_RejectsReservedPrincipalSeparator(t *testing.T) {
 	for _, id := range []string{
 		"system:scheduler",

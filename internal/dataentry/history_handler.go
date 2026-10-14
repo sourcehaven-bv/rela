@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -16,38 +17,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
-
-// revealIsPrivileged reports whether taking the reveal arm actually constitutes
-// a privileged disclosure worth auditing, which is only true under a configured
-// policy.
-//
-// Without this the audit row is worse than useless. Under NopACL and
-// ReadOnlyACL no middleware attaches a read gate, so readGateFromContext hands
-// back nopReadGate, whose HoldsPermission returns true for EVERY permission
-// (readgate.go:135, the RR-CWWJGW shape). Every history read would therefore
-// take the reveal arm — but with no policy configured nothing is redacted, so
-// those reads reveal nothing. Recording them would bury the real reveals under
-// noise in every unconfigured deployment, and would train an operator who later
-// configures a policy to ignore exactly the row this exists to surface.
-//
-// A closed switch on the ACL IMPLEMENTATION, matching permitsGatedUIElement:
-// asking the read gate here is precisely the fail-open mistake being avoided,
-// since the gate is the thing that cannot answer. Value and pointer forms are
-// both matched because these types' methods have value receivers. An
-// implementation nobody taught this about audits (the default arm) — the
-// conservative direction for a log, where a spurious row is recoverable and a
-// missing one is not.
-func revealIsPrivileged(aclImpl acl.ACL) bool {
-	switch aclImpl.(type) {
-	case nil:
-		// Wired without an ACL: same "no policy" case as NopACL.
-		return false
-	case acl.NopACL, *acl.NopACL, acl.ReadOnlyACL, *acl.ReadOnlyACL:
-		return false
-	default:
-		return true
-	}
-}
 
 // recordHistoryReveal emits the audit row for a history read that overrode
 // redaction via acl.PermHistoryReadRedacted (TKT-LVSPSB / issue #1238).
@@ -338,8 +307,9 @@ func serveHistoryVersion(a *App,
 		// ordinary redacted read discloses nothing the permission governs, and
 		// under no policy this arm is reached by every reader with nothing
 		// redacted to reveal. Both would bury the real reveals this record
-		// exists to surface. See audit.OpHistoryReveal and revealIsPrivileged.
-		if revealIsPrivileged(a.acl) {
+		// exists to surface. See audit.OpHistoryReveal and
+		// access.Mode.RevealIsPrivileged.
+		if access.ModeOf(a.acl).RevealIsPrivileged() {
 			recordHistoryReveal(ctx, a.auditSink, snap.Type, entityID, snap.Version)
 		}
 	} else {

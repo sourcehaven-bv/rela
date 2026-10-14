@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -605,73 +606,10 @@ func sidebarItemFor(
 // deliberately (root CLAUDE.md, "The configuration is not a secret; the data
 // is"). The goal is only to keep things a user cannot act on out of their way.
 //
-// Policy, keyed on the configured ACL implementation, mirroring
-// authorizeCommand (DEC-EIHQSU):
-//
-//   - No `permission:` → show. The overwhelmingly common case, short-circuited
-//     before any ACL work so an unconfigured menu costs nothing.
-//   - [acl.NopACL] and [acl.ReadOnlyACL] → show. NEITHER carries a policy, so
-//     there is no permission model to consult and no principal who could be
-//     shown to hold anything: "no policy configured ⇒ no restrictions", the
-//     same posture the read gate takes. See the read-only note below.
-//   - [*acl.Declarative] → the principal must hold the permission.
-//   - anything else → hide.
-//
-// Read-only deserves its own paragraph, because the obvious arm is wrong in
-// two different ways and this predicate is a copy target.
-//
-// It is tempting to mirror authorizeCommand, which denies everything under
-// ReadOnlyACL. That is right for commands — they SHELL OUT, a write-shaped act
-// — but [acl.ReadOnlyACL] only implements AuthorizeWrite; it restricts no
-// reads whatsoever. The gated elements are overwhelmingly read surfaces (list,
-// kanban, dashboard, search, dashboard cards), and hiding them would remove
-// things an observe-only principal can use perfectly well. It would also hide
-// them from EVERYONE, since ReadOnlyACL has no identity to check — so
-// `permission:` would silently
-// change meaning from "hide from non-holders" to "hide from all" based on a
-// process-wide flag about writes. An operator in post-incident forensic mode
-// (a documented ReadOnlyACL use case) would lose exactly the audit-log entry
-// they came for.
-//
-// The hazard the deny arm was reaching for is real but belongs elsewhere: under
-// ReadOnlyACL no middleware attaches a read gate, so readGateFromContext hands
-// back nopReadGate, whose HoldsPermission returns true unconditionally
-// (RR-CWWJGW). Falling THROUGH to the gate would therefore show gated entries
-// while looking like it had checked something. The explicit arm above is what
-// prevents that: the answer is the same, but it is reached deliberately rather
-// than by an accident that would keep working if the gate's behavior changed.
-//
-// The switch is closed by construction: an ACL implementation nobody taught
-// this function about hides gated entries rather than showing them. Both value
-// and face forms of the nop/read-only types are matched, because their
-// AuthorizeWrite has a value receiver — matching only the value form would
-// drop a `&acl.ReadOnlyACL{}` into the default arm.
+// The decision per ACL mode, including why read-only shows gated elements, is
+// [access.Mode.PermitsGatedUIElement].
 func permitsGatedUIElement(ctx context.Context, aclImpl acl.ACL, permission string) bool {
-	if permission == "" {
-		return true
-	}
-	// A nil ACL means the handler was wired without one. Hide, for the same
-	// fail-closed reason authorizeCommand denies.
-	if aclImpl == nil {
-		return false
-	}
-
-	switch a := aclImpl.(type) {
-	// Grouped deliberately: both mean "no policy is configured", so neither
-	// can answer whether a principal holds a permission. See the read-only
-	// paragraph above before splitting these apart.
-	case acl.NopACL, *acl.NopACL, acl.ReadOnlyACL, *acl.ReadOnlyACL:
-		return true
-
-	case *acl.Declarative:
-		if a == nil {
-			return false // misconfigured policy must not fail open
-		}
-		return readGateFromContext(ctx).HoldsPermission(ctx, permission)
-
-	default:
-		return false
-	}
+	return access.ModeOf(aclImpl).PermitsGatedUIElement(ctx, readGateFromContext(ctx), permission)
 }
 
 // setNavStatusKey names an entry that declares `status:` rules, so the SPA

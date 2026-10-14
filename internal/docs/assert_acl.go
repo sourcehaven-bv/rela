@@ -295,9 +295,5 @@ func claimFaces(
 }
 
 func validOp(op string) bool {
-	switch acl.Op(op) {
-	case acl.OpCreate, acl.OpUpdate, acl.OpDelete, acl.OpRename:
-		return true
-	}
-	return false
+	return acl.Op(op).Valid()
 }

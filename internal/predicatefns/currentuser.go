@@ -80,7 +80,7 @@ var ErrNoCurrentUser = errors.New("predicatefns: no current user on this context
 //
 // The string a principal carries is NOT stable across transports.
 // internal/dataentry rewrites principal.User to the resolved user-entity
-// id on /api/ (resolvePrincipalEntity), while CLI, MCP, scheduler and
+// id on /api/ (access.Opener), while CLI, MCP, scheduler and
 // desktop keep the raw identifier — acl.Declarative.ResolvePrincipal
 // documents that split and its fail-closed rationale. A query condition
 // compares against entity DATA (`entity.assignee`, which holds an entity

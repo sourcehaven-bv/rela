@@ -10,47 +10,59 @@ import (
 
 // Verb is a read-or-write access verb. The who-can query asks about one,
 // and so does the affordance resolver when it decides what a role without a
-// field block contributes ([Request.RoleGrantsVerbOnFace]). It widens [Op]
-// (create/update/delete/rename) with read, which has no Op because the write
-// path never authorizes reads; the read path is Request.readQuery. VerbRead
-// routes through the read machinery; every other verb routes through the
-// per-verb write grant.
+// field block contributes ([Request.RoleGrantsVerbOnFace]).
+//
+// A Verb is an [Op] or read. Read has no Op because the write path never
+// authorizes reads; the read path is Request.readQuery. Every write verb is
+// the Op of the same name, so the verb set follows [Ops] and a new write Op
+// cannot be left out of the reports that enumerate [Verbs].
 type Verb string
 
-// Verb constants. VerbRead maps to the read path; the rest map 1:1 to
-// the write [Op] of the same name.
+// VerbRead is the one verb that is not an [Op].
+const VerbRead Verb = "read"
+
+// The write verbs, one per [Op].
 const (
-	VerbRead   Verb = "read"
-	VerbCreate Verb = "create"
-	VerbUpdate Verb = "update"
-	VerbDelete Verb = "delete"
+	VerbCreate = Verb(OpCreate)
+	VerbUpdate = Verb(OpUpdate)
+	VerbDelete = Verb(OpDelete)
+	VerbRename = Verb(OpRename)
 )
+
+// Verbs returns [VerbRead] followed by one verb per [Ops] entry, in that
+// order.
+func Verbs() []Verb {
+	ops := Ops()
+	out := make([]Verb, 0, len(ops)+1)
+	out = append(out, VerbRead)
+	for _, op := range ops {
+		out = append(out, Verb(op))
+	}
+	return out
+}
 
 // Valid reports whether v is one of the known verbs. Unknown verbs must
 // be rejected rather than defaulted — a fail-closed access tool never
 // silently treats a garbage verb as "read".
+//
+// [VerbRename] is valid, but the grant helpers that answer reports
+// (AccessRoutes, EveryoneGrants, AssertedGrants) read it from the `update:`
+// list, which is wrong in both directions. aclmap keeps rename out of its
+// reports until TKT-4APGVF fixes them; a new caller must do the same.
 func (v Verb) Valid() bool {
-	switch v {
-	case VerbRead, VerbCreate, VerbUpdate, VerbDelete:
-		return true
-	default:
-		return false
-	}
+	return v == VerbRead || Op(v).Valid()
 }
 
 // op maps a write Verb to its [Op]. VerbRead has no Op (read never goes
-// through the write path) and returns ("", false).
+// through the write path) and returns ("", false), as does an unknown verb.
 func (v Verb) op() (Op, bool) {
-	switch v {
-	case VerbCreate:
-		return OpCreate, true
-	case VerbUpdate:
-		return OpUpdate, true
-	case VerbDelete:
-		return OpDelete, true
-	default:
+	if v == VerbRead {
 		return "", false
 	}
+	if op := Op(v); op.Valid() {
+		return op, true
+	}
+	return "", false
 }
 
 // EveryoneGrant reports how a policy grants a verb to *every* principal

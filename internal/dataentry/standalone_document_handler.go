@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -66,56 +67,17 @@ func gateDocumentPermission(
 // keys on the ACL IMPLEMENTATION instead — the shape authorizeCommand uses and
 // documents.
 //
-// Policy, mirroring authorizeCommand except where noted:
-//
-//   - nil ACL → deny. An authorization guard must fail closed on a wiring bug.
-//   - [acl.ReadOnlyACL] → deny, value and face forms both (matching only
-//     the value form was the one-'&' bypass authorizeCommand's doc describes).
-//   - [acl.NopACL] → DENY. This DIVERGES from authorizeCommand, whose NopACL
-//     arm grants in order to preserve pre-ACL behavior. An elevated document
-//     has no pre-ACL behavior to preserve — the feature is new — so granting
-//     would only create a deployment in which the boundary is inert while
-//     appearing configured. Note validateDocuments already requires a
-//     permission on every elevated document, so reaching here under NopACL
-//     means a policy-less deployment declared elevation; refusing to serve is
-//     the honest answer.
-//   - [*acl.Declarative] → nil-check, then the permission must be held.
-//   - anything else → DENY.
-//
-// The switch is closed by construction: an ACL implementation nobody taught
-// this function about cannot silently grant an ungated raw read.
+// The decision per ACL mode is [access.Mode.PermitsElevatedRead]. It keys on
+// the ACL implementation, not the read gate, and denies under NopACL as well:
+// unlike commands, an elevated document has no pre-ACL behavior to preserve,
+// so granting would leave the boundary inert while it looks configured.
 func authorizeElevatedDocument(
 	ctx context.Context, aclImpl acl.ACL, docCfg dataentryconfig.DocumentConfig,
 ) bool {
 	if !docCfg.AllowACLBypass.Enabled() {
 		return true // not elevated: gateDocumentPermission is the whole story.
 	}
-	if aclImpl == nil {
-		return false
-	}
-
-	switch a := aclImpl.(type) {
-	case acl.ReadOnlyACL, *acl.ReadOnlyACL:
-		return false
-
-	case acl.NopACL, *acl.NopACL:
-		return false
-
-	case *acl.Declarative:
-		if a == nil {
-			return false // misconfigured policy must not fail open
-		}
-		if docCfg.Permission == "" {
-			// Unreachable via a validated config (validateDocuments rejects
-			// this), but a guard that depends on validation having run is a
-			// guard waiting to be bypassed by a new construction path.
-			return false
-		}
-		return readGateFromContext(ctx).HoldsPermission(ctx, docCfg.Permission)
-
-	default:
-		return false
-	}
+	return access.ModeOf(aclImpl).PermitsElevatedRead(ctx, readGateFromContext(ctx), docCfg.Permission)
 }
 
 // gateElevatedDocument applies authorizeElevatedDocument and writes the deny

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/comments"
@@ -150,8 +151,7 @@ func (h *commentsHandler) commentAuthorizer() *comments.Authorizer {
 // it is a process-wide switch, and conflating the two made read-only instances
 // refuse comment READS as well.
 func (h *commentsHandler) aclPolicyActive() bool {
-	_, ok := h.acl().(*acl.Declarative)
-	return ok
+	return access.ModeOf(h.acl()).PolicyConfigured()
 }
 
 // commentWritesPermitted reports whether this instance accepts comment writes
@@ -161,12 +161,7 @@ func (h *commentsHandler) aclPolicyActive() bool {
 // process-wide refusal, not a permission a principal could hold: no grant in
 // any acl.yaml should make a read-only instance writable.
 func (h *commentsHandler) commentWritesPermitted() bool {
-	switch h.acl().(type) {
-	case acl.ReadOnlyACL, *acl.ReadOnlyACL:
-		return false
-	default:
-		return true
-	}
+	return !access.ModeOf(h.acl()).RefusesWrites()
 }
 
 // anchorContext is what a read needs to decide how each anchor currently

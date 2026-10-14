@@ -16,7 +16,7 @@ import (
 // The unit tests in internal/acl prove the ceiling computes correctly. These
 // prove it SURVIVES THE REQUEST PATH — a separate question, because the path
 // rebuilds the Principal twice (verifiedPrincipal, then
-// resolvePrincipalEntity) and either rebuild can silently drop a claim. A
+// access.Opener.Open) and either rebuild can silently drop a claim. A
 // dropped principal_type matches no baseline, so the client is UNRESTRICTED:
 // the failure is invisible and fails open.
 //
