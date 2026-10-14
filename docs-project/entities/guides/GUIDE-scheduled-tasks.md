@@ -252,6 +252,29 @@ tasks:
 
 ## Execution Model
 
+### Config changes
+
+The scheduler reads `schedules.yaml` and `subscriptions.yaml` again every minute.
+An edit takes effect without a restart: a new task runs when it is due, and a
+removed task gets no new runs. A script run that is already queued still
+finishes, because it carries its script. A queued subscription poll or `for_each`
+run of a removed or renamed task fails as not configured, and counts as one
+failure. A `for_each` run that is in progress uses the new settings for the
+subjects that have not run yet.
+
+If a file no longer loads, the scheduler keeps the tasks that file declared and
+logs the error once. It logs again when the file loads. A broken
+`subscriptions.yaml` does not hold back an edit to `schedules.yaml`. Run-state is
+not pruned while a file fails to load.
+
+With several nodes, each reads its own files, so for up to a minute nodes can
+disagree. A run another node queued for a task this node does not know yet
+fails and is retried. An editor that saves a file in two steps can be read
+halfway; save by renaming a complete file when that matters.
+
+`rela scheduler` refuses to start with no tasks, but keeps running if a reload
+removes them all.
+
 ### Sequential Execution
 
 Tasks execute **sequentially** in the order they appear in `schedules.yaml`. If you have

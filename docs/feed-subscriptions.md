@@ -140,7 +140,9 @@ write access, every poll fails on its first new item.
 - `rela validate` checks `subscriptions.yaml` against the schema, including the
   entity types, properties and template references.
 
-Changes to `subscriptions.yaml` take effect when the scheduler restarts.
+The scheduler reads `subscriptions.yaml` again every minute, so an edit takes
+effect without a restart. A file that no longer loads keeps the running
+subscriptions; see [Config changes](scheduled-tasks.md#config-changes).
 
 ## Trust
 

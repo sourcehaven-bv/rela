@@ -166,7 +166,7 @@ func (s *Scheduler) runSubscriptionJob(ctx context.Context, job jobs.Job) error 
 }
 
 func (s *Scheduler) pollSubscription(ctx context.Context, taskName string) error {
-	task, ok := s.task(taskName)
+	task, ok := s.taskNamed(taskName)
 	if !ok || task.Subscription == nil {
 		return fmt.Errorf("scheduler: subscription task %q is not configured", taskName)
 	}
@@ -221,14 +221,4 @@ func (s *Scheduler) subscriptionDeps(name string) (subscription.Deps, error) {
 		Fetcher: &subscription.Fetcher{Transport: s.subscriptionTransport},
 		Logger:  s.logger,
 	}, nil
-}
-
-// task returns the configured task named name.
-func (s *Scheduler) task(name string) (TaskConfig, bool) {
-	for _, t := range s.config.Tasks {
-		if t.Name == name {
-			return t, true
-		}
-	}
-	return TaskConfig{}, false
 }

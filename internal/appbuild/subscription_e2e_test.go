@@ -143,3 +143,47 @@ func titlesOf(articles []article) []string {
 	}
 	return out
 }
+
+// TestSubscription_AddedWhileRunning pins the reload path through the real
+// loader: a scheduler built before subscriptions.yaml exists polls it once
+// the file appears, without a restart.
+func TestSubscription_AddedWhileRunning(t *testing.T) {
+	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(subscriptionFeed))
+	}))
+	defer feed.Close()
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "schema.yaml"), []byte(`
+entities:
+  article:
+    label: Article
+    id_type: short
+    id_prefix: "ART-"
+    properties:
+      title: {type: string, required: true}
+      guid: {type: string}
+`), 0o600))
+	svc, err := discover(t, root)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+
+	cfg, err := scheduler.LoadWorkspaceConfig(context.Background(), svc)
+	require.NoError(t, err)
+	require.Empty(t, cfg.Tasks)
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, discardTestLogger())
+	require.NoError(t, err)
+	s.WatchConfig()
+
+	require.NoError(t, os.WriteFile(filepath.Join(root, "subscriptions.yaml"), []byte(`
+subscriptions:
+  news:
+    url: `+feed.URL+`/feed.xml
+    every: 1h
+    find: {type: article, match: [guid], values: {guid: "{{item.id}}"}}
+    create_if_missing:
+      properties: {title: "{{item.title}}"}
+`), 0o600))
+	runSubscriptionOnce(t, svc, s)
+	require.Len(t, listArticles(t, svc), 2)
+}

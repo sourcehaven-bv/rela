@@ -36,6 +36,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -144,33 +145,28 @@ type WorkspaceProvider interface {
 	ScheduledLuaWriteDeps() lua.WriteDeps
 }
 
-// StartBackground starts the scheduler in a background goroutine if
-// schedules.yaml or subscriptions.yaml declares a task. It is a no-op
-// otherwise. The scheduler
-// runs until ctx is cancelled. Errors are logged, not returned.
+// StartBackground starts the scheduler in a background goroutine, with
+// WatchConfig on, so it runs even before schedules.yaml or subscriptions.yaml
+// declares a task, and picks up a file added or fixed later. It runs until
+// ctx is cancelled. Errors are logged, not returned.
 //
 // The returned channel closes when the scheduler has stopped (at once when it
-// never started), so a caller that replaces the services it runs against can
-// wait for it before closing them.
+// could not be built), so a caller that replaces the services it runs against
+// must wait for it before closing them.
 func StartBackground(
 	ctx context.Context,
 	ws WorkspaceProvider,
 	logger *slog.Logger,
 ) <-chan struct{} {
 	done := make(chan struct{})
-	cfg, err := LoadWorkspaceConfig(ctx, ws)
+	cfg, loadErr := LoadWorkspaceConfig(ctx, ws)
 	switch {
 	case cfg == nil:
-		logger.Error("invalid scheduler config, scheduler not started", "error", err)
-		close(done)
-		return done
-	case err != nil:
-		logger.Error("subscriptions not started", "error", err)
-	}
-
-	if len(cfg.Tasks) == 0 {
-		close(done)
-		return done
+		// Start with no tasks: WatchConfig applies the file once it is fixed.
+		logger.Error("invalid scheduler config; no tasks until it loads", "error", loadErr)
+		cfg = &Config{}
+	case loadErr != nil:
+		logger.Error("subscriptions not started", "error", loadErr)
 	}
 
 	s, err := NewWithQueue(cfg, script.NewEngine(), ws, logger)
@@ -178,6 +174,11 @@ func StartBackground(
 		logger.Error("scheduler not started", "error", err)
 		close(done)
 		return done
+	}
+	s.WatchConfig()
+	if loadErr != nil {
+		// Logged above; the first reload reports it again only if it changed.
+		s.reloadErr = loadErr.Error()
 	}
 
 	go func() {
@@ -298,7 +299,18 @@ func stampContext(ctx context.Context, user, triggeredBy string) context.Context
 
 // Scheduler decides which tasks are due and hands them to the job queue.
 type Scheduler struct {
-	config *Config
+	// config is the task list. It is published atomically because
+	// WatchConfig replaces it from the tick while job handlers read it;
+	// every operation loads it once.
+	config atomic.Pointer[Config]
+
+	// reload reads the config files again. Nil, the default, keeps the
+	// config the scheduler was built with; see WatchConfig.
+	reload func(ctx context.Context) (*Config, error)
+	// reloadErr is the last reload error logged, so a broken file is
+	// reported once rather than every tick. Only the tick touches it.
+	reloadErr string
+
 	engine *script.Engine
 	ws     WorkspaceProvider
 	runs   schedulerstate.Store
@@ -330,8 +342,8 @@ type Scheduler struct {
 	// lastPrune is when the tick last pruned run-state. Only the scheduler
 	// goroutine touches it.
 	lastPrune time.Time
-
-	// pruneAge is how long an idle task's record is kept; see pruneAgeFor.
+	// pruneAge is the largest prune age used so far; see maybePrune. Only
+	// the tick touches it.
 	pruneAge time.Duration
 }
 
@@ -360,16 +372,16 @@ func New(
 	if runs == nil {
 		return nil, errors.New("scheduler: the workspace provides no run-state store")
 	}
-	return &Scheduler{
-		config:   cfg,
-		engine:   engine,
-		ws:       ws,
-		runs:     runs,
-		logger:   logger,
-		now:      time.Now,
-		node:     nodeID(),
-		pruneAge: pruneAgeFor(cfg.Tasks),
-	}, nil
+	s := &Scheduler{
+		engine: engine,
+		ws:     ws,
+		runs:   runs,
+		logger: logger,
+		now:    time.Now,
+		node:   nodeID(),
+	}
+	s.config.Store(cfg)
+	return s, nil
 }
 
 // nodeID names this process: host and pid.
@@ -383,7 +395,8 @@ func nodeID() string {
 
 // Run starts the scheduler and blocks until ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) error {
-	if len(s.config.Tasks) == 0 {
+	cfg := s.config.Load()
+	if len(cfg.Tasks) == 0 && s.reload == nil {
 		s.logger.Info("no tasks configured, waiting for shutdown")
 		<-ctx.Done()
 		return nil
@@ -391,7 +404,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 	s.importLegacyState(ctx)
 
-	for _, t := range s.config.Tasks {
+	for _, t := range cfg.Tasks {
 		if t.Subscription != nil {
 			s.logger.Info("scheduled subscription", "task", t.Name, "every", t.Every)
 			continue
@@ -402,7 +415,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	// Run due tasks immediately (handles first-ever and missed runs).
 	s.tick(ctx)
 
-	s.logger.Info("scheduler started", "tasks", len(s.config.Tasks), "node", s.node)
+	s.logger.Info("scheduler started", "tasks", len(cfg.Tasks), "node", s.node)
 
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
@@ -421,6 +434,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 // tick abandons lost runs, then queues a run for every due task. It never
 // waits for a run, so one slow or lost run cannot delay any other task.
 func (s *Scheduler) tick(ctx context.Context) {
+	s.reloadConfig(ctx)
+	cfg := s.config.Load()
 	now := s.now()
 
 	reaped, err := s.runs.Reap(ctx, now, retryDelay)
@@ -437,8 +452,8 @@ func (s *Scheduler) tick(ctx context.Context) {
 			"retry_at", fin.NextRetry)
 	}
 
-	names := make([]string, 0, len(s.config.Tasks))
-	for _, task := range s.config.Tasks {
+	names := make([]string, 0, len(cfg.Tasks))
+	for _, task := range cfg.Tasks {
 		names = append(names, task.Name)
 	}
 	states, err := s.runs.Load(ctx, names)
@@ -449,7 +464,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 		return
 	}
 
-	for _, task := range s.config.Tasks {
+	for _, task := range cfg.Tasks {
 		if ctx.Err() != nil {
 			return
 		}
@@ -472,7 +487,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 		s.queueRun(ctx, task, ts.Version, reason, now)
 	}
 
-	s.maybePrune(ctx, now)
+	s.maybePrune(ctx, cfg, now)
 }
 
 // dueReason reports whether task is due at now, and why.
@@ -546,19 +561,26 @@ func (s *Scheduler) queueRun(ctx context.Context, task TaskConfig, version int64
 }
 
 // maybePrune drops old run-state at most once per pruneInterval.
-func (s *Scheduler) maybePrune(ctx context.Context, now time.Time) {
-	if now.Sub(s.lastPrune) < pruneInterval {
+//
+// Prune covers the whole run-state store, not just this config, so it is
+// skipped while the config is incomplete: with no tasks, or while a file
+// fails to load. The age never shrinks below the largest one this process
+// has used, so commenting out a monthly task does not drop its record.
+func (s *Scheduler) maybePrune(ctx context.Context, cfg *Config, now time.Time) {
+	if len(cfg.Tasks) == 0 || s.reloadErr != "" || now.Sub(s.lastPrune) < pruneInterval {
 		return
 	}
 	s.lastPrune = now
-	removed, err := s.runs.Prune(ctx, now.Add(-s.pruneAge))
+	s.pruneAge = max(s.pruneAge, pruneAgeFor(cfg.Tasks))
+	cutoff := now.Add(-s.pruneAge)
+	removed, err := s.runs.Prune(ctx, cutoff)
 	if err != nil {
 		s.logger.Warn("scheduler: could not prune run-state", "error", err)
 		return
 	}
 	if len(removed) > 0 {
 		s.logger.Info("pruned run-state for tasks idle since the cut-off",
-			"tasks", removed, "cutoff", now.Add(-s.pruneAge))
+			"tasks", removed, "cutoff", cutoff)
 	}
 }
 
