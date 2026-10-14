@@ -161,6 +161,38 @@ exist — or one your data doesn't populate — the walk finds no edges and grou
 roles silently never resolve. There's no separate "is this a real relation"
 check; the relation simply has to be there.
 
+## How field blocks combine across roles
+
+A role's `fields:`, `visible:` and `options:` blocks narrow what that role
+gives for one entity type. A principal often holds several roles on the same
+row: a global role from `assignments:`, a group role, and a role conferred by
+an edge such as `watches`. The result is the **union** of what each role
+gives, per dimension:
+
+- A role with a block gives what the block grants on this row.
+- A role without a block gives the whole dimension, if it holds the
+  dimension's verb on the row's type and face. The verb is `read` for
+  `visible:`, `update` for `fields:` and `options:`, and `create` for
+  `fields:` and `options:` when the row is being created.
+- A role that holds neither gives nothing.
+
+So gaining a role never removes a field. In the example above, a member of
+`triage-team` who is also an `editor` may write every ticket field: the
+editor's `update: [ticket]` covers them all, and the triager's block cannot
+take that away. A member who is only a triager may write `status` alone.
+
+Face-qualified grants count only on their face: a role with
+`read: ["policy@published"]` and no `visible:` block shows every field of a
+published policy and nothing of a draft. A client ceiling is applied after
+the union and can only remove.
+
+The `everyone` role takes part like any other role. If it holds `read` on a
+face of a type and has no `visible:` block for that type, every other role's
+`visible:` block restricts nobody on that face. The same holds for `update`
+or `create` and the `fields:` and `options:` blocks. `rela acl audit` reports
+this as `A14-everyone-opens-field-block`, and rela logs it as a warning
+when it loads `acl.yaml`.
+
 ## Scoping a grant to a content state
 
 If a type declares `faces:` (see the

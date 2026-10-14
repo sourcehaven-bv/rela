@@ -1,7 +1,7 @@
 request: PATCH /api/v1/tickets/TKT-4
 identity: header editor@example.test
 status: 200
-header ETag: "SE5gwqg0BeM="
+header ETag: "/3CVys6Yzm4="
 reads: GetEntity=2 GetRelation=10 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=1 ListRelations=5 MatchingFaces=5
 breadth: ListEntities=1/1 ListEntityHeaders=1/1 ListRelations=0/5 MatchingFaces=5/5
 bodies: GetEntity=2/2 GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/1
@@ -13,7 +13,9 @@ body:
   "type": "ticket",
   "_title": "Delta renamed",
   "properties": {
+    "budget": "delta-budget",
     "due": "2025-03-28",
+    "note": "delta-note",
     "secret": "delta-secret",
     "start": "2025-01-20",
     "status": "open",
@@ -27,6 +29,9 @@ body:
     "update": true
   },
   "_fields": {
+    "note": {
+      "writable": false
+    },
     "status": {
       "options": {
         "archived": false
@@ -40,8 +45,10 @@ body:
   },
   "_versions": {
     "properties": {
+      "budget": "c6b48a0d",
       "closed_on": "fac7a217",
       "due": "bf50d62b",
+      "note": "fe5ad481",
       "screenshot": "39e94aa8",
       "secret": "e2905b9a",
       "start": "141ef927",
@@ -51,10 +58,7 @@ body:
     "content": "12b08f88",
     "relations": "427a4020"
   },
-  "_redacted": [
-    "budget",
-    "note"
-  ],
+  "_redacted": [],
   "_attachments": {},
   "_transitions": {
     "status": [

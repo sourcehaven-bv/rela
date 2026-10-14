@@ -75,6 +75,11 @@ func TestCreateEntity_FieldGate(t *testing.T) {
 		if gate.calls != 1 || len(gate.lastSet) != 1 || gate.lastSet["title"] != "T" {
 			t.Errorf("gate calls=%d set=%v, want one call with just title", gate.calls, gate.lastSet)
 		}
+		// A create is judged as a create: a role that may create the type
+		// but not update it writes every field on create (BUG-Y5UF3K).
+		if gate.createCalls != 1 {
+			t.Errorf("create checks = %d, want 1", gate.createCalls)
+		}
 	})
 
 	t.Run("elevation skips the gate", func(t *testing.T) {

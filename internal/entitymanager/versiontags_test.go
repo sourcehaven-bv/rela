@@ -58,6 +58,10 @@ func (denyAllFieldGate) CheckFieldWrite(context.Context, *entity.Entity, map[str
 	return errors.New("field write denied")
 }
 
+func (denyAllFieldGate) CheckCreateFieldWrite(context.Context, *entity.Entity, map[string]any) error {
+	return errors.New("field write denied")
+}
+
 var alice = principal.Principal{User: "alice", Tool: principal.ToolCLI}
 
 func taggerCtx() context.Context {

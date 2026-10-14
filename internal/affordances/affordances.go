@@ -18,12 +18,23 @@
 //
 // A grant block (fields / visible / options / relations) is opt-in
 // per entity type: when a role declares the block for type T, that
-// role's grants are closed-world for T — anything not granted is
-// denied. A role that does not declare the block for T contributes
-// nothing (it neither grants nor shrinks). Cross-role semantics are a
-// union: a field is writable if ANY of the principal's effective
-// roles grants it under a passing predicate. This keeps access
-// monotonic in the role set.
+// role's grants are closed-world for T: anything not granted is
+// denied. Cross-role semantics are a union: a field is writable if
+// ANY of the principal's effective roles grants it under a passing
+// predicate.
+//
+// A role that does not declare a fields, visible or options block for
+// T contributes the whole dimension when it holds the dimension's verb
+// on the row's type and face, and nothing otherwise (BUG-Y5UF3K). The
+// verb is read for visible, update for fields and options, and create
+// for fields and options on a create. So a role whose type grant
+// covers every field keeps covering it when the principal also holds
+// a role with a narrower block. The visible, fields and options
+// dimensions, and relation meta visibility (with the source row's read
+// grant), are therefore monotonic in the role set. Relation create,
+// remove and meta writes are not yet: they count only roles that
+// declare a relation grant, so gaining such a role can still narrow
+// them (BUG-826XOX).
 //
 // # Effective roles are entity-scoped
 //

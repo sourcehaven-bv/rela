@@ -221,6 +221,12 @@ func (r *metamodelReader) DefaultWorld() string {
 	return metamodel.EffectiveDefaultWorld(r.m)
 }
 
+// Faces returns the content states entity type t declares in declaration
+// order, or nil for a faceless or undeclared type.
+func (r *metamodelReader) Faces(t string) []string {
+	return metamodel.FaceOrderOf(r.m, t)
+}
+
 // HasFace reports whether entity type t declares the content state named
 // face. Resolves aliases via GetEntityDef, so a grant written against a
 // type alias answers about the canonical type. A type with no `faces:`

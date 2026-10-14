@@ -1372,6 +1372,29 @@ write form. When the hidden field is the entity's display property, the
 through the title. See [GUIDE-acl-overview] for how `visible:` grants
 are written.
 
+**Roles combine by union.** A field is visible when any role the principal
+holds on the row allows it. A role with a `visible:` block for the type
+allows what the block grants. A role without one allows every field when it
+reads the row's type and face, and nothing when it does not (BUG-Y5UF3K).
+The same rule holds for `fields:` and `options:` with `update` (or `create`
+on a create) as the verb. So a role conferred by an edge, such as a
+`watches` edge conferring `watcher`, never hides a field from a principal
+whose other roles show it. A principal whose only grant on the type is the
+conferred role still gets exactly that role's block. The client ceiling is
+applied after the union and only removes. See [GUIDE-acl-overview] for the
+full rule.
+
+**Upgrading.** Before this rule, holding a role with a block narrowed every
+other role the principal held on that type. A policy that relied on that,
+for example a `watcher` block meant to hide fields from an `editor` who also
+watches the ticket, now shows those fields. Give the wider role its own
+block if it should see less. An `everyone` role that holds a block's verb on
+a face of the type, without a block of its own, now opens that block on that
+face: `read` opens `visible:`, `update` and `create` open `fields:` and
+`options:`. `rela acl audit` reports it as `A14-everyone-opens-field-block`
+(high), naming the faces, and rela logs the same as a warning when it
+loads `acl.yaml`.
+
 **Search cannot be a hidden-field oracle.** Redacting the response body
 is not enough on its own: the full-text index still contains a hidden
 property's text, so a query that matched *only* that property would
@@ -1415,7 +1438,9 @@ too — a caller cannot smuggle a secret past the closed-world by using an
 undeclared property name. Relations have no display-title channel, so there
 is no `_title` fallback to worry about; the redaction is a straight
 value-omission from `meta`. A relation type with no `visible:` block emits
-its meta unchanged (permissive default).
+its meta unchanged (permissive default). Roles combine by union here too:
+a role with no meta `visible:` list for the relation shows every meta key
+when it reads the source row's type and face.
 
 ## Field write grants on MCP and scheduled scripts
 
@@ -1445,10 +1470,12 @@ Row grants apply on all of these.
 
 **Upgrading.** A scheduled task now fails to write a property its principal
 may not write. Grant the task's principal (`system:scheduler`, or its
-`run_as` user) the field, or move the write into an automation. Field lists
-are closed: once any role the principal holds lists fields for a type, a
-field none of them names is read-only. So name the field in a `fields:`
-block of one of the principal's roles.
+`run_as` user) the field, or move the write into an automation. A field is
+writable when any role the principal holds allows it: a role with a
+`fields:` block for the type allows the fields it names, and a role without
+one allows every field if it may update the type. So either name the field
+in a `fields:` block of one of the principal's roles, or give the principal
+a role that may update the type and has no `fields:` block for it.
 
 ## `related(...)` in a grant's `when:`
 
@@ -1710,7 +1737,18 @@ too come from the live graph and would otherwise let a role conferred *after*
 capture reveal a field. To keep that reduction from silently defaulting to
 all-visible, a type that any role gates with `visible:` gets a **type-level
 closed-world** in history: every field not affirmatively granted visible by a
-globally-held role is hidden. The rule, stated as an invariant:
+globally-held role is hidden.
+
+A global role **without** a `visible:` block for the type is such an
+affirmative grant, of every field, when it reads the snapshot's type and face
+(BUG-Y5UF3K). That is what the same role shows on a live read, and it depends
+only on the reader's assignments, never on the subject's graph. History uses
+a subset of the reader's live roles and the union only grows with roles, so
+this rule never makes a historical version show a reader more than a live read
+of the same row would. The face is the one the snapshot records: a role that reads only
+`policy@published` shows nothing of a draft snapshot, or of one recorded
+without a face. A reader whose only grant on the type was a conferred role
+still sees no field. The rule, stated as an invariant:
 
 > A historical version shows a field only if today's `visible:` policy
 > affirmatively grants it against inputs that can be safely evaluated. Every

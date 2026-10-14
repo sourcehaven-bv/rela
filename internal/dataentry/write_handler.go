@@ -462,8 +462,10 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 	// unpersisted entity, which is the safe direction; only global-role
 	// grants apply at create. Collection-level create authorization is
 	// enforced separately inside CreateEntity (acl.OpCreate).
-	candidate := &entityPkg.Entity{Type: typeName, Properties: req.Properties}
-	if denial := h.affordances.validateFieldWrite(r.Context(), candidate, req.Properties, nil); denial != nil {
+	// The candidate carries the face being created: a role's create grant
+	// may name one face only (`type@face`), and field verdicts follow it.
+	candidate := &entityPkg.Entity{Type: typeName, Face: createOpts.Face, Properties: req.Properties}
+	if denial := h.affordances.validateCreateFieldWrite(r.Context(), candidate, req.Properties); denial != nil {
 		h.denyAfford(r.Context(), w, candidate, *denial)
 		return
 	}
@@ -664,6 +666,14 @@ func (h *writeHandler) handleV1DryRunCreate(w http.ResponseWriter, r *http.Reque
 	// A create ENTERS the machine at its initial state; it is not a transition.
 	// Lock every state-machine field to its entry value so the create form
 	// renders it read-only at the initial state (BUG-X1C7S / TKT-3G93B8).
+	// The form describes a create, so its `_fields` come from the create
+	// verdicts: forWire computed them for an update of an existing row, and a
+	// role that may create the type but not update it writes on create every
+	// field it would be refused on a later PATCH (BUG-Y5UF3K). Visibility is
+	// the same for both, so the redaction forWire applied stands.
+	createFields := computeFieldAffordancesFrom(createFieldVerdicts(
+		r.Context(), h.serializer.affordances.resolver(), h.serializer.affordances.meta(), candidate))
+	result.FieldAffordances = &createFields
 	h.serializer.affordances.applyCreateLock(r.Context(), &result, candidate)
 	if idWarning != nil {
 		result.Warnings = append(result.Warnings, *idWarning)

@@ -191,16 +191,31 @@ func NewWriteGate(r *PolicyResolver) (*WriteGate, error) {
 	return &WriteGate{resolver: r}, nil
 }
 
-// CheckFieldWrite returns a *[FieldWriteError] for the first refused write,
-// or nil.
+// CheckFieldWrite returns a *[FieldWriteError] for the first refused write
+// to the existing row e, or nil.
 func (g *WriteGate) CheckFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any, unset []string) error {
+	return g.check(ctx, e, set, unset, g.resolver.FieldVerdicts)
+}
+
+// CheckCreateFieldWrite is [WriteGate.CheckFieldWrite] for creating e, judged
+// against [PolicyResolver.CreateFieldVerdicts].
+func (g *WriteGate) CheckCreateFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any) error {
+	return g.check(ctx, e, set, nil, g.resolver.CreateFieldVerdicts)
+}
+
+// check runs the shared field-write check against the verdicts verdictsFor
+// computes for e.
+func (g *WriteGate) check(
+	ctx context.Context, e *entity.Entity, set map[string]any, unset []string,
+	verdictsFor func(context.Context, *entity.Entity) FieldVerdicts,
+) error {
 	if e == nil {
 		return errors.New("affordances: field write check without an entity")
 	}
 	if len(set) == 0 && len(unset) == 0 {
 		return nil // a content-only write names no property
 	}
-	d := CheckFieldWrite(g.resolver.FieldVerdicts(ctx, e), DeclaredProperties(g.resolver.meta, e.Type), set, unset)
+	d := CheckFieldWrite(verdictsFor(ctx, e), DeclaredProperties(g.resolver.meta, e.Type), set, unset)
 	if d == nil {
 		return nil // not d: a nil *FieldWriteError is a non-nil error
 	}

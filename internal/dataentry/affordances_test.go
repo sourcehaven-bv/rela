@@ -862,3 +862,59 @@ func TestDomainRedactedNotOnWire(t *testing.T) {
 		t.Errorf("domain Redacted field reached the wire: %s", blob)
 	}
 }
+
+// createVerdictResolver answers update and create differently, standing in for
+// a policy where a role without a `fields:` block may create but not update.
+type createVerdictResolver struct {
+	NopFieldVerdictResolver
+	update, create FieldVerdicts
+}
+
+func (r createVerdictResolver) FieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {
+	return r.update
+}
+
+func (r createVerdictResolver) CreateFieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {
+	return r.create
+}
+
+// TestCreateFieldVerdicts_RoutesToCreateCapability (BUG-Y5UF3K): every create
+// surface judges fields by the create verdicts when the resolver has them, and
+// falls back to the update verdicts when it does not. The schema-intrinsic
+// read-only overlay applies to both.
+func TestCreateFieldVerdicts_RoutesToCreateCapability(t *testing.T) {
+	meta := &metamodel.Metamodel{Entities: map[string]metamodel.EntityDef{
+		"ticket": {Properties: map[string]metamodel.PropertyDef{
+			"secret": {Type: metamodel.PropertyTypeString},
+			"score":  {Type: metamodel.PropertyTypeInteger, Computed: "1"},
+		}},
+	}}
+	updateOnly := FieldVerdicts{Writable: map[string]bool{"secret": false}}
+	tests := []struct {
+		name          string
+		resolver      FieldVerdictResolver
+		secretAllowed bool
+	}{
+		{"resolver with create verdicts", createVerdictResolver{update: updateOnly}, true},
+		{"resolver without create verdicts", fakeResolver{fv: updateOnly}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := affordanceService{
+				resolver: func() FieldVerdictResolver { return tc.resolver },
+				meta:     func() *metamodel.Metamodel { return meta },
+			}
+			e := &entity.Entity{Type: "ticket"}
+			denial := svc.validateCreateFieldWrite(context.Background(), e, map[string]any{"secret": "s"})
+			if (denial == nil) != tc.secretAllowed {
+				t.Errorf("secret create denial = %+v, want allowed=%v", denial, tc.secretAllowed)
+			}
+			if svc.validateCreateFieldWrite(context.Background(), e, map[string]any{"score": 1}) == nil {
+				t.Error("computed field writable on create")
+			}
+			if svc.validateFieldWrite(context.Background(), e, map[string]any{"secret": "s"}, nil) == nil {
+				t.Error("update must keep judging by the update verdicts")
+			}
+		})
+	}
+}

@@ -29,7 +29,19 @@ func (p *policyResolver) PrimeTraversals(ctx context.Context, rows []*entityPkg.
 // FieldVerdicts maps affordances field verdicts onto the wire-shape
 // type, carrying the deny attribution through unchanged.
 func (p *policyResolver) FieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts {
-	v := p.inner.FieldVerdicts(ctx, e)
+	return fieldVerdictsWire(p.inner.FieldVerdicts(ctx, e))
+}
+
+// CreateFieldVerdicts maps [affordances.PolicyResolver.CreateFieldVerdicts]
+// like FieldVerdicts, making policyResolver satisfy
+// [createFieldVerdictResolver].
+func (p *policyResolver) CreateFieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts {
+	return fieldVerdictsWire(p.inner.CreateFieldVerdicts(ctx, e))
+}
+
+// fieldVerdictsWire maps affordances field verdicts onto the wire-shape type,
+// carrying the deny attribution through unchanged.
+func fieldVerdictsWire(v affordances.FieldVerdicts) FieldVerdicts {
 	return FieldVerdicts{
 		Writable:    v.Writable,
 		Visible:     v.Visible,

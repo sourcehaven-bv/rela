@@ -314,6 +314,11 @@ func foldsIntoEndpoint(q store.GraphQuery) bool {
 //     whole dimension in as soon as a role declaresVisible): everything the
 //     role does not name is hidden, with no `when:` string anywhere to find.
 //
+// Another role a reader holds can reopen such a field, because field
+// verdicts are the union over the reader's roles (BUG-Y5UF3K). That does not
+// weaken either case: a reader who holds only the restricting role still has
+// the field hidden, so "some reader cannot see it" stays true.
+//
 // Case 2 is the likelier spelling — an operator writes `visible: [name,
 // title]` intending `salary` to be hidden — and it is the one a
 // `when:`-only check silently misses, returning "filterable" for exactly the

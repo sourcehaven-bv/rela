@@ -356,11 +356,39 @@ type FieldVerdicts struct {
 // policy-derived verdict. Computed properties are materialized for display but
 // can never be authored, regardless of ACL role; nor can external refs.
 func (svc affordanceService) fieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts {
-	v := svc.resolver().FieldVerdicts(ctx, e)
+	return withSchemaReadOnly(svc.meta(), e, svc.resolver().FieldVerdicts(ctx, e))
+}
+
+// createFieldVerdictResolver is the OPTIONAL capability of a
+// [FieldVerdictResolver] whose verdicts depend on the operation: on a create,
+// a role without a `fields:` or `options:` block qualifies by holding create
+// rather than update (BUG-Y5UF3K). Only the policy-backed resolver has it;
+// the Nop and Demo resolvers answer a create like any other write.
+type createFieldVerdictResolver interface {
+	CreateFieldVerdicts(ctx context.Context, e *entityPkg.Entity) FieldVerdicts
+}
+
+// createFieldVerdicts is [affordanceService.fieldVerdicts] for creating e. Every
+// create surface asks it: the create gate, the create dry-run form and a
+// history recreate.
+func createFieldVerdicts(
+	ctx context.Context, res FieldVerdictResolver, meta *metamodel.Metamodel, e *entityPkg.Entity,
+) FieldVerdicts {
+	if creator, ok := res.(createFieldVerdictResolver); ok {
+		return withSchemaReadOnly(meta, e, creator.CreateFieldVerdicts(ctx, e))
+	}
+	return withSchemaReadOnly(meta, e, res.FieldVerdicts(ctx, e))
+}
+
+// withSchemaReadOnly marks the fields of e's type that no principal may author
+// read-only on top of v: computed properties and external refs.
+//
+// Nil: e accepted (v returned unchanged).
+func withSchemaReadOnly(meta *metamodel.Metamodel, e *entityPkg.Entity, v FieldVerdicts) FieldVerdicts {
 	if e == nil {
 		return v
 	}
-	def, ok := svc.meta().GetEntityDef(e.Type)
+	def, ok := meta.GetEntityDef(e.Type)
 	if !ok {
 		return v
 	}
@@ -479,8 +507,25 @@ func (svc affordanceService) validateFieldWrite(
 	if e == nil {
 		return nil
 	}
-	v := svc.fieldVerdicts(ctx, e)
-	d := affordances.CheckFieldWrite(affordances.FieldVerdicts(v), affordances.DeclaredProperties(svc.meta(), e.Type),
+	return checkFieldWrite(svc.meta(), e, svc.fieldVerdicts(ctx, e), setKeys, unsetKeys)
+}
+
+// validateCreateFieldWrite is validateFieldWrite for a create of e, judged
+// against createFieldVerdicts.
+func (svc affordanceService) validateCreateFieldWrite(
+	ctx context.Context, e *entityPkg.Entity, setKeys map[string]any,
+) *AffordanceDenialError {
+	if e == nil {
+		return nil
+	}
+	return checkFieldWrite(svc.meta(), e, createFieldVerdicts(ctx, svc.resolver(), svc.meta(), e), setKeys, nil)
+}
+
+// checkFieldWrite applies the shared field-write check to verdicts v of e.
+func checkFieldWrite(
+	meta *metamodel.Metamodel, e *entityPkg.Entity, v FieldVerdicts, setKeys map[string]any, unsetKeys []string,
+) *AffordanceDenialError {
+	d := affordances.CheckFieldWrite(affordances.FieldVerdicts(v), affordances.DeclaredProperties(meta, e.Type),
 		setKeys, unsetKeys)
 	if d == nil {
 		return nil

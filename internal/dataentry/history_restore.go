@@ -116,8 +116,8 @@ func restoreOntoLive(a *App,
 // restoreRecreate re-creates a deleted entity from the snapshot. Unlike a
 // normal create — where the author types the values — a restore's values come
 // from a historical snapshot the principal may never have been allowed to
-// write. So every snapshot property is gated through validateFieldWrite (as if
-// it were a PATCH setting that field), exactly like restoreOntoLive: otherwise
+// write. So every snapshot property is gated through validateCreateFieldWrite
+// (as if the principal typed it into a create), like restoreOntoLive: otherwise
 // resurrection would launder a forbidden field write (RR-LH9RJ8). Type-level
 // create authorization + validation still run in the entitymanager.
 func restoreRecreate(a *App,
@@ -132,7 +132,7 @@ func restoreRecreate(a *App,
 
 	// Gate every snapshot property as a field write against the (would-be)
 	// entity, so a field the principal cannot write blocks the resurrection.
-	if denial := a.affordances.validateFieldWrite(ctx, target, target.Properties, nil); denial != nil {
+	if denial := a.affordances.validateCreateFieldWrite(ctx, target, target.Properties); denial != nil {
 		a.denyAffordance(ctx, w, target, *denial)
 		return
 	}

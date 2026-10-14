@@ -2107,6 +2107,7 @@ func prepare(cfg Config, opts []Option) (*SharedBase, error) {
 		return nil, fmt.Errorf("compile query scopes: %w", err)
 	}
 	warnQueryScopes(&compiledScopes, meta, aclPolicy)
+	warnEveryoneOpensFieldBlocks(meta, aclPolicy)
 	if problems := QueryScopeTraversalFieldErrors(&compiledScopes, meta, aclPolicy); len(problems) > 0 {
 		return nil, fmt.Errorf("compile query scopes: %s", strings.Join(problems, "; "))
 	}

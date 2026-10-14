@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -406,8 +407,33 @@ func (r *PolicyResolver) compile(roleName, entityType, block string, idx int, wh
 }
 
 // FieldVerdicts computes the sparse field-level verdicts for e against
-// the principal carried on ctx.
+// the principal carried on ctx, for reading e and for updating it.
+//
+// Every role that applies to e contributes a set per dimension, and a field
+// or option is allowed when any contribution holds it (BUG-Y5UF3K). A role
+// with a block for e's type contributes what the block grants on e. A role
+// without one contributes every declared field (or option) when it holds the
+// dimension's verb on e's type and face: read for visibility, update for
+// writability and options. The client ceiling then removes fields.
 func (r *PolicyResolver) FieldVerdicts(ctx context.Context, e *entity.Entity) FieldVerdicts {
+	return r.fieldVerdicts(ctx, e, acl.VerbUpdate)
+}
+
+// CreateFieldVerdicts is [PolicyResolver.FieldVerdicts] for creating e: a role
+// without a `fields:` or `options:` block qualifies by holding create on e's
+// type and face rather than update. A create gate asks this, so a role that may
+// create a type and writes every field of it on create keeps doing so when the
+// principal also holds a role with a `fields:` block. Asking update here would
+// narrow it; asking "create or update" in FieldVerdicts instead would let a
+// create-only role open every field on an update the other role authorizes.
+func (r *PolicyResolver) CreateFieldVerdicts(ctx context.Context, e *entity.Entity) FieldVerdicts {
+	return r.fieldVerdicts(ctx, e, acl.VerbCreate)
+}
+
+// fieldVerdicts computes the field verdicts for e. writeVerb is the verb a
+// role without a `fields:` or `options:` block must hold to contribute every
+// field or option: update for an existing row, create for a new one.
+func (r *PolicyResolver) fieldVerdicts(ctx context.Context, e *entity.Entity, writeVerb acl.Verb) FieldVerdicts {
 	out := FieldVerdicts{}
 	if e == nil || r.policy == nil {
 		return out
@@ -420,54 +446,119 @@ func (r *PolicyResolver) FieldVerdicts(ctx context.Context, e *entity.Entity) Fi
 	// Historical type-level closed-world (TKT-73C6B2): when serializing a
 	// snapshot of a type that ANY role gates with `visible:`, force the visible
 	// dimension to opt in up front. Ordinarily the `visible:` closed-world is
-	// role-scoped — it bites only for roles the reader holds that declare a
+	// role-scoped: it bites only for roles the reader holds that declare a
 	// block, so a reader with no such role sees all fields and is protected only
 	// by the row-level read gate. For history that is not enough: the reader's
 	// live roles are reduced to globals-only (resolveViaDeclarative), which can
 	// drop the very role that declared the block, and the reduced set would
-	// otherwise default to all-visible — leaking a field that was redacted at
+	// otherwise default to all-visible, leaking a field that was redacted at
 	// write time. Opting in here means every field not affirmatively granted
-	// visible by a globally-held role is hidden. Deliberately stricter than a
-	// live read; a holder of acl.PermHistoryReadRedacted bypasses redaction
-	// entirely at the handler.
+	// visible by a globally-held role is hidden.
+	//
+	// A global role that declares no `visible:` block but reads the snapshot's
+	// type and face is such an affirmative grant, of every field (BUG-Y5UF3K).
+	// It is how that role answers on every live read, and it depends only on
+	// the reader's assignments, never on the subject's live graph. History
+	// roles are a subset of live roles and the union only grows with roles, so
+	// history stays no wider than a live read by the same reader. Still
+	// stricter than live; a holder of acl.PermHistoryReadRedacted bypasses
+	// redaction entirely at the handler.
 	if IsHistoricalSubject(ctx) && r.typesWithVisible[e.Type] {
-		visible.optIn("hidden")
+		visible.optIn(kindHidden)
 	}
+
+	fieldUniverse := r.declaredFields(e.Type)
+	enumValues := r.enumOptions(e.Type)
 
 	bc, roles := r.bindingFor(ctx, e)
 	if bc != nil {
+		var blockless blocklessRoles
 		for _, role := range roles {
-			g := r.grants[grantKey{role, e.Type}]
-			if g == nil {
-				continue
-			}
-			if g.declaredFields {
-				r.applyFieldGrants(ctx, bc, role, "read-only", g.fields, writable)
-			}
-			if g.declaredVisible {
-				r.applyFieldGrants(ctx, bc, role, "hidden", g.visible, visible)
-			}
-			if g.declaredOptions {
-				r.applyOptionGrants(ctx, bc, role, g.options, options)
-			}
+			blockless.add(role, r.applyRoleBlocks(ctx, bc, role, writable, visible, options))
 		}
+		blockless.contribute(bc, writeVerb, fieldUniverse, enumValues, writable, visible, options)
 	}
 
 	// Client attenuation, field axis (TKT-IAC8TX). Applied AFTER every role
 	// grant because a ceiling only ever removes: whatever the roles allowed,
 	// this can subtract from, and nothing here can add. Applied BEFORE the
 	// universe is resolved so a `visible:` ceiling gets the same closed-world
-	// treatment a role-declared block does — which is what makes a property
+	// treatment a role-declared block does, which is what makes a property
 	// added to the metamodel later hidden from a restricted client by default.
 	r.applyClientCeiling(ctx, e.Type, visible)
 
-	fieldUniverse := r.declaredFields(e.Type)
 	out.Writable, out.Attribution = writable.deny(fieldUniverse, out.Attribution)
-	visMap, attr := visible.deny(fieldUniverse, out.Attribution)
-	out.Visible = visMap
-	out.Attribution = attr
-	out.Options, out.Attribution = options.deny(r.enumOptions(e.Type), out.Attribution)
+	out.Visible, out.Attribution = visible.deny(fieldUniverse, out.Attribution)
+	out.Options, out.Attribution = options.deny(enumValues, out.Attribution)
 	return out
+}
+
+// blocklessRoles lists, per dimension, the roles on a row that declare no
+// block for the row's type in that dimension.
+type blocklessRoles struct {
+	fields, visible, options []string
+}
+
+// add records role under every dimension declared reports false for.
+func (b *blocklessRoles) add(role string, declared declaredBlocks) {
+	if !declared.fields {
+		b.fields = append(b.fields, role)
+	}
+	if !declared.visible {
+		b.visible = append(b.visible, role)
+	}
+	if !declared.options {
+		b.options = append(b.options, role)
+	}
+}
+
+// contribute adds what each block-less role gives: every field (or option)
+// of a dimension whose verb the role holds on the row. Only a dimension some
+// block closed on this row is visited: elsewhere nothing is denied and the
+// contribution would change nothing, so the verb is not asked.
+func (b *blocklessRoles) contribute(
+	bc *bindingContext, writeVerb acl.Verb, fieldUniverse []string, enumValues map[string][]string,
+	writable, visible *dimension, options *optionDimension,
+) {
+	holdsWrite := bc.verbMemo(writeVerb)
+	if writable.optedIn && slices.ContainsFunc(b.fields, holdsWrite) {
+		writable.allowAll(fieldUniverse)
+	}
+	holdsRead := func(role string) bool { return bc.roleHoldsVerb(role, acl.VerbRead) }
+	if visible.optedIn && slices.ContainsFunc(b.visible, holdsRead) {
+		visible.allowAll(fieldUniverse)
+	}
+	if len(options.optedInFields) > 0 && slices.ContainsFunc(b.options, holdsWrite) {
+		options.allowAll(enumValues)
+	}
+}
+
+// declaredBlocks reports which field blocks a role declares for a type.
+type declaredBlocks struct {
+	fields, visible, options bool
+}
+
+// applyRoleBlocks folds the blocks role declares for the row's type into the
+// dimensions and reports which it declared. A role with a block contributes
+// what the block grants on the row; what a role without one contributes is
+// decided after every role is folded (see fieldVerdicts).
+func (r *PolicyResolver) applyRoleBlocks(
+	ctx context.Context, bc *bindingContext, role string, writable, visible *dimension, options *optionDimension,
+) declaredBlocks {
+	g := r.grants[grantKey{role, bc.entity.Type}]
+	if g == nil {
+		return declaredBlocks{}
+	}
+	if g.declaredFields {
+		r.applyFieldGrants(ctx, bc, role, "read-only", g.fields, writable)
+	}
+	if g.declaredVisible {
+		r.applyFieldGrants(ctx, bc, role, kindHidden, g.visible, visible)
+	}
+	if g.declaredOptions {
+		r.applyOptionGrants(ctx, bc, role, g.options, options)
+	}
+	return declaredBlocks{fields: g.declaredFields, visible: g.declaredVisible, options: g.declaredOptions}
 }
 
 // declaredFields returns the metamodel-declared property names for an
@@ -594,23 +685,20 @@ func (r *PolicyResolver) RelationFieldVerdicts(
 	visible := newDimension()
 	bc, roles := r.bindingFor(ctx, from)
 	if bc != nil {
+		var blockless []string
 		for _, role := range roles {
-			g := r.grants[grantKey{role, from.Type}]
-			if g == nil || !g.declaredRelations {
-				continue
+			if !r.applyRelationVisible(ctx, bc, role, relType, visible) {
+				blockless = append(blockless, role)
 			}
-			for _, rg := range g.relations {
-				if rg.relation != relType || len(rg.visible) == 0 {
-					continue
-				}
-				visible.optIn("hidden")
-				grantPassed := r.passes(ctx, bc, rg.program, role)
-				for _, fg := range rg.visible {
-					if grantPassed && r.passes(ctx, bc, fg.program, role) {
-						visible.allow(fg.field)
-					} else {
-						visible.observeDeny(fg.field, role)
-					}
+		}
+		// Role union (BUG-Y5UF3K), as in FieldVerdicts: a role that declares
+		// no meta `visible:` list for relType shows every meta key on the edge
+		// when it reads the source's type and face, so holding it never hides
+		// a key another role restricts.
+		if visible.optedIn {
+			for _, role := range blockless {
+				if bc.roleHoldsVerb(role, acl.VerbRead) {
+					visible.allowAll(metaKeys)
 				}
 			}
 		}
@@ -618,6 +706,35 @@ func (r *PolicyResolver) RelationFieldVerdicts(
 
 	denied, _ := visible.deny(metaKeys, nil)
 	return denied
+}
+
+// applyRelationVisible folds role's meta `visible:` grants for relType into
+// visible and reports whether the role declares any. A meta key is allowed
+// when both the relation grant's `when:` and the key's own `when:` pass.
+func (r *PolicyResolver) applyRelationVisible(
+	ctx context.Context, bc *bindingContext, role, relType string, visible *dimension,
+) bool {
+	g := r.grants[grantKey{role, bc.entity.Type}]
+	if g == nil || !g.declaredRelations {
+		return false
+	}
+	declared := false
+	for _, rg := range g.relations {
+		if rg.relation != relType || len(rg.visible) == 0 {
+			continue
+		}
+		declared = true
+		visible.optIn(kindHidden)
+		grantPassed := r.passes(ctx, bc, rg.program, role)
+		for _, fg := range rg.visible {
+			if grantPassed && r.passes(ctx, bc, fg.program, role) {
+				visible.allow(fg.field)
+			} else {
+				visible.observeDeny(fg.field, role)
+			}
+		}
+	}
+	return declared
 }
 
 // TransitionVerdicts resolves, per state-machine-typed property on e, the
@@ -711,7 +828,7 @@ func (g requestGuard) HoldsPermission(ctx context.Context, subjectID, permission
 // inheritance.
 func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *bindingContext, roles []string) {
 	p := principal.From(ctx)
-	global, roles := r.resolveViaDeclarative(ctx, p, e)
+	global, roles, roleGrants := r.resolveViaDeclarative(ctx, p, e)
 	if len(roles) == 0 {
 		return nil, nil
 	}
@@ -727,6 +844,7 @@ func (r *PolicyResolver) bindingFor(ctx context.Context, e *entity.Entity) (bc *
 		lookup:      r.lookup,
 		userID:      p.User,
 		resolver:    r,
+		roleGrants:  roleGrants,
 	}
 	bc.userFuncs = predicatefns.CurrentUserBindings(bc.identity())
 	return bc, roles
@@ -803,7 +921,7 @@ func (r *PolicyResolver) applyClientCeiling(ctx context.Context, entityType stri
 // the unstamped path.
 func (r *PolicyResolver) resolveViaDeclarative(
 	ctx context.Context, p principal.Principal, e *entity.Entity,
-) (global map[string]bool, roles []string) {
+) (global map[string]bool, roles []string, roleGrants roleVerbGrants) {
 	global = map[string]bool{}
 	if r.policy == nil {
 		// coverage-ignore-start: defensive: both entry points (FieldVerdicts/RelationVerdicts) short-circuit on
@@ -813,7 +931,7 @@ func (r *PolicyResolver) resolveViaDeclarative(
 		// when policy is nil, but bindingFor is now the sole entry point
 		// and a future caller without that guard would otherwise panic on
 		// r.policy.Roles below.
-		return global, nil
+		return global, nil, nil
 		// coverage-ignore-end
 	}
 	// RR-JJYW: reuse the per-request Request scope when one is attached
@@ -826,11 +944,12 @@ func (r *PolicyResolver) resolveViaDeclarative(
 		req, err = r.declarative.ForPrincipal(p)
 		if err != nil {
 			// Unstamped principal: only `everyone` (if declared) applies.
-			if _, ok := r.policy.Roles[acl.EveryoneRole]; ok {
+			everyone, ok := r.policy.Roles[acl.EveryoneRole]
+			if ok {
 				global[acl.EveryoneRole] = true
 				roles = []string{acl.EveryoneRole}
 			}
-			return global, roles
+			return global, roles, everyoneRoleGrants{everyone: everyone}
 		}
 	}
 	gr := req.Globals(ctx)
@@ -868,7 +987,26 @@ func (r *PolicyResolver) resolveViaDeclarative(
 	// (RR-QV18 / DR-S3). Matches the legacy effectiveRoles ordering
 	// the affordance verdicts have always assumed.
 	sort.Strings(roles)
-	return global, roles
+	return global, roles, req
+}
+
+// roleVerbGrants answers whether a role that applies to a row grants a verb
+// on the row's type and face. FieldVerdicts asks it of a role that declares
+// no block for the type (BUG-Y5UF3K). [*acl.Request] satisfies it with the
+// client ceiling applied.
+type roleVerbGrants interface {
+	RoleGrantsVerbOnFace(role string, verb acl.Verb, entityType string, face entity.Face) bool
+}
+
+// everyoneRoleGrants answers for an unstamped principal, which holds only the
+// `everyone` role and matches no client baseline (see applyClientCeiling), so
+// the role's own lists are the whole answer.
+type everyoneRoleGrants struct{ everyone acl.RoleDef }
+
+func (g everyoneRoleGrants) RoleGrantsVerbOnFace(
+	role string, verb acl.Verb, entityType string, face entity.Face,
+) bool {
+	return role == acl.EveryoneRole && acl.GrantsVerbOnFace(g.everyone, verb, entityType, face)
 }
 
 // passes reports whether a grant's predicate evaluates true. A nil

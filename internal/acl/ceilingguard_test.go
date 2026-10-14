@@ -48,8 +48,9 @@ var declarationCheck = regexp.MustCompile(`_,\s*(ok|defined|hasEveryone)\s*:?=`)
 // Keep this list tiny. A function that HAS a principal and reports its access
 // belongs on Request and must clamp (grantingAttributions does).
 var policyWideReporters = map[string]bool{
-	"EveryoneGrants": true,
-	"AssertedGrants": true,
+	"EveryoneGrants":            true,
+	"AssertedGrants":            true,
+	"EveryoneOpenedFieldBlocks": true,
 }
 
 // enclosingFunc scans backwards for the nearest `func` declaration, so a
