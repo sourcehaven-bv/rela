@@ -21,7 +21,7 @@ import (
 
 const subscriptionFeed = `<?xml version="1.0"?>
 <rss version="2.0"><channel><title>News</title>
-<item><guid>g2</guid><title>Second</title><link>/p/2</link>
+<item><guid>g2</guid><title>Second ![](https://t.example/p.gif)</title><link>/p/2</link>
   <description>&lt;p&gt;Two &lt;script&gt;x()&lt;/script&gt;&lt;/p&gt;</description>
   <pubDate>Tue, 29 Sep 2026 10:00:00 GMT</pubDate></item>
 <item><guid>g1</guid><title>First</title><link>/p/1</link>
@@ -66,7 +66,7 @@ subscriptions:
     find: {type: article, match: [guid], values: {guid: "{{item.id}}"}}
     create_if_missing:
       properties: {title: "{{item.title}}", link: "{{item.link}}"}
-      content: "{{item.summary}}"
+      content: "{{item.title}}\n\n{{item.summary}}"
 `), 0o600))
 
 	svc, err := discover(t, root)
@@ -82,10 +82,12 @@ subscriptions:
 
 	runSubscriptionOnce(t, svc, s)
 	articles := listArticles(t, svc)
-	require.Equal(t, []string{"First", "Second"}, titlesOf(articles))
+	require.Equal(t, []string{"First", "Second ![](https://t.example/p.gif)"}, titlesOf(articles))
 	for _, a := range articles {
 		require.NotContains(t, a.Content, "script", "feed HTML must be sanitized")
 	}
+	require.Contains(t, articles[1].Content, `Second \!\[\](https://t.example/p.gif)`,
+		"feed text in the body must be escaped, so it cannot place an image")
 	require.Equal(t, feed.URL+"/p/1", articles[0].Properties["link"])
 
 	// Forget the run so the task is due again, as runSchedulerTwice does.

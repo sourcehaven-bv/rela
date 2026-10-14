@@ -76,6 +76,13 @@ except in `create_if_missing.content`, where `item.summary` and `item.content`
 keep their paragraphs. Because a multi-line value cannot be appended as one log
 line, `then: append_section` may not use them.
 
+In an entity body (`create_if_missing.content` and `append_section`), the text
+the publisher writes is escaped: `item.id`, `item.title`, `item.authors`,
+`item.categories` and `feed.title`. A title such as `![](https://t.example/p.gif)`
+then shows as that literal text instead of an image, and `===` cannot turn the
+line above it into a heading. Properties store the text unchanged. A bare URL in
+the text may still render as a link, and the escaping adds backslashes to it.
+
 ## Authentication
 
 ```yaml
@@ -139,7 +146,6 @@ Changes to `subscriptions.yaml` take effect when the scheduler restarts.
 
 The feed is untrusted input. `item.summary` and `item.content` reach an entity
 only after conversion to markdown, which drops scripts, styles, images and event
-handlers. The other values are flattened to one line but not escaped. Used in
-`create_if_missing.content`, a title such as `![](https://tracker.example/p.gif)`
-renders as an image. Keep those values in properties, or accept that the
-publisher controls their markdown.
+handlers. Other text is escaped wherever it lands in a body. Links keep only
+`http` and `https` and a plain host name or IP address. The markdown punctuation
+in their path, query and fragment is percent-encoded.

@@ -363,9 +363,9 @@ func (p webhookPayload) DefaultMatchRef(prop string) string {
 	return "body." + prop
 }
 
-// IsBlock implements ingest.Source. A webhook body is untrusted JSON with no
-// sanitized markup, so every value is flattened.
-func (webhookPayload) IsBlock(string) bool { return false }
+// Kind implements ingest.Source. Every webhook value is raw: the producer is
+// authenticated by the fronting proxy and may send markdown on purpose.
+func (webhookPayload) Kind(string) ingest.ValueKind { return ingest.ValueRaw }
 
 // Resolve implements ingest.Source: it looks up one {{...}} reference,
 // returning "" when absent. Vocabulary, extending the automation template

@@ -65,6 +65,11 @@ func TestParse_Errors(t *testing.T) {
 		{"default match not an item field", `, values: {guid: "{{item.id}}"}`, "", "item.guid is not an item field"},
 		{"no match", "match: [guid], values: {guid: \"{{item.id}}\"}", "match: []", "needs find.match"},
 		{
+			"markdown in append", "content: \"{{item.content}}\"",
+			"content: x\n    then: [{append_section: {section: Log, content: \"{{item.summary}}\"}}]",
+			"may not use {{item.summary}}",
+		},
+		{
 			"block with append", "content: \"{{item.content}}\"",
 			"content: \"{{item.content}}\"\n    then: [{append_section: {section: Log, content: x}}]",
 			"feed headings could forge the section",

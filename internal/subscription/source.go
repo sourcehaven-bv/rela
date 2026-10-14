@@ -1,12 +1,14 @@
 package subscription
 
 import (
+	"net"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/feed"
 	"github.com/Sourcehaven-BV/rela/internal/htmlmd"
+	"github.com/Sourcehaven-BV/rela/internal/ingest"
 )
 
 // itemSource resolves a mapping's references for one feed item. It implements
@@ -68,9 +70,9 @@ func (s *itemSource) DefaultMatchRef(prop string) string {
 	return "item." + prop
 }
 
-// IsBlock reports the HTML fields, which resolve to sanitized markdown.
-func (s *itemSource) IsBlock(ref string) bool {
-	return blockRefs[ref]
+// Kind reports how a markdown body treats ref; see refs.
+func (s *itemSource) Kind(ref string) ingest.ValueKind {
+	return refs[ref]
 }
 
 // html converts untrusted item HTML to markdown once per reference. A
@@ -87,7 +89,7 @@ func (s *itemSource) html(ref, in string) string {
 		md = ""
 	}
 	if s.markdown == nil {
-		s.markdown = make(map[string]string, len(blockRefs))
+		s.markdown = map[string]string{}
 	}
 	s.markdown[ref] = md
 	return md
@@ -108,15 +110,41 @@ func (s *itemSource) link(raw string) string {
 	if s.base != nil {
 		u = s.base.ResolveReference(u)
 	}
-	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if (u.Scheme != "http" && u.Scheme != "https") || !plainHost(u) {
 		return ""
 	}
+	// The path, query and fragment keep the publisher's bytes where they
+	// are valid in a URL, and could carry image or link markup into a body.
+	u.RawPath = linkEscaper.Replace(u.EscapedPath())
+	u.RawQuery = linkEscaper.Replace(u.RawQuery)
+	u.RawFragment = linkEscaper.Replace(u.EscapedFragment())
 	return u.String()
 }
+
+// linkEscaper percent-encodes the markdown punctuation a URL may carry
+// unencoded. Servers read both forms alike.
+var linkEscaper = strings.NewReplacer(
+	"[", "%5B", "]", "%5D", "(", "%28", ")", "%29", "<", "%3C", ">", "%3E",
+	"!", "%21", "*", "%2A", "_", "%5F", "`", "%60", `\`, "%5C", " ", "%20",
+)
 
 func timestamp(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+// plainHost reports whether u names its host as a DNS name or an IP literal
+// with a numeric port. Go accepts hosts such as "a)b" or "x<details>", which
+// would close a markdown link or open HTML.
+func plainHost(u *url.URL) bool {
+	host, port := u.Hostname(), u.Port()
+	if host == "" || strings.Trim(port, "0123456789") != "" {
+		return false
+	}
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	return strings.Trim(strings.ToLower(host), "abcdefghijklmnopqrstuvwxyz0123456789.-") == ""
 }
