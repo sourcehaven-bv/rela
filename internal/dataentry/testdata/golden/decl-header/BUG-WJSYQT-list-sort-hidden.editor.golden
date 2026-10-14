@@ -118,7 +118,9 @@ body:
       "type": "ticket",
       "_title": "Delta",
       "properties": {
+        "budget": "delta-budget",
         "due": "2025-03-28",
+        "note": "delta-note",
         "secret": "delta-secret",
         "start": "2025-01-20",
         "status": "open",

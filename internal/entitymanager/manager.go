@@ -170,7 +170,21 @@ type auditedDenial interface {
 // record, a caller probing read-only fields over MCP or Lua would leave no
 // trace. A plain function: Manager is at its method cap.
 func checkFieldWrite(ctx context.Context, m *Manager, e *entity.Entity, set map[string]any, unset []string) error {
-	err := m.deps.FieldGate.CheckFieldWrite(ctx, e, set, unset)
+	return recordFieldDenial(ctx, m, e, m.deps.FieldGate.CheckFieldWrite(ctx, e, set, unset))
+}
+
+// checkCreateFieldWrite is checkFieldWrite for a create of e: the gate judges
+// the properties against what the caller may write when creating, not when
+// updating (BUG-Y5UF3K).
+func checkCreateFieldWrite(ctx context.Context, m *Manager, e *entity.Entity, set map[string]any) error {
+	return recordFieldDenial(ctx, m, e, m.deps.FieldGate.CheckCreateFieldWrite(ctx, e, set))
+}
+
+// recordFieldDenial records a field-gate refusal of a write to e as a denied
+// write and returns err unchanged.
+//
+// Nil: err accepted (nothing refused, nothing recorded).
+func recordFieldDenial(ctx context.Context, m *Manager, e *entity.Entity, err error) error {
 	if err == nil || isAffordanceProbe(ctx) {
 		return err
 	}
@@ -384,8 +398,14 @@ type Deps struct {
 // and automation is the system acting, not the principal. Gating it would
 // mean a user who cannot author `status` could never trigger an automation
 // that sets `status`, breaking ordinary workflow automations (RR-00ERM9).
+//
+// The two methods differ only in the operation they judge. A role without a
+// `fields:` block grants every field it may write, and which verb that takes
+// depends on the operation: update for CheckFieldWrite (a patch of an
+// existing row), create for CheckCreateFieldWrite (BUG-Y5UF3K).
 type FieldWriteGate interface {
 	CheckFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any, unset []string) error
+	CheckCreateFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any) error
 }
 
 // AllowAllFieldGate permits every field write. It is the explicit opt-out
@@ -400,6 +420,11 @@ type AllowAllFieldGate struct{}
 func (AllowAllFieldGate) CheckFieldWrite(
 	context.Context, *entity.Entity, map[string]any, []string,
 ) error {
+	return nil
+}
+
+// CheckCreateFieldWrite implements [FieldWriteGate] by allowing everything.
+func (AllowAllFieldGate) CheckCreateFieldWrite(context.Context, *entity.Entity, map[string]any) error {
 	return nil
 }
 
@@ -846,7 +871,7 @@ func (m *Manager) CreateEntity(
 	// caller may not write could be set at create time (BUG-Q60V).
 	if fieldGated(m) {
 		candidate := &entity.Entity{ID: opts.ID, Type: e.Type, Face: opts.Face, Properties: e.Properties}
-		if err := checkFieldWrite(ctx, m, candidate, e.Properties, nil); err != nil {
+		if err := checkCreateFieldWrite(ctx, m, candidate, e.Properties); err != nil {
 			return nil, err
 		}
 	}

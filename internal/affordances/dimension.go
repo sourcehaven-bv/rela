@@ -17,10 +17,17 @@ package affordances
 // roles one at a time (allow + observeDeny) and deny() reports the
 // closed-world denials at the end.
 //
-// Semantics (DR-S3, DR-C4):
+// Semantics (DR-S3, DR-C4, BUG-Y5UF3K):
 //   - A role "opts in" by declaring the block for this type. Once ANY
 //     role opts in, the dimension is closed-world for the user.
-//   - allowed accumulates the union of granted fields across roles.
+//   - allowed accumulates the union of granted fields across roles. A
+//     role with a block adds the fields it grants on the row. A role
+//     without a block adds every declared field when it holds the
+//     dimension's verb on the row (read for visibility, update for
+//     writability), and nothing otherwise. So adding a role never
+//     removes a field: the triager above, combined with an `editor`
+//     that may update tickets and declares no `fields:` block, writes
+//     every ticket field.
 //   - deny() denies every metamodel-declared field (plus any mentioned
 //     candidate) that isn't in allowed.
 //   - When no role opts in, the dimension stays permissive and deny()
@@ -70,6 +77,21 @@ func (d *dimension) allow(field string) {
 	d.allowed[field] = true
 	d.candidates[field] = true
 	delete(d.denyRole, field)
+}
+
+// allowAll records the contribution of a role that declares no block for the
+// type but holds the dimension's verb on the row: every declared field
+// (BUG-Y5UF3K). It does not opt the dimension in. A block-less role restricts
+// nothing, so when no role on the row declares a block the dimension stays
+// permissive and deny() emits nothing, exactly as before.
+//
+// universe is the declared fields only, while deny() also denies candidates a
+// block mentioned. The two agree because grant validation rejects a block
+// that names an undeclared field when the policy compiles.
+func (d *dimension) allowAll(universe []string) {
+	for _, f := range universe {
+		d.allow(f)
+	}
 }
 
 // restrictTo intersects the dimension with a client-attenuation ceiling
@@ -234,6 +256,17 @@ func (o *optionDimension) allow(field, option string) {
 	o.allowed[field][option] = true
 	o.candidate(field, option)
 	delete(o.denyRole, field+"="+option)
+}
+
+// allowAll records the contribution of a role that declares no `options:`
+// block for the type but holds update on the row: every option of every enum
+// field (BUG-Y5UF3K). Like [dimension.allowAll] it opts no field in.
+func (o *optionDimension) allowAll(enumValues map[string][]string) {
+	for field, values := range enumValues {
+		for _, v := range values {
+			o.allow(field, v)
+		}
+	}
 }
 
 func (o *optionDimension) observeDeny(field, option, role string) {

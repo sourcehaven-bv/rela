@@ -46,6 +46,7 @@ func BenchmarkVerdicts(b *testing.B) {
 	policy, err := acl.LoadPolicyBytes([]byte(`
 roles:
   editor:
+    read: [ticket]
     create: [ticket]
     update: [ticket]
     delete: [ticket]

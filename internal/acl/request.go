@@ -47,6 +47,12 @@ type Request struct {
 	// per call. Inactive (and fully transparent) for an interactive user or any
 	// principal whose type no baseline covers.
 	ceiling compiledCeiling
+
+	// roleVerbAnswers memoises [Request.RoleGrantsVerbOnFace], which the field
+	// verdicts ask per role per row. Under an active ceiling each answer
+	// clamps the role, so a list page would otherwise clamp the same role
+	// once per row. Allocated on first use.
+	roleVerbAnswers map[roleVerbQuestion]bool
 }
 
 // ForPrincipal opens a Request scope for `p`. Returns

@@ -122,7 +122,7 @@ type RelationView struct {
 // MetamodelReader is the narrow consumer-side view of the metamodel the Tier-B
 // checks need. The concrete implementation (an adapter over
 // *metamodel.Metamodel) is supplied by the caller; defining the interface here
-// keeps aclaudit free of a metamodel import and bounded to the 3 lookups it
+// keeps aclaudit free of a metamodel import and bounded to the lookups it
 // actually uses (rather than the whole, plimsoll-fat Metamodel surface).
 //
 // A nil MetamodelReader is valid: [Audit] then runs only the Tier-A
@@ -151,6 +151,9 @@ type MetamodelReader interface {
 	// HasFace reports whether entity type t declares the content state
 	// named face.
 	HasFace(t, face string) bool
+	// Faces returns the content states entity type t declares, or nil for
+	// a faceless or undeclared type.
+	Faces(t string) []string
 }
 
 // PermissionConsumer reports permissions referenced OUTSIDE acl.yaml. The
@@ -201,6 +204,7 @@ func Audit(p *acl.Policy, meta MetamodelReader, perms PermissionConsumer) []Find
 	}
 	var f []Finding
 	f = append(f, tierA(p, perms)...)
+	f = append(f, checkEveryoneOpensBlocks(p, meta)...) // A14
 	if meta != nil {
 		f = append(f, tierB(p, meta)...)
 	}

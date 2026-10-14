@@ -388,10 +388,18 @@ func TestPatch_ApplyOnNilMap(t *testing.T) {
 // what it was asked about, so tests can assert BOTH the decision and that
 // the gate was consulted at all.
 type recordingGate struct {
-	denied  map[string]bool
-	calls   int
-	lastSet map[string]any
-	lastUn  []string
+	denied map[string]bool
+	calls  int
+	// createCalls counts the calls that came through CheckCreateFieldWrite.
+	createCalls int
+	lastSet     map[string]any
+	lastUn      []string
+}
+
+// CheckCreateFieldWrite records a create check like CheckFieldWrite.
+func (g *recordingGate) CheckCreateFieldWrite(ctx context.Context, e *entity.Entity, set map[string]any) error {
+	g.createCalls++
+	return g.CheckFieldWrite(ctx, e, set, nil)
 }
 
 func (g *recordingGate) CheckFieldWrite(

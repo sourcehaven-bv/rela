@@ -12,33 +12,46 @@ body:
     "_self": "/api/v1/tickets/TKT-1",
     "id": "TKT-1",
     "type": "ticket",
-    "_title": "TKT-1",
-    "properties": {},
+    "_title": "Alpha",
+    "properties": {
+      "secret": "first-secret",
+      "status": "open",
+      "title": "Alpha"
+    },
     "content": "Alpha body.",
     "_actions": {
       "delete": false,
       "rename": false,
       "update": false
     },
-    "_fields": {},
+    "_fields": {
+      "note": {
+        "writable": false
+      },
+      "status": {
+        "options": {
+          "archived": false
+        }
+      }
+    },
     "_relations": {
       "implements": {
         "removable": false
       }
     },
-    "_redacted": [
-      "budget",
-      "closed_on",
-      "due",
-      "note",
-      "screenshot",
-      "secret",
-      "start",
-      "status",
-      "title"
-    ],
+    "_redacted": [],
     "_attachments": {},
-    "_transitions": {},
+    "_transitions": {
+      "status": [
+        {
+          "to": "closed",
+          "label": "Close",
+          "guard": "close-ticket",
+          "allowed": false,
+          "reason": "guard"
+        }
+      ]
+    },
     "_copies": [],
     "_faces": []
   },

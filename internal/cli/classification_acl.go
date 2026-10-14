@@ -117,8 +117,16 @@ func classificationViewFor(
 		if !req.ReadQuery(ctx, t).AllowAll {
 			continue
 		}
-		hidden := resolver.FieldVerdicts(ctx, entity.New("", t)).Visible
-		view.Entities[t] = visibleOf(shape.Entities[t].Fields, hidden)
+		// A role may read a type on some faces only, and field verdicts follow
+		// the face (BUG-Y5UF3K), so the worst case is the union over faces.
+		readable := map[string]bool{}
+		for _, face := range auditFaces(meta, t) {
+			hidden := resolver.FieldVerdicts(ctx, auditCandidate(t, face)).Visible
+			for _, f := range visibleOf(shape.Entities[t].Fields, hidden) {
+				readable[f] = true
+			}
+		}
+		view.Entities[t] = inOrder(shape.Entities[t].Fields, readable)
 	}
 	for _, r := range sortedKeys(shape.Relations) {
 		rs := shape.Relations[r]
@@ -135,9 +143,11 @@ func classificationViewFor(
 			view.Ends[r] = append(view.Ends[r], e)
 			// Relation `visible:` grants are keyed by the FROM type, so the
 			// union over readable pairs is the worst case.
-			hidden := resolver.RelationFieldVerdicts(ctx, entity.New("", e.From), r, props)
-			for _, f := range visibleOf(rs.Fields, hidden) {
-				visible[f] = true
+			for _, face := range auditFaces(meta, e.From) {
+				hidden := resolver.RelationFieldVerdicts(ctx, auditCandidate(e.From, face), r, props)
+				for _, f := range visibleOf(rs.Fields, hidden) {
+					visible[f] = true
+				}
 			}
 		}
 		if len(view.Ends[r]) > 0 {
@@ -145,6 +155,28 @@ func classificationViewFor(
 		}
 	}
 	return view, nil
+}
+
+// auditFaces returns the faces a candidate of entityType is evaluated on: each
+// declared face, or the unnamed face of a faceless type.
+func auditFaces(meta *metamodel.Metamodel, entityType string) []entity.Face {
+	names := metamodel.FaceOrderOf(meta, entityType)
+	if len(names) == 0 {
+		return []entity.Face{""}
+	}
+	faces := make([]entity.Face, len(names))
+	for i, name := range names {
+		faces[i] = entity.Face(name)
+	}
+	return faces
+}
+
+// auditCandidate is an id-less entity of entityType on face, standing in for
+// every row of that type and face.
+func auditCandidate(entityType string, face entity.Face) *entity.Entity {
+	e := entity.New("", entityType)
+	e.Face = face
+	return e
 }
 
 // visibleOf returns fields minus the ones hidden holds (a deny map: presence

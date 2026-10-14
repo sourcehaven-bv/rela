@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -54,6 +55,9 @@ type bindingContext struct {
 	globalRoles map[string]bool
 	lookup      RelationLookup
 	resolver    *PolicyResolver
+	// roleGrants answers whether a role in entityRoles holds a verb on the
+	// entity's type and face, under the request's client ceiling.
+	roleGrants roleVerbGrants
 	// userID is the principal's identity as it appears on role-relation
 	// edges and current_user.id.
 	userID string
@@ -68,6 +72,29 @@ type bindingContext struct {
 	// resolve call scans the graph at most once for them.
 	outgoing      map[string]int
 	outgoingReady bool
+}
+
+// roleHoldsVerb reports whether role, which applies to the entity, holds verb
+// on the entity's type and face.
+func (bc *bindingContext) roleHoldsVerb(role string, verb acl.Verb) bool {
+	return bc.roleGrants.RoleGrantsVerbOnFace(role, verb, bc.entity.Type, bc.entity.Face)
+}
+
+// verbMemo returns roleHoldsVerb for one verb, remembering each role's
+// answer, for a caller that asks about the same role more than once.
+func (bc *bindingContext) verbMemo(verb acl.Verb) func(role string) bool {
+	var answers map[string]bool
+	return func(role string) bool {
+		held, seen := answers[role]
+		if !seen {
+			held = bc.roleHoldsVerb(role, verb)
+			if answers == nil {
+				answers = map[string]bool{}
+			}
+			answers[role] = held
+		}
+		return held
+	}
 }
 
 // outgoingCounts returns the entity's outgoing-edge counts, loading

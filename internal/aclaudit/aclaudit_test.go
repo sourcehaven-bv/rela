@@ -37,6 +37,8 @@ func (m fakeMetamodel) HasFace(t, face string) bool {
 	return slices.Contains(m.faces[t], face)
 }
 
+func (m fakeMetamodel) Faces(t string) []string { return m.faces[t] }
+
 func (m fakeMetamodel) GetRelation(name string) (RelationView, bool) {
 	from, ok := m.relations[name]
 	if !ok {
@@ -204,6 +206,111 @@ func TestAudit_A3_EveryoneReadOnly_NoFinding(t *testing.T) {
 	}}
 	if got := Audit(p, nil, allPerms{}); hasRule(got, "A3-everyone-privileged") {
 		t.Errorf("read-only everyone must not flag A3, got %+v", got)
+	}
+}
+
+// TestAudit_A14_EveryoneOpensFieldBlock: field verdicts are the union of every
+// role on the row (BUG-Y5UF3K), so an everyone role that holds a block's verb
+// on some face and declares no block of its own makes the block restrict
+// nobody there. The verb is the dimension's own, and the faces are the
+// declared ones.
+func TestAudit_A14_EveryoneOpensFieldBlock(t *testing.T) {
+	t.Parallel()
+	block := map[string][]acl.FieldGrant{"ticket": {{Field: "title"}}}
+	policyBlock := map[string][]acl.FieldGrant{"policy": {{Field: "title"}}}
+	meta := fakeMetamodel{faces: map[string][]string{"policy": {"draft", "published"}}}
+	tests := []struct {
+		name     string
+		everyone acl.RoleDef
+		watcher  acl.RoleDef
+		subjects []string
+	}{
+		{
+			name:     "everyone reads every type",
+			everyone: acl.RoleDef{Read: []string{"*"}},
+			watcher:  acl.RoleDef{Read: []string{"ticket"}, Visible: block},
+			subjects: []string{"watcher.visible.ticket (read)"},
+		},
+		{
+			name:     "everyone reads one face",
+			everyone: acl.RoleDef{Read: []string{"policy@published"}},
+			watcher:  acl.RoleDef{Read: []string{"policy"}, Visible: policyBlock},
+			subjects: []string{"watcher.visible.policy (read)"},
+		},
+		{
+			name:     "everyone updates the type",
+			everyone: acl.RoleDef{Read: []string{"ticket"}, Update: []string{"ticket"}},
+			watcher: acl.RoleDef{Read: []string{"ticket"}, Update: []string{"ticket"}, Fields: block,
+				Options: map[string][]acl.OptionGrant{"ticket": {{Field: "status", Option: "open"}}}},
+			subjects: []string{"watcher.fields.ticket (update)", "watcher.options.ticket (update)"},
+		},
+		{
+			name:     "a create grant opens a fields block on create only",
+			everyone: acl.RoleDef{Create: []string{"ticket"}},
+			watcher:  acl.RoleDef{Read: []string{"ticket"}, Update: []string{"ticket"}, Fields: block},
+			subjects: []string{"watcher.fields.ticket (create)"},
+		},
+		{
+			name:     "a wildcard update covers no named face",
+			everyone: acl.RoleDef{Read: []string{"*"}, Update: []string{"*"}},
+			watcher:  acl.RoleDef{Read: []string{"policy"}, Update: []string{"policy"}, Fields: policyBlock},
+		},
+		{
+			name:     "everyone declares its own block",
+			everyone: acl.RoleDef{Read: []string{"*"}, Visible: block},
+			watcher:  acl.RoleDef{Read: []string{"ticket"}, Visible: block},
+		},
+		{
+			name:     "everyone reads another type",
+			everyone: acl.RoleDef{Read: []string{"person"}},
+			watcher:  acl.RoleDef{Read: []string{"ticket"}, Visible: block},
+		},
+		{
+			name:     "a read grant does not open a fields block",
+			everyone: acl.RoleDef{Read: []string{"*"}},
+			watcher:  acl.RoleDef{Read: []string{"ticket"}, Update: []string{"ticket"}, Fields: block},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := &acl.Policy{Roles: map[string]acl.RoleDef{acl.EveryoneRole: tc.everyone, "watcher": tc.watcher}}
+			var subjects []string
+			for _, f := range Audit(p, meta, allPerms{}) {
+				if f.Rule != "A14-everyone-opens-field-block" {
+					continue
+				}
+				if f.Severity != High {
+					t.Errorf("A14 severity = %v, want high", f.Severity)
+				}
+				subjects = append(subjects, f.Subject)
+			}
+			if !slices.Equal(subjects, tc.subjects) {
+				t.Errorf("A14 subjects = %v, want %v", subjects, tc.subjects)
+			}
+		})
+	}
+}
+
+// TestAudit_A14_DetailNamesTheFaces: a block opened on some faces says which.
+func TestAudit_A14_DetailNamesTheFaces(t *testing.T) {
+	t.Parallel()
+	p := &acl.Policy{Roles: map[string]acl.RoleDef{
+		acl.EveryoneRole: {Read: []string{"policy@published"}},
+		"watcher": {Read: []string{"policy"},
+			Visible: map[string][]acl.FieldGrant{"policy": {{Field: "title"}}}},
+	}}
+	meta := fakeMetamodel{faces: map[string][]string{"policy": {"draft", "published"}}}
+	var details []string
+	for _, f := range Audit(p, meta, allPerms{}) {
+		if f.Rule == "A14-everyone-opens-field-block" {
+			details = append(details, f.Detail)
+		}
+	}
+	namesOnlyPublished := len(details) == 1 && strings.Contains(details[0], "on faces published") &&
+		!strings.Contains(details[0], "draft")
+	if !namesOnlyPublished {
+		t.Errorf("A14 details = %q, want one naming only the published face", details)
 	}
 }
 

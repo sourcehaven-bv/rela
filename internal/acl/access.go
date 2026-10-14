@@ -8,11 +8,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 )
 
-// Verb is a read-or-write access verb the who-can query asks about. It
-// widens [Op] (create/update/delete/rename) with read, which has no Op
-// because the write path never authorizes reads — the read path is
-// Request.readQuery. VerbRead routes through the read machinery;
-// every other verb routes through the per-verb write grant.
+// Verb is a read-or-write access verb. The who-can query asks about one,
+// and so does the affordance resolver when it decides what a role without a
+// field block contributes ([Request.RoleGrantsVerbOnFace]). It widens [Op]
+// (create/update/delete/rename) with read, which has no Op because the write
+// path never authorizes reads; the read path is Request.readQuery. VerbRead
+// routes through the read machinery; every other verb routes through the
+// per-verb write grant.
 type Verb string
 
 // Verb constants. VerbRead maps to the read path; the rest map 1:1 to

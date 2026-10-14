@@ -23,7 +23,11 @@ type historicalSubjectKey struct{}
 //   - to stop that reduced role set from silently defaulting to all-visible, a
 //     type gated by `visible:` gets a type-level closed-world in history
 //     (FieldVerdicts): a field is shown only if a globally-held role
-//     affirmatively grants it visible.
+//     affirmatively grants it visible. A global role without a `visible:`
+//     block for the type grants every field when it reads the snapshot's type
+//     and face (BUG-Y5UF3K). The face is the one the snapshot records, so a
+//     role that reads only `type@published` shows nothing on a draft snapshot
+//     or on one recorded without a face.
 //
 // Reader-side inputs stay LIVE — current_user and the reader's global roles are
 // assignment-based, not subject-world, so per-reader redaction still applies and
