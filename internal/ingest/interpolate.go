@@ -14,12 +14,12 @@ import "strings"
 // second reference. An unterminated `{{` is emitted verbatim so the operator
 // sees the typo.
 func Interpolate(tmpl string, resolve func(ref string) string) string {
-	return interpolateWith(tmpl, resolve, nil)
+	return interpolateWith(tmpl, func(ref string) string { return FlattenToLine(resolve(ref)) })
 }
 
-// interpolateWith is [Interpolate] that leaves a value unflattened when block
-// reports its reference as a block. Nil block flattens everything.
-func interpolateWith(tmpl string, resolve func(ref string) string, block func(ref string) bool) string {
+// interpolateWith is [Interpolate] with the per-value step left to the
+// caller: value receives each reference and returns what to substitute.
+func interpolateWith(tmpl string, value func(ref string) string) string {
 	if !strings.Contains(tmpl, "{{") {
 		return tmpl
 	}
@@ -37,17 +37,26 @@ func interpolateWith(tmpl string, resolve func(ref string) string, block func(re
 			b.WriteString(after)
 			break
 		}
-		// Flatten the VALUE, not the finished template: the newline that must
-		// not survive is a source-supplied one. See [FlattenToLine].
-		name := strings.TrimSpace(ref)
-		if value := resolve(name); block != nil && block(name) {
-			b.WriteString(strings.ReplaceAll(value, "\x00", ""))
-		} else {
-			b.WriteString(FlattenToLine(value))
-		}
+		b.WriteString(value(strings.TrimSpace(ref)))
 		rest = remainder
 	}
 	return b.String()
+}
+
+// markdownEscaper backslash-escapes the punctuation that can open markdown
+// or HTML: images and links, raw HTML and character references, emphasis,
+// code, ATX and setext headings, thematic breaks, tables and strikethrough. CommonMark allows a backslash
+// before any ASCII punctuation, so escaping more than needed is harmless.
+// A Replacer is single-pass, so an escape is never escaped again.
+var markdownEscaper = strings.NewReplacer(
+	`\`, `\\`, "`", "\\`", "*", `\*`, "_", `\_`, "[", `\[`, "]", `\]`,
+	"<", `\<`, ">", `\>`, "&", `\&`, "!", `\!`, "#", `\#`, "|", `\|`, "~", `\~`,
+	"-", `\-`, "=", `\=`, "+", `\+`,
+)
+
+// EscapeMarkdown returns s as markdown that renders as the literal text s.
+func EscapeMarkdown(s string) string {
+	return markdownEscaper.Replace(s)
 }
 
 // FlattenToLine collapses newlines and NULs in ONE INTERPOLATED VALUE, so a

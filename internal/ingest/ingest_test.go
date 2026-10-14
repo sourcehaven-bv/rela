@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/markdown"
+
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/ingestspec"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -102,7 +104,17 @@ type mapSource map[string]string
 
 func (m mapSource) Resolve(ref string) string          { return m[ref] }
 func (m mapSource) DefaultMatchRef(prop string) string { return "body." + prop }
-func (m mapSource) IsBlock(ref string) bool            { return strings.HasPrefix(ref, "block.") }
+
+// Kind reads the prefix: block.* is markdown, text.* is text, the rest raw.
+func (m mapSource) Kind(ref string) ValueKind {
+	switch {
+	case strings.HasPrefix(ref, "block."):
+		return ValueMarkdown
+	case strings.HasPrefix(ref, "text."):
+		return ValueText
+	}
+	return ValueRaw
+}
 
 func ticket(id, host string) *entity.Entity {
 	return &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"host": host}, Content: "## Log\n"}
@@ -500,5 +512,70 @@ func TestIsConflict(t *testing.T) {
 				t.Errorf("IsConflict = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRun_TextIsEscapedOnlyInBodies pins where a text value is escaped: in
+// the content of a new entity and in an appended section, where it would
+// otherwise render as markup, but not in a property, which is not markdown.
+// A raw value is never escaped.
+func TestRun_TextIsEscapedOnlyInBodies(t *testing.T) {
+	const text = "![x](https://t/p.gif) *hi*"
+	const escaped = `\!\[x\](https://t/p.gif) \*hi\*`
+	w := &world{}
+	m := ingestspec.Mapping{
+		Find: &ingestspec.Find{Type: "ticket", Match: []string{"host"}},
+		CreateIfMissing: &ingestspec.Create{
+			Properties: map[string]string{"title": "{{text.v}}"},
+			Content:    "{{text.v}} {{body.v}}\n\n## Log\n",
+		},
+		Then: []ingestspec.Step{{AppendSection: &ingestspec.AppendSection{Section: "Log", Content: "- {{text.v}} {{body.v}}"}}},
+	}
+	src := mapSource{"body.host": "h", "text.v": text, "body.v": "**raw**"}
+	if _, err := Run(context.Background(), w.deps(), m, src); err != nil {
+		t.Fatal(err)
+	}
+	created := w.created[0]
+	if !strings.HasPrefix(created.Content, escaped+" **raw**") {
+		t.Errorf("content = %q, want the text escaped and the raw value as it is", created.Content)
+	}
+	if got := created.Properties["title"]; got != text {
+		t.Errorf("title = %q, want the text unchanged", got)
+	}
+	appended := *w.patches[0].Content
+	if !strings.Contains(appended, "- "+escaped+" **raw**") {
+		t.Errorf("appended = %q, want the text escaped and the raw value as it is", appended)
+	}
+}
+
+func TestEscapeMarkdown(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                      ``,
+		"plain text 1.2":        "plain text 1.2",
+		`a\b`:                   `a\\b`,
+		`\*`:                    `\\\*`,
+		"<img src=x>":           `\<img src\=x\>`,
+		"===":                   `\=\=\=`,
+		"--- + x":               `\-\-\- \+ x`,
+		"&#33;[x](y)":           `\&\#33;\[x\](y)`,
+		"# h | t ~~s~~ `c` _e_": `\# h \| t \~\~s\~\~ \` + "`" + `c\` + "`" + ` \_e\_`,
+	} {
+		if got := EscapeMarkdown(in); got != want {
+			t.Errorf("EscapeMarkdown(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestRun_TextCannotForgeASetextHeading pins that a text value alone on an
+// appended line cannot turn the line above it into a heading, which would end
+// the section and send every later append above it.
+func TestRun_TextCannotForgeASetextHeading(t *testing.T) {
+	for _, title := range []string{"===", "---"} {
+		content := markdown.AppendToSection("## Log\nfirst entry\n", "Log",
+			interpolateBody(mapSource{"text.v": title}, "{{text.v}}", false))
+		content = markdown.AppendToSection(content, "Log", "later")
+		if !strings.HasSuffix(strings.TrimSpace(content), "later") {
+			t.Errorf("title %q: content = %q, want later appended last in Log", title, content)
+		}
 	}
 }

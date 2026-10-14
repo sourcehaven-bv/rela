@@ -7,6 +7,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/feed"
 	"github.com/Sourcehaven-BV/rela/internal/htmlmd"
+	"github.com/Sourcehaven-BV/rela/internal/ingest"
 )
 
 func TestItemSource_Resolve(t *testing.T) {
@@ -52,8 +53,10 @@ func TestItemSource_Resolve(t *testing.T) {
 	if !strings.Contains(summary, "## Head") {
 		t.Errorf("summary %q, want the heading converted", summary)
 	}
-	if src.DefaultMatchRef("id") != "item.id" || !src.IsBlock("item.summary") || src.IsBlock("item.title") {
-		t.Error("DefaultMatchRef or IsBlock wrong")
+	kindsRight := src.Kind("item.summary") == ingest.ValueMarkdown &&
+		src.Kind("item.title") == ingest.ValueText && src.Kind("item.link") == ingest.ValueRaw
+	if src.DefaultMatchRef("id") != "item.id" || !kindsRight {
+		t.Error("DefaultMatchRef or Kind wrong")
 	}
 }
 
@@ -78,6 +81,14 @@ func TestItemSource_Links(t *testing.T) {
 		"mailto:a@example.com":   "",
 		"http://[::1":            "",
 		"\thttp://a.example/y\n": "http://a.example/y",
+		// Markup in the query or fragment is encoded, so the link is
+		// safe to place in a markdown body.
+		"https://a.example/x)![](https://t.example/p.gif)": "https://a.example/x%29%21%5B%5D%28https://t.example/p.gif%29",
+		"https://a)b/":                                    "",
+		"https://x<details>/":                             "",
+		"https://a.example:8a/":                           "",
+		"https://[::1]:8080/x":                            "https://[::1]:8080/x",
+		"https://a.example/?q=![x](https://t/p.gif)#<b>_": "https://a.example/?q=%21%5Bx%5D%28https://t/p.gif%29#%3Cb%3E%5F",
 	} {
 		if got := src.link(in); got != want {
 			t.Errorf("link(%q) = %q, want %q", in, got, want)

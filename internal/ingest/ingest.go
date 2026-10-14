@@ -35,6 +35,7 @@ import (
 	"iter"
 	"log/slog"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -69,12 +70,32 @@ type Source interface {
 	// webhook. A reference cannot carry record data into template position:
 	// its value goes through Resolve and is flattened like any other.
 	DefaultMatchRef(prop string) string
-	// IsBlock reports whether ref holds a multi-line markdown block that the
-	// source has already made safe, such as feed HTML converted by htmlmd.
-	// Only create_if_missing.content keeps a block's line breaks; every other
-	// template flattens it like any value. A webhook body has no blocks.
-	IsBlock(ref string) bool
+	// Kind reports how a markdown body treats the value of ref.
+	Kind(ref string) ValueKind
 }
+
+// ValueKind is how a value is written into a markdown body: the content of a
+// new entity or an appended section line. Properties are not markdown, so
+// every kind reaches a property flattened and otherwise unchanged.
+type ValueKind int
+
+const (
+	// ValueText is plain text from an untrusted source. It is flattened and
+	// then escaped with [EscapeMarkdown], so a title cannot place an image,
+	// markup or a heading in the body. A bare URL in it may still render as
+	// a link, which shows its target. ValueText is the zero value, so a
+	// source that forgets a reference fails safe.
+	ValueText ValueKind = iota
+	// ValueRaw is inserted as it is, flattened to one line. A webhook value
+	// is raw: its producer is authenticated by the proxy and may send
+	// markdown on purpose.
+	ValueRaw
+	// ValueMarkdown is markdown the source has already made safe, such as
+	// feed HTML converted by htmlmd. It is never escaped, and it keeps its
+	// line breaks in create_if_missing.content only: the entity is new, so
+	// there is no section structure for it to forge a sibling of.
+	ValueMarkdown
+)
 
 // Reader is the ACL-gated read the find step uses.
 //
@@ -223,11 +244,24 @@ func interpolate(src Source, tmpl string) string {
 	return Interpolate(tmpl, src.Resolve)
 }
 
-// interpolateBody expands the content of a new entity. It is the one template
-// where a source's block values keep their line breaks: the entity is new, so
-// there is no existing section structure for a block to forge a sibling of.
-func interpolateBody(src Source, tmpl string) string {
-	return interpolateWith(tmpl, src.Resolve, src.IsBlock)
+// interpolateBody expands a template that becomes markdown. keepLines is set
+// for the content of a new entity, the one body where a [ValueMarkdown]
+// value keeps its line breaks.
+func interpolateBody(src Source, tmpl string, keepLines bool) string {
+	return interpolateWith(tmpl, func(ref string) string {
+		value := src.Resolve(ref)
+		switch src.Kind(ref) {
+		case ValueMarkdown:
+			if keepLines {
+				return strings.ReplaceAll(value, "\x00", "")
+			}
+			return FlattenToLine(value)
+		case ValueText:
+			return EscapeMarkdown(FlattenToLine(value))
+		default:
+			return FlattenToLine(value)
+		}
+	})
 }
 
 // matchExpr is the template for one find.match property.
@@ -369,7 +403,7 @@ func createEntity(ctx context.Context, d Deps, m ingestspec.Mapping, src Source)
 		}
 	}
 	if spec.Content != "" {
-		e.Content = interpolateBody(src, spec.Content)
+		e.Content = interpolateBody(src, spec.Content, true)
 	}
 
 	opts := entity.CreateOptions{Variant: spec.Template}
@@ -431,10 +465,10 @@ func applySteps(
 	for i, step := range m.Then {
 		switch {
 		case step.AppendSection != nil:
-			// Interpolate flattens each substituted value, so the only
-			// newlines reaching here are ones the OPERATOR wrote in the
-			// template: those are theirs to make, and to get wrong.
-			block := interpolate(src, step.AppendSection.Content)
+			// Each substituted value is flattened, so the only newlines
+			// reaching here are ones the OPERATOR wrote in the template:
+			// those are theirs to make, and to get wrong.
+			block := interpolateBody(src, step.AppendSection.Content, false)
 			content = markdown.AppendToSection(content, step.AppendSection.Section, block)
 			contentChanged = true
 		case len(step.Set) > 0:

@@ -308,6 +308,11 @@ that could emit a newline could emit `## Heading`, which would become a SIBLING
 of the section it was appended to, so every later delivery would land above it
 and the document would silently reshape itself.
 
+A value is not otherwise escaped: `**bold**` or a link in `{{body.note}}` renders
+as markdown. The producer is authenticated by the proxy and may send markdown on
+purpose. [Feed subscriptions](feed-subscriptions.md), whose source is untrusted,
+escape their text values instead.
+
 The shape you write in `content:` is not touched. It is your document; a heading
 level that collides with the surrounding structure is yours to get wrong, the
 same as any other line you put in a template.

@@ -35,6 +35,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Sourcehaven-BV/rela/internal/ingest"
 	"github.com/Sourcehaven-BV/rela/internal/ingestspec"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/secrets"
@@ -108,21 +109,24 @@ var nameRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 // headerNameRegex is the RFC 7230 token grammar.
 var headerNameRegex = regexp.MustCompile(`^[A-Za-z0-9!#$%&'*+._` + "`" + `|~^-]{1,128}$`)
 
-// refs is the closed set of references a subscription template may use. A
-// webhook body is open-ended, but a feed item has a fixed shape, so a typo
-// such as item.guid is a load error rather than a value that is always empty.
-var refs = map[string]bool{
-	"item.id": true, "item.title": true, "item.link": true,
-	"item.summary": true, "item.content": true,
-	"item.published": true, "item.published_date": true, "item.updated": true,
-	"item.authors": true, "item.categories": true,
-	"feed.title": true, "feed.link": true,
-	"subscription.name": true,
-	"now":               true, "today": true,
+// refs is the closed set of references a subscription template may use,
+// with how a markdown body treats each. A webhook body is open-ended, but a
+// feed item has a fixed shape, so a typo such as item.guid is a load error
+// rather than a value that is always empty.
+//
+// The HTML fields resolve to markdown htmlmd has sanitized. Every other
+// field the publisher writes is text, escaped in a body. The rest are raw:
+// links rela rebuilt with their markdown punctuation encoded, timestamps,
+// and the operator's own subscription name.
+var refs = map[string]ingest.ValueKind{
+	"item.summary": ingest.ValueMarkdown, "item.content": ingest.ValueMarkdown,
+	"item.id": ingest.ValueText, "item.title": ingest.ValueText,
+	"item.authors": ingest.ValueText, "item.categories": ingest.ValueText,
+	"feed.title": ingest.ValueText,
+	"item.link":  ingest.ValueRaw, "feed.link": ingest.ValueRaw,
+	"item.published": ingest.ValueRaw, "item.published_date": ingest.ValueRaw, "item.updated": ingest.ValueRaw,
+	"subscription.name": ingest.ValueRaw, "now": ingest.ValueRaw, "today": ingest.ValueRaw,
 }
-
-// blockRefs are the references that resolve to a multi-line markdown block.
-var blockRefs = map[string]bool{"item.summary": true, "item.content": true}
 
 // Parse decodes and validates subscriptions.yaml. Every problem is reported,
 // joined into one error.
@@ -250,17 +254,23 @@ func (s Subscription) validateRefs() []string {
 	bodyHasBlock := false
 	s.Templates(func(path, tmpl string) {
 		for _, ref := range templateRefs(tmpl) {
-			if !refs[ref] {
+			kind, known := refs[ref]
+			if !known {
 				errs = append(errs, fmt.Sprintf("%s uses unknown reference {{%s}}", path, ref))
 			}
-			if path == "create_if_missing.content" && blockRefs[ref] {
+			if kind == ingest.ValueMarkdown && strings.HasSuffix(path, ".append_section.content") {
+				// Flattened, a converted "## heading" still starts the
+				// appended line and forges a sibling section.
+				errs = append(errs, fmt.Sprintf("%s may not use {{%s}}; feed headings could forge a section", path, ref))
+			}
+			if path == "create_if_missing.content" && kind == ingest.ValueMarkdown {
 				bodyHasBlock = true
 			}
 		}
 	})
 	if s.Find != nil {
 		for _, prop := range s.Find.Match {
-			if _, ok := s.Find.Values[prop]; !ok && !refs["item."+prop] {
+			if _, ok := s.Find.Values[prop]; !ok && !isRef("item."+prop) {
 				errs = append(errs, fmt.Sprintf(
 					"find.match %q has no find.values entry and item.%s is not an item field", prop, prop))
 			}
@@ -293,4 +303,9 @@ func templateRefs(tmpl string) []string {
 		out = append(out, strings.TrimSpace(ref))
 		rest = remainder
 	}
+}
+
+func isRef(ref string) bool {
+	_, ok := refs[ref]
+	return ok
 }
