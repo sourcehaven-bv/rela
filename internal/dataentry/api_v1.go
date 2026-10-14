@@ -27,6 +27,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // --- API v1 Types ---
@@ -348,11 +349,19 @@ var errListLoad = errors.New("list load failed")
 func (a *App) listPage(
 	ctx context.Context, typeName string, query map[string][]string, page, perPage int,
 ) (rows []*entityPkg.Entity, total int, ordering *relationOrdering, err error) {
-	ctx, n, err := resolveListNarrowing(ctx, a, typeName, query)
+	// FIRST, before anything reads a row: the field gate's answer depends on
+	// the policy and the caller's roles only, so the refusal must not vary
+	// with what the type holds.
+	state := a.State()
+	gated, err := gateAppListQuery(ctx, a, state, typeName, query)
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	if plan, empty, ok := n.pushdownPlan(ctx, a, typeName, query, page, perPage); ok {
+	ctx, n, err := resolveListNarrowing(ctx, a, state, typeName, query)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	if plan, empty, ok := n.pushdownPlan(ctx, typeName, gated, page, perPage); ok {
 		if empty {
 			return nil, 0, nil, nil
 		}
@@ -360,7 +369,7 @@ func (a *App) listPage(
 		return rows, total, nil, err
 	}
 	cond, scope := n.cond, n.scope
-	all, ordering, err := scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
+	all, ordering, err := scopedSortedEntitiesScoped(ctx, a, typeName, gated, scope)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -390,11 +399,16 @@ func (a *App) scopedSortedEntities(
 	if err != nil {
 		return nil, err
 	}
-	scope, err := viewQueryScope(a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName)
+	state := a.State()
+	scope, err := viewQueryScope(a.queryScopes, state.Cfg, state.Meta, typeName, scopeName)
 	if err != nil {
 		return nil, err
 	}
-	rows, _, err := scopedSortedEntitiesScoped(ctx, a, typeName, query, scope)
+	gated, err := gateAppListQuery(ctx, a, state, typeName, query)
+	if err != nil {
+		return nil, err
+	}
+	rows, _, err := scopedSortedEntitiesScoped(ctx, a, typeName, gated, scope)
 	return rows, err
 }
 
@@ -402,7 +416,8 @@ func (a *App) scopedSortedEntities(
 // scope already resolved, for callers that resolved it to decide something
 // else first (listPage uses it to gate the pushdown). It also returns the
 // relation ordering a page-scoped request was sorted by, if any; see
-// [resolvePageScope].
+// [resolvePageScope]. The query is a [gatedListQuery], so every property it
+// filters or sorts on is one the principal sees on every row.
 //
 // A package function taking the App rather than a method, to keep App under
 // its plimsoll load line — the discipline the directive at [App] records:
@@ -411,9 +426,10 @@ func scopedSortedEntitiesScoped(
 	ctx context.Context,
 	a *App,
 	typeName string,
-	query map[string][]string,
+	query gatedListQuery,
 	scope resolvedQueryScope,
 ) ([]*entityPkg.Entity, *relationOrdering, error) {
+	params := query.params
 	// Stamp the scope's request-scoped state ONCE, before any row is
 	// evaluated — a scope reading current_user resolves it here, not per row.
 	ctx, err := scope.bind(ctx)
@@ -422,7 +438,7 @@ func scopedSortedEntitiesScoped(
 	}
 	// The page scope resolves BEFORE the load, so an anchor the principal
 	// cannot see answers the uniform 404 whatever the type's verdict is.
-	pageIDs, ordering, pageScoped, err := resolvePageScope(ctx, a, query, typeName)
+	pageIDs, ordering, pageScoped, err := resolvePageScope(ctx, a, params, typeName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -463,7 +479,7 @@ func scopedSortedEntitiesScoped(
 	// over relevance ranking, same approach SearchView uses for filtering.
 	// Backend errors surface as HTTP 500 rather than rendering an empty list
 	// and pretending the search succeeded.
-	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(query, "q"), typeName)
+	searchResult, err := a.queries.freeTextIDsForType(ctx, queryGet(params, "q"), typeName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -477,18 +493,13 @@ func scopedSortedEntitiesScoped(
 		entities = filtered
 	}
 
-	// Classify each filter[<key>] param as property vs relation ONCE, up
-	// front, so both passes agree on routing. The config's FilterControls are
-	// authoritative (RR-0HWAS0 / RR-B0JPPL): a relation filter applies only
-	// when a list or kanban control of this type configures it. Name-based
-	// GetRelationDef is only a fallback and only ever routes AWAY from
-	// properties, never toward relations without a control.
-	isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
-	entities, err = applyV1Filters(entities, query, typeName, isRelationKey)
+	// Each filter[<key>] param was classified as property vs relation ONCE,
+	// by the gate, so both passes agree on routing with the gate itself.
+	entities, err = applyV1Filters(entities, query)
 	if err != nil {
 		return nil, nil, err
 	}
-	entities, err = a.applyRelationFilters(ctx, entities, query, typeName, isRelationKey)
+	entities, err = a.applyRelationFilters(ctx, entities, params, typeName, query.isRelationKey)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -615,7 +626,7 @@ func (a *App) applyRelationFilters(
 
 		direction, _ := cfg.RelationFilterDirection(typeName, relation)
 		matched, merr := matchRelationFilterMany(
-			ctx, a.Services(), a.visibleReader, entities, relation, direction, want)
+			ctx, a.Services(), a.visibleReader, appRedactor(a), entities, relation, direction, want)
 		if merr != nil {
 			return nil, fmt.Errorf("%w: relation filter %q: %w", errListLoad, relation, merr)
 		}
@@ -643,9 +654,16 @@ func (a *App) applyRelationFilters(
 // A store failure is returned, never folded into an empty verdict map: an
 // empty map reads as "no row matches", which for a `ne` filter admits EVERY
 // row — a backend fault would silently widen a filter whose job is to narrow.
+//
+// The title compared is the one the principal is shown: each served neighbor
+// is redacted once with red before its display title is taken. The served
+// headers are gated but not redacted, so comparing their raw title would let
+// `filter[<relation>]=<guess>` confirm a display property that `visible:`
+// hides on the neighbor (BUG-WJSYQT review). The field gate does not cover
+// this key, because it names a relation, not a property of the listed type.
 func matchRelationFilterMany(
-	ctx context.Context, svc Services, visible visibleReader, rows []*entityPkg.Entity,
-	relation string, direction dataentryconfig.Direction, want string,
+	ctx context.Context, svc Services, visible visibleReader, red visibility.FieldRedactor,
+	rows []*entityPkg.Entity, relation string, direction dataentryconfig.Direction, want string,
 ) (map[string]bool, error) {
 	matched := make(map[string]bool, len(rows))
 	if len(rows) == 0 {
@@ -668,6 +686,7 @@ func matchRelationFilterMany(
 	if err != nil {
 		return nil, err
 	}
+	served = redactHeaders(ctx, red, served)
 	for _, re := range edges {
 		h, ok := served[re.targetID]
 		if !ok || svc.Meta.DisplayTitle(h.ID, h.Type, h.Properties) != want {
@@ -679,6 +698,23 @@ func matchRelationFilterMany(
 		matched[re.rowID] = true
 	}
 	return matched, nil
+}
+
+// redactHeaders redacts each header once with red, priming any `related(...)`
+// verdicts for the whole batch first so the cost does not grow per header.
+func redactHeaders(
+	ctx context.Context, red visibility.FieldRedactor, headers map[string]store.EntityHeader,
+) map[string]store.EntityHeader {
+	probes := make([]*entityPkg.Entity, 0, len(headers))
+	for _, h := range headers {
+		probes = append(probes, &entityPkg.Entity{ID: h.ID, Type: h.Type, Face: h.Face, Properties: h.Properties})
+	}
+	ctx = visibility.PrimeTraversals(ctx, red, probes)
+	out := make(map[string]store.EntityHeader, len(headers))
+	for id, h := range headers {
+		out[id] = visibility.RedactHeader(ctx, red, h)
+	}
+	return out
 }
 
 // relationFilterEdge is one edge of a relation filter, oriented from the
@@ -727,28 +763,60 @@ func relationFilterEdges(
 	return edges, neighborIDs, nil
 }
 
-// parseRelationFilterKey parses a `filter[<rel>]` or `filter[<rel>][<op>]` key
-// using the SAME `][`-split logic as applyV1Filters, so an operator segment is
-// recognized rather than being swallowed into the relation name (RR-6RF60V,
-// the old TrimPrefix/TrimSuffix bug). Returns (relation, operator, ok) with
-// operator defaulting to "eq". ok is false for a malformed key (empty relation,
-// too many segments).
-func parseRelationFilterKey(key string) (relation, operator string, ok bool) {
-	filterKey := strings.TrimPrefix(key, "filter[")
-	filterKey = strings.TrimSuffix(filterKey, "]")
-	filterKey = strings.TrimSuffix(filterKey, "][") // was "...[]"
-	parts := strings.Split(filterKey, "][")
-	if len(parts) > 2 || parts[0] == "" {
-		return "", "", false
+// filterKey is a parsed `filter[...]` query key.
+type filterKey struct {
+	// property is the property or relation the key names.
+	property string
+	// operator defaults to "eq".
+	operator string
+	// arrayForm records an explicit `[]` suffix: each repeated param is one
+	// member, verbatim. Without it, a lone param is the comma form. The
+	// suffix, not the number of params, is the signal, since a one-element
+	// array is indistinguishable from a comma list by count.
+	arrayForm bool
+}
+
+// parseFilterKey parses `filter[property]`, `filter[property][operator]` or
+// `filter[property][operator][]`. It is the ONE parser of the key shape: the
+// field gate, the Go filter, the relation pass and the pushdown all read keys
+// through it, so the gate checks exactly the property each of them evaluates
+// (BUG-WJSYQT).
+//
+// A malformed key like `filter[prop][][weird]` produces three segments; more
+// than two segments, or an empty property or operator, returns errBadFilter.
+// On an empty operator the property is still set, so a caller can route a
+// relation key before refusing.
+func parseFilterKey(key string) (filterKey, error) {
+	inner := strings.TrimSuffix(strings.TrimPrefix(key, "filter["), "]")
+	trimmed := strings.TrimSuffix(inner, "][") // was "...[]"
+	fk := filterKey{operator: "eq", arrayForm: trimmed != inner}
+	parts := strings.Split(trimmed, "][")
+	if len(parts) > 2 {
+		return filterKey{}, fmt.Errorf("%w: key %q has too many segments", errBadFilter, key)
 	}
-	operator = "eq"
+	fk.property = parts[0]
+	if fk.property == "" {
+		return filterKey{}, fmt.Errorf("%w: key %q has an empty property", errBadFilter, key)
+	}
 	if len(parts) == 2 {
 		if parts[1] == "" {
-			return "", "", false
+			return fk, fmt.Errorf("%w: key %q has an empty operator segment", errBadFilter, key)
 		}
-		operator = parts[1]
+		fk.operator = parts[1]
 	}
-	return parts[0], operator, true
+	return fk, nil
+}
+
+// parseRelationFilterKey is [parseFilterKey] for a caller that only needs to
+// know whether the key is well formed. Returns (relation, operator, ok) with
+// operator defaulting to "eq"; an operator segment is recognized rather than
+// being swallowed into the relation name (RR-6RF60V).
+func parseRelationFilterKey(key string) (relation, operator string, ok bool) {
+	fk, err := parseFilterKey(key)
+	if err != nil {
+		return "", "", false
+	}
+	return fk.property, fk.operator, true
 }
 
 // queryGet returns the first value for key from a raw query map, or "".
@@ -1094,6 +1162,24 @@ func writeListPipelineError(w http.ResponseWriter, r *http.Request, err error) {
 		// filter key/operator, never store internals.
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_filter",
 			"Invalid filter parameter", err.Error())
+	case errors.Is(err, errPropertyNotVisible):
+		// Client-caused: the caller filtered or sorted on a property its
+		// roles do not show on every row (BUG-WJSYQT). The detail names the
+		// property and the type, which are config, not secrets, and depends
+		// on no row (see listfieldgate.go).
+		problem := v1.Error{
+			Type:     "https://rela.dev/errors/property_not_visible",
+			Title:    "Cannot filter or sort on this property",
+			Status:   http.StatusBadRequest,
+			Detail:   err.Error(),
+			Instance: r.URL.Path,
+		}
+		if refusal, ok := errors.AsType[*propertyNotVisibleError](err); ok {
+			problem.Use, problem.Property = refusal.use, refusal.property
+		}
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(problem)
 	case errors.Is(err, errBadQueryScope):
 		// Client-caused, like errBadFilter above: the caller named a scope
 		// that does not resolve, or repeated the parameter. Echo the detail
@@ -2174,70 +2260,44 @@ func (a *App) filterVisibleIncludes(ctx context.Context, candidates []*entityPkg
 }
 
 // applyV1Filters applies `filter[...]` query params to the entity slice. Pure
-// data transform — a free function, not App behavior (TKT-N26KLB M5.5).
+// data transform — a free function, not App behavior (TKT-N26KLB M5.5). It
+// takes a [gatedListQuery], so it never compares a property the principal
+// cannot see on every row (BUG-WJSYQT).
 // A malformed key or unsupported operator returns errBadFilter (HTTP 400)
 // instead of silently dropping the clause, which returned the unfiltered
 // superset and hid config/caller typos.
 //
-// isRelationKey identifies filter keys that target a metamodel relation rather
-// than an entity property; those are skipped here and handled by the relation
-// pass in scopedSortedEntities (which has ctx + config for direction-aware
-// traversal). A relation key would otherwise match no property and nuke the
-// whole result set (TKT-5U7QBR). A nil predicate treats every key as a
-// property filter (the pre-TKT-5U7QBR behavior).
+// The query's isRelationKey identifies filter keys that target a metamodel
+// relation rather than an entity property; those are skipped here and handled
+// by the relation pass in scopedSortedEntities (which has ctx + config for
+// direction-aware traversal). A relation key would otherwise match no property
+// and nuke the whole result set (TKT-5U7QBR). A nil predicate treats every key
+// as a property filter (the pre-TKT-5U7QBR behavior).
 //
-//nolint:gocognit,funlen // dispatches over every supported filter operator and value type; each branch is one operator's semantics, not extractable shared logic.
-func applyV1Filters(
-	entities []*entityPkg.Entity, query map[string][]string, _ string, isRelationKey func(string) bool,
-) ([]*entityPkg.Entity, error) {
+//nolint:gocognit // dispatches over every supported filter operator and value type; each branch is one operator's semantics, not extractable shared logic.
+func applyV1Filters(entities []*entityPkg.Entity, query gatedListQuery) ([]*entityPkg.Entity, error) {
 	filtered := entities
 
-	for key, values := range query {
+	for key, values := range query.params {
 		if !strings.HasPrefix(key, "filter[") || len(values) == 0 {
 			continue
 		}
 
-		// Parse filter[property] or filter[property][operator] or
-		// filter[property][operator][] (multi-value array form). Strip the
-		// optional `[]` array suffix before splitting so we get clean parts.
-		filterKey := strings.TrimPrefix(key, "filter[")
-		filterKey = strings.TrimSuffix(filterKey, "]")
-		trimmed := strings.TrimSuffix(filterKey, "][") // was "...[]"
-		// An explicit `[]` suffix declares the ARRAY form: each repeated param
-		// is one member, verbatim. Without it, a lone param is the comma form.
-		// The suffix — not the number of params — is the signal, since a
-		// one-element array is indistinguishable from a comma list by count.
-		isArrayForm := trimmed != filterKey
-		filterKey = trimmed
-		parts := strings.Split(filterKey, "][")
-
-		// Validate parsed shape. A malformed key like `filter[prop][][weird]`
-		// produces parts=["prop", "", "weird"] — more than 2 parts or an
-		// empty property/operator means the URL is bogus. Reject the request:
-		// the old skip-with-a-log "fail closed" still returned the unfiltered
-		// superset, which is fail-open at the result level.
-		if len(parts) > 2 {
-			return nil, fmt.Errorf("%w: key %q has too many segments", errBadFilter, key)
-		}
-		property := parts[0]
-		if property == "" {
-			return nil, fmt.Errorf("%w: key %q has an empty property", errBadFilter, key)
-		}
-
+		fk, err := parseFilterKey(key)
 		// Relation filter keys are handled by the direction-aware relation
 		// pass in scopedSortedEntities. Skip them here so a relation key
-		// (which matches no property) doesn't nuke the result set.
-		if isRelationKey != nil && isRelationKey(property) {
+		// (which matches no property) doesn't nuke the result set. A key with
+		// too many segments has no property and is refused below.
+		if fk.property != "" && query.isRelationKey != nil && query.isRelationKey(fk.property) {
 			continue
 		}
-
-		operator := "eq"
-		if len(parts) == 2 {
-			if parts[1] == "" {
-				return nil, fmt.Errorf("%w: key %q has an empty operator segment", errBadFilter, key)
-			}
-			operator = parts[1]
+		// Reject a malformed key: the old skip-with-a-log "fail closed" still
+		// returned the unfiltered superset, which is fail-open at the result
+		// level.
+		if err != nil {
+			return nil, err
 		}
+		property, operator, isArrayForm := fk.property, fk.operator, fk.arrayForm
 
 		// Reject unknown operators BEFORE the per-entity loop. A typo like
 		// `filter[status][equals]=done` used to be skipped with only a log —
@@ -2388,11 +2448,13 @@ func parseSortParam(query map[string][]string) []filter.SortSpec {
 // whether or not it was pushed into the database.
 //
 // meta may be nil; that yields byte-wise comparison for every property, which
-// is the right answer when no schema is available.
+// is the right answer when no schema is available. The query is a
+// [gatedListQuery], so a sort key is never a property hidden from the
+// principal on some row (BUG-WJSYQT).
 func applyV1Sorting(
-	entities []*entityPkg.Entity, query map[string][]string, meta *metamodel.Metamodel,
+	entities []*entityPkg.Entity, query gatedListQuery, meta *metamodel.Metamodel,
 ) []*entityPkg.Entity {
-	sortSpecs := parseSortParam(query)
+	sortSpecs := parseSortParam(query.params)
 	if len(sortSpecs) == 0 {
 		return entities
 	}

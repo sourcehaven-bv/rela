@@ -22,7 +22,7 @@
 import { computed } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { useSchemaStore, useUIStore } from '@/stores'
-import { listEntities, getErrorMessage } from '@/api'
+import { listEntities, getErrorMessage, withSortFallback } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { useWorld } from '@/composables/useWorld'
 import { useFlyout } from '@/composables/useFlyout'
@@ -67,7 +67,7 @@ const query = useQuery({
   query: () => {
     const config = listConfig.value
     if (!config || !params.value) throw new Error(`unknown list: ${props.listId}`)
-    return listEntities(config.entity, params.value)
+    return withSortFallback(params.value, (p) => listEntities(config.entity, p))
   },
   enabled: () => params.value !== null,
 })

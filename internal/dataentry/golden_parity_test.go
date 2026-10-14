@@ -30,9 +30,9 @@ import (
 // are the wire contract a refactor of the access layer must keep: a change in
 // any of them is either the intended fix of a recorded gap or a regression.
 //
-// Cases named after a bug (BUG-2TPO2F, BUG-WJSYQT, BUG-C8DHGF, BUG-VUNO11,
-// BUG-T6HNKS) record a known gap as it is today. The fix of that bug is
-// expected to change those files.
+// Cases named after a bug (BUG-2TPO2F, BUG-C8DHGF, BUG-VUNO11, BUG-T6HNKS)
+// record a known gap as it is today. The fix of that bug is expected to
+// change those files.
 //
 // Rewrite the recordings with:
 //
@@ -329,11 +329,11 @@ var goldenReads = []goldenEndpoint{
 		path: "/api/v1/_caldav/principal/calendars/tickets/ticket--TKT-4@rela.ics"},
 	{slug: "list", method: http.MethodGet, path: "/api/v1/tickets/"},
 	{slug: "list-filtered", method: http.MethodGet, path: "/api/v1/tickets/?filter[status]=open&sort=-title"},
-	{slug: "BUG-WJSYQT-list-filter-hidden", method: http.MethodGet,
+	{slug: "list-filter-hidden", method: http.MethodGet,
 		path: "/api/v1/tickets/?filter[secret][contains]=brav"},
-	{slug: "BUG-WJSYQT-list-filter-hidden-eq", method: http.MethodGet,
+	{slug: "list-filter-hidden-eq", method: http.MethodGet,
 		path: "/api/v1/tickets/?filter[secret]=bravo-secret"},
-	{slug: "BUG-WJSYQT-list-sort-hidden", method: http.MethodGet, path: "/api/v1/tickets/?sort=secret"},
+	{slug: "list-sort-hidden", method: http.MethodGet, path: "/api/v1/tickets/?sort=secret"},
 	{slug: "list-include", method: http.MethodGet, path: "/api/v1/tickets/?include=*"},
 	{slug: "list-policies", method: http.MethodGet, path: "/api/v1/policies/"},
 	// The viewer is granted world:published and not world:editorial.

@@ -149,6 +149,11 @@ func (NopFieldVerdictResolver) UnconditionalRelationVerdicts(context.Context, *e
 	return RelationVerdicts{}
 }
 
+// FieldVisibleOnEveryRow is always true: this resolver hides nothing.
+func (NopFieldVerdictResolver) FieldVisibleOnEveryRow(context.Context, string, string) bool {
+	return true
+}
+
 // DemoFieldVerdictResolver applies a fixed fixture against the
 // "ticket" entity type. The fixture is hand-picked to exercise every
 // affordance code path:
@@ -227,4 +232,10 @@ func (d DemoFieldVerdictResolver) UnconditionalRelationVerdicts(
 	ctx context.Context, e *entityPkg.Entity,
 ) RelationVerdicts {
 	return d.RelationVerdicts(ctx, e)
+}
+
+// FieldVisibleOnEveryRow is false for the one field the fixture hides,
+// ticket.priority, whose verdict depends on the type only.
+func (DemoFieldVerdictResolver) FieldVisibleOnEveryRow(_ context.Context, entityType, property string) bool {
+	return entityType != "ticket" || property != "priority"
 }

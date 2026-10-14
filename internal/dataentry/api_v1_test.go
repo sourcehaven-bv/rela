@@ -491,6 +491,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 			{ID: "TKT-001", Type: "ticket"},
 			{ID: "TKT-003", Type: "ticket"},
 		}}
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=ticket&sort=title", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -516,6 +517,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		app := newTestAppV1(t)
 		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "A"}})
 		app.searcher = &fakeSearcher{hits: nil}
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=needle", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -541,6 +543,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 			{ID: "TKT-001", Type: "ticket"},
 			{ID: "TKT-002", Type: "ticket"},
 		}}
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=ticket&filter[status]=open", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -561,6 +564,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		// test can prove the searcher was never called.
 		fake := &fakeSearcher{hits: nil}
 		app.searcher = fake
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=%20%20", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -591,6 +595,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		seedEntity(app, &entity.Entity{ID: "TKT-002", Type: "ticket", Properties: map[string]any{"title": "B"}})
 		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-999", Type: "ticket"}}}
 		app.searcher = fake
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=type%3Afoo", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -612,6 +617,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "Hit"}})
 		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-001", Type: "ticket"}}}
 		app.searcher = fake
+		rebindVisibleSearcher(t, app)
 
 		// Query says `type:feature` but we're listing tickets — the helper
 		// must overwrite the type to the list's type.
@@ -628,6 +634,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		app := newTestAppV1(t)
 		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "A"}})
 		app.searcher = &fakeSearcher{err: errors.New("index unavailable")}
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=anything", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -649,6 +656,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 			}
 		}
 		app.searcher = &fakeSearcher{hits: hits}
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets?q=hit&page=2&per_page=3", http.NoBody)
 		rec := httptest.NewRecorder()
@@ -674,6 +682,7 @@ func TestV1ListEntitiesSearchQuery(t *testing.T) {
 		seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "Hit"}})
 		fake := &fakeSearcher{hits: []search.Hit{{ID: "TKT-001", Type: "ticket"}}}
 		app.searcher = fake
+		rebindVisibleSearcher(t, app)
 
 		req := httptest.NewRequest(http.MethodGet, `/api/v1/tickets?q=%22exact+phrase%22`, http.NoBody)
 		rec := httptest.NewRecorder()

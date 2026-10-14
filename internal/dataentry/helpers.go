@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"iter"
@@ -577,11 +578,20 @@ type freeTextIDsForTypeResult struct {
 // path stay in lockstep on the bound.
 const maxFreeTextSearchResults = 1000
 
-// freeTextIDs issues a Searcher query from a parsed SearchQuery under world
-// scope w, and returns the matching entity IDs. Phrases are re-quoted so the
-// searcher's text layer can rebuild the same fuzzy-words + exact-phrases
+// freeTextIDs issues an ACL-scoped search from a parsed SearchQuery under
+// world scope w, and returns the matching entity IDs. Phrases are re-quoted so
+// the searcher's text layer can rebuild the same fuzzy-words + exact-phrases
 // compound query the dataentry UI used to build upstream. Backend failures
 // surface to the caller.
+//
+// # Field redaction
+//
+// It searches through [searchVisibleHits], the path `/_search` uses, so a hit
+// that matched only a property hidden from the principal is dropped. With the
+// unredacted searcher, a list row kept by `?q=<guess>` confirmed the guess
+// against the hidden value: the same oracle a filter on that property was
+// (BUG-WJSYQT, RR-H3GP12). A searcher that cannot redact while the policy
+// hides fields yields errACLListQuery, the fail-closed answer.
 //
 // # IDs, not entities
 //
@@ -597,8 +607,8 @@ const maxFreeTextSearchResults = 1000
 // Free function taking svc rather than an App method: it needs one
 // collaborator, and App sits at its plimsoll method cap.
 func freeTextIDs(
-	ctx context.Context, svc Services, sq *searchparser.SearchQuery,
-	w store.WorldScope, limit int,
+	ctx context.Context, vs search.VisibleSearcher, aff affordanceService,
+	sq *searchparser.SearchQuery, scope map[string]search.TypeScope, w store.WorldScope, limit int,
 ) (map[string]struct{}, error) {
 	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
 	parts = append(parts, sq.FreeTextWords...)
@@ -612,8 +622,11 @@ func freeTextIDs(
 		World: w,
 	}
 	ids := make(map[string]struct{})
-	for hit, err := range svc.Searcher.Search(ctx, q) {
+	for hit, err := range searchVisibleHits(ctx, vs, aff, q, scope) {
 		if err != nil {
+			if errors.Is(err, search.ErrScope) {
+				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)
+			}
 			return nil, fmt.Errorf("free-text search: %w", err)
 		}
 		ids[hit.ID] = struct{}{}

@@ -42,6 +42,11 @@ func (f fakeTransitionResolver) UnconditionalRelationVerdicts(context.Context, *
 	return RelationVerdicts{}
 }
 
+func (f fakeTransitionResolver) FieldVisibleOnEveryRow(_ context.Context, _, property string) bool {
+	_, hidden := f.hidden[property]
+	return !hidden
+}
+
 func (f fakeTransitionResolver) TransitionVerdicts(
 	_ context.Context, _ *entity.Entity,
 ) map[string][]statemachine.TransitionVerdict {

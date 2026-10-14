@@ -284,3 +284,39 @@ func TestNavItems_CreateOffer(t *testing.T) {
 		})
 	}
 }
+
+// A generated group over a list that groups or sorts on a property the reader
+// cannot see on every row keeps its entries, unsorted, rather than vanishing
+// (BUG-WJSYQT). A refused filter still drops the group: dropping the filter
+// would widen it.
+func TestNavItems_RefusedSortIsDroppedRefusedFilterStands(t *testing.T) {
+	app := newTestAppV1(t)
+	wireRealViewConditions(t, app)
+	setTestResolver(t, app, fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"status": false}}})
+	for _, tk := range []struct{ id, status string }{{"TKT-1", "open"}, {"TKT-2", "done"}} {
+		seedEntity(app, &entity.Entity{ID: tk.id, Type: "ticket",
+			Properties: map[string]any{"title": "T " + tk.id, "status": tk.status}})
+	}
+
+	for _, tc := range []struct {
+		name string
+		list dataentryconfig.List
+	}{
+		{"group_by", dataentryconfig.List{EntityType: "ticket", GroupBy: &dataentryconfig.ListGroupBy{Property: "status"}}},
+		{"sort", dataentryconfig.List{EntityType: "ticket", Sort: []dataentryconfig.SortSpec{{Property: "status"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			installNavItemsGroup(app, tc.list, dataentryconfig.NavItemsFrom{})
+			items, body := navItemsAs(principalCtx("alice"), t, app)
+			require.ElementsMatch(t, []string{"TKT-1", "TKT-2"}, entryIDs(items["0"]))
+			require.NotContains(t, body, "done")
+		})
+	}
+
+	installNavItemsGroup(app, dataentryconfig.List{
+		EntityType: "ticket",
+		Filters:    []dataentryconfig.FilterConfig{{Property: "status", Operator: "=", Value: "open"}},
+	}, dataentryconfig.NavItemsFrom{})
+	items, _ := navItemsAs(principalCtx("alice"), t, app)
+	require.NotContains(t, items, "0", "a refused filter must not be dropped")
+}

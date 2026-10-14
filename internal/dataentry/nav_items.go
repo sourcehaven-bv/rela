@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -44,7 +45,7 @@ func handleV1NavItems(a *App, w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// One group that cannot be read must not blank the others, and an
 			// absent group is the honest answer for it.
-			slog.WarnContext(ctx, "nav items: group skipped",
+			slog.Log(ctx, sidebarSkipLevel(err), "nav items: group skipped",
 				"group", ni.Entry.Group, "list", ni.Entry.ItemsFrom.List, "error", err)
 			continue
 		}
@@ -73,7 +74,16 @@ func navItemsFor(
 		return v1.NavItemList{}, fmt.Errorf("unknown list %q", from.List)
 	}
 	limit := from.EffectiveLimit()
-	rows, total, _, err := a.listPage(ctx, listCfg.EntityType, navItemsListQuery(from.List, listCfg), 1, limit)
+	query := navItemsListQuery(from.List, listCfg)
+	rows, total, _, err := a.listPage(ctx, listCfg.EntityType, query, 1, limit)
+	if refusal, ok := errors.AsType[*propertyNotVisibleError](err); ok && refusal.use == "sort" {
+		// The list sorts or groups on a property this reader cannot see on
+		// every row. The group's entries are still the list's rows, so drop
+		// the order and read again, as the SPA list does (withSortFallback).
+		// A refused filter stands: dropping it would widen the group.
+		delete(query, "sort")
+		rows, total, _, err = a.listPage(ctx, listCfg.EntityType, query, 1, limit)
+	}
 	if err != nil {
 		return v1.NavItemList{}, err
 	}

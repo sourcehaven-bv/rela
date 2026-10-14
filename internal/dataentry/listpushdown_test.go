@@ -141,6 +141,10 @@ func TestListPushdown_Eligibility(t *testing.T) {
 	tk.Properties["due"] = metamodelProp("date")
 	tk.Properties["estimate"] = metamodelProp("integer")
 	tk.Properties["jira"] = metamodelProp(metamodel.PropertyTypeExternalRef)
+	// A declared string property named like the virtual sort key: the Go path
+	// orders `modified` by the modification time, so the store must not order
+	// by this property's value (RR-S8X8GA).
+	tk.Properties["modified"] = metamodelProp("string")
 	meta.Entities["ticket"] = tk
 	allow := acl.ReadQueryResult{AllowAll: true}
 	isRel := func(k string) bool { return k == "implements" }
@@ -165,16 +169,19 @@ func TestListPushdown_Eligibility(t *testing.T) {
 		// D7: an external ref is an object; only PropKeyEqual reads it.
 		{"external ref filter", "filter%5Bjira%5D=J-1", false},
 		{"external ref sort", "sort=jira", false},
+		{"virtual sort key declared as a property", "sort=-modified", false},
+		{"virtual id sort", "sort=id", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, ok := planListPushdown(meta, "ticket", parseQuery(tc.query), allow, store.TrivialScope(), 1, 25, isRel)
+			_, ok := planListPushdown(meta, "ticket", testGatedQuery(parseQuery(tc.query), isRel), allow, store.TrivialScope(), 1, 25)
 			if ok != tc.want {
 				t.Errorf("eligible = %v, want %v", ok, tc.want)
 			}
 		})
 	}
 	t.Run("deny all", func(t *testing.T) {
-		_, ok := planListPushdown(meta, "ticket", parseQuery(""), acl.ReadQueryResult{DenyAll: true}, store.TrivialScope(), 1, 25, isRel)
+		_, ok := planListPushdown(meta, "ticket", testGatedQuery(parseQuery(""), isRel),
+			acl.ReadQueryResult{DenyAll: true}, store.TrivialScope(), 1, 25)
 		if ok {
 			t.Error("a denied type must not be pushed")
 		}
