@@ -155,10 +155,10 @@ export function usePiles() {
 
   async function create(input: CreatePileInput): Promise<Pile | null> {
     try {
-      const pile = await createPile(
-        { ...input, items: input.items?.slice(0, PILE_REQUEST_MAX_ITEMS) },
-        worldParam.value
-      )
+      const pile = await createPile({
+        ...input,
+        items: input.items?.slice(0, PILE_REQUEST_MAX_ITEMS),
+      })
       rememberPileNames([pile])
       const n = input.items?.length ?? 0
       uiStore.showToast(
@@ -180,7 +180,7 @@ export function usePiles() {
 
   async function update(pile: PileRef, input: UpdatePileInput): Promise<Pile | null> {
     try {
-      const updated = await updatePile(pile.id, input, worldParam.value)
+      const updated = await updatePile(pile.id, input)
       rememberPileNames([updated])
       return updated
     } catch (err) {
@@ -219,7 +219,7 @@ export function usePiles() {
     if (addresses.length === 0) return 0
     const items = addresses.slice(0, PILE_REQUEST_MAX_ITEMS)
     try {
-      const { added } = await addPileItems(pile.id, items, worldParam.value)
+      const { added } = await addPileItems(pile.id, items)
       if (!opts.quiet) {
         const skipped = items.length - added
         const tail = skipped > 0 ? ` (${skipped} already on it)` : ''
@@ -242,7 +242,7 @@ export function usePiles() {
   async function removeItems(pile: PileRef, addresses: string[]): Promise<boolean> {
     if (addresses.length === 0) return true
     try {
-      await removePileItems(pile.id, addresses, worldParam.value)
+      await removePileItems(pile.id, addresses)
       uiStore.showToast(
         'success',
         `${countLabel(addresses.length)} removed from ${pile.name}`,

@@ -155,10 +155,11 @@ describe('usePiles', () => {
     await flushPromises()
 
     expect(pile?.id).toBe('PIL-NEW00001')
-    expect(api.createPile).toHaveBeenCalledWith(
-      { name: 'New', icon: 'star', items: ['TKT-1', 'POL-1@draft'] },
-      undefined
-    )
+    expect(api.createPile).toHaveBeenCalledWith({
+      name: 'New',
+      icon: 'star',
+      items: ['TKT-1', 'POL-1@draft'],
+    })
     expect(success).toHaveBeenCalledWith(
       'success',
       'Pile New created with 2 items',
@@ -168,10 +169,40 @@ describe('usePiles', () => {
     expect(api.listPiles.mock.calls.length).toBe(before + 1)
   })
 
+  // The server refuses `?world=` on a write (world_read_only), so a page in a
+  // non-default world must still write without one (BUG-5NP70I).
+  it('sends no world on a write from a world-bound page', async () => {
+    route.query = { world: 'published' }
+    useSchemaStore().worlds.set('published', { readable: true } as never)
+    api.createPile.mockResolvedValue({ ...friday, items: [] })
+    api.updatePile.mockResolvedValue({ ...friday, items: [] })
+    api.addPileItems.mockResolvedValue({ added: 1 })
+    api.removePileItems.mockResolvedValue(undefined)
+    const piles = mountPiles()
+    await flushPromises()
+    expect(api.listPiles).toHaveBeenCalledWith('published', expect.anything())
+
+    await piles().create({ name: 'New', icon: 'star', items: ['POL-1@draft'] })
+    await piles().update(friday, { name: 'Renamed', icon: 'star' })
+    await piles().addItems(friday, ['POL-1@draft'])
+    await piles().removeItems(friday, ['POL-1@draft'])
+
+    expect(api.createPile.mock.calls[0]).toHaveLength(1)
+    expect(api.updatePile.mock.calls[0]).toHaveLength(2)
+    expect(api.addPileItems.mock.calls[0]).toHaveLength(2)
+    expect(api.removePileItems.mock.calls[0]).toHaveLength(2)
+  })
+
   it('says when a selection was cut to the request limit', async () => {
     const selected = Array.from({ length: PILE_REQUEST_MAX_ITEMS + 12 }, (_, i) => `TKT-${i + 1}`)
     api.addPileItems.mockResolvedValueOnce({ added: PILE_REQUEST_MAX_ITEMS })
-    api.createPile.mockResolvedValueOnce({ ...friday, id: 'PIL-NEW00002', name: 'Big', count: 500, items: [] })
+    api.createPile.mockResolvedValueOnce({
+      ...friday,
+      id: 'PIL-NEW00002',
+      name: 'Big',
+      count: 500,
+      items: [],
+    })
     const toast = vi.spyOn(useUIStore(), 'showToast')
     const piles = mountPiles()
 
@@ -240,14 +271,14 @@ describe('usePiles', () => {
     const piles = mountPiles()
 
     expect(await piles().removeItems(friday, ['TKT-1', 'POL-1@draft'])).toBe(true)
-    expect(api.removePileItems).toHaveBeenCalledWith(friday.id, ['TKT-1', 'POL-1@draft'], undefined)
+    expect(api.removePileItems).toHaveBeenCalledWith(friday.id, ['TKT-1', 'POL-1@draft'])
     const [, message, , action] = toast.mock.calls[0]
     expect(message).toBe('2 items removed from Friday review')
     expect(action?.label).toBe('Undo')
 
     action!.onAction()
     await flushPromises()
-    expect(api.addPileItems).toHaveBeenCalledWith(friday.id, ['TKT-1', 'POL-1@draft'], undefined)
+    expect(api.addPileItems).toHaveBeenCalledWith(friday.id, ['TKT-1', 'POL-1@draft'])
   })
 
   it('deletes a pile and closes it when it is open', async () => {

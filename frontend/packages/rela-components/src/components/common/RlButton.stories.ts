@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { expect, within } from 'storybook/test'
 import type { Meta, StoryObj } from '@storybook/vue3-vite'
 import RlButton from './RlButton.vue'
 import RlButtonGroup from './RlButtonGroup.vue'
@@ -180,6 +181,17 @@ export const Pending: Story = {
       </div>
     `,
   }),
+  // An idle button is centred: the spinner's reserved slot rides in the hidden
+  // pending label, not beside the visible one (BUG-5NP70I).
+  play: async ({ canvasElement }) => {
+    const button = within(canvasElement).getByRole('button', { name: 'Save' })
+    const label = within(button).getByText('Save')
+    const outer = button.getBoundingClientRect()
+    const inner = label.getBoundingClientRect()
+    const left = inner.left - outer.left
+    const right = outer.right - inner.right
+    await expect(Math.abs(left - right)).toBeLessThanOrEqual(1)
+  },
 }
 
 /**

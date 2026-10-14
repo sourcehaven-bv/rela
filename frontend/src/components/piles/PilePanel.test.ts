@@ -123,14 +123,14 @@ describe('PilePanel', () => {
     await remove.trigger('click')
     await flushPromises()
 
-    expect(api.removePileItems).toHaveBeenCalledWith(pileId, ['TKT-1', 'TKT-2'], undefined)
+    expect(api.removePileItems).toHaveBeenCalledWith(pileId, ['TKT-1', 'TKT-2'])
     expect(wrapper.find('[data-testid="pile-ticked"]').exists()).toBe(false)
 
     const [, message, , action] = toast.mock.calls[0]
     expect(message).toBe('2 items removed from Friday review')
     action!.onAction()
     await flushPromises()
-    expect(api.addPileItems).toHaveBeenCalledWith(pileId, ['TKT-1', 'TKT-2'], undefined)
+    expect(api.addPileItems).toHaveBeenCalledWith(pileId, ['TKT-1', 'TKT-2'])
   })
 
   it('explains how to fill an empty pile', async () => {

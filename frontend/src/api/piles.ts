@@ -9,6 +9,10 @@ import { ApiError } from './errors'
  *
  * Every read honours `?world=`: the counts and items are the READABLE ones in
  * that world, so the panel, the sidebar count, the scope and the export agree.
+ * Writes take no world: the server refuses `?world=` on a write
+ * (`world_read_only`). The addresses name their face instead, through
+ * `entityRef`, which reads the face from the `_self` link every entity
+ * response carries.
  */
 
 /** A pile as `GET /_piles` lists it: no items, a count of readable ones. */
@@ -65,10 +69,6 @@ export const PILE_REQUEST_MAX_ITEMS = 500
 /** The longest pile name the server accepts, in characters after trimming. */
 export const PILE_NAME_MAX = 80
 
-function withWorld(path: string, world?: string): string {
-  return world ? `${path}?${new URLSearchParams({ world }).toString()}` : path
-}
-
 function pilePath(id: string): string {
   return `/_piles/${encodeURIComponent(id)}`
 }
@@ -81,16 +81,12 @@ export async function getPile(id: string, world?: string, signal?: AbortSignal):
   return api.get<Pile>(pilePath(id), world ? { world } : undefined, signal)
 }
 
-export async function createPile(input: CreatePileInput, world?: string): Promise<Pile> {
-  return api.post<Pile>(withWorld('/_piles', world), input)
+export async function createPile(input: CreatePileInput): Promise<Pile> {
+  return api.post<Pile>('/_piles', input)
 }
 
-export async function updatePile(
-  id: string,
-  input: UpdatePileInput,
-  world?: string
-): Promise<Pile> {
-  return api.patch<Pile>(withWorld(pilePath(id), world), input)
+export async function updatePile(id: string, input: UpdatePileInput): Promise<Pile> {
+  return api.patch<Pile>(pilePath(id), input)
 }
 
 export async function deletePile(id: string): Promise<void> {
@@ -98,20 +94,16 @@ export async function deletePile(id: string): Promise<void> {
 }
 
 /** Adds addresses to a pile. Already-present items are not counted in `added`. */
-export async function addPileItems(
-  id: string,
-  items: string[],
-  world?: string
-): Promise<{ added: number }> {
-  return api.post<{ added: number }>(withWorld(`${pilePath(id)}/items`, world), { items })
+export async function addPileItems(id: string, items: string[]): Promise<{ added: number }> {
+  return api.post<{ added: number }>(`${pilePath(id)}/items`, { items })
 }
 
 /**
  * Removes addresses from a pile. The server answers 204 whatever was stored,
  * so the response says nothing about which addresses were on it.
  */
-export async function removePileItems(id: string, items: string[], world?: string): Promise<void> {
-  await api.post<void>(withWorld(`${pilePath(id)}/items/_remove`, world), { items })
+export async function removePileItems(id: string, items: string[]): Promise<void> {
+  await api.post<void>(`${pilePath(id)}/items/_remove`, { items })
 }
 
 /** The download URL for a pile exported through a registered transform. */
