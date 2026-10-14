@@ -283,14 +283,11 @@ func moveRelation(
 	if !hasDef || prop == "" {
 		return nil, fmt.Errorf("%w: %s", ErrRelationNotOrderable, key.Type)
 	}
-	keep := orderSiblingFilter(key, *opts.Position)
-	if opts.Position.Incoming {
-		authorized, aErr := authorizeIncomingSiblings(ctx, m, key, keep)
-		if aErr != nil {
-			return nil, aErr
-		}
-		keep = func(r *entity.Relation) bool { return authorized[r.Identity()] }
+	readable, rErr := readableOrderSiblings(ctx, m, key, *opts.Position)
+	if rErr != nil {
+		return nil, rErr
 	}
+	keep := func(r *entity.Relation) bool { return readable[r.Identity()] }
 	var moved *entity.Relation
 	var densified []*entity.Relation
 	err := m.deps.Store.Tx(ctx, func(view store.Store) error {
@@ -365,40 +362,94 @@ func orderSiblingFilter(key entity.RelationKey, pos entity.OrderPosition) func(*
 	}
 }
 
-// authorizeIncomingSiblings authorizes an update of every edge an incoming
-// move may write, and returns their identities. An edge belongs to its
-// source, so the update [Manager.UpdateRelation] authorized covers the
-// moved edge only, while a densify on the incoming side rewrites edges of
-// other sources. One denial fails the whole move, before anything is
-// written. It runs before the move's transaction, so the ACL reads stay out
-// of it; the transaction then writes only these edges, which leaves an edge
-// created in between alone.
-func authorizeIncomingSiblings(
-	ctx context.Context, m *Manager, key entity.RelationKey, keep func(*entity.Relation) bool,
+// readableOrderSiblings returns the identities of the edges a move of key
+// may read and write: the edges [orderSiblingFilter] keeps whose other
+// endpoint the caller can read, and the moved edge itself, which
+// [Manager.UpdateRelation] gated. The other endpoint is the source on the
+// incoming side and the target on the outgoing side. A sibling the caller
+// cannot read is treated as absent, so it is never authorized, densified,
+// audited or found by a Before or After. The endpoints are read in one
+// header query; the gate runs once per distinct endpoint.
+//
+// On the incoming side it also authorizes an update of every sibling. An
+// edge belongs to its source, so the update UpdateRelation authorized
+// covers the moved edge only, while a densify there rewrites edges of other
+// sources. One denial fails the whole move, before anything is written. It
+// runs before the move's transaction, so the ACL reads stay out of it; the
+// transaction then writes only these edges, which leaves an edge created in
+// between alone.
+func readableOrderSiblings(
+	ctx context.Context, m *Manager, key entity.RelationKey, pos entity.OrderPosition,
 ) (map[entity.RelationKey]bool, error) {
-	authorized := map[entity.RelationKey]bool{key: true}
-	types := map[string]string{}
-	for r, err := range m.deps.Store.ListRelations(ctx, orderSiblingQuery(key, true)) {
+	keep := orderSiblingFilter(key, pos)
+	var siblings []*entity.Relation
+	var ids []string
+	seenID := map[string]bool{}
+	for r, err := range m.deps.Store.ListRelations(ctx, orderSiblingQuery(key, pos.Incoming)) {
 		if err != nil {
 			return nil, err
 		}
-		if !keep(r) || authorized[r.Identity()] {
+		if !keep(r) || r.Identity() == key {
 			continue
 		}
-		typ, seen := types[r.From]
-		if !seen {
-			// A lookup error leaves the type empty, which matches no grant.
-			fam, _ := lookupFamily(ctx, m.deps.Store, r.From)
-			typ = fam.typ
-			types[r.From] = typ
+		siblings = append(siblings, r)
+		if id := siblingEndpoint(r, pos.Incoming); !seenID[id] {
+			seenID[id] = true
+			ids = append(ids, id)
 		}
-		if aErr := m.authorizeAndAudit(ctx,
-			RelationUpdateRequest(m.deps.Meta, key.Type, typ, r.From, r.FromFace)); aErr != nil {
-			return nil, aErr
-		}
-		authorized[r.Identity()] = true
 	}
-	return authorized, nil
+	gate := faceGateOf(m)
+	var families map[string]entityFamily
+	if gate != nil || pos.Incoming {
+		var err error
+		if families, err = lookupFamilies(ctx, m.deps.Store, ids); err != nil {
+			return nil, err
+		}
+	}
+	type endpoint struct {
+		id   string
+		face entity.Face
+	}
+	visible := map[endpoint]bool{}
+	readable := map[entity.RelationKey]bool{key: true}
+	for _, r := range siblings {
+		ep := endpoint{id: siblingEndpoint(r, pos.Incoming)}
+		if pos.Incoming {
+			ep.face = r.FromFace
+		}
+		ok, seen := visible[ep]
+		if !seen {
+			// A missing family has no face, so a gate finds it unreadable.
+			var err error
+			if ok, err = visibleEndpoint(ctx, gate, families[ep.id], ep.face); err != nil {
+				return nil, err
+			}
+			visible[ep] = ok
+		}
+		if !ok {
+			continue
+		}
+		if pos.Incoming {
+			// A missing source leaves the type empty, which matches no grant.
+			typ := families[r.From].typ
+			if aErr := m.authorizeAndAudit(ctx,
+				RelationUpdateRequest(m.deps.Meta, key.Type, typ, r.From, r.FromFace)); aErr != nil {
+				return nil, aErr
+			}
+		}
+		readable[r.Identity()] = true
+	}
+	return readable, nil
+}
+
+// siblingEndpoint is the id of r's endpoint that is not shared by every
+// edge on the order side: the source on the incoming side, the target on
+// the outgoing one.
+func siblingEndpoint(r *entity.Relation, incoming bool) string {
+	if incoming {
+		return r.From
+	}
+	return r.To
 }
 
 // writeOrderPlan writes each planned order value to its sibling through
