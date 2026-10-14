@@ -1615,12 +1615,13 @@ end
   are recognised.
 - Input is refused above 10 MiB, 64 levels of nesting, 100 000 elements
   or 64 attributes on one element.
-- Only UTF-8, US-ASCII and ISO-8859-1 are accepted. ISO-8859-1 is read as
-  windows-1252, as browsers do.
+- Only UTF-8, US-ASCII, ISO-8859-1 and windows-1252 are accepted.
+  ISO-8859-1 is read as windows-1252, as browsers do.
 
 A refused or malformed document returns `(nil, err_table)` with
 `kind="bad_response"`. When a limit refused it, `err.limit` names the
 limit: `"bytes"`, `"depth"`, `"elements"`, `"attributes"` or `"charset"`.
+`rela.feed.parse` adds `"items"` for a feed with more than 10 000 items.
 
 ### Feed Functions
 
@@ -1657,8 +1658,10 @@ The feed table has `format` (`"rss"`, `"rdf"`, `"atom"` or `"json"`),
 `summary` and `content` come from the feed, so treat them as untrusted
 HTML. Convert them with `rela.md.from_html` before you store them.
 
-A date without a time zone is read as UTC. The US zone names `EST`,
-`PDT` and so on are understood.
+A date without a time zone is read as UTC. Numeric offsets and the zone
+names from RFC 822 (`GMT`, `UT`, `EST`, `PDT` and so on) are understood.
+A date with any other zone name is treated as unreadable, so `published`
+is `nil` and only `published_raw` is set.
 
 ### Context
 

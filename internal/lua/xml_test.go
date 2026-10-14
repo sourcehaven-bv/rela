@@ -99,6 +99,13 @@ func TestLuaXML_TextStopsOnHandBuiltCycle(t *testing.T) {
 		n.children = {n}
 		local s = rela.xml.text(n)
 		assert(#s > 0 and #s <= 64, "bounded walk, got length " .. #s)
+
+		-- Ten children that are all the node itself: without a node budget
+		-- this is 10^64 visits.
+		local w = {text = "y", children = {}}
+		for i = 1, 10 do w.children[i] = w end
+		s = rela.xml.text(w)
+		assert(#s <= 100000, "budgeted walk, got length " .. #s)
 	`)
 }
 

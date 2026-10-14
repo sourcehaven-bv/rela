@@ -59,6 +59,7 @@ func TestDecode_Encodings(t *testing.T) {
 		{"windows-1252 bytes under a latin1 label",
 			[]byte("<?xml version=\"1.0\" encoding=\"iso-8859-1\"?><a>\x93q\x94 \x80</a>"), "“q” €"},
 		{"us-ascii", []byte(`<?xml version="1.0" encoding="US-ASCII"?><a>x</a>`), "x"},
+		{"utf8 without hyphen", []byte(`<?xml version="1.0" encoding="utf8"?><a>é</a>`), "é"},
 		{"utf8 declared", []byte(`<?xml version="1.0" encoding="utf-8"?><a>é</a>`), "é"},
 	}
 	for _, tc := range tests {

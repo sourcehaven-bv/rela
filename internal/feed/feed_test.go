@@ -206,6 +206,12 @@ func TestParseDate(t *testing.T) {
 		{"Tue, 13 Oct 26 10:00:00 -0500", "2026-10-13T15:00:00Z"},
 		{"13 Oct 2026 10:00:00 +0100", "2026-10-13T09:00:00Z"},
 		{"  2026-10-13  ", "2026-10-13T00:00:00Z"},
+		{"2026-10-13T10:00:00+0200", "2026-10-13T08:00:00Z"},
+		{"Tue, 13 Oct 2026 10:00:00 UT", "2026-10-13T10:00:00Z"},
+		{"Tue, 13 Oct 2026 10:00:00 Z", "2026-10-13T10:00:00Z"},
+		{"Tue, 13 Oct 2026 10:00:00 est", "2026-10-13T15:00:00Z"},
+		{"Tuesday, 13-Oct-26 10:00:00 GMT", "2026-10-13T10:00:00Z"},
+		{"Tue, 13 Oct 2026 10:00:00 CEST", ""},
 		{"", ""},
 		{"yesterday", ""},
 	}
@@ -222,5 +228,66 @@ func TestParseDate(t *testing.T) {
 				t.Errorf("parseDate(%q) = %v, want %s in UTC", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestParse_ItemCap(t *testing.T) {
+	xmlItems := "<rss><channel>" + strings.Repeat("<item/>", MaxItems+1) + "</channel></rss>"
+	jsonItems := `{"version":"https://jsonfeed.org/version/1.1","items":[` +
+		strings.TrimSuffix(strings.Repeat("{},", MaxItems+1), ",") + `]}`
+	atomItems := `<feed xmlns="http://www.w3.org/2005/Atom">` + strings.Repeat("<entry/>", MaxItems+1) + "</feed>"
+	for name, doc := range map[string]string{"rss": xmlItems, "json": jsonItems, "atom": atomItems} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(doc))
+			le, ok := errors.AsType[*safexml.LimitError](err)
+			if !ok || le.Limit != "items" {
+				t.Fatalf("err = %v, want an items LimitError", err)
+			}
+		})
+	}
+	atCap := `{"version":"https://jsonfeed.org/version/1","items":[` +
+		strings.TrimSuffix(strings.Repeat("{},", MaxItems), ",") + `]}`
+	if f, err := Parse([]byte(atCap)); err != nil || len(f.Items) != MaxItems {
+		t.Fatalf("feed at the cap: %d items, err %v", len(f.Items), err)
+	}
+}
+
+func TestParse_JSONFeedShapes(t *testing.T) {
+	doc := `{"extra": {"nested": [1, 2]}, "title": 5, "version": "https://jsonfeed.org/version/1", "items": []}`
+	f, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if f.Title != "" || len(f.Items) != 0 {
+		t.Errorf("feed = %+v; a non-string title is left empty", f)
+	}
+	for _, bad := range []string{`{"items": {}}`, `{"items": [1]}`, `{"version": "https://jsonfeed.org/version/1"`, `{"a" 1}`} {
+		if _, err := Parse([]byte(bad)); err == nil || !strings.Contains(err.Error(), "invalid JSON") {
+			t.Errorf("Parse(%s) err = %v, want invalid JSON", bad, err)
+		}
+	}
+}
+
+func TestParse_EmbeddedMarkup(t *testing.T) {
+	rss := `<rss><channel><item>
+<description>Hello <b>world</b> &amp; <a href="/x">more</a></description>
+</item></channel></rss>`
+	f, err := Parse([]byte(rss))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got, want := f.Items[0].Summary, `Hello <b>world</b> &amp; <a href="/x">more</a>`; got != want {
+		t.Errorf("RSS description with child elements = %q, want %q", got, want)
+	}
+
+	atom := `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:o="urn:o"><entry><content type="xhtml">` +
+		`<div xmlns="http://www.w3.org/1999/xhtml"><p xml:lang="nl" lang="nl" o:x="1">p</p><br>x</br><hr/></div>` +
+		`</content></entry></feed>`
+	f, err = Parse([]byte(atom))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got, want := f.Items[0].Content, `<p xml:lang="nl" lang="nl">p</p><br>x</br><hr>`; got != want {
+		t.Errorf("xhtml content = %q, want %q", got, want)
 	}
 }

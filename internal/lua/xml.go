@@ -29,7 +29,8 @@
 // Error convention follows rela.json.decode: invalid or refused input
 // returns (nil, err_table) with kind="bad_response"; a wrong argument type
 // raises. When the input was refused for exceeding a limit, err.limit names
-// it ("bytes", "depth", "elements", "attributes" or "charset").
+// it ("bytes", "depth", "elements", "attributes", "charset", or "items" from
+// rela.feed.parse).
 package lua
 
 import (
@@ -144,7 +145,7 @@ func xmlChildren(ls *lua.LState, fn func(*lua.LTable) bool) {
 }
 
 func luaXMLFind(ls *lua.LState) int {
-	var found lua.LValue = lua.LNil
+	found := lua.LNil
 	xmlChildren(ls, func(c *lua.LTable) bool {
 		found = c
 		return false
@@ -164,28 +165,41 @@ func luaXMLFindAll(ls *lua.LState) int {
 }
 
 func luaXMLText(ls *lua.LState) int {
-	var b strings.Builder
-	appendLuaXMLText(&b, ls.CheckTable(1), 0)
-	ls.Push(lua.LString(b.String()))
+	w := textWalk{budget: safexml.DefaultLimits.MaxElements}
+	w.walk(ls.CheckTable(1), 0)
+	ls.Push(lua.LString(w.b.String()))
 	return 1
 }
 
-// appendLuaXMLText walks a node table. A script can build a cyclic or
-// arbitrarily deep table by hand, so the walk stops at the same depth
-// safexml allows rather than trusting the shape.
-func appendLuaXMLText(b *strings.Builder, node *lua.LTable, depth int) {
-	if depth >= safexml.DefaultLimits.MaxDepth {
+// textWalk joins the text of a node table. A script can hand-build the table,
+// including cycles and nodes shared many times over, so neither depth nor
+// shape bounds the work: a table whose children all point back at it would
+// take exponential time. The walk therefore stops after visiting as many
+// nodes as safexml would ever produce, and after as many bytes as it would
+// ever accept.
+type textWalk struct {
+	b      strings.Builder
+	budget int
+}
+
+func (w *textWalk) done() bool {
+	return w.budget <= 0 || w.b.Len() >= safexml.DefaultLimits.MaxBytes
+}
+
+func (w *textWalk) walk(node *lua.LTable, depth int) {
+	if depth >= safexml.DefaultLimits.MaxDepth || w.done() {
 		return
 	}
-	b.WriteString(lua.LVAsString(node.RawGetString("text")))
+	w.budget--
+	w.b.WriteString(lua.LVAsString(node.RawGetString("text")))
 	children, ok := node.RawGetString("children").(*lua.LTable)
 	if !ok {
 		return
 	}
-	for i := 1; i <= children.Len(); i++ {
+	for i := 1; i <= children.Len() && !w.done(); i++ {
 		if c, ok := children.RawGetInt(i).(*lua.LTable); ok {
-			appendLuaXMLText(b, c, depth+1)
-			b.WriteString(lua.LVAsString(c.RawGetString("tail")))
+			w.walk(c, depth+1)
+			w.b.WriteString(lua.LVAsString(c.RawGetString("tail")))
 		}
 	}
 }

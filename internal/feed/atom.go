@@ -1,7 +1,6 @@
 package feed
 
 import (
-	"html"
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/safexml"
@@ -19,6 +18,9 @@ func parseAtom(root *safexml.Node) (Feed, error) {
 	}
 	for _, c := range root.Children {
 		if c.Name == "entry" && atom(c) {
+			if len(f.Items) == MaxItems {
+				return Feed{}, errTooManyItems()
+			}
 			f.Items = append(f.Items, atomEntry(c))
 		}
 	}
@@ -81,7 +83,7 @@ func atomText(n *safexml.Node) string {
 	}
 	switch typ := strings.ToLower(strings.TrimSpace(attr(n, "type"))); {
 	case typ == "html", typ == "text/html":
-		return strings.TrimSpace(textOf(n))
+		return htmlField(n)
 	case typ == "xhtml", typ == "application/xhtml+xml":
 		return xhtmlBody(n)
 	case typ == "", typ == "text", strings.HasPrefix(typ, "text/"):
@@ -94,47 +96,8 @@ func atomText(n *safexml.Node) string {
 // xhtmlBody rebuilds the markup inside an Atom xhtml construct. Atom wraps it
 // in one xhtml <div> that is not part of the content.
 func xhtmlBody(n *safexml.Node) string {
-	inner := n
 	if len(n.Children) == 1 && n.Children[0].Name == "div" {
-		inner = n.Children[0]
+		return innerMarkup(n.Children[0])
 	}
-	var b strings.Builder
-	b.WriteString(html.EscapeString(inner.Text))
-	for _, c := range inner.Children {
-		writeMarkup(&b, c)
-		b.WriteString(html.EscapeString(c.Tail))
-	}
-	return strings.TrimSpace(b.String())
-}
-
-// voidElements are written without a closing tag: in HTML "<br></br>" is two
-// line breaks.
-var voidElements = map[string]bool{
-	"area": true, "base": true, "br": true, "col": true, "embed": true, "hr": true,
-	"img": true, "input": true, "link": true, "meta": true, "source": true, "track": true, "wbr": true,
-}
-
-// writeMarkup serializes one element and its subtree as HTML. Attribute
-// namespaces are dropped: xhtml content uses unqualified attributes, and the
-// result is untrusted HTML for the consumer to sanitize anyway.
-func writeMarkup(b *strings.Builder, n *safexml.Node) {
-	b.WriteString("<" + n.Name)
-	for _, a := range n.Attrs {
-		b.WriteString(" " + a.Name + `="` + html.EscapeString(a.Value) + `"`)
-	}
-	b.WriteString(">")
-	if voidElements[n.Name] {
-		return
-	}
-	b.WriteString(html.EscapeString(n.Text))
-	for _, c := range n.Children {
-		writeMarkup(b, c)
-		b.WriteString(html.EscapeString(c.Tail))
-	}
-	b.WriteString("</" + n.Name + ">")
-}
-
-// textToHTML escapes plain text so it can stand in an HTML field.
-func textToHTML(s string) string {
-	return html.EscapeString(strings.TrimSpace(s))
+	return innerMarkup(n)
 }

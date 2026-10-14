@@ -13,7 +13,8 @@
 //   - a size cap, checked before decoding starts;
 //   - caps on nesting depth, element count and attributes per element, so a
 //     small document cannot fan out into a huge tree;
-//   - a charset allowlist (UTF-8, US-ASCII, ISO-8859-1 / windows-1252).
+//   - a charset allowlist: UTF-8, US-ASCII, and ISO-8859-1 / windows-1252
+//     (see charsetReader for the accepted labels).
 //
 // The tree follows the ElementTree model: an element's Text is the character
 // data before its first child, and each child's Tail is the character data
@@ -73,14 +74,14 @@ type Node struct {
 // a charset outside the allowlist. Malformed XML is reported with a plain
 // error instead, so a caller can tell hostile or oversize input apart.
 type LimitError struct {
-	Limit  string // "bytes", "depth", "elements", "attributes" or "charset"
+	Limit  string // "bytes", "depth", "elements", "attributes" or "charset"; package feed adds "items"
 	Detail string
 }
 
 func (e *LimitError) Error() string { return "xml limit exceeded: " + e.Detail }
 
 // htmlEntities is a private copy of xml.HTMLEntity: the exported map is a
-// mutable global, and the decoder must not change behaviour if another
+// mutable global, and the decoder must not change behavior if another
 // package writes to it. It holds only single-character replacements, so it
 // cannot recurse or amplify input. Feeds use &nbsp; and friends freely, and
 // without the map Strict mode rejects them.
@@ -224,7 +225,8 @@ func attrs(in []xml.Attr) []Attr {
 	return out
 }
 
-// charsetReader is consulted for every declared encoding other than UTF-8.
+// charsetReader is consulted for every declared encoding other than "utf-8"
+// (case-insensitive); "utf8" without the hyphen still arrives here.
 // ISO-8859-1 is decoded as windows-1252, as browsers do, because feeds that
 // claim latin-1 are routinely windows-1252 in practice and the two agree on
 // every printable latin-1 character. Anything else is refused: decoding it
@@ -232,7 +234,7 @@ func attrs(in []xml.Attr) []Attr {
 // silently wrong text.
 func charsetReader(label string, input io.Reader) (io.Reader, error) {
 	switch strings.ToLower(strings.TrimSpace(label)) {
-	case "us-ascii", "ascii":
+	case "utf8", "us-ascii", "ascii":
 		return input, nil
 	case "iso-8859-1", "iso8859-1", "latin1", "latin-1", "l1", "windows-1252", "cp1252":
 		return &cp1252Reader{r: input}, nil

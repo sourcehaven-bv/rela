@@ -25,6 +25,9 @@ func parseRSS(root *safexml.Node) (Feed, error) {
 	f := channelFeed(FormatRSS, ch)
 	for _, c := range ch.Children {
 		if c.Name == "item" && core(c) {
+			if len(f.Items) == MaxItems {
+				return Feed{}, errTooManyItems()
+			}
 			f.Items = append(f.Items, rssItem(c, ""))
 		}
 	}
@@ -41,6 +44,9 @@ func parseRDF(root *safexml.Node) (Feed, error) {
 	f := channelFeed(FormatRDF, ch)
 	for _, c := range root.Children {
 		if c.Name == "item" && core(c) {
+			if len(f.Items) == MaxItems {
+				return Feed{}, errTooManyItems()
+			}
 			f.Items = append(f.Items, rssItem(c, rdfAbout(c)))
 		}
 	}
@@ -62,8 +68,8 @@ func rssItem(n *safexml.Node, about string) Item {
 	it := Item{
 		Title:   textOf(child(n, "title", core)),
 		Link:    textOf(child(n, "link", core)),
-		Summary: textOf(child(n, "description", core)),
-		Content: textOf(child(n, "encoded", content)),
+		Summary: htmlField(child(n, "description", core)),
+		Content: htmlField(child(n, "encoded", content)),
 	}
 	it.ID = firstNonEmpty(textOf(child(n, "guid", core)), about, it.Link)
 	it.PublishedRaw = firstNonEmpty(textOf(child(n, "pubDate", core)), textOf(child(n, "date", dc)))

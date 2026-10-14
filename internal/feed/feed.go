@@ -65,9 +65,20 @@ type Item struct {
 	Categories   []string
 }
 
+// MaxItems caps the items in one feed, in every format. The XML element cap
+// already bounds an XML feed, but a JSON Feed has no element count, and
+// 10 MiB of "{}," is millions of items; the cap keeps both formats to the
+// same order of memory. Real feeds carry tens to hundreds of items.
+const MaxItems = 10_000
+
+// errTooManyItems is returned once a feed passes [MaxItems].
+func errTooManyItems() error {
+	return &safexml.LimitError{Limit: "items", Detail: fmt.Sprintf("more than %d items", MaxItems)}
+}
+
 // Parse detects the format of data and parses it. Input over
 // safexml.DefaultLimits.MaxBytes is refused with a *safexml.LimitError, as is
-// XML that exceeds any other limit.
+// XML that exceeds any other limit and a feed with more than [MaxItems] items.
 func Parse(data []byte) (Feed, error) {
 	if len(data) > safexml.DefaultLimits.MaxBytes {
 		return Feed{}, &safexml.LimitError{Limit: "bytes", Detail: fmt.Sprintf(
