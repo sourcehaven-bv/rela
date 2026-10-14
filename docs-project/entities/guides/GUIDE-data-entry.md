@@ -3319,9 +3319,12 @@ kanbans:
 
 Entities with column property values not in the explicit list are hidden from the board.
 
-Each column heading has a coloured dot. Its colour comes from the
-[`styles:`](#styles) entry for the column's value, the same colour the value's
-badge shows. A value without a style keeps the neutral grey dot.
+Each column heading has a coloured dot in the same colour as the value's
+badge. For a custom type with a [`styles:`](#styles) entry, that is the
+colour the entry gives the value. A custom type without a `styles:` entry
+gets colours from rela automatically, so its columns are coloured too. A
+value that has no colour, such as one left out of a `styles:` entry, keeps
+the neutral grey dot.
 
 ### Columns from a relation (`columns_from`)
 
@@ -3437,10 +3440,15 @@ The total covers the cards on the board: the cards the reader may see, after
 the board's filters. A card without a value adds nothing, and an empty column
 shows a total of 0. A collapsed column shows its total on its narrow strip.
 
-Config load checks that the property exists and is an `integer` property, and
-that `currency` is three upper-case letters. It does not check the code
-against a list: the browser formats every well-formed code, and shows a code
-it does not know as the code itself, such as "XYZ 3.500".
+If the property is hidden from the reader on some cards (with `visible:` in
+`acl.yaml`), those values are not in the sum. The line then ends in
+"(partial)", so the reader knows the amount is not the whole column.
+
+Config load checks that the property exists and is a single-valued `integer`
+property (not `list: true`), and that `currency` is three upper-case letters.
+It does not check the code against a list: the browser formats every
+well-formed code, and shows a code it does not know as the code itself, such
+as "XYZ 3.500".
 
 `column_total` cannot be used on a board with swimlanes. A swimlane board has
 a heading per column in every lane, so there is no single place for the total.

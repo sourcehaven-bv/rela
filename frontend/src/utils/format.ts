@@ -49,25 +49,38 @@ export function formatDate(value: string, locale?: string): string | null {
  * `locale` defaults to the browser's, as formatDate's does. Tests pass one.
  */
 export function formatAmount(value: number, currency?: string, locale?: string): string {
-  const digits = Number.isInteger(value) ? 0 : 2
-  return new Intl.NumberFormat(locale, {
-    ...(currency ? { style: 'currency', currency } : {}),
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(value)
+  return amountFormatter(Number.isInteger(value) ? 0 : 2, currency, locale).format(value)
 }
+
+// Building an Intl.NumberFormat is the expensive part, and a board formats an
+// amount per card on every render, so formatters are kept per shape.
+const amountFormatters = new Map<string, Intl.NumberFormat>()
+
+function amountFormatter(digits: number, currency?: string, locale?: string): Intl.NumberFormat {
+  const key = `${locale ?? ''}|${currency ?? ''}|${digits}`
+  let f = amountFormatters.get(key)
+  if (!f) {
+    f = new Intl.NumberFormat(locale, {
+      ...(currency ? { style: 'currency', currency } : {}),
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    })
+    amountFormatters.set(key, f)
+  }
+  return f
+}
+
+const DECIMAL_RE = /^-?\d+(\.\d+)?$/
 
 /**
  * A stored property value as a number, or undefined when it is not one.
- * Integer properties arrive as JSON numbers; a numeric string is accepted too,
- * so a value written by hand into a Markdown file still counts.
+ * Integer properties arrive as JSON numbers. A plain decimal string such as
+ * "42" is accepted too, so a value written by hand into a Markdown file still
+ * counts; hex, exponent and padded forms are not.
  */
 export function numericValue(value: unknown): number | undefined {
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
-  if (typeof value === 'string' && value.trim() !== '') {
-    const n = Number(value)
-    return Number.isFinite(n) ? n : undefined
-  }
+  if (typeof value === 'string' && DECIMAL_RE.test(value)) return Number(value)
   return undefined
 }
 

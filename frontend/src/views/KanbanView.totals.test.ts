@@ -127,6 +127,21 @@ describe('KanbanView column_total', () => {
     )
   })
 
+  it('marks a total partial when a card hides the property from the reader', async () => {
+    listAllEntitiesMock.mockResolvedValue({
+      data: [
+        deal('D-1', 'lead', 3500),
+        { ...deal('D-2', 'lead'), _redacted: ['value'] },
+        deal('D-3', 'won', 1200),
+      ],
+      meta: { total: 3, page: 1, per_page: 25, has_more: false },
+    })
+    const wrapper = await mountBoard({ column_total: { property: 'value', currency: 'EUR' } })
+    const summary = (id: string) => column(wrapper, id).get('.rl-board-column__summary').text()
+    expect(summary('lead')).toBe(`Total: ${formatAmount(3500, 'EUR')} (partial)`)
+    expect(summary('won')).toBe(`Total: ${formatAmount(1200, 'EUR')}`)
+  })
+
   it('shows no line without column_total', async () => {
     const wrapper = await mountBoard()
     expect(wrapper.find('.rl-board-column__summary').exists()).toBe(false)

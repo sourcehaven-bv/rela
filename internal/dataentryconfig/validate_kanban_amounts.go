@@ -18,7 +18,7 @@ func validateKanbanAmounts(kanbanID string, kanban Kanban, entDef *metamodel.Ent
 			// accept a key that would render nothing.
 			errs = append(errs, at+" is not supported on a board with swimlanes")
 		}
-		errs = append(errs, checkIntegerProperty(at, t.Property, kanban.EntityType, entDef)...)
+		errs = append(errs, checkIntegerProperty(at, t.Property, kanban.EntityType, entDef, true)...)
 		errs = append(errs, checkCurrencyCode(at, t.Currency)...)
 	}
 	for i, f := range kanban.Card.Fields {
@@ -31,23 +31,33 @@ func validateKanbanAmounts(kanbanID string, kanban Kanban, entDef *metamodel.Ent
 			errs = append(errs, at+": currency needs a property field, not a relation, comments or display")
 			continue
 		}
-		errs = append(errs, checkIntegerProperty(at, f.Property, kanban.EntityType, entDef)...)
+		// validateKanbans already reports a property the type does not have.
+		errs = append(errs, checkIntegerProperty(at, f.Property, kanban.EntityType, entDef, false)...)
 	}
 	return errs
 }
 
-// checkIntegerProperty reports unless name is an integer property of the
-// entity type. rela has no decimal type, so integer is the only numeric one.
-func checkIntegerProperty(at, name, entityType string, entDef *metamodel.EntityDef) []string {
+// checkIntegerProperty reports unless name is a single-valued integer
+// property of the entity type. rela has no decimal type, so integer is the
+// only numeric one. A list property arrives as an array, which the board
+// cannot add up, so it would show 0 rather than fail.
+//
+// reportUnknown is false where the caller already reports a property the
+// type does not have, so the author sees one error, not two.
+func checkIntegerProperty(at, name, entityType string, entDef *metamodel.EntityDef, reportUnknown bool) []string {
 	if name == "" {
 		return []string{at + ": property is required"}
 	}
 	def, ok := entDef.Properties[name]
-	if !ok {
+	switch {
+	case !ok && reportUnknown:
 		return []string{fmt.Sprintf("%s: property %q not in entity %q", at, name, entityType)}
-	}
-	if def.Type != metamodel.PropertyTypeInteger {
+	case !ok:
+		return nil
+	case def.Type != metamodel.PropertyTypeInteger:
 		return []string{fmt.Sprintf("%s: property %q must be an integer property, is %q", at, name, def.Type)}
+	case def.List:
+		return []string{fmt.Sprintf("%s: property %q is a list; use a single-valued integer property", at, name)}
 	}
 	return nil
 }

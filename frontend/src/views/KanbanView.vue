@@ -508,12 +508,21 @@ function columnColor(value: string): StatusColor | undefined {
 // board already holds every card, and only the cards the server served to
 // this reader, so the total shows nothing the cards do not. A card without a
 // numeric value adds nothing. The server refuses the key on a swimlane board.
+//
+// A value hidden from the reader by `visible:` is absent too, but it is not
+// "not set": `_redacted` names it. The sum then misses values the reader may
+// not see, so it is marked partial rather than stated as the column's total.
 function columnSummary(items: Entity[]): string | undefined {
   const total = kanbanConfig.value?.column_total
   if (!total || hasSwimmlanes.value) return undefined
   let sum = 0
-  for (const entity of items) sum += numericValue(entity.properties[total.property]) ?? 0
-  return `${total.label || 'Total'}: ${formatAmount(sum, total.currency)}`
+  let partial = false
+  for (const entity of items) {
+    if (entity._redacted?.includes(total.property)) partial = true
+    sum += numericValue(entity.properties[total.property]) ?? 0
+  }
+  const line = `${total.label || 'Total'}: ${formatAmount(sum, total.currency)}`
+  return partial ? `${line} (partial)` : line
 }
 
 // Folded columns, remembered per board. Only declared columns carry a config

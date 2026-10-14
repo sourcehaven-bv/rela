@@ -1,6 +1,7 @@
 package dataentryconfig
 
 import (
+	"maps"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ func amountsMetamodel() *metamodel.Metamodel {
 	m := testMetamodel()
 	ticket := m.Entities["ticket"]
 	ticket.Properties["value"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger}
+	ticket.Properties["scores"] = metamodel.PropertyDef{Type: metamodel.PropertyTypeInteger, List: true}
 	m.Entities["ticket"] = ticket
 	return m
 }
@@ -55,6 +57,8 @@ func TestValidateConfig_KanbanAmounts(t *testing.T) {
 			total("value", "")(k)
 			k.SwimlaneProperty = "priority"
 		}), wantErr: "column_total is not supported on a board with swimlanes"},
+		{name: "total on a list property", kanban: board(total("scores", "")), wantErr: `column_total: property "scores" is a list`},
+		{name: "card currency on a list property", kanban: board(field(KanbanCardField{Property: "scores", Currency: "EUR"})), wantErr: `card.fields[0]: property "scores" is a list`},
 		{name: "card currency", kanban: board(field(KanbanCardField{Property: "value", Currency: "EUR"}))},
 		{name: "card currency on a string", kanban: board(field(KanbanCardField{Property: "assignee", Currency: "EUR"})), wantErr: `card.fields[0]: property "assignee" must be an integer property`},
 		{name: "card currency on a relation", kanban: board(field(KanbanCardField{Relation: "belongs-to", Currency: "EUR"})), wantErr: "currency needs a property field"},
@@ -65,9 +69,7 @@ func TestValidateConfig_KanbanAmounts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			meta := amountsMetamodel()
 			// The columns_from case needs the relation from columnsFromMetamodel.
-			for name, rel := range columnsFromMetamodel().Relations {
-				meta.Relations[name] = rel
-			}
+			maps.Copy(meta.Relations, columnsFromMetamodel().Relations)
 			cfg := &Config{Kanbans: map[string]Kanban{"board": tt.kanban}}
 			err := ValidateConfig([]byte(`version: "1.0"`), cfg, meta)
 			if tt.wantErr == "" {
@@ -112,5 +114,26 @@ kanbans:
 	}
 	if got := k.Card.Fields[0].Currency; got != "EUR" {
 		t.Errorf("card field currency = %q, want EUR", got)
+	}
+}
+
+// TestKanbanAmounts_UnknownCardPropertyReportedOnce: the card field loop
+// already reports an unknown property, so `currency:` adds no second error.
+func TestKanbanAmounts_UnknownCardPropertyReportedOnce(t *testing.T) {
+	cfg := &Config{Kanbans: map[string]Kanban{"board": {
+		EntityType: "ticket", ColumnProperty: "status", Card: KanbanCard{
+			Title:  "title",
+			Fields: []KanbanCardField{{Property: "amount", Currency: "EUR"}},
+		},
+	}}}
+	errs := validateKanbans(cfg, amountsMetamodel())
+	n := 0
+	for _, e := range errs {
+		if strings.Contains(e, `"amount"`) {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("want one error naming the property, got %d: %v", n, errs)
 	}
 }

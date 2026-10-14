@@ -1110,11 +1110,11 @@ type Kanban struct {
 	Card             KanbanCard         `yaml:"card" json:"card"`
 	// ColumnTotal adds a line under each column heading with the sum of a
 	// numeric property over the column's cards (TKT-SVLQQ6).
-	ColumnTotal *KanbanColumnTotal `yaml:"column_total,omitempty" json:"column_total,omitempty"`
-	EditForm         string             `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
-	CreateForm       string             `yaml:"create_form,omitempty" json:"create_form,omitempty"`
-	Filters          []FilterConfig     `yaml:"filters,omitempty" json:"filters,omitempty"`
-	FilterControls   []FilterControl    `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
+	ColumnTotal    *KanbanColumnTotal `yaml:"column_total,omitempty" json:"column_total,omitempty"`
+	EditForm       string             `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
+	CreateForm     string             `yaml:"create_form,omitempty" json:"create_form,omitempty"`
+	Filters        []FilterConfig     `yaml:"filters,omitempty" json:"filters,omitempty"`
+	FilterControls []FilterControl    `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
 	// Condition mirrors [List.Condition], but is NOT YET SUPPORTED on a
 	// kanban and is refused at config load.
 	//

@@ -1592,11 +1592,14 @@ views:
         display: list
         create: {}
 
-# kanban-totals.spec.ts: board column colours come from these. in_progress is
-# left unstyled on purpose, to show a column without a style keeps no colour.
+# kanban-totals.spec.ts: board column colours come from these. Every value is
+# listed, because an explicit entry replaces the colours rela would otherwise
+# assign to the type, and a value left out would lose its colour in every spec.
 styles:
   feature_status:
     draft: blue
+    approved: purple
+    in_progress: orange
     done: green
 
 kanbans:
