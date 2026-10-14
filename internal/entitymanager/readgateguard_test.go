@@ -39,8 +39,6 @@ var noReadGateNeeded = map[string]string{
 		"probeCopyTarget, which read-gates the target, first",
 	"edgeTypeAllowed": "an affordance probe for the copy's own edges: withAffordanceProbe drops the " +
 		"audit row and the copy skips the edge instead of answering 403",
-	"authorizeIncomingSiblings": "authorizes other sources' edges into a target whose own source " +
-		"UpdateRelation gated through lookupSource; the sibling sources are not read-gated",
 }
 
 // TestAuthorizeAndAuditFollowsReadGate fails when a function in this

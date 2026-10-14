@@ -554,6 +554,41 @@ type entityFamily struct {
 	faces []entity.Face
 }
 
+// lookupFamilies reads the families of ids in one header query, keyed by id.
+// An id with no stored row has no entry.
+func lookupFamilies(ctx context.Context, st store.EntityLister, ids []string) (map[string]entityFamily, error) {
+	out := make(map[string]entityFamily, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	q := store.EntityQuery{IDs: ids, Faces: store.AllFaces()}
+	for h, err := range store.ListEntityHeaders(ctx, st, q) {
+		if err != nil {
+			return nil, err
+		}
+		// A backend may match ids case-insensitively; a family is the exact id.
+		if !want[h.ID] {
+			continue
+		}
+		fam := out[h.ID]
+		fam.id = h.ID
+		if fam.typ == "" {
+			fam.typ = h.Type
+		}
+		fam.faces = append(fam.faces, h.Face)
+		out[h.ID] = fam
+	}
+	for id, fam := range out {
+		slices.Sort(fam.faces)
+		out[id] = fam
+	}
+	return out, nil
+}
+
 // lookupFamily reads the family of the entity ref names, from headers only.
 // ref may be a bare id or the fused `ID@face` form; either way the family of
 // the id is returned, because its type and faces are what the callers need.
