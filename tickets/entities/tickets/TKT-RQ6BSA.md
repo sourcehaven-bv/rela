@@ -5,7 +5,7 @@ title: Extract the webhook find/create/then mapping core out of dataentry
 kind: refactor
 priority: medium
 effort: m
-status: ready
+status: backlog
 ---
 
 ## Description

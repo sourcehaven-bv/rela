@@ -5,7 +5,7 @@ title: 'Feed subscriptions: poll RSS/Atom/JSON Feed into entities, plus rela.xml
 kind: enhancement
 priority: medium
 effort: l
-status: ready
+status: backlog
 ---
 
 ## Description
