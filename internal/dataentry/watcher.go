@@ -335,6 +335,7 @@ func (a *App) reloadConfig() error {
 		return reject(&configError{public: publicConfigErrorMessage(err, a.paths.Root), err: err})
 	}
 	slog.Info("config reloaded")
+	warnListVisibilityConflicts(cfg, meta, a.acl)
 
 	// The provider recomputes the style map + OpenAPI generator (co-derived
 	// from cfg/meta) and publishes atomically.

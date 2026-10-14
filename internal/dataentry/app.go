@@ -1208,6 +1208,7 @@ func NewApp(
 	if avatarErr := checkAvatarUserType(cfg.Account, aclImpl, meta); avatarErr != nil {
 		return nil, fmt.Errorf("invalid %s: %w", ConfigFile, avatarErr)
 	}
+	warnListVisibilityConflicts(cfg, meta, aclImpl)
 
 	entCount, _ := st.CountEntities(context.Background(), store.EntityQuery{Faces: store.AllFaces()})
 	relCount, _ := st.CountRelations(context.Background(), store.RelationQuery{})

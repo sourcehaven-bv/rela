@@ -342,12 +342,11 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 
 // rebindVisibleSearcher re-derives the generic visible-search wrapper
 // over the app's CURRENT searcher+store pair. Tests that inject a fake
-// via `app.searcher = ...` and exercise an executeQuery consumer
-// (/_search, _position search scope) must call this afterwards —
-// executeQuery routes through app.visibleSearcher (TKT-BA8BSX), which
-// otherwise still wraps the searcher from construction time. Tests
-// that only hit the list pipeline (?q= on list endpoints) don't need
-// it: that path reads app.searcher directly.
+// via `app.searcher = ...` and exercise a search consumer (/_search,
+// _position search scope, or ?q= on a list endpoint) must call this
+// afterwards. Each routes through app.visibleSearcher (TKT-BA8BSX, and
+// for the list since BUG-WJSYQT), which otherwise still wraps the
+// searcher from construction time.
 func rebindVisibleSearcher(t *testing.T, app *App) {
 	t.Helper()
 	v, err := search.NewVisible(app.searcher, app.store)

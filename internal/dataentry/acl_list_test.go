@@ -201,6 +201,7 @@ func TestACLList_DenyAllSearchShortCircuit(t *testing.T) {
 
 	var calls []string
 	app.searcher = recordingSearcher{log: &calls}
+	rebindVisibleSearcher(t, app)
 
 	d := mustNewACL(t, &acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"feature"}}},
@@ -236,6 +237,7 @@ func TestACLList_SearchAfterACLOrdering(t *testing.T) {
 	var calls []string
 	app.store = orderRecordingStore{Store: app.store, log: &calls}
 	app.searcher = recordingSearcher{log: &calls, hits: []string{"TKT-001"}}
+	rebindVisibleSearcher(t, app)
 
 	d := mustNewACL(t, &acl.Policy{
 		Roles: map[string]acl.RoleDef{"editor": {Read: []string{"ticket"}}},
@@ -453,16 +455,27 @@ func listEntitiesAs(ctx context.Context, t *testing.T, app *App, d *acl.Declarat
 // recordingSearcher logs every Search call and yields the configured
 // hits. Used to pin the DenyAll short-circuit (zero calls) and the
 // search-after-ACL ordering.
+// recordingSearcher logs each Search call. Its hits are ticket ids: the
+// ACL-scoped wrapper keeps a hit only for a type the scope admits.
 type recordingSearcher struct {
 	log  *[]string
 	hits []string
 }
 
-func (s recordingSearcher) Search(context.Context, search.Query) iter.Seq2[search.Hit, error] {
+func (s recordingSearcher) Search(_ context.Context, q search.Query) iter.Seq2[search.Hit, error] {
 	*s.log = append(*s.log, "search")
 	return func(yield func(search.Hit, error) bool) {
+		hits := make([]search.Hit, 0, len(s.hits))
 		for _, id := range s.hits {
-			if !yield(search.Hit{ID: id}, nil) {
+			hits = append(hits, search.Hit{ID: id, Type: "ticket"})
+		}
+		admitted, err := admitHits(q, hits)
+		if err != nil {
+			yield(search.Hit{}, err)
+			return
+		}
+		for _, h := range admitted {
+			if !yield(h, nil) {
 				return
 			}
 		}

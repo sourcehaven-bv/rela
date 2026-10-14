@@ -100,3 +100,59 @@ func assertStatusVerdict(t *testing.T, row v1.Entity) {
 		t.Errorf("%s: status shown = %v, want %v", row.ID, shown, want)
 	}
 }
+
+// A list `?q=` under a field-hiding policy (BUG-WJSYQT) drops a hit whose
+// text matched only fields the reader cannot see, which needs a field verdict
+// per hit. The list's own reads (headers, relations) do not grow with the
+// number of hits. Two per-hit terms remain, both inside the shared
+// search.FieldVisibleSearcher contract that /_search and the MCP searcher use
+// too: the searcher loads each hit once to tell which fields matched, and a
+// `when:` that traverses is answered per hit because the hidden-field
+// callback has no batch hook. BUG-57A53F tracks removing them; until
+// then this pins them at exactly one each, so they cannot grow further.
+func TestQueryBudget_ListFreeTextUnderFieldHiding(t *testing.T) {
+	type sample struct{ fixed, entityLoads, traversals int }
+	var got []sample
+	var detail string
+	for _, n := range []int{10, 50} {
+		app, counting, _, ctx := newBudgetAppOn(t, n, memstore.New())
+		d := mustNewACL(t, &acl.Policy{
+			Roles: map[string]acl.RoleDef{"editor": {
+				Read: []string{"*"},
+				Visible: map[string][]acl.FieldGrant{"ticket": {
+					{Field: "title"},
+					{Field: "status", When: "not related(entity, 'implements', { title = 'Feature 1' })"},
+				}},
+			}},
+			Assignments: map[string]string{"T1": "editor"},
+		}, app.store)
+		setTestACL(t, app, d)
+		res, err := ResolverFromProfile("", app.Meta(), app.store, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		setTestResolver(t, app, res)
+		counting.Reset()
+
+		resp, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "q=Ticket&per_page=100")
+		if rec.Code != http.StatusOK || len(resp.Data) != n {
+			t.Fatalf("list ?q=: %d, %d rows, want %d (%s)", rec.Code, len(resp.Data), n, rec.Body)
+		}
+		calls := counting.Calls()
+		got = append(got, sample{
+			fixed:       counting.Reads() - calls["GetEntity"] - calls["MatchingFaces"],
+			entityLoads: calls["GetEntity"] - n, // the in-memory searcher's own scan reads each row once
+			traversals:  calls["MatchingFaces"] - 2,
+		})
+		detail = counting.String()
+	}
+	if got[0].fixed != got[1].fixed {
+		t.Errorf("list reads grow with hits: %d at 10, %d at 50 (%s)", got[0].fixed, got[1].fixed, detail)
+	}
+	for i, n := range []int{10, 50} {
+		if got[i].entityLoads != n || got[i].traversals != n {
+			t.Errorf("at %d hits: %d field-check entity loads and %d traversals, want %d each (%s)",
+				n, got[i].entityLoads, got[i].traversals, n, detail)
+		}
+	}
+}

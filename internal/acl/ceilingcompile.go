@@ -468,6 +468,12 @@ func (f FieldCeiling) Constrains() bool {
 	return f.Visible != nil || len(f.Redact) > 0
 }
 
+// Hides reports whether this ceiling withholds property: a `redact:` entry
+// names it, or a `visible:` allowlist does not.
+func (f FieldCeiling) Hides(property string) bool {
+	return ceilingHidesField(f, property)
+}
+
 // FieldCeilingFor returns the field ceiling this request's principal is subject
 // to for entityType. A zero value (Constrains() == false) means unrestricted —
 // either no baseline matched, or the baseline says nothing about this type.

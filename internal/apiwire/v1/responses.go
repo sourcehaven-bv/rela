@@ -852,6 +852,13 @@ type Error struct {
 	// bare id offers: the faces of the entity the caller may read, in
 	// declaration order. A client retries with one of them.
 	Faces []string `json:"faces,omitempty"`
+	// Use and Property are set on a 400 property_not_visible (BUG-WJSYQT):
+	// Use is how the list request used the property ("filter" or "sort"),
+	// and Property names it. A client may drop a refused sort and read
+	// again; a refused filter must stand, because dropping it widens the
+	// list.
+	Use      string `json:"use,omitempty"`
+	Property string `json:"property,omitempty"`
 }
 
 // FieldError represents a validation error on a specific field.

@@ -332,6 +332,12 @@ func foldsIntoEndpoint(q store.GraphQuery) bool {
 // the SCHEMA, reported identically to everyone, which is also what lets it be
 // a load-time error rather than a request-time one. It is NOT a substitute
 // for the per-principal ceiling check; see [Request.GateTraversal].
+//
+// That argument is about a condition compiled once and shared by every
+// principal. A list filter or sort that one principal sends is different: it
+// may be judged per principal (affordances.PolicyResolver.FieldVisibleOnEveryRow),
+// because that answer depends only on the policy and the caller's own roles,
+// which the caller already knows, and never on a row.
 func (p *Policy) ConditionallyVisible(entityType, property string) bool {
 	if p == nil {
 		return false

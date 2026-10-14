@@ -27,6 +27,10 @@ export interface ProblemDetail {
   // Set on the 412 a PATCH with preconditions receives (TKT-2VDVHF).
   conflicts?: FieldConflicts
   versions?: FieldVersions
+  // Set on a 400 property_not_visible (BUG-WJSYQT): how the list request
+  // used the refused property, and its name.
+  use?: 'filter' | 'sort'
+  property?: string
 }
 
 export interface ValidationError {
@@ -139,16 +143,13 @@ export function normalizeApiError(error: AxiosError): ApiError {
     // WHICH field a refusal is about, putting the sentence in `title`
     // instead — and a toast reading just "/world" names the field while
     // explaining nothing. problemMessage picks whichever field holds prose.
-    return new ApiError(
-      problemMessage(problem) || `Request failed (${response.status})`,
-      {
-        kind: 'http',
-        status: problem.status ?? response.status,
-        problem,
-        correlationId: problem.correlation_id,
-        original: error,
-      }
-    )
+    return new ApiError(problemMessage(problem) || `Request failed (${response.status})`, {
+      kind: 'http',
+      status: problem.status ?? response.status,
+      problem,
+      correlationId: problem.correlation_id,
+      original: error,
+    })
   }
 
   // Response without a structured body (proxy error page, empty body, …).

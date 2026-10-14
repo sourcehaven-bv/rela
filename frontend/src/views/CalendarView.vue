@@ -242,6 +242,13 @@ const initialLoad = ref(true)
 /** A refetch is in flight. Drives a subtle busy hint, never a blanked grid. */
 const refreshing = ref(false)
 const loadError = ref('')
+/**
+ * Sources whose own read failed while others loaded, by index. One source
+ * refused (say, a date property the reader cannot see on every row, which
+ * the server answers with 400 property_not_visible) must not blank the
+ * sources that did load, so each failure is reported next to the grid.
+ */
+const sourceErrors = ref<{ index: number; message: string }[]>([])
 
 // pageState mirrors DynamicForm's `form-state-*` contract: a stable signal
 // that this screen has finished resolving, so a screenshot{} capture can wait
@@ -276,6 +283,7 @@ async function refetchGrid() {
   // load followed by a switch to a calendar with no sources leaves the error
   // banner up and (since the template gates the grid on it) hides the grid.
   loadError.value = ''
+  sourceErrors.value = []
 
   if (!queries.length) {
     fetched.value = []
@@ -286,7 +294,7 @@ async function refetchGrid() {
   }
   refreshing.value = true
   try {
-    const results = await Promise.all(
+    const settled = await Promise.allSettled(
       queries.map(async ({ source, params }): Promise<SourceResult> => {
         const res = await listAllEntities(source.entity, params, controller.signal)
         // Publish into the cache entry the optimistic write and SSE
@@ -300,8 +308,20 @@ async function refetchGrid() {
       })
     )
     // A superseded fetch must not publish: its window is no longer on screen.
-    if (generation !== refetchGeneration) return
-    fetched.value = results
+    if (generation !== refetchGeneration || controller.signal.aborted) return
+    const failures = settled.flatMap((r, index) =>
+      r.status === 'rejected'
+        ? [{ index, message: getErrorMessage(r.reason, 'Failed to load this source') }]
+        : []
+    )
+    if (failures.length === settled.length) {
+      // Nothing loaded: one error for the calendar, as before.
+      throw (settled[0] as PromiseRejectedResult).reason
+    }
+    fetched.value = settled.map((r) =>
+      r.status === 'fulfilled' ? r.value : { entities: [], included: {}, truncated: false }
+    )
+    sourceErrors.value = failures
   } catch (err) {
     // An abort is this component superseding itself, not a failure to report.
     if (generation !== refetchGeneration || controller.signal.aborted) return
@@ -332,8 +352,11 @@ const sourceData = computed<CalendarSourceData[]>(() =>
   }))
 )
 
-const allEvents = useCalendarEvents(config, sourceData, timezone, (rel) =>
-  schemaStore.getInverseName(rel) ?? ''
+const allEvents = useCalendarEvents(
+  config,
+  sourceData,
+  timezone,
+  (rel) => schemaStore.getInverseName(rel) ?? ''
 )
 
 /**
@@ -413,9 +436,11 @@ const periodLabel = computed(() => {
 })
 
 const weekdayLabels = computed(() =>
-  days.value.slice(0, 7).map((d) =>
-    new Date(d.year, d.month - 1, d.day).toLocaleDateString(undefined, { weekday: 'short' })
-  )
+  days.value
+    .slice(0, 7)
+    .map((d) =>
+      new Date(d.year, d.month - 1, d.day).toLocaleDateString(undefined, { weekday: 'short' })
+    )
 )
 
 function go(delta: number) {
@@ -494,12 +519,10 @@ const { mutate: reschedule } = useMutation({
     // To the event's ADDRESS, face included — see utils/entityRef.
     updateEntity(event.entityType, entityRef(event.entity), { properties: updates }),
   onMutate({ event, updates }) {
-    return beginOptimistic(
-      queryCache,
-      entityKeys.list(event.entityType),
-      event.entity.id,
-      (e) => ({ ...e, properties: { ...e.properties, ...updates } })
-    )
+    return beginOptimistic(queryCache, entityKeys.list(event.entityType), event.entity.id, (e) => ({
+      ...e,
+      properties: { ...e.properties, ...updates },
+    }))
   },
   onError(err, _vars, context) {
     rollbackOptimistic(queryCache, context)
@@ -617,11 +640,7 @@ function onDragEnd() {
         </span>
       </div>
       <div class="calendar-views">
-        <RlSegmentedControl
-          v-model="viewChoice"
-          label="Calendar range"
-          :options="viewOptions"
-        />
+        <RlSegmentedControl v-model="viewChoice" label="Calendar range" :options="viewOptions" />
       </div>
     </div>
 
@@ -641,6 +660,15 @@ function onDragEnd() {
       Some long events may not be shown; increase <code>max_span</code> for this calendar's sources.
     </div>
 
+    <RlStatusRegion
+      v-for="failure in loadError ? [] : sourceErrors"
+      :key="failure.index"
+      tone="error"
+      data-testid="calendar-source-error"
+    >
+      {{ config?.sources?.[failure.index]?.label || config?.sources?.[failure.index]?.entity }}:
+      {{ failure.message }}
+    </RlStatusRegion>
     <RlStatusRegion v-if="loadError" tone="error">{{ loadError }}</RlStatusRegion>
     <RlStatusRegion v-else-if="initialLoad">Loading…</RlStatusRegion>
 

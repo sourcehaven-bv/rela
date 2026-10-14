@@ -69,7 +69,7 @@ func NewQuerySort(
 	}
 	conflicting := map[string]bool{}
 	for _, spec := range specs {
-		if spec.Property == "" || isVirtualSortProperty(spec.Property) {
+		if spec.Property == "" || IsVirtualSortProperty(spec.Property) {
 			continue
 		}
 		for _, def := range defs {
@@ -236,16 +236,17 @@ func sortValue(r Record, property string) (string, bool) {
 	return fmt.Sprintf("%v", v), true
 }
 
-// isVirtualSortProperty reports whether name addresses something other than a
-// stored property, so [NewQuerySort] skips resolving a declared value order
-// for it: neither an entity id nor a modification time can be enum-shaped.
+// IsVirtualSortProperty reports whether name addresses something other than a
+// stored property: the entity id or the modification time. The comparator
+// below orders by those even when a type declares a property of the same name,
+// so [NewQuerySort] skips resolving a declared value order for them.
 //
-// Both ARE honored by the comparator below. That is a different question
-// from whether a backend can ORDER BY them, which the pushdown planner decides
-// for itself — "id" it can, "modified" it cannot, and a request sorting on
-// "modified" therefore stays on the Go path rather than being pushed and
-// reproduced differently.
-func isVirtualSortProperty(name string) bool {
+// A store cannot reproduce that, so a list pushdown must not order by a
+// virtual key: on a type that declares a `modified` property, the store would
+// order by the property value and the Go path by the modification time. And
+// because no `visible:` grant governs an id or a modification time, a list's
+// field gate does not check a virtual sort key.
+func IsVirtualSortProperty(name string) bool {
 	return name == "id" || name == "modified"
 }
 

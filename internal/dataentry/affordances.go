@@ -268,6 +268,15 @@ type FieldVerdictResolver interface {
 	// not allow. A write gate judges a face the caller cannot read by it;
 	// see [affordanceService.relationSources].
 	UnconditionalRelationVerdicts(ctx context.Context, e *entityPkg.Entity) RelationVerdicts
+	// FieldVisibleOnEveryRow reports whether the principal on ctx sees
+	// property on every row of entityType. A list may filter and sort only
+	// on such a property; see gateListQuery.
+	//
+	// It is a required method, not an optional capability found by type
+	// assertion, because the answer must come from the resolver that redacts:
+	// a resolver missing it would otherwise default to "visible" and reopen
+	// the hidden-value oracle (BUG-WJSYQT).
+	FieldVisibleOnEveryRow(ctx context.Context, entityType, property string) bool
 }
 
 // traversalPrimer is the OPTIONAL capability of a [FieldVerdictResolver]

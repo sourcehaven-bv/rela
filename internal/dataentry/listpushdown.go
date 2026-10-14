@@ -52,15 +52,26 @@ type listPlan struct {
 	errClass error
 }
 
+// modifiedSortKey is the virtual sort key that orders by modification time.
+const modifiedSortKey = "modified"
+
 // planListPushdown decides whether the request is eligible and, if so,
 // builds the paged query. ok=false means "take the Go path"; it is never
 // an error, because ineligibility is the ordinary case for a request the
 // planner does not understand.
+//
+// The query is a [gatedListQuery], so the store never filters or orders by a
+// property hidden from the principal on some row (BUG-WJSYQT). A sort on
+// `modified` declines when the type declares a property of that name: the Go
+// path orders by the modification time (filter.IsVirtualSortProperty), and
+// the store would order by the property value instead. The other virtual
+// key, `id`, needs no check: it is a reserved property name, so no type
+// declares it, and an undeclared sort key already declines.
 func planListPushdown(
-	meta *metamodel.Metamodel, typeName string, query map[string][]string,
+	meta *metamodel.Metamodel, typeName string, gated gatedListQuery,
 	rqr acl.ReadQueryResult, world store.WorldScope, page, perPage int,
-	isRelationKey func(string) bool,
 ) (listPlan, bool) {
+	query, isRelationKey := gated.params, gated.isRelationKey
 	if queryGet(query, "q") != "" || rqr.DenyAll {
 		return listPlan{}, false
 	}
@@ -78,10 +89,11 @@ func planListPushdown(
 		if !strings.HasPrefix(key, "filter[") || len(values) == 0 {
 			continue
 		}
-		property, operator, ok := parseRelationFilterKey(key)
-		if !ok || strings.HasSuffix(key, "[]") || (isRelationKey != nil && isRelationKey(property)) {
+		fk, err := parseFilterKey(key)
+		if err != nil || fk.arrayForm || (isRelationKey != nil && isRelationKey(fk.property)) {
 			return listPlan{}, false
 		}
+		property, operator := fk.property, fk.operator
 		if !stringShaped(property) || len(values) != 1 {
 			return listPlan{}, false
 		}
@@ -103,7 +115,7 @@ func planListPushdown(
 
 	var order []store.OrderSpec
 	for _, spec := range parseSortParam(query) {
-		if !stringShaped(spec.Property) {
+		if spec.Property == modifiedSortKey || !stringShaped(spec.Property) {
 			return listPlan{}, false
 		}
 		// Values carries the enum's declared order so the store ranks by
@@ -147,6 +159,9 @@ func planListPushdown(
 type listNarrowing struct {
 	cond  ViewConditionMatcher
 	scope resolvedQueryScope
+	// state is the schema the operation loaded once; pushdownPlan reads the
+	// metamodel from it rather than loading the schema again.
+	state *Schema
 }
 
 // resolveListNarrowing resolves both narrowings and stamps the query identity
@@ -154,16 +169,17 @@ type listNarrowing struct {
 // binds before the store read and the condition runs in Go afterwards
 // against this ctx. The bind is idempotent.
 func resolveListNarrowing(
-	ctx context.Context, a *App, typeName string, query map[string][]string,
+	ctx context.Context, a *App, state *Schema, typeName string, query map[string][]string,
 ) (context.Context, listNarrowing, error) {
 	n := listNarrowing{
-		cond: viewCondition(a.viewConditions, a.State(), viewKindList, queryGet(query, listIDParam)),
+		cond:  viewCondition(a.viewConditions, state, viewKindList, queryGet(query, listIDParam)),
+		state: state,
 	}
 	scopeName, err := queryScopeParam(query)
 	if err != nil {
 		return ctx, n, err
 	}
-	if n.scope, err = viewQueryScope(a.queryScopes, a.Cfg(), a.Meta(), typeName, scopeName); err != nil {
+	if n.scope, err = viewQueryScope(a.queryScopes, state.Cfg, state.Meta, typeName, scopeName); err != nil {
 		return ctx, n, err
 	}
 	if n.cond != nil || n.scope.Scope != nil {
@@ -188,16 +204,15 @@ func resolveListNarrowing(
 // the scope is lowered, because lowering gates every traversal and that work
 // is wasted on a request the plan would decline anyway.
 func (n listNarrowing) pushdownPlan(
-	ctx context.Context, a *App, typeName string, query map[string][]string, page, perPage int,
+	ctx context.Context, typeName string, query gatedListQuery, page, perPage int,
 ) (plan listPlan, empty, ok bool) {
 	// A page scope (pagescope.go) narrows membership the way a condition does,
 	// so it declines too.
-	if n.cond != nil || hasPageScope(query) || worldFromContext(ctx).blocksAllReads() {
+	if n.cond != nil || hasPageScope(query.params) || worldFromContext(ctx).blocksAllReads() {
 		return listPlan{}, false, false
 	}
 	rqr := readGateFromContext(ctx).ReadQuery(ctx, typeName)
-	isRelationKey := relationFilterClassifier(a.Meta(), a.Cfg(), typeName)
-	plan, ok = planListPushdown(a.Meta(), typeName, query, rqr, worldScopeFrom(ctx), page, perPage, isRelationKey)
+	plan, ok = planListPushdown(n.state.Meta, typeName, query, rqr, worldScopeFrom(ctx), page, perPage)
 	if !ok || n.scope.Scope == nil {
 		return plan, false, ok
 	}

@@ -63,6 +63,12 @@ func (p *policyResolver) UnconditionalRelationVerdicts(ctx context.Context, e *e
 	return relationVerdictsWire(p.inner.UnconditionalRelationVerdicts(ctx, e))
 }
 
+// FieldVisibleOnEveryRow delegates to
+// [affordances.PolicyResolver.FieldVisibleOnEveryRow].
+func (p *policyResolver) FieldVisibleOnEveryRow(ctx context.Context, entityType, property string) bool {
+	return p.inner.FieldVisibleOnEveryRow(ctx, entityType, property)
+}
+
 // relationVerdictsWire maps affordances relation verdicts onto the wire
 // type. Each relation type's per-dimension attribution ("create" / "remove"
 // / "fields.<name>") is preserved.

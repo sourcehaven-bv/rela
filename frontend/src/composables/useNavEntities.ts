@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, type Ref } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { listEntities } from '@/api'
+import { withSortFallback } from '@/api/entities'
 import { shouldDropHeldContent } from '@/api/errors'
 import { useEvents } from '@/composables/useEvents'
 import { useWorld } from '@/composables/useWorld'
@@ -70,7 +71,11 @@ export function useNavEntities(groups: Ref<SidebarGroup[]>) {
     key: () => ['nav-entities', worldParam.value ?? '', ...entries.value.map(navEntitiesKey)],
     query: async ({ signal }) => {
       const settled = await Promise.allSettled(
-        entries.value.map((e) => listEntities(e.type, paramsFor(e), signal))
+        // A sort the server refuses (a property this reader cannot see on
+        // every row) is dropped rather than losing the entry's rows.
+        entries.value.map((e) =>
+          withSortFallback(paramsFor(e), (p) => listEntities(e.type, p, signal))
+        )
       )
       const rows = new Map<string, NavEntityRow[]>()
       settled.forEach((result, i) => {

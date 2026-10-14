@@ -51,7 +51,7 @@ func handleV1NavStatus(a *App, w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// One entry that cannot be counted must not blank every other
 			// marker, and a missing marker is the honest answer for it.
-			slog.WarnContext(ctx, "nav status: entry skipped",
+			slog.Log(ctx, sidebarSkipLevel(err), "nav status: entry skipped",
 				"entry", ns.Entry.Label, "list", ns.List, "error", err)
 			continue
 		}
@@ -133,7 +133,13 @@ func navStatusRows(
 	if ctx, err = bindQueryIdentity(ctx, scope); err != nil {
 		return ctx, nil, err
 	}
-	rows, _, err := scopedSortedEntitiesScoped(ctx, a, typeName, navStatusListQuery(listCfg), scope)
+	// A configured filter on a property hidden from this principal fails
+	// this one entry, as any other error here does; the caller degrades it.
+	gated, err := gateAppListQuery(ctx, a, s, typeName, navStatusListQuery(listCfg))
+	if err != nil {
+		return ctx, nil, err
+	}
+	rows, _, err := scopedSortedEntitiesScoped(ctx, a, typeName, gated, scope)
 	if err != nil {
 		return ctx, nil, err
 	}

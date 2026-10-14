@@ -301,7 +301,14 @@ func (q *queryService) freeTextIDsForType(
 		return freeTextIDsForTypeResult{IDs: nil, HasFilter: true}, nil
 	}
 
-	ids, err := freeTextIDs(ctx, q.services(), sq, worldScopeFrom(ctx), maxFreeTextSearchResults)
+	// The list rows are gated already; the search is scoped the same way
+	// so it can drop a hit that matched a hidden field only.
+	scope := readGateFromContext(ctx).SearchScope(ctx, sq.EntityTypes)
+	if len(scope) == 0 {
+		return freeTextIDsForTypeResult{IDs: map[string]struct{}{}, HasFilter: true}, nil
+	}
+	ids, err := freeTextIDs(ctx, q.visibleSearcher(), q.affordances(), sq, scope,
+		worldScopeFrom(ctx), maxFreeTextSearchResults)
 	if err != nil {
 		return freeTextIDsForTypeResult{}, err
 	}

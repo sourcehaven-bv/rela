@@ -11,7 +11,7 @@ import { useUrlFilterSync } from '@/composables/useUrlFilterSync'
 import { useWorld } from '@/composables/useWorld'
 import { useCreateTarget } from '@/composables/useCreateTarget'
 import { useListGrouping, type ListSection } from '@/composables/useListGrouping'
-import { listEntities, listAllEntities, getErrorMessage } from '@/api'
+import { listEntities, listAllEntities, getErrorMessage, withSortFallback, type SortDropped } from '@/api'
 import { entityKeys } from '@/queries/entities'
 import { liveListPath } from '@/api/live'
 import { useLiveSubscription } from '@/composables/useLiveSubscription'
@@ -119,7 +119,7 @@ onUnmounted(() => { mobileQuery?.removeEventListener('change', onMediaChange) })
 const page = ref(1)
 const queryCache = useQueryCache()
 
-type ListQuery = ReturnType<typeof useQuery<ListResponse<Entity>>>
+type ListQuery = ReturnType<typeof useQuery<ListResponse<Entity> & { sortDropped?: SortDropped }>>
 const listQueryRef = shallowRef<ListQuery>()
 
 const entities = computed<Entity[]>(() => listQueryRef.value?.data.value?.data ?? [])
@@ -159,6 +159,9 @@ const loadError = computed(() => {
   const err = listQueryRef.value?.error.value
   return err ? getErrorMessage(err, 'Failed to load entities') : null
 })
+// Set when the server refused the list's sort because the reader cannot see
+// a sorted property, and the rows were read again unsorted.
+const sortDropped = computed(() => listQueryRef.value?.data.value?.sortDropped)
 const includedEntities = computed<Record<string, Entity>>(
   () => listQueryRef.value?.data.value?.included ?? {}
 )
@@ -634,10 +637,12 @@ const listQuery = useQuery({
   query: ({ signal }) => {
     const config = listConfig.value
     if (!config) throw new Error(`unknown list: ${props.listId}`)
-    if (config.group_by) {
-      return listAllEntities(config.entity, queryParams.value, signal, { maxRows: config.group_by.max_rows })
-    }
-    return listEntities(config.entity, queryParams.value)
+    const groupBy = config.group_by
+    return withSortFallback(queryParams.value, (params) =>
+      groupBy
+        ? listAllEntities(config.entity, params, signal, { maxRows: groupBy.max_rows })
+        : listEntities(config.entity, params)
+    )
   },
   enabled: () => !!listConfig.value,
   placeholderData: (prev) => prev,
@@ -1418,6 +1423,13 @@ watch(searchQuery, () => {
         data-testid="group-truncated"
       >
         Showing the first {{ entities.length }} of {{ grouping.total.value }} rows. Filter the list to see the rest.
+      </RlBanner>
+      <RlBanner
+        v-if="sortDropped && !loading && !loadError"
+        tone="info"
+        data-testid="sort-dropped"
+      >
+        Shown unsorted: {{ sortDropped.reason }}
       </RlBanner>
       <RlStatusRegion v-if="loading">Loading...</RlStatusRegion>
 

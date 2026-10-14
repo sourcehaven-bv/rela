@@ -357,6 +357,11 @@ func (f fakeResolver) UnconditionalRelationVerdicts(context.Context, *entity.Ent
 	return f.rv
 }
 
+// FieldVisibleOnEveryRow follows the fixed verdicts, which hold for every row.
+func (f fakeResolver) FieldVisibleOnEveryRow(_ context.Context, _, property string) bool {
+	return f.fv.IsVisible(property)
+}
+
 // byTypeResolver returns different verdicts depending on the entity
 // type. Used by tests that need to prove the source-not-path-entity
 // resolution: an incoming-direction edge should resolve the verdict
@@ -377,6 +382,7 @@ func (r byTypeResolver) RelationVerdicts(_ context.Context, e *entity.Entity) Re
 func (r byTypeResolver) UnconditionalRelationVerdicts(ctx context.Context, e *entity.Entity) RelationVerdicts {
 	return r.RelationVerdicts(ctx, e)
 }
+func (r byTypeResolver) FieldVisibleOnEveryRow(context.Context, string, string) bool { return true }
 
 // affordanceServiceWithResolver builds a bare affordanceService over a fixed
 // resolver — no App. The resolver-driven affordance methods

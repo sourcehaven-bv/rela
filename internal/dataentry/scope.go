@@ -300,16 +300,21 @@ func storePosition(
 		return nil, false
 	}
 	query := scope.toQuery()
-	ctx, n, err := resolveListNarrowing(r.Context(), a, scope.Type, query)
+	// LOAD-BEARING: declining on either error is safe only because the Go
+	// path (resolveScope → scopedSortedEntities) gates the query and resolves
+	// the same narrowing again, and refuses with the same error. A scope that
+	// fails either must never degrade into an unscoped or ungated read; if the
+	// Go path ever stops re-checking, this must return the error instead.
+	state := a.State()
+	gated, err := gateAppListQuery(r.Context(), a, state, scope.Type, query)
 	if err != nil {
-		// LOAD-BEARING: declining here is safe only because the Go path
-		// (resolveScope → scopedSortedEntities) resolves the same narrowing
-		// again and refuses with the same error. A scope that fails to
-		// resolve must never degrade into an unscoped read; if the Go path
-		// ever stops re-resolving, this must return the error instead.
 		return nil, false
 	}
-	plan, empty, ok := n.pushdownPlan(ctx, a, scope.Type, query, 1, 1)
+	ctx, n, err := resolveListNarrowing(r.Context(), a, state, scope.Type, query)
+	if err != nil {
+		return nil, false
+	}
+	plan, empty, ok := n.pushdownPlan(ctx, scope.Type, gated, 1, 1)
 	if !ok {
 		return nil, false
 	}
