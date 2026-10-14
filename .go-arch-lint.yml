@@ -96,6 +96,11 @@ components:
   mailrender:       { in: internal/mailrender }
   # HTML <-> markdown for sync connectors (TKT-LAMZ8F). A leaf like mailrender.
   htmlmd:           { in: internal/htmlmd }
+  # Hardened XML decoding (stdlib only) and the feed parser on top of it. Both
+  # are pure leaves: rela.xml / rela.feed in Lua and the feed importer share
+  # them, so every caller decodes untrusted XML under the same limits.
+  safexml:          { in: internal/safexml }
+  feed:             { in: internal/feed }
   # Which entity ids a markdown body mentions (TKT-Q6AKUN). A leaf: every store
   # backend indexes with it and the data-entry renderer links with it, so the
   # backlink index and the rendered links agree on what counts as a mention.
@@ -1020,6 +1025,9 @@ deps:
       - goldmark
       - bluemonday
       - douceur
+  feed:
+    mayDependOn:
+      - safexml
   htmlmd:
     canUse:
       - goldmark
@@ -1639,6 +1647,9 @@ deps:
       - mailrender
       # rela.md.from_html / to_html (TKT-LAMZ8F); a leaf, no cycle possible.
       - htmlmd
+      # rela.xml / rela.feed (TKT-6KN0AC); pure leaves, no cycle possible.
+      - safexml
+      - feed
       - metamodel
       - principal
       - search

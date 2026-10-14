@@ -959,6 +959,11 @@ func (r *Runtime) registerReadBindings(rela *lua.LTable) {
 
 	// JSON encode/decode helpers module (rela.json.*)
 	r.registerJSONModule(rela)
+
+	// XML decoding and feed parsing (rela.xml.*, rela.feed.*). Pure: no I/O,
+	// so read-only runtimes get them too, like rela.json.
+	registerXMLModule(r.L, rela)
+	registerFeedModule(r.L, rela)
 }
 
 // registerWriteBindings installs mutation bindings on the rela table.

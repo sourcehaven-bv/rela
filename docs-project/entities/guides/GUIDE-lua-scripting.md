@@ -1572,6 +1572,103 @@ error-handling branches work unchanged.
   string `"<max-depth>"` to prevent stack overflow from a hostile
   response.
 
+### XML Functions
+
+The `rela.xml` module decodes XML into plain tables. It is available in
+every script, because it does no I/O.
+
+| Function | Description | Returns |
+|----------|-------------|---------|
+| `rela.xml.decode(string)` | XML string → node table | (node, nil) or (nil, err_table) |
+| `rela.xml.find(node, name[, ns])` | First child element named `name` | node or nil |
+| `rela.xml.find_all(node, name[, ns])` | All child elements named `name` | list of nodes |
+| `rela.xml.text(node)` | All text inside `node`, children included | string |
+
+A node table has these fields. Empty fields are left out.
+
+| Field | Content |
+|-------|---------|
+| `name` | Element name without prefix |
+| `ns` | Namespace URI, not the prefix |
+| `attrs` | Attribute values by name. An attribute with a namespace is keyed `"{uri}name"`. Namespace declarations (`xmlns`) are not included. |
+| `children` | List of child element nodes |
+| `text` | Text before the first child element |
+| `tail` | Text after this element, before its next sibling |
+
+`text` and `tail` together keep mixed content such as `two <b>bold</b>
+tail` in order. Use `rela.xml.text(node)` when you only want the string.
+
+```lua
+local resp = assert(http.request({url = "https://example.org/status.xml"}))
+local root, err = rela.xml.decode(resp.body)
+if err then
+    print("bad XML: " .. err.message)
+    return
+end
+for _, svc in ipairs(rela.xml.find_all(root, "service")) do
+    print(svc.attrs.name .. ": " .. rela.xml.text(svc))
+end
+```
+
+#### XML Safety Limits
+
+`rela.xml.decode` is built for untrusted input:
+
+- It never processes a DTD and never loads an external entity, so XXE
+  and "billion laughs" attacks fail. A `<!DOCTYPE>` is skipped. Using an
+  entity declared there is an error.
+- The standard XML entities and the HTML entities (`&nbsp;` and so on)
+  are recognised.
+- Input is refused above 10 MiB, 64 levels of nesting, 100 000 elements
+  or 64 attributes on one element.
+- Only UTF-8, US-ASCII, ISO-8859-1 and windows-1252 are accepted.
+  ISO-8859-1 is read as windows-1252, as browsers do.
+
+A refused or malformed document returns `(nil, err_table)` with
+`kind="bad_response"`. When a limit refused it, `err.limit` names the
+limit: `"bytes"`, `"depth"`, `"elements"`, `"attributes"` or `"charset"`.
+`rela.feed.parse` adds `"items"` for a feed with more than 10 000 items.
+
+### Feed Functions
+
+`rela.feed.parse(string)` reads an RSS 2.0, RSS 1.0, Atom or JSON Feed
+document and returns one shape for all four. XML feeds go through the
+same limits as `rela.xml.decode`.
+
+```lua
+local resp = assert(http.request({url = "https://example.org/feed.atom"}))
+local feed, err = rela.feed.parse(resp.body)
+if err then
+    print("feed error: " .. err.message)
+    return
+end
+for _, item in ipairs(feed.items) do
+    if item.id then
+        print(item.id .. " " .. item.title)
+    end
+end
+```
+
+The feed table has `format` (`"rss"`, `"rdf"`, `"atom"` or `"json"`),
+`title`, `link`, `description` and `items`. Each item has these fields:
+
+| Field | Content |
+|-------|---------|
+| `id` | The feed's own id (`guid`, Atom `id`, JSON `id`), else the link. `nil` when the item has neither. |
+| `title`, `link` | Strings, `""` when absent |
+| `summary`, `content` | HTML strings, `""` when absent. Plain text is escaped, so both are always HTML. |
+| `published`, `updated` | RFC 3339 times in UTC, or `nil` when absent or not readable |
+| `published_raw`, `updated_raw` | The date text as the feed wrote it |
+| `authors`, `categories` | Lists of strings |
+
+`summary` and `content` come from the feed, so treat them as untrusted
+HTML. Convert them with `rela.md.from_html` before you store them.
+
+A date without a time zone is read as UTC. Numeric offsets and the zone
+names from RFC 822 (`GMT`, `UT`, `EST`, `PDT` and so on) are understood.
+A date with any other zone name is treated as unreadable, so `published`
+is `nil` and only `published_raw` is set.
+
 ### Context
 
 | Variable | Description |
