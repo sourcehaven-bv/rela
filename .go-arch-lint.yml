@@ -101,6 +101,11 @@ components:
   # them, so every caller decodes untrusted XML under the same limits.
   safexml:          { in: internal/safexml }
   feed:             { in: internal/feed }
+  # The find / create / then mapping that turns an inbound record into entity
+  # writes. ingestspec is the leaf of types that config packages embed; ingest
+  # runs it on the write path. Webhooks and feed subscriptions share both.
+  ingestspec:       { in: internal/ingestspec }
+  ingest:           { in: internal/ingest }
   # Which entity ids a markdown body mentions (TKT-Q6AKUN). A leaf: every store
   # backend indexes with it and the data-entry renderer links with it, so the
   # backlink index and the rendered links agree on what counts as a mention.
@@ -600,6 +605,7 @@ deps:
       - conflict
       - dataentryconfig
       - entitymanager
+      - ingest
       - filter
       - principal
       - git
@@ -664,6 +670,7 @@ deps:
       - filter
       - git
       - icondefs
+      - ingestspec
       - metamodel
     canUse:
       - rrulego
@@ -1028,6 +1035,13 @@ deps:
   feed:
     mayDependOn:
       - safexml
+  ingest:
+    mayDependOn:
+      - entity
+      - entitymanager
+      - ingestspec
+      - markdown
+      - store
   htmlmd:
     canUse:
       - goldmark
