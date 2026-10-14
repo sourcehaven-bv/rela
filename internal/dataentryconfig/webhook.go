@@ -1,6 +1,10 @@
 package dataentryconfig
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/Sourcehaven-BV/rela/internal/ingestspec"
+)
 
 // Webhook declares an inbound HTTP endpoint that maps a request onto entity
 // writes, without Lua (TKT-1EM4KL).
@@ -12,36 +16,20 @@ import "net/http"
 // explicit path would add an aliasing surface to design, validate and keep
 // consistent with the id, for no gain.
 //
-// # Three workflows, distinguished by which fields are set
+// # Three workflows
 //
-// Uniqueness is a property of the operator's schema, not something this layer
-// may assume, so all three shapes must be expressible:
-//
-//	Find    CreateIfMissing   workflow
-//	------- ----------------- ---------------------------------------
-//	nil     set               always-create (an inbound form post)
-//	set     set               find-or-create (a monitoring alert)
-//	set     nil               find-and-update-only (no create race)
-//
-// This is why Find is OPTIONAL and a match key is required only alongside
-// CreateIfMissing: requiring a key everywhere would break always-create
-// outright.
+// Which of always-create, find-or-create and find-and-update-only a hook runs
+// follows from which of Find and CreateIfMissing are set; see the ingestspec
+// package doc.
 type Webhook struct {
 	// Description is operator documentation, unused by the runtime.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 
-	// Find locates an existing entity to act on. Omitted ⇒ always create.
-	Find *WebhookFind `yaml:"find,omitempty" json:"find,omitempty"`
-
-	// CreateIfMissing creates the entity when Find matches nothing (or when
-	// Find is omitted entirely). Nil ⇒ a miss is a no-op, reported as
-	// no_match in the response.
+	// Find, CreateIfMissing and Then are the hook's mapping; see
+	// [ingestspec.Mapping], which documents each field.
+	Find            *WebhookFind   `yaml:"find,omitempty" json:"find,omitempty"`
 	CreateIfMissing *WebhookCreate `yaml:"create_if_missing,omitempty" json:"create_if_missing,omitempty"`
-
-	// Then are the mutation steps applied to the found-or-created entity, in
-	// order. Steps must be PURE: a conflict retry re-runs the whole list, so a
-	// step with an external side effect would repeat it.
-	Then []WebhookStep `yaml:"then,omitempty" json:"then,omitempty"`
+	Then            []WebhookStep  `yaml:"then,omitempty" json:"then,omitempty"`
 
 	// Respond shapes the HTTP response. Zero value ⇒ 200.
 	Respond WebhookRespond `yaml:"respond,omitempty" json:"respond,omitzero"`
@@ -61,69 +49,14 @@ type Webhook struct {
 	MaxBodyBytes int64 `yaml:"max_body_bytes,omitempty" json:"max_body_bytes,omitempty"`
 }
 
-// WebhookFind locates the entity a delivery concerns.
-type WebhookFind struct {
-	// Type is the entity type to search. Required.
-	Type string `yaml:"type" json:"type"`
-
-	// Face is the face the hook reads, writes and creates, for a Type that
-	// declares `faces:`. Required for such a type and refused for one
-	// without. A delivery names no face, and a world may rank several, so
-	// the face a hook edits is configuration, never a world's choice
-	// (TKT-7IZHP0 §6).
-	Face string `yaml:"face,omitempty" json:"face,omitempty"`
-
-	// Match names the properties whose values identify the entity. Each is
-	// compared against the interpolated value in Values, or — when Values has
-	// no entry for it — against the same-named field of the request body.
-	//
-	// It names SOURCE properties, never a derived key: computed properties are
-	// materialized on write, so a `unique:` computed hash exists on the stored
-	// entity and matching on its inputs is what lets rela derive the identity.
-	Match []string `yaml:"match,omitempty" json:"match,omitempty"`
-
-	// Values optionally supplies an interpolated expression per match property,
-	// for when the body's field name differs from the entity's property name.
-	Values map[string]string `yaml:"values,omitempty" json:"values,omitempty"`
-}
-
-// WebhookCreate describes the entity to create on a miss.
-type WebhookCreate struct {
-	// Type is the entity type to create. Defaults to Find.Type when omitted.
-	Type string `yaml:"type,omitempty" json:"type,omitempty"`
-
-	// Template names a template variant (templates/entities/<type>--<variant>.md).
-	Template string `yaml:"template,omitempty" json:"template,omitempty"`
-
-	// Properties are interpolated property values for the new entity.
-	Properties map[string]string `yaml:"properties,omitempty" json:"properties,omitempty"`
-
-	// Content is the interpolated markdown body of the new entity.
-	Content string `yaml:"content,omitempty" json:"content,omitempty"`
-}
-
-// WebhookStep is one mutation applied to the found-or-created entity. Exactly
-// one field must be set — the shape is a tagged union spelled as a struct so
-// YAML reads naturally.
-type WebhookStep struct {
-	// AppendSection appends a line to a named markdown section of the body.
-	AppendSection *WebhookAppendSection `yaml:"append_section,omitempty" json:"append_section,omitempty"`
-
-	// Set upserts interpolated property values.
-	Set map[string]string `yaml:"set,omitempty" json:"set,omitempty"`
-}
-
-// WebhookAppendSection appends a line to a named section of the entity body.
-//
-// A missing section is CREATED rather than erroring — see
-// markdown.AppendToSection, which owns that decision and the reasoning.
-type WebhookAppendSection struct {
-	// Section is the heading text to append under. Matched case-insensitively.
-	Section string `yaml:"section" json:"section"`
-
-	// Content is the interpolated line to append.
-	Content string `yaml:"content" json:"content"`
-}
+// The mapping types live in ingestspec, which the feed subscriptions share;
+// these aliases keep the webhook names its callers and tests use.
+type (
+	WebhookFind          = ingestspec.Find
+	WebhookCreate        = ingestspec.Create
+	WebhookStep          = ingestspec.Step
+	WebhookAppendSection = ingestspec.AppendSection
+)
 
 // WebhookRespond shapes the response to a successful delivery.
 type WebhookRespond struct {
@@ -139,17 +72,13 @@ func (r WebhookRespond) StatusOrDefault() int {
 	return r.Status
 }
 
+// Mapping returns the hook's find / create / then pipeline.
+func (w Webhook) Mapping() ingestspec.Mapping {
+	return ingestspec.Mapping{Find: w.Find, CreateIfMissing: w.CreateIfMissing, Then: w.Then}
+}
+
 // CreateType returns the entity type a create step produces: the explicit
 // create type, else the find type.
 func (w Webhook) CreateType() string {
-	if w.CreateIfMissing == nil {
-		return ""
-	}
-	if w.CreateIfMissing.Type != "" {
-		return w.CreateIfMissing.Type
-	}
-	if w.Find != nil {
-		return w.Find.Type
-	}
-	return ""
+	return w.Mapping().CreateType()
 }

@@ -1,8 +1,10 @@
 package markdown_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 )
@@ -229,4 +231,27 @@ func TestAppendToSection_EmptyBlockAddsNothing(t *testing.T) {
 	if got := markdown.AppendToSection(content, "A", ""); got != content {
 		t.Errorf("empty block changed the document\n got %q\nwant %q", got, content)
 	}
+}
+
+// TestAppendToSection_NonCommonMarkBreaksForgeNoHeading pins the line-ending
+// definition ingest.FlattenToLine relies on: \v, \f, U+0085, U+2028 and U+2029
+// do not end a line, so "## Forged" after one of them is not a heading and a
+// later append to the same section still lands below it.
+func TestAppendToSection_NonCommonMarkBreaksForgeNoHeading(t *testing.T) {
+	for _, sep := range []string{"\v", "\f", "\u0085", " ", " "} {
+		t.Run(fmt.Sprintf("%U", first(sep)), func(t *testing.T) {
+			body := markdown.AppendToSection("## Log\n", "Log", "- a"+sep+"## Forged")
+			body = markdown.AppendToSection(body, "Log", "- b")
+			first := strings.Index(body, "## Forged")
+			second := strings.Index(body, "- b")
+			if first < 0 || second < first {
+				t.Errorf("a later append landed above the forged text, so it parsed as a heading:\n%q", body)
+			}
+		})
+	}
+}
+
+func first(s string) rune {
+	r, _ := utf8.DecodeRuneInString(s)
+	return r
 }

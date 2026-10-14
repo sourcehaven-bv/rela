@@ -118,6 +118,8 @@ override:
     threshold: 55
   - path: ^internal/dataentryconfig$
     threshold: 70
+  - path: ^internal/ingest$
+    threshold: 90 # the webhook and feed write path, including the per-value flattening guard
   - path: ^internal/lua$
     threshold: 80
   - path: ^internal/imgproc$

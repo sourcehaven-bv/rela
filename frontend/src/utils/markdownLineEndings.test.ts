@@ -2,7 +2,7 @@
 //
 // Line-ending parity between marked and goldmark (#1594).
 //
-// `flattenToLine` (internal/dataentry/webhook_routes.go) replaces only \n and
+// `FlattenToLine` (internal/ingest/interpolate.go) replaces only \n and
 // \r in an interpolated webhook value, leaving \v, \f, U+0085, U+2028 and
 // U+2029 alone. Its doc comment is explicit that this is safe only because of
 // what the PARSER treats as a line ending, not because of anything the
