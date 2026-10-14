@@ -379,8 +379,6 @@ func TestRun_Errors(t *testing.T) {
 	ok := (&world{}).deps()
 	failing := ok
 	failing.Reader = &failingReader{}
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
 	without := func(edit func(*Deps)) Deps {
 		d := ok
 		edit(&d)
@@ -388,30 +386,35 @@ func TestRun_Errors(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name string
-		ctx  context.Context
-		d    Deps
-		m    ingestspec.Mapping
-		want string
+		name      string
+		cancelled bool
+		d         Deps
+		m         ingestspec.Mapping
+		want      string
 	}{
-		{"nil reader", context.Background(), without(func(d *Deps) { d.Reader = nil }), findOrCreate,
+		{"nil reader", false, without(func(d *Deps) { d.Reader = nil }), findOrCreate,
 			"no visible reader"},
-		{"nil writer", context.Background(), without(func(d *Deps) { d.Writer = nil }), findOrCreate,
+		{"nil writer", false, without(func(d *Deps) { d.Writer = nil }), findOrCreate,
 			"no writer"},
-		{"nil write-prep", context.Background(), without(func(d *Deps) { d.WritePrep = nil }), findOrCreate,
+		{"nil write-prep", false, without(func(d *Deps) { d.WritePrep = nil }), findOrCreate,
 			"no write-prep"},
-		{"zero attempts", context.Background(), without(func(d *Deps) { d.MaxAttempts = 0 }), findOrCreate,
+		{"zero attempts", false, without(func(d *Deps) { d.MaxAttempts = 0 }), findOrCreate,
 			"MaxAttempts 0"},
-		{"list error", context.Background(), failing, findOrCreate, "store down"},
-		{"cancelled", cancelled, ok, findOrCreate, "context canceled"},
-		{"no create type", context.Background(), ok,
+		{"list error", false, failing, findOrCreate, "store down"},
+		{"cancelled", true, ok, findOrCreate, "context canceled"},
+		{"no create type", false, ok,
 			ingestspec.Mapping{CreateIfMissing: &ingestspec.Create{}}, "no resolvable entity type"},
-		{"step without action", context.Background(), ok,
+		{"step without action", false, ok,
 			ingestspec.Mapping{CreateIfMissing: &ingestspec.Create{Type: "ticket"}, Then: []ingestspec.Step{{}}},
 			"then[0] declares no action"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Run(tc.ctx, tc.d, tc.m, mapSource{"body.host": "web1"})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.cancelled {
+				cancel()
+			}
+			_, err := Run(ctx, tc.d, tc.m, mapSource{"body.host": "web1"})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("err = %v, want it to contain %q", err, tc.want)
 			}

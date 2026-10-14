@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Sourcehaven-BV/rela/internal/markdown"
 )
@@ -238,7 +239,7 @@ func TestAppendToSection_EmptyBlockAddsNothing(t *testing.T) {
 // later append to the same section still lands below it.
 func TestAppendToSection_NonCommonMarkBreaksForgeNoHeading(t *testing.T) {
 	for _, sep := range []string{"\v", "\f", "\u0085", " ", " "} {
-		t.Run(fmt.Sprintf("%U", []rune(sep)[0]), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%U", first(sep)), func(t *testing.T) {
 			body := markdown.AppendToSection("## Log\n", "Log", "- a"+sep+"## Forged")
 			body = markdown.AppendToSection(body, "Log", "- b")
 			first := strings.Index(body, "## Forged")
@@ -248,4 +249,9 @@ func TestAppendToSection_NonCommonMarkBreaksForgeNoHeading(t *testing.T) {
 			}
 		})
 	}
+}
+
+func first(s string) rune {
+	r, _ := utf8.DecodeRuneInString(s)
+	return r
 }
