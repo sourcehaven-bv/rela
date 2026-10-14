@@ -126,6 +126,9 @@ func newSandboxedState() *lua.LState {
 	for _, g := range []string{
 		"loadfile", "dofile", "load", "loadstring",
 		"rawget", "rawset", "rawequal", "rawlen", "getmetatable", "setmetatable",
+		// No shared modules: a re-run must transform exactly as the first
+		// run did, and a lib/ module may have changed since.
+		"require", "module",
 	} {
 		ls.SetGlobal(g, lua.LNil)
 	}

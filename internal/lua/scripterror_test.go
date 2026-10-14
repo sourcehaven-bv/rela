@@ -446,3 +446,20 @@ func tail(s string, n int) string {
 	}
 	return s[len(s)-n:]
 }
+
+// Inline code runs under gopher-lua's "<string>" chunk name while the
+// envelope Path is "<inline>"; that difference must not read as a module.
+func TestBuildScriptError_InlineErrorHasNoLuaPath(t *testing.T) {
+	t.Parallel()
+	se := BuildScriptError(BuildInput{
+		Path:   "<inline>",
+		Err:    errors.New("<string>:2: boom"),
+		Frames: []StackFrame{{Path: "<string>", Line: 2}},
+	})
+	if se.LuaPath != "" {
+		t.Errorf("LuaPath = %q, want empty", se.LuaPath)
+	}
+	if !strings.HasPrefix(se.Error(), "<inline>:2: ") {
+		t.Errorf("Error() = %q", se.Error())
+	}
+}

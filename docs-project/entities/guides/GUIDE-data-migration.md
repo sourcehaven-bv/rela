@@ -440,7 +440,9 @@ The script never writes anything itself — the migration runner applies the
 returned patch with raw store access. That is deliberate: migration input is
 by definition invalid under the new schema, so the normal write path
 (validation, automations, state machines) must not run. The sandbox has no
-`io`, `os`, or file access. Use `entity: "*"` (quoted) to transform every
+`io`, `os`, or file access, and no `require`: a migration must transform the
+same way when it is re-run later, and a shared module in `lib/` may have
+changed since. Use `entity: "*"` (quoted) to transform every
 entity, including entities whose type the new schema no longer knows.
 Scripts must be idempotent, like every other step.
 

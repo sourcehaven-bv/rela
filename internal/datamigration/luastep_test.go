@@ -82,7 +82,7 @@ end`)
 func TestLuaStep_SandboxHasNoIO(t *testing.T) {
 	f, fsys := luaFixture(t, "task", `
 function migrate(entity)
-  if os ~= nil or io ~= nil or dofile ~= nil or load ~= nil then
+  if os ~= nil or io ~= nil or dofile ~= nil or load ~= nil or require ~= nil or module ~= nil then
     error("sandbox leak")
   end
   return nil

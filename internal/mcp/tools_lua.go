@@ -98,8 +98,15 @@ func (h luaHandler) handleLuaEval(ctx context.Context, req *mcpgo.CallToolReques
 		// runtimes writes to os.Stdout (see lua/runtime.go:256), which
 		// is the right thing for MCP — operators want their print()
 		// landing in the terminal where they invoked the tool.
-		return luaScriptErrorResult(lua.SurfaceLuaEval, "<inline>", nil,
-			runtime.ErrorFrames(), nil, err), nil
+		// The eval chunk has no source to slice, but a failing lib/ module
+		// does.
+		var sourceFS fs.FS
+		frames := runtime.ErrorFrames()
+		if lua.FailedInModule(frames) {
+			sourceFS = h.writeDeps.SourceFS(ctx)
+		}
+		return luaScriptErrorResult(lua.SurfaceLuaEval, "<inline>", sourceFS,
+			frames, nil, err), nil
 	}
 
 	result := output.String()
@@ -152,18 +159,18 @@ func (h luaHandler) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest
 	}
 	defer runtime.Close()
 
-	// Use RunFileContent rather than RunString so the runtime wires
-	// up chunk name, rela.args, and cache namespace identically to a
-	// normal RunFile call. We read the bytes ourselves (via ReadScript
-	// above) for containment and so a database-carried script runs; passing
-	// them through RunFileContent keeps that while sharing all the
-	// downstream invariants.
-	//
+	// The cache namespace stays the scripts/-relative path; the chunk name
+	// is project-relative, so frames from the script and from any lib/
+	// module it required name the file the envelope reads. We read the
+	// bytes ourselves (via ReadScript above) for containment and so a
+	// database-carried script runs.
+	envelopePath := scriptsDir + "/" + filepath.ToSlash(path)
+	runtime.SetScriptPath(path)
+	runtime.SetArgs(args)
 	//nolint:contextcheck // ctx threaded via WithContext; see handleLuaEval note
-	if err := runtime.RunFileContent(path, scriptContent, args); err != nil {
+	if err := runtime.RunChunk(string(scriptContent), envelopePath); err != nil {
 		// See note above: print() bypasses `output` for MCP runs.
-		return luaScriptErrorResult(lua.SurfaceLuaRun,
-			filepath.ToSlash(filepath.Join(scriptsDir, path)), h.writeDeps.SourceFS(ctx),
+		return luaScriptErrorResult(lua.SurfaceLuaRun, envelopePath, h.writeDeps.SourceFS(ctx),
 			runtime.ErrorFrames(), nil, err), nil
 	}
 
@@ -180,7 +187,7 @@ func (h luaHandler) handleLuaRun(ctx context.Context, req *mcpgo.CallToolRequest
 // NewToolResultError (not NewToolResultText) so the result's IsError
 // flag stays true — clients keying off that flag still see the failure.
 //
-// sourceFS is nil for lua_eval (no script source to slice); otherwise it
+// sourceFS is nil for lua_eval unless it failed in a lib/ module; otherwise it
 // serves the project files so the envelope can include ±N lines around the
 // failing line.
 func luaScriptErrorResult(surface lua.Surface, envelopePath string, sourceFS fs.FS,
@@ -194,14 +201,6 @@ func luaScriptErrorResult(surface lua.Surface, envelopePath string, sourceFS fs.
 	}
 	if sourceFS != nil {
 		in.SourceFS = sourceFS
-		// Frames coming from the Lua VM use the bare filename as Source;
-		// re-prefix matching frames so they line up with envelopePath.
-		bareName := strings.TrimPrefix(envelopePath, scriptsDir+"/")
-		for i := range in.Frames {
-			if in.Frames[i].Path == bareName {
-				in.Frames[i].Path = envelopePath
-			}
-		}
 	}
 	se := lua.BuildScriptError(in)
 	body, err := json.Marshal(se)

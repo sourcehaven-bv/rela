@@ -54,7 +54,8 @@ async function copyCorrelationId(): Promise<void> {
     </header>
 
     <p class="se-message">
-      <strong v-if="error.lua.line">line {{ error.lua.line }}:</strong>
+      <strong v-if="error.lua.line && error.lua.file">{{ error.lua.file }} line {{ error.lua.line }}:</strong>
+      <strong v-else-if="error.lua.line">line {{ error.lua.line }}:</strong>
       {{ error.lua.message }}
     </p>
 

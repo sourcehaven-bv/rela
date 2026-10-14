@@ -251,7 +251,7 @@ func logFields(event, namespacedKey string) []any {
 // path — so they hold those and nothing else.
 //
 // scriptPath is a func, not a captured string, because the runtime's
-// scriptPath is MUTABLE after registration: RunFile/RunFileContent set
+// scriptPath is MUTABLE after registration: RunFile sets
 // it per run and external callers change it via [Runtime.SetScriptPath]
 // between RunString calls. A value captured at construction would
 // freeze the cache namespace at whatever the path was when bindings

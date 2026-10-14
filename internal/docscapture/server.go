@@ -264,7 +264,7 @@ func copyProjectSchema(src, dst string) error {
 	}
 	// Presentation/behavior dirs the SPA + data-entry config reference (NOT
 	// entities/relations, which are seeded separately).
-	for _, d := range []string{"templates", "scripts", "actions", "apps", "documents"} {
+	for _, d := range []string{"templates", "scripts", "lib", "actions", "apps", "documents"} {
 		if err := copyDirIfExists(filepath.Join(src, d), filepath.Join(dst, d)); err != nil {
 			return err
 		}

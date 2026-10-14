@@ -162,6 +162,16 @@ func (d ReadDeps) projectFiles() ProjectFiles {
 	return d.Files
 }
 
+// moduleFiles returns the source require reads lib/ from, or nil when the
+// runtime has no project. rootfs.New("") would resolve against the working
+// directory, so an empty ProjectRoot must not fall back to it.
+func (d ReadDeps) moduleFiles() ProjectFiles {
+	if d.Files == nil && d.ProjectRoot == "" {
+		return nil
+	}
+	return d.projectFiles()
+}
+
 // ReadScript returns the source of the Lua script at name under the project
 // directory dir (scripts, actions or validations).
 //

@@ -9,7 +9,6 @@ import (
 	"math"
 	"mime"
 	"net/http"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -166,29 +165,20 @@ func (e *Engine) ExecuteActionRequest(
 		ls.SetGlobal("entity", lua.EntityToTable(ls, triggerEntity))
 	}
 
+	envelopePath := projectPath(actionsDir, scriptPath)
 	// ctx is threaded into the runtime via lua.WithContext(ctx) above;
 	// RunActionString applies it to the VM state. contextcheck can't follow
 	// that flow across the boundary into the Lua VM.
 	//nolint:contextcheck // ctx threaded via WithContext; see comment above
-	ret, err := runtime.RunActionString(scriptCode, scriptPath)
+	ret, err := runtime.RunActionString(scriptCode, envelopePath)
 	if errors.Is(err, lua.ErrNoReturnValue) {
 		return &ActionResponse{}, nil
 	}
 	if err != nil {
-		// Path in the envelope is project-relative (e.g.,
-		// "actions/foo.lua") for display; SourceFS is rooted at the
-		// project so readSourceSlice can resolve that same path.
-		// Lua's chunkname (used as scriptPath here) is the bare filename;
-		// the Lua VM reports it back via the message handler as the
-		// frame's Source. Re-prefix with actionsDir so frame paths line
-		// up with the SourceFS root and the displayed Path.
-		envelopePath := filepath.ToSlash(filepath.Join(actionsDir, scriptPath))
+		// The chunk name is the project-relative envelopePath, so frames
+		// line up with the SourceFS root (the project) and the displayed
+		// Path without rewriting.
 		frames := runtime.ErrorFrames()
-		for i := range frames {
-			if frames[i].Path == scriptPath {
-				frames[i].Path = envelopePath
-			}
-		}
 		return nil, lua.BuildScriptError(lua.BuildInput{
 			Surface:        lua.SurfaceAction,
 			Path:           envelopePath,
