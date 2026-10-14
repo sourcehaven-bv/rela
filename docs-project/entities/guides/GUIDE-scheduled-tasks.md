@@ -59,6 +59,10 @@ Stop it with Ctrl+C or SIGTERM.
 Schedules are defined in `schedules.yaml` in the project root. Each task has a name,
 a script path (relative to `scripts/`), and a schedule.
 
+To import an RSS, Atom or JSON Feed, declare it in `subscriptions.yaml` instead.
+The scheduler polls each subscription as the task `subscription:<name>`; see
+[Feed subscriptions](feed-subscriptions.md).
+
 ```yaml
 tasks:
   - name: daily-report

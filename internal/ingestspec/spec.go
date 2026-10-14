@@ -2,8 +2,9 @@
 // inbound record into entity writes. A declarative webhook (data-entry.yaml
 // `webhooks:`) is one source of records; package ingest runs the mapping.
 //
-// A leaf on purpose: config packages embed these types, and must not pull in
-// the store and write path that ingest needs to execute them.
+// Near-leaf on purpose: config packages embed these types, and must not pull
+// in the store and write path that ingest needs to execute them. Its one
+// project import is metamodel, which [Mapping.Validate] checks against.
 //
 // # Three workflows, distinguished by which fields are set
 //

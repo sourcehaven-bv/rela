@@ -31,13 +31,15 @@ func (c *SchedulerCmd) Run(ctx context.Context, ws scheduler.WorkspaceProvider) 
 	if err := appbuild.RequireSyncBackend(svc); err != nil {
 		return err
 	}
-	data, err := ws.Config().Load(ctx, scheduler.ConfigFile)
+	cfg, err := scheduler.LoadWorkspaceConfig(ctx, ws)
 	if err != nil {
-		return fmt.Errorf("cannot read %s: %w", scheduler.ConfigFile, err)
-	}
-	cfg, err := scheduler.ParseConfig(data)
-	if err != nil {
+		// Unlike the server, the command refuses to start: an operator
+		// running it is watching, and a half-started scheduler would hide
+		// the broken file behind the tasks that did start.
 		return err
+	}
+	if len(cfg.Tasks) == 0 {
+		return fmt.Errorf("no tasks: neither %s nor subscriptions.yaml declares one", scheduler.ConfigFile)
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,

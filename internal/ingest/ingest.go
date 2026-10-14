@@ -69,6 +69,11 @@ type Source interface {
 	// webhook. A reference cannot carry record data into template position:
 	// its value goes through Resolve and is flattened like any other.
 	DefaultMatchRef(prop string) string
+	// IsBlock reports whether ref holds a multi-line markdown block that the
+	// source has already made safe, such as feed HTML converted by htmlmd.
+	// Only create_if_missing.content keeps a block's line breaks; every other
+	// template flattens it like any value. A webhook body has no blocks.
+	IsBlock(ref string) bool
 }
 
 // Reader is the ACL-gated read the find step uses.
@@ -218,12 +223,34 @@ func interpolate(src Source, tmpl string) string {
 	return Interpolate(tmpl, src.Resolve)
 }
 
+// interpolateBody expands the content of a new entity. It is the one template
+// where a source's block values keep their line breaks: the entity is new, so
+// there is no existing section structure for a block to forge a sibling of.
+func interpolateBody(src Source, tmpl string) string {
+	return interpolateWith(tmpl, src.Resolve, src.IsBlock)
+}
+
 // matchExpr is the template for one find.match property.
 func matchExpr(m ingestspec.Mapping, src Source, prop string) string {
 	if expr, ok := m.Find.Values[prop]; ok {
 		return expr
 	}
 	return "{{" + src.DefaultMatchRef(prop) + "}}"
+}
+
+// MatchValues returns the interpolated value of each find.match property of m
+// for src, keyed by property. A caller that needs the record's identity before
+// running the mapping reads it here, so it agrees with the find. Nil when the
+// mapping has no find or no match properties.
+func MatchValues(m ingestspec.Mapping, src Source) map[string]string {
+	if m.Find == nil || len(m.Find.Match) == 0 {
+		return nil
+	}
+	want := make(map[string]string, len(m.Find.Match))
+	for _, prop := range m.Find.Match {
+		want[prop] = interpolate(src, matchExpr(m, src, prop))
+	}
+	return want
 }
 
 // findTarget resolves the entity a record concerns, or nil when there is no
@@ -241,16 +268,14 @@ func findTarget(
 		return nil, nil
 	}
 
-	want := make(map[string]string, len(m.Find.Match))
-	for _, prop := range m.Find.Match {
-		value := interpolate(src, matchExpr(m, src, prop))
+	want := MatchValues(m, src)
+	for _, value := range want {
 		if value == "" {
 			// An empty match value would match every entity missing that
 			// property. Refusing is the safe direction: it degrades to
 			// "create a new one", never "update an arbitrary one".
 			return nil, nil
 		}
-		want[prop] = value
 	}
 
 	for e, listErr := range d.Reader.ListEntities(ctx, store.EntityQuery{
@@ -344,7 +369,7 @@ func createEntity(ctx context.Context, d Deps, m ingestspec.Mapping, src Source)
 		}
 	}
 	if spec.Content != "" {
-		e.Content = interpolate(src, spec.Content)
+		e.Content = interpolateBody(src, spec.Content)
 	}
 
 	opts := entity.CreateOptions{Variant: spec.Template}

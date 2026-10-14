@@ -14,6 +14,12 @@ import "strings"
 // second reference. An unterminated `{{` is emitted verbatim so the operator
 // sees the typo.
 func Interpolate(tmpl string, resolve func(ref string) string) string {
+	return interpolateWith(tmpl, resolve, nil)
+}
+
+// interpolateWith is [Interpolate] that leaves a value unflattened when block
+// reports its reference as a block. Nil block flattens everything.
+func interpolateWith(tmpl string, resolve func(ref string) string, block func(ref string) bool) string {
 	if !strings.Contains(tmpl, "{{") {
 		return tmpl
 	}
@@ -33,7 +39,12 @@ func Interpolate(tmpl string, resolve func(ref string) string) string {
 		}
 		// Flatten the VALUE, not the finished template: the newline that must
 		// not survive is a source-supplied one. See [FlattenToLine].
-		b.WriteString(FlattenToLine(resolve(strings.TrimSpace(ref))))
+		name := strings.TrimSpace(ref)
+		if value := resolve(name); block != nil && block(name) {
+			b.WriteString(strings.ReplaceAll(value, "\x00", ""))
+		} else {
+			b.WriteString(FlattenToLine(value))
+		}
 		rest = remainder
 	}
 	return b.String()

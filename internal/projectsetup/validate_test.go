@@ -1,6 +1,7 @@
 package projectsetup_test
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,7 @@ import (
 
 func TestValidateWithFS_NoProject(t *testing.T) {
 	fs := storage.NewMemFS()
-	_, err := projectsetup.ValidateWithFS("/missing", fs)
+	_, err := projectsetup.ValidateWithFS(context.Background(), "/missing", fs)
 	if err == nil {
 		t.Fatal("expected error for missing project, got nil")
 	}
@@ -49,7 +50,7 @@ func TestValidateWithFS_ValidatesScheduledMailReferences(t *testing.T) {
     every: day
     for_each: {entity_type: person}
 `)
-	result, err := projectsetup.ValidateWithFS(root, fs)
+	result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +77,7 @@ entities:
 	if err := fs.WriteFile(filepath.Join(root, "schema.yaml"), []byte(schema), 0o644); err != nil {
 		t.Fatalf("write schema: %v", err)
 	}
-	result, err := projectsetup.ValidateWithFS(root, fs)
+	result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 	if err != nil {
 		t.Fatalf("ValidateWithFS: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestValidateWithFS_ValidProject(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 
-	result, err := projectsetup.ValidateWithFS(root, fs)
+	result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 	if err != nil {
 		t.Fatalf("ValidateWithFS: %v", err)
 	}
@@ -144,7 +145,7 @@ func TestValidateWithFS_Connections(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			result, err := projectsetup.ValidateWithFS(root, fs)
+			result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -156,6 +157,48 @@ func TestValidateWithFS_Connections(t *testing.T) {
 			}
 			if result.ConnectionsError == nil || !strings.Contains(result.ConnectionsError.Error(), tc.wantErr) {
 				t.Fatalf("ConnectionsError = %v, want one naming %q", result.ConnectionsError, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateWithFS_Subscriptions(t *testing.T) {
+	t.Parallel()
+	const valid = `subscriptions:
+  news:
+    url: https://example.com/feed.xml
+    every: 1h
+    find: {type: requirement, match: [title], values: {title: "{{item.title}}"}}
+    create_if_missing: {}
+`
+	for _, tc := range []struct{ name, body, wantErr string }{
+		{name: "absent"},
+		{name: "valid", body: valid},
+		{name: "unknown type", body: strings.Replace(valid, "requirement", "post", 1), wantErr: `"post"`},
+		{name: "every too short", body: strings.Replace(valid, "1h", "1m", 1), wantErr: "minimum"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fs := storage.NewMemFS()
+			root := "/proj"
+			if _, err := projectsetup.InitializeWithFS(root, fs); err != nil {
+				t.Fatal(err)
+			}
+			if tc.body != "" {
+				if err := fs.WriteFile(filepath.Join(root, "subscriptions.yaml"), []byte(tc.body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := result.SubscriptionsError
+			if tc.wantErr == "" && got != nil {
+				t.Fatalf("SubscriptionsError = %v, want nil", got)
+			}
+			if tc.wantErr != "" && (got == nil || !strings.Contains(got.Error(), tc.wantErr)) {
+				t.Fatalf("SubscriptionsError = %v, want one naming %q", got, tc.wantErr)
 			}
 		})
 	}
@@ -173,6 +216,7 @@ func TestValidateResult_HasErrors(t *testing.T) {
 		{"mail err", projectsetup.ValidateResult{MailTemplatesError: errExample}, true},
 		{"schedules err", projectsetup.ValidateResult{SchedulesError: errExample}, true},
 		{"connections err", projectsetup.ValidateResult{ConnectionsError: errExample}, true},
+		{"subscriptions err", projectsetup.ValidateResult{SubscriptionsError: errExample}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -226,7 +270,7 @@ entities:
 		if err := fs.WriteFile(root+"/schema.yaml", []byte(body), 0o644); err != nil {
 			t.Fatalf("write schema: %v", err)
 		}
-		result, err := projectsetup.ValidateWithFS(root, fs)
+		result, err := projectsetup.ValidateWithFS(context.Background(), root, fs)
 		if err != nil {
 			t.Fatalf("ValidateWithFS: %v", err)
 		}

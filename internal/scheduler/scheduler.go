@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -43,11 +44,13 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/jobs"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/schedulerstate"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/state"
+	"github.com/Sourcehaven-BV/rela/internal/subscription"
 )
 
 // tickInterval is how often the scheduler wakes to check for due tasks.
@@ -142,7 +145,8 @@ type WorkspaceProvider interface {
 }
 
 // StartBackground starts the scheduler in a background goroutine if
-// schedules.yaml exists. It is a no-op if the file is missing. The scheduler
+// schedules.yaml or subscriptions.yaml declares a task. It is a no-op
+// otherwise. The scheduler
 // runs until ctx is cancelled. Errors are logged, not returned.
 //
 // The returned channel closes when the scheduler has stopped (at once when it
@@ -154,18 +158,14 @@ func StartBackground(
 	logger *slog.Logger,
 ) <-chan struct{} {
 	done := make(chan struct{})
-	data, err := ws.Config().Load(ctx, ConfigFile)
-	if err != nil {
-		// No schedules.yaml — nothing to do.
+	cfg, err := LoadWorkspaceConfig(ctx, ws)
+	switch {
+	case cfg == nil:
+		logger.Error("invalid scheduler config, scheduler not started", "error", err)
 		close(done)
 		return done
-	}
-
-	cfg, err := ParseConfig(data)
-	if err != nil {
-		logger.Error("invalid schedules.yaml, scheduler not started", "error", err)
-		close(done)
-		return done
+	case err != nil:
+		logger.Error("subscriptions not started", "error", err)
 	}
 
 	if len(cfg.Tasks) == 0 {
@@ -191,6 +191,22 @@ func StartBackground(
 		}
 	}()
 	return done
+}
+
+// metaProvider is the capability that gives [LoadConfig] its schema.
+// Type-asserted for the same reason as [jobQueueProvider].
+type metaProvider interface {
+	Meta() *metamodel.Metamodel
+}
+
+// LoadWorkspaceConfig is [LoadConfig] over the workspace's config and
+// schema, for the entry points that hold a [WorkspaceProvider].
+func LoadWorkspaceConfig(ctx context.Context, ws WorkspaceProvider) (*Config, error) {
+	var meta *metamodel.Metamodel
+	if mp, ok := ws.(metaProvider); ok {
+		meta = mp.Meta()
+	}
+	return LoadConfig(ctx, ws.Config(), meta)
 }
 
 // jobQueueProvider is the capability a WorkspaceProvider must carry to hand the
@@ -267,11 +283,17 @@ func stampTaskAuditContext(ctx context.Context, taskName, runAs string) context.
 	if user == "" {
 		user = principal.UserScheduler
 	}
+	return stampContext(ctx, user, "schedule:"+taskName)
+}
+
+// stampContext stamps user as the scheduler's principal and triggeredBy as
+// the audit trigger.
+func stampContext(ctx context.Context, user, triggeredBy string) context.Context {
 	out := principal.With(ctx, principal.Principal{
 		User: user,
 		Tool: principal.ToolScheduler,
 	})
-	return audit.WithTriggeredBy(out, "schedule:"+taskName)
+	return audit.WithTriggeredBy(out, triggeredBy)
 }
 
 // Scheduler decides which tasks are due and hands them to the job queue.
@@ -291,6 +313,14 @@ type Scheduler struct {
 	// bypassing the job handler around it: the handler is what records the
 	// run's outcome, so a test must keep it. When nil, the real engine runs.
 	engineRunner func(ctx context.Context, task TaskConfig) error
+
+	// subscriptionRunner overrides the poll of a subscription for testing,
+	// keeping the job handler around it, like engineRunner.
+	subscriptionRunner func(ctx context.Context, name string, sub subscription.Subscription) error
+
+	// subscriptionTransport carries subscription fetches. Nil means
+	// http.DefaultTransport; tests point it at an httptest server.
+	subscriptionTransport http.RoundTripper
 
 	// queue is where script execution happens. REQUIRED: there is no inline
 	// path, so a scheduler without one cannot run anything. Set by UseQueue at
@@ -362,6 +392,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	s.importLegacyState(ctx)
 
 	for _, t := range s.config.Tasks {
+		if t.Subscription != nil {
+			s.logger.Info("scheduled subscription", "task", t.Name, "every", t.Every)
+			continue
+		}
 		s.logger.Info("scheduled task", "task", t.Name, "every", t.Every, "script", t.Script)
 	}
 

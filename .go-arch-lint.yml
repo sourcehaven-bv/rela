@@ -106,6 +106,9 @@ components:
   # runs it on the write path. Webhooks and feed subscriptions share both.
   ingestspec:       { in: internal/ingestspec }
   ingest:           { in: internal/ingest }
+  # Feed subscriptions (TKT-RUO1GY): polls a feed and imports its items
+  # through ingest. The scheduler runs it.
+  subscription:     { in: internal/subscription }
   # Which entity ids a markdown body mentions (TKT-Q6AKUN). A leaf: every store
   # backend indexes with it and the data-entry renderer links with it, so the
   # backlink index and the rendered links agree on what counts as a mention.
@@ -971,6 +974,9 @@ deps:
       - project
       - scheduler
       - storage
+      - subscription
+      # The scheduler's loader reads through a config.Loader.
+      - config
       # `rela validate` checks connections.yaml (TKT-01KZSO).
       - tokenstore
       # `rela validate` must check the pointer grammar too. The loader
@@ -1035,6 +1041,21 @@ deps:
   feed:
     mayDependOn:
       - safexml
+  subscription:
+    mayDependOn:
+      - entitymanager
+      - feed
+      - htmlmd
+      - ingest
+      - ingestspec
+      - metamodel
+      - safexml
+      - secrets
+      - state
+  # Mapping.Validate checks types and properties against the schema.
+  ingestspec:
+    mayDependOn:
+      - metamodel
   ingest:
     mayDependOn:
       - entity
@@ -1693,6 +1714,11 @@ deps:
       - audit
       - jobs
       - config
+      # Subscription tasks: the poll, its ingest deps and the raw store
+      # for ingest's write-prep re-read.
+      - ingest
+      - store
+      - subscription
       - lua
       - metamodel
       - filter
