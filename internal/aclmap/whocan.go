@@ -36,6 +36,9 @@ import (
 // sorted deterministically. The everyone role is never listed as a
 // principal (it is the global entry).
 func (e *Engine) WhoCan(ctx context.Context, verb acl.Verb, entityID string) (*WhoCanResult, error) {
+	if err := checkReportable(verb); err != nil {
+		return nil, err
+	}
 	entityID, entityType, err := e.entityTarget(ctx, entityID)
 	if err != nil {
 		return nil, err

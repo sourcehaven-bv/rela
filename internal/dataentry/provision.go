@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -106,37 +107,21 @@ func maybeProvision(
 	// Re-resolve the (now-existing) entity and re-stamp ctx to it, rebuilding the
 	// ACL request + read gate on the resolved principal so both the manager call
 	// and the response-shaping read see the new entity.
-	id, rerr := d.ResolvePrincipal(ctx, sub)
-	if rerr != nil || id == "" {
-		// Ambiguous/errored re-resolve (e.g. two stubs raced onto the same sub on
-		// a backend without atomic uniqueness) — log and proceed as unmatched
-		// rather than guess. The write is then normally authorized.
-		slog.Warn("dataentry: provision: re-resolve after create found no single entity",
+	provisioned, req, rerr := access.Restamp(ctx, d, sub)
+	if rerr != nil {
+		// Ambiguous or errored re-resolve, or no request for the resolved
+		// principal: proceed as unmatched rather than guess. The write is then
+		// normally authorized.
+		slog.Warn("dataentry: provision: re-stamp after create failed; proceeding as unmatched",
 			"sub", sub, "err", rerr)
 		return ctx
 	}
-
-	resolved := principal.Verified(id, p.Tool, p.OrgID(), p.OrgSlug(), p.Roles()).WithEmail(p.Email())
-	resolved.RawUser = sub
-	// The principal now resolves to a real entity — clear the unmatched flag so
-	// the triggering write is judged on the resolved identity's roles, not
-	// re-caught by the unmatched gate in AuthorizeWrite.
-	provisioned := acl.WithMatchedVerified(principal.With(ctx, resolved))
-
-	req, ferr := d.ForPrincipal(resolved)
-	if ferr != nil {
-		slog.Warn("dataentry: provision: ForPrincipal on resolved principal failed",
-			"id", id, "err", ferr)
-		return ctx
-	}
 	gate, gerr := newACLReadGate(req)
-	if gerr != nil {
-		slog.Warn("dataentry: provision: read-gate rebuild failed", "id", id, "err", gerr)
+	if gerr != nil { // coverage-ignore: Restamp returns a non-nil Request whenever its error is nil
+		slog.Warn("dataentry: provision: read-gate rebuild failed", "sub", sub, "err", gerr)
 		return ctx
 	}
-	provisioned = acl.WithRequest(provisioned, req)
-	provisioned = withReadGate(provisioned, gate)
-	return provisioned
+	return withReadGate(provisioned, gate)
 }
 
 // buildStubEntity assembles the bare stub: the join key (principal_property =

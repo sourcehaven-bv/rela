@@ -2,11 +2,13 @@ package dataentry
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
@@ -107,14 +109,27 @@ func newRelatedUserAppNoACL(t *testing.T) (*App, *storetest.Counting) {
 }
 
 // relatedUserList lists taken as the router would serve raw principal user:
-// resolvePrincipalEntity maps it to its persoon first, as it does on /api/.
+// principal resolution maps it to its persoon first, as it does on /api/.
 func relatedUserList(t *testing.T, app *App, d *acl.Declarative, user, scope string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/taken?query_scope="+scope, http.NoBody)
-	ctx := principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolDataEntry})
-	ctx = resolvePrincipalEntity(ctx, d, req, false)
+	ctx := resolveAsRouter(t, d, principal.Principal{User: user, Tool: principal.ToolDataEntry})
 	_, rec := listEntitiesAs(ctx, t, app, d, "taak", "taken", "query_scope="+scope)
 	return rec
+}
+
+// resolveAsRouter returns a ctx carrying p as attachACLRequest would resolve
+// it under d: mapped to its user entity through principal_property.
+func resolveAsRouter(t *testing.T, d *acl.Declarative, p principal.Principal) context.Context {
+	t.Helper()
+	opener, err := access.NewOpener(d, false)
+	if err != nil {
+		t.Fatalf("NewOpener: %v", err)
+	}
+	ctx, _, err := opener.Open(principal.With(context.Background(), p), slog.Default())
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	return ctx
 }
 
 func TestQueryScope_RelatedToCurrentUser(t *testing.T) {
@@ -213,9 +228,7 @@ func TestViewCondition_RelatedToCurrentUser(t *testing.T) {
 
 	app, d, _ := newRelatedUserApp(t)
 	withCondition(t, app)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/taken", http.NoBody)
-	ctx := resolvePrincipalEntity(principal.With(context.Background(),
-		principal.Principal{User: "sub-alice", Tool: principal.ToolDataEntry}), d, req, false)
+	ctx := resolveAsRouter(t, d, principal.Principal{User: "sub-alice", Tool: principal.ToolDataEntry})
 	_, rec := listEntitiesAs(ctx, t, app, d, "taak", "taken", "list_id=taken")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -226,7 +239,7 @@ func TestViewCondition_RelatedToCurrentUser(t *testing.T) {
 
 	anon, _ := newRelatedUserAppNoACL(t)
 	withCondition(t, anon)
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/taken?list_id=taken", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/taken?list_id=taken", http.NoBody)
 	req = req.WithContext(principal.With(req.Context(),
 		principal.Principal{User: principal.Unknown, Tool: principal.ToolDataEntry}))
 	rec = httptest.NewRecorder()

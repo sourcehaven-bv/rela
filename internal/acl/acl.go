@@ -52,6 +52,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // ACL gates writes. Implementations decide whether a [WriteRequest]
@@ -87,6 +88,26 @@ const (
 	OpDelete Op = "delete"
 	OpRename Op = "rename"
 )
+
+// ops is every write Op, in the order [Ops] returns them.
+var ops = [...]Op{OpCreate, OpUpdate, OpDelete, OpRename}
+
+// Ops returns every write Op, as a fresh slice the caller may keep. [Verbs] is
+// built from it, so a new Op is also a new [Verb] for every consumer that
+// enumerates the verbs.
+func Ops() []Op {
+	return slices.Clone(ops[:])
+}
+
+// Valid reports whether o is one of [Ops].
+func (o Op) Valid() bool {
+	for _, known := range ops {
+		if o == known {
+			return true
+		}
+	}
+	return false
+}
 
 // Decision is the ACL's answer plus enough context to debug a deny.
 // Every deny names the rule that fired (RuleKind + RuleID) — opaque

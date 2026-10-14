@@ -230,6 +230,10 @@ components:
 
   # Infrastructure
   acl:              { in: internal/acl }
+  # The data-entry access service (TKT-WFS778): ACL mode decisions and the
+  # per-request lifecycle today; the read gate, gated reader, write
+  # authorization and affordance verdicts move here in later steps.
+  access:           { in: internal/access }
   aclaudit:         { in: internal/aclaudit }
   aclmap:           { in: internal/aclmap }
   affordances:      { in: internal/affordances }
@@ -581,6 +585,7 @@ deps:
       # that is a wiring-site decision, like the store backend.
       - nextaction
       - userstate
+      - access
       - acl
       - affordances
       - apiwire
@@ -1120,6 +1125,10 @@ deps:
       - entity
       - principal
       - store
+  access:
+    mayDependOn:
+      - acl
+      - principal
   aclaudit:
     mayDependOn:
       - acl

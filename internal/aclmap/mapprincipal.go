@@ -3,6 +3,7 @@ package aclmap
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -11,14 +12,37 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
+// Verbs returns the verbs the access reports answer, in [acl.Verbs] order:
+// every verb except rename. The grant helpers behind the reports read the
+// `update:` list for rename, while the runtime asks for a `rename:` grant on a
+// faced type and also honors one on a faceless type, so a rename report would
+// be wrong in both directions. TKT-4APGVF fixes the helpers and drops this
+// exclusion. A new write Op appears here without a change.
+func Verbs() []acl.Verb {
+	return slices.DeleteFunc(acl.Verbs(), func(v acl.Verb) bool { return v == acl.VerbRename })
+}
+
+// checkReportable returns an error unless verb is one of [Verbs]. Rename
+// gets its own message: it is a known verb that the reports leave out until
+// TKT-4APGVF, not a typo.
+func checkReportable(verb acl.Verb) error {
+	if slices.Contains(Verbs(), verb) {
+		return nil
+	}
+	if verb == acl.VerbRename {
+		return fmt.Errorf("aclmap: verb %q is not reported yet (TKT-4APGVF)", verb)
+	}
+	return fmt.Errorf("aclmap: unknown verb %q", verb)
+}
+
 // resolveVerbs turns a --verb filter into the ordered verb list to
-// cover: the single verb when set (validated), else all four.
+// cover: the single verb when set (validated), else every verb in [Verbs].
 func resolveVerbs(verbFilter acl.Verb) ([]acl.Verb, error) {
 	if verbFilter == "" {
-		return allVerbs, nil
+		return Verbs(), nil
 	}
-	if !verbFilter.Valid() {
-		return nil, fmt.Errorf("aclmap: unknown verb %q", verbFilter)
+	if err := checkReportable(verbFilter); err != nil {
+		return nil, err
 	}
 	return []acl.Verb{verbFilter}, nil
 }
@@ -46,10 +70,6 @@ func (e *Engine) resolveEffective(ctx context.Context, raw string) (user, rawSho
 	}
 	return raw, "", nil
 }
-
-// allVerbs is the fixed verb set a map covers when no --verb filter is
-// given, in a stable order for deterministic output.
-var allVerbs = []acl.Verb{acl.VerbRead, acl.VerbCreate, acl.VerbUpdate, acl.VerbDelete}
 
 // TypeAccess is one principal's effective access to one entity type,
 // split into a type-level Baseline (grants that apply to EVERY entity of
@@ -91,7 +111,7 @@ type MapPrincipalResult struct {
 	SchemaVersion int    `json:"schema_version"`
 	Principal     string `json:"principal"`
 	Raw           string `json:"raw,omitempty"`
-	// Verbs is the verb set this map covers (all four, or the single
+	// Verbs is the verb set this map covers (every verb, or the single
 	// filtered verb).
 	Verbs []string `json:"verbs"`
 	// Types is the per-type access, sorted by type name. A type with no

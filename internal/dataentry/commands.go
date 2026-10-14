@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -183,11 +184,9 @@ func SelectCommandAuthorizer(
 	active acl.ACL, declarative *acl.Declarative, loopback, override bool, notify CommandAuthNotifier,
 ) (commandAuthorizer, error) {
 	// ReadOnly is checked before anything else: it is a stronger guarantee than
-	// "no policy" and must deny exec on every bind. Match both value and pointer
-	// forms (AuthorizeWrite has a value receiver, so &ReadOnlyACL{} also
-	// satisfies acl.ACL) — the same &-reachable bypass the old switch guarded.
-	switch active.(type) {
-	case acl.ReadOnlyACL, *acl.ReadOnlyACL:
+	// "no policy" and must deny exec on every bind. access.ModeOf matches the
+	// value and pointer forms, closing the &ReadOnlyACL{} bypass.
+	if access.ModeOf(active).RefusesWrites() {
 		return denyAuthorizer{}, nil
 	}
 

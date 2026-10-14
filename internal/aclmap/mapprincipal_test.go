@@ -259,20 +259,9 @@ func runtimeVerdict(ctx context.Context, t *testing.T, req *acl.Request, verb ac
 		}
 		return ok
 	}
-	var op acl.Op
-	switch verb {
-	case acl.VerbUpdate:
-		op = acl.OpUpdate
-	case acl.VerbDelete:
-		op = acl.OpDelete
-	case acl.VerbCreate:
-		op = acl.OpCreate
-	case acl.VerbRead:
-		// handled above; unreachable here.
-		return false
-	}
+	// Every write verb is the Op of the same name.
 	d := req.AuthorizeWrite(ctx, acl.WriteRequest{
-		Op:      op,
+		Op:      acl.Op(verb),
 		Subject: acl.NewFacelessEntitySubject(typ, id),
 	})
 	return d.Allow
