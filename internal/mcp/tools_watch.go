@@ -295,7 +295,9 @@ func (r *watchRun) pass(ctx context.Context, deadline time.Time) (changed []int,
 		if done[t.key] {
 			continue
 		}
-		if rctx.Err() != nil {
+		// The clock, not only rctx: the deadline timer that cancels rctx can
+		// fire late on a loaded machine, and the budget must hold anyway.
+		if rctx.Err() != nil || !time.Now().Before(end) {
 			r.next = idx
 			return r.moved(moved), true, nil
 		}
