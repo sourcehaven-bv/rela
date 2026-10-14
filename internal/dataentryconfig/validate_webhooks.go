@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -126,10 +125,8 @@ func isForbiddenWebhookHeader(name string) bool {
 const maxWebhookBodyCap = 8 << 20 // 8 MiB
 
 // validateWebhooks validates the webhooks: map. Every problem here is a LOAD
-// ERROR, matching how an automation condition: that fails to compile is treated:
-// a webhook that silently does not fire, or fires against the wrong type, loses
-// data from a producer that generally does not retry. Failing the load is the
-// safe direction.
+// ERROR, matching how an automation condition: that fails to compile is treated;
+// Mapping.Validate in package ingestspec gives the reason for the mapping half.
 func validateWebhooks(cfg *Config, meta *metamodel.Metamodel) []string {
 	var errs []string
 
@@ -140,120 +137,11 @@ func validateWebhooks(cfg *Config, meta *metamodel.Metamodel) []string {
 				"webhooks: invalid hook ID %q (must match ^[a-z0-9][a-z0-9_-]{0,63}$; the ID is the URL segment)", id))
 			continue
 		}
-		errs = append(errs, validateWebhookShape(id, hook, meta)...)
+		for _, msg := range hook.Mapping().Validate(meta) {
+			errs = append(errs, fmt.Sprintf("webhooks: %q %s", id, msg))
+		}
 		errs = append(errs, validateWebhookHeaders(id, hook)...)
 		errs = append(errs, validateWebhookRespond(id, hook)...)
-		errs = append(errs, validateWebhookSteps(id, hook, meta)...)
-	}
-	return errs
-}
-
-// validateWebhookShape checks the find/create combination and the entity types
-// and properties they name.
-func validateWebhookShape(id string, hook Webhook, meta *metamodel.Metamodel) []string {
-	var errs []string
-
-	if hook.Find == nil && hook.CreateIfMissing == nil {
-		return append(errs, fmt.Sprintf(
-			"webhooks: %q has neither find nor create_if_missing (nothing to do)", id))
-	}
-
-	if hook.Find != nil {
-		errs = append(errs, validateWebhookFind(id, hook, meta)...)
-	}
-
-	if hook.CreateIfMissing != nil {
-		createType := hook.CreateType()
-		if createType == "" {
-			errs = append(errs, fmt.Sprintf(
-				"webhooks: %q create_if_missing needs a type (set create_if_missing.type or find.type)", id))
-		} else if def, ok := metaEntityDef(meta, createType); !ok {
-			errs = append(errs, fmt.Sprintf(
-				"webhooks: %q create_if_missing type %q is not a known entity type", id, createType))
-		} else {
-			for _, prop := range sortedKeysOfStringMap(hook.CreateIfMissing.Properties) {
-				if _, known := def.Properties[prop]; !known {
-					errs = append(errs, fmt.Sprintf(
-						"webhooks: %q create_if_missing sets unknown property %q on type %q", id, prop, createType))
-				}
-			}
-		}
-	}
-	return errs
-}
-
-// validateWebhookFind checks find.type, find.match and find.values.
-func validateWebhookFind(id string, hook Webhook, meta *metamodel.Metamodel) []string {
-	var errs []string
-	find := hook.Find
-
-	if find.Type == "" {
-		return append(errs, fmt.Sprintf("webhooks: %q find requires a type", id))
-	}
-	def, ok := metaEntityDef(meta, find.Type)
-	if !ok {
-		return append(errs, fmt.Sprintf(
-			"webhooks: %q find type %q is not a known entity type", id, find.Type))
-	}
-
-	errs = append(errs, validateWebhookFace(id, hook, meta, def)...)
-
-	// A match key is required only when a create can happen. Without one,
-	// find-or-create would create on every delivery: the find could not
-	// identify the entity the previous delivery made, so each alert would mint
-	// a duplicate rather than accumulate — silent, and only visible as growth.
-	if len(find.Match) == 0 && hook.CreateIfMissing != nil {
-		errs = append(errs, fmt.Sprintf(
-			"webhooks: %q has create_if_missing but find declares no match properties "+
-				"(a match key is required to avoid creating a duplicate per delivery)", id))
-	}
-
-	for _, prop := range find.Match {
-		if _, known := def.Properties[prop]; !known {
-			errs = append(errs, fmt.Sprintf(
-				"webhooks: %q find matches on unknown property %q of type %q", id, prop, find.Type))
-		}
-	}
-
-	matched := make(map[string]bool, len(find.Match))
-	for _, prop := range find.Match {
-		matched[prop] = true
-	}
-	for _, prop := range sortedKeysOfStringMap(find.Values) {
-		if !matched[prop] {
-			errs = append(errs, fmt.Sprintf(
-				"webhooks: %q find.values names %q which is not in find.match", id, prop))
-		}
-	}
-	return errs
-}
-
-// validateWebhookFace checks find.face against the find type's faces. A
-// create of another type has no face to write at, so it must not be faced.
-func validateWebhookFace(id string, hook Webhook, meta *metamodel.Metamodel, def *metamodel.EntityDef) []string {
-	find := hook.Find
-	var errs []string
-	switch {
-	case len(def.Faces) == 0 && find.Face != "":
-		errs = append(errs, fmt.Sprintf(
-			"webhooks: %q find.face %q: type %q declares no faces", id, find.Face, find.Type))
-	case len(def.Faces) > 0 && find.Face == "":
-		errs = append(errs, fmt.Sprintf(
-			"webhooks: %q find type %q declares faces, so find.face is required: one of %s",
-			id, find.Type, strings.Join(metamodel.FaceOrderOf(meta, find.Type), ", ")))
-	case len(def.Faces) > 0:
-		if _, declared := def.Faces[find.Face]; !declared {
-			errs = append(errs, fmt.Sprintf(
-				"webhooks: %q find.face %q is not a face of %q: one of %s",
-				id, find.Face, find.Type, strings.Join(metamodel.FaceOrderOf(meta, find.Type), ", ")))
-		}
-	}
-	if ct := hook.CreateType(); ct != "" && ct != find.Type {
-		if cdef, ok := metaEntityDef(meta, ct); ok && len(cdef.Faces) > 0 {
-			errs = append(errs, fmt.Sprintf(
-				"webhooks: %q create type %q declares faces; a webhook creates at find.face, "+
-					"so the create type must be the find type", id, ct))
-		}
 	}
 	return errs
 }
@@ -295,96 +183,6 @@ func validateWebhookRespond(id string, hook Webhook) []string {
 	return nil
 }
 
-// validateWebhookSteps checks each then: step is a well-formed tagged union.
-func validateWebhookSteps(id string, hook Webhook, meta *metamodel.Metamodel) []string {
-	var errs []string
-
-	// A step runs against whichever entity the pipeline ended up with: the FOUND
-	// one, or the one it CREATED. Those can be different types (a hook may find
-	// `alpha` and create `beta`), and a step must therefore be valid on every
-	// type it could reach — checking only one is wrong in both directions. It
-	// rejects a legitimate hook whose step targets the created type, and it
-	// admits a broken one whose step is invalid there, which then fails at
-	// request time. That is precisely what the load-error contract exists to
-	// prevent.
-	stepTypes := webhookStepTypes(hook)
-
-	for i, step := range hook.Then {
-		set := 0
-		if step.AppendSection != nil {
-			set++
-		}
-		if len(step.Set) > 0 {
-			set++
-		}
-		switch {
-		case set == 0:
-			errs = append(errs, fmt.Sprintf(
-				"webhooks: %q then[%d] declares no action (expected append_section or set)", id, i))
-			continue
-		case set > 1:
-			errs = append(errs, fmt.Sprintf(
-				"webhooks: %q then[%d] declares more than one action (expected exactly one)", id, i))
-			continue
-		}
-
-		if as := step.AppendSection; as != nil && strings.TrimSpace(as.Content) == "" {
-			errs = append(errs, fmt.Sprintf(
-				"webhooks: %q then[%d] append_section requires content", id, i))
-		}
-
-		for _, stepType := range stepTypes {
-			if len(step.Set) == 0 || stepType == "" {
-				continue
-			}
-			if def, ok := metaEntityDef(meta, stepType); ok {
-				for _, prop := range sortedKeysOfStringMap(step.Set) {
-					if _, known := def.Properties[prop]; !known {
-						errs = append(errs, fmt.Sprintf(
-							"webhooks: %q then[%d] sets unknown property %q on type %q", id, i, prop, stepType))
-					}
-				}
-			}
-		}
-	}
-	return errs
-}
-
-// webhookStepTypes returns every entity type a then: step could run against,
-// deduplicated: the found type and the created type, which a find-or-create
-// hook may declare independently.
-//
-// A property named by a step must exist on ALL of them. The pipeline does not
-// know at load time which branch a given delivery will take, so "valid on the
-// type we happen to check" is not a property worth enforcing — the step has to
-// be valid whichever entity it lands on.
-func webhookStepTypes(hook Webhook) []string {
-	var types []string
-	add := func(t string) {
-		if t != "" && !slices.Contains(types, t) {
-			types = append(types, t)
-		}
-	}
-	if hook.Find != nil {
-		add(hook.Find.Type)
-	}
-	add(hook.CreateType())
-	return types
-}
-
-// metaEntityDef looks up an entity definition, tolerating a nil metamodel so
-// config-only tests need not build one.
-func metaEntityDef(meta *metamodel.Metamodel, typeName string) (*metamodel.EntityDef, bool) {
-	if meta == nil {
-		return nil, false
-	}
-	def, ok := meta.GetEntityDef(typeName)
-	if !ok {
-		return nil, false
-	}
-	return def, true
-}
-
 // sortedWebhookIDs returns hook ids in a deterministic order so validation
 // errors are stable.
 func sortedWebhookIDs(cfg *Config) []string {
@@ -394,16 +192,6 @@ func sortedWebhookIDs(cfg *Config) []string {
 	}
 	sort.Strings(ids)
 	return ids
-}
-
-// sortedKeysOfStringMap returns a map's keys in sorted order.
-func sortedKeysOfStringMap(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // --- request-scoped actions (TKT-EFMRQM) -----------------------------------

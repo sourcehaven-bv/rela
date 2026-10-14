@@ -8,6 +8,9 @@ Declared under `webhooks:`; **the hook id is the URL segment**, so
 `webhooks: { icinga-alert: ... }` serves `POST /hooks/icinga-alert`. There is no
 `path:` key.
 
+The same mapping vocabulary drives [feed subscriptions](feed-subscriptions.md),
+which poll an RSS, Atom or JSON Feed instead of receiving a request.
+
 **When this vocabulary is not enough**, a
 [request-scoped action](data-entry.md#request-scoped-actions) is the escape
 hatch: an odd payload shape, a response a third party needs in a specific form,

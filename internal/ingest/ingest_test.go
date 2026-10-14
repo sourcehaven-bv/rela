@@ -102,6 +102,7 @@ type mapSource map[string]string
 
 func (m mapSource) Resolve(ref string) string          { return m[ref] }
 func (m mapSource) DefaultMatchRef(prop string) string { return "body." + prop }
+func (m mapSource) IsBlock(ref string) bool            { return strings.HasPrefix(ref, "block.") }
 
 func ticket(id, host string) *entity.Entity {
 	return &entity.Entity{ID: id, Type: "ticket", Properties: map[string]any{"host": host}, Content: "## Log\n"}
@@ -242,6 +243,50 @@ func TestRun_FlattensEveryTemplatedField(t *testing.T) {
 	}
 	if want := "## Log\n" + flat; created.Content != want {
 		t.Errorf("content = %q, want %q", created.Content, want)
+	}
+}
+
+// TestRun_BlockKeepsLinesOnlyInCreateContent pins that a source's block value
+// keeps its line breaks in a new entity's body and nowhere else, and still
+// loses NUL there.
+func TestRun_BlockKeepsLinesOnlyInCreateContent(t *testing.T) {
+	const block = "para one\n\npara\x00 two"
+	w := &world{}
+	m := ingestspec.Mapping{
+		Find: &ingestspec.Find{Type: "ticket", Match: []string{"host"}},
+		CreateIfMissing: &ingestspec.Create{
+			Properties: map[string]string{"title": "{{block.v}}"},
+			Content:    "{{block.v}}\n{{body.v}}",
+		},
+		Then: []ingestspec.Step{{Set: map[string]string{"status": "{{block.v}}"}}},
+	}
+	src := mapSource{"body.host": "h", "block.v": block, "body.v": "x\ny"}
+	if _, err := Run(context.Background(), w.deps(), m, src); err != nil {
+		t.Fatal(err)
+	}
+	created := w.created[0]
+	if want := "para one\n\npara two\nx y"; created.Content != want {
+		t.Errorf("content = %q, want %q", created.Content, want)
+	}
+	if got := created.Properties["title"]; got != "para one  para two" {
+		t.Errorf("title = %q, want the block flattened", got)
+	}
+	if got := w.patches[0].Properties["status"]; got != "para one  para two" {
+		t.Errorf("set step = %q, want the block flattened", got)
+	}
+}
+
+// TestMatchValues pins the identity a caller reads before running a mapping.
+func TestMatchValues(t *testing.T) {
+	m := ingestspec.Mapping{Find: &ingestspec.Find{
+		Type: "t", Match: []string{"a", "b"}, Values: map[string]string{"b": "x-{{body.y}}"},
+	}}
+	got := MatchValues(m, mapSource{"body.a": "1\n2", "body.y": "3"})
+	if len(got) != 2 || got["a"] != "1 2" || got["b"] != "x-3" {
+		t.Errorf("MatchValues = %v", got)
+	}
+	if got := MatchValues(ingestspec.Mapping{}, mapSource{}); got != nil {
+		t.Errorf("MatchValues without find = %v, want nil", got)
 	}
 }
 

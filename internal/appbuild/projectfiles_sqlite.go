@@ -28,6 +28,7 @@ var configRootFiles = []string{
 	"desktop.yaml",
 	"acl.yaml",
 	"schedules.yaml",
+	"subscriptions.yaml",
 	"mail-templates.yaml",
 	"classification.yaml",
 	"realtime.yaml",

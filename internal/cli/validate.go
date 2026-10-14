@@ -66,7 +66,7 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		startDir = os.Getenv("RELA_PROJECT")
 	}
 
-	result, err := projectsetup.Validate(startDir)
+	result, err := projectsetup.Validate(ctx, startDir)
 	if err != nil {
 		return err
 	}
@@ -87,7 +87,7 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 		err  error
 	}{
 		{"mail templates", result.MailTemplatesError}, {"schedules", result.SchedulesError},
-		{"connections", result.ConnectionsError},
+		{"connections", result.ConnectionsError}, {"subscriptions", result.SubscriptionsError},
 	} {
 		if item.err != nil {
 			fmt.Printf("  ✗ %s: %v\n", item.name, item.err)
