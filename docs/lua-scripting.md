@@ -49,17 +49,96 @@ messages remain accurate.
 
 ### Script Location
 
-Scripts executed via `lua_run` must be in the `scripts/` directory:
+Scripts executed via `lua_run` must be in the `scripts/` directory. Code that
+several scripts share goes in `lib/`, as modules (see
+[Sharing code between scripts](#sharing-code-between-scripts)):
 
 ```text
 project/
 ├── scripts/
-│   ├── report.lua
-│   └── utils/
-│       └── helpers.lua
+│   └── report.lua
+├── lib/
+│   └── fmt/
+│       └── date.lua      -- require("fmt.date")
 ├── entities/
 └── schema.yaml
 ```
+
+## Sharing code between scripts
+
+Put shared code in a module under the project's `lib/` directory, and load it
+with `require`. Any script can use it: actions, documents and export
+renders, automations (`lua:` and `lua_file:`), scheduled tasks, validation
+rules, flows, `rela script` and the MCP `lua_run`/`lua_eval` tools.
+
+A module is a Lua file that returns a value, usually a table of functions:
+
+```lua
+-- lib/fmt/date.lua
+local M = {}
+
+function M.iso(y, m, d)
+  return string.format("%04d-%02d-%02d", y, m, d)
+end
+
+return M
+```
+
+```lua
+-- actions/stamp.lua
+local date = require("fmt.date")
+return { message = "Stamped " .. date.iso(2026, 10, 14) }
+```
+
+**Names.** A module name is one or more dot-separated segments of lower-case
+letters, digits and underscores. Each dot is a directory:
+`require("fmt.date")` loads `lib/fmt/date.lua`. Any other name raises an
+error. The first segment may not be a built-in name (`rela`, `http`, `ai`,
+`crypto`, `mail`, `string`, `table`, `math`, `coroutine`, `os`, `io`,
+`debug`, `package`, `channel`, `utf8`, `bit32`). `require("string")`,
+`require("table")`, `require("math")` and `require("coroutine")` return the
+standard library.
+
+**Loading.** A module runs the first time a script requires it. Later calls
+in the same run return the same value without running it again. If the
+module returns nothing, `require` returns `true`. Every run starts fresh, so
+an edited module takes effect on the next run, as an edited script does. A
+module whose loading fails is not cached; requiring it again tries again. A
+module that requires itself, directly or through other modules, raises
+`require cycle: a -> b -> a`.
+
+**What a module can do.** A module runs with the permissions of the script
+that required it. In a validation rule, which cannot write, a module cannot
+write either. `http` and `ai` exist in a module only when the calling script
+was granted them. A module shares the script's global variables, so declare
+your variables `local` and return what callers need. In a script with
+`allow_acl_bypass:`, a module can also call `rela.bypass_acl`, so review the
+modules such a script requires as part of the script.
+
+**Rules for module code:**
+
+- Do not read per-call globals such as `entity` at the top level of a module.
+  A validation rule loads a module once and then runs it for every entity, so
+  the top level would only ever see the first entity. Pass the entity to a
+  function instead: `require("rules.status").draft(entity)`.
+- Do not yield (`coroutine.yield`, `rela.flow.emit`) at the top level of a
+  module. Doing so raises an error. Yield from a function the module returns.
+- `rela.cache` inside a module uses the cache of the script that required it.
+  In inline code, which has no cache, `rela.cache` raises an error as it
+  would in the inline code itself.
+
+**Errors.** An error inside a module names the module file and line, for
+example `lib/fmt/date.lua:3: bad argument`. The error panel in the data-entry
+app shows that line of the module.
+
+**Where modules are not available.** Data migration steps cannot use
+`require`: re-running a migration must give the same result as the first
+run, and a module may have changed since. Mail transport scripts
+(`.rela/mail.yaml`) and the docs build run without project files, so
+`require` of a module raises an error there.
+
+On the SQLite build, `rela db load` stores the `.lua` files under `lib/` in
+`rela.db` with the other scripts. Other files in `lib/` are not stored.
 
 ## Interactive Flows
 
@@ -934,6 +1013,10 @@ invoking principal can, so the ACL already bounds it; a value means someone
 should read that closure before it ships. The value says which *kind* of
 scrutiny — is this reading data the principal cannot see, or writing past their
 permissions? That is why it is not sliced by verb.
+
+The code to read includes every `lib/` module the script requires, directly or
+through other modules. A module can call `rela.bypass_acl` too, so a change to
+a shared module changes what an elevated script does.
 
 > **Migrating from the boolean.** `allow_acl_bypass: true` used to mean reads
 > and writes. It is now **refused at load** with an error naming the
@@ -2541,6 +2624,8 @@ separately.
 - `table` - Table operations
 - `math` - Mathematical functions
 - `coroutine` - Coroutine support
+- `require` - Loads modules from the project's `lib/` directory only (see
+  [Sharing code between scripts](#sharing-code-between-scripts))
 - Base functions: `print`, `pairs`, `ipairs`, `type`, `tostring`, `tonumber`, `error`, `pcall`,
   `assert`, `select`, `next`, `unpack`
 
@@ -2550,6 +2635,8 @@ separately.
 - `os` - No system commands
 - `debug` - No runtime introspection
 - `load`, `loadfile`, `dofile`, `loadstring` - No dynamic code loading
+- `package`, `module` - No module search paths; `require` reads only `lib/`.
+  A symlink in `lib/` that points outside `lib/` is refused.
 - `rawget`, `rawset`, `getmetatable`, `setmetatable` - No metatable manipulation
 
 ### AI / Network Access

@@ -157,22 +157,19 @@ func (e *Engine) ExecuteStandaloneDocument(
 // Captured output is left for the caller to attach via AttachCapturedOutput
 // when they own the buffer (e.g. the document renderer).
 //
-// For inline / synthetic paths (containing '<' or empty), no prefix is
-// applied — the path is used as-is for envelope display, and the source
-// FS is left out since there's nothing on disk to slice.
+// A file-backed script ran under its project-relative chunk name
+// (projectPath), so its frames already name the file the envelope shows.
+// For inline / synthetic paths (containing '<' or empty) the path is used
+// as-is, and the source FS is left out since there's nothing on disk to
+// slice, unless the failure is inside a lib/ module.
 func wrapScriptError(surface lua.Surface, subdir, scriptPath, entityID string,
 	frames []lua.StackFrame, capturedOutput []byte, runErr error,
 	sourceFS fs.FS) error {
 	envelopePath := scriptPath
-	useSourceFS := false
+	useSourceFS := lua.FailedInModule(frames)
 	if scriptPath != "" && !strings.ContainsAny(scriptPath, "<>") {
-		envelopePath = filepath.ToSlash(filepath.Join(subdir, scriptPath))
+		envelopePath = projectPath(subdir, scriptPath)
 		useSourceFS = true
-		for i := range frames {
-			if frames[i].Path == scriptPath {
-				frames[i].Path = envelopePath
-			}
-		}
 	}
 	in := lua.BuildInput{
 		Surface:        surface,
@@ -186,6 +183,13 @@ func wrapScriptError(surface lua.Surface, subdir, scriptPath, entityID string,
 		in.SourceFS = sourceFS
 	}
 	return lua.BuildScriptError(in)
+}
+
+// projectPath is the project-relative, slash-separated path of the script
+// name under dir. It is both the chunk name a script runs under and the
+// path its error envelope shows.
+func projectPath(dir, name string) string {
+	return filepath.ToSlash(filepath.Join(dir, name))
 }
 
 // execute runs Lua code with entity context. scriptPath is used to resolve
@@ -233,10 +237,18 @@ func (e *Engine) execute(ctx context.Context, code string, deps lua.WriteDeps, s
 	}
 
 	// ctx is threaded into the runtime via lua.WithContext(ctx) above;
-	// RunString applies it to the VM state. contextcheck can't follow that flow
-	// across the boundary into the Lua VM.
-	//nolint:contextcheck // ctx threaded via WithContext; see comment above
-	if runErr := runtime.RunString(code); runErr != nil {
+	// RunString / RunChunk apply it to the VM state. contextcheck can't
+	// follow that flow across the boundary into the Lua VM. A script file
+	// runs under its project-relative chunk name so its frames name the file.
+	var runErr error
+	if scriptPath != "" {
+		//nolint:contextcheck // ctx threaded via WithContext; see comment above
+		runErr = runtime.RunChunk(code, projectPath(scriptsDir, scriptPath))
+	} else {
+		//nolint:contextcheck // ctx threaded via WithContext; see comment above
+		runErr = runtime.RunString(code)
+	}
+	if runErr != nil {
 		// Surface tag is "automation" — this seam is invoked from the
 		// automation engine (workspace) for both inline `lua: |` blocks
 		// and `script:` files. Captured stdout is omitted: automations

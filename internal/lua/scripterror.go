@@ -22,16 +22,19 @@ import (
 // action, document render, automation, MCP lua_run/lua_eval) wraps its
 // failures in *ScriptError so HTTP and MCP handlers can branch on the type.
 type ScriptError struct {
-	Surface        Surface        `json:"surface"`
-	Path           string         `json:"path"`
-	EntityID       string         `json:"entity_id,omitempty"`
-	Args           map[string]any `json:"args,omitempty"`
-	LuaMessage     string         `json:"lua_message"`
-	LuaLine        int            `json:"lua_line,omitempty"`
-	Stack          []StackFrame   `json:"stack,omitempty"`
-	Source         []SourceLine   `json:"source,omitempty"`
-	CapturedOutput string         `json:"captured_output,omitempty"`
-	CorrelationID  string         `json:"correlation_id,omitempty"`
+	Surface    Surface        `json:"surface"`
+	Path       string         `json:"path"`
+	EntityID   string         `json:"entity_id,omitempty"`
+	Args       map[string]any `json:"args,omitempty"`
+	LuaMessage string         `json:"lua_message"`
+	LuaLine    int            `json:"lua_line,omitempty"`
+	// LuaPath is the file LuaLine is in when that is not Path: the failure
+	// is inside a lib/ module the script required. Empty otherwise.
+	LuaPath        string       `json:"lua_path,omitempty"`
+	Stack          []StackFrame `json:"stack,omitempty"`
+	Source         []SourceLine `json:"source,omitempty"`
+	CapturedOutput string       `json:"captured_output,omitempty"`
+	CorrelationID  string       `json:"correlation_id,omitempty"`
 }
 
 // Surface identifies which Lua execution path produced an error.
@@ -131,6 +134,11 @@ func BuildScriptError(in BuildInput) *ScriptError {
 		se.Stack = trimFrames(in.Frames)
 	}
 	se.fillFromError(in.Err)
+	if frame := se.deepestUserFrame(); frame != nil && frame.Path != se.Path && frame.Line == se.LuaLine &&
+		strings.HasPrefix(frame.Path, ModuleDir+"/") {
+
+		se.LuaPath = frame.Path
+	}
 
 	if se.LuaLine > 0 && in.SourceFS != nil {
 		// When `require`d helpers are involved, the innermost frame's
@@ -184,6 +192,9 @@ func trimFrames(in []StackFrame) []StackFrame {
 func (e *ScriptError) Error() string {
 	if e == nil {
 		return ""
+	}
+	if e.LuaPath != "" && e.LuaLine > 0 {
+		return fmt.Sprintf("%s:%d: %s", e.LuaPath, e.LuaLine, e.LuaMessage)
 	}
 	if e.Path != "" && e.LuaLine > 0 {
 		return fmt.Sprintf("%s:%d: %s", e.Path, e.LuaLine, e.LuaMessage)

@@ -140,9 +140,10 @@ type Runtime struct {
 	// Entity renders leave this zero, so rela.document carries no row
 	// bindings there.
 	listRender ListRenderContext
-	aiProvider ai.Provider // nil means AI is not configured
-	cache      cacheStore  // nil means rela.cache.* is not registered
-	scriptPath string      // set by RunFile; empty for RunString/inline
+	aiProvider ai.Provider   // nil means AI is not configured
+	cache      cacheStore    // nil means rela.cache.* is not registered
+	scriptPath string        // set by RunFile; empty for RunString/inline
+	modules    *moduleLoader // require; Nil: never — set by newRuntime
 
 	// mailSender backs mail.send. Nil means mail is not configured for this
 	// project, which the binding reports as a typed not_configured error
@@ -482,6 +483,7 @@ func newRuntime(deps WriteDeps, stdout io.Writer, allowWrites bool, opts ...Opti
 		// value, which grants nothing.
 		caps: deps.Capabilities,
 	}
+	r.modules = installRequire(L, deps.moduleFiles())
 
 	// Apply options
 	for _, opt := range opts {
@@ -538,6 +540,9 @@ func openSafeLibraries(ls *lua.LState) {
 	ls.SetGlobal("dofile", lua.LNil)
 	ls.SetGlobal("load", lua.LNil)
 	ls.SetGlobal("loadstring", lua.LNil)
+	// module() creates globals by name; require (installRequire) is the one
+	// way to load shared code.
+	ls.SetGlobal("module", lua.LNil)
 
 	// Remove raw access functions that could bypass metamethod protections
 	// and modify the rela module internals
@@ -573,6 +578,9 @@ func (r *Runtime) pcallWithCapture() error {
 	r.errorFrames = nil
 	handler := r.L.NewFunction(func(L *lua.LState) int {
 		r.errorFrames = collectStackFrames(L)
+		if frame := r.modules.takePendingFrame(L.Get(1)); frame != nil {
+			r.errorFrames = append([]StackFrame{*frame}, r.errorFrames...)
+		}
 		// Pass the original error object (arg #1) through unchanged so
 		// gopher-lua wraps it into ApiError as usual.
 		L.Push(L.Get(1))
@@ -608,53 +616,42 @@ func collectStackFrames(ls *lua.LState) []StackFrame {
 	return frames
 }
 
-// RunFile sets the runtime's scriptPath (via filepath.Clean(path)) so
-// the rela.cache.* bindings can namespace entries by script. Callers
-// using RunString/inline code do not get this identity and any
-// rela.cache.* call raises a Lua error.
+// RunFile reads and runs the Lua script at path, which is also its chunk
+// name. It sets rela.args and the runtime's scriptPath (via
+// filepath.Clean(path)) so the rela.cache.* bindings can namespace entries
+// by script; cleaning (rather than absolutising) keeps two runs with
+// different CWDs sharing the same namespace when the relative path is
+// identical. Callers using RunString/inline code do not get this identity
+// and any rela.cache.* call raises a Lua error.
+//
+// It reads with os.ReadFile and so has no containment: it is for the
+// operator's shell (rela script). A caller serving a project script reads
+// it through ReadDeps.ReadScript and uses RunChunk.
 func (r *Runtime) RunFile(path string, args []string) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("cannot read script file: %w", err)
 	}
-	return r.RunFileContent(path, content, args)
-}
-
-// RunFileContent executes Lua code loaded from `path`, using the
-// already-read `content`. This exists for callers that need traversal-
-// resistant file reads (e.g. MCP's lua_run, which uses os.OpenRoot).
-// Effects match RunFile: chunk name for errors, scriptPath for
-// rela.cache.* namespacing, rela.args for script arguments. Shebangs
-// are stripped.
-func (r *Runtime) RunFileContent(path string, content []byte, args []string) error {
-	// Set rela.args
-	argsTable := r.L.NewTable()
-	for i, arg := range args {
-		argsTable.RawSetInt(i+1, lua.LString(arg))
-	}
-	relaTable, ok := r.L.GetGlobal("rela").(*lua.LTable)
-	if !ok {
+	if _, ok := r.L.GetGlobal("rela").(*lua.LTable); !ok {
 		return errors.New("rela module not initialized")
 	}
-	relaTable.RawSetString("args", argsTable)
+	r.SetArgs(args)
+	r.SetScriptPath(path)
+	return r.RunChunk(string(content), path)
+}
 
-	// Record the cleaned script path so rela.cache.* can namespace
-	// entries. Cleaning (rather than absolutising) keeps two runs with
-	// different CWDs sharing the same namespace when the relative path
-	// is identical — the CLI already chdirs to project root, so this is
-	// the stable identity.
-	r.scriptPath = filepath.Clean(path)
-
-	// Strip shebang if present
-	code := stripShebang(string(content))
-
+// RunChunk executes code compiled under chunkName, which becomes the Path of
+// every captured frame from this chunk. Callers pass the script's
+// project-relative path ("scripts/report.lua"), so a frame names the same
+// file whether it comes from the entry script or from a lib/ module it
+// required. Unlike RunFile it leaves the cache namespace and rela.args
+// alone; set them with SetScriptPath and SetArgs. Shebangs are stripped.
+func (r *Runtime) RunChunk(code, chunkName string) error {
 	r.applyTimeout()
-
-	fn, err := r.L.Load(strings.NewReader(code), path)
+	fn, err := r.L.Load(strings.NewReader(stripShebang(code)), chunkName)
 	if err != nil {
 		return fmt.Errorf("cannot compile script: %w", err)
 	}
-
 	r.L.Push(fn)
 	return r.pcallWithCapture()
 }
@@ -791,17 +788,15 @@ func (r *Runtime) clearTimeout() {
 }
 
 // SetScriptPath records a cache namespace identity for callers that
-// run via RunString or RunActionString (not RunFile/RunFileContent,
-// which set it automatically). The "path" here is used purely as the
-// rela.cache.* namespace — for inline-code callers that need a
-// stable cache scope it's the caller's name for the script
-// (e.g. "validations/<rule-name>"); for file-backed callers
-// RunFileContent is preferred because it sets chunk name, args, and
-// namespace in one step. The path is cleaned (filepath.Clean).
+// run via RunString, RunChunk or RunActionString (RunFile sets it
+// automatically). The "path" here is used purely as the rela.cache.*
+// namespace — for inline-code callers that need a stable cache scope
+// it's the caller's name for the script (e.g. "validations/<rule-name>").
+// The path is cleaned (filepath.Clean).
 //
 // SetScriptPath persists across subsequent RunString calls on the
 // same Runtime. Call with "" to revert to inline/eval mode (cache
-// calls raise). RunFile / RunFileContent override it.
+// calls raise). RunFile overrides it.
 func (r *Runtime) SetScriptPath(path string) {
 	if path == "" {
 		r.scriptPath = ""
