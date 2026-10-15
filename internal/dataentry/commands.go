@@ -22,6 +22,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/access"
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/cmdexec"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
@@ -216,7 +217,8 @@ func SelectCommandAuthorizer(
 
 // resolveCommands returns commands available for a given page context.
 // pageType is "entity", "list", "view", or "dashboard".
-// qualifier is the specific list ID or view ID.
+// qualifier is the specific list ID or view ID, or for a dashboard its name
+// ("" for the default dashboard).
 // entityType is the entity type shown on the page (empty for dashboard).
 //
 // Commands the principal may not execute are omitted, so the SPA never renders
@@ -282,7 +284,12 @@ func matchesPage(cmd CommandConfig, pageType, qualifier, entityType string) bool
 			return true
 		}
 	case "dashboard":
-		if scope.Dashboard {
+		// The qualifier is the dashboard's name, "" (or "default") for the
+		// default one, as for `/_dashboard?name=`.
+		if qualifier == dataentryconfig.DefaultDashboardName {
+			qualifier = ""
+		}
+		if scope.Dashboard.IsSet() && scope.Dashboard.Name() == qualifier {
 			return true
 		}
 	}

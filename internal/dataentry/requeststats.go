@@ -182,7 +182,7 @@ func buildRouteWords(s *Schema) routeWords {
 			maps.Keys(c.Forms), maps.Keys(c.Lists), maps.Keys(c.Views), maps.Keys(c.EntityViews),
 			maps.Keys(c.Kanbans), maps.Keys(c.Calendars), maps.Keys(c.Gantts), maps.Keys(c.Documents),
 			maps.Keys(c.Feeds), maps.Keys(c.Commands), maps.Keys(c.Actions), maps.Keys(c.Webhooks),
-			maps.Keys(c.Pages), maps.Keys(c.NextActions),
+			maps.Keys(c.Pages), maps.Keys(c.NextActions), maps.Keys(c.Dashboards),
 		} {
 			for name := range names {
 				w[name] = true

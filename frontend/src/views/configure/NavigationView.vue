@@ -15,7 +15,7 @@ import ConfigSection from '@/components/configure/ConfigSection.vue'
 import ConfigPreview from '@/components/configure/ConfigPreview.vue'
 import NavGroupEditor from '@/components/configure/NavGroupEditor.vue'
 import { useConfigDraftStore } from '@/stores/configDraft'
-import { boards, entityTypes, lists, spaces } from '@/configure/models'
+import { boards, dashboards, entityTypes, lists, spaces } from '@/configure/models'
 import { configureRoute } from '@/configure/routes'
 import { getIn, keys, newMap } from '@/configure/tree'
 
@@ -70,6 +70,10 @@ const targetChoices = computed(() => [
     name: '',
   })),
   { value: 'dashboard:', label: 'Dashboard', name: 'Dashboard' },
+  // Named dashboards (TKT-5LQNLY): the entry is written `dashboard: <name>`.
+  ...dashboards(draft.currentDataEntry)
+    .filter((d) => d.name)
+    .map((d) => ({ value: `dashboard:${d.name}`, label: `Dashboard: ${d.title}`, name: d.title })),
   { value: 'search:', label: 'Search', name: 'Search' },
 ])
 const targets = computed(() => targetChoices.value.map(({ value, label }) => ({ value, label })))

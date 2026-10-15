@@ -275,6 +275,19 @@ func TestDataEntryPermissions_NilMetamodelKeepsDataEntryPermissions(t *testing.T
 	}
 }
 
+// A card permission on a named dashboard (TKT-5LQNLY) is a used permission,
+// like one on the default dashboard.
+func TestDataEntryPermissions_NamedDashboardCards(t *testing.T) {
+	t.Parallel()
+	cfg := &dataentryconfig.Config{Dashboards: map[string]dataentryconfig.DashboardConfig{
+		"crm": {Cards: []dataentryconfig.DashboardCard{{Title: "Margins", Permission: "sales:read"}}},
+	}}
+	perms := (&dataEntryPermissions{cfg: cfg}).UsedPermissions()
+	if !slices.Contains(perms, "sales:read") {
+		t.Errorf("a named dashboard card's permission must be collected; got %q", perms)
+	}
+}
+
 // realtimeLoader serves a data-entry.yaml with one gated document and the
 // given realtime.yaml.
 func realtimeLoader(t *testing.T, realtime string) config.Loader {

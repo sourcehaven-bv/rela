@@ -3740,7 +3740,7 @@ func TestValidateNavigation_Status(t *testing.T) {
 func TestNavStatusEntries_KeysFollowTheTree(t *testing.T) {
 	status := []NavStatusRule{{Tone: "new", Label: "x"}}
 	cfg := &Config{Navigation: []NavigationEntry{
-		{Label: "Home", Dashboard: true},
+		{Label: "Home", Dashboard: DefaultDashboard},
 		{Label: "Top", List: "a", Status: status},
 		{Group: "Work", Items: []NavigationEntry{
 			{Label: "Plain", List: "b"},

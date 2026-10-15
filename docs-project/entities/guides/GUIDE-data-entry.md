@@ -254,6 +254,11 @@ dashboard:                 # Optional overview page
       query: "type:task status:open"
       display: count
 
+dashboards:                # Optional named dashboards, same shape
+  sales:
+    title: "Pipeline"
+    cards: [...]
+
 kanbans:                   # Kanban board views
   board_name:
     entity_type: task
@@ -2742,6 +2747,71 @@ same one shown when no cards are configured at all.
 > roles in `acl.yaml` first. This applies equally to `permission:` on
 > commands, documents, and navigation entries.
 
+### Named dashboards (`dashboards`)
+
+A project can have more dashboards than the default one. Each space can then
+open on its own, for example a sales pipeline in a CRM space. Declare them
+under `dashboards:`, keyed by name. Each entry has the same fields as
+`dashboard:`, cards and `permission:` included:
+
+```yaml
+dashboard:                 # the default dashboard, at /dashboard
+  title: "Overview"
+  cards: [...]
+
+dashboards:
+  sales:                   # at /dashboard/sales
+    title: "Pipeline"
+    cards:
+      - title: "Open deals"
+        query: "type:deal status:open"
+        display: count
+```
+
+Open a named dashboard by writing its name where `dashboard: true` is
+accepted: a [navigation entry](#navigation), a [page tab](#pages), a space
+[`home:`](#spaces) and a command's [`available_on:`](#visibility-rules-available_on).
+
+```yaml
+spaces:
+  - id: crm
+    label: CRM
+    home: { dashboard: sales }
+    navigation:
+      - label: Pipeline
+        dashboard: sales
+```
+
+The rules:
+
+- `dashboard:` and `dashboards:` can be used together. `dashboard:` stays the
+  default dashboard, and `dashboard: true` keeps opening it.
+- The name `default` is reserved. `dashboards:` may not declare it, and
+  `dashboard: default` means the same as `dashboard: true`.
+- A name starts with a lowercase letter, followed by up to 31 lowercase
+  letters, digits, `_` or `-`. It is part of the URL.
+- A name that `dashboards:` does not declare is a config error, for example
+  `navigation: references unknown dashboard "sales" (known: ops)`.
+- `dashboard: true` without a `dashboard:` block shows an empty dashboard, as
+  before.
+
+A named dashboard opens at `/dashboard/<name>`, and inside a space at
+`/s/<space>/dashboard/<name>`. Its sidebar entry is highlighted while it is
+open. The API serves it at `/api/v1/_dashboard?name=<name>`; without `name`
+the default dashboard is served. An unknown name returns 404 with the error
+type `dashboard_not_found`, and the page shows "Dashboard not found".
+
+A command's `available_on: { dashboard: ... }` scope applies to the commands
+API, `/api/v1/_commands?page_type=dashboard&qualifier=<name>`. A command
+with `dashboard: sales` matches only the `sales` dashboard, and one with
+`dashboard: true` only the default dashboard (an empty qualifier, or
+`default`). Unscoped `global` commands match every dashboard. The dashboard
+page itself does not list commands.
+
+In the Configure space, the Dashboard screen edits the default dashboard and
+every named one; pick a dashboard at the top of the screen. Adding or renaming
+a named dashboard is done in `data-entry.yaml`.
+
 ### Display Modes
 
 **`count`** shows a single large number — the count of entities matching the query. Use this for
@@ -3653,7 +3723,7 @@ navigation:
 | `label`     | string | Menu item text                                                 |
 | `list`      | string | List name to navigate to (mutually exclusive with other types) |
 | `kanban`    | string | Kanban board name to navigate to                               |
-| `dashboard` | bool   | Link to the dashboard page                                     |
+| `dashboard` | bool or string | `true` links the default dashboard; a name links a [named dashboard](#named-dashboards-dashboards) |
 | `graph`     | bool   | Link to the graph explorer                                     |
 | `document`  | string | Standalone document to open (see [Standalone documents](#standalone-documents)) |
 | `page`      | string | Page to open, with its views as tabs (see [Pages](#pages)) |
@@ -4366,6 +4436,7 @@ error in a space names it, for example
 
 **`home:`** names one destination, written like a navigation entry:
 `{ list: tasks }`, `{ kanban: board }`, `{ page: tickets }`, `{ dashboard: true }`,
+`{ dashboard: sales }` (a [named dashboard](#named-dashboards-dashboards)),
 `{ search: true }` and so on. It cannot be a group or an action, and it does not take `status:`,
 `open:` or `permission:`. Without `home:`, the space opens on the first entry
 in its navigation that the user can see and that opens a page, so actions are
@@ -4477,7 +4548,7 @@ Each tab names exactly one view:
 | `icon`       | no       | An [icon name](#icon-names) shown before the label |
 | `permission` | no       | Hide the tab from users who lack this ACL permission |
 | `list`, `kanban`, `calendar`, `gantt`, `document` | one of | The view the tab shows, by name |
-| `dashboard`  | one of   | `true` shows the dashboard |
+| `dashboard`  | one of   | `true` shows the default dashboard; a name shows a [named dashboard](#named-dashboards-dashboards) |
 | `scope`      | on an entity page | How the tab narrows its view to the page's entity. See [Entity pages](#entity-pages) |
 
 ### Entity pages
@@ -5962,7 +6033,8 @@ available_on:
   views: [ticket_report]      # Only on specific views
   lists: [all_tickets]         # Only on specific lists
   entity_types: [ticket]       # Only for specific entity types
-  dashboard: true              # Only on the dashboard (global context)
+  dashboard: true              # Only on the default dashboard (global context)
+                               # or a name: only on that named dashboard
 ```
 
 A command appears if **any** condition matches.

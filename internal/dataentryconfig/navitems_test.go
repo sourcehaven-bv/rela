@@ -125,7 +125,7 @@ func TestNavItemsFromEntries_Keys(t *testing.T) {
 	from := &NavItemsFrom{List: "cats"}
 	cfg := &Config{
 		Navigation: []NavigationEntry{
-			{Label: "Home", Dashboard: true},
+			{Label: "Home", Dashboard: DefaultDashboard},
 			{Group: "Categories", ItemsFrom: from},
 			{Group: "Static", Items: []NavigationEntry{{Label: "T", List: "tickets"}}},
 		},

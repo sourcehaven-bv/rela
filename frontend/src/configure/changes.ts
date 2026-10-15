@@ -571,7 +571,45 @@ function navChanges(b: DraftTrees, a: DraftTrees): ChangeGroup[] {
 }
 
 const HANDLED_SCHEMA = ['entities', 'types', 'relations', 'validations', 'automations']
-const HANDLED_SCREENS = ['styles', 'forms', 'lists', 'kanbans', 'dashboard', 'spaces', 'navigation']
+const HANDLED_SCREENS = [
+  'styles',
+  'forms',
+  'lists',
+  'kanbans',
+  'dashboard',
+  'dashboards',
+  'spaces',
+  'navigation',
+]
+
+/**
+ * The changes to one dashboard: the default one, or the named one `name`
+ * under `dashboards:` (TKT-5LQNLY).
+ */
+function dashboardChanges(
+  before: TreeValue | undefined,
+  after: TreeValue | undefined,
+  name?: string
+): ChangeGroup[] {
+  if (equal(before, after)) return []
+  const to = configureRoute.dashboard(name)
+  const items = [
+    ...settingChanges(before, after, to, ['cards']),
+    ...itemChanges(
+      get(before, 'cards'),
+      get(after, 'cards'),
+      'Card',
+      (item) => str(get(item, 'title')) ?? 'card',
+      () => to,
+      'Order of cards',
+      to
+    ),
+  ]
+  if (!items.length) return []
+  return name
+    ? [{ key: `dashboards:${name}`, title: `Dashboard: ${name}`, items }]
+    : [{ key: 'dashboard', title: 'Dashboard', items }]
+}
 
 /** Every change in the draft, grouped by what it changes. */
 export function describeChanges(
@@ -670,23 +708,16 @@ export function describeChanges(
         ]
       )
     )
-    const dashBefore = get(b.dataEntry, 'dashboard')
-    const dashAfter = get(a.dataEntry, 'dashboard')
-    if (!equal(dashBefore, dashAfter)) {
-      const to = configureRoute.dashboard()
-      const items = [
-        ...settingChanges(dashBefore, dashAfter, to, ['cards']),
-        ...itemChanges(
-          get(dashBefore, 'cards'),
-          get(dashAfter, 'cards'),
-          'Card',
-          (item) => str(get(item, 'title')) ?? 'card',
-          () => to,
-          'Order of cards',
-          to
-        ),
-      ]
-      if (items.length) groups.push({ key: 'dashboard', title: 'Dashboard', items })
+    groups.push(...dashboardChanges(get(b.dataEntry, 'dashboard'), get(a.dataEntry, 'dashboard')))
+    const named = [...new Set([...keys(get(b.dataEntry, 'dashboards')), ...keys(get(a.dataEntry, 'dashboards'))])]
+    for (const name of named.sort()) {
+      groups.push(
+        ...dashboardChanges(
+          get(get(b.dataEntry, 'dashboards'), name),
+          get(get(a.dataEntry, 'dashboards'), name),
+          name
+        )
+      )
     }
     groups.push(...navChanges(b, a))
     // Colours of names that are not choice lists (a choice list's colours

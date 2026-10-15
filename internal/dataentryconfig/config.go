@@ -98,7 +98,7 @@ func (d Direction) IsIncoming() bool {
 // (TKT-GNKR5H), `account` (TKT-MJTD12), `pages` (TKT-ITQ0HL) and `piles`
 // (TKT-K3RJLH) are the most recent.
 //
-//plimsoll:max-fields=26
+//plimsoll:max-fields=27
 type Config struct {
 	Version     string                       `yaml:"version"`
 	App         AppConfig                    `yaml:"app"`
@@ -116,10 +116,14 @@ type Config struct {
 	Feeds       map[string]Feed              `yaml:"feeds,omitempty" json:"feeds,omitempty"`
 	CalDAV      CalDAVConfig                 `yaml:"caldav,omitempty" json:"caldav,omitzero"`
 	Dashboard   *DashboardConfig             `yaml:"dashboard,omitempty"`
-	Commands    map[string]CommandConfig     `yaml:"commands,omitempty"`
-	Actions     map[string]Action            `yaml:"actions,omitempty"`
-	Webhooks    map[string]Webhook           `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
-	Navigation  []NavigationEntry            `yaml:"navigation"`
+	// Dashboards are named dashboards, each the shape of Dashboard, reached
+	// by `dashboard: <name>` and at /dashboard/<name>. Dashboard stays the
+	// default dashboard; the two coexist. The name "default" is reserved.
+	Dashboards map[string]DashboardConfig `yaml:"dashboards,omitempty" json:"dashboards,omitempty"`
+	Commands   map[string]CommandConfig   `yaml:"commands,omitempty"`
+	Actions    map[string]Action          `yaml:"actions,omitempty"`
+	Webhooks   map[string]Webhook         `yaml:"webhooks,omitempty" json:"webhooks,omitempty"`
+	Navigation []NavigationEntry          `yaml:"navigation"`
 
 	// Spaces are named entry points, each with its own navigation, home and
 	// Create menu; list order is switcher order. Mutually exclusive with a
@@ -1506,15 +1510,15 @@ func (f KanbanCardField) DisplayLabel() string {
 //plimsoll:max-fields=22
 type NavigationEntry struct {
 	// Direct item fields
-	Label     string `yaml:"label,omitempty" json:"label,omitempty"`
-	List      string `yaml:"list,omitempty" json:"list,omitempty"`
-	Dashboard bool   `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
-	Kanban    string `yaml:"kanban,omitempty" json:"kanban,omitempty"`
-	Calendar  string `yaml:"calendar,omitempty" json:"calendar,omitempty"`
-	Gantt     string `yaml:"gantt,omitempty" json:"gantt,omitempty"`
-	Search    bool   `yaml:"search,omitempty" json:"search,omitempty"`
-	Settings  bool   `yaml:"settings,omitempty" json:"settings,omitempty"`
-	Action    string `yaml:"action,omitempty" json:"action,omitempty"`
+	Label     string       `yaml:"label,omitempty" json:"label,omitempty"`
+	List      string       `yaml:"list,omitempty" json:"list,omitempty"`
+	Dashboard DashboardRef `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
+	Kanban    string       `yaml:"kanban,omitempty" json:"kanban,omitempty"`
+	Calendar  string       `yaml:"calendar,omitempty" json:"calendar,omitempty"`
+	Gantt     string       `yaml:"gantt,omitempty" json:"gantt,omitempty"`
+	Search    bool         `yaml:"search,omitempty" json:"search,omitempty"`
+	Settings  bool         `yaml:"settings,omitempty" json:"settings,omitempty"`
+	Action    string       `yaml:"action,omitempty" json:"action,omitempty"`
 	// Document names a STANDALONE document (one with no entity_type) under
 	// documents:. Entity-anchored documents cannot appear here — they need
 	// an entry id the sidebar has no way to supply. Enforced by
@@ -2372,7 +2376,9 @@ type CommandScope struct {
 	Views       []string `yaml:"views,omitempty"`
 	Lists       []string `yaml:"lists,omitempty"`
 	EntityTypes []string `yaml:"entity_types,omitempty"`
-	Dashboard   bool     `yaml:"dashboard,omitempty"`
+	// Dashboard shows the command on a dashboard: `true` for the default
+	// dashboard, a name for one under `dashboards:`.
+	Dashboard DashboardRef `yaml:"dashboard,omitempty"`
 }
 
 // DocumentConfig defines how to render a document, either from an entry

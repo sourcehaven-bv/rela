@@ -541,7 +541,7 @@ func sidebarPages(
 }
 
 // pageTabView returns the kind of view a tab shows and the id of that view
-// ("" for the dashboard). The kinds are the SPA's route names for the
+// ("" for the default dashboard, the name for a named one). The kinds are the SPA's route names for the
 // standalone views.
 func pageTabView(tab dataentryconfig.PageTab) (kind, target string) {
 	switch {
@@ -556,7 +556,7 @@ func pageTabView(tab dataentryconfig.PageTab) (kind, target string) {
 	case tab.Document != "":
 		return "document", tab.Document
 	default:
-		return "dashboard", ""
+		return "dashboard", tab.Dashboard.Name()
 	}
 }
 
@@ -725,8 +725,11 @@ func navEntryToSidebarItem(entry dataentryconfig.NavigationEntry, meta *metamode
 	case entry.Gantt != "":
 		item.Href = "/gantt/" + entry.Gantt
 		item.Icon = derived.Gantt
-	case entry.Dashboard:
+	case entry.Dashboard.IsDefault():
 		item.Href = "/"
+		item.Icon = derived.Dashboard
+	case entry.Dashboard.IsSet():
+		item.Href = "/dashboard/" + entry.Dashboard.Name()
 		item.Icon = derived.Dashboard
 	case entry.Search:
 		item.Href = "/search"

@@ -63,7 +63,7 @@ func TestNavStatus_FirstMatchWinsAndZeroIsOmitted(t *testing.T) {
 	installNavStatusConfig(app,
 		map[string]dataentryconfig.List{"all": {EntityType: "ticket"}},
 		[]dataentryconfig.NavigationEntry{
-			{Label: "Home", Dashboard: true},
+			{Label: "Home", Dashboard: dataentryconfig.DefaultDashboard},
 			{Group: "Work", Items: []dataentryconfig.NavigationEntry{
 				{Label: "All", List: "all", Status: []dataentryconfig.NavStatusRule{
 					rule("error", "{count} blocked", "entity.status == 'blocked'"),

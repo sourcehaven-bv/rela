@@ -4,6 +4,8 @@ import {
   boardModel,
   choiceListModel,
   dashboardModel,
+  dashboardPath,
+  dashboards,
   entityTypeLabel,
   entityTypeModel,
   formModel,
@@ -77,6 +79,29 @@ describe('screen models', () => {
       cardFields: ['effort'],
     })
     expect(dashboardModel(dataEntry).cards.map((c) => c.restricted)).toEqual([false, true])
+  })
+
+  // Named dashboards (TKT-5LQNLY) sit under `dashboards.<name>`.
+  it('reads named dashboards beside the default one', () => {
+    const withNamed = toTree({
+      ...dataEntryFixture,
+      dashboards: {
+        ops: { title: 'Operations', cards: [] },
+        crm: { title: 'Pipeline', cards: [{ title: 'Open deals', query: 'type:deal', display: 'count' }] },
+      },
+    })
+    expect(dashboards(withNamed)).toEqual([
+      { name: '', title: 'Default' },
+      { name: 'crm', title: 'Pipeline' },
+      { name: 'ops', title: 'Operations' },
+    ])
+    expect(dashboardModel(withNamed, 'crm')).toMatchObject({
+      title: 'Pipeline',
+      cards: [{ title: 'Open deals', query: 'type:deal' }],
+    })
+    expect(dashboardModel(withNamed).cards.map((c) => c.title)).toEqual(['Open', 'Secret'])
+    expect(dashboardPath()).toEqual(['dashboard'])
+    expect(dashboardPath('crm')).toEqual(['dashboards', 'crm'])
   })
 
   it('groups navigation and locks gated entries', () => {

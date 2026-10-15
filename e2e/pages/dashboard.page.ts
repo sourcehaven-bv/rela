@@ -24,6 +24,43 @@ export class DashboardPage extends BasePage {
     await expect(this.loadingState).toBeHidden({ timeout: 10000 });
   }
 
+  /**
+   * Open a named dashboard (TKT-5LQNLY) at /dashboard/<name>, or under a
+   * space prefix when `space` is given.
+   */
+  async navigateNamed(name: string, space?: string) {
+    await this.navigateTo(`${space ? `/s/${space}` : ''}/dashboard/${name}`);
+    await expect(this.view).toBeVisible();
+    await expect(this.loadingState).toBeHidden({ timeout: 10000 });
+  }
+
+  async expectTitle(title: string) {
+    await expect(this.header.locator('h1')).toHaveText(title);
+  }
+
+  async expectCardTitles(titles: string[]) {
+    await expect(this.cards.locator('h3')).toHaveText(titles);
+  }
+
+  async expectNotFound(name: string) {
+    const state = this.page.getByTestId('dashboard-not-found');
+    await expect(state).toBeVisible();
+    await expect(state).toContainText(name);
+  }
+
+  /** A sidebar navigation link, by its exact label. */
+  sidebarLink(label: string): Locator {
+    return this.page.locator('#main-sidebar').getByRole('link', { name: label, exact: true });
+  }
+
+  async expectSidebarActive(label: string) {
+    await expect(this.sidebarLink(label)).toHaveAttribute('aria-current', 'page');
+  }
+
+  async expectSidebarInactive(label: string) {
+    await expect(this.sidebarLink(label)).not.toHaveAttribute('aria-current', 'page');
+  }
+
   async getCardCount(): Promise<number> {
     return this.cards.count();
   }

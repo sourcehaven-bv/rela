@@ -184,6 +184,46 @@ describe('activeNavId', () => {
     const actions = toNavGroups([{ items: [{ label: 'Sync', action: 'sync' }] }], RouterLink)
     expect(activeNavId(actions, '/sync')).toBeUndefined()
   })
+  // Named dashboards (TKT-5LQNLY) link at /dashboard/<name>, plain or under a
+  // space prefix, and each lights only its own row.
+  describe('named dashboards', () => {
+    const dashboards = toNavGroups(
+      [
+        {
+          items: [
+            { label: 'Home', href: '/' },
+            { label: 'Pipeline', href: '/dashboard/crm' },
+            { label: 'Ops', href: '/dashboard/ops' },
+          ],
+        },
+      ],
+      RouterLink
+    )
+    const spaced = toNavGroups(
+      [
+        {
+          items: [
+            { label: 'Home', href: '/s/crm' },
+            { label: 'Pipeline', href: '/s/crm/dashboard/crm' },
+          ],
+        },
+      ],
+      RouterLink
+    )
+
+    it('highlights the named dashboard on its own route', () => {
+      expect(activeNavId(dashboards, '/dashboard/crm')).toBe('href:/dashboard/crm')
+      expect(activeNavId(dashboards, '/dashboard/ops')).toBe('href:/dashboard/ops')
+    })
+
+    it('does not highlight a dashboard whose name is a prefix of another', () => {
+      expect(activeNavId(dashboards, '/dashboard/crm2')).toBeUndefined()
+    })
+
+    it('highlights the named dashboard under a space prefix', () => {
+      expect(activeNavId(spaced, '/s/crm/dashboard/crm')).toBe('href:/s/crm/dashboard/crm')
+    })
+  })
 })
 
 describe('toNavGroups flyout entries', () => {

@@ -1954,6 +1954,7 @@ func (a *App) handleV1Config(w http.ResponseWriter, r *http.Request) {
 		Calendars:        resolveCalendarDirections(s, s.Cfg.Calendars),
 		Gantts:           s.Cfg.Gantts,
 		Dashboard:        s.Cfg.Dashboard,
+		Dashboards:       s.Cfg.Dashboards,
 		Actions:          s.Cfg.Actions,
 		Navigation:       s.Cfg.Navigation,
 		Spaces:           s.Cfg.Spaces,

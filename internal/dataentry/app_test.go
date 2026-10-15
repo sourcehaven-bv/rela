@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/project"
@@ -415,7 +416,7 @@ func TestFirstNavTarget(t *testing.T) {
 	t.Run("flat items returns first", func(t *testing.T) {
 		nav := []NavigationEntry{
 			{Label: "Tickets", List: "tickets"},
-			{Label: "Dashboard", Dashboard: true},
+			{Label: "Dashboard", Dashboard: dataentryconfig.DefaultDashboard},
 		}
 		target := firstNavTarget(nav)
 		if target == nil {
@@ -447,13 +448,13 @@ func TestFirstNavTarget(t *testing.T) {
 	t.Run("empty group skipped", func(t *testing.T) {
 		nav := []NavigationEntry{
 			{Group: "Empty", Items: []NavigationEntry{}},
-			{Label: "Dashboard", Dashboard: true},
+			{Label: "Dashboard", Dashboard: dataentryconfig.DefaultDashboard},
 		}
 		target := firstNavTarget(nav)
 		if target == nil {
 			t.Fatal("expected non-nil target")
 		}
-		if !target.Dashboard {
+		if !target.Dashboard.IsDefault() {
 			t.Error("expected dashboard target")
 		}
 	})

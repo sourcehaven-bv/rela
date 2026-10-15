@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import RlSortableList from 'rela-components/components/data/RlSortableList.vue'
 import RlTextField from 'rela-components/components/form/RlTextField.vue'
 import RlNumberField from 'rela-components/components/form/RlNumberField.vue'
@@ -14,22 +15,41 @@ import ConfigSection from '@/components/configure/ConfigSection.vue'
 import ConfigPreview from '@/components/configure/ConfigPreview.vue'
 import LockedNote from '@/components/configure/LockedNote.vue'
 import { useConfigDraftStore } from '@/stores/configDraft'
-import { dashboardModel } from '@/configure/models'
+import { dashboardModel, dashboardPath, dashboards } from '@/configure/models'
+import { configureRoute } from '@/configure/routes'
 import { listAt, newMap, positionAfterMove, type TreeValue } from '@/configure/tree'
 
 /**
  * The dashboard: cards in order, each a count, a table or a breakdown of
  * the records a query finds. A card shown only to some people is listed but
  * not edited here.
+ *
+ * `?name=` picks a named dashboard under `dashboards:` (TKT-5LQNLY); without
+ * it, this edits the default one. A name the draft does not declare also
+ * falls back to the default one, with a note saying so.
  */
 const draft = useConfigDraftStore()
+const route = useRoute()
+const router = useRouter()
 
-const dash = computed(() => dashboardModel(draft.currentDataEntry))
+const all = computed(() => dashboards(draft.currentDataEntry))
+const wanted = computed(() => (typeof route.query.name === 'string' ? route.query.name : ''))
+const name = computed(() => (all.value.some((d) => d.name === wanted.value) ? wanted.value : ''))
+const unknownName = computed(() => (wanted.value && !name.value ? wanted.value : ''))
+const base = computed(() => dashboardPath(name.value || undefined))
+const dashOptions = computed(() => all.value.map((d) => ({ value: d.name, label: d.title })))
+function setDashboard(next: string) {
+  void router.replace(configureRoute.dashboard(next || undefined))
+}
+
+const dash = computed(() => dashboardModel(draft.currentDataEntry, name.value || undefined))
 const rows = computed(() =>
   dash.value.cards.map((c) => ({ ...c, id: String(c.index), title: c.title || 'Untitled card' }))
 )
 const editing = ref<number | undefined>(undefined)
 const card = computed(() => dash.value.cards.find((c) => c.index === editing.value))
+// The open editor addresses a card by position in one dashboard.
+watch(name, () => (editing.value = undefined))
 
 const displays = [
   { value: 'count', label: 'Count' },
@@ -40,13 +60,13 @@ const displayLabel = (value: string) => displays.find((d) => d.value === value)?
 
 function cardSetting(key: string, value: TreeValue | undefined) {
   if (editing.value === undefined) return
-  draft.setAt('screens', ['dashboard', 'cards', editing.value], key, value)
+  draft.setAt('screens', [...base.value, 'cards', editing.value], key, value)
 }
 
 function addCard() {
   draft.appendAt(
     'screens',
-    ['dashboard'],
+    base.value,
     'cards',
     newMap({ title: 'New card', query: '', display: 'count' })
   )
@@ -60,18 +80,18 @@ function addCard() {
  */
 function moveCard(from: number, to: number) {
   const length = draftCards()?.length ?? 0
-  draft.moveAt('screens', ['dashboard', 'cards'], from, to)
+  draft.moveAt('screens', [...base.value, 'cards'], from, to)
   if (editing.value === undefined) return
   const next = positionAfterMove(editing.value, from, to, length)
   editing.value = next < 0 ? undefined : next
 }
 
 function draftCards() {
-  return listAt(draft.currentDataEntry, ['dashboard', 'cards'])
+  return listAt(draft.currentDataEntry, [...base.value, 'cards'])
 }
 
 function removeCard(index: number) {
-  draft.removeAt('screens', ['dashboard', 'cards'], index)
+  draft.removeAt('screens', [...base.value, 'cards'], index)
   editing.value = undefined
 }
 </script>
@@ -82,10 +102,25 @@ function removeCard(index: number) {
       <RlButton variant="secondary" icon="plus" @click="addCard">New card</RlButton>
     </template>
     <ConfigSplit>
+      <RlText v-if="unknownName" size="sm" tone="muted" as="p" data-testid="config-dashboard-unknown">
+        No dashboard is named “{{ unknownName }}”. These are the default dashboard's cards.
+      </RlText>
+      <RlSegmentedControl
+        v-if="all.length > 1"
+        :model-value="name"
+        label="Dashboard"
+        :options="dashOptions"
+        data-testid="config-dashboard-picker"
+        @update:model-value="setDashboard"
+      />
       <ConfigSection
         title="Cards"
         :count="rows.length"
-        description="The home page shows these cards in this order."
+        :description="
+          name
+            ? 'This dashboard shows these cards in this order.'
+            : 'The home page shows these cards in this order.'
+        "
       >
         <RlSortableList
           :items="rows"

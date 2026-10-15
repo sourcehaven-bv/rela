@@ -754,6 +754,11 @@ type CustomType struct {
 }
 
 // Config is the JSON representation of the UI config.
+//
+// It mirrors the top-level keys of data-entry.yaml, so a new key raises the
+// pin by one; `dashboards` (TKT-5LQNLY) is the most recent.
+//
+//plimsoll:max-fields=21
 type Config struct {
 	App AppConfig `json:"app"`
 	// AboutDescription is the deployment description shown by the SPA's global
@@ -772,6 +777,7 @@ type Config struct {
 	Calendars        map[string]dataentryconfig.Calendar         `json:"calendars,omitempty"`
 	Gantts           map[string]dataentryconfig.Gantt            `json:"gantts,omitempty"`
 	Dashboard        *dataentryconfig.DashboardConfig            `json:"dashboard,omitempty"`
+	Dashboards       map[string]dataentryconfig.DashboardConfig  `json:"dashboards,omitempty"`
 	Actions          map[string]dataentryconfig.Action           `json:"actions,omitempty"`
 	Navigation       []dataentryconfig.NavigationEntry           `json:"navigation"`
 	Spaces           []dataentryconfig.Space                     `json:"spaces,omitempty"`

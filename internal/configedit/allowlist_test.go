@@ -244,6 +244,55 @@ navigation:
 	}
 }
 
+// A named dashboard (TKT-5LQNLY) is edited like the default one: its title
+// and cards are editable, and a card's permission is locked and protective.
+func TestCheckEdit_NamedDashboards(t *testing.T) {
+	const de = `dashboards:
+  crm:
+    title: Pipeline
+    cards:
+      - title: Open
+        query: type:deal
+        display: count
+      - title: Margins
+        query: type:deal
+        display: count
+        permission: sales:read
+`
+	tests := []struct {
+		name string
+		edit string
+		want []string
+	}{
+		{"retitle the dashboard", strings.Replace(de, "title: Pipeline", "title: Deals", 1), nil},
+		{"edit a card query", strings.Replace(de, "query: type:deal\n        display: count\n      - title: Margins",
+			"query: type:lead\n        display: count\n      - title: Margins", 1), nil},
+		{"add a card", de + "      - title: Won\n        query: type:deal\n        display: count\n", nil},
+		{"change a card permission", strings.Replace(de, "sales:read", "everyone", 1),
+			[]string{"dashboards.crm.cards.1.permission changed"}},
+		{"remove a card permission", strings.Replace(de, "        permission: sales:read\n", "", 1),
+			[]string{"dashboards.crm.cards.1.permission removed"}},
+		{"add a card permission", strings.Replace(de, "      - title: Open\n        query: type:deal\n        display: count\n",
+			"      - title: Open\n        query: type:deal\n        display: count\n        permission: x\n", 1),
+			[]string{"dashboards.crm.cards.0.permission added"}},
+		{"remove the gated card", strings.Replace(de,
+			"      - title: Margins\n        query: type:deal\n        display: count\n        permission: sales:read\n", "", 1),
+			[]string{"dashboards.crm.cards.1 removed"}},
+	}
+	before := treeOf(t, de)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, v := range CheckEdit(DataEntryFile, before, treeOf(t, tc.edit)) {
+				got = append(got, v.Path+" "+v.Change)
+			}
+			if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // The real files must pass unchanged, and a list item moved around keeps
 // passing as long as only its editable keys differ.
 func TestCheckEdit_RealFilesUnchanged(t *testing.T) {
