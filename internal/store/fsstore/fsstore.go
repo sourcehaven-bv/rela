@@ -196,8 +196,12 @@ type attachMeta struct {
 // +1 exported / +1 method (TKT-Q6AKUN): MentionSources, the optional
 // store.MentionIndex capability. Its helpers are free functions in mentions.go.
 //
-//plimsoll:max-methods=91
-//plimsoll:max-exported-methods=35
+// +1 exported (entity conversion): ReplaceEntityFamily is required by
+// store.FamilyReplacer so a type change can replace all rows of one entity
+// family under the same store transaction.
+//
+//plimsoll:max-methods=92
+//plimsoll:max-exported-methods=36
 type FSStore struct {
 	// rooted is the validated-key I/O surface. Every read, write,
 	// directory op, and remove that operates on files under the

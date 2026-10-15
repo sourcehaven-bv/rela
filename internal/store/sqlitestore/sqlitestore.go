@@ -137,8 +137,12 @@ func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano
 // +1 exported / +1 method (TKT-Q6AKUN): MentionSources, the optional
 // store.MentionIndex capability. Its helpers are free functions in mentions.go.
 //
-//plimsoll:max-methods=54
-//plimsoll:max-exported-methods=36
+// +1 exported (entity conversion): ReplaceEntityFamily is required by
+// store.FamilyReplacer so a type change can replace all rows of one entity
+// family under the same store transaction.
+//
+//plimsoll:max-methods=55
+//plimsoll:max-exported-methods=37
 type Store struct {
 	db *sql.DB
 

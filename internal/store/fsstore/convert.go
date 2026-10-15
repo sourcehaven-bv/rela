@@ -14,7 +14,7 @@ import (
 
 var _ store.FamilyReplacer = (*FSStore)(nil)
 
-func (s *FSStore) replaceEntityFamily(_ context.Context, id string, replacements []store.FamilyReplacement) error {
+func replaceEntityFamily(s *FSStore, _ context.Context, id string, replacements []store.FamilyReplacement) error {
 	if err := storeutil.ValidateID(id); err != nil {
 		return err
 	}

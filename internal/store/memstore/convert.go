@@ -12,7 +12,7 @@ import (
 
 var _ store.FamilyReplacer = (*MemStore)(nil)
 
-func (m *MemStore) replaceEntityFamily(_ context.Context, id string, replacements []store.FamilyReplacement) error {
+func replaceEntityFamily(m *MemStore, _ context.Context, id string, replacements []store.FamilyReplacement) error {
 	if err := validateID(id); err != nil {
 		return err
 	}

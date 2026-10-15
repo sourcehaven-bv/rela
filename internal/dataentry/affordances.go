@@ -1525,7 +1525,7 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	if offers := svc.computeCopyOffers(ctx, e); offers != nil {
 		result.Copies = &offers
 	}
-	if offers := svc.computeConversionOffers(ctx, e); offers != nil {
+	if offers := computeConversionOffers(svc, ctx, e); offers != nil {
 		result.Conversions = &offers
 	}
 	if detail := svc.computeDetailActions(ctx, e); detail != nil {
@@ -1757,7 +1757,7 @@ func (svc affordanceService) computeCopyOffers(
 	return out
 }
 
-func (svc affordanceService) computeConversionOffers(ctx context.Context, e *entityPkg.Entity) []v1.ConversionOffer {
+func computeConversionOffers(svc affordanceService, ctx context.Context, e *entityPkg.Entity) []v1.ConversionOffer {
 	if svc.conversions == nil || e == nil {
 		return nil
 	}
