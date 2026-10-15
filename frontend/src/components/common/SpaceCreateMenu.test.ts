@@ -2,12 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { PiniaColada, useQueryCache } from '@pinia/colada'
-import { defineComponent } from 'vue'
+import { defineComponent, reactive } from 'vue'
 import SpaceCreateMenu from './SpaceCreateMenu.vue'
 import { usePageStore } from '@/stores/pages'
+import { useSchemaStore } from '@/stores/schema'
 import { useSpaceStore } from '@/stores/space'
 import { useUIStore } from '@/stores/ui'
-import type { Entity, SidebarPage } from '@/types'
+import type { CalendarConfig, Entity, KanbanConfig, SidebarPage } from '@/types'
 
 const createRelationMock = vi.fn()
 vi.mock('@/api/entities', async (orig) => ({
@@ -16,7 +17,12 @@ vi.mock('@/api/entities', async (orig) => ({
 }))
 
 const pushMock = vi.fn()
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }))
+/* The route on screen; the menu reads which view it shows. */
+const route = reactive<{ name: string; params: Record<string, string> }>({
+  name: 'dashboard',
+  params: {},
+})
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }), useRoute: () => route }))
 
 /* The create dialog, reduced to the two events the menu listens to. */
 const ModalStub = defineComponent({
@@ -97,6 +103,7 @@ beforeEach(() => {
   setActivePinia(pinia)
   createRelationMock.mockReset().mockResolvedValue(undefined)
   pushMock.mockReset()
+  Object.assign(route, { name: 'dashboard', params: {} })
   useSpaceStore().set({ create: [{ type: 'task', label: 'Task', form: 'create_task' }] })
   usePageStore().set({ topic: topicPage })
 })
@@ -225,5 +232,89 @@ describe('SpaceCreateMenu rows', () => {
     expect(dialog.wrapper.find('[data-testid="menu"]').exists()).toBe(false)
     await dialog.save(task)
     expect(createRelationMock).toHaveBeenCalledWith(...linkArgs('TOPIC-1'))
+  })
+})
+
+describe('SpaceCreateMenu order', () => {
+  const rows = [
+    { type: 'deal', label: 'Deal', form: 'create_deal' },
+    { type: 'org', label: 'Organisation', form: 'create_org' },
+    { type: 'person', label: 'Person', form: 'create_person' },
+  ]
+
+  const pipeline: KanbanConfig = {
+    entity: 'deal',
+    column_property: 'stage',
+    card: { title: 'title' },
+  }
+  const agenda: CalendarConfig = {
+    default_view: 'month',
+    week_start: 'monday',
+    day_start: '08:00',
+    day_end: '18:00',
+    max_events_per_day: 3,
+    sources: [
+      { entity: 'person', date: 'birthday', max_span: 0 },
+      { entity: 'org', date: 'founded', max_span: 0 },
+    ],
+  }
+
+  /* The menu's children in order: a row's label, or `|` for the separator. */
+  const items = (wrapper: ReturnType<typeof mountMenu>) =>
+    wrapper
+      .findAll('[role="menuitem"], [role="separator"]')
+      .map((el) => (el.attributes('role') === 'separator' ? '|' : el.text()))
+
+  beforeEach(() => {
+    useSpaceStore().set({ create: rows })
+    const schema = useSchemaStore()
+    schema.lists = new Map([['orgs', { entity: 'org', columns: [] }]])
+    schema.kanbans = new Map([['pipeline', pipeline]])
+    schema.calendars = new Map([['agenda', agenda]])
+  })
+
+  it('keeps config order on a page without view types', () => {
+    expect(items(mountMenu())).toEqual(['Deal', 'Organisation', 'Person'])
+  })
+
+  it("puts a list's type first", () => {
+    Object.assign(route, { name: 'list', params: { id: 'orgs' } })
+    expect(items(mountMenu())).toEqual(['Organisation', '|', 'Deal', 'Person'])
+  })
+
+  it("puts a board's type first, with no separator when nothing follows", () => {
+    Object.assign(route, { name: 'kanban', params: { id: 'pipeline' } })
+    expect(items(mountMenu())).toEqual(['Deal', '|', 'Organisation', 'Person'])
+    useSpaceStore().set({ create: [rows[0]!] })
+    expect(items(mountMenu())).toEqual(['Deal'])
+  })
+
+  it("leads with a calendar's types in config order", () => {
+    Object.assign(route, { name: 'calendar', params: { id: 'agenda' } })
+    expect(items(mountMenu())).toEqual(['Organisation', 'Person', '|', 'Deal'])
+  })
+
+  it('follows the view of the open page tab', async () => {
+    usePageStore().set({
+      crm: {
+        label: 'CRM',
+        tabs: [
+          { id: 'orgs', label: 'Orgs', view: 'list', target: 'orgs' },
+          { id: 'pipeline', label: 'Pipeline', view: 'kanban', target: 'pipeline' },
+        ],
+      },
+    })
+    Object.assign(route, { name: 'page', params: { page: 'crm', tab: 'orgs' } })
+    const wrapper = mountMenu()
+    expect(items(wrapper)).toEqual(['Organisation', '|', 'Deal', 'Person'])
+    route.params = { page: 'crm', tab: 'pipeline' }
+    await flushPromises()
+    expect(items(wrapper)).toEqual(['Deal', '|', 'Organisation', 'Person'])
+  })
+
+  it("keeps config order for a view type the space doesn't create", () => {
+    useSchemaStore().lists = new Map([['notes', { entity: 'note', columns: [] }]])
+    Object.assign(route, { name: 'list', params: { id: 'notes' } })
+    expect(items(mountMenu())).toEqual(['Deal', 'Organisation', 'Person'])
   })
 })

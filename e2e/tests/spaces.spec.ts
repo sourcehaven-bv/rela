@@ -27,7 +27,7 @@ const SPACES_YAML = `spaces:
     label: "Support"
     home:
       list: bugs
-    create: [bug, task]
+    create: [task, bug]
     navigation:
       - label: "Bugs"
         list: bugs
@@ -54,7 +54,9 @@ test.describe("Spaces", () => {
     await expect(spaces.sidebarLink("Bugs")).toHaveCount(0);
   });
 
-  test("the switcher moves to another space and its navigation", async ({ appPage }) => {
+  test("the switcher moves to another space and its navigation", async ({
+    appPage,
+  }) => {
     const spaces = new SpacesPage(appPage);
     await spaces.switchSpace(/Product/, "Support");
 
@@ -67,7 +69,10 @@ test.describe("Spaces", () => {
     );
   });
 
-  test("a deep link keeps its space across a reload", async ({ appPage, serverUrl }) => {
+  test("a deep link keeps its space across a reload", async ({
+    appPage,
+    serverUrl,
+  }) => {
     const spaces = new SpacesPage(appPage);
     await appPage.goto(`${serverUrl}/s/support/list/tasks`);
     await expect(spaces.sidebarLink("Tasks")).toBeVisible();
@@ -75,15 +80,39 @@ test.describe("Spaces", () => {
     await expect(appPage).toHaveURL(/\/s\/support\/list\/tasks$/);
   });
 
-  test("an unknown space falls back to the first", async ({ appPage, serverUrl }) => {
+  test("an unknown space falls back to the first", async ({
+    appPage,
+    serverUrl,
+  }) => {
     await appPage.goto(`${serverUrl}/s/nosuch/list/bugs`);
     await expect(appPage).toHaveURL(/\/s\/product\/list\/bugs$/);
   });
 
-  test("the Create menu offers the space's types", async ({ appPage, serverUrl }) => {
+  // features is not among the space's create: types, so nothing moves.
+  test("the Create menu offers the space's types in config order", async ({
+    appPage,
+    serverUrl,
+  }) => {
     const spaces = new SpacesPage(appPage);
-    await appPage.goto(`${serverUrl}/s/support/list/bugs`);
+    await appPage.goto(`${serverUrl}/s/support/list/features`);
     await spaces.openCreateMenu();
-    await expect(spaces.menuItems).toHaveText([/Bug/, /Task/]);
+    await expect(spaces.menuItems).toHaveText([/Task/, /Bug/]);
   });
+
+  // TKT-DSVLOQ: the type the page shows comes first.
+  for (const [route, order] of [
+    ["list/tasks", [/Task/, /Bug/]],
+    ["list/bugs", [/Bug/, /Task/]],
+    ["kanban/bug-board", [/Bug/, /Task/]],
+  ] as const) {
+    test(`the Create menu on ${route} leads with its type`, async ({
+      appPage,
+      serverUrl,
+    }) => {
+      const spaces = new SpacesPage(appPage);
+      await appPage.goto(`${serverUrl}/s/support/${route}`);
+      await spaces.openCreateMenu();
+      await expect(spaces.menuItems).toHaveText([...order]);
+    });
+  }
 });
