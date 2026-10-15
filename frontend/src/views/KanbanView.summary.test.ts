@@ -8,8 +8,8 @@ import { _setEntityPluralForTest } from '@/api/entities'
 import { formatAmount } from '@/utils/format'
 import type { Entity, KanbanConfig } from '@/types'
 
-// TKT-SVLQQ6: enum column colours from `styles:`, `column_total:` under each
-// column heading, and `currency:` on a card field.
+// TKT-SVLQQ6: enum column colours from `styles:`, `column_summary:` under
+// each column heading, and a `display: {currency}` property on a card.
 
 const listAllEntitiesMock = vi.fn()
 vi.mock('@/api', async (orig) => ({
@@ -54,7 +54,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-async function mountBoard(over: Partial<KanbanConfig> = {}) {
+async function mountBoard(over: Partial<KanbanConfig> = {}, currency: string | null = 'EUR') {
   const schema = useSchemaStore()
   schema.kanbans.set('pipeline', {
     entity: 'deal',
@@ -68,7 +68,8 @@ async function mountBoard(over: Partial<KanbanConfig> = {}) {
     properties: {
       title: { type: 'string' },
       stage: { type: 'deal_stage' },
-      value: { type: 'integer' },
+      value: { type: 'integer', ...(currency ? { display: { currency } } : {}) },
+      closes: { type: 'date' },
     },
   } as never)
   schema.customTypes.set('deal_stage', { values: ['lead', 'offer', 'won'] } as never)
@@ -96,38 +97,75 @@ describe('KanbanView enum column colour', () => {
   })
 })
 
-describe('KanbanView column_total', () => {
-  it('sums the property per column under the heading', async () => {
+describe('KanbanView column_summary', () => {
+  const summary = (wrapper: Awaited<ReturnType<typeof mountBoard>>, id: string) =>
+    column(wrapper, id)
+      .findAll('.rl-board-column__summary p')
+      .map((p) => p.text())
+
+  it('renders one line per summary under the heading', async () => {
     const wrapper = await mountBoard({
-      column_total: { property: 'value', label: 'Totaal', currency: 'EUR' },
+      column_summary: [
+        { function: 'count', label: 'Deals' },
+        { function: 'sum', property: 'value', label: 'Totaal' },
+      ],
     })
-    const summary = (id: string) => column(wrapper, id).get('.rl-board-column__summary').text()
-    expect(summary('lead')).toBe(`Totaal: ${formatAmount(11500, 'EUR')}`)
-    // Missing and non-numeric values add nothing.
-    expect(summary('won')).toBe(`Totaal: ${formatAmount(1200, 'EUR')}`)
-    // An empty column still shows its total.
-    expect(summary('offer')).toBe(`Totaal: ${formatAmount(0, 'EUR')}`)
+    expect(summary(wrapper, 'lead')).toEqual(['Deals: 2', `Totaal: ${formatAmount(11500, 'EUR')}`])
+    // Missing and non-numeric values add nothing, but the cards still count.
+    expect(summary(wrapper, 'won')).toEqual(['Deals: 3', `Totaal: ${formatAmount(1200, 'EUR')}`])
   })
 
-  it('defaults the label and shows a plain number without a currency', async () => {
-    const wrapper = await mountBoard({ column_total: { property: 'value' } })
-    expect(column(wrapper, 'lead').get('.rl-board-column__summary').text()).toBe(
-      `Total: ${formatAmount(11500)}`,
-    )
+  it('shows 0 for count and sum, and a dash for avg, min and max, on an empty column', async () => {
+    const wrapper = await mountBoard({
+      column_summary: [
+        { function: 'count' },
+        { function: 'sum', property: 'value' },
+        { function: 'avg', property: 'value' },
+        { function: 'min', property: 'value' },
+        { function: 'max', property: 'value' },
+      ],
+    })
+    expect(summary(wrapper, 'offer')).toEqual([
+      'Count: 0',
+      `Total: ${formatAmount(0, 'EUR')}`,
+      'Average: –',
+      'Minimum: –',
+      'Maximum: –',
+    ])
   })
 
-  it('shows the total on a collapsed column', async () => {
+  it('formats avg, min and max of a currency property as money', async () => {
+    const wrapper = await mountBoard({
+      column_summary: [
+        { function: 'avg', property: 'value' },
+        { function: 'min', property: 'value' },
+        { function: 'max', property: 'value' },
+      ],
+    })
+    expect(summary(wrapper, 'lead')).toEqual([
+      `Average: ${formatAmount(5750, 'EUR')}`,
+      `Minimum: ${formatAmount(3500, 'EUR')}`,
+      `Maximum: ${formatAmount(8000, 'EUR')}`,
+    ])
+  })
+
+  it('shows a plain number for a property without a currency', async () => {
+    const wrapper = await mountBoard({ column_summary: [{ function: 'sum', property: 'value' }] }, null)
+    expect(summary(wrapper, 'lead')).toEqual([`Total: ${formatAmount(11500)}`])
+  })
+
+  it('shows the summaries compactly on a collapsed column', async () => {
     const wrapper = await mountBoard({
       columns: [{ value: 'lead', collapsed: true }, { value: 'won' }],
-      column_total: { property: 'value', currency: 'EUR' },
+      column_summary: [{ function: 'count' }, { function: 'sum', property: 'value' }],
     })
     const rail = wrapper.get('button[aria-label="Expand lead"]')
     expect(rail.get('.rl-board-column-collapsed__summary').text()).toBe(
-      `Total: ${formatAmount(11500, 'EUR')}`,
+      `Count: 2 · Total: ${formatAmount(11500, 'EUR')}`,
     )
   })
 
-  it('marks a total partial when a card hides the property from the reader', async () => {
+  it('marks a summary partial when a card hides the property from the reader', async () => {
     listAllEntitiesMock.mockResolvedValue({
       data: [
         deal('D-1', 'lead', 3500),
@@ -136,30 +174,32 @@ describe('KanbanView column_total', () => {
       ],
       meta: { total: 3, page: 1, per_page: 25, has_more: false },
     })
-    const wrapper = await mountBoard({ column_total: { property: 'value', currency: 'EUR' } })
-    const summary = (id: string) => column(wrapper, id).get('.rl-board-column__summary').text()
-    expect(summary('lead')).toBe(`Total: ${formatAmount(3500, 'EUR')} (partial)`)
-    expect(summary('won')).toBe(`Total: ${formatAmount(1200, 'EUR')}`)
+    const wrapper = await mountBoard({
+      column_summary: [{ function: 'count' }, { function: 'sum', property: 'value' }],
+    })
+    // The count covers every card the reader sees, so it is never partial.
+    expect(summary(wrapper, 'lead')).toEqual(['Count: 2', `Total: ${formatAmount(3500, 'EUR')} (partial)`])
+    expect(summary(wrapper, 'won')).toEqual(['Count: 1', `Total: ${formatAmount(1200, 'EUR')}`])
   })
 
-  it('shows no line without column_total', async () => {
+  it('shows no summary without column_summary', async () => {
     const wrapper = await mountBoard()
     expect(wrapper.find('.rl-board-column__summary').exists()).toBe(false)
   })
 })
 
-describe('KanbanView card currency', () => {
-  it('renders an integer card field as money', async () => {
+describe('KanbanView currency card field', () => {
+  it('renders a currency property on a card as money', async () => {
     const wrapper = await mountBoard({
-      card: { title: 'title', fields: [{ property: 'value', currency: 'EUR', show_label: false }] },
+      card: { title: 'title', fields: [{ property: 'value', show_label: false }] },
     })
     const card = column(wrapper, 'lead').findAll('.kanban-card')[0]
     expect(card.get('.card-field').text()).toBe(formatAmount(3500, 'EUR'))
   })
 
-  it('shows nothing for a card without a numeric value', async () => {
+  it('shows nothing for a card without a value', async () => {
     const wrapper = await mountBoard({
-      card: { title: 'title', fields: [{ property: 'value', currency: 'EUR' }] },
+      card: { title: 'title', fields: [{ property: 'value' }] },
     })
     const cards = column(wrapper, 'won').findAll('.kanban-card')
     const noValue = cards.find((c) => c.text().includes('D-4'))!

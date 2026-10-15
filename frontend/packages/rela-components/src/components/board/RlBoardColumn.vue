@@ -123,7 +123,9 @@ function onRelease() {
       :collapsible="collapsible"
       @collapse="emit('collapse', section)"
     />
-    <p v-if="section.summary" class="rl-board-column__summary">{{ section.summary }}</p>
+    <div v-if="section.summary?.length" class="rl-board-column__summary">
+      <p v-for="(line, i) in section.summary" :key="i">{{ line }}</p>
+    </div>
 
     <div class="rl-board-column__cards">
       <template v-for="item in section.items" :key="item.id">
@@ -225,6 +227,8 @@ function onRelease() {
   color: var(--rl-color-text-muted);
   font-variant-numeric: tabular-nums;
 }
+
+.rl-board-column__summary p { margin: 0; }
 
 /*
  * The column a held card would land in. Drawn as a tinted, outlined well

@@ -2468,7 +2468,7 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 		}
 
-		errs = append(errs, validateKanbanAmounts(kanbanID, kanban, entDef)...)
+		errs = append(errs, validateKanbanColumnSummary(kanbanID, kanban, entDef)...)
 
 		// `condition:` is accepted on the struct (shared with lists) but the
 		// board does not evaluate it yet — it still filters client-side. A
@@ -3365,10 +3365,9 @@ func checkCardFieldCounts(
 	return errs
 }
 
-// refuseCardCounts rejects the kanban-only card keys (the count shapes and
-// `currency:`) on the other surfaces that share [KanbanCardField]. Calendar
-// chips and gantt tooltips do not render them, so accepting the keys there
-// would load and render nothing.
+// refuseCardCounts rejects the kanban-only count shapes on the other surfaces
+// that share [KanbanCardField]. Calendar chips and gantt tooltips are not
+// served counts, so accepting the keys there would load and render nothing.
 func refuseCardCounts(prefix string, f KanbanCardField) []string {
 	var errs []string
 	if f.Display != "" {
@@ -3376,9 +3375,6 @@ func refuseCardCounts(prefix string, f KanbanCardField) []string {
 	}
 	if f.Comments {
 		errs = append(errs, prefix+": comments is only supported on kanban card fields")
-	}
-	if f.Currency != "" {
-		errs = append(errs, prefix+": currency is only supported on kanban card fields")
 	}
 	return errs
 }

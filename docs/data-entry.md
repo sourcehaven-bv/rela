@@ -3217,7 +3217,7 @@ kanbans:
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
 | `card`             | object | Card display configuration                                 |
-| `column_total`     | object | Sum of a property under each column heading (see below)    |
+| `column_summary`   | list   | Aggregate lines under each column heading (see below)      |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
 | `create_form`      | string | Form name for the "New" button                             |
 | `filters`          | list   | Static filters (same as lists)                             |
@@ -3395,58 +3395,68 @@ default, so they start expanded.
 
 You cannot drop a card onto a collapsed column. Expand it first.
 
-### Column totals
+### Column summaries
 
-`column_total` shows a line under each column heading with the sum of a
-property over the cards in that column, for example the value of the deals
-in each stage of a sales pipeline:
+`column_summary` shows lines under each column heading, one per entry, such
+as the number of deals and their total value in each stage of a sales
+pipeline:
 
 ```yaml
 kanbans:
   pipeline:
     entity_type: opportunity
     column_property: stage
-    column_total:
-      property: value
-      label: Totaal
-      currency: EUR
+    column_summary:
+      - function: count
+        label: Deals
+      - function: sum
+        property: value
+        label: Totaal
     card:
       title: title
       fields:
         - property: value
-          currency: EUR
           show_label: false
 ```
 
-This shows "Totaal: € 11.500" under a column whose cards have the values
-3500 and 8000.
+With two cards worth 3500 and 8000, the column shows "Deals: 2" and
+"Totaal: € 11.500". The euro sign comes from the property, not from the
+board: `value` has `display: {currency: EUR}` in `schema.yaml` (see
+[Display formats](metamodel.md#display-formats)).
 
 | Key        | Type   | Description |
 |------------|--------|-------------|
-| `property` | string | Required. An `integer` property of the board's entity type. |
-| `label`    | string | Optional. Text before the amount. Defaults to "Total". |
-| `currency` | string | Optional. An ISO 4217 code, such as `EUR` or `USD`. The amount then shows as money. Without it, the amount shows as a plain number. |
+| `function` | string | Required. `count`, `sum`, `avg` (average), `min` or `max`. |
+| `property` | string | The property to aggregate. Required for every function except `count`, which counts the cards and takes no property. |
+| `label`    | string | Optional. Text before the value. Defaults to "Count", "Total", "Average", "Minimum" or "Maximum". |
 
-The amount uses the number format of the reader's browser language. A whole
-amount shows no decimals.
+`sum` and `avg` need a single-valued `integer` property. `min` and `max`
+also accept a `date` or `datetime` property, and show the earliest or latest
+date. Config load checks this, and reports an unknown function, a missing
+property, or a property on `count`.
 
-The total covers the cards on the board: the cards the reader may see, after
-the board's filters. A card without a value adds nothing, and an empty column
-shows a total of 0. A collapsed column shows its total on its narrow strip.
+A value is formatted the way the property is formatted everywhere else: a
+currency property shows as money, a date as a date. Numbers use the format
+of the reader's browser language. A whole number shows no decimals.
+
+The summaries cover the cards on the board: the cards the reader may see,
+after the board's filters. A card without a value adds nothing to `sum`,
+`avg`, `min` or `max`. An empty column shows 0 for `count` and `sum`, and
+"–" for `avg`, `min` and `max`, because those have no value. A collapsed
+column shows its summaries on one line on its narrow strip.
 
 If the property is hidden from the reader on some cards (with `visible:` in
-`acl.yaml`), those values are not in the sum. The line then ends in
-"(partial)", so the reader knows the amount is not the whole column.
+`acl.yaml`), those values are left out. The line then ends in "(partial)",
+so the reader knows the value does not cover the whole column. `count` is
+never partial: it counts the cards the reader sees.
 
-Config load checks that the property exists and is a single-valued `integer`
-property (not `list: true`), and that `currency` is three upper-case letters.
-It does not check the code against a list: the browser formats every
-well-formed code, and shows a code it does not know as the code itself, such
-as "XYZ 3.500".
+`column_summary` cannot be used on a board with swimlanes. A swimlane board
+has a heading per column in every lane, so there is no single place for the
+summaries. Config load reports it as an error.
 
-`column_total` cannot be used on a board with swimlanes. A swimlane board has
-a heading per column in every lane, so there is no single place for the total.
-Config load reports it as an error.
+The entry shape (`function`, `property`, `label`) is meant to be shared. List
+footers, `group_by` headers and dashboard cards may adopt it later with the
+same syntax.
 
 ### Swimlanes
 
@@ -3493,24 +3503,10 @@ card:
 
 Card fields use the same styling as lists — enum values are displayed with colors from `styles`.
 
-#### Amounts on cards
-
-`currency:` on a card field shows an `integer` property as money, such as
-"€ 3.500" for `currency: EUR` in a Dutch browser:
-
-```yaml
-card:
-  title: title
-  fields:
-    - property: value
-      currency: EUR
-```
-
-The code is an ISO 4217 code, checked the same way as for
-[column totals](#column-totals). The field must name an `integer` property;
-it cannot be combined with `relation`, `display` or `comments`. A card
-without a value shows nothing for the field. `currency` is kanban-only: on a
-calendar or gantt field it is a config error.
+A card field for a property with a display format, such as
+`display: {currency: EUR}`, shows the value in that format, such as
+"€ 3.500" in a Dutch browser. See
+[Display formats](metamodel.md#display-formats).
 
 #### Counts on cards
 

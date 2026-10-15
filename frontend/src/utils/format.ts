@@ -84,6 +84,24 @@ export function numericValue(value: unknown): number | undefined {
   return undefined
 }
 
+/**
+ * A property value in the property's display format, or undefined when the
+ * property has none or the value is not a number. Today the only format is
+ * `display: {currency}` on an integer property (TKT-SVLQQ6), so 3500 reads
+ * "€ 3.500" for EUR in nl-NL. Every surface that renders a value for reading
+ * goes through this; inputs stay plain numbers.
+ */
+export function formatDisplayNumber(
+  value: unknown,
+  propDef: PropertyDef | undefined,
+  locale?: string
+): string | undefined {
+  const currency = propDef?.display?.currency
+  if (!currency || propDef?.type !== 'integer') return undefined
+  const n = numericValue(value)
+  return n === undefined ? undefined : formatAmount(n, currency, locale)
+}
+
 const DATETIME_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   dateStyle: 'medium',
   timeStyle: 'short',
@@ -260,6 +278,8 @@ export function formatCellValue(
     if (propDef?.type === 'external_ref') {
       return parseExternalRef(value)?.id ?? ''
     }
+    const amount = formatDisplayNumber(value, propDef)
+    if (amount !== undefined) return amount
   }
 
   if (Array.isArray(value)) {

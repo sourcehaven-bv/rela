@@ -968,10 +968,12 @@ entities:
       evidence:
         type: file
         max: 3
-      # kanban-totals.spec.ts: an amount for the bug-pipeline board's column
-      # total and currency card field. No seed bug sets it.
+      # kanban-summary.spec.ts: an amount for the bug-pipeline board's column
+      # summary and card, shown as money. No seed bug sets it.
       estimate:
         type: integer
+        display:
+          currency: EUR
 
   # BUG-L1DHC5: a dedicated type whose file property is REQUIRED. Separate from
   # 'bug' on purpose — a required property on a shared type makes every other
@@ -1592,7 +1594,7 @@ views:
         display: list
         create: {}
 
-# kanban-totals.spec.ts: board column colours come from these. Every value is
+# kanban-summary.spec.ts: board column colours come from these. Every value is
 # listed, because an explicit entry replaces the colours rela would otherwise
 # assign to the type, and a value left out would lose its colour in every spec.
 styles:
@@ -1671,9 +1673,9 @@ kanbans:
     card:
       title: title
 
-  # kanban-totals.spec.ts (TKT-SVLQQ6): column colours from styles:, a
-  # column total and a currency card field. Not in the sidebar, so it changes
-  # no navigation count. Swimlane-free: column_total refuses swimlanes.
+  # kanban-summary.spec.ts (TKT-SVLQQ6): column colours from styles:, column
+  # summaries and a currency card field. Not in the sidebar, so it changes no
+  # navigation count. Swimlane-free: column_summary refuses swimlanes.
   bug-pipeline:
     entity_type: bug
     title: "Bug Pipeline"
@@ -1686,15 +1688,19 @@ kanbans:
         collapsed: true
       - value: done
         label: Fixed
-    column_total:
-      property: estimate
-      label: Totaal
-      currency: EUR
+    column_summary:
+      - function: count
+        label: Bugs
+      - function: sum
+        property: estimate
+        label: Totaal
+      - function: max
+        property: estimate
+        label: Grootste
     card:
       title: title
       fields:
         - property: estimate
-          currency: EUR
           show_label: false
 
   # kanban-card-counts.spec.ts: count card fields. Not in the sidebar, so it

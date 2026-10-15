@@ -227,12 +227,12 @@ export class KanbanPage extends BasePage {
     await expect(this.page.getByRole('button', { name: `Collapse ${name}`, exact: true })).toBeVisible();
   }
 
-  /** The line under a column heading, such as its `column_total`. */
-  async expectColumnSummary(columnName: string, text: RegExp) {
-    await expect(this.getColumn(columnName).locator('.rl-board-column__summary')).toHaveText(text);
+  /** The lines under a column heading, from its `column_summary`. */
+  async expectColumnSummary(columnName: string, lines: RegExp[]) {
+    await expect(this.getColumn(columnName).locator('.rl-board-column__summary p')).toHaveText(lines);
   }
 
-  /** The same line on a collapsed column's rail. */
+  /** The same lines, joined, on a collapsed column's rail. */
   async expectCollapsedColumnSummary(columnName: string, text: RegExp) {
     await expect(this.collapsedRail(columnName).locator('.rl-board-column-collapsed__summary')).toHaveText(text);
   }

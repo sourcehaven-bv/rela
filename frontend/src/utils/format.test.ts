@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   formatValue,
   formatAmount,
+  formatDisplayNumber,
   formatCellValue,
   numericValue,
   formatDate,
@@ -392,5 +393,28 @@ describe('numericValue', () => {
     [true, undefined],
   ])('reads %j as %j', (input, want) => {
     expect(numericValue(input)).toBe(want)
+  })
+})
+
+describe('formatDisplayNumber', () => {
+  const plain = (s: string | undefined) => s?.replace(/\u00a0/g, ' ')
+  const eur = { type: 'integer' as const, display: { currency: 'EUR' } }
+
+  it('formats a currency property as money', () => {
+    expect(plain(formatDisplayNumber(3500, eur, 'nl-NL'))).toBe('€ 3.500')
+    expect(plain(formatDisplayNumber('3500', eur, 'nl-NL'))).toBe('€ 3.500')
+  })
+
+  it('leaves a property without a format, or a non-number, to the caller', () => {
+    expect(formatDisplayNumber(3500, { type: 'integer' }, 'nl-NL')).toBeUndefined()
+    expect(formatDisplayNumber(3500, undefined, 'nl-NL')).toBeUndefined()
+    expect(formatDisplayNumber('n/a', eur, 'nl-NL')).toBeUndefined()
+    expect(formatDisplayNumber(3500, { type: 'string', display: { currency: 'EUR' } }, 'nl-NL')).toBeUndefined()
+  })
+
+  it('is applied by formatCellValue', () => {
+    const et = { name: 'deal', properties: { value: eur } } as unknown as EntityType
+    expect(formatCellValue(3500, 'value', et)).toBe(formatAmount(3500, 'EUR'))
+    expect(formatCellValue(null, 'value', et)).toBe('')
   })
 })

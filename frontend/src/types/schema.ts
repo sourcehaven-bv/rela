@@ -123,6 +123,13 @@ export interface WorldMessages {
   stand_in?: string
 }
 
+// A property's display format. Only currency exists today; more formats may
+// join, and at most one applies.
+export interface PropertyDisplay {
+  // ISO 4217 code: the integer renders as money in the reader's locale.
+  currency?: string
+}
+
 export interface PropertyDef {
   label?: string
   type:
@@ -149,6 +156,8 @@ export interface PropertyDef {
   max?: number
   // For `external_ref` properties: the external system the ref points into.
   system?: string
+  // How the value renders for reading (TKT-SVLQQ6). Inputs stay plain.
+  display?: PropertyDisplay
 }
 
 export interface RelationType {

@@ -317,6 +317,15 @@ export const useSchemaStore = defineStore('schema', () => {
     )
   }
 
+  // The property def that carries a display format (TKT-SVLQQ6), for a
+  // display surface that has a property name but no def, such as a view row.
+  function displayDefForProperty(
+    property: string,
+    entityType?: string | EntityType,
+  ): PropertyDef | undefined {
+    return scanPropertyDefs(property, entityType, (def) => (def?.display ? def : undefined))
+  }
+
   // Resolve the badge style map (value → badge class) for a property. The
   // server keys `styles` by CUSTOM-TYPE name (buildStyleMap; validateStyles
   // rejects other keys), so resolve the property to its custom type first.
@@ -558,6 +567,7 @@ export const useSchemaStore = defineStore('schema', () => {
     getGantt,
     getAction,
     getEnumLabel,
+    displayDefForProperty,
     enumValuesForProperty,
     resolveOptionLabels,
     stylesForProperty,

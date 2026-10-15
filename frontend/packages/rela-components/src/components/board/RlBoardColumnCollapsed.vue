@@ -22,7 +22,9 @@ const emit = defineEmits<{ expand: [section: Section<T>] }>()
     <RlStatusDot v-else :color="section.color" />
     <span class="rl-board-column-collapsed__title">{{ section.title }}</span>
     <RlCount :value="section.count ?? section.items.length" />
-    <span v-if="section.summary" class="rl-board-column-collapsed__summary">{{ section.summary }}</span>
+    <span v-if="section.summary?.length" class="rl-board-column-collapsed__summary">{{
+      section.summary.join(' · ')
+    }}</span>
   </button>
 </template>
 

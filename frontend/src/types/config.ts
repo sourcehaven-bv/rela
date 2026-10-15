@@ -457,8 +457,8 @@ export interface KanbanConfig {
   swimlane_property?: string
   swimlanes?: KanbanSwimlane[]
   card: KanbanCard
-  /** A line under each column heading with the sum of a property (TKT-SVLQQ6). */
-  column_total?: KanbanColumnTotal
+  /** Lines under each column heading, such as a count or a sum (TKT-SVLQQ6). */
+  column_summary?: Summary[]
   edit_form?: string
   create_form?: string
   filters?: Array<{ property: string; operator: string; value: string }>
@@ -467,16 +467,21 @@ export interface KanbanConfig {
   query_scope?: string
 }
 
+/** The aggregate a {@link Summary} computes. */
+export type SummaryFunction = 'count' | 'sum' | 'avg' | 'min' | 'max'
+
 /**
- * The sum of an integer property over a column's cards. The server refuses it
- * on a swimlane board, so the board never has to place it per lane.
+ * One aggregate over a set of entities (TKT-SVLQQ6). Mirrors the Go
+ * `dataentryconfig.Summary`. The kanban column header is its first user; list
+ * footers, group_by headers and dashboard cards are meant to share it. The
+ * server validates it: count takes no property, sum and avg need a
+ * single-valued integer, min and max also accept a date or datetime.
  */
-export interface KanbanColumnTotal {
-  property: string
-  /** Text before the amount; "Total" when unset. */
+export interface Summary {
+  function: SummaryFunction
+  property?: string
+  /** Text before the value; the function's name when unset. */
   label?: string
-  /** ISO 4217 code; the amount renders as money when set. */
-  currency?: string
 }
 
 export interface KanbanColumnsFrom {
@@ -525,8 +530,6 @@ export interface KanbanCardField {
   display?: 'count'
   /** Shows the number of comments on the card's entity. Stands alone. */
   comments?: boolean
-  /** ISO 4217 code: renders an integer property as money. Kanban only. */
-  currency?: string
   /** Overrides the displayed name; derived from property/relation when unset. */
   label?: string
   /** Renders the label before the value. Defaults to true when unset. */

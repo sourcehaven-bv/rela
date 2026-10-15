@@ -56,7 +56,7 @@ export function renameScreenReferences(
     if (!entityTypesOf(board).includes(entityType)) continue
     renameIn(board, 'column_property', from, to)
     renameIn(board, 'swimlane_property', from, to)
-    renameIn(get(board, 'column_total'), 'property', from, to)
+    renameEach(get(board, 'column_summary'), 'property', from, to)
     renameEach(getIn(board, ['card', 'fields']), 'property', from, to)
     renameEach(get(board, 'filter_controls'), 'property', from, to)
   }

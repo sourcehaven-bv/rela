@@ -1208,7 +1208,48 @@ func validatePropertyDef(
 	errs = append(errs, validateComputedProperty(schemaName, propName, propDef, allowComputed)...)
 	errs = append(errs, validateFilePropertyOptions(schemaName, propName, propDef)...)
 	errs = append(errs, validateExternalRefOptions(schemaName, propName, propDef, allowComputed)...)
+	errs = append(errs, validatePropertyDisplay(schemaName, propName, propDef)...)
 	return errs
+}
+
+// validatePropertyDisplay checks the `display:` format of a property
+// (TKT-SVLQQ6). Currency needs a single-valued integer property, since rela
+// has no decimal type, and a code shaped like ISO 4217. It checks the shape,
+// not a list of codes: the browser formats every well-formed code (an
+// unknown one shows as the code itself), so a list would only reject codes
+// it does not know yet.
+func validatePropertyDisplay(schemaName, propName string, propDef PropertyDef) []string {
+	d := propDef.Display
+	if d == nil {
+		return nil
+	}
+	at := fmt.Sprintf("%s: property %q: display", schemaName, propName)
+	if d.Currency == "" {
+		return []string{at + " names no format; use currency"}
+	}
+	var errs []string
+	if !isCurrencyCode(d.Currency) {
+		errs = append(errs, fmt.Sprintf(
+			"%s: currency %q is not an ISO 4217 code (three upper-case letters, such as EUR)", at, d.Currency))
+	}
+	if propDef.Type != PropertyTypeInteger {
+		errs = append(errs, fmt.Sprintf("%s: currency needs an integer property, not %q", at, propDef.Type))
+	} else if propDef.List {
+		errs = append(errs, at+": currency is not supported on a list property")
+	}
+	return errs
+}
+
+func isCurrencyCode(s string) bool {
+	if len(s) != 3 {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < 'A' || s[i] > 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 func validateComputedProperty(schemaName, propName string, propDef PropertyDef, allowComputed bool) []string {

@@ -659,6 +659,7 @@ entities:
 | `default`        | Default value for the property                                                        |
 | `format`         | Date format (Go layout string, e.g., `2006-01-02`)                                    |
 | `description`    | Documentation for the property                                                        |
+| `display`        | How the value is shown for reading, such as `{currency: EUR}` (see [Display formats](#display-formats)) |
 | `list: true`     | Allow multiple values (multi-select for enum types)                                   |
 | `computed`       | Pure entity-local expression materialized on every write; the property is read-only   |
 | `unique: true`   | Natural key: no two entities of the type may share a non-empty value (write-time 422; find pre-existing dups with `rela analyze unique`). On a type declaring `faces:` the constraint holds **per face**: two entities may not share a value within one face, while two faces of the same entity never collide with each other. Only for string-valued properties (`string`, `date`, `datetime`, `enum`, custom types) — not `list`, and not `integer`/`boolean`/`file`. On the PostgreSQL backend this is additionally enforced by an automatically-maintained database index, so it holds even under concurrent writers ([details](postgres-backend.md#derived-schema-unique-constraints)). |
@@ -911,6 +912,33 @@ Common formats:
 | European | `01/02/2025` | `02/01/2006`           |
 | US       | `02/01/2025` | `01/02/2006`           |
 | Long     | `1 Feb 2025` | `2 Jan 2006`           |
+
+### Display formats
+
+`display:` says how the web interface shows a property's value for reading.
+It does not change the stored value, and form inputs stay plain numbers.
+Today there is one format, `currency`:
+
+```yaml
+properties:
+  value:
+    type: integer
+    display:
+      currency: EUR
+```
+
+The value 3500 then shows as "€ 3.500" in a Dutch browser and "€3,500" in an
+American one. A whole amount shows no decimals. The format applies wherever
+the value is shown: kanban cards and column summaries, list cells, and the
+entity page.
+
+`currency` needs a single-valued `integer` property, and an ISO 4217 code:
+three upper-case letters, such as `EUR` or `USD`. Config load checks both. It
+does not check the code against a list: the browser formats every
+well-formed code, and shows a code it does not know as the code itself.
+
+`display` is a map so that more formats can join later, such as a
+percentage or a unit.
 
 ### Datetime Properties
 

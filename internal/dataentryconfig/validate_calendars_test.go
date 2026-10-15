@@ -247,13 +247,6 @@ func TestValidateCalendars_Invalid(t *testing.T) {
 			}),
 			want: "comments is only supported on kanban card fields",
 		},
-		{
-			name: "event field currency",
-			cal: withShell(func(c *Calendar) {
-				c.Event = CalendarEvent{Fields: []KanbanCardField{{Property: "title", Currency: "EUR"}}}
-			}),
-			want: "currency is only supported on kanban card fields",
-		},
 	}
 
 	for _, tt := range tests {

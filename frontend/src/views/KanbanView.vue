@@ -42,7 +42,8 @@ import { worldText } from '@/utils/worldText'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { hasIcon, resolveIcon } from '@/utils/icons'
-import { formatAmount, formatCellValue, numericValue } from '@/utils/format'
+import { formatCellValue } from '@/utils/format'
+import { formatSummary } from '@/utils/summary'
 import { styleStatusColor } from '@/utils/styleColors'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import CardFieldList, { type ResolvedCardField } from '@/components/common/CardFieldList.vue'
@@ -503,26 +504,21 @@ function columnColor(value: string): StatusColor | undefined {
   return styleStatusColor(enumColumnStyles.value, value)
 }
 
-// The line under each column heading for `column_total:` (TKT-SVLQQ6): the
-// sum of the property over the cards in the column. Summed here because the
-// board already holds every card, and only the cards the server served to
-// this reader, so the total shows nothing the cards do not. A card without a
-// numeric value adds nothing. The server refuses the key on a swimlane board.
-//
-// A value hidden from the reader by `visible:` is absent too, but it is not
-// "not set": `_redacted` names it. The sum then misses values the reader may
-// not see, so it is marked partial rather than stated as the column's total.
-function columnSummary(items: Entity[]): string | undefined {
-  const total = kanbanConfig.value?.column_total
-  if (!total || hasSwimmlanes.value) return undefined
-  let sum = 0
-  let partial = false
-  for (const entity of items) {
-    if (entity._redacted?.includes(total.property)) partial = true
-    sum += numericValue(entity.properties[total.property]) ?? 0
-  }
-  const line = `${total.label || 'Total'}: ${formatAmount(sum, total.currency)}`
-  return partial ? `${line} (partial)` : line
+// The lines under each column heading for `column_summary:` (TKT-SVLQQ6),
+// one per entry. Computed here because the board already holds every card,
+// and only the cards the server served to this reader, so a summary shows
+// nothing the cards do not. The server refuses the key on a swimlane board.
+function columnSummary(items: Entity[]): string[] | undefined {
+  const specs = kanbanConfig.value?.column_summary
+  if (!specs?.length || hasSwimmlanes.value) return undefined
+  return specs.map((spec) =>
+    formatSummary(
+      spec,
+      items,
+      spec.property ? entityType.value?.properties[spec.property] : undefined,
+      uiStore.effectiveTimezone
+    )
+  )
 }
 
 // Folded columns, remembered per board. Only declared columns carry a config
@@ -668,12 +664,6 @@ function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
       .join(', ')
   }
   if (!field.property) return ''
-  // `currency:` renders the integer as money (TKT-SVLQQ6). Validated at load
-  // to sit on an integer property; a value that is not a number shows nothing.
-  if (field.currency) {
-    const amount = numericValue(entity.properties[field.property])
-    return amount === undefined ? '' : formatAmount(amount, field.currency)
-  }
   // Formatted via the shared cell formatter so cards agree with list cells
   // (dates render human-readably, booleans as Yes/No, rrules as text). This
   // used to be a bare String(v || ''), which showed raw ISO datetimes and
@@ -759,8 +749,7 @@ function resolvedCardFields(entity: Entity): ResolvedCardField[] {
 
     // Relation fields have no PropertyDef and so no widget: they render as
     // joined target titles, the contract shared with list relation columns.
-    // An amount is already formatted text, so it skips the number widget.
-    const entry = field.property && !field.relation && !field.currency
+    const entry = field.property && !field.relation
       ? cardFieldWidgets.value.get(field.property)
       : undefined
 

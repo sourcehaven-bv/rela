@@ -297,13 +297,6 @@ func TestValidateGantts_Invalid(t *testing.T) {
 			want: "display is only supported on kanban card fields",
 		},
 		{
-			name: "tooltip currency rejected",
-			g: withGantt(func(g *Gantt) {
-				g.Tooltip = GanttTooltip{Fields: []KanbanCardField{{Property: "status", Currency: "EUR"}}}
-			}),
-			want: "currency is only supported on kanban card fields",
-		},
-		{
 			name: "tooltip field with no property",
 			g: withGantt(func(g *Gantt) {
 				g.Tooltip = GanttTooltip{Fields: []KanbanCardField{{}}}

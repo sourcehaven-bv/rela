@@ -44,11 +44,12 @@ export interface Section<T extends CollectionItem = CollectionItem> {
   count?: number
   collapsed?: boolean
   /**
-   * One line of text under the heading, such as a column total. Already
-   * formatted: the library does not know what the line means, only where it
-   * goes. A board column shows it under its heading and on its collapsed rail.
+   * Lines of text under the heading, such as a card count and a total.
+   * Already formatted: the library does not know what a line means, only
+   * where it goes. A board column shows them under its heading, one per
+   * line, and joined on one line on its collapsed rail.
    */
-  summary?: string
+  summary?: string[]
   /**
    * A glyph drawn before the title, carried as the component itself rather
    * than a name to look up.
