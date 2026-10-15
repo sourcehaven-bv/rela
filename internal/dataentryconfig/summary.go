@@ -11,7 +11,7 @@ import (
 // Summary is one aggregate over a set of entities, such as the number of
 // cards in a kanban column or the sum of their amounts (TKT-SVLQQ6).
 //
-// It is the shared shape for every surface that summarises a set of
+// It is the shared shape for every surface that summarizes a set of
 // entities. The kanban column header is the first; list footers, group_by
 // headers and dashboard cards are meant to adopt the same type, so authors
 // learn one syntax. Validate it with [validateSummaries].
@@ -53,7 +53,7 @@ var summaryPropertyTypes = map[SummaryFunction][]string{
 // validateSummaries checks each summary against the entity type it
 // aggregates. at prefixes every message, such as `kanban "deals": column_summary`.
 func validateSummaries(at string, summaries []Summary, entityType string, entDef *metamodel.EntityDef) []string {
-	var errs []string
+	errs := make([]string, 0, len(summaries))
 	for i, s := range summaries {
 		errs = append(errs, validateSummary(fmt.Sprintf("%s[%d]", at, i), s, entityType, entDef)...)
 	}
