@@ -43,6 +43,8 @@ import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { renderMarkdown } from '@/utils/markdown'
 import { hasIcon, resolveIcon } from '@/utils/icons'
 import { formatCellValue } from '@/utils/format'
+import { formatSummary } from '@/utils/summary'
+import { styleStatusColor } from '@/utils/styleColors'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import CardFieldList, { type ResolvedCardField } from '@/components/common/CardFieldList.vue'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
@@ -489,6 +491,36 @@ const relationColumnColors = computed(() => {
   return colors
 })
 
+// An enum column's colour, from the app `styles:` entry for its value, the
+// colour the value's badge shows. A value with no style has none.
+const enumColumnStyles = computed(() => {
+  const config = kanbanConfig.value
+  if (!config || columnsFrom.value) return undefined
+  return schemaStore.stylesForProperty(config.column_property, config.entity)
+})
+
+function columnColor(value: string): StatusColor | undefined {
+  if (columnsFrom.value) return relationColumnColors.value.get(value)
+  return styleStatusColor(enumColumnStyles.value, value)
+}
+
+// The lines under each column heading for `column_summary:` (TKT-SVLQQ6),
+// one per entry. Computed here because the board already holds every card,
+// and only the cards the server served to this reader, so a summary shows
+// nothing the cards do not. The server refuses the key on a swimlane board.
+function columnSummary(items: Entity[]): string[] | undefined {
+  const specs = kanbanConfig.value?.column_summary
+  if (!specs?.length || hasSwimmlanes.value) return undefined
+  return specs.map((spec) =>
+    formatSummary(
+      spec,
+      items,
+      spec.property ? entityType.value?.properties[spec.property] : undefined,
+      uiStore.effectiveTimezone
+    )
+  )
+}
+
 // Folded columns, remembered per board. Only declared columns carry a config
 // default; an inferred column starts open.
 const columnCollapse = useKanbanCollapse(
@@ -497,14 +529,18 @@ const columnCollapse = useKanbanCollapse(
 )
 
 const boardSections = computed((): Section<BoardCard>[] =>
-  columns.value.map((column) => ({
-    id: column.value,
-    title: columnTitle(column),
-    icon: iconFor(column.icon),
-    color: columnsFrom.value ? relationColumnColors.value.get(column.value) : undefined,
-    collapsed: columnCollapse.isCollapsed(column.value),
-    items: (entitiesByColumn.value[column.value] ?? []).map(toCard),
-  }))
+  columns.value.map((column) => {
+    const items = entitiesByColumn.value[column.value] ?? []
+    return {
+      id: column.value,
+      title: columnTitle(column),
+      icon: iconFor(column.icon),
+      color: columnColor(column.value),
+      collapsed: columnCollapse.isCollapsed(column.value),
+      summary: columnSummary(items),
+      items: items.map(toCard),
+    }
+  })
 )
 
 function sectionId(section: string | Section<BoardCard>): string {

@@ -3223,6 +3223,7 @@ kanbans:
 | `swimlane_property`| string | Property to group by for swimlanes (optional)              |
 | `swimlanes`        | list   | Explicit swimlane definitions (`value`, `label`, `icon`)   |
 | `card`             | object | Card display configuration                                 |
+| `column_summary`   | list   | Aggregate lines under each column heading (see below)      |
 | `edit_form`        | string | Form name for editing cards (click to open)                |
 | `create_form`      | string | Form name for the "New" button                             |
 | `filters`          | list   | Static filters (same as lists)                             |
@@ -3318,6 +3319,13 @@ kanbans:
 
 Entities with column property values not in the explicit list are hidden from the board.
 
+Each column heading has a coloured dot in the same colour as the value's
+badge. For a custom type with a [`styles:`](#styles) entry, that is the
+colour the entry gives the value. A custom type without a `styles:` entry
+gets colours from rela automatically, so its columns are coloured too. A
+value that has no colour, such as one left out of a `styles:` entry, keeps
+the neutral grey dot.
+
 ### Columns from a relation (`columns_from`)
 
 `columns_from` takes the columns from the targets of a relation instead of
@@ -3393,6 +3401,69 @@ default, so they start expanded.
 
 You cannot drop a card onto a collapsed column. Expand it first.
 
+### Column summaries
+
+`column_summary` shows lines under each column heading, one per entry, such
+as the number of deals and their total value in each stage of a sales
+pipeline:
+
+```yaml
+kanbans:
+  pipeline:
+    entity_type: opportunity
+    column_property: stage
+    column_summary:
+      - function: count
+        label: Deals
+      - function: sum
+        property: value
+        label: Totaal
+    card:
+      title: title
+      fields:
+        - property: value
+          show_label: false
+```
+
+With two cards worth 3500 and 8000, the column shows "Deals: 2" and
+"Totaal: € 11.500". The euro sign comes from the property, not from the
+board: `value` has `display: {currency: EUR}` in `schema.yaml` (see
+[Display formats](metamodel.md#display-formats)).
+
+| Key        | Type   | Description |
+|------------|--------|-------------|
+| `function` | string | Required. `count`, `sum`, `avg` (average), `min` or `max`. |
+| `property` | string | The property to aggregate. Required for every function except `count`, which counts the cards and takes no property. |
+| `label`    | string | Optional. Text before the value. Defaults to "Count", "Total", "Average", "Minimum" or "Maximum". |
+
+`sum` and `avg` need a single-valued `integer` property. `min` and `max`
+also accept a `date` or `datetime` property, and show the earliest or latest
+date. Config load checks this, and reports an unknown function, a missing
+property, or a property on `count`.
+
+A value is formatted the way the property is formatted everywhere else: a
+currency property shows as money, a date as a date. Numbers use the format
+of the reader's browser language. A whole number shows no decimals.
+
+The summaries cover the cards on the board: the cards the reader may see,
+after the board's filters. A card without a value adds nothing to `sum`,
+`avg`, `min` or `max`. An empty column shows 0 for `count` and `sum`, and
+"–" for `avg`, `min` and `max`, because those have no value. A collapsed
+column shows its summaries on one line on its narrow strip.
+
+If the property is hidden from the reader on some cards (with `visible:` in
+`acl.yaml`), those values are left out. The line then ends in "(partial)",
+so the reader knows the value does not cover the whole column. `count` is
+never partial: it counts the cards the reader sees.
+
+`column_summary` cannot be used on a board with swimlanes. A swimlane board
+has a heading per column in every lane, so there is no single place for the
+summaries. Config load reports it as an error.
+
+The entry shape (`function`, `property`, `label`) is meant to be shared. List
+footers, `group_by` headers and dashboard cards may adopt it later with the
+same syntax.
+
 ### Swimlanes
 
 Add a second grouping dimension with swimlanes. This creates a grid where columns are horizontal
@@ -3437,6 +3508,11 @@ card:
 | `fields` | list   | Additional properties displayed as badges on the card |
 
 Card fields use the same styling as lists — enum values are displayed with colors from `styles`.
+
+A card field for a property with a display format, such as
+`display: {currency: EUR}`, shows the value in that format, such as
+"€ 3.500" in a Dutch browser. See
+[Display formats](metamodel.md#display-formats).
 
 #### Counts on cards
 

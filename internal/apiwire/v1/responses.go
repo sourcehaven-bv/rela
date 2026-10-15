@@ -696,6 +696,15 @@ type PropertyDef struct {
 	// System names the external system of an `external_ref` property
 	// (TKT-SM20FG). The value is read-only on every interactive surface.
 	System string `json:"system,omitempty"`
+	// Display is the property's display format, such as a currency
+	// (TKT-SVLQQ6). The SPA applies it wherever it renders the value for
+	// reading; inputs stay plain. Omitted when unset.
+	Display *PropertyDisplay `json:"display,omitempty"`
+}
+
+// PropertyDisplay is the wire form of metamodel.PropertyDisplay.
+type PropertyDisplay struct {
+	Currency string `json:"currency,omitempty"`
 }
 
 // RelationType is the JSON representation of a relation type.

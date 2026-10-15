@@ -47,6 +47,7 @@ import type { PropertyItem } from '@/components/common/PropertyDisplay.vue'
 import { ChevronRight } from 'lucide-vue-next'
 import { defaultRegistry } from '@/widgets/registry'
 import { isDenseEmpty, viewFieldRoutingHint } from '@/widgets/viewRouting'
+import { formatDisplayNumber } from '@/utils/format'
 import type { WidgetRoutingHint } from '@/widgets/types'
 import type { PropertyDef } from '@/types'
 import type { Component } from 'vue'
@@ -1820,9 +1821,13 @@ function memoBuildRowEditFields(ent: ViewEntity): SectionEditField[] {
 // stale-string-mirror bug where a verdict flips writable→display and
 // the cell shows last-loadView's display string instead of the
 // post-edit value (RR-FC1C).
+//
+// A row renders through the text widget, so a property with a display
+// format, such as a currency, is formatted here (TKT-SVLQQ6).
 function rowDisplayValue(ent: ViewEntity, field: ViewSectionField): unknown {
   if (field.property && ent._props && field.property in ent._props) {
-    return ent._props[field.property]
+    const raw = ent._props[field.property]
+    return formatDisplayNumber(raw, getPropertyDef(ent.type, field.property)) ?? raw
   }
   return field.values ?? []
 }

@@ -227,6 +227,28 @@ export class KanbanPage extends BasePage {
     await expect(this.page.getByRole('button', { name: `Collapse ${name}`, exact: true })).toBeVisible();
   }
 
+  /** The lines under a column heading, from its `column_summary`. */
+  async expectColumnSummary(columnName: string, lines: RegExp[]) {
+    await expect(this.getColumn(columnName).locator('.rl-board-column__summary p')).toHaveText(lines);
+  }
+
+  /** The same lines, joined, on a collapsed column's rail. */
+  async expectCollapsedColumnSummary(columnName: string, text: RegExp) {
+    await expect(this.collapsedRail(columnName).locator('.rl-board-column-collapsed__summary')).toHaveText(text);
+  }
+
+  /** The colour of a column heading's status dot (StatusColor name). */
+  async expectColumnColor(columnName: string, color: string) {
+    await expect(this.getColumn(columnName).locator('.rl-section-heading .rl-status-dot')).toHaveClass(
+      new RegExp(`rl-status-dot--${color}\\b`),
+    );
+  }
+
+  /** The text of a card's field lines. */
+  async expectCardFieldText(cardTitle: string, text: RegExp) {
+    await expect(this.cards.filter({ hasText: cardTitle }).locator('.card-field')).toHaveText(text);
+  }
+
   async expectEmptyColumn(columnName: string) {
     const column = this.getColumn(columnName);
     await expect(column.locator('.empty-column')).toBeVisible();

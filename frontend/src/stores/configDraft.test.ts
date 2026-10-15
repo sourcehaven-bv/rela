@@ -104,6 +104,23 @@ describe('useConfigDraftStore', () => {
     ).toBe('estimate')
   })
 
+  it('renames the property a board column summary aggregates', () => {
+    const store = fresh()
+    store.edit('screens', (tree) => {
+      const board = getIn(tree, ['kanbans', 'board'])
+      if (isMap(board)) {
+        set(board, 'column_summary', [
+          newMap({ function: 'count' }),
+          newMap({ function: 'sum', property: 'effort' }),
+        ])
+      }
+    })
+    store.renameProperty('ticket', 'effort', 'estimate')
+    expect(
+      get(getIn(store.currentDataEntry, ['kanbans', 'board', 'column_summary', 1]), 'property')
+    ).toBe('estimate')
+  })
+
   it('sends only what changed', () => {
     const store = fresh()
     renameFeature(store, 'Epic')

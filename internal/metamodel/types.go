@@ -820,6 +820,20 @@ type PropertyDef struct {
 	// A long-running host refuses to start when a sync ref exists without
 	// version history, because the merge base is a version tag.
 	Sync bool `yaml:"sync,omitempty"`
+
+	// Display says how the SPA renders the value for reading (TKT-SVLQQ6).
+	// It never changes the stored value or the input, which stays a plain
+	// number. Nil means the default rendering.
+	Display *PropertyDisplay `yaml:"display,omitempty"`
+}
+
+// PropertyDisplay is a property's display format. It is a map so that more
+// formats can join later (a percentage, a unit such as hours) without new
+// syntax; at most one format applies to a property.
+type PropertyDisplay struct {
+	// Currency renders an integer property as an amount of money in the
+	// reader's locale, such as "€ 3.500" for EUR in Dutch. An ISO 4217 code.
+	Currency string `yaml:"currency,omitempty" json:"currency,omitempty"`
 }
 
 // TransformStep is one entry in a `transform:` pipeline. A step is EITHER an

@@ -457,12 +457,31 @@ export interface KanbanConfig {
   swimlane_property?: string
   swimlanes?: KanbanSwimlane[]
   card: KanbanCard
+  /** Lines under each column heading, such as a count or a sum (TKT-SVLQQ6). */
+  column_summary?: Summary[]
   edit_form?: string
   create_form?: string
   filters?: Array<{ property: string; operator: string; value: string }>
   filter_controls?: FilterControl[]
   /** Named query scope; see the field of the same name on ListConfig. */
   query_scope?: string
+}
+
+/** The aggregate a {@link Summary} computes. */
+export type SummaryFunction = 'count' | 'sum' | 'avg' | 'min' | 'max'
+
+/**
+ * One aggregate over a set of entities (TKT-SVLQQ6). Mirrors the Go
+ * `dataentryconfig.Summary`. The kanban column header is its first user; list
+ * footers, group_by headers and dashboard cards are meant to share it. The
+ * server validates it: count takes no property, sum and avg need a
+ * single-valued integer, min and max also accept a date or datetime.
+ */
+export interface Summary {
+  function: SummaryFunction
+  property?: string
+  /** Text before the value; the function's name when unset. */
+  label?: string
 }
 
 export interface KanbanColumnsFrom {

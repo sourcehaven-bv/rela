@@ -1108,10 +1108,14 @@ type Kanban struct {
 	SwimlaneProperty string             `yaml:"swimlane_property,omitempty" json:"swimlane_property,omitempty"`
 	Swimlanes        []KanbanSwimlane   `yaml:"swimlanes,omitempty" json:"swimlanes,omitempty"`
 	Card             KanbanCard         `yaml:"card" json:"card"`
-	EditForm         string             `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
-	CreateForm       string             `yaml:"create_form,omitempty" json:"create_form,omitempty"`
-	Filters          []FilterConfig     `yaml:"filters,omitempty" json:"filters,omitempty"`
-	FilterControls   []FilterControl    `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
+	// ColumnSummary adds one line per entry under each column heading, such
+	// as a count of the cards or the sum of an amount (TKT-SVLQQ6). Computed
+	// by the SPA over the cards the reader can see.
+	ColumnSummary  []Summary       `yaml:"column_summary,omitempty" json:"column_summary,omitempty"`
+	EditForm       string          `yaml:"edit_form,omitempty" json:"edit_form,omitempty"`
+	CreateForm     string          `yaml:"create_form,omitempty" json:"create_form,omitempty"`
+	Filters        []FilterConfig  `yaml:"filters,omitempty" json:"filters,omitempty"`
+	FilterControls []FilterControl `yaml:"filter_controls,omitempty" json:"filter_controls,omitempty"`
 	// Condition mirrors [List.Condition], but is NOT YET SUPPORTED on a
 	// kanban and is refused at config load.
 	//

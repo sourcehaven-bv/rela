@@ -41,6 +41,67 @@ export function formatDate(value: string, locale?: string): string | null {
   return date.toLocaleDateString(locale, DATE_FORMAT_OPTIONS)
 }
 
+/**
+ * An amount in the reader's locale, as money when `currency` (an ISO 4217
+ * code such as EUR) is given: 3500 with EUR reads "€ 3.500" in nl-NL. A
+ * whole number shows no decimals; any other shows two.
+ *
+ * `locale` defaults to the browser's, as formatDate's does. Tests pass one.
+ */
+export function formatAmount(value: number, currency?: string, locale?: string): string {
+  return amountFormatter(Number.isInteger(value) ? 0 : 2, currency, locale).format(value)
+}
+
+// Building an Intl.NumberFormat is the expensive part, and a board formats an
+// amount per card on every render, so formatters are kept per shape.
+const amountFormatters = new Map<string, Intl.NumberFormat>()
+
+function amountFormatter(digits: number, currency?: string, locale?: string): Intl.NumberFormat {
+  const key = `${locale ?? ''}|${currency ?? ''}|${digits}`
+  let f = amountFormatters.get(key)
+  if (!f) {
+    f = new Intl.NumberFormat(locale, {
+      ...(currency ? { style: 'currency', currency } : {}),
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    })
+    amountFormatters.set(key, f)
+  }
+  return f
+}
+
+const DECIMAL_RE = /^-?\d+(\.\d+)?$/
+
+/**
+ * A stored property value as a number, or undefined when it is not one.
+ * Integer properties arrive as JSON numbers. A plain decimal string such as
+ * "42" is accepted too, so a value written by hand into a Markdown file still
+ * counts; hex, exponent and padded forms are not.
+ */
+export function numericValue(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value === 'string' && DECIMAL_RE.test(value)) return Number(value)
+  return undefined
+}
+
+/**
+ * A property value in the property's display format, or undefined when the
+ * property has none or the value is not a number. Today the only format is
+ * `display: {currency}` on an integer property (TKT-SVLQQ6), so 3500 reads
+ * "€ 3.500" for EUR in nl-NL. Every surface that renders a value for reading
+ * goes through this; inputs stay plain numbers.
+ */
+export function formatDisplayNumber(
+  value: unknown,
+  propDef: PropertyDef | undefined,
+  locale?: string
+): string | undefined {
+  const currency = propDef?.display?.currency
+  if (!currency || propDef?.type !== 'integer') return undefined
+  const n = numericValue(value)
+  return n === undefined ? undefined : formatAmount(n, currency, locale)
+}
+
 const DATETIME_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   dateStyle: 'medium',
   timeStyle: 'short',
@@ -217,6 +278,8 @@ export function formatCellValue(
     if (propDef?.type === 'external_ref') {
       return parseExternalRef(value)?.id ?? ''
     }
+    const amount = formatDisplayNumber(value, propDef)
+    if (amount !== undefined) return amount
   }
 
   if (Array.isArray(value)) {

@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatValue,
+  formatAmount,
+  formatDisplayNumber,
   formatCellValue,
+  numericValue,
   formatDate,
   formatDatetime,
   utcISOToLocalInput,
@@ -346,5 +349,72 @@ describe('format', () => {
       expect(typeof result).toBe('string')
       expect(result).toMatch(/2024/)
     })
+  })
+})
+
+describe('formatAmount', () => {
+  // Intl separates the symbol with a no-break space; compare on plain spaces.
+  const plain = (s: string) => s.replace(/\u00a0/g, ' ')
+
+  it('formats a whole amount as money without decimals', () => {
+    expect(plain(formatAmount(3500, 'EUR', 'nl-NL'))).toBe('€ 3.500')
+    expect(plain(formatAmount(3500, 'EUR', 'en-US'))).toBe('€3,500')
+  })
+
+  it('shows two decimals for an amount that is not whole', () => {
+    expect(plain(formatAmount(12.5, 'EUR', 'nl-NL'))).toBe('€ 12,50')
+  })
+
+  it('formats a plain number without a currency', () => {
+    expect(formatAmount(11500, undefined, 'nl-NL')).toBe('11.500')
+  })
+
+  it('formats zero and negative amounts', () => {
+    expect(plain(formatAmount(0, 'EUR', 'nl-NL'))).toBe('€ 0')
+    expect(plain(formatAmount(-1200, 'EUR', 'nl-NL'))).toBe('€ -1.200')
+  })
+})
+
+describe('numericValue', () => {
+  it.each([
+    [3500, 3500],
+    ['42', 42],
+    ['', undefined],
+    ['  ', undefined],
+    [' 42 ', undefined],
+    ['0x1F', undefined],
+    ['1e3', undefined],
+    ['-7', -7],
+    ['2.5', 2.5],
+    ['abc', undefined],
+    [null, undefined],
+    [undefined, undefined],
+    [Number.NaN, undefined],
+    [true, undefined],
+  ])('reads %j as %j', (input, want) => {
+    expect(numericValue(input)).toBe(want)
+  })
+})
+
+describe('formatDisplayNumber', () => {
+  const plain = (s: string | undefined) => s?.replace(/\u00a0/g, ' ')
+  const eur = { type: 'integer' as const, display: { currency: 'EUR' } }
+
+  it('formats a currency property as money', () => {
+    expect(plain(formatDisplayNumber(3500, eur, 'nl-NL'))).toBe('€ 3.500')
+    expect(plain(formatDisplayNumber('3500', eur, 'nl-NL'))).toBe('€ 3.500')
+  })
+
+  it('leaves a property without a format, or a non-number, to the caller', () => {
+    expect(formatDisplayNumber(3500, { type: 'integer' }, 'nl-NL')).toBeUndefined()
+    expect(formatDisplayNumber(3500, undefined, 'nl-NL')).toBeUndefined()
+    expect(formatDisplayNumber('n/a', eur, 'nl-NL')).toBeUndefined()
+    expect(formatDisplayNumber(3500, { type: 'string', display: { currency: 'EUR' } }, 'nl-NL')).toBeUndefined()
+  })
+
+  it('is applied by formatCellValue', () => {
+    const et = { name: 'deal', properties: { value: eur } } as unknown as EntityType
+    expect(formatCellValue(3500, 'value', et)).toBe(formatAmount(3500, 'EUR'))
+    expect(formatCellValue(null, 'value', et)).toBe('')
   })
 })

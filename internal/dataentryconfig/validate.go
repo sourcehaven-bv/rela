@@ -2468,6 +2468,8 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 			}
 		}
 
+		errs = append(errs, validateKanbanColumnSummary(kanbanID, kanban, entDef)...)
+
 		// `condition:` is accepted on the struct (shared with lists) but the
 		// board does not evaluate it yet — it still filters client-side. A
 		// key that validates and then does nothing is precisely the silent
