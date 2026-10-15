@@ -23,6 +23,10 @@ type EntityLinks struct {
 }
 
 // Entity is the JSON representation of an entity for API v1.
+//
+// Conversion offers are part of the per-entity affordances the detail page
+// needs, so they remain top-level alongside the other `_` metadata.
+//plimsoll:max-fields=21
 type Entity struct {
 	EntityLinks
 	ID           string              `json:"id"`
