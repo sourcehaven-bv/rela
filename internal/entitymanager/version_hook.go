@@ -62,10 +62,10 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 	if e != nil {
 		prevFace = e.Face
 	}
-	m.recordEntityVersionWithPrevFace(ctx, op, e, prevID, prevFace, false)
+	recordEntityVersionWithPrevFace(m, ctx, op, e, prevID, prevFace, false)
 }
 
-func (m *Manager) recordEntityVersionWithPrevFace(ctx context.Context, op store.VersionOp, e *entity.Entity, prevID string, prevFace entity.Face, hasPrevFace bool) {
+func recordEntityVersionWithPrevFace(m *Manager, ctx context.Context, op store.VersionOp, e *entity.Entity, prevID string, prevFace entity.Face, hasPrevFace bool) {
 	if m.deps.VersionRecorder == nil {
 		return
 	}

@@ -618,7 +618,7 @@ func conversionRelationPlan(oldID, currentID string, rels []*entity.Relation, ma
 	return leaving, pending, invalid
 }
 
-func (m *Manager) recordConversionAudit(ctx context.Context, oldID, oldType string, after *entity.Entity) {
+func recordConversionAudit(m *Manager, ctx context.Context, oldID, oldType string, after *entity.Entity) {
 	if after == nil {
 		return
 	}

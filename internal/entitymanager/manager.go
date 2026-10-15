@@ -2683,7 +2683,7 @@ func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
 	}
 	for _, e := range renamed {
 		if r.conversionFrom != "" {
-			m.recordConversionAudit(ctx, oldID, r.conversionFrom, e)
+			recordConversionAudit(m, ctx, oldID, r.conversionFrom, e)
 		} else {
 			m.recordRenameAudit(ctx, oldID, e)
 		}
@@ -2699,7 +2699,7 @@ func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
 				hasPrevFace = source != e.Face
 			}
 		}
-		m.recordEntityVersionWithPrevFace(ctx, store.VersionOpRename, e, oldID, prevFace, hasPrevFace)
+		recordEntityVersionWithPrevFace(m, ctx, store.VersionOpRename, e, oldID, prevFace, hasPrevFace)
 	}
 
 	// Rewrite id-keyed references for the same reason the version above carries
