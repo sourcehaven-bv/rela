@@ -156,7 +156,7 @@ func (t txStore) RenameFamily(ctx context.Context, oldID, newID string) (*store.
 }
 
 func (t txStore) ReplaceEntityFamily(ctx context.Context, id string, replacements []store.FamilyReplacement) error {
-	return t.replaceEntityFamily(ctx, id, replacements)
+	return replaceEntityFamily(t.MemStore, ctx, id, replacements)
 }
 
 func (t txStore) CreateRelation(
