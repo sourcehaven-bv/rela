@@ -912,7 +912,7 @@ The same rule applies to **every** surface that takes a `direction:`:
 | --- | --- |
 | form relations (including wizard steps) | the form's `entity_type` |
 | list columns and `filter_controls` | the list's `entity_type` |
-| kanban `card.fields` and `filter_controls` | the kanban's `entity_type` |
+| kanban `card.fields` and `filter_controls` | the kanban's `entity_type` (a card field's `property` with a `relation` names a property of the related type) |
 | `caldav.dynamic.<name>` | the collection's `entity_type` (the **member**, not `driver_type` — the edge runs member→driver) |
 
 > **Upgrading.** `direction` used to default to `outgoing` whenever it was
@@ -3618,6 +3618,54 @@ entity.
 
 `display` and `comments` are kanban-only: on a calendar or gantt field they are
 a config error.
+
+#### Properties of related entities
+
+A card field with both `relation` and `property` shows that property of the
+related entities instead of their titles. For example, a sales pipeline of
+opportunities can show the segment of the linked organisation:
+
+```yaml
+card:
+  title: title
+  fields:
+    - relation: heeft_opportunity   # organisatie -> opportunity
+      direction: incoming
+      property: segment             # a property of organisatie
+      show_label: false
+```
+
+| Key          | Description                                                                  |
+| ------------ | ---------------------------------------------------------------------------- |
+| `relation`   | The relation to follow.                                                      |
+| `direction`  | `outgoing` or `incoming`. Inferred like any card relation field.             |
+| `property`   | A property of the entity types at the other end of the relation.             |
+| `label`      | Optional. Defaults to the property name.                                     |
+| `show_label` | Optional. Default `true`.                                                    |
+
+The value renders as the property renders elsewhere. An enum shows as a badge
+in the colour from its `styles:` entry, an integer with
+`display: {currency: EUR}` shows as an amount, and a date is formatted. Plain
+text values are separated by commas.
+
+A card with several related entities shows each distinct value once, in the
+order of the relations. A list property adds each of its elements. A card with
+no related entity, or none with a value, shows nothing for the field.
+
+Access control applies. A related entity the reader cannot see adds nothing,
+and neither does a property hidden from the reader by a `visible:` rule.
+
+The board checks the field when the configuration loads:
+
+- The board's entity type must be on the starting side of the relation: a
+  `from` type for `outgoing`, a `to` type for `incoming`.
+- `property` must exist on every entity type at the other end of the relation.
+  The error names each type that lacks it.
+- `display: count` cannot be combined with `property`.
+
+This is kanban-only for now: on a calendar or gantt field it is a config error.
+It reads one relation step. Sorting or filtering by a related property is not
+supported.
 
 ### Drag and Drop
 

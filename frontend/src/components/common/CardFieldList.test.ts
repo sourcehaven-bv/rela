@@ -15,7 +15,7 @@ const StubWidget = defineComponent({
     propertyName: { type: String, default: '' },
     entityType: { type: String, default: '' },
   },
-  setup: (props) => () => h('em', String(props.modelValue)),
+  setup: (props) => () => h('em', { 'data-type': props.entityType }, String(props.modelValue)),
 })
 
 describe('cardFieldLabel', () => {
@@ -124,6 +124,46 @@ describe('CardFieldList', () => {
 
     expect(wrapper.text()).toContain('belongs to')
     expect(wrapper.text()).not.toContain('belongs-to')
+  })
+
+  it('renders each related value with the widget and type it came with', () => {
+    const wrapper = mount(CardFieldList, {
+      props: {
+        entityType: 'deal',
+        fields: [
+          {
+            field: { relation: 'belongs-to', property: 'segment' },
+            text: 'hospital, Gov',
+            values: [
+              { key: 'a', component: StubWidget, propertyName: 'segment', entityType: 'org', modelValue: 'hospital', text: 'hospital' },
+              { key: 'b', propertyName: 'segment', entityType: 'lead', modelValue: 'gov', text: 'Gov' },
+            ],
+          },
+        ],
+      },
+    })
+
+    // Labelled by the property, not the relation.
+    expect(wrapper.get('.field-label').text()).toBe('segment:')
+    // The widget gets the related type, not the card's, for styles and formats.
+    expect(wrapper.get('em').attributes('data-type')).toBe('org')
+    expect(wrapper.get('.related-values').text()).toBe('hospitalGov')
+  })
+
+  it('joins related values with commas when none has a widget', () => {
+    const value = (text: string) => ({ key: text, propertyName: 'name', entityType: 'org', modelValue: text, text })
+    const wrapper = mount(CardFieldList, {
+      props: {
+        fields: [
+          {
+            field: { relation: 'belongs-to', property: 'name', show_label: false },
+            text: 'Acme, Beta',
+            values: [value('Acme'), value('Beta')],
+          },
+        ],
+      },
+    })
+    expect(wrapper.get('.card-field').text()).toBe('Acme, Beta')
   })
 
   it('renders nothing at all when there are no fields', () => {

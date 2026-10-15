@@ -25,6 +25,23 @@ import type { IconName } from 'rela-components/components/common/icons'
 import { cardFieldLabel, cardFieldLabelShown, type KanbanCardField } from '@/types/config'
 import { useSchemaStore } from '@/stores/schema'
 
+/**
+ * One distinct value of a related-property field (TKT-8Z2LT3). It carries the
+ * related entity's type, because the property's enum styles and display
+ * format belong to that type, not to the card's.
+ */
+export interface RelatedCardValue {
+  /** Unique within the field; the related type plus the value. */
+  key: string
+  /** Widget for this type's property; absent means render `text`. When no
+   * value of a field has one, the field renders the field's joined `text`. */
+  component?: Component
+  propertyName: string
+  entityType: string
+  modelValue: unknown
+  text: string
+}
+
 /** A field with its value already resolved by the caller. */
 export interface ResolvedCardField {
   field: KanbanCardField
@@ -37,6 +54,9 @@ export interface ResolvedCardField {
   /** Set for a count field (comments, `display: count`); rendered as an icon
    * and number in one row under the other fields. */
   count?: { value: number; icon: IconName }
+  /** Set for a related-property field: one entry per distinct value, in the
+   * order the related entities came. Rendered side by side. */
+  values?: RelatedCardValue[]
 }
 
 const props = defineProps<{
@@ -56,6 +76,12 @@ function relationLabel(relation: string): string | undefined {
   return schemaStore.getRelationType(relation)?.label
 }
 
+/** A stable key per line. A card may show a relation's titles and one of its
+ * properties, or two properties through the same relation. */
+function lineKey(field: KanbanCardField, i: number): string {
+  return `${field.relation ?? ''}:${field.direction ?? ''}:${field.property ?? ''}:${i}`
+}
+
 /** A stable key per count field: a card may count a relation both ways. */
 function countKey(field: KanbanCardField): string {
   return field.comments ? 'comments' : `${field.relation}:${field.direction ?? 'outgoing'}`
@@ -64,17 +90,33 @@ function countKey(field: KanbanCardField): string {
 
 <template>
   <div v-if="fields.length" class="card-fields">
-    <div
-      v-for="(resolved, i) in lines"
-      :key="resolved.field.relation || resolved.field.property || i"
-      class="card-field"
-    >
+    <div v-for="(resolved, i) in lines" :key="lineKey(resolved.field, i)" class="card-field">
       <span v-if="cardFieldLabelShown(resolved.field)" class="field-label">
         {{ cardFieldLabel(resolved.field, relationLabel) }}:
       </span>
+      <!-- Related values: widgets (badges, dates) side by side; plain text
+           values joined with commas so two names do not read as one. -->
+      <span
+        v-if="resolved.values && resolved.values.every((v) => !v.component)"
+        class="field-value"
+        >{{ resolved.text }}</span
+      >
+      <span v-else-if="resolved.values" class="field-value related-values">
+        <template v-for="value in resolved.values" :key="value.key">
+          <component
+            :is="value.component"
+            v-if="value.component"
+            :model-value="value.modelValue"
+            mode="display"
+            :property-name="value.propertyName"
+            :entity-type="value.entityType"
+          />
+          <span v-else>{{ value.text }}</span>
+        </template>
+      </span>
       <component
         :is="resolved.component"
-        v-if="resolved.component"
+        v-else-if="resolved.component"
         class="field-value"
         :model-value="resolved.modelValue"
         mode="display"
@@ -134,6 +176,14 @@ function countKey(field: KanbanCardField): string {
 .field-label {
   flex: none;
   color: var(--rl-color-text-muted);
+}
+
+/* The distinct values of a related property, such as two segments, side by
+   side like the badges of a list enum. */
+.related-values {
+  display: inline-flex;
+  gap: var(--space-xs);
+  overflow: hidden;
 }
 
 .field-value {

@@ -249,6 +249,22 @@ export class KanbanPage extends BasePage {
     await expect(this.cards.filter({ hasText: cardTitle }).locator('.card-field')).toHaveText(text);
   }
 
+  /** The enum badges on a card's field lines, in order, with their colours
+   * (the badge--<colour> class of each). */
+  async expectCardBadges(cardTitle: string, badges: Array<{ text: string; color: string }>) {
+    const found = this.cards.filter({ hasText: cardTitle }).locator('.card-field .badge');
+    await expect(found).toHaveText(badges.map((b) => b.text));
+    for (const [i, b] of badges.entries()) {
+      await expect(found.nth(i)).toHaveClass(new RegExp(`\\bbadge--${b.color}\\b`));
+    }
+  }
+
+  /** A card shows no field lines at all. */
+  async expectNoCardFields(cardTitle: string) {
+    await expect(this.cards.filter({ hasText: cardTitle })).toBeVisible();
+    await expect(this.cards.filter({ hasText: cardTitle }).locator('.card-field')).toHaveCount(0);
+  }
+
   async expectEmptyColumn(columnName: string) {
     const column = this.getColumn(columnName);
     await expect(column.locator('.empty-column')).toBeVisible();

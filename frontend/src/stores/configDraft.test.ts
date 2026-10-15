@@ -121,6 +121,31 @@ describe('useConfigDraftStore', () => {
     ).toBe('estimate')
   })
 
+  it('renames a related card property with its own type, not the board type', () => {
+    const store = fresh()
+    const fieldAt = (i: number) =>
+      getIn(store.currentDataEntry, ['kanbans', 'board', 'card', 'fields', i])
+    store.edit('screens', (tree) => {
+      const fields = getIn(tree, ['kanbans', 'board', 'card', 'fields'])
+      if (Array.isArray(fields)) {
+        fields.push(newMap({ relation: 'implements', property: 'priority' }))
+        fields.push(newMap({ relation: 'implements', direction: 'outgoing', property: 'title' }))
+      }
+    })
+    const n = (getIn(store.currentDataEntry, ['kanbans', 'board', 'card', 'fields']) as unknown[])
+      .length
+
+    // The property belongs to feature, the type at the other end.
+    store.renameProperty('feature', 'priority', 'urgency')
+    expect(get(fieldAt(n - 2), 'property')).toBe('urgency')
+
+    // Renaming the board type's own title leaves the related one alone.
+    store.renameProperty('ticket', 'title', 'name')
+    expect(get(fieldAt(n - 1), 'property')).toBe('title')
+    store.renameProperty('feature', 'title', 'heading')
+    expect(get(fieldAt(n - 1), 'property')).toBe('heading')
+  })
+
   it('sends only what changed', () => {
     const store = fresh()
     renameFeature(store, 'Epic')

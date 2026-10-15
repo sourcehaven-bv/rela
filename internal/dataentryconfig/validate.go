@@ -2459,9 +2459,9 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 						"kanban %q: card.fields[%d] references unknown relation %q",
 						kanbanID, i, f.Relation))
 				}
-				errs = append(errs, CheckAmbiguousDirection(
-					fmt.Sprintf("kanban %q: card.fields[%d]", kanbanID, i),
-					kanban.EntityType, f.Relation, f.Direction, meta)...)
+				at := fmt.Sprintf("kanban %q: card.fields[%d]", kanbanID, i)
+				errs = append(errs, CheckAmbiguousDirection(at, kanban.EntityType, f.Relation, f.Direction, meta)...)
+				errs = append(errs, checkCardFieldRelatedProperty(at, f, kanban.EntityType, meta)...)
 				continue
 			}
 			if f.Property != "" && f.Property != "title" && f.Property != "id" {
@@ -3406,10 +3406,12 @@ func checkCardFieldCounts(
 	return errs
 }
 
-// refuseCardCounts rejects the kanban-only count shapes on the other surfaces
-// that share [KanbanCardField]. Calendar chips and gantt tooltips are not
-// served counts, so accepting the keys there would load and render nothing.
-func refuseCardCounts(prefix string, f KanbanCardField) []string {
+// refuseKanbanOnlyFields rejects the kanban-only card field shapes on the
+// other surfaces that share [KanbanCardField]: the count shapes and a related
+// property (relation plus property). Calendar chips and gantt tooltips are not
+// served counts or related entities, so accepting the keys there would load
+// and render nothing.
+func refuseKanbanOnlyFields(prefix string, f KanbanCardField) []string {
 	var errs []string
 	if f.Display != "" {
 		errs = append(errs, prefix+": display is only supported on kanban card fields")
@@ -3417,5 +3419,14 @@ func refuseCardCounts(prefix string, f KanbanCardField) []string {
 	if f.Comments {
 		errs = append(errs, prefix+": comments is only supported on kanban card fields")
 	}
+	if f.Relation != "" && f.Property != "" {
+		errs = append(errs, prefix+": a related property (relation with property) is only supported on kanban card fields")
+	}
 	return errs
+}
+
+// isRelatedProperty reports whether f is the kanban-only related-property
+// shape, which [refuseKanbanOnlyFields] has already reported.
+func (f KanbanCardField) isRelatedProperty() bool {
+	return f.Relation != "" && f.Property != ""
 }

@@ -394,7 +394,9 @@ export const useConfigDraftStore = defineStore('configDraft', () => {
       renameKey(props, from, to)
       renameSchemaReferences(tree, entityType, from, to)
     })
-    edit('screens', (tree) => renameScreenReferences(tree, entityType, from, to))
+    edit('screens', (tree) =>
+      renameScreenReferences(tree, entityType, from, to, currentSchema.value)
+    )
     const rest = renames.value.filter((r) => !(r.entity_type === entityType && r.to === from))
     if (original !== undefined && original !== to)
       rest.push({ entity_type: entityType, from: original, to })

@@ -525,6 +525,10 @@ export interface KanbanSwimlane {
  * config rather than two spellings of it.
  */
 export interface KanbanCardField {
+  /**
+   * The property to show. With `relation` set it names a property of the
+   * related entities, shown instead of their titles (TKT-8Z2LT3; kanban only).
+   */
   property?: string
   relation?: string
   direction?: 'outgoing' | 'incoming'
@@ -560,7 +564,8 @@ export function cardFieldLabel(
 ): string {
   if (field.label) return field.label
   if (field.comments) return 'comments'
-  if (field.relation) return relationLabel?.(field.relation) || field.relation
+  // A related property is labeled by the property: that is the value shown.
+  if (field.relation && !field.property) return relationLabel?.(field.relation) || field.relation
   return field.property || ''
 }
 

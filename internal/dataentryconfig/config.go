@@ -1444,6 +1444,12 @@ type GanttSource struct {
 // (relation type whose target titles are shown). For relation fields,
 // Direction controls whether to show outgoing (default) or incoming edges.
 //
+// A Relation together with a Property shows that property of each related
+// entity instead of its title (TKT-8Z2LT3). Property then names a property of
+// the types at the other end of the relation, not of the card's own type.
+// Kanban cards only: the board reads the related entities from its gated
+// `include=*` fetch, which calendar chips and gantt tooltips do not have.
+//
 // This is a dedicated type rather than a reuse of ViewSectionField: the
 // latter is shared by form relations, side panels, and view sections, and
 // widening it would leak card-relation semantics into all of them. An
@@ -1485,7 +1491,9 @@ func (f KanbanCardField) LabelShown() bool {
 }
 
 // DisplayLabel is the label to render: the explicit override when set,
-// otherwise the relation or property name it was derived from.
+// otherwise the relation or property name it was derived from. A field that
+// shows a related entity's property is labeled by the property, the value it
+// shows.
 func (f KanbanCardField) DisplayLabel() string {
 	if f.Label != "" {
 		return f.Label
@@ -1493,7 +1501,7 @@ func (f KanbanCardField) DisplayLabel() string {
 	if f.Comments {
 		return "comments"
 	}
-	if f.Relation != "" {
+	if f.Relation != "" && f.Property == "" {
 		return f.Relation
 	}
 	return f.Property

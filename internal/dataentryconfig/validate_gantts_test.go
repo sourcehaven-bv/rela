@@ -297,6 +297,13 @@ func TestValidateGantts_Invalid(t *testing.T) {
 			want: "display is only supported on kanban card fields",
 		},
 		{
+			name: "tooltip related property rejected",
+			g: withGantt(func(g *Gantt) {
+				g.Tooltip = GanttTooltip{Fields: []KanbanCardField{{Relation: "contains", Property: "status"}}}
+			}),
+			want: "tooltip.fields[0]: a related property (relation with property) is only supported on kanban card fields",
+		},
+		{
 			name: "tooltip field with no property",
 			g: withGantt(func(g *Gantt) {
 				g.Tooltip = GanttTooltip{Fields: []KanbanCardField{{}}}
