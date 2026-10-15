@@ -42,6 +42,7 @@ const pageLink = usePageCreateLink()
 const viewTypes = useViewEntityTypes()
 
 const rows = computed(() => leadWith(pageLink.offered(space.create), viewTypes.value))
+const hasRows = computed(() => rows.value.lead.length > 0 || rows.value.rest.length > 0)
 
 const creating = ref<SidebarCreate | null>(null)
 /* Fixed when the dialog opens: the dialog outlives a navigation to another page. */
@@ -73,7 +74,7 @@ function onCreatedAnother(entity: Entity) {
 <template>
   <!-- The dialog sits outside the menu's v-if: it stays open when a navigation empties the menu. -->
   <template v-if="space.create.length">
-    <RlMenu v-if="rows.lead.length || rows.rest.length || pages.opening" align="end">
+    <RlMenu v-if="hasRows || pages.opening" align="end">
       <template #trigger="{ toggle, attrs }">
         <RlButton
           variant="primary"

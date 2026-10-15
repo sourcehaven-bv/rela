@@ -282,9 +282,13 @@ describe('SpaceCreateMenu order', () => {
     expect(items(mountMenu())).toEqual(['Organisation', '|', 'Deal', 'Person'])
   })
 
-  it("puts a board's type first, with no separator when nothing follows", () => {
+  it("puts a board's type first", () => {
     Object.assign(route, { name: 'kanban', params: { id: 'pipeline' } })
     expect(items(mountMenu())).toEqual(['Deal', '|', 'Organisation', 'Person'])
+  })
+
+  it('adds no separator when nothing follows the leading type', () => {
+    Object.assign(route, { name: 'kanban', params: { id: 'pipeline' } })
     useSpaceStore().set({ create: [rows[0]!] })
     expect(items(mountMenu())).toEqual(['Deal'])
   })
@@ -316,5 +320,34 @@ describe('SpaceCreateMenu order', () => {
     useSchemaStore().lists = new Map([['notes', { entity: 'note', columns: [] }]])
     Object.assign(route, { name: 'list', params: { id: 'notes' } })
     expect(items(mountMenu())).toEqual(['Deal', 'Organisation', 'Person'])
+  })
+
+  it('orders the types an entity page can link by the open tab', () => {
+    const link = (type: string) => ({ type, relation: 'has', direction: 'outgoing' as const })
+    usePageStore().set({
+      org: {
+        label: 'Org',
+        entity_type: 'account',
+        tabs: [
+          {
+            id: 'people',
+            label: 'People',
+            view: 'list',
+            target: 'orgs',
+            scope: 'relation',
+            relation: 'has',
+            direction: 'outgoing',
+            links: [link('person'), link('org')],
+          },
+        ],
+      },
+    })
+    usePageStore().current = { page: 'org', tab: 'people', entity: 'ACC-1' }
+    Object.assign(route, {
+      name: 'entity-page',
+      params: { page: 'org', entity: 'ACC-1', tab: 'people' },
+    })
+    // Deal cannot be linked, so it is not offered; the list's type leads.
+    expect(items(mountMenu())).toEqual(['Organisation', '|', 'Person'])
   })
 })

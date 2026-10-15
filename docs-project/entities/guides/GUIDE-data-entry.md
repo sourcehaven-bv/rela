@@ -4462,9 +4462,10 @@ order. Which types a page shows:
 
 When a page shows several types, they come first in `create:` order, not in
 the view's own order. A type the space does not create is not added. On an
-entity page the menu first narrows to the types it can link, then orders them
-the same way. The entity view and documents keep `create:` order. There is no
-setting for this.
+[entity page](#entity-pages) (a page with `entity_type:`) the menu first
+narrows to the types it can link, then orders them by the open tab. The
+entity view (`/entity/<type>/<id>`) and documents keep `create:` order. There
+is no setting for this.
 
 **`permission:`** keeps a space out of the switcher of a user who does not hold
 the permission. It works like `permission:` on a navigation entry. It is a

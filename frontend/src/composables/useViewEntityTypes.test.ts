@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { leadWith, pageTabView, viewEntityTypes, type ViewConfigs } from './useViewEntityTypes'
-import type { CalendarConfig, GanttConfig, KanbanConfig, SidebarPage } from '@/types'
+import type { CalendarConfig, GanttConfig, KanbanConfig, PageTabView, SidebarPage } from '@/types'
 
 const pipeline: KanbanConfig = {
   entity: 'deal',
@@ -39,7 +39,7 @@ const configs: ViewConfigs = {
 }
 
 describe('viewEntityTypes', () => {
-  it.each([
+  it.each<[PageTabView, string, string[]]>([
     ['list', 'orgs', ['org']],
     ['kanban', 'pipeline', ['deal']],
     ['calendar', 'agenda', ['meeting', 'task']],

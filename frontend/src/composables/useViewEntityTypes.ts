@@ -2,7 +2,15 @@ import { computed } from 'vue'
 import { useRoute, type RouteLocationNormalizedLoaded } from 'vue-router'
 import { usePageStore } from '@/stores/pages'
 import { useSchemaStore } from '@/stores/schema'
-import type { CalendarConfig, GanttConfig, KanbanConfig, ListConfig, SidebarPage } from '@/types'
+import { routeTabId } from '@/utils/pageContext'
+import type {
+  CalendarConfig,
+  GanttConfig,
+  KanbanConfig,
+  ListConfig,
+  PageTabView,
+  SidebarPage,
+} from '@/types'
 
 /** The view configs a view's entity types are read from. */
 export interface ViewConfigs {
@@ -18,7 +26,7 @@ export interface ViewConfigs {
  * a map, so their order means nothing. Any other view, and a view the config
  * does not declare, shows no known type.
  */
-export function viewEntityTypes(view: string, id: string, configs: ViewConfigs): string[] {
+export function viewEntityTypes(view: PageTabView, id: string, configs: ViewConfigs): string[] {
   switch (view) {
     case 'list':
       return typesOf([configs.getList(id)?.entity])
@@ -37,20 +45,26 @@ function typesOf(types: Array<string | undefined>): string[] {
   return [...new Set(types.filter((t): t is string => !!t))]
 }
 
-/**
- * The view and view id the open tab of a page shows, read from the route
- * like PageView reads it. On an entity page the two-segment route puts the
- * entity where a plain page has its tab, so it has no tab yet.
- */
+/** The view and view id the open tab of a page shows, read from the route as PageView reads it. */
 export function pageTabView(
   params: RouteLocationNormalizedLoaded['params'],
   pages: Record<string, SidebarPage>
-): { view: string; id: string } | undefined {
+): { view: PageTabView; id: string } | undefined {
   const page = pages[String(params.page)]
-  if (!page) return undefined
-  const tabId = page.entity_type && !params.entity ? undefined : params.tab
-  const tab = page.tabs.find((t) => t.id === tabId)
+  const tabId = routeTabId(page, {
+    tab: typeof params.tab === 'string' ? params.tab : undefined,
+    entity: typeof params.entity === 'string' ? params.entity : undefined,
+  })
+  const tab = page?.tabs.find((t) => t.id === tabId)
   return tab?.target ? { view: tab.view, id: tab.target } : undefined
+}
+
+/* The standalone routes of the views that show known types, by route name. */
+const routeViews: Record<string, PageTabView> = {
+  list: 'list',
+  kanban: 'kanban',
+  calendar: 'calendar',
+  gantt: 'gantt',
 }
 
 /**
@@ -65,10 +79,11 @@ export function useViewEntityTypes() {
 
   return computed((): string[] => {
     const name = String(route.name ?? '')
+    const view = routeViews[name]
     const target =
       name === 'page' || name === 'entity-page'
         ? pageTabView(route.params, pages.pages)
-        : { view: name, id: String(route.params.id ?? '') }
+        : view && { view, id: String(route.params.id ?? '') }
     return target ? viewEntityTypes(target.view, target.id, schema) : []
   })
 }

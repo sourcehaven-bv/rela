@@ -30,6 +30,19 @@ export function pageTabPath(ref: PageTabRef): string {
   return `/p/${ref.page}/${ref.tab}`
 }
 
+/**
+ * The id of the tab a page route asks for. On an entity page the
+ * two-segment route `/p/<page>/<entity>` puts the entity where a plain page
+ * has its tab, so it asks for none and the page opens its first tab. PageView
+ * and the space's Create menu both read the open tab through this.
+ */
+export function routeTabId(
+  page: { entity_type?: string } | undefined,
+  params: { tab?: string; entity?: string }
+): string | undefined {
+  return page?.entity_type && !params.entity ? undefined : params.tab
+}
+
 /** The page tab the route shows, or undefined outside a page tab. */
 export function currentPageTab(route: RouteLocationNormalizedLoaded): PageTabRef | undefined {
   if (route.name !== 'page' && route.name !== 'entity-page') return undefined

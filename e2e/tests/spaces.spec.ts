@@ -54,9 +54,7 @@ test.describe("Spaces", () => {
     await expect(spaces.sidebarLink("Bugs")).toHaveCount(0);
   });
 
-  test("the switcher moves to another space and its navigation", async ({
-    appPage,
-  }) => {
+  test("the switcher moves to another space and its navigation", async ({ appPage }) => {
     const spaces = new SpacesPage(appPage);
     await spaces.switchSpace(/Product/, "Support");
 
@@ -69,10 +67,7 @@ test.describe("Spaces", () => {
     );
   });
 
-  test("a deep link keeps its space across a reload", async ({
-    appPage,
-    serverUrl,
-  }) => {
+  test("a deep link keeps its space across a reload", async ({ appPage, serverUrl }) => {
     const spaces = new SpacesPage(appPage);
     await appPage.goto(`${serverUrl}/s/support/list/tasks`);
     await expect(spaces.sidebarLink("Tasks")).toBeVisible();
@@ -80,23 +75,19 @@ test.describe("Spaces", () => {
     await expect(appPage).toHaveURL(/\/s\/support\/list\/tasks$/);
   });
 
-  test("an unknown space falls back to the first", async ({
-    appPage,
-    serverUrl,
-  }) => {
+  test("an unknown space falls back to the first", async ({ appPage, serverUrl }) => {
     await appPage.goto(`${serverUrl}/s/nosuch/list/bugs`);
     await expect(appPage).toHaveURL(/\/s\/product\/list\/bugs$/);
   });
 
-  // features is not among the space's create: types, so nothing moves.
-  test("the Create menu offers the space's types in config order", async ({
-    appPage,
-    serverUrl,
-  }) => {
+  // The features list shows a type the space does not create, so nothing
+  // moves. Search and the dashboard have no page header, so no Create menu.
+  test("the Create menu offers the space's types in config order", async ({ appPage, serverUrl }) => {
     const spaces = new SpacesPage(appPage);
     await appPage.goto(`${serverUrl}/s/support/list/features`);
     await spaces.openCreateMenu();
     await expect(spaces.menuItems).toHaveText([/Task/, /Bug/]);
+    await expect(spaces.menuSeparators).toHaveCount(0);
   });
 
   // TKT-DSVLOQ: the type the page shows comes first.
@@ -105,14 +96,12 @@ test.describe("Spaces", () => {
     ["list/bugs", [/Bug/, /Task/]],
     ["kanban/bug-board", [/Bug/, /Task/]],
   ] as const) {
-    test(`the Create menu on ${route} leads with its type`, async ({
-      appPage,
-      serverUrl,
-    }) => {
+    test(`the Create menu on ${route} leads with its type`, async ({ appPage, serverUrl }) => {
       const spaces = new SpacesPage(appPage);
       await appPage.goto(`${serverUrl}/s/support/${route}`);
       await spaces.openCreateMenu();
       await expect(spaces.menuItems).toHaveText([...order]);
+      await expect(spaces.menuSeparators).toHaveCount(1);
     });
   }
 });

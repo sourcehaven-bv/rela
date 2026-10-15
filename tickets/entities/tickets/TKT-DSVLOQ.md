@@ -4,8 +4,10 @@ type: ticket
 title: Create menu puts the current page's type first
 kind: enhancement
 priority: medium
+effort: s
 started: "2026-10-15"
-status: in-progress
+completed: "2026-10-15"
+status: done
 ---
 
 ## Description

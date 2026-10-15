@@ -34,7 +34,7 @@ import { usePageStore } from '@/stores/pages'
 import { useSpaceStore } from '@/stores/space'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { entityRef } from '@/utils/entityRef'
-import { pageTabPath } from '@/utils/pageContext'
+import { pageTabPath, routeTabId } from '@/utils/pageContext'
 import type { PageTabView, SidebarPageTab } from '@/types'
 
 const props = defineProps<{
@@ -82,7 +82,7 @@ const anchorType = computed(() => pageConfig.value?.entity_type)
  * two-segment route puts the entity where a plain page has its tab.
  */
 const anchorId = computed(() => (anchorType.value ? (props.entity ?? props.tab) : undefined))
-const tabId = computed(() => (anchorType.value && !props.entity ? undefined : props.tab))
+const tabId = computed(() => routeTabId(pageConfig.value, props))
 const activeTab = computed(() => tabs.value.find((t) => t.id === tabId.value))
 
 function tabHref(id: string): string {
