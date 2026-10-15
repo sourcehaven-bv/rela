@@ -2,6 +2,7 @@ package dataentryconfig
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -34,6 +35,7 @@ var validTopLevelKeys = map[string]bool{
 	"feeds":        true,
 	"caldav":       true,
 	"dashboard":    true,
+	"dashboards":   true,
 	"commands":     true,
 	"actions":      true,
 	"webhooks":     true,
@@ -682,6 +684,9 @@ func navTargetErrors(nav NavigationEntry, cfg *Config) []string {
 		if _, ok := cfg.Gantts[nav.Gantt]; !ok {
 			errs = append(errs, fmt.Sprintf("references unknown gantt %q", nav.Gantt))
 		}
+	}
+	if e := dashboardRefError(nav.Dashboard, cfg); e != "" {
+		errs = append(errs, e)
 	}
 	if nav.Page != "" {
 		page, ok := cfg.Pages[nav.Page]
@@ -2544,46 +2549,71 @@ func validateKanbans(cfg *Config, meta *metamodel.Metamodel) []string {
 	return errs
 }
 
-// validateDashboard validates dashboard configuration.
+// validateDashboard validates the default dashboard and every named one.
+// An error names the dashboard: `dashboard:` for the default one,
+// `dashboards[<name>]:` for a named one.
 func validateDashboard(cfg *Config, _ *metamodel.Metamodel) []string {
 	var errs []string
 
-	if cfg.Dashboard == nil {
-		return errs
+	for _, name := range slices.Sorted(maps.Keys(cfg.Dashboards)) {
+		switch {
+		case name == DefaultDashboardName:
+			errs = append(errs, fmt.Sprintf(
+				"dashboards: the name %q is reserved for the default dashboard; "+
+					"configure it under the top-level dashboard: key instead", name))
+		case !urlSegmentPattern.MatchString(name):
+			errs = append(errs, fmt.Sprintf(
+				"dashboards: name %q is invalid (lowercase letter first, then up to 31 of a-z, 0-9, _ or -)",
+				name))
+		}
 	}
 
-	for i, card := range cfg.Dashboard.Cards {
+	for _, d := range cfg.AllDashboards() {
+		prefix := "dashboard"
+		if d.Name != "" {
+			prefix = fmt.Sprintf("dashboards[%s]", d.Name)
+		}
+		errs = append(errs, validateDashboardCards(prefix, d.Config.Cards)...)
+	}
+
+	return errs
+}
+
+// validateDashboardCards validates the cards of one dashboard. prefix names
+// the dashboard in each message.
+func validateDashboardCards(prefix string, cards []DashboardCard) []string {
+	var errs []string
+	for i, card := range cards {
 		// Validate display mode
 		if !validDashboardDisplayModes[card.Display] {
 			errs = append(errs, fmt.Sprintf(
-				"dashboard: card[%d] %q has invalid display mode %q (valid: %s)",
-				i, card.Title, card.Display, joinMapKeys(validDashboardDisplayModes)))
+				"%s: card[%d] %q has invalid display mode %q (valid: %s)",
+				prefix, i, card.Title, card.Display, joinMapKeys(validDashboardDisplayModes)))
 		}
 
 		// Validate sort directions
 		for j, s := range card.Sort {
 			if !validSortDirections[s.Direction] {
 				errs = append(errs, fmt.Sprintf(
-					"dashboard: card[%d] %q sort[%d] has invalid direction %q (valid: asc, desc)",
-					i, card.Title, j, s.Direction))
+					"%s: card[%d] %q sort[%d] has invalid direction %q (valid: asc, desc)",
+					prefix, i, card.Title, j, s.Direction))
 			}
 		}
 
 		// For breakdown display, group_by should be specified
 		if card.Display == "breakdown" && card.GroupBy == "" {
 			errs = append(errs, fmt.Sprintf(
-				"dashboard: card[%d] %q uses breakdown display but has no group_by",
-				i, card.Title))
+				"%s: card[%d] %q uses breakdown display but has no group_by",
+				prefix, i, card.Title))
 		}
 
 		// For table display, columns should be specified
 		if card.Display == "table" && len(card.Columns) == 0 {
 			errs = append(errs, fmt.Sprintf(
-				"dashboard: card[%d] %q uses table display but has no columns",
-				i, card.Title))
+				"%s: card[%d] %q uses table display but has no columns",
+				prefix, i, card.Title))
 		}
 	}
-
 	return errs
 }
 
@@ -2787,27 +2817,38 @@ func validateCommands(cfg *Config, meta *metamodel.Metamodel) []string {
 				cmdID, cmd.Context, joinMapKeys(validCommandContexts)))
 		}
 		if cmd.AvailableOn != nil {
-			for _, v := range cmd.AvailableOn.Views {
-				if _, ok := cfg.Views[v]; !ok {
-					errs = append(errs, fmt.Sprintf(
-						"command %q: available_on references unknown view %q", cmdID, v))
-				}
-			}
-			for _, l := range cmd.AvailableOn.Lists {
-				if _, ok := cfg.Lists[l]; !ok {
-					errs = append(errs, fmt.Sprintf(
-						"command %q: available_on references unknown list %q", cmdID, l))
-				}
-			}
-			for _, et := range cmd.AvailableOn.EntityTypes {
-				if _, ok := meta.GetEntityDef(et); !ok {
-					errs = append(errs, fmt.Sprintf(
-						"command %q: available_on references unknown entity type %q", cmdID, et))
-				}
-			}
+			errs = append(errs, validateCommandScope(cmdID, *cmd.AvailableOn, cfg, meta)...)
 		}
 	}
 
+	return errs
+}
+
+// validateCommandScope checks that every view, list, entity type and
+// dashboard a command's `available_on:` names exists.
+func validateCommandScope(cmdID string, scope CommandScope, cfg *Config, meta *metamodel.Metamodel) []string {
+	var errs []string
+	for _, v := range scope.Views {
+		if _, ok := cfg.Views[v]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"command %q: available_on references unknown view %q", cmdID, v))
+		}
+	}
+	for _, l := range scope.Lists {
+		if _, ok := cfg.Lists[l]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"command %q: available_on references unknown list %q", cmdID, l))
+		}
+	}
+	for _, et := range scope.EntityTypes {
+		if _, ok := meta.GetEntityDef(et); !ok {
+			errs = append(errs, fmt.Sprintf(
+				"command %q: available_on references unknown entity type %q", cmdID, et))
+		}
+	}
+	if e := dashboardRefError(scope.Dashboard, cfg); e != "" {
+		errs = append(errs, fmt.Sprintf("command %q: available_on %s", cmdID, e))
+	}
 	return errs
 }
 

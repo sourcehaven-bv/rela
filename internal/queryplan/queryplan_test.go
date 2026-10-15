@@ -49,6 +49,22 @@ func TestStaticIndexSpecsCollectsAndCanonicalizesStaticQueries(t *testing.T) {
 	}
 }
 
+// A card on a named dashboard (TKT-5LQNLY) is a static query too.
+func TestStaticIndexSpecsIncludeNamedDashboardCards(t *testing.T) {
+	t.Parallel()
+	cfg := &dataentryconfig.Config{
+		Dashboards: map[string]dataentryconfig.DashboardConfig{
+			"crm": {Cards: []dataentryconfig.DashboardCard{{Query: "type:task prop:owner=alice"}}},
+		},
+	}
+	want := []store.DerivedObjectSpec{
+		{Kind: store.DerivedQueryIndex, Type: "task", Properties: []string{"owner"}},
+	}
+	if got := StaticIndexSpecs(cfg, testMeta()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("StaticIndexSpecs() = %#v, want %#v", got, want)
+	}
+}
+
 // A next-action condition's pushable equalities join the query's in ONE
 // composite index, because the runtime pushes both into the same store
 // query. Memberships and unpushable shapes contribute no column, and a

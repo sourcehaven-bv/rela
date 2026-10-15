@@ -4,7 +4,8 @@ import { createPinia, setActivePinia } from 'pinia'
 
 import DashboardView from './DashboardView.vue'
 import { useSchemaStore } from '@/stores/schema'
-import type { DashboardCard, AnalyzeResult, ListResponse, Entity } from '@/types'
+import type { DashboardCard, DashboardResponse, AnalyzeResult, ListResponse, Entity } from '@/types'
+import { ApiError } from '@/api/errors'
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -12,12 +13,18 @@ vi.mock('vue-router', () => ({
   RouterLink: { template: '<a><slot/></a>' },
 }))
 
-const searchEntitiesMock = vi.fn<() => Promise<ListResponse<Entity>>>()
+const searchEntitiesMock = vi.fn<(query: string) => Promise<ListResponse<Entity>>>()
 const analyzeMock = vi.fn<() => Promise<AnalyzeResult>>()
-vi.mock('@/api', () => ({
-  searchEntities: () => searchEntitiesMock(),
-  analyze: () => analyzeMock(),
-}))
+const getDashboardMock = vi.fn<(name?: string) => Promise<DashboardResponse>>()
+vi.mock('@/api', async () => {
+  const { ApiError } = await import('@/api/errors')
+  return {
+    searchEntities: (query: string) => searchEntitiesMock(query),
+    analyze: () => analyzeMock(),
+    getDashboard: (name?: string) => getDashboardMock(name),
+    ApiError,
+  }
+})
 
 function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
   return { title: 'Open', query: 'type:ticket', display: 'count', ...overrides }
@@ -303,6 +310,84 @@ describe('DashboardView', () => {
       await flushPromises()
 
       expect(wrapper.text()).toContain('done')
+    })
+  })
+
+  // Named dashboards (TKT-5LQNLY): a `name` fetches that dashboard from
+  // `/_dashboard?name=` instead of rendering the prefetched default one.
+  describe('named dashboard', () => {
+    it('fetches and renders the named dashboard, not the default', async () => {
+      seedDashboard([card({ title: 'Default card' })])
+      getDashboardMock.mockResolvedValue({
+        title: 'Pipeline',
+        cards: [card({ title: 'Open deals', query: 'type:deal' })],
+      })
+
+      const wrapper = mount(DashboardView, { props: { name: 'crm' } })
+      await flushPromises()
+
+      expect(getDashboardMock).toHaveBeenCalledWith('crm')
+      expect(wrapper.find('h1').text()).toBe('Pipeline')
+      expect(wrapper.findAll('.dashboard-card h3').map((h) => h.text())).toEqual(['Open deals'])
+      expect(searchEntitiesMock).toHaveBeenCalledWith('type:deal')
+      expect(wrapper.text()).not.toContain('Default card')
+    })
+
+    it('does not fetch for the default dashboard', async () => {
+      seedDashboard([card({ title: 'Open' })])
+
+      await mountView()
+
+      expect(getDashboardMock).not.toHaveBeenCalled()
+    })
+
+    it('shows a not-found state for an unknown name', async () => {
+      seedDashboard([])
+      getDashboardMock.mockRejectedValue(
+        new ApiError('Dashboard not found', { kind: 'http', status: 404, original: null })
+      )
+
+      const wrapper = mount(DashboardView, { props: { name: 'nope' } })
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="dashboard-not-found"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('nope')
+      expect(searchEntitiesMock).not.toHaveBeenCalled()
+    })
+
+    it('reloads when the name changes', async () => {
+      seedDashboard([])
+      getDashboardMock.mockImplementation((name) =>
+        Promise.resolve({ title: name === 'crm' ? 'Pipeline' : 'Ops', cards: [] })
+      )
+
+      const wrapper = mount(DashboardView, { props: { name: 'crm' } })
+      await flushPromises()
+      expect(wrapper.find('h1').text()).toBe('Pipeline')
+
+      await wrapper.setProps({ name: 'ops' })
+      await flushPromises()
+      expect(wrapper.find('h1').text()).toBe('Ops')
+    })
+
+    it('keeps the newer dashboard when an older load finishes last', async () => {
+      seedDashboard([])
+      let finishCrm: (r: DashboardResponse) => void = () => {}
+      getDashboardMock.mockImplementation((name) =>
+        name === 'crm'
+          ? new Promise((resolve) => (finishCrm = resolve))
+          : Promise.resolve({ title: 'Ops', cards: [] })
+      )
+
+      const wrapper = mount(DashboardView, { props: { name: 'crm' } })
+      await flushPromises()
+      await wrapper.setProps({ name: 'ops' })
+      await flushPromises()
+      expect(wrapper.find('h1').text()).toBe('Ops')
+
+      finishCrm({ title: 'Pipeline', cards: [] })
+      await flushPromises()
+      expect(wrapper.find('h1').text()).toBe('Ops')
     })
   })
 })

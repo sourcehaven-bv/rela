@@ -1,13 +1,27 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useSchemaStore } from '@/stores'
 import NextActionCard from '@/components/NextActionCard.vue'
-import { searchEntities, analyze } from '@/api'
+import { searchEntities, analyze, getDashboard, ApiError } from '@/api'
 
-import type { Entity, DashboardCard, AnalyzeResult } from '@/types'
+import type { Entity, DashboardCard, AnalyzeResult, DashboardResponse } from '@/types'
 import RlStatusRegion from 'rela-components/components/feedback/RlStatusRegion.vue'
+import RlEmptyState from 'rela-components/components/feedback/RlEmptyState.vue'
+
+/**
+ * `name` is a dashboard under `dashboards:` (TKT-5LQNLY), from
+ * `/dashboard/<name>` or a page tab. Without it this is the default
+ * dashboard, which the schema store prefetches.
+ */
+const props = defineProps<{ name?: string }>()
 
 const schemaStore = useSchemaStore()
+
+// The named dashboard's per-principal payload, fetched on entry since only
+// the default one is prefetched. `notFound` is the server's 404 for a name
+// that is not configured, such as a stale bookmark.
+const named = ref<DashboardResponse | undefined>(undefined)
+const notFound = ref(false)
 
 // State
 const loading = ref(true)
@@ -44,23 +58,47 @@ function cardKey(card: DashboardCard): string {
 }
 
 // Computed
-const dashboardConfig = computed(() => schemaStore.dashboard)
+const dashboardConfig = computed(() => (props.name ? named.value : schemaStore.dashboard))
 const title = computed(() => dashboardConfig.value?.title || 'Dashboard')
 const description = computed(() => dashboardConfig.value?.description)
 const cards = computed(() => dashboardConfig.value?.cards || [])
 
 // Methods
+// Bumped on every load, so a slow load for a dashboard the user has already
+// left cannot overwrite the one on screen.
+let generation = 0
+
 async function loadData() {
+  const gen = ++generation
+  const stale = () => gen !== generation
   loading.value = true
   loadError.value = false
+  notFound.value = false
+  cardData.value = new Map()
 
   try {
+    if (props.name) {
+      named.value = undefined
+      try {
+        const resp = await getDashboard(props.name)
+        if (stale()) return
+        named.value = resp
+      } catch (err) {
+        if (stale()) return
+        if (err instanceof ApiError && err.status === 404) {
+          notFound.value = true
+          return
+        }
+        throw err
+      }
+    }
     // Load card data in parallel
     const cardPromises = cards.value.map(async (card) => {
       // Cards count in the default world. Counting a card in another world
       // is a separate decision, like next-action's per-source
       // `source_world:`.
       const response = await searchEntities(card.query)
+      if (stale()) return
       cardData.value.set(cardKey(card), {
         entities: response.data,
         count: response.meta.total,
@@ -72,10 +110,11 @@ async function loadData() {
 
     await Promise.all([...cardPromises, analysisPromise.then((r) => (analysisResult.value = r))])
   } catch (err) {
+    if (stale()) return
     console.error('Dashboard load error:', err)
     loadError.value = true
   } finally {
-    loading.value = false
+    if (!stale()) loading.value = false
   }
 }
 
@@ -193,6 +232,12 @@ onMounted(async () => {
   }
   await loadData()
 })
+
+// The router reuses this view between two named dashboards.
+watch(
+  () => props.name,
+  () => void loadData()
+)
 </script>
 
 <template>
@@ -204,9 +249,18 @@ onMounted(async () => {
 
     <RlStatusRegion v-if="loading">Loading dashboard...</RlStatusRegion>
 
+    <RlEmptyState
+      v-else-if="notFound"
+      title="Dashboard not found"
+      :description="`No dashboard is named “${name}”.`"
+      data-testid="dashboard-not-found"
+    />
+
     <template v-else>
       <!-- Above the cards, and independent of them: a suggestion is worth
-           showing even on a dashboard with nothing else on it. -->
+           showing even on a dashboard with nothing else on it. A named
+           dashboard shows it too, as it does the analysis summary: both are
+           project-wide, not part of any one dashboard's cards. -->
       <NextActionCard />
 
       <!--

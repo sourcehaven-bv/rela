@@ -234,6 +234,22 @@ var editable = map[File][]string{
 		"dashboard.cards.[].sort.[].**",
 		"dashboard.cards.[].title",
 
+		// A named dashboard has the same editable keys as the default one.
+		"dashboards.*.title",
+		"dashboards.*.description",
+		"dashboards.*.cards.[].columns.[].direction",
+		"dashboards.*.cards.[].columns.[].label",
+		"dashboards.*.cards.[].columns.[].link",
+		"dashboards.*.cards.[].columns.[].property",
+		"dashboards.*.cards.[].columns.[].relation",
+		"dashboards.*.cards.[].columns.[].sortable",
+		"dashboards.*.cards.[].display",
+		"dashboards.*.cards.[].group_by",
+		"dashboards.*.cards.[].limit",
+		"dashboards.*.cards.[].query",
+		"dashboards.*.cards.[].sort.[].**",
+		"dashboards.*.cards.[].title",
+
 		"spaces.[].id",
 		"spaces.[].label",
 		"spaces.[].icon",
@@ -302,6 +318,7 @@ var locked = map[File][]string{
 		"app.default_world", "app.disable_custom_injection", "app.max_attachment_bytes", "app.plantuml_server_url",
 		// Access control and actions.
 		"nav.permission", "nav.action", "spaces.[].permission", "dashboard.cards.[].permission",
+		"dashboards.*.cards.[].permission",
 		"lists.*.actions.**", "lists.*.export_render",
 		// The pile menu's actions and export transforms, like a list's.
 		"piles.actions.[]", "piles.export.[]",
@@ -311,6 +328,7 @@ var locked = map[File][]string{
 		"documents.**", "feeds.**", "caldav.**", "commands.**", "actions.**", "webhooks.**",
 		"pages.**", "next_action_bands.**", "next_actions.**", "account.**", "lists.*.create_world",
 		"lists.*.columns.[].face", "dashboard.cards.[].columns.[].face",
+		"dashboards.*.cards.[].columns.[].face",
 	},
 }
 
@@ -332,6 +350,7 @@ var protective = map[File][]string{
 	DataEntryFile: {
 		"app.disable_custom_injection", "app.max_attachment_bytes",
 		"nav.permission", "spaces.[].permission", "dashboard.cards.[].permission",
+		"dashboards.*.cards.[].permission",
 	},
 }
 

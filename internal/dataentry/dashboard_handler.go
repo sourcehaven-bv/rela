@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"net/http"
+	"strconv"
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
@@ -9,6 +10,12 @@ import (
 
 // handleV1Dashboard returns the dashboard page config with the cards this
 // principal may see (TKT-53KICM).
+//
+// `?name=<name>` selects a dashboard under `dashboards:`; without it (or with
+// `name=default`) the default `dashboard:` is served. An unknown name is a
+// 404 `dashboard_not_found`. Dashboard names are config, not data, so the
+// distinct code discloses nothing (see "The configuration is not a secret;
+// the data is" in the root CLAUDE.md).
 //
 // This is the per-principal counterpart to the `dashboard:` block that
 // `/api/v1/_config` serves verbatim to everyone. The split is deliberate:
@@ -31,7 +38,13 @@ func (h *viewsHandler) handleV1Dashboard(w http.ResponseWriter, r *http.Request)
 	cards := make([]dataentryconfig.DashboardCard, 0)
 	resp := v1.DashboardResponse{Cards: cards}
 
-	cfg := h.schema().Cfg.Dashboard
+	name := r.URL.Query().Get("name")
+	cfg, ok := h.schema().Cfg.DashboardByName(name)
+	if !ok {
+		writeV1Error(w, r, http.StatusNotFound, "dashboard_not_found",
+			"Dashboard not found", "no dashboard named "+strconv.Quote(name)+" under dashboards:")
+		return
+	}
 	if cfg == nil {
 		writeV1JSON(w, http.StatusOK, resp)
 		return

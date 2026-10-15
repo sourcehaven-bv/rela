@@ -2024,7 +2024,7 @@ func TestV1SidebarWithNavigation(t *testing.T) {
 			Items: []dataentryconfig.NavigationEntry{
 				{Label: "Tickets", List: "tickets"},
 				{Label: "Kanban", Kanban: "board"},
-				{Label: "Dashboard", Dashboard: true},
+				{Label: "Dashboard", Dashboard: dataentryconfig.DefaultDashboard},
 				{Label: "Search", Search: true},
 				{Label: "Settings", Settings: true},
 			},

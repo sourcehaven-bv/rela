@@ -331,8 +331,8 @@ func (d *dataEntryPermissions) UsedPermissions() []string {
 	for _, action := range d.cfg.Actions {
 		add(action.Permission)
 	}
-	if d.cfg.Dashboard != nil {
-		for _, card := range d.cfg.Dashboard.Cards {
+	for _, dash := range d.cfg.AllDashboards() {
+		for _, card := range dash.Config.Cards {
 			add(card.Permission)
 		}
 	}

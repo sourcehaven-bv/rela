@@ -42,7 +42,7 @@ func testPages() map[string]dataentryconfig.Page {
 	return map[string]dataentryconfig.Page{
 		"tickets": {Label: "Tickets", Tabs: []dataentryconfig.PageTab{
 			{ID: "table", Label: "Table", List: "all"},
-			{ID: "home", Label: "Home", Dashboard: true, Permission: "admin:read"},
+			{ID: "home", Label: "Home", Dashboard: dataentryconfig.DefaultDashboard, Permission: "admin:read"},
 		}},
 		"admin": {Label: "Admin", Icon: "folder", Tabs: []dataentryconfig.PageTab{
 			{ID: "all", Label: "All", List: "all", Permission: "admin:read"},

@@ -6860,6 +6860,9 @@ body:
           "dashboard": {
             "type": "object"
           },
+          "dashboards": {
+            "type": "object"
+          },
           "documents": {
             "type": "object"
           },

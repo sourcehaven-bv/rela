@@ -55,11 +55,11 @@ type PageTab struct {
 	// [NavigationEntry.Permission]: a UX filter, not access control.
 	Permission string `yaml:"permission,omitempty" json:"permission,omitempty"`
 
-	List      string `yaml:"list,omitempty" json:"list,omitempty"`
-	Kanban    string `yaml:"kanban,omitempty" json:"kanban,omitempty"`
-	Calendar  string `yaml:"calendar,omitempty" json:"calendar,omitempty"`
-	Gantt     string `yaml:"gantt,omitempty" json:"gantt,omitempty"`
-	Dashboard bool   `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
+	List      string       `yaml:"list,omitempty" json:"list,omitempty"`
+	Kanban    string       `yaml:"kanban,omitempty" json:"kanban,omitempty"`
+	Calendar  string       `yaml:"calendar,omitempty" json:"calendar,omitempty"`
+	Gantt     string       `yaml:"gantt,omitempty" json:"gantt,omitempty"`
+	Dashboard DashboardRef `yaml:"dashboard,omitempty" json:"dashboard,omitempty"`
 	// Document names a standalone document, as on a navigation entry.
 	Document string `yaml:"document,omitempty" json:"document,omitempty"`
 
@@ -170,7 +170,7 @@ func (t PageTab) Destination() NavigationEntry {
 func (t PageTab) destinationCount() int {
 	n := 0
 	for _, set := range []bool{
-		t.List != "", t.Kanban != "", t.Calendar != "", t.Gantt != "", t.Dashboard, t.Document != "",
+		t.List != "", t.Kanban != "", t.Calendar != "", t.Gantt != "", t.Dashboard.IsSet(), t.Document != "",
 	} {
 		if set {
 			n++

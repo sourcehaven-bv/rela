@@ -187,7 +187,7 @@ watchEffect(() => {
 const viewProps = computed((): Record<string, unknown> => {
   const tab = activeTab.value
   if (!tab?.target) return {}
-  const key = tab.view === 'document' ? 'name' : 'id'
+  const key = tab.view === 'document' || tab.view === 'dashboard' ? 'name' : 'id'
   const out: Record<string, unknown> = { [key]: tab.target }
   if (anchorId.value && tab.scope === 'relation') {
     out.pageScope = {

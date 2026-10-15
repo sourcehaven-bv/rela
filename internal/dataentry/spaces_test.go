@@ -238,7 +238,7 @@ func TestSpaces_HomeDerivation(t *testing.T) {
 		// A dashboard entry's href is "/"; as a home it would redirect to
 		// the space's own root forever.
 		{ID: "dash", Label: "Dash", Navigation: []dataentryconfig.NavigationEntry{
-			{Label: "Dashboard", Dashboard: true},
+			{Label: "Dashboard", Dashboard: dataentryconfig.DefaultDashboard},
 		}},
 	})
 	d := mustNewACL(t, gatedNavPolicy(), app.store)

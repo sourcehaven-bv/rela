@@ -11,7 +11,10 @@ import type { DashboardResponse } from '@/types'
  * That omission is a UX affordance, not a boundary — each card's query still
  * runs through the ACL-scoped search endpoint, returning exactly what it always
  * did. Do not reintroduce client-side filtering on `card.permission`.
+ *
+ * `name` selects a dashboard under `dashboards:` (TKT-5LQNLY); without it the
+ * default dashboard is served. An unknown name rejects with a 404.
  */
-export async function getDashboard(): Promise<DashboardResponse> {
-  return api.get<DashboardResponse>('/_dashboard')
+export async function getDashboard(name?: string): Promise<DashboardResponse> {
+  return api.get<DashboardResponse>('/_dashboard', name ? { name } : undefined)
 }

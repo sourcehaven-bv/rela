@@ -58,7 +58,7 @@ func navEntryDestinations(nav NavigationEntry) []string {
 		set  bool
 	}{
 		{"list", nav.List != ""},
-		{"dashboard", nav.Dashboard},
+		{"dashboard", nav.Dashboard.IsSet()},
 		{"kanban", nav.Kanban != ""},
 		{"calendar", nav.Calendar != ""},
 		{"gantt", nav.Gantt != ""},

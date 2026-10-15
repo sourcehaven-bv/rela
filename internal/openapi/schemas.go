@@ -503,6 +503,7 @@ func (g *Generator) addCommonSchemas(spec *Spec) {
 			"calendars":  {Type: "object"},
 			"gantts":     {Type: "object"},
 			"dashboard":  {Type: "object"},
+			"dashboards": {Type: "object"},
 			"navigation": {Type: "array"},
 			"documents":  {Type: "object"},
 		},

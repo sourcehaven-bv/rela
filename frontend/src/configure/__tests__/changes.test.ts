@@ -65,6 +65,22 @@ describe('describeChanges', () => {
     expect(changeCount(groups)).toBe(6)
   })
 
+  // Named dashboards (TKT-5LQNLY) get a group each, linked to their screen.
+  it('groups the changes to a named dashboard under its name', () => {
+    const before = toTree({ dashboards: { crm: { title: 'Pipeline', cards: [] } } })
+    const after = clone(before)
+    set(at(after, ['dashboards', 'crm']), 'title', 'Deals')
+
+    const groups = describeChanges(
+      { schema: base.schema, dataEntry: before },
+      { schema: base.schema, dataEntry: after },
+      []
+    )
+
+    expect(groups.map((g) => g.title)).toEqual(['Dashboard: crm'])
+    expect(groups[0].items[0].to).toBe('/configure/dashboard?name=crm')
+  })
+
   it('never shows the configuration format', () => {
     const schema = clone(base.schema)
     set(at(schema, ['entities', 'ticket', 'properties', 'effort']), 'required', true)

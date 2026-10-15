@@ -189,3 +189,29 @@ describe('PageView on an entity page', () => {
     expect(wrapper.text()).toContain('Open a topic to see this page.')
   })
 })
+
+// A dashboard tab hands DashboardView the dashboard's name (TKT-5LQNLY); the
+// default dashboard's tab has no target and passes nothing.
+describe('PageView dashboard tabs', () => {
+  beforeEach(() => {
+    usePageStore().set({
+      sales: {
+        label: 'Sales',
+        tabs: [
+          { id: 'pipeline', label: 'Pipeline', view: 'dashboard', target: 'crm' },
+          { id: 'home', label: 'Home', view: 'dashboard' },
+        ],
+      },
+    })
+  })
+
+  it('passes a named dashboard tab its name', async () => {
+    const wrapper = await mountPage({ page: 'sales', tab: 'pipeline' })
+    expect(viewProps(wrapper, 'DashboardView')).toEqual({ name: 'crm' })
+  })
+
+  it('passes the default dashboard tab no name', async () => {
+    const wrapper = await mountPage({ page: 'sales', tab: 'home' })
+    expect(viewProps(wrapper, 'DashboardView')).toEqual({})
+  })
+})

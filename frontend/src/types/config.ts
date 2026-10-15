@@ -28,6 +28,8 @@ export interface Config {
   calendars?: Record<string, CalendarConfig>
   gantts?: Record<string, GanttConfig>
   dashboard?: DashboardConfig
+  /** Named dashboards (TKT-5LQNLY), reached at `/dashboard/<name>`. */
+  dashboards?: Record<string, DashboardConfig>
   actions?: Record<string, ActionConfig>
   navigation: NavigationEntry[]
   /** Tabbed screens keyed by page id (TKT-ITQ0HL). Absent without `pages:`. */
@@ -850,7 +852,8 @@ export interface NavigationEntry {
   // Direct item fields
   label?: string
   list?: string
-  dashboard?: boolean
+  /** `true` for the default dashboard, or the name of one under `dashboards:`. */
+  dashboard?: boolean | string
   kanban?: string
   calendar?: string
   search?: boolean
@@ -1012,7 +1015,8 @@ export interface PageConfig {
     kanban?: string
     calendar?: string
     gantt?: string
-    dashboard?: boolean
+    /** `true` for the default dashboard, or the name of one under `dashboards:`. */
+    dashboard?: boolean | string
     document?: string
     scope?: { root?: boolean; relation?: string; direction?: 'outgoing' | 'incoming' }
   }>
@@ -1027,7 +1031,7 @@ export interface SidebarPageTab {
   label: string
   icon?: string
   view: PageTabView
-  /** The id of the view the tab shows. Absent for the dashboard. */
+  /** The id of the view the tab shows: the name of a named dashboard, absent for the default one. */
   target?: string
   /**
    * How a tab of an entity page narrows to the page's entity: `relation`

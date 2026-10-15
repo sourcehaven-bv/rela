@@ -787,8 +787,27 @@ export interface CardModel {
   restricted: boolean
 }
 
-export function dashboardModel(dataEntry: TreeValue | undefined) {
-  const dash = get(dataEntry, 'dashboard')
+/**
+ * Where a dashboard sits in the screens tree: the default one under
+ * `dashboard`, a named one under `dashboards.<name>` (TKT-5LQNLY).
+ */
+export function dashboardPath(name?: string): TreePath {
+  return name ? ['dashboards', name] : ['dashboard']
+}
+
+/** The dashboards a project declares: the default one first, then the named ones. */
+export function dashboards(dataEntry: TreeValue | undefined): { name: string; title: string }[] {
+  const named = get(dataEntry, 'dashboards')
+  return [
+    { name: '', title: str(get(get(dataEntry, 'dashboard'), 'title')) || 'Default' },
+    ...keys(named)
+      .sort()
+      .map((name) => ({ name, title: str(get(get(named, name), 'title')) || name })),
+  ]
+}
+
+export function dashboardModel(dataEntry: TreeValue | undefined, name?: string) {
+  const dash = getIn(dataEntry, dashboardPath(name))
   const cards = get(dash, 'cards')
   return {
     title: str(get(dash, 'title')) ?? '',
