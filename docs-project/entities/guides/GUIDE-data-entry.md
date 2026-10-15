@@ -2620,6 +2620,20 @@ incoming ones ("something else points at me") are offered but not preselected.
 Only relations whose other end you may read are listed, so the counts shown are
 per-viewer and may be lower than the raw graph.
 
+### Using a conversion in the web app
+
+When the schema declares a conversion for the entity's type and the caller has
+the source type's `convert:` ACL grant, the detail page offers the configured
+conversion. The conversion form shows mapped destination fields and any
+required fields that still need values. Its preview lists relations that will
+be remapped or dropped; the user confirms before saving. The client selects a
+configured conversion by name and cannot supply its own field or relation map.
+
+The conversion changes the entity type and id, while preserving comments,
+history lineage and aliases for old links. It reuses the rename history and
+reference rewriting behavior. See [conversion definitions](metamodel.md#declaring-entity-conversions)
+for the operator mapping syntax and face limitations.
+
 ### How navigation resolves
 
 For each clickable entity reference, the SPA picks the destination URL using
@@ -7811,6 +7825,30 @@ remove by hand, and leaves the others. A caller who lacks the guard permission r
 a `403` naming it. A source the caller may not read produces the same `404` as
 a source that does not exist. Any other refusal, such as an unknown definition
 or a cross-entity copy without a `target_id`, is a `422`.
+
+### Converting an entity
+
+The entity response carries `_conversions` offers, including the target type
+and whether the caller may invoke each configured conversion. The web app
+shows a form for an allowed offer. Before saving, it posts to the conversion's
+`/preflight` endpoint, which reports required target properties, relation
+mapping effects, and relations that will be dropped. Dropped relations require
+explicit confirmation.
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/_conversions/note-to-task/preflight \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"NOTE-1"}'
+
+curl -s -X POST http://localhost:8080/api/v1/_conversions/note-to-task \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"NOTE-1","properties":{"title":"Follow up"}}'
+```
+
+The server applies the operator's mapping, rechecks the `convert:` ACL, and
+returns the new id. Rename aliases keep old id links resolving, and the rename
+history hook records the old id as the predecessor. A relation the mapping
+cannot preserve is reported before the entity changes.
 
 ### Responses and errors
 

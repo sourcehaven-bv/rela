@@ -1856,13 +1856,15 @@ can leave a partially written target face.
 
 `conversions:` declares administrator-approved entity type changes. A user
 invokes only a conversion name; the client cannot submit its own mapping.
-Each destination property is mapped explicitly, and incident relation types
-must be mapped or dropped. In a conversion, `{{source.title}}` reads the
-property from the entity being converted. A whole-property reference preserves
-the property's stored value type, so an integer or list remains an integer or
-list. For compatibility with copy definitions, `{{new.title}}` is also
-accepted, but `source` is clearer here because it names the conversion's input.
-Unmapped source properties are not carried forward.
+Each destination property is mapped explicitly from the source entity with
+the `{{source.property}}` interpolation syntax. `source` means the entity
+being converted; it is the input to the mapping. For example,
+`{{source.title}}` reads the old note's title and writes it to the task's
+`title`. `{{new.title}}` is also accepted for compatibility with copy
+definitions, but `source` names the conversion input more clearly. Unmapped
+source properties are not carried forward. Every relation type incident to
+the source must be mapped to a destination relation type or explicitly
+dropped.
 
 ```yaml
 conversions:
@@ -1880,55 +1882,46 @@ conversions:
       "": [""]
 ```
 
-Here `""` is an empty face name: the implicit, unnamed state stored under the
-bare entity ID. A faceless type has this one state. It is not a wildcard or a
-missing mapping. A type that declares `faces:` has only named states such as
-`POL-1@draft`; it has no empty-name face.
+The empty face name (`""`) means the type's implicit, faceless row. Required
+destination fields not produced by the mapping are entered in the conversion
+form. Before saving, Rela previews required fields and the effects of relation
+mappings. The user confirms any configured relation drops.
 
-For example, a faced-to-faced conversion can declare a mapping for every
-source face, with one or more target-face choices:
+A faced conversion names its face coordinates explicitly; for example, this
+maps one faceless source row to either a draft or approved destination face:
 
 ```yaml
 entities:
-  policy:
-    label: Policy
-    faces:
-      draft: {label: Draft}
-      published: {label: Published}
-    properties:
-      title: {type: string, required: true}
+  note:
+    label: Note
+    properties: {title: {type: string}}
   controlled-document:
     label: Controlled document
     faces:
       draft: {label: Draft}
       approved: {label: Approved}
-    properties:
-      title: {type: string, required: true}
-relations: {}
+    properties: {title: {type: string}}
 conversions:
-  policy-to-controlled-document:
-    from: policy
+  note-to-controlled-document:
+    from: note
     to: controlled-document
     fields:
       title: "{{source.title}}"
     faces:
-      draft: [draft, approved]
-      published: [approved]
+      "": [draft, approved]
 ```
 
-The operator declares the available face choices; when a mapping lists more
-than one target face, the user chooses one during conversion. The conversion
-keeps the family rows together, moves relation tails to the selected face,
-and moves face-scoped comments. History follows the source face through the
-conversion even when its destination face has a different name.
+The operator lists the destination face choices; when more than one is listed,
+the user chooses one in the conversion form. The current write path supports
+conversions between faceless types only; faced definitions are validated but
+writes are refused until face-scoped history can follow a changed face
+coordinate.
 
-Required destination fields not produced by the mapping are entered in the
-conversion form. Before saving, Rela previews required fields and relation
-mappings; the user confirms any configured drops. The ACL role's `convert:`
-grant is separate from `rename:` and is matched against the source type.
-Conversion rekeys the entity family and reuses rename aliases and history
-lineage, so old entity links continue to resolve after faceless and faced
-conversions.
+The ACL role's `convert:` grant is separate from `rename:` and is matched
+against the source type. Conversion rekeys the entity family and reuses rename
+aliases and history lineage, so old entity links continue to resolve. See
+[Converting an entity](data-entry.md#converting-an-entity) for the form and
+preview behavior.
 
 ### Checking stored states
 

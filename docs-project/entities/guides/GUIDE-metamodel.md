@@ -1858,6 +1858,77 @@ PostgreSQL backend rolls back a failed copy. On the filesystem and in-memory
 backends the transaction is a write lock only, so a failure part-way through
 can leave a partially written target face.
 
+### Declaring entity conversions
+
+`conversions:` declares administrator-approved entity type changes. A user
+invokes only a conversion name; the client cannot submit its own mapping.
+Each destination property is mapped explicitly from the source entity with
+the `{{source.property}}` interpolation syntax. `source` means the entity
+being converted; it is the input to the mapping. For example,
+`{{source.title}}` reads the old note's title and writes it to the task's
+`title`. `{{new.title}}` is also accepted for compatibility with copy
+definitions, but `source` names the conversion input more clearly. Unmapped
+source properties are not carried forward. Every relation type incident to
+the source must be mapped to a destination relation type or explicitly
+dropped.
+
+```yaml
+conversions:
+  note-to-task:
+    from: note
+    to: task
+    label: Convert to task
+    fields:
+      title: "{{source.title}}"
+      description: "{{source.body}}"
+    relations:
+      related-to: related-to
+      mentions: drop
+    faces:
+      "": [""]
+```
+
+The empty face name (`""`) means the type's implicit, faceless row. Required
+destination fields not produced by the mapping are entered in the conversion
+form. Before saving, Rela previews required fields and the effects of relation
+mappings. The user confirms any configured relation drops.
+
+A faced conversion names its face coordinates explicitly; for example, this
+maps one faceless source row to either a draft or approved destination face:
+
+```yaml
+entities:
+  note:
+    label: Note
+    properties: {title: {type: string}}
+  controlled-document:
+    label: Controlled document
+    faces:
+      draft: {label: Draft}
+      approved: {label: Approved}
+    properties: {title: {type: string}}
+conversions:
+  note-to-controlled-document:
+    from: note
+    to: controlled-document
+    fields:
+      title: "{{source.title}}"
+    faces:
+      "": [draft, approved]
+```
+
+The operator lists the destination face choices; when more than one is listed,
+the user chooses one in the conversion form. The current write path supports
+conversions between faceless types only; faced definitions are validated but
+writes are refused until face-scoped history can follow a changed face
+coordinate.
+
+The ACL role's `convert:` grant is separate from `rename:` and is matched
+against the source type. Conversion rekeys the entity family and reuses rename
+aliases and history lineage, so old entity links continue to resolve. See
+[Converting an entity](data-entry.md#converting-an-entity) for the form and
+preview behavior.
+
 ### Checking stored states
 
 `rela analyze states` reports state rows the schema does not account for. Three
