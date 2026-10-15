@@ -58,7 +58,7 @@ func validateGanttTooltip(ganttID string, g Gantt, meta *metamodel.Metamodel) []
 	var errs []string
 	for i, f := range g.Tooltip.Fields {
 		prefix := fmt.Sprintf("gantt %q: tooltip.fields[%d]", ganttID, i)
-		if errs = append(errs, refuseCardCounts(prefix, f)...); f.Comments {
+		if errs = append(errs, refuseKanbanOnlyFields(prefix, f)...); f.Comments || f.isRelatedProperty() {
 			continue
 		}
 		if f.Relation != "" {

@@ -31,12 +31,62 @@ function entityTypesOf(item: TreeValue | undefined): string[] {
   return strList(get(item, 'entity_type'))
 }
 
-/** Renames a property's references in the screens file, in place. */
+/**
+ * The entity types at the other end of a board card field's relation, as seen
+ * from the board's type: `from` types for an incoming field, `to` types for an
+ * outgoing one. Without a direction it follows the side the board is on, as
+ * the server infers it.
+ */
+function relatedTypesOf(
+  schema: TreeValue | undefined,
+  field: TreeValue | undefined,
+  boardTypes: string[]
+): string[] {
+  const rel = getIn(schema, ['relations', str(get(field, 'relation')) ?? ''])
+  const fromTypes = strList(get(rel, 'from'))
+  const toTypes = strList(get(rel, 'to'))
+  const direction = str(get(field, 'direction'))
+  if (direction === 'incoming') return fromTypes
+  if (direction === 'outgoing') return toTypes
+  // As the server's InferDirection: incoming only when the board is on the
+  // `to` side and not the `from` side; otherwise outgoing.
+  const incoming =
+    !boardTypes.some((t) => fromTypes.includes(t)) && boardTypes.some((t) => toTypes.includes(t))
+  return incoming ? fromTypes : toTypes
+}
+
+/**
+ * Renames a board's card-field property references. A field with a relation
+ * names a property of the related entities (TKT-8Z2LT3), so it follows a
+ * rename on the related type rather than on the board's own type.
+ */
+function renameCardFields(
+  board: TreeValue | undefined,
+  schema: TreeValue | undefined,
+  entityType: string,
+  from: string,
+  to: string
+): void {
+  const boardTypes = entityTypesOf(board)
+  for (const field of mapItems(getIn(board, ['card', 'fields']))) {
+    const owners = str(get(field, 'relation'))
+      ? relatedTypesOf(schema, field, boardTypes)
+      : boardTypes
+    if (owners.includes(entityType)) renameIn(field, 'property', from, to)
+  }
+}
+
+/**
+ * Renames a property's references in the screens file, in place. `schema` is
+ * the data model the screens refer to; a board field that reads a property
+ * through a relation needs it to know which type that property belongs to.
+ */
 export function renameScreenReferences(
   dataEntry: TreeMap,
   entityType: string,
   from: string,
-  to: string
+  to: string,
+  schema: TreeValue | undefined
 ): void {
   for (const [, form] of entries(get(dataEntry, 'forms'))) {
     if (!entityTypesOf(form).includes(entityType)) continue
@@ -53,11 +103,11 @@ export function renameScreenReferences(
     renameIn(get(list, 'group_by'), 'property', from, to)
   }
   for (const [, board] of entries(get(dataEntry, 'kanbans'))) {
+    renameCardFields(board, schema, entityType, from, to)
     if (!entityTypesOf(board).includes(entityType)) continue
     renameIn(board, 'column_property', from, to)
     renameIn(board, 'swimlane_property', from, to)
     renameEach(get(board, 'column_summary'), 'property', from, to)
-    renameEach(getIn(board, ['card', 'fields']), 'property', from, to)
     renameEach(get(board, 'filter_controls'), 'property', from, to)
   }
 }

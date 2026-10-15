@@ -47,6 +47,7 @@ import { formatSummary } from '@/utils/summary'
 import { styleStatusColor } from '@/utils/styleColors'
 import { densePropertyRoutingHint } from '@/widgets/viewRouting'
 import CardFieldList, { type ResolvedCardField } from '@/components/common/CardFieldList.vue'
+import { useRelatedCardValues } from '@/composables/useRelatedCardValues'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
 import LeaseBadge from '@/components/common/LeaseBadge.vue'
 import { defaultRegistry } from '@/widgets/registry'
@@ -144,8 +145,9 @@ const { filters, writeToQuery } = useUrlFilterSync({
 
 // Cards may render relation targets by ID; when any card field references a
 // relation we must ask the server to embed the related entities (?include=*)
-// so we can resolve those IDs to titles. Property-only boards fetch without
-// includes, exactly as before.
+// so we can resolve those IDs to titles, or read a property of the related
+// entities (TKT-8Z2LT3). Property-only boards fetch without includes, exactly
+// as before.
 // A `display: count` relation field needs no titles: it counts the ids the
 // `relations` map already carries.
 const hasRelationFields = computed(
@@ -647,7 +649,7 @@ function relationCardKey(field: KanbanCardField): string {
 }
 
 function getCardFieldValue(entity: Entity, field: KanbanCardField): string {
-  if (field.relation) {
+  if (field.relation && !field.property) {
     const ids = entity.relations?.[relationCardKey(field)] || []
     return ids
       .map((id) => {
@@ -698,6 +700,14 @@ function getCardFieldStoredValue(entity: Entity, field: KanbanCardField): unknow
   return entity.properties[field.property]
 }
 
+// Related-property fields (TKT-8Z2LT3): the property of each related entity,
+// read from the gated include block. See useRelatedCardValues.
+const { relatedCardValues } = useRelatedCardValues({
+  fields: () => kanbanConfig.value?.card.fields ?? [],
+  included: () => includedEntities.value,
+  relationKey: relationCardKey,
+})
+
 // Widget resolution for property card-fields, computed once per configured
 // field rather than per card (RR-UD2A). Relation fields are absent on
 // purpose: they have no PropertyDef and no relation widget, so they keep the
@@ -742,6 +752,13 @@ function resolvedCardFields(entity: Entity): ResolvedCardField[] {
     if (count !== undefined) {
       // Zero renders nothing, like any empty card field.
       if (count.value > 0) out.push({ field, text: String(count.value), count })
+      continue
+    }
+    if (field.relation && field.property) {
+      const values = relatedCardValues(entity, field)
+      if (values.length > 0) {
+        out.push({ field, text: values.map((v) => v.text).join(', '), values })
+      }
       continue
     }
     const text = getCardFieldValue(entity, field)

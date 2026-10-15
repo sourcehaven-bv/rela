@@ -1703,6 +1703,44 @@ kanbans:
         - property: estimate
           show_label: false
 
+  # kanban-related-property.spec.ts (TKT-8Z2LT3): card fields that show a
+  # property of the related entities. Not in the sidebar, so they change no
+  # navigation count. The feature board reads the status of the tasks that
+  # implement it (incoming); the task board reads the estimate of the bugs it
+  # fixes (outgoing), a currency property.
+  feature-task-status:
+    entity_type: feature
+    title: "Feature Task Status"
+    column_property: status
+    columns:
+      - value: draft
+        label: Draft
+      - value: approved
+        label: Approved
+    card:
+      title: title
+      fields:
+        - relation: implements
+          direction: incoming
+          property: status
+          show_label: false
+  task-bug-estimate:
+    entity_type: task
+    title: "Task Bug Estimate"
+    column_property: status
+    columns:
+      - value: draft
+        label: Draft
+      - value: in_progress
+        label: In Progress
+    card:
+      title: title
+      fields:
+        - relation: fixes
+          direction: outgoing
+          property: estimate
+          label: Fix value
+
   # kanban-card-counts.spec.ts: count card fields. Not in the sidebar, so it
   # changes no navigation count. FEAT-001 is implemented by TASK-001 (seed).
   feature-counts:
