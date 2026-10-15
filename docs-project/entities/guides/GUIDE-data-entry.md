@@ -4495,6 +4495,26 @@ offers a type only when the user may create it and a create form exists for
 it, the same rule as inline creation from a relation field. On an entity page
 the menu offers fewer types; see [Entity pages](#entity-pages).
 
+The menu lists the types in `create:` order, except that the types the page
+shows come first. A separator divides them from the rest, which keep their
+order. Which types a page shows:
+
+| Page                       | Types that come first                   |
+| -------------------------- | --------------------------------------- |
+| List                       | The list's entity type                  |
+| Kanban board               | The board's entity type                 |
+| Calendar                   | The entity types of its sources         |
+| Gantt                      | The entity types of its sources         |
+| Page tab                   | The types of the view the tab shows     |
+| Any other page             | None: the menu keeps `create:` order    |
+
+When a page shows several types, they come first in `create:` order, not in
+the view's own order. A type the space does not create is not added. On an
+[entity page](#entity-pages) (a page with `entity_type:`) the menu first
+narrows to the types it can link, then orders them by the open tab. The
+entity view (`/entity/<type>/<id>`) and documents keep `create:` order. There
+is no setting for this.
+
 **`permission:`** keeps a space out of the switcher of a user who does not hold
 the permission. It works like `permission:` on a navigation entry. It is a
 convenience, not a security control: the lists and entities of a hidden space

@@ -3,10 +3,12 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import RlMenu from 'rela-components/components/overlay/RlMenu.vue'
 import RlMenuItem from 'rela-components/components/overlay/RlMenuItem.vue'
+import RlMenuSeparator from 'rela-components/components/overlay/RlMenuSeparator.vue'
 import RlButton from 'rela-components/components/common/RlButton.vue'
 import RlIcon from 'rela-components/components/common/RlIcon.vue'
 import InlineCreateFormModal from '@/components/forms/InlineCreateFormModal.vue'
 import { usePageCreateLink, type AnchorLink } from '@/composables/usePageTabScope'
+import { leadWith, useViewEntityTypes } from '@/composables/useViewEntityTypes'
 import { usePageStore } from '@/stores/pages'
 import { useSpaceStore } from '@/stores/space'
 import type { Entity, SidebarCreate } from '@/types'
@@ -27,13 +29,20 @@ import type { Entity, SidebarCreate } from '@/types'
  * page's entity loads, the links are not known yet: the button stays in
  * place but is busy and inert, so the header does not shift and keyboard
  * focus is not lost.
+ *
+ * On a list, board, calendar or gantt, on its own route or in a page tab,
+ * the types the view shows come first, so the likely choice is the top row.
+ * The other types follow in config order, after a separator.
  */
 const space = useSpaceStore()
 const pages = usePageStore()
 const router = useRouter()
 const pageLink = usePageCreateLink()
 
-const rows = computed(() => pageLink.offered(space.create))
+const viewTypes = useViewEntityTypes()
+
+const rows = computed(() => leadWith(pageLink.offered(space.create), viewTypes.value))
+const hasRows = computed(() => rows.value.lead.length > 0 || rows.value.rest.length > 0)
 
 const creating = ref<SidebarCreate | null>(null)
 /* Fixed when the dialog opens: the dialog outlives a navigation to another page. */
@@ -65,7 +74,7 @@ function onCreatedAnother(entity: Entity) {
 <template>
   <!-- The dialog sits outside the menu's v-if: it stays open when a navigation empties the menu. -->
   <template v-if="space.create.length">
-    <RlMenu v-if="rows.length || pages.opening" align="end">
+    <RlMenu v-if="hasRows || pages.opening" align="end">
       <template #trigger="{ toggle, attrs }">
         <RlButton
           variant="primary"
@@ -79,7 +88,11 @@ function onCreatedAnother(entity: Entity) {
           <template #trailing><RlIcon name="chevron-down" :size="12" /></template>
         </RlButton>
       </template>
-      <RlMenuItem v-for="row in rows" :key="row.type" @click="open(row)">
+      <RlMenuItem v-for="row in rows.lead" :key="row.type" @click="open(row)">
+        {{ row.label }}
+      </RlMenuItem>
+      <RlMenuSeparator v-if="rows.lead.length && rows.rest.length" />
+      <RlMenuItem v-for="row in rows.rest" :key="row.type" @click="open(row)">
         {{ row.label }}
       </RlMenuItem>
     </RlMenu>
