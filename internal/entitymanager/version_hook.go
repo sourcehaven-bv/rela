@@ -39,7 +39,9 @@ type VersionRecord struct {
 	// default face (TKT-C1XUA8).
 	Face          entity.Face
 	Op            store.VersionOp
-	PrevID        string // rename only: the entity's former id
+	PrevID        string      // rename only: the entity's former id
+	PrevFace      entity.Face // conversion only: the entity's former face
+	HasPrevFace   bool
 	Type          string
 	Content       string
 	Properties    map[string]any
@@ -56,6 +58,14 @@ type VersionRecord struct {
 // caller-supplied field — so a version row cannot carry a forged principal.
 // Failure is logged, never propagated: versioning must not block a write.
 func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e *entity.Entity, prevID string) {
+	prevFace := entity.ImplicitFace
+	if e != nil {
+		prevFace = e.Face
+	}
+	m.recordEntityVersionWithPrevFace(ctx, op, e, prevID, prevFace, false)
+}
+
+func (m *Manager) recordEntityVersionWithPrevFace(ctx context.Context, op store.VersionOp, e *entity.Entity, prevID string, prevFace entity.Face, hasPrevFace bool) {
 	if m.deps.VersionRecorder == nil {
 		return
 	}
@@ -78,6 +88,8 @@ func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e
 		Face:          e.Face,
 		Op:            op,
 		PrevID:        prevID,
+		PrevFace:      prevFace,
+		HasPrevFace:   hasPrevFace,
 		Type:          e.Type,
 		Content:       e.Content,
 		Properties:    e.Properties,

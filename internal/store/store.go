@@ -185,6 +185,22 @@ type Store interface {
 	Transactor
 }
 
+// FamilyReplacer is the optional store capability used by an entity
+// conversion after its family has been renamed. ReplaceEntityFamily changes
+// the type, properties, content and face coordinates of every row at id in one
+// transaction. Relations and attachments remain keyed to the entity family;
+// the entity manager rewrites relation types and tails in that same Tx.
+type FamilyReplacer interface {
+	ReplaceEntityFamily(ctx context.Context, id string, replacements []FamilyReplacement) error
+}
+
+// FamilyReplacement pairs one stored source face with its converted target
+// row. The source face is required even when the target coordinate changes.
+type FamilyReplacement struct {
+	SourceFace entity.Face
+	Entity     *entity.Entity
+}
+
 // Transactor groups writes into one serialized unit (DEC-8UIL0).
 //
 // Tx runs fn with a transaction-bound view of the store. The contract
@@ -933,7 +949,10 @@ type VersionMeta struct {
 	Version int
 	Op      VersionOp
 	PrevID  string // set only for VersionOpRename: the entity's former ID
-	Type    string
+	// PrevFace is the source coordinate of a face-changing conversion.
+	PrevFace    entity.Face
+	HasPrevFace bool
+	Type        string
 
 	// Face is the face this version captured; zero is the implicit face of a
 	// faceless type. A lineage is per (id, face), so every row of one
@@ -988,8 +1007,12 @@ type VersionInput struct {
 	// faces holding identical bytes do not dedup against one another.
 	Face entity.Face
 
-	Op            VersionOp
-	PrevID        string
+	Op     VersionOp
+	PrevID string
+	// PrevFace identifies the source face when a conversion changes the face
+	// coordinate. Empty preserves the historical same-face rename behavior.
+	PrevFace      entity.Face
+	HasPrevFace   bool
 	Type          string
 	Content       string
 	Properties    map[string]any

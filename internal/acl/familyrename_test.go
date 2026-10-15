@@ -15,6 +15,9 @@ roles:
   renamer:
     read: ["*"]
     rename: [policy]
+  converter:
+    read: ["*"]
+    convert: [policy]
   anyrenamer:
     read: ["*"]
     rename: ["*"]
@@ -29,6 +32,7 @@ roles:
     rename: [policy]
 assignments:
   renamer: renamer
+  converter: converter
   anyrenamer: anyrenamer
   editor: editor
   typewide: typewide
@@ -54,6 +58,8 @@ func TestDecideFamily_RenameNeedsTheFamilyGrant(t *testing.T) {
 		want bool
 	}{
 		{"renamer", OpRename, true},
+		{"converter", OpConvert, true},
+		{"renamer", OpConvert, false},
 		{"anyrenamer", OpRename, true},
 		{"editor", OpRename, false},
 		{"typewide", OpRename, false},
@@ -77,6 +83,19 @@ func TestDecideFamily_RenameNeedsTheFamilyGrant(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestConvertGrantDoesNotImplyRenameOrUpdate(t *testing.T) {
+	d := mustDeclarative(t, familyRenamePolicy)
+	for _, tc := range []struct {
+		op   Op
+		want bool
+	}{{OpConvert, true}, {OpRename, false}, {OpUpdate, false}} {
+		got := mustRequest(t, d, "converter").AuthorizeWrite(t.Context(), WriteRequest{Op: tc.op, Subject: NewFamilySubject("policy", "POL-1")})
+		if got.Allow != tc.want {
+			t.Errorf("convert-only grant: %s allow=%v, want %v", tc.op, got.Allow, tc.want)
+		}
 	}
 }
 

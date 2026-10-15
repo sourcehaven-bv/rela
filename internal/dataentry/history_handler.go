@@ -187,6 +187,9 @@ func serveHistoryTimeline(
 		}
 		if m.PrevID != "" {
 			row["prev_id"] = m.PrevID
+			if m.PrevFace != m.Face {
+				row["prev_face"] = m.PrevFace.String()
+			}
 		}
 		if m.TriggeredBy != "" {
 			row["triggered_by"] = m.TriggeredBy

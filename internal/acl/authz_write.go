@@ -49,8 +49,7 @@ func (r *Request) authorizeEntityWrite(ctx context.Context, op Op, s EntitySubje
 }
 
 // decideFamily decides op on every face of an entity of type target from
-// the roles in attrs. Only rename has a family-level grant; any other op is
-// denied, because no grant list could authorize it at this level.
+// the roles in attrs. Rename and conversion have dedicated family grants.
 //
 // The local roles in attrs are conferred through identity-scoped relations
 // only (Policy.validateIdentityStructure refuses a content-scoped conferring
@@ -64,22 +63,31 @@ func (r *Request) decideFamily(attrs []RoleAttribution, op Op, target string) De
 	if deny := r.ceilingDenial(attrs, op, target); deny != nil {
 		return *deny
 	}
-	if op == OpRename {
+	if op == OpRename || op == OpConvert {
 		for _, a := range attrs {
 			role, ok := r.roleFor(a.Role)
-			if ok && grantsFamilyRename(role, target) {
+			if ok && ((op == OpRename && grantsFamilyRename(role, target)) ||
+				(op == OpConvert && grantsFamilyConvert(role, target))) {
 				return Decision{Allow: true, RuleKind: "role-grant", RuleID: a.Role, Attributions: attrs}
 			}
 		}
 	}
 	return Decision{
-		Allow:    false,
-		RuleKind: "role-grant",
-		RuleID:   "-",
-		Reason: fmt.Sprintf("no role grants %s on every face of type %q (a type with faces is renamed "+
-			"through a `rename:` grant)", op, target),
+		Allow:        false,
+		RuleKind:     "role-grant",
+		RuleID:       "-",
+		Reason:       fmt.Sprintf("no role grants %s on every face of type %q", op, target),
 		Attributions: attrs,
 	}
+}
+
+func grantsFamilyConvert(role RoleDef, target string) bool {
+	for _, entry := range role.Convert {
+		if entry == "*" || entry == target {
+			return true
+		}
+	}
+	return false
 }
 
 // grantsFamilyRename reports whether role's `rename:` list covers target.

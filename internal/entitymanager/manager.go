@@ -2604,10 +2604,12 @@ func requireManualID(meta *metamodel.Metamodel, family []*entity.Entity) error {
 // authorized so far, and the incident relations captured before the rename.
 // It keeps the rename's Tx body and its logging off Manager.
 type familyRename struct {
-	m             *Manager
-	oldID, newID  string
-	authorized    familyAuthorization
-	preRenameRels []*entity.Relation
+	m              *Manager
+	oldID, newID   string
+	conversionFrom string
+	prevFaces      map[entity.Face]entity.Face
+	authorized     familyAuthorization
+	preRenameRels  []*entity.Relation
 }
 
 // inTx is the rename's critical section. It re-authorizes the family read
@@ -2680,12 +2682,24 @@ func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
 			"error", "renamed faces could not be read")
 	}
 	for _, e := range renamed {
-		m.recordRenameAudit(ctx, oldID, e)
+		if r.conversionFrom != "" {
+			m.recordConversionAudit(ctx, oldID, r.conversionFrom, e)
+		} else {
+			m.recordRenameAudit(ctx, oldID, e)
+		}
 		// Capture the rename as a version event carrying the old id (prev_id),
 		// so a renamed entity's history is walkable back to its former id. Only
 		// the choke-point knows old->new; a later sweep sees the renamed entity
 		// as an ordinary update and cannot reconstruct this link.
-		m.recordEntityVersion(ctx, store.VersionOpRename, e, oldID)
+		prevFace := e.Face
+		hasPrevFace := false
+		if r.prevFaces != nil {
+			if source, ok := r.prevFaces[e.Face]; ok {
+				prevFace = source
+				hasPrevFace = source != e.Face
+			}
+		}
+		m.recordEntityVersionWithPrevFace(ctx, store.VersionOpRename, e, oldID, prevFace, hasPrevFace)
 	}
 
 	// Rewrite id-keyed references for the same reason the version above carries

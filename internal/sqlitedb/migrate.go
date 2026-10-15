@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 18
+const schemaVersion = 19
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -27,6 +27,17 @@ type migration struct {
 	// carries the version bump, so a failure rolls the whole step back rather
 	// than leaving a half-migrated shape stamped as complete.
 	apply func(context.Context, *sql.Conn) error
+}
+
+func chain(steps ...func(context.Context, *sql.Conn) error) func(context.Context, *sql.Conn) error {
+	return func(ctx context.Context, conn *sql.Conn) error {
+		for _, step := range steps {
+			if err := step(ctx, conn); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 // sqlSteps adapts plain statements to [migration.apply].
@@ -204,6 +215,18 @@ var migrations = []migration{
 		// EXISTS, a no-op where schemaSQL already made the tables.
 		to:    18,
 		apply: sqlSteps(channelsDDL),
+	},
+	{
+		// v18 → v19: let rename history follow a conversion across face names.
+		to: 19,
+		apply: chain(
+			addColumns([]addedColumn{{"entity_versions", "prev_face"}}),
+			sqlSteps(
+				`UPDATE entity_versions SET prev_face = face WHERE op = 'rename' AND prev_id IS NOT NULL`,
+				`DROP INDEX entity_versions_prev_id_idx`,
+				`CREATE INDEX entity_versions_prev_id_idx ON entity_versions (prev_id, (COALESCE(prev_face, face))) WHERE prev_id IS NOT NULL`,
+			),
+		),
 	},
 }
 

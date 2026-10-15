@@ -309,6 +309,19 @@ A caller with the grant who can read no face of the entity gets the same
 not-found response as for an entity that does not exist. Without the grant the
 answer is a `403` that names the type, whatever faces exist.
 
+**Converting.** Type conversion is a separate family-level write. It requires
+an explicit `convert:` grant on the source type; neither `update:` nor
+`rename:` implies it:
+
+```yaml
+editor:
+  read: [note]
+  convert: [note]         # or ["*"] for every source type
+```
+
+The server rechecks this grant when it applies the operator-declared mapping.
+As with rename, the caller must be able to read the source entity.
+
 **Identity-scoped relations.** An identity-scoped relation from a faced entity
 belongs to the whole entity. Writing one needs the verb on every face the type
 **declares**, whether or not this entity stores it. A `relation_grants:`

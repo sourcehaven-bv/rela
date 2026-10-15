@@ -47,7 +47,7 @@ Every record is one line of JSON:
 | `time`        | UTC timestamp                                                        |
 | `op`          | See the op list below |
 | `subject`     | The thing acted on (see "Subject shape" below)                       |
-| `before` / `after` | For `rename-entity` only — the identity diff                   |
+| `before` / `after` | For `rename-entity` and `convert-entity` — the identity diff |
 | `principal.user` | The OS user (from `$USER`) that initiated the operation           |
 | `principal.tool` | `cli`, `mcp`, `data-entry`, `scheduler`, or `desktop`             |
 | `principal.raw_user` | Optional. The pre-resolution identifier, when `principal_property` substituted a graph entity ID into `user` |
@@ -60,7 +60,7 @@ Every record is one line of JSON:
 
 | `op` | Meaning |
 |------|---------|
-| `create-entity`, `update-entity`, `delete-entity`, `rename-entity` | Entity writes |
+| `create-entity`, `update-entity`, `delete-entity`, `rename-entity`, `convert-entity` | Entity writes |
 | `restore-entity`, `purge-deleted-entity` | Undo of a web-app delete, and the final removal once the undo window has passed. See "Undoable deletes" below |
 | `create-relation`, `update-relation`, `delete-relation` | Relation writes |
 | `denied-write` | A write the ACL refused, or an upload the attachment policy refused. Subject names the would-be target; the summary carries the rule that fired |

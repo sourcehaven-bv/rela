@@ -37,7 +37,7 @@ import (
 // internal/acl/declarative.go.
 type ACLMapCmd struct {
 	Principal string `help:"Principal to map (a user entity ID, or the raw identifier — email/UPN — when principal_property is set). Omit to map EVERY principal (whole-graph inventory)." default:""`
-	Verb      string `help:"Restrict to one verb: read|create|update|delete. Omit for all four." enum:",read,create,update,delete" default:""`
+	Verb      string `help:"Restrict to one verb: read|create|update|delete|convert. Omit for all." enum:",read,create,update,delete,convert" default:""`
 	Type      string `help:"Restrict to one entity type. Omit for all declared types." default:""`
 	As        string `help:"Map as a CLIENT of this principal_type (e.g. app, pat, service), applying the matching client_baselines ceiling. Requires --principal." default:""`
 	Scope     string `help:"Space- or comma-separated scopes the client presents, re-opening capability the baseline closed. Requires --as." default:""`

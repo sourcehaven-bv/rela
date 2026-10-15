@@ -69,10 +69,29 @@ type Metamodel struct {
 	// BY NAME and can never submit its own mapping.
 	Copies map[string]CopyDef `yaml:"copies,omitempty"`
 
+	// Conversions declares the operator-authored transformations that may
+	// change an entity's type while retaining its identity lineage. Requests
+	// invoke a conversion by name and cannot supply their own mapping.
+	Conversions map[string]ConversionDef `yaml:"conversions,omitempty"`
+
 	// Computed lookups (not from YAML)
 	aliasMap      map[string]string // alias -> canonical name
 	inverseOwners map[string]string // inverse name -> owning canonical relation name
 	worldOrder    []string          // world names in YAML order; see [WorldOrderOf]
+}
+
+// ConversionDef is an operator-declared transformation from one entity type
+// to another. `fields` maps destination properties to the existing copy
+// interpolation syntax. Relation values name the destination relation type
+// or `drop`; `faces` maps each source face to one or more destination faces.
+type ConversionDef struct {
+	From      string              `yaml:"from"`
+	To        string              `yaml:"to"`
+	Label     string              `yaml:"label,omitempty"`
+	Fields    map[string]string   `yaml:"fields,omitempty"`
+	Content   string              `yaml:"content,omitempty"`
+	Relations map[string]string   `yaml:"relations,omitempty"`
+	Faces     map[string][]string `yaml:"faces,omitempty"`
 }
 
 // InverseOwner returns the canonical relation type that declares the

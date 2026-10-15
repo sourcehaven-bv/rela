@@ -271,7 +271,8 @@ type App struct {
 	// Constructed in NewApp from the entity manager, which is required, so
 	// this is never nil — see copiesHandler's doc for why a nil-and-skip
 	// design would render a wiring bug as a valid domain answer.
-	copies *copiesHandler
+	copies      *copiesHandler
+	conversions *conversionHandler
 	// worldNeighbors resolves an entity's LINKS under the request's world
 	// (TKT-WRLDAPI item 4). Nil until [SetWorldNeighbors] is called, in
 	// which case a world-bound response carries no relations — the pre-item-4
@@ -1286,6 +1287,8 @@ func NewApp(
 		return nil, fmt.Errorf("dataentry.NewApp: %w", cerr)
 	}
 	app.copies = copiesHandler
+	app.conversions = newConversionHandler(em)
+	app.conversions.schema = app.State
 
 	// affordanceService shares the App's acl/fieldResolver/store and takes the
 	// metamodel per-request via app.State(). The two relation-graph reads are
@@ -1305,9 +1308,15 @@ func NewApp(
 			reader:  app.reader,
 			visible: app.visibleReader,
 		}.plan,
-		copies:           copyOffers,
+		copies: copyOffers,
+		conversions: func(ctx context.Context, entityType, id string) []entitymanager.ConversionOffer {
+			return entitymanager.ConversionsForSource(ctx, em, entityType, id)
+		},
 		schema:           app.State,
 		actionConditions: func() ViewConditionFunc { return app.viewConditions },
+	}
+	app.conversions.validateFields = func(ctx context.Context, e *entity.Entity, set map[string]any) error {
+		return app.affordances.validateCreateFieldWrite(ctx, e, set)
 	}
 
 	app.serializer = entitySerializer{affordances: app.affordances}

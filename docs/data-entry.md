@@ -7806,6 +7806,30 @@ a `403` naming it. A source the caller may not read produces the same `404` as
 a source that does not exist. Any other refusal, such as an unknown definition
 or a cross-entity copy without a `target_id`, is a `422`.
 
+### Converting an entity
+
+The entity response carries `_conversions` offers, including the target type
+and the caller's advisory `allowed` verdict. The web app shows the conversion
+form for allowed offers. Before it writes, the form posts to the definition's
+`/preflight` endpoint, which lists required target properties, invalid relation
+mappings, and relations the mapping will drop. A dropped relation requires
+explicit confirmation in the form.
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/_conversions/note-to-task/preflight \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"NOTE-1"}'
+
+curl -s -X POST http://localhost:8080/api/v1/_conversions/note-to-task \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"NOTE-1","properties":{"title":"Follow up"}}'
+```
+
+The server applies only the operator's mapping, rechecks `convert:` ACL, and
+returns the new ID. Rename aliases keep old ID links resolving, and the rename
+history hook records the old ID as the predecessor. A relation the mapping
+cannot preserve returns a `422` before the entity is changed.
+
 ### Responses and errors
 
 | Situation | Response |

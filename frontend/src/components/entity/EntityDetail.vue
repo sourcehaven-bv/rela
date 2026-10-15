@@ -72,6 +72,7 @@ import { buildCreateLinkQuery } from '@/utils/createLink'
 import type { ViewSectionCreate, ViewSectionCreateTarget } from '@/api/views'
 import { entityExportUrl, getTransforms, type TransformInfo } from '@/api/transforms'
 import CopyMenu from '@/components/entity/CopyMenu.vue'
+import ConversionModal from '@/components/entity/ConversionModal.vue'
 import FaceMenu from '@/components/entity/FaceMenu.vue'
 import EntityActionsMenu from '@/components/entity/EntityActionsMenu.vue'
 import type { EntityAction } from '@/components/entity/entityActions'
@@ -79,7 +80,7 @@ import DuplicateModal from '@/components/entity/DuplicateModal.vue'
 import WorldBadge from '@/components/entity/WorldBadge.vue'
 import WorldBanner from '@/components/common/WorldBanner.vue'
 import { invokeCopy } from '@/api/copies'
-import type { CopyOffer, Face } from '@/types'
+import type { CopyOffer, ConversionOffer, Face } from '@/types'
 import SectionEditForm, { type SectionEditField } from '@/components/forms/SectionEditForm.vue'
 import AutoSaveIndicator from '@/components/forms/AutoSaveIndicator.vue'
 import EntityTitle from './EntityTitle.vue'
@@ -1196,6 +1197,17 @@ async function requestDelete() {
 // from `[]` (none declared), but this page renders nothing for both, so the
 // distinction is collapsed HERE, once, rather than carried into every reader.
 const copyOffers = computed<CopyOffer[]>(() => entry.value?._copies ?? [])
+const conversionOffers = computed<ConversionOffer[]>(() => entry.value?._conversions?.filter((o) => o.allowed) ?? [])
+const conversionOffer = ref<ConversionOffer | null>(null)
+
+function conversionDone(id: string, face: string) {
+  const offer = conversionOffer.value
+  conversionOffer.value = null
+  if (offer) {
+    uiStore.success(`Converted to ${offer.to}`)
+    router.push({ path: `/entity/${offer.to}/${id}${face ? `@${face}` : ''}`, query: { ...route.query } })
+  }
+}
 
 // Faces render on EVERY screen, world-bound or not — a reader wants the way
 // back to the draft, an author wants to see what readers see, and the
@@ -2303,6 +2315,9 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
             a world, where copyOffers is empty; see its comment for why.
           -->
           <CopyMenu :offers="copyOffers" :busy="copyBusy" @invoke="runCopy" />
+          <RlButton v-for="offer in conversionOffers" :key="offer.name" variant="secondary" @click="conversionOffer = offer">
+            {{ offer.label }}
+          </RlButton>
           <!--
             The page-header create menu: sections that opted into
             `create.in: [header]`. The server assembles and dedupes it, so this
@@ -2389,6 +2404,13 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
         :world="worldParam || undefined"
         @close="showDuplicateModal = false"
         @created="handleDuplicated"
+      />
+      <ConversionModal
+        v-if="conversionOffer && entry"
+        :source="entry"
+        :offer="conversionOffer"
+        @close="conversionOffer = null"
+        @converted="conversionDone"
       />
       <NewPileDialog
         v-if="pileActions.newPileOpen.value"

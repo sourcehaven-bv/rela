@@ -48,6 +48,7 @@ func (g *Generator) buildEntitySchema(typeName string, def metamodel.EntityDef) 
 	}
 	for name, desc := range map[string]string{
 		"_copies":      "Copy definitions offered from this face (promote, translate)",
+		"_conversions": "Operator-declared entity type conversions offered from this entity",
 		"_faces":       "The other faces of this entity the reader may see",
 		"inaccessible": "Properties that exist but whose value cannot be read (locked content)",
 		"warnings":     "Soft validation findings from the write that produced this response",

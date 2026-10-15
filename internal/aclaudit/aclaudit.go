@@ -296,17 +296,18 @@ func splitStateGrant(entry string) (typeName, face string, isState bool) {
 // verbLists returns the grant lists of a role for iteration.
 func verbLists(r acl.RoleDef) map[string][]string {
 	return map[string][]string{
-		"create": r.Create,
-		"update": r.Update,
-		"delete": r.Delete,
-		"rename": r.Rename,
-		"read":   r.Read,
+		"create":  r.Create,
+		"update":  r.Update,
+		"delete":  r.Delete,
+		"rename":  r.Rename,
+		"convert": r.Convert,
+		"read":    r.Read,
 	}
 }
 
 // hasWildcardWrite reports whether a role grants "*" on any write verb.
 func hasWildcardWrite(r acl.RoleDef) bool {
-	for _, list := range [][]string{r.Create, r.Update, r.Delete, r.Rename} {
+	for _, list := range [][]string{r.Create, r.Update, r.Delete, r.Rename, r.Convert} {
 		if slices.Contains(list, "*") {
 			return true
 		}

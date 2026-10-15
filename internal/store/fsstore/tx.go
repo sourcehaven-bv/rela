@@ -87,6 +87,12 @@ func (s *FSStore) RenameFamily(ctx context.Context, oldID, newID string) (*store
 	return s.renameEntity(ctx, oldID, newID)
 }
 
+// ReplaceEntityFamily implements store.FamilyReplacer.
+func (s *FSStore) ReplaceEntityFamily(ctx context.Context, id string, replacements []store.FamilyReplacement) error {
+	defer s.lockTx()()
+	return s.replaceEntityFamily(ctx, id, replacements)
+}
+
 // CreateRelation implements store.RelationWriter.
 func (s *FSStore) CreateRelation(
 	ctx context.Context, k entity.RelationKey, data *store.RelationData,
@@ -156,6 +162,10 @@ func (t txStore) DeleteFace(ctx context.Context, ref entity.Ref) (*store.DeleteR
 
 func (t txStore) RenameFamily(ctx context.Context, oldID, newID string) (*store.RenameResult, error) {
 	return t.renameEntity(ctx, oldID, newID)
+}
+
+func (t txStore) ReplaceEntityFamily(ctx context.Context, id string, replacements []store.FamilyReplacement) error {
+	return t.replaceEntityFamily(ctx, id, replacements)
 }
 
 func (t txStore) CreateRelation(

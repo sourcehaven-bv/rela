@@ -1852,6 +1852,84 @@ PostgreSQL backend rolls back a failed copy. On the filesystem and in-memory
 backends the transaction is a write lock only, so a failure part-way through
 can leave a partially written target face.
 
+### Declaring entity conversions
+
+`conversions:` declares administrator-approved entity type changes. A user
+invokes only a conversion name; the client cannot submit its own mapping.
+Each destination property is mapped explicitly, and incident relation types
+must be mapped or dropped. In a conversion, `{{source.title}}` reads the
+property from the entity being converted. A whole-property reference preserves
+the property's stored value type, so an integer or list remains an integer or
+list. For compatibility with copy definitions, `{{new.title}}` is also
+accepted, but `source` is clearer here because it names the conversion's input.
+Unmapped source properties are not carried forward.
+
+```yaml
+conversions:
+  note-to-task:
+    from: note
+    to: task
+    label: Convert to task
+    fields:
+      title: "{{source.title}}"
+      description: "{{source.body}}"
+    relations:
+      related-to: related-to
+      mentions: drop
+    faces:
+      "": [""]
+```
+
+Here `""` is an empty face name: the implicit, unnamed state stored under the
+bare entity ID. A faceless type has this one state. It is not a wildcard or a
+missing mapping. A type that declares `faces:` has only named states such as
+`POL-1@draft`; it has no empty-name face.
+
+For example, a faced-to-faced conversion can declare a mapping for every
+source face, with one or more target-face choices:
+
+```yaml
+entities:
+  policy:
+    label: Policy
+    faces:
+      draft: {label: Draft}
+      published: {label: Published}
+    properties:
+      title: {type: string, required: true}
+  controlled-document:
+    label: Controlled document
+    faces:
+      draft: {label: Draft}
+      approved: {label: Approved}
+    properties:
+      title: {type: string, required: true}
+relations: {}
+conversions:
+  policy-to-controlled-document:
+    from: policy
+    to: controlled-document
+    fields:
+      title: "{{source.title}}"
+    faces:
+      draft: [draft, approved]
+      published: [approved]
+```
+
+The operator declares the available face choices; when a mapping lists more
+than one target face, the user chooses one during conversion. The conversion
+keeps the family rows together, moves relation tails to the selected face,
+and moves face-scoped comments. History follows the source face through the
+conversion even when its destination face has a different name.
+
+Required destination fields not produced by the mapping are entered in the
+conversion form. Before saving, Rela previews required fields and relation
+mappings; the user confirms any configured drops. The ACL role's `convert:`
+grant is separate from `rename:` and is matched against the source type.
+Conversion rekeys the entity family and reuses rename aliases and history
+lineage, so old entity links continue to resolve after faceless and faced
+conversions.
+
 ### Checking stored states
 
 `rela analyze states` reports state rows the schema does not account for. Three

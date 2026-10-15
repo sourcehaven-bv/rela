@@ -2764,6 +2764,8 @@ func (r versionRecorder) RecordVersion(ctx context.Context, v entitymanager.Vers
 		Face:          v.Face,
 		Op:            v.Op,
 		PrevID:        v.PrevID,
+		PrevFace:      v.PrevFace,
+		HasPrevFace:   v.HasPrevFace,
 		Type:          v.Type,
 		Content:       v.Content,
 		Properties:    v.Properties,
