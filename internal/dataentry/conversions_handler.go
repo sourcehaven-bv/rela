@@ -75,7 +75,16 @@ func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.R
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "source_id is required", "")
 		return
 	}
-	req := entitymanager.ConversionRequest{Definition: name, SourceID: body.SourceID, SourceFace: body.SourceFace, TargetID: body.TargetID, Properties: body.Properties, Content: body.Content, DropRelations: body.DropRelations, FaceMapping: body.Faces}
+	req := entitymanager.ConversionRequest{
+		Definition:    name,
+		SourceID:      body.SourceID,
+		SourceFace:    body.SourceFace,
+		TargetID:      body.TargetID,
+		Properties:    body.Properties,
+		Content:       body.Content,
+		DropRelations: body.DropRelations,
+		FaceMapping:   body.Faces,
+	}
 	preview, err := entitymanager.PreviewConversion(r.Context(), h.manager, req)
 	if err != nil {
 		writeConversionError(w, r, err)
@@ -86,13 +95,22 @@ func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.R
 		if id == "" {
 			id = "CONVERSION-PREVIEW"
 		}
-		if err := h.validateFields(r.Context(), &entity.Entity{ID: id, Type: preview.TargetType, Properties: body.Properties}, body.Properties); err != nil {
-			writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", err.Error())
+		candidate := &entity.Entity{ID: id, Type: preview.TargetType, Properties: body.Properties}
+		if validationErr := h.validateFields(r.Context(), candidate, body.Properties); validationErr != nil {
+			writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", validationErr.Error())
 			return
 		}
 	}
 	if preflight {
-		writeV1JSON(w, http.StatusOK, v1.ConversionPreview{TargetType: preview.TargetType, Required: preview.Required, RequiredFaces: preview.RequiredFaces, RelationsToDrop: preview.RelationsToDrop, InvalidRelations: preview.InvalidRelations, InvalidFaces: preview.InvalidFaces, TargetFaces: preview.TargetFaces})
+		writeV1JSON(w, http.StatusOK, v1.ConversionPreview{
+			TargetType:       preview.TargetType,
+			Required:         preview.Required,
+			RequiredFaces:    preview.RequiredFaces,
+			RelationsToDrop:  preview.RelationsToDrop,
+			InvalidRelations: preview.InvalidRelations,
+			InvalidFaces:     preview.InvalidFaces,
+			TargetFaces:      preview.TargetFaces,
+		})
 		return
 	}
 	res, err := entitymanager.ConvertEntity(r.Context(), h.manager, req)
@@ -100,7 +118,13 @@ func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.R
 		writeConversionError(w, r, err)
 		return
 	}
-	writeV1JSON(w, http.StatusOK, v1.ConversionResult{Definition: res.Definition, OldID: res.OldID, EntityID: res.Entity.ID, Face: res.Entity.Face.String(), RelationsDropped: res.RelationsDropped})
+	writeV1JSON(w, http.StatusOK, v1.ConversionResult{
+		Definition:       res.Definition,
+		OldID:            res.OldID,
+		EntityID:         res.Entity.ID,
+		Face:             res.Entity.Face.String(),
+		RelationsDropped: res.RelationsDropped,
+	})
 }
 
 func writeConversionError(w http.ResponseWriter, r *http.Request, err error) {
@@ -117,7 +141,7 @@ func writeConversionError(w http.ResponseWriter, r *http.Request, err error) {
 		writeV1Error(w, r, http.StatusConflict, "conflict", "Conversion target is already taken", "")
 		return
 	}
-	if errors.Is(err, entitymanager.ErrUnknownConversion) || errors.Is(err, entitymanager.ErrConversionSourceMismatch) || errors.Is(err, entitymanager.ErrConversionFaceFamily) || errors.Is(err, entitymanager.ErrConversionInvalid) {
+	if isConversionInputError(err) {
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "conversion_failed", "Conversion could not be applied", err.Error())
 		return
 	}
@@ -128,4 +152,18 @@ func writeConversionError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	slog.Error("dataentry: conversion failed", "err", err)
 	writeV1Error(w, r, http.StatusInternalServerError, "conversion_failed", "Conversion could not be applied", "check server logs")
+}
+
+func isConversionInputError(err error) bool {
+	for _, sentinel := range []error{
+		entitymanager.ErrUnknownConversion,
+		entitymanager.ErrConversionSourceMismatch,
+		entitymanager.ErrConversionFaceFamily,
+		entitymanager.ErrConversionInvalid,
+	} {
+		if errors.Is(err, sentinel) {
+			return true
+		}
+	}
+	return false
 }

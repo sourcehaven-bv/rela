@@ -47,8 +47,6 @@ conversions:
       description: "{{source.body}}"
     relations:
       relates-to: relates-to
-    faces:
-      "": [""]
   note-to-task-dropping-relation:
     from: note
     to: task
@@ -56,16 +54,14 @@ conversions:
       title: "{{source.title}}"
     relations:
       relates-to: drop
-    faces:
-      "": [""]
 `
-	meta, err := metamodel.Parse([]byte(schema))
-	if err != nil {
-		t.Fatalf("parse schema: %v", err)
+	meta, parseErr := metamodel.Parse([]byte(schema))
+	if parseErr != nil {
+		t.Fatalf("parse schema: %v", parseErr)
 	}
-	transitions, err := statemachine.Compile(meta)
-	if err != nil {
-		t.Fatalf("compile transitions: %v", err)
+	transitions, transitionsErr := statemachine.Compile(meta)
+	if transitionsErr != nil {
+		t.Fatalf("compile transitions: %v", transitionsErr)
 	}
 	st := memstore.New()
 	hooks := &conversionHooks{}
@@ -141,8 +137,8 @@ conversions:
 	var conversionAudit *audit.Record
 	for _, record := range auditor.Records() {
 		if record.Op == audit.OpConvertEntity {
-			copy := record
-			conversionAudit = &copy
+			copiedRecord := record
+			conversionAudit = &copiedRecord
 		}
 	}
 	if conversionAudit == nil || conversionAudit.Before.Type != "note" || conversionAudit.After.Type != "task" {
@@ -210,13 +206,13 @@ conversions:
       draft: [active, done]
       final: [active]
 `
-	meta, err := metamodel.Parse([]byte(schema))
-	if err != nil {
-		t.Fatal(err)
+	meta, parseErr := metamodel.Parse([]byte(schema))
+	if parseErr != nil {
+		t.Fatal(parseErr)
 	}
-	transitions, err := statemachine.Compile(meta)
-	if err != nil {
-		t.Fatal(err)
+	transitions, transitionsErr := statemachine.Compile(meta)
+	if transitionsErr != nil {
+		t.Fatal(transitionsErr)
 	}
 	st := memstore.New()
 	hooks := &conversionHooks{}
@@ -294,7 +290,7 @@ func (h *conversionHooks) EntityRenamed(_ context.Context, oldID, newID string) 
 }
 func (*conversionHooks) EntityDeleted(context.Context, string) error                  { return nil }
 func (*conversionHooks) EntityFaceDeleted(context.Context, string, entity.Face) error { return nil }
-func (h *conversionHooks) EntityFaceMoved(_ context.Context, _ string, _ string, from, to entity.Face) error {
+func (h *conversionHooks) EntityFaceMoved(_ context.Context, _, _ string, from, to entity.Face) error {
 	h.faceMoves = append(h.faceMoves, [2]entity.Face{from, to})
 	return nil
 }

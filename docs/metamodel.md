@@ -1878,44 +1878,53 @@ conversions:
     relations:
       related-to: related-to
       mentions: drop
-    faces:
-      "": [""]
 ```
 
-The empty face name (`""`) means the type's implicit, faceless row. Required
-destination fields not produced by the mapping are entered in the conversion
-form. Before saving, Rela previews required fields and the effects of relation
-mappings. The user confirms any configured relation drops.
+When both types are faceless, their implicit, unnamed rows map to each other
+and `faces:` can be omitted. This row is stored under the bare entity ID. It is
+not a wildcard or a missing mapping. A type that declares `faces:` has only
+named rows such as `POL-1@draft`; it has no empty-name face. If either type has
+faces, declare a mapping for every source face. Use `""` as the source or
+target name when mapping the implicit face.
 
-A faced conversion names its face coordinates explicitly; for example, this
-maps one faceless source row to either a draft or approved destination face:
+Required destination fields not produced by the mapping are entered in the
+conversion form. Before saving, Rela previews required fields and the effects
+of relation mappings. The user confirms any configured relation drops.
+
+A faced conversion names its face coordinates explicitly. For example, the
+operator maps both policy faces to the target type and gives users a choice
+when converting a draft:
 
 ```yaml
 entities:
-  note:
-    label: Note
+  policy:
+    label: Policy
+    faces:
+      draft: {label: Draft}
+      published: {label: Published}
     properties: {title: {type: string}}
   controlled-document:
     label: Controlled document
     faces:
-      draft: {label: Draft}
+      working: {label: Working}
       approved: {label: Approved}
     properties: {title: {type: string}}
 conversions:
-  note-to-controlled-document:
-    from: note
+  policy-to-controlled-document:
+    from: policy
     to: controlled-document
     fields:
       title: "{{source.title}}"
     faces:
-      "": [draft, approved]
+      draft: [working, approved]
+      published: [approved]
 ```
 
-The operator lists the destination face choices; when more than one is listed,
-the user chooses one in the conversion form. The current write path supports
-conversions between faceless types only; faced definitions are validated but
-writes are refused until face-scoped history can follow a changed face
-coordinate.
+The user chooses `working` or `approved` for a draft source. The published
+face maps directly to `approved`, since it has one configured choice. The
+conversion moves the family rows, face-scoped relations, comments and history
+lineage to the selected target faces; old entity links still resolve through
+the alias.
 
 The ACL role's `convert:` grant is separate from `rename:` and is matched
 against the source type. Conversion rekeys the entity family and reuses rename

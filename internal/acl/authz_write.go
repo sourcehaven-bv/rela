@@ -66,9 +66,20 @@ func (r *Request) decideFamily(attrs []RoleAttribution, op Op, target string) De
 	if op == OpRename || op == OpConvert {
 		for _, a := range attrs {
 			role, ok := r.roleFor(a.Role)
-			if ok && ((op == OpRename && grantsFamilyRename(role, target)) ||
-				(op == OpConvert && grantsFamilyConvert(role, target))) {
-				return Decision{Allow: true, RuleKind: "role-grant", RuleID: a.Role, Attributions: attrs}
+			if !ok {
+				continue
+			}
+			switch op {
+			case OpRename:
+				if grantsFamilyRename(role, target) {
+					return Decision{Allow: true, RuleKind: "role-grant", RuleID: a.Role, Attributions: attrs}
+				}
+			case OpConvert:
+				if grantsFamilyConvert(role, target) {
+					return Decision{Allow: true, RuleKind: "role-grant", RuleID: a.Role, Attributions: attrs}
+				}
+			case OpCreate, OpUpdate, OpDelete:
+				continue
 			}
 		}
 	}

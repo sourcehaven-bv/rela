@@ -1525,7 +1525,7 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	if offers := svc.computeCopyOffers(ctx, e); offers != nil {
 		result.Copies = &offers
 	}
-	if offers := computeConversionOffers(svc, ctx, e); offers != nil {
+	if offers := computeConversionOffers(ctx, svc, e); offers != nil {
 		result.Conversions = &offers
 	}
 	if detail := svc.computeDetailActions(ctx, e); detail != nil {
@@ -1757,14 +1757,23 @@ func (svc affordanceService) computeCopyOffers(
 	return out
 }
 
-func computeConversionOffers(svc affordanceService, ctx context.Context, e *entityPkg.Entity) []v1.ConversionOffer {
+func computeConversionOffers(ctx context.Context, svc affordanceService, e *entityPkg.Entity) []v1.ConversionOffer {
 	if svc.conversions == nil || e == nil {
 		return nil
 	}
 	offers := svc.conversions(ctx, e.Type, e.ID)
 	out := make([]v1.ConversionOffer, 0, len(offers))
 	for _, o := range offers {
-		out = append(out, v1.ConversionOffer{Name: o.Name, Label: o.Label, To: o.To, Allowed: o.Allowed, Reason: o.Reason, MappedFields: o.MappedFields, ContentMapped: o.ContentMapped, FaceChoices: o.FaceChoices})
+		out = append(out, v1.ConversionOffer{
+			Name:          o.Name,
+			Label:         o.Label,
+			To:            o.To,
+			Allowed:       o.Allowed,
+			Reason:        o.Reason,
+			MappedFields:  o.MappedFields,
+			ContentMapped: o.ContentMapped,
+			FaceChoices:   o.FaceChoices,
+		})
 	}
 	return out
 }

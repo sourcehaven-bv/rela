@@ -24,13 +24,14 @@ conversions:
     to: task
     fields:
       title: "{{source.title}}"
-    faces:
-      "": [""]
 `
 
 func TestConversionDefinitionsAreValidated(t *testing.T) {
 	if _, err := Parse([]byte(conversionSchema)); err != nil {
 		t.Fatalf("valid conversion rejected: %v", err)
+	}
+	if strings.Contains(conversionSchema, "faces:") {
+		t.Fatal("faceless conversion example should not need a face mapping")
 	}
 	legacyCopySyntax := strings.Replace(conversionSchema, "{{source.title}}", "{{new.title}}", 1)
 	if _, err := Parse([]byte(legacyCopySyntax)); err != nil {

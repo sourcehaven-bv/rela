@@ -1841,7 +1841,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// version lineage (entity_versions keys on face), so capturing one face
 	// left every other face's history without a delete marker.
 	for _, e := range res.DeletedEntities {
-		m.recordEntityVersion(ctx, store.VersionOpDelete, e, "")
+		m.recordEntityVersion(ctx, e)
 	}
 
 	// Tell id-keyed subscribers the entity is gone. They decide what to do:
@@ -2176,7 +2176,7 @@ func (m *Manager) recordPartialCascade(
 		return
 	}
 	for _, e := range res.DeletedEntities {
-		m.recordEntityVersion(ctx, store.VersionOpDelete, e, "")
+		m.recordEntityVersion(ctx, e)
 	}
 	m.recordFamilyDeleteAudit(ctx, res.DeletedEntities, len(res.DeletedRelations))
 	if len(res.DeletedRelations) == 0 {
@@ -2344,7 +2344,7 @@ func (m *Manager) DeleteEntityFace(
 
 	// Version capture, audit and relation attribution after commit, exactly
 	// as DeleteEntity orders them and for the same reasons.
-	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
+	m.recordEntityVersion(ctx, current)
 	notifyAliasesOfFaceDelete(ctx, m.deps.AliasRewriter, id, face)
 	if lastFace {
 		// The entity is gone, not just a face of it.
@@ -2683,7 +2683,7 @@ func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
 	}
 	for _, e := range renamed {
 		if r.conversionFrom != "" {
-			recordConversionAudit(m, ctx, oldID, r.conversionFrom, e)
+			recordConversionAudit(ctx, m, oldID, r.conversionFrom, e)
 		} else {
 			m.recordRenameAudit(ctx, oldID, e)
 		}
@@ -2699,7 +2699,7 @@ func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
 				hasPrevFace = source != e.Face
 			}
 		}
-		recordEntityVersionWithPrevFace(m, ctx, store.VersionOpRename, e, oldID, prevFace, hasPrevFace)
+		recordEntityVersionWithPrevFace(ctx, m, store.VersionOpRename, e, oldID, prevFace, hasPrevFace)
 	}
 
 	// Rewrite id-keyed references for the same reason the version above carries

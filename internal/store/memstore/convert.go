@@ -2,6 +2,7 @@ package memstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 var _ store.FamilyReplacer = (*MemStore)(nil)
 
-func replaceEntityFamily(m *MemStore, _ context.Context, id string, replacements []store.FamilyReplacement) error {
+func replaceEntityFamily(_ context.Context, m *MemStore, id string, replacements []store.FamilyReplacement) error {
 	if err := validateID(id); err != nil {
 		return err
 	}
@@ -29,7 +30,7 @@ func replaceEntityFamily(m *MemStore, _ context.Context, id string, replacements
 		return store.ErrNotFound
 	}
 	if len(replacements) == 0 {
-		return fmt.Errorf("memstore: replacement family must not be empty")
+		return errors.New("memstore: replacement family must not be empty")
 	}
 	seen := make(map[entity.Face]bool, len(replacements))
 	seenSource := make(map[entity.Face]bool, len(replacements))
@@ -63,7 +64,7 @@ func replaceEntityFamily(m *MemStore, _ context.Context, id string, replacements
 		newRows = append(newRows, target.Clone())
 	}
 	if len(seenSource) != len(oldFaces) {
-		return fmt.Errorf("memstore: replacement must account for every source face")
+		return errors.New("memstore: replacement must account for every source face")
 	}
 
 	for _, key := range oldKeys {

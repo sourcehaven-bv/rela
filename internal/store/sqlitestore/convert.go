@@ -2,6 +2,7 @@ package sqlitestore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,15 +13,16 @@ import (
 
 var _ store.FamilyReplacer = (*Store)(nil)
 
+//nolint:gocognit // Validate the whole family before changing any row.
 func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements []store.FamilyReplacement) error {
 	if s.conn == nil {
 		return s.Tx(ctx, func(tx store.Store) error {
 			txCtx := store.ContextInTx(ctx)
-			return tx.(store.FamilyReplacer).ReplaceEntityFamily(txCtx, id, replacements)
+			return tx.(store.FamilyReplacer).ReplaceEntityFamily(txCtx, id, replacements) //nolint:errcheck // Tx propagates the callback error.
 		})
 	}
 	if id == "" || len(replacements) == 0 {
-		return fmt.Errorf("sqlitestore: replacement family requires an id and rows")
+		return errors.New("sqlitestore: replacement family requires an id and rows")
 	}
 	current := map[entity.Face]bool{}
 	for row, err := range s.ListEntities(ctx, store.EntityQuery{IDs: []string{id}, Faces: store.AllFaces()}) {
@@ -43,7 +45,7 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 		if typeName == "" {
 			typeName = e.Type
 		} else if e.Type != typeName {
-			return fmt.Errorf("sqlitestore: replacement family has mixed entity types")
+			return errors.New("sqlitestore: replacement family has mixed entity types")
 		}
 		if seenTarget[e.Face] {
 			return fmt.Errorf("sqlitestore: replacement family maps multiple rows to face %q", e.Face)
@@ -52,7 +54,7 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 		seenTarget[e.Face] = true
 	}
 	if len(seenSource) != len(current) {
-		return fmt.Errorf("sqlitestore: replacement must account for every source face")
+		return errors.New("sqlitestore: replacement must account for every source face")
 	}
 
 	for i, replacement := range replacements {

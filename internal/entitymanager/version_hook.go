@@ -57,15 +57,23 @@ type VersionRecord struct {
 // builds). Attribution is read from ctx exactly like audit — never from a
 // caller-supplied field — so a version row cannot carry a forged principal.
 // Failure is logged, never propagated: versioning must not block a write.
-func (m *Manager) recordEntityVersion(ctx context.Context, op store.VersionOp, e *entity.Entity, prevID string) {
+func (m *Manager) recordEntityVersion(ctx context.Context, e *entity.Entity) {
 	prevFace := entity.ImplicitFace
 	if e != nil {
 		prevFace = e.Face
 	}
-	recordEntityVersionWithPrevFace(m, ctx, op, e, prevID, prevFace, false)
+	recordEntityVersionWithPrevFace(ctx, m, store.VersionOpDelete, e, "", prevFace, false)
 }
 
-func recordEntityVersionWithPrevFace(m *Manager, ctx context.Context, op store.VersionOp, e *entity.Entity, prevID string, prevFace entity.Face, hasPrevFace bool) {
+func recordEntityVersionWithPrevFace(
+	ctx context.Context,
+	m *Manager,
+	op store.VersionOp,
+	e *entity.Entity,
+	prevID string,
+	prevFace entity.Face,
+	hasPrevFace bool,
+) {
 	if m.deps.VersionRecorder == nil {
 		return
 	}

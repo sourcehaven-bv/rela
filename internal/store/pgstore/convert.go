@@ -2,6 +2,7 @@ package pgstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,11 +19,11 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 	if s.txPending == nil {
 		return s.Tx(ctx, func(tx store.Store) error {
 			txCtx := store.ContextInTx(ctx)
-			return tx.(store.FamilyReplacer).ReplaceEntityFamily(txCtx, id, replacements)
+			return tx.(store.FamilyReplacer).ReplaceEntityFamily(txCtx, id, replacements) //nolint:errcheck // Tx propagates the callback error.
 		})
 	}
 	if id == "" || len(replacements) == 0 {
-		return fmt.Errorf("pgstore: replacement family requires an id and rows")
+		return errors.New("pgstore: replacement family requires an id and rows")
 	}
 
 	current := map[entity.Face]bool{}
@@ -46,7 +47,7 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 		if typeName == "" {
 			typeName = e.Type
 		} else if e.Type != typeName {
-			return fmt.Errorf("pgstore: replacement family has mixed entity types")
+			return errors.New("pgstore: replacement family has mixed entity types")
 		}
 		if seenTarget[e.Face] {
 			return fmt.Errorf("pgstore: replacement family maps multiple rows to face %q", e.Face)
@@ -55,7 +56,7 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 		seenTarget[e.Face] = true
 	}
 	if len(seenSource) != len(current) {
-		return fmt.Errorf("pgstore: replacement must account for every source face")
+		return errors.New("pgstore: replacement must account for every source face")
 	}
 
 	for i, replacement := range replacements {

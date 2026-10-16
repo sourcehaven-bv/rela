@@ -14,7 +14,8 @@ import (
 
 var _ store.FamilyReplacer = (*FSStore)(nil)
 
-func replaceEntityFamily(s *FSStore, _ context.Context, id string, replacements []store.FamilyReplacement) error {
+//nolint:gocognit // Validate the whole family before changing any row.
+func replaceEntityFamily(_ context.Context, s *FSStore, id string, replacements []store.FamilyReplacement) error {
 	if err := storeutil.ValidateID(id); err != nil {
 		return err
 	}
@@ -26,7 +27,7 @@ func replaceEntityFamily(s *FSStore, _ context.Context, id string, replacements 
 		return store.ErrNotFound
 	}
 	if len(replacements) == 0 {
-		return fmt.Errorf("fsstore: replacement family must not be empty")
+		return errors.New("fsstore: replacement family must not be empty")
 	}
 	seen := make(map[entity.Face]bool, len(replacements))
 	seenSource := make(map[entity.Face]bool, len(replacements))
@@ -48,7 +49,7 @@ func replaceEntityFamily(s *FSStore, _ context.Context, id string, replacements 
 		if typeName == "" {
 			typeName = target.Type
 		} else if target.Type != typeName {
-			return fmt.Errorf("fsstore: replacement family has mixed entity types")
+			return errors.New("fsstore: replacement family has mixed entity types")
 		}
 		if _, ok := s.layout.schemas[target.Type]; !ok {
 			return fmt.Errorf("fsstore: replacement type %q is not declared", target.Type)
@@ -63,7 +64,7 @@ func replaceEntityFamily(s *FSStore, _ context.Context, id string, replacements 
 		newRows = append(newRows, target.Clone())
 	}
 	if len(seenSource) != len(oldFaces) {
-		return fmt.Errorf("fsstore: replacement must account for every source face")
+		return errors.New("fsstore: replacement must account for every source face")
 	}
 
 	// Check every destination before writing any of them. Conversion targets
