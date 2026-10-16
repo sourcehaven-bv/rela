@@ -189,6 +189,7 @@ components:
   pglease:          { in: internal/lease/pglease }
   # Realtime channels (TKT-DD8B6I): message logs anchored to an entity.
   channels:         { in: internal/channels }
+  realtime:         { in: internal/realtime }
   filechannels:     { in: internal/channels/filechannels }
   sqlchannels:      { in: internal/channels/sqlchannels }
   sqlitechannels:   { in: internal/channels/sqlitechannels }
@@ -775,6 +776,8 @@ deps:
       - rootfs
       # Loads realtime.yaml at boot and holds the compiled config.
       - realtimecfg
+      # Builds the channel service over the channel store.
+      - realtime
       # hostconfig.Dir: the default source of secrets and AI/mail settings.
       - hostconfig
       # The sqlite recipe OPENS the database and hands the same handle to both
@@ -868,6 +871,9 @@ deps:
       - dataentryconfig
       - nextaction
       - acl
+      # The channel service's access adapter asks access.ModeOf whether the
+      # instance refuses writes. access is a leaf (acl, principal).
+      - access
       # appbuild constructs the affordance resolver so the field write gate
       # and the two gated-read bundles can share ONE instance (TKT-0XL8MF).
       # Safe as a dependency edge: affordances is a near-leaf (acl, entity,
@@ -1581,6 +1587,20 @@ deps:
   channels:
     mayDependOn:
       - entity
+  # The channel service (TKT-ZU7P13): authorization, validation, rate limits
+  # and ephemeral signals over the channel store. Every gate comes in through
+  # a consumer-side interface appbuild implements, so it lists neither acl,
+  # store nor visibility.
+  realtime:
+    mayDependOn:
+      - channels
+      - entity
+      - metamodel
+      - predicate
+      - predicatefns
+      - principal
+      - realtimecfg
+      - realtimelimits
   # The file backend: one directory per channel through the storage seam,
   # with a YAML head and JSON-lines log segments.
   filechannels:

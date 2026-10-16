@@ -1,0 +1,216 @@
+//go:build !postgres && !memorybackend && !sqlite
+
+package appbuild_test
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
+	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
+	"github.com/Sourcehaven-BV/rela/internal/search"
+	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
+)
+
+const serviceRealtimeYAML = `version: 1
+channel_types:
+  room:
+    attach_to: [doc, memo]
+    roles:
+      owner: { from: entity.owner }
+    message_types:
+      note:
+        properties:
+          body: { type: string }
+          about: { type: ref, to: [doc] }
+        post: [owner]
+`
+
+// serviceSchema declares a required title, so a ref renders it, and a memo
+// type, so a policy can let a caller read one type and not the other.
+const serviceSchema = `version: "1.0"
+entities:
+  doc:
+    label: Doc
+    id_prefix: "DOC-"
+    id_type: sequential
+    properties:
+      title: {type: string, required: true}
+      owner: {type: string}
+  memo:
+    label: Memo
+    id_prefix: "MEMO-"
+    id_type: sequential
+    properties:
+      title: {type: string, required: true}
+      owner: {type: string}
+`
+
+// serviceFixture assembles a project with realtime.yaml over a memstore
+// holding DOC-1 (owner alice), DOC-2 (owner bob) and MEMO-1 (owner bob).
+func serviceFixture(t *testing.T, files map[string]string, opts ...appbuild.Option) *appbuild.Services {
+	t.Helper()
+	files["realtime.yaml"] = serviceRealtimeYAML
+	files["schema.yaml"] = serviceSchema
+	base, err := realtimeBase(t, realtimeProject(t, files), opts...)
+	require.NoError(t, err)
+	st := memstore.New()
+	ctx := context.Background()
+	require.NoError(t, st.CreateEntity(ctx, &entity.Entity{ID: "DOC-1", Type: "doc",
+		Properties: map[string]any{"title": "One", "owner": "alice"}}))
+	require.NoError(t, st.CreateEntity(ctx, &entity.Entity{ID: "DOC-2", Type: "doc",
+		Properties: map[string]any{"title": "Two", "owner": "bob"}}))
+	require.NoError(t, st.CreateEntity(ctx, &entity.Entity{ID: "MEMO-1", Type: "memo",
+		Properties: map[string]any{"title": "Memo", "owner": "bob"}}))
+	svc, err := base.Assemble(st, search.New(st, search.NewLinearSearch()), nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	return svc
+}
+
+func asUser(name string) context.Context {
+	return principal.With(context.Background(), principal.Principal{User: name, Tool: principal.ToolDataEntry})
+}
+
+var doc1Room = realtime.RawAddress{EntityType: "doc", Anchor: "DOC-1", Type: "room"}
+
+func note(body string) realtime.PostInput {
+	return realtime.PostInput{Type: "note", Props: map[string]any{"body": body}}
+}
+
+func requireStatus(t *testing.T, err error, status int) {
+	t.Helper()
+	d, ok := errors.AsType[*realtime.DenialError](err)
+	require.Truef(t, ok, "want a *DenialError, got %v", err)
+	require.Equal(t, status, d.Status, d.Error())
+}
+
+// TestChannelService_Declarative pins the wiring under acl.yaml: the
+// anchor read is row-gated (a caller who cannot read the entity gets
+// ErrAnchorNotFound), entity-property roles read the gated anchor, and a
+// ref the caller cannot read is a 422.
+func TestChannelService_Declarative(t *testing.T) {
+	t.Parallel()
+	svc := serviceFixture(t, map[string]string{"acl.yaml": `roles:
+  reader:
+    read: ["*"]
+  memos:
+    read: [memo]
+assignments:
+  alice: reader
+  bob: memos
+`})
+	cs := appbuild.ChannelService(svc)
+	require.NotNil(t, cs)
+
+	res, err := cs.Post(asUser("alice"), doc1Room, note("hi"))
+	require.NoError(t, err)
+	require.EqualValues(t, 1, res.Message.Seq)
+
+	_, err = cs.Head(asUser("bob"), doc1Room)
+	require.ErrorIs(t, err, realtime.ErrAnchorNotFound)
+	_, err = cs.Head(asUser("carol"), doc1Room)
+	require.ErrorIs(t, err, realtime.ErrAnchorNotFound)
+
+	memo := realtime.RawAddress{EntityType: "memo", Anchor: "MEMO-1", Type: "room"}
+	_, err = cs.Post(asUser("bob"), memo, note("mine"))
+	require.NoError(t, err)
+	_, err = cs.Post(asUser("bob"), memo, realtime.PostInput{Type: "note", Props: map[string]any{"about": "DOC-1"}})
+	requireStatus(t, err, http.StatusUnprocessableEntity)
+
+	got, err := cs.Post(asUser("alice"), doc1Room,
+		realtime.PostInput{Type: "note", Props: map[string]any{"about": "DOC-2"}})
+	require.NoError(t, err)
+	require.Equal(t, &realtime.RefValue{ID: "DOC-2", Type: "doc", Title: "Two"}, got.Message.Props["about"])
+
+	_, err = cs.Post(asUser("alice"), realtime.RawAddress{EntityType: "doc", Anchor: "DOC-2", Type: "room"}, note("x"))
+	requireStatus(t, err, http.StatusForbidden)
+}
+
+// TestChannelService_InjectedACL pins the two policy-free modes: under
+// NopACL every reader may read and the owner may post; under ReadOnlyACL
+// reads work and every post is refused.
+func TestChannelService_InjectedACL(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		acl      acl.ACL
+		postable bool
+	}{
+		{"nop", acl.NopACL{}, true},
+		{"read only", acl.ReadOnlyACL{}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cs := appbuild.ChannelService(serviceFixture(t, map[string]string{}, appbuild.WithACL(tc.acl)))
+			_, err := cs.Head(asUser("carol"), doc1Room)
+			require.NoError(t, err)
+			_, err = cs.Post(asUser("alice"), doc1Room, note("x"))
+			if tc.postable {
+				require.NoError(t, err)
+			} else {
+				requireStatus(t, err, http.StatusForbidden)
+			}
+			_, err = cs.Post(asUser("carol"), doc1Room, note("x"))
+			requireStatus(t, err, http.StatusForbidden)
+		})
+	}
+}
+
+// TestChannelService_ReloadRefusesRecordedShapeChange pins that a hot
+// reload is held against the type records the channel store has, as boot
+// is. The config at boot does not declare room, so the reload's own
+// history check knows nothing of it; only the store's records do. A post
+// records a type's shape, and closing the assembly stops the check.
+func TestChannelService_ReloadRefusesRecordedShapeChange(t *testing.T) {
+	t.Parallel()
+	lobby := strings.Replace(serviceRealtimeYAML, "  room:\n", "  lobby:\n", 1)
+	root := realtimeProject(t, map[string]string{"realtime.yaml": lobby, "schema.yaml": serviceSchema})
+	base, err := realtimeBase(t, root, appbuild.WithACL(acl.NopACL{}))
+	require.NoError(t, err)
+	st := memstore.New()
+	ctx := context.Background()
+	require.NoError(t, st.CreateEntity(ctx, &entity.Entity{ID: "DOC-1", Type: "doc",
+		Properties: map[string]any{"title": "One", "owner": "alice"}}))
+	svc, err := base.Assemble(st, search.New(st, search.NewLinearSearch()), nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+
+	lobbyRoom := realtime.RawAddress{EntityType: "doc", Anchor: "DOC-1", Type: "lobby"}
+	_, err = appbuild.ChannelService(svc).Post(asUser("alice"), lobbyRoom, note("x"))
+	require.NoError(t, err)
+	recs, err := appbuild.Channels(svc).TypeRecords(ctx)
+	require.NoError(t, err)
+	require.Equal(t, channels.TypeRecord{Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityOne},
+		recs["lobby"], "a post records the type's shape")
+
+	require.NoError(t, appbuild.Channels(svc).RecordTypes(ctx, map[string]channels.TypeRecord{
+		"room": {Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityMany},
+	}))
+	holder := appbuild.Realtime(svc)
+	prev := holder.Load().Config
+	both := lobby + strings.TrimPrefix(serviceRealtimeYAML, "version: 1\nchannel_types:\n")
+	writeProjectFile(t, root, "realtime.yaml", both)
+	require.ErrorContains(t, holder.Reload(ctx),
+		"channel_types.room.cardinality: cannot change from many to one")
+	require.Same(t, prev, holder.Load().Config, "a refused reload keeps the previous config")
+
+	require.NoError(t, svc.Close())
+	require.NoError(t, holder.Reload(ctx), "a closed assembly's store is no longer checked")
+}
+
+// TestChannelService_Nil pins the accessor's nil contract.
+func TestChannelService_Nil(t *testing.T) {
+	t.Parallel()
+	require.Nil(t, appbuild.ChannelService(nil))
+}

@@ -174,6 +174,23 @@ func (r *Request) PermitsReadFace(
 // still authorizing against.
 func (r *Request) Principal() principal.Principal { return r.principal.Clone() }
 
+// CeilingPermitsVerb reports whether the request's client ceiling
+// (client_baselines and scope_grants) admits op on entityType. It consults
+// the ceiling only, never a role or a row: it answers "may this client write
+// this type at all", for a caller that grants access through a source of its
+// own (a realtime channel role) and must still honor the client's limits.
+//
+// It answers false for an op it does not handle, so a new verb fails closed
+// until it is mapped to a ceiling axis.
+func (r *Request) CeilingPermitsVerb(op Op, entityType string) bool {
+	switch op {
+	case OpCreate, OpUpdate, OpRename, OpDelete:
+		return r.ceiling.permitsVerb(op, entityType)
+	default:
+		return false
+	}
+}
+
 // ctxKey is the unexported type for context.WithValue. Required by
 // the std-lib contract that context keys are not bare strings.
 type ctxKey struct{}

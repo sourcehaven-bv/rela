@@ -232,23 +232,38 @@ func (k Key) String() string {
 }
 
 // Author records who wrote a message or acted on one. It is for display and
-// ownership checks only; the principal type grants nothing.
+// ownership checks only; the principal type grants nothing. OrgID is the
+// organization of a verified principal, so an ownership check compares the
+// user and the organization: two organizations may share a user name.
 type Author struct {
 	User          string `json:"user"                     yaml:"user"`
 	Tool          string `json:"tool,omitempty"           yaml:"tool,omitempty"`
 	PrincipalType string `json:"principal_type,omitempty" yaml:"principal_type,omitempty"`
+	OrgID         string `json:"org_id,omitempty"         yaml:"org_id,omitempty"`
 }
 
 // IsZero reports whether no user is recorded.
 func (a Author) IsZero() bool { return a.User == "" }
 
 // Removal records who removed a message, when and why. It replaces the
-// message's content.
+// message's content. Kind says whether the author withdrew the message or a
+// moderator removed it. The author is erased with the content, so Kind is
+// the only record of which it was.
 type Removal struct {
-	By     Author    `json:"by"`
-	At     time.Time `json:"at"`
-	Reason string    `json:"reason,omitempty"`
+	By     Author      `json:"by"`
+	At     time.Time   `json:"at"`
+	Reason string      `json:"reason,omitempty"`
+	Kind   RemovalKind `json:"kind,omitempty"`
 }
+
+// RemovalKind says who removed a message.
+type RemovalKind string
+
+// Removal kinds. The empty kind reads as a moderator's removal.
+const (
+	RemovalModerator RemovalKind = "moderator"
+	RemovalAuthor    RemovalKind = "author"
+)
 
 // ActionStatus is where a message action stands.
 type ActionStatus string
@@ -584,6 +599,11 @@ func PrepareRemoval(r Removal) (Removal, error) {
 	if utf8.RuneCountInString(r.Reason) > MaxReasonRunes {
 		return r, fmt.Errorf("%w: reason over %d characters", ErrTooLarge, MaxReasonRunes)
 	}
+	switch r.Kind {
+	case "", RemovalModerator, RemovalAuthor:
+	default:
+		return r, fmt.Errorf("%w: removal kind %q", ErrInvalidMessage, r.Kind)
+	}
 	r.At = NormTime(r.At)
 	return r, nil
 }
@@ -715,7 +735,9 @@ func checkAuthor(a Author) error {
 	if strings.TrimSpace(a.User) == "" {
 		return fmt.Errorf("%w: no author", ErrInvalidMessage)
 	}
-	if len(a.User) > MaxTextBytes || len(a.Tool) > MaxTextBytes || len(a.PrincipalType) > MaxTextBytes {
+	if len(a.User) > MaxTextBytes || len(a.Tool) > MaxTextBytes || len(a.PrincipalType) > MaxTextBytes ||
+		len(a.OrgID) > MaxTextBytes {
+
 		return fmt.Errorf("%w: author field over %d bytes", ErrTooLarge, MaxTextBytes)
 	}
 	return nil
