@@ -1669,7 +1669,14 @@ configuration.
     delete itself would give, so a caller who may not delete never sees the
     409. A face delete counts the whole-entity channels only when the
     caller's last readable face goes, so a hidden face never changes the
-    answer.
+    answer. A whole-family delete always counts them. That keeps the
+    hidden-face property only because every surface resolves a bare id
+    through `visibility.Resolver.WriteTarget` before it deletes; the
+    data-entry API refuses a bare id on a faced type as `face_required`. A
+    new delete surface that skipped that step would let a channel on a face
+    the caller cannot read decide the 409. A block on an entity the delete
+    removes through `owning` names the type only, never the owned
+    entity's id.
 - **Markdown body (`content`) is not field-redacted, on any read path.**
   `visible:` is a **property-values** guard: it omits hidden *property* and
   *relation-meta* values from the wire. It makes no claim over the markdown

@@ -571,6 +571,10 @@ func writeErrorResult(err error) *mcpgo.CallToolResult {
 		return errorResult(fmt.Sprintf("conflict: a %s channel is attached to this entity, and its type "+
 			"sets on_entity_delete: block; close or remove the channel first", blocked.ChannelType))
 	}
+	if errors.Is(err, store.ErrConflict) {
+		return errorResult("conflict: the entity changed while the request ran; nothing was written, retry: " +
+			err.Error())
+	}
 	return errorResult(err.Error())
 }
 

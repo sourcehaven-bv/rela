@@ -30,7 +30,7 @@ func newChannelAliases(t *testing.T) (*channelAliases, channels.Store, *memstore
 	cs, err := filechannels.New(storage.NewMemFS(), "/p/.rela/channels", filelock.ProcessPrivate{})
 	require.NoError(t, err)
 	st := memstore.New()
-	a := channelAliasesFor(cs, st)
+	a := channelAliasesFor(cs, st, nil)
 	a.now = func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }
 	return a, cs, st
 }
@@ -198,7 +198,7 @@ func TestAliasFanout_EntityCreated(t *testing.T) {
 
 	a.store = failingChannels{Store: cs}
 	require.Error(t, n.EntityCreated(ctx, "T-1", ""))
-	require.Nil(t, channelAliasesFor(nil, st))
+	require.Nil(t, channelAliasesFor(nil, st, nil))
 }
 
 type nopRewriter struct{}

@@ -1120,6 +1120,15 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 				"channel type "+blocked.ChannelType+" has on_entity_delete: block")
 			return
 		}
+		// The entity's faces or owned entities changed while the channel
+		// guard ran. Nothing was deleted, and the same request can succeed.
+		// The manager authorizes before it reports this, so a caller who
+		// would be refused never sees it.
+		if errors.Is(err, store.ErrConflict) {
+			writeV1Error(w, r, http.StatusConflict, "conflict", "Entity is being modified concurrently",
+				"retry the delete")
+			return
+		}
 		// Another request deleted it between the read above and this write.
 		if errors.Is(err, entitymanager.ErrEntityNotFound) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")

@@ -181,11 +181,16 @@ func otherEntities(result *entity.DeleteResult, id string) int {
 
 // anchorConflict rewrites a channel guard refusal as the CLI's form of the
 // 409 the HTTP API returns: the write conflicts with a channel, and the
-// message names the channel type to resolve. Other errors pass through.
+// message names the channel type to resolve. A store.ErrConflict, a delete
+// that raced a change to what it removes, becomes a conflict with a retry
+// hint. Other errors pass through.
 func anchorConflict(id string, err error) error {
 	if blocked, ok := errors.AsType[*entitymanager.AnchorBlockedError](err); ok {
 		return fmt.Errorf("conflict: %s has a %s channel, and that type sets on_entity_delete: block; "+
 			"close or remove the channel first: %w", id, blocked.ChannelType, err)
+	}
+	if errors.Is(err, store.ErrConflict) {
+		return fmt.Errorf("conflict: %s changed while the command ran; nothing was written, retry: %w", id, err)
 	}
 	return err
 }

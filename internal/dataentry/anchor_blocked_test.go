@@ -2,6 +2,7 @@ package dataentry
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // blockingMutator refuses every delete the way the channel guard does.
@@ -20,6 +22,40 @@ func (blockingMutator) DeleteEntity(context.Context, string, bool) (*entity.Dele
 
 func (blockingMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
 	return nil, &entitymanager.AnchorBlockedError{ChannelType: "incident-room"}
+}
+
+// conflictingMutator fails every delete the way a delete that raced a face
+// or owned-entity change does.
+type conflictingMutator struct{ entityMutator }
+
+var errRaced = fmt.Errorf("delete: the entities it owns changed during the delete; retry: %w", store.ErrConflict)
+
+func (conflictingMutator) DeleteEntity(context.Context, string, bool) (*entity.DeleteResult, error) {
+	return nil, errRaced
+}
+
+func (conflictingMutator) DeleteEntityFace(context.Context, string, entity.Face, bool) (*entity.DeleteResult, error) {
+	return nil, errRaced
+}
+
+// A delete that raced a concurrent change is a retryable 409.
+func TestV1DeleteEntity_ConflictIs409(t *testing.T) {
+	app := newTestAppV1(t)
+	seedEntity(app, &entity.Entity{ID: "TKT-001", Type: "ticket", Properties: map[string]any{"title": "T"}})
+	app.write.manager = conflictingMutator{entityMutator: app.write.manager}
+	app.write.softDeletes = nil
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tickets/TKT-001", http.NoBody)
+	rec := httptest.NewRecorder()
+	app.write.handleV1DeleteEntity(rec, req, "ticket", "tickets", "TKT-001")
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("got %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "conflict") || !strings.Contains(body, "retry") {
+		t.Errorf("body %s should carry the conflict code and a retry hint", body)
+	}
 }
 
 type blockingSoftDeleter struct{ softDeleter }

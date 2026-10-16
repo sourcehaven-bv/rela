@@ -515,9 +515,9 @@ func PurgeSoftDeleted(ctx context.Context, m *Manager, cutoff time.Time) (int, e
 			// The entity is still marked, or was restored meanwhile: either
 			// way its channels belong with it. One another purge removed
 			// meanwhile keeps them detached.
-			undo.run(ctx, func(id string, _ entity.Face) bool {
+			undo.restore(ctx, func(ctx context.Context, id string, _ entity.Face) bool {
 				return !errors.Is(pErr, store.ErrNotFound) || familyStillStored(ctx, m.deps.Store, id)
-			})
+			}, nil)
 		}
 		if errors.Is(pErr, store.ErrNotFound) {
 			continue // restored or purged meanwhile

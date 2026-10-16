@@ -1841,7 +1841,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 		return dErr
 	})
 	if txErr != nil {
-		undoFailedDelete(ctx, m, undo)
+		undoFailedDelete(ctx, m, undo, txErr)
 		// A non-transactional backend can fail partway through a cascade with
 		// some relation files already off disk, and it reports those in a
 		// partial result (issue #929). Audit them before propagating: the
@@ -2360,7 +2360,7 @@ func (m *Manager) DeleteEntityFace(
 		return requireAuthorizedEdges(res.DeletedRelations, incoming, outgoing)
 	})
 	if txErr != nil {
-		undoFailedDelete(ctx, m, fg.undo)
+		undoFailedDelete(ctx, m, fg.undo, txErr)
 		// A non-transactional backend can fail part-way with some relation
 		// files already gone (TKT-A23L87); record those, as DeleteEntity does.
 		m.recordPartialCascade(ctx, "cascade:delete-entity:"+id, res, &cascadeCapture{incoming: incoming, outgoing: outgoing})
@@ -2570,9 +2570,11 @@ func (m *Manager) RenameEntity(
 		return res, nil
 	}
 	// Channels an earlier entity left on newID are detached before the Tx,
-	// once newID is known to be free. Moving the renamed entity's own
-	// channels is the post-commit alias hook's job.
-	if gErr := guardRename(ctx, m, oldID, newID); gErr != nil {
+	// once newID is known to be free, and put back when the rename fails.
+	// Moving the renamed entity's own channels is the post-commit alias
+	// hook's job.
+	renameUndo, gErr := guardRename(ctx, m, oldID, newID)
+	if gErr != nil {
 		return nil, gErr
 	}
 
@@ -2604,6 +2606,7 @@ func (m *Manager) RenameEntity(
 		if res != nil && !familyStillStored(ctx, m.deps.Store, oldID) {
 			r.record(ctx, renamed)
 		}
+		undoFailedRename(ctx, m, renameUndo)
 		return nil, txErr
 	}
 	r.record(ctx, renamed)

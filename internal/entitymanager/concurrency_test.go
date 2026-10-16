@@ -74,6 +74,9 @@ relations:
 type concBackend struct {
 	name string
 	open func(t *testing.T) store.Store
+	// guarded makes the delete fixtures wire a pass-through anchor guard
+	// (see deleteACLBackends).
+	guarded bool
 }
 
 var concBackends = []concBackend{

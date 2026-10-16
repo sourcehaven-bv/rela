@@ -16,6 +16,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
 
@@ -87,7 +88,7 @@ func newGuardFixture(t *testing.T) guardFixture {
 // the real channel alias hook, as assemble wires them.
 func (f guardFixture) manager(t *testing.T, g entitymanager.AnchorGuard) *entitymanager.Manager {
 	t.Helper()
-	aliases := channelAliasesFor(f.cs, f.st)
+	aliases := channelAliasesFor(f.cs, f.st, nil)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: f.st, Meta: f.meta, Templater: gcNopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
@@ -105,6 +106,27 @@ func (f guardFixture) seed(t *testing.T, id string, faces ...entity.Face) {
 	}
 }
 
+// guardDelete runs BeforeDelete in a scope of its own for d.ID, as the
+// manager does for a delete of one entity.
+func guardDelete(
+	ctx context.Context, g *channelGuard, d entitymanager.AnchorDelete,
+) (entitymanager.AnchorUndo, error) {
+	s, err := g.Scope(ctx, []string{d.ID})
+	if err != nil || s == nil {
+		return nil, err
+	}
+	return s.BeforeDelete(ctx, d)
+}
+
+// guardCheck is guardDelete for CheckDelete.
+func guardCheck(ctx context.Context, g *channelGuard, d entitymanager.AnchorDelete) error {
+	s, err := g.Scope(ctx, []string{d.ID})
+	if err != nil || s == nil {
+		return err
+	}
+	return s.CheckDelete(ctx, d)
+}
+
 func TestChannelGuard_BeforeDelete(t *testing.T) {
 	whole := entitymanager.AnchorDelete{ID: "INC-1", Block: true, Detach: true}
 	var blocked *entitymanager.AnchorBlockedError
@@ -112,12 +134,12 @@ func TestChannelGuard_BeforeDelete(t *testing.T) {
 	t.Run("block refuses and writes nothing", func(t *testing.T) {
 		f := newGuardFixture(t)
 		appendTo(t, f.cs, chanKey("INC-1", "", "war-room"))
-		undo, err := f.guard.BeforeDelete(t.Context(), whole)
+		undo, err := guardDelete(t.Context(), f.guard, whole)
 		require.ErrorAs(t, err, &blocked)
 		assert.Equal(t, "war-room", blocked.ChannelType)
 		assert.Nil(t, undo)
 		assert.Equal(t, []string{"INC-1/war-room"}, entityKeys(t, f.cs, "INC-1"))
-		require.ErrorAs(t, f.guard.CheckDelete(t.Context(), whole), &blocked)
+		require.ErrorAs(t, guardCheck(t.Context(), f.guard, whole), &blocked)
 	})
 
 	t.Run("purge detaches a blocking channel", func(t *testing.T) {
@@ -125,7 +147,7 @@ func TestChannelGuard_BeforeDelete(t *testing.T) {
 		appendTo(t, f.cs, chanKey("INC-1", "", "war-room"))
 		purge := whole
 		purge.Purge = true
-		undo, err := f.guard.BeforeDelete(t.Context(), purge)
+		undo, err := guardDelete(t.Context(), f.guard, purge)
 		require.NoError(t, err)
 		require.NotNil(t, undo)
 		assert.Empty(t, entityKeys(t, f.cs, "INC-1"))
@@ -136,23 +158,23 @@ func TestChannelGuard_BeforeDelete(t *testing.T) {
 		for _, typ := range []string{"chat", "purge-me", "gone-type"} {
 			appendTo(t, f.cs, chanKey("INC-1", "", typ))
 		}
-		undo, err := f.guard.BeforeDelete(t.Context(), whole)
+		undo, err := guardDelete(t.Context(), f.guard, whole)
 		require.NoError(t, err)
 		assert.Empty(t, entityKeys(t, f.cs, "INC-1"))
-		require.NoError(t, undo(t.Context()))
+		require.NoError(t, undo.Restore(t.Context()))
 		assert.Len(t, entityKeys(t, f.cs, "INC-1"), 3)
 
 		appendTo(t, f.cs, chanKey("INC-1", "", "war-room"))
 		f.guard.config = func() *realtimecfg.Compiled { return nil }
-		_, err = f.guard.BeforeDelete(t.Context(), whole)
+		_, err = guardDelete(t.Context(), f.guard, whole)
 		require.NoError(t, err, "without realtime.yaml nothing blocks")
-		require.NoError(t, f.guard.CheckDelete(t.Context(), whole))
+		require.NoError(t, guardCheck(t.Context(), f.guard, whole))
 		assert.Empty(t, entityKeys(t, f.cs, "INC-1"))
 	})
 
 	t.Run("no channels", func(t *testing.T) {
 		f := newGuardFixture(t)
-		undo, err := f.guard.BeforeDelete(t.Context(), whole)
+		undo, err := guardDelete(t.Context(), f.guard, whole)
 		require.NoError(t, err)
 		assert.Nil(t, undo)
 	})
@@ -164,21 +186,21 @@ func TestChannelGuard_BeforeDelete(t *testing.T) {
 
 		// Not the caller's last face: the whole-entity block does not count,
 		// and a face with no channels detaches nothing.
-		undo, err := f.guard.BeforeDelete(t.Context(), entitymanager.AnchorDelete{ID: "INC-1", Face: "draft"})
+		undo, err := guardDelete(t.Context(), f.guard, entitymanager.AnchorDelete{ID: "INC-1", Face: "draft"})
 		require.NoError(t, err)
 		assert.Nil(t, undo)
 
 		// The caller's last face: the whole-entity block counts.
-		_, err = f.guard.BeforeDelete(t.Context(), entitymanager.AnchorDelete{ID: "INC-1", Face: "draft", Block: true})
+		_, err = guardDelete(t.Context(), f.guard, entitymanager.AnchorDelete{ID: "INC-1", Face: "draft", Block: true})
 		require.ErrorAs(t, err, &blocked)
 
 		// A blocking channel on the face itself always counts.
-		_, err = f.guard.BeforeDelete(t.Context(), entitymanager.AnchorDelete{ID: "INC-1", Face: "final"})
+		_, err = guardDelete(t.Context(), f.guard, entitymanager.AnchorDelete{ID: "INC-1", Face: "final"})
 		require.ErrorAs(t, err, &blocked)
 		assert.Equal(t, "notes", blocked.ChannelType)
 
 		appendTo(t, f.cs, chanKey("INC-1", "draft", "chat"))
-		undo, err = f.guard.BeforeDelete(t.Context(), entitymanager.AnchorDelete{ID: "INC-1", Face: "draft"})
+		undo, err = guardDelete(t.Context(), f.guard, entitymanager.AnchorDelete{ID: "INC-1", Face: "draft"})
 		require.NoError(t, err)
 		require.NotNil(t, undo)
 		assert.Equal(t, []string{"INC-1/war-room", "INC-1@final/notes"}, entityKeys(t, f.cs, "INC-1"))
@@ -188,7 +210,7 @@ func TestChannelGuard_BeforeDelete(t *testing.T) {
 		f := newGuardFixture(t)
 		appendTo(t, f.cs, chanKey("INC-1", "", "chat"))
 		f.guard.store = failingChannels{Store: f.cs}
-		_, err := f.guard.BeforeDelete(t.Context(), whole)
+		_, err := guardDelete(t.Context(), f.guard, whole)
 		require.ErrorIs(t, err, errDiskFull)
 	})
 }
@@ -198,21 +220,122 @@ func TestChannelGuard_BeforeRename(t *testing.T) {
 	f := newGuardFixture(t)
 	calls := 0
 	free := func(context.Context) error { calls++; return nil }
-	require.NoError(t, f.guard.BeforeRename(ctx, "INC-2", free))
+	undo, err := f.guard.BeforeRename(ctx, "INC-2", free)
+	require.NoError(t, err)
+	assert.Nil(t, undo)
 	assert.Zero(t, calls, "no channels on the new id: nothing to check")
 
 	appendTo(t, f.cs, chanKey("INC-2", "", "chat"))
 	taken := func(context.Context) error { return entitymanager.ErrEntityAlreadyExists }
-	require.ErrorIs(t, f.guard.BeforeRename(ctx, "INC-2", taken), entitymanager.ErrEntityAlreadyExists)
+	_, err = f.guard.BeforeRename(ctx, "INC-2", taken)
+	require.ErrorIs(t, err, entitymanager.ErrEntityAlreadyExists)
 	assert.Equal(t, []string{"INC-2/chat"}, entityKeys(t, f.cs, "INC-2"), "a taken id keeps its channels")
 
-	require.NoError(t, f.guard.BeforeRename(ctx, "INC-2", free))
+	undo, err = f.guard.BeforeRename(ctx, "INC-2", free)
+	require.NoError(t, err)
 	assert.Equal(t, 1, calls)
 	assert.Empty(t, entityKeys(t, f.cs, "INC-2"))
 
-	require.Nil(t, channelAliasesFor(nil, f.st))
+	// A failed rename puts them back.
+	require.NotNil(t, undo)
+	_, pErr := channels.ParseTombstoneHandle(undo.String())
+	require.NoError(t, pErr, "the undo names its batch")
+	require.NoError(t, undo.Restore(ctx))
+	assert.Equal(t, []string{"INC-2/chat"}, entityKeys(t, f.cs, "INC-2"))
+
+	require.Nil(t, channelAliasesFor(nil, f.st, nil))
 	_, nop := newChannelGuard(nil, nil).(entitymanager.NopAnchorGuard)
 	assert.True(t, nop)
+	assert.True(t, f.guard.Active())
+}
+
+// A rename whose transaction fails, through the manager, leaves the
+// channels an earlier entity left on the new id where they were.
+func TestChannelGuard_RenameTxFailureRestores(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	f.seed(t, "inc-a", "draft")
+	appendTo(t, f.cs, chanKey("inc-b", "", "chat"))
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store: failingTxStore{f.st}, Meta: f.meta, Templater: gcNopTemplater{}, Audit: audit.Nop{},
+		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AnchorGuard: f.guard,
+	})
+	require.NoError(t, err)
+	_, err = mgr.RenameEntity(ctx, "inc-a", "inc-b", entity.RenameOptions{})
+	require.ErrorIs(t, err, errDiskFull)
+	assert.Equal(t, []string{"inc-b/chat"}, entityKeys(t, f.cs, "inc-b"))
+}
+
+// failingTxStore fails every transaction without writing.
+type failingTxStore struct{ store.Store }
+
+func (failingTxStore) Tx(context.Context, func(store.Store) error) error { return errDiskFull }
+
+// partialTombstone moves the batch and then fails, as the file backend does
+// when it moved the channels but could not write the audit record.
+type partialTombstone struct{ channels.Store }
+
+func (p partialTombstone) Tombstone(
+	ctx context.Context, id string, face entity.Face, at time.Time,
+) (channels.TombstoneHandle, error) {
+	h, err := p.Store.Tombstone(ctx, id, face, at)
+	if err != nil {
+		return h, err
+	}
+	return h, errDiskFull
+}
+
+// A detach that fails part way is put back before the error is returned, on
+// delete and on rename alike, so a failed guard leaves nothing detached.
+func TestChannelGuard_PartialTombstoneIsRestored(t *testing.T) {
+	f := newGuardFixture(t)
+	appendTo(t, f.cs, chanKey("INC-1", "", "chat"))
+	f.guard.store = partialTombstone{Store: f.cs}
+
+	_, err := guardDelete(t.Context(), f.guard, entitymanager.AnchorDelete{ID: "INC-1", Block: true, Detach: true})
+	require.ErrorIs(t, err, errDiskFull)
+	assert.Equal(t, []string{"INC-1/chat"}, entityKeys(t, f.cs, "INC-1"))
+
+	_, err = f.guard.BeforeRename(t.Context(), "INC-1", func(context.Context) error { return nil })
+	require.ErrorIs(t, err, errDiskFull)
+	assert.Equal(t, []string{"INC-1/chat"}, entityKeys(t, f.cs, "INC-1"))
+}
+
+// One scope loads the config once, however many entities it judges, and
+// its errors name no id.
+func TestChannelGuard_ScopeLoadsConfigOnce(t *testing.T) {
+	f := newGuardFixture(t)
+	appendTo(t, f.cs, chanKey("INC-1", "", "chat"))
+	appendTo(t, f.cs, chanKey("INC-2", "", "chat"))
+	loads := 0
+	cfg := f.cfg
+	f.guard.config = func() *realtimecfg.Compiled { loads++; return cfg }
+
+	s, err := f.guard.Scope(t.Context(), []string{"INC-1", "INC-2", "INC-3"})
+	require.NoError(t, err)
+	require.NotNil(t, s)
+	for _, id := range []string{"INC-1", "INC-2", "INC-3"} {
+		_, err = s.BeforeDelete(t.Context(), entitymanager.AnchorDelete{ID: id, Block: true, Detach: true})
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 1, loads)
+
+	empty, err := f.guard.Scope(t.Context(), []string{"INC-1", "INC-3"})
+	require.NoError(t, err)
+	assert.Nil(t, empty, "no channels left: nothing to guard")
+
+	f.guard.store = failingList{Store: f.cs}
+	_, err = f.guard.Scope(t.Context(), []string{"INC-1", "SECRET-9"})
+	require.ErrorIs(t, err, errDiskFull)
+	assert.NotContains(t, err.Error(), "SECRET-9")
+}
+
+// failingList fails every channel listing.
+type failingList struct{ channels.Store }
+
+func (failingList) ListEntity(context.Context, string) ([]channels.Channel, error) {
+	return nil, errDiskFull
 }
 
 // A rename through the manager, with the real guard and alias hook, leaves
@@ -240,11 +363,24 @@ type postingGuard struct {
 	t *testing.T
 }
 
-func (g postingGuard) BeforeDelete(
+func (g postingGuard) Scope(ctx context.Context, ids []string) (entitymanager.AnchorScope, error) {
+	s, err := g.channelGuard.Scope(ctx, ids)
+	if err != nil || s == nil {
+		return s, err
+	}
+	return postingScope{AnchorScope: s, g: g}, nil
+}
+
+type postingScope struct {
+	entitymanager.AnchorScope
+	g postingGuard
+}
+
+func (s postingScope) BeforeDelete(
 	ctx context.Context, d entitymanager.AnchorDelete,
-) (func(context.Context) error, error) {
-	undo, err := g.channelGuard.BeforeDelete(ctx, d)
-	appendCtx(ctx, g.t, g.store, chanKey(d.ID, "", "war-room"))
+) (entitymanager.AnchorUndo, error) {
+	undo, err := s.AnchorScope.BeforeDelete(ctx, d)
+	appendCtx(ctx, s.g.t, s.g.store, chanKey(d.ID, "", "war-room"))
 	return undo, err
 }
 
@@ -253,6 +389,7 @@ func TestChannelGuard_SweepAfterConcurrentFirstPost(t *testing.T) {
 	f := newGuardFixture(t)
 	mgr := f.manager(t, postingGuard{channelGuard: f.guard, t: t})
 	f.seed(t, "inc-a", "draft")
+	appendTo(t, f.cs, chanKey("inc-a", "", "chat"))
 	_, err := mgr.DeleteEntity(context.Background(), "inc-a", true)
 	require.NoError(t, err)
 	assert.Empty(t, entityKeys(t, f.cs, "inc-a"))
@@ -331,7 +468,7 @@ func TestChannelReconciler(t *testing.T) {
 	appendTo(t, f.cs, chanKey("inc-b", "", "chat"))
 	appendTo(t, f.cs, chanKey("inc-c", "", "chat"))
 
-	stop := startChannelReconciler(f.st, f.cs)
+	stop := startChannelReconciler(f.st, f.cs, newExternalDetaches(externalDetachCap))
 	t.Cleanup(stop)
 
 	_, err := f.st.DeleteFace(ctx, entity.Ref{ID: "inc-a", Face: "final"})
@@ -362,6 +499,6 @@ func TestChannelReconciler(t *testing.T) {
 
 	stop()
 	stop() // idempotent
-	nilStop := startChannelReconciler(f.st, nil)
+	nilStop := startChannelReconciler(f.st, nil, nil)
 	nilStop()
 }

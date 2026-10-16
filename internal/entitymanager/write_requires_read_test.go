@@ -46,6 +46,7 @@ func writeBlindManager(t *testing.T, a func(store.Store) acl.ACL) (*entitymanage
 		Audit: audit.Nop{}, ACL: a(st),
 		Transitions:    statemachine.EmptySet(),
 		FieldGate:      entitymanager.AllowAllFieldGate{},
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),
 	})

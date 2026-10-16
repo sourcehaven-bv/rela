@@ -30,6 +30,9 @@ type refHolders struct {
 	leases      *lease.Service
 	leaseShared leaseShared
 	channels    channels.Store
+	// detached is shared by the channel alias hook and the reconciler (see
+	// [externalDetaches]).
+	detached *externalDetaches
 }
 
 // buildRefHolders builds the services that hold references by entity id:
@@ -64,6 +67,7 @@ func buildRefHolders(
 	if h.channels, err = buildChannels(base.cfg.FS, base.cfg.Paths, st, overrides.channelStore); err != nil {
 		return refHolders{}, err
 	}
+	h.detached = newExternalDetaches(externalDetachCap)
 	return h, nil
 }
 

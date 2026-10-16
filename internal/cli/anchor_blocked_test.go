@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // A delete or rename a channel type blocks is reported as a conflict that
@@ -23,6 +24,16 @@ func TestAnchorConflict(t *testing.T) {
 	var typed *entitymanager.AnchorBlockedError
 	if !errors.As(err, &typed) {
 		t.Error("the typed error must stay in the chain")
+	}
+
+	raced := anchorConflict("INC-1", fmt.Errorf("delete: owned entities changed: %w", store.ErrConflict))
+	for _, w := range []string{"conflict:", "INC-1", "retry"} {
+		if !strings.Contains(raced.Error(), w) {
+			t.Errorf("error %q lacks %q", raced, w)
+		}
+	}
+	if !errors.Is(raced, store.ErrConflict) {
+		t.Error("store.ErrConflict must stay in the chain")
 	}
 
 	other := errors.New("disk full")

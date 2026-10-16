@@ -9,6 +9,7 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
 // A delete or rename a channel type blocks is reported as a conflict that
@@ -21,6 +22,8 @@ func TestWriteErrorResult(t *testing.T) {
 	}{
 		{"blocked", fmt.Errorf("delete: %w", &entitymanager.AnchorBlockedError{ChannelType: "incident-room"}),
 			[]string{"conflict:", "incident-room", "on_entity_delete: block"}},
+		{"conflict", fmt.Errorf("delete: owned entities changed: %w", store.ErrConflict),
+			[]string{"conflict:", "retry"}},
 		{"other", errors.New("disk full"), []string{"disk full"}},
 	}
 	for _, tc := range tests {

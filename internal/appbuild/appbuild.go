@@ -2553,7 +2553,7 @@ func assemble(
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
 	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		channelAliasesFor(refs.channels, st))
+		channelAliasesFor(refs.channels, st, refs.detached))
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate, refs.channels)
@@ -2673,7 +2673,7 @@ func finishAssembly(
 		s.versionSweep = sweep
 		sweep.Start()
 	}
-	s.channelReconcileStop = startChannelReconciler(s.store, refs.channels)
+	s.channelReconcileStop = startChannelReconciler(s.store, refs.channels, refs.detached)
 	return s, nil
 }
 

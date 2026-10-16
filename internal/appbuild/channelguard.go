@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -29,7 +30,8 @@ import (
 //     realtime.yaml, is detached: the config can no longer say otherwise.
 //
 // In degraded mode the holder serves the last good config, so the rules that
-// held when the channels were written still apply.
+// held when the channels were written still apply. One delete operation reads
+// the config once, in Scope, and judges every entity it removes under it.
 //
 // A block is best effort against a concurrent first post: a channel created
 // after the guard listed the entity's channels is swept up by the post-commit
@@ -67,18 +69,48 @@ func channelGuardFor(base *SharedBase, cs channels.Store) (entitymanager.AnchorG
 	return newChannelGuard(cs, base.realtime), nil
 }
 
-// BeforeDelete implements [entitymanager.AnchorGuard].
-func (g *channelGuard) BeforeDelete(
-	ctx context.Context, d entitymanager.AnchorDelete,
-) (func(context.Context) error, error) {
-	list, err := g.store.ListEntity(ctx, d.ID)
-	if err != nil {
-		return nil, fmt.Errorf("channels: list %s before delete: %w", d.ID, err)
+// Active implements [entitymanager.AnchorGuard]: a guard over a channel
+// store can always act.
+func (g *channelGuard) Active() bool { return true }
+
+// Scope implements [entitymanager.AnchorGuard]. It lists the channels of
+// each id once and loads the config once; the scope's calls reuse both. The
+// error does not name an id, since ids may include entities the caller did
+// not address.
+func (g *channelGuard) Scope(ctx context.Context, ids []string) (entitymanager.AnchorScope, error) {
+	lists := make(map[string][]channels.Channel, len(ids))
+	for _, id := range ids {
+		list, err := g.store.ListEntity(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("channels: list channels before delete: %w", err)
+		}
+		if len(list) > 0 {
+			lists[id] = list
+		}
 	}
+	if len(lists) == 0 {
+		return nil, nil //nolint:nilnil // no channels: the interface's "nothing to guard"
+	}
+	return &channelScope{guard: g, cfg: g.config(), lists: lists}, nil
+}
+
+// channelScope is one delete operation's [entitymanager.AnchorScope]: the
+// config it is judged under and the channels Scope listed.
+type channelScope struct {
+	guard *channelGuard
+	cfg   *realtimecfg.Compiled
+	lists map[string][]channels.Channel
+}
+
+// BeforeDelete implements [entitymanager.AnchorScope].
+func (s *channelScope) BeforeDelete(
+	ctx context.Context, d entitymanager.AnchorDelete,
+) (entitymanager.AnchorUndo, error) {
+	list := s.lists[d.ID]
 	if len(list) == 0 {
 		return nil, nil //nolint:nilnil // no channels: nothing to undo
 	}
-	if blocked := g.blocking(list, d); blocked != "" {
+	if blocked := blocking(s.cfg, list, d); blocked != "" {
 		if !d.Purge {
 			return nil, &entitymanager.AnchorBlockedError{ChannelType: blocked}
 		}
@@ -91,59 +123,102 @@ func (g *channelGuard) BeforeDelete(
 	} else if !hasFaceChannel(list, face) {
 		return nil, nil //nolint:nilnil // the face has no channels: nothing to undo
 	}
-	h, err := g.store.Tombstone(ctx, d.ID, face, g.now())
+	g := s.guard
+	h, err := g.tombstone(ctx, d.ID, face)
 	if err != nil {
 		return nil, fmt.Errorf("channels: detach %s before delete: %w", entity.FormatStateRef(d.ID, face), err)
 	}
 	if h.IsZero() {
 		return nil, nil //nolint:nilnil // nothing was tombstoned: nothing to undo
 	}
-	return func(ctx context.Context) error {
-		return g.store.Untombstone(ctx, h, g.now())
-	}, nil
+	return tombstoneUndo{store: g.store, h: h, now: g.now}, nil
 }
 
-// CheckDelete implements [entitymanager.AnchorGuard].
-func (g *channelGuard) CheckDelete(ctx context.Context, d entitymanager.AnchorDelete) error {
-	list, err := g.store.ListEntity(ctx, d.ID)
-	if err != nil {
-		return fmt.Errorf("channels: list %s before delete: %w", d.ID, err)
-	}
-	if blocked := g.blocking(list, d); blocked != "" {
+// CheckDelete implements [entitymanager.AnchorScope].
+func (s *channelScope) CheckDelete(_ context.Context, d entitymanager.AnchorDelete) error {
+	if blocked := blocking(s.cfg, s.lists[d.ID], d); blocked != "" {
 		return &entitymanager.AnchorBlockedError{ChannelType: blocked}
 	}
 	return nil
 }
 
+// tombstone tombstones id@face. A store can fail after moving part of the
+// batch and still return its handle; that part is put back before the error
+// is returned, so a failed detach leaves nothing detached.
+func (g *channelGuard) tombstone(ctx context.Context, id string, face entity.Face) (channels.TombstoneHandle, error) {
+	h, err := g.store.Tombstone(ctx, id, face, g.now())
+	if err == nil || h.IsZero() {
+		return h, err
+	}
+	uctx, cancel := undoContext(ctx)
+	defer cancel()
+	if uErr := g.store.Untombstone(uctx, h, g.now()); uErr != nil {
+		slog.Error("channels: cannot restore a detach that failed part way",
+			"tombstone", h.String(), "error", uErr)
+	}
+	return channels.TombstoneHandle{}, err
+}
+
 // BeforeRename implements [entitymanager.AnchorGuard]. Channels on newID
 // belong to an earlier entity with that id; once free confirms the id can be
-// taken, they are detached, so the renamed entity does not inherit them.
-// Nothing is undone when the rename then fails: those channels had no entity
-// to serve them anyway.
-func (g *channelGuard) BeforeRename(ctx context.Context, newID string, free func(context.Context) error) error {
+// taken, they are detached, so the renamed entity does not inherit them. The
+// undo puts them back when the rename then fails.
+func (g *channelGuard) BeforeRename(
+	ctx context.Context, newID string, free func(context.Context) error,
+) (entitymanager.AnchorUndo, error) {
 	list, err := g.store.ListEntity(ctx, newID)
 	if err != nil {
-		return fmt.Errorf("channels: list %s before rename: %w", newID, err)
+		return nil, fmt.Errorf("channels: list %s before rename: %w", newID, err)
 	}
 	if len(list) == 0 {
-		return nil
+		return nil, nil //nolint:nilnil // no channels: nothing to undo
 	}
-	if err := free(ctx); err != nil {
-		return err
+	if freeErr := free(ctx); freeErr != nil {
+		return nil, freeErr
 	}
-	if _, err := g.store.Tombstone(ctx, newID, "", g.now()); err != nil {
-		return fmt.Errorf("channels: clear %s before rename: %w", newID, err)
+	h, err := g.tombstone(ctx, newID, "")
+	if err != nil {
+		return nil, fmt.Errorf("channels: clear %s before rename: %w", newID, err)
 	}
-	return nil
+	if h.IsZero() {
+		return nil, nil //nolint:nilnil // nothing was tombstoned: nothing to undo
+	}
+	return tombstoneUndo{store: g.store, h: h, now: g.now}, nil
+}
+
+// tombstoneUndo is the [entitymanager.AnchorUndo] of one tombstone batch.
+type tombstoneUndo struct {
+	store channels.Store
+	h     channels.TombstoneHandle
+	now   func() time.Time
+}
+
+// Restore implements [entitymanager.AnchorUndo].
+func (u tombstoneUndo) Restore(ctx context.Context) error {
+	return u.store.Untombstone(ctx, u.h, u.now())
+}
+
+// String implements [entitymanager.AnchorUndo]: the handle's text form,
+// which [channels.ParseTombstoneHandle] reads back.
+func (u tombstoneUndo) String() string { return u.h.String() }
+
+// channelUndoWait bounds the restore of a failed detach.
+const channelUndoWait = 30 * time.Second
+
+// undoContext is the context a restore runs on. The restore repairs a write
+// that already failed, so the request's cancellation must not reach it.
+func undoContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), channelUndoWait)
 }
 
 // blocking returns the type of the first channel in list that d removes and
-// whose type blocks deletes, or "" when none does. A whole-entity delete
-// removes every channel. A face delete removes the face's own channels, and
-// counts the entity's family channels when d.Block says the caller's last
-// face goes.
-func (g *channelGuard) blocking(list []channels.Channel, d entitymanager.AnchorDelete) string {
-	cfg := g.config()
+// whose type blocks deletes under cfg, or "" when none does. A whole-entity
+// delete removes every channel. A face delete removes the face's own
+// channels, and counts the entity's family channels when d.Block says the
+// caller's last face goes.
+//
+// Nil: cfg is accepted and means realtime is off, so nothing blocks.
+func blocking(cfg *realtimecfg.Compiled, list []channels.Channel, d entitymanager.AnchorDelete) string {
 	if cfg == nil {
 		return ""
 	}
@@ -225,6 +300,119 @@ func configuredTypeRecords(cfg *realtimecfg.Compiled) map[string]channels.TypeRe
 // entity with the same id.
 const channelReconcileBuffer = 256
 
+// externalDetachCap bounds how many ids [externalDetaches] remembers.
+const externalDetachCap = 1024
+
+// externalDetaches remembers the batches the reconciler tombstoned for
+// entities that went outside the manager, so an entity that comes back the
+// same way gets its channels back. On the file backend a file that vanishes
+// is often only away for a moment: a git checkout or stash removes it and
+// puts it back. Without this, that round trip would detach its channels for
+// good.
+//
+// It holds at most externalDetachCap ids. Beyond that the oldest id is
+// dropped, and each of its batches is logged at warn with its handle, so an
+// operator can still restore it by hand. It is in memory: a restart forgets
+// every batch the same way.
+//
+// Nil: a nil *externalDetaches remembers nothing, and every method is a
+// no-op.
+type externalDetaches struct {
+	mu    sync.Mutex
+	limit int
+	order []string // ids, oldest first
+	byID  map[string][]channels.TombstoneHandle
+}
+
+// newExternalDetaches returns an empty ledger that remembers at most limit
+// ids.
+func newExternalDetaches(limit int) *externalDetaches {
+	return &externalDetaches{limit: limit, byID: make(map[string][]channels.TombstoneHandle)}
+}
+
+// add records batch h for id.
+func (d *externalDetaches) add(id string, h channels.TombstoneHandle) {
+	if d == nil || h.IsZero() {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, ok := d.byID[id]; !ok {
+		d.order = append(d.order, id)
+	}
+	d.byID[id] = append(d.byID[id], h)
+	for len(d.order) > d.limit {
+		old := d.order[0]
+		d.order = d.order[1:]
+		for _, oh := range d.byID[old] {
+			slog.Warn("channels: too many entities removed outside rela; forgetting one's detached channels, "+
+				"which stay tombstoned", "id", old, "tombstone", oh.String())
+		}
+		delete(d.byID, old)
+	}
+}
+
+// forget drops every batch of id. The alias hook calls it when the manager
+// creates an entity at id: that entity is new and must not receive them.
+func (d *externalDetaches) forget(id string) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.dropLocked(id)
+}
+
+func (d *externalDetaches) dropLocked(id string) {
+	if _, ok := d.byID[id]; !ok {
+		return
+	}
+	delete(d.byID, id)
+	d.order = slices.DeleteFunc(d.order, func(o string) bool { return o == id })
+}
+
+// restore puts back the batches of id that a create of id@face brings back:
+// a whole-entity batch on any face, a face batch on its own face. Each batch
+// is tried once and then forgotten; a refusal because live channels now
+// occupy the anchor is logged.
+//
+// The lock is held across the restore. forget takes it too, so a create by
+// the manager, whose alias hook calls forget and then tombstones whatever is
+// on the id, runs either wholly before the restore (and nothing is restored)
+// or wholly after (and the restored channels are tombstoned again).
+func (d *externalDetaches) restore(
+	ctx context.Context, id string, face entity.Face, untombstone func(context.Context, channels.TombstoneHandle) error,
+) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var keep []channels.TombstoneHandle
+	for _, h := range d.byID[id] {
+		if hf := h.Anchor().Face; hf != "" && hf != face {
+			keep = append(keep, h)
+			continue
+		}
+		err := untombstone(ctx, h)
+		var occupied *channels.OccupiedError
+		switch {
+		case err == nil:
+		case errors.As(err, &occupied):
+			slog.Warn("channels: an entity removed outside rela came back, but live channels now occupy it; "+
+				"its old channels stay tombstoned", "id", id, "tombstone", h.String())
+		default:
+			slog.Error("channels: cannot restore the channels of an entity that came back",
+				"id", id, "tombstone", h.String(), "error", err)
+		}
+	}
+	if len(keep) == 0 {
+		d.dropLocked(id)
+		return
+	}
+	d.byID[id] = keep
+}
+
 // startChannelReconciler detaches the channels of entities deleted outside
 // the manager, which on the file backend means a file removed by hand or by
 // git. The store reports such a removal as an entity-deleted event, as it
@@ -235,22 +423,36 @@ const channelReconcileBuffer = 256
 // reconciler finds nothing or a concurrent first post, which the alias hook
 // would sweep too.
 //
+// It records each batch it detaches in detached, and on an entity-created
+// event for the id it puts the batch back (see [externalDetaches]). A create
+// through the manager forgets the batch first, through the alias hook. An
+// event cannot say which process made a delete, so a leftover the reconciler
+// swept after a manager delete is restored too if the id then comes back
+// outside the manager.
+//
 // Events are handled on a goroutine of their own, never on the store's
 // emitting path. The returned stop cancels the subscription and waits for
 // the goroutine.
 //
-// Nil: cs is accepted and starts nothing.
-func startChannelReconciler(st store.Store, cs channels.Store) func() {
+// Nil: cs is accepted and starts nothing; detached is accepted and
+// remembers nothing.
+func startChannelReconciler(st store.Store, cs channels.Store, detached *externalDetaches) func() {
 	if cs == nil {
 		return func() {}
 	}
 	events, cancel := st.Subscribe(channelReconcileBuffer)
-	r := channelReconciler{store: st, channels: cs, now: time.Now}
+	r := channelReconciler{store: st, channels: cs, now: time.Now, detached: detached}
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		for ev := range events {
-			if ev.Op == store.EventEntityDeleted {
+			switch ev.Op {
+			case store.EventEntityDeleted:
 				r.handle(context.Background(), ev.EntityID, ev.Face)
+			case store.EventEntityCreated:
+				r.restore(context.Background(), ev.EntityID, ev.Face)
+			case store.EventEntityUpdated, store.EventRelationCreated,
+				store.EventRelationUpdated, store.EventRelationDeleted:
+				// Channels follow entity existence only.
 			}
 		}
 	})
@@ -268,6 +470,7 @@ type channelReconciler struct {
 	store    store.Store
 	channels channels.Store
 	now      func() time.Time
+	detached *externalDetaches
 }
 
 // handle detaches the channels of id, or of id@face when other faces of the
@@ -280,7 +483,22 @@ func (r channelReconciler) handle(ctx context.Context, id string, face entity.Fa
 	}
 }
 
+// restore puts back the channels the reconciler detached for id when id@face
+// is created again.
+func (r channelReconciler) restore(ctx context.Context, id string, face entity.Face) {
+	r.detached.restore(ctx, id, face, func(ctx context.Context, h channels.TombstoneHandle) error {
+		return r.channels.Untombstone(ctx, h, r.now())
+	})
+}
+
+// reconcile reads the channels first: most ids have none, and the store
+// reads after it (the family, and the soft-delete marks) are the expensive
+// part.
 func (r channelReconciler) reconcile(ctx context.Context, id string, face entity.Face) error {
+	list, err := r.channels.ListEntity(ctx, id)
+	if err != nil || len(list) == 0 {
+		return err
+	}
 	headers, err := store.FamilyHeaders(ctx, r.store, id)
 	if err != nil {
 		return err
@@ -299,18 +517,17 @@ func (r channelReconciler) reconcile(ctx context.Context, id string, face entity
 	} else if marked, mErr := isMarked(ctx, r.store, id); mErr != nil || marked {
 		return mErr
 	}
-	list, err := r.channels.ListEntity(ctx, id)
-	if err != nil || len(list) == 0 {
-		return err
-	}
 	if target != "" && !hasFaceChannel(list, target) {
 		return nil
 	}
-	_, err = r.channels.Tombstone(ctx, id, target, r.now())
+	h, err := r.channels.Tombstone(ctx, id, target, r.now())
+	// A batch moved part way is still recorded, so a return can restore it.
+	r.detached.add(id, h)
 	return err
 }
 
-// isMarked reports whether id is soft-deleted in st.
+// isMarked reports whether id is soft-deleted in st. Ids are compared
+// case-folded, as the stores compare them.
 func isMarked(ctx context.Context, st store.Store, id string) (bool, error) {
 	sd, ok := st.(store.SoftDeleteProvider)
 	if !ok {
@@ -324,7 +541,7 @@ func isMarked(ctx context.Context, st store.Store, id string) (bool, error) {
 		return false, err
 	}
 	for _, me := range marked {
-		if me.ID == id {
+		if strings.EqualFold(me.ID, id) {
 			return true, nil
 		}
 	}
