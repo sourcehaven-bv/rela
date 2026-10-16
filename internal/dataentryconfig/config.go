@@ -1951,6 +1951,22 @@ type ViewTraverse struct {
 	MaxDepth       int    `yaml:"max_depth,omitempty" json:"max_depth,omitempty"`
 	Where          string `yaml:"where,omitempty" json:"where,omitempty"`
 
+	// Condition is a predicate expression ANDed with Where, for a rule Where
+	// cannot express: `and`/`or`, grouping, negation and the date functions.
+	// `entity.type` names the entity type, so one step can keep, say, the
+	// unfinished tasks and every project.
+	//
+	// A separate key from Where for the reason [List.Condition] gives: the
+	// two syntaxes overlap without erroring, so the key declares the dialect.
+	//
+	// Compiled at config load (conditionlint.CompileViewConditions) once per
+	// entity type the step can collect after a `where:` on `type`
+	// ([TraverseConditionTypes]), so a
+	// condition that does not compile is a startup error. Evaluated against
+	// the redacted entity, like a list condition. `related(...)` is refused:
+	// the step runs inside the view's fixpoint loop.
+	Condition string `yaml:"condition,omitempty" json:"condition,omitempty"`
+
 	// MentionedBy collects the entities whose body mentions the entry, in
 	// place of following a relation (TKT-HF0D5W). It takes `from: entry`
 	// only, and no `follow`, `follow_incoming`, `recursive` or `max_depth`.
