@@ -162,27 +162,6 @@ func prepareConversionRename(
 	return rn
 }
 
-func convertEntityTransaction(
-	ctx context.Context,
-	m *Manager,
-	tx store.Transactor,
-	d metamodel.ConversionDef,
-	req ConversionRequest,
-	newID string,
-	faceMap map[entity.Face]entity.Face,
-	targets []*entity.Entity,
-	rels []*entity.Relation,
-) (*entity.Entity, int, error) {
-	var converted *entity.Entity
-	dropped := 0
-	txErr := tx.Tx(ctx, func(view store.Store) error {
-		var err error
-		converted, dropped, err = applyConversionInView(ctx, m, view, d, req, newID, faceMap, targets, rels)
-		return err
-	})
-	return converted, dropped, txErr
-}
-
 func applyConversionInView(
 	ctx context.Context,
 	m *Manager,

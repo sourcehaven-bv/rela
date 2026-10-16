@@ -341,6 +341,28 @@ func ConvertEntity(ctx context.Context, m *Manager, req ConversionRequest) (*Con
 	}, nil
 }
 
+func convertEntityTransaction(
+	ctx context.Context,
+	m *Manager,
+	tx store.Transactor,
+	d metamodel.ConversionDef,
+	req ConversionRequest,
+	newID string,
+	faceMap map[entity.Face]entity.Face,
+	targets []*entity.Entity,
+	rels []*entity.Relation,
+) (*entity.Entity, int, error) {
+	var converted *entity.Entity
+	dropped := 0
+	txErr := tx.Tx(ctx, func(view store.Store) error {
+		txCtx := store.ContextInTx(ctx)
+		var err error
+		converted, dropped, err = applyConversionInView(txCtx, m, view, d, req, newID, faceMap, targets, rels)
+		return err
+	})
+	return converted, dropped, txErr
+}
+
 func validateConversionOverrides(d metamodel.ConversionDef, req ConversionRequest) error {
 	for key := range req.Properties {
 		if _, mapped := d.Fields[key]; mapped {
