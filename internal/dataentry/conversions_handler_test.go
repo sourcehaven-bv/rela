@@ -74,12 +74,7 @@ func TestConversionHandlerACLAndFaceScopedOverrides(t *testing.T) {
 	require.True(t, ok, "test fixture exposes the concrete entity manager")
 	app.conversions = newConversionHandler(manager)
 	app.conversions.schema = app.State
-	app.conversions.validateFields = func(ctx context.Context, e *entity.Entity, set map[string]any) error {
-		if denial := app.affordances.validateCreateFieldWrite(ctx, e, set); denial != nil {
-			return denial
-		}
-		return nil
-	}
+	app.conversions.validateFields = conversionCreateFieldValidator(app.affordances)
 
 	send := func(user, body string) *httptest.ResponseRecorder {
 		t.Helper()

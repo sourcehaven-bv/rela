@@ -358,8 +358,8 @@ conversions:
 		e.SetString("title", row.title)
 		e.SetString("body", row.body)
 		e.Content = row.content
-		if err := st.CreateEntity(context.Background(), e); err != nil {
-			t.Fatal(err)
+		if createErr := st.CreateEntity(context.Background(), e); createErr != nil {
+			t.Fatal(createErr)
 		}
 	}
 	edited := "Edited draft content"
@@ -368,16 +368,16 @@ conversions:
 		FaceMapping: map[string]string{"draft": "draft", "published": "published"},
 		Properties:  map[string]any{"editor_note": "draft-only"}, Content: &edited,
 	}
-	if _, err := entitymanager.ConvertEntity(context.Background(), mgr, req); err != nil {
-		t.Fatal(err)
+	if _, convertErr := entitymanager.ConvertEntity(context.Background(), mgr, req); convertErr != nil {
+		t.Fatal(convertErr)
 	}
-	draft, err := st.GetEntity(context.Background(), entity.Ref{ID: "DOC-1", Face: "draft"})
-	if err != nil {
-		t.Fatal(err)
+	draft, draftErr := st.GetEntity(context.Background(), entity.Ref{ID: "DOC-1", Face: "draft"})
+	if draftErr != nil {
+		t.Fatal(draftErr)
 	}
-	published, err := st.GetEntity(context.Background(), entity.Ref{ID: "DOC-1", Face: "published"})
-	if err != nil {
-		t.Fatal(err)
+	published, publishedErr := st.GetEntity(context.Background(), entity.Ref{ID: "DOC-1", Face: "published"})
+	if publishedErr != nil {
+		t.Fatal(publishedErr)
 	}
 	if draft.Content != edited || draft.GetString("editor_note") != "draft-only" {
 		t.Fatalf("selected face did not receive client overrides: %#v", draft)

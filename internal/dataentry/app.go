@@ -1315,12 +1315,7 @@ func NewApp(
 		schema:           app.State,
 		actionConditions: func() ViewConditionFunc { return app.viewConditions },
 	}
-	app.conversions.validateFields = func(ctx context.Context, e *entity.Entity, set map[string]any) error {
-		if denial := app.affordances.validateCreateFieldWrite(ctx, e, set); denial != nil {
-			return denial
-		}
-		return nil
-	}
+	app.conversions.validateFields = conversionCreateFieldValidator(app.affordances)
 
 	app.serializer = entitySerializer{affordances: app.affordances}
 

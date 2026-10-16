@@ -25,6 +25,15 @@ func newConversionHandler(m *entitymanager.Manager) *conversionHandler {
 	return &conversionHandler{manager: m}
 }
 
+func conversionCreateFieldValidator(svc affordanceService) func(context.Context, *entity.Entity, map[string]any) error {
+	return func(ctx context.Context, e *entity.Entity, set map[string]any) (validationErr error) {
+		if denial := svc.validateCreateFieldWrite(ctx, e, set); denial != nil {
+			validationErr = denial
+		}
+		return validationErr
+	}
+}
+
 type conversionRequest struct {
 	SourceID      string            `json:"source_id"`
 	SourceFace    string            `json:"source_face,omitempty"`
