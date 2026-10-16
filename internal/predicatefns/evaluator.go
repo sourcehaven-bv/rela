@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +77,45 @@ func (e *Evaluator) CompileWithCurrentUser(entityType, source string) (*predicat
 	return e.compile(entityType, source, true)
 }
 
+// CompileForCollection is [Evaluator.CompileWithCurrentUser] for a condition
+// that filters a collection which may hold several entity types, such as a
+// view's traverse step. The program is compiled for entityType, one of
+// collectionTypes, with two differences in the `entity` record:
+//
+//   - `entity.id` and `entity.type` are readable, so the condition can select
+//     by type: `entity.type == 'task' and entity.status == 'done'`.
+//   - A property that another type in collectionTypes declares, but
+//     entityType does not, is declared as nil. So `entity.status == 'done'`
+//     is false for a type without a status rather than a compile error. Only
+//     an equality test compiles on such a field: an ordered comparison or a
+//     date function on it is a compile error, because at runtime it could
+//     only fail.
+//
+// The extended record is limited to this entry point. It is not for a
+// program that is lowered to SQL: `type` and `id` are not properties there.
+func (e *Evaluator) CompileForCollection(
+	entityType string, collectionTypes []string, source string,
+) (*predicate.Program, error) {
+	others := slices.Clone(collectionTypes)
+	slices.Sort(others)
+	others = slices.Compact(others)
+	key := "collection\x00" + entityType + "\x00" + strings.Join(others, ",") + "\x00" + source
+	return e.compileKeyed(key, entityType, source, true, func(def *metamodel.EntityDef) predicate.RecordType {
+		rt := predicate.RecordType{"id": predicate.StringType, "type": predicate.StringType}
+		for _, t := range others {
+			od, ok := e.meta.GetEntityDef(t)
+			if !ok || t == entityType {
+				continue
+			}
+			for name := range EntityRecordType(e.meta, od) {
+				rt[name] = predicate.NilType
+			}
+		}
+		maps.Copy(rt, EntityRecordType(e.meta, def))
+		return rt
+	})
+}
+
 func (e *Evaluator) compile(entityType, source string, withUser bool) (*predicate.Program, error) {
 	// The profile is part of the cache key. Without it the two Envs would
 	// collide: whichever spelling compiled first would be served to the
@@ -86,6 +127,16 @@ func (e *Evaluator) compile(entityType, source string, withUser bool) (*predicat
 		profile = "user"
 	}
 	key := profile + "\x00" + entityType + "\x00" + source
+	return e.compileKeyed(key, entityType, source, withUser, func(def *metamodel.EntityDef) predicate.RecordType {
+		return EntityRecordType(e.meta, def)
+	})
+}
+
+// compileKeyed compiles source under the cache key, with record building the
+// `entity` record type for entityType's definition.
+func (e *Evaluator) compileKeyed(
+	key, entityType, source string, withUser bool, record func(*metamodel.EntityDef) predicate.RecordType,
+) (*predicate.Program, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if prog, ok := e.cache[key]; ok {
@@ -96,7 +147,7 @@ func (e *Evaluator) compile(entityType, source string, withUser bool) (*predicat
 		return nil, fmt.Errorf("predicatefns: unknown entity type %q", entityType)
 	}
 	env := predicate.NewEnv()
-	if err := env.DeclareVar("entity", EntityRecordType(e.meta, def)); err != nil {
+	if err := env.DeclareVar("entity", record(def)); err != nil {
 		return nil, err
 	}
 	if err := Declare(env); err != nil {

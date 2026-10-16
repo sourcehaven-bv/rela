@@ -1796,6 +1796,7 @@ func validateViews(cfg *Config, meta *metamodel.Metamodel) []string {
 					"view %q: traverse[%d] cannot specify both follow and follow_incoming",
 					viewID, i))
 			}
+			errs = append(errs, validateTraverseWhere(fmt.Sprintf("view %q: traverse[%d]", viewID, i), t)...)
 
 			// Validate collect_as is specified
 			if t.CollectAs == "" {
@@ -1964,21 +1965,7 @@ func collectionTypes(view ViewConfig, name string, meta *metamodel.Metamodel) []
 	if rule == nil {
 		return nil
 	}
-	if rule.MentionedBy {
-		return allEntityTypes(meta)
-	}
-	relType := rule.Follow
-	if relType == "" {
-		relType = rule.FollowIncoming
-	}
-	relDef, ok := meta.GetRelationDef(relType)
-	if !ok {
-		return nil
-	}
-	if rule.Follow != "" {
-		return relDef.To
-	}
-	return relDef.From
+	return TraverseTargetTypes(*rule, meta)
 }
 
 // validateLevelColumns checks one level's per-type column map for a nested

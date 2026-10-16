@@ -3,6 +3,7 @@ package dataentry
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -546,6 +547,7 @@ func (h *viewsHandler) executeSidePanel(
 	// executeView caller along with it.
 	result, err := h.executeView(ctx, viewCfg, entityID, defaultViewWorld())
 	if err != nil {
+		slog.Warn("dataentry: side panel traversal failed; panel left empty", "entity", entityID, "err", err)
 		return nil
 	}
 

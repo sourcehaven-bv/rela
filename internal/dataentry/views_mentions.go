@@ -40,7 +40,6 @@ func (h *viewsHandler) collectBacklinks(ctx context.Context, rule ViewTraverse, 
 		return nil
 	}
 	vw := worldHandle(w).visibility()
-	s := h.schema()
 	after := ""
 	for range mentionStepPages {
 		page, err := res.MentionedBy(ctx, vw, result.Entry.ID, after, limit)
@@ -58,10 +57,8 @@ func (h *viewsHandler) collectBacklinks(ctx context.Context, rule ViewTraverse, 
 		if err != nil {
 			return &gateFaultError{err: err}
 		}
-		if rule.Where != "" {
-			if found, err = filterEntities(s, found, rule.Where); err != nil {
-				return err // refused at load; reaching here is a config bug
-			}
+		if found, err = result.filter.narrow(ctx, rule, found); err != nil {
+			return err // a bad where: is refused at load; reaching here is a config bug
 		}
 		for _, e := range found {
 			if len(collected) == limit {

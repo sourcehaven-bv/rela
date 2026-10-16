@@ -1940,6 +1940,7 @@ traverse:
 | `recursive`       | bool   | Follow the relation transitively                   |
 | `max_depth`       | int    | Maximum recursion depth                            |
 | `where`           | string | Filter expression to select matching entities      |
+| `condition`       | string | Predicate expression, ANDed with `where` (see below) |
 | `mentioned_by`    | bool   | Collect the entities whose body mentions the entry (see below) |
 
 #### Backlinks: `mentioned_by`
@@ -1961,8 +1962,8 @@ traverse:
   `follow_incoming`, `recursive` or `max_depth`, and it needs a `collect_as`
   no other step uses.
 - It collects at most 200 sources, in id order. `where:` filters while the
-  step collects, so the 200 are matching sources. A bad `where:` on this step
-  is a load error.
+  step collects, so the 200 are matching sources. A `condition:` does the
+  same.
 - When more matching sources exist, or the backlink index scan reaches its
   limit, the section shows a note that only part of the list is shown. A
   section `sort:` orders the collected sources; it does not pick which 200
@@ -2012,13 +2013,61 @@ filtering on draft values would contradict itself, so the filter follows the
 page. Filters on the `type` pseudo-property are unaffected, because an entity's
 type is the same on every face.
 
-If a where clause is invalid or a property doesn't exist, the filter is silently
-skipped and all entities are returned (fail-open for robustness).
+A `where:` that does not parse is a load error, so `rela validate` and the
+server refuse it. A `where:` on a property the entity's type does not declare
+matches nothing for that entity.
 
-> **Note:** that fail-open behaviour is a known defect, not a design goal — a
-> mistyped `where:` silently *widens* a clause whose purpose is to narrow. It is
-> tracked as BUG-WHEREWIDE and will become a load-time error, so a bad `where:`
-> is refused when the config parses rather than ignored at render time.
+#### Traverse conditions (`condition:`)
+
+A `where:` holds one clause. When a step needs `and`, `or`, `not` or grouping,
+use `condition:`. It is a predicate expression in the same language as a
+list's [`condition:`](#conditions-condition), evaluated for every entity the
+step collects and ANDed with `where:`.
+
+`entity.type` is the entity's type and `entity.id` its id, so one step can
+select by type and by property at once:
+
+```yaml
+traverse:
+  # Only the finished tasks.
+  - from: entry
+    follow: bestaat_uit
+    collect_as: afgerond
+    condition: "entity.type == 'taak' and entity.status == 'gereed'"
+
+  # The unfinished tasks, and every sub-project.
+  - from: entry
+    follow: bestaat_uit
+    collect_as: lopend
+    condition: >-
+      entity.type == 'project'
+      or (entity.type == 'taak' and entity.status ~= 'gereed')
+```
+
+- The condition is compiled at load for every type the step can collect: the
+  `to:` types of a `follow:` relation, the `from:` types of a
+  `follow_incoming:` relation, and every type for `mentioned_by`. A `where:`
+  on `type` runs first and narrows that set. If the condition does not
+  compile for one of the types, `rela validate` and the server refuse the
+  config and name the view, the step and the type.
+- A property that another collected type declares, but this entity's type
+  does not, reads as `nil`. So `entity.status == 'gereed'` is false for a type
+  without a status, and `entity.status ~= 'gereed'` is true. Note the
+  difference with `where:`, which leaves out an entity whose type lacks the
+  property.
+- On such a property only `==` and `~=` compile. A comparison such as
+  `entity.vervaldatum < today()` could only fail for a type without the
+  property, so it is a load error. Narrow the types first with
+  `where: "type = taak"`.
+- A property no collected type declares is a load error.
+- The language is Lua, as in a list `condition:`: not-equal is `~=`, strings
+  take quotes, and `and`/`or`/`not` are words. The `where:` spelling
+  `status = gereed` is refused.
+- The condition reads only the fields the reader may see. A hidden field
+  reads as `nil`. Like `where:`, it reads the face the world resolved.
+- `related(...)` is not available in a traverse condition. The step runs up to
+  ten times while the view collects, and each run would cost a store query.
+- Side panels do not support `condition:`; use `where:` there.
 
 ### Sections
 

@@ -29,6 +29,11 @@ const (
 	// the entity type of the list the entry opens, since the rule counts that
 	// list's rows.
 	ViewConditionNavStatus ViewConditionKind = "nav_status"
+
+	// ViewConditionTraverse is the `condition:` of a view's traverse step,
+	// keyed by dataentryconfig.TraverseConditionID: one program per entity
+	// type the step can collect.
+	ViewConditionTraverse ViewConditionKind = "traverse"
 )
 
 // ViewConditionKey identifies one compiled view condition.
@@ -40,9 +45,9 @@ type ViewConditionKey struct {
 // String renders the key the way the config reads, for diagnostics.
 func (k ViewConditionKey) String() string { return fmt.Sprintf("%s[%q]", k.Kind, k.ID) }
 
-// CompileViewConditions compiles the `condition:` of every list and kanban,
-// the `when:` of every detail-page action, and every rule of a navigation
-// entry's `status:`.
+// CompileViewConditions compiles the `condition:` of every list, kanban and
+// view traverse step, the `when:` of every detail-page action, and every rule
+// of a navigation entry's `status:`.
 //
 // Like [CompileNextActions] and unlike [Lint], this is AUTHORITATIVE: the
 // programs returned here are the ones evaluated on the read path, so an
@@ -51,9 +56,9 @@ func (k ViewConditionKey) String() string { return fmt.Sprintf("%s[%q]", k.Kind,
 // instead of silently emptying a view — the failure mode BUG-WHEREWIDE and
 // BUG-F1LTV0 both record, in opposite directions.
 //
-// A view declares exactly one `entity_type`, so unlike a next-action source
-// there is no multi-type question: the condition is compiled against that
-// type and must succeed.
+// A list or kanban declares exactly one `entity_type`, so the condition is
+// compiled against that type and must succeed. A traverse step can collect
+// several types and compiles once per type (see compileTraverseConditions).
 //
 // The Env is the request-scoped profile (CompileWithCurrentUser), matching
 // next actions: a view is rendered for one signed-in principal, so a
@@ -92,6 +97,7 @@ func CompileViewConditions(
 		}
 	}
 	compileActionConditions(ev, meta, cfg, programs, &problems)
+	compileTraverseConditions(ev, meta, cfg, programs, &problems)
 
 	sort.Strings(problems)
 	if len(programs) == 0 {
@@ -136,6 +142,55 @@ func compileActionConditions(
 				continue
 			}
 			programs[key] = prog
+		}
+	}
+}
+
+// compileTraverseConditions compiles the `condition:` of every view traverse
+// step once per entity type the step can collect, narrowed by a `where:` on
+// `type` (dataentryconfig.TraverseConditionTypes).
+//
+// Every type must compile, as for a next-action source spanning several
+// types: the step learns an entity's type only when it holds one, so a
+// condition valid for some types would silently drop the others. The Env
+// makes that rule usable: `entity.type` is readable, and a property another
+// collected type declares is nil-typed (CompileForCollection).
+//
+// `related(...)` is refused. The step runs inside the view's fixpoint loop,
+// up to ten passes per rule, and a store query per pass per type is a cost
+// the view should not hide.
+//
+// A step with an unknown relation has no type set; validateViews reports the
+// relation, so it is skipped here.
+func compileTraverseConditions(
+	ev *predicatefns.Evaluator, meta *metamodel.Metamodel, cfg *dataentryconfig.Config,
+	programs map[ViewConditionKey]*predicate.Program, problems *[]string,
+) {
+	for viewID, view := range cfg.Views {
+		for i, t := range view.Traverse {
+			if t.Condition == "" {
+				continue
+			}
+			name := fmt.Sprintf("views[%q].traverse[%d]", viewID, i)
+			types := dataentryconfig.TraverseConditionTypes(t, meta)
+			for _, et := range types {
+				if _, ok := meta.GetEntityDef(et); !ok {
+					continue // an undeclared relation endpoint is the metamodel's to report
+				}
+				prog, err := ev.CompileForCollection(et, types, t.Condition)
+				if err != nil {
+					*problems = append(*problems, fmt.Sprintf(
+						"%s: condition does not compile against entity type %q: %v", name, et, err))
+					continue
+				}
+				if len(prog.Traversals()) > 0 {
+					*problems = append(*problems, fmt.Sprintf(
+						"%s: %s(...) is not available in a traverse condition", name, predicate.FuncRelated))
+					continue
+				}
+				id := dataentryconfig.TraverseConditionID(et, types, t.Condition)
+				programs[ViewConditionKey{ViewConditionTraverse, id}] = prog
+			}
 		}
 	}
 }
@@ -235,6 +290,9 @@ func entityTypeFor(cfg *dataentryconfig.Config, key ViewConditionKey) string {
 		return cfg.Kanbans[key.ID].EntityType
 	case ViewConditionAction:
 		_, et, _ := dataentryconfig.SplitActionConditionID(key.ID)
+		return et
+	case ViewConditionTraverse:
+		et, _ := dataentryconfig.SplitTraverseConditionID(key.ID)
 		return et
 	case ViewConditionNavStatus:
 		for _, ns := range dataentryconfig.NavStatusEntries(cfg) {
