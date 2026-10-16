@@ -3,9 +3,9 @@ identity: header editor@example.test
 status: 200
 header X-Total-Count: 6
 header Link: </api/v1/tickets?page=1&per_page=25>; rel="first", </api/v1/tickets?page=1&per_page=25>; rel="last"
-reads: CountMatched=1 GetRelation=54 GraphQueryHeaders=2 ListEntityHeaders=6 ListRelations=22 MatchingFaces=4
-breadth: ListEntityHeaders=18/6 ListRelations=18/22 MatchingFaces=10/4
-bodies: GraphQuery=4/2 ListEntityHeaders=0/6
+reads: CountMatched=1 GraphQueryHeaders=2 ListEntityHeaders=2 ListRelations=9 MatchingFaces=2
+breadth: ListEntityHeaders=14/2 ListRelations=48/9 MatchingFaces=9/2
+bodies: GraphQuery=4/2 ListEntityHeaders=0/2
 versions: 
 body:
 {

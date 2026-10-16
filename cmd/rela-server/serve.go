@@ -211,7 +211,8 @@ func (s *server) build(svc *appbuild.Services) (*generation, error) {
 	if err := app.StartWatching(); err != nil {
 		slog.Warn("file watcher not started", "error", err)
 	}
-	return &generation{svc: svc, app: app, handler: app.NewRouter(dataentry.WithAccessLog(s.accessLog))}, nil
+	return &generation{svc: svc, app: app, handler: app.NewRouter(
+		dataentry.WithAccessLog(s.accessLog), dataentry.WithQueryCeiling(s.f.queryCeiling))}, nil
 }
 
 // buildApp builds the data-entry app over svc with the process's identity,

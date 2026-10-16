@@ -9,6 +9,7 @@ import {
   handleLiveChanged,
   setLiveReconnect,
 } from './useLiveSubscription'
+import { invalidateWhenVisible, refetchJitter, runWhenVisible } from './visibleRefetch'
 
 export type SSEEventType = 'refresh' | 'git' | 'git:status' | 'entity:changed'
 
@@ -158,7 +159,11 @@ export function useEvents() {
       eventSource.addEventListener('live:changed', (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data) as { key?: unknown }
-          if (typeof data.key === 'string') handleLiveChanged(data.key)
+          // A hidden tab refetches when it is shown again, not now.
+          if (typeof data.key === 'string') {
+            const key = data.key
+            runWhenVisible(`live:${key}`, () => handleLiveChanged(key))
+          }
         } catch {
           console.warn('Failed to parse live:changed event data')
         }
@@ -173,8 +178,8 @@ export function useEvents() {
         // marks every entity query stale and background-refetches the
         // active ones (FEAT-XY2D1L).
         entitiesStore.invalidateAll()
-        queryCache.invalidateQueries({ key: entityKeys.root }).catch(() => {})
-        gitStore.fetchStatus().catch(() => {})
+        invalidateWhenVisible(queryCache, { key: entityKeys.root }).catch(() => {})
+        runWhenVisible('git-status', () => gitStore.fetchStatus().catch(() => {}))
         // Also sent when data-entry.yaml reloads, so components holding
         // config-derived state (the sidebar) can refetch it. No type: the
         // event is not about one.
@@ -210,11 +215,11 @@ export function useEvents() {
 
       // Handle git events
       eventSource.addEventListener('git', () => {
-        gitStore.fetchStatus().catch(() => {})
+        runWhenVisible('git-status', () => gitStore.fetchStatus().catch(() => {}))
       })
 
       eventSource.addEventListener('git:status', () => {
-        gitStore.fetchStatus().catch(() => {})
+        runWhenVisible('git-status', () => gitStore.fetchStatus().catch(() => {}))
       })
 
       // Handle the type-scoped entity-change event. Create/update/delete
@@ -229,11 +234,9 @@ export function useEvents() {
           const data = JSON.parse(event.data) as EntityEventData
           // Legacy TTL cache (unmigrated views) is all-or-nothing.
           entitiesStore.invalidateAll()
-          queryCache
-            .invalidateQueries({
-              key: data.type ? entityKeys.type(data.type) : entityKeys.root,
-            })
-            .catch(() => {})
+          invalidateWhenVisible(queryCache, {
+            key: data.type ? entityKeys.type(data.type) : entityKeys.root,
+          }).catch(() => {})
           eventHandlers.get('entity:changed')?.forEach((handler) => handler(data))
         } catch {
           console.warn('Failed to parse entity:changed event data')
@@ -282,7 +285,9 @@ export function useEvents() {
     if (reconnectTimer) return // Already scheduled
 
     reconnectAttempts++
-    const delay = getReconnectDelay()
+    // Jitter, so tabs that lost the stream together (a laptop waking) do
+    // not reconnect, and resync, in the same second (TASK-550RD).
+    const delay = getReconnectDelay() + refetchJitter()
 
     connectionState.value = {
       connected: false,

@@ -22,6 +22,7 @@ import { useWorld } from '@/composables/useWorld'
 import { useFlyout } from '@/composables/useFlyout'
 import { pileNavId } from '@/components/common/sidebarNav'
 import { forgetPileName, rememberPileNames, resetPileNames } from './pileNames'
+import { runWhenVisible } from './visibleRefetch'
 
 /** How long a burst of entity changes is left to settle before recounting. */
 export const PILES_EVENT_DEBOUNCE_MS = 1000
@@ -147,7 +148,8 @@ export function usePiles() {
     if (eventTimer) clearTimeout(eventTimer)
     eventTimer = setTimeout(() => {
       eventTimer = null
-      void refresh()
+      // A hidden tab refreshes once, when it is shown again.
+      runWhenVisible(PILES_KEY_ROOT, () => void refresh())
     }, PILES_EVENT_DEBOUNCE_MS)
   }
   on('entity:changed', onEntityChanged)

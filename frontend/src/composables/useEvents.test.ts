@@ -194,7 +194,7 @@ describe('useEvents', () => {
       lastSource!._emit('entity:changed', JSON.stringify({ type: 'ticket' }))
 
       expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(1)
-      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'ticket'] })
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'ticket'] }, true)
     })
 
     it('invalidates per type across successive entity:changed events', async () => {
@@ -205,9 +205,25 @@ describe('useEvents', () => {
       lastSource!._emit('entity:changed', JSON.stringify({ type: 'risk' }))
       lastSource!._emit('entity:changed', JSON.stringify({ type: 'measure' }))
 
-      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'risk'] })
-      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'measure'] })
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'risk'] }, true)
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'measure'] }, true)
       expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(2)
+    })
+
+    it('only marks queries stale while the tab is hidden (TASK-550RD)', async () => {
+      const queryCache = useQueryCache()
+      const spy = vi.spyOn(queryCache, 'invalidateQueries')
+      await mountConnected()
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+      try {
+        lastSource!._emit('entity:changed', JSON.stringify({ type: 'ticket' }))
+        lastSource!._emit('refresh')
+      } finally {
+        visibility.mockRestore()
+      }
+
+      expect(spy).toHaveBeenCalledWith({ key: ['entities', 'ticket'] }, false)
+      expect(spy).toHaveBeenCalledWith({ key: ['entities'] }, false)
     })
 
     it('invalidates every entity query on refresh', async () => {
@@ -218,7 +234,7 @@ describe('useEvents', () => {
       lastSource!._emit('refresh')
 
       expect(mockEntitiesInvalidateAll).toHaveBeenCalledTimes(1)
-      expect(spy).toHaveBeenCalledWith({ key: ['entities'] })
+      expect(spy).toHaveBeenCalledWith({ key: ['entities'] }, true)
       expect(mockGitFetchStatus).toHaveBeenCalled()
     })
 

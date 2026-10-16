@@ -139,47 +139,83 @@ func (r *Request) walkMembers(ctx context.Context) []string {
 // over-granting.
 func (r *Request) computeForEntity(ctx context.Context, entityID string) []RoleAttribution {
 	globals := r.Globals(ctx)
-	out := append([]RoleAttribution(nil), globals.Attributions...)
-	seen := map[attrKey]bool{}
-	for _, a := range out {
-		seen[attrKey(a)] = true
+	if local, ok := primedLocalRoles(ctx, r, entityID); ok {
+		return mergeAttributions(globals.Attributions, local)
 	}
-	add := func(role string, source Source) {
-		k := attrKey{Role: role, Source: source}
-		if seen[k] {
-			return
-		}
-		seen[k] = true
-		out = append(out, RoleAttribution{Role: role, Source: source})
-	}
-
 	chain := r.ancestors(ctx, entityID)
+	local := r.localRoles(entityID, chain, globals.Members, func(member, relType, target string) bool {
+		return r.d.graph.HasEdge(ctx, member, relType, target)
+	})
+	return mergeAttributions(globals.Attributions, local)
+}
+
+// localRoles returns the roles conferred on the principal for entityID by
+// role-relation edges from a member to an entity on chain (entityID first,
+// then its inherit_roles_through ancestors), deduplicated, in the resolver's
+// deterministic order. hasEdge answers one (member, relType, target) probe;
+// the per-entity path asks the graph, a primed page asks the edges it loaded
+// in one batch ([PrimeLocalRoles]), and both share this walk so they cannot
+// disagree about which roles an edge confers or in what order.
+func (r *Request) localRoles(
+	entityID string, chain, members []string, hasEdge func(member, relType, target string) bool,
+) []RoleAttribution {
 	policy := r.d.policy
+	var out []RoleAttribution
+	seen := map[attrKey]bool{}
 	// RR-MBK0: iterate role-relation types in sorted order so the local-
 	// role attributions land in deterministic order — Decision.Attributions
 	// otherwise reflects Go's randomized map iteration, making
 	// formatDeniedSummary output non-reproducible.
+	for _, relType := range r.conferringRelations() {
+		role := policy.RoleRelations[relType].Confers
+		for _, member := range members {
+			for _, target := range chain {
+				if !hasEdge(member, relType, target) {
+					continue
+				}
+				src := buildLocalSource(member, r.principal.User, target, entityID, relType)
+				a := RoleAttribution{Role: role, Source: src}
+				if k := attrKey(a); !seen[k] {
+					seen[k] = true
+					out = append(out, a)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// conferringRelations returns, sorted, the role-relation types whose
+// conferred role the policy defines: the only ones the local-role walk
+// probes.
+func (r *Request) conferringRelations() []string {
+	policy := r.d.policy
 	relTypes := make([]string, 0, len(policy.RoleRelations))
-	for relType := range policy.RoleRelations {
+	for relType, def := range policy.RoleRelations {
+		if def.Confers == "" {
+			continue
+		}
+		if _, defined := policy.Roles[def.Confers]; !defined {
+			continue
+		}
 		relTypes = append(relTypes, relType)
 	}
 	sort.Strings(relTypes)
-	for _, relType := range relTypes {
-		def := policy.RoleRelations[relType]
-		role := def.Confers
-		if role == "" {
-			continue
-		}
-		if _, defined := policy.Roles[role]; !defined {
-			continue
-		}
-		for _, member := range globals.Members {
-			for _, target := range chain {
-				if !r.d.graph.HasEdge(ctx, member, relType, target) {
-					continue
-				}
-				add(role, buildLocalSource(member, r.principal.User, target, entityID, relType))
-			}
+	return relTypes
+}
+
+// mergeAttributions appends local to globals, dropping any (role, source)
+// pair already present. globals is not modified.
+func mergeAttributions(globals, local []RoleAttribution) []RoleAttribution {
+	out := append([]RoleAttribution(nil), globals...)
+	seen := make(map[attrKey]bool, len(out))
+	for _, a := range out {
+		seen[attrKey(a)] = true
+	}
+	for _, a := range local {
+		if k := attrKey(a); !seen[k] {
+			seen[k] = true
+			out = append(out, a)
 		}
 	}
 	return out

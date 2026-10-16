@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -55,5 +56,45 @@ func TestQueryStats_ChildContextSharesParentStats(t *testing.T) {
 	QueryStatsFrom(child).Record(time.Millisecond)
 	if got := stats.Queries(); got != 1 {
 		t.Errorf("a derived context must record into the same stats; Queries = %d", got)
+	}
+}
+
+func TestQueryStats_MostRepeated(t *testing.T) {
+	s := &QueryStats{}
+	if sql, n := s.MostRepeated(); sql != "" || n != 0 {
+		t.Fatalf("empty stats: got %q x%d", sql, n)
+	}
+	for range 3 {
+		s.RecordStatement("SELECT b", time.Millisecond)
+	}
+	s.RecordStatement("SELECT a", time.Millisecond)
+	s.Record(time.Millisecond)
+	if sql, n := s.MostRepeated(); sql != "SELECT b" || n != 3 {
+		t.Errorf("got %q x%d, want SELECT b x3", sql, n)
+	}
+	if got := s.Queries(); got != 5 {
+		t.Errorf("Queries() = %d, want 5", got)
+	}
+}
+
+// Distinct texts past the cap still count as queries, the table stays
+// bounded, and a statement repeated after the table filled is still the one
+// reported.
+func TestQueryStats_ShapeCapIsBounded(t *testing.T) {
+	s := &QueryStats{}
+	for i := range 1000 {
+		s.RecordStatement(fmt.Sprintf("SELECT %d", i), 0)
+	}
+	for range 300 {
+		s.RecordStatement("SELECT hot", 0)
+	}
+	if got := s.Queries(); got != 1300 {
+		t.Errorf("Queries() = %d, want 1300", got)
+	}
+	if len(s.shapes) > maxStatementShapes {
+		t.Errorf("%d shapes kept, cap %d", len(s.shapes), maxStatementShapes)
+	}
+	if sql, n := s.MostRepeated(); sql != "SELECT hot" || n < 300 {
+		t.Errorf("got %q x%d, want SELECT hot x>=300", sql, n)
 	}
 }

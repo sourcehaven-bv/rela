@@ -1,8 +1,9 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import { PiniaColada } from '@pinia/colada'
+import { PiniaColada, useQueryCache } from '@pinia/colada'
 import App from './App.vue'
 import router from './router'
+import { installVisibleRefetch } from './composables/visibleRefetch'
 // rela-components tokens and shared classes FIRST: it declares the --rl-*
 // palette that everything below resolves against, tokens.css included — that
 // file is now a set of aliases onto it, not a palette of its own.
@@ -111,7 +112,11 @@ window.addEventListener('error', (ev) => {
 })
 
 app.use(createPinia())
-app.use(PiniaColada)
+// Focus and reconnect refetches go through visibleRefetch instead: they wait
+// for a visible tab and start after a random delay, so tabs waking together
+// do not all hit the server in the same second (TASK-550RD).
+app.use(PiniaColada, { queryOptions: { refetchOnWindowFocus: false, refetchOnReconnect: false } })
+app.runWithContext(() => installVisibleRefetch(useQueryCache()))
 app.use(router)
 
 app.mount('#app')

@@ -1,8 +1,8 @@
 request: REPORT /api/v1/_caldav/principal/calendars/tickets/
 identity: header editor@example.test
 status: 207
-reads: GetRelation=6 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=1
-breadth: ListEntityHeaders=0/1 ListRelations=0/1 MatchingFaces=6/1
+reads: GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=2 MatchingFaces=1
+breadth: ListEntityHeaders=0/1 ListRelations=6/2 MatchingFaces=6/1
 bodies: GraphQuery=0/1 ListEntityHeaders=0/1
 versions: 
 body:

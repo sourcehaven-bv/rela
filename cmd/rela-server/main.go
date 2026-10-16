@@ -47,6 +47,7 @@ type serverFlags struct {
 	verbose           bool
 	quiet             bool
 	accessLog         string
+	queryCeiling      int64
 	debugPprof        string
 	principalHeader   string
 	readOnly          bool
@@ -123,8 +124,11 @@ func parseFlags() *serverFlags {
 	flag.BoolVar(&f.verbose, "verbose", false, "Verbose (debug) logging")
 	flag.BoolVar(&f.quiet, "quiet", false, "Quiet (warn-only) logging")
 	flag.StringVar(&f.accessLog, "access-log", "",
-		"Log one line per request: =stderr, or =syslog (tag "+accessLogTag+"). Fields: method, path (no query string), "+
-			"status, wall_ms, queries, db_ms. Independent of --verbose/--quiet; unlike --verbose it logs no SQL.")
+		"Log one line per request: =stderr, or =syslog (tag "+accessLogTag+"). Fields: method, path and query "+
+			"(as shapes: ids and data masked), status, wall_ms, queries, db_ms. Independent of --verbose/--quiet; unlike --verbose it logs no SQL.")
+	flag.Int64Var(&f.queryCeiling, "query-ceiling", dataentry.DefaultQueryCeiling,
+		"Log a warning for a GET request that runs more than this many database statements, naming the "+
+			"statement it repeated most. 0 turns it off. Only database backends count statements.")
 	flag.StringVar(&f.debugPprof, "debug-pprof", "",
 		"If set, serve net/http/pprof on this loopback address (e.g. 127.0.0.1:6060). "+
 			"Diagnostic only. Refuses to bind to non-loopback addresses.")

@@ -498,8 +498,16 @@ type RelationQuery struct {
 	// bind-parameter budget has to pack the batch itself (for example by
 	// sending one JSON array). Pinned by storetest's ListEntityIDsLargeBatch.
 	EntityIDs []string
-	Cursor    string // pagination cursor from a previous page (empty = start); ignored by ListRelations
-	Limit     int    // max relations per page (0 = no limit); ignored by ListRelations
+	// PeerIDs filters the OTHER endpoint: the target for DirectionOutgoing,
+	// the source for DirectionIncoming, and either endpoint for
+	// DirectionBoth (the same rule as EntityIDs there). With EntityIDs it
+	// asks "edges between these ids and those" in one query, which an ACL
+	// probe of (member, target) pairs needs (BUG-E2W1LS): filtering on one
+	// side only reads every edge into a shared ancestor. Nil, empty and
+	// batch size follow EntityIDs.
+	PeerIDs []string
+	Cursor  string // pagination cursor from a previous page (empty = start); ignored by ListRelations
+	Limit   int    // max relations per page (0 = no limit); ignored by ListRelations
 
 	// FromFace filters on the state-specific tail of an edge
 	// (TKT-DOFYR1). nil — the zero value — leaves the tail UNFILTERED:

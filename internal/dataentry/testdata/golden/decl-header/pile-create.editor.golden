@@ -1,8 +1,8 @@
 request: POST /api/v1/_piles
 identity: header editor@example.test
 status: 201
-reads: GetRelation=4 GraphQueryHeaders=1 ListEntityHeaders=2 ListRelations=1 MatchingFaces=2
-breadth: ListEntityHeaders=4/2 ListRelations=0/1 MatchingFaces=4/2
+reads: GraphQueryHeaders=1 ListEntityHeaders=2 ListRelations=3 MatchingFaces=2
+breadth: ListEntityHeaders=4/2 ListRelations=4/3 MatchingFaces=4/2
 bodies: GraphQuery=0/1 ListEntityHeaders=0/2
 versions: 
 body:

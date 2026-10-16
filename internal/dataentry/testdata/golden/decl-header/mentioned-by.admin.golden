@@ -1,8 +1,8 @@
 request: GET /api/v1/tickets/TKT-1/mentioned-by
 identity: header admin@example.test
 status: 200
-reads: GetRelation=2 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=1 MentionSources=1
-breadth: ListEntities=1/1 ListEntityHeaders=2/1 ListRelations=0/1 MatchingFaces=2/1
+reads: GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=1 ListRelations=2 MatchingFaces=1 MentionSources=1
+breadth: ListEntities=1/1 ListEntityHeaders=2/1 ListRelations=2/2 MatchingFaces=2/1
 bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/1 MentionSources=0/1
 versions: 
 body:

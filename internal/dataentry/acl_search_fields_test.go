@@ -1,7 +1,10 @@
 package dataentry
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -10,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // buildFieldPolicyApp wires ONE acl.Declarative as both the read gate (so a
@@ -118,5 +122,95 @@ assignments:
 	if len(resp.Data) != 1 || resp.Data[0].ID != "TKT-001" {
 		t.Errorf("no visible: block → property visible → search should return the ticket; got %d hits",
 			len(resp.Data))
+	}
+}
+
+// TestACLList_BatchedIncludesKeepGates pins the read gates on the batched
+// list include path (TASK-550RD). The page's include block is resolved in
+// one batch over every row, so a gate verdict must still hold per entity:
+// a type the principal cannot read never enters `included`, and a hidden
+// field of an included entity is redacted, for every row on the page.
+func TestACLList_BatchedIncludesKeepGates(t *testing.T) {
+	const aclYAML = `
+roles:
+  viewer:
+    read: [ticket]
+    visible:
+      ticket:
+        - field: title
+  admin:
+    read: ["*"]
+assignments:
+  alice: viewer
+  root: admin
+`
+	app, d := buildFieldPolicyApp(t, aclYAML)
+	for _, id := range []string{"TKT-001", "TKT-002", "TKT-003"} {
+		seedEntity(app, &entity.Entity{ID: id, Type: "ticket",
+			Properties: map[string]any{"title": "title " + id, "status": "hidden-status-" + id}})
+	}
+	seedEntity(app, &entity.Entity{ID: "FEAT-001", Type: "feature", Properties: map[string]any{"title": "secret feature"}})
+	seedEntity(app, &entity.Entity{ID: "FEAT-002", Type: "feature", Properties: map[string]any{"title": "other feature"}})
+	seedRelation(app, entity.NewRelation("TKT-001", "implements", "FEAT-001"))
+	seedRelation(app, entity.NewRelation("TKT-003", "implements", "FEAT-002"))
+	seedRelation(app, entity.NewRelation("TKT-002", "blocks", "TKT-001"))
+	seedRelation(app, entity.NewRelation("TKT-003", "blocks", "TKT-002"))
+
+	type listBody struct {
+		Included map[string]struct {
+			Properties map[string]any `json:"properties"`
+		} `json:"included"`
+	}
+	decode := func(t *testing.T, raw []byte) listBody {
+		t.Helper()
+		var b listBody
+		if err := json.Unmarshal(raw, &b); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return b
+	}
+
+	for _, include := range []string{"*", "implements,blocks", "blocks.implements"} {
+		t.Run("viewer include="+include, func(t *testing.T) {
+			_, rec := listEntitiesAs(aliceCtx(), t, app, d, "ticket", "tickets", "include="+url.QueryEscape(include))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("list: %d %s", rec.Code, rec.Body)
+			}
+			body := rec.Body.String()
+			for _, leak := range []string{"secret feature", "other feature", "hidden-status-"} {
+				if strings.Contains(body, leak) {
+					t.Errorf("batched include leaked %q: %s", leak, body)
+				}
+			}
+			b := decode(t, rec.Body.Bytes())
+			for id, e := range b.Included {
+				if strings.HasPrefix(id, "FEAT-") {
+					t.Errorf("hidden %s served in included", id)
+				}
+				if _, ok := e.Properties["status"]; ok {
+					t.Errorf("included %s carries hidden status", id)
+				}
+			}
+			if _, ok := b.Included["TKT-001"]; !ok {
+				t.Errorf("readable TKT-001 missing from included: %s", body)
+			}
+		})
+	}
+
+	// Control: a principal who may read everything gets both features and
+	// the statuses, so the assertions above are not vacuous.
+	rootCtx := principal.With(context.Background(), principal.Principal{User: "root", Tool: principal.ToolDataEntry})
+	_, rec := listEntitiesAs(rootCtx, t, app, d, "ticket", "tickets", "include=*")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("root list: %d %s", rec.Code, rec.Body)
+	}
+	b := decode(t, rec.Body.Bytes())
+	for _, id := range []string{"FEAT-001", "FEAT-002", "TKT-001", "TKT-002", "TKT-003"} {
+		if _, ok := b.Included[id]; !ok {
+			t.Errorf("root: %s missing from included: %s", id, rec.Body)
+		}
+	}
+	if s, _ := b.Included["TKT-001"].Properties["status"].(string); s != "hidden-status-TKT-001" {
+		t.Errorf("root: TKT-001 status = %q, want it visible", s)
 	}
 }

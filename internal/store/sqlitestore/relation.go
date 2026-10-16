@@ -158,6 +158,22 @@ func buildRelationQueryFrom(q store.RelationQuery, cursorKey string) (sqlText st
 			args = append(args, ids, ids)
 		}
 	}
+	if q.PeerIDs != nil {
+		// The other endpoint; see store.RelationQuery.PeerIDs.
+		peers := jsonIDs(q.PeerIDs)
+		const in = "(SELECT value FROM json_each(?))"
+		switch q.Direction {
+		case store.DirectionOutgoing:
+			conds = append(conds, "to_id IN "+in)
+			args = append(args, peers)
+		case store.DirectionIncoming:
+			conds = append(conds, "from_id IN "+in)
+			args = append(args, peers)
+		default:
+			conds = append(conds, "(from_id IN "+in+" OR to_id IN "+in+")")
+			args = append(args, peers, peers)
+		}
+	}
 
 	sqlText = `SELECT ` + relationColumns + ` FROM relations`
 	if len(conds) > 0 {

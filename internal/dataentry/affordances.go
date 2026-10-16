@@ -288,10 +288,23 @@ type traversalPrimer interface {
 }
 
 // primeVerdicts primes res for a page of rows so serializing the page costs
-// one store query per grant traversal, not one per row. Serializing on the
-// unprimed ctx is still correct, only slower.
+// one store query per grant traversal, not one per row. It also primes the
+// rows' local roles ([acl.PrimeLocalRoles]), which every `_actions` verb and
+// field verdict of a row consults (BUG-E2W1LS). Serializing on the unprimed
+// ctx is still correct, only slower.
+//
+// Read paths only: the local-role prime is a snapshot, and a write made on
+// the returned ctx would not be reflected in it.
 func primeVerdicts(ctx context.Context, res FieldVerdictResolver, rows []*entityPkg.Entity) context.Context {
-	if p, ok := res.(traversalPrimer); ok && len(rows) > 0 {
+	if len(rows) == 0 {
+		return ctx
+	}
+	ids := make([]string, len(rows))
+	for i, e := range rows {
+		ids[i] = e.ID
+	}
+	ctx = acl.PrimeLocalRoles(ctx, ids)
+	if p, ok := res.(traversalPrimer); ok {
 		return p.PrimeTraversals(ctx, rows)
 	}
 	return ctx

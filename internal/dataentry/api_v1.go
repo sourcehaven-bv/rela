@@ -376,7 +376,11 @@ func (a *App) listPage(
 	// AFTER the ACL scope and every filter, BEFORE paging and the count: the
 	// condition narrows the population the page and total describe, so
 	// applying it later would page one set and count another.
-	ctx = primeVerdicts(ctx, a.fieldResolver, all)
+	// Prime only when a condition will judge every row: otherwise the page
+	// is primed below, and priming the whole population here is wasted.
+	if cond != nil {
+		ctx = primeVerdicts(ctx, a.fieldResolver, all)
+	}
 	if all, err = applyViewCondition(ctx, all, cond, a.redactedForSuggestion, a.Services().Store); err != nil {
 		return nil, 0, nil, err
 	}
@@ -890,7 +894,7 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 
 	// Build response - always include relations for relation column support
 	data := make([]v1.Entity, 0, len(entities))
-	included := make(map[string]v1.Entity)
+	var included map[string]v1.Entity // nil when none; both encoders omit it
 	pageCtx := primeVerdicts(r.Context(), a.fieldResolver, entities)
 	for i, e := range entities {
 		v1Entity := a.serializer.forWireRelated(
@@ -915,11 +919,11 @@ func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeN
 			v1Entity.World = worldProvenance(r.Context(), e)
 		}
 		data = append(data, v1Entity)
+	}
 
-		// Resolve includes if requested
-		if wantIncludes {
-			maps.Copy(included, a.resolveV1Includes(r.Context(), e, includes))
-		}
+	// Resolve includes for the whole page at once (TASK-550RD).
+	if wantIncludes {
+		included = a.resolveV1Includes(r.Context(), entities, includes)
 	}
 
 	if !serveListRowExtras(w, r, a, query, entities, data) {
@@ -1090,7 +1094,7 @@ func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName
 
 	// Handle includes for related entities
 	if includes := query.Get("include"); includes != "" {
-		result.Included = a.resolveV1Includes(ctx, entity, includes)
+		result.Included = a.resolveV1Includes(ctx, []*entityPkg.Entity{entity}, includes)
 	}
 
 	// Resolve the entity-ID code spans in the body so an edit form can render
@@ -2180,7 +2184,15 @@ func flattenIssues(sections []AnalysisSection) []visibleIssue {
 
 // --- Helper Functions ---
 
-// resolveV1Includes expands `?include=` into the `included` map.
+// resolveV1Includes expands `?include=` for a set of rows into the
+// `included` map. The single-entity GET passes one row; the list passes its
+// served page.
+//
+// The page is resolved in ONE batch per include level (TASK-550RD): one edge
+// read and one head resolution for all rows, one gate pass per entity type,
+// then one recursive call per nested expression. Resolving row by row made
+// the query count grow with the page — the Atlas task list with `include=*`
+// cost about 8,000 queries per poll.
 //
 // Candidate collection is world-aware (TKT-WRLDAPI item 4): under a
 // non-default world the neighbors come from the world-scoped seam, so an
@@ -2192,7 +2204,12 @@ func flattenIssues(sections []AnalysisSection) []visibleIssue {
 // serialization — is shared by both paths deliberately. The world decides
 // WHICH entities are candidates; it does not change how they are gated or
 // rendered, and forking that would be two visibility rules to keep in step.
-func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, includes string) map[string]v1.Entity {
+func (a *App) resolveV1Includes(
+	ctx context.Context, rows []*entityPkg.Entity, includes string,
+) map[string]v1.Entity {
+	if len(rows) == 0 {
+		return nil
+	}
 	s := a.State()
 	included := make(map[string]v1.Entity)
 
@@ -2203,26 +2220,40 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 	// hub entity with 50 neighbors must not cost 50 GraphCount
 	// round-trips).
 	//
-	// nestedFor maps target.ID → the remaining nested-include
-	// expression (e.g. "implements.requires" → "requires" stored
-	// against the implements target). Recursion happens after the
-	// visibility filter so hidden neighbors don't trigger hidden nested
-	// probes.
-	candidates, nestedFor, err := includeCandidates(ctx, a.reader, a.worldNeighbors, entity, includes)
+	// nested pairs a target id with the remaining nested-include expression
+	// (e.g. "implements.requires" → "requires" against the implements
+	// target). Recursion happens after the visibility filter so hidden
+	// neighbors don't trigger hidden nested probes.
+	candidates, nested, err := includeCandidates(ctx, a.reader, a.worldNeighbors, rows, includes)
 	if err != nil {
 		// The include channel is a best-effort affordance (see
 		// filterVisibleIncludes): the authoritative read is the explicit GET.
 		// A world-resolution fault drops the block and logs rather than
-		// failing the whole entity response — but it must not be silent, or
+		// failing the whole response — but it must not be silent, or
 		// an outage reads as "this entity has no neighbors in this world".
-		slog.Warn("dataentry: resolving world-scoped includes failed; include block omitted",
-			"entity", entity.ID, "include", includes, "err", err)
+		slog.Warn("dataentry: resolving world-scoped includes failed; include block omitted for every row",
+			"first_entity", rows[0].ID, "rows", len(rows), "include", includes, "err", err)
 		return nil
 	}
 
+	// One entry per id, the LAST candidate winning — the map assignment the
+	// per-row loop made. A neighbor shared by many rows is serialized once.
 	visible := a.filterVisibleIncludes(ctx, candidates)
-	ctx = primeVerdicts(ctx, a.fieldResolver, visible)
+	byID := make(map[string]*entityPkg.Entity, len(visible))
+	order := make([]string, 0, len(visible))
 	for _, target := range visible {
+		if _, dup := byID[target.ID]; !dup {
+			order = append(order, target.ID)
+		}
+		byID[target.ID] = target
+	}
+	targets := make([]*entityPkg.Entity, 0, len(order))
+	for _, id := range order {
+		targets = append(targets, byID[id])
+	}
+
+	ctx = primeVerdicts(ctx, a.fieldResolver, targets)
+	for _, target := range targets {
 		entityDef := s.Meta.Entities[target.Type]
 		plural := entityDef.GetPlural(target.Type)
 		wired := a.serializer.forWireRelated(ctx, target, nil, nil, nil, a.Meta(), plural)
@@ -2237,10 +2268,24 @@ func (a *App) resolveV1Includes(ctx context.Context, entity *entityPkg.Entity, i
 		// cannot disagree about what a face resolution was.
 		wired.World = worldProvenance(ctx, target)
 		included[target.ID] = wired
+	}
 
-		if nested, ok := nestedFor[target.ID]; ok {
-			maps.Copy(included, a.resolveV1Includes(ctx, target, nested))
+	// Nested includes: one batch per distinct expression, over the visible
+	// targets that carry it.
+	var exprs []string
+	byExpr := make(map[string][]*entityPkg.Entity)
+	for _, n := range nested {
+		target, ok := byID[n.id]
+		if !ok {
+			continue
 		}
+		if _, known := byExpr[n.expr]; !known {
+			exprs = append(exprs, n.expr)
+		}
+		byExpr[n.expr] = append(byExpr[n.expr], target)
+	}
+	for _, expr := range exprs {
+		maps.Copy(included, a.resolveV1Includes(ctx, byExpr[expr], expr))
 	}
 	return included
 }
