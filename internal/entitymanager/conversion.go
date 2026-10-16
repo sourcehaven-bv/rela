@@ -284,272 +284,41 @@ func ConversionsForSource(ctx context.Context, m *Manager, sourceType, sourceID 
 
 // ConvertEntity rekeys a family and retypes its default row in one store Tx.
 // Rename lineage hooks preserve old links, comments and version history.
-//
-//nolint:gocognit // Coordinates validation and atomic replacement across related store state.
 func ConvertEntity(ctx context.Context, m *Manager, req ConversionRequest) (*ConversionResult, error) {
 	ctx = withStoreAttribution(ctx)
-	d, definitionFound := m.deps.Meta.Conversions[req.Definition]
-	if !definitionFound {
-		return nil, fmt.Errorf("%w: %q", ErrUnknownConversion, req.Definition)
+	d, family, sourceErr := conversionSource(ctx, m, req, false)
+	if sourceErr != nil {
+		return nil, sourceErr
 	}
 	if overrideErr := validateConversionOverrides(d, req); overrideErr != nil {
 		return nil, overrideErr
 	}
-	family, familyErr := familyRows(ctx, m.deps.Store, req.SourceID)
-	if familyErr != nil {
-		return nil, familyErr
-	}
-	if len(family) == 0 {
-		return nil, newEntityNotFound(req.SourceID)
-	}
-	if rerr := requireReadableRow(ctx, faceGateOf(m), req.SourceID, family); rerr != nil {
-		return nil, rerr
-	}
-	for _, row := range family {
-		if row.Type != d.From {
-			return nil, fmt.Errorf("%w: expected %q, got %q", ErrConversionSourceMismatch, d.From, row.Type)
-		}
-	}
-	request := acl.WriteRequest{Op: acl.OpConvert, Subject: acl.NewFamilySubject(d.From, req.SourceID)}
-	if authorizeErr := m.authorizeAndAudit(ctx, request); authorizeErr != nil {
-		return nil, authorizeErr
-	}
 	toDef, _ := m.deps.Meta.GetEntityDef(d.To)
-	faceMap, requiredFaces, invalidFaces := resolveConversionFaces(d, family, req.FaceMapping)
-	if len(requiredFaces) > 0 || len(invalidFaces) > 0 {
-		return nil, fmt.Errorf("%w: face choices required %v; invalid %v", ErrConversionInvalid, requiredFaces, invalidFaces)
+	faceMap, required, invalid := resolveConversionFaces(d, family, req.FaceMapping)
+	if len(required) > 0 || len(invalid) > 0 {
+		return nil, fmt.Errorf("%w: face choices required %v; invalid %v", ErrConversionInvalid, required, invalid)
 	}
-	newID := req.TargetID
-	if toDef.IsManualID() {
-		if newID == "" {
-			return nil, fmt.Errorf("%w: target id is required for manual-id type", ErrConversionInvalid)
-		}
-		if idErr := entity.ValidateID(newID); idErr != nil {
-			return nil, fmt.Errorf("%w: %w", ErrConversionInvalid, idErr)
-		}
-	} else {
-		if newID != "" {
-			return nil, fmt.Errorf("%w: target id is generated for this type", ErrConversionInvalid)
-		}
-		generatedID, idErr := generateID(ctx, m.deps, d.To, "", 1)
-		if idErr != nil {
-			return nil, idErr
-		}
-		newID = generatedID
+	newID, err := conversionTargetID(ctx, m, d, *toDef, req)
+	if err != nil {
+		return nil, err
 	}
-	if req.SourceID == newID {
-		return nil, fmt.Errorf("%w: target id must differ from source id", ErrConversionInvalid)
+	targets, err := buildConversionTargets(ctx, m, d, req, family, faceMap, newID)
+	if err != nil {
+		return nil, err
 	}
-	taken, takenErr := idTakenByOther(ctx, m.deps.Store, newID, req.SourceID)
-	if takenErr != nil {
-		return nil, takenErr
-	} else if taken {
-		return nil, fmt.Errorf("%w: %s", ErrEntityAlreadyExists, newID)
+	rels, err := conversionRelations(ctx, m.deps.Store, req.SourceID)
+	if err != nil {
+		return nil, err
 	}
-	targets := make([]*entity.Entity, 0, len(family))
-	targetByFace := make(map[entity.Face]*entity.Entity, len(family))
-	for _, source := range family {
-		face, ok := faceMap[source.Face]
-		if !ok {
-			return nil, fmt.Errorf("%w: no destination face for %q", ErrConversionInvalid, source.Face)
-		}
-		props := conversionPropertyValues(d, source, req.Properties)
-		for key := range req.Properties {
-			if _, known := toDef.Properties[key]; !known {
-				return nil, fmt.Errorf("%w: unknown target property %q", ErrConversionInvalid, key)
-			}
-		}
-		if err := rejectComputedPresent(m.deps, d.To, props); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrConversionInvalid, err)
-		}
-		content := source.Content
-		if d.Content != "" {
-			content = conversionContentValue(d.Content, source)
-		}
-		if req.Content != nil {
-			content = *req.Content
-		}
-		target := &entity.Entity{ID: newID, Face: face, Type: d.To, Properties: props, Content: content}
-		before := &entity.Entity{Type: d.To, Properties: map[string]any{}}
-		if err := rejectExternalRefChanges(m.deps.Meta, before, target, false); err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrConversionInvalid, err)
-		}
-		if err := m.deps.Computed.Evaluate(ctx, target); err != nil {
-			return nil, err
-		}
-		validation := metamodel.NewValidator(m.deps.Meta).ValidateEntity(target.ID, target.Type, target.Properties)
-		if hard, _ := partitionValidationErrors(validation); len(hard) > 0 {
-			return nil, newValidationError(hard)
-		}
-		targets = append(targets, target)
-		targetByFace[face] = target
-	}
-	rels, relationsErr := conversionRelations(ctx, m.deps.Store, req.SourceID)
-	if relationsErr != nil {
-		return nil, relationsErr
-	}
-	for _, rel := range rels {
-		mapped, exists := d.Relations[rel.Type]
-		if !exists {
-			return nil, fmt.Errorf("%w: relation %q needs an explicit mapping or drop", ErrConversionInvalid, rel.Type)
-		}
-		if mapped == "drop" {
-			if !slices.Contains(req.DropRelations, rel.Type) {
-				return nil, fmt.Errorf("%w: confirm dropping relation %q", ErrConversionInvalid, rel.Type)
-			}
-			continue
-		}
-		targetRel, exists := m.deps.Meta.GetRelationDef(mapped)
-		if !exists {
-			return nil, fmt.Errorf("%w: relation %q maps to unknown relation %q", ErrConversionInvalid, rel.Type, mapped)
-		}
-		if rel.From == req.SourceID && !conversionAllowsType(targetRel.From, d.To) {
-			return nil, fmt.Errorf("%w: mapped relation %q cannot originate at %q", ErrConversionInvalid, mapped, d.To)
-		}
-		if rel.To == req.SourceID && !conversionAllowsType(targetRel.To, d.To) {
-			return nil, fmt.Errorf("%w: mapped relation %q cannot target %q", ErrConversionInvalid, mapped, d.To)
-		}
-	}
-	for _, relType := range req.DropRelations {
-		if d.Relations[relType] != "drop" {
-			return nil, fmt.Errorf("%w: relation %q is not configured to drop", ErrConversionInvalid, relType)
-		}
+	if err := validateConversionRelationMappings(m, d, req, rels); err != nil {
+		return nil, err
 	}
 	tx, ok := m.deps.Store.(store.Transactor)
 	if !ok {
 		return nil, errors.New("entitymanager: store does not support transactions")
 	}
-	rn := familyRename{m: m, oldID: req.SourceID, newID: newID, authorized: familyAuthorization{}}
-	rn.conversionFrom = d.From
-	rn.prevFaces = make(map[entity.Face]entity.Face, len(faceMap))
-	for src, dst := range faceMap {
-		rn.prevFaces[dst] = src
-	}
-	for _, rel := range rels {
-		if d.Relations[rel.Type] != rel.Type {
-			continue
-		}
-		if rel.From == req.SourceID && faceMap[rel.FromFace] != rel.FromFace {
-			continue
-		}
-		rn.preRenameRels = append(rn.preRenameRels, rel)
-	}
-	dropped := 0
-	var converted *entity.Entity
-	txErr := tx.Tx(ctx, func(view store.Store) error {
-		txCtx := store.ContextInTx(ctx)
-		current, readErr := familyRows(txCtx, view, req.SourceID)
-		if readErr != nil {
-			return readErr
-		}
-		if len(current) == 0 {
-			return newEntityNotFound(req.SourceID)
-		}
-		for _, row := range current {
-			if row.Type != d.From {
-				return ErrConversionSourceMismatch
-			}
-		}
-		currentFaceMap, missing, invalid := resolveConversionFaces(d, current, req.FaceMapping)
-		if len(missing) > 0 || len(invalid) > 0 || !maps.Equal(currentFaceMap, faceMap) {
-			return ErrConversionInvalid
-		}
-		if err := requireReadableRow(txCtx, faceGateOf(m), req.SourceID, current); err != nil {
-			return err
-		}
-		request := acl.WriteRequest{Op: acl.OpConvert, Subject: acl.NewFamilySubject(d.From, req.SourceID)}
-		if err := m.authorizeAndAudit(txCtx, request); err != nil {
-			return err
-		}
-		if _, err := view.RenameFamily(txCtx, req.SourceID, newID); err != nil {
-			return translateRenameErr(err, req.SourceID, newID)
-		}
-		replacer, ok := view.(store.FamilyReplacer)
-		if !ok {
-			return errors.New("entitymanager: store cannot replace entity families")
-		}
-		replacements := make([]store.FamilyReplacement, 0, len(targets))
-		for _, dst := range targets {
-			for _, src := range current {
-				if faceMap[src.Face] == dst.Face {
-					replacements = append(replacements, store.FamilyReplacement{SourceFace: src.Face, Entity: dst})
-					break
-				}
-			}
-		}
-		if err := replacer.ReplaceEntityFamily(txCtx, newID, replacements); err != nil {
-			return err
-		}
-		convertedRows, rowsErr := familyRows(txCtx, view, newID)
-		if rowsErr != nil {
-			return rowsErr
-		}
-		for _, row := range convertedRows {
-			if row.Face == faceMap[entity.Face(req.SourceFace)] {
-				converted = row
-				break
-			}
-		}
-		if converted == nil && len(convertedRows) > 0 {
-			converted = convertedRows[0]
-		}
-		leaving, pending, invalid := conversionRelationPlan(
-			req.SourceID, newID, rels, d.Relations, faceMap, m.deps.Meta, d.To,
-		)
-		if len(invalid) > 0 {
-			return fmt.Errorf("%w: %v", ErrConversionInvalid, invalid)
-		}
-		for i, key := range pending {
-			if err := checkRelationCapacity(txCtx, view, m.deps.Meta, key, leaving, pending[:i]); err != nil {
-				return err
-			}
-		}
-		for _, rel := range rels {
-			mapped := d.Relations[rel.Type]
-			from, to := rel.From, rel.To
-			if from == req.SourceID {
-				from = newID
-			}
-			if to == req.SourceID {
-				to = newID
-			}
-			fromFace := rel.FromFace
-			if rel.From == req.SourceID {
-				fromFace = faceMap[fromFace]
-			}
-			key := entity.RelationKey{From: from, FromFace: rel.FromFace, Type: rel.Type, To: to}
-			// RenameFamily already re-keyed this edge. Keep it in place when
-			// the mapping preserves its relation type, retaining its relation ID
-			// and history lineage.
-			if mapped == rel.Type && fromFace == rel.FromFace {
-				continue
-			}
-			if err := view.DeleteRelation(txCtx, key); err != nil && !errors.Is(err, store.ErrNotFound) {
-				return err
-			}
-			if mapped == "drop" {
-				dropped++
-				continue
-			}
-			relType, exists := m.deps.Meta.GetRelationDef(mapped)
-			if !exists {
-				return fmt.Errorf("unknown mapped relation %q", mapped)
-			}
-			if rel.From == req.SourceID && !conversionAllowsType(relType.From, d.To) {
-				return fmt.Errorf("relation %q cannot originate at %q", mapped, d.To)
-			}
-			if rel.To == req.SourceID && !conversionAllowsType(relType.To, d.To) {
-				return fmt.Errorf("relation %q cannot target %q", mapped, d.To)
-			}
-			mappedKey := entity.RelationKey{From: from, FromFace: fromFace, Type: mapped, To: to}
-			data := &store.RelationData{Properties: rel.Properties, Content: rel.Content}
-			_, err := view.CreateRelation(txCtx, mappedKey, data)
-			if err != nil {
-				return fmt.Errorf("convert relation %q: %w", rel.Type, err)
-			}
-		}
-		return nil
-	})
+	rn := prepareConversionRename(m, req, d, newID, faceMap, rels)
+	converted, dropped, txErr := convertEntityTransaction(ctx, m, tx, d, req, newID, faceMap, targets, rels)
 	if txErr != nil {
 		if converted != nil && !familyStillStored(ctx, m.deps.Store, req.SourceID) {
 			rn.record(ctx, []*entity.Entity{converted})
@@ -563,23 +332,13 @@ func ConvertEntity(ctx context.Context, m *Manager, req ConversionRequest) (*Con
 			notifyAliasesOfFaceMove(ctx, m.deps.AliasRewriter, newID, d.From, src, dst)
 		}
 	}
-	if req.SourceFace != "" {
-		if targetFace, ok := faceMap[entity.Face(req.SourceFace)]; ok {
-			for _, row := range convertedRows {
-				if row.Face == targetFace {
-					converted = row
-					break
-				}
-			}
-		}
-	}
-	result := &ConversionResult{
+	converted = chooseConvertedFace(convertedRows, faceMap, req.SourceFace)
+	return &ConversionResult{
 		Definition:       req.Definition,
 		OldID:            req.SourceID,
 		Entity:           converted,
 		RelationsDropped: dropped,
-	}
-	return result, nil
+	}, nil
 }
 
 func validateConversionOverrides(d metamodel.ConversionDef, req ConversionRequest) error {

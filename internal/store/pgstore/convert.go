@@ -19,7 +19,13 @@ func (s *Store) ReplaceEntityFamily(ctx context.Context, id string, replacements
 	if s.txPending == nil {
 		return s.Tx(ctx, func(tx store.Store) error {
 			txCtx := store.ContextInTx(ctx)
-			return tx.(store.FamilyReplacer).ReplaceEntityFamily(txCtx, id, replacements) //nolint:errcheck // Tx propagates the callback error.
+			replacer, ok := tx.(store.FamilyReplacer)
+			if !ok {
+				return errors.New("pgstore: transaction cannot replace entity families")
+			}
+			return replacer.ReplaceEntityFamily(
+				txCtx, id, replacements,
+			)
 		})
 	}
 	if id == "" || len(replacements) == 0 {

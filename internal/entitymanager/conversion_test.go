@@ -66,9 +66,9 @@ conversions:
 	st := memstore.New()
 	hooks := &conversionHooks{}
 	auditor := audit.NewMemory()
-	mgr, err := entitymanager.New(entitymanager.Deps{Store: st, Meta: meta, Templater: nopTemplater{}, Audit: auditor, ACL: acl.NopACL{}, Transitions: transitions, FieldGate: entitymanager.AllowAllFieldGate{}, AliasRewriter: hooks, VersionRecorder: hooks})
-	if err != nil {
-		t.Fatalf("manager: %v", err)
+	mgr, managerErr := entitymanager.New(entitymanager.Deps{Store: st, Meta: meta, Templater: nopTemplater{}, Audit: auditor, ACL: acl.NopACL{}, Transitions: transitions, FieldGate: entitymanager.AllowAllFieldGate{}, AliasRewriter: hooks, VersionRecorder: hooks})
+	if managerErr != nil {
+		t.Fatalf("manager: %v", managerErr)
 	}
 	source := entity.New("NOTE-1", "note")
 	source.SetString("title", "Quick note")
@@ -99,16 +99,16 @@ conversions:
 	if _, err := st.CreateRelation(context.Background(), entity.RelationKey{From: "NOTE-1", Type: "relates-to", To: "NOTE-2"}, &store.RelationData{}); err != nil {
 		t.Fatalf("create source relation: %v", err)
 	}
-	preview, err := entitymanager.PreviewConversion(context.Background(), mgr, entitymanager.ConversionRequest{Definition: "note-to-task", SourceID: "NOTE-1"})
-	if err != nil {
-		t.Fatalf("preview: %v", err)
+	preview, previewErr := entitymanager.PreviewConversion(context.Background(), mgr, entitymanager.ConversionRequest{Definition: "note-to-task", SourceID: "NOTE-1"})
+	if previewErr != nil {
+		t.Fatalf("preview: %v", previewErr)
 	}
 	if len(preview.Required) != 0 {
 		t.Fatalf("required fields: %v", preview.Required)
 	}
-	result, err := entitymanager.ConvertEntity(context.Background(), mgr, entitymanager.ConversionRequest{Definition: "note-to-task", SourceID: "NOTE-1"})
-	if err != nil {
-		t.Fatalf("convert: %v", err)
+	result, conversionErr := entitymanager.ConvertEntity(context.Background(), mgr, entitymanager.ConversionRequest{Definition: "note-to-task", SourceID: "NOTE-1"})
+	if conversionErr != nil {
+		t.Fatalf("convert: %v", conversionErr)
 	}
 	if result.OldID != "NOTE-1" || result.Entity.ID != "TASK-001" || result.Entity.Type != "task" {
 		t.Fatalf("conversion identity = old %q, entity %#v", result.OldID, result.Entity)
@@ -152,16 +152,16 @@ conversions:
 	if _, err := st.CreateRelation(context.Background(), entity.RelationKey{From: "NOTE-3", Type: "relates-to", To: "NOTE-2"}, &store.RelationData{}); err != nil {
 		t.Fatalf("create second relation: %v", err)
 	}
-	preview, err = entitymanager.PreviewConversion(context.Background(), mgr, entitymanager.ConversionRequest{Definition: "note-to-task-dropping-relation", SourceID: "NOTE-3"})
-	if err != nil || !reflect.DeepEqual(preview.RelationsToDrop, []string{"relates-to"}) {
-		t.Fatalf("drop preview=%+v err=%v", preview, err)
+	dropPreview, dropPreviewErr := entitymanager.PreviewConversion(context.Background(), mgr, entitymanager.ConversionRequest{Definition: "note-to-task-dropping-relation", SourceID: "NOTE-3"})
+	if dropPreviewErr != nil || !reflect.DeepEqual(dropPreview.RelationsToDrop, []string{"relates-to"}) {
+		t.Fatalf("drop preview=%+v err=%v", dropPreview, dropPreviewErr)
 	}
-	if _, err = entitymanager.ConvertEntity(context.Background(), mgr, entitymanager.ConversionRequest{Definition: "note-to-task-dropping-relation", SourceID: "NOTE-3"}); !errors.Is(err, entitymanager.ErrConversionInvalid) {
-		t.Fatalf("unconfirmed relation drop error=%v", err)
+	if _, unconfirmedErr := entitymanager.ConvertEntity(context.Background(), mgr, entitymanager.ConversionRequest{Definition: "note-to-task-dropping-relation", SourceID: "NOTE-3"}); !errors.Is(unconfirmedErr, entitymanager.ErrConversionInvalid) {
+		t.Fatalf("unconfirmed relation drop error=%v", unconfirmedErr)
 	}
-	dropped, err := entitymanager.ConvertEntity(context.Background(), mgr, entitymanager.ConversionRequest{Definition: "note-to-task-dropping-relation", SourceID: "NOTE-3", DropRelations: []string{"relates-to"}})
-	if err != nil {
-		t.Fatalf("confirmed drop convert: %v", err)
+	dropped, dropErr := entitymanager.ConvertEntity(context.Background(), mgr, entitymanager.ConversionRequest{Definition: "note-to-task-dropping-relation", SourceID: "NOTE-3", DropRelations: []string{"relates-to"}})
+	if dropErr != nil {
+		t.Fatalf("confirmed drop convert: %v", dropErr)
 	}
 	if dropped.RelationsDropped != 1 {
 		t.Fatalf("dropped relation count=%d", dropped.RelationsDropped)
@@ -216,9 +216,9 @@ conversions:
 	}
 	st := memstore.New()
 	hooks := &conversionHooks{}
-	mgr, err := entitymanager.New(entitymanager.Deps{Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.NewMemory(), ACL: acl.NopACL{}, Transitions: transitions, FieldGate: entitymanager.AllowAllFieldGate{}, AliasRewriter: hooks, VersionRecorder: hooks})
-	if err != nil {
-		t.Fatal(err)
+	mgr, managerErr := entitymanager.New(entitymanager.Deps{Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.NewMemory(), ACL: acl.NopACL{}, Transitions: transitions, FieldGate: entitymanager.AllowAllFieldGate{}, AliasRewriter: hooks, VersionRecorder: hooks})
+	if managerErr != nil {
+		t.Fatal(managerErr)
 	}
 	for _, row := range []struct {
 		face  entity.Face
