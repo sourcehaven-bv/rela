@@ -67,7 +67,7 @@ func buildConversionTargets(
 		if !exists {
 			return nil, fmt.Errorf("%w: no destination face for %q", ErrConversionInvalid, source.Face)
 		}
-		props := conversionPropertyValues(d, source, req.Properties)
+		props := conversionPropertyValues(d, source, req.Properties, req.SourceFace)
 		for key := range req.Properties {
 			if _, known := toDef.Properties[key]; !known {
 				return nil, fmt.Errorf("%w: unknown target property %q", ErrConversionInvalid, key)
@@ -80,7 +80,7 @@ func buildConversionTargets(
 		if d.Content != "" {
 			content = conversionContentValue(d.Content, source)
 		}
-		if req.Content != nil {
+		if req.Content != nil && source.Face.String() == req.SourceFace {
 			content = *req.Content
 		}
 		target := &entity.Entity{ID: newID, Face: face, Type: d.To, Properties: props, Content: content}

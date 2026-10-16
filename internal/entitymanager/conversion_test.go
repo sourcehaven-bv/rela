@@ -298,3 +298,94 @@ func (h *conversionHooks) RecordVersion(_ context.Context, v entitymanager.Versi
 	h.versions = append(h.versions, v)
 	return nil
 }
+
+func TestConvertEntityAppliesClientOverridesOnlyToSelectedFace(t *testing.T) {
+	const schema = `version: "1"
+entities:
+  note:
+    label: Note
+    id_prefix: "NOTE-"
+    id_type: manual
+    faces: {draft: {label: Draft}, published: {label: Published}}
+    properties:
+      title: {type: string, required: true}
+      body: {type: string}
+  document:
+    label: Document
+    id_prefix: "DOC-"
+    id_type: manual
+    faces: {draft: {label: Draft}, published: {label: Published}}
+    properties:
+      title: {type: string, required: true}
+      summary: {type: string}
+      editor_note: {type: string}
+relations: {}
+conversions:
+  note-to-document:
+    from: note
+    to: document
+    fields:
+      title: "{{source.title}}"
+      summary: "{{source.body}}"
+    faces:
+      draft: [draft]
+      published: [published]
+`
+	meta, err := metamodel.Parse([]byte(schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transitions, err := statemachine.Compile(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := memstore.New()
+	mgr, err := entitymanager.New(entitymanager.Deps{
+		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.NewMemory(),
+		ACL: acl.NopACL{}, Transitions: transitions, FieldGate: entitymanager.AllowAllFieldGate{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		face, title, body, content string
+	}{
+		{"draft", "Working title", "Draft summary", "Original draft content"},
+		{"published", "Released title", "Published summary", "Original published content"},
+	} {
+		e := entity.New("NOTE-1", "note")
+		e.Face = entity.Face(row.face)
+		e.SetString("title", row.title)
+		e.SetString("body", row.body)
+		e.Content = row.content
+		if err := st.CreateEntity(context.Background(), e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	edited := "Edited draft content"
+	req := entitymanager.ConversionRequest{
+		Definition: "note-to-document", SourceID: "NOTE-1", SourceFace: "draft", TargetID: "DOC-1",
+		FaceMapping: map[string]string{"draft": "draft", "published": "published"},
+		Properties:  map[string]any{"editor_note": "draft-only"}, Content: &edited,
+	}
+	if _, err := entitymanager.ConvertEntity(context.Background(), mgr, req); err != nil {
+		t.Fatal(err)
+	}
+	draft, err := st.GetEntity(context.Background(), entity.Ref{ID: "DOC-1", Face: "draft"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := st.GetEntity(context.Background(), entity.Ref{ID: "DOC-1", Face: "published"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft.Content != edited || draft.GetString("editor_note") != "draft-only" {
+		t.Fatalf("selected face did not receive client overrides: %#v", draft)
+	}
+	if published.Content != "Original published content" || published.GetString("editor_note") != "" {
+		t.Fatalf("client overrides escaped to another face: %#v", published)
+	}
+	if published.GetString("summary") != "Published summary" {
+		t.Fatalf("operator mapping was not applied to the other face: %#v", published)
+	}
+}

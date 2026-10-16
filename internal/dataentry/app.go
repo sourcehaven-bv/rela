@@ -1316,7 +1316,10 @@ func NewApp(
 		actionConditions: func() ViewConditionFunc { return app.viewConditions },
 	}
 	app.conversions.validateFields = func(ctx context.Context, e *entity.Entity, set map[string]any) error {
-		return app.affordances.validateCreateFieldWrite(ctx, e, set)
+		if denial := app.affordances.validateCreateFieldWrite(ctx, e, set); denial != nil {
+			return denial
+		}
+		return nil
 	}
 
 	app.serializer = entitySerializer{affordances: app.affordances}

@@ -91,7 +91,7 @@ func PreviewConversion(ctx context.Context, m *Manager, req ConversionRequest) (
 	preview.InvalidFaces = append(preview.InvalidFaces, invalidFaces...)
 	previewConversionFaceChoices(preview, d, family, req.SourceFace)
 	toDef, _ := m.deps.Meta.GetEntityDef(d.To)
-	preview.Required, sourceErr = conversionRequiredFields(d, family, req.Properties, *toDef)
+	preview.Required, sourceErr = conversionRequiredFields(d, family, req.Properties, req.SourceFace, *toDef)
 	if sourceErr != nil {
 		return nil, sourceErr
 	}
@@ -123,6 +123,11 @@ func conversionSource(
 	}
 	if readableErr := requireReadableRow(ctx, faceGateOf(m), req.SourceID, family); readableErr != nil {
 		return d, nil, readableErr
+	}
+	if len(req.Properties) > 0 || req.Content != nil {
+		if err := requireReadableConversionFace(ctx, m, d.From, req.SourceID, req.SourceFace, family); err != nil {
+			return d, nil, err
+		}
 	}
 	for _, row := range family {
 		if row.Type != d.From {
@@ -169,6 +174,7 @@ func conversionRequiredFields(
 	d metamodel.ConversionDef,
 	family []*entity.Entity,
 	supplied map[string]any,
+	sourceFace string,
 	target metamodel.EntityDef,
 ) ([]string, error) {
 	for key := range supplied {
@@ -182,7 +188,7 @@ func conversionRequiredFields(
 			continue
 		}
 		for _, source := range family {
-			values := conversionPropertyValues(d, source, supplied)
+			values := conversionPropertyValues(d, source, supplied, sourceFace)
 			value, exists := values[key]
 			if !exists || metamodel.IsEmptyValue(value) {
 				required = append(required, key)
@@ -382,6 +388,7 @@ func conversionPropertyValues(
 	d metamodel.ConversionDef,
 	source *entity.Entity,
 	supplied map[string]any,
+	sourceFace string,
 ) map[string]any {
 	props := map[string]any{}
 	for target, tmpl := range d.Fields {
@@ -389,8 +396,45 @@ func conversionPropertyValues(
 			props[target] = value
 		}
 	}
-	maps.Copy(props, supplied)
+	if source.Face.String() == sourceFace {
+		maps.Copy(props, supplied)
+	}
 	return props
+}
+
+// requireReadableConversionFace makes the client-authored part of a conversion
+// belong to a face the caller can actually see. Conversion itself is a family
+// operation, but form values and edited content come from the face where the
+// user opened the conversion form; accepting a caller-selected hidden face
+// would let a visible draft overwrite a published row.
+func requireReadableConversionFace(
+	ctx context.Context,
+	m *Manager,
+	typ, id, sourceFace string,
+	family []*entity.Entity,
+) error {
+	var selected *entity.Entity
+	for _, row := range family {
+		if row.Face.String() == sourceFace {
+			selected = row
+			break
+		}
+	}
+	if selected == nil {
+		return fmt.Errorf("%w: conversion source face %q does not exist", ErrConversionInvalid, sourceFace)
+	}
+	gate := faceGateOf(m)
+	if gate == nil {
+		return nil
+	}
+	readable, err := gate.PermitsReadFace(ctx, typ, id, selected.Face)
+	if err != nil {
+		return fmt.Errorf("read gate for %s: %w", entity.FormatStateRef(id, selected.Face), err)
+	}
+	if !readable {
+		return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
+	}
+	return nil
 }
 
 func resolveConversionFaces(
