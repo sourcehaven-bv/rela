@@ -37,3 +37,15 @@ func (p Principal) ShareKey() string {
 func (p Principal) SameIdentity(q Principal) bool {
 	return p.User == q.User && p.Tool == q.Tool && p.RawUser == q.RawUser && p.orgID == q.orgID
 }
+
+// Identity returns a stable key for the caller p is: the hex SHA-256 of the
+// fields [Principal.SameIdentity] compares. A token refresh keeps it. Lease
+// holders are keyed by it.
+func Identity(p Principal) string {
+	b, err := json.Marshal([]string{p.User, p.Tool, p.RawUser, p.orgID})
+	if err != nil { // coverage-ignore: unreachable: a string slice always marshals
+		panic(err)
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}

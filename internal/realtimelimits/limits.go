@@ -31,6 +31,21 @@ const (
 	MaxTitleRunes = 200
 	// MaxReasonRunes caps the reason given for removing a message.
 	MaxReasonRunes = 500
+	// MaxEphemeralBytes caps the JSON encoding of one signal's properties.
+	// A signal is held in memory, so it is far smaller than a message.
+	MaxEphemeralBytes = 1 << 10
+	// MaxEphemeralTotalBytes caps the properties of every live signal in
+	// one process together. A signal over the budget is refused.
+	MaxEphemeralTotalBytes = 8 << 20
+	// MaxEphemeralPerIdentity caps the live signals of one identity in one
+	// process. A signal over the cap is refused; none is evicted.
+	MaxEphemeralPerIdentity = 32
+	// MaxEphemeralChannels caps the channels that hold live signals in one
+	// process. A signal to another channel is refused while the cap holds.
+	MaxEphemeralChannels = 4096
+	// MaxRateBuckets caps the rate-limit buckets one process keeps. A
+	// request that needs a new bucket is refused while the cap holds.
+	MaxRateBuckets = 8192
 )
 
 // Rate is a token-bucket rate: Count events per Per.
@@ -45,6 +60,12 @@ var (
 	DefaultLogRate = Rate{Count: 30, Per: time.Minute}
 	// DefaultEphemeralRate applies to signals (ephemeral message types).
 	DefaultEphemeralRate = Rate{Count: 2, Per: time.Second}
+	// IdentityRate caps every channel write of one identity together
+	// (user and organization), across channels, operations and types.
+	IdentityRate = Rate{Count: 300, Per: time.Minute}
+	// OpRate applies to the channel operations that are not a post: create,
+	// edit and remove.
+	OpRate = Rate{Count: 30, Per: time.Minute}
 )
 
 // PerSecond returns the rate as events per second.
