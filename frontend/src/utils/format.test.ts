@@ -112,8 +112,14 @@ describe('format', () => {
         is_active: { type: 'boolean' },
         title: { type: 'string' },
         schedule: { type: 'rrule' },
+        bijlagen: { type: 'file' },
       },
     }
+
+    it('shows a file value as file names, not storage paths', () => {
+      const value = ['attachments/T-1/bijlagen/c54fb91819f593e9/b.pdf', 'a.txt']
+      expect(formatCellValue(value, 'bijlagen', mockEntityType)).toBe('a.txt, b.pdf')
+    })
 
     it('returns empty string for null', () => {
       expect(formatCellValue(null, 'title', mockEntityType)).toBe('')

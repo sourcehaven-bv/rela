@@ -91,9 +91,13 @@ reusing the detail-view routing in a cell has already caused regressions
   puts list first because the *edit* side needs a tag picker whatever the type;
   on the display side that erases the formatter (a list-valued rrule rendered as
   an em-dash). Non-enum lists route to preformatted text.
-- **`boolean` → text and `file` → text in cells**, deliberately: booleans stay
-  Cmd-F searchable, and FileWidget's `<img>` previews would be one network
-  request per cell.
+- **`boolean` → text in cells**, deliberately: booleans stay Cmd-F
+  searchable.
+- **`file` → `FileCellWidget`, never `FileWidget`, in cells**: names and
+  download links only, because FileWidget's `<img>` previews would be one
+  network request per cell. The `file` hint kind resolves to a dense-only
+  component that is not a registered widget, so it is not a valid `widget:`
+  override.
 - **Resolve per column/field, not per cell** — `resolve()` walks a Map and can
   `console.warn`, which at 200 rows is 200 warnings per render. See
   `PropertyDisplay.vue`'s precomputed `rows` (RR-UD2A) for the pattern.
