@@ -88,6 +88,9 @@ type liveHub struct {
 	now func() time.Time
 
 	kick chan struct{} // cap 1: a PUT asks for a baseline round
+	// reconfigured (cap 1) asks for a full round: a reload changed who may
+	// read what. See [liveHub.policyChanged].
+	reconfigured chan struct{}
 
 	// rotate is where the next over-cap round starts in the sorted pairs, so
 	// the cap passes over every subscription in turn instead of always
@@ -110,7 +113,7 @@ func newLiveHub(meta func() *metamodel.Metamodel) *liveHub {
 	return &liveHub{
 		meta: meta, window: liveWindow, slots: make(chan struct{}, liveParallel),
 		conns: make(map[string]*liveConn), kick: make(chan struct{}, 1),
-		presence: presence.New(), now: time.Now,
+		reconfigured: make(chan struct{}, 1), presence: presence.New(), now: time.Now,
 	}
 }
 
@@ -493,6 +496,21 @@ type leaseWaker interface {
 	Subscribe() (wake <-chan struct{}, cancel func())
 }
 
+// policyChanged makes the next tick run a full round. A reload that changes
+// who may read what calls it: a topic round replays only subscriptions whose
+// last replay succeeded, so without a full round a revoked subscriber would
+// keep its topic, and get one frame at the channel's next message, which
+// reveals when that message was posted. The full round replays it at the
+// reload instead, where the 404 or 403 clears the topic. A full round frames
+// at the reload's time, which the subscriber may learn: configuration is
+// not a secret.
+func (h *liveHub) policyChanged() {
+	select {
+	case h.reconfigured <- struct{}{}:
+	default:
+	}
+}
+
 // start runs the live worker on feed, on leases when it is non-nil, and on
 // the channel changes chans subscribes to when it is non-nil, until stop. A
 // second start before stop is a no-op.
@@ -558,7 +576,9 @@ type liveFeed interface {
 // round: on the tick it runs a topic round over the heads and channel lists
 // of the channels that changed, together with the presence faces that
 // changed. A channel subscription that lost count (resync) replays every
-// channel subscription.
+// channel subscription that has a topic; one without a topic is not readable
+// and waits for a full round. A reload of realtime.yaml (reconfigured) dirties
+// the round, so a reader it revokes is re-checked at once.
 func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struct{}, chans channelChanges) {
 	tick := time.NewTicker(h.window)
 	defer tick.Stop()
@@ -574,6 +594,8 @@ func (h *liveHub) run(ctx context.Context, feed liveFeed, leaseWake <-chan struc
 		case <-feed.Wake():
 			dirty = true
 		case <-leaseWake:
+			dirty = true
+		case <-h.reconfigured:
 			dirty = true
 		case <-chanWake:
 			channelsDirty = true

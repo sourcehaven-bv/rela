@@ -1676,7 +1676,12 @@ the realtime guide.
   replay of its own `GET`, and loses it on any other answer. A message on a
   channel the subscriber cannot read therefore never re-checks that
   subscription, and sends no frame. A reader who loses access gets one frame,
-  on which the `GET` answers 404, and none after that.
+  and none after that. On that frame the `GET` answers 404 when the entity is
+  no longer readable, or 403 `read_denied` when the entity stays readable but
+  the channel's `read:` rule no longer admits the reader. A graph write and a
+  reload of `realtime.yaml` both re-check every subscription, so a revoked
+  reader gets that frame when the change lands, not at the channel's next
+  message, whose time it would otherwise learn.
 - **Message pages are not live.** A frame only says the head changed; the
   client fetches the messages through the same gated `GET` as any other
   read.

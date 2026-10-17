@@ -54,7 +54,9 @@ func watchRealtime(a *App, sub config.Subscriber) error {
 	return nil
 }
 
-// reloadRealtime re-reads realtime.yaml. A rejected file keeps the previous
+// reloadRealtime re-reads realtime.yaml. An accepted file may change who
+// reads which channel, so the live worker runs a full round (see
+// [liveHub.policyChanged]). A rejected file keeps the previous
 // config serving; browsers get a config-error frame naming realtime.yaml,
 // and the returned error is a *configError. Configuration is not a secret,
 // so the frame carries the problem itself, stripped of the host path.
@@ -65,6 +67,7 @@ func reloadRealtime(a *App) error {
 	err := a.realtime.Reload(context.Background())
 	if err == nil {
 		slog.Info("realtime config reloaded")
+		a.live.policyChanged()
 		return nil
 	}
 	ce := &configError{public: publicConfigErrorMessage(err, a.paths.Root), err: err}

@@ -40,6 +40,12 @@ type ChannelService interface {
 	Delete(ctx context.Context, addr realtime.RawAddress, seq int64, reason string) (realtime.MessageView, error)
 }
 
+// realtimeSwitch reports whether realtime is on now. *realtime.Service
+// satisfies it.
+type realtimeSwitch interface {
+	Enabled() bool
+}
+
 // channelsHandler owns the channel routes (TKT-ZU7P13). {ref} is ID or
 // ID@face; {type} is a channel type of realtime.yaml.
 //
@@ -51,14 +57,16 @@ type ChannelService interface {
 //	PATCH  …/_channels/{type}[/{name}]/messages/{seq}          edit own message
 //	DELETE …/_channels/{type}[/{name}]/messages/{seq}          delete or remove
 //
-// Parsing is structural: `messages` is the subresource wherever it stands,
-// and can never be a channel name, because names are minted as 13 base36
+// Parsing is structural: after the type, `messages` is the subresource
+// wherever it stands, and can never be a channel name, because names are minted as 13 base36
 // digits. The service decides by cardinality whether a name belongs.
 //
 // A nil *channelsHandler is "channels not wired": every route answers the
 // entity GET's uniform 404, as with realtime off. [SetChannels] installs it.
 type channelsHandler struct {
 	svc ChannelService
+	// on answers whether realtime is on; see [channelsHandler.serve].
+	on realtimeSwitch
 	// changes subscribes the live worker to channel changes.
 	changes func() channelChanges
 }
@@ -75,6 +83,7 @@ func SetChannels(a *App, svc *realtime.Service) error {
 	}
 	a.channels = &channelsHandler{
 		svc:     svc,
+		on:      svc,
 		changes: func() channelChanges { return svc.Subscribe() },
 	}
 	if st := a.State(); st != nil && st.OpenAPIGen != nil {
@@ -101,9 +110,11 @@ type channelRoute struct {
 }
 
 // serve answers every route under /api/v1/{plural}/{ref}/_channels. rest
-// holds the segments after _channels.
+// holds the segments after _channels. With realtime off it answers the
+// entity GET's 404 before it reads the route, query or body, so no request
+// shape tells "off" apart from a hidden or missing entity.
 func (h *channelsHandler) serve(w http.ResponseWriter, r *http.Request, typeName, ref string, rest []string) {
-	if h == nil {
+	if h == nil || !h.on.Enabled() {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}

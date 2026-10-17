@@ -88,6 +88,11 @@ func (s *Service) Subscribe() *Subscription { return s.local.Subscribe() }
 // an operation loads its own snapshot.
 func (s *Service) Config() *realtimecfg.Compiled { return s.cfg.Load().Config }
 
+// Enabled reports whether realtime is on now. A route uses it to answer
+// "off" before it reads the request; an operation still loads its own
+// snapshot, which decides.
+func (s *Service) Enabled() bool { return s.Config() != nil }
+
 // Affordances are what the caller may do in a channel now.
 type Affordances struct {
 	// Post lists the message types the caller may post, sorted. A type's

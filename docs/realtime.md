@@ -229,9 +229,17 @@ A message page takes one cursor:
 - `?after_rev=r` returns the messages that changed after revision `r`, so a
   client catches up after a live frame. The answer has `next_after_rev`.
 - `?after=n` returns the messages after sequence number `n`, oldest first.
-- `?before=n` returns the messages before `n`, for scrolling back.
+  The answer has `next_after`.
+- `?before=n` returns the messages before `n`, for scrolling back. The
+  answer has `next_before`.
+- Without a cursor, the page holds the newest messages. The answer has
+  `next_before`, to scroll back from there.
 - `?limit=` caps the page. The default and the maximum come from
   `page_limit`.
+
+Each page names one cursor, the one that continues it in the direction it
+was read. An empty page names none. `has_more` means the page is full: there
+may be more messages past the cursor, and only the next request can tell.
 
 A `ref` property is served with the target's id, type and display title. A
 target the caller cannot read, or that no longer exists, is served as
@@ -271,9 +279,15 @@ that was not subscribed when it was posted does not see it.
 
 The server re-checks a subscription only when its channel changes. A
 subscription to a channel the caller cannot read gets no frames. A reader
-who loses access gets one frame, on which the head answers 404, and no frames
-after that. A single server process delivers frames for the messages posted
-through it; it does not yet poll for messages posted by another process.
+who loses access gets one frame, and no frames after that. On that frame the
+head answers 404 when the entity is no longer readable, or 403
+`read_denied` when the entity stays readable but the channel's `read:` rule
+no longer admits the reader. A reload of `realtime.yaml` re-checks every
+subscription at once, so a reader it revokes gets that frame at the reload,
+not at the channel's next message.
+
+A single server process delivers frames for the messages posted through it;
+it does not yet poll for messages posted by another process.
 
 ## Reloading
 

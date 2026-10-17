@@ -229,7 +229,12 @@ func postBodySchema(ct realtimecfg.ChannelType) *Schema {
 		if mt.Persist != realtimecfg.PersistEphemeral {
 			body["reply_to"] = &Schema{Type: "integer", Description: "Seq of the top-level message to reply to"}
 		}
-		s := ObjectSchema(body, []string{"type"})
+		top := []string{"type"}
+		if len(required) > 0 {
+			// A type with a required property cannot be posted without props.
+			top = append(top, "props")
+		}
+		s := ObjectSchema(body, top)
 		s.Title = name
 		s.Description = mt.Label
 		variants = append(variants, s)
@@ -314,9 +319,10 @@ func addChannelSchemas(spec *Spec) {
 	sc[messagePageSchema] = ObjectSchema(map[string]*Schema{
 		"channel":        Ref(channelSchema),
 		"messages":       ArraySchema(Ref(messageSchema)),
-		"has_more":       b(),
-		"next_after":     i64(),
-		"next_after_rev": i64(),
+		"has_more":       {Type: "boolean", Description: "The page is full, so there may be more past its cursor"},
+		"next_after":     {Type: "integer", Description: "Seq to pass as after; set on an after page"},
+		"next_before":    {Type: "integer", Description: "Seq to pass as before; set on the newest and a before page"},
+		"next_after_rev": {Type: "integer", Description: "Rev to pass as after_rev; set on an after_rev page"},
 	}, []string{"channel", "messages", "has_more"})
 	sc[ephemeralSchema] = ObjectSchema(map[string]*Schema{
 		"id": str(), "type": str(), "author": Ref(channelAuthorRef), "at": dateTimeSchema(),
