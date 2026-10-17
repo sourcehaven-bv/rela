@@ -209,3 +209,24 @@ func TestListAnchor(t *testing.T) {
 	_, err = h.svc.ListAnchor(as(user("bob")), "doc", "TKT-1", "")
 	require.ErrorIs(t, err, ErrAnchorNotFound)
 }
+
+// Every operation, not only the list, refuses an anchor of another entity
+// type than the route names, as the entity GET under that plural answers
+// 404. threads attaches to ticket and doc, so the channel type alone would
+// admit the ticket under the doc route.
+func TestService_AnchorOfAnotherRouteTypeIsNotFound(t *testing.T) {
+	h := newHarness(t)
+	alice := user("alice")
+	created, err := h.svc.Create(as(alice), "ticket", "TKT-1", "threads", CreateInput{Title: "t"})
+	require.NoError(t, err)
+	wrong := RawAddress{EntityType: "doc", Anchor: "TKT-1", Type: "threads", Name: created.Name}
+
+	_, err = h.svc.Create(as(alice), "doc", "TKT-1", "threads", CreateInput{Title: "t"})
+	require.ErrorIs(t, err, ErrAnchorNotFound)
+	_, err = h.svc.Head(as(alice), wrong)
+	require.ErrorIs(t, err, ErrAnchorNotFound)
+	_, err = h.svc.Messages(as(alice), wrong, channels.Page{})
+	require.ErrorIs(t, err, ErrAnchorNotFound)
+	_, err = h.svc.Post(as(alice), wrong, PostInput{Type: "text", Props: map[string]any{"body": "x"}})
+	require.ErrorIs(t, err, ErrAnchorNotFound)
+}
