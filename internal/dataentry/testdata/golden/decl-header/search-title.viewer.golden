@@ -1,8 +1,8 @@
 request: GET /api/v1/_search?q=Alpha
 identity: header viewer@example.test
 status: 200
-reads: GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=2 ListRelations=2 MatchingFaces=11
-breadth: ListEntities=1/1 ListEntityHeaders=2/2 ListRelations=1/2 MatchingFaces=11/11
+reads: GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=2 ListRelations=2 MatchingFaces=7
+breadth: ListEntities=1/1 ListEntityHeaders=2/2 ListRelations=1/2 MatchingFaces=7/7
 bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/2
 versions: 
 body:

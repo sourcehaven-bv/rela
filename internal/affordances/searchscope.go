@@ -200,22 +200,33 @@ func (c *fieldScopeCompiler) globalFieldGrants(roles []string) []search.FieldGra
 }
 
 // localFieldGrants is the grants of roles held through a role relation:
-// each applies where the role is held AND its condition passes.
+// each applies where the role is held AND its condition passes. A role's
+// unconditional fields merge into one grant, as [fieldScopeCompiler.globalFieldGrants]
+// merges a global role's, so they cost one predicate per role, not per field.
 func (c *fieldScopeCompiler) localFieldGrants(locals []localRole) []search.FieldGrant {
 	var out []search.FieldGrant
 	for _, lr := range locals {
 		held := store.DirectedRelation{Incoming: true, Pred: lr.held}
+		var unconditional []string
 		for _, fg := range c.grants[grantKey{lr.name, c.entityType}].visible {
-			when := &store.GraphQuery{EntityType: c.entityType, Faces: store.AllFaces()}
-			if fg.program != nil {
-				lowered, ok := c.lowerWhen(fg.program)
-				if !ok {
-					continue
-				}
-				when = lowered
+			if fg.program == nil {
+				unconditional = append(unconditional, fg.field)
+				continue
+			}
+			when, ok := c.lowerWhen(fg.program)
+			if !ok {
+				continue
 			}
 			when.Related = append(when.Related, held)
 			out = append(out, search.FieldGrant{Fields: []string{fg.field}, When: when})
+		}
+		if len(unconditional) > 0 {
+			out = append(out, search.FieldGrant{
+				Fields: dedupe(unconditional),
+				When: &store.GraphQuery{
+					EntityType: c.entityType, Faces: store.AllFaces(), Related: []store.DirectedRelation{held},
+				},
+			})
 		}
 	}
 	return out
