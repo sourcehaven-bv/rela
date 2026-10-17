@@ -25,8 +25,8 @@ check no longer refuses a changed anchor for channels that already exist.
 
 ## Fix
 
-Restore 0026 to its released content. Add pg migration 0028 and a SQLite schema
-rung (v19 to v20) that add the column with an empty default. Treat an empty
+Restore 0026 to its released content. Add pg migration 0029 and a SQLite schema
+rung (v20 to v21) that add the column with an empty default. Treat an empty
 cardinality as "recorded before cardinality was tracked": it matches any
 configured cardinality and the next record fills it in. The file store reads
 `_types/anchor-modes.yaml` as records with an unknown cardinality. A test pins
