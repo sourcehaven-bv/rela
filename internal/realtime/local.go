@@ -2,11 +2,14 @@ package realtime
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
@@ -37,6 +40,19 @@ type Local struct {
 	// decides conflicts; the cache only skips repeats.
 	recMu    sync.Mutex
 	recorded map[string]channels.TypeRecord
+
+	// stored caches the refs the store's type records hold, by channel
+	// type, so rendering reads the store once per config generation rather
+	// than once per message. storedFor is the config it was read under;
+	// nil means not read. See Local.storedRefs.
+	storedMu  sync.Mutex
+	storedFor *realtimecfg.Compiled
+	stored    map[string][]string
+}
+
+// typeRecordReader is the part of a channel store Local.storedRefs reads.
+type typeRecordReader interface {
+	TypeRecords(ctx context.Context) (map[string]channels.TypeRecord, error)
 }
 
 // NewLocal returns the process-local state with the limits of
@@ -239,11 +255,54 @@ func (l *Local) needsRecord(typ string, rec channels.TypeRecord) bool {
 	return !ok || !got.Equal(rec)
 }
 
-// noteRecorded remembers that the store holds rec for typ.
+// noteRecorded remembers that the store holds rec for typ. The store adds
+// refs and never drops them, so rec's refs join the cached stored refs.
 func (l *Local) noteRecorded(typ string, rec channels.TypeRecord) {
 	l.recMu.Lock()
-	defer l.recMu.Unlock()
 	l.recorded[typ] = rec
+	l.recMu.Unlock()
+	l.storedMu.Lock()
+	defer l.storedMu.Unlock()
+	if l.storedFor != nil && len(rec.Refs) > 0 {
+		refs := slices.Concat(l.stored[typ], rec.Refs)
+		slices.Sort(refs)
+		l.stored[typ] = slices.Compact(refs)
+	}
+}
+
+// storedRefs returns the refs the store has recorded for channel type typ,
+// as "message-type.property". A stored id renders as a ref even when cfg
+// declares its property as another type, so a config change cannot turn a
+// hidden entity's id into plain text.
+//
+// The records are read from st once per cfg: a reload publishes a new
+// config, which reads them again. A refused record write
+// ([channels.ErrTypeShapeConflict]) also drops the cache, since another
+// process may have added refs.
+func (l *Local) storedRefs(
+	ctx context.Context, st typeRecordReader, cfg *realtimecfg.Compiled, typ string,
+) ([]string, error) {
+	l.storedMu.Lock()
+	defer l.storedMu.Unlock()
+	if l.storedFor != cfg || l.storedFor == nil {
+		recs, err := st.TypeRecords(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("realtime: read the recorded channel types: %w", err)
+		}
+		l.stored = make(map[string][]string, len(recs))
+		for t, rec := range recs {
+			l.stored[t] = rec.Refs
+		}
+		l.storedFor = cfg
+	}
+	return l.stored[typ], nil
+}
+
+// forgetStoredRefs drops the cache of Local.storedRefs.
+func (l *Local) forgetStoredRefs() {
+	l.storedMu.Lock()
+	defer l.storedMu.Unlock()
+	l.storedFor, l.stored = nil, nil
 }
 
 // liveSignals returns the live signals of key.

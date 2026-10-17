@@ -105,12 +105,14 @@ func (e *ephemeralStore) add(key channels.Key, s signal, now time.Time) (expired
 		replaced, oldBytes = 1, r.sigs[replace].size
 	}
 	switch {
-	case count-replaced >= e.lim.perIdentity, e.bytes-oldBytes+s.size > e.lim.totalBytes:
+	case count-replaced >= e.lim.perIdentity:
+		return expired, rateLimited(e.identitySoonestLocked(s.identity, now))
+	case e.bytes-oldBytes+s.size > e.lim.totalBytes:
 		return expired, rateLimited(e.soonestLocked(now))
 	case r != nil && ringLen-replaced >= e.lim.ring:
 		return expired, rateLimited(r.soonest(now))
 	case own == 0 && e.perIdentityRings[s.identity] >= e.lim.channelsPerIdentity:
-		return expired, rateLimited(e.soonestLocked(now))
+		return expired, rateLimited(e.identityRingFreeLocked(s.identity, now))
 	case r == nil && len(e.rings) >= e.lim.channels:
 		return expired, rateLimited(e.soonestLocked(now))
 	}
@@ -222,6 +224,46 @@ func (e *ephemeralStore) sweepLocked(now time.Time) []channels.Key {
 func (e *ephemeralStore) soonestLocked(now time.Time) time.Duration {
 	next, ok := e.nextExpiryLocked()
 	if !ok {
+		return time.Second
+	}
+	return next.Sub(now)
+}
+
+// identitySoonestLocked is how long until the first signal of identity
+// expires, which frees one of its slots under the per-identity cap.
+// Another poster's expiry frees nothing for it.
+func (e *ephemeralStore) identitySoonestLocked(identity string, now time.Time) time.Duration {
+	var next time.Time
+	for _, r := range e.rings {
+		for _, s := range r.sigs {
+			if s.identity == identity && (next.IsZero() || s.expires.Before(next)) {
+				next = s.expires
+			}
+		}
+	}
+	if next.IsZero() {
+		return time.Second
+	}
+	return next.Sub(now)
+}
+
+// identityRingFreeLocked is how long until identity holds signals in one
+// ring fewer: the earliest time at which all of its signals in some ring
+// have expired.
+func (e *ephemeralStore) identityRingFreeLocked(identity string, now time.Time) time.Duration {
+	var next time.Time
+	for _, r := range e.rings {
+		var last time.Time
+		for _, s := range r.sigs {
+			if s.identity == identity && s.expires.After(last) {
+				last = s.expires
+			}
+		}
+		if !last.IsZero() && (next.IsZero() || last.Before(next)) {
+			next = last
+		}
+	}
+	if next.IsZero() {
 		return time.Second
 	}
 	return next.Sub(now)

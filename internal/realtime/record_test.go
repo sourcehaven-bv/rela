@@ -1,13 +1,16 @@
 package realtime
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
 
 // TestRecord_RefsRecorded pins that a stored write records the type's
@@ -61,19 +64,74 @@ func TestRecord_RefTurnedPlain(t *testing.T) {
 	require.EqualValues(t, 1, h.store.appends.Load())
 }
 
-// TestRecord_ConfigChangedDuringWrite pins that a write refuses when
-// realtime.yaml was reloaded between its start and its record, and writes
-// nothing.
+// TestRecord_ConfigChangedDuringWrite pins that a write refuses when a
+// reload between its start and its record changed the shape of its channel
+// type, or turned realtime off, and writes nothing.
 func TestRecord_ConfigChangedDuringWrite(t *testing.T) {
+	t.Parallel()
+	plain := strings.Replace(testRealtime, "about: { type: ref, to: [ticket] }", "about: { type: string }", 1)
+	require.NotEqual(t, testRealtime, plain)
+	for name, next := range map[string]*realtimecfg.Compiled{
+		"ref turned plain": testCompiled(t, plain),
+		"realtime off":     nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.store.onRecord = func() { h.cfg.set(Snapshot{Config: next}) }
+			_, err := h.svc.Post(as(user("bob")), room, text("x"))
+			requireDenial(t, err, http.StatusConflict, TypeConfigChanged)
+			require.Zero(t, h.store.appends.Load())
+		})
+	}
+}
+
+// TestRecord_NoOpReloadDuringWrite pins that a reload which publishes a
+// new config with the same shape for the type does not refuse the write.
+func TestRecord_NoOpReloadDuringWrite(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	next := testCompiled(t, testRealtime)
+	require.NotSame(t, h.cfg.Load().Config, next)
 	h.store.onRecord = func() { h.cfg.set(Snapshot{Config: next}) }
-	_, err := h.svc.Post(as(user("bob")), room, text("x"))
-	requireDenial(t, err, http.StatusConflict, TypeConfigChanged)
-	require.Zero(t, h.store.appends.Load())
-	h.store.onRecord = nil
 	h.post(t, user("bob"), text("x"))
+	require.EqualValues(t, 1, h.store.appends.Load())
+}
+
+// TestRender_RecordedRefWinsOverConfig pins that a property the store
+// recorded as a ref renders as a ref after a config declares it another
+// type: an entity the reader cannot read shows as restricted, without its
+// id. The recorded refs are read once per config, not once per message.
+func TestRender_RecordedRefWinsOverConfig(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.post(t, user("bob"), PostInput{Type: "note", Props: map[string]any{"level": 1, "about": "TKT-2"}})
+	plain := strings.Replace(testRealtime, "about: { type: ref, to: [ticket] }", "about: { type: string }", 1)
+	require.NotEqual(t, testRealtime, plain)
+	h.cfg.set(Snapshot{Config: testCompiled(t, plain)})
+	h.refs.mu.Lock()
+	delete(h.refs.views, "TKT-2") // the reader can no longer read it
+	h.refs.mu.Unlock()
+	st := &recordReadCounter{Store: h.store}
+	h.svc.store = st
+	for range 2 {
+		page, err := h.svc.Messages(as(user("bob")), room, pageAll())
+		require.NoError(t, err)
+		require.Len(t, page.Messages, 1)
+		require.Equal(t, &RefValue{Restricted: true}, page.Messages[0].Props["about"])
+	}
+	require.EqualValues(t, 1, st.reads.Load(), "the recorded refs are cached per config")
+}
+
+// recordReadCounter counts TypeRecords reads.
+type recordReadCounter struct {
+	channels.Store
+	reads atomic.Int64
+}
+
+func (s *recordReadCounter) TypeRecords(ctx context.Context) (map[string]channels.TypeRecord, error) {
+	s.reads.Add(1)
+	return s.Store.TypeRecords(ctx)
 }
 
 // TestRender_UndeclaredOmitted pins that rendering is fail-safe: a stored
