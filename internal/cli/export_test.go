@@ -85,11 +85,18 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	old := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
+	// Drain while fn runs: a pipe holds only a few KiB, so output larger than
+	// that blocks fn on write forever if the read waits until fn returns.
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		close(done)
+	}()
 	err := fn()
 	w.Close()
 	os.Stdout = old
-	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, r)
+	<-done
 	return buf.String(), err
 }
 
