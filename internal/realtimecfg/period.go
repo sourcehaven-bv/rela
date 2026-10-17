@@ -70,5 +70,20 @@ func (p Period) AddTo(t time.Time) time.Time {
 	return t.Add(p.fixed)
 }
 
+// calendarSlack covers the days [time.Time.AddDate] can add past a month
+// end: 31 January plus one month is 3 March.
+const calendarSlack = 4 * 24 * time.Hour
+
+// Cutoff returns a time c such that every start s with p.AddTo(s) <= now
+// lies before c. For a fixed period it is tight; for a calendar period it
+// is a few days late, so a caller lists the candidates before c and then
+// checks each one exactly with AddTo.
+func (p Period) Cutoff(now time.Time) time.Time {
+	if p.months != 0 {
+		return now.AddDate(0, -p.months, 0).Add(calendarSlack)
+	}
+	return now.Add(-p.fixed).Add(time.Microsecond)
+}
+
 // String returns the period as written.
 func (p Period) String() string { return p.text }

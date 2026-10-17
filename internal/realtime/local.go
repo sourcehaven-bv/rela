@@ -138,6 +138,10 @@ func (s *Subscription) Close() {
 	s.local.subMu.Unlock()
 }
 
+// Mark implements [ChangeMarker]: the background sweep reports the channels
+// it changed, so this process's subscribers see them.
+func (l *Local) Mark(keys ...channels.Key) { l.mark(keys...) }
+
 // mark adds keys to every subscriber's change set and wakes each one.
 func (l *Local) mark(keys ...channels.Key) {
 	if len(keys) == 0 {
