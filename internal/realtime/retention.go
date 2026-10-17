@@ -40,36 +40,56 @@ func DeletePolicy(cfg *realtimecfg.Compiled, chs []channels.Channel) channels.To
 }
 
 // FilingFor returns the filing of a batch of chs tombstoned at `at` for
-// policy, with the purge time [PurgeAfter] computes.
+// policy: the purge time [PurgeAfter] computes, and in TypeAfter the
+// earlier time of each type whose channels are all due before it. So a
+// delete erases a type that says `on_entity_delete: delete` at once, while
+// a type that keeps its channels in the same batch keeps them for its
+// retention.
 //
 // Nil: cfg is accepted (see [PurgeAfter]).
 func FilingFor(
 	cfg *realtimecfg.Compiled, policy channels.TombstonePolicy, at time.Time, chs []channels.Channel, pending bool,
 ) channels.Filing {
-	return channels.Filing{Policy: policy, PurgeAfter: PurgeAfter(cfg, policy, at, chs), Pending: pending}
+	byType := typeDue(cfg, policy, at, chs)
+	latest := channels.NormTime(at)
+	for _, due := range byType {
+		if due.After(latest) {
+			latest = due
+		}
+	}
+	var early map[string]time.Time
+	for typ, due := range byType {
+		if due.Before(latest) {
+			if early == nil {
+				early = map[string]time.Time{}
+			}
+			early[typ] = due
+		}
+	}
+	return channels.Filing{Policy: policy, PurgeAfter: latest, TypeAfter: early, Pending: pending}
 }
 
 // Filer returns the [channels.Filer] of a batch tombstoned at `at` for
 // policy. The store runs it over the channels it actually moves, so a
 // channel created after the caller listed the entity still sets the purge
-// time. For [channels.PolicyDelete] the batch's policy is [DeletePolicy]
+// times. For [channels.PolicyDelete] the batch's policy is [DeletePolicy]
 // of the moved channels: delete when one of their types says so, detach
-// otherwise.
+// otherwise. It never returns an error.
 //
 // Nil: cfg is accepted (see [PurgeAfter]).
 func Filer(cfg *realtimecfg.Compiled, policy channels.TombstonePolicy, at time.Time, pending bool) channels.Filer {
-	return func(moved []channels.Channel) channels.Filing {
+	return func(moved []channels.Channel) (channels.Filing, error) {
 		p := policy
 		if p == channels.PolicyDelete {
 			p = DeletePolicy(cfg, moved)
 		}
-		return FilingFor(cfg, p, at, moved, pending)
+		return FilingFor(cfg, p, at, moved, pending), nil
 	}
 }
 
-// PurgeAfter returns the earliest time a batch of chs tombstoned at `at`
-// for policy may be erased: the latest of its channels' times. A channel's
-// time is
+// PurgeAfter returns the earliest time a whole batch of chs tombstoned at
+// `at` for policy may be erased: the latest of its channels' times. A
+// channel's time is
 //
 //   - at itself for a batch of an entity deleted under
 //     `on_entity_delete: delete`, when the channel's type says delete;
@@ -83,6 +103,22 @@ func Filer(cfg *realtimecfg.Compiled, policy channels.TombstonePolicy, at time.T
 func PurgeAfter(
 	cfg *realtimecfg.Compiled, policy channels.TombstonePolicy, at time.Time, chs []channels.Channel,
 ) time.Time {
+	latest := channels.NormTime(at)
+	for _, due := range typeDue(cfg, policy, at, chs) {
+		if due.After(latest) {
+			latest = due
+		}
+	}
+	return latest
+}
+
+// typeDue returns, for each type in chs, the latest time of its channels;
+// see [PurgeAfter].
+//
+// Nil: cfg is accepted (see [PurgeAfter]).
+func typeDue(
+	cfg *realtimecfg.Compiled, policy channels.TombstonePolicy, at time.Time, chs []channels.Channel,
+) map[string]time.Time {
 	at = channels.NormTime(at)
 	types := map[string]*realtimecfg.ChannelType{}
 	lookup := func(name string) *realtimecfg.ChannelType {
@@ -98,14 +134,14 @@ func PurgeAfter(
 		types[name] = found
 		return found
 	}
-	latest := at
+	out := map[string]time.Time{}
 	for _, c := range chs {
-		due := channelDue(lookup(c.Key.Type), policy, at, c)
-		if due.After(latest) {
-			latest = due
+		due := channels.NormTime(channelDue(lookup(c.Key.Type), policy, at, c))
+		if cur, ok := out[c.Key.Type]; !ok || due.After(cur) {
+			out[c.Key.Type] = due
 		}
 	}
-	return latest
+	return out
 }
 
 // channelDue is the purge time of one channel; see [PurgeAfter].
@@ -133,12 +169,16 @@ func channelDue(
 	return due
 }
 
-// RetentionReport is what one [Sweeper.RunRetention] did.
+// RetentionReport is what one [Sweeper.RunRetention] or
+// [Sweeper.RunPurge] did.
 type RetentionReport struct {
-	// Purged counts the batches erased.
+	// Purged counts the purges: a batch erased whole, or the channels of
+	// the types due early erased from it.
 	Purged int
-	// Confirmed counts the pending batches confirmed because their entity
-	// is gone: the delete committed but its confirmation was lost.
+	// Confirmed counts the batches made final by the sweep: a pending
+	// batch whose entity is gone (the delete committed but its
+	// confirmation was lost), and a pending or orphan batch that could not
+	// be put back.
 	Confirmed int
 	// Restored counts the batches put back: a pending batch whose entity
 	// still exists after [realtimelimits.OrphanGrace], whose delete
@@ -152,25 +192,53 @@ type RetentionReport struct {
 	TypesCleared int
 }
 
+// RunPurge erases what is due in the confirmed batches that recorded a
+// purge time, as [channels.Store.DueTombstones] lists them. It reads an
+// index and the due batches only, so the worker runs it every minute and
+// on every delete wake. Pending batches, batches filed without a purge
+// time, orphans and type records are left to [Sweeper.RunRetention].
+func (s *Sweeper) RunPurge(ctx context.Context) (RetentionReport, error) {
+	var rep RetentionReport
+	snap := s.cfg.Load()
+	now := s.clock()
+	batches, err := s.store.DueTombstones(ctx, now)
+	if err != nil {
+		return rep, fmt.Errorf("realtime: list due tombstones: %w", err)
+	}
+	var errs []error
+	for _, b := range batches {
+		_, err := s.purgeDue(ctx, snap, b, now, &rep)
+		errs = append(errs, err)
+	}
+	return rep, errors.Join(errs...)
+}
+
 // RunRetention erases the detached batches that are due, settles the
-// pending ones, detaches orphans and clears unused type records.
+// pending ones, detaches orphans and clears unused type records. It lists
+// every batch and every channel id, so the worker runs it every hour.
 //
 // A batch is erased only once confirmed, and only at its recorded purge
-// time. A batch filed without one (by a release before retention) is
-// erased only under a present, non-degraded config that declares every
-// type in it, with the purge time [PurgeAfter] computes for a detach.
+// times: the channels of a type in [channels.Filing.TypeAfter] at that
+// type's time, the rest at PurgeAfter. A batch filed without a purge time
+// (by a release before retention) is erased only under a present,
+// non-degraded config that declares every type in it, with the purge time
+// [PurgeAfter] computes for a detach.
 //
-// A pending batch was tombstoned before its delete committed. If its
-// entity still exists after [realtimelimits.OrphanGrace] the delete failed
-// and the batch goes back; if the entity is gone the delete committed and
-// the batch is confirmed.
+// A pending batch was tombstoned before its write committed. If its
+// entity still exists after [realtimelimits.OrphanGrace] the write failed
+// and the batch goes back; if the entity is gone the write committed and
+// the batch is confirmed. A batch that cannot go back, because live
+// channels sit on its anchor again or a new entity reusing the id has made
+// it final, is confirmed and erased when due.
 //
 // An orphan is a live channel whose entity id has been missing from the
 // store for [realtimelimits.OrphanGrace], deleted outside rela. It is
 // tombstoned with [channels.PolicyOrphan] and the type's detached
-// retention, and put back if the id reappears before it is erased. Only a
-// missing id counts; a channel on a missing face of an existing entity is
-// left alone. Orphans and type records are handled only under a present,
+// retention, and put back if the id reappears outside rela before it is
+// erased. A new entity created through rela with that id makes the batch
+// final first (see [channels.Store.ConfirmTombstones]). Only a missing id
+// counts; a channel on a missing face of an existing entity is left
+// alone. Orphans and type records are handled only under a present,
 // non-degraded config.
 func (s *Sweeper) RunRetention(ctx context.Context) (RetentionReport, error) {
 	var rep RetentionReport
@@ -223,40 +291,67 @@ func (s *Sweeper) retentionPass(ctx context.Context, snap Snapshot, rep *Retenti
 }
 
 // settleBatch restores, confirms or purges one batch, and reports whether
-// it purged it.
+// it purged from it.
 func (s *Sweeper) settleBatch(
 	ctx context.Context, snap Snapshot, b channels.TombstoneBatch, exists bool, now time.Time, rep *RetentionReport,
 ) (bool, error) {
-	h := b.Handle
-	if b.Filing.Pending {
-		if exists {
-			if now.Sub(b.At) < realtimelimits.OrphanGrace {
-				return false, nil
-			}
-			return false, s.restore(ctx, b, rep)
+	restorable := b.Filing.Pending || b.Filing.Policy == channels.PolicyOrphan
+	if restorable && exists {
+		if b.Filing.Pending && now.Sub(b.At) < realtimelimits.OrphanGrace {
+			return false, nil
 		}
-		if err := s.store.ConfirmTombstone(ctx, h); err != nil {
-			return false, ignoreGone(err, "confirm", h)
+		restored, err := s.restore(ctx, b, rep)
+		if err != nil || restored {
+			return false, err
+		}
+	}
+	if restorable {
+		// The entity is gone, or the batch cannot go back: it is final.
+		if err := s.store.ConfirmTombstone(ctx, b.Handle); err != nil {
+			return false, ignoreGone(err, "confirm", b.Handle)
 		}
 		rep.Confirmed++
+		b.Filing = b.Filing.Confirmed()
 	}
-	if b.Filing.Policy == channels.PolicyOrphan && exists {
-		return false, s.restore(ctx, b, rep)
-	}
+	return s.purgeDue(ctx, snap, b, now, rep)
+}
+
+// purgeDue purges what of b is due at now: the whole batch once its
+// purge time has come, else the channels of each type whose time in
+// [channels.Filing.TypeAfter] has. It reports whether it purged anything.
+func (s *Sweeper) purgeDue(
+	ctx context.Context, snap Snapshot, b channels.TombstoneBatch, now time.Time, rep *RetentionReport,
+) (bool, error) {
 	due, ok := batchDue(snap, b)
-	if !ok || due.After(now) {
+	if !ok {
 		return false, nil
 	}
-	if err := s.store.Purge(ctx, h, systemAuthor(), now); err != nil {
-		return false, ignoreGone(err, "purge", h)
+	var types []string
+	if due.After(now) {
+		for typ, t := range b.Filing.TypeAfter {
+			if !t.After(now) && holdsType(b.Channels, typ) {
+				types = append(types, typ)
+			}
+		}
+		if len(types) == 0 {
+			return false, nil
+		}
+		slices.Sort(types)
+	}
+	if err := s.store.Purge(ctx, b.Handle, types, systemAuthor(), now); err != nil {
+		return false, ignoreGone(err, "purge", b.Handle)
 	}
 	rep.Purged++
 	return true, nil
 }
 
-// batchDue returns when b may be purged, and false when the sweep cannot
-// tell: an unrecorded batch under a missing or degraded config, or one
-// holding a type the config does not declare.
+func holdsType(chs []channels.Channel, typ string) bool {
+	return slices.ContainsFunc(chs, func(c channels.Channel) bool { return c.Key.Type == typ })
+}
+
+// batchDue returns when the whole of b may be purged, and false when the
+// sweep cannot tell: an unrecorded batch under a missing or degraded
+// config, or one holding a type the config does not declare.
 func batchDue(snap Snapshot, b channels.TombstoneBatch) (time.Time, bool) {
 	if b.Filing.Recorded() {
 		return b.Filing.PurgeAfter, true
@@ -272,20 +367,21 @@ func batchDue(snap Snapshot, b channels.TombstoneBatch) (time.Time, bool) {
 	return PurgeAfter(snap.Config, channels.PolicyDetach, b.At, b.Channels), true
 }
 
-// restore puts b back. A batch whose anchor has live channels again stays
-// tombstoned; it is erased when due.
-func (s *Sweeper) restore(ctx context.Context, b channels.TombstoneBatch, rep *RetentionReport) error {
+// restore puts b back and reports whether it did. A batch whose anchor
+// has live channels again, or that a new entity reusing the id made final,
+// stays tombstoned; the caller confirms it, and it is erased when due.
+func (s *Sweeper) restore(ctx context.Context, b channels.TombstoneBatch, rep *RetentionReport) (bool, error) {
 	err := s.store.Untombstone(ctx, b.Handle, s.clock())
 	var occupied *channels.OccupiedError
 	switch {
 	case err == nil:
 		rep.Restored++
 		s.marker.Mark(batchKeys(b.Channels)...)
-		return nil
-	case errors.As(err, &occupied):
-		return nil
+		return true, nil
+	case errors.As(err, &occupied), errors.Is(err, channels.ErrConflict):
+		return false, nil
 	default:
-		return ignoreGone(err, "restore", b.Handle)
+		return false, ignoreGone(err, "restore", b.Handle)
 	}
 }
 
@@ -320,7 +416,7 @@ func (s *Sweeper) detachOrphans(ctx context.Context, cfg *realtimecfg.Compiled, 
 	for _, id := range due {
 		var moved []channels.Channel
 		file := Filer(cfg, channels.PolicyOrphan, now, false)
-		h, err := s.store.Tombstone(ctx, id, "", now, func(chs []channels.Channel) channels.Filing {
+		h, err := s.store.Tombstone(ctx, id, "", now, func(chs []channels.Channel) (channels.Filing, error) {
 			moved = chs
 			return file(chs)
 		})

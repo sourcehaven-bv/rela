@@ -2,6 +2,7 @@ package channels
 
 import (
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -44,27 +45,70 @@ func (p TombstonePolicy) Valid() bool {
 // fail, and then the batch goes back. [Store.ConfirmTombstone] clears the
 // mark once the delete has committed. The zero Filing is a confirmed batch
 // with nothing recorded.
+//
+// A batch is restorable while it is pending, while its policy is
+// [PolicyOrphan], or when it recorded no policy; see [Filing.Restorable].
+// Confirming a batch makes it final: [Filing.Confirmed].
 type Filing struct {
 	Policy TombstonePolicy
-	// PurgeAfter is the earliest time the batch may be purged. Zero means
-	// not recorded.
+	// PurgeAfter is the earliest time the whole batch may be purged. Zero
+	// means not recorded.
 	PurgeAfter time.Time
-	Pending    bool
+	// TypeAfter holds the channel types of the batch that may be purged
+	// before PurgeAfter, each with the earliest time it may be. A delete
+	// that erases one type at once and keeps another for its retention
+	// files both in one batch this way. Nil when every type waits for
+	// PurgeAfter.
+	TypeAfter map[string]time.Time
+	Pending   bool
 }
 
 // Recorded reports whether f carries a purge time.
 func (f Filing) Recorded() bool { return !f.PurgeAfter.IsZero() }
 
+// DueAt returns the earliest time anything in the batch may be purged:
+// PurgeAfter, or an earlier time in TypeAfter. Zero when not recorded.
+func (f Filing) DueAt() time.Time {
+	due := f.PurgeAfter
+	for _, t := range f.TypeAfter {
+		if t.Before(due) {
+			due = t
+		}
+	}
+	return due
+}
+
+// Restorable reports whether [Store.Untombstone] may put the batch back:
+// it is pending, an orphan, or recorded no policy. A confirmed delete or
+// detach batch is final, so an id reused by a new entity never receives
+// the channels of the old one.
+func (f Filing) Restorable() bool {
+	return f.Pending || f.Policy == PolicyOrphan || f.Policy == PolicyUnrecorded
+}
+
+// Confirmed returns f as [Store.ConfirmTombstone] leaves it: not pending,
+// and an orphan batch turned into a detach batch, so neither can be
+// restored.
+func (f Filing) Confirmed() Filing {
+	f.Pending = false
+	if f.Policy == PolicyOrphan {
+		f.Policy = PolicyDetach
+	}
+	return f
+}
+
 // Filer computes the filing of a batch from the channels the batch moves.
 // [Store.Tombstone] calls it once, under the same lock or transaction as
 // the move. So a channel created after the caller listed the entity is
-// counted, and cannot be purged sooner than its own type allows.
+// counted, and cannot be purged sooner than its own type allows. An error
+// aborts the tombstone: nothing moves, and [Store.Tombstone] returns the
+// error as it is.
 //
 // Nil: accepted by [Store.Tombstone], which then files the zero Filing.
-type Filer func(moved []Channel) Filing
+type Filer func(moved []Channel) (Filing, error)
 
 // FileAs returns a Filer that files f whatever the batch holds.
-func FileAs(f Filing) Filer { return func([]Channel) Filing { return f } }
+func FileAs(f Filing) Filer { return func([]Channel) (Filing, error) { return f, nil } }
 
 // FileBatch runs file over moved and validates the result; see
 // [PrepareFiling]. Backends call it inside the Tombstone critical section.
@@ -74,20 +118,51 @@ func FileBatch(file Filer, moved []Channel) (Filing, error) {
 	if file == nil {
 		return Filing{}, nil
 	}
-	return PrepareFiling(file(moved))
+	f, err := file(moved)
+	if err != nil {
+		return Filing{}, err
+	}
+	return PrepareFiling(f)
 }
 
-// PrepareFiling validates f and returns it with its time normalized.
+// PrepareFiling validates f and returns it with its times normalized. A
+// TypeAfter entry at or after PurgeAfter says nothing and is dropped; one
+// without a PurgeAfter, or with an invalid type name, is an error.
 func PrepareFiling(f Filing) (Filing, error) {
 	if !f.Policy.Valid() {
 		return f, fmt.Errorf("%w: tombstone policy %q", ErrInvalidMessage, f.Policy)
 	}
 	f.PurgeAfter = NormTime(f.PurgeAfter)
+	if len(f.TypeAfter) == 0 {
+		f.TypeAfter = nil
+		return f, nil
+	}
+	if f.PurgeAfter.IsZero() {
+		return f, fmt.Errorf("%w: type purge times without a batch purge time", ErrInvalidMessage)
+	}
+	early := make(map[string]time.Time, len(f.TypeAfter))
+	for typ, t := range f.TypeAfter {
+		if !ValidName(typ) {
+			return f, fmt.Errorf("%w: channel type %q", ErrInvalidKey, typ)
+		}
+		if t = NormTime(t); !t.IsZero() && t.Before(f.PurgeAfter) {
+			early[typ] = t
+		}
+	}
+	f.TypeAfter = nil
+	if len(early) > 0 {
+		f.TypeAfter = early
+	}
 	return f, nil
 }
 
-// CheckPurge validates the author and time of a [Store.Purge] call.
-func CheckPurge(by Author, at time.Time) error {
+// CheckPurge validates the types, author and time of a [Store.Purge] call.
+func CheckPurge(types []string, by Author, at time.Time) error {
+	for _, typ := range types {
+		if !ValidName(typ) {
+			return fmt.Errorf("%w: channel type %q", ErrInvalidKey, typ)
+		}
+	}
 	if err := checkAuthor(by); err != nil {
 		return err
 	}
@@ -97,10 +172,34 @@ func CheckPurge(by Author, at time.Time) error {
 	return nil
 }
 
-// PurgeAudit returns the record [Store.Purge] appends to the batch's filed
-// trail.
-func PurgeAudit(h TombstoneHandle, by Author, at time.Time) AuditRecord {
-	return AuditRecord{At: NormTime(at), Op: AuditPurge, Face: h.Anchor().Face, By: by}
+// PurgeAudit returns the records [Store.Purge] appends to the batch's
+// filed trail: one per erased channel, naming it, or one naming only the
+// anchor when the batch held no channel. Each carries the batch's stamp.
+func PurgeAudit(h TombstoneHandle, erased []Channel, by Author, at time.Time) []AuditRecord {
+	if len(erased) == 0 {
+		return []AuditRecord{{At: NormTime(at), Op: AuditPurge, Face: h.Anchor().Face, By: by, Tomb: h.Stamp()}}
+	}
+	out := make([]AuditRecord, len(erased))
+	for i, c := range erased {
+		out[i] = KeyAudit(c.Key, AuditPurge, NormTime(at))
+		out[i].By, out[i].Tomb, out[i].Seq = by, h.Stamp(), c.LastSeq
+	}
+	return out
+}
+
+// PurgeTypes returns the channels of chs whose type is in types. An
+// empty types means every channel.
+func PurgeTypes(chs []Channel, types []string) []Channel {
+	if len(types) == 0 {
+		return chs
+	}
+	out := []Channel{}
+	for _, c := range chs {
+		if slices.Contains(types, c.Key.Type) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // CheckDropType validates the type a [Store.DropTypeRecord] call names.

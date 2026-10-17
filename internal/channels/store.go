@@ -87,32 +87,52 @@ type Store interface {
 	//
 	// The batch records what file returns for the channels it moves (see
 	// [Filer] and [Filing]). file runs under the same lock or transaction
-	// as the move, and not at all when nothing moves. An invalid filing
-	// moves nothing and is an error.
+	// as the move, and not at all when nothing moves. An invalid filing, or
+	// an error from file, moves nothing and is returned.
 	//
 	// No list, Remove or Delete reaches a tombstoned channel. Only the
 	// batch methods do: [Store.Tombstones] lists batches,
 	// [Store.Untombstone] puts one back and [Store.Purge] erases one.
 	Tombstone(ctx context.Context, id string, face entity.Face, at time.Time, file Filer) (TombstoneHandle, error)
 
-	// ConfirmTombstone clears the pending mark of the batch h names (see
-	// [Filing]), so [Store.Purge] may erase it. A batch that is not
-	// pending is left as it is. A batch already restored or purged, or one
-	// that recorded no filing, is [ErrNotFound].
+	// ConfirmTombstone makes the batch h names final (see
+	// [Filing.Confirmed]): it clears the pending mark, so [Store.Purge] may
+	// erase it, and turns an orphan batch into a detach batch. A batch that
+	// is already final is left as it is. A batch already restored or
+	// purged, or one that recorded no filing, is [ErrNotFound].
 	ConfirmTombstone(ctx context.Context, h TombstoneHandle) error
+
+	// ConfirmTombstones confirms, as ConfirmTombstone does, every batch of
+	// anchor: every batch of the id for an empty face, the face's batches
+	// otherwise. A new entity reusing an id calls it, so no batch of the
+	// old entity can be restored onto the new one. An anchor without
+	// batches is not an error.
+	ConfirmTombstones(ctx context.Context, anchor Anchor) error
 
 	// Tombstones returns the batches filed before the given time, oldest
 	// first. A batch holding no channel is left out: it has nothing to
 	// purge.
 	Tombstones(ctx context.Context, before time.Time) ([]TombstoneBatch, error)
 
-	// Purge erases the channels and messages of exactly the batch h names.
-	// The batch's filed audit trail is kept, and a record with
-	// [AuditPurge] is appended to it, never to the live trail of the id:
-	// that id may belong to a new entity by now. A pending batch is
-	// [ErrConflict]. A batch already restored or purged is [ErrNotFound].
-	// The zero handle is a no-op.
-	Purge(ctx context.Context, h TombstoneHandle, by Author, at time.Time) error
+	// DueTombstones returns the confirmed batches with something due at or
+	// before the given time (see [Filing.DueAt]), oldest first. Batches
+	// that recorded no purge time are left out, as are those holding no
+	// channel. It reads an index, so the purge poll can call it often.
+	DueTombstones(ctx context.Context, at time.Time) ([]TombstoneBatch, error)
+
+	// Purge erases channels and messages of exactly the batch h names:
+	// the channels of the given types, or every channel when types is
+	// empty. A partial purge leaves the rest of the batch where it is,
+	// drops the erased types from the filing's TypeAfter, and becomes a
+	// whole purge when it erases the last channel. A whole purge also ends
+	// the batch: its filed audit trail is kept, and the records
+	// [PurgeAudit] returns are appended to it, never to the live trail of
+	// the id, since that id may belong to a new entity by now. A partial
+	// purge appends its records the same way.
+	//
+	// A pending batch is [ErrConflict]. A batch already restored or
+	// purged is [ErrNotFound]. The zero handle is a no-op.
+	Purge(ctx context.Context, h TombstoneHandle, types []string, by Author, at time.Time) error
 
 	// DropTypeRecord removes the record of typ (see [TypeRecord]) when no
 	// channel of typ exists, live or tombstoned; otherwise it is
@@ -128,9 +148,10 @@ type Store interface {
 	//
 	// When live channels sit on the batch's anchor (any channel of the id
 	// for a whole-entity batch, any channel of the face for a face batch),
-	// it refuses with [*OccupiedError] and nothing changes. A batch already
-	// restored or purged, or never filed, is [ErrNotFound]. The zero handle is a
-	// no-op.
+	// it refuses with [*OccupiedError] and nothing changes. A batch whose
+	// filing is final (see [Filing.Restorable]) is [ErrConflict] and
+	// nothing changes. A batch already restored or purged, or never filed,
+	// is [ErrNotFound]. The zero handle is a no-op.
 	Untombstone(ctx context.Context, h TombstoneHandle, at time.Time) error
 
 	// Head returns the channel's metadata, including the last seq and rev a

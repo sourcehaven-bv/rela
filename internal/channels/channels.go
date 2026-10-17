@@ -566,6 +566,9 @@ type AuditRecord struct {
 	Status   string      `json:"status,omitempty"`
 	// TriggeredBy is set on records of changes no person asked for.
 	TriggeredBy string `json:"triggered_by,omitempty"`
+	// Tomb is the stamp of the batch a purge record is about. A purge
+	// record of a channel also carries the channel's last seq in Seq.
+	Tomb string `json:"tomb,omitempty"`
 }
 
 // KeyAudit returns the start of an audit record about the channel k.

@@ -614,6 +614,13 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 	if !hasDir && tombAudit == nil {
 		return fmt.Errorf("%w: tombstone %s", channels.ErrNotFound, h)
 	}
+	f, hasFiling, err := readFiling(&s.disk, h)
+	if err != nil {
+		return err
+	}
+	if hasFiling && !f.Restorable() {
+		return fmt.Errorf("%w: tombstone %s is final", channels.ErrConflict, h)
+	}
 	occupied, err := s.occupied(a)
 	if err != nil {
 		return err

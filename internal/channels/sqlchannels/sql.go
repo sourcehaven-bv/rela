@@ -109,7 +109,7 @@ type Dialect struct {
 // required-interface exception rather than a ratchet target. Helpers stay
 // free functions.
 //
-//plimsoll:max-exported-methods=25
+//plimsoll:max-exported-methods=27
 type Store struct {
 	db DB
 	d  Dialect
@@ -393,8 +393,15 @@ func (s *Store) checkParent(ctx context.Context, q Querier, channelID int64, k c
 }
 
 // insertChannel inserts the channel k. Only the title, incarnation, author
-// and time of nc are read; k carries the type.
+// and time of nc are read; k carries the type. It takes the type's lock
+// (see typeLock) after the caller's entity lock, so a create and a
+// DropTypeRecord of the type serialize.
 func (s *Store) insertChannel(ctx context.Context, q Querier, k channels.Key, nc channels.NewChannel) (row, error) {
+	if s.d.LockEntity != "" {
+		if _, err := q.Exec(ctx, s.d.LockEntity, typeLock(k.Type)); err != nil {
+			return row{}, fmt.Errorf("lock type %s: %w", k.Type, err)
+		}
+	}
 	_, err := q.Exec(ctx, `INSERT INTO channels
 		(anchor_id, anchor_face, type, name, tomb, incarnation, state, title, created_by, created_at, closed_at,
 		 archived_at, last_seq, rev)
@@ -653,6 +660,7 @@ func (s *Store) Tombstone(
 	h := channels.NewTombstoneHandle(a, channels.TombstoneStamp(at))
 	rec := channels.AuditRecord{At: channels.NormTime(at), Op: channels.AuditTombstone, Face: face}
 	filed := false
+	var fileErr error
 	err := s.write(ctx, []string{id}, func(q Querier) error {
 		// The filing is computed from the rows this transaction moves,
 		// read under the same write lock (see channels.Filer).
@@ -666,8 +674,8 @@ func (s *Store) Tombstone(
 		}
 		var f channels.Filing
 		if len(batch) > 0 {
-			if f, err = channels.FileBatch(file, batch); err != nil {
-				return err
+			if f, fileErr = channels.FileBatch(file, batch); fileErr != nil {
+				return fileErr
 			}
 		}
 		if face != "" {
@@ -705,6 +713,9 @@ func (s *Store) Tombstone(
 		_, err = q.Exec(ctx, `UPDATE channel_audit SET tomb = ? WHERE anchor_id = ? AND tomb = ''`, h.Stamp(), id)
 		return err
 	})
+	if fileErr != nil {
+		return channels.TombstoneHandle{}, fileErr
+	}
 	if err != nil || !filed {
 		return channels.TombstoneHandle{}, s.wrap(err, "tombstone %s", entity.FormatStateRef(id, face))
 	}
@@ -733,6 +744,13 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 		}
 		if filedChannels == 0 && filedAudit == 0 {
 			return fmt.Errorf("%w: tombstone %s", channels.ErrNotFound, h)
+		}
+		f, ok, err := readFiling(ctx, q, h)
+		if err != nil {
+			return err
+		}
+		if ok && !f.filing.Restorable() {
+			return fmt.Errorf("%w: tombstone %s is final", channels.ErrConflict, h)
 		}
 		liveQuery, liveArgs := `SELECT COUNT(*) FROM channels WHERE anchor_id = ? AND tomb = ''`, []any{a.ID}
 		if a.Face != "" {
@@ -1014,6 +1032,13 @@ func (s *Store) typeRecords(ctx context.Context, q Querier) (map[string]channels
 // recording the same type serialize. It cannot collide with an entity id,
 // which never holds a slash.
 const typeRecordsLock = "channel-types/records"
+
+// typeLock is the entity lock of one channel type, which a channel create
+// and DropTypeRecord take. Like typeRecordsLock it holds a slash, so it
+// cannot collide with an entity id; and a type name holds none, so it
+// cannot collide with typeRecordsLock. It is always the last lock a
+// transaction takes, so it adds no lock-order cycle.
+func typeLock(typ string) string { return "channel-types/type/" + typ }
 
 // RecordTypes implements [channels.Store]. It reads the held records and
 // writes what [channels.MergeTypeRecord] adds in one transaction under

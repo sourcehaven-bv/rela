@@ -106,7 +106,7 @@ type Locker interface {
 // required-interface exception rather than a ratchet target. Helpers stay
 // free functions.
 //
-//plimsoll:max-exported-methods=25
+//plimsoll:max-exported-methods=27
 type Store struct {
 	disk
 	locker Locker

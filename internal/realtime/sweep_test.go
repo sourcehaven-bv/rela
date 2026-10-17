@@ -3,6 +3,7 @@ package realtime
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -317,7 +318,7 @@ func TestPurgeAfter(t *testing.T) {
 		want   time.Time
 	}{
 		{"delete policy erases at once", cfg, channels.PolicyDelete, []channels.Channel{ch("purge", time.Time{})}, at},
-		{"delete batch keeps a detach type", cfg, channels.PolicyDelete,
+		{"a delete batch with a detach type waits for it as a whole", cfg, channels.PolicyDelete,
 			[]channels.Channel{ch("purge", time.Time{}), ch("room", time.Time{})}, at.Add(90 * 24 * time.Hour)},
 		{"detach of a delete type waits", cfg, channels.PolicyDetach, []channels.Channel{ch("purge", time.Time{})},
 			at.Add(realtimelimits.DetachedRetention)},
@@ -545,7 +546,7 @@ func TestSweep_AnchorBatches(t *testing.T) {
 	ctx := context.Background()
 	h := newSweepHarness(t)
 	for i := range anchorChunk + 1 {
-		h.post(t, sweepKey("TKT-"+itoa(i+1), "room"), sweepT0)
+		h.post(t, sweepKey("TKT-"+strconv.Itoa(i+1), "room"), sweepT0)
 	}
 	_, err := h.sweeper.RunRetention(ctx)
 	require.NoError(t, err)
@@ -554,16 +555,4 @@ func TestSweep_AnchorBatches(t *testing.T) {
 	h.anchors.err = errors.New("store down")
 	_, err = h.sweeper.RunRetention(ctx)
 	require.ErrorContains(t, err, "store down")
-}
-
-func itoa(n int) string {
-	const digits = "0123456789"
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for ; n > 0; n /= 10 {
-		b = append([]byte{digits[n%10]}, b...)
-	}
-	return string(b)
 }
