@@ -98,9 +98,11 @@ func (c *call) channelType(entityType, typ string) error {
 
 // resolveAnchor reads the anchor of c.ct and sets c.anchor and the anchor
 // part of c.key. A face-anchored type needs `ID@face` (422 face_required,
-// before the read). A miss, an entity of another type than the route names,
-// or one whose type the channel type does not attach to, is
-// [ErrAnchorNotFound], as the entity GET under that plural answers 404.
+// before the read). A miss, or an entity of another type than the route
+// names, is [ErrAnchorNotFound], as the entity GET under that plural
+// answers 404. A readable entity whose type the channel type does not
+// attach to is 404 unknown_channel_type; only a route that names no entity
+// type (MCP) can reach it.
 func (s *Service) resolveAnchor(c *call, raw string) error {
 	addr, err := entity.ParseAddress(raw)
 	if err != nil {
@@ -118,8 +120,14 @@ func (s *Service) resolveAnchor(c *call, raw string) error {
 		}
 		return fmt.Errorf("realtime: read anchor: %w", err)
 	}
-	if (c.entityType != "" && view.Type != c.entityType) || !slices.Contains(c.ct.AttachTo, view.Type) {
+	if c.entityType != "" && view.Type != c.entityType {
 		return ErrAnchorNotFound
+	}
+	if !slices.Contains(c.ct.AttachTo, view.Type) {
+		// Only a route that names no entity type gets here: the caller may
+		// read the entity, so naming its type tells them nothing new.
+		return deny(http.StatusNotFound, TypeUnknownChannelType,
+			fmt.Sprintf("channel type %s does not attach to %s entities", c.ct.Name, view.Type))
 	}
 	c.anchor = view
 	c.key = channels.Key{Anchor: anchorFor(c.ct, view), Type: c.ct.Name}

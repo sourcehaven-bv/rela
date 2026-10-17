@@ -257,3 +257,17 @@ func TestPost_LogOnlyRefusesSignals(t *testing.T) {
 	require.NoError(t, err, "the server path still takes the signal")
 	require.Len(t, h.local.liveSignals(roomKey()), 1)
 }
+
+// TestRead_UntypedRouteOutsideAttachTo pins that a route naming no entity
+// type answers unknown_channel_type for a readable entity whose type the
+// channel type does not attach to, and the uniform anchor miss for an
+// entity the caller cannot read.
+func TestRead_UntypedRouteOutsideAttachTo(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	_, err := h.svc.Read(as(user("bob")), RawAddress{Anchor: "DOC-1", Type: "room"}, ReadRequest{})
+	d := requireDenial(t, err, http.StatusNotFound, TypeUnknownChannelType)
+	require.Contains(t, d.Title, "doc")
+	_, err = h.svc.Read(as(user("bob")), RawAddress{Anchor: "DOC-9", Type: "room"}, ReadRequest{})
+	require.ErrorIs(t, err, ErrAnchorNotFound)
+}
