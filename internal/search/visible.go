@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"iter"
 	"slices"
-	"sync/atomic"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -42,6 +41,8 @@ type Visible struct {
 	// than silently skipping the check: a missing provenance source is a
 	// wiring bug, not a reason to leak.
 	prov fieldMatchProvenance
+	// page is how many hits one field check judges together.
+	page int
 }
 
 // compile-time check
@@ -54,9 +55,9 @@ var _ VisibleSearcher = (*Visible)(nil)
 // the field check silently: a search over a field-gated type fails closed on
 // it (a scope without [TypeScope.Fields] is unaffected).
 //
-// The reader defaults to inner when inner is a store.EntityReader; pass a
-// distinct reader only in tests. Requiring the reader here means the single
-// snapshot load lives at the seam, not in each consumer.
+// gq must also be a [store.EntityReader]: the field check reads the hits'
+// entities through it, so the snapshot load lives at the seam, not in each
+// consumer.
 func NewVisible(inner Searcher, gq store.GraphQueryer) (*Visible, error) {
 	if inner == nil {
 		return nil, errors.New("search.NewVisible: inner Searcher is required")
@@ -68,7 +69,7 @@ func NewVisible(inner Searcher, gq store.GraphQueryer) (*Visible, error) {
 	if !ok {
 		return nil, errors.New("search.NewVisible: GraphQueryer must also be a store.EntityReader")
 	}
-	v := &Visible{inner: inner, gq: gq, reader: reader}
+	v := &Visible{inner: inner, gq: gq, reader: reader, page: defaultFieldCheckPage}
 	if p, ok := inner.(fieldMatchProvenance); ok {
 		v.prov = p
 	}
@@ -106,7 +107,7 @@ func (v *Visible) SearchVisible(
 			return
 		}
 		emitted := 0
-		pageSize := int(fieldCheckPage.Load())
+		pageSize := v.page
 		for start := 0; start < len(hits); start += pageSize {
 			page := hits[start:min(start+pageSize, len(hits))]
 			if gated {
@@ -128,15 +129,7 @@ func (v *Visible) SearchVisible(
 	}
 }
 
-// fieldCheckPage is how many hits one field check judges together. It is a
-// variable only so a test can shrink it and see the per-page cost.
-var fieldCheckPage = func() *atomic.Int64 {
-	var n atomic.Int64
-	n.Store(defaultFieldCheckPage)
-	return &n
-}()
-
-// defaultFieldCheckPage is the production value of fieldCheckPage.
+// defaultFieldCheckPage is how many hits one field check judges together.
 const defaultFieldCheckPage = 256
 
 // anyFieldScope reports whether some entry gates properties.
