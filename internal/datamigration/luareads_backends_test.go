@@ -43,7 +43,7 @@ func openSQLiteStore(t *testing.T) store.Store {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	st, err := sqlitestore.New(db)
+	st, err := sqlitestore.New(context.Background(), db)
 	if err != nil {
 		t.Fatalf("sqlitestore.New: %v", err)
 	}
