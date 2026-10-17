@@ -3,6 +3,7 @@ package sqlitestore
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/search"
@@ -57,7 +58,7 @@ func reindexSearchTextBatch(ctx context.Context, tx store.Store) error {
 		p, err := unmarshalProps(props)
 		if err != nil {
 			_ = rows.Close()
-			return err
+			return fmt.Errorf("entity %s face %q: %w", id, face, err)
 		}
 		batch = append(batch, &entity.Entity{ID: id, Face: entity.Face(face), Properties: p, Content: content})
 	}
