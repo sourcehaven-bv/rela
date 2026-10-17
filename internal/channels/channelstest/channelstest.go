@@ -545,7 +545,21 @@ func testActions(t *testing.T, h Harness) {
 	require.NoError(t, err)
 	require.Empty(t, stale)
 
-	audit, err := h.Store.Audit(ctx, "TKT-1")
+	assertActionAudit(t, h, releasedAt)
+	_, err = h.Store.SetAction(ctx, k, 9, "accept", channels.ActionNone, pending)
+	require.ErrorIs(t, err, channels.ErrNotFound)
+	_, err = h.Store.SetAction(ctx, k, 1, "Bad Name", channels.ActionNone, pending)
+	require.ErrorIs(t, err, channels.ErrInvalidMessage)
+	_, err = h.Store.Remove(ctx, k, 2, channels.Removal{By: Alice, At: at})
+	require.NoError(t, err)
+	_, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionNone, pending)
+	require.ErrorIs(t, err, channels.ErrRemoved)
+}
+
+// assertActionAudit checks the action records testActions leaves.
+func assertActionAudit(t *testing.T, h Harness, releasedAt time.Time) {
+	t.Helper()
+	audit, err := h.Store.Audit(context.Background(), "TKT-1")
 	require.NoError(t, err)
 	var actions []channels.AuditRecord
 	for _, r := range audit {
@@ -562,15 +576,6 @@ func testActions(t *testing.T, h Harness) {
 		At: channels.NormTime(releasedAt), Op: channels.AuditAction, Type: "room", Seq: 2, By: Bob,
 		Action: "accept", Status: channels.AuditReleased,
 	}, actions[1])
-
-	_, err = h.Store.SetAction(ctx, k, 9, "accept", channels.ActionNone, pending)
-	require.ErrorIs(t, err, channels.ErrNotFound)
-	_, err = h.Store.SetAction(ctx, k, 1, "Bad Name", channels.ActionNone, pending)
-	require.ErrorIs(t, err, channels.ErrInvalidMessage)
-	_, err = h.Store.Remove(ctx, k, 2, channels.Removal{By: Alice, At: at})
-	require.NoError(t, err)
-	_, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionNone, pending)
-	require.ErrorIs(t, err, channels.ErrRemoved)
 }
 
 func testLifecycle(t *testing.T, h Harness) {
@@ -599,21 +604,7 @@ func testLifecycle(t *testing.T, h Harness) {
 		channels.Transition{To: channels.StateClosed, By: Bob, At: closedAt})
 	require.ErrorIs(t, err, channels.ErrNotFound)
 
-	got, err := h.Store.ListByLifecycle(ctx, "room", channels.StateClosed, closedAt.Add(time.Second))
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	require.Equal(t, k, got[0].Key)
-	got, err = h.Store.ListByLifecycle(ctx, "other", channels.StateClosed, closedAt.Add(time.Second))
-	require.NoError(t, err)
-	require.Empty(t, got, "the type narrows the list")
-	got, err = h.Store.ListByLifecycle(ctx, "room", channels.StateClosed, closedAt)
-	require.NoError(t, err)
-	require.Empty(t, got)
-	got, err = h.Store.ListByLifecycle(ctx, "room", channels.StateOpen, closedAt.Add(time.Hour))
-	require.NoError(t, err)
-	require.Empty(t, got)
-	_, err = h.Store.ListByLifecycle(ctx, "", channels.StateOpen, closedAt)
-	require.ErrorIs(t, err, channels.ErrInvalidKey, "the type is required")
+	assertClosedList(t, h, k, closedAt)
 
 	auditLog, err := h.Store.Audit(ctx, "TKT-1")
 	require.NoError(t, err)
@@ -647,7 +638,7 @@ func testLifecycle(t *testing.T, h Harness) {
 	head, err = h.Store.Head(ctx, k)
 	require.NoError(t, err)
 	require.Equal(t, c, head)
-	got, err = h.Store.ListByLifecycle(ctx, "room", channels.StateOpen, reopenedAt)
+	got, err := h.Store.ListByLifecycle(ctx, "room", channels.StateOpen, reopenedAt)
 	require.NoError(t, err)
 	require.Empty(t, got, "a reopened channel has been open since its reopen, not its creation")
 	got, err = h.Store.ListByLifecycle(ctx, "room", channels.StateOpen, reopenedAt.Add(time.Second))
@@ -663,6 +654,28 @@ func testLifecycle(t *testing.T, h Harness) {
 		}
 	}
 	require.Equal(t, []string{"open>closed", "closed>open", "open>closed", "closed>archived", "archived>open"}, trail)
+}
+
+// assertClosedList checks ListByLifecycle against k, the one channel,
+// closed at closedAt.
+func assertClosedList(t *testing.T, h Harness, k channels.Key, closedAt time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	got, err := h.Store.ListByLifecycle(ctx, "room", channels.StateClosed, closedAt.Add(time.Second))
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, k, got[0].Key)
+	got, err = h.Store.ListByLifecycle(ctx, "other", channels.StateClosed, closedAt.Add(time.Second))
+	require.NoError(t, err)
+	require.Empty(t, got, "the type narrows the list")
+	got, err = h.Store.ListByLifecycle(ctx, "room", channels.StateClosed, closedAt)
+	require.NoError(t, err)
+	require.Empty(t, got)
+	got, err = h.Store.ListByLifecycle(ctx, "room", channels.StateOpen, closedAt.Add(time.Hour))
+	require.NoError(t, err)
+	require.Empty(t, got)
+	_, err = h.Store.ListByLifecycle(ctx, "", channels.StateOpen, closedAt)
+	require.ErrorIs(t, err, channels.ErrInvalidKey, "the type is required")
 }
 
 func testCreateMany(t *testing.T, h Harness) {

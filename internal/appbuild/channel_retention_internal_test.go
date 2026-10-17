@@ -309,7 +309,7 @@ type switchLock struct {
 	attempts int
 }
 
-func (l *switchLock) take(context.Context) (func(), bool, error) {
+func (l *switchLock) take(context.Context) (release func(), ok bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.attempts++

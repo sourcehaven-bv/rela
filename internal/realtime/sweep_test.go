@@ -87,13 +87,11 @@ func (f *fakeExistence) Faces(_ context.Context, ids []string) (map[string][]ent
 	return out, nil
 }
 
-func (f *fakeExistence) set(id string, faces ...entity.Face) {
+// set makes id an existing entity with no faces.
+func (f *fakeExistence) set(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if faces == nil {
-		faces = []entity.Face{""}
-	}
-	f.faces[id] = faces
+	f.faces[id] = []entity.Face{""}
 }
 
 func (f *fakeExistence) drop(id string) {

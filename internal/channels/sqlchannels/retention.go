@@ -39,7 +39,7 @@ func encodeTypeAfter(f channels.Filing) string {
 
 func decodeTypeAfter(raw string) (map[string]time.Time, error) {
 	if raw == "" {
-		return nil, nil
+		return nil, nil //nolint:nilnil // no column value: the batch recorded no type times
 	}
 	var in map[string]int64
 	if err := json.Unmarshal([]byte(raw), &in); err != nil {
@@ -276,73 +276,103 @@ func (s *Store) Purge(
 	}
 	a := h.Anchor()
 	err := s.write(ctx, []string{a.ID}, func(q Querier) error {
-		f, ok, err := readFiling(ctx, q, h)
-		if err != nil {
-			return err
-		}
-		if ok && f.filing.Pending {
-			return fmt.Errorf("%w: tombstone %s waits for its delete to commit", channels.ErrConflict, h)
-		}
-		batch, err := collect(ctx, q, `SELECT `+chanCols+` FROM channels WHERE anchor_id = ? AND tomb = ?
-			ORDER BY anchor_face, type, name`, []any{a.ID, h.Stamp()}, scanChannel)
-		if err != nil {
-			return err
-		}
-		var filedAudit int
-		if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM channel_audit WHERE anchor_id = ? AND tomb = ?`,
-			a.ID, h.Stamp()).Scan(&filedAudit); err != nil {
-			return err
-		}
-		if len(batch) == 0 && filedAudit == 0 {
-			return fmt.Errorf("%w: tombstone %s", channels.ErrNotFound, h)
-		}
-		var erased []row
-		for _, r := range batch {
-			if len(types) == 0 || slices.Contains(types, r.c.Key.Type) {
-				erased = append(erased, r)
-			}
-		}
-		whole := len(erased) == len(batch)
-		for _, r := range erased {
-			// Messages first, for the reason Delete gives.
-			if _, err := q.Exec(ctx, `DELETE FROM channel_messages WHERE channel_id = ?`, r.id); err != nil {
-				return err
-			}
-			if _, err := q.Exec(ctx, `DELETE FROM channels WHERE id = ?`, r.id); err != nil {
-				return err
-			}
-		}
-		trail := channels.PurgedTrail(h.Stamp())
-		if whole {
-			if _, err := q.Exec(ctx, `UPDATE channel_audit SET tomb = ? WHERE anchor_id = ? AND tomb = ?`,
-				trail, a.ID, h.Stamp()); err != nil {
-				return err
-			}
-		}
-		chs := make([]channels.Channel, len(erased))
-		for i, r := range erased {
-			chs[i] = r.c
-		}
-		for _, rec := range channels.PurgeAudit(h, chs, by, at) {
-			if _, err := q.Exec(ctx, `INSERT INTO channel_audit (anchor_id, tomb, record) VALUES (?, ?, ?)`,
-				a.ID, trail, mustJSON(rec)); err != nil {
-				return err
-			}
-		}
-		if whole {
-			return deleteFiling(ctx, q, h)
-		}
-		if !ok || len(f.filing.TypeAfter) == 0 {
-			return nil
-		}
-		rest := maps.Clone(f.filing.TypeAfter)
-		for _, typ := range types {
-			delete(rest, typ)
-		}
-		f.filing.TypeAfter = rest
-		return updateTypeAfter(ctx, q, h, f.filing)
+		return purgeBatch(ctx, q, h, types, by, at)
 	})
 	return s.wrap(err, "purge %s", entity.FormatStateRef(a.ID, a.Face))
+}
+
+// purgeBatch is the transaction of Purge.
+func purgeBatch(
+	ctx context.Context, q Querier, h channels.TombstoneHandle, types []string, by channels.Author, at time.Time,
+) error {
+	a := h.Anchor()
+	f, ok, err := readFiling(ctx, q, h)
+	if err != nil {
+		return err
+	}
+	if ok && f.filing.Pending {
+		return fmt.Errorf("%w: tombstone %s waits for its delete to commit", channels.ErrConflict, h)
+	}
+	batch, err := collect(ctx, q, `SELECT `+chanCols+` FROM channels WHERE anchor_id = ? AND tomb = ?
+		ORDER BY anchor_face, type, name`, []any{a.ID, h.Stamp()}, scanChannel)
+	if err != nil {
+		return err
+	}
+	var filedAudit int
+	if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM channel_audit WHERE anchor_id = ? AND tomb = ?`,
+		a.ID, h.Stamp()).Scan(&filedAudit); err != nil {
+		return err
+	}
+	if len(batch) == 0 && filedAudit == 0 {
+		return fmt.Errorf("%w: tombstone %s", channels.ErrNotFound, h)
+	}
+	var erased []row
+	for _, r := range batch {
+		if len(types) == 0 || slices.Contains(types, r.c.Key.Type) {
+			erased = append(erased, r)
+		}
+	}
+	whole := len(erased) == len(batch)
+	if err := eraseRows(ctx, q, erased); err != nil {
+		return err
+	}
+	if err := writePurgeRecords(ctx, q, h, erased, whole, by, at); err != nil {
+		return err
+	}
+	switch {
+	case whole:
+		return deleteFiling(ctx, q, h)
+	case !ok || len(f.filing.TypeAfter) == 0:
+		return nil
+	}
+	rest := maps.Clone(f.filing.TypeAfter)
+	for _, typ := range types {
+		delete(rest, typ)
+	}
+	f.filing.TypeAfter = rest
+	return updateTypeAfter(ctx, q, h, f.filing)
+}
+
+// eraseRows deletes the channels rs and their messages.
+func eraseRows(ctx context.Context, q Querier, rs []row) error {
+	for _, r := range rs {
+		// Messages first, for the reason Delete gives.
+		if _, err := q.Exec(ctx, `DELETE FROM channel_messages WHERE channel_id = ?`, r.id); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `DELETE FROM channels WHERE id = ?`, r.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writePurgeRecords writes the purge records of erased under the purged
+// trail label, after moving the batch's filed trail there on a whole
+// purge.
+func writePurgeRecords(
+	ctx context.Context, q Querier, h channels.TombstoneHandle, erased []row, whole bool,
+	by channels.Author, at time.Time,
+) error {
+	a := h.Anchor()
+	trail := channels.PurgedTrail(h.Stamp())
+	if whole {
+		if _, err := q.Exec(ctx, `UPDATE channel_audit SET tomb = ? WHERE anchor_id = ? AND tomb = ?`,
+			trail, a.ID, h.Stamp()); err != nil {
+			return err
+		}
+	}
+	chs := make([]channels.Channel, len(erased))
+	for i, r := range erased {
+		chs[i] = r.c
+	}
+	for _, rec := range channels.PurgeAudit(h, chs, by, at) {
+		if _, err := q.Exec(ctx, `INSERT INTO channel_audit (anchor_id, tomb, record) VALUES (?, ?, ?)`,
+			a.ID, trail, mustJSON(rec)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DropTypeRecord implements [channels.Store]. It runs under the lock

@@ -350,7 +350,7 @@ func (s *Store) DueTombstones(ctx context.Context, at time.Time) ([]channels.Tom
 		}
 	}
 	if len(leaked) > 0 {
-		if err := s.dropLeakedFilings(ctx, leaked); err != nil {
+		if err := dropLeakedFilings(ctx, s, leaked); err != nil {
 			return out, err
 		}
 	}
@@ -358,12 +358,12 @@ func (s *Store) DueTombstones(ctx context.Context, at time.Time) ([]channels.Tom
 }
 
 // filingAt reads the filing file named name, and the handle it belongs to.
-func (s *Store) filingAt(name string) (channels.TombstoneHandle, channels.Filing, bool) {
+func (d *disk) filingAt(name string) (channels.TombstoneHandle, channels.Filing, bool) {
 	stamp, ok := strings.CutSuffix(name, ".yaml")
 	if !ok {
 		return channels.TombstoneHandle{}, channels.Filing{}, false
 	}
-	data, err := s.readFile(filingsDir + "/" + name)
+	data, err := d.readFile(filingsDir + "/" + name)
 	if err != nil || data == nil {
 		return channels.TombstoneHandle{}, channels.Filing{}, false
 	}
@@ -385,7 +385,7 @@ func (s *Store) filingAt(name string) (channels.TombstoneHandle, channels.Filing
 // lock, so a filing without a batch seen under the lock belongs to no
 // batch: a crash left it, or a purge or restore that stopped part way.
 // A whole-entity batch that kept only its filed trail is left alone.
-func (s *Store) dropLeakedFilings(ctx context.Context, hs []channels.TombstoneHandle) error {
+func dropLeakedFilings(ctx context.Context, s *Store, hs []channels.TombstoneHandle) error {
 	unlock, err := s.lock(ctx)
 	if err != nil {
 		return err
@@ -407,14 +407,14 @@ func (s *Store) dropLeakedFilings(ctx context.Context, hs []channels.TombstoneHa
 
 // batchGone reports whether neither the directory nor the filed trail of
 // h exists.
-func (s *Store) batchGone(h channels.TombstoneHandle) (bool, error) {
-	if ok, err := s.exists(detachedKey(h)); err != nil || ok {
+func (d *disk) batchGone(h channels.TombstoneHandle) (bool, error) {
+	if ok, err := d.exists(detachedKey(h)); err != nil || ok {
 		return false, err
 	}
 	if h.Anchor().Face != "" {
 		return true, nil
 	}
-	ok, err := s.exists(detachedAuditKey(h))
+	ok, err := d.exists(detachedAuditKey(h))
 	return !ok, err
 }
 
@@ -469,8 +469,8 @@ func (s *Store) Purge(
 	}
 	if !hasDir && filed == nil {
 		if hasFiling {
-			if err := removeFiling(&s.disk, h); err != nil {
-				return err
+			if rmErr := removeFiling(&s.disk, h); rmErr != nil {
+				return rmErr
 			}
 		}
 		return fmt.Errorf("%w: tombstone %s", channels.ErrNotFound, h)
@@ -483,30 +483,23 @@ func (s *Store) Purge(
 	}
 	erased := channels.PurgeTypes(batch, types)
 	whole := len(erased) == len(batch)
-	if err := s.appendPurgeRecords(h, erased, whole, filed, by, at); err != nil {
-		return err
+	if recErr := s.appendPurgeRecords(h, erased, whole, filed, by, at); recErr != nil {
+		return recErr
 	}
-	if err := s.trashErased(h, erased, whole, hasDir); err != nil {
-		return err
+	if trashErr := s.trashErased(h, erased, whole, hasDir); trashErr != nil {
+		return trashErr
 	}
 	if whole {
-		if filed != nil {
-			if err := s.rfs.Remove(detachedAuditKey(h)); err != nil && !notExist(err) {
-				return fmt.Errorf("filechannels: purge audit of %s: %w", h, err)
-			}
-		}
-		if err := removeFiling(&s.disk, h); err != nil {
-			return err
-		}
+		err = s.dropBatchRecords(h, filed != nil)
 	} else if hasFiling && len(f.TypeAfter) > 0 {
-		rest := maps.Clone(f.TypeAfter)
+		f.TypeAfter = maps.Clone(f.TypeAfter)
 		for _, typ := range types {
-			delete(rest, typ)
+			delete(f.TypeAfter, typ)
 		}
-		f.TypeAfter = rest
-		if err := writeFiling(&s.disk, h, f); err != nil {
-			return err
-		}
+		err = writeFiling(&s.disk, h, f)
+	}
+	if err != nil {
+		return err
 	}
 	if err := s.removeAll(trashDir); err != nil {
 		return fmt.Errorf("filechannels: purge %s: %w", h, err)
@@ -514,15 +507,26 @@ func (s *Store) Purge(
 	return nil
 }
 
+// dropBatchRecords writes step 3 of a whole Purge: it removes the filed
+// trail, when the batch has one, and the filing.
+func (d *disk) dropBatchRecords(h channels.TombstoneHandle, hasTrail bool) error {
+	if hasTrail {
+		if err := d.rfs.Remove(detachedAuditKey(h)); err != nil && !notExist(err) {
+			return fmt.Errorf("filechannels: purge audit of %s: %w", h, err)
+		}
+	}
+	return removeFiling(d, h)
+}
+
 // appendPurgeRecords writes step 1 of Purge: the records of the erased
 // channels, after the filed trail of a whole purge, in one append. A
 // record already in purgedAuditKey, from a purge a crash cut short, is
 // not written again, and neither is the trail then.
-func (s *Store) appendPurgeRecords(
+func (d *disk) appendPurgeRecords(
 	h channels.TombstoneHandle, erased []channels.Channel, whole bool, filed []byte, by channels.Author, at time.Time,
 ) error {
 	key := purgedAuditKey(h.Anchor().ID)
-	prior, err := s.readFile(key)
+	prior, err := d.readFile(key)
 	if err != nil {
 		return fmt.Errorf("filechannels: purge audit of %s: %w", h, err)
 	}
@@ -544,10 +548,10 @@ func (s *Store) appendPurgeRecords(
 	if whole {
 		buf = append(complete(filed), buf...)
 	}
-	if err := s.rfs.MkdirAll(auditDir+"/~purged", 0o755); err != nil {
+	if err := d.rfs.MkdirAll(auditDir+"/~purged", 0o755); err != nil {
 		return fmt.Errorf("filechannels: purge audit of %s: %w", h, err)
 	}
-	if err := s.appendTo(key, buf); err != nil {
+	if err := d.appendTo(key, buf); err != nil {
 		return fmt.Errorf("filechannels: purge audit of %s: %w", h, err)
 	}
 	return nil
@@ -577,18 +581,18 @@ func purgedRecords(data []byte, stamp string) map[string]bool {
 }
 
 // trashErased writes step 2 of Purge.
-func (s *Store) trashErased(h channels.TombstoneHandle, erased []channels.Channel, whole, hasDir bool) error {
+func (d *disk) trashErased(h channels.TombstoneHandle, erased []channels.Channel, whole, hasDir bool) error {
 	if whole {
 		if !hasDir {
 			return nil
 		}
-		if err := s.move(detachedKey(h), trashDir+"/"+channels.NewName()); err != nil {
+		if err := d.move(detachedKey(h), trashDir+"/"+channels.NewName()); err != nil {
 			return fmt.Errorf("filechannels: purge %s: %w", h, err)
 		}
 		return nil
 	}
 	for _, c := range erased {
-		if err := s.move(batchChannelDir(h, c.Key), trashDir+"/"+channels.NewName()); err != nil {
+		if err := d.move(batchChannelDir(h, c.Key), trashDir+"/"+channels.NewName()); err != nil {
 			return fmt.Errorf("filechannels: purge %s from %s: %w", c.Key, h, err)
 		}
 	}

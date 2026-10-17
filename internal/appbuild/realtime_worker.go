@@ -30,8 +30,6 @@ const (
 	// realtimeWorkerLockFile is the worker lock of the file backend, in the
 	// project's cache directory.
 	realtimeWorkerLockFile = "realtime-worker.lock"
-	// realtimeWorkerLockKey names the worker lock of a database backend.
-	realtimeWorkerLockKey = "realtime-worker"
 )
 
 // tombstoneConfirmer connects the channel guard to the post-commit delete

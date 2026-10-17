@@ -21,7 +21,7 @@ var (
 
 // confirmedBatch tombstones a channel of id@face and files it confirmed and
 // due at retT0.
-func confirmedBatch(t *testing.T, s *Store, id string, face string) channels.TombstoneHandle {
+func confirmedBatch(t *testing.T, s *Store, id, face string) channels.TombstoneHandle {
 	t.Helper()
 	ctx := context.Background()
 	k := channels.Key{Anchor: channels.Anchor{ID: id}, Type: "room"}

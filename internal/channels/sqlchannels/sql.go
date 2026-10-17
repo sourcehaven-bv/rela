@@ -679,38 +679,10 @@ func (s *Store) Tombstone(
 			}
 		}
 		if face != "" {
-			moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ?
-				WHERE anchor_id = ? AND anchor_face = ? AND tomb = ''`, h.Stamp(), id, string(face))
-			if err != nil || moved == 0 {
-				return err
-			}
-			filed = true
-			if err := insertFiling(ctx, q, h, f); err != nil {
-				return err
-			}
-			return s.audit(ctx, q, id, rec)
+			filed, err = tombstoneFace(ctx, s, q, h, f, rec)
+		} else {
+			filed, err = tombstoneEntity(ctx, s, q, h, f, rec)
 		}
-		moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ? WHERE anchor_id = ? AND tomb = ''`,
-			h.Stamp(), id)
-		if err != nil {
-			return err
-		}
-		filed = moved > 0
-		if filed {
-			if fileErr := insertFiling(ctx, q, h, f); fileErr != nil {
-				return fileErr
-			}
-		}
-		var n int
-		if cErr := q.QueryRow(ctx, `SELECT COUNT(*) FROM channel_audit WHERE anchor_id = ? AND tomb = ''`,
-			id).Scan(&n); cErr != nil || n == 0 {
-			return cErr
-		}
-		filed = true
-		if aErr := s.audit(ctx, q, id, rec); aErr != nil {
-			return aErr
-		}
-		_, err = q.Exec(ctx, `UPDATE channel_audit SET tomb = ? WHERE anchor_id = ? AND tomb = ''`, h.Stamp(), id)
 		return err
 	})
 	if fileErr != nil {
@@ -720,6 +692,51 @@ func (s *Store) Tombstone(
 		return channels.TombstoneHandle{}, s.wrap(err, "tombstone %s", entity.FormatStateRef(id, face))
 	}
 	return h, nil
+}
+
+// tombstoneFace moves the channels of a face to the batch h and files it
+// with f. It reports whether it moved any.
+func tombstoneFace(
+	ctx context.Context, s *Store, q Querier, h channels.TombstoneHandle, f channels.Filing, rec channels.AuditRecord,
+) (bool, error) {
+	a := h.Anchor()
+	moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ?
+		WHERE anchor_id = ? AND anchor_face = ? AND tomb = ''`, h.Stamp(), a.ID, string(a.Face))
+	if err != nil || moved == 0 {
+		return false, err
+	}
+	if err := insertFiling(ctx, q, h, f); err != nil {
+		return true, err
+	}
+	return true, s.audit(ctx, q, a.ID, rec)
+}
+
+// tombstoneEntity moves every channel of an entity, and its audit trail,
+// to the batch h and files it with f. It reports whether it moved
+// anything: a channel, or an audit trail left by channels removed before.
+func tombstoneEntity(
+	ctx context.Context, s *Store, q Querier, h channels.TombstoneHandle, f channels.Filing, rec channels.AuditRecord,
+) (bool, error) {
+	id := h.Anchor().ID
+	moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ? WHERE anchor_id = ? AND tomb = ''`, h.Stamp(), id)
+	if err != nil {
+		return false, err
+	}
+	if moved > 0 {
+		if fileErr := insertFiling(ctx, q, h, f); fileErr != nil {
+			return true, fileErr
+		}
+	}
+	var n int
+	if err = q.QueryRow(ctx, `SELECT COUNT(*) FROM channel_audit WHERE anchor_id = ? AND tomb = ''`,
+		id).Scan(&n); err != nil || n == 0 {
+		return moved > 0, err
+	}
+	if auditErr := s.audit(ctx, q, id, rec); auditErr != nil {
+		return true, auditErr
+	}
+	_, err = q.Exec(ctx, `UPDATE channel_audit SET tomb = ? WHERE anchor_id = ? AND tomb = ''`, h.Stamp(), id)
+	return true, err
 }
 
 // Untombstone implements [channels.Store]. A stamp is unique to one

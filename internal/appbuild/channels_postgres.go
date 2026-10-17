@@ -33,6 +33,9 @@ func storeChannelsFor(st store.Store) channels.Store {
 	return s
 }
 
+// realtimeWorkerLockKey names the realtime worker lock in the database.
+const realtimeWorkerLockKey = "realtime-worker"
+
 // storeLeaderLockFor returns the realtime worker lock on st's database: a
 // keyed advisory lock tried once per run (see [pgstore.TryKeyedLock]), so
 // every rela-server process on the schema contends on one lock and none

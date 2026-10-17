@@ -2625,12 +2625,8 @@ func assemble(
 	// Upstream's parameter order (readDeps after cascadeRunner) with the
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
-	chAliases, err := channelAliasesFor(refs.channels, st, refs.channelTombs, base.realtime)
-	if err != nil {
-		return nil, err
-	}
 	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		chAliases, refs.realtimeLocal)
+		refs.channelAliases, refs.realtimeLocal)
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
 		attachLocker, fieldPol.gate, refs.channels, refs.channelTombs)
@@ -2743,8 +2739,8 @@ func finishAssembly(
 		return nil, err
 	}
 	s.versionTags = tags
-	if err := autoJobs.bind(servicesJobRunner{s}, engine); err != nil {
-		return nil, err
+	if bindErr := autoJobs.bind(servicesJobRunner{s}, engine); bindErr != nil {
+		return nil, bindErr
 	}
 	// Built, not started: the host starts it (see RunRealtimeWorker).
 	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, refs); err != nil {

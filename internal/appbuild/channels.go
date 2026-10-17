@@ -101,7 +101,7 @@ func channelAliasesFor(
 	cs channels.Store, st store.EntityLister, tombs *tombstoneConfirmer, rt *RealtimeConfig,
 ) (*channelAliases, error) {
 	if cs == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // no channel store: newAliasFanout drops a nil subscriber
 	}
 	if st == nil || tombs == nil {
 		return nil, errors.New("channels: the alias hooks need an entity lister and a tombstone confirmer")
@@ -202,18 +202,18 @@ func (a *channelAliases) EntityCreated(ctx context.Context, id string, face enti
 	if err != nil {
 		return fmt.Errorf("channels: read faces of %s: %w", id, err)
 	}
-	var clear entity.Face
+	var target entity.Face
 	switch {
 	case len(headers) <= 1:
-		clear = ""
+		target = ""
 	case face != "":
-		clear = face
+		target = face
 	default:
 		return nil
 	}
-	err = a.store.ConfirmTombstones(ctx, channels.Anchor{ID: id, Face: clear})
+	err = a.store.ConfirmTombstones(ctx, channels.Anchor{ID: id, Face: target})
 	if err == nil {
-		err = a.tombstone(ctx, id, clear, a.now(), channels.PolicyDetach)
+		err = a.tombstone(ctx, id, target, a.now(), channels.PolicyDetach)
 	}
 	if err != nil {
 		return fmt.Errorf("channels: clear %s on create: %w", entity.FormatStateRef(id, face), err)
