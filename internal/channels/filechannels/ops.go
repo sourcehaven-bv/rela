@@ -367,7 +367,7 @@ func (s *Store) SetLifecycle(
 	}
 	c := m.channel(k)
 	channels.ApplyTransition(&c, t)
-	m.State, m.ClosedAt, m.ArchivedAt = c.State, c.ClosedAt, c.ArchivedAt
+	m.State, m.ClosedAt, m.ArchivedAt, m.ReopenedAt = c.State, c.ClosedAt, c.ArchivedAt, c.ReopenedAt
 	m.Rev++
 	if err := s.writeMeta(k, m); err != nil {
 		return channels.Channel{}, err

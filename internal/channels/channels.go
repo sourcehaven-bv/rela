@@ -375,8 +375,11 @@ type Channel struct {
 	CreatedAt   time.Time `json:"created_at"`
 	ClosedAt    time.Time `json:"closed_at,omitzero"`
 	ArchivedAt  time.Time `json:"archived_at,omitzero"`
-	LastSeq     int64     `json:"last_seq"`
-	Rev         int64     `json:"rev"`
+	// ReopenedAt is when the channel was last reopened; zero when it was
+	// never reopened.
+	ReopenedAt time.Time `json:"reopened_at,omitzero"`
+	LastSeq    int64     `json:"last_seq"`
+	Rev        int64     `json:"rev"`
 }
 
 // CheckIncarnation reports a channel whose incarnation is not live, the
@@ -423,7 +426,8 @@ func (nc NewChannel) Cap() int {
 }
 
 // StateSince returns when the channel entered its current state: the close
-// or archive time, or the creation time for an open channel.
+// or archive time, or for an open channel the reopen time, or the creation
+// time when it was never reopened.
 func (c Channel) StateSince() time.Time {
 	switch c.State {
 	case StateClosed:
@@ -431,6 +435,9 @@ func (c Channel) StateSince() time.Time {
 	case StateArchived:
 		return c.ArchivedAt
 	default:
+		if !c.ReopenedAt.IsZero() {
+			return c.ReopenedAt
+		}
 		return c.CreatedAt
 	}
 }
@@ -447,14 +454,14 @@ type Transition struct {
 }
 
 // ApplyTransition sets c's state and timestamps for t. Reopening clears
-// both timestamps; closing clears the archive time. Archiving an open
-// channel closes it in the same instant, so an archived channel always has
-// a close time.
+// both timestamps and records the reopen time; closing clears the archive
+// time. Archiving an open channel closes it in the same instant, so an
+// archived channel always has a close time.
 func ApplyTransition(c *Channel, t Transition) {
 	c.State = t.To
 	switch t.To {
 	case StateOpen:
-		c.ClosedAt, c.ArchivedAt = time.Time{}, time.Time{}
+		c.ClosedAt, c.ArchivedAt, c.ReopenedAt = time.Time{}, time.Time{}, t.At
 	case StateClosed:
 		c.ClosedAt, c.ArchivedAt = t.At, time.Time{}
 	case StateArchived:

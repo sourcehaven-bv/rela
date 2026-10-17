@@ -204,7 +204,11 @@ func utc(t time.Time) time.Time {
 }
 
 const chanCols = `id, anchor_id, anchor_face, type, name, incarnation, state, title, created_by,
-	created_at, closed_at, archived_at, last_seq, rev`
+	created_at, closed_at, archived_at, reopened_at, last_seq, rev`
+
+// openSinceSQL is when an open channel entered its state, as
+// [channels.Channel.StateSince] reads it.
+const openSinceSQL = `(CASE WHEN reopened_at > 0 THEN reopened_at ELSE created_at END)`
 
 // row is a channel row: the channel and its surrogate id.
 type row struct {
@@ -215,10 +219,10 @@ type row struct {
 func scanChannel(r interface{ Scan(...any) error }) (row, error) {
 	var out row
 	var face, by string
-	var created, closed, archived int64
+	var created, closed, archived, reopened int64
 	c := &out.c
 	if err := r.Scan(&out.id, &c.Key.ID, &face, &c.Key.Type, &c.Key.Name, &c.Incarnation, &c.State, &c.Title, &by,
-		&created, &closed, &archived, &c.LastSeq, &c.Rev); err != nil {
+		&created, &closed, &archived, &reopened, &c.LastSeq, &c.Rev); err != nil {
 		return out, err
 	}
 	c.Key.Face = entity.Face(face)
@@ -226,6 +230,7 @@ func scanChannel(r interface{ Scan(...any) error }) (row, error) {
 		return out, fmt.Errorf("channel %s has a damaged created_by: %w", c.Key, err)
 	}
 	c.CreatedAt, c.ClosedAt, c.ArchivedAt = fromMicros(created), fromMicros(closed), fromMicros(archived)
+	c.ReopenedAt = fromMicros(reopened)
 	return out, nil
 }
 
@@ -563,8 +568,9 @@ func (s *Store) SetLifecycle(
 		c := r.c
 		channels.ApplyTransition(&c, t)
 		c.Rev++
-		if _, err := q.Exec(ctx, `UPDATE channels SET state = ?, closed_at = ?, archived_at = ?, rev = ?
-			WHERE id = ?`, string(c.State), micros(c.ClosedAt), micros(c.ArchivedAt), c.Rev, r.id); err != nil {
+		if _, err := q.Exec(ctx, `UPDATE channels SET state = ?, closed_at = ?, archived_at = ?, reopened_at = ?,
+			rev = ? WHERE id = ?`, string(c.State), micros(c.ClosedAt), micros(c.ArchivedAt), micros(c.ReopenedAt),
+			c.Rev, r.id); err != nil {
 			return err
 		}
 		out = c
@@ -896,7 +902,7 @@ func (s *Store) ListByLifecycle(
 		return nil, fmt.Errorf("%w: channel type %q", channels.ErrInvalidKey, typ)
 	}
 	col := map[channels.State]string{
-		channels.StateOpen: "created_at", channels.StateClosed: "closed_at", channels.StateArchived: "archived_at",
+		channels.StateOpen: openSinceSQL, channels.StateClosed: "closed_at", channels.StateArchived: "archived_at",
 	}[state]
 	if col == "" {
 		return nil, fmt.Errorf("%w: state %q", channels.ErrInvalidMessage, state)

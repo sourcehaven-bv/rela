@@ -230,6 +230,33 @@ func TestSweep_AutoLifecycle(t *testing.T) {
 	require.Equal(t, channels.StateArchived, h.head(t, k).State)
 }
 
+// A reopened channel is closed again only once auto.after has run from the
+// reopen, not from its creation.
+func TestSweep_ReopenRestartsAutoClose(t *testing.T) {
+	ctx := context.Background()
+	h := newSweepHarness(t)
+	k := sweepKey("TKT-1", "room")
+	h.post(t, k, sweepT0.Add(-72*time.Hour))
+	rep, err := h.sweeper.RunLifecycle(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, rep.Closed)
+
+	_, err = h.store.SetLifecycle(ctx, k, channels.StateClosed, channels.Transition{
+		To: channels.StateOpen, By: channels.Author{User: "alice"}, At: h.clock.Now(),
+	})
+	require.NoError(t, err)
+	h.clock.Add(time.Minute)
+	rep, err = h.sweeper.RunLifecycle(ctx)
+	require.NoError(t, err)
+	require.Zero(t, rep.Closed, "the reopen restarts the day")
+	require.Equal(t, channels.StateOpen, h.head(t, k).State)
+
+	h.clock.Add(24 * time.Hour)
+	rep, err = h.sweeper.RunLifecycle(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, rep.Closed, "a day after the reopen it closes again")
+}
+
 // A degraded config runs no automatic step and a missing one runs nothing.
 func TestSweep_LifecycleConfigStates(t *testing.T) {
 	ctx := context.Background()

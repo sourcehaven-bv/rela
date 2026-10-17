@@ -257,11 +257,31 @@ var migrations = []migration{
 	},
 	{
 		// v22 → v23: what each tombstoned channel batch recorded, and the
-		// (tomb, type, state) index of the lifecycle sweeps (TKT-964SIS).
-		// Pure CREATE IF NOT EXISTS.
+		// indexes retention reads through, and the reopen time of each
+		// channel (TKT-964SIS).
 		to:    23,
-		apply: sqlSteps(channelRetentionDDL),
+		apply: addChannelRetention,
 	},
+}
+
+// addChannelRetention is the v22 to v23 rung: channelRetentionDDL, and
+// channels.reopened_at when it is missing. channelsDDL already has the
+// column, so a database that took the v17 to v18 rung from this release
+// has it.
+func addChannelRetention(ctx context.Context, conn *sql.Conn) error {
+	var n int
+	if err := conn.QueryRowContext(ctx,
+		`SELECT count(*) FROM pragma_table_info('channels') WHERE name = 'reopened_at'`,
+	).Scan(&n); err != nil {
+		return fmt.Errorf("probe channels.reopened_at: %w", err)
+	}
+	if n == 0 {
+		if _, err := conn.ExecContext(ctx,
+			`ALTER TABLE channels ADD COLUMN reopened_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add channels.reopened_at: %w", err)
+		}
+	}
+	return sqlSteps(channelRetentionDDL)(ctx, conn)
 }
 
 // addChannelTypeCardinality adds channel_types.cardinality when it is

@@ -298,6 +298,7 @@ type meta struct {
 	CreatedAt   time.Time            `yaml:"created_at"`
 	ClosedAt    time.Time            `yaml:"closed_at,omitempty"`
 	ArchivedAt  time.Time            `yaml:"archived_at,omitempty"`
+	ReopenedAt  time.Time            `yaml:"reopened_at,omitempty"`
 	LastSeq     int64                `yaml:"last_seq"`
 	Rev         int64                `yaml:"rev"`
 	SegRev      []int64              `yaml:"seg_rev,omitempty"`
@@ -308,7 +309,8 @@ func (m *meta) channel(k channels.Key) channels.Channel {
 	return channels.Channel{
 		Key: k, Incarnation: m.Incarnation, State: m.State, Title: m.Title, CreatedBy: m.CreatedBy,
 		CreatedAt: m.CreatedAt.UTC(), ClosedAt: utc(m.ClosedAt), ArchivedAt: utc(m.ArchivedAt),
-		LastSeq: m.LastSeq, Rev: m.Rev,
+		ReopenedAt: utc(m.ReopenedAt),
+		LastSeq:    m.LastSeq, Rev: m.Rev,
 	}
 }
 
