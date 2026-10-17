@@ -33,8 +33,7 @@ func TestUserText(t *testing.T) {
 		},
 		{"retry", rateLimited(1500 * time.Millisecond), "rate_limited: too many requests; try again later; retry in 2s", true},
 		{"wrapped", fmt.Errorf("x: %w", channelNotFound()), "channel_not_found: channel not found", true},
-		{"no principal", noPrincipal(), "no_principal: the request carries no identity the ACL can evaluate" +
-			noPrincipalHint, true},
+		{"no principal", noPrincipal(), "no_principal: the request carries no identity the ACL can evaluate", true},
 		{"off", ErrRealtimeOff, OffText, true},
 		{"anchor", ErrAnchorNotFound, "", false},
 		{"other", errors.New("disk on fire"), "", false},
@@ -45,6 +44,7 @@ func TestUserText(t *testing.T) {
 			got, ok := UserText(tc.err)
 			require.Equal(t, tc.ok, ok)
 			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.name == "no principal", IsNoPrincipal(tc.err))
 		})
 	}
 }

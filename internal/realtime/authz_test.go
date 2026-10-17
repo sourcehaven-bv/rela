@@ -319,7 +319,7 @@ func TestAuthz_ACLModes(t *testing.T) {
 
 	_, err = h.svc.Head(as(readOnly), room)
 	require.NoError(t, err)
-	_, err = h.svc.Messages(as(readOnly), room, pageAll())
+	_, err = h.svc.Read(as(readOnly), room, ReadRequest{})
 	require.NoError(t, err)
 	_, err = h.svc.Post(as(readOnly), room, text("x"))
 	requireDenial(t, err, http.StatusForbidden, TypePostDenied)

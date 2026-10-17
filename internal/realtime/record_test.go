@@ -115,7 +115,7 @@ func TestRender_RecordedRefWinsOverConfig(t *testing.T) {
 	st := &recordReadCounter{Store: h.store}
 	h.svc.store = st
 	for range 2 {
-		page, err := h.svc.Messages(as(user("bob")), room, pageAll())
+		page, err := h.svc.Read(as(user("bob")), room, ReadRequest{})
 		require.NoError(t, err)
 		require.Len(t, page.Messages, 1)
 		require.Equal(t, &RefValue{Restricted: true}, page.Messages[0].Props["about"])
@@ -145,7 +145,7 @@ func TestRender_UndeclaredOmitted(t *testing.T) {
 	noAbout := strings.Replace(testRealtime, "          about: { type: ref, to: [ticket] }\n", "", 1)
 	require.NotEqual(t, testRealtime, noAbout)
 	h.cfg.set(Snapshot{Config: testCompiled(t, withoutType(noAbout, "perm-text"))})
-	page, err := h.svc.Messages(as(user("bob")), room, pageAll())
+	page, err := h.svc.Read(as(user("bob")), room, ReadRequest{})
 	require.NoError(t, err)
 	require.Len(t, page.Messages, 2)
 	require.Equal(t, map[string]any{"level": float64(1)}, page.Messages[0].Props,

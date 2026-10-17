@@ -31,7 +31,7 @@ func TestRefs_RestrictedAndUniform422(t *testing.T) {
 
 	delete(h.refs.views, "TKT-3")
 	h.refs.calls.Store(0)
-	page, err := h.svc.Messages(as(bob), room, pageAll())
+	page, err := h.svc.Read(as(bob), room, ReadRequest{})
 	require.NoError(t, err)
 	require.Equal(t, &RefValue{Restricted: true}, page.Messages[0].Props["about"])
 	require.Equal(t, &RefValue{ID: "DOC-1", Type: "doc", Title: "A doc"}, page.Messages[0].Props["also"])
@@ -55,7 +55,7 @@ func TestRefs_OneResolvePerPage(t *testing.T) {
 		}
 		h.refs.calls.Store(0)
 		h.store.heads.Store(0)
-		page, err := h.svc.Messages(as(bob), room, pageAll())
+		page, err := h.svc.Read(as(bob), room, ReadRequest{})
 		require.NoError(t, err)
 		require.Len(t, page.Messages, n)
 		require.EqualValues(t, 1, h.refs.calls.Load(), "n=%d", n)

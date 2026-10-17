@@ -155,6 +155,13 @@ func (s *Service) Head(ctx context.Context, addr RawAddress) (HeadView, error) {
 
 // affordances answers what the caller may do in c's channel.
 func (c *call) affordances() Affordances {
+	return c.affordancesWith(c.postable())
+}
+
+// affordancesWith is [call.affordances] over a post set from
+// [call.postable], so a caller that needs the set twice evaluates the post
+// gates once.
+func (c *call) affordancesWith(post map[string]bool) Affordances {
 	a := Affordances{Post: []string{}, Lifecycle: []string{}}
 	if c.requireCaller() != nil {
 		return a
@@ -162,16 +169,32 @@ func (c *call) affordances() Affordances {
 	ops := c.ct.MessageOps
 	a.Remove = c.moderator()
 	a.Lifecycle = c.lifecycleOps()
-	if c.state() == channels.StateOpen {
-		for _, name := range sortedKeys(c.ct.MessageTypes) {
-			if c.mayPost(c.ct.MessageTypes[name]) {
-				a.Post = append(a.Post, name)
-			}
+	for _, name := range sortedKeys(c.ct.MessageTypes) {
+		if post[name] {
+			a.Post = append(a.Post, name)
 		}
+	}
+	if c.state() == channels.StateOpen {
 		a.EditOwn = ops.EditOwn != nil && c.gate(ops.EditOwn.Gate)
 	}
 	a.DeleteOwn = ops.DeleteOwn != nil && c.gate(ops.DeleteOwn.Gate)
 	return a
+}
+
+// postable is the set of message types the caller may post here now: they
+// hold a post role and the channel is open. It is nil for a caller without
+// identity.
+func (c *call) postable() map[string]bool {
+	if c.requireCaller() != nil || c.state() != channels.StateOpen {
+		return nil
+	}
+	out := map[string]bool{}
+	for name, mt := range c.ct.MessageTypes {
+		if c.mayPost(mt) {
+			out[name] = true
+		}
+	}
+	return out
 }
 
 // renderer builds the renderer for c, resolving every ref of msgs and sigs
@@ -197,29 +220,6 @@ func (s *Service) renderer(c *call, msgs []channels.Message, sigs []signal) (*re
 	}
 	r.refs = got
 	return r, nil
-}
-
-// MessagePage is one page of messages. Full is set when the page holds as
-// many messages as asked for: there may be more past its cursor.
-type MessagePage struct {
-	Channel  ChannelView   `json:"channel"`
-	Messages []MessageView `json:"messages"`
-	Full     bool          `json:"full"`
-}
-
-// Messages returns one page of messages through [Service.Read]. A
-// positive page.AfterRev is the after_rev cursor.
-func (s *Service) Messages(ctx context.Context, addr RawAddress, page channels.Page) (MessagePage, error) {
-	req := ReadRequest{AfterSeq: page.AfterSeq, BeforeSeq: page.BeforeSeq, Limit: page.Limit}
-	if page.RevOrder() {
-		rev := page.AfterRev
-		req.AfterRev = &rev
-	}
-	v, err := s.Read(ctx, addr, req)
-	if err != nil {
-		return MessagePage{}, err
-	}
-	return MessagePage{Channel: v.Channel, Messages: v.Messages, Full: v.HasMore}, nil
 }
 
 // PostInput is a message to post.

@@ -16,9 +16,17 @@ const UntrustedNotice = "UNTRUSTED CONTENT: message and signal properties, chann
 // OffText answers an operation while the project has no realtime.yaml.
 const OffText = "channels are not enabled in this project (no realtime.yaml)"
 
-// noPrincipalHint follows a no_principal denial: a local command without
-// $USER (cron, systemd) runs as nobody.
-const noPrincipalHint = "; a local command takes its identity from $USER"
+// NoPrincipalHint follows a no_principal denial on a transport whose
+// identity comes from $USER (stdio MCP, the CLI): a local command without
+// $USER (cron, systemd) runs as nobody. A remote transport takes identity
+// from a verified token and does not add it.
+const NoPrincipalHint = "; a local command takes its identity from $USER"
+
+// IsNoPrincipal reports whether err is a no_principal denial.
+func IsNoPrincipal(err error) bool {
+	d, ok := errors.AsType[*DenialError](err)
+	return ok && d.Type == TypeNoPrincipal
+}
 
 // UserText renders err for a person or an agent, for transports that
 // answer in text (MCP, CLI). A [*DenialError] renders as
@@ -43,9 +51,6 @@ func denialText(d *DenialError) string {
 	out := d.Type + ": " + d.Title
 	if d.Rule != "" {
 		out += " (rule: " + d.Rule + ")"
-	}
-	if d.Type == TypeNoPrincipal {
-		out += noPrincipalHint
 	}
 	if d.RetryAfter > 0 {
 		out += fmt.Sprintf("; retry in %ds", int(math.Ceil(d.RetryAfter.Seconds())))

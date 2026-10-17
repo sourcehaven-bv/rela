@@ -14,8 +14,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
-func pageAll() channels.Page { return channels.Page{} }
-
 // TestOps_RemovePlaceholder pins AC6: a removed message renders only its
 // seq, rev, thread link and removal; props, author, type and time are gone.
 func TestOps_RemovePlaceholder(t *testing.T) {
@@ -29,7 +27,7 @@ func TestOps_RemovePlaceholder(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.Removed)
 
-	page, err := h.svc.Messages(as(bob), room, pageAll())
+	page, err := h.svc.Read(as(bob), room, ReadRequest{})
 	require.NoError(t, err)
 	require.Len(t, page.Messages, 2)
 	removed := page.Messages[0]
@@ -91,7 +89,7 @@ func TestOps_ReasonVisibility(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			page, err := h.svc.Messages(as(tc.reader), room, pageAll())
+			page, err := h.svc.Read(as(tc.reader), room, ReadRequest{})
 			require.NoError(t, err)
 			require.Len(t, page.Messages, 2)
 			mr, ar := page.Messages[0].Removed, page.Messages[1].Removed
@@ -260,7 +258,7 @@ func TestOps_MessageTypeGone(t *testing.T) {
 	h2.cfg.snap = Snapshot{Config: testCompiled(t, withoutType(testRealtime, "perm-text"))}
 	_, err := h2.svc.Edit(as(held), room, msg.Seq, map[string]any{"body": "y"})
 	requireDenial(t, err, http.StatusConflict, TypeMessageTypeGone)
-	page, err := h2.svc.Messages(as(held), room, pageAll())
+	page, err := h2.svc.Read(as(held), room, ReadRequest{})
 	require.NoError(t, err)
 	require.Nil(t, page.Messages[0].Props, "a message of an undeclared type renders no properties")
 }

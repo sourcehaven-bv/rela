@@ -165,7 +165,7 @@ func TestRead_OneCaptureFlatCost(t *testing.T) {
 			h.anchors.calls.Store(0)
 			h.refs.calls.Store(0)
 
-			got, err := svc.Read(as(user("bob")), room, ReadRequest{Signals: true, Schemas: true})
+			got, err := svc.Read(as(user("bob")), room, ReadRequest{Signals: true, Schemas: true, Actions: true})
 			require.NoError(t, err)
 			require.Len(t, got.Messages, n)
 			require.Len(t, got.Signals, 1)
@@ -197,7 +197,7 @@ func TestRead_SchemasSignalsAndLogOnly(t *testing.T) {
 		return out
 	}
 
-	full, err := h.svc.Read(bob, room, ReadRequest{Signals: true, Schemas: true})
+	full, err := h.svc.Read(bob, room, ReadRequest{Signals: true, Schemas: true, Actions: true})
 	require.NoError(t, err)
 	require.Len(t, full.Signals, 1)
 	mts := types(full)
@@ -215,8 +215,9 @@ func TestRead_SchemasSignalsAndLogOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, bare.Signals)
 	require.Empty(t, bare.MessageTypes)
+	require.Nil(t, bare.Actions, "affordances are computed only when asked for")
 
-	logOnly, err := h.svc.Read(bob, room, ReadRequest{Schemas: true, LogOnly: true})
+	logOnly, err := h.svc.Read(bob, room, ReadRequest{Schemas: true, LogOnly: true, Actions: true})
 	require.NoError(t, err)
 	mts = types(logOnly)
 	require.False(t, mts["typing"].CanPost)

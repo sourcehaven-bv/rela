@@ -3,7 +3,7 @@ package realtime
 import (
 	"context"
 	"errors"
-	"slices"
+	"maps"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
@@ -38,6 +38,10 @@ type ReadRequest struct {
 	Signals bool
 	// Schemas includes a description of each message type.
 	Schemas bool
+	// Actions includes the caller's affordances. A transport that does not
+	// render them leaves it unset, and the post and edit gates are not
+	// evaluated.
+	Actions bool
 	// LogOnly reports a transport that cannot post signals (see
 	// [PostInput.LogOnly]). The caller's affordances and CanPost then
 	// leave out the ephemeral message types.
@@ -89,7 +93,7 @@ type MessageTypeView struct {
 // may be more past its cursor.
 type ReadView struct {
 	Channel      ChannelView       `json:"channel"`
-	Actions      Affordances       `json:"actions"`
+	Actions      *Affordances      `json:"actions,omitempty"`
 	MessageTypes []MessageTypeView `json:"message_types,omitempty"`
 	Signals      []EphemeralView   `json:"signals,omitempty"`
 	Messages     []MessageView     `json:"messages"`
@@ -109,14 +113,21 @@ func (s *Service) Read(ctx context.Context, addr RawAddress, req ReadRequest) (R
 	if err != nil {
 		return ReadView{}, err
 	}
-	out := ReadView{Channel: channelView(c.key, c.head), Messages: []MessageView{}, Actions: c.affordances()}
-	if req.LogOnly {
-		out.Actions.Post = slices.DeleteFunc(out.Actions.Post, func(name string) bool {
-			return c.ct.MessageTypes[name].Persist == realtimecfg.PersistEphemeral
-		})
-	}
-	if req.Schemas {
-		out.MessageTypes = c.messageTypes(req.LogOnly)
+	out := ReadView{Channel: channelView(c.key, c.head), Messages: []MessageView{}}
+	if req.Actions || req.Schemas {
+		post := c.postable()
+		if req.LogOnly {
+			maps.DeleteFunc(post, func(name string, _ bool) bool {
+				return c.ct.MessageTypes[name].Persist == realtimecfg.PersistEphemeral
+			})
+		}
+		if req.Actions {
+			a := c.affordancesWith(post)
+			out.Actions = &a
+		}
+		if req.Schemas {
+			out.MessageTypes = c.messageTypes(post)
+		}
 	}
 	var msgs []channels.Message
 	if c.head != nil {
@@ -192,16 +203,16 @@ func cursors(req ReadRequest, v ReadView) Cursors {
 	return out
 }
 
-// messageTypes describes c's message types, sorted by name.
-func (c *call) messageTypes(logOnly bool) []MessageTypeView {
-	open := c.requireCaller() == nil && c.state() == channels.StateOpen
+// messageTypes describes c's message types, sorted by name. post is the
+// set from [call.postable], less what the transport cannot carry.
+func (c *call) messageTypes(post map[string]bool) []MessageTypeView {
 	out := make([]MessageTypeView, 0, len(c.ct.MessageTypes))
 	for _, name := range sortedKeys(c.ct.MessageTypes) {
 		mt := c.ct.MessageTypes[name]
 		ephemeral := mt.Persist == realtimecfg.PersistEphemeral
 		v := MessageTypeView{
 			Name: mt.Name, Label: mt.Label, Persist: mt.Persist, Reply: !ephemeral,
-			CanPost: open && (!ephemeral || !logOnly) && c.mayPost(mt),
+			CanPost: post[name],
 			Props:   mt.PropsSchema(),
 		}
 		if ephemeral {

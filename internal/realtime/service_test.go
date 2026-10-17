@@ -121,19 +121,19 @@ func TestPost_NullDropped(t *testing.T) {
 	require.False(t, ok)
 }
 
-// TestMessages_PageClamp pins that a page never returns more than the
+// TestRead_PageClamp pins that a page never returns more than the
 // configured page limit.
-func TestMessages_PageClamp(t *testing.T) {
+func TestRead_PageClamp(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	for i := range 55 {
 		h.local.limiter = newLimiter(defaultLimitCaps()) // keep the rate limit out of this test
 		h.post(t, user("bob"), text(fmt.Sprintf("m%d", i)))
 	}
-	page, err := h.svc.Messages(as(user("bob")), room, channels.Page{Limit: 500})
+	page, err := h.svc.Read(as(user("bob")), room, ReadRequest{Limit: 500})
 	require.NoError(t, err)
 	require.Len(t, page.Messages, 50)
-	page, err = h.svc.Messages(as(user("bob")), room, channels.Page{AfterSeq: 50})
+	page, err = h.svc.Read(as(user("bob")), room, ReadRequest{AfterSeq: 50})
 	require.NoError(t, err)
 	require.Len(t, page.Messages, 5)
 }
@@ -225,7 +225,7 @@ func TestService_AnchorOfAnotherRouteTypeIsNotFound(t *testing.T) {
 	require.ErrorIs(t, err, ErrAnchorNotFound)
 	_, err = h.svc.Head(as(alice), wrong)
 	require.ErrorIs(t, err, ErrAnchorNotFound)
-	_, err = h.svc.Messages(as(alice), wrong, channels.Page{})
+	_, err = h.svc.Read(as(alice), wrong, ReadRequest{})
 	require.ErrorIs(t, err, ErrAnchorNotFound)
 	_, err = h.svc.Post(as(alice), wrong, PostInput{Type: "text", Props: map[string]any{"body": "x"}})
 	require.ErrorIs(t, err, ErrAnchorNotFound)
