@@ -116,6 +116,7 @@ func TestSearchVisible_FieldScopeReadBudget(t *testing.T) {
 			}},
 		},
 	}
+	page := 0 // 0 keeps the production page size
 	added := func(rows int) map[string]int {
 		t.Helper()
 		ms := memstore.New()
@@ -134,6 +135,9 @@ func TestSearchVisible_FieldScopeReadBudget(t *testing.T) {
 		v, err := search.NewVisible(search.New(counting, ls), counting)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if page > 0 {
+			search.SetFieldCheckPageForTest(v, page)
 		}
 		measure := func(fs *search.FieldScope, want int) map[string]int {
 			counting.Reset()
@@ -171,7 +175,7 @@ func TestSearchVisible_FieldScopeReadBudget(t *testing.T) {
 
 	// With pages of 5 hits, 10 rows take 2 pages and 50 rows take 10. The
 	// reads per page must be the same, or a page's cost grows with its rows.
-	search.SetFieldCheckPageForTest(t, 5)
+	page = 5
 	two, ten := added(10), added(50)
 	if len(two) == 0 {
 		t.Fatal("paged field check made no reads; the budget measures nothing")

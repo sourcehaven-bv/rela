@@ -1,12 +1,7 @@
 package search
 
-import "testing"
-
-// SetFieldCheckPageForTest sets how many hits one field check judges
-// together, for the duration of t.
-func SetFieldCheckPageForTest(t *testing.T, n int) {
-	t.Helper()
-	prev := fieldCheckPage.Load()
-	fieldCheckPage.Store(int64(n))
-	t.Cleanup(func() { fieldCheckPage.Store(prev) })
+// SetFieldCheckPageForTest sets how many hits one field check of v judges
+// together, so a test can shrink the page and see the per-page cost.
+func SetFieldCheckPageForTest(v *Visible, n int) {
+	v.page = n
 }
