@@ -57,23 +57,37 @@ func PolicyChannelService(s *Services) (*realtime.Service, error) {
 	if policy == nil {
 		return s.channelService, nil
 	}
-	if verr := ValidateACLPolicy(policy, s.base.meta); verr != nil {
-		return nil, verr
-	}
-	writes, d, err := buildACL(policy, s.Store())
-	if err != nil {
-		return nil, err
-	}
-	redactor, err := buildFieldRedactor(s.base.meta, s.Store(), d)
+	c, err := compileDeclarative(policy, s.base.meta, s.Store())
 	if err != nil {
 		return nil, err
 	}
 	svc, _, err := newRealtimeService(realtimeInputs{
 		meta: s.base.meta, worlds: s.base.worlds, config: realtimeConfigSource{h: s.base.realtime},
 		store: s.Store(), channels: s.channels, local: s.realtimeLocal,
-		declarative: d, redactor: redactor, writes: writes,
+		declarative: c.declarative, redactor: c.fields.redactor, writes: c.acl,
 	})
 	return svc, err
+}
+
+// ACLAssignsNoRole reports whether the project has an acl.yaml whose
+// assignments name no role for user. A local process uses it to warn that
+// its identity reaches the channels with the "everyone" role only. It looks
+// at assignments alone: a role a user entity or a membership grants is not
+// seen, so the answer is a hint for a log line, not an access decision. An
+// acl.yaml that does not load reports false; [PolicyChannelService] reports
+// that error.
+//
+// Nil: s is accepted and reports false.
+func ACLAssignsNoRole(s *Services, user string) bool {
+	if s == nil || s.base == nil {
+		return false
+	}
+	policy, err := loadACLPolicy(s.base.cfg)
+	if err != nil || policy == nil {
+		return false
+	}
+	_, ok := policy.Assignments[user]
+	return !ok
 }
 
 // buildRealtimeService builds the channel service over cs for one assembly.

@@ -2420,6 +2420,10 @@ func startBackgroundServices(
 func resolveACLAndFieldPolicy(
 	base *SharedBase, st store.Store,
 ) (acl.ACL, *acl.Declarative, fieldPolicy, error) {
+	if base.acl == nil {
+		c, err := compileDeclarative(base.aclPolicy, base.meta, st)
+		return c.acl, c.declarative, c.fields, err
+	}
 	resolvedACL, aclDeclarative, err := resolveACL(base, st)
 	if err != nil {
 		return nil, nil, fieldPolicy{}, err
@@ -2429,6 +2433,35 @@ func resolveACLAndFieldPolicy(
 		return nil, nil, fieldPolicy{}, err
 	}
 	return resolvedACL, aclDeclarative, fp, nil
+}
+
+// compiledPolicy is acl.yaml compiled against one store: the write ACL, the
+// declarative evaluator behind it, and the field policy.
+type compiledPolicy struct {
+	acl         acl.ACL
+	declarative *acl.Declarative
+	fields      fieldPolicy
+}
+
+// compileDeclarative checks policy against meta and compiles it over st.
+// It is the one compile sequence for acl.yaml: assembly and
+// [PolicyChannelService] both use it, so a gate added here holds for both.
+// A nil policy compiles to NopACL with permissive field rules. A policy
+// that does not validate or compile is an error, never a permissive
+// fallback.
+func compileDeclarative(policy *acl.Policy, meta *metamodel.Metamodel, st store.Store) (compiledPolicy, error) {
+	if err := validateResolvedPolicy(nil, policy, meta); err != nil {
+		return compiledPolicy{}, err
+	}
+	a, d, err := buildACL(policy, st)
+	if err != nil {
+		return compiledPolicy{}, err
+	}
+	fp, err := buildFieldPolicy(meta, st, d)
+	if err != nil {
+		return compiledPolicy{}, err
+	}
+	return compiledPolicy{acl: a, declarative: d, fields: fp}, nil
 }
 
 // cascadeReadDeps builds the static lua.ReadDeps backing automation cascades.
