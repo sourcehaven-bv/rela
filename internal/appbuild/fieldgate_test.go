@@ -53,9 +53,9 @@ func asAlice(tb testing.TB, svc *appbuild.Services) context.Context {
 // boundAs stamps p and binds its Request the way a request edge does.
 func boundAs(tb testing.TB, svc *appbuild.Services, p principal.Principal) context.Context {
 	tb.Helper()
-	ctx, err := appbuild.IdentityBinder(svc)(principal.With(context.Background(), p))
+	ctx, err := appbuild.MustIdentityBinder(svc)(principal.With(context.Background(), p))
 	if err != nil {
-		tb.Fatalf("IdentityBinder(%q): %v", p.User, err)
+		tb.Fatalf("MustIdentityBinder(%q): %v", p.User, err)
 	}
 	return ctx
 }

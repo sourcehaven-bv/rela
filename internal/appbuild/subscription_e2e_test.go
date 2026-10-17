@@ -99,7 +99,7 @@ subscriptions:
 	require.NoError(t, err)
 	// One scheduler for both runs: a Services carries at most one, since a
 	// second registers the same job kinds.
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.IdentityBinder(svc), discardTestLogger())
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.MustIdentityBinder(svc), discardTestLogger())
 	require.NoError(t, err)
 
 	runSubscriptionOnce(t, svc, s)
@@ -193,7 +193,7 @@ entities:
 	cfg, err := scheduler.LoadWorkspaceConfig(context.Background(), svc)
 	require.NoError(t, err)
 	require.Empty(t, cfg.Tasks)
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.IdentityBinder(svc), discardTestLogger())
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.MustIdentityBinder(svc), discardTestLogger())
 	require.NoError(t, err)
 	s.WatchConfig()
 

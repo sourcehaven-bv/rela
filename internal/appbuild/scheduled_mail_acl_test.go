@@ -541,7 +541,7 @@ func TestRunScheduledTemplate_SuppressionLogDoesNotDiscloseHiddenContent(t *test
 // scheduler's task context does before it renders a recipient's mail.
 func bindForTest(ctx context.Context, tb testing.TB, svc *Services) context.Context {
 	tb.Helper()
-	out, err := IdentityBinder(svc)(ctx)
+	out, err := MustIdentityBinder(svc)(ctx)
 	if err != nil {
 		tb.Fatalf("IdentityBinder: %v", err)
 	}

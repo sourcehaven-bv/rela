@@ -262,9 +262,10 @@ func (s *mcpServices) deps() relamcp.Deps {
 		Families:      appbuild.CompiledWorlds(s.svc).Families(),
 		// The request edge for stdio: resolve the fallback principal against
 		// THIS assembly's ACL (NopACL here, so it binds nothing today). It is
-		// built from the same Services as the readers above and published
-		// with them, so a reload cannot pair a Request with foreign readers.
-		BindIdentity: appbuild.IdentityBinder(s.svc),
+		// the IdentityBinder step, taken from the same GatedReads as the
+		// readers above and published with them, so a reload cannot pair a
+		// Request with foreign readers.
+		BindIdentity: reads.Rebind,
 	}
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals

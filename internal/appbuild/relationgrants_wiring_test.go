@@ -95,7 +95,7 @@ func newSpawntHarness(t *testing.T, policyBody string) spawntHarness {
 		taskCtx := principal.With(ctx, principal.Principal{
 			User: "system:scheduler", Tool: principal.ToolScheduler,
 		})
-		taskCtx, bindErr := appbuild.IdentityBinder(svc)(taskCtx)
+		taskCtx, bindErr := appbuild.MustIdentityBinder(svc)(taskCtx)
 		if bindErr != nil {
 			t.Fatalf("IdentityBinder: %v", bindErr)
 		}

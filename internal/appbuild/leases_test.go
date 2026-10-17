@@ -53,7 +53,7 @@ func leaseCtx(t *testing.T, svc *appbuild.Services, user string) context.Context
 // bindAt runs svc's request-edge step on ctx.
 func bindAt(ctx context.Context, t *testing.T, svc *appbuild.Services) context.Context {
 	t.Helper()
-	bound, err := appbuild.IdentityBinder(svc)(ctx)
+	bound, err := appbuild.MustIdentityBinder(svc)(ctx)
 	require.NoError(t, err)
 	return bound
 }

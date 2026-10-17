@@ -104,7 +104,11 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 			return fmt.Errorf("validate scheduled mail recipients: %w", discoverErr)
 		}
 		defer mailSvc.Close()
-		mailCtx := appbuild.BindOrWarn(ctx, appbuild.IdentityBinder(mailSvc))
+		bind, bindErr := appbuild.IdentityBinder(mailSvc)
+		if bindErr != nil {
+			return bindErr
+		}
+		mailCtx := appbuild.BindOrWarn(ctx, bind)
 		if validateErr := mailSvc.ValidateScheduledMailRecipients(mailCtx); validateErr != nil {
 			fmt.Printf("  ✗ scheduled mail recipients: %v\n", validateErr)
 			hasErrors = true
@@ -134,7 +138,11 @@ func (c *ValidateCmd) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize project services: %w", err)
 	}
-	ctx = appbuild.BindOrWarn(ctx, appbuild.IdentityBinder(checkSvc))
+	bind, err := appbuild.IdentityBinder(checkSvc)
+	if err != nil {
+		return err
+	}
+	ctx = appbuild.BindOrWarn(ctx, bind)
 	checkAnalysis, err := analysis.New(analysis.Deps{
 		Store:       checkSvc.Store(),
 		Meta:        checkSvc.Meta(),

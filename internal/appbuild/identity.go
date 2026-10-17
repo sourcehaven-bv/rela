@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
@@ -17,9 +18,21 @@ import (
 // same evaluator as svc's gated readers and manager. With no declarative
 // policy it returns ctx unchanged.
 //
-// Nil: rejected — svc must be non-nil.
-func IdentityBinder(svc *Services) func(context.Context) (context.Context, error) {
-	return identityBinderFor(svc.ACLDeclarative())
+// Nil: rejected with an error; there are no Services to bind against.
+func IdentityBinder(svc *Services) (func(context.Context) (context.Context, error), error) {
+	if svc == nil {
+		return nil, errors.New("appbuild: IdentityBinder: services are nil")
+	}
+	return identityBinderFor(svc.ACLDeclarative()), nil
+}
+
+// MustIdentityBinder is [IdentityBinder] for tests: it panics on nil.
+func MustIdentityBinder(svc *Services) func(context.Context) (context.Context, error) {
+	bind, err := IdentityBinder(svc)
+	if err != nil {
+		panic(err)
+	}
+	return bind
 }
 
 // identityBinderFor is [IdentityBinder] over a policy already in hand. It is
