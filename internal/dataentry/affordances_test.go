@@ -3,10 +3,12 @@ package dataentry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -347,6 +349,19 @@ func TestDemoFieldVerdictResolver_NilEntity_ReturnsEmpty(t *testing.T) {
 type fakeResolver struct {
 	fv FieldVerdicts
 	rv RelationVerdicts
+}
+
+// errNoSearchForm is the search form of a test resolver that has none. It
+// refuses every search, so a stub that hides fields cannot pair with a
+// search that hides nothing.
+var errNoSearchForm = errors.New("test resolver has no search field scope")
+
+func (fakeResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, errNoSearchForm
+}
+
+func (byTypeResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, errNoSearchForm
 }
 
 func (f fakeResolver) FieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {

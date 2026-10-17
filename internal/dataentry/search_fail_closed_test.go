@@ -81,24 +81,18 @@ func TestFreeTextSearch_FieldScopeErrorFailsClosed(t *testing.T) {
 	}
 }
 
-// TestSearchFieldScoper_FollowsTheResolver pins the search form of each
-// resolver kind. A resolver the data-entry search does not know refuses
-// every search, so a stub that hides fields cannot pair with a search that
-// hides nothing.
-func TestSearchFieldScoper_FollowsTheResolver(t *testing.T) {
+// TestSearchFieldScope_FollowsTheResolver pins the search form of each
+// production resolver kind.
+func TestSearchFieldScope_FollowsTheResolver(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	if fs, err := searchFieldScoper(NopFieldVerdictResolver{}).SearchFieldScope(ctx, "ticket"); fs != nil || err != nil {
+	if fs, err := (NopFieldVerdictResolver{}).SearchFieldScope(ctx, "ticket"); fs != nil || err != nil {
 		t.Errorf("nop: scope=%+v err=%v, want nothing hidden", fs, err)
 	}
-	fs, err := searchFieldScoper(DemoFieldVerdictResolver{}).SearchFieldScope(ctx, "ticket")
+	fs, err := (DemoFieldVerdictResolver{}).SearchFieldScope(ctx, "ticket")
 	if err != nil || fs == nil || !fs.Gates("priority") {
 		t.Errorf("demo: scope=%+v err=%v, want priority gated on ticket", fs, err)
-	}
-	unknown := fakeResolver{fv: FieldVerdicts{Visible: map[string]bool{"title": false}}}
-	if _, err := searchFieldScoper(unknown).SearchFieldScope(ctx, "ticket"); err == nil {
-		t.Error("an unknown resolver kind must refuse, not hide nothing")
 	}
 }
 
