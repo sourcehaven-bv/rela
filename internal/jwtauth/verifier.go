@@ -136,6 +136,8 @@ func refreshErrorHandler(u string) func(ctx context.Context, err error) {
 // error wrapping either [ErrInvalid] or [ErrKeysUnavailable] — see classify.
 // ctx bounds the JWKS refresh a rare unknown-kid may trigger, so a slow IdP can't
 // outlast the request's deadline.
+//
+//archplan:guard=authn reason="verifies the OIDC token (sub claim)"
 func (v *Verifier) VerifySubject(ctx context.Context, raw string) (string, error) {
 	claims := jwt.MapClaims{}
 	if _, err := jwt.NewParser(v.opts...).ParseWithClaims(raw, claims, v.kf.KeyfuncCtx(ctx)); err != nil {

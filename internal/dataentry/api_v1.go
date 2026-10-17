@@ -844,6 +844,7 @@ func setListHeaders(w http.ResponseWriter, r *http.Request, page, perPage, total
 	w.Header().Set("X-Per-Page", strconv.Itoa(perPage))
 }
 
+//archplan:auth=required
 func (a *App) handleV1ListEntities(w http.ResponseWriter, r *http.Request, typeName, plural string) {
 	query := r.URL.Query()
 	page, perPage := parseV1Pagination(query)
@@ -1029,6 +1030,7 @@ func (a *App) gateReadOrNotFound(w http.ResponseWriter, r *http.Request, typeNam
 	return true
 }
 
+//archplan:auth=required
 func (a *App) handleV1GetEntity(w http.ResponseWriter, r *http.Request, typeName, plural, entityID string) {
 	ctx := r.Context()
 
@@ -1993,6 +1995,7 @@ func parseSearchLimit(raw string) (int, bool) {
 	return n, true
 }
 
+//archplan:auth=required
 func (a *App) handleV1Search(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
