@@ -43,7 +43,7 @@ func (r *Request) authorizeEntityWrite(ctx context.Context, op Op, s EntitySubje
 		attrs = r.Globals(ctx).Attributions
 	}
 	if s.family {
-		return r.decideFamily(attrs, op, s.typ)
+		return r.decideFamily(attrs, op, s.typ, s.convertTo)
 	}
 	return r.decideFromAttrs(attrs, op, s.typ, s.face, "no role grants %s on type %q")
 }
@@ -59,9 +59,14 @@ func (r *Request) authorizeEntityWrite(ctx context.Context, op Op, s EntitySubje
 //
 // The reason names the type and never a face: the decision does not depend
 // on which faces exist, and a denial must not suggest that it did.
-func (r *Request) decideFamily(attrs []RoleAttribution, op Op, target string) Decision {
+func (r *Request) decideFamily(attrs []RoleAttribution, op Op, target, convertTo string) Decision {
 	if deny := r.ceilingDenial(attrs, op, target); deny != nil {
 		return *deny
+	}
+	if op == OpConvert {
+		if deny := r.conversionCeilingDenial(attrs, target, convertTo); deny != nil {
+			return *deny
+		}
 	}
 	if op == OpRename || op == OpConvert {
 		for _, a := range attrs {
@@ -321,6 +326,36 @@ func (r *Request) ceilingDenial(attrs []RoleAttribution, op Op, target string) *
 		Reason: fmt.Sprintf(
 			"client baseline %q does not permit %s on %q for principal type %q",
 			r.ceiling.name, op, target, r.principal.PrincipalType()),
+		Attributions: attrs,
+	}
+}
+
+// conversionCeilingDenial applies the client ceiling to the destination of a
+// conversion. A conversion creates an entity of type convertTo, so a ceiling
+// that withholds create on that type must also withhold the conversion;
+// otherwise `convert:` would be a way around it. The check uses the ceiling's
+// create axis through [compiledCeiling.permitsVerb], so it adds no new deny
+// primitive. Without an active ceiling it never denies. Under one, a request
+// that does not name its destination is refused, because the ceiling cannot
+// be checked.
+func (r *Request) conversionCeilingDenial(attrs []RoleAttribution, source, convertTo string) *Decision {
+	if !r.ceiling.active {
+		return nil
+	}
+	if convertTo != "" && r.ceiling.permitsVerb(OpCreate, convertTo) {
+		return nil
+	}
+	reason := fmt.Sprintf("client baseline %q does not permit create on %q, the destination of a conversion "+
+		"from %q, for principal type %q", r.ceiling.name, convertTo, source, r.principal.PrincipalType())
+	if convertTo == "" {
+		reason = fmt.Sprintf("client baseline %q applies, and a conversion from %q must name its destination type",
+			r.ceiling.name, source)
+	}
+	return &Decision{
+		Allow:        false,
+		RuleKind:     "client-ceiling",
+		RuleID:       r.ceiling.name,
+		Reason:       reason,
 		Attributions: attrs,
 	}
 }

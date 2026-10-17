@@ -277,7 +277,10 @@ func (c compiledCeiling) clamp(role RoleDef) RoleDef {
 	// A rename is a modification: the ceiling's update axis bounds it, as
 	// permitsVerb does for OpRename.
 	role.Rename = filterTypes(role.Rename, c.update)
-	role.Convert = filterTypes(role.Convert, c.update)
+	// A conversion modifies the source and ends it as that type, so the
+	// update and delete axes both bound it, as permitsVerb does for
+	// OpConvert. The destination is checked per request, in decideFamily.
+	role.Convert = filterTypes(filterTypes(role.Convert, c.update), c.del)
 	role.Delete = filterTypes(role.Delete, c.del)
 	role.Worlds = filterWorlds(role.Worlds, c.worlds)
 	role.Permissions = filterPermissions(role.Permissions, c.permissions)
@@ -397,8 +400,10 @@ func (c compiledCeiling) permitsVerb(op Op, target string) bool {
 	switch op {
 	case OpCreate:
 		return c.create.permits(target)
-	case OpUpdate, OpRename, OpConvert:
+	case OpUpdate, OpRename:
 		return c.update.permits(target)
+	case OpConvert:
+		return c.update.permits(target) && c.del.permits(target)
 	case OpDelete:
 		return c.del.permits(target)
 	default:
