@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -88,7 +89,7 @@ func TestRestore_OwnedGrantThroughOwner(t *testing.T) {
 
 			policy, err := acl.LoadPolicyBytes([]byte(grantViaOwnerPolicy))
 			require.NoError(t, err)
-			decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
+			decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st)
 			require.NoError(t, err)
 			mgr, err := entitymanager.New(entitymanager.Deps{
 				Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: decl,
@@ -98,14 +99,14 @@ func TestRestore_OwnedGrantThroughOwner(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			_, err = entitymanager.SoftDeleteEntity(userCtx("alice"), mgr, "alice")
+			_, err = entitymanager.SoftDeleteEntity(entitymanager.BindAs(userCtx("alice"), t, mgr), mgr, "alice")
 			require.NoError(t, err)
 
-			_, err = entitymanager.RestoreEntity(userCtx("bob"), mgr, "alice")
+			_, err = entitymanager.RestoreEntity(entitymanager.BindAs(userCtx("bob"), t, mgr), mgr, "alice")
 			var forbidden *acl.ForbiddenError
 			require.ErrorAs(t, err, &forbidden, "bob holds no role on the note")
 
-			_, err = entitymanager.RestoreEntity(userCtx("alice"), mgr, "alice")
+			_, err = entitymanager.RestoreEntity(entitymanager.BindAs(userCtx("alice"), t, mgr), mgr, "alice")
 			require.NoError(t, err)
 			_, err = st.GetEntity(ctx, entity.Ref{ID: child})
 			require.NoError(t, err, "the owned note is back")

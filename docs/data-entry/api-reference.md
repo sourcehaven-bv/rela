@@ -679,10 +679,16 @@ configuration reload clears it, and clients reconnect and join again.
 ## ETag / If-Match
 
 The handler honors `If-Match: <etag>` for optimistic concurrency control.
-The ETag is computed against the entity's current `properties + content`.
-Mismatch → 412 Precondition Failed. It does not cover `_lease`; see
-[Leases](#leases-_lease-_leases) for why the GET never answers 304 when the
-server has leases.
+The ETag is computed against the entity's current `properties + content`
+and its outgoing edges. Mismatch → 412 Precondition Failed. It does not
+cover `_lease`; see [Leases](#leases-_lease-_leases) for why the GET never
+answers 304 when the server has leases.
+
+The ETag covers only what the caller may see. Properties hidden from the
+caller by a `visible:` grant are left out of the hash. So a GET, the
+`If-Match` check and the PATCH response give one caller the same ETag for
+the same row, and a change to a hidden value does not change it. Hashing
+hidden values would let a caller test guesses for them offline.
 
 The precondition is re-checked by the store, atomically with the write
 (TKT-34XS2R). Previously the compare and the write were separate steps made
@@ -764,6 +770,26 @@ field that cannot be merged is reported to the user and not written. For a
 body, the editor then shows the other side's text with the user's lines in
 each conflicting region, so the user's next edit overwrites only those
 regions.
+
+## Check order
+
+The handler runs its checks in a fixed order:
+
+1. Resolve the entity. A hidden or missing entity returns 404.
+2. Refuse a locked entity, then parse the body (400 on bad JSON).
+3. If the body changes properties or content, ask the entity manager
+   whether the caller may update the entity (`Manager.AuthorizeUpdate`). This
+   is the manager's own write check, so the 403 and its one `denied-write`
+   audit row are the ones the write itself would produce. The write then
+   reuses this decision and does not ask again. Nothing else runs
+   first: no ETag, no field verdicts, no edge reads.
+4. Check `If-Match` (412), then the field and relation verdicts (403), then
+   the per-field `preconditions` (400 or 412), then write.
+
+So a caller who may not update the entity gets 403 even when its `If-Match`
+is stale. A caller who may write a field but may not update the entity gets
+the entity-level 403, not the field one. A body that only changes relations skips step 3. Each edge is
+authorized on its own when it is written.
 
 ## MCP and Lua content semantics
 

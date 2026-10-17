@@ -117,19 +117,18 @@ func TestListBodies_DefaultListReadsNoBodies(t *testing.T) {
 // one of them reads properties. Each query shape therefore keeps the zero-body
 // bound.
 //
-// A `?q=` arm is included deliberately, and it is the one shape that does NOT
-// assert zero — see [TestListBodies_FreeTextBodiesScaleWithHitsNotType] for
-// what it asserts instead and why.
+// The `?q=` arms included: the search reads hit headers a page at a time, so
+// a free-text list under a policy without `visible:` reads no body, whether it
+// matches one row or all of them (BUG-57A53F). A field-hiding policy reads the
+// bodies of a page of hits once, to tell which fields matched; that cost is
+// pinned by TestQueryBudget_ListFreeTextUnderFieldHiding.
 func TestListBodies_QueryShapesKeepTheBound(t *testing.T) {
 	for _, tc := range []struct{ name, query string }{
 		{name: "sorted", query: "per_page=5&sort=title"},
 		{name: "filtered", query: "per_page=5&filter[title]=Ticket+TKT-0001"},
 		{name: "paged deep", query: "per_page=5&page=2"},
-		// A free-text query narrow enough to match ONE row. The list
-		// pipeline's own contribution is still zero; the single body is the
-		// search gate's, and pinning it here keeps that cost attributed
-		// rather than blamed on the list.
 		{name: "free text narrow", query: "per_page=5&q=TKT-0001"},
+		{name: "free text broad", query: "per_page=5&q=Ticket"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, n := range []int{10, 50} {
@@ -138,58 +137,11 @@ func TestListBodies_QueryShapesKeepTheBound(t *testing.T) {
 				if rec.Code != http.StatusOK {
 					t.Fatalf("list n=%d: %d %s", n, rec.Code, rec.Body)
 				}
-				// One tolerated body on the free-text arm, zero everywhere
-				// else. Expressed as a bound that does not move with n, which
-				// is the property under test.
-				want := 0
-				if strings.Contains(tc.query, "q=") {
-					want = 1
-				}
-				if got := watch.Bodies(); got != want {
-					t.Errorf("n=%d: read %d bodies, want %d (%s)", n, got, want, watch)
+				if got := watch.Bodies(); got != 0 {
+					t.Errorf("n=%d: read %d bodies, want 0 (%s)", n, got, watch)
 				}
 			}
 		})
-	}
-}
-
-// Free-text list bodies are the search layer's, not the list pipeline's, and
-// they scale with HITS rather than with the type.
-//
-// The distinction is worth pinning because it is easy to misread. A `?q=` that
-// matches every row of the type reads a body per row, which looks exactly like
-// the defect BUG-SDMD6O describes — a body per entity of the type — and is
-// not. The reads come from internal/search/visible.go, which loads each HIT to
-// decide whether the match landed on a field the principal may see; dropping
-// them would turn a field-visibility gate into an oracle. They are bounded by
-// maxFreeTextSearchResults, and a narrower query reads fewer.
-//
-// So the honest assertion is about what the count tracks, not about its size:
-// hold the type size fixed and vary the MATCH count, and the bodies follow the
-// matches. A regression that made the list pipeline itself load bodies on the
-// `?q=` path would break this, because the count would then follow n.
-func TestListBodies_FreeTextBodiesScaleWithHitsNotType(t *testing.T) {
-	const n = 50
-	// One query matches every ticket, the other exactly one — over the SAME
-	// fixture, so the type size is held constant and only the hits vary.
-	app, watch, d, ctx := newBodyWatchApp(t, n)
-	if _, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=5&q=Ticket"); rec.Code != http.StatusOK {
-		t.Fatalf("broad: %d %s", rec.Code, rec.Body)
-	}
-	broad := watch.Bodies()
-
-	app, watch, d, ctx = newBodyWatchApp(t, n)
-	if _, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "per_page=5&q=TKT-0001"); rec.Code != http.StatusOK {
-		t.Fatalf("narrow: %d %s", rec.Code, rec.Body)
-	}
-	narrow := watch.Bodies()
-
-	if narrow != 1 {
-		t.Errorf("a single-hit query read %d bodies, want 1 — the search gate reads one entity per hit", narrow)
-	}
-	if broad <= narrow {
-		t.Errorf("bodies did not follow the hit count: broad=%d narrow=%d over the same %d-row type",
-			broad, narrow, n)
 	}
 }
 

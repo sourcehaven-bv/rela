@@ -251,8 +251,8 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	//      stamps before ACL reads.
 	// Reversed order silently fails every /api/ request with 500
 	// `acl_unstamped_principal` when ACL is configured, because the
-	// principal is still the unstamped default at the time
-	// ForPrincipal is called.
+	// principal is still the unstamped default at the time the
+	// identity is resolved.
 	//
 	// World selection must run AFTER the read gate is on the context, because
 	// its grant check consults readGateFromContext. Per the wrap-order note
@@ -421,7 +421,7 @@ func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) h
 	opener, oerr := access.NewOpener(d, jwtVerified)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isAPIPath(r.URL.Path) {
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(withACLEnforced(r.Context())))
 			return
 		}
 		if oerr != nil {
@@ -439,12 +439,20 @@ func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) h
 				"Upstream ACL request principal does not match context principal",
 				"check server logs")
 			return
-		case err != nil:
+		case errors.Is(err, acl.ErrUnstampedPrincipal):
 			// RR-372L: Open logged the raw error; it never reaches the body.
 			writeV1Error(w, r, http.StatusInternalServerError,
 				"acl_unstamped_principal",
 				"Principal could not be resolved under ACL",
 				"principal stamper produced an unstamped identity; check server logs")
+			return
+		case err != nil:
+			// A store error or failed membership walk. Its text could carry
+			// internal detail, so it stays in the log.
+			writeV1Error(w, r, http.StatusInternalServerError,
+				"acl_identity_unresolved",
+				"Principal could not be resolved under ACL",
+				"identity resolution failed; check server logs")
 			return
 		}
 		gate, gerr := newACLReadGate(req)
@@ -457,7 +465,7 @@ func attachACLRequest(next http.Handler, d *acl.Declarative, jwtVerified bool) h
 			return
 		}
 		// coverage-ignore-end
-		next.ServeHTTP(w, r.WithContext(withReadGate(ctx, gate)))
+		next.ServeHTTP(w, r.WithContext(withReadGate(withACLEnforced(ctx), gate)))
 	})
 }
 

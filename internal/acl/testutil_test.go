@@ -5,7 +5,10 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -157,7 +160,7 @@ func (w *World) Build(t *testing.T) *World {
 	}
 	w.store = ms
 
-	d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	d, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("World.Build: NewDeclarative: %v", err)
 	}
@@ -178,7 +181,7 @@ func (*World) principalFor(actor string) principal.Principal {
 // covered by unit tests.)
 func (w *World) requestFor(actor string) *acl.Request {
 	w.t.Helper()
-	req, err := w.acl.ForPrincipal(w.principalFor(actor))
+	req, err := w.acl.ForIdentity(acltest.IdentityFor(w.t.Context(), w.t, w.acl, w.principalFor(actor)))
 	if err != nil {
 		w.t.Fatalf("World.requestFor(%q): %v", actor, err)
 	}

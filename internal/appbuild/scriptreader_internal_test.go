@@ -4,11 +4,13 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
@@ -37,7 +39,7 @@ func mustDeclarative(t *testing.T, st *memstore.MemStore) *acl.Declarative {
 	if err := yaml.Unmarshal([]byte(cascadePolicy), &policy); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -63,11 +65,12 @@ func seedCascadeWorld(t *testing.T) *memstore.MemStore {
 // entity she cannot see stays invisible to the automation (DEC-O59WM4).
 func TestScriptEntityReader_GatesOnActingIdentity(t *testing.T) {
 	st := seedCascadeWorld(t)
-	rd := scriptEntityReader(st, mustDeclarative(t, st), nil, worlds.Compiled{})
+	d := mustDeclarative(t, st)
+	rd := scriptEntityReader(st, d, nil, worlds.Compiled{})
 
-	ctx := principal.With(context.Background(), principal.Principal{
+	ctx := acltest.Bind(principal.With(context.Background(), principal.Principal{
 		User: "alice", Tool: principal.ToolDataEntry,
-	})
+	}), t, d)
 
 	if _, err := rd.GetAddress(ctx, "TKT-1"); err != nil {
 		t.Errorf("granted entity unreadable: %v", err)
@@ -118,11 +121,12 @@ func TestScriptTracer_GatesOnActingIdentity(t *testing.T) {
 	if _, err := st.CreateRelation(context.Background(), entity.RelationKey{From: "TKT-1", Type: "relates", To: "SEC-1"}, nil); err != nil {
 		t.Fatalf("seed relation: %v", err)
 	}
-	tr := scriptTracer(tracertest.Must(st, store.TrivialScope()), st, mustDeclarative(t, st), nil, worlds.Compiled{})
+	d := mustDeclarative(t, st)
+	tr := scriptTracer(tracertest.Must(st, store.TrivialScope()), st, d, nil, worlds.Compiled{})
 
-	ctx := principal.With(context.Background(), principal.Principal{
+	ctx := acltest.Bind(principal.With(context.Background(), principal.Principal{
 		User: "alice", Tool: principal.ToolDataEntry,
-	})
+	}), t, d)
 	got := tr.TraceFrom(ctx, "TKT-1", 2)
 	if got == nil {
 		t.Fatal("visible root pruned from trace")

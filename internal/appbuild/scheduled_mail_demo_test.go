@@ -280,7 +280,7 @@ func TestDemo_ScheduledMailOverHTTP(t *testing.T) {
 	cfg, err := scheduler.ParseConfig(data)
 	require.NoError(t, err)
 
-	sch, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc,
+	sch, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, MustIdentityBinder(svc),
 		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	require.NoError(t, err)
 
@@ -507,7 +507,7 @@ capabilities:
 	cfg, err := scheduler.ParseConfig(data)
 	require.NoError(t, err)
 
-	sch, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc,
+	sch, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, MustIdentityBinder(svc),
 		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	require.NoError(t, err)
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -106,6 +107,7 @@ type conversionFixture struct {
 	conv  *entitymanager.Converter
 	audit *audit.Memory
 	hooks *conversionHooks
+	mgr   *entitymanager.Manager
 }
 
 type conversionOptions struct {
@@ -143,7 +145,7 @@ func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixtur
 		if pErr != nil {
 			t.Fatalf("load policy: %v", pErr)
 		}
-		decl, dErr := acl.NewDeclarative(policy, acl.NewStoreGraph(st), st)
+		decl, dErr := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st)
 		if dErr != nil {
 			t.Fatalf("NewDeclarative: %v", dErr)
 		}
@@ -184,7 +186,7 @@ func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixtur
 	if err != nil {
 		t.Fatalf("converter: %v", err)
 	}
-	return conversionFixture{st: st, conv: conv, audit: auditor, hooks: hooks}
+	return conversionFixture{st: st, conv: conv, audit: auditor, hooks: hooks, mgr: mgr}
 }
 
 // seed writes e straight to the store.
@@ -220,7 +222,13 @@ func (f conversionFixture) auditOps(op string) []audit.Record {
 	return out
 }
 
-func asAlice(principalType string) context.Context {
+func (f conversionFixture) asAlice(t *testing.T, principalType string) context.Context {
+	t.Helper()
+	return entitymanager.BindAs(stampAlice(principalType), t, f.mgr)
+}
+
+// stampAlice stamps alice, with principalType as a verified claim when set.
+func stampAlice(principalType string) context.Context {
 	if principalType == "" {
 		return principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
 	}
@@ -524,7 +532,7 @@ func TestConvert_RecordsARenameThatCouldNotRollBack(t *testing.T) {
 func TestConvert_HiddenRelationIsNeitherListedNorConfirmed(t *testing.T) {
 	t.Parallel()
 	f := newConversionFixture(t, conversionOptions{policy: conversionPolicy})
-	ctx := asAlice("")
+	ctx := f.asAlice(t, "")
 	f.seed(t, "NOTE-1", "note", map[string]any{"title": "Quick note"})
 	f.seed(t, "VAULT-1", "vault", nil)
 	f.link(t, "NOTE-1", "stored-in", "VAULT-1")
@@ -563,7 +571,7 @@ func TestConvert_HiddenRemapCapacityIsGeneric(t *testing.T) {
 	f.link(t, "NOTE-1", "watched-by", "VAULT-1")
 	f.link(t, "TASK-500", "followed-by", "VAULT-1")
 
-	preview, err := f.conv.Preview(asAlice(""),
+	preview, err := f.conv.Preview(f.asAlice(t, ""),
 		entitymanager.ConversionRequest{Definition: "note-to-task", SourceID: "NOTE-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -587,7 +595,7 @@ func TestConvert_ClientCeilingBoundsTheDestination(t *testing.T) {
 			t.Parallel()
 			f := newConversionFixture(t, conversionOptions{policy: conversionPolicy})
 			f.seed(t, "NOTE-1", "note", map[string]any{"title": "Quick note"})
-			ctx := asAlice(tc.principalType)
+			ctx := f.asAlice(t, tc.principalType)
 			offers := f.conv.Offers(ctx, "note", "NOTE-1")
 			if len(offers) != 1 || offers[0].Allowed != tc.allowed {
 				t.Errorf("offers = %+v, want allowed %v", offers, tc.allowed)
@@ -853,7 +861,8 @@ func TestConvert_RefusesWhenAFaceIsUnreadable(t *testing.T) {
 	t.Parallel()
 	f := newConversionFixture(t, conversionOptions{schema: facedConversionSchema, policy: facedConversionPolicy})
 	seedFaces(t, f.st, "draft", "final")
-	ctx := principal.With(context.Background(), principal.Principal{User: "drafter", Tool: principal.ToolDataEntry})
+	ctx := entitymanager.BindAs(principal.With(context.Background(),
+		principal.Principal{User: "drafter", Tool: principal.ToolDataEntry}), t, f.mgr)
 	req := entitymanager.ConversionRequest{
 		Definition: "note-to-task", SourceID: "NOTE-1", TargetID: "TASK-1",
 		FaceMapping: map[string]string{"draft": "done"},

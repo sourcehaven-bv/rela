@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -13,7 +14,7 @@ import (
 // TestScriptReads_MentionedByGated (TKT-Q6AKUN): rela.get_mentioned_by lists
 // only the sources the caller may read, redacted, and pages by cursor.
 func TestScriptReads_MentionedByGated(t *testing.T) {
-	st, deps := newACLWorld(t)
+	st, deps, decl := newACLWorld(t)
 	ctx := context.Background()
 	for _, e := range []*entity.Entity{
 		{ID: "TKT-2", Type: "ticket", Properties: map[string]any{"title": "Two"}, Content: "Owner `P-1`."},
@@ -25,7 +26,7 @@ func TestScriptReads_MentionedByGated(t *testing.T) {
 		}
 	}
 
-	out := runAsAlice(t, deps, `
+	out := runAsAlice(t, decl, deps, `
 local page = rela.get_mentioned_by("P-1")
 for _, e in ipairs(page.items) do
   rela.output(e.id .. " salary=" .. tostring(e.properties.salary))
@@ -52,7 +53,7 @@ rela.output("hidden=" .. #rela.get_mentioned_by("SEC-1").items)
 // TestScriptReads_MentionedByRejectsBadOpts pins that a malformed option
 // raises instead of falling back to a default.
 func TestScriptReads_MentionedByRejectsBadOpts(t *testing.T) {
-	_, deps := newACLWorld(t)
+	_, deps, decl := newACLWorld(t)
 	for _, src := range []string{
 		`rela.get_mentioned_by("P-1", {limit = 0})`,
 		`rela.get_mentioned_by("P-1", {limit = 201})`,
@@ -64,7 +65,8 @@ func TestScriptReads_MentionedByRejectsBadOpts(t *testing.T) {
 		`rela.get_mentioned_by("")`,
 	} {
 		t.Run(src, func(t *testing.T) {
-			pctx := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolScheduler})
+			pctx := acltest.Bind(principal.With(context.Background(),
+				principal.Principal{User: "alice", Tool: principal.ToolScheduler}), t, decl)
 			var out strings.Builder
 			rt := lua.NewWriter(deps, &out, lua.WithContext(pctx), lua.WithPrincipal(principal.From(pctx)))
 			defer rt.Close()

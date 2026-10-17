@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -490,7 +491,7 @@ func withFieldPolicy(t *testing.T, app *App, aclYAML string) context.Context {
 	if err := yaml.Unmarshal([]byte(aclYAML), &policy); err != nil {
 		t.Fatalf("unmarshal acl.yaml: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(app.store), app.store)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(app.store), app.store)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

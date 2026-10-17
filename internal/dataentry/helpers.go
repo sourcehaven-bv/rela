@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"iter"
 	"regexp"
 	"slices"
 	"strconv"
@@ -29,6 +28,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/search/searchparser"
 	"github.com/Sourcehaven-BV/rela/internal/store"
+	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // nowFunc is the clock used for filter variable substitution. Tests can
@@ -382,101 +382,6 @@ func addCheckboxIndices(s string) string {
 	})
 }
 
-// searchVisibleHits runs the ACL-scoped search with property-level redaction
-// when the wired searcher supports it ([search.FieldVisibleSearcher]), so a hit
-// that matched only a `visible:`-hidden property is dropped rather than
-// confirming that property's value by its presence (the match-on-hidden-field
-// oracle, TKT-GGQ0JT). If the searcher is entity-level only, it degrades to
-// SearchVisible — no field redaction, matching pre-existing behavior.
-//
-// Free function (not an App method) to keep App's method surface under the
-// god-object load line; it takes only the two collaborators it needs.
-//
-// The field filter is engaged only when the resolver can actually hide a
-// property (a policy-backed resolver); under the Nop resolver redaction is a
-// provable no-op, so the plain entity-level path runs — and a searcher that
-// isn't a FieldVisibleSearcher is fine there.
-//
-// When redaction IS in play but the searcher cannot do it, this FAILS CLOSED:
-// it yields search.ErrScope rather than falling back to the un-redacted
-// SearchVisible. A searcher that reaches here without implementing
-// FieldVisibleSearcher is a wiring bug — a decorator (cache, metrics, tracing)
-// wrapped around the searcher without forwarding the method — and the failure
-// it would otherwise produce is silent: search stops redacting while the policy
-// still hides, with no error and no log.
-//
-// This mirrors search.Visible.SearchVisibleFields one layer down, whose godoc
-// settles the principle: "silently skipping redaction is exactly the oracle
-// this closes" (RR-8W40EW). The two decision points are the same shape; the
-// outer one was the one still failing open (TKT-NCLA67).
-func searchVisibleHits(
-	ctx context.Context, vs search.VisibleSearcher, aff affordanceService,
-	q search.Query, scope map[string]search.TypeScope,
-) iter.Seq2[search.Hit, error] {
-	return faceGatedHits(ctx, searchScopedHits(ctx, vs, aff, q, scope))
-}
-
-// faceGatedHits drops hits whose matched face a `type@face` grant withholds.
-// The search scope carries the face allowlist and every searcher trims by it
-// before the world ranks, so this is the fail-closed check at the edge: a
-// `ticket@published` principal must never get a draft-face hit with a draft
-// title from a search the entity GET would 404. It is one predicate over a
-// field the hit already carries.
-func faceGatedHits(ctx context.Context, hits iter.Seq2[search.Hit, error]) iter.Seq2[search.Hit, error] {
-	return func(yield func(search.Hit, error) bool) {
-		for h, err := range hits {
-			if err == nil && !faceReadable(ctx, h.Type, h.Face) {
-				continue
-			}
-			if !yield(h, err) {
-				return
-			}
-		}
-	}
-}
-
-func searchScopedHits(
-	ctx context.Context, vs search.VisibleSearcher, aff affordanceService,
-	q search.Query, scope map[string]search.TypeScope,
-) iter.Seq2[search.Hit, error] {
-	// Nothing to redact: the plain entity-level path is correct, and a searcher
-	// that isn't a FieldVisibleSearcher is fine here.
-	if !aff.hidesAnyField() {
-		return vs.SearchVisible(ctx, q, scope)
-	}
-	fvs, ok := vs.(search.FieldVisibleSearcher)
-	if !ok {
-		// Redaction is in play but this searcher cannot do it. Refuse rather
-		// than serve un-redacted hits.
-		return func(yield func(search.Hit, error) bool) {
-			yield(search.Hit{}, fmt.Errorf(
-				"%w: policy hides fields but the wired searcher (%T) cannot redact them",
-				search.ErrScope, vs))
-		}
-	}
-	return fvs.SearchVisibleFields(ctx, q, scope, hiddenSearchFields(aff))
-}
-
-// hiddenSearchFields builds the [search.HiddenFieldsFunc] that reports, per
-// hit, the property fields the request principal may not see — resolved through
-// the same affordance verdict source the serializer uses, then qualified into
-// the search field vocabulary (`prop:<name>`). The seam passes the already-
-// loaded entity, so the resolver's `when:` predicates evaluate against the same
-// snapshot the provenance check uses (no second load, no cross-snapshot race).
-func hiddenSearchFields(aff affordanceService) search.HiddenFieldsFunc {
-	return func(ctx context.Context, _ search.Hit, e *entity.Entity) (map[string]struct{}, error) {
-		hidden := aff.hiddenProperties(ctx, e)
-		if len(hidden) == 0 {
-			return nil, nil
-		}
-		out := make(map[string]struct{}, len(hidden))
-		for name := range hidden {
-			out[search.PropFieldPrefix+name] = struct{}{}
-		}
-		return out, nil
-	}
-}
-
 // visibleListByTypes is executeQuery's no-free-text branch: load
 // entities by type under the per-type scope verdict. Unlike
 // listFromStoreByTypes (which other, ungated consumers still use and
@@ -586,12 +491,12 @@ const maxFreeTextSearchResults = 1000
 //
 // # Field redaction
 //
-// It searches through [searchVisibleHits], the path `/_search` uses, so a hit
-// that matched only a property hidden from the principal is dropped. With the
-// unredacted searcher, a list row kept by `?q=<guess>` confirmed the guess
-// against the hidden value: the same oracle a filter on that property was
-// (BUG-WJSYQT, RR-H3GP12). A searcher that cannot redact while the policy
-// hides fields yields errACLListQuery, the fail-closed answer.
+// It searches through [visibility.SearchScoped], the path `/_search` uses, so
+// a hit that matched only a property hidden from the principal is dropped.
+// With the unredacted searcher, a list row kept by `?q=<guess>` confirmed the
+// guess against the hidden value: the same oracle a filter on that property
+// was (BUG-WJSYQT, RR-H3GP12). A field scope that cannot be compiled yields
+// errACLListQuery, the fail-closed answer.
 //
 // # IDs, not entities
 //
@@ -604,10 +509,10 @@ const maxFreeTextSearchResults = 1000
 // than documenting it. (search.Service already loads the right face internally
 // by its Ref; a consumer re-read here would only undo that.)
 //
-// Free function taking svc rather than an App method: it needs one
-// collaborator, and App sits at its plimsoll method cap.
+// Free function rather than an App method: App sits at its plimsoll method
+// cap.
 func freeTextIDs(
-	ctx context.Context, vs search.VisibleSearcher, aff affordanceService,
+	ctx context.Context, vs search.VisibleSearcher, fields visibility.FieldScoper,
 	sq *searchparser.SearchQuery, scope map[string]search.TypeScope, w store.WorldScope, limit int,
 ) (map[string]struct{}, error) {
 	parts := make([]string, 0, len(sq.FreeTextWords)+len(sq.FreeTextPhrases))
@@ -622,7 +527,7 @@ func freeTextIDs(
 		World: w,
 	}
 	ids := make(map[string]struct{})
-	for hit, err := range searchVisibleHits(ctx, vs, aff, q, scope) {
+	for hit, err := range visibility.SearchScoped(ctx, vs, ctxRowGate{}, fields, q, scope, sq.EntityTypes) {
 		if err != nil {
 			if errors.Is(err, search.ErrScope) {
 				return nil, fmt.Errorf("%w: %w", errACLListQuery, err)

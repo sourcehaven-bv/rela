@@ -11,20 +11,21 @@ import (
 )
 
 // ErrPrincipalMismatch reports that ctx already carries an ACL request for a
-// different principal than the one stamped on ctx. It is a wiring bug: the
-// gate would run against the wrong identity, so the request must fail.
+// different principal (or another policy) than the one stamped on ctx. It is
+// a wiring bug: the gate would run against the wrong identity, so the request
+// must fail.
 var ErrPrincipalMismatch = errors.New("access: attached ACL request belongs to another principal")
 
 // ErrUnresolvedPrincipal reports that no ACL request could be opened for the
 // principal on ctx, for example because the principal stamper left it
-// unstamped. The cause is wrapped for the server log; it must not reach a
-// response body (RR-372L).
+// unstamped or the membership walk failed. The cause is wrapped for the server
+// log; it must not reach a response body (RR-372L).
 var ErrUnresolvedPrincipal = errors.New("access: principal could not be resolved under the ACL")
 
 // Opener opens the per-request access state under a declarative policy. One
 // Opener serves every request of a router; [Opener.Open] runs once per HTTP
-// request, so the member-of walk the acl.Request caches is shared by every
-// gate call in that request (RR-JJYW).
+// request and resolves the identity once, so every gate call in that request
+// evaluates the same membership closure (RR-JJYW).
 type Opener struct {
 	policy           *acl.Declarative
 	verifiedIdentity bool
@@ -51,55 +52,61 @@ func NewOpener(policy *acl.Declarative, verifiedIdentity bool) (*Opener, error) 
 // Nil log: accepted — Open logs to slog.Default().
 //
 // When ctx already carries an ACL request (an upstream layer, chiefly tests,
-// attached one), Open reuses it after checking that it belongs to the ctx
-// principal; a mismatch returns [ErrPrincipalMismatch] (SIG-2). Reusing
-// without the check would run every gate against the wrong identity with no
-// loud signal. On this branch principal resolution has not run, so both sides
-// are the raw principal.
+// attached one), Open reuses it after [acl.Declarative.RequestFrom] checks
+// that it belongs to this policy and to the ctx principal; a mismatch returns
+// [ErrPrincipalMismatch] (SIG-2). Reusing without the check would run every
+// gate against the wrong identity with no loud signal. On this branch
+// principal resolution has not run, so both sides are the raw principal.
 //
-// Otherwise Open resolves the principal through the policy's
-// `principal_property` lookup and opens a request for the result. A failure
-// returns [ErrUnresolvedPrincipal] rather than a ctx without a request, which
-// would make every later read fail open (RR-875A).
+// Otherwise Open resolves the identity: the policy's `principal_property`
+// lookup and the member-of walk. On a single match ctx is re-stamped with the
+// resolved principal, so the ACL evaluation and the audit writer (which
+// re-reads principal.From(ctx)) both attribute to the real entity, with the
+// raw value in RawUser. A failure returns [ErrUnresolvedPrincipal] wrapping
+// the cause, rather than a ctx without a request, which would make every
+// later read fail open (RR-875A).
 func (o *Opener) Open(ctx context.Context, log *slog.Logger) (context.Context, *acl.Request, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	// The log messages keep the attachACLRequest prefix they had in dataentry,
 	// so operators' existing searches still match.
-	if existing := acl.FromContext(ctx); existing != nil {
-		ctxPrin := principal.From(ctx)
-		if !existing.Principal().Equal(ctxPrin) {
-			log.Warn("acl: attachACLRequest: existing Request principal mismatch",
-				"ctx_user", ctxPrin.User,
-				"ctx_tool", ctxPrin.Tool,
-				"req_user", existing.Principal().User,
-				"req_tool", existing.Principal().Tool)
-			return ctx, nil, ErrPrincipalMismatch
-		}
+	existing, err := o.policy.RequestFrom(ctx)
+	switch {
+	case err == nil:
 		return ctx, existing, nil
+	case !errors.Is(err, acl.ErrNoIdentity):
+		// RequestFrom logged the principal ids.
+		log.Warn("acl: attachACLRequest: existing Request principal mismatch", "err", err)
+		return ctx, nil, ErrPrincipalMismatch
 	}
 
-	ctx = o.resolvePrincipal(ctx, log)
-
-	p := principal.From(ctx)
-	req, err := o.policy.ForPrincipal(p)
+	ctx, ident, err := o.resolveIdentity(ctx, log)
 	if err != nil {
-		log.Warn("acl: attachACLRequest: ForPrincipal failed",
+		p := principal.From(ctx)
+		log.Warn("acl: attachACLRequest: identity resolution failed",
 			"err", err,
 			"user", p.User,
 			"tool", p.Tool)
 		return ctx, nil, errors.Join(ErrUnresolvedPrincipal, err)
 	}
+	req, err := o.policy.ForIdentity(ident)
+	if err != nil { // coverage-ignore: ident was just resolved by this policy's own resolver
+		return ctx, nil, errors.Join(ErrUnresolvedPrincipal, err)
+	}
 	return acl.WithRequest(ctx, req), req, nil
 }
 
-// Restamp re-stamps ctx to the user entity that sub now resolves to, after
-// `unmatched_principal: provision` created it, and opens the ACL request for
-// that principal. The returned ctx carries the resolved principal with RawUser
-// set to sub, the matched-verified mark (so the triggering write is judged on
-// the resolved identity's roles, not caught again by the unmatched gate) and
-// the request.
+// Restamp re-stamps ctx to the user entity its principal now resolves to,
+// after `unmatched_principal: provision` created it, and opens the ACL request
+// for that identity. The returned ctx carries the resolved principal with
+// RawUser set to the verified subject, and the request. The request is opened
+// on a matched identity, so it is not unmatched-verified: the triggering write
+// is judged on the resolved identity's roles, not caught again by the
+// unmatched gate.
+//
+// Resolution rebuilds the principal with every verified claim, so the client
+// ceiling the original request carried still applies (BUG-AR6NN9).
 //
 // An ambiguous or failed re-resolve (two stubs raced onto one sub on a backend
 // without atomic uniqueness) returns [ErrUnresolvedPrincipal], as does a
@@ -111,74 +118,64 @@ func (o *Opener) Open(ctx context.Context, log *slog.Logger) (context.Context, *
 // of the Opener's settings.
 //
 // Nil policy: rejected with an error; there is no policy to resolve against.
-func Restamp(ctx context.Context, policy *acl.Declarative, sub string) (context.Context, *acl.Request, error) {
+func Restamp(ctx context.Context, policy *acl.Declarative) (context.Context, *acl.Request, error) {
 	if policy == nil {
 		return ctx, nil, errors.New("access: Restamp: policy is nil")
 	}
-	id, err := policy.ResolvePrincipal(ctx, sub)
-	if err != nil {
-		return ctx, nil, errors.Join(ErrUnresolvedPrincipal, err)
-	}
-	if id == "" {
-		return ctx, nil, fmt.Errorf("%w: %q resolves to no single entity", ErrUnresolvedPrincipal, sub)
-	}
-
 	p := principal.From(ctx)
-	// BUG-AR6NN9: principal.Verified keeps no PrincipalType or Scopes, so a
-	// restricted client loses its ceiling here; Open keeps every claim through
-	// VerifiedFrom. Kept as is in this refactor.
-	resolved := principal.Verified(id, p.Tool, p.OrgID(), p.OrgSlug(), p.Roles()).WithEmail(p.Email())
-	resolved.RawUser = sub
-	restamped := acl.WithMatchedVerified(principal.With(ctx, resolved))
-
-	req, err := policy.ForPrincipal(resolved)
+	ident, err := policy.IdentityResolver().Resolve(ctx, p)
 	if err != nil {
 		return ctx, nil, errors.Join(ErrUnresolvedPrincipal, err)
 	}
-	return acl.WithRequest(restamped, req), req, nil
+	if ident.Unmatched() || !policy.Policy().PrincipalPropertyLookupEnabled() {
+		return ctx, nil, fmt.Errorf("%w: %q resolves to no single entity", ErrUnresolvedPrincipal, p.User)
+	}
+	req, err := policy.ForIdentity(ident.WithVerifiedAssertion())
+	if err != nil { // coverage-ignore: ident was just resolved by this policy's own resolver
+		return ctx, nil, errors.Join(ErrUnresolvedPrincipal, err)
+	}
+	return acl.WithRequest(principal.With(ctx, ident.Principal()), req), req, nil
 }
 
-// resolvePrincipal applies the policy's `principal_property` lookup to the ctx
-// principal. When the lookup is enabled and the raw principal resolves to
-// exactly one user entity, it returns a ctx carrying a principal whose User is
-// the entity ID and whose RawUser is the original identifier, so the ACL walk
-// and the audit log both attribute to the real entity. In every other case
-// (lookup disabled, no match, ambiguous match, backend error) it returns ctx
-// unchanged, falling back to the raw principal; errors are logged, a plain
-// no-match is not (a break-glass identity assigned by raw UPN is expected to
-// be absent from the graph).
+// resolveIdentity resolves the ctx principal into an [acl.Identity] for the
+// request and returns ctx re-stamped with the identity's principal.
 //
-// A genuine no-match on a verified identity while the lookup is enabled marks
-// the request unmatched-verified, so `unmatched_principal: reject` can deny
-// its writes (see acl.WithUnmatchedVerified). A disabled lookup also returns
-// "", but that is "not attempted", not a no-match.
-func (o *Opener) resolvePrincipal(ctx context.Context, log *slog.Logger) context.Context {
+// With the policy's `principal_property` lookup enabled, a single match
+// replaces User with the entity ID and keeps the raw value in RawUser;
+// [acl.IdentityResolver.Resolve] rebuilds the principal so every verified
+// claim survives (losing the ceiling claims would widen a restricted client;
+// pinned by acl.TestResolve_SubstitutesAndKeepsClaims).
+//
+// A failed or ambiguous lookup is logged and resolution falls back to the raw
+// principal ([acl.IdentityResolver.ResolveDirect]), the pre-feature behavior.
+// That can only lose grants. A plain no-match is not logged: a principal
+// absent from the graph is expected (a break-glass identity assigned by raw
+// UPN).
+//
+// On a verified identity the result is marked with
+// [acl.Identity.WithVerifiedAssertion]; combined with a genuine no-match the
+// request opened on it is unmatched-verified, so `unmatched_principal:
+// reject` can deny its writes (see [acl.Request.UnmatchedVerified]).
+//
+// Any other error (unstamped principal, failed membership walk) is returned.
+func (o *Opener) resolveIdentity(
+	ctx context.Context, log *slog.Logger,
+) (context.Context, acl.Identity, error) {
+	res := o.policy.IdentityResolver()
 	p := principal.From(ctx)
-	id, err := o.policy.ResolvePrincipal(ctx, p.User)
-	if err != nil {
+	ident, err := res.Resolve(ctx, p)
+	if errors.Is(err, acl.ErrPrincipalLookup) {
 		log.Warn("acl: principal_property lookup failed; using raw principal", "err", err)
-		return ctx
+		ident, err = res.ResolveDirect(ctx, p)
 	}
-	if id == "" || id == p.User {
-		if o.verifiedIdentity && id == "" && o.policy.Policy().PrincipalPropertyLookupEnabled() {
-			ctx = acl.WithUnmatchedVerified(ctx)
-		}
-		return ctx
+	if err != nil {
+		return ctx, acl.Identity{}, err
 	}
-	// Rebuild via VerifiedFrom so the assertion claims survive the substitution.
-	// A plain composite literal would drop org, roles, email and the
-	// attenuation claims: the resolved principal would keep its identity but
-	// lose every asserted grant and its ceiling. Losing the ceiling would
-	// widen a restricted client to its acting user's full grants.
-	out := principal.VerifiedFrom(id, p.Tool, principal.Claims{
-		OrgID:         p.OrgID(),
-		OrgSlug:       p.OrgSlug(),
-		OrgName:       p.OrgName(),
-		Roles:         p.Roles(),
-		PrincipalType: p.PrincipalType(),
-		Scopes:        p.Scopes(),
-		Email:         p.Email(),
-	})
-	out.RawUser = p.User
-	return principal.With(ctx, out)
+	if resolved := ident.Principal(); !resolved.Equal(p) {
+		ctx = principal.With(ctx, resolved)
+	}
+	if o.verifiedIdentity {
+		ident = ident.WithVerifiedAssertion()
+	}
+	return ctx, ident, nil
 }

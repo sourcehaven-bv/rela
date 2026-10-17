@@ -31,8 +31,8 @@ const searchFuzziness = 1
 //     the field's standard-analyzer tokens. A word with '*' or '?' matches
 //     as a whole-token wildcard; any other word within one rune edit.
 //
-// It must not report a field the search did not match on. The
-// field-visibility filter keeps a hit when a visible field matched, so an extra visible field would
+// It must not report a field the search did not match on. A field scope
+// keeps a hit when a visible field matched, so an extra visible field would
 // return a hit whose real match was a hidden property. An earlier version
 // unioned [search.MatchTextFields] and the query's analyzer tokens into the
 // result. Both over-report: "xxfoobar" holds the substring "foobar" but is
@@ -47,7 +47,7 @@ func (idx *Index) MatchedFields(e *entity.Entity, text string) map[string]struct
 	if analyzer == nil {
 		// coverage-ignore-start: defensive: textAnalyzer only returns nil if the bleve registry lacks the standard
 		// analyzer, which never happens with bleve linked
-		return nil // nothing can be attributed, so the field-visibility filter drops the hit
+		return nil // nothing can be attributed, so the field scope drops the hit
 		// coverage-ignore-end
 	}
 	m := newWordMatcher(words)

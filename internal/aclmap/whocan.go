@@ -132,23 +132,22 @@ func (e *Engine) accessFor(
 ) (PrincipalAccess, bool, error) {
 	user := strings.TrimSpace(raw)
 	if user == "" {
-		// A blank assignment key can't be a principal (ForPrincipal would
-		// reject it as unstamped); skip it, not an error.
+		// A blank assignment key can't be a principal (identity resolution
+		// would reject it as unstamped); skip it, not an error.
 		return PrincipalAccess{}, false, nil
 	}
 	rawShown := ""
 	// Resolve raw → entity ID when principal_property is configured. An
 	// ambiguous or errored lookup fails the report loud rather than
 	// silently mis-attributing.
-	if id, err := e.resolver.ResolvePrincipal(ctx, raw); err != nil {
+	if id, err := e.resolver.IdentityResolver().ResolvePrincipal(ctx, raw); err != nil {
 		return PrincipalAccess{}, false, err
 	} else if id != "" && id != raw {
 		user = id
 		rawShown = raw
 	}
 
-	req, err := e.resolver.ForPrincipal(
-		principal.Principal{User: user, Tool: principal.ToolCLI, RawUser: rawShown})
+	req, err := e.requestFor(ctx, principal.Principal{User: user, Tool: principal.ToolCLI, RawUser: rawShown})
 	if err != nil {
 		return PrincipalAccess{}, false, fmt.Errorf("aclmap: open resolver for %q: %w", user, err)
 	}

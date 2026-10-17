@@ -695,30 +695,31 @@ func TestQueryBudget_NavItemsWithInitialsAreSizeIndependent(t *testing.T) {
 //
 // Measured with the neighbor gate wired, as production wires it
 // (BUG-J01V0Q). The fixture used to leave it unwired, which skipped the
-// gated edge reads and undercounted the list and view shapes by one or two.
+// gated edge reads. A page's edges are one relation query, not one per
+// face (worldreader.RelationReader.NeighborsForPage).
 const (
 	// list page: scoped count + one bounded page read (listpushdown.go),
 	// page edges, neighbor headers, membership walk.
-	listPageBudget = 8
+	listPageBudget = 6
 	// traversal-scoped list page on the Go path (a scope that does not
 	// lower): the type's headers, ONE MatchingIDs for the traversal, then the
 	// page's edges, neighbor headers and membership walk as on a plain page.
 	// A scope that lowers costs listPageBudget instead.
-	traversalScopeBudget = 8
+	traversalScopeBudget = 6
 	// view: entry, two traverse passes, collection load, section columns +
 	// target headers, entry edges, membership walk.
-	viewSectionBudget = 13
+	viewSectionBudget = 12
 	// edge warnings: the test's own listing of the peers, ONE header read for
 	// every peer, and the membership walk.
 	edgeWarningsBudget = 4
 
 	// page-scoped list: the anchor read, the scope's relation query, the
 	// whole-type read, page edges, neighbor headers, membership walk.
-	pageScopedListBudget = 9
+	pageScopedListBudget = 7
 	// incoming-ordered list: pageScopedListBudget plus the edge gate's
 	// header read and the movable check's batched source rows and gate.
 	// Measured, not derived.
-	incomingOrderedListBudget = 12
+	incomingOrderedListBudget = 10
 	// nav items: scoped count + one bounded page read (listpushdown.go), the
 	// initials' relation query and neighbor headers, membership walk.
 	navItemsBudget = 6
@@ -729,29 +730,29 @@ const (
 	searchLinkableBudget = 5
 	// list page with a relation context: listPageBudget plus the same two
 	// reads as searchLinkableBudget.
-	listLinkableBudget = 10
+	listLinkableBudget = 8
 	// list pages with ?include= (TASK-550RD): listPageBudget plus, per
 	// include level, the page's batched edge reads and ONE head resolution.
 	// Before batching: 8 + 4×rows (all), 8 + 3×rows (named) and 8 + 6×rows
 	// (nested), i.e. 208, 158 and 308 at 50 rows.
-	listIncludeAllBudget    = 12
-	listIncludeNamedBudget  = 11
-	listIncludeNestedBudget = 14
+	listIncludeAllBudget    = 8
+	listIncludeNamedBudget  = 8
+	listIncludeNestedBudget = 10
 	// recursive view: entry, the fixpoint's relation queries, the collection
 	// load, and the BFS frontier source gate's ONE header scan per level
 	// walked (BUG-9Z20WH). Measured, not derived; the point of the pin is that
 	// it does not move with row count — the fixture puts every ticket one
 	// level below the epic, so a per-node gate would make this grow.
-	recursiveViewBudget = 13
+	recursiveViewBudget = 12
 	// mentioned-by: the target's address read, one index batch, ONE header
 	// read for that batch's sources, and the membership walk.
 	mentionedByBudget = 5
 	// backlinks view (TKT-HF0D5W): the entry read, one index batch, the
 	// resolver's ONE header read to gate it, the step's ONE header reload,
-	// and the edge and membership reads every view makes. Measured: 8 at 10
+	// and the edge and membership reads every view makes. Measured: 7 at 10
 	// and 50 sources. The separate MentionSources assertion pins the
 	// once-per-view read.
-	mentionsViewBudget = 8
+	mentionsViewBudget = 7
 	// nested view: entry, the two traverse passes, the collection loads, the
 	// entry edges and the membership walk, plus the relation column's own
 	// reads — one ListRelations per ROW TYPE (epic and ticket) and the gated
@@ -767,7 +768,7 @@ const (
 	// this is necessary but not sufficient, and why
 	// TestQueryBudget_NestedRelationColumnsResolveOverEmittedRowsOnly measures
 	// the breadth instead.
-	nestedSectionBudget = 16
+	nestedSectionBudget = 15
 	// nestedRelationIDsPerRow is how many relation-column ids a nested section
 	// may spend PER EMITTED ROW, as a numerator over
 	// nestedRelationIDsPerRowDiv.

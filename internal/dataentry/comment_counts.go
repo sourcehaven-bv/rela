@@ -85,11 +85,15 @@ func (h *commentsHandler) serveCommentCounts(ctx context.Context, rows []*entity
 // so this is too; with one but no request ACL on ctx it fails closed, as
 // [commentPermissionGate] does.
 func (h *commentsHandler) readsCommentsEverywhere(ctx context.Context) bool {
-	if !h.aclPolicyActive() {
+	policy, active := h.aclPolicy()
+	if !active {
 		return true
 	}
-	req := acl.FromContext(ctx)
-	if req == nil {
+	if policy == nil {
+		return false
+	}
+	req, err := policy.RequestFrom(ctx)
+	if err != nil {
 		return false
 	}
 	return req.HoldsPermission(ctx, acl.PermCommentRead)

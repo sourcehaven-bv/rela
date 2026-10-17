@@ -7,12 +7,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
+	"github.com/Sourcehaven-BV/rela/internal/relresolve"
 
 	"gopkg.in/yaml.v3"
 )
@@ -30,12 +34,18 @@ func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
 	if err := yaml.Unmarshal([]byte(aclYAML), &policy); err != nil {
 		t.Fatalf("unmarshal acl.yaml: %v", err)
 	}
-	declarative, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(app.store), app.store)
+	declarative, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(app.store), app.store)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
+	// The traversal binder production wires (ResolverFromProfile), so a
+	// `related(...)` grant compiles here as it does there.
+	traversals, err := relresolve.NewStoreBinder(app.Meta(), relresolve.Ungated, app.store)
+	if err != nil {
+		t.Fatalf("relresolve.NewStoreBinder: %v", err)
+	}
 	resolver, err := affordances.New(app.Meta(),
-		storeRelationLookup{st: app.store}, declarative)
+		storeRelationLookup{st: app.store}, declarative, affordances.WithTraversals(traversals))
 	if err != nil {
 		t.Fatalf("affordances.New: %v", err)
 	}
@@ -52,8 +62,8 @@ func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
 func patchAs(t *testing.T, app *App, user, id, body string) (status int, respBody string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/tickets/"+id, strings.NewReader(body))
-	req = req.WithContext(principal.With(req.Context(),
-		principal.Principal{User: user, Tool: principal.ToolDataEntry}))
+	req = req.WithContext(acltest.Bind(principal.With(req.Context(),
+		principal.Principal{User: user, Tool: principal.ToolDataEntry}), t, app.acl))
 	rec := httptest.NewRecorder()
 	app.write.handleV1UpdateEntity(rec, req, "ticket", "tickets", id)
 	return rec.Code, rec.Body.String()
@@ -63,8 +73,8 @@ func patchAs(t *testing.T, app *App, user, id, body string) (status int, respBod
 func getAs(t *testing.T, app *App, user, id string) v1.Entity {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/"+id, http.NoBody)
-	req = req.WithContext(principal.With(req.Context(),
-		principal.Principal{User: user, Tool: principal.ToolDataEntry}))
+	req = req.WithContext(acltest.Bind(principal.With(req.Context(),
+		principal.Principal{User: user, Tool: principal.ToolDataEntry}), t, app.acl))
 	rec := httptest.NewRecorder()
 	app.handleV1GetEntity(rec, req, "ticket", "tickets", id)
 	if rec.Code != http.StatusOK {
@@ -79,11 +89,14 @@ func getAs(t *testing.T, app *App, user, id string) v1.Entity {
 
 // AC3 end-to-end: a field grant whose predicate evaluates false yields
 // _fields.status.writable=false on GET AND a 403 on the PATCH, with
-// the TKT-G7N5 wire rule_id (DR-C5 — not a new rule_kind).
+// the TKT-G7N5 wire rule_id (DR-C5 — not a new rule_kind). The role may
+// update tickets: a role that may not is refused by the row-level check
+// before any field verdict, like the manager does.
 func TestPolicyResolver_FieldPredicate_WireAndWrite(t *testing.T) {
 	const aclYAML = `
 roles:
   triager:
+    update: [ticket]
     fields:
       ticket:
         - field: status
@@ -128,6 +141,7 @@ func TestPolicyResolver_AuditCarriesAttribution(t *testing.T) {
 	const aclYAML = `
 roles:
   triager:
+    update: [ticket]
     fields:
       ticket:
         - field: status

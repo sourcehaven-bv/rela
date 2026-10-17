@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
@@ -43,7 +44,7 @@ func TestServeConfigure_Gate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestAppV1(t)
 			if tc.declared {
-				d, err := acl.NewDeclarative(&acl.Policy{}, acl.NewStoreGraph(app.store), app.store)
+				d, err := acl.NewDeclarative(&acl.Policy{}, aclstore.MustNewGraph(app.store), app.store)
 				require.NoError(t, err)
 				setTestACL(t, app, d)
 			}

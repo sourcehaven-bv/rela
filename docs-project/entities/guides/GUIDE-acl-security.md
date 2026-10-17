@@ -858,14 +858,14 @@ principal's verdict for that type is not `DenyAll` (AllowAll or a
 relation-scoped Query both deliver). The type verdict is resolved once
 per connection and cached. A relation write (member-of / role-relation /
 containment edge — the types that can change a principal's read scope)
-re-derives a **fresh** read gate for the connection: a new `acl.Request`
-whose member-of closure is walked against the current graph, so a
-principal who gains or loses a group membership mid-connection starts or
-stops receiving a type's nudges without reconnecting. (The connection's
-original request memoizes its membership closure for its lifetime; the
-re-derive is what keeps the verdict honest — without it, only the
-per-entity inbound query would refresh, not the principal's own group
-membership.) Both the re-derive and the nudges are coalesced into one
+re-derives a **fresh** read gate for the connection. It resolves the
+principal again into a new `acl.Identity`, which walks the member-of
+closure against the current graph, and opens a new `acl.Request` from
+it. A principal who gains or loses a group membership mid-connection
+therefore starts or stops receiving a type's nudges without
+reconnecting. (An identity holds its membership closure for its
+lifetime. Without the re-derive, only the per-entity inbound query
+would refresh, not the principal's own group membership.) Both the re-derive and the nudges are coalesced into one
 flush window, so a bulk relation import triggers one membership re-walk
 per connection, not one per edge.
 
@@ -1052,6 +1052,31 @@ Writes without a read policy are exempt: a project without `acl.yaml`,
 `rela.bypass_acl`, automation cascades, and the writers that go to the
 store directly (data migrations, import, normalize).
 
+### The `rela` CLI gates writes, not reads
+
+The CLI acts as the operating-system user: the principal is `$USER` (or
+`$USERNAME`), used directly as the graph identity. There is no
+`principal_property` lookup, so `USER=PERS-alice` acts as `PERS-alice`.
+
+- **Reads are not gated.** `rela list`, `rela show`, `rela trace` and the
+  other read commands read the store directly. They return every entity
+  and every property value, whatever the principal's roles. A principal
+  with no role at all sees the same output as an admin.
+- **Writes are gated.** `rela create`, `update`, `delete`, `link` and the
+  other write commands go through the entity manager under the
+  principal's roles, so the rules above apply: a row the principal cannot
+  read is reported as not found, and a missing grant is a `forbidden`
+  error. Field write grants (`fields:`, `options:`) are not
+  checked; see "Field write grants on MCP and scheduled scripts".
+- If `$USER` is empty, the principal cannot be resolved. The CLI logs a
+  warning and every gated write is denied; reads still return everything.
+
+This is deliberate. Whoever runs the CLI can read and edit the project's
+data files, or connect to its database, directly, so read gating there
+would not protect anything. Do not rely on `acl.yaml` to keep data from
+someone with shell access to the project. Give such users access through
+`rela-server` instead.
+
 ### Invariants downstream maintainers MUST preserve
 
 - **No `ETag` on deny.** Suppressing it is what closes the
@@ -1149,11 +1174,13 @@ Key properties:
   cases on every backend.
 - **Two implementations, one contract.** The fs/memory builds wrap
   the regular searcher in a generic filter (`search.NewVisible`,
-  batched `MatchingIDs` probes — in-process, cheap). The postgres
+  batched `MatchingFaces` probes — in-process, cheap). The postgres
   build composes visibility into the search SQL itself
   (`pgstore.SearchVisible`): hidden rows never leave the database,
   the `LIMIT` is post-visibility, and there is no hidden-ROW work to
-  measure through timing.
+  measure through timing. The `visible:` grant checks of a
+  field-scoped search also run in that SQL; only the judgement of
+  which fields matched stays in Go.
 - **That last point is about rows, not fields.** Entity-level
   filtering is pushed into the query, so a hidden row costs nothing
   observable. Property-level `visible:` redaction is different: it
@@ -1449,15 +1476,50 @@ is not enough on its own: the full-text index still contains a hidden
 property's text, so a query that matched *only* that property would
 otherwise return the entity as a hit and confirm the value by its mere
 presence (search a candidate postcode against a hidden address field →
-guess oracle). `/_search` closes this at the `VisibleSearcher` seam: each
-backend reports which fields a query matched (bleve with its own analyzer,
-Postgres by re-matching the candidate rows per field, the linear backend
-by substring), and a hit is **dropped** when every field it matched is one
-the principal may not see. A hit that also matched a *visible* field — or
-the id or content, which are never property-gated — still surfaces, with
-the hidden property redacted from its body. The property-level conformance
-suite (`storetest.RunVisibleFieldSearchTests`) pins this across all
-backends.
+guess oracle). `/_search` closes this inside the search itself. For each
+entity type, the request's `visible:` grants are compiled once into a
+field allowlist: which properties are gated, and which of them each grant
+shows on which rows. A grant's `when:`, and the role relation that confers a
+local role, become store predicates. The allowlist follows the role union:
+a role without a `visible:` block for the type shows every property on the
+rows it applies to and reads. The search backend applies the
+allowlist to every candidate row, so the result limit counts only hits that
+survive. Each backend checks a page of hits in one batch. On PostgreSQL the
+search query itself reports which grants hold on each row. Nothing calls back
+into the ACL per hit.
+
+A hit is **dropped** when every field it matched is one the principal may
+not see. A hit that also matched a *visible* field, or the id or content
+(which are never property-gated), still surfaces, with the hidden property
+redacted from its body. A property the metamodel does not declare is never
+gated. The suite `storetest.RunFieldScopeSearchTests` pins this on every
+backend, including a comparison with the Go matcher on generated data.
+
+Every backend decides which fields matched in Go, with the same case folding
+the search index was written with. PostgreSQL's `lower()` folds some
+characters differently: it turns 'İ' into "i" plus a combining dot, where Go
+turns it into "i". A match judged with `lower()` could count a visible field
+that the search did not actually match on, and so return a hit whose only
+real match was hidden. Bleve reports the fields its own fuzzy and wildcard
+rules matched, and never a field they did not.
+
+**A `visible:` condition must be answerable by a store query.** Because
+search applies `visible:` inside the store query, every `when:` in a role's
+`visible:` block must lower exactly to store predicates. The policy fails to
+load otherwise, and the error names the role, the type, the index and the
+field. A condition may be an AND of:
+
+- property equalities: `entity.status == 'open'`,
+  `entity.assignee == current_user.id`, `is_current_user(entity.assignee)`;
+- `related(...)` terms.
+
+Refused in `visible:`: `or`, `not`, ordered comparisons, `~=`,
+`has_role`, `has_global_role`, `has_relation`, `count_relations` and
+`has_current_user`. To show a field to whoever holds a role on the entity,
+confer that role with `role_relations` and give the role its own
+`visible:` block; local roles are honored exactly. The rule applies to
+entity `visible:` only. `fields:`, `options:` and relation-meta `visible:`
+keep the full predicate vocabulary.
 
 **Relation meta is redacted the same way.** A relation carries its own
 property map (`meta`), and a role's `relations:` grant can add a `visible:`
@@ -1666,7 +1728,8 @@ configuration.
   own treatment).
 - **Local stdio MCP (`rela mcp`)** applies no ACL. It has no
   authentication, so there is no principal to gate for; it runs with the
-  operator's own file access, like the CLI. The **remote** MCP endpoint
+  operator's own file access. Unlike the CLI, it does not gate writes
+  either (see "The `rela` CLI gates writes, not reads"). The **remote** MCP endpoint
   (`rela-server -mcp`) is JWT-authenticated and gated (TKT-4QSZ8Y): entity
   and relation reads, `search_entities`, trace and resources all read
   through `GatedReads`. Search drops hits that matched only hidden

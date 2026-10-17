@@ -9,7 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -303,7 +306,7 @@ func aliceCtx() context.Context { return principalCtx("alice") }
 // is explicit.
 func mustNewACL(t *testing.T, p *acl.Policy, st store.Store) *acl.Declarative {
 	t.Helper()
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
@@ -315,9 +318,9 @@ func mustNewACL(t *testing.T, p *acl.Policy, st store.Store) *acl.Declarative {
 // middleware so they need this explicit setup.
 func gateCtxFor(ctx context.Context, t *testing.T, d *acl.Declarative) context.Context {
 	t.Helper()
-	req, err := d.ForPrincipal(principal.From(ctx))
+	req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.From(ctx)))
 	if err != nil {
-		t.Fatalf("ForPrincipal: %v", err)
+		t.Fatalf("ForIdentity: %v", err)
 	}
 	ctx = acl.WithRequest(ctx, req)
 	return withReadGate(ctx, aclReadGate{req: req})

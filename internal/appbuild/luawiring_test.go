@@ -8,6 +8,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
+	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
@@ -61,7 +63,7 @@ func TestScheduledLuaWriteDeps_ReadsAreACLBound(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(schedPolicy), &policy); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -73,6 +75,10 @@ func TestScheduledLuaWriteDeps_ReadsAreACLBound(t *testing.T) {
 	taskCtx := principal.With(ctx, principal.Principal{
 		User: "system:reports", Tool: principal.ToolScheduler,
 	})
+	taskCtx, bindErr := appbuild.MustIdentityBinder(svc)(taskCtx)
+	if bindErr != nil {
+		t.Fatalf("IdentityBinder: %v", bindErr)
+	}
 	var out strings.Builder
 	rt := lua.NewWriter(svc.ScheduledLuaWriteDeps(), &out,
 		lua.WithContext(taskCtx), lua.WithPrincipal(principal.From(taskCtx)))
@@ -103,7 +109,7 @@ func TestScheduledLuaWriteDeps_WritePrepStaysRaw(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(schedPolicy), &policy); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

@@ -171,7 +171,13 @@ func (s *Scheduler) pollSubscription(ctx context.Context, taskName string) error
 		return fmt.Errorf("scheduler: subscription task %q is not configured", taskName)
 	}
 	name := taskName[len(SubscriptionTaskPrefix):]
-	ctx = stampContext(ctx, principal.ReservedPrefix+"subscription:"+name, "subscription:"+name)
+	// The subscription's request edge, as taskContext is a script task's:
+	// stamp its principal and bind its ACL request scope once, so the
+	// gated reads and the writes of the poll evaluate against it.
+	ctx, err := s.bind(stampContext(ctx, principal.ReservedPrefix+"subscription:"+name, "subscription:"+name))
+	if err != nil {
+		return fmt.Errorf("scheduler: resolve identity for subscription %q: %w", name, err)
+	}
 	if s.subscriptionRunner != nil {
 		return s.subscriptionRunner(ctx, name, *task.Subscription)
 	}

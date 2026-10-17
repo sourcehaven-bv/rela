@@ -132,7 +132,7 @@ func TestMaybePrune_SkipsAnIncompleteConfig(t *testing.T) {
 func TestStartBackground_RunsWithoutTasks(t *testing.T) {
 	ws := &queueWorkspace{mockWorkspace: newMockWorkspace(t), q: newFakeQueue()}
 	ctx, cancel := context.WithCancel(context.Background())
-	done := StartBackground(ctx, ws, discardLogger())
+	done := StartBackground(ctx, ws, ws.bind, discardLogger())
 	select {
 	case <-done:
 		t.Fatal("the scheduler stopped although a file could still be added")

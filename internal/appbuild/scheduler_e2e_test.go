@@ -182,7 +182,7 @@ func TestSchedulerCmd_EndToEnd(t *testing.T) {
 
 	cmd := &cli.SchedulerCmd{}
 	done := make(chan error, 1)
-	go func() { done <- cmd.Run(ctx, svc) }()
+	go func() { done <- cmd.Run(ctx, svc, appbuild.MustIdentityBinder(svc)) }()
 
 	require.Eventually(t, func() bool {
 		notes := listNotes(t, svc)
@@ -222,7 +222,7 @@ func runScheduler(t *testing.T, svc *appbuild.Services) {
 	cfg, err := scheduler.ParseConfig(data)
 	require.NoError(t, err)
 
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, discardTestLogger())
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.MustIdentityBinder(svc), discardTestLogger())
 	require.NoError(t, err)
 
 	// Run executes due tasks immediately on start, so the first run lands
@@ -267,7 +267,7 @@ func runSchedulerTwice(t *testing.T, svc *appbuild.Services) {
 	cfg, err := scheduler.ParseConfig(data)
 	require.NoError(t, err)
 
-	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, discardTestLogger())
+	s, err := scheduler.NewWithQueue(cfg, script.NewEngine(), svc, appbuild.MustIdentityBinder(svc), discardTestLogger())
 	require.NoError(t, err)
 
 	runUntil(t, s, func() bool { return schedulerSettled(svc) },

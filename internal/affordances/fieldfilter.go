@@ -6,7 +6,6 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // FieldVisibleOnEveryRow reports whether the principal on ctx sees property
@@ -44,7 +43,9 @@ import (
 // the policy and the principal's own roles.
 //
 // A property the type does not declare is always visible: field verdicts deny
-// only from the declared fields, so redaction never hides one.
+// only from the declared fields, so redaction never hides one. A declared
+// property is refused when no [acl.Request] is bound to ctx, as FieldVerdicts
+// denies every field then.
 func (r *PolicyResolver) FieldVisibleOnEveryRow(ctx context.Context, entityType, property string) bool {
 	if r.policy == nil {
 		return true
@@ -56,8 +57,8 @@ func (r *PolicyResolver) FieldVisibleOnEveryRow(ctx context.Context, entityType,
 	if _, declared := def.Properties[property]; !declared {
 		return true
 	}
-	globals, ceiling, verbs := r.globalRoleScope(ctx, entityType)
-	if ceiling.Hides(property) {
+	globals, ceiling, verbs, err := r.globalRoleScope(ctx, entityType)
+	if err != nil || ceiling.Hides(property) {
 		return false
 	}
 	if !r.typesWithVisible[entityType] {
@@ -115,31 +116,21 @@ func declaredFaces[V any](faces map[string]V) []entity.Face {
 	return out
 }
 
-// globalRoleScope resolves the principal's global role names, its client
-// field ceiling for entityType, and the role verb check, the way
-// [PolicyResolver.FieldVerdicts] does: from the request scope on ctx, or a
-// fresh one when none is attached. An unstamped principal holds only the
-// `everyone` role, when declared, and no ceiling can match it (see
-// resolveViaDeclarative and applyClientCeiling).
+// globalRoleScope resolves the principal's global role names and its client
+// field ceiling for entityType from the operation's [acl.Request], the way
+// [PolicyResolver.FieldVerdicts] does. The Request also answers the role verb
+// check. It fails when no Request is bound to ctx.
 func (r *PolicyResolver) globalRoleScope(
 	ctx context.Context, entityType string,
-) (roles []string, ceiling acl.FieldCeiling, verbs roleVerbGrants) {
-	req := acl.FromContext(ctx)
-	if req == nil {
-		var err error
-		req, err = r.declarative.ForPrincipal(principal.From(ctx))
-		if err != nil {
-			everyone, ok := r.policy.Roles[acl.EveryoneRole]
-			if ok {
-				roles = []string{acl.EveryoneRole}
-			}
-			return roles, acl.FieldCeiling{}, everyoneRoleGrants{everyone: everyone}
-		}
+) (roles []string, ceiling acl.FieldCeiling, req *acl.Request, err error) {
+	req, err = r.requestFor(ctx)
+	if err != nil {
+		return nil, acl.FieldCeiling{}, nil, err
 	}
-	for _, a := range req.Globals(ctx).Attributions {
+	for _, a := range req.Globals().Attributions {
 		roles = append(roles, a.Role)
 	}
-	return roles, req.FieldCeilingFor(entityType), req
+	return roles, req.FieldCeilingFor(entityType), req, nil
 }
 
 // showsUnconditionally reports whether these grants declare a `visible:`

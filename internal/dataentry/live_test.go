@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
@@ -541,8 +542,8 @@ func TestLive_ReplayMatchesGet(t *testing.T) {
 			PrincipalProperty: "email",
 			Roles:             map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 			Assignments:       map[string]string{"PERS-alice": "viewer"},
-		}, acl.NewStoreGraph(app.store), app.store,
-			acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(app.store)))
+		}, aclstore.MustNewGraph(app.store), app.store,
+			acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(app.store)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -607,8 +608,8 @@ func TestLive_PrincipalPropertyFrames(t *testing.T) {
 			PrincipalProperty: "email",
 			Roles:             map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 			Assignments:       map[string]string{"PERS-alice": "viewer"},
-		}, acl.NewStoreGraph(app.store), app.store,
-			acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(app.store)))
+		}, aclstore.MustNewGraph(app.store), app.store,
+			acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(app.store)))
 		if err != nil {
 			t.Fatal(err)
 		}

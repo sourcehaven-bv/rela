@@ -4,7 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store/memstore"
 )
@@ -40,7 +43,7 @@ scope_grants:
 		t.Fatalf("the YAML in docs/acl-overview.md does not parse: %v", err)
 	}
 	st := memstore.New()
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,9 +51,9 @@ scope_grants:
 
 	asClient := func(scopes []string) *acl.Request {
 		t.Helper()
-		req, rErr := d.ForPrincipal(principal.VerifiedFrom(
+		req, rErr := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.VerifiedFrom(
 			"alice", principal.ToolDataEntry,
-			principal.Claims{PrincipalType: "app", Scopes: scopes}))
+			principal.Claims{PrincipalType: "app", Scopes: scopes})))
 		if rErr != nil {
 			t.Fatal(rErr)
 		}
@@ -87,8 +90,8 @@ scope_grants:
 	}
 
 	// "A `principal_type` that matches no baseline is unrestricted."
-	unmatched, err := d.ForPrincipal(principal.VerifiedFrom(
-		"alice", principal.ToolDataEntry, principal.Claims{PrincipalType: "user"}))
+	unmatched, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.VerifiedFrom(
+		"alice", principal.ToolDataEntry, principal.Claims{PrincipalType: "user"})))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,19 +120,19 @@ asserted_role_assignments:
 		t.Fatalf("the YAML in docs/acl-overview.md does not parse: %v", err)
 	}
 	st := memstore.New()
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// "A principal holding [admin, compliance] gets the union, deduplicated."
-	req, err := d.ForPrincipal(principal.Verified(
+	req, err := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Verified(
 		"usr_1", principal.ToolDataEntry, "org", "slug",
-		[]string{"admin", "compliance"}))
+		[]string{"admin", "compliance"})))
 	if err != nil {
 		t.Fatal(err)
 	}
 	roles := map[string]int{}
-	for _, a := range req.Globals(context.Background()).Attributions {
+	for _, a := range req.Globals().Attributions {
 		roles[a.Role]++
 	}
 	if roles["editor"] == 0 || roles["auditor"] == 0 {

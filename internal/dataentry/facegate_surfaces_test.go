@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
@@ -441,7 +443,7 @@ func TestFaceGrant_CollectionCreateIsPerFace(t *testing.T) {
 		Assignments: map[string]string{"alice": "editor"},
 	}, app.store))
 
-	got := app.affordances.computeCollectionActions(aliceCtx(), "ticket")
+	got := app.affordances.computeCollectionActions(acltest.Bind(aliceCtx(), t, app.acl), "ticket")
 	want := map[string]bool{"create": true, "create@draft": true, "create@published": false}
 	for k, v := range want {
 		if got[k] != v {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -54,7 +55,7 @@ func newD4Manager(t *testing.T, b concBackend) (*entitymanager.Manager, store.St
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestCreateRelation_IdentityEdgeOnFacedSourceNeedsEveryFace(t *testing.T) {
 					}); err != nil {
 						t.Fatalf("seed: %v", err)
 					}
-					_, err := mgr.CreateRelation(asUser(tc.user), entity.RelationKey{From: "POL-1", Type: "owns", To: "CTL-2"},
+					_, err := mgr.CreateRelation(entitymanager.BindAs(asUser(tc.user), t, mgr), entity.RelationKey{From: "POL-1", Type: "owns", To: "CTL-2"},
 						entity.RelationOptions{})
 					if tc.allow && err != nil {
 						t.Fatalf("CreateRelation: %v", err)
@@ -122,7 +123,7 @@ func TestCreateRelation_ContentEdgeOnFacedSourceNeedsAFace(t *testing.T) {
 	for _, b := range concBackends {
 		t.Run(b.name, func(t *testing.T) {
 			mgr, _ := newD4Manager(t, b)
-			_, err := mgr.CreateRelation(asUser("editor"), entity.RelationKey{From: "POL-1", Type: "implements", To: "CTL-1"},
+			_, err := mgr.CreateRelation(entitymanager.BindAs(asUser("editor"), t, mgr), entity.RelationKey{From: "POL-1", Type: "implements", To: "CTL-1"},
 				entity.RelationOptions{})
 			if !errors.Is(err, entitymanager.ErrRelationFaceRequired) {
 				t.Fatalf("CreateRelation err = %v, want ErrRelationFaceRequired", err)
@@ -142,7 +143,7 @@ func TestDelete_CascadeIdentityEdgeFromFacedSourceNeedsEveryFace(t *testing.T) {
 			}{{"bare", false}, {"drafter", false}, {"editor", true}} {
 				t.Run(tc.user, func(t *testing.T) {
 					mgr, st := newD4Manager(t, b)
-					_, err := mgr.DeleteEntity(asUser(tc.user), "CTL-1", true)
+					_, err := mgr.DeleteEntity(entitymanager.BindAs(asUser(tc.user), t, mgr), "CTL-1", true)
 					if tc.allow && err != nil {
 						t.Fatalf("DeleteEntity: %v", err)
 					}

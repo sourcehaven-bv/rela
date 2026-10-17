@@ -63,15 +63,10 @@ type viewsHandler struct {
 	// holds one: tests reassign app.acl AFTER construction, so a captured
 	// value would go stale and the filter would consult the wrong policy.
 	aclImpl func() acl.ACL
-	// faceEdges reads the entry's edges from the FACE being served, via
-	// [servedFaceEdges]. A closure for the same staleness reason aclImpl is
-	// one, and more sharply: [SetWorldNeighbors] runs AFTER this handler is
-	// constructed, so a captured worldNeighbors would be the nil it held at
-	// construction time and every view would silently take the bare-id arm —
-	// the exact face-merging bug this seam exists to close.
-	faceEdges func(
-		ctx context.Context, e *entityPkg.Entity,
-	) ([]*entityPkg.Relation, error)
+	// faceEdges reads the entry's edges from the FACE being served. It is
+	// the App's one gated face-edge read ([faceEdgeReader]), late-bound
+	// because [SetWorldNeighbors] runs after this handler is constructed.
+	faceEdges faceEdgeReader
 	// viewConditions returns the compiler behind a traverse step's
 	// `condition:`. A closure because SetViewConditions runs after this
 	// handler is constructed. Nil: a view with a traverse condition fails.
@@ -917,7 +912,7 @@ func (h *viewsHandler) handleV1Views(w http.ResponseWriter, r *http.Request) {
 	//
 	// One face-scoped read answers both: the entry knows its own face, so
 	// its edges are well-defined whether or not a world was named.
-	entryRels, werr := h.faceEdges(r.Context(), result.Entry)
+	entryRels, werr := h.faceEdges.edges(r.Context(), result.Entry)
 	if werr != nil {
 		// A neighbor-resolution fault is an infrastructure failure, not an
 		// empty link set — the same posture the entity GET takes (RR-4TFZNL).
@@ -1195,17 +1190,22 @@ func (h *viewsHandler) inlineCreateForms(ctx context.Context) map[string]string 
 // createAuthorizer returns whether the principal may create an entity of a
 // type.
 //
-// The middleware attaches a per-request scope; fall back to the unscoped
-// path when one is absent (tests and any non-HTTP caller), which is
-// correct-but-slower rather than a different answer.
+// Under a declarative policy it looks up the Request the middleware attached
+// once and asks it per type. Otherwise, or when no usable Request is attached,
+// it asks the ACL itself; a declarative ACL then fails closed, because
+// [acl.Declarative.AuthorizeWrite] denies a ctx without a Request.
 func (h *viewsHandler) createAuthorizer(ctx context.Context) func(entityType string) bool {
-	scope := acl.FromContext(ctx)
+	a := h.currentACL()
+	var scope *acl.Request
+	if d, ok := a.(*acl.Declarative); ok && d != nil {
+		scope, _ = d.RequestFrom(ctx)
+	}
 	return func(entityType string) bool {
 		req := translateVerb("create", entityType, "", "")
 		if scope != nil {
 			return scope.AuthorizeWrite(ctx, req).Allow
 		}
-		return h.currentACL().AuthorizeWrite(ctx, req).Allow
+		return a.AuthorizeWrite(ctx, req).Allow
 	}
 }
 

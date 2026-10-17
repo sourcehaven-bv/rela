@@ -101,9 +101,9 @@ func TestSQLiteLuaVersionTags(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
-	alice := principal.With(context.Background(), principal.Principal{User: "alice", Tool: principal.ToolScheduler})
-	bob := principal.With(context.Background(), principal.Principal{User: "bob", Tool: principal.ToolScheduler})
-	carol := principal.With(context.Background(), principal.Principal{User: "carol", Tool: principal.ToolScheduler})
+	alice := boundAs(t, svc, principal.Principal{User: "alice", Tool: principal.ToolScheduler})
+	bob := boundAs(t, svc, principal.Principal{User: "bob", Tool: principal.ToolScheduler})
+	carol := boundAs(t, svc, principal.Principal{User: "carol", Tool: principal.ToolScheduler})
 	create := func(typ, title string) string {
 		e := entity.New("", typ)
 		e.SetString("title", title)

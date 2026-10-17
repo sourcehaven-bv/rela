@@ -64,7 +64,7 @@ func verbStrings(verbs []acl.Verb) []string {
 // typed with stray whitespace.
 func (e *Engine) resolveEffective(ctx context.Context, raw string) (user, rawShown string, err error) {
 	raw = strings.TrimSpace(raw)
-	if id, rErr := e.resolver.ResolvePrincipal(ctx, raw); rErr != nil {
+	if id, rErr := e.resolver.IdentityResolver().ResolvePrincipal(ctx, raw); rErr != nil {
 		return "", "", rErr
 	} else if id != "" && id != raw {
 		return id, raw, nil
@@ -252,7 +252,7 @@ func (e *Engine) typeAccess(
 		return TypeAccess{}, false, err
 	}
 
-	ta.Faces = e.splitFaces(ctx, req, typ, verbs, baseline)
+	ta.Faces = e.splitFaces(req, typ, verbs, baseline)
 	if len(baseline) > 0 {
 		ta.Baseline = baseline
 	}
@@ -278,7 +278,7 @@ func (e *Engine) typeAccess(
 // through [acl.Request.RoleGrantsVerbOnFace], which applies the client
 // ceiling first. A faceless type returns nil and leaves baseline unchanged.
 func (e *Engine) splitFaces(
-	ctx context.Context, req *acl.Request, typ string, verbs []acl.Verb, baseline map[string][]Route,
+	req *acl.Request, typ string, verbs []acl.Verb, baseline map[string][]Route,
 ) map[string][]string {
 	faces := e.faces(typ)
 	if len(faces) == 0 {
@@ -288,7 +288,7 @@ func (e *Engine) splitFaces(
 	for _, verb := range verbs {
 		var held []entity.Face
 		for _, face := range faces {
-			if e.heldOnFace(ctx, req, verb, typ, face) {
+			if e.heldOnFace(req, verb, typ, face) {
 				held = append(held, face)
 			}
 		}
@@ -310,8 +310,8 @@ func (e *Engine) splitFaces(
 
 // heldOnFace reports whether a type-level role of the principal grants verb
 // on face of typ. See splitFaces for the roles asked.
-func (e *Engine) heldOnFace(ctx context.Context, req *acl.Request, verb acl.Verb, typ string, face entity.Face) bool {
-	for _, a := range req.Globals(ctx).Attributions {
+func (e *Engine) heldOnFace(req *acl.Request, verb acl.Verb, typ string, face entity.Face) bool {
+	for _, a := range req.Globals().Attributions {
 		if req.RoleGrantsVerbOnFace(a.Role, verb, typ, face) {
 			return true
 		}

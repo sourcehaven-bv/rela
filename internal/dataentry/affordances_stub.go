@@ -11,6 +11,7 @@ import (
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/relresolve"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -154,6 +155,11 @@ func (NopFieldVerdictResolver) FieldVisibleOnEveryRow(context.Context, string, s
 	return true
 }
 
+// SearchFieldScope is nil: this resolver hides nothing.
+func (NopFieldVerdictResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, nil //nolint:nilnil // nil scope is the documented "nothing hidden"
+}
+
 // DemoFieldVerdictResolver applies a fixed fixture against the
 // "ticket" entity type. The fixture is hand-picked to exercise every
 // affordance code path:
@@ -238,4 +244,12 @@ func (d DemoFieldVerdictResolver) UnconditionalRelationVerdicts(
 // ticket.priority, whose verdict depends on the type only.
 func (DemoFieldVerdictResolver) FieldVisibleOnEveryRow(_ context.Context, entityType, property string) bool {
 	return entityType != "ticket" || property != "priority"
+}
+
+// SearchFieldScope hides priority on every ticket, as FieldVerdicts does.
+func (DemoFieldVerdictResolver) SearchFieldScope(_ context.Context, entityType string) (*search.FieldScope, error) {
+	if entityType != "ticket" {
+		return nil, nil //nolint:nilnil // nil scope is the documented "nothing hidden"
+	}
+	return &search.FieldScope{Gated: []string{"priority"}}, nil
 }

@@ -2,9 +2,9 @@ request: PATCH /api/v1/tickets/TKT-3
 identity: header editor@example.test
 status: 200
 header ETag: "C9kf6UOLwUw="
-reads: GetEntity=2 ListEntities=1 ListEntityHeaders=3 ListRelations=4
-breadth: ListEntities=1/1 ListEntityHeaders=3/3 ListRelations=0/4
-bodies: GetEntity=0/2 ListEntities=0/1 ListEntityHeaders=0/3
+reads: GetEntity=2 ListEntities=1 ListEntityHeaders=1 ListRelations=1
+breadth: ListEntities=1/1 ListEntityHeaders=1/1 ListRelations=0/1
+bodies: GetEntity=0/2 ListEntities=0/1 ListEntityHeaders=0/1
 versions: 
 body:
 {

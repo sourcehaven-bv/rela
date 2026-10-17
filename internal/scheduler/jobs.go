@@ -179,9 +179,12 @@ func (s *Scheduler) runTaskJob(ctx context.Context, job jobs.Job) error {
 		// Unrunnable, and no retry would make a script path appear.
 		err = fmt.Errorf("scheduler: job %q carries no script", name)
 	} else {
-		err = s.runEngine(stampTaskAuditContext(ctx, name, runAs), TaskConfig{
-			Name: name, Script: script, RunAs: runAs, Capabilities: capabilitiesFromPayload(job.Payload),
-		})
+		var taskCtx context.Context
+		if taskCtx, err = s.taskContext(ctx, name, runAs); err == nil {
+			err = s.runEngine(taskCtx, TaskConfig{
+				Name: name, Script: script, RunAs: runAs, Capabilities: capabilitiesFromPayload(job.Payload),
+			})
+		}
 	}
 	s.finish(ctx, run, err)
 	return err

@@ -69,7 +69,7 @@ func createNote(t *testing.T, svc *appbuild.Services) *entity.Entity {
 
 func createNoteWith(t *testing.T, svc *appbuild.Services, props map[string]any) *entity.Entity {
 	t.Helper()
-	res, err := svc.EntityManager().CreateEntity(asAlice(), &entity.Entity{
+	res, err := svc.EntityManager().CreateEntity(asAlice(t, svc), &entity.Entity{
 		Type: "note", Properties: props,
 	}, entity.CreateOptions{ID: fmt.Sprintf("NOTE-%d", noteSeq.Add(1))})
 	require.NoError(t, err)
@@ -109,7 +109,7 @@ func TestBackgroundAction_QueueMode(t *testing.T) {
 	want := principal.UserAutomation + ":one"
 	require.Eventually(t, func() bool { return pushed(t, svc, e.ID) == want }, 10*time.Second, 20*time.Millisecond)
 
-	_, err = svc.EntityManager().PatchEntity(asAlice(), e.ID, entity.Patch{
+	_, err = svc.EntityManager().PatchEntity(asAlice(t, svc), e.ID, entity.Patch{
 		Properties: map[string]any{"title": "two"},
 	})
 	require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestBackgroundAction_RenameRetriggers(t *testing.T) {
 	e := createNote(t, svc)
 	clearPushed(t, svc, e)
 
-	_, err = svc.EntityManager().RenameEntity(asAlice(), e.ID, "NOTE-RENAMED", entity.RenameOptions{})
+	_, err = svc.EntityManager().RenameEntity(asAlice(t, svc), e.ID, "NOTE-RENAMED", entity.RenameOptions{})
 	require.NoError(t, err)
 	require.Equal(t, principal.UserAutomation+":one", pushed(t, svc, "NOTE-RENAMED"))
 }
@@ -157,7 +157,7 @@ func TestBackgroundAction_RenameReschedulesPendingCreate(t *testing.T) {
 	require.Eventually(t, func() bool { return pushed(t, svc, e.ID) == want }, 10*time.Second, 20*time.Millisecond)
 	clearPushed(t, svc, e)
 
-	_, err = svc.EntityManager().RenameEntity(asAlice(), e.ID, "NOTE-RENAMED", entity.RenameOptions{})
+	_, err = svc.EntityManager().RenameEntity(asAlice(t, svc), e.ID, "NOTE-RENAMED", entity.RenameOptions{})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return pushed(t, svc, "NOTE-RENAMED") == want },
 		10*time.Second, 20*time.Millisecond)
@@ -200,7 +200,7 @@ assignments:
 	clearPushed(t, svc, free)
 
 	for _, e := range []*entity.Entity{held, free} {
-		_, err = svc.EntityManager().RenameEntity(asAlice(), e.ID, e.ID+"-R", entity.RenameOptions{})
+		_, err = svc.EntityManager().RenameEntity(asAlice(t, svc), e.ID, e.ID+"-R", entity.RenameOptions{})
 		require.NoError(t, err)
 	}
 	require.Empty(t, pushed(t, svc, held.ID+"-R"), "a hidden value must not flip the condition")

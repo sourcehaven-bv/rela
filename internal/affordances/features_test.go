@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
@@ -85,7 +87,7 @@ assignments:
 	tkt.SetString("internal_notes", "customer threatening to leave")
 	mustCreate(t, ms, tkt)
 
-	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -95,8 +97,8 @@ assignments:
 		t.Fatalf("affordances.New: %v", err)
 	}
 
-	ctx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	ctx := acltest.Bind(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, declarative)
 	verdict := resolver.FieldVerdicts(ctx, tkt)
 
 	// internal_notes is closed-world denied; title and status are
@@ -158,7 +160,7 @@ assignments:
 	tkt.SetString("status", "open")
 	mustCreate(t, ms, tkt)
 
-	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -168,8 +170,8 @@ assignments:
 		t.Fatalf("affordances.New: %v", err)
 	}
 
-	ctx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	ctx := acltest.Bind(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, declarative)
 	verdict := resolver.FieldVerdicts(ctx, tkt)
 
 	for _, name := range []string{"title", "status"} {
@@ -181,21 +183,15 @@ assignments:
 	}
 }
 
-// TestFeature_UnstampedEveryone pins `everyone` role semantics: an
-// unstamped principal still picks up `everyone` if the policy declares
-// it. acl.Declarative.ForPrincipal errors on unstamped, but the
-// resolveViaDeclarative fallback adds `everyone` explicitly so
-// anonymous-readable workspaces work.
+// TestFeature_UnstampedFailsClosed pins that an unstamped principal gets
+// no affordances, not the `everyone` role. Identity is resolved at the
+// request edge, and an unstamped principal cannot be resolved, so no request
+// scope is bound. The resolver does not invent one: every field is hidden.
 //
-// Scenario. The policy declares the `everyone` role with `read:
-// [ticket]` and `visible:` granting only the `title` field. A request
-// with no principal stamp (User=""/"unknown") arrives — perhaps from
-// a misconfigured proxy or a public anonymous-readable workspace.
-// The affordance verdict should still apply the `everyone` role's
-// visibility rules. Without this, anonymous-readable workspaces
-// (which the design doc calls out as a supported case) silently
-// degrade to "no role at all".
-func TestFeature_UnstampedEveryone(t *testing.T) {
+// Before identity resolution moved to the edge, the resolver added
+// `everyone` itself for this case. No transport relied on it: the data-entry
+// API already refuses an unstamped principal under an ACL with a 500.
+func TestFeature_UnstampedFailsClosed(t *testing.T) {
 	t.Parallel()
 	meta := &metamodel.Metamodel{
 		Entities: map[string]metamodel.EntityDef{
@@ -226,7 +222,7 @@ roles:
 	tkt.SetString("internal_notes", "hidden")
 	mustCreate(t, ms, tkt)
 
-	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -236,17 +232,14 @@ roles:
 		t.Fatalf("affordances.New: %v", err)
 	}
 
-	// Unstamped: User="" → ForPrincipal errors, but everyone should
-	// still apply.
-	ctx := context.Background()
-	verdict := resolver.FieldVerdicts(ctx, tkt)
-
-	// internal_notes should be hidden (closed-world); title visible.
-	if v, present := verdict.Visible["internal_notes"]; !present || v {
-		t.Errorf("Visible[internal_notes] = (%v, present=%v); want (false, present=true) — everyone applies to unstamped", v, present)
-	}
-	if _, present := verdict.Visible["title"]; present {
-		t.Errorf("Visible[title] should be absent (visible-by-default); got entry in map")
+	// Unstamped: no identity can be resolved, so no request scope is
+	// bound. Every field is hidden, including the one `everyone` grants.
+	verdict := resolver.FieldVerdicts(context.Background(), tkt)
+	for _, field := range []string{"internal_notes", "title"} {
+		if v, present := verdict.Visible[field]; !present || v {
+			t.Errorf("Visible[%s] = (%v, present=%v); want (false, present=true): no identity fails closed",
+				field, v, present)
+		}
 	}
 }
 
@@ -268,11 +261,11 @@ roles:
 //  1. Write path: authorize OpUpdate on TKT-001. Allow with RuleID
 //     "editor" — only the editor role grants write on ticket, and
 //     editor flows in only via the per-entity edge.
-//  2. Affordance path: editor role declares a `visible:` grant on
-//     internal_notes ONLY when has_role(..., "editor"). Under the
-//     correct wiring, the affordance resolver picks up editor for
-//     Alice on TKT-001, the predicate passes, and the field is
-//     visible (absent from the deny-map under closed-world).
+//  2. Affordance path: the everyone role closes ticket with a
+//     `visible:` block of title only, and the editor role adds
+//     internal_notes. Under the correct wiring, the affordance resolver
+//     picks up editor for Alice on TKT-001 and the field is visible
+//     (absent from the deny-map under closed-world).
 //
 // A regression where affordances.New ignored its injected Declarative
 // would fail (2): the resolver would not see editor for Alice on
@@ -306,7 +299,10 @@ roles:
     visible:
       ticket:
         - field: internal_notes
-          when: 'has_role(current_user, entity, "editor")'
+  everyone:
+    visible:
+      ticket:
+        - field: title
 role_relations:
   editor-of:
     confers: editor
@@ -325,7 +321,7 @@ role_relations:
 	// assignment — this is the ONLY path that confers editor.
 	mustCreateRelation(t, ms, "alice", "editor-of", "TKT-001")
 
-	declarative, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -334,8 +330,8 @@ role_relations:
 		t.Fatalf("affordances.New: %v", err)
 	}
 
-	aliceCtx := principal.With(context.Background(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	aliceCtx := acltest.Bind(principal.With(context.Background(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, declarative)
 
 	// (1) Write path: deny without the per-entity edge would mean
 	// editor doesn't apply; allow with RuleID=editor confirms the
@@ -352,9 +348,8 @@ role_relations:
 	}
 
 	// (2) Affordance path: internal_notes should be VISIBLE because
-	// the predicate has_role(current_user, entity, "editor") passes —
 	// the resolver attributes editor to Alice on TKT-001 via the
-	// per-entity edge. Pre-fix or under a regression that ignored
+	// per-entity edge, and editor's `visible:` block grants it. Pre-fix or under a regression that ignored
 	// the injected Declarative, internal_notes would be hidden
 	// (present in the deny-map with false), because no other path
 	// confers editor.
@@ -433,7 +428,7 @@ func TestFeature_HasRole_AncestorConferred(t *testing.T) {
 roles:
   editor:
     read: [document]
-    visible:
+    fields:
       document:
         - field: internal_notes
           when: '` + tc.when + `'
@@ -446,7 +441,7 @@ inherit_roles_through:
 			if err != nil {
 				t.Fatalf("LoadPolicyBytes: %v", err)
 			}
-			d, err := acl.NewDeclarative(policy, acl.NewStoreGraph(ms), ms)
+			d, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 			if err != nil {
 				t.Fatalf("NewDeclarative: %v", err)
 			}
@@ -454,13 +449,15 @@ inherit_roles_through:
 			if err != nil {
 				t.Fatalf("affordances.New: %v", err)
 			}
-			ctx := principal.With(context.Background(),
-				principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+			ctx := acltest.Bind(principal.With(context.Background(),
+				principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, d)
 			verdict := resolver.FieldVerdicts(ctx, dsecret)
 
-			_, denied := verdict.Visible["internal_notes"]
+			// A `fields:` block: has_role does not lower to a store query, so a
+			// `visible:` condition may not use it (TestNew_VisibleWhenMustLower).
+			_, denied := verdict.Writable["internal_notes"]
 			if denied != tc.wantVisible {
-				t.Errorf("Visible[internal_notes] presence = %v; want %v (verdict=%+v)",
+				t.Errorf("Writable[internal_notes] presence = %v; want %v (verdict=%+v)",
 					denied, tc.wantVisible, verdict)
 			}
 		})

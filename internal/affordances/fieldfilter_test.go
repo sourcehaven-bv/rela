@@ -12,7 +12,7 @@ import (
 
 // TestFieldVisibleOnEveryRow_ResolvesRequestScope pins that the rule reads the
 // same global roles and client ceiling that FieldVerdicts uses (BUG-WJSYQT),
-// whether or not the acl.Request is already on ctx.
+// and refuses when no acl.Request is on ctx.
 func TestFieldVisibleOnEveryRow_ResolvesRequestScope(t *testing.T) {
 	t.Parallel()
 	w := newCeilingWorld(t, hrCanSeeEverything+`
@@ -32,7 +32,7 @@ client_baselines:
 		{"user sees every field", "user", "salary", true},
 		{"ceiling hides a field", "app", "salary", false},
 		{"ceiling leaves other fields", "app", "email", true},
-		{"ceiling applies without a request on ctx", "bare app", "salary", false},
+		{"no request on ctx refuses", "bare app", "salary", false},
 		{"undeclared property is never hidden", "app", "nickname", true},
 	}
 	for _, tc := range cases {
@@ -49,9 +49,10 @@ client_baselines:
 	}
 }
 
-// TestFieldVisibleOnEveryRow_UnstampedCaller pins the fallback for a caller
-// with no verified principal: only the `everyone` role applies.
-func TestFieldVisibleOnEveryRow_UnstampedCaller(t *testing.T) {
+// TestFieldVisibleOnEveryRow_NoIdentityRefuses pins that a caller with no
+// Request bound to ctx may not filter or sort on a declared field, even one
+// the `everyone` role shows. FieldVerdicts denies every field then too.
+func TestFieldVisibleOnEveryRow_NoIdentityRefuses(t *testing.T) {
 	t.Parallel()
 	w := newCeilingWorld(t, `
 roles:
@@ -63,10 +64,13 @@ roles:
 `)
 	ctx := context.Background()
 	if w.resolver.FieldVisibleOnEveryRow(ctx, "person", "salary") {
-		t.Error("salary: want hidden, the everyone role does not grant it")
+		t.Error("salary: want refused, no identity is bound")
 	}
-	if !w.resolver.FieldVisibleOnEveryRow(ctx, "person", "name") {
-		t.Error("name: want visible, the everyone role grants it")
+	if w.resolver.FieldVisibleOnEveryRow(ctx, "person", "name") {
+		t.Error("name: want refused, no identity is bound")
+	}
+	if !w.resolver.FieldVisibleOnEveryRow(ctx, "person", "nickname") {
+		t.Error("nickname: want visible, the type does not declare it")
 	}
 }
 
@@ -144,11 +148,11 @@ func TestFieldVisibleOnEveryRow_NeverContradictsFieldVerdicts(t *testing.T) {
 
 	for _, user := range users {
 		for property := range testMeta(t).Entities["ticket"].Properties {
-			if !r.FieldVisibleOnEveryRow(ctxAs(user), "ticket", property) {
+			if !r.FieldVisibleOnEveryRow(ctxFor(t, r, user), "ticket", property) {
 				continue
 			}
 			for _, row := range rows {
-				if _, hidden := r.FieldVerdicts(ctxAs(user), row).Visible[property]; hidden {
+				if _, hidden := r.FieldVerdicts(ctxFor(t, r, user), row).Visible[property]; hidden {
 					t.Errorf("%s: gate allows %q, but FieldVerdicts hides it on %s", user, property, row.ID)
 				}
 			}
@@ -175,7 +179,7 @@ func TestFieldVisibleOnEveryRow_NeverContradictsFieldVerdicts(t *testing.T) {
 		{"alice", "title", true},
 		{"nobody", "status", false},
 	} {
-		if got := r.FieldVisibleOnEveryRow(ctxAs(tc.user), "ticket", tc.property); got != tc.want {
+		if got := r.FieldVisibleOnEveryRow(ctxFor(t, r, tc.user), "ticket", tc.property); got != tc.want {
 			t.Errorf("%s on %q = %v, want %v", tc.user, tc.property, got, tc.want)
 		}
 	}
@@ -202,7 +206,7 @@ assignments:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if !r.FieldVisibleOnEveryRow(ctxAs("olga"), "ticket", "status") {
+	if !r.FieldVisibleOnEveryRow(ctxFor(t, r, "olga"), "ticket", "status") {
 		t.Error("olga reads no tickets: want the gate to pass, so the list is an empty 200")
 	}
 }

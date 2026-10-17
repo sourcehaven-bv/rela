@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -82,8 +83,8 @@ func rejectApp(t *testing.T, mode string) *App {
 	// appbuildtest.New makes a fresh memstore, so the store must be built once
 	// and injected via WithStore into both the Declarative and the bundle.)
 	st := memstore.New()
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(st)))
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(st)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

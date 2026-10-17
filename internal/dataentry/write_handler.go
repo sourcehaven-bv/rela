@@ -77,6 +77,28 @@ type entityMutator interface {
 	PatchEntity(
 		ctx context.Context, id string, patch entityPkg.Patch,
 	) (*entityPkg.UpdateResult, error)
+
+	// AuthorizeUpdate is the manager's own update check, read gate first,
+	// X	// through the grant it returns. See entitymanager.Manager.AuthorizeUpdate.
+	AuthorizeUpdate(ctx context.Context, row *entityPkg.Entity) (entitymanager.UpdateGrant, error)
+
+	// PatchGranted is PatchEntity for the row grant names, without asking
+	// the ACL again. See entitymanager.UpdateGrant.PatchEntity.
+	PatchGranted(
+		ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+	) (*entityPkg.UpdateResult, error)
+}
+
+// grantedManager is the production [entityMutator]: the manager, plus the
+// granted write as a method, so tests can wrap it like any other write.
+type grantedManager struct{ *entitymanager.Manager }
+
+// PatchGranted writes through the grant. The grant names its own manager,
+// which in production is the embedded one.
+func (grantedManager) PatchGranted(
+	ctx context.Context, grant entitymanager.UpdateGrant, id string, patch entityPkg.Patch,
+) (*entityPkg.UpdateResult, error) {
+	return grant.PatchEntity(ctx, id, patch)
 }
 
 // writeHandler owns the data-entry write nucleus: the entity/relation CRUD
@@ -143,11 +165,11 @@ type writeHandler struct {
 		ctx context.Context, w http.ResponseWriter, target *entityPkg.Entity, denial AffordanceDenialError,
 	)
 	computeETag func(ctx context.Context, e *entityPkg.Entity) string
-	// faceEdges is [servedFaceEdges] bound to the App's neighbor wiring: the
-	// outgoing edges of the face an entity IS, with the neighbor ids the
-	// caller may see. The write path answers with the row it wrote, so it
-	// owes the row's own edges, not the bare id's union of every face's.
-	faceEdges func(ctx context.Context, e *entityPkg.Entity) ([]*entityPkg.Relation, map[string]bool, error)
+	// faceEdges is the App's gated face-edge read: the outgoing edges of the
+	// face an entity IS, with the neighbor ids the caller may see. The write
+	// path answers with the row it wrote, so it owes the row's own edges, not
+	// the bare id's union of every face's.
+	faceEdges faceEdgeReader
 	// readVisible is [visibleReader.addressRef]: the GET's gated read,
 	// for re-reading a row after a write whose outcome may have hidden it.
 	readVisible func(ctx context.Context, typeName string, ref entityPkg.Ref) (*entityPkg.Entity, bool, error)
@@ -439,7 +461,10 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	entityDef, defOK := h.schema().Meta.Entities[typeName]
+	// One schema snapshot for the whole request, so a reload cannot change
+	// the metamodel between the type check and the response.
+	s := h.schema()
+	entityDef, defOK := s.Meta.Entities[typeName]
 	if !defOK {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "Entity type not found", typeName)
 		return
@@ -509,15 +534,16 @@ func (h *writeHandler) handleV1CreateEntity(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// The created face's own edges (BUG-ISJHML), through the neighbor gate
-	// the GET uses. A raw read would name a neighbor the caller cannot see,
-	// such as one an on-create automation linked.
-	rels, visibleNeighbors, rerr := h.faceEdges(r.Context(), created)
+	// The created face's own edges, read through the same face-scoped,
+	// neighbor-gated seam the GET uses (BUG-ISJHML). A raw read here would
+	// name a neighbor the caller cannot see, such as one an on-create
+	// automation linked.
+	rels, visibleNeighbors, rerr := h.faceEdges.read(r.Context(), created)
 	if rerr != nil {
 		writeGateError(w, r, rerr)
 		return
 	}
-	result := h.serializer.forWireScoped(r.Context(), created, rels, visibleNeighbors, h.schema().Meta, plural)
+	result := h.serializer.forWireScoped(r.Context(), created, rels, visibleNeighbors, s.Meta, plural)
 	if len(relWarnings) > 0 {
 		result.Warnings = append(result.Warnings, relWarnings...)
 	}
@@ -726,17 +752,34 @@ func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
 	writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Validation failed", err.Error())
 }
 
+// writeEarlyUpdateError answers an error from the PATCH's early
+// [entityMutator.AuthorizeUpdate]. A row the manager's read gate refuses is
+// the uniform 404 the resolver read gives, so the early check cannot tell a
+// hidden row from a missing one. A denial is the write's 403. Anything else
+// is a failed gate query.
+func writeEarlyUpdateError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeForbiddenIfACLDenied(w, err) {
+		return
+	}
+	if errors.Is(err, entitymanager.ErrEntityNotFound) {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+	writeGateError(w, r, err)
+}
+
 // currentVersions returns the field tokens of e as this caller sees it: the
 // same face-scoped edges and redaction the GET applies.
 func (h *writeHandler) currentVersions(
 	ctx context.Context, e *entityPkg.Entity, plural string,
 ) (*v1.FieldVersions, error) {
-	rels, visible, err := h.faceEdges(ctx, e)
+	rels, visible, err := h.faceEdges.read(ctx, e)
 	if err != nil {
 		return nil, err
 	}
-	view := h.serializer.forWireScoped(ctx, e, rels, visible, h.schema().Meta, plural)
-	return fieldVersionsOf(&view, h.schema().Meta), nil
+	meta := h.schema().Meta
+	view := h.serializer.forWireScoped(ctx, e, rels, visible, meta, plural)
+	return fieldVersionsOf(&view, meta), nil
 }
 
 // visibleStored re-reads the row at ref through the GET's row and face
@@ -857,9 +900,10 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// bare id edits the one face the default world admits and the caller
 	// may read, else 422 `face_required` (TKT-7IZHP0 §6).
 	//
-	// The resolver read runs BEFORE body parse, If-Match and IsLocked (RR-FGUZ,
-	// RR-NGMI), so "exists but hidden" and "denied face" answer the same 404 as
-	// "absent". A 400, 403, 412 or 422 here would be an existence oracle.
+	// The resolver read runs BEFORE body parse, authorization, If-Match and
+	// IsLocked (RR-FGUZ, RR-NGMI), so "exists but hidden" and "denied face"
+	// answer the same 404 as "absent". A 400, 403, 412 or 422 here would be an
+	// existence oracle.
 	entity, found := writeTargetOr404(w, r, h.visible, typeName, entityID)
 	if !found {
 		return
@@ -873,17 +917,6 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		writeV1Error(w, r, http.StatusUnprocessableEntity, "encrypted_inaccessible",
 			"Cannot edit an inaccessible entity", "File is git-crypt encrypted; run `git-crypt unlock` first.")
 		return
-	}
-
-	// Check If-Match for optimistic locking
-	ifMatch := r.Header.Get("If-Match")
-	if ifMatch != "" {
-		currentETag := h.computeETag(r.Context(), entity)
-		if ifMatch != currentETag {
-			writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
-				"Entity has been modified", "ETag mismatch")
-			return
-		}
 	}
 
 	var req struct {
@@ -905,6 +938,33 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		}
 		writeV1Error(w, r, http.StatusBadRequest, "invalid_json", "Invalid JSON body", err.Error())
 		return
+	}
+
+	// Authorize the entity write before any further work, so a denied
+	// caller does not cost an ETag, affordance verdicts and relation
+	// validation first. The patch below writes through the grant this
+	// returns, so the update is authorized once, here. It runs after the
+	// resolver read, so a hidden entity is still the uniform 404, never a
+	// 403. A relations-only PATCH is not an entity update: its edges are
+	// authorized one by one by the manager.
+	entityChanged := req.Properties != nil || len(req.PropertiesUnset) > 0 || req.Content != nil
+	var grant entitymanager.UpdateGrant
+	if entityChanged {
+		g, err := h.manager.AuthorizeUpdate(r.Context(), entity)
+		if err != nil {
+			writeEarlyUpdateError(w, r, err)
+			return
+		}
+		grant = g
+	}
+
+	// Check If-Match for optimistic locking
+	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
+		if ifMatch != h.computeETag(r.Context(), entity) {
+			writeV1Error(w, r, http.StatusPreconditionFailed, "precondition_failed",
+				"Entity has been modified", "ETag mismatch")
+			return
+		}
 	}
 
 	// Affordance parity (TKT-G7N5): reject writes that conflict with
@@ -982,7 +1042,6 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
-	entityChanged := req.Properties != nil || len(req.PropertiesUnset) > 0 || req.Content != nil
 	if entityChanged {
 		// PatchEntity + ExpectedVersion, NOT a read-modify-write into
 		// UpdateEntity (TKT-34XS2R). Two things change:
@@ -1010,7 +1069,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 		// default face — so a write to POL-1@published would be authorized
 		// (and applied) against POL-1's default state instead.
 		stateRef := entityPkg.FormatStateRef(entity.ID, entity.Face)
-		updateResult, err := h.manager.PatchEntity(r.Context(), stateRef, patch)
+		updateResult, err := h.manager.PatchGranted(r.Context(), grant, stateRef, patch)
 		if err != nil {
 			if req.Preconditions != nil && h.writeLostRace(w, r, err, req.Preconditions, typeName, ref, plural) {
 				return
@@ -1049,7 +1108,7 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	// answer with the draft's links beside it — the mixed-face response the
 	// seam exists to prevent, on a body the SPA feeds straight back into its
 	// relation editor.
-	rels, visibleNeighbors, rerr := h.faceEdges(r.Context(), entity)
+	rels, visibleNeighbors, rerr := h.faceEdges.read(r.Context(), entity)
 	if rerr != nil {
 		writeGateError(w, r, rerr)
 		return
@@ -1065,15 +1124,19 @@ func (h *writeHandler) handleV1UpdateEntity(w http.ResponseWriter, r *http.Reque
 	if !versioned {
 		served = entity
 	}
-	result := h.serializer.forWireScoped(r.Context(), served, rels, visibleNeighbors, h.schema().Meta, plural)
+	result := h.serializer.forWireScoped(r.Context(), served, rels, visibleNeighbors, s.Meta, plural)
 	if len(warnings) > 0 {
 		result.Warnings = warnings
 	}
 	if versioned {
-		result.Versions = fieldVersionsOf(&result, h.schema().Meta)
+		result.Versions = fieldVersionsOf(&result, s.Meta)
 	}
-	newETag := h.computeETag(r.Context(), served)
-	w.Header().Set("ETag", newETag)
+	// The validator hashes the edges the body carries, read once above. A
+	// second read here would rebuild the edge set and its gate pass, and
+	// could describe a different edge set than the body it validates.
+	// servedETag leaves out the fields this caller cannot see, so the ETag
+	// equals the one a GET returns and the caller's next If-Match matches.
+	w.Header().Set("ETag", servedETag(r.Context(), h.affordances, served, rels))
 
 	// SSE broadcast is driven by the store-event bridge: an entity update only
 	// fires EventEntityUpdated when the store's entity row actually changed,

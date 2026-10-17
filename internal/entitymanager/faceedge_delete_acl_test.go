@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/audit"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
@@ -108,7 +109,7 @@ func newFaceEdgeFixtureWith(t *testing.T, b concBackend, guard entitymanager.Anc
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestDeleteEntityFace_ContentEdgeAuthorizedByItsTail(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
 
-			res, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true)
+			res, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("drafter"), t, f.mgr), "POL-1", "draft", true)
 			if err != nil {
 				t.Fatalf("DeleteEntityFace POL-1@draft as drafter: %v", err)
 			}
@@ -204,7 +205,7 @@ func TestDeleteEntityFace_ContentEdgeDeniedWritesNothing(t *testing.T) {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
 
-			_, err := f.mgr.DeleteEntityFace(asUser("gated-drafter"), "POL-1", "draft", true)
+			_, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("gated-drafter"), t, f.mgr), "POL-1", "draft", true)
 
 			var forbidden *acl.ForbiddenError
 			if !errors.As(err, &forbidden) {
@@ -234,7 +235,7 @@ func TestDelete_CascadeResolvesEdgeSourceType(t *testing.T) {
 	for _, b := range deleteACLBackends() {
 		t.Run(b.name+"/family", func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
-			res, err := f.mgr.DeleteEntity(asUser("admin"), "POL-1", true)
+			res, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser("admin"), t, f.mgr), "POL-1", true)
 			if err != nil {
 				t.Fatalf("family DeleteEntity POL-1 as admin: %v", err)
 			}
@@ -245,7 +246,7 @@ func TestDelete_CascadeResolvesEdgeSourceType(t *testing.T) {
 		})
 		t.Run(b.name+"/faceless-target", func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
-			res, err := f.mgr.DeleteEntity(asUser("admin"), "CTL-1", true)
+			res, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser("admin"), t, f.mgr), "CTL-1", true)
 			if err != nil {
 				t.Fatalf("DeleteEntity CTL-1 as admin: %v", err)
 			}
@@ -299,7 +300,7 @@ func TestDelete_CascadeSourceFallback(t *testing.T) {
 					t.Skipf("%s refuses the seed edge: %v", b.name, err)
 				}
 
-				_, err := f.mgr.DeleteEntity(asUser("admin"), ctl.ID, true)
+				_, err := f.mgr.DeleteEntity(entitymanager.BindAs(asUser("admin"), t, f.mgr), ctl.ID, true)
 
 				var forbidden *acl.ForbiddenError
 				switch {
@@ -353,7 +354,7 @@ func TestDeleteEntityFace_SourceReadErrorAborts(t *testing.T) {
 		t.Fatalf("entitymanager.New: %v", err)
 	}
 
-	_, err = mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", true)
+	_, err = mgr.DeleteEntityFace(entitymanager.BindAs(asUser("drafter"), t, mgr), "POL-1", "draft", true)
 
 	if !errors.Is(err, errTailRead) {
 		t.Fatalf("DeleteEntityFace = %v, want the tail read error", err)

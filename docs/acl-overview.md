@@ -26,15 +26,17 @@ graph TD
     end
 
     Policy -->|NewDeclarative| Declarative
-    Graph -->|NewStoreGraph| Declarative
+    Graph -->|aclstore.NewGraph| Declarative
 
     subgraph PerRequest [Per HTTP request]
         Middleware[attachACLRequest middleware]
-        Request["*acl.Request<br/>(per-call scope<br/>caches member-of walk)"]
+        Identity["acl.Identity<br/>(principal + member-of closure)"]
+        Request["*acl.Request<br/>(per-call scope<br/>roles from the Identity)"]
         Resolver{Resolver}
     end
 
-    Middleware -->|d.ForPrincipal p| Request
+    Middleware -->|IdentityResolver.Resolve p| Identity
+    Identity -->|d.ForIdentity| Request
     Declarative -.references.-> Middleware
 
     subgraph WriteCall [Per write call]
@@ -72,17 +74,17 @@ sequenceDiagram
 
     SPA->>Router: PATCH /api/v1/tickets/TKT-001
     Router->>Mid: handler chain
-    Mid->>D: d.ForPrincipal(principal.From(ctx))
-    D-->>Mid: *Request (member-of not yet walked)
+    Mid->>Graph: IdentityResolver.Resolve(principal.From(ctx))<br/>OutgoingRelations(user, "member-of"), once
+    Graph-->>Mid: members closure (acl.Identity)
+    Mid->>D: d.ForIdentity(identity)
+    D-->>Mid: *Request (global roles computed, no graph read)
     Mid->>Router: ctx = acl.WithRequest(ctx, req)
     Router->>EM: UpdateEntity(ctx, e, opts)
     EM->>D: AuthorizeWrite({Op: Update, Subject: EntitySubject{TKT-001}})
 
     rect rgb(240, 248, 255)
-        note right of D: Per-request scope —<br/>walks happen once.
+        note right of D: Per-request scope.<br/>The member-of walk already ran at the edge.
         D->>Res: Request.ForEntity(ctx, "ticket", "TKT-001")
-        Res->>Graph: OutgoingRelations(user, "member-of")<br/>(cached after first call)
-        Graph-->>Res: members closure
         Res->>Graph: OutgoingRelations(entity, inherit_roles_through)
         Graph-->>Res: ancestor chain
         Res->>Graph: HasEdge(member, rel-type, target)<br/>for each (member, target) ∈ members × chain
@@ -99,6 +101,17 @@ sequenceDiagram
 The single `Request` is what makes the per-list response viable: a
 list of 50 tickets reuses one member-of walk and one ancestor chain
 per ticket, instead of re-walking 50× from scratch.
+
+Identity resolution is an explicit step at the request edge. Each
+transport (data-entry, MCP, the scheduler, the CLI, Lua) resolves the
+principal once with `IdentityResolver`, calls `Declarative.ForIdentity`,
+and attaches the `Request` with `acl.WithRequest`. Nothing caches an
+identity across requests, so a membership change applies on the next
+request. Code below the edge reads the attached `Request`. If there is
+none, it fails closed: affordances deny every field and relation, and
+the visibility gate returns `acl.ErrNoIdentity`. The evaluator never
+walks membership itself; `TestEvaluatorDoesNotResolveIdentity` in
+`internal/acl` enforces this.
 
 ## A worked acl.yaml
 

@@ -100,16 +100,29 @@ func (h *commentsHandler) commentPolicy() metamodel.CommentPolicy {
 // relation TO THE COMMENTED-ON ENTITY is honored, not just a global grant. That
 // is what lets "the assignee may comment on their own ticket" be expressed
 // without any special case here.
-type commentPermissionGate struct{ policyActive bool }
+//
+// active reports whether a declarative policy is configured; without one the
+// gate is inert. policy is that policy. Nil policy while active: accepted —
+// a typed-nil policy is a wiring bug, and the gate denies.
+type commentPermissionGate struct {
+	policy *acl.Declarative
+	active bool
+}
 
 func (g commentPermissionGate) HoldsPermission(ctx context.Context, subjectID, permission string) bool {
-	req := acl.FromContext(ctx)
-	if req == nil {
-		// Mirrors the statemachine transition guard (appbuild/transitions.go):
-		// inert when no policy exists at all, fail CLOSED when one does but the
-		// Request is missing — a served path that lost its middleware must not
-		// silently open commenting.
-		return !g.policyActive
+	if !g.active {
+		return true
+	}
+	if g.policy == nil {
+		return false
+	}
+	// Mirrors the statemachine transition guard (appbuild/transitions.go):
+	// inert when no policy exists at all, fail CLOSED when one does but the
+	// Request is missing or bound to another principal — a served path that
+	// lost its middleware must not silently open commenting.
+	req, err := g.policy.RequestFrom(ctx)
+	if err != nil {
+		return false
 	}
 	return req.HoldsPermissionForEntity(ctx, subjectID, permission)
 }
@@ -134,24 +147,26 @@ func (commentReadGate) CanRead(ctx context.Context, entityType, entityID string)
 // request-scoped itself, but the gates it holds read the ACL from ctx, and a
 // cached authorizer would invite someone to give it request state later.
 func (h *commentsHandler) commentAuthorizer() *comments.Authorizer {
-	active := h.aclPolicyActive()
-	return comments.NewAuthorizer(commentPermissionGate{policyActive: active}, commentReadGate{}, active)
+	policy, active := h.aclPolicy()
+	return comments.NewAuthorizer(commentPermissionGate{policy: policy, active: active}, commentReadGate{}, active)
 }
 
-// aclPolicyActive reports whether per-principal comment permissions are
-// enforced.
+// aclPolicy returns the declarative policy, and whether per-principal comment
+// permissions are enforced.
 //
-// True only for a declarative policy — the deployment that actually has roles
-// and permissions to evaluate. [acl.NopACL] and [acl.ReadOnlyACL] both leave
-// this false: neither carries a role model, so demanding `comment:read` under
+// Active only for a declarative policy — the deployment that actually has roles
+// and permissions to evaluate. A typed-nil policy is active with a nil policy,
+// so the gate fails closed on that wiring bug. [acl.NopACL] and
+// [acl.ReadOnlyACL] both leave it inactive: neither carries a role model, so demanding `comment:read` under
 // them would deny every request rather than authorize anything.
 //
 // ReadOnlyACL's write refusal is enforced separately by
 // commentWritesPermitted, NOT by pretending it is a permission policy:
 // it is a process-wide switch, and conflating the two made read-only instances
 // refuse comment READS as well.
-func (h *commentsHandler) aclPolicyActive() bool {
-	return access.ModeOf(h.acl()).PolicyConfigured()
+func (h *commentsHandler) aclPolicy() (policy *acl.Declarative, active bool) {
+	policy, _ = h.acl().(*acl.Declarative)
+	return policy, access.ModeOf(h.acl()).PolicyConfigured()
 }
 
 // commentWritesPermitted reports whether this instance accepts comment writes

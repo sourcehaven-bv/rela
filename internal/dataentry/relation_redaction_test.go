@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -42,8 +44,8 @@ assignments:
 func getRelations(t *testing.T, app *App, user, typeName, id string) map[string][]map[string]any {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/"+id+"/relations", http.NoBody)
-	req = req.WithContext(principal.With(req.Context(),
-		principal.Principal{User: user, Tool: principal.ToolDataEntry}))
+	req = req.WithContext(acltest.Bind(principal.With(req.Context(),
+		principal.Principal{User: user, Tool: principal.ToolDataEntry}), t, app.acl))
 	rec := httptest.NewRecorder()
 	app.handleV1EntityRelations(rec, req, typeName, id)
 	if rec.Code != http.StatusOK {
@@ -95,8 +97,8 @@ func TestRelationRedaction_LiveIncoming_UsesSourceGrant(t *testing.T) {
 	// View from TKT-002 (the TO side): the incoming edge appears under the inverse
 	// key. The grant is keyed on TKT-001's type, resolved against the edge's source.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tickets/TKT-002/relations", http.NoBody)
-	req = req.WithContext(principal.With(req.Context(),
-		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
+	req = req.WithContext(acltest.Bind(principal.With(req.Context(),
+		principal.Principal{User: "alice", Tool: principal.ToolDataEntry}), t, app.acl))
 	rec := httptest.NewRecorder()
 	app.handleV1EntityRelations(rec, req, "ticket", "TKT-002")
 	if rec.Code != http.StatusOK {
@@ -229,7 +231,7 @@ func getRelHistoryMetaAs(t *testing.T, app *App, user string) map[string]any {
 	perms := map[string]bool{acl.PermHistoryRead: true}
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/_relation_history/ticket/alice/depends_on/acme/1", http.NoBody)
-	ctx := principal.With(req.Context(), principal.Principal{User: user, Tool: principal.ToolDataEntry})
+	ctx := acltest.Bind(principal.With(req.Context(), principal.Principal{User: user, Tool: principal.ToolDataEntry}), t, app.acl)
 	ctx = withReadGate(ctx, permGate{perms: perms})
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -363,7 +365,7 @@ assignments:
 			}
 			req := httptest.NewRequest(http.MethodGet,
 				"/api/v1/_relation_history/"+tc.fromType+"/GONE-A/depends_on/GONE-B/1", http.NoBody)
-			ctx := principal.With(req.Context(), principal.Principal{User: "hr_reader", Tool: principal.ToolDataEntry})
+			ctx := acltest.Bind(principal.With(req.Context(), principal.Principal{User: "hr_reader", Tool: principal.ToolDataEntry}), t, app.acl)
 			ctx = withReadGate(ctx, permGate{perms: perms})
 			req = req.WithContext(ctx)
 			rec := httptest.NewRecorder()
@@ -447,7 +449,7 @@ func TestRelHistoryRestore_ReadsRawMeta_PreservesHidden(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v1/_relation_history/ticket/alice/depends_on/acme/1/restore", http.NoBody)
-	ctx := principal.With(req.Context(), principal.Principal{User: "plain_reader", Tool: principal.ToolDataEntry})
+	ctx := acltest.Bind(principal.With(req.Context(), principal.Principal{User: "plain_reader", Tool: principal.ToolDataEntry}), t, app.acl)
 	ctx = withReadGate(ctx, permGate{perms: map[string]bool{acl.PermHistoryRead: true}})
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()

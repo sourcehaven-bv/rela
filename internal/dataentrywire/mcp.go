@@ -82,7 +82,7 @@ func RemoteMCPServer(svc *appbuild.Services, host dataentry.MCPHost, version str
 
 // RemoteMCPDeps builds the MCP dependencies for the remote endpoint. Every
 // read handle, including search, comes from [appbuild.Services.GatedReads].
-// LuaWriteDeps and LuaCache stay zero because the remote server has no Lua
+// Lua stays zero because the remote server has no Lua
 // tools.
 //
 // A bare id resolves in the compiled default world, as on the data-entry API

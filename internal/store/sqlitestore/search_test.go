@@ -186,6 +186,15 @@ CREATE TRIGGER entity_search_delete AFTER DELETE ON entities BEGIN
 END;
 INSERT INTO entity_search(rowid, body) SELECT rowid, id || char(10) || content FROM entities;`
 
+// foldingSearchIndex is the v13 to v19 index: keyed, but with a tokenizer
+// that folds case itself (BUG-YG126C). Filled with ids only, which is enough
+// to see that the migration rebuilds it.
+const foldingSearchIndex = `CREATE TABLE entity_search_key (
+	key INTEGER PRIMARY KEY, id TEXT NOT NULL, face TEXT NOT NULL, UNIQUE (id, face));
+CREATE VIRTUAL TABLE entity_search USING fts5(body, tokenize = 'trigram');
+INSERT INTO entity_search_key(id, face) SELECT id, face FROM entities;
+INSERT INTO entity_search(rowid, body) SELECT k.key, k.id FROM entity_search_key k;`
+
 // seedOldDatabase writes rows to a fresh database, then rewrites its search
 // index with shape and stamps it with version.
 func seedOldDatabase(t *testing.T, path, shape string, version int) {
@@ -193,14 +202,19 @@ func seedOldDatabase(t *testing.T, path, shape string, version int) {
 	ctx := context.Background()
 	db, err := sqlitedb.Open(ctx, sqlitedb.Options{Path: path})
 	require.NoError(t, err)
-	s, err := sqlitestore.New(db)
+	s, err := sqlitestore.New(context.Background(), db)
 	require.NoError(t, err)
 	createEntity(t, s, "OLD-0", "note", "title", "Doomed row", "")
 	createEntity(t, s, "OLD-1", "note", "title", "Legacy row", "first body")
 	createEntity(t, s, "OLD-2", "note", "title", "Other row", "second body")
+	createEntity(t, s, "OLD-3", "note", "title", "Parked row", "")
 	_, err = s.DeleteFamily(ctx, "OLD-0", true)
 	require.NoError(t, err)
-	_, err = db.DB().ExecContext(ctx, dropSearchIndex+shape)
+	_, err = s.SoftDelete().MarkDeleted(ctx, "OLD-3", "tester")
+	require.NoError(t, err)
+	_, err = db.DB().ExecContext(ctx, dropSearchIndex+shape+`;
+UPDATE entities SET search_text = NULL;
+UPDATE marked_entities SET search_text = NULL`)
 	require.NoError(t, err)
 	_, err = db.DB().ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, version))
 	require.NoError(t, err)
@@ -219,6 +233,7 @@ func TestSearch_MigrationRebuildsIndex(t *testing.T) {
 	}{
 		{"v11 without an index", "", 11},
 		{"v12 keyed by rowid", rowidSearchIndex, 12},
+		{"v19 folding case", foldingSearchIndex, 19},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -240,6 +255,10 @@ func TestSearch_MigrationRebuildsIndex(t *testing.T) {
 			var version int
 			require.NoError(t, db.DB().QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version))
 			require.Equal(t, sqlitedb.SchemaVersion(), version)
+			var ddl string
+			require.NoError(t, db.DB().QueryRowContext(ctx,
+				`SELECT sql FROM sqlite_master WHERE name = 'entity_search'`).Scan(&ddl))
+			require.Contains(t, ddl, "case_sensitive 1", "the index matches Go-lowered text without folding")
 			require.Equal(t, []string{"OLD-1"}, searchIDs(t, b, "legacy", w), "properties are indexed again")
 			require.Empty(t, searchIDs(t, b, "doomed", w))
 
@@ -256,6 +275,13 @@ func TestSearch_MigrationRebuildsIndex(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, searchIDs(t, b, "second", w))
 			require.Equal(t, []string{"OLD-1"}, searchIDs(t, b, "row", w))
+
+			// A row soft-deleted before the upgrade has no search text; the
+			// restore must index it.
+			require.Empty(t, searchIDs(t, b, "parked", w))
+			_, err = s.SoftDelete().Unmark(ctx, "OLD-3")
+			require.NoError(t, err)
+			require.Equal(t, []string{"OLD-3"}, searchIDs(t, b, "parked", w))
 		})
 	}
 }

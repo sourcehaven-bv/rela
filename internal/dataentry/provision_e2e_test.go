@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+	"github.com/Sourcehaven-BV/rela/internal/aclstore"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -100,8 +102,8 @@ func provisionAppWithSubject(t *testing.T, subject string) (*App, store.Store) {
 		},
 	}
 	st := memstore.New()
-	d, err := acl.NewDeclarative(p, acl.NewStoreGraph(st), st,
-		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(st)))
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(st)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -373,11 +375,11 @@ func TestMaybeProvision_RefusesReservedSubjectDirectly(t *testing.T) {
 
 	// Hand maybeProvision exactly the state it sees mid-request for an
 	// unmatched verified principal, bypassing the HTTP boundary entirely.
-	ctx := acl.WithUnmatchedVerified(
-		principal.With(context.Background(), principal.Principal{
+	ctx := acltest.BindVerified(
+		principal.With(t.Context(), principal.Principal{
 			User: principal.UserScheduler,
 			Tool: principal.ToolDataEntry,
-		}))
+		}), t, d)
 
 	got := maybeProvision(ctx, d, app.entityManager, schemaMetaView{schema: app.State})
 

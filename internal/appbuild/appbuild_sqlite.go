@@ -76,7 +76,7 @@ func New(cfg Config, opts ...Option) (*Services, error) {
 		return nil, err
 	}
 
-	st, searcher, closer, err := openBackend(base, db)
+	st, searcher, closer, err := openBackend(context.Background(), base, db)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
@@ -165,13 +165,15 @@ func openDatabase(ctx context.Context, cfg Config) (*sqlitedb.DB, error) {
 // database's triggers keep it current, so there is no index to open, backfill
 // or close. On success the returned closer owns db; on error the caller still
 // does.
-func openBackend(base *SharedBase, db *sqlitedb.DB) (store.Store, search.Searcher, io.Closer, error) {
+func openBackend(
+	ctx context.Context, base *SharedBase, db *sqlitedb.DB,
+) (store.Store, search.Searcher, io.Closer, error) {
 	backend, err := sqlitestore.NewSearchBackend(db)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	backend.RankByTitles(sqlitestore.SearchTitles(rankingTitles(base.meta)))
-	st, err := sqlitestore.New(db)
+	st, err := sqlitestore.New(ctx, db)
 	if err != nil {
 		return nil, nil, nil, err
 	}

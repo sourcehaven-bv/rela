@@ -230,7 +230,7 @@ func TestAnchorGuard_FacesChangedIsConflict(t *testing.T) {
 			f := newFaceEdgeFixtureWith(t, b, g)
 			st = f.st
 
-			_, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", true)
+			_, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("admin"), t, f.mgr), "POL-1", "draft", true)
 			require.ErrorIs(t, err, entitymanager.ErrConcurrentChange)
 			require.NotErrorIs(t, err, store.ErrConflict)
 			assert.Equal(t, []string{"POL-1@draft"}, g.undoneRefs())
@@ -263,7 +263,7 @@ func TestAnchorGuard_ConflictWithoutDetach(t *testing.T) {
 			f := newFaceEdgeFixtureWith(t, b, g)
 			st = f.st
 
-			_, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", true)
+			_, err := f.mgr.DeleteEntityFace(entitymanager.BindAs(asUser("admin"), t, f.mgr), "POL-1", "draft", true)
 			require.ErrorIs(t, err, entitymanager.ErrConcurrentChange)
 			assert.Empty(t, g.undoneRefs(), "nothing was detached")
 			_, gErr := f.st.GetEntity(context.Background(), entity.Ref{ID: "POL-1", Face: "draft"})

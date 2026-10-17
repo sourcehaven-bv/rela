@@ -159,6 +159,19 @@ repeats differ only in values, they still fold, and the loop shows `…` in
 place of the values. Pass `-values=false` to
 draw names only.
 
+## Loops over iterators
+
+In a `for ... range` loop over an iterator, the iterator calls the loop body
+through its `yield` function. Go therefore runs the body inside the
+iterator. seqtrace undoes this. A call in the loop body has as its parent
+the function that contains the loop, not the iterator. Calls the iterator
+makes itself, such as its database query, stay under the iterator.
+
+This works for any function with a parameter named `yield` of type
+`func(...) bool`. That covers helpers that receive `yield` and iterators
+that wrap other iterators. A callback with another name is a real call
+from the callee and is drawn as one.
+
 ## Linking work across goroutines
 
 A call normally has as its parent the caller on the same goroutine. When

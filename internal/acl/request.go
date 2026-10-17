@@ -3,42 +3,43 @@ package acl
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
-// ErrUnstampedPrincipal is the sentinel returned by Declarative.ForPrincipal
-// when the principal carries User="" / User="unknown" or Tool="" /
-// Tool="unknown". Code paths that forgot to stamp identity must fail
-// loud rather than silently degrade.
+// ErrUnstampedPrincipal is the sentinel returned by
+// [IdentityResolver.Resolve] and [IdentityResolver.ResolveDirect] when the
+// principal carries User="" / User="unknown" or Tool="" / Tool="unknown".
+// Code paths that forgot to stamp identity must fail loud rather than
+// silently degrade.
 var ErrUnstampedPrincipal = errors.New("acl: principal is unstamped (User or Tool is unknown)")
 
-// GlobalRoles is the result of computing the global (no-entity) role
-// set for a principal. Carries both the attributions and the
-// transitively-walked member-of closure so a follow-up per-entity
-// call can reuse the Members slice without re-walking.
+// GlobalRoles is the global (no-entity) role set of a [Request]. Carries
+// both the attributions and the membership closure of the [Identity] it
+// was computed from, so per-entity probes reuse the closure.
 type GlobalRoles struct {
 	Attributions []RoleAttribution
 	Members      []string
 }
 
-// Request is a per-request resolver scope. Constructed via
-// Declarative.ForPrincipal; methods are not safe for concurrent use
-// by multiple goroutines — open one Request per logical operation and
-// let it go out of scope when the operation completes.
+// Request is a per-operation evaluation scope. Constructed via
+// [Declarative.ForIdentity]. Open one Request per logical operation and
+// let it go out of scope when the operation completes. It is safe for
+// concurrent use: it travels by pointer on ctx, so a goroutine spawned
+// within the operation may share it. Its fields are fixed at construction,
+// except for a memo that a mutex guards.
 //
-// Carries a memoised GlobalRoles so multiple per-entity calls on the
-// same Request reuse the one member-of walk. The principal is bound
+// Its global roles are computed at construction from the [Identity] and
+// the policy; no Request method walks membership. The principal is bound
 // at construction and never revalidated by Request methods.
 type Request struct {
-	d             *Declarative
-	principal     principal.Principal
-	globals       GlobalRoles
-	globalsLoaded bool
+	d         *Declarative
+	principal principal.Principal
+	globals   GlobalRoles
 
 	// ceiling is the client attenuation resolved from the principal's verified
 	// principal_type + scope claims (TKT-IAC8TX). Computed once at
@@ -51,25 +52,51 @@ type Request struct {
 	// roleVerbAnswers memoises [Request.RoleGrantsVerbOnFace], which the field
 	// verdicts ask per role per row. Under an active ceiling each answer
 	// clamps the role, so a list page would otherwise clamp the same role
-	// once per row. Allocated on first use.
+	// once per row. Allocated on first use, and guarded by roleVerbMu: a
+	// Request travels by pointer on ctx, so any goroutine that inherits the
+	// ctx can ask. It is the only state a Request mutates after construction.
+	roleVerbMu      sync.Mutex
 	roleVerbAnswers map[roleVerbQuestion]bool
+	// unmatchedVerified is set by [Declarative.ForIdentity] when the
+	// Identity was unmatched and came from a verified assertion; see
+	// [Request.UnmatchedVerified].
+	unmatchedVerified bool
 }
 
-// ForPrincipal opens a Request scope for `p`. Returns
-// ErrUnstampedPrincipal if `p.User` or `p.Tool` is empty or "unknown".
-// The Declarative is always constructed with a non-nil Graph (the
-// [NewDeclarative] constructor rejects nil), so the resolver always
-// has the read-side access it needs.
-func (d *Declarative) ForPrincipal(p principal.Principal) (*Request, error) {
-	if isUnstamped(p) {
-		return nil, fmt.Errorf("%w: User=%q Tool=%q", ErrUnstampedPrincipal, p.User, p.Tool)
+// ForIdentity opens a Request scope for a resolved [Identity]. The global
+// role set is a pure function of the identity and the policy, so this does
+// no graph traffic.
+//
+// It returns [ErrNoIdentity] for the zero Identity and [ErrForeignIdentity]
+// for an identity that another Declarative's resolver produced.
+func (d *Declarative) ForIdentity(id Identity) (*Request, error) {
+	if id.origin == nil {
+		return nil, ErrNoIdentity
 	}
+	if id.origin != d.identities {
+		return nil, ErrForeignIdentity
+	}
+	p := id.principal.Clone()
 	return &Request{
-		d:         d,
-		principal: p,
-		ceiling:   d.policy.ceilingFor(p.PrincipalType(), p.Scopes()),
+		d:                 d,
+		principal:         p,
+		globals:           d.globalRoles(p, id.members),
+		ceiling:           d.policy.ceilingFor(p.PrincipalType(), p.Scopes()),
+		unmatchedVerified: id.unmatched && id.verified,
 	}, nil
 }
+
+// UnmatchedVerified reports that the request's principal was
+// cryptographically verified but resolved to no user entity: the
+// `principal_property` lookup ran and found no match. The data-entry edge
+// sets it through [Identity.WithVerifiedAssertion]; the CLI, MCP, the
+// scheduler and header-authenticated requests never do.
+//
+// [Declarative.AuthorizeWrite], the single point every entity write reaches,
+// reads it to enforce `unmatched_principal`. Lazy provisioning reads it to
+// decide whether to create a stub user, and then binds a new Request on the
+// provisioned identity, which is not unmatched.
+func (r *Request) UnmatchedVerified() bool { return r.unmatchedVerified }
 
 // roleFor resolves a declared role name to its definition, NARROWED by the
 // request's client ceiling.
@@ -91,14 +118,9 @@ func (r *Request) roleFor(name string) (RoleDef, bool) {
 	return r.ceiling.clamp(role), true
 }
 
-// Globals returns the principal's global role set, computing it on
-// first call and caching for the lifetime of the Request. Subsequent
-// calls reuse the cached value with no graph traffic.
-func (r *Request) Globals(ctx context.Context) GlobalRoles {
-	if !r.globalsLoaded {
-		r.globals = r.computeGlobals(ctx)
-		r.globalsLoaded = true
-	}
+// Globals returns the principal's global role set, computed at
+// construction by [Declarative.ForIdentity]. No graph traffic.
+func (r *Request) Globals() GlobalRoles {
 	return r.globals
 }
 
@@ -113,7 +135,7 @@ func (r *Request) Globals(ctx context.Context) GlobalRoles {
 // Passing entityID == "" returns Globals only (no per-entity probes).
 func (r *Request) ForEntity(ctx context.Context, _, entityID string) []RoleAttribution {
 	if entityID == "" {
-		return r.Globals(ctx).Attributions
+		return r.Globals().Attributions
 	}
 	return r.computeForEntity(ctx, entityID)
 }
@@ -129,8 +151,8 @@ func (r *Request) AuthorizeWrite(ctx context.Context, req WriteRequest) Decision
 // dataentry handler consumes this and either runs an unfiltered list
 // (AllowAll), returns empty (DenyAll), or runs the composed
 // store.GraphQuery.
-func (r *Request) ReadQuery(ctx context.Context, entityType string) ReadQueryResult {
-	return r.readQuery(ctx, entityType)
+func (r *Request) ReadQuery(_ context.Context, entityType string) ReadQueryResult {
+	return r.readQuery(entityType)
 }
 
 // errReadQueryZero reports a ReadQueryResult with none of its three states
@@ -178,12 +200,10 @@ func (r *Request) Principal() principal.Principal { return r.principal.Clone() }
 // the std-lib contract that context keys are not bare strings.
 type ctxKey struct{}
 
-// WithRequest attaches r to ctx so downstream resolvers (notably the
-// affordance resolver) can reuse the same per-request scope —
-// amortizing the member-of walk across every per-entity call in a
-// list response (RR-JJYW). The dataentry list handler opens one
-// Request at the top and threads the derived ctx through every
-// FieldVerdicts / RelationVerdicts call.
+// WithRequest attaches r to ctx. Every request edge does this once, after
+// resolving the principal; downstream evaluation (the write gate, the
+// visibility readers, the affordance resolver) reads it back with
+// [Declarative.RequestFrom] and fails closed when it is missing.
 //
 // When ctx already carries a Request, the latest one wins; this is
 // the right behavior for nested handlers (rare today).
@@ -192,60 +212,15 @@ func WithRequest(ctx context.Context, r *Request) context.Context {
 }
 
 // FromContext returns the Request previously attached via
-// [WithRequest], or nil when no Request is attached. The affordance
-// resolver consults this in bindingFor; a nil return means "build a
-// fresh Request for this call" (back-compat for callers that don't
-// thread a Request).
+// [WithRequest], or nil when no Request is attached. It does not check
+// that the Request belongs to a particular Declarative or to ctx's
+// principal; evaluation paths use [Declarative.RequestFrom], which does.
 func FromContext(ctx context.Context) *Request {
 	if ctx == nil {
 		return nil
 	}
 	r, _ := ctx.Value(ctxKey{}).(*Request)
 	return r
-}
-
-// unmatchedVerifiedKey is the ctx key for the "verified-but-unmatched" flag.
-type unmatchedVerifiedKey struct{}
-
-// WithUnmatchedVerified marks ctx to record that the request's principal was
-// CRYPTOGRAPHICALLY VERIFIED but resolved to no user entity (the
-// principal_property lookup found no match).
-//
-// It is set by the data-entry middleware, which is the only layer that knows
-// both facts: that a verified-JWT gate is the identity source (wiring state,
-// not a per-principal marker — a JWT and a proxy-header principal are
-// indistinguishable on the Principal), and that resolution found no entity. The
-// flag lets [Declarative.AuthorizeWrite] — the single point every entity write
-// funnels through — enforce `unmatched_principal: reject` uniformly across
-// every data-entry write path (CRUD, sync, action, attachment) without the
-// write layer learning about transports.
-//
-// A boolean fact on ctx, set on the read path; it performs no write and is
-// gone when the request ends. CLI/MCP/scheduler/header requests never set it.
-func WithUnmatchedVerified(ctx context.Context) context.Context {
-	return context.WithValue(ctx, unmatchedVerifiedKey{}, true)
-}
-
-// WithMatchedVerified CLEARS the unmatched-verified flag on ctx, marking that a
-// principal which arrived unmatched now resolves to a real user entity. Lazy
-// provisioning (`unmatched_principal: provision`, TKT-ANUJDS) calls this after
-// it creates the stub and re-stamps ctx to the resolved entity: the principal is
-// no longer unmatched, so [Declarative.AuthorizeWrite] must judge the triggering
-// write on the resolved identity's roles, NOT re-enter the unmatched gate. It
-// overrides the key with false so [UnmatchedVerifiedFrom] reports false even
-// though an ancestor ctx set it true.
-func WithMatchedVerified(ctx context.Context) context.Context {
-	return context.WithValue(ctx, unmatchedVerifiedKey{}, false)
-}
-
-// UnmatchedVerifiedFrom reports whether ctx was marked by
-// [WithUnmatchedVerified] and not subsequently cleared by [WithMatchedVerified].
-func UnmatchedVerifiedFrom(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	v, _ := ctx.Value(unmatchedVerifiedKey{}).(bool)
-	return v
 }
 
 // isUnstamped reports whether the principal looks like a default /
@@ -288,9 +263,9 @@ func isBlankOrUnknown(s string) bool {
 //
 // A world grant is a READ capability, and the read paths in this package
 // carry errors on purpose ([Request.PermitsRead], [Request.ReadableFacesMany],
-// visibility's listPushdown). Resolving the principal's roles walks the
-// graph, and a store failure there yields a PARTIAL role set — which would
-// silently answer "no" for a principal who genuinely holds the grant.
+// visibility's listPushdown). Checking a world grant conferred through a
+// relation probes the graph, and a store failure there must not read as
+// "no" for a principal who genuinely holds the grant.
 //
 // That matters because a denial must render as an EMPTY result rather than
 // a 403 (a 403 would be an existence oracle for the world's contents). So
@@ -298,20 +273,15 @@ func isBlankOrUnknown(s string) bool {
 // with no operator signal. Callers map: false+nil → empty, err → 500
 // (RR-4TFZNL).
 //
-// LIMITATION, stated because the signature promises more than it currently
-// delivers: the error is reserved, and today always nil. The role walk it
-// depends on (Request.walkMembers) discards its own backing error and
-// returns a PARTIAL member list — its "abort the walk loud" comment
-// describes an intent the code does not implement. Threading that error out
-// touches computeGlobals and every Globals caller, which is a separate
-// change. The signature is here now so the ~dozen call sites PR-C adds do
-// not all have to change when it lands, and so a caller cannot form the
-// habit of treating a false as necessarily meaning "denied".
+// The membership closure is resolved before the Request exists, and a walk
+// failure there is an error at the edge ([IdentityResolver.ResolveDirect]),
+// so the global roles read here are never partial. The error this method
+// returns comes from the per-subject probes in permitsWorldThroughRelations.
 func (r *Request) PermitsWorld(ctx context.Context, world string) (bool, error) {
 	if !r.ceiling.permitsWorld(world) {
 		return false, nil
 	}
-	globals := r.Globals(ctx)
+	globals := r.Globals()
 	for _, a := range globals.Attributions {
 		// roleFor, never policy.Roles[...] — it is THE clamp point, and a
 		// direct lookup here would bypass the client ceiling entirely

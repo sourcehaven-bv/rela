@@ -5,6 +5,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl/acltest"
+
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
@@ -322,9 +324,9 @@ func TestWorldNeighbors_DeniedPrimeFallsThrough(t *testing.T) {
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket", "feature@published"}}},
 		Assignments: map[string]string{"alice": "viewer"},
 	}, app.store)
-	req, rerr := d.ForPrincipal(principal.Principal{User: "alice", Tool: principal.ToolDataEntry})
+	req, rerr := d.ForIdentity(acltest.IdentityFor(t.Context(), t, d, principal.Principal{User: "alice", Tool: principal.ToolDataEntry}))
 	if rerr != nil {
-		t.Fatalf("ForPrincipal: %v", rerr)
+		t.Fatalf("ForIdentity: %v", rerr)
 	}
 	gate, gerr := newACLReadGate(req)
 	if gerr != nil {
@@ -609,29 +611,6 @@ func TestResolvedFromStoreFace_CarriesFace(t *testing.T) {
 	}
 	if res.Via != worldreader.RuleChain {
 		t.Errorf("Via = %v, want chain: `published` is in this world's chain", res.Via)
-	}
-}
-
-// TestRuleFromName_MatchesWireVocabulary pins that the two vocabularies stay
-// in step. They are separate constants in separate packages, so nothing but a
-// test stops them drifting — and a drift would mislabel provenance rather
-// than fail, which is the quiet kind.
-func TestRuleFromName_MatchesWireVocabulary(t *testing.T) {
-	t.Parallel()
-	cases := map[string]worldreader.Rule{
-		ruleUnscoped:        worldreader.RuleUnscoped,
-		ruleChain:           worldreader.RuleChain,
-		ruleFallbackDefault: worldreader.RuleFallbackDefault,
-	}
-	for name, want := range cases {
-		if got := ruleFromName(name); got != want {
-			t.Errorf("ruleFromName(%q) = %v, want %v", name, got, want)
-		}
-		if want.String() != name {
-			t.Errorf("worldreader.Rule %v stringifies as %q but the wire "+
-				"constant is %q — the two vocabularies must match",
-				want, want.String(), name)
-		}
 	}
 }
 
@@ -968,9 +947,9 @@ func TestWorldETag_ResolutionFaultDoesNotForgeAValidValidator(t *testing.T) {
 	}
 
 	// The validator for a genuinely edge-less entity.
-	edgeless := entityETagWithEdges(face, nil)
+	edgeless := servedETag(wctx, app.affordances, face, nil)
 	// The validator produced when edges could not be resolved.
-	faulted := etagUnresolved(wctx, face)
+	faulted := etagUnresolved(wctx, app.affordances, face)
 
 	if edgeless == faulted {
 		t.Error("a resolution fault must not produce the SAME validator as a " +
@@ -999,8 +978,8 @@ func TestWorldETag_UsesTheEdgesItIsGiven(t *testing.T) {
 		t.Fatalf("get: found=%v err=%v", found, err)
 	}
 
-	none := entityETagWithEdges(e, nil)
-	one := entityETagWithEdges(e, []*entity.Relation{
+	none := entityETagWithEdges(e, nil, nil)
+	one := entityETagWithEdges(e, nil, []*entity.Relation{
 		{From: "TKT-1", Type: "implements", To: "FEAT-1"},
 	})
 	if none == one {
@@ -1069,7 +1048,7 @@ func TestDefaultWorld_ContentEdgesAreFaceScoped(t *testing.T) {
 		t.Fatalf("the default world must serve the DEFAULT face; got face %q", face.Face)
 	}
 
-	outgoing, _, err := servedFaceEdges(dctx, app.worldNeighbors, face)
+	outgoing, _, err := app.faceEdges.read(dctx, face)
 	if err != nil {
 		t.Fatalf("servedFaceEdges: %v", err)
 	}
@@ -1119,7 +1098,7 @@ func TestDefaultWorld_IdentityEdgesAreFaceIndependent(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("resolve entry: found=%v err=%v", found, err)
 	}
-	outgoing, _, err := servedFaceEdges(dctx, app.worldNeighbors, face)
+	outgoing, _, err := app.faceEdges.read(dctx, face)
 	if err != nil {
 		t.Fatalf("servedFaceEdges: %v", err)
 	}

@@ -41,11 +41,11 @@ func newTestDeps(t *testing.T, meta *metamodel.Metamodel, st store.Store) Deps {
 		Validator:     svc.Validator(),
 		EntityManager: svc.EntityManager(),
 		Config:        svc.Config(),
-		LuaWriteDeps:  svc.LuaWriteDeps(),
+		Lua:           LuaDeps{WriteDeps: svc.LuaWriteDeps()},
 		Watcher:       nopWatcher{},
 		Watch:         WatchDeps{Changes: st, Rebind: svc.GatedReads().Rebind},
 		// Note: this real empty dir (what lua_run walks) is
-		// intentionally distinct from LuaWriteDeps' ProjectRoot, which
+		// intentionally distinct from Lua.WriteDeps' ProjectRoot, which
 		// points at the fixture's in-memory /project. No current test
 		// resolves a Lua write relative to that root; align the two if
 		// one ever does.

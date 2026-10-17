@@ -1,7 +1,6 @@
 package acl
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -46,7 +45,6 @@ relation_grants:
 func TestRelationWrite_IdentityEdgeUsesFamilyRule(t *testing.T) {
 	t.Parallel()
 	d := mustDeclarative(t, facedRelationPolicy)
-	ctx := context.Background()
 	family := RelationSubject{
 		Type: "owns", FromType: "policy", FromID: "POL-1",
 		FamilyFaces: []entity.Face{"draft", "published"},
@@ -69,7 +67,7 @@ func TestRelationWrite_IdentityEdgeUsesFamilyRule(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := mustRequest(t, d, tc.user).authorizeRelationWrite(ctx, OpCreate, tc.subject)
+			got := mustRequest(t, d, tc.user).authorizeRelationWrite(OpCreate, tc.subject)
 			if got.Allow != tc.allow {
 				t.Fatalf("allow = %v, want %v (%s)", got.Allow, tc.allow, got.Reason)
 			}
@@ -86,7 +84,6 @@ func TestRelationWrite_IdentityEdgeUsesFamilyRule(t *testing.T) {
 func TestRelationGrant_DoesNotReachAnUnwritableTail(t *testing.T) {
 	t.Parallel()
 	d := mustDeclarative(t, facedRelationPolicy)
-	ctx := context.Background()
 	cites := func(face entity.Face) RelationSubject {
 		return RelationSubject{Type: "cites", FromType: "policy", FromID: "POL-1", FromFace: face}
 	}
@@ -105,7 +102,7 @@ func TestRelationGrant_DoesNotReachAnUnwritableTail(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := mustRequest(t, d, tc.user).authorizeRelationWrite(ctx, OpCreate, tc.subject)
+			got := mustRequest(t, d, tc.user).authorizeRelationWrite(OpCreate, tc.subject)
 			if got.Allow != tc.allow {
 				t.Fatalf("allow = %v, want %v (%s)", got.Allow, tc.allow, got.Reason)
 			}

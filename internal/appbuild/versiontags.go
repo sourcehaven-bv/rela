@@ -6,18 +6,15 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/lua"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
 )
 
 // tagPermissionGuard answers the namespace check of a version tag write
 // (`tag:<ns>`, TKT-VO6VG9) with the subject-aware resolver, like
-// [transitionGuard]. It reuses the [acl.Request] on ctx when the caller
-// attached one (the data-entry server and rela-server MCP do), so its role
-// walk is shared with the rest of the operation. Otherwise it opens one for
-// the ctx principal, the way [acl.Declarative.AuthorizeWrite] does, because
-// the CLI and scheduled scripts write with a stamped principal and no
-// attached Request. An unstamped principal is denied.
+// [transitionGuard]. It evaluates with the [acl.Request] the operation's edge
+// attached (see [acl.Declarative.RequestFrom]), so its role walk is shared
+// with the rest of the operation. A ctx with no usable Request is denied, the
+// way [acl.Declarative.AuthorizeWrite] denies it.
 //
 // The check is per entity id, not per face: the acl package answers named
 // permissions for an entity only, and roles conferred through relations are
@@ -31,12 +28,9 @@ func (g tagPermissionGuard) HoldsPermission(ctx context.Context, entityID, permi
 	if g.d == nil {
 		return true
 	}
-	r := acl.FromContext(ctx)
-	if r == nil {
-		var err error
-		if r, err = g.d.ForPrincipal(principal.From(ctx)); err != nil {
-			return false
-		}
+	r, err := g.d.RequestFrom(ctx)
+	if err != nil {
+		return false
 	}
 	return r.HoldsPermissionForEntity(ctx, entityID, permission)
 }

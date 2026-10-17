@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -171,33 +172,15 @@ type Backend interface {
 // It answers per entity because it runs only over the hits Search already
 // produced.
 //
-// It must never report a field Search did not match on. The field-visibility
-// filter ([Visible.SearchVisibleFields]) keeps a hit when a visible field
-// matched, so an extra field can return a hit whose only match is a hidden
-// property. Leaving out a field that did match is safe: the hit is dropped,
-// which hides more, never less. When in doubt, leave the field out.
+// It must never report a field Search did not match on. A field scope keeps
+// a hit when a visible field matched, so an extra field can return a hit
+// whose only match is a hidden property. Leaving out a field that did match
+// is safe: the hit is dropped, which hides more, never less. When in doubt,
+// leave the field out.
 type FieldMatcher interface {
 	Backend
 	MatchedFields(e *entity.Entity, text string) map[string]struct{}
 }
-
-// HiddenFieldsFunc reports, for one hit, the set of property fields the
-// requesting principal may NOT see — in the [PropFieldPrefix]-qualified
-// vocabulary (e.g. "prop:internal_notes"). It is supplied by the consumer,
-// which resolves the ACL verdict (the search package never sees a principal
-// or a policy, exactly as with the scope map). A nil func, or a func that
-// returns an empty set, disables field-level filtering for that hit.
-//
-// It receives the ALREADY-LOADED entity, not just the Hit: the seam loads the
-// entity once and threads that single snapshot through both the hidden-field
-// computation and the match-provenance computation, so a concurrent write
-// cannot make the two observe different states (the fail-closed decision is
-// snapshot-consistent — CLAUDE.md "capture state once per operation"). The
-// consumer resolves its ACL verdict against this exact entity (the resolver's
-// `when:` predicates evaluate against it). Returning an error fails closed —
-// the hit is dropped and the error surfaced — so an ACL resolution failure can
-// never widen visibility.
-type HiddenFieldsFunc func(ctx context.Context, h Hit, e *entity.Entity) (map[string]struct{}, error)
 
 // WildcardType is the reserved scope-map key that supplies the default
 // verdict for entity types without an explicit entry. It cannot collide
@@ -223,12 +206,68 @@ const WildcardType = "*"
 // so a denied prime falls through to a readable face, as on lists and the
 // single-entity read. A [WildcardType] entry must leave it nil.
 //
+// Fields, when set, gates which properties a text match may count on for
+// this type ([FieldScope]). Nil gates nothing. A [WildcardType] entry must
+// leave it nil.
+//
 // The scope map is server-derived (from ACL policy verdicts), never
 // wire-supplied.
 type TypeScope struct {
 	AllowAll bool
 	Query    *store.GraphQuery
 	Faces    []entity.Face
+	Fields   *FieldScope
+}
+
+// FieldScope closes the match-on-hidden-field oracle for one type: a search
+// must not confirm a property's value by returning an entity whose only match
+// is a property the reader may not see.
+//
+// It is an allowlist. A property p of a row is visible when p is not in Gated,
+// or when some grant lists p and the grant's When matches the row. Hidden is
+// derived as Gated minus what the grants allow; it is never authored. A hit
+// survives when its text matched the id, the content (never property-gated),
+// or at least one visible property.
+//
+// The verdict is per row, and a backend evaluates it inside its own query
+// (pgstore) or in one batch per page (the generic [Visible]). Nothing calls
+// back into the ACL per row: the consumer compiles the scope once per request.
+type FieldScope struct {
+	Gated  []string
+	Grants []FieldGrant
+}
+
+// FieldGrant makes Fields visible on the rows When matches. A nil When
+// matches every row. When.EntityType is empty or the scope's type; its Faces
+// selection is set by the backend, which evaluates it against the matched
+// face row.
+type FieldGrant struct {
+	Fields []string
+	When   *store.GraphQuery
+}
+
+// Gates reports whether the scope can hide property prop on any row.
+func (fs *FieldScope) Gates(prop string) bool {
+	return fs != nil && slices.Contains(fs.Gated, prop)
+}
+
+// AdmitsMatch reports whether a hit whose text matched the fields in matched
+// survives: it matched the id or the content, or a property the scope shows
+// on this row. holds reports whether grant i's When matches the row; it is
+// asked only about grants with a non-nil When.
+func (fs *FieldScope) AdmitsMatch(matched map[string]struct{}, holds func(i int) bool) bool {
+	for f := range matched {
+		prop, isProp := strings.CutPrefix(f, PropFieldPrefix)
+		if !isProp || !fs.Gates(prop) {
+			return true // id, content, or a property no grant decides
+		}
+		for i, g := range fs.Grants {
+			if slices.Contains(g.Fields, prop) && (g.When == nil || holds(i)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // AdmitsFace reports whether the scope's face allowlist admits f.
@@ -246,6 +285,14 @@ func ValidateScope(scope map[string]TypeScope) error {
 		if ts.Faces != nil && len(ts.Faces) == 0 {
 			return fmt.Errorf("%w: scope entry %q has an empty face allowlist", ErrScope, typ)
 		}
+		if ts.Fields == nil {
+			continue
+		}
+		for _, g := range ts.Fields.Grants {
+			if g.When != nil && g.When.EntityType != "" && g.When.EntityType != typ {
+				return fmt.Errorf("%w: scope entry %q has a field grant on type %q", ErrScope, typ, g.When.EntityType)
+			}
+		}
 	}
 	ws, ok := scope[WildcardType]
 	if !ok {
@@ -256,6 +303,9 @@ func ValidateScope(scope map[string]TypeScope) error {
 	}
 	if ws.Faces != nil {
 		return fmt.Errorf("%w: wildcard scope entry cannot carry a face allowlist", ErrScope)
+	}
+	if ws.Fields != nil {
+		return fmt.Errorf("%w: wildcard scope entry cannot carry a field scope", ErrScope)
 	}
 	return nil
 }
@@ -317,33 +367,18 @@ func ResolveTypeScope(scope map[string]TypeScope, entityType string) (TypeScope,
 //     is the prime of the faces the scope admits, never a prime the scope
 //     denies.
 //   - q.Sort is ignored, matching [Service.Search].
+//   - A type whose entry carries [TypeScope.Fields] yields a hit only when
+//     [FieldScope.AdmitsMatch] keeps it, judged on the matched face row. The
+//     limit counts these surviving hits only.
 //
 // Service plus this package's generic wrapper (NewVisible) serve the
 // simple backends; smart backends (pgstore) implement it natively by
 // composing visibility into the search query itself.
 //
 // Its iterators follow [store.EntityReader]'s rule: no backend resource is
-// held while yielding or while a [HiddenFieldsFunc] runs.
+// held while yielding.
 type VisibleSearcher interface {
 	SearchVisible(ctx context.Context, q Query, scope map[string]TypeScope) iter.Seq2[Hit, error]
-}
-
-// FieldVisibleSearcher is VisibleSearcher extended with property-level
-// redaction: SearchVisibleFields additionally drops any hit whose text matched
-// ONLY fields the principal may not see (per the consumer's HiddenFieldsFunc),
-// closing the match-on-hidden-field oracle. A hit that matched a visible
-// property — or the id/content, never property-gated — always survives.
-//
-// It layers on top of SearchVisible's entity-level scope: entity-level
-// filtering runs first, then the field filter over the survivors. Both the
-// generic wrapper ([Visible]) and the pgstore-native store implement it. A
-// consumer that needs field redaction for confidentiality must wire a
-// FieldVisibleSearcher, not a bare VisibleSearcher.
-type FieldVisibleSearcher interface {
-	VisibleSearcher
-	SearchVisibleFields(
-		ctx context.Context, q Query, scope map[string]TypeScope, hidden HiddenFieldsFunc,
-	) iter.Seq2[Hit, error]
 }
 
 // ErrScope marks a SearchVisible failure that occurred while evaluating

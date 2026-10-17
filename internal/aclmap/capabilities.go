@@ -2,7 +2,6 @@ package aclmap
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -102,9 +101,9 @@ func (e *Engine) mapFor(
 	ctx context.Context, p principal.Principal, result *MapPrincipalResult,
 	verbs []acl.Verb, typeFilter string, entityTypes []string, extras Extras,
 ) (*MapPrincipalResult, error) {
-	req, err := e.resolver.ForPrincipal(p)
+	req, err := e.requestFor(ctx, p)
 	if err != nil {
-		return nil, fmt.Errorf("aclmap: open resolver for %q: %w", p.User, err)
+		return nil, err
 	}
 	result.Verbs = verbStrings(verbs)
 	result.Baseline = acl.CeilingBaseline(req)

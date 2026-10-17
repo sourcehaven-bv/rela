@@ -19,7 +19,7 @@ func (s *Server) registerTools() {
 	reads["show_entity"] = addTool(s, toolShowEntity(), s.handleShowEntity)
 	addTool(s, toolSearchEntities(), s.handleSearchEntities)
 	addTool(s, toolListWorlds(), func(ctx context.Context, _ *mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-		return handleListWorlds(ctx, s.deps()), nil
+		return handleListWorlds(ctx, snapshotFor(ctx, s).deps), nil
 	})
 	addTool(s, toolCreateEntity(), s.handleCreateEntity)
 	addTool(s, toolUpdateEntity(), s.handleUpdateEntity)
