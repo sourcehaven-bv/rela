@@ -27,7 +27,7 @@ func TestManager_AuthorizeUpdate(t *testing.T) {
 		t.Parallel()
 		sink := audit.NewMemory()
 		mgr, _ := newManagerWithACL(t, acl.ReadOnlyACL{}, sink)
-		err := mgr.AuthorizeUpdate(ctx, row)
+		_, err := mgr.AuthorizeUpdate(ctx, row)
 		var forbidden *acl.ForbiddenError
 		if !errors.As(err, &forbidden) {
 			t.Fatalf("AuthorizeUpdate = %v, want *acl.ForbiddenError", err)
@@ -47,7 +47,7 @@ func TestManager_AuthorizeUpdate(t *testing.T) {
 		t.Parallel()
 		sink := audit.NewMemory()
 		mgr, _ := newManagerWithACL(t, acl.NopACL{}, sink)
-		if err := mgr.AuthorizeUpdate(ctx, row); err != nil {
+		if _, err := mgr.AuthorizeUpdate(ctx, row); err != nil {
 			t.Fatalf("AuthorizeUpdate = %v, want nil", err)
 		}
 		if recs := sink.Records(); len(recs) != 0 {
@@ -61,7 +61,8 @@ func TestManager_AuthorizeUpdate(t *testing.T) {
 		// The answer must match a missing row, never a 403 that confirms
 		// DEC-1 exists.
 		ask := func(mgr *entitymanager.Manager, id string) error {
-			return mgr.AuthorizeUpdate(writer(), &entity.Entity{ID: id, Type: "decision"})
+			_, err := mgr.AuthorizeUpdate(writer(), &entity.Entity{ID: id, Type: "decision"})
+			return err
 		}
 		mgr, _ := writeBlindManager(t, hiding)
 		// The reference is the write's own answer for a row that does not

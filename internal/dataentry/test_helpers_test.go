@@ -317,7 +317,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 	app.write = &writeHandler{
 		schema:      app.State,
 		store:       svc.Store(),
-		manager:     svc.EntityManager(),
+		manager:     grantedManager{svc.EntityManager()},
 		softDeletes: softDeletesFor(svc.EntityManager()),
 		reader:      app.reader,
 		serializer:  app.serializer,

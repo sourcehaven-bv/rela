@@ -34,9 +34,14 @@ two `denied-write` rows for one denial.
 All three build the update question with `entityUpdateRequest`.
 `AuthorizeUpdate` asks the same question through `authorizeAndAudit`
 without writing, for a boundary that wants to refuse a denied caller before
-it spends work (the data-entry PATCH). It is advisory: the write checks
-again. It runs the read gate first, as the writes do, so a row the caller
-cannot read answers not found rather than 403.
+it spends work (the data-entry PATCH). It returns an `UpdateGrant`, and
+`UpdateGrant.PatchEntity` skips the write's own ACL check when the stored
+row and the ctx principal are the ones granted, so the update asks the ACL
+once. Only `AuthorizeUpdate` can make a grant (unexported fields), so Lua,
+MCP and CLI writes through `PatchEntity`/`UpdateEntity` always authorize.
+Do not replace the grant with a ctx flag: a flag travels to every write on
+that ctx. `AuthorizeUpdate` runs the read gate first, as the writes do, so a
+row the caller cannot read answers not found rather than 403.
 
 `TestAuthorizeAndAuditFollowsReadGate` scans this package and fails when a
 function calls `authorizeAndAudit` or `ACL.AuthorizeWrite` with no read gate

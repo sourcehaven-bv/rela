@@ -780,7 +780,8 @@ The handler runs its checks in a fixed order:
 3. If the body changes properties or content, ask the entity manager
    whether the caller may update the entity (`Manager.AuthorizeUpdate`). This
    is the manager's own write check, so the 403 and its one `denied-write`
-   audit row are the ones the write itself would produce. Nothing else runs
+   audit row are the ones the write itself would produce. The write then
+   reuses this decision and does not ask again. Nothing else runs
    first: no ETag, no field verdicts, no edge reads.
 4. Check `If-Match` (412), then the field and relation verdicts (403), then
    the per-field `preconditions` (400 or 412), then write.

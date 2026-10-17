@@ -12,6 +12,7 @@ import (
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild/appbuildtest"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/project"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -342,6 +343,13 @@ func (m racingMutator) PatchEntity(
 	return m.entityMutator.PatchEntity(ctx, id, p)
 }
 
+func (m racingMutator) PatchGranted(
+	ctx context.Context, g entitymanager.UpdateGrant, id string, p entity.Patch,
+) (*entity.UpdateResult, error) {
+	m.race()
+	return m.entityMutator.PatchGranted(ctx, g, id, p)
+}
+
 func TestV1UpdateEntity_LostRaceReturnsFreshTokens(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -461,6 +469,14 @@ func (m hidingMutator) PatchEntity(
 	ctx context.Context, id string, p entity.Patch,
 ) (*entity.UpdateResult, error) {
 	res, err := m.entityMutator.PatchEntity(ctx, id, p)
+	*m.hidden = true
+	return res, err
+}
+
+func (m hidingMutator) PatchGranted(
+	ctx context.Context, g entitymanager.UpdateGrant, id string, p entity.Patch,
+) (*entity.UpdateResult, error) {
+	res, err := m.entityMutator.PatchGranted(ctx, g, id, p)
 	*m.hidden = true
 	return res, err
 }

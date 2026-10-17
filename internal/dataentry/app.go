@@ -1523,7 +1523,7 @@ func NewApp(
 	app.write = &writeHandler{
 		schema:      app.State,
 		store:       st,
-		manager:     em, // concrete; writeHandler narrows to entityMutator
+		manager:     grantedManager{em}, // writeHandler narrows to entityMutator
 		softDeletes: softDeletesFor(em),
 
 		reader:      app.reader,
