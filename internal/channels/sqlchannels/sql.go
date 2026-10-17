@@ -589,13 +589,20 @@ func (s *Store) SetLifecycle(
 }
 
 // Delete implements [channels.Store].
-func (s *Store) Delete(ctx context.Context, k channels.Key, by channels.Author, at time.Time) error {
+func (s *Store) Delete(ctx context.Context, k channels.Key, d channels.Deletion) error {
 	if err := k.Validate(); err != nil {
 		return err
 	}
-	err := s.write(ctx, []string{k.ID}, func(q Querier) error {
+	d, err := channels.PrepareDeletion(d)
+	if err != nil {
+		return err
+	}
+	err = s.write(ctx, []string{k.ID}, func(q Querier) error {
 		r, err := s.channelRow(ctx, q, k)
 		if err != nil {
+			return err
+		}
+		if err := channels.CheckDeletion(k, r.c.State, r.c.Rev, d); err != nil {
 			return err
 		}
 		// Messages first: the foreign key cascades too, but SQLite only
@@ -607,8 +614,8 @@ func (s *Store) Delete(ctx context.Context, k channels.Key, by channels.Author, 
 		if _, err := q.Exec(ctx, `DELETE FROM channels WHERE id = ?`, r.id); err != nil {
 			return err
 		}
-		rec := channels.KeyAudit(k, channels.AuditDelete, channels.NormTime(at))
-		rec.By = by
+		rec := channels.KeyAudit(k, channels.AuditDelete, d.At)
+		rec.By = d.By
 		return s.audit(ctx, q, k.ID, rec)
 	})
 	return s.wrap(err, "delete %s", k)

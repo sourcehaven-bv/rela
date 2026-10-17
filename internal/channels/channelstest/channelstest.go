@@ -73,6 +73,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"CreateManyMax", testCreateManyMax},
 		{"ListAndListEntity", testList},
 		{"DeleteKeepsAudit", testDelete},
+		{"DeleteCompareAndSet", testDeleteCAS},
 		{"Rekey", testRekey},
 		{"RekeyConflict", testRekeyConflict},
 		{"TombstoneEntity", testTombstoneEntity},
@@ -861,13 +862,16 @@ func testDelete(t *testing.T, h Harness) {
 	keep := key("TKT-1", "other")
 	mustAppend(t, h.Store, keep, text("stays"))
 
-	require.NoError(t, h.Store.Delete(ctx, k, Bob, T0.Add(time.Hour)))
-	_, err := h.Store.Head(ctx, k)
+	head, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	del := channels.Deletion{Expect: head.State, Rev: head.Rev, By: Bob, At: T0.Add(time.Hour)}
+	require.NoError(t, h.Store.Delete(ctx, k, del))
+	_, err = h.Store.Head(ctx, k)
 	require.ErrorIs(t, err, channels.ErrNotFound)
 	_, err = h.Store.Messages(ctx, k, channels.Page{})
 	require.ErrorIs(t, err, channels.ErrNotFound)
 	require.NotContains(t, string(h.Raw(t)), payload, "a deleted channel's content is gone from storage")
-	require.ErrorIs(t, h.Store.Delete(ctx, k, Bob, T0), channels.ErrNotFound)
+	require.ErrorIs(t, h.Store.Delete(ctx, k, del), channels.ErrNotFound)
 
 	audit, err := h.Store.Audit(ctx, "TKT-1")
 	require.NoError(t, err)
@@ -881,6 +885,49 @@ func testDelete(t *testing.T, h Harness) {
 	got, err := h.Store.Messages(ctx, keep, channels.Page{})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
+}
+
+// testDeleteCAS pins that a delete compares the state and rev the caller
+// read: a lifecycle change or a new message since refuses it, and a refused
+// delete deletes and records nothing.
+func testDeleteCAS(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	k := key("TKT-1", "room")
+	mustAppend(t, h.Store, k, text("one"))
+	read, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	at := T0.Add(time.Hour)
+
+	mustAppend(t, h.Store, k, text("two"))
+	require.ErrorIs(t, h.Store.Delete(ctx, k, channels.Deletion{Expect: read.State, Rev: read.Rev, By: Bob, At: at}),
+		channels.ErrConflict, "a new message bumps the rev")
+
+	cur, err := h.Store.Head(ctx, k)
+	require.NoError(t, err)
+	require.ErrorIs(t, h.Store.Delete(ctx, k,
+		channels.Deletion{Expect: channels.StateClosed, Rev: cur.Rev, By: Bob, At: at}), channels.ErrConflict)
+
+	closed, err := h.Store.SetLifecycle(ctx, k, channels.StateOpen,
+		channels.Transition{To: channels.StateClosed, By: Bob, At: T0.Add(time.Minute)})
+	require.NoError(t, err)
+	require.ErrorIs(t, h.Store.Delete(ctx, k,
+		channels.Deletion{Expect: channels.StateOpen, Rev: cur.Rev, By: Bob, At: at}),
+		channels.ErrConflict, "a channel closed since the read")
+
+	_, err = h.Store.Head(ctx, k)
+	require.NoError(t, err, "a refused delete deletes nothing")
+	trail, err := h.Store.Audit(ctx, "TKT-1")
+	require.NoError(t, err)
+	for _, r := range trail {
+		require.NotEqual(t, channels.AuditDelete, r.Op, "a refused delete records nothing")
+	}
+
+	require.ErrorIs(t, h.Store.Delete(ctx, k, channels.Deletion{Expect: "gone", By: Bob, At: at}),
+		channels.ErrInvalidMessage)
+	require.ErrorIs(t, h.Store.Delete(ctx, k, channels.Deletion{Expect: closed.State, Rev: closed.Rev, At: at}),
+		channels.ErrInvalidMessage, "a delete needs an author")
+	require.NoError(t, h.Store.Delete(ctx, k, channels.Deletion{Expect: closed.State, Rev: closed.Rev, By: Bob, At: at}))
 }
 
 func testRekey(t *testing.T, h Harness) {

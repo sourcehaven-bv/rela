@@ -62,8 +62,11 @@ type Store interface {
 	SetLifecycle(ctx context.Context, key Key, expect State, t Transition) (Channel, error)
 
 	// Delete removes the channel and every message in it, and writes a
-	// deletion record to the entity's audit trail, which survives.
-	Delete(ctx context.Context, key Key, by Author, at time.Time) error
+	// deletion record to the entity's audit trail, which survives. It is a
+	// compare-and-set on the state and rev the caller read (see
+	// [Deletion]): a channel that moved or changed since is [ErrConflict]
+	// and nothing is deleted.
+	Delete(ctx context.Context, key Key, d Deletion) error
 
 	// Rekey moves every channel and the audit trail of entity oldID to
 	// newID: afterwards nothing is found under oldID. An oldID without
