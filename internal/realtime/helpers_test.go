@@ -35,6 +35,7 @@ entities:
       title: {type: string}
       owner: {type: string}
       watchers: {type: string, list: true}
+      status: {type: string}
   doc:
     label: Doc
     id_prefix: DOC
@@ -139,10 +140,16 @@ channel_types:
         post: [member]
 `
 
-func testCompiled(t *testing.T, yaml string) *realtimecfg.Compiled {
+func testMeta(t *testing.T) *metamodel.Metamodel {
 	t.Helper()
 	meta, err := metamodel.Parse([]byte(testSchema))
 	require.NoError(t, err)
+	return meta
+}
+
+func testCompiled(t *testing.T, yaml string) *realtimecfg.Compiled {
+	t.Helper()
+	meta := testMeta(t)
 	c, err := realtimecfg.Parse([]byte(yaml), meta, nil)
 	require.NoError(t, err)
 	return c
@@ -206,7 +213,11 @@ func user(name string, perms ...string) *fakeAccess {
 	}
 }
 
+// fakeAnchors serves anchor views. With meta set it binds the record a
+// lifecycle condition reads from the returned properties, as the wiring
+// site does.
 type fakeAnchors struct {
+	meta    *metamodel.Metamodel
 	mu      sync.Mutex
 	views   map[string]AnchorView // by "ID" (served face) and "ID@face"
 	calls   atomic.Int64
@@ -233,7 +244,35 @@ func (f *fakeAnchors) Anchor(_ context.Context, addr entity.Address, props []str
 			out.Props[p] = val
 		}
 	}
+	if def, ok := f.entityDef(v.Type); ok && len(props) > 0 {
+		out.Record = predicatefns.EntityRecord(f.meta, def, v.ID, v.Type, out.Props)
+	}
 	return out, nil
+}
+
+// setProp sets a property of the view at addr.
+func (f *fakeAnchors) setProp(addr, prop string, v any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	view := f.views[addr]
+	props := map[string]any{}
+	for k, old := range view.Props {
+		props[k] = old
+	}
+	if v == nil {
+		delete(props, prop)
+	} else {
+		props[prop] = v
+	}
+	view.Props = props
+	f.views[addr] = view
+}
+
+func (f *fakeAnchors) entityDef(typ string) (*metamodel.EntityDef, bool) {
+	if f.meta == nil {
+		return nil, false
+	}
+	return f.meta.GetEntityDef(typ)
 }
 
 type fakeRefs struct {
@@ -299,6 +338,15 @@ type countingStore struct {
 	onHead  func()
 	// onRecord runs before RecordTypes.
 	onRecord func()
+	// onDelete runs before Delete.
+	onDelete func()
+}
+
+func (s *countingStore) Delete(ctx context.Context, k channels.Key, d channels.Deletion) error {
+	if s.onDelete != nil {
+		s.onDelete()
+	}
+	return s.Store.Delete(ctx, k, d)
 }
 
 func (s *countingStore) Head(ctx context.Context, k channels.Key) (channels.Channel, error) {
@@ -342,6 +390,7 @@ type harnessOpts struct {
 
 func withEphemeral(l ephemeralLimits) harnessOpt { return func(o *harnessOpts) { o.lim = l } }
 func withBuckets(n int) harnessOpt               { return func(o *harnessOpts) { o.caps.buckets = n } }
+func withYAML(yaml string) harnessOpt            { return func(o *harnessOpts) { o.yaml = yaml } }
 
 func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	t.Helper()
@@ -358,7 +407,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	t.Cleanup(local.Stop)
 	h := &harness{
 		store: st, clock: clock, local: local,
-		anchors: &fakeAnchors{views: map[string]AnchorView{
+		anchors: &fakeAnchors{meta: testMeta(t), views: map[string]AnchorView{
 			"TKT-1": {ID: "TKT-1", Type: "ticket", Props: map[string]any{
 				"owner": "alice", "watchers": []any{"carol", "dave"},
 			}},

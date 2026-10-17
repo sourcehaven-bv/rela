@@ -13,10 +13,11 @@ import (
 // Rate-limit operation names. A post is keyed by its message type, so each
 // type has its own bucket; the other operations share one per channel.
 const (
-	opCreate  = "create"
-	opEdit    = "edit"
-	opRemove  = "remove"
-	opPostPfx = "post:"
+	opCreate    = "create"
+	opEdit      = "edit"
+	opRemove    = "remove"
+	opLifecycle = "lifecycle"
+	opPostPfx   = "post:"
 )
 
 // sweepEvery is how many takes pass between two sweeps of full buckets.

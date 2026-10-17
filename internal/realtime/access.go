@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/predicate"
 	"github.com/Sourcehaven-BV/rela/internal/predicatefns"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
@@ -49,7 +50,8 @@ type AccessSource interface {
 // [ErrAnchorNotFound].
 type AnchorReader interface {
 	// Anchor reads addr and returns its view. props names the properties the
-	// channel type's roles read; the view carries no other property.
+	// channel type's roles and lifecycle conditions read; the view carries
+	// no other property.
 	Anchor(ctx context.Context, addr entity.Address, props []string) (AnchorView, error)
 }
 
@@ -64,6 +66,12 @@ type AnchorView struct {
 	// Props holds the requested properties of the served face, redacted for
 	// the caller. The service compares them and never renders them.
 	Props map[string]any
+	// Record is the served face as the `entity` record a lifecycle
+	// `condition:` reads, bound from the same redacted properties as Props:
+	// a property that was not requested, or that the caller may not see,
+	// reads as absent. Nil when no property was requested; a condition then
+	// does not hold.
+	Record predicate.Value
 }
 
 // RefResolver resolves the entity ids that ref properties name, gated and
@@ -95,7 +103,8 @@ type Snapshot struct {
 	Config *realtimecfg.Compiled
 	// Degraded is set when the configuration is the last valid one, kept
 	// after a schema or acl.yaml reload made the file invalid. An
-	// entity-property role then grants nobody.
+	// entity-property role then grants nobody, and a lifecycle operation
+	// with a `condition:` is refused.
 	Degraded bool
 }
 

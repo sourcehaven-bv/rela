@@ -47,6 +47,18 @@ const (
 	TypeTooLarge           = "too_large"
 	TypeInvalidRef         = "invalid_ref"
 	TypeRateLimited        = "rate_limited"
+	// TypeLifecycleNotOffered is a 403 for a lifecycle operation the
+	// channel type does not declare.
+	TypeLifecycleNotOffered = "lifecycle_not_offered"
+	// TypeLifecycleDenied is a 403 for a declared lifecycle operation whose
+	// gate or condition refuses the caller.
+	TypeLifecycleDenied = "lifecycle_denied"
+	// TypeLifecycleWrongState is a 409 for a lifecycle operation that does
+	// not start from the channel's current state.
+	TypeLifecycleWrongState = "lifecycle_wrong_state"
+	// TypeRetentionActive is a 409 for a delete before the channel's
+	// retention ends, or of a channel under retention that was never closed.
+	TypeRetentionActive = "retention_active"
 	// TypeChannelTypeConflict is a 409 for a write to a channel type whose
 	// record in the channel store differs from realtime.yaml: another
 	// anchor or cardinality, or a recorded ref declared as another type.

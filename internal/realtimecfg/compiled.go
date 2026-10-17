@@ -294,6 +294,39 @@ type Lifecycle struct {
 	Delete  *LifecycleOp
 }
 
+// Lifecycle operation names, as `lifecycle:` keys them and the HTTP route
+// names them.
+const (
+	LifecycleClose   = "close"
+	LifecycleReopen  = "reopen"
+	LifecycleArchive = "archive"
+	LifecycleDelete  = "delete"
+)
+
+// LifecycleOpNames returns every lifecycle operation name, in the order a
+// listing of operations uses.
+func LifecycleOpNames() []string {
+	return []string{LifecycleClose, LifecycleReopen, LifecycleArchive, LifecycleDelete}
+}
+
+// Op returns the operation named name.
+//
+// Nil: returned for an operation the channel type does not declare and for
+// a name that is no lifecycle operation.
+func (l Lifecycle) Op(name string) *LifecycleOp {
+	switch name {
+	case LifecycleClose:
+		return l.Close
+	case LifecycleReopen:
+		return l.Reopen
+	case LifecycleArchive:
+		return l.Archive
+	case LifecycleDelete:
+		return l.Delete
+	}
+	return nil
+}
+
 // LifecycleOp is one lifecycle operation.
 type LifecycleOp struct {
 	Gate

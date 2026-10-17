@@ -162,11 +162,11 @@ func TestHead_Affordances(t *testing.T) {
 	}{
 		{"member", user("bob"), Affordances{
 			Post:    []string{"cursor", "note", "text", "typing"},
-			EditOwn: true, DeleteOwn: true,
+			EditOwn: true, DeleteOwn: true, Lifecycle: []string{},
 		}},
 		{"owner and moderator", user("alice", "chat.moderate", "chat.post"), Affordances{
 			Post:    []string{"cursor", "note", "owner-text", "perm-text", "text", "typing"},
-			EditOwn: true, DeleteOwn: true, Remove: true,
+			EditOwn: true, DeleteOwn: true, Remove: true, Lifecycle: []string{},
 		}},
 	}
 	for _, tc := range tests {

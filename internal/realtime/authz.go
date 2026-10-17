@@ -110,7 +110,7 @@ func (s *Service) resolveAnchor(c *call, raw string) error {
 		return deny(http.StatusUnprocessableEntity, TypeFaceRequired,
 			fmt.Sprintf("channel type %s anchors to a face; address the entity as ID@face", c.ct.Name))
 	}
-	view, err := s.anchors.Anchor(c.ctx, addr, roleProps(c.ct))
+	view, err := s.anchors.Anchor(c.ctx, addr, anchorProps(c.ct))
 	if err != nil {
 		if errors.Is(err, ErrAnchorNotFound) {
 			return ErrAnchorNotFound
@@ -283,6 +283,29 @@ func (c *call) propertyNamesCaller(prop string) bool {
 	}
 	b, ok := got.(predicate.Bool)
 	return ok && b.Bool()
+}
+
+// conditionHolds reports whether prog, a lifecycle `condition:` compiled
+// for the anchor's type, holds for the anchor's redacted record. A missing
+// program or record, or an evaluation error, does not hold: a condition
+// fails closed.
+func (c *call) conditionHolds(prog *predicate.Program) bool {
+	if prog == nil || c.anchor.Record == nil {
+		return false
+	}
+	b := predicate.NewBindings()
+	if err := b.SetVar("entity", c.anchor.Record); err != nil {
+		return false
+	}
+	if err := predicatefns.Bind(b, c.now); err != nil {
+		return false
+	}
+	v, err := prog.Eval(c.ctx, b)
+	if err != nil {
+		return false
+	}
+	got, ok := v.(predicate.Bool)
+	return ok && got.Bool()
 }
 
 func stringList(ss []string) predicate.Value {
