@@ -134,7 +134,7 @@ func newUnionWorld(t *testing.T, policyYAML string) unionWorld {
 	mustCreateRelation(t, ms, "cora", "member-of", "clerks")
 	mustCreateRelation(t, ms, "ulla", "member-of", "clerks")
 	mustCreateRelation(t, ms, "pia", "member-of", "policyclerks")
-	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -583,7 +583,7 @@ func newMonotonicWorld(tb testing.TB, extraPolicy string, users map[string]int) 
 			}
 		}
 	}
-	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		tb.Fatalf("NewDeclarative: %v", err)
 	}

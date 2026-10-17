@@ -239,8 +239,8 @@ func goldenDeclarativeACL(t *testing.T, meta *metamodel.Metamodel, st store.Stor
 	if vErr := appbuild.ValidateACLPolicy(policy, meta); vErr != nil {
 		t.Fatalf("validate acl.yaml: %v", vErr)
 	}
-	d, err := acl.NewDeclarative(policy, aclstore.NewGraph(st), st,
-		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(st)))
+	d, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(st)))
 	if err != nil {
 		t.Fatalf("build acl: %v", err)
 	}

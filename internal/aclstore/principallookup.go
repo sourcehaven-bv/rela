@@ -2,6 +2,7 @@ package aclstore
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -22,10 +23,22 @@ type PrincipalLookup struct {
 
 // NewPrincipalLookup constructs a PrincipalLookup backed by s.
 //
-// Nil: not checked; a nil s panics on the first lookup. Wiring always
-// passes a store.
-func NewPrincipalLookup(s store.GraphQueryer) *PrincipalLookup {
-	return &PrincipalLookup{s: s}
+// Nil: rejected with an error; a lookup with no store has nothing to query.
+func NewPrincipalLookup(s store.GraphQueryer) (*PrincipalLookup, error) {
+	if s == nil {
+		return nil, errors.New("aclstore: NewPrincipalLookup: store is nil")
+	}
+	return &PrincipalLookup{s: s}, nil
+}
+
+// MustNewPrincipalLookup is [NewPrincipalLookup] for tests and fixtures: it
+// panics on nil.
+func MustNewPrincipalLookup(s store.GraphQueryer) *PrincipalLookup {
+	l, err := NewPrincipalLookup(s)
+	if err != nil {
+		panic(err)
+	}
+	return l
 }
 
 // LookupEntityByProperty runs one scalar-equality graph query. The

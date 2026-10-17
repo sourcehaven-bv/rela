@@ -53,7 +53,7 @@ func cascadeManagerWith(t *testing.T, st store.Store, guard entitymanager.Anchor
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

@@ -491,7 +491,7 @@ func withFieldPolicy(t *testing.T, app *App, aclYAML string) context.Context {
 	if err := yaml.Unmarshal([]byte(aclYAML), &policy); err != nil {
 		t.Fatalf("unmarshal acl.yaml: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, aclstore.NewGraph(app.store), app.store)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(app.store), app.store)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

@@ -75,7 +75,7 @@ func buildWorld(t *testing.T, policyYAML string, ents []ent, rels []rel) *world 
 			t.Fatalf("create relation %s--%s-->%s: %v", r.from, r.typ, r.to, cErr)
 		}
 	}
-	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -135,8 +135,8 @@ func buildWorldWithMeta(t *testing.T, meta *metamodel.Metamodel, policyYAML stri
 			t.Fatalf("create relation %s--%s-->%s: %v", r.from, r.typ, r.to, cErr)
 		}
 	}
-	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms,
-		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(ms)))
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(ms)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

@@ -181,7 +181,7 @@ func newLeaseEnv(t *testing.T) *leaseEnv {
 			"noter":  {Read: []string{"note"}, Update: []string{"note"}},
 		},
 		Assignments: map[string]string{"editors": "editor", "noters": "noter"},
-	}, aclstore.NewGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

@@ -88,7 +88,7 @@ func TestPrimeLocalRoles_MatchesPerEntityWalk(t *testing.T) {
 	for seed := range uint64(40) {
 		t.Run(strconv.FormatUint(seed, 10), func(t *testing.T) {
 			st, ids := randomPrimeGraph(t, seed, 20)
-			d, err := NewDeclarative(primePolicy(), aclstore.NewGraph(st), st)
+			d, err := NewDeclarative(primePolicy(), aclstore.MustNewGraph(st), st)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -144,7 +144,7 @@ func TestPrimeLocalRoles_ReadsAreSizeIndependent(t *testing.T) {
 			ids = append(ids, id)
 		}
 		st := storetest.NewCounting(base)
-		d, err := NewDeclarative(primePolicy(), aclstore.NewGraph(st), st)
+		d, err := NewDeclarative(primePolicy(), aclstore.MustNewGraph(st), st)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -168,7 +168,7 @@ func TestPrimeLocalRoles_ReadsAreSizeIndependent(t *testing.T) {
 // (a rebind) must not read it.
 func TestPrimeLocalRoles_ScopedToRequest(t *testing.T) {
 	st, ids := randomPrimeGraph(t, 3, 5)
-	d, err := NewDeclarative(primePolicy(), aclstore.NewGraph(st), st)
+	d, err := NewDeclarative(primePolicy(), aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestWithoutLocalRolePrime_SeesLaterEdges(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	d, err := NewDeclarative(primePolicy(), aclstore.NewGraph(st), st)
+	d, err := NewDeclarative(primePolicy(), aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -87,7 +87,7 @@ assignments:
 	tkt.SetString("internal_notes", "customer threatening to leave")
 	mustCreate(t, ms, tkt)
 
-	declarative, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -160,7 +160,7 @@ assignments:
 	tkt.SetString("status", "open")
 	mustCreate(t, ms, tkt)
 
-	declarative, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -222,7 +222,7 @@ roles:
 	tkt.SetString("internal_notes", "hidden")
 	mustCreate(t, ms, tkt)
 
-	declarative, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -321,7 +321,7 @@ role_relations:
 	// assignment — this is the ONLY path that confers editor.
 	mustCreateRelation(t, ms, "alice", "editor-of", "TKT-001")
 
-	declarative, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -441,7 +441,7 @@ inherit_roles_through:
 			if err != nil {
 				t.Fatalf("LoadPolicyBytes: %v", err)
 			}
-			d, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+			d, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 			if err != nil {
 				t.Fatalf("NewDeclarative: %v", err)
 			}

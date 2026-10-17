@@ -35,9 +35,22 @@ type Graph struct {
 
 // NewGraph constructs a Graph backed by s.
 //
-// Nil: not checked; a nil s panics on the first probe. Wiring always
-// passes a store.
-func NewGraph(s EdgeReader) *Graph { return &Graph{s: s} }
+// Nil: rejected with an error; a Graph with no store has nothing to probe.
+func NewGraph(s EdgeReader) (*Graph, error) {
+	if s == nil {
+		return nil, errors.New("aclstore: NewGraph: store is nil")
+	}
+	return &Graph{s: s}, nil
+}
+
+// MustNewGraph is [NewGraph] for tests and fixtures: it panics on nil.
+func MustNewGraph(s EdgeReader) *Graph {
+	g, err := NewGraph(s)
+	if err != nil {
+		panic(err)
+	}
+	return g
+}
 
 // HasEdge reports whether the specific (from, relType, to) edge exists.
 // A missing edge ([store.ErrNotFound]) reports false silently. Any

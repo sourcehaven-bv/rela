@@ -80,7 +80,7 @@ func buildPrincipalLookupWorld(
 	if err != nil {
 		t.Fatalf("LoadPolicyBytes: %v", err)
 	}
-	d, err := NewDeclarative(policy, aclstore.NewGraph(ms), ms, WithPrincipalLookup(aclstore.NewPrincipalLookup(ms)))
+	d, err := NewDeclarative(policy, aclstore.MustNewGraph(ms), ms, WithPrincipalLookup(aclstore.MustNewPrincipalLookup(ms)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

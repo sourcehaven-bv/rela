@@ -144,7 +144,7 @@ func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixtur
 		if pErr != nil {
 			t.Fatalf("load policy: %v", pErr)
 		}
-		decl, dErr := acl.NewDeclarative(policy, aclstore.NewGraph(st), st)
+		decl, dErr := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st)
 		if dErr != nil {
 			t.Fatalf("NewDeclarative: %v", dErr)
 		}

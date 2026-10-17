@@ -43,7 +43,7 @@ func TestGateTraversal_AllFacesQueryCannotSatisfyHopOutsideRequestWorld(t *testi
 	d, err := NewDeclarative(&Policy{
 		Roles:       map[string]RoleDef{"reader": {Read: []string{"ticket", "concept"}}},
 		Assignments: map[string]string{"alice": "reader"},
-	}, aclstore.NewGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}

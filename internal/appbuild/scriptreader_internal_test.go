@@ -39,7 +39,7 @@ func mustDeclarative(t *testing.T, st *memstore.MemStore) *acl.Declarative {
 	if err := yaml.Unmarshal([]byte(cascadePolicy), &policy); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

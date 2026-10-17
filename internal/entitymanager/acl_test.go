@@ -432,7 +432,7 @@ assignments:
 	// Switch to the production ACL: Declarative with a store-backed
 	// Graph. This is the exact wiring shape appbuild produces.
 	sink := audit.NewMemory()
-	declarative, err := acl.NewDeclarative(policy, aclstore.NewGraph(store), store)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(store), store)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -590,7 +590,7 @@ assignments:
 	tktID := tktRes.Entity.ID
 
 	sink := audit.NewMemory()
-	declarative, err := acl.NewDeclarative(policy, aclstore.NewGraph(store), store)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(store), store)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

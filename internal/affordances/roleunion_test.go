@@ -101,7 +101,7 @@ func newRoleUnionWorld(t *testing.T, policyYAML string) roleUnionWorld {
 	for _, user := range []string{"alice", "rita", "vic"} {
 		mustCreateRelation(t, ms, user, "watches", "TKT-1")
 	}
-	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

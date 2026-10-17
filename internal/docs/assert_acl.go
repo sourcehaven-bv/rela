@@ -114,7 +114,11 @@ func (a *aclBindings) luaAuthz(ls *lua.LState, wantAllow bool) int {
 	// The seeded memstore is both the graph (for role-relation membership) and
 	// the query backend, so a manual can seed the very edge that confers a role
 	// and then assert what it grants.
-	d, err := acl.NewDeclarative(a.policy, aclstore.NewGraph(a.store), a.store)
+	graph, err := aclstore.NewGraph(a.store)
+	if err != nil {
+		return a.luaFail(ls, "%s: building the evaluator failed: %v", verb, err)
+	}
+	d, err := acl.NewDeclarative(a.policy, graph, a.store)
 	if err != nil {
 		return a.luaFail(ls, "%s: building the evaluator failed: %v", verb, err)
 	}

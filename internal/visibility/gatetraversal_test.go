@@ -31,7 +31,7 @@ func TestDeclarativeGate_GateTraversalUsesCtxPrincipal(t *testing.T) {
 			"narrow": {Read: []string{"ticket"}},
 		},
 		Assignments: map[string]string{"alice": "full", "bob": "narrow"},
-	}, aclstore.NewGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}

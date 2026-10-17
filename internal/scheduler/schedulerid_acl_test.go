@@ -42,7 +42,7 @@ func schedulerReader(t *testing.T, policyYAML string) (*visibility.ScriptReader,
 	if err := yaml.Unmarshal([]byte(policyYAML), &policy); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestSchedulerIdentity_IsAcceptedByACL(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	st := memstore.New()
-	d, err := acl.NewDeclarative(&policy, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

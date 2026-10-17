@@ -83,8 +83,8 @@ func rejectApp(t *testing.T, mode string) *App {
 	// appbuildtest.New makes a fresh memstore, so the store must be built once
 	// and injected via WithStore into both the Declarative and the bundle.)
 	st := memstore.New()
-	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st,
-		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(st)))
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(st)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

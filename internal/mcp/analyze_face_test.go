@@ -62,7 +62,7 @@ func facedGatedServer(t *testing.T, read []string, extra ...*entity.Entity) (*Se
 	d, err := acl.NewDeclarative(&acl.Policy{
 		Roles:       map[string]acl.RoleDef{"reader": {Read: read}},
 		Assignments: map[string]string{"alice": "reader"},
-	}, aclstore.NewGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

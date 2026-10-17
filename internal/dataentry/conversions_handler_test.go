@@ -118,7 +118,7 @@ func newConversionHandlerFixture(t *testing.T) conversionHandlerFixture {
 	require.NoError(t, st.CreateEntity(t.Context(), hidden))
 	policy, err := acl.LoadPolicyBytes([]byte(conversionHandlerPolicy))
 	require.NoError(t, err)
-	d, err := acl.NewDeclarative(policy, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st)
 	require.NoError(t, err)
 	app := newAppFromParts(&Config{App: AppConfig{Name: "Conversion test"}}, meta, newFixture(),
 		appbuildtest.WithStore(st), appbuildtest.WithDeclarative(d))

@@ -104,7 +104,7 @@ func gatedServerAs(t *testing.T) (srv *Server, as func(user string) context.Cont
 			"editor": {Read: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"}},
 		},
 		Assignments: map[string]string{"alice": "viewer", "carol": "editor"},
-	}, aclstore.NewGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

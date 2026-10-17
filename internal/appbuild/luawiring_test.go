@@ -63,7 +63,7 @@ func TestScheduledLuaWriteDeps_ReadsAreACLBound(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(schedPolicy), &policy); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestScheduledLuaWriteDeps_WritePrepStaysRaw(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(schedPolicy), &policy); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

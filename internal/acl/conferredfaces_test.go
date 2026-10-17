@@ -43,7 +43,7 @@ func TestReadQuery_ConferredRolesKeepTheirOwnFaces(t *testing.T) {
 			"reviews": {Confers: "reviewer"},
 		},
 	}
-	d, err := NewDeclarative(p, aclstore.NewGraph(st), st)
+	d, err := NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestPermitsReadFace_ScopedVerdictReadsTheFaceRow(t *testing.T) {
 	d, err := NewDeclarative(&Policy{
 		Roles:         map[string]RoleDef{"author": {Read: []string{"policy"}}},
 		RoleRelations: map[string]RoleRelationDef{"owns": {Confers: "author"}},
-	}, aclstore.NewGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
