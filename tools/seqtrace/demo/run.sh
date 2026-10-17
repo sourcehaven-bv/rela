@@ -94,7 +94,11 @@ if [[ -n $REF ]]; then
     git -C "$REPO" rev-parse --verify --quiet "$REF^{commit}" >/dev/null || die "unknown git ref: $REF"
     rm -rf "$SRC"
     mkdir -p "$SRC"
-    git -C "$REPO" archive --format=tar "$REF" | tar -x -C "$SRC"
+    # Through a file, not a pipe: bsdtar stops reading at the end-of-archive
+    # marker, so git archive gets SIGPIPE and pipefail aborts the script.
+    git -C "$REPO" archive --format=tar -o "$WORK/src.tar" "$REF"
+    tar -x -f "$WORK/src.tar" -C "$SRC"
+    rm -f "$WORK/src.tar"
     rsync -a --delete "$REPO/tools/seqtrace/" "$SRC/tools/seqtrace/"
 else
     step "Copying the checkout to $SRC"
