@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -507,7 +505,7 @@ func TestSchemaGraphviz(t *testing.T) {
 	meta := metamodel.DefaultMetamodel()
 	svc := schemaTestFixture(t, meta)
 
-	_, err := captureStdoutVoid(t, func() error {
+	_, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
@@ -519,7 +517,7 @@ func TestSchemaGraphvizOutput(t *testing.T) {
 	meta := metamodel.DefaultMetamodel()
 	svc := schemaTestFixture(t, meta)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
@@ -574,7 +572,7 @@ func TestSchemaGraphvizWithConstraints(t *testing.T) {
 	}
 	svc := schemaTestFixture(t, meta)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, true, nil, false, false)
 	})
 	if err != nil {
@@ -605,7 +603,7 @@ func TestSchemaGraphvizWithColors(t *testing.T) {
 	}
 	svc := schemaTestFixture(t, meta)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
@@ -639,7 +637,7 @@ func TestSchemaGraphvizMultipleFromTo(t *testing.T) {
 	}
 	svc := schemaTestFixture(t, meta)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
@@ -718,24 +716,6 @@ func TestFormatCardinality(t *testing.T) {
 	}
 }
 
-// captureStdoutVoid runs fn while redirecting os.Stdout. Returns captured output and fn's err.
-func captureStdoutVoid(t *testing.T, fn func() error) (string, error) {
-	t.Helper()
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create pipe: %v", err)
-	}
-	oldStdout := os.Stdout
-	os.Stdout = w
-	fnErr := fn()
-	w.Close()
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, r)
-	return buf.String(), fnErr
-}
-
 // --- graphviz rendering-pipeline tests -------------------------------------
 
 // schemaGraphvizFixture builds a bare metamodel with the given entities and
@@ -769,7 +749,7 @@ func TestSchemaGraphvizExclude(t *testing.T) {
 		},
 	)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, []string{"c"}, false, false)
 	})
 	if err != nil {
@@ -802,7 +782,7 @@ func TestSchemaGraphvizLegendFiveTargets(t *testing.T) {
 		},
 	)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
@@ -834,7 +814,7 @@ func TestSchemaGraphvizHubIsolatedTargets(t *testing.T) {
 		},
 	)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
@@ -878,7 +858,7 @@ func TestSchemaGraphvizLegendConnectedTargets(t *testing.T) {
 		},
 	)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
@@ -929,7 +909,7 @@ func TestSchemaGraphvizFivePairStarvesThreePair(t *testing.T) {
 		},
 	)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
@@ -959,7 +939,7 @@ func TestSchemaGraphvizFewTargetsPlain(t *testing.T) {
 		},
 	)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
@@ -992,7 +972,7 @@ func TestSchemaGraphvizDropsEmptyNode(t *testing.T) {
 		},
 	)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
@@ -1021,7 +1001,7 @@ func TestSchemaGraphvizNoLegendFlag(t *testing.T) {
 		},
 	)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, true)
 	})
 	if err != nil {
@@ -1046,7 +1026,7 @@ func TestSchemaGraphvizNoBundleFlag(t *testing.T) {
 		},
 	)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, true, false)
 	})
 	if err != nil {
@@ -1148,7 +1128,7 @@ func TestSchemaGraphvizHyphenatedIDs(t *testing.T) {
 		},
 	)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
@@ -1205,7 +1185,7 @@ func TestSchemaGraphvizEscapesHTML(t *testing.T) {
 		},
 	)
 
-	result, err := captureStdoutVoid(t, func() error {
+	result, err := captureStdout(t, func() error {
 		return runSchemaGraphviz(svc.Meta, false, nil, false, false)
 	})
 	if err != nil {
