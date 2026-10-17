@@ -113,6 +113,9 @@ func channelView(key channels.Key, h *channels.Channel) ChannelView {
 // every ref id first, so a page costs one Resolve, however many refs.
 type renderer struct {
 	ct realtimecfg.ChannelType
+	// stored holds the refs the store recorded for ct, as
+	// "message-type.property". They render as refs whatever ct declares.
+	stored []string
 	// moderator is set when the reader passes the remove gate: they see who
 	// removed a message and why.
 	moderator bool
@@ -129,7 +132,7 @@ func (r *renderer) refIDs(msgs []channels.Message, sigs []signal) []string {
 			return
 		}
 		for name, p := range mt.Properties {
-			if p.Type != realtimecfg.PropertyRef {
+			if !r.isRef(typ, name, p) {
 				continue
 			}
 			if id, ok := props[name].(string); ok && id != "" {
@@ -153,6 +156,12 @@ func (r *renderer) refIDs(msgs []channels.Message, sigs []signal) []string {
 	return slices.Compact(ids)
 }
 
+// isRef reports whether property name of message type typ renders as a
+// ref: the configuration declares it one, or the store recorded it as one.
+func (r *renderer) isRef(typ, name string, p realtimecfg.Property) bool {
+	return p.Type == realtimecfg.PropertyRef || slices.Contains(r.stored, typ+"."+name)
+}
+
 func (r *renderer) ref(id string) *RefValue {
 	if v, ok := r.refs[id]; ok {
 		return &RefValue{ID: v.ID, Type: v.Type, Title: v.Title}
@@ -172,7 +181,7 @@ func (r *renderer) props(typ string, in map[string]any) map[string]any {
 		if !ok || v == nil {
 			continue
 		}
-		if p.Type == realtimecfg.PropertyRef {
+		if r.isRef(typ, name, p) {
 			id, _ := v.(string)
 			out[name] = r.ref(id)
 			continue

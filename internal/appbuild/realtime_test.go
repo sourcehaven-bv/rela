@@ -240,5 +240,5 @@ func TestRealtime_BootRefusesRecordedShapeChange(t *testing.T) {
 	require.NoError(t, svc.Close())
 
 	_, err = base.Assemble(st, search.New(st, search.NewLinearSearch()), nil, nil)
-	require.ErrorContains(t, err, "room: anchor family and cardinality many are recorded, family and one configured")
+	require.ErrorContains(t, err, "channel_types.room.cardinality: cannot change from many to one")
 }

@@ -160,9 +160,18 @@ func (c *call) affordances() Affordances {
 }
 
 // renderer builds the renderer for c, resolving every ref of msgs and sigs
-// in one batch.
+// in one batch. A property the store recorded as a ref renders as one
+// whatever the configuration now says (see Local.storedRefs).
 func (s *Service) renderer(c *call, msgs []channels.Message, sigs []signal) (*renderer, error) {
 	r := &renderer{ct: c.ct, moderator: c.moderator()}
+	if len(msgs) == 0 && len(sigs) == 0 {
+		return r, nil
+	}
+	stored, err := s.local.storedRefs(c.ctx, s.store, c.snap.Config, c.ct.Name)
+	if err != nil {
+		return nil, err
+	}
+	r.stored = stored
 	ids := r.refIDs(msgs, sigs)
 	if len(ids) == 0 {
 		return r, nil
@@ -291,6 +300,9 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 }
 
 // rendererWith is a renderer over refs already resolved for the caller.
+// It needs no stored refs: it renders only the caller's own write, after a successful
+// Service.record, which refuses a config that declares a recorded ref as
+// another type, or after a removal, which keeps no properties.
 func (s *Service) rendererWith(c *call, refs map[string]RefView) *renderer {
 	return &renderer{ct: c.ct, refs: refs, moderator: c.moderator()}
 }
@@ -384,21 +396,18 @@ func (s *Service) postSignal(
 // the write with a 409 channel_type_conflict. Local's cache skips the
 // store call for a record this process already wrote.
 //
-// After the record it checks that realtime.yaml was not reloaded since the
-// operation began. A reload checks the store's records before it applies,
-// so one that ran before this record could not see it; refusing here keeps
-// a write from landing under a shape the live config no longer has.
+// After the record it checks that the live realtime.yaml still gives the
+// type the shape it recorded. A reload checks the store's records before
+// it applies, so one that ran before this record could not see it;
+// refusing here keeps a write from landing under a shape the live config
+// no longer has. It compares shapes, not config generations, so a reload
+// that leaves this type's shape alone refuses nothing.
 func (s *Service) record(c *call) error {
-	shape := c.ct.Shape()
-	rec := channels.TypeRecord{
-		Anchor:      channels.AnchorMode(shape.Anchor),
-		Cardinality: channels.Cardinality(shape.Cardinality),
-		Refs:        shape.Refs,
-		Plain:       c.ct.PlainProperties(),
-	}
+	rec := typeRecord(c.ct)
 	if s.local.needsRecord(c.ct.Name, rec) {
 		err := s.store.RecordTypes(c.ctx, map[string]channels.TypeRecord{c.ct.Name: rec})
 		if errors.Is(err, channels.ErrTypeShapeConflict) {
+			s.local.forgetStoredRefs()
 			return typeConflict(c.ct.Name)
 		}
 		if err != nil {
@@ -406,10 +415,25 @@ func (s *Service) record(c *call) error {
 		}
 		s.local.noteRecorded(c.ct.Name, rec)
 	}
-	if s.cfg.Load().Config != c.snap.Config {
-		return configChanged()
+	live := s.cfg.Load().Config
+	if live != c.snap.Config {
+		ct, ok := live.ChannelType(c.ct.Name)
+		if !ok || !typeRecord(ct).Equal(rec) {
+			return configChanged()
+		}
 	}
 	return nil
+}
+
+// typeRecord is the store record of ct's configured shape.
+func typeRecord(ct realtimecfg.ChannelType) channels.TypeRecord {
+	shape := ct.Shape()
+	return channels.TypeRecord{
+		Anchor:      channels.AnchorMode(shape.Anchor),
+		Cardinality: channels.Cardinality(shape.Cardinality),
+		Refs:        shape.Refs,
+		Plain:       ct.PlainProperties(),
+	}
 }
 
 // CreateInput is a named channel to create.

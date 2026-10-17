@@ -425,7 +425,12 @@ func TestCheckChannelTypeRecords(t *testing.T) {
 	require.NoError(t, checkChannelTypeRecords(ctx, f.cs, nil))
 	require.NoError(t, checkChannelTypeRecords(ctx, f.cs, f.cfg), "nothing recorded yet")
 
-	matching := configuredTypeRecords(f.cfg)
+	matching := map[string]channels.TypeRecord{}
+	for _, ct := range f.cfg.ChannelTypes() {
+		matching[ct.Name] = channels.TypeRecord{
+			Anchor: channels.AnchorMode(ct.Anchor), Cardinality: channels.Cardinality(ct.Cardinality),
+		}
+	}
 	require.NoError(t, f.cs.RecordTypes(ctx, matching))
 	require.NoError(t, checkChannelTypeRecords(ctx, f.cs, f.cfg))
 
@@ -440,8 +445,8 @@ func TestCheckChannelTypeRecords(t *testing.T) {
 	before, err := f.cs.TypeRecords(ctx)
 	require.NoError(t, err)
 	err = checkChannelTypeRecords(ctx, f.cs, f.cfg)
-	require.ErrorContains(t, err, "chat: anchor face")
-	require.ErrorContains(t, err, "notes: anchor face and cardinality many")
+	require.ErrorContains(t, err, "channel_types.chat.anchor: cannot change from face to family")
+	require.ErrorContains(t, err, "channel_types.notes.cardinality: cannot change from many to one")
 	assert.NotContains(t, err.Error(), "retired", "a type the config dropped is not compared")
 	after, err := f.cs.TypeRecords(ctx)
 	require.NoError(t, err)

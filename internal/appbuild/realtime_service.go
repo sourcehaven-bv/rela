@@ -44,9 +44,6 @@ func buildRealtimeService(
 	base *SharedBase, st store.Store, cs channels.Store, local *realtime.Local,
 	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
 ) (*realtime.Service, *realtime.Local, error) {
-	if err := checkRecordedRefs(context.Background(), cs, base.realtime.Load().Config); err != nil {
-		return nil, nil, err
-	}
 	if local == nil {
 		var err error
 		if local, err = realtime.NewLocal(time.Now); err != nil {
@@ -260,48 +257,29 @@ func (r *RealtimeConfig) checkTypeRecords(ctx context.Context, next *realtimecfg
 	}
 	r.records.mu.Unlock()
 	for _, src := range srcs {
-		recs, err := src.TypeRecords(ctx)
-		if err != nil {
-			return fmt.Errorf("channels: read the recorded channel types: %w", err)
-		}
-		stored := make(map[string]realtimecfg.TypeShape, len(recs))
-		for typ, rec := range recs {
-			stored[typ] = realtimecfg.TypeShape{
-				Anchor:      realtimecfg.Anchor(rec.Anchor),
-				Cardinality: realtimecfg.Cardinality(rec.Cardinality),
-				Refs:        rec.Refs,
-			}
-		}
-		if err := realtimecfg.ShapeMismatchError(realtimecfg.ShapeMismatches(next, stored)); err != nil {
+		if err := checkRecords(ctx, src, next); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// checkRecordedRefs refuses cfg at boot when cs has recorded a ref
-// property of a channel type that cfg declares as another property type,
-// or no longer declares as a ref. The anchor and
-// cardinality of the record are checked by checkChannelTypeRecords; this
-// adds the refs, so the stored shapes carry the configured anchor and
-// cardinality and only the refs can differ.
-//
-// Nil: cs and cfg are accepted; either makes it a no-op.
-func checkRecordedRefs(ctx context.Context, cs typeRecordReader, cfg *realtimecfg.Compiled) error {
-	if cs == nil || cfg == nil {
-		return nil
-	}
-	recs, err := cs.TypeRecords(ctx)
+// checkRecords holds cfg against the type records of src: a changed anchor
+// or cardinality of a recorded type, or a recorded ref cfg declares as
+// another property type, is a [realtimecfg.ShapeMismatch]. Boot and reload
+// both report through it.
+func checkRecords(ctx context.Context, src typeRecordReader, cfg *realtimecfg.Compiled) error {
+	recs, err := src.TypeRecords(ctx)
 	if err != nil {
 		return fmt.Errorf("channels: read the recorded channel types: %w", err)
 	}
 	stored := make(map[string]realtimecfg.TypeShape, len(recs))
 	for typ, rec := range recs {
-		ct, ok := cfg.ChannelType(typ)
-		if !ok || len(rec.Refs) == 0 {
-			continue
+		stored[typ] = realtimecfg.TypeShape{
+			Anchor:      realtimecfg.Anchor(rec.Anchor),
+			Cardinality: realtimecfg.Cardinality(rec.Cardinality),
+			Refs:        rec.Refs,
 		}
-		stored[typ] = realtimecfg.TypeShape{Anchor: ct.Anchor, Cardinality: ct.Cardinality, Refs: rec.Refs}
 	}
 	return realtimecfg.ShapeMismatchError(realtimecfg.ShapeMismatches(cfg, stored))
 }

@@ -83,6 +83,47 @@ func TestEphemeralStore_FullRingRetryAfter(t *testing.T) {
 	require.Equal(t, 3*time.Second, d.RetryAfter)
 }
 
+// TestEphemeralStore_IdentityCapRetryAfter pins that the per-identity caps
+// answer Retry-After from the caller's own signals: another poster's
+// sooner expiry frees nothing for them.
+func TestEphemeralStore_IdentityCapRetryAfter(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(0, 0)
+	t.Run("count", func(t *testing.T) {
+		t.Parallel()
+		lim := defaultEphemeralLimits()
+		lim.perIdentity = 2
+		e := newEphemeralStore(lim)
+		_, err := e.add(keyOf("A"), sig("other", "y", now, 2*time.Second), now)
+		require.NoError(t, err)
+		_, err = e.add(keyOf("A"), sig("x1", "x", now, 40*time.Second), now)
+		require.NoError(t, err)
+		_, err = e.add(keyOf("B"), sig("x2", "x", now, 20*time.Second), now)
+		require.NoError(t, err)
+		_, err = e.add(keyOf("C"), sig("x3", "x", now, time.Minute), now)
+		d := requireDenial(t, err, http.StatusTooManyRequests, TypeRateLimited)
+		require.Equal(t, 20*time.Second, d.RetryAfter)
+	})
+	t.Run("channels", func(t *testing.T) {
+		t.Parallel()
+		lim := defaultEphemeralLimits()
+		lim.channelsPerIdentity = 2
+		e := newEphemeralStore(lim)
+		_, err := e.add(keyOf("A"), sig("other", "y", now, 2*time.Second), now)
+		require.NoError(t, err)
+		_, err = e.add(keyOf("A"), sig("a1", "x", now, 10*time.Second), now)
+		require.NoError(t, err)
+		_, err = e.add(keyOf("A"), sig("a2", "x", now, 50*time.Second), now)
+		require.NoError(t, err)
+		_, err = e.add(keyOf("B"), sig("b1", "x", now, 30*time.Second), now)
+		require.NoError(t, err)
+		_, err = e.add(keyOf("C"), sig("c1", "x", now, time.Minute), now)
+		d := requireDenial(t, err, http.StatusTooManyRequests, TypeRateLimited)
+		require.Equal(t, 30*time.Second, d.RetryAfter,
+			"ring B is the first the caller leaves; ring A still holds a2")
+	})
+}
+
 // TestEphemeralStore_ChannelsPerIdentity pins that one identity holds
 // signals in at most a fixed number of channels, and that a channel it is
 // already in still takes its signals.
