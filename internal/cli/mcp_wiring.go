@@ -15,7 +15,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
-	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -235,7 +234,8 @@ func (s *mcpServices) watchSchema(srv *relamcp.Server) {
 // because a schema reload builds a new config holder, and does nothing once
 // Close has run.
 func (s *mcpServices) watchRealtime(sub config.Subscriber) {
-	stop, err := sub.Subscribe(context.Background(), realtimecfg.FileName, func() { s.reloadRealtime() })
+	const realtimeFile = "realtime.yaml"
+	stop, err := sub.Subscribe(context.Background(), realtimeFile, func() { s.reloadRealtime() })
 	if err != nil {
 		slog.Warn("mcp: realtime.yaml watcher not started; realtime hot-reload disabled", "error", err)
 		return
