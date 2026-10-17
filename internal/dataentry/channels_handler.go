@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	channelsSegment = "_channels"
-	messagesSegment = "messages"
+	channelsSegment  = "_channels"
+	messagesSegment  = "messages"
+	lifecycleSegment = "_lifecycle"
 	// channelBodyLimit caps a channel request body: the largest message
 	// realtime.yaml may allow, plus room for the JSON envelope. The service
 	// applies the configured, possibly smaller, limit to the properties.
@@ -38,6 +39,7 @@ type ChannelService interface {
 	Create(ctx context.Context, entityType, anchor, typ string, in realtime.CreateInput) (realtime.ChannelView, error)
 	Edit(ctx context.Context, addr realtime.RawAddress, seq int64, props map[string]any) (realtime.MessageView, error)
 	Delete(ctx context.Context, addr realtime.RawAddress, seq int64, reason string) (realtime.MessageView, error)
+	Lifecycle(ctx context.Context, addr realtime.RawAddress, op string) (realtime.ChannelView, error)
 }
 
 // realtimeSwitch reports whether realtime is on now. *realtime.Service
@@ -56,10 +58,11 @@ type realtimeSwitch interface {
 //	POST   …/_channels/{type}[/{name}]/messages                post (201, or 202 ephemeral)
 //	PATCH  …/_channels/{type}[/{name}]/messages/{seq}          edit own message
 //	DELETE …/_channels/{type}[/{name}]/messages/{seq}          delete or remove
+//	POST   …/_channels/{type}[/{name}]/_lifecycle/{op}         close, reopen, archive, delete
 //
-// Parsing is structural: after the type, `messages` is the subresource
-// wherever it stands, and can never be a channel name, because names are minted as 13 base36
-// digits. The service decides by cardinality whether a name belongs.
+// Parsing is structural: after the type, `messages` and `_lifecycle` are
+// subresources wherever they stand, and can never be a channel name,
+// because names are minted as 13 base36 digits. The service decides by cardinality whether a name belongs.
 //
 // A nil *channelsHandler is "channels not wired": every route answers the
 // entity GET's uniform 404, as with realtime off. [SetChannels] installs it.
@@ -107,6 +110,8 @@ type channelRoute struct {
 	// msgs is set for …/messages; seq additionally for …/messages/{seq}.
 	msgs bool
 	seq  int64
+	// lifecycle is the operation of …/_lifecycle/{op}.
+	lifecycle string
 }
 
 // serve answers every route under /api/v1/{plural}/{ref}/_channels. rest
@@ -130,6 +135,10 @@ func (h *channelsHandler) serve(w http.ResponseWriter, r *http.Request, typeName
 		return
 	}
 	switch {
+	case rt.lifecycle != "":
+		if allowMethod(w, r, http.MethodPost) {
+			h.runLifecycle(w, r, rt)
+		}
 	case rt.seq != 0:
 		switch r.Method {
 		case http.MethodPatch:
@@ -169,19 +178,25 @@ func methodNotAllowed(w http.ResponseWriter, r *http.Request, allow string) {
 	writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 }
 
-// parseChannelRoute parses {type}[/{name}][/messages[/{seq}]]. It reports
-// false for any other shape.
+// parseChannelRoute parses {type}[/{name}][/messages[/{seq}]] and
+// {type}[/{name}]/_lifecycle/{op}. It reports false for any other shape,
+// including an op that is no lifecycle operation.
 func parseChannelRoute(typeName, ref string, rest []string) (channelRoute, bool) {
 	if slices.Contains(rest, "") {
 		return channelRoute{}, false
 	}
 	rt := channelRoute{addr: realtime.RawAddress{EntityType: typeName, Anchor: ref, Type: rest[0]}}
 	tail := rest[1:]
-	if len(tail) > 0 && tail[0] != messagesSegment {
+	if len(tail) > 0 && tail[0] != messagesSegment && tail[0] != lifecycleSegment {
 		rt.addr.Name, tail = tail[0], tail[1:]
 	}
 	switch {
 	case len(tail) == 0:
+	case len(tail) == 2 && tail[0] == lifecycleSegment:
+		if !realtime.IsLifecycleOp(tail[1]) {
+			return channelRoute{}, false
+		}
+		rt.lifecycle = tail[1]
 	case len(tail) == 1 && tail[0] == messagesSegment:
 		rt.msgs = true
 	case len(tail) == 2 && tail[0] == messagesSegment:
@@ -340,6 +355,25 @@ func (h *channelsHandler) remove(w http.ResponseWriter, r *http.Request, rt chan
 		return
 	}
 	writeV1JSON(w, http.StatusOK, wireMessage(got))
+}
+
+// runLifecycle serves POST …/_lifecycle/{op}. The body is empty or `{}`.
+// A delete answers 204; every other operation answers the channel.
+func (h *channelsHandler) runLifecycle(w http.ResponseWriter, r *http.Request, rt channelRoute) {
+	var req struct{}
+	if !decodeChannelBody(w, r, &req, true) {
+		return
+	}
+	got, err := h.svc.Lifecycle(r.Context(), rt.addr, rt.lifecycle)
+	if err != nil {
+		writeChannelError(w, r, err)
+		return
+	}
+	if rt.lifecycle == realtime.LifecycleDelete {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeV1JSON(w, http.StatusOK, wireChannel(got))
 }
 
 // decodeChannelBody reads a JSON body of at most [channelBodyLimit] bytes
