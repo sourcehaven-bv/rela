@@ -103,10 +103,10 @@ func (r *rekeyRacer) Rekey(ctx context.Context, oldID, newID string, at time.Tim
 }
 
 func (r *rekeyRacer) Tombstone(
-	ctx context.Context, id string, face entity.Face, at time.Time,
+	ctx context.Context, id string, face entity.Face, at time.Time, f channels.Filing,
 ) (channels.TombstoneHandle, error) {
 	r.tombs = append(r.tombs, entity.FormatStateRef(id, face))
-	return r.Store.Tombstone(ctx, id, face, at)
+	return r.Store.Tombstone(ctx, id, face, at, f)
 }
 
 func TestChannelAliases_RenameRaces(t *testing.T) {
@@ -136,7 +136,9 @@ func TestChannelAliases_RenameRaces(t *testing.T) {
 
 type failingChannels struct{ channels.Store }
 
-func (failingChannels) Tombstone(context.Context, string, entity.Face, time.Time) (channels.TombstoneHandle, error) {
+func (failingChannels) Tombstone(
+	context.Context, string, entity.Face, time.Time, channels.Filing,
+) (channels.TombstoneHandle, error) {
 	return channels.TombstoneHandle{}, errDiskFull
 }
 

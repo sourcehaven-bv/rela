@@ -103,11 +103,13 @@ type Dialect struct {
 
 // Store is the SQL backend.
 //
-// 20 -> 21 (TKT-ZU7P13): Untombstone. The exported methods are the mandated
-// [channels.Store] interface, so this is a required-interface exception
-// rather than a ratchet target.
+// 20 -> 21 (TKT-ZU7P13): Untombstone. 21 -> 25 (TKT-964SIS):
+// ConfirmTombstone, Tombstones, Purge and DropTypeRecord. The exported
+// methods are the mandated [channels.Store] interface, so this is a
+// required-interface exception rather than a ratchet target. Helpers stay
+// free functions.
 //
-//plimsoll:max-exported-methods=21
+//plimsoll:max-exported-methods=25
 type Store struct {
 	db DB
 	d  Dialect
@@ -238,6 +240,7 @@ func (s *Store) wrap(err error, format string, args ...any) error {
 		channels.ErrNotFound, channels.ErrInvalidKey, channels.ErrInvalidMessage, channels.ErrTooLarge,
 		channels.ErrTooManyChannels, channels.ErrConflict, channels.ErrRemoved, channels.ErrInvalidReply,
 		channels.ErrInvalidPage, channels.ErrRekeyConflict, channels.ErrStaleAnchor, channels.ErrTypeShapeConflict,
+		channels.ErrTypeInUse,
 	} {
 		if errors.Is(err, sentinel) {
 			return err
@@ -483,21 +486,23 @@ func (s *Store) SetAction(
 	if err != nil {
 		return channels.Message{}, err
 	}
+	if err := channels.CheckRelease(expect, next); err != nil {
+		return channels.Message{}, err
+	}
 	return s.update(ctx, k, seq, "act on", func(q Querier, _ row, m *channels.Message) error {
 		if err := channels.CheckActionCAS(m.Action, name, expect); err != nil {
 			return err
 		}
 		if next.Status == channels.ActionNone {
 			m.Action = nil
+		} else {
+			a := next
+			m.Action = &a
+		}
+		rec, ok := channels.ActionAudit(k, seq, name, expect, next)
+		if !ok {
 			return nil
 		}
-		a := next
-		m.Action = &a
-		if next.Status != channels.ActionDone {
-			return nil
-		}
-		rec := channels.KeyAudit(k, channels.AuditAction, next.At)
-		rec.Seq, rec.By, rec.Action, rec.Promoted = seq, next.By, name, next.Promoted
 		return s.audit(ctx, q, k.ID, rec)
 	})
 }
@@ -564,7 +569,7 @@ func (s *Store) SetLifecycle(
 		}
 		out = c
 		rec := channels.KeyAudit(k, channels.AuditLifecycle, t.At)
-		rec.By, rec.From, rec.To = t.By, string(expect), string(t.To)
+		rec.By, rec.From, rec.To, rec.TriggeredBy = t.By, string(expect), string(t.To), t.TriggeredBy
 		return s.audit(ctx, q, k.ID, rec)
 	})
 	return out, s.wrap(werr, "move %s", k)
@@ -630,18 +635,23 @@ func (s *Store) Rekey(ctx context.Context, oldID, newID string, at time.Time) er
 }
 
 // Tombstone implements [channels.Store]. The batch's rows keep their
-// place and get the stamp in their tomb column.
+// place and get the stamp in their tomb column; its filing is a row of
+// channel_tombstones.
 func (s *Store) Tombstone(
-	ctx context.Context, id string, face entity.Face, at time.Time,
+	ctx context.Context, id string, face entity.Face, at time.Time, f channels.Filing,
 ) (channels.TombstoneHandle, error) {
 	a := channels.Anchor{ID: id, Face: face}
 	if err := a.Validate(); err != nil {
 		return channels.TombstoneHandle{}, err
 	}
+	f, err := channels.PrepareFiling(f)
+	if err != nil {
+		return channels.TombstoneHandle{}, err
+	}
 	h := channels.NewTombstoneHandle(a, channels.TombstoneStamp(at))
 	rec := channels.AuditRecord{At: channels.NormTime(at), Op: channels.AuditTombstone, Face: face}
 	filed := false
-	err := s.write(ctx, []string{id}, func(q Querier) error {
+	err = s.write(ctx, []string{id}, func(q Querier) error {
 		if face != "" {
 			moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ?
 				WHERE anchor_id = ? AND anchor_face = ? AND tomb = ''`, h.Stamp(), id, string(face))
@@ -649,6 +659,9 @@ func (s *Store) Tombstone(
 				return err
 			}
 			filed = true
+			if err := insertFiling(ctx, q, h, f); err != nil {
+				return err
+			}
 			return s.audit(ctx, q, id, rec)
 		}
 		moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ? WHERE anchor_id = ? AND tomb = ''`,
@@ -657,6 +670,11 @@ func (s *Store) Tombstone(
 			return err
 		}
 		filed = moved > 0
+		if filed {
+			if err := insertFiling(ctx, q, h, f); err != nil {
+				return err
+			}
+		}
 		var n int
 		if cErr := q.QueryRow(ctx, `SELECT COUNT(*) FROM channel_audit WHERE anchor_id = ? AND tomb = ''`,
 			id).Scan(&n); cErr != nil || n == 0 {
@@ -715,6 +733,9 @@ func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at 
 		}
 		if _, err := q.Exec(ctx, `UPDATE channel_audit SET tomb = '' WHERE anchor_id = ? AND tomb = ?`,
 			a.ID, h.Stamp()); err != nil {
+			return err
+		}
+		if err := deleteFiling(ctx, q, h); err != nil {
 			return err
 		}
 		return s.audit(ctx, q, a.ID, channels.AuditRecord{
@@ -848,18 +869,23 @@ func (s *Store) ListEntity(ctx context.Context, id string) ([]channels.Channel, 
 	return out, s.wrap(err, "list %s", id)
 }
 
-// ListByLifecycle implements [channels.Store].
+// ListByLifecycle implements [channels.Store]. channels_type_state_idx
+// narrows the scan to the type and state.
 func (s *Store) ListByLifecycle(
-	ctx context.Context, state channels.State, before time.Time,
+	ctx context.Context, typ string, state channels.State, before time.Time,
 ) ([]channels.Channel, error) {
+	if !channels.ValidName(typ) {
+		return nil, fmt.Errorf("%w: channel type %q", channels.ErrInvalidKey, typ)
+	}
 	col := map[channels.State]string{
 		channels.StateOpen: "created_at", channels.StateClosed: "closed_at", channels.StateArchived: "archived_at",
 	}[state]
 	if col == "" {
 		return nil, fmt.Errorf("%w: state %q", channels.ErrInvalidMessage, state)
 	}
-	out, err := s.channels(ctx, `AND state = ? AND `+col+` < ?`, string(state), micros(channels.NormTime(before)))
-	return out, s.wrap(err, "list %s channels", state)
+	out, err := s.channels(ctx, `AND type = ? AND state = ? AND `+col+` < ?`,
+		typ, string(state), micros(channels.NormTime(before)))
+	return out, s.wrap(err, "list %s %s channels", state, typ)
 }
 
 // StalePending implements [channels.Store].

@@ -152,7 +152,7 @@ func (s *channelScope) CheckDelete(_ context.Context, d entitymanager.AnchorDele
 // batch and still return its handle; that part is put back before the error
 // is returned, so a failed detach leaves nothing detached.
 func (g *channelGuard) tombstone(ctx context.Context, id string, face entity.Face) (channels.TombstoneHandle, error) {
-	h, err := g.store.Tombstone(ctx, id, face, g.now())
+	h, err := g.store.Tombstone(ctx, id, face, g.now(), channels.Filing{})
 	if err == nil || h.IsZero() {
 		return h, err
 	}

@@ -96,6 +96,12 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"AfterRevPagesInRevOrder", testAfterRevPaging},
 		{"ManyReplies", testManyReplies},
 		{"LongestAnchor", testLongestAnchor},
+		{"TombstonesList", testTombstonesList},
+		{"ConfirmTombstone", testConfirmTombstone},
+		{"Purge", testPurge},
+		{"PurgeFace", testPurgeFace},
+		{"PurgeAfterUntombstone", testPurgeAfterUntombstone},
+		{"DropTypeRecord", testDropTypeRecord},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,7 +128,7 @@ func mustAppend(t *testing.T, s channels.Store, k channels.Key, m channels.NewMe
 // tombstone tombstones id@face and returns the handle.
 func tombstone(t *testing.T, s channels.Store, id string, face entity.Face, at time.Time) channels.TombstoneHandle {
 	t.Helper()
-	h, err := s.Tombstone(context.Background(), id, face, at)
+	h, err := s.Tombstone(context.Background(), id, face, at, channels.Filing{})
 	require.NoError(t, err)
 	return h
 }
@@ -520,10 +526,14 @@ func testActions(t *testing.T, h Harness) {
 	require.NoError(t, err)
 	require.Empty(t, stale)
 
-	// A failed side effect reverts to no action.
+	// A failed side effect, or a moderator, releases the pending action.
 	_, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionNone, pending)
 	require.NoError(t, err)
-	got, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionPending, channels.Action{})
+	_, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionPending, channels.Action{})
+	require.ErrorIs(t, err, channels.ErrInvalidMessage, "a release names who released it")
+	releasedAt := at.Add(2 * time.Second)
+	got, err = h.Store.SetAction(ctx, k, 2, "accept", channels.ActionPending,
+		channels.Action{By: Bob, At: releasedAt})
 	require.NoError(t, err)
 	require.Nil(t, got.Action)
 	stale, err = h.Store.StalePending(ctx, at.Add(time.Hour))
@@ -538,10 +548,15 @@ func testActions(t *testing.T, h Harness) {
 			actions = append(actions, r)
 		}
 	}
-	require.Len(t, actions, 1, "only a completed action is audited")
+	require.Len(t, actions, 2, "a completed and a released action are audited; going pending is not")
 	require.Equal(t, "accept", actions[0].Action)
 	require.Equal(t, int64(1), actions[0].Seq)
 	require.Equal(t, &channels.Promoted{ID: "DEC-1", Type: "decision"}, actions[0].Promoted)
+	require.Empty(t, actions[0].Status)
+	require.Equal(t, channels.AuditRecord{
+		At: channels.NormTime(releasedAt), Op: channels.AuditAction, Type: "room", Seq: 2, By: Bob,
+		Action: "accept", Status: channels.AuditReleased,
+	}, actions[1])
 
 	_, err = h.Store.SetAction(ctx, k, 9, "accept", channels.ActionNone, pending)
 	require.ErrorIs(t, err, channels.ErrNotFound)
@@ -579,16 +594,35 @@ func testLifecycle(t *testing.T, h Harness) {
 		channels.Transition{To: channels.StateClosed, By: Bob, At: closedAt})
 	require.ErrorIs(t, err, channels.ErrNotFound)
 
-	got, err := h.Store.ListByLifecycle(ctx, channels.StateClosed, closedAt.Add(time.Second))
+	got, err := h.Store.ListByLifecycle(ctx, "room", channels.StateClosed, closedAt.Add(time.Second))
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Equal(t, k, got[0].Key)
-	got, err = h.Store.ListByLifecycle(ctx, channels.StateClosed, closedAt)
+	got, err = h.Store.ListByLifecycle(ctx, "other", channels.StateClosed, closedAt.Add(time.Second))
+	require.NoError(t, err)
+	require.Empty(t, got, "the type narrows the list")
+	got, err = h.Store.ListByLifecycle(ctx, "room", channels.StateClosed, closedAt)
 	require.NoError(t, err)
 	require.Empty(t, got)
-	got, err = h.Store.ListByLifecycle(ctx, channels.StateOpen, closedAt.Add(time.Hour))
+	got, err = h.Store.ListByLifecycle(ctx, "room", channels.StateOpen, closedAt.Add(time.Hour))
 	require.NoError(t, err)
 	require.Empty(t, got)
+	_, err = h.Store.ListByLifecycle(ctx, "", channels.StateOpen, closedAt)
+	require.ErrorIs(t, err, channels.ErrInvalidKey, "the type is required")
+
+	auditLog, err := h.Store.Audit(ctx, "TKT-1")
+	require.NoError(t, err)
+	require.Empty(t, auditLog[len(auditLog)-1].TriggeredBy, "a requested change names no trigger")
+	_, err = h.Store.SetLifecycle(ctx, k, channels.StateClosed, channels.Transition{
+		To: channels.StateOpen, By: Bob, At: closedAt, TriggeredBy: "auto:room/reopen",
+	})
+	require.NoError(t, err)
+	auditLog, err = h.Store.Audit(ctx, "TKT-1")
+	require.NoError(t, err)
+	require.Equal(t, "auto:room/reopen", auditLog[len(auditLog)-1].TriggeredBy)
+	_, err = h.Store.SetLifecycle(ctx, k, channels.StateOpen,
+		channels.Transition{To: channels.StateClosed, By: Bob, At: closedAt})
+	require.NoError(t, err)
 
 	archivedAt := closedAt.Add(time.Hour)
 	c, err = h.Store.SetLifecycle(ctx, k, channels.StateClosed,
@@ -611,7 +645,7 @@ func testLifecycle(t *testing.T, h Harness) {
 			trail = append(trail, r.From+">"+r.To)
 		}
 	}
-	require.Equal(t, []string{"open>closed", "closed>archived", "archived>open"}, trail)
+	require.Equal(t, []string{"open>closed", "closed>open", "open>closed", "closed>archived", "archived>open"}, trail)
 }
 
 func testCreateMany(t *testing.T, h Harness) {
@@ -927,7 +961,7 @@ func testTombstoneEntity(t *testing.T, h Harness) {
 	tombstone(t, h.Store, "TKT-1", "", T0.Add(time.Hour))
 	tombstone(t, h.Store, "TKT-1", "", T0.Add(time.Hour))
 	tombstone(t, h.Store, "NONE-1", "", T0)
-	requireTombstoneErr(t, channels.ErrInvalidKey)(h.Store.Tombstone(ctx, "../x", "", T0))
+	requireTombstoneErr(t, channels.ErrInvalidKey)(h.Store.Tombstone(ctx, "../x", "", T0, channels.Filing{}))
 }
 
 func testTombstoneFace(t *testing.T, h Harness) {
@@ -954,7 +988,7 @@ func testTombstoneFace(t *testing.T, h Harness) {
 	last := audit[len(audit)-1]
 	require.Equal(t, channels.AuditTombstone, last.Op)
 	require.Equal(t, entity.Face("draft"), last.Face)
-	requireTombstoneErr(t, channels.ErrInvalidKey)(h.Store.Tombstone(ctx, "TKT-1", "Bad Face", T0))
+	requireTombstoneErr(t, channels.ErrInvalidKey)(h.Store.Tombstone(ctx, "TKT-1", "Bad Face", T0, channels.Filing{}))
 }
 
 func testCaps(t *testing.T, h Harness) {

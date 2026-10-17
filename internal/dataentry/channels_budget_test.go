@@ -87,10 +87,10 @@ func (c *countingChannels) ListEntity(ctx context.Context, id string) ([]channel
 }
 
 func (c *countingChannels) ListByLifecycle(
-	ctx context.Context, state channels.State, before time.Time,
+	ctx context.Context, typ string, state channels.State, before time.Time,
 ) ([]channels.Channel, error) {
 	c.hit("ListByLifecycle")
-	return c.Store.ListByLifecycle(ctx, state, before)
+	return c.Store.ListByLifecycle(ctx, typ, state, before)
 }
 
 func (c *countingChannels) StalePending(ctx context.Context, before time.Time) ([]channels.PendingAction, error) {

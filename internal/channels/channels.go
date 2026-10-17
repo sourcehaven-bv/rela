@@ -105,6 +105,10 @@ var (
 	// earlier entity that used the same id. Nothing was written; the caller
 	// tombstones the leftover and retries. See [Channel.Incarnation].
 	ErrStaleAnchor = errors.New("channels: channel belongs to an earlier entity with this id")
+
+	// ErrTypeInUse reports a type record that cannot be dropped because a
+	// channel of the type still exists, live or tombstoned.
+	ErrTypeInUse = errors.New("channels: channel type still has channels")
 )
 
 // Caps enforced at the store boundary, so no backend and no caller above it
@@ -432,11 +436,14 @@ func (c Channel) StateSince() time.Time {
 }
 
 // Transition is a lifecycle change: the state to move to, who moves it and
-// when.
+// when. TriggeredBy names the rule that made the change when no person
+// asked for it, such as an `auto` step; it is empty for a request. The
+// store copies it to the audit record.
 type Transition struct {
-	To State
-	By Author
-	At time.Time
+	To          State
+	By          Author
+	At          time.Time
+	TriggeredBy string
 }
 
 // ApplyTransition sets c's state and timestamps for t. Reopening clears
@@ -519,14 +526,24 @@ const (
 	AuditRekey       AuditOp = "rekey"
 	AuditTombstone   AuditOp = "tombstone"
 	AuditUntombstone AuditOp = "untombstone"
+	// AuditPurge records that the channels of a tombstoned batch were
+	// erased. It is appended to the batch's own filed trail, never to the
+	// live trail of the id, which may belong to a new entity by then.
+	AuditPurge AuditOp = "purge"
 )
+
+// AuditReleased is the [AuditRecord.Status] of an action record that
+// records a pending action put back to none.
+const AuditReleased = "released"
 
 // AuditRecord is one entry in an entity's channel audit trail. It never
 // holds message content: no properties, no removal reason, no title.
 //
 // Type and Name are empty for the records that concern the whole entity
 // (rekey, and a tombstone or untombstone of every face). From and To carry the old and new
-// state of a lifecycle change and the old and new id of a rekey.
+// state of a lifecycle change and the old and new id of a rekey. Status is
+// set on an action record that is not a completion, such as
+// [AuditReleased]. TriggeredBy is copied from [Transition.TriggeredBy].
 type AuditRecord struct {
 	At       time.Time   `json:"at"`
 	Op       AuditOp     `json:"op"`
@@ -539,6 +556,9 @@ type AuditRecord struct {
 	To       string      `json:"to,omitempty"`
 	Action   string      `json:"action,omitempty"`
 	Promoted *Promoted   `json:"promoted,omitempty"`
+	Status   string      `json:"status,omitempty"`
+	// TriggeredBy is set on records of changes no person asked for.
+	TriggeredBy string `json:"triggered_by,omitempty"`
 }
 
 // KeyAudit returns the start of an audit record about the channel k.
@@ -630,14 +650,15 @@ func PrepareRemoval(r Removal) (Removal, error) {
 
 // PrepareAction validates the next action of a SetAction call, and returns
 // it with its times normalized. A next action with [ActionNone] clears the
-// action, so its other fields are ignored.
+// action: only its By and At are kept, for the audit record of a release
+// (see [CheckRelease]).
 func PrepareAction(name string, next Action) (Action, error) {
 	if !ValidName(name) {
 		return next, fmt.Errorf("%w: action name %q", ErrInvalidMessage, name)
 	}
 	switch next.Status {
 	case ActionNone:
-		return Action{}, nil
+		return Action{By: next.By, At: NormTime(next.At)}, nil
 	case ActionPending, ActionDone:
 	default:
 		return next, fmt.Errorf("%w: action status %q", ErrInvalidMessage, next.Status)
@@ -680,6 +701,38 @@ func CheckActionCAS(cur *Action, name string, expect ActionStatus) error {
 		return fmt.Errorf("%w: message carries action %q, not %q", ErrConflict, cur.Name, name)
 	}
 	return nil
+}
+
+// CheckRelease refuses a SetAction from [ActionPending] to [ActionNone]
+// that names no author or time. That step is a release, and its audit
+// record says who released the action and when.
+func CheckRelease(expect ActionStatus, next Action) error {
+	if expect != ActionPending || next.Status != ActionNone {
+		return nil
+	}
+	if err := checkAuthor(next.By); err != nil {
+		return fmt.Errorf("release: %w", err)
+	}
+	if next.At.IsZero() {
+		return fmt.Errorf("%w: release has no time", ErrInvalidMessage)
+	}
+	return nil
+}
+
+// ActionAudit returns the audit record a SetAction writes, and whether it
+// writes one. A completion ([ActionDone]) and a release (pending to none)
+// are recorded; taking an action pending is not.
+func ActionAudit(k Key, seq int64, name string, expect ActionStatus, next Action) (AuditRecord, bool) {
+	release := next.Status == ActionNone && expect == ActionPending
+	if next.Status != ActionDone && !release {
+		return AuditRecord{}, false
+	}
+	rec := KeyAudit(k, AuditAction, next.At)
+	rec.Seq, rec.By, rec.Action, rec.Promoted = seq, next.By, name, next.Promoted
+	if release {
+		rec.Status = AuditReleased
+	}
+	return rec, true
 }
 
 // checkPromotedType refuses an empty, oversized or unprintable entity type
@@ -729,6 +782,9 @@ func PrepareTransition(expect State, t Transition) (Transition, error) {
 	}
 	if t.At.IsZero() {
 		return t, fmt.Errorf("%w: missing time", ErrInvalidMessage)
+	}
+	if len(t.TriggeredBy) > MaxTextBytes {
+		return t, fmt.Errorf("%w: triggered_by over %d bytes", ErrTooLarge, MaxTextBytes)
 	}
 	t.At = NormTime(t.At)
 	return t, nil
@@ -785,7 +841,7 @@ func NewName() string {
 // TombstoneStamp returns the label a tombstone files channels under: the
 // time, then random bits so two tombstones in one instant never collide.
 func TombstoneStamp(at time.Time) string {
-	return NormTime(at).Format("20060102T150405.000000Z") + "-" + NewName()[7:]
+	return NormTime(at).Format(stampTimeLayout) + "-" + NewName()[7:]
 }
 
 // KeyLess orders keys by entity id, face, type and name: the order every

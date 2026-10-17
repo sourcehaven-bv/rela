@@ -112,7 +112,7 @@ func (a *channelAliases) EntityRenamed(ctx context.Context, oldID, newID string)
 	at := a.now()
 	err := a.store.Rekey(ctx, oldID, newID, at)
 	if errors.Is(err, channels.ErrRekeyConflict) {
-		if _, err = a.store.Tombstone(ctx, newID, "", at); err == nil {
+		if _, err = a.store.Tombstone(ctx, newID, "", at, channels.Filing{}); err == nil {
 			err = a.store.Rekey(ctx, oldID, newID, at)
 		}
 	}
@@ -135,7 +135,7 @@ func (a *channelAliases) sweep(ctx context.Context, id string, at time.Time) err
 	if err != nil || len(left) == 0 {
 		return err
 	}
-	_, err = a.store.Tombstone(ctx, id, "", at)
+	_, err = a.store.Tombstone(ctx, id, "", at, channels.Filing{})
 	return err
 }
 
@@ -155,7 +155,7 @@ func (a *channelAliases) EntityFaceDeleted(ctx context.Context, id string, face 
 	if face == "" {
 		return nil
 	}
-	if _, err := a.store.Tombstone(ctx, id, face, a.now()); err != nil {
+	if _, err := a.store.Tombstone(ctx, id, face, a.now(), channels.Filing{}); err != nil {
 		return fmt.Errorf("channels: detach %s: %w", entity.FormatStateRef(id, face), err)
 	}
 	return nil
@@ -178,9 +178,9 @@ func (a *channelAliases) EntityCreated(ctx context.Context, id string, face enti
 	}
 	switch {
 	case len(headers) <= 1:
-		_, err = a.store.Tombstone(ctx, id, "", a.now())
+		_, err = a.store.Tombstone(ctx, id, "", a.now(), channels.Filing{})
 	case face != "":
-		_, err = a.store.Tombstone(ctx, id, face, a.now())
+		_, err = a.store.Tombstone(ctx, id, face, a.now(), channels.Filing{})
 	}
 	if err != nil {
 		return fmt.Errorf("channels: clear %s on create: %w", entity.FormatStateRef(id, face), err)

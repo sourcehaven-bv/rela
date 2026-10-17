@@ -715,7 +715,7 @@ CREATE TABLE IF NOT EXISTS channel_types (
 	type        TEXT PRIMARY KEY,
 	anchor_mode TEXT NOT NULL,
 	cardinality TEXT NOT NULL DEFAULT ''
-) STRICT;` + channelTypeRefsDDL
+) STRICT;` + channelTypeRefsDDL + channelRetentionDDL
 
 // channelTypeRefsDDL holds the ref properties recorded for each channel
 // type (see channels.TypeRecord). Shared between channelsDDL and the v19 to
@@ -736,6 +736,22 @@ CREATE TABLE IF NOT EXISTS entity_search_key (
 	face TEXT NOT NULL,
 	UNIQUE (id, face)
 ) STRICT;`
+
+// channelRetentionDDL holds what each tombstoned batch of channels recorded
+// when it was filed (channels.Filing), and the index the close and archive
+// sweeps read through. pgstore migration 0030 has the same shape. Shared
+// between channelsDDL and the v22 to v23 rung.
+const channelRetentionDDL = `
+CREATE TABLE IF NOT EXISTS channel_tombstones (
+	anchor_id   TEXT NOT NULL,
+	tomb        TEXT NOT NULL,
+	anchor_face TEXT NOT NULL DEFAULT '',
+	policy      TEXT NOT NULL DEFAULT '',
+	purge_after INTEGER NOT NULL DEFAULT 0,
+	pending     INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (anchor_id, tomb)
+) STRICT;
+CREATE INDEX IF NOT EXISTS channels_type_state_idx ON channels(tomb, type, state);`
 
 // searchDDL is the full-text search index (DEC-10Z731): an FTS5 table with
 // the trigram tokenizer, which answers substring queries as pgstore's LIKE

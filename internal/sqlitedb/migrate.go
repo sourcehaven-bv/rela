@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 22
+const schemaVersion = 23
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -254,6 +254,13 @@ var migrations = []migration{
 			}
 			return sqlSteps(dropSearchSQL, `UPDATE entities SET search_text = NULL`)(ctx, conn)
 		},
+	},
+	{
+		// v22 → v23: what each tombstoned channel batch recorded, and the
+		// (tomb, type, state) index of the lifecycle sweeps (TKT-964SIS).
+		// Pure CREATE IF NOT EXISTS.
+		to:    23,
+		apply: sqlSteps(channelRetentionDDL),
 	},
 }
 
