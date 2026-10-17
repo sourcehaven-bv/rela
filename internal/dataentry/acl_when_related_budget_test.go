@@ -134,12 +134,20 @@ func TestQueryBudget_ListFreeTextUnderFieldHiding(t *testing.T) {
 		if rec.Code != http.StatusOK || len(resp.Data) != n {
 			t.Fatalf("list ?q=: %d, %d rows, want %d (%s)", rec.Code, len(resp.Data), n, rec.Body)
 		}
+		// "open" matches only status, whose grant is conditional, so every hit
+		// needs the grant's verdict: open tickets (even i) that implement
+		// Feature 1 (i%5 == 0), one in ten. A lazy per-hit verdict would show
+		// up here and not under "Ticket", which the unconditional title grant
+		// admits without asking.
+		resp, rec = listEntitiesAs(ctx, t, app, d, "ticket", "tickets", "q=open&per_page=100")
+		if rec.Code != http.StatusOK || len(resp.Data) != n/10 {
+			t.Fatalf("list ?q=open: %d, %d rows, want %d (%s)", rec.Code, len(resp.Data), n/10, rec.Body)
+		}
 		calls := counting.Calls()
 		got = append(got, sample{
 			fixed:       counting.Reads() - calls["GetEntity"] - calls["MatchingFaces"],
-			entityLoads: calls["GetEntity"] - n, // the in-memory searcher's own scan reads each row once
-			// One batched traversal primes the served page; the rest are per hit.
-			traversals: calls["MatchingFaces"] - 1,
+			entityLoads: calls["GetEntity"],
+			traversals:  calls["MatchingFaces"],
 		})
 		detail = counting.String()
 	}
