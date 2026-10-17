@@ -576,7 +576,7 @@ func aclPolicy() *acl.Policy {
 // transport edge does.
 func (f attachFixture) as(t *testing.T, user string) context.Context {
 	t.Helper()
-	ctx, err := appbuild.IdentityBinder(f.svc)(principal.With(context.Background(),
+	ctx, err := appbuild.MustIdentityBinder(f.svc)(principal.With(context.Background(),
 		principal.Principal{User: user, Tool: principal.ToolMCP}))
 	if err != nil {
 		t.Fatalf("IdentityBinder: %v", err)

@@ -90,7 +90,11 @@ func (p *project) syncSeed(ctx context.Context, seed []docs.SeedOp) error {
 // authorized and attributed the same way) and resolves it into svc's ACL
 // request scope.
 func seedContext(ctx context.Context, svc *appbuild.Services, who principal.Principal) (context.Context, error) {
-	out, err := appbuild.IdentityBinder(svc)(principal.With(ctx, who))
+	bind, err := appbuild.IdentityBinder(svc)
+	if err != nil {
+		return ctx, err
+	}
+	out, err := bind(principal.With(ctx, who))
 	if err != nil {
 		return ctx, fmt.Errorf("resolve seed principal: %w", err)
 	}

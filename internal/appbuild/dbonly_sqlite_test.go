@@ -128,7 +128,7 @@ func TestSQLite_DatabaseOnlyProjectRunsItsConfig(t *testing.T) {
 	t.Run("scheduled task", func(t *testing.T) {
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		scheduler.StartBackground(runCtx, svc, appbuild.IdentityBinder(svc), slog.New(slog.DiscardHandler))
+		scheduler.StartBackground(runCtx, svc, appbuild.MustIdentityBinder(svc), slog.New(slog.DiscardHandler))
 
 		deadline := time.Now().Add(10 * time.Second)
 		for {

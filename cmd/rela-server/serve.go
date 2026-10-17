@@ -275,10 +275,15 @@ func (s *server) startScheduler(g *generation) {
 	if g.held || g.schedStop != nil {
 		return
 	}
+	bind, err := appbuild.IdentityBinder(g.svc)
+	if err != nil {
+		slog.Error("scheduler not started", "err", err)
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	g.schedStop = cancel
 	// *appbuild.Services satisfies scheduler.WorkspaceProvider structurally.
-	sched := scheduler.StartBackground(ctx, g.svc, appbuild.IdentityBinder(g.svc), slog.Default())
+	sched := scheduler.StartBackground(ctx, g.svc, bind, slog.Default())
 	leases := appbuild.WatchLeases(ctx, g.svc)
 	done := make(chan struct{})
 	go func() {

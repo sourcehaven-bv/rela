@@ -75,7 +75,7 @@ func TestScheduledLuaWriteDeps_ReadsAreACLBound(t *testing.T) {
 	taskCtx := principal.With(ctx, principal.Principal{
 		User: "system:reports", Tool: principal.ToolScheduler,
 	})
-	taskCtx, bindErr := appbuild.IdentityBinder(svc)(taskCtx)
+	taskCtx, bindErr := appbuild.MustIdentityBinder(svc)(taskCtx)
 	if bindErr != nil {
 		t.Fatalf("IdentityBinder: %v", bindErr)
 	}

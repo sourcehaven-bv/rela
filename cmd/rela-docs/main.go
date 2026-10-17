@@ -76,7 +76,12 @@ func run() int {
 
 	// The request edge: resolve the stamped principal once into the ACL
 	// request scope the build's reads use.
-	ctx = appbuild.BindOrWarn(ctx, appbuild.IdentityBinder(svc))
+	bind, err := appbuild.IdentityBinder(svc)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	ctx = appbuild.BindOrWarn(ctx, bind)
 
 	ktx.BindTo(ctx, (*context.Context)(nil))
 	// appbuild.Services satisfies docscli.Project via Meta()/Paths().

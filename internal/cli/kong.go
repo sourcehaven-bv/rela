@@ -219,6 +219,7 @@ func runKong() int {
 
 	var svc *appbuild.Services
 	var bundles *cliBundles
+	var bind func(context.Context) (context.Context, error)
 	if requiresProject(ktx.Command()) {
 		var err error
 		// The postgres build resolves its DSN inside Discover, from
@@ -246,7 +247,12 @@ func runKong() int {
 		// ACL request scope the command uses. A command that builds its own
 		// services (flow, validate) binds again against those, because a
 		// Request belongs to one Declarative.
-		ctx = appbuild.BindOrWarn(ctx, appbuild.IdentityBinder(svc))
+		bind, err = appbuild.IdentityBinder(svc)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		ctx = appbuild.BindOrWarn(ctx, bind)
 	}
 
 	ktx.BindTo(ctx, (*context.Context)(nil))
@@ -257,7 +263,7 @@ func runKong() int {
 		// supplied here at the wiring site (consumer-side interface):
 		// appbuild.Services satisfies scheduler.WorkspaceProvider directly.
 		ktx.BindTo(svc, (*scheduler.WorkspaceProvider)(nil))
-		ktx.BindTo(appbuild.IdentityBinder(svc), (*scheduler.IdentityBinder)(nil))
+		ktx.BindTo(bind, (*scheduler.IdentityBinder)(nil))
 	}
 
 	if err := ktx.Run(); err != nil {

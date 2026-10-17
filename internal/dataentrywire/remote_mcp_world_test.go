@@ -172,7 +172,7 @@ func aliceCtx(t *testing.T, svc *appbuild.Services) context.Context {
 // attachACLRequest does for a remote MCP call.
 func boundCtx(t *testing.T, svc *appbuild.Services, user string) context.Context {
 	t.Helper()
-	ctx, err := appbuild.IdentityBinder(svc)(principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolMCP}))
+	ctx, err := appbuild.MustIdentityBinder(svc)(principal.With(context.Background(), principal.Principal{User: user, Tool: principal.ToolMCP}))
 	if err != nil {
 		t.Fatalf("IdentityBinder: %v", err)
 	}
