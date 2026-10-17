@@ -142,7 +142,7 @@ func (c *call) lifecycleCondition(op *realtimecfg.LifecycleOp, name, rule string
 		return forbidden(TypeLifecycleDenied,
 			"conditions are suspended while realtime.yaml is degraded", rule)
 	}
-	if !c.conditionHolds(op.Conditions[c.anchor.Type]) {
+	if !c.conditionHolds(op.Conditions[c.anchor.Type], rule) {
 		title := op.Denied
 		if title == "" {
 			title = "the entity does not meet the condition of " + name
@@ -161,6 +161,11 @@ func retentionCheck(retention realtimecfg.Period, closedAt, now time.Time) error
 			fmt.Sprintf("retention keeps this channel for %s after it closes; close it first", retention))
 	}
 	if until := retention.AddTo(closedAt); now.Before(until) {
+		// The title has whole seconds; round up, so a retry at the time it
+		// names is not refused again.
+		if rounded := until.Truncate(time.Second); !rounded.Equal(until) {
+			until = rounded.Add(time.Second)
+		}
 		return deny(http.StatusConflict, TypeRetentionActive,
 			"retention keeps this channel until "+until.UTC().Format(time.RFC3339))
 	}

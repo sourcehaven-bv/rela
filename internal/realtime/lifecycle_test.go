@@ -3,7 +3,9 @@ package realtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -15,7 +17,8 @@ import (
 )
 
 // lifecycleRealtime declares every lifecycle operation on room, only a
-// calendar-retention delete on calls, and none on plain.
+// calendar-retention delete on calls, none on plain, and on timed a close
+// whose condition reads no entity property.
 const lifecycleRealtime = `
 version: 1
 channel_types:
@@ -52,6 +55,16 @@ channel_types:
       member: { from: attached }
     message_types:
       text: { properties: { body: { type: string } }, post: [member] }
+  timed:
+    attach_to: [ticket]
+    cardinality: one
+    read: { from: attached }
+    roles:
+      member: { from: attached }
+    message_types:
+      text: { properties: { body: { type: string } }, post: [member] }
+    lifecycle:
+      close: { roles: [member], condition: "days_between(today(), today()) == 0" }
 `
 
 // lead may run every room operation; member may only post.
@@ -192,6 +205,21 @@ func TestLifecycle_Condition_TrueFalseRedactedDegraded(t *testing.T) {
 	require.Equal(t, channels.StateClosed, got.State)
 }
 
+// TestLifecycle_ConditionReadingNoProperty pins that a condition that reads
+// no entity property is judged on the record all the same: the anchor read
+// binds the record whether or not it was asked for properties.
+func TestLifecycle_ConditionReadingNoProperty(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, withYAML(lifecycleRealtime))
+	timed := RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "timed"}
+	_, err := h.svc.Post(as(member()), timed, PostInput{Type: "text"})
+	require.NoError(t, err)
+	require.Equal(t, []string{realtimecfg.LifecycleClose}, h.offered(t, member(), timed))
+	got, err := h.svc.Lifecycle(as(member()), timed, realtimecfg.LifecycleClose)
+	require.NoError(t, err)
+	require.Equal(t, channels.StateClosed, got.State)
+}
+
 // TestLifecycle_DeleteRetention pins AC5: a delete under retention is
 // refused, with the date it ends, until retention has passed since the
 // close; a channel that never closed is refused too. Calendar retention
@@ -232,6 +260,22 @@ func TestLifecycle_DeleteRetention(t *testing.T) {
 
 		m := h.post(t, member(), PostInput{Type: "text"})
 		require.Equal(t, int64(1), m.Seq, "a deleted cardinality-one channel starts over")
+	})
+	t.Run("fractional close time", func(t *testing.T) {
+		t.Parallel()
+		h := newLifecycleHarness(t)
+		h.clock.Add(500 * time.Millisecond)
+		until := h.clock.Now().Add(7 * 24 * time.Hour)
+		h.moveRoom(t, channels.StateClosed)
+		h.clock.now = until.Add(-time.Millisecond)
+		_, err := h.svc.Lifecycle(as(lead()), room, realtimecfg.LifecycleDelete)
+		d := requireDenial(t, err, http.StatusConflict, TypeRetentionActive)
+		named := until.Truncate(time.Second).Add(time.Second)
+		require.Equal(t, "retention keeps this channel until "+named.Format(time.RFC3339), d.Title,
+			"the title rounds up to the next whole second")
+		h.clock.now = named
+		_, err = h.svc.Lifecycle(as(lead()), room, realtimecfg.LifecycleDelete)
+		require.NoError(t, err, "a retry at the time the title names succeeds")
 	})
 	t.Run("calendar", func(t *testing.T) {
 		t.Parallel()
@@ -357,48 +401,105 @@ func TestLifecycle_RateLimited(t *testing.T) {
 	requireDenial(t, err, http.StatusTooManyRequests, TypeRateLimited)
 }
 
-// TestLifecycle_AffordanceAndGateAgree pins AC7: for every operation,
-// state, caller, condition outcome and retention age, the head offers the
-// operation exactly when running it succeeds.
+// agreeTarget is one channel the agree-test runs every operation on.
+type agreeTarget struct {
+	name string
+	// setup prepares a fresh harness and returns the channel's address.
+	setup func(t *testing.T, h *harness) RawAddress
+}
+
+// agreeTargets lists the room in each state with its condition true or
+// false, the room never written, and a calls channel open or closed.
+func agreeTargets() []agreeTarget {
+	var out []agreeTarget
+	for _, st := range []channels.State{channels.StateOpen, channels.StateClosed, channels.StateArchived} {
+		for _, status := range []string{"done", "open"} {
+			out = append(out, agreeTarget{
+				name: fmt.Sprintf("room %s status %s", st, status),
+				setup: func(t *testing.T, h *harness) RawAddress {
+					t.Helper()
+					h.post(t, member(), PostInput{Type: "text"})
+					if st == channels.StateArchived {
+						h.moveRoom(t, channels.StateClosed)
+					}
+					h.moveRoom(t, st)
+					h.anchors.setStatus(status)
+					return room
+				},
+			})
+		}
+	}
+	out = append(out, agreeTarget{
+		name:  "room never written",
+		setup: func(*testing.T, *harness) RawAddress { return room },
+	})
+	for _, st := range []channels.State{channels.StateOpen, channels.StateClosed} {
+		out = append(out, agreeTarget{
+			name: fmt.Sprintf("calls %s", st),
+			setup: func(t *testing.T, h *harness) RawAddress {
+				t.Helper()
+				ch, err := h.svc.Create(as(member()), "ticket", "TKT-1", "calls", CreateInput{})
+				require.NoError(t, err)
+				if st != channels.StateOpen {
+					_, err = h.store.SetLifecycle(context.Background(), channels.Key{
+						Anchor: channels.Anchor{ID: "TKT-1"}, Type: "calls", Name: ch.Name,
+					}, channels.StateOpen,
+						channels.Transition{To: st, By: channels.Author{User: "setup"}, At: h.clock.Now()})
+					require.NoError(t, err)
+				}
+				return RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "calls", Name: ch.Name}
+			},
+		})
+	}
+	return out
+}
+
+// TestLifecycle_AffordanceAndGateAgree pins AC7: for every caller, channel,
+// state, condition outcome, retention age and degraded flag, the head
+// offers an operation exactly when running it succeeds.
 func TestLifecycle_AffordanceAndGateAgree(t *testing.T) {
 	t.Parallel()
-	callers := map[string]func() *fakeAccess{
-		"lead":     lead,
-		"member":   member,
-		"readonly": func() *fakeAccess { return readOnlyClient(lead()) },
+	callers := []struct {
+		name string
+		get  func() *fakeAccess
+	}{
+		{"lead", lead},
+		{"member", member},
+		{"readonly", func() *fakeAccess { return readOnlyClient(lead()) }},
 	}
-	states := []channels.State{channels.StateOpen, channels.StateClosed, channels.StateArchived}
-	for name, caller := range callers {
-		for _, st := range states {
-			for _, status := range []string{"done", "open"} {
-				for _, age := range []time.Duration{time.Hour, 30 * 24 * time.Hour} {
-					setup := func(t *testing.T) *harness {
-						t.Helper()
-						h := newLifecycleHarness(t)
-						if st == channels.StateArchived {
-							h.moveRoom(t, channels.StateClosed)
+	ages := []time.Duration{time.Hour, 60 * 24 * time.Hour}
+	for _, target := range agreeTargets() {
+		for _, caller := range callers {
+			for _, age := range ages {
+				for _, degraded := range []bool{false, true} {
+					name := fmt.Sprintf("%s/%s/age %s/degraded %v", target.name, caller.name, age, degraded)
+					t.Run(name, func(t *testing.T) {
+						t.Parallel()
+						setup := func(t *testing.T) (*harness, RawAddress) {
+							t.Helper()
+							h := newHarness(t, withYAML(lifecycleRealtime))
+							addr := target.setup(t, h)
+							h.clock.Add(age)
+							if degraded {
+								h.cfg.set(Snapshot{Config: h.cfg.Load().Config, Degraded: true})
+							}
+							return h, addr
 						}
-						h.moveRoom(t, st)
-						h.anchors.setStatus(status)
-						h.clock.Add(age)
-						return h
-					}
-					offered := setup(t).offered(t, caller(), room)
-					for _, op := range realtimecfg.LifecycleOpNames() {
-						_, err := setup(t).svc.Lifecycle(as(caller()), room, op)
-						want := false
-						for _, o := range offered {
-							want = want || o == op
+						h, addr := setup(t)
+						offered := h.offered(t, caller.get(), addr)
+						for _, op := range realtimecfg.LifecycleOpNames() {
+							h, addr := setup(t)
+							_, err := h.svc.Lifecycle(as(caller.get()), addr, op)
+							require.Equalf(t, slices.Contains(offered, op), err == nil,
+								"%s: offered %v, got %v", op, offered, err)
+							if err != nil {
+								d, ok := errors.AsType[*DenialError](err)
+								require.True(t, ok, err)
+								require.GreaterOrEqual(t, d.Status, 400)
+								require.Less(t, d.Status, 500)
+							}
 						}
-						require.Equalf(t, want, err == nil,
-							"%s %s in %s, status %s, age %s: offered %v, got %v", name, op, st, status, age, offered, err)
-						if err != nil {
-							d, ok := errors.AsType[*DenialError](err)
-							require.True(t, ok, err)
-							require.GreaterOrEqual(t, d.Status, 400)
-							require.Less(t, d.Status, 500)
-						}
-					}
+					})
 				}
 			}
 		}

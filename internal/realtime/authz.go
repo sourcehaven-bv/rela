@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -288,20 +289,24 @@ func (c *call) propertyNamesCaller(prop string) bool {
 // conditionHolds reports whether prog, a lifecycle `condition:` compiled
 // for the anchor's type, holds for the anchor's redacted record. A missing
 // program or record, or an evaluation error, does not hold: a condition
-// fails closed.
-func (c *call) conditionHolds(prog *predicate.Program) bool {
+// fails closed. An evaluation error is logged with rule, the condition's
+// key in realtime.yaml, because the caller sees only the refusal.
+func (c *call) conditionHolds(prog *predicate.Program, rule string) bool {
 	if prog == nil || c.anchor.Record == nil {
 		return false
 	}
 	b := predicate.NewBindings()
-	if err := b.SetVar("entity", c.anchor.Record); err != nil {
-		return false
+	err := b.SetVar("entity", c.anchor.Record)
+	if err == nil {
+		err = predicatefns.Bind(b, c.now)
 	}
-	if err := predicatefns.Bind(b, c.now); err != nil {
-		return false
+	var v predicate.Value
+	if err == nil {
+		v, err = prog.Eval(c.ctx, b)
 	}
-	v, err := prog.Eval(c.ctx, b)
 	if err != nil {
+		slog.WarnContext(c.ctx, "realtime: lifecycle condition failed to evaluate; refusing",
+			"rule", rule, "anchor", c.anchor.ID, "error", err)
 		return false
 	}
 	got, ok := v.(predicate.Bool)
