@@ -348,8 +348,9 @@ func checkNameWhitespace(p *acl.Policy) []Finding {
 		}
 	}
 	for _, key := range sortedAssignmentKeys(p) {
-		// The key is the member/group ID matched in computeGlobals; a padded
-		// key silently matches no member, same foot-gun as a padded value.
+		// The key is the member/group ID that acl's Declarative.globalRoles
+		// matches; a padded key silently matches no member, the same foot-gun
+		// as a padded value.
 		if hasLeadingTrailingSpace(key) {
 			add(key, "assignment key")
 		}

@@ -222,7 +222,7 @@ func (d *Declarative) AuthorizeWrite(ctx context.Context, req WriteRequest) Deci
 			d.provisionWarn.Do(func() {
 				slog.Warn("acl: unmatched_principal: provision reached the write-authz gate " +
 					"still unmatched; provisioning did not fire (non-data-entry transport) or " +
-					"failed (see earlier provision warnings) — treating as anonymous")
+					"failed (see earlier provision warnings); evaluating the roles it holds without a user entity")
 			})
 		}
 	}

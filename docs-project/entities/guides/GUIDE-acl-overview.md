@@ -32,7 +32,7 @@ graph TD
     end
 
     Policy -->|NewDeclarative| Declarative
-    Graph -->|NewStoreGraph| Declarative
+    Graph -->|aclstore.NewGraph| Declarative
 
     subgraph PerRequest [Per HTTP request]
         Middleware[attachACLRequest middleware]

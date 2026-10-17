@@ -42,7 +42,7 @@ ancestry inherits role grants).
 
 **Graph.** The store-backed adapter that answers `HasEdge` and
 `OutgoingRelations` for the resolver's traversal. Production wires
-it to `acl.NewStoreGraph(s)`; tests use `acl.NullGraph{}` for "no
+it to `aclstore.NewGraph(s)`; tests use `acl.NullGraph{}` for "no
 edges anywhere."
 
 **Request.** A per-request resolver scope. Constructed by

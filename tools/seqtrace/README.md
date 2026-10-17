@@ -169,9 +169,8 @@ makes itself, such as its database query, stay under the iterator.
 
 This works for any function with a parameter named `yield` of type
 `func(...) bool`. That covers helpers that receive `yield` and iterators
-that wrap other iterators. A callback with another name, such as a
-`search.HiddenFieldsFunc`, is a real call from the callee and is drawn as
-one.
+that wrap other iterators. A callback with another name is a real call
+from the callee and is drawn as one.
 
 ## Linking work across goroutines
 

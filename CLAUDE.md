@@ -133,8 +133,9 @@ your session id or `"$(hostname)-$$"`:
   searcher and `/_search` both run it).
   This only works because **every `visible:` `when:` must lower exactly
   through `queryplan.LowerScope`, or the policy fails to load** (AND of
-  property equalities and `related(...)`; no `or`, `not`, `has_role`,
-  `has_relation`, `count_relations`, `has_current_user`). Do not loosen that check into a Go
+  property equalities and `related(...)`; no `or`, `not`, ordered
+  comparisons, `~=`, `has_role`, `has_global_role`, `has_relation`,
+  `count_relations`, `has_current_user`). Do not loosen that check into a Go
   fallback: a condition the store cannot answer would need the per-row
   callback back. `TestSearchFieldScope_AgreesWithFieldVerdicts` pins the
   compiled scope to `FieldVerdicts`; `storetest.RunFieldScopeSearchTests` pins
