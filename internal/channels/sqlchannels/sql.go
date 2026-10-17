@@ -18,7 +18,9 @@
 //   - channel_audit: the audit trail, one JSON record per row, with the same
 //     tomb column as channels.
 //   - channel_types: the anchor mode and cardinality recorded for each
-//     channel type, and channel_type_refs its ref properties.
+//     channel type, and channel_type_refs its ref properties. An empty
+//     cardinality is a row from before the column existed
+//     ([channels.CardinalityUnknown]).
 //
 // # Erasure
 //
@@ -984,13 +986,19 @@ func (s *Store) RecordTypes(ctx context.Context, records map[string]channels.Typ
 		for _, typ := range types {
 			given := records[typ]
 			held, ok := cur[typ]
-			added, err := channels.MergeTypeRecord(typ, held, ok, given)
+			added, fill, err := channels.MergeTypeRecord(typ, held, ok, given)
 			if err != nil {
 				return err
 			}
-			if !ok {
+			switch {
+			case !ok:
 				if _, err := q.Exec(ctx, `INSERT INTO channel_types (type, anchor_mode, cardinality)
 					VALUES (?, ?, ?)`, typ, string(given.Anchor), string(given.Cardinality)); err != nil {
+					return err
+				}
+			case fill:
+				if _, err := q.Exec(ctx, `UPDATE channel_types SET cardinality = ? WHERE type = ?`,
+					string(given.Cardinality), typ); err != nil {
 					return err
 				}
 			}

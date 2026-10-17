@@ -12,7 +12,7 @@ import (
 // schemaVersion is the shape of the tables this binary expects. Bump it
 // whenever schemaSQL changes shape, and append the step that carries an
 // existing database forward to [migrations].
-const schemaVersion = 19
+const schemaVersion = 20
 
 // SchemaVersion reports the table shape this binary expects, so the CLI can
 // show a real number rather than prose.
@@ -211,6 +211,33 @@ var migrations = []migration{
 		to:    19,
 		apply: sqlSteps(channelTypeRefsDDL),
 	},
+	{
+		// v19 → v20: the cardinality of each recorded channel type
+		// (BUG-DQLE0K). Existing rows take '', which the channel store
+		// reads as "recorded before cardinality was kept".
+		to:    20,
+		apply: addChannelTypeCardinality,
+	},
+}
+
+// addChannelTypeCardinality adds channel_types.cardinality when it is
+// missing. It probes like [addColumns], for the same reasons, but is separate
+// because this column is NOT NULL with a default rather than nullable.
+func addChannelTypeCardinality(ctx context.Context, conn *sql.Conn) error {
+	var n int
+	if err := conn.QueryRowContext(ctx,
+		`SELECT count(*) FROM pragma_table_info('channel_types') WHERE name = 'cardinality'`,
+	).Scan(&n); err != nil {
+		return fmt.Errorf("probe channel_types.cardinality: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := conn.ExecContext(ctx,
+		`ALTER TABLE channel_types ADD COLUMN cardinality TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add channel_types.cardinality: %w", err)
+	}
+	return nil
 }
 
 // mentionColumns are the backlink columns, on the live and the marked table.

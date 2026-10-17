@@ -38,6 +38,13 @@ const (
 // Valid reports whether c is a known cardinality.
 func (c Cardinality) Valid() bool { return c == CardinalityOne || c == CardinalityMany }
 
+// CardinalityUnknown is the cardinality of a record written before the
+// store kept one: pgstore before migration 28, sqlitedb before v20, and the
+// file store's older anchor-modes file. It matches any configured
+// cardinality, and the next [Store.RecordTypes] for the type fills it in.
+// [PrepareTypeRecords] refuses it, so it is never written.
+const CardinalityUnknown Cardinality = ""
+
 // TypeRecord is what the store records about a channel type the first time
 // a channel of that type is written: the two settings that decide how its
 // keys are read, and the message properties whose stored values are entity
@@ -65,6 +72,15 @@ type TypeRecord struct {
 func (r TypeRecord) Equal(o TypeRecord) bool {
 	return r.Anchor == o.Anchor && r.Cardinality == o.Cardinality &&
 		slices.Equal(r.Refs, o.Refs) && slices.Equal(r.Plain, o.Plain)
+}
+
+// conflicts reports whether the recorded r differs from want in anchor
+// mode or cardinality. A [CardinalityUnknown] in r matches any cardinality.
+func (r TypeRecord) conflicts(want TypeRecord) bool {
+	if r.Anchor != want.Anchor {
+		return true
+	}
+	return r.Cardinality != CardinalityUnknown && r.Cardinality != want.Cardinality
 }
 
 // PrepareTypeRecords validates records for [Store.RecordTypes] and returns
@@ -107,32 +123,37 @@ func sortedSet(in []string) []string {
 // the rule of [Store.RecordTypes], and returns the refs of given that the
 // store must add. held reports whether the store holds a record; when it
 // does not, the result is every ref of given and given is recorded whole.
+// fill reports that the held cardinality is [CardinalityUnknown], so the
+// store must set it to given's in the same write.
 //
-// A held record whose anchor mode or cardinality differs from given, or
-// one of whose refs given declares in Plain, is [ErrTypeShapeConflict].
-// Both records must have passed [PrepareTypeRecords] or come from the
-// store, so their refs are sorted.
-func MergeTypeRecord(typ string, cur TypeRecord, held bool, given TypeRecord) ([]string, error) {
+// A held record whose anchor mode differs from given, whose known
+// cardinality differs from given, or one of whose refs given declares in
+// Plain, is [ErrTypeShapeConflict]. Both records must have passed
+// [PrepareTypeRecords] or come from the store, so their refs are sorted.
+func MergeTypeRecord(typ string, cur TypeRecord, held bool, given TypeRecord) (added []string, fill bool, err error) {
 	if !held {
-		return given.Refs, nil
+		return given.Refs, false, nil
 	}
-	if cur.Anchor != given.Anchor || cur.Cardinality != given.Cardinality {
-		return nil, fmt.Errorf("%w: %s: anchor %s and cardinality %s are recorded, %s and %s given",
-			ErrTypeShapeConflict, typ, cur.Anchor, cur.Cardinality, given.Anchor, given.Cardinality)
+	if cur.conflicts(given) {
+		recorded := string(cur.Cardinality)
+		if cur.Cardinality == CardinalityUnknown {
+			recorded = "unknown"
+		}
+		return nil, false, fmt.Errorf("%w: %s: anchor %s and cardinality %s are recorded, %s and %s given",
+			ErrTypeShapeConflict, typ, cur.Anchor, recorded, given.Anchor, given.Cardinality)
 	}
 	for _, p := range given.Plain {
 		if _, found := slices.BinarySearch(cur.Refs, p); found {
-			return nil, fmt.Errorf("%w: %s: property %s is recorded as a ref and declared as another type",
+			return nil, false, fmt.Errorf("%w: %s: property %s is recorded as a ref and declared as another type",
 				ErrTypeShapeConflict, typ, p)
 		}
 	}
-	var added []string
 	for _, r := range given.Refs {
 		if _, found := slices.BinarySearch(cur.Refs, r); !found {
 			added = append(added, r)
 		}
 	}
-	return added, nil
+	return added, cur.Cardinality == CardinalityUnknown, nil
 }
 
 // TypeRecordChange is a channel type whose configured settings differ from
@@ -148,12 +169,12 @@ type TypeRecordChange struct {
 // sorted by type. Refs are not compared; [Store.RecordTypes] and the
 // realtime configuration check hold them. A type that is configured but
 // not recorded has no stored channels yet, and a type that is recorded but
-// no longer configured is unused; neither is a change.
+// no longer configured is unused; neither is a change. Nor is a recorded
+// [CardinalityUnknown].
 func TypeRecordChanges(recorded, configured map[string]TypeRecord) []TypeRecordChange {
 	var out []TypeRecordChange
 	for typ, want := range configured {
-		got, ok := recorded[typ]
-		if ok && (got.Anchor != want.Anchor || got.Cardinality != want.Cardinality) {
+		if got, ok := recorded[typ]; ok && got.conflicts(want) {
 			out = append(out, TypeRecordChange{Type: typ, Recorded: got, Configured: want})
 		}
 	}

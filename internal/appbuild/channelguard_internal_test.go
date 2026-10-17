@@ -452,8 +452,29 @@ func TestCheckChannelTypeRecords(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "the check writes nothing")
 
+	// A record with an unknown cardinality (written before cardinality was
+	// kept) matches the configured one; its anchor is still compared.
+	err = checkChannelTypeRecords(ctx, legacyCardinality{Store: f.cs}, f.cfg)
+	require.ErrorContains(t, err, "channel_types.chat.anchor: cannot change from face to family")
+	assert.NotContains(t, err.Error(), "cardinality", "an unknown cardinality is not a change")
+	ok := newGuardFixture(t)
+	require.NoError(t, ok.cs.RecordTypes(ctx, matching))
+	require.NoError(t, checkChannelTypeRecords(ctx, legacyCardinality{Store: ok.cs}, ok.cfg))
+
 	f.guard.store = failingRecords{Store: f.cs}
 	require.ErrorIs(t, checkChannelTypeRecords(ctx, f.guard.store, f.cfg), errDiskFull)
+}
+
+// legacyCardinality reads every record with an unknown cardinality.
+type legacyCardinality struct{ channels.Store }
+
+func (l legacyCardinality) TypeRecords(ctx context.Context) (map[string]channels.TypeRecord, error) {
+	recs, err := l.Store.TypeRecords(ctx)
+	for typ, r := range recs {
+		r.Cardinality = channels.CardinalityUnknown
+		recs[typ] = r
+	}
+	return recs, err
 }
 
 type failingRecords struct{ channels.Store }

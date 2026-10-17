@@ -29,9 +29,17 @@ func newStore(t *testing.T) (*sqlchannels.Store, *sqlitedb.DB) {
 func TestConformance(t *testing.T) {
 	channelstest.RunAll(t, func(t *testing.T) channelstest.Harness {
 		t.Helper()
-		s, _ := newStore(t)
+		s, db := newStore(t)
 		return channelstest.Harness{
 			Store: s,
+			// A v19 row upgraded by the v20 rung: the column default fills
+			// cardinality.
+			SeedLegacyType: func(t *testing.T, typ string, anchor channels.AnchorMode) {
+				t.Helper()
+				_, err := db.DB().ExecContext(context.Background(),
+					`INSERT INTO channel_types (type, anchor_mode) VALUES (?, ?)`, typ, string(anchor))
+				require.NoError(t, err)
+			},
 			Raw: func(t *testing.T) []byte {
 				t.Helper()
 				raw, err := sqlchannels.Raw(context.Background(), s)

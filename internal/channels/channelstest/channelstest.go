@@ -33,6 +33,10 @@ type Harness struct {
 	// Second opens another Store over the same storage, standing in for a
 	// second process. Nil for a backend that admits one process only.
 	Second func(t *testing.T) channels.Store
+	// SeedLegacyType writes a type record the way a release before
+	// cardinality was kept left it: the anchor mode only. Nil skips the
+	// legacy-record test.
+	SeedLegacyType func(t *testing.T, typ string, anchor channels.AnchorMode)
 }
 
 // T0 is the suite's base time. It has a sub-microsecond part on purpose:
@@ -82,6 +86,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"TypeRecordConflict", testTypeRecordConflict},
 		{"TypeRecordRefs", testTypeRecordRefs},
 		{"TypeRecordConcurrent", testTypeRecordConcurrent},
+		{"LegacyTypeRecord", testLegacyTypeRecord},
 		{"UntombstoneRestoresItsBatch", testUntombstoneBatch},
 		{"UntombstoneFace", testUntombstoneFace},
 		{"UntombstoneOccupied", testUntombstoneOccupied},
@@ -1233,6 +1238,71 @@ func testTypeRecordConcurrent(t *testing.T, h Harness) {
 	got, err := h.Store.TypeRecords(ctx)
 	require.NoError(t, err)
 	require.Contains(t, recs, got["room"])
+}
+
+// testLegacyTypeRecord checks a record written before cardinality was kept.
+// It reads with an unknown cardinality and no refs, and it matches any
+// configured cardinality but not another anchor. The next RecordTypes for
+// the type fills the cardinality in and adds its refs; a record with
+// another anchor still conflicts and records nothing. Once filled in, a
+// different cardinality conflicts again.
+func testLegacyTypeRecord(t *testing.T, h Harness) {
+	t.Helper()
+	if h.SeedLegacyType == nil {
+		t.Skip("backend has no legacy type record")
+	}
+	ctx := context.Background()
+	h.SeedLegacyType(t, "room", channels.AnchorFamily)
+	h.SeedLegacyType(t, "review", channels.AnchorFace)
+
+	legacyRoom := channels.TypeRecord{Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityUnknown}
+	legacyReview := channels.TypeRecord{Anchor: channels.AnchorFace, Cardinality: channels.CardinalityUnknown}
+	legacy := map[string]channels.TypeRecord{"room": legacyRoom, "review": legacyReview}
+	got, err := h.Store.TypeRecords(ctx)
+	require.NoError(t, err)
+	require.Equal(t, legacy, got)
+
+	famMany := channels.TypeRecord{Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityMany}
+	famOne := channels.TypeRecord{Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityOne}
+	faceOne := channels.TypeRecord{Anchor: channels.AnchorFace, Cardinality: channels.CardinalityOne}
+	require.Empty(t, channels.TypeRecordChanges(got, map[string]channels.TypeRecord{"room": famMany}),
+		"an unknown cardinality matches any configured one")
+	require.Empty(t, channels.TypeRecordChanges(got, map[string]channels.TypeRecord{"room": famOne}),
+		"an unknown cardinality matches any configured one")
+	require.Len(t, channels.TypeRecordChanges(got, map[string]channels.TypeRecord{"review": famOne}), 1,
+		"the anchor mode is still compared")
+
+	err = h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{"room": famMany, "review": famOne})
+	require.ErrorIs(t, err, channels.ErrTypeShapeConflict, "an unknown cardinality does not excuse another anchor")
+	got, err = h.Store.TypeRecords(ctx)
+	require.NoError(t, err)
+	require.Equal(t, legacy, got, "a conflict fills in nothing, not even the other types of the call")
+
+	roomRefs := famMany
+	roomRefs.Refs = []string{"note.about"}
+	roomRefs.Plain = []string{"text.body"}
+	require.NoError(t, h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{"room": roomRefs}))
+	filledRoom := famMany
+	filledRoom.Refs = []string{"note.about"}
+	want := map[string]channels.TypeRecord{"room": filledRoom, "review": legacyReview}
+	got, err = h.Store.TypeRecords(ctx)
+	require.NoError(t, err)
+	require.Equal(t, want, got, "RecordTypes fills in the cardinality and refs of the type it names only")
+	require.Len(t, channels.TypeRecordChanges(got, map[string]channels.TypeRecord{"room": famOne}), 1,
+		"a recorded cardinality conflicts with another")
+	err = h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{"room": famOne})
+	require.ErrorIs(t, err, channels.ErrTypeShapeConflict, "a filled-in cardinality is held")
+	if h.Second != nil {
+		got, err = h.Second(t).TypeRecords(ctx)
+		require.NoError(t, err)
+		require.Equal(t, want, got, "another instance reads the filled-in record")
+	}
+
+	require.NoError(t, h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{"review": faceOne}))
+	got, err = h.Store.TypeRecords(ctx)
+	require.NoError(t, err)
+	require.Equal(t, map[string]channels.TypeRecord{"room": filledRoom, "review": faceOne}, got,
+		"a fill without refs still writes the cardinality")
 }
 
 // Contains reports whether raw holds needle; a helper for backend tests

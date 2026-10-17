@@ -700,10 +700,13 @@ CREATE TABLE IF NOT EXISTS channel_audit (
 	record    TEXT NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS channel_audit_anchor_idx ON channel_audit(anchor_id, tomb, id);
+-- A cardinality of '' is a type recorded before v20, when only the anchor
+-- mode was kept. The v19 to v20 rung adds the column with the same default,
+-- so a fresh and an upgraded table have the same shape.
 CREATE TABLE IF NOT EXISTS channel_types (
 	type        TEXT PRIMARY KEY,
 	anchor_mode TEXT NOT NULL,
-	cardinality TEXT NOT NULL
+	cardinality TEXT NOT NULL DEFAULT ''
 ) STRICT;` + channelTypeRefsDDL
 
 // channelTypeRefsDDL holds the ref properties recorded for each channel

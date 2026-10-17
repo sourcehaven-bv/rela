@@ -172,6 +172,31 @@ func TestShapeMismatches(t *testing.T) {
 	}
 }
 
+// A stored shape with an empty cardinality was recorded before the channel
+// store kept one. It matches any configured cardinality, but the anchor is
+// still compared.
+func TestShapeMismatchesUnknownStoredCardinality(t *testing.T) {
+	c, err := Parse([]byte(golden(t)), testMeta(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// incident-room is configured family/one, page-threads face/many.
+	if got := ShapeMismatches(c, map[string]TypeShape{
+		"incident-room": {Anchor: AnchorFamily},
+		"page-threads":  {Anchor: AnchorFace},
+	}); len(got) != 0 {
+		t.Fatalf("ShapeMismatches = %+v; want none", got)
+	}
+	got := ShapeMismatches(c, map[string]TypeShape{"incident-room": {Anchor: AnchorFace}})
+	if len(got) != 1 {
+		t.Fatalf("ShapeMismatches = %+v; want one anchor mismatch", got)
+	}
+	problems := got[0].Problems()
+	if len(problems) != 1 || problems[0].Key != "channel_types.incident-room.anchor" {
+		t.Fatalf("Problems = %+v; want the anchor only", problems)
+	}
+}
+
 // billionLaughs builds a file whose channel types alias a message type map
 // that aliases a property map, n entries at every level. Following the
 // aliases visits about n^3 nodes from a file of 3n lines.

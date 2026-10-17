@@ -138,7 +138,8 @@ type Store interface {
 
 	// TypeRecords returns the record of each channel type the store holds
 	// one for (see [TypeRecord]). A store that recorded nothing returns an
-	// empty map. Compare it with the configuration through
+	// empty map. A record written before cardinality was kept reads with
+	// [CardinalityUnknown]. Compare it with the configuration through
 	// [TypeRecordChanges].
 	TypeRecords(ctx context.Context) (map[string]TypeRecord, error)
 
@@ -146,8 +147,9 @@ type Store interface {
 	// for, and adds the given refs to the record of a type it does hold.
 	// It never replaces an anchor mode or cardinality: a record that
 	// differs from the held one in either, or whose Plain names a held
-	// ref, is [ErrTypeShapeConflict] (see [MergeTypeRecord]). It writes
-	// nothing when nothing is new. Types not given keep theirs. An invalid
+	// ref, is [ErrTypeShapeConflict] (see [MergeTypeRecord]). A held
+	// [CardinalityUnknown] is the exception: it matches, and the call sets
+	// it to the given cardinality. It writes nothing when nothing is new. Types not given keep theirs. An invalid
 	// type is [ErrInvalidKey], an unknown mode or cardinality
 	// [ErrInvalidMessage]; on any error nothing is recorded.
 	RecordTypes(ctx context.Context, records map[string]TypeRecord) error
