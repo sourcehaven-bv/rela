@@ -174,7 +174,7 @@ func (r *Request) PermitsReadFace(
 // still authorizing against.
 func (r *Request) Principal() principal.Principal { return r.principal.Clone() }
 
-// CeilingPermitsVerb reports whether the request's client ceiling
+// CeilingPermitsVerb reports whether r's client ceiling
 // (client_baselines and scope_grants) admits op on entityType. It consults
 // the ceiling only, never a role or a row: it answers "may this client write
 // this type at all", for a caller that grants access through a source of its
@@ -182,7 +182,10 @@ func (r *Request) Principal() principal.Principal { return r.principal.Clone() }
 //
 // It answers false for an op it does not handle, so a new verb fails closed
 // until it is mapped to a ceiling axis.
-func (r *Request) CeilingPermitsVerb(op Op, entityType string) bool {
+//
+// A function rather than a method: [Request] is at its plimsoll method load
+// line.
+func CeilingPermitsVerb(r *Request, op Op, entityType string) bool {
 	switch op {
 	case OpCreate, OpUpdate, OpRename, OpDelete:
 		return r.ceiling.permitsVerb(op, entityType)

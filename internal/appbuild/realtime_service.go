@@ -123,7 +123,7 @@ func (a requestAccess) HoldsPermissionFor(ctx context.Context, anchorID, perm st
 }
 
 func (a requestAccess) CeilingAdmitsUpdate(entityType string) bool {
-	return a.req.CeilingPermitsVerb(acl.OpUpdate, entityType)
+	return acl.CeilingPermitsVerb(a.req, acl.OpUpdate, entityType)
 }
 
 // openAccess answers without a policy: every permission is held and there

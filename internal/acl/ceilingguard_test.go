@@ -312,7 +312,7 @@ client_baselines:
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := tc.req.CeilingPermitsVerb(tc.op, tc.typ); got != tc.want {
+			if got := CeilingPermitsVerb(tc.req, tc.op, tc.typ); got != tc.want {
 				t.Errorf("CeilingPermitsVerb(%q, %q) = %v, want %v", tc.op, tc.typ, got, tc.want)
 			}
 		})
