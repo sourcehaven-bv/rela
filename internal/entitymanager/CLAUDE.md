@@ -39,9 +39,12 @@ again. It runs the read gate first, as the writes do, so a row the caller
 cannot read answers not found rather than 403.
 
 `TestAuthorizeAndAuditFollowsReadGate` scans this package and fails when a
-function calls `authorizeAndAudit` with no read gate (`requireReadableRow`,
-`visibleEndpoint`, `lookupSource`) before it. A helper whose caller gates
-the row goes on its allowlist with a reason naming that caller.
+function calls `authorizeAndAudit` or `ACL.AuthorizeWrite` with no read gate
+(`requireReadableRow`, `visibleEndpoint`, `lookupSource`) before it. A helper
+whose caller gates the row goes on `callerGates` with a reason naming that
+caller, and the scan then checks every caller of the helper in turn. A
+function that needs no gate at all (a create) goes on `noReadGateNeeded`. A
+gate called with a nil or empty family literal fails the test too.
 
 ### PatchEntity ordering is load-bearing
 
