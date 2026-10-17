@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,6 +66,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"Lifecycle", testLifecycle},
 		{"CreateMany", testCreateMany},
 		{"CreateManyCap", testCreateManyCap},
+		{"CreateManyMax", testCreateManyMax},
 		{"ListAndListEntity", testList},
 		{"DeleteKeepsAudit", testDelete},
 		{"Rekey", testRekey},
@@ -77,6 +79,9 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"TimesRoundTrip", testTimes},
 		{"SecondInstance", testSecondInstance},
 		{"TypeRecords", testTypeRecords},
+		{"TypeRecordConflict", testTypeRecordConflict},
+		{"TypeRecordRefs", testTypeRecordRefs},
+		{"TypeRecordConcurrent", testTypeRecordConcurrent},
 		{"UntombstoneRestoresItsBatch", testUntombstoneBatch},
 		{"UntombstoneFace", testUntombstoneFace},
 		{"UntombstoneOccupied", testUntombstoneOccupied},
@@ -690,6 +695,44 @@ func testCreateManyCap(t *testing.T, h Harness) {
 	require.Len(t, list, channels.MaxChannelsPerType+1)
 }
 
+// testCreateManyMax checks that a caller's lower cap holds under
+// concurrent creates and counts only the channels of the type.
+func testCreateManyMax(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	anchor := channels.Anchor{ID: "TKT-1"}
+	_, err := h.Store.CreateMany(ctx, anchor, channels.NewChannel{Type: "other", By: Alice, At: T0, Max: 3})
+	require.NoError(t, err)
+	const maxTopics, tries = 3, 12
+	var wg sync.WaitGroup
+	var made, refused atomic.Int64
+	errs := make(chan error, tries)
+	for range tries {
+		wg.Go(func() {
+			_, err := h.Store.CreateMany(ctx, anchor, channels.NewChannel{
+				Type: "topic", By: Alice, At: T0, Max: maxTopics,
+			})
+			switch {
+			case err == nil:
+				made.Add(1)
+			case errors.Is(err, channels.ErrTooManyChannels):
+				refused.Add(1)
+			default:
+				errs <- err
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.Equal(t, int64(maxTopics), made.Load(), "the other type does not count")
+	require.Equal(t, int64(tries-maxTopics), refused.Load())
+	require.Equal(t, channels.MaxChannelsPerType, channels.NewChannel{Max: channels.MaxChannelsPerType + 1}.Cap())
+	require.Equal(t, channels.MaxChannelsPerType, channels.NewChannel{}.Cap())
+}
+
 func testList(t *testing.T, h Harness) {
 	t.Helper()
 	ctx := context.Background()
@@ -1069,12 +1112,12 @@ func testTypeRecords(t *testing.T, h Harness) {
 		"room": famOne, "review": faceOne,
 	}))
 	require.NoError(t, h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{
-		"room": famMany, "alerts": famOne, "review": faceOne,
+		"room": famOne, "alerts": famMany, "review": faceOne,
 	}))
-	want := map[string]channels.TypeRecord{"room": famMany, "review": faceOne, "alerts": famOne}
+	want := map[string]channels.TypeRecord{"room": famOne, "review": faceOne, "alerts": famMany}
 	got, err = h.Store.TypeRecords(ctx)
 	require.NoError(t, err)
-	require.Equal(t, want, got, "a record replaces only the types it names")
+	require.Equal(t, want, got, "a record adds the types it names and keeps the others")
 
 	err = h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{
 		"topic": {Anchor: "both", Cardinality: channels.CardinalityOne},
@@ -1102,6 +1145,94 @@ func testTypeRecords(t *testing.T, h Harness) {
 		require.NoError(t, err)
 		require.Equal(t, want, got, "another instance reads the same records")
 	}
+}
+
+// testTypeRecordConflict checks that a record never replaces a held anchor
+// mode or cardinality: the whole call is refused with
+// [channels.ErrTypeShapeConflict] and records nothing.
+func testTypeRecordConflict(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	famOne := channels.TypeRecord{Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityOne}
+	faceOne := channels.TypeRecord{Anchor: channels.AnchorFace, Cardinality: channels.CardinalityOne}
+	famMany := channels.TypeRecord{Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityMany}
+	require.NoError(t, h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{"room": famOne}))
+	for _, other := range []channels.TypeRecord{faceOne, famMany} {
+		err := h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{"room": other, "alerts": famOne})
+		require.ErrorIs(t, err, channels.ErrTypeShapeConflict)
+	}
+	got, err := h.Store.TypeRecords(ctx)
+	require.NoError(t, err)
+	require.Equal(t, map[string]channels.TypeRecord{"room": famOne}, got,
+		"a conflict records nothing, not even the other types of the call")
+}
+
+// testTypeRecordRefs checks that refs only grow, and that a record declaring
+// a held ref as plain is refused.
+func testTypeRecordRefs(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	rec := func(refs, plain []string) map[string]channels.TypeRecord {
+		return map[string]channels.TypeRecord{"room": {
+			Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityOne, Refs: refs, Plain: plain,
+		}}
+	}
+	require.NoError(t, h.Store.RecordTypes(ctx, rec([]string{"note.about"}, []string{"text.body"})))
+	require.NoError(t, h.Store.RecordTypes(ctx, rec([]string{"note.also", "note.about"}, nil)))
+	require.NoError(t, h.Store.RecordTypes(ctx, rec(nil, []string{"text.body"})),
+		"a record that drops a ref keeps it")
+	got, err := h.Store.TypeRecords(ctx)
+	require.NoError(t, err)
+	want := channels.TypeRecord{
+		Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityOne, Refs: []string{"note.about", "note.also"},
+	}
+	require.Equal(t, want, got["room"], "refs grow, sorted; plain is not stored")
+
+	err = h.Store.RecordTypes(ctx, rec([]string{"note.about"}, []string{"note.also"}))
+	require.ErrorIs(t, err, channels.ErrTypeShapeConflict)
+	got, err = h.Store.TypeRecords(ctx)
+	require.NoError(t, err)
+	require.Equal(t, want, got["room"])
+	if h.Second != nil {
+		got, err = h.Second(t).TypeRecords(ctx)
+		require.NoError(t, err)
+		require.Equal(t, want, got["room"], "another instance reads the same refs")
+	}
+}
+
+// testTypeRecordConcurrent checks that of concurrent records with two
+// different shapes, one shape wins and every record of the other conflicts.
+func testTypeRecordConcurrent(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	recs := []channels.TypeRecord{
+		{Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityOne},
+		{Anchor: channels.AnchorFace, Cardinality: channels.CardinalityOne},
+	}
+	const tries = 8
+	var wg sync.WaitGroup
+	var conflicts atomic.Int64
+	errs := make(chan error, tries)
+	for i := range tries {
+		wg.Go(func() {
+			err := h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{"room": recs[i%2]})
+			switch {
+			case errors.Is(err, channels.ErrTypeShapeConflict):
+				conflicts.Add(1)
+			case err != nil:
+				errs <- err
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	require.Equal(t, int64(tries/2), conflicts.Load(), "every record of the losing shape conflicts")
+	got, err := h.Store.TypeRecords(ctx)
+	require.NoError(t, err)
+	require.Contains(t, recs, got["room"])
 }
 
 // Contains reports whether raw holds needle; a helper for backend tests

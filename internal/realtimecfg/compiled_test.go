@@ -145,7 +145,20 @@ func TestShapeMismatches(t *testing.T) {
 			Configured:  TypeShape{Anchor: AnchorFace, Cardinality: CardinalityMany},
 		},
 	}
-	if !slices.Equal(got, want) {
+	type key struct {
+		name               string
+		stored, configured [2]string
+	}
+	project := func(ms []ShapeMismatch) []key {
+		var out []key
+		for _, m := range ms {
+			out = append(out, key{m.ChannelType,
+				[2]string{string(m.Stored.Anchor), string(m.Stored.Cardinality)},
+				[2]string{string(m.Configured.Anchor), string(m.Configured.Cardinality)}})
+		}
+		return out
+	}
+	if !slices.Equal(project(got), project(want)) {
 		t.Fatalf("ShapeMismatches = %+v; want %+v", got, want)
 	}
 	err = ShapeMismatchError(got)

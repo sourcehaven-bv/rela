@@ -191,8 +191,9 @@ func TestChannelService_ReloadRefusesRecordedShapeChange(t *testing.T) {
 	require.NoError(t, err)
 	recs, err := appbuild.Channels(svc).TypeRecords(ctx)
 	require.NoError(t, err)
-	require.Equal(t, channels.TypeRecord{Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityOne},
-		recs["lobby"], "a post records the type's shape")
+	require.Equal(t, channels.TypeRecord{
+		Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityOne, Refs: []string{"note.about"},
+	}, recs["lobby"], "a post records the type's shape")
 
 	require.NoError(t, appbuild.Channels(svc).RecordTypes(ctx, map[string]channels.TypeRecord{
 		"room": {Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityMany},
@@ -207,6 +208,38 @@ func TestChannelService_ReloadRefusesRecordedShapeChange(t *testing.T) {
 
 	require.NoError(t, svc.Close())
 	require.NoError(t, holder.Reload(ctx), "a closed assembly's store is no longer checked")
+}
+
+// TestChannelService_RefTurnedPlainIsRefused pins that once a post has
+// recorded a ref property, neither a hot reload nor a boot accepts a
+// realtime.yaml that declares that property as another type: the stored
+// entity ids would render to every reader as plain text.
+func TestChannelService_RefTurnedPlainIsRefused(t *testing.T) {
+	t.Parallel()
+	root := realtimeProject(t, map[string]string{"realtime.yaml": serviceRealtimeYAML, "schema.yaml": serviceSchema})
+	base, err := realtimeBase(t, root, appbuild.WithACL(acl.NopACL{}))
+	require.NoError(t, err)
+	st := memstore.New()
+	ctx := context.Background()
+	require.NoError(t, st.CreateEntity(ctx, &entity.Entity{ID: "DOC-1", Type: "doc",
+		Properties: map[string]any{"title": "One", "owner": "alice"}}))
+	svc, err := base.Assemble(st, search.New(st, search.NewLinearSearch()), nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	_, err = appbuild.ChannelService(svc).Post(asUser("alice"), doc1Room, note("x"))
+	require.NoError(t, err)
+
+	plain := strings.Replace(serviceRealtimeYAML, "about: { type: ref, to: [doc] }", "about: { type: string }", 1)
+	require.NotEqual(t, serviceRealtimeYAML, plain)
+	writeProjectFile(t, root, "realtime.yaml", plain)
+	holder := appbuild.Realtime(svc)
+	require.ErrorContains(t, holder.Reload(ctx), "cannot change from ref")
+
+	again, err := realtimeBase(t, root, appbuild.WithACL(acl.NopACL{}))
+	require.NoError(t, err)
+	st2 := memstore.New()
+	_, err = again.Assemble(st2, search.New(st2, search.NewLinearSearch()), nil, nil)
+	require.ErrorContains(t, err, "cannot change from ref")
 }
 
 // TestChannelService_Nil pins the accessor's nil contract.

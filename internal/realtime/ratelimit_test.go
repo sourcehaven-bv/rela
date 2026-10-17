@@ -53,7 +53,7 @@ func TestRateLimit_DeniedDoesNotCharge(t *testing.T) {
 // on one aggregate bucket across channels and operations.
 func TestRateLimit_Aggregate(t *testing.T) {
 	t.Parallel()
-	l := newLimiter(1 << 20)
+	l := newLimiter(defaultLimitCaps())
 	now := time.Unix(0, 0)
 	generous := realtimelimits.Rate{Count: 1000, Per: time.Minute}
 	for i := range realtimelimits.IdentityRate.Count {
@@ -65,35 +65,35 @@ func TestRateLimit_Aggregate(t *testing.T) {
 	require.NoError(t, l.take(now, "carol", roomKey(), opEdit, generous))
 }
 
-// TestRateLimit_CapRefusesNeverEvicts pins that a full bucket table refuses
-// a request that needs a new bucket, keeps every existing bucket, and frees
-// slots once buckets turn stale.
+// TestRateLimit_CapRefusesNeverEvicts pins that a full per-channel table
+// refuses a request that needs a new bucket, keeps every existing bucket,
+// and frees slots once buckets are full again.
 func TestRateLimit_CapRefusesNeverEvicts(t *testing.T) {
 	t.Parallel()
-	l := newLimiter(4)
+	l := newLimiter(limitCaps{buckets: 2, perIdentity: 64, identities: 100})
 	now := time.Unix(0, 0)
 	rate := realtimelimits.Rate{Count: 1, Per: time.Minute}
 	require.NoError(t, l.take(now, "bob", roomKey(), opEdit, rate))
 	require.NoError(t, l.take(now, "carol", roomKey(), opEdit, rate))
-	require.Equal(t, 4, l.size())
+	require.Equal(t, 4, l.size(), "two per-channel buckets and two aggregates")
 
 	err := l.take(now, "dave", roomKey(), opEdit, rate)
 	d := requireDenial(t, err, http.StatusTooManyRequests, TypeRateLimited)
-	require.Equal(t, 2*time.Minute, d.RetryAfter)
-	require.Equal(t, 4, l.size(), "no bucket was evicted")
+	require.Equal(t, time.Minute, d.RetryAfter, "the first per-channel bucket is full in a minute")
+	require.Equal(t, 4, l.size(), "no bucket was evicted and none inserted")
 	err = l.take(now, "bob", roomKey(), opEdit, rate)
 	requireDenial(t, err, http.StatusTooManyRequests, TypeRateLimited)
 
-	later := now.Add(2*time.Minute + time.Second)
+	later := now.Add(time.Minute)
 	require.NoError(t, l.take(later, "dave", roomKey(), opEdit, rate))
-	require.Equal(t, 2, l.size(), "the stale buckets were swept")
+	require.Equal(t, 2, l.size(), "the full buckets were swept")
 }
 
 // TestRateLimit_HarnessCap pins the cap through the service: with room
-// for one caller's buckets, a second caller is refused.
+// for one caller's per-channel bucket, a second caller is refused.
 func TestRateLimit_HarnessCap(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t, withBuckets(2))
+	h := newHarness(t, withBuckets(1))
 	_, err := h.svc.Post(as(user("bob")), room, text("x"))
 	require.NoError(t, err)
 	_, err = h.svc.Post(as(user("carol")), room, text("x"))
@@ -104,7 +104,7 @@ func TestRateLimit_HarnessCap(t *testing.T) {
 // TestRateLimit_Sweep pins the periodic sweep of stale buckets.
 func TestRateLimit_Sweep(t *testing.T) {
 	t.Parallel()
-	l := newLimiter(1 << 20)
+	l := newLimiter(defaultLimitCaps())
 	now := time.Unix(0, 0)
 	rate := realtimelimits.Rate{Count: 10, Per: time.Second}
 	for i := range sweepEvery - 1 {

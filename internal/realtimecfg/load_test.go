@@ -528,6 +528,56 @@ func TestCheckReload(t *testing.T) {
 	}
 }
 
+// TestCheckReload_Refs pins that a ref property cannot turn into another
+// type, while dropping it, its message type or its channel type is allowed.
+func TestCheckReload_Refs(t *testing.T) {
+	meta := testMeta(t)
+	prev, err := Parse([]byte(golden(t)), meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, _ := prev.ChannelType("incident-room")
+	if got := ct.Shape().Refs; !slices.Equal(got, []string{"status-update.affects"}) {
+		t.Fatalf("Shape().Refs = %v", got)
+	}
+	if !slices.Contains(ct.PlainProperties(), "status-update.summary") {
+		t.Fatalf("PlainProperties() = %v", ct.PlainProperties())
+	}
+	const ref = "          affects:  { type: ref, to: [maatregel, risico] }\n"
+	tests := []struct {
+		name, with string
+		refused    bool
+	}{
+		{"ref turned string", "          affects:  { type: string }\n", true},
+		{"ref dropped", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := strings.Replace(golden(t), ref, tc.with, 1)
+			next, err := Parse([]byte(src), meta, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = CheckReload(prev, next)
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			assertProblem(t, err, "channel_types.incident-room.message_types.status-update.properties.affects.type",
+				"cannot change from ref")
+		})
+	}
+	stored := map[string]TypeShape{"incident-room": {
+		Anchor: AnchorFamily, Cardinality: CardinalityOne, Refs: []string{"status-update.summary", "text.gone"},
+	}}
+	ms := ShapeMismatches(prev, stored)
+	if len(ms) != 1 || !slices.Equal(ms[0].LostRefs, []string{"status-update.summary"}) {
+		t.Fatalf("ShapeMismatches = %+v; want the summary ref lost and the undeclared one ignored", ms)
+	}
+}
+
 func TestPeriod(t *testing.T) {
 	start := time.Date(2026, 1, 31, 12, 0, 0, 0, time.UTC)
 	cases := []struct {

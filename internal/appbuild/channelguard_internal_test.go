@@ -429,6 +429,9 @@ func TestCheckChannelTypeRecords(t *testing.T) {
 	require.NoError(t, f.cs.RecordTypes(ctx, matching))
 	require.NoError(t, checkChannelTypeRecords(ctx, f.cs, f.cfg))
 
+	// RecordTypes refuses to change a recorded shape, so the mismatched
+	// records go into a fresh store.
+	f = newGuardFixture(t)
 	require.NoError(t, f.cs.RecordTypes(ctx, map[string]channels.TypeRecord{
 		"chat":    {Anchor: channels.AnchorFace, Cardinality: channels.CardinalityOne},
 		"notes":   {Anchor: channels.AnchorFace, Cardinality: channels.CardinalityMany},

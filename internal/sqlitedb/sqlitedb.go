@@ -704,6 +704,16 @@ CREATE TABLE IF NOT EXISTS channel_types (
 	type        TEXT PRIMARY KEY,
 	anchor_mode TEXT NOT NULL,
 	cardinality TEXT NOT NULL
+) STRICT;` + channelTypeRefsDDL
+
+// channelTypeRefsDDL holds the ref properties recorded for each channel
+// type (see channels.TypeRecord). Shared between channelsDDL and the v18 to
+// v19 rung.
+const channelTypeRefsDDL = `
+CREATE TABLE IF NOT EXISTS channel_type_refs (
+	type TEXT NOT NULL,
+	ref  TEXT NOT NULL,
+	PRIMARY KEY (type, ref)
 ) STRICT;`
 
 // searchDDL is the full-text search index (DEC-10Z731): an FTS5 table with

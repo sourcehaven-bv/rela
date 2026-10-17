@@ -146,7 +146,7 @@ func (c *call) affordances() Affordances {
 		return a
 	}
 	ops := c.ct.MessageOps
-	a.Remove = ops.Remove != nil && c.gate(ops.Remove.Gate)
+	a.Remove = c.moderator()
 	if c.state() == channels.StateOpen {
 		for _, name := range sortedKeys(c.ct.MessageTypes) {
 			if c.mayPost(c.ct.MessageTypes[name]) {
@@ -162,9 +162,7 @@ func (c *call) affordances() Affordances {
 // renderer builds the renderer for c, resolving every ref of msgs and sigs
 // in one batch.
 func (s *Service) renderer(c *call, msgs []channels.Message, sigs []signal) (*renderer, error) {
-	ops := c.ct.MessageOps
-	r := &renderer{ct: c.ct}
-	r.moderator = c.requireCaller() == nil && ops.Remove != nil && c.gate(ops.Remove.Gate)
+	r := &renderer{ct: c.ct, moderator: c.moderator()}
 	ids := r.refIDs(msgs, sigs)
 	if len(ids) == 0 {
 		return r, nil
@@ -294,11 +292,7 @@ func (s *Service) Post(ctx context.Context, addr RawAddress, in PostInput) (Post
 
 // rendererWith is a renderer over refs already resolved for the caller.
 func (s *Service) rendererWith(c *call, refs map[string]RefView) *renderer {
-	ops := c.ct.MessageOps
-	return &renderer{
-		ct: c.ct, refs: refs,
-		moderator: ops.Remove != nil && c.gate(ops.Remove.Gate),
-	}
+	return &renderer{ct: c.ct, refs: refs, moderator: c.moderator()}
 }
 
 // postRate is the rate of mt: its own, or the configured default for its
@@ -383,21 +377,38 @@ func (s *Service) postSignal(
 	return PostResult{Ephemeral: true, ID: sg.id, ExpiresAt: sg.expires}, nil
 }
 
-// record writes the type record of c's channel type to the store before
-// its first channel write in this process, so boot and reload can refuse a
-// change of its anchor or cardinality. The store writes only a change.
+// record writes the type record of c's channel type to the store before a
+// stored write, so boot and reload can refuse a change of its anchor, its
+// cardinality or a ref property. The store records a type once and only
+// adds refs after that; a record that conflicts with the held one refuses
+// the write with a 409 channel_type_conflict. Local's cache skips the
+// store call for a record this process already wrote.
+//
+// After the record it checks that realtime.yaml was not reloaded since the
+// operation began. A reload checks the store's records before it applies,
+// so one that ran before this record could not see it; refusing here keeps
+// a write from landing under a shape the live config no longer has.
 func (s *Service) record(c *call) error {
+	shape := c.ct.Shape()
 	rec := channels.TypeRecord{
-		Anchor:      channels.AnchorMode(c.ct.Anchor),
-		Cardinality: channels.Cardinality(c.ct.Cardinality),
+		Anchor:      channels.AnchorMode(shape.Anchor),
+		Cardinality: channels.Cardinality(shape.Cardinality),
+		Refs:        shape.Refs,
+		Plain:       c.ct.PlainProperties(),
 	}
-	if !s.local.needsRecord(c.ct.Name, rec) {
-		return nil
+	if s.local.needsRecord(c.ct.Name, rec) {
+		err := s.store.RecordTypes(c.ctx, map[string]channels.TypeRecord{c.ct.Name: rec})
+		if errors.Is(err, channels.ErrTypeShapeConflict) {
+			return typeConflict(c.ct.Name)
+		}
+		if err != nil {
+			return fmt.Errorf("realtime: record channel type %s: %w", c.ct.Name, err)
+		}
+		s.local.noteRecorded(c.ct.Name, rec)
 	}
-	if err := s.store.RecordTypes(c.ctx, map[string]channels.TypeRecord{c.ct.Name: rec}); err != nil {
-		return fmt.Errorf("realtime: record channel type %s: %w", c.ct.Name, err)
+	if s.cfg.Load().Config != c.snap.Config {
+		return configChanged()
 	}
-	s.local.noteRecorded(c.ct.Name, rec)
 	return nil
 }
 
@@ -416,7 +427,7 @@ func (s *Service) Create(
 		return ChannelView{}, openErr
 	}
 	if err := c.channelType(entityType, typ); err != nil {
-		return ChannelView{}, s.offError(c, err)
+		return ChannelView{}, err
 	}
 	if c.ct.Cardinality != realtimecfg.CardinalityMany || c.ct.Create == nil {
 		return ChannelView{}, deny(http.StatusConflict, TypeNotCreatable,
@@ -439,34 +450,20 @@ func (s *Service) Create(
 	if err := s.local.limiter.take(c.now, bucketIdentity(c.p), c.key, opCreate, realtimelimits.OpRate); err != nil {
 		return ChannelView{}, err
 	}
-	existing, err := s.store.List(c.ctx, c.key.Anchor, "", "")
-	if err != nil {
-		return ChannelView{}, fmt.Errorf("realtime: list channels: %w", err)
-	}
-	if len(existing) >= c.snap.Config.Limits().ChannelsPerEntity {
-		return ChannelView{}, storeError(channels.ErrTooManyChannels)
-	}
-	err = s.record(c)
-	if err != nil {
+	if err := s.record(c); err != nil {
 		return ChannelView{}, err
 	}
+	// The store counts the channels of this type on the anchor and creates
+	// in one step, so concurrent creates cannot pass channels_per_entity.
 	ch, err := s.store.CreateMany(c.ctx, c.key.Anchor, channels.NewChannel{
 		Type: typ, Title: in.Title, By: authorOf(c.p), At: c.now,
+		Max: c.snap.Config.Limits().ChannelsPerEntity,
 	})
 	if err != nil {
 		return ChannelView{}, storeError(err)
 	}
 	s.local.mark(ch.Key)
 	return channelView(ch.Key, &ch), nil
-}
-
-// offError turns an unknown channel type into [ErrRealtimeOff] when
-// realtime is off.
-func (s *Service) offError(c *call, err error) error {
-	if c.snap.Config == nil {
-		return ErrRealtimeOff
-	}
-	return err
 }
 
 // TypeChannels are the channels of one type on an anchor that the caller
@@ -497,9 +494,6 @@ func (s *Service) ListAnchor(
 	c, err := s.begin(ctx)
 	if err != nil {
 		return AnchorChannels{}, err
-	}
-	if c.snap.Config == nil {
-		return AnchorChannels{}, ErrRealtimeOff
 	}
 	addr, err := entity.ParseAddress(anchor)
 	if err != nil {
