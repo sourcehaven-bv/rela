@@ -390,7 +390,7 @@ type harnessOpts struct {
 
 func withEphemeral(l ephemeralLimits) harnessOpt { return func(o *harnessOpts) { o.lim = l } }
 func withBuckets(n int) harnessOpt               { return func(o *harnessOpts) { o.caps.buckets = n } }
-func withYAML(yaml string) harnessOpt            { return func(o *harnessOpts) { o.yaml = yaml } }
+func withLifecycleYAML() harnessOpt              { return func(o *harnessOpts) { o.yaml = lifecycleRealtime } }
 
 func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	t.Helper()

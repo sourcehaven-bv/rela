@@ -75,7 +75,7 @@ func member() *fakeAccess { return user("bob") }
 // one message and whose TKT-1 has status done.
 func newLifecycleHarness(t *testing.T) *harness {
 	t.Helper()
-	h := newHarness(t, withYAML(lifecycleRealtime))
+	h := newHarness(t, withLifecycleYAML())
 	h.post(t, member(), PostInput{Type: "text", Props: map[string]any{"body": "hi"}})
 	h.anchors.setStatus("done")
 	return h
@@ -126,7 +126,7 @@ func TestLifecycle_NotDeclared(t *testing.T) {
 // that holds no message has nothing to act on.
 func TestLifecycle_NeverWrittenChannel(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t, withYAML(lifecycleRealtime))
+	h := newHarness(t, withLifecycleYAML())
 	require.Empty(t, h.offered(t, lead(), room))
 	_, err := h.svc.Lifecycle(as(lead()), room, realtimecfg.LifecycleClose)
 	requireDenial(t, err, http.StatusNotFound, TypeChannelNotFound)
@@ -210,7 +210,7 @@ func TestLifecycle_Condition_TrueFalseRedactedDegraded(t *testing.T) {
 // binds the record whether or not it was asked for properties.
 func TestLifecycle_ConditionReadingNoProperty(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t, withYAML(lifecycleRealtime))
+	h := newHarness(t, withLifecycleYAML())
 	timed := RawAddress{EntityType: "ticket", Anchor: "TKT-1", Type: "timed"}
 	_, err := h.svc.Post(as(member()), timed, PostInput{Type: "text"})
 	require.NoError(t, err)
@@ -477,7 +477,7 @@ func TestLifecycle_AffordanceAndGateAgree(t *testing.T) {
 						t.Parallel()
 						setup := func(t *testing.T) (*harness, RawAddress) {
 							t.Helper()
-							h := newHarness(t, withYAML(lifecycleRealtime))
+							h := newHarness(t, withLifecycleYAML())
 							addr := target.setup(t, h)
 							h.clock.Add(age)
 							if degraded {
