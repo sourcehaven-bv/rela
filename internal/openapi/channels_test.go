@@ -23,6 +23,9 @@ channel_types:
           about: { type: ref, to: [task, note] }
         post: [member]
       typing: { persist: ephemeral, post: [member] }
+    lifecycle:
+      close: { roles: [member] }
+      delete: { roles: [member] }
   threads:
     attach_to: [task]
     cardinality: many
@@ -30,6 +33,8 @@ channel_types:
     create: { roles: [member] }
     roles:
       member: { from: attached }
+    lifecycle:
+      archive: { roles: [member] }
     message_types:
       text:
         properties: { body: { type: string } }
@@ -87,6 +92,10 @@ func TestChannelPaths(t *testing.T) {
 		{"/api/v1/tasks/{id}/_channels/threads/{name}", "GET", []string{"200", "403", "404", "422"}},
 		{"/api/v1/tasks/{id}/_channels/threads/{name}/messages", "POST",
 			[]string{"201", "202", "400", "403", "404", "409", "413", "422", "429"}},
+		{"/api/v1/tasks/{id}/_channels/room/_lifecycle/close", "POST", []string{"200", "400", "403", "404", "409", "429"}},
+		{"/api/v1/tasks/{id}/_channels/room/_lifecycle/delete", "POST", []string{"204", "400", "403", "404", "409", "429"}},
+		{"/api/v1/tasks/{id}/_channels/threads/{name}/_lifecycle/archive", "POST",
+			[]string{"200", "400", "403", "404", "409", "429"}},
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			item, ok := spec.Paths[tc.path]
@@ -108,7 +117,8 @@ func TestChannelPaths(t *testing.T) {
 		})
 	}
 
-	for _, p := range []string{"/api/v1/notes/{id}/_channels", "/api/v1/tasks/{id}/_channels/room/{name}"} {
+	for _, p := range []string{"/api/v1/notes/{id}/_channels", "/api/v1/tasks/{id}/_channels/room/{name}",
+		"/api/v1/tasks/{id}/_channels/room/_lifecycle/reopen", "/api/v1/tasks/{id}/_channels/threads/{name}/_lifecycle/close"} {
 		if _, ok := spec.Paths[p]; ok {
 			t.Errorf("spec has %s, which no channel type serves", p)
 		}
@@ -133,6 +143,13 @@ func TestChannelPaths(t *testing.T) {
 	}
 	if got := body.OneOf[1].Required; len(got) != 1 || got[0] != "type" {
 		t.Errorf("typing body required = %v, want [type]", got)
+	}
+	if _, ok := spec.Paths["/api/v1/tasks/{id}/_channels/room/_lifecycle/delete"].Post.Responses["200"]; ok {
+		t.Error("delete answers 204, but the spec describes a 200")
+	}
+	actions := spec.Components.Schemas[channelHeadSchema].Properties["_actions"]
+	if _, ok := actions.Properties["lifecycle"]; !ok {
+		t.Error("ChannelHead _actions has no lifecycle")
 	}
 	page := spec.Components.Schemas[messagePageSchema]
 	for _, cursor := range []string{"next_after", "next_before", "next_after_rev"} {

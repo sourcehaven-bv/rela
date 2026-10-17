@@ -167,6 +167,50 @@ func addChannelTypePaths(spec *Spec, basePath, typeName, tag string, ct realtime
 				"400", "403", "404", "409", "413", "429"),
 		},
 	}
+	addLifecyclePaths(spec, headPath, opID, tag, params, ct.Lifecycle)
+}
+
+// lifecycleText is the summary and description of each lifecycle
+// operation's path.
+var lifecycleText = map[string][2]string{
+	realtimecfg.LifecycleClose:   {"Close the channel", "Closes the channel: it keeps its messages and takes no new ones."},
+	realtimecfg.LifecycleReopen:  {"Reopen the channel", "Opens a closed or archived channel again."},
+	realtimecfg.LifecycleArchive: {"Archive the channel", "Archives the channel: it keeps its messages and takes no new ones."},
+	realtimecfg.LifecycleDelete: {"Delete the channel", "Deletes the channel and its messages. " +
+		"A cardinality-one channel starts again at the next post."},
+}
+
+// addLifecyclePaths adds one `POST …/_lifecycle/{op}` path per operation
+// the channel type declares. The body is empty or `{}`.
+func addLifecyclePaths(
+	spec *Spec, headPath, opID, tag string, params []Parameter, lc realtimecfg.Lifecycle,
+) {
+	for _, name := range realtimecfg.LifecycleOpNames() {
+		if lc.Op(name) == nil {
+			continue
+		}
+		var responses map[string]Response
+		errs := []string{"400", "403", "404", "409", "429"}
+		if name == realtimecfg.LifecycleDelete {
+			responses = channelResponses("200", "", nil, errs...)
+			delete(responses, "200")
+			responses["204"] = Response{Description: "The channel is deleted"}
+		} else {
+			responses = channelResponses("200", "The channel after the change", Ref(channelSchema), errs...)
+		}
+		text := lifecycleText[name]
+		spec.Paths[headPath+"/_lifecycle/"+name] = PathItem{
+			Parameters: params,
+			Post: &Operation{
+				OperationID: name + "Channel" + opID,
+				Summary:     text[0],
+				Description: text[1] + " The operation is offered in the head's `_actions.lifecycle`.",
+				Tags:        []string{tag},
+				RequestBody: &RequestBody{Content: jsonContent(ObjectSchema(map[string]*Schema{}, nil))},
+				Responses:   responses,
+			},
+		}
+	}
 }
 
 func refParam() Parameter {
@@ -178,7 +222,8 @@ var channelErrorText = map[string]string{
 	"400": "Invalid JSON, an unknown field, or an invalid message or query",
 	"403": "A role or gate refused; the problem names the rule",
 	"404": "Entity not found (the same body as the entity GET), or no such channel type, channel or message",
-	"409": "The channel is not open, the message was removed, a limit or a concurrent change refused",
+	"409": "The channel is not open or not in the state the operation starts from, the message was removed, " +
+		"a limit, the retention or a concurrent change refused",
 	"413": "Request body or a value too large",
 	"422": "A ref to an entity that cannot be referenced, or a bare id for a face-anchored type",
 	"429": "Rate limited; see Retry-After",
@@ -337,6 +382,7 @@ func addChannelSchemas(spec *Spec) {
 		"ephemeral": ArraySchema(Ref(ephemeralSchema)),
 		"_actions": ObjectSchema(map[string]*Schema{
 			"post": ArraySchema(str()), "edit_own": b(), "delete_own": b(), "remove": b(),
-		}, []string{"post", "edit_own", "delete_own", "remove"}),
+			"lifecycle": ArraySchema(str()),
+		}, []string{"post", "edit_own", "delete_own", "remove", "lifecycle"}),
 	}, []string{"channel", "ephemeral", "_actions"})
 }
