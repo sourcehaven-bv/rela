@@ -231,6 +231,11 @@ func (c *Converter) Convert(ctx context.Context, req ConversionRequest) (*Conver
 	// A generated id is minted inside the Tx and has never been used.
 	var renameUndo anchorUndo
 	if req.TargetID != "" {
+		// Checked first: the guard frees the id for anything but the source,
+		// so a target id naming the source would detach its own channels.
+		if checkErr := checkChosenTargetID(m, pre.def.To, req); checkErr != nil {
+			return nil, checkErr
+		}
 		if renameUndo, err = guardRename(ctx, m, req.SourceID, req.TargetID); err != nil {
 			return nil, err
 		}

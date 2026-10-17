@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/audit"
@@ -86,6 +87,32 @@ func (r *conversionRun) apply(ctx context.Context, view store.Store) error {
 	return r.rewriteRelations(ctx, view)
 }
 
+// checkChosenTargetID checks the caller's target id against toType without
+// reading the store: a manual-id type needs a valid id that is not the
+// source id in any case, and a generated-id type takes none.
+func checkChosenTargetID(m *Manager, toType string, req ConversionRequest) error {
+	target, ok := m.deps.Meta.GetEntityDef(toType)
+	if !ok {
+		return fmt.Errorf("%w: target type %q is not declared", ErrConversionInvalid, toType)
+	}
+	if !target.IsManualID() {
+		if req.TargetID != "" {
+			return fmt.Errorf("%w: target id is generated for this type", ErrConversionInvalid)
+		}
+		return nil
+	}
+	if req.TargetID == "" {
+		return fmt.Errorf("%w: target id is required for manual-id type", ErrConversionInvalid)
+	}
+	if err := entity.ValidateID(req.TargetID); err != nil {
+		return fmt.Errorf("%w: %w", ErrConversionInvalid, err)
+	}
+	if strings.EqualFold(req.SourceID, req.TargetID) {
+		return fmt.Errorf("%w: target id must differ from source id", ErrConversionInvalid)
+	}
+	return nil
+}
+
 // conversionTargetID returns the converted entity's id: the caller's for a
 // manual-id type, otherwise a generated one. It reads view, so the id is
 // checked against the same state the rename writes to.
@@ -93,17 +120,10 @@ func conversionTargetID(
 	ctx context.Context, m *Manager, view store.Store, toType string, target metamodel.EntityDef, req ConversionRequest,
 ) (string, error) {
 	newID := req.TargetID
-	if target.IsManualID() {
-		if newID == "" {
-			return "", fmt.Errorf("%w: target id is required for manual-id type", ErrConversionInvalid)
-		}
-		if err := entity.ValidateID(newID); err != nil {
-			return "", fmt.Errorf("%w: %w", ErrConversionInvalid, err)
-		}
-	} else {
-		if newID != "" {
-			return "", fmt.Errorf("%w: target id is generated for this type", ErrConversionInvalid)
-		}
+	if err := checkChosenTargetID(m, toType, req); err != nil {
+		return "", err
+	}
+	if !target.IsManualID() {
 		deps := m.deps
 		deps.Store = view
 		var err error
@@ -111,7 +131,7 @@ func conversionTargetID(
 			return "", err
 		}
 	}
-	if req.SourceID == newID {
+	if strings.EqualFold(req.SourceID, newID) {
 		return "", fmt.Errorf("%w: target id must differ from source id", ErrConversionInvalid)
 	}
 	taken, err := idTakenByOther(ctx, view, newID, req.SourceID)

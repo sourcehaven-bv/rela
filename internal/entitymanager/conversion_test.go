@@ -119,6 +119,8 @@ type conversionOptions struct {
 	// fieldGate, when set, gates the caller's values through a field-gated
 	// handle, as the data-entry API does.
 	fieldGate entitymanager.FieldWriteGate
+	// guard replaces the inactive channel guard.
+	guard entitymanager.AnchorGuard
 }
 
 func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixture {
@@ -161,12 +163,16 @@ func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixtur
 	}
 	hooks := &conversionHooks{}
 	auditor := audit.NewMemory()
+	var guard entitymanager.AnchorGuard = entitymanager.NopAnchorGuard{}
+	if opts.guard != nil {
+		guard = opts.guard
+	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: managed, Meta: meta, Templater: nopTemplater{}, Audit: auditor, ACL: gate,
 		Transitions: transitions, FieldGate: fields,
 		CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: visibility,
 		AliasRewriter: hooks, VersionRecorder: hooks, RelationVersionRecorder: hooks,
-		AnchorGuard: entitymanager.NopAnchorGuard{},
+		AnchorGuard: guard,
 	})
 	if err != nil {
 		t.Fatalf("manager: %v", err)
@@ -705,6 +711,45 @@ func seedFaces(t *testing.T, st store.Store, faces ...entity.Face) {
 		if err := st.CreateEntity(context.Background(), e); err != nil {
 			t.Fatalf("seed %s: %v", face, err)
 		}
+	}
+}
+
+// recordingGuard is an active channel guard that records the ids it frees.
+type recordingGuard struct {
+	entitymanager.NopAnchorGuard
+	renamedTo []string
+}
+
+func (*recordingGuard) Active() bool { return true }
+
+func (g *recordingGuard) BeforeRename(
+	ctx context.Context, newID string, free func(context.Context) error,
+) (entitymanager.AnchorUndo, error) {
+	g.renamedTo = append(g.renamedTo, newID)
+	return nil, free(ctx)
+}
+
+// A target id that names the source must be refused before the channel
+// guard runs: the guard frees an id for anything but the source, so it
+// would detach the source's own channels.
+func TestConvert_TargetIDNamingTheSourceSkipsTheGuard(t *testing.T) {
+	t.Parallel()
+	for _, target := range []string{"NOTE-1", "note-1"} {
+		t.Run(target, func(t *testing.T) {
+			t.Parallel()
+			guard := &recordingGuard{}
+			f := newConversionFixture(t, conversionOptions{schema: facedConversionSchema, guard: guard})
+			seedFaces(t, f.st, "final")
+			_, err := f.conv.Convert(context.Background(), entitymanager.ConversionRequest{
+				Definition: "note-to-task", SourceID: "NOTE-1", TargetID: target,
+			})
+			if !errors.Is(err, entitymanager.ErrConversionInvalid) {
+				t.Fatalf("Convert = %v, want ErrConversionInvalid", err)
+			}
+			if len(guard.renamedTo) != 0 {
+				t.Fatalf("guard ran for %v", guard.renamedTo)
+			}
+		})
 	}
 }
 
