@@ -3,6 +3,7 @@ package dataentrywire
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
 	"github.com/Sourcehaven-BV/rela/internal/dataentry"
@@ -107,12 +108,14 @@ func RemoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 		EntityManager: appbuild.FieldGatedEntityManager(svc),
 		Config:        svc.Config(),
 		Watcher:       noopWatcher{},
-		Watch:         relamcp.WatchDeps{Changes: svc.Store(), Rebind: reads.Rebind},
-		ProjectRoot:   svc.Paths().Root,
-		Attachments:   remoteAttachmentDeps(svc, host),
-		World:         reads.LuaReads.World,
-		Families:      appbuild.CompiledWorlds(svc).Families(),
-		Worlds:        host.Worlds(),
+		Watch: relamcp.WatchDeps{
+			Changes: svc.Store(), Rebind: reads.Rebind, ChannelPoll: remoteChannelPoll,
+		},
+		ProjectRoot: svc.Paths().Root,
+		Attachments: remoteAttachmentDeps(svc, host),
+		World:       reads.LuaReads.World,
+		Families:    appbuild.CompiledWorlds(svc).Families(),
+		Worlds:      host.Worlds(),
 	}
 	if reads.Traversals != nil {
 		deps.Traversals = reads.Traversals
@@ -128,8 +131,20 @@ func RemoteMCPDeps(svc *appbuild.Services, host dataentry.MCPHost) (relamcp.Deps
 	if host.Actions != nil {
 		deps.Actions = host.Actions
 	}
+	// The channel tools share the HTTP routes' service, so a post through
+	// either wakes the other's watchers, and signals are kept. The service
+	// reads the realtime config holder on every call, so a realtime.yaml
+	// reload applies to the next tool call.
+	if cs := appbuild.ChannelService(svc); cs != nil {
+		deps.Channels = relamcp.ChannelDeps{Reader: cs, Writer: cs}
+	}
 	return deps, nil
 }
+
+// remoteChannelPoll is how often a remote watch replays its read_channel
+// targets, for posts made by another rela-server process against the same
+// database. A post in this process wakes the watch at once.
+const remoteChannelPoll = 5 * time.Second
 
 // noopWatcher satisfies [relamcp.Watcher] for the HTTP transport, which has
 // no use for file-change callbacks.

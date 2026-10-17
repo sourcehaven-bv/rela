@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/appbuild"
@@ -14,6 +15,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/config"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	relamcp "github.com/Sourcehaven-BV/rela/internal/mcp"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/script"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -46,6 +48,9 @@ type mcpServices struct {
 	// stopSchemaWatch releases the schema.yaml subscription. Nil until
 	// [mcpServices.watchSchema] runs.
 	stopSchemaWatch func()
+	// stopRealtimeWatch releases the realtime.yaml subscription. Nil until
+	// [mcpServices.watchRealtime] runs.
+	stopRealtimeWatch func()
 	// closed is set by Close. The watcher's Stop does NOT wait for an
 	// in-flight callback, so a change event can be mid-flight when shutdown
 	// begins; without this flag that callback would assemble a whole new
@@ -77,6 +82,10 @@ func (s *mcpServices) current() *appbuild.Services {
 // nothing. Access control that matters belongs on the deployed HTTP API,
 // which serves callers who do not have direct file access. WithACL makes
 // this an explicit, justified opt-out rather than a silent default.
+//
+// The channel tools are the exception: they apply acl.yaml when the project
+// has one ([mcpServices.channelDeps]), so an agent identity stays inside
+// the channel roles the project gave it.
 func newMCPServices(startDir string) (*mcpServices, error) {
 	svc, err := appbuild.Discover(startDir, script.NewEngine(), appbuild.WithACL(acl.NopACL{}))
 	if err != nil {
@@ -213,15 +222,55 @@ func (s *mcpServices) watchSchema(srv *relamcp.Server) {
 		slog.Warn("mcp: schema watcher not started; hot-reload disabled", "error", err)
 		return
 	}
+	if !s.keepWatch(stop, &s.stopSchemaWatch) {
+		return
+	}
+	s.watchRealtime(sub)
+}
 
+// watchRealtime subscribes to realtime.yaml and reloads the realtime config
+// of the current services on every change, so the channel tools follow an
+// edit from the next call. A file that does not load keeps the previous
+// config serving. The callback resolves the current services per event,
+// because a schema reload builds a new config holder, and does nothing once
+// Close has run.
+func (s *mcpServices) watchRealtime(sub config.Subscriber) {
+	stop, err := sub.Subscribe(context.Background(), realtimecfg.FileName, func() { s.reloadRealtime() })
+	if err != nil {
+		slog.Warn("mcp: realtime.yaml watcher not started; realtime hot-reload disabled", "error", err)
+		return
+	}
+	s.keepWatch(stop, &s.stopRealtimeWatch)
+}
+
+// reloadRealtime re-reads realtime.yaml for the current services.
+func (s *mcpServices) reloadRealtime() {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	cur := s.svc
+	s.mu.Unlock()
+	if err := appbuild.Realtime(cur).Reload(context.Background()); err != nil {
+		slog.Warn("mcp: realtime.yaml reload rejected; keeping previous config", "error", err)
+		return
+	}
+	slog.Info("mcp: realtime config reloaded")
+}
+
+// keepWatch stores a subscription's stop handle in dst, or stops it and
+// reports false when Close ran while it was subscribing.
+func (s *mcpServices) keepWatch(stop func(), dst *func()) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		// Close ran while we were subscribing; nothing will read the handle.
 		stop()
-		return
+		return false
 	}
-	s.stopSchemaWatch = stop
+	*dst = stop
+	return true
 }
 
 // Deps flattens the per-project services into the focused [mcp.Deps]
@@ -256,10 +305,12 @@ func (s *mcpServices) deps() relamcp.Deps {
 		Config:        s.svc.Config(),
 		Lua:           relamcp.LuaDeps{WriteDeps: s.svc.LuaWriteDeps(), Cache: s.svc.ScriptEngine().LuaCache()},
 		Watcher:       s.watcher,
-		Watch:         relamcp.WatchDeps{Changes: s.svc.Store(), Rebind: reads.Rebind},
-		ProjectRoot:   s.svc.Paths().Root,
-		World:         reads.LuaReads.World,
-		Families:      appbuild.CompiledWorlds(s.svc).Families(),
+		Watch: relamcp.WatchDeps{
+			Changes: s.svc.Store(), Rebind: reads.Rebind, ChannelPoll: stdioChannelPoll,
+		},
+		ProjectRoot: s.svc.Paths().Root,
+		World:       reads.LuaReads.World,
+		Families:    appbuild.CompiledWorlds(s.svc).Families(),
 		// The request edge for stdio: resolve the fallback principal against
 		// THIS assembly's ACL (NopACL here, so it binds nothing today). It is
 		// the IdentityBinder step, taken from the same GatedReads as the
@@ -277,7 +328,31 @@ func (s *mcpServices) deps() relamcp.Deps {
 	if leases := appbuild.Leases(s.svc); leases != nil {
 		deps.Leases = leases
 	}
+	deps.Channels = s.channelDeps()
 	return deps
+}
+
+// stdioChannelPoll is how often a stdio watch replays its read_channel
+// targets. A post made by rela-server or the CLI wakes nothing in this
+// process, so the poll is how a stdio watch sees it.
+const stdioChannelPoll = 2 * time.Second
+
+// channelDeps wires the channel tools over the channel service that applies
+// acl.yaml (see [appbuild.PolicyChannelService]). Signals are refused: a
+// signal lives only in the process that receives it, and this one is not
+// rela-server. An acl.yaml that does not build leaves the channel tools off
+// rather than open. Caller holds mu.
+func (s *mcpServices) channelDeps() relamcp.ChannelDeps {
+	svc, err := appbuild.PolicyChannelService(s.svc)
+	if err != nil {
+		slog.Warn("mcp: channel tools off: acl.yaml does not apply", "error", err)
+		return relamcp.ChannelDeps{}
+	}
+	// Assigned only when set, for the reason Leases is.
+	if svc == nil {
+		return relamcp.ChannelDeps{}
+	}
+	return relamcp.ChannelDeps{Reader: svc, Writer: svc, RefuseSignals: true}
 }
 
 // attachmentDeps wires the MCP attachment tools like `rela attach`: raw
@@ -314,13 +389,15 @@ func (s *mcpServices) Close() error {
 	// mu on the captured assemblies: stopping a version sweep waits, without
 	// a bound, for an in-flight tick.
 	s.closed = true
-	stopSchemaWatch := s.stopSchemaWatch
-	s.stopSchemaWatch = nil
+	stops := []func(){s.stopSchemaWatch, s.stopRealtimeWatch}
+	s.stopSchemaWatch, s.stopRealtimeWatch = nil, nil
 	watcher, current, origin := s.watcher, s.svc, s.origin
 	s.mu.Unlock()
 
-	if stopSchemaWatch != nil {
-		stopSchemaWatch()
+	for _, stop := range stops {
+		if stop != nil {
+			stop()
+		}
 	}
 	if watcher != nil {
 		watcher.Stop()

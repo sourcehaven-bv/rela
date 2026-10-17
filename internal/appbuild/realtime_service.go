@@ -33,6 +33,49 @@ func ChannelService(s *Services) *realtime.Service {
 	return s.channelService
 }
 
+// PolicyChannelService returns a channel service of s that applies the
+// project's acl.yaml, for a wiring that assembled s with an injected ACL.
+// Stdio `rela mcp` does that (NopACL), so its entity tools stay open as
+// before, while its channel tools apply acl.yaml as `rela lease` does. That
+// is not a security boundary for a local user, who can edit acl.yaml; it
+// keeps an agent identity inside the limits the project set for it.
+//
+// Without acl.yaml it returns [ChannelService]. With one it builds a
+// service over the same channel store, realtime config and process-local
+// state, gated by a Declarative built from the policy. A policy that does
+// not load, validate or compile is an error, never an open fallback.
+//
+// Nil: s is accepted and returns nil, as does an s without channels.
+func PolicyChannelService(s *Services) (*realtime.Service, error) {
+	if s == nil || s.channelService == nil || s.base == nil {
+		return ChannelService(s), nil
+	}
+	policy, err := loadACLPolicy(s.base.cfg)
+	if err != nil {
+		return nil, err
+	}
+	if policy == nil {
+		return s.channelService, nil
+	}
+	if err = ValidateACLPolicy(policy, s.base.meta); err != nil {
+		return nil, err
+	}
+	writes, d, err := buildACL(policy, s.Store())
+	if err != nil {
+		return nil, err
+	}
+	redactor, err := buildFieldRedactor(s.base.meta, s.Store(), d)
+	if err != nil {
+		return nil, err
+	}
+	svc, _, err := newRealtimeService(realtimeInputs{
+		meta: s.base.meta, worlds: s.base.worlds, config: realtimeConfigSource{h: s.base.realtime},
+		store: s.Store(), channels: s.channels, local: s.realtimeLocal,
+		declarative: d, redactor: redactor, writes: writes,
+	})
+	return svc, err
+}
+
 // buildRealtimeService builds the channel service over cs for one assembly.
 // The service is per assembly, so its access checks follow the current ACL;
 // local is the process-local state successive assemblies share (see
