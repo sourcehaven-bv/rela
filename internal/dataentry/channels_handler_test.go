@@ -79,9 +79,10 @@ func TestChannels_Routes(t *testing.T) {
 	code, b = env.get(t, "alice", roomPath+"/messages?limit=1")
 	page := decodeAs[v1.MessagePage](t, b)
 	if code != http.StatusOK || len(page.Messages) != 1 || page.Messages[0].Seq != 2 || !page.HasMore ||
-		page.NextBefore != 2 || page.NextAfter != 0 || page.NextAfterRev != 0 {
+		page.NextBefore != 2 || page.NextAfter != 0 || page.NextAfterRev == nil || *page.NextAfterRev != head.Channel.Rev {
 
-		t.Fatalf("newest page = %d %+v, want seq 2 continuing at next_before 2", code, page)
+		t.Fatalf("newest page = %d %+v, want seq 2 continuing at next_before 2 and next_after_rev %d",
+			code, page, head.Channel.Rev)
 	}
 	code, b = env.get(t, "alice", roomPath+"/messages?before=2&limit=1")
 	page = decodeAs[v1.MessagePage](t, b)
@@ -104,10 +105,23 @@ func TestChannels_Routes(t *testing.T) {
 	}
 	code, b = env.get(t, "alice", roomPath+"/messages?after_rev="+strconv.FormatInt(head.Channel.Rev, 10))
 	page = decodeAs[v1.MessagePage](t, b)
-	if code != http.StatusOK || len(page.Messages) != 1 || page.Messages[0].Seq != 1 || page.NextAfterRev == 0 ||
-		page.NextBefore != 0 {
+	if code != http.StatusOK || len(page.Messages) != 1 || page.Messages[0].Seq != 1 || page.NextAfterRev == nil ||
+		*page.NextAfterRev != page.Messages[0].Rev || page.NextBefore != 0 {
 
 		t.Fatalf("after_rev page = %d %+v", code, page)
+	}
+	// An empty after_rev page still names where to continue, and rev 0
+	// is a cursor: it follows the channel from its start.
+	code, b = env.get(t, "alice", roomPath+"/messages?after_rev="+strconv.FormatInt(*page.NextAfterRev, 10))
+	empty := decodeAs[v1.MessagePage](t, b)
+	if code != http.StatusOK || len(empty.Messages) != 0 || empty.NextAfterRev == nil ||
+		*empty.NextAfterRev != *page.NextAfterRev {
+
+		t.Fatalf("empty after_rev page = %d %s", code, b)
+	}
+	code, b = env.get(t, "alice", roomPath+"/messages?after_rev=0")
+	if all := decodeAs[v1.MessagePage](t, b); code != http.StatusOK || len(all.Messages) != 2 {
+		t.Fatalf("after_rev=0 page = %d %s, want both messages", code, b)
 	}
 
 	resp, b = env.do(t, "alice", http.MethodDelete, roomPath+"/messages/1", "", nil)
@@ -476,8 +490,8 @@ func (s stubChannels) ListAnchor(context.Context, string, string, channels.State
 func (s stubChannels) Head(context.Context, realtime.RawAddress) (realtime.HeadView, error) {
 	return realtime.HeadView{}, s.err
 }
-func (s stubChannels) Messages(context.Context, realtime.RawAddress, channels.Page) (realtime.MessagePage, error) {
-	return realtime.MessagePage{}, s.err
+func (s stubChannels) Read(context.Context, realtime.RawAddress, realtime.ReadRequest) (realtime.ReadView, error) {
+	return realtime.ReadView{}, s.err
 }
 func (s stubChannels) Post(context.Context, realtime.RawAddress, realtime.PostInput) (realtime.PostResult, error) {
 	return realtime.PostResult{}, s.err

@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"encoding/json"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -134,6 +135,14 @@ func TestChannelPaths(t *testing.T) {
 	text := body.OneOf[0].Properties["props"]
 	if got := text.Required; len(got) != 1 || got[0] != "body" {
 		t.Errorf("text props required = %v, want [body]", got)
+	}
+	// The props schema is the one the MCP tools publish: closed, and
+	// rendered as additionalProperties false.
+	if want, err := json.Marshal(propsSchema(rt.ChannelTypes()[0].MessageTypes["text"].PropsSchema())); err != nil {
+		t.Fatal(err)
+	} else if got, _ := json.Marshal(text); string(got) != string(want) ||
+		!strings.Contains(string(got), `"additionalProperties":false`) {
+		t.Errorf("text props = %s, want %s with additionalProperties false", got, want)
 	}
 	if _, ok := body.OneOf[1].Properties["reply_to"]; ok {
 		t.Error("an ephemeral message type offers reply_to")

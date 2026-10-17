@@ -37,7 +37,7 @@ const (
 type channelReader interface {
 	ListAnchor(ctx context.Context, entityType, anchor string, state channels.State) (realtime.AnchorChannels, error)
 	Head(ctx context.Context, addr realtime.RawAddress) (realtime.HeadView, error)
-	Messages(ctx context.Context, addr realtime.RawAddress, page channels.Page) (realtime.MessagePage, error)
+	Read(ctx context.Context, addr realtime.RawAddress, req realtime.ReadRequest) (realtime.ReadView, error)
 }
 
 // messageWriter serves the message routes: post, edit and delete.
@@ -254,32 +254,37 @@ func (h *channelsHandler) head(w http.ResponseWriter, r *http.Request, rt channe
 }
 
 func (h *channelsHandler) messages(w http.ResponseWriter, r *http.Request, rt channelRoute) {
-	page, ok := parseMessagePage(w, r)
+	req, ok := parseMessagePage(w, r)
 	if !ok {
 		return
 	}
-	got, err := h.read.Messages(r.Context(), rt.addr, page)
+	got, err := h.read.Read(r.Context(), rt.addr, req)
 	if err != nil {
 		writeChannelError(w, r, err)
 		return
 	}
-	writeV1JSON(w, http.StatusOK, wirePage(got, page))
+	writeV1JSON(w, http.StatusOK, wirePage(got))
 }
 
 // parseMessagePage reads after, before, after_rev and limit. A value that
 // is not a whole number is a 400; the service checks the combination.
-func parseMessagePage(w http.ResponseWriter, r *http.Request) (channels.Page, bool) {
+// after_rev counts when present, so after_rev=0 follows an empty channel.
+func parseMessagePage(w http.ResponseWriter, r *http.Request) (realtime.ReadRequest, bool) {
 	q := r.URL.Query()
-	var page channels.Page
+	var page realtime.ReadRequest
+	var afterRev int64
 	for _, f := range []struct {
 		name string
 		dst  *int64
-	}{{"after", &page.AfterSeq}, {"before", &page.BeforeSeq}, {"after_rev", &page.AfterRev}} {
+	}{{"after", &page.AfterSeq}, {"before", &page.BeforeSeq}, {"after_rev", &afterRev}} {
 		if v, ok, bad := queryInt(q, f.name); bad {
 			writeV1Error(w, r, http.StatusBadRequest, "invalid_request", "Invalid query", f.name+" must be a whole number")
 			return page, false
 		} else if ok {
 			*f.dst = v
+			if f.dst == &afterRev {
+				page.AfterRev = &afterRev
+			}
 		}
 	}
 	limit, ok, bad := queryInt(q, "limit")

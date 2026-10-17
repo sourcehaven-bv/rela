@@ -2,7 +2,6 @@ package openapi
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
@@ -280,24 +279,16 @@ func postBodySchema(ct realtimecfg.ChannelType) *Schema {
 	variants := make([]*Schema, 0, len(names))
 	for _, name := range names {
 		mt := ct.MessageTypes[name]
-		props := map[string]*Schema{}
-		var required []string
-		for pname, p := range mt.Properties {
-			props[pname] = messagePropSchema(p)
-			if p.Required {
-				required = append(required, pname)
-			}
-		}
-		slices.Sort(required)
+		props := propsSchema(mt.PropsSchema())
 		body := map[string]*Schema{
 			"type":  {Type: "string", Enum: []string{name}},
-			"props": {Type: "object", Properties: props, Required: required},
+			"props": props,
 		}
 		if mt.Persist != realtimecfg.PersistEphemeral {
 			body["reply_to"] = &Schema{Type: "integer", Description: "Seq of the top-level message to reply to"}
 		}
 		top := []string{"type"}
-		if len(required) > 0 {
+		if len(props.Required) > 0 {
 			// A type with a required property cannot be posted without props.
 			top = append(top, "props")
 		}
@@ -309,29 +300,16 @@ func postBodySchema(ct realtimecfg.ChannelType) *Schema {
 	return &Schema{OneOf: variants}
 }
 
-// messagePropSchema maps a message property to JSON Schema.
-func messagePropSchema(p realtimecfg.Property) *Schema {
-	var s *Schema
-	switch p.Type {
-	case realtimecfg.PropertyInteger:
-		s = IntegerSchema()
-	case realtimecfg.PropertyBoolean:
-		s = BooleanSchema()
-	case realtimecfg.PropertyDate:
-		s = &Schema{Type: "string", Format: "date"}
-	case realtimecfg.PropertyDatetime:
-		s = dateTimeSchema()
-	case realtimecfg.PropertyRef:
-		s = &Schema{Type: "string", Description: "Entity ID; one of the types " + strings.Join(p.To, ", ")}
-	case realtimecfg.PropertyEnum:
-		s = &Schema{Type: "string", Enum: slices.Clone(p.Values)}
-	default:
-		s = StringSchema()
+// propsSchema converts a message type's props schema, which the MCP tools
+// publish too, to an OpenAPI schema.
+func propsSchema(ps realtimecfg.PropsSchema) *Schema {
+	props := make(map[string]*Schema, len(ps.Properties))
+	for name, p := range ps.Properties {
+		props[name] = &Schema{
+			Type: p.Type, Format: p.Format, Enum: p.Enum, MaxLength: p.MaxLength, Description: p.Description,
+		}
 	}
-	if p.Label != "" && s.Description == "" {
-		s.Description = p.Label
-	}
-	return s
+	return &Schema{Type: ps.Type, Properties: props, Required: ps.Required, Closed: !ps.AdditionalProperties}
 }
 
 // addChannelSchemas adds the schemas the channel routes share.
@@ -389,7 +367,7 @@ func addChannelSchemas(spec *Spec) {
 		"has_more":       {Type: "boolean", Description: "The page is full, so there may be more past its cursor"},
 		"next_after":     {Type: "integer", Description: "Seq to pass as after; set on an after page"},
 		"next_before":    {Type: "integer", Description: "Seq to pass as before; set on the newest and a before page"},
-		"next_after_rev": {Type: "integer", Description: "Rev to pass as after_rev; set on an after_rev page"},
+		"next_after_rev": {Type: "integer", Description: "Rev to pass as after_rev; set on the newest and an after_rev page, also when it is 0"},
 	}, []string{"channel", "messages", "has_more"})
 	sc[ephemeralSchema] = ObjectSchema(map[string]*Schema{
 		"id": str(), "type": str(), "author": Ref(channelAuthorRef), "at": dateTimeSchema(),
