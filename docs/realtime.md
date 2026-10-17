@@ -194,9 +194,15 @@ who can read the entity, because its answer says something about the
 entity. `auto` runs `close` or `archive` without a request, when
 `when` holds or `after` has passed. `after` counts from when the channel
 entered its current state; for a reopened channel, from the reopen.
-`retention` applies to `delete` only: a
-channel cannot be deleted before it ends. Retention never blocks removing a
-single message.
+`retention` applies to `delete` only: a channel cannot be deleted until
+`retention` has passed since it closed. A channel that never closed must be
+closed first. Retention never blocks removing a single message.
+
+Without `from`, `close` starts from `open`, `reopen` from `closed` or
+`archived`, `archive` from `open` or `closed`, and `delete` from any state.
+
+Deleting a channel removes it and all its messages. A `one` channel starts
+again, empty, at the next post.
 
 Periods are a count from 1 to 100000 and a unit: `s`, `m`, `h` and `d` have a fixed length;
 `mo` and `y` are calendar months and years.
@@ -269,8 +275,13 @@ The data-entry API serves channels under the entity they are attached to.
 | `POST .../{channel}/messages` | Posts a message: `{"type": ..., "props": {...}, "reply_to": n}`. A `log` message gets a 201 with the message; an `ephemeral` one gets a 202. |
 | `PATCH .../{channel}/messages/{seq}` | Edits a message: `{"props": {...}}`. |
 | `DELETE .../{channel}/messages/{seq}` | Removes a message. The body may hold a `reason`. |
+| `POST .../{channel}/_lifecycle/{op}` | Runs `close`, `reopen`, `archive` or `delete`. The body is empty or `{}`. A `delete` gets a 204; the other operations get the channel. |
 
 `{channel}` is `_channels/{type}` or `_channels/{type}/{name}`.
+
+The head's `_actions.lifecycle` lists the lifecycle operations the caller
+may run now. It runs the same checks as the `POST`, except the rate limit.
+A `one` channel that holds no message has no lifecycle operations.
 
 A message page takes one cursor:
 
@@ -301,12 +312,12 @@ Every error is a problem body (`application/problem+json`) with a `type`.
 | --- | --- |
 | 404 `not_found` | Realtime is off, or the entity is hidden, does not exist, or is not of the collection's type. The body is the same as for the entity `GET`. |
 | 404 | The channel type is not attached to the entity type, or the channel or the message does not exist. |
-| 403 | The caller may not perform the operation, or the edit window has passed. `title` says what the operation needs and `detail` names the rule in `realtime.yaml`, such as `channel_types.room.message_types.text.post`. |
+| 403 | The caller may not perform the operation, the edit window has passed, the lifecycle operation is not declared (`lifecycle_not_offered`), or its `condition` does not hold (`lifecycle_denied`). `title` says what the operation needs and `detail` names the rule in `realtime.yaml`, such as `channel_types.room.message_types.text.post`. |
 | 400 | The message does not match its type (`invalid_message`), has too many properties, or a removal lacks a required reason. |
 | 400 | The body is not valid JSON, has unknown fields, or a query parameter is not a positive number. |
 | 413 `too_large` | The message is over `message_bytes`. |
 | 422 | A `ref` names an entity that does not exist or that the caller cannot read. Both get the same body. |
-| 409 | The channel is not open, the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. |
+| 409 | The channel is not open, the channel is not in a state the lifecycle operation starts from (`lifecycle_wrong_state`), `retention` keeps the channel (`retention_active`), a concurrent change won (`conflict`), the message was removed, `channels_per_entity` is reached, the POST tried to open a channel of a `one` type, or the configuration changed during the request. |
 | 429 | A rate limit. `Retry-After` gives the seconds to wait, rounded up. |
 
 The OpenAPI document at `/api/v1/_openapi.json` lists these paths for every
