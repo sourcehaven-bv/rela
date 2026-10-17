@@ -847,7 +847,7 @@ func (s *Store) Messages(ctx context.Context, k channels.Key, p channels.Page) (
 	args := []any{r.id}
 	reverse := false
 	switch {
-	case p.AfterRev > 0:
+	case p.RevOrder():
 		query, args = base+` AND rev > ? ORDER BY rev LIMIT ?`, append(args, p.AfterRev, p.Limit)
 	case p.AfterSeq > 0:
 		query, args = base+` AND seq > ? ORDER BY seq LIMIT ?`, append(args, p.AfterSeq, p.Limit)

@@ -284,6 +284,8 @@ func testPaging(t *testing.T, h Harness) {
 		{"before start", channels.Page{BeforeSeq: 1}, []int64{}},
 		{"before far", channels.Page{BeforeSeq: 100, Limit: 2}, []int64{6, 7}},
 		{"after rev", channels.Page{AfterRev: 0, Limit: 2}, []int64{6, 7}},
+		{"by rev from zero", channels.Page{ByRev: true, Limit: 2}, []int64{1, 2}},
+		{"by rev after", channels.Page{ByRev: true, AfterRev: 5}, []int64{6, 7}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -296,6 +298,8 @@ func testPaging(t *testing.T, h Harness) {
 	_, err := h.Store.Messages(ctx, k, channels.Page{AfterSeq: 1, BeforeSeq: 3})
 	require.ErrorIs(t, err, channels.ErrInvalidPage)
 	_, err = h.Store.Messages(ctx, k, channels.Page{AfterSeq: -1})
+	require.ErrorIs(t, err, channels.ErrInvalidPage)
+	_, err = h.Store.Messages(ctx, k, channels.Page{ByRev: true, AfterSeq: 1})
 	require.ErrorIs(t, err, channels.ErrInvalidPage)
 }
 

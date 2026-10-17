@@ -761,7 +761,7 @@ func (s *Store) Messages(_ context.Context, k channels.Key, p channels.Page) ([]
 		return nil, err
 	}
 	switch {
-	case p.AfterRev > 0:
+	case p.RevOrder():
 		return s.byRev(k, m, idxs, p)
 	case p.AfterSeq > 0:
 		return s.afterSeq(k, idxs, p)

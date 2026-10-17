@@ -480,13 +480,21 @@ func ApplyTransition(c *Channel, t Transition) {
 //     the cursor that sees edits and removals.
 //   - none: the newest messages, oldest first.
 //
+// ByRev selects the rev order even when AfterRev is 0, so a reader that
+// started following an empty channel (rev 0) gets every message. A
+// positive AfterRev implies it.
+//
 // Limit is clamped to [1, MaxPageLimit]; zero means [DefaultPageLimit].
 type Page struct {
 	AfterSeq  int64
 	BeforeSeq int64
 	AfterRev  int64
+	ByRev     bool
 	Limit     int
 }
+
+// RevOrder reports whether p pages by rev.
+func (p Page) RevOrder() bool { return p.ByRev || p.AfterRev > 0 }
 
 // Normalize validates p and returns it with the limit clamped.
 func (p Page) Normalize() (Page, error) {
@@ -498,6 +506,9 @@ func (p Page) Normalize() (Page, error) {
 		if v > 0 {
 			set++
 		}
+	}
+	if p.ByRev && p.AfterRev == 0 {
+		set++
 	}
 	if set > 1 {
 		return p, fmt.Errorf("%w: name at most one cursor", ErrInvalidPage)
