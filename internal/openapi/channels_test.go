@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"sync/atomic"
@@ -140,8 +141,9 @@ func TestChannelPaths(t *testing.T) {
 	// rendered as additionalProperties false.
 	if want, err := json.Marshal(propsSchema(rt.ChannelTypes()[0].MessageTypes["text"].PropsSchema())); err != nil {
 		t.Fatal(err)
-	} else if got, _ := json.Marshal(text); string(got) != string(want) ||
+	} else if got, _ := json.Marshal(text); !bytes.Equal(got, want) ||
 		!strings.Contains(string(got), `"additionalProperties":false`) {
+
 		t.Errorf("text props = %s, want %s with additionalProperties false", got, want)
 	}
 	if _, ok := body.OneOf[1].Properties["reply_to"]; ok {

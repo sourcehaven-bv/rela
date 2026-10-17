@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 	"testing"
 
@@ -12,8 +13,6 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
-
-func rev(n int64) *int64 { return &n }
 
 // postN posts n text messages as bob, past the rate limit.
 func (h *harness) postN(t *testing.T, n int) []MessageView {
@@ -43,7 +42,7 @@ func TestRead_Cursors(t *testing.T) {
 	empty, err := h.svc.Read(bob, room, ReadRequest{})
 	require.NoError(t, err)
 	require.Empty(t, empty.Messages)
-	require.Equal(t, Cursors{NextAfterRev: rev(0)}, empty.Cursors, "an empty channel can be followed from rev 0")
+	require.Equal(t, Cursors{NextAfterRev: new(int64(0))}, empty.Cursors, "an empty channel can be followed from rev 0")
 
 	posted := h.postN(t, 3)
 	headRev := posted[2].Rev
@@ -55,36 +54,36 @@ func TestRead_Cursors(t *testing.T) {
 		hasMore bool
 		want    Cursors
 	}{
-		{"newest", ReadRequest{Limit: 2}, []int64{2, 3}, true, Cursors{NextBefore: 2, NextAfterRev: rev(headRev)}},
+		{"newest", ReadRequest{Limit: 2}, []int64{2, 3}, true, Cursors{NextBefore: 2, NextAfterRev: new(headRev)}},
 		{"before", ReadRequest{BeforeSeq: 2, Limit: 2}, []int64{1}, false, Cursors{NextBefore: 1}},
 		{"before start", ReadRequest{BeforeSeq: 1}, []int64{}, false, Cursors{}},
 		{"after", ReadRequest{AfterSeq: 1, Limit: 1}, []int64{2}, true, Cursors{NextAfter: 2}},
 		{"after end", ReadRequest{AfterSeq: 3}, []int64{}, false, Cursors{NextAfter: 3}},
-		{"after rev zero", ReadRequest{AfterRev: rev(0)}, []int64{1, 2, 3}, false, Cursors{NextAfterRev: rev(headRev)}},
+		{"after rev zero", ReadRequest{AfterRev: new(int64(0))}, []int64{1, 2, 3}, false, Cursors{NextAfterRev: new(headRev)}},
 		{
-			"after rev full page", ReadRequest{AfterRev: rev(0), Limit: 1}, []int64{1}, true,
-			Cursors{NextAfterRev: rev(posted[0].Rev)},
+			"after rev full page", ReadRequest{AfterRev: new(int64(0)), Limit: 1}, []int64{1}, true,
+			Cursors{NextAfterRev: new(posted[0].Rev)},
 		},
-		{"after rev at head", ReadRequest{AfterRev: rev(headRev)}, []int64{}, false, Cursors{NextAfterRev: rev(headRev)}},
+		{"after rev at head", ReadRequest{AfterRev: new(headRev)}, []int64{}, false, Cursors{NextAfterRev: new(headRev)}},
 	}
+	// One loop, not subtests: the cases read one harness that the test then
+	// edits, so they cannot run in parallel with the rest of it.
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := h.svc.Read(bob, room, tc.req)
-			require.NoError(t, err)
-			require.Equal(t, tc.seqs, readSeqs(got))
-			require.Equal(t, tc.hasMore, got.HasMore)
-			require.Equal(t, tc.want, got.Cursors)
-		})
+		page, readErr := h.svc.Read(bob, room, tc.req)
+		require.NoError(t, readErr, tc.name)
+		require.Equal(t, tc.seqs, readSeqs(page), tc.name)
+		require.Equal(t, tc.hasMore, page.HasMore, tc.name)
+		require.Equal(t, tc.want, page.Cursors, tc.name)
 	}
 
 	_, err = h.svc.Edit(bob, room, 1, map[string]any{"body": "edited"})
 	require.NoError(t, err)
-	got, err := h.svc.Read(bob, room, ReadRequest{AfterRev: rev(headRev)})
+	got, err := h.svc.Read(bob, room, ReadRequest{AfterRev: new(headRev)})
 	require.NoError(t, err)
 	require.Equal(t, []int64{1}, readSeqs(got), "an edit is seen past the rev cursor")
 	require.Equal(t, got.Messages[0].Rev, *got.NextAfterRev)
 
-	_, err = h.svc.Read(bob, room, ReadRequest{AfterSeq: 1, AfterRev: rev(0)})
+	_, err = h.svc.Read(bob, room, ReadRequest{AfterSeq: 1, AfterRev: new(int64(0))})
 	requireDenial(t, err, http.StatusBadRequest, TypeInvalid)
 }
 
@@ -108,7 +107,7 @@ func TestRead_AfterRevMissesNothing(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
-	got, err := h.svc.Read(bob, room, ReadRequest{AfterRev: rev(posted[0].Rev)})
+	got, err := h.svc.Read(bob, room, ReadRequest{AfterRev: new(posted[0].Rev)})
 	require.NoError(t, err)
 	require.Equal(t, []int64{2}, readSeqs(got), "the racing post is in the page")
 	h.store.onHead = nil
@@ -146,7 +145,7 @@ func (c *countingConfig) Load() Snapshot {
 func TestRead_OneCaptureFlatCost(t *testing.T) {
 	t.Parallel()
 	for _, n := range []int{10, 50} {
-		t.Run(fmt.Sprint(n), func(t *testing.T) {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			for i := range n {

@@ -201,7 +201,7 @@ func (c *call) messageTypes(logOnly bool) []MessageTypeView {
 		ephemeral := mt.Persist == realtimecfg.PersistEphemeral
 		v := MessageTypeView{
 			Name: mt.Name, Label: mt.Label, Persist: mt.Persist, Reply: !ephemeral,
-			CanPost: open && !(ephemeral && logOnly) && c.mayPost(mt),
+			CanPost: open && (!ephemeral || !logOnly) && c.mayPost(mt),
 			Props:   mt.PropsSchema(),
 		}
 		if ephemeral {
