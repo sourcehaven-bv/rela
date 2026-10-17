@@ -171,8 +171,10 @@ your session id or `"$(hostname)-$$"`:
   edge (`access.Opener.Open`, and `access.Restamp` after provisioning) calls
   the resolver directly, because it needs the lookup and the verified-JWT
   mark. `TestIdentityEdgeCallers`
-  (`internal/archguard`) pins every caller of these to an allowlist with a
-  reason. A new caller must be a genuine edge.
+  (`internal/archguard`) pins every reference to these to an allowlist with a
+  reason, including `ForIdentity`, `ResolveDirect`, `ResolvePrincipal`, the
+  `IdentityResolver` type and method values taken without a call. A new
+  caller must be a genuine edge.
 
   Code below the edge reads the attached `Request` via
   `Declarative.RequestFrom` and **fails closed** without one: affordances

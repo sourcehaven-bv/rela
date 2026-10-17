@@ -37,30 +37,60 @@ var fromContextGuard = guard{
 // is empty and may only stay empty.
 var fromContextAllowlist = map[string]allowed{}
 
-// identityEdgeCalls returns the position of every call that resolves an
-// identity: `x.IdentityResolver()` with no arguments, and `acl.OpenRequest`
-// or `acl.BindRequest` under any import name. Syntactic, like the other
-// guards here; a method value passed without a call is not caught.
+// identityEdgeMethods are the acl methods that resolve an identity or open a
+// Request for one. No other package declares a method with these names, so
+// they are matched on any receiver.
+var identityEdgeMethods = map[string]bool{
+	"ForIdentity":      true, // Declarative.ForIdentity: opens a Request for a resolved Identity
+	"ResolveDirect":    true, // IdentityResolver.ResolveDirect
+	"ResolvePrincipal": true, // IdentityResolver.ResolvePrincipal
+}
+
+// identityEdgeCalls returns the position of every reference that resolves an
+// identity, called or taken as a value:
+//
+//   - `x.IdentityResolver`, the accessor or the acl type, except a call with
+//     arguments (another package's method of that name). Every
+//     IdentityResolver.Resolve call needs a resolver, and this is the only
+//     way to name one, so Resolve itself is not matched: the name is too
+//     common to match on any receiver.
+//   - `x.ForIdentity`, `x.ResolveDirect`, `x.ResolvePrincipal`.
+//   - `acl.OpenRequest`, `acl.BindRequest`, under any import name.
+//   - `identityBinderFor`, appbuild's binder constructor.
+//
+// Syntactic, like the other guards here.
 func identityEdgeCalls(fset *token.FileSet, file *ast.File) []token.Position {
 	aclName := importName(file, "github.com/Sourcehaven-BV/rela/internal/acl")
+	calledWithArgs := map[*ast.SelectorExpr]bool{}
+	declared := map[*ast.Ident]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.CallExpr:
+			if sel, ok := n.Fun.(*ast.SelectorExpr); ok && len(n.Args) > 0 {
+				calledWithArgs[sel] = true
+			}
+		case *ast.FuncDecl:
+			declared[n.Name] = true
+		case *ast.SelectorExpr:
+			declared[n.Sel] = true // matched as a selector below, not as a bare name
+		}
+		return true
+	})
 	var found []token.Position
 	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		switch sel.Sel.Name {
-		case "IdentityResolver":
-			if len(call.Args) == 0 {
-				found = append(found, fset.Position(sel.Sel.Pos()))
+		switch n := n.(type) {
+		case *ast.SelectorExpr:
+			name := n.Sel.Name
+			switch {
+			case name == "IdentityResolver" && !calledWithArgs[n],
+				identityEdgeMethods[name],
+				name == "identityBinderFor",
+				(name == "OpenRequest" || name == "BindRequest") && isPkg(n.X, aclName):
+				found = append(found, fset.Position(n.Sel.Pos()))
 			}
-		case "OpenRequest", "BindRequest":
-			if isPkg(sel.X, aclName) {
-				found = append(found, fset.Position(sel.Sel.Pos()))
+		case *ast.Ident:
+			if n.Name == "identityBinderFor" && !declared[n] {
+				found = append(found, fset.Position(n.Pos()))
 			}
 		}
 		return true
@@ -152,6 +182,16 @@ func TestIdentityMatchers(t *testing.T) {
 	}{
 		{"resolver accessor", imp, `_ = d.IdentityResolver()`, identityEdgeCalls, 1},
 		{"resolver with args", imp, `_ = x.IdentityResolver(1)`, identityEdgeCalls, 0},
+		{"resolver method value", imp, `f := d.IdentityResolver; _ = f`, identityEdgeCalls, 1},
+		{"resolver type", imp, `var r *acl.IdentityResolver; _ = r`, identityEdgeCalls, 1},
+		{"for identity", imp, `_, _ = d.ForIdentity(id)`, identityEdgeCalls, 1},
+		{"resolve direct", imp, `_, _ = r.ResolveDirect(ctx, p)`, identityEdgeCalls, 1},
+		{"resolve principal", imp, `_, _ = r.ResolvePrincipal(ctx, raw)`, identityEdgeCalls, 1},
+		{"resolve principal value", imp, `f := r.ResolvePrincipal; _ = f`, identityEdgeCalls, 1},
+		{"binder constructor", imp, `_ = identityBinderFor(d)`, identityEdgeCalls, 1},
+		{"binder constructor value", imp, `f := identityBinderFor; _ = f`, identityEdgeCalls, 1},
+		{"bind request value", imp, `f := acl.BindRequest; _ = f`, identityEdgeCalls, 1},
+		{"other Resolve", imp, `_, _ = r.Resolve(ctx, p)`, identityEdgeCalls, 0},
 		{"open request", imp, `_, _ = acl.OpenRequest(ctx, d, p)`, identityEdgeCalls, 1},
 		{"bind request", imp, `_, _ = acl.BindRequest(ctx, a)`, identityEdgeCalls, 1},
 		{"aliased bind", aliased, `_, _ = a.BindRequest(ctx, x)`, identityEdgeCalls, 1},
@@ -206,5 +246,32 @@ func TestIdentityGuards_FindPlantedViolations(t *testing.T) {
 		counts(fromContextAllowlist))
 	if len(msgs) != 2 {
 		t.Errorf("fromContext: want two findings against the empty allowlist; got %q", msgs)
+	}
+}
+
+// The edge guard must fail on a file that reaches the resolver without
+// calling the accessor: a method value, a resolver taken by type, and a
+// direct ForIdentity, in a file that is not on the allowlist.
+func TestIdentityEdgeGuard_FindsPlantedIndirectViolation(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	const src = "package pkg\n" +
+		"import \"github.com/Sourcehaven-BV/rela/internal/acl\"\n" +
+		"func f(d *acl.Declarative, r *acl.IdentityResolver) {\n" +
+		"\tresolve := r.ResolvePrincipal\n\t_ = resolve\n" +
+		"\t_, _ = d.ForIdentity(acl.Identity{})\n}\n"
+	if err := mkdirAllWrite(filepath.Join(root, "internal", "pkg", "sneaky.go"), src); err != nil {
+		t.Fatal(err)
+	}
+	if err := mkdirAllWrite(filepath.Join(root, "cmd", "tool", "main.go"), "package main\n"); err != nil {
+		t.Fatal(err)
+	}
+	got := outsideACL(scanTree(t, root, scannedRoots, identityEdgeCalls))
+	if n := len(got["internal/pkg/sneaky.go"]); n != 3 {
+		t.Errorf("findings in sneaky.go = %d (%v), want 3: the resolver type, the method value and ForIdentity",
+			n, got)
+	}
+	if msgs := diffAllowlist(identityEdgeGuard, got, counts(identityEdgeAllowlist)); len(msgs) == 0 {
+		t.Error("the planted file passed the allowlist check")
 	}
 }
