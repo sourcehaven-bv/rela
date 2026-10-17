@@ -92,8 +92,10 @@ func TestChannelPaths(t *testing.T) {
 		{"/api/v1/tasks/{id}/_channels/threads/{name}", "GET", []string{"200", "403", "404", "422"}},
 		{"/api/v1/tasks/{id}/_channels/threads/{name}/messages", "POST",
 			[]string{"201", "202", "400", "403", "404", "409", "413", "422", "429"}},
-		{"/api/v1/tasks/{id}/_channels/room/_lifecycle/close", "POST", []string{"200", "400", "403", "404", "409", "429"}},
-		{"/api/v1/tasks/{id}/_channels/room/_lifecycle/delete", "POST", []string{"204", "400", "403", "404", "409", "429"}},
+		{"/api/v1/tasks/{id}/_channels/room/_lifecycle/close", "POST",
+			[]string{"200", "400", "403", "404", "409", "413", "422", "429"}},
+		{"/api/v1/tasks/{id}/_channels/room/_lifecycle/delete", "POST",
+			[]string{"204", "400", "403", "404", "409", "413", "422", "429"}},
 		{"/api/v1/tasks/{id}/_channels/threads/{name}/_lifecycle/archive", "POST",
 			[]string{"200", "400", "403", "404", "409", "429"}},
 	} {
@@ -146,6 +148,11 @@ func TestChannelPaths(t *testing.T) {
 	}
 	if _, ok := spec.Paths["/api/v1/tasks/{id}/_channels/room/_lifecycle/delete"].Post.Responses["200"]; ok {
 		t.Error("delete answers 204, but the spec describes a 200")
+	}
+	lcBody := spec.Paths["/api/v1/tasks/{id}/_channels/room/_lifecycle/close"].Post.
+		RequestBody.Content["application/json"].Schema
+	if ap := lcBody.AdditionalProperties; ap == nil || ap.Not == nil {
+		t.Errorf("lifecycle body admits fields the server rejects: %+v", lcBody)
 	}
 	actions := spec.Components.Schemas[channelHeadSchema].Properties["_actions"]
 	if _, ok := actions.Properties["lifecycle"]; !ok {

@@ -130,6 +130,9 @@ type Schema struct {
 	AllOf []*Schema `json:"allOf,omitempty"`
 	OneOf []*Schema `json:"oneOf,omitempty"`
 	AnyOf []*Schema `json:"anyOf,omitempty"`
+	// Not admits what its schema refuses. `{"not": {}}` admits nothing: as
+	// additionalProperties it closes an object, like JSON Schema's `false`.
+	Not *Schema `json:"not,omitempty"`
 
 	// Metadata
 	Title       string `json:"title,omitempty"`

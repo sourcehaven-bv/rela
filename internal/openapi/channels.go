@@ -170,14 +170,30 @@ func addChannelTypePaths(spec *Spec, basePath, typeName, tag string, ct realtime
 	addLifecyclePaths(spec, headPath, opID, tag, params, ct.Lifecycle)
 }
 
-// lifecycleText is the summary and description of each lifecycle
-// operation's path.
-var lifecycleText = map[string][2]string{
-	realtimecfg.LifecycleClose:   {"Close the channel", "Closes the channel: it keeps its messages and takes no new ones."},
-	realtimecfg.LifecycleReopen:  {"Reopen the channel", "Opens a closed or archived channel again."},
-	realtimecfg.LifecycleArchive: {"Archive the channel", "Archives the channel: it keeps its messages and takes no new ones."},
-	realtimecfg.LifecycleDelete: {"Delete the channel", "Deletes the channel and its messages. " +
-		"A cardinality-one channel starts again at the next post."},
+// lifecycleDoc is the summary and description of a lifecycle operation's
+// path.
+type lifecycleDoc struct {
+	summary, description string
+}
+
+var lifecycleText = map[string]lifecycleDoc{
+	realtimecfg.LifecycleClose: {
+		summary:     "Close the channel",
+		description: "Closes the channel: it keeps its messages and takes no new ones.",
+	},
+	realtimecfg.LifecycleReopen: {
+		summary:     "Reopen the channel",
+		description: "Opens a closed or archived channel again.",
+	},
+	realtimecfg.LifecycleArchive: {
+		summary:     "Archive the channel",
+		description: "Archives the channel: it keeps its messages and takes no new ones.",
+	},
+	realtimecfg.LifecycleDelete: {
+		summary: "Delete the channel",
+		description: "Deletes the channel and its messages. " +
+			"A cardinality-one channel starts again at the next post.",
+	},
 }
 
 // addLifecyclePaths adds one `POST …/_lifecycle/{op}` path per operation
@@ -189,24 +205,25 @@ func addLifecyclePaths(
 		if lc.Op(name) == nil {
 			continue
 		}
+		errs := []string{"400", "403", "404", "409", "413", "422", "429"}
 		var responses map[string]Response
-		errs := []string{"400", "403", "404", "409", "429"}
 		if name == realtimecfg.LifecycleDelete {
-			responses = channelResponses("200", "", nil, errs...)
-			delete(responses, "200")
-			responses["204"] = Response{Description: "The channel is deleted"}
+			responses = withResponse(channelErrors(errs...), "204", Response{Description: "The channel is deleted"})
 		} else {
 			responses = channelResponses("200", "The channel after the change", Ref(channelSchema), errs...)
 		}
-		text := lifecycleText[name]
+		// The server decodes the body strictly into an empty object.
+		body := ObjectSchema(map[string]*Schema{}, nil)
+		body.AdditionalProperties = &Schema{Not: &Schema{}}
+		doc := lifecycleText[name]
 		spec.Paths[headPath+"/_lifecycle/"+name] = PathItem{
 			Parameters: params,
 			Post: &Operation{
 				OperationID: name + "Channel" + opID,
-				Summary:     text[0],
-				Description: text[1] + " The operation is offered in the head's `_actions.lifecycle`.",
+				Summary:     doc.summary,
+				Description: doc.description + " The operation is offered in the head's `_actions.lifecycle`.",
 				Tags:        []string{tag},
-				RequestBody: &RequestBody{Content: jsonContent(ObjectSchema(map[string]*Schema{}, nil))},
+				RequestBody: &RequestBody{Content: jsonContent(body)},
 				Responses:   responses,
 			},
 		}
@@ -231,7 +248,12 @@ var channelErrorText = map[string]string{
 
 // channelResponses is the success response plus the listed error ones.
 func channelResponses(code, desc string, schema *Schema, errs ...string) map[string]Response {
-	out := map[string]Response{code: {Description: desc, Content: jsonContent(schema)}}
+	return withResponse(channelErrors(errs...), code, Response{Description: desc, Content: jsonContent(schema)})
+}
+
+// channelErrors is the listed error responses.
+func channelErrors(errs ...string) map[string]Response {
+	out := make(map[string]Response, len(errs)+1)
 	for _, e := range errs {
 		r := Response{Description: channelErrorText[e], Content: problemContent()}
 		if e == "429" {
