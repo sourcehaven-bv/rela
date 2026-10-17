@@ -79,6 +79,10 @@ var noReadGateNeeded = map[string]string{
 		"target (PermitsReadFace) before authorizeCopy; both go through the face gate the scan does not follow",
 	"edgeTypeAllowed": "an affordance probe for the copy's own edges: withAffordanceProbe drops the " +
 		"audit row and the copy skips the edge instead of answering 403",
+	"Offers": "an affordance probe on a served entity: data-entry calls it from computeConversionOffers " +
+		"for an entity the request already read, and withAffordanceProbe keeps a denial out of the audit log",
+	"authorizeRemovals": "conversionRun.apply calls it after Converter.plan, which runs requireReadableRow " +
+		"on the source family; the removed edges are that family's, judged by edgeVisibility",
 }
 
 // TestAuthorizeAndAuditFollowsReadGate fails when a function in this

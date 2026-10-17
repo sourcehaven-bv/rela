@@ -153,13 +153,13 @@ func (e *Engine) checkWebhook(ctx context.Context, req *acl.Request, m WebhookMa
 // no face of a faced type at runtime.
 func (e *Engine) holdsNeed(ctx context.Context, req *acl.Request, verb acl.Verb, typ, face string) (bool, error) {
 	if face != "" {
-		return e.heldOnFace(ctx, req, verb, typ, entity.Face(face)), nil
+		return e.heldOnFace(req, verb, typ, entity.Face(face)), nil
 	}
 	baseline, _, err := e.typeBaseline(ctx, req, typ, []acl.Verb{verb})
 	if err != nil {
 		return false, err
 	}
-	e.splitFaces(ctx, req, typ, []acl.Verb{verb}, baseline)
+	e.splitFaces(req, typ, []acl.Verb{verb}, baseline)
 	_, held := baseline[string(verb)]
 	return held, nil
 }
