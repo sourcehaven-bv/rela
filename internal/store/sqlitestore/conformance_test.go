@@ -43,7 +43,7 @@ func openWithDB(t *testing.T, path string, opts ...sqlitestore.Option) (*sqlites
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	s, err := sqlitestore.New(db, opts...)
+	s, err := sqlitestore.New(context.Background(), db, opts...)
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
@@ -148,7 +148,7 @@ func fuzzFactory() storetest.FuzzFactory {
 		if err != nil {
 			panic(err)
 		}
-		s, err := sqlitestore.New(db)
+		s, err := sqlitestore.New(context.Background(), db)
 		if err != nil {
 			_ = db.Close()
 			panic(err)

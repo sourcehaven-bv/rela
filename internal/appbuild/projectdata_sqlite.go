@@ -93,7 +93,7 @@ func ImportMarkdownData(
 	if err != nil {
 		return nil, err
 	}
-	dst, err := sqlitestore.New(db)
+	dst, err := sqlitestore.New(ctx, db)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,7 @@ func ExportMarkdownData(
 	if err != nil {
 		return DataSummary{}, err
 	}
-	src, err := sqlitestore.New(db)
+	src, err := sqlitestore.New(ctx, db)
 	if err != nil {
 		return DataSummary{}, err
 	}

@@ -22,7 +22,7 @@ func TestCountPushdown_EqualsListPushdown_SQLite(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	st, err := sqlitestore.New(db)
+	st, err := sqlitestore.New(context.Background(), db)
 	if err != nil {
 		t.Fatal(err)
 	}

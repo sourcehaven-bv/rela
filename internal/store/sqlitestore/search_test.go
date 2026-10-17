@@ -202,7 +202,7 @@ func seedOldDatabase(t *testing.T, path, shape string, version int) {
 	ctx := context.Background()
 	db, err := sqlitedb.Open(ctx, sqlitedb.Options{Path: path})
 	require.NoError(t, err)
-	s, err := sqlitestore.New(db)
+	s, err := sqlitestore.New(context.Background(), db)
 	require.NoError(t, err)
 	createEntity(t, s, "OLD-0", "note", "title", "Doomed row", "")
 	createEntity(t, s, "OLD-1", "note", "title", "Legacy row", "first body")
