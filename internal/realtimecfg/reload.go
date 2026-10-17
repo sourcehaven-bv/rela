@@ -39,11 +39,20 @@ func CheckReload(prev, next *Compiled) error {
 // channels are keyed and read: the anchor, the cardinality and the
 // properties whose stored values are entity ids.
 type TypeShape struct {
-	Anchor      Anchor
+	Anchor Anchor
+	// Cardinality is empty in a stored shape the channel store recorded
+	// before it kept cardinality. An empty stored cardinality matches any
+	// configured one.
 	Cardinality Cardinality
 	// Refs lists the ref properties of the type's message types, as
 	// "message-type.property", sorted.
 	Refs []string
+}
+
+// cardinalityChanged reports whether the stored s and the configured cur
+// have different cardinalities. An empty stored cardinality matches.
+func (s TypeShape) cardinalityChanged(cur TypeShape) bool {
+	return s.Cardinality != "" && s.Cardinality != cur.Cardinality
 }
 
 // refName is the name of property prop of message type mt in
@@ -100,7 +109,7 @@ func (m ShapeMismatch) Problems() []Problem {
 				m.Stored.Anchor, m.Configured.Anchor, m.Stored.Anchor),
 		})
 	}
-	if m.Stored.Cardinality != m.Configured.Cardinality {
+	if m.Stored.cardinalityChanged(m.Configured) {
 		out = append(out, Problem{
 			Key: "channel_types." + m.ChannelType + ".cardinality",
 			Reason: fmt.Sprintf("cannot change from %s to %s: stored channels of this type were written "+
@@ -139,7 +148,7 @@ func ShapeMismatches(c *Compiled, stored map[string]TypeShape) []ShapeMismatch {
 		}
 		cur := ct.Shape()
 		lost := lostRefs(old.Refs, ct.PlainProperties())
-		if cur.Anchor != old.Anchor || cur.Cardinality != old.Cardinality || len(lost) > 0 {
+		if cur.Anchor != old.Anchor || old.cardinalityChanged(cur) || len(lost) > 0 {
 			out = append(out, ShapeMismatch{ChannelType: name, Stored: old, Configured: cur, LostRefs: lost})
 		}
 	}

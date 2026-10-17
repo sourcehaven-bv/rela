@@ -954,15 +954,15 @@ func (s *Store) RecordTypes(ctx context.Context, records map[string]channels.Typ
 	for _, typ := range slices.Sorted(maps.Keys(records)) {
 		given := records[typ]
 		held, ok := cur[typ]
-		added, mergeErr := channels.MergeTypeRecord(typ, held, ok, given)
+		added, fill, mergeErr := channels.MergeTypeRecord(typ, held, ok, given)
 		if mergeErr != nil {
 			return mergeErr
 		}
-		if ok && len(added) == 0 {
+		if ok && !fill && len(added) == 0 {
 			continue
 		}
-		if !ok {
-			held = channels.TypeRecord{Anchor: given.Anchor, Cardinality: given.Cardinality}
+		if !ok || fill {
+			held.Anchor, held.Cardinality = given.Anchor, given.Cardinality
 		}
 		held.Refs = slices.Sorted(slices.Values(slices.Concat(held.Refs, added)))
 		cur[typ], changed = held, true
@@ -984,18 +984,32 @@ func (s *Store) RecordTypes(ctx context.Context, records map[string]channels.Typ
 // readTypes reads the type records. A missing file is an empty record; a
 // damaged one is an error, because guessing would let a changed anchor or
 // cardinality through.
+//
+// A type found only in legacyTypesFile reads with
+// [channels.CardinalityUnknown]. RecordTypes writes every record it read to
+// typesFile, so after that write typesFile holds each legacy type too and
+// takes precedence over the legacy file.
 func (s *Store) readTypes() (map[string]channels.TypeRecord, error) {
-	out := map[string]channels.TypeRecord{}
-	data, err := s.readFile(typesFile)
+	legacy := map[string]channels.AnchorMode{}
+	data, err := s.readFile(legacyTypesFile)
+	if err != nil {
+		return nil, fmt.Errorf("filechannels: read legacy anchor modes: %w", err)
+	}
+	if err = yaml.Unmarshal(data, &legacy); err != nil {
+		return nil, fmt.Errorf("filechannels: read legacy anchor modes: %w", err)
+	}
+	cur := map[string]channels.TypeRecord{}
+	data, err = s.readFile(typesFile)
 	if err != nil {
 		return nil, fmt.Errorf("filechannels: read type records: %w", err)
 	}
-	err = yaml.Unmarshal(data, &out)
-	if err != nil {
+	if err = yaml.Unmarshal(data, &cur); err != nil {
 		return nil, fmt.Errorf("filechannels: read type records: %w", err)
 	}
-	if out == nil {
-		out = map[string]channels.TypeRecord{}
+	out := make(map[string]channels.TypeRecord, len(legacy)+len(cur))
+	for typ, mode := range legacy {
+		out[typ] = channels.TypeRecord{Anchor: mode, Cardinality: channels.CardinalityUnknown}
 	}
+	maps.Copy(out, cur)
 	return out, nil
 }

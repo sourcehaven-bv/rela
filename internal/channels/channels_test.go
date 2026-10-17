@@ -282,39 +282,47 @@ func TestTypeRecords(t *testing.T) {
 
 func TestMergeTypeRecord(t *testing.T) {
 	held := TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityOne, Refs: []string{"note.about"}}
+	legacy := TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityUnknown}
 	tests := []struct {
 		name     string
 		cur      TypeRecord
 		held     bool
 		given    TypeRecord
 		want     []string
+		fill     bool
 		conflict bool
 	}{
 		{"nothing held records every ref", TypeRecord{}, false,
-			TypeRecord{Anchor: AnchorFace, Cardinality: CardinalityMany, Refs: []string{"a.b"}}, []string{"a.b"}, false},
-		{"same record adds nothing", held, true, held, nil, false},
+			TypeRecord{Anchor: AnchorFace, Cardinality: CardinalityMany, Refs: []string{"a.b"}}, []string{"a.b"}, false, false},
+		{"same record adds nothing", held, true, held, nil, false, false},
 		{"new ref is added", held, true, TypeRecord{
 			Anchor: AnchorFamily, Cardinality: CardinalityOne, Refs: []string{"note.about", "note.also"},
-		}, []string{"note.also"}, false},
+		}, []string{"note.also"}, false, false},
 		{"dropped ref is kept", held, true,
-			TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityOne}, nil, false},
+			TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityOne}, nil, false, false},
 		{"anchor differs", held, true,
-			TypeRecord{Anchor: AnchorFace, Cardinality: CardinalityOne}, nil, true},
+			TypeRecord{Anchor: AnchorFace, Cardinality: CardinalityOne}, nil, false, true},
 		{"cardinality differs", held, true,
-			TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityMany}, nil, true},
+			TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityMany}, nil, false, true},
 		{"ref turned plain", held, true, TypeRecord{
 			Anchor: AnchorFamily, Cardinality: CardinalityOne, Plain: []string{"note.about"},
-		}, nil, true},
+		}, nil, false, true},
+		{"unknown cardinality is filled in", legacy, true,
+			TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityMany, Refs: []string{"a.b"}},
+			[]string{"a.b"}, true, false},
+		{"unknown cardinality keeps the anchor", legacy, true,
+			TypeRecord{Anchor: AnchorFace, Cardinality: CardinalityOne}, nil, false, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := MergeTypeRecord("room", tc.cur, tc.held, tc.given)
+			got, fill, err := MergeTypeRecord("room", tc.cur, tc.held, tc.given)
 			if tc.conflict {
 				require.ErrorIs(t, err, ErrTypeShapeConflict)
 				return
 			}
 			require.NoError(t, err)
 			require.Equal(t, tc.want, got)
+			require.Equal(t, tc.fill, fill)
 		})
 	}
 }

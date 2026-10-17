@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/channels/channelstest"
@@ -59,15 +60,32 @@ func rawDisk(t *testing.T, dir string) []byte {
 	return buf.Bytes()
 }
 
+// seedLegacyType adds typ to the anchor-modes file older releases wrote.
+func seedLegacyType(s *Store) func(t *testing.T, typ string, anchor channels.AnchorMode) {
+	return func(t *testing.T, typ string, anchor channels.AnchorMode) {
+		t.Helper()
+		modes := map[string]channels.AnchorMode{}
+		data, err := s.readFile(legacyTypesFile)
+		require.NoError(t, err)
+		require.NoError(t, yaml.Unmarshal(data, &modes))
+		modes[typ] = anchor
+		data, err = yaml.Marshal(modes)
+		require.NoError(t, err)
+		require.NoError(t, s.rfs.WriteFile(legacyTypesFile, data, filePerm))
+	}
+}
+
 func TestConformance_Disk(t *testing.T) {
 	t.Parallel()
 	channelstest.RunAll(t, func(t *testing.T) channelstest.Harness {
 		t.Helper()
 		dir := filepath.Join(t.TempDir(), "channels")
+		s := newDiskStore(t, dir)
 		return channelstest.Harness{
-			Store:  newDiskStore(t, dir),
-			Raw:    func(t *testing.T) []byte { t.Helper(); return rawDisk(t, dir) },
-			Second: func(t *testing.T) channels.Store { t.Helper(); return newDiskStore(t, dir) },
+			Store:          s,
+			Raw:            func(t *testing.T) []byte { t.Helper(); return rawDisk(t, dir) },
+			Second:         func(t *testing.T) channels.Store { t.Helper(); return newDiskStore(t, dir) },
+			SeedLegacyType: seedLegacyType(s),
 		}
 	})
 }
@@ -85,7 +103,8 @@ func TestConformance_MemFS(t *testing.T) {
 		rfs, err := storage.NewRootedFS(mfs, dir)
 		require.NoError(t, err)
 		return channelstest.Harness{
-			Store: s,
+			Store:          s,
+			SeedLegacyType: seedLegacyType(s),
 			Raw: func(t *testing.T) []byte {
 				t.Helper()
 				var buf bytes.Buffer
