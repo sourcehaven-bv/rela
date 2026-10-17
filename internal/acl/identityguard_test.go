@@ -47,16 +47,31 @@ type identityCall struct {
 }
 
 // funcFacts is what the guard records about one function declaration: the
-// identity calls it makes directly, and the package-level functions of the
-// same package it calls.
+// identity calls it makes directly, and the functions and methods of the same
+// package it may call.
 type funcFacts struct {
 	calls   []identityCall
 	callees []string
 }
 
+// funcKey names a declaration: the bare name for a package-level function,
+// Recv.Name for a method.
+func funcKey(fn *ast.FuncDecl) string {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return fn.Name.Name
+	}
+	return receiverName(fn.Recv.List[0].Type) + "." + fn.Name.Name
+}
+
 // evaluatorIdentityCalls parses files as one package. It returns a finding
 // for every identity call an evaluator method makes, directly or through a
-// chain of package-level functions in the package.
+// chain of functions and methods declared in the package.
+//
+// A method call is followed syntactically: x.name() may reach every method
+// called name on any type in the package, since the scan does not know x's
+// type. That over-approximates, so a finding through a method names the
+// path it took. Methods of the evaluator types are not followed, because
+// each is checked on its own.
 func evaluatorIdentityCalls(fset *token.FileSet, files map[string][]byte) ([]string, error) {
 	names := make([]string, 0, len(files))
 	for name := range files {
@@ -77,17 +92,22 @@ func evaluatorIdentityCalls(fset *token.FileSet, files map[string][]byte) ([]str
 		}
 	}
 
-	pkgFuncs := map[string]bool{}
+	scope := declScope{funcs: map[string]bool{}, methods: map[string][]string{}}
 	for _, fn := range decls {
+		key := funcKey(fn)
 		if fn.Recv == nil {
-			pkgFuncs[fn.Name.Name] = true
+			scope.funcs[key] = true
+			continue
 		}
+		recv := receiverName(fn.Recv.List[0].Type)
+		if evaluatorReceivers[recv] || key == identityAccessor {
+			continue
+		}
+		scope.methods[fn.Name.Name] = append(scope.methods[fn.Name.Name], key)
 	}
 	facts := map[string]funcFacts{}
 	for _, fn := range decls {
-		if fn.Recv == nil {
-			facts[fn.Name.Name] = scanFunc(fset, fn.Body, pkgFuncs)
-		}
+		facts[funcKey(fn)] = scanFunc(fset, fn.Body, scope)
 	}
 
 	var findings []string
@@ -96,11 +116,11 @@ func evaluatorIdentityCalls(fset *token.FileSet, files map[string][]byte) ([]str
 			continue
 		}
 		recv := receiverName(fn.Recv.List[0].Type)
-		method := recv + "." + fn.Name.Name
+		method := funcKey(fn)
 		if !evaluatorReceivers[recv] || method == identityAccessor {
 			continue
 		}
-		own := scanFunc(fset, fn.Body, pkgFuncs)
+		own := facts[method]
 		for _, c := range own.calls {
 			findings = append(findings, c.pos+": "+method+" calls "+c.callee)
 		}
@@ -109,9 +129,16 @@ func evaluatorIdentityCalls(fset *token.FileSet, files map[string][]byte) ([]str
 	return findings, nil
 }
 
-// scanFunc records the identity calls body makes and the package-level
-// functions it calls.
-func scanFunc(fset *token.FileSet, body *ast.BlockStmt, pkgFuncs map[string]bool) funcFacts {
+// declScope is what a call may reach inside the package: its package-level
+// functions, and its methods by name (minus the evaluator types' own).
+type declScope struct {
+	funcs   map[string]bool
+	methods map[string][]string
+}
+
+// scanFunc records the identity calls body makes and the functions and
+// methods of the package it may call.
+func scanFunc(fset *token.FileSet, body *ast.BlockStmt, scope declScope) funcFacts {
 	var out funcFacts
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -122,9 +149,12 @@ func scanFunc(fset *token.FileSet, body *ast.BlockStmt, pkgFuncs map[string]bool
 		switch fun := call.Fun.(type) {
 		case *ast.SelectorExpr:
 			callee = fun.Sel.Name
+			if !identityCalls[callee] {
+				out.callees = append(out.callees, scope.methods[callee]...)
+			}
 		case *ast.Ident:
 			callee = fun.Name
-			if pkgFuncs[callee] {
+			if scope.funcs[callee] {
 				out.callees = append(out.callees, callee)
 			}
 		}
@@ -205,7 +235,8 @@ func receiverName(expr ast.Expr) string {
 // instead of per request, and an evaluation path could silently pick a
 // different identity than the one the edge stamped for audit. The scan
 // covers every non-test file, so a new file cannot opt out, and it follows
-// calls into package-level helpers, so a helper cannot hide the walk.
+// calls into package-level helpers and into methods of the package's other
+// types, so neither can hide the walk.
 func TestEvaluatorDoesNotResolveIdentity(t *testing.T) {
 	t.Parallel()
 	names, err := filepath.Glob("*.go")
@@ -237,8 +268,8 @@ func TestEvaluatorDoesNotResolveIdentity(t *testing.T) {
 
 // TestEvaluatorIdentityGuard_DetectsViolations proves the scan is not
 // vacuous: each forbidden shape inside an evaluator method is reported,
-// including one hidden two package-level helpers deep and a hand-written
-// membership walk, and the same calls outside evaluator code are not.
+// including one hidden two package-level helpers deep, one behind a method of
+// another type, and a hand-written membership walk, and the same calls outside evaluator code are not.
 func TestEvaluatorIdentityGuard_DetectsViolations(t *testing.T) {
 	t.Parallel()
 	const src = `package acl
@@ -253,6 +284,8 @@ func helperTwo(r *Request) { r.d.ids.ResolveDirect(nil, p) }
 func (r *Request) f() { r.d.graph.OutgoingRelations(nil, "u", "member-of") }
 func (r *Request) g() { r.d.graph.OutgoingRelations(nil, "u", r.d.policy.MembershipRelation) }
 func (r *Request) h() { r.d.graph.OutgoingRelations(nil, "u", "owns") }
+func (r *Request) i() { r.view.closure() }
+func (v *policyView) closure() { v.ids.walkMembers(nil, "") }
 func unreached() { walkMembers(nil, "") }
 `
 	findings, err := evaluatorIdentityCalls(token.NewFileSet(), map[string][]byte{"fixture.go": []byte(src)})
@@ -267,6 +300,7 @@ func unreached() { walkMembers(nil, "") }
 		"Request.e reaches helperOne -> helperTwo, which calls ResolveDirect",
 		"Request.f calls OutgoingRelations with the membership relation",
 		"Request.g calls OutgoingRelations with the membership relation",
+		"Request.i reaches policyView.closure, which calls walkMembers",
 	}
 	if len(findings) != len(want) {
 		t.Fatalf("findings = %v, want %d", findings, len(want))
