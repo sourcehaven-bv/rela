@@ -489,7 +489,7 @@ roles:
 			if err == nil {
 				t.Fatal("New: want a load error")
 			}
-			for _, part := range []string{"roles.triager.visible.ticket[0]", `field "assignee"`, "has_current_user"} {
+			for _, part := range []string{"roles.triager.visible.ticket[0]", `field "assignee"`, "~=", "has_current_user"} {
 				if !strings.Contains(err.Error(), part) {
 					t.Errorf("error %q does not name %s", err, part)
 				}

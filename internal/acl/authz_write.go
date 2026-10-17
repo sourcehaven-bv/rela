@@ -279,9 +279,8 @@ func (r *Request) decideFromAttrs(
 	}
 	for _, a := range attrs {
 		role, ok := r.roleFor(a.Role)
-		// coverage-ignore: defensive: attrs come from computeGlobals/computeForEntity which already skip roles not
-		// defined in policy.Roles, so
-		// ok is always true here
+		// coverage-ignore: defensive: attrs come from Declarative.globalRoles/computeForEntity, which already skip
+		// roles not defined in policy.Roles, so ok is always true here
 		if !ok {
 			continue
 		}

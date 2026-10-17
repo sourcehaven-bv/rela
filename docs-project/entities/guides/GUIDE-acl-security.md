@@ -1149,11 +1149,13 @@ Key properties:
   cases on every backend.
 - **Two implementations, one contract.** The fs/memory builds wrap
   the regular searcher in a generic filter (`search.NewVisible`,
-  batched `MatchingIDs` probes — in-process, cheap). The postgres
+  batched `MatchingFaces` probes — in-process, cheap). The postgres
   build composes visibility into the search SQL itself
   (`pgstore.SearchVisible`): hidden rows never leave the database,
   the `LIMIT` is post-visibility, and there is no hidden-ROW work to
-  measure through timing.
+  measure through timing. The `visible:` grant checks of a
+  field-scoped search also run in that SQL; only the judgement of
+  which fields matched stays in Go.
 - **That last point is about rows, not fields.** Entity-level
   filtering is pushed into the query, so a hidden row costs nothing
   observable. Property-level `visible:` redaction is different: it

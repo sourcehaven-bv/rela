@@ -35,8 +35,8 @@ const loadCheckIdentity = "load-check"
 //
 // What lowers: an AND of property equalities (`entity.x == 'v'`,
 // `entity.x == current_user.id`, `is_current_user(entity.x)`) and
-// `related(...)` terms. What does not: or, not, ordered comparisons, and the
-// host functions has_role, has_global_role, has_relation, count_relations
+// `related(...)` terms. What does not: or, not, ordered comparisons, ~=, and
+// the host functions has_role, has_global_role, has_relation, count_relations
 // and has_current_user. Grant per-entity roles with role_relations, which
 // `visible:` already honors.
 func requireLowerable(
@@ -50,8 +50,8 @@ func requireLowerable(
 	}
 	return fmt.Errorf("roles.%s.visible.%s[%d] (field %q).when: the condition cannot be answered by a store query; "+
 		"a visible: condition must be an AND of property equalities and related(...) terms "+
-		"(has_role, has_global_role, has_relation, count_relations, has_current_user, or, not and "+
-		"ordered comparisons are refused; "+
+		"(or, not, ordered comparisons, ~=, has_role, has_global_role, has_relation, count_relations and "+
+		"has_current_user are refused; "+
 		"grant per-entity access with role_relations)",
 		roleName, entityType, idx, field)
 }
