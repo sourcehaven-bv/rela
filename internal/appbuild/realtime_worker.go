@@ -199,7 +199,7 @@ func realtimeLeaderLock(fs storage.FS, cacheDir string, st store.Store) (leaderL
 
 // realtimeWorker runs the [realtime.Sweeper] while this process holds the
 // worker lock. A host starts it with [RunRealtimeWorker] and stops it by
-// cancelling the context it passed; [Services.Close] stops it too.
+// canceling the context it passed; [Services.Close] stops it too.
 type realtimeWorker struct {
 	sweeper *realtime.Sweeper
 	lock    leaderLock
@@ -228,6 +228,7 @@ func newRealtimeWorker(sweeper *realtime.Sweeper, l leaderLock, wake <-chan stru
 func buildRealtimeWorker(base *SharedBase, st store.Store, refs refHolders) (*realtimeWorker, error) {
 	if !base.opts.backgroundAutomationJobs || refs.channels == nil || refs.channelTombs == nil ||
 		refs.realtimeLocal == nil {
+
 		return nil, nil //nolint:nilnil // not a long-running process: no worker
 	}
 	sweeper, err := realtime.NewSweeper(realtime.SweepDeps{

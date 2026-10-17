@@ -234,8 +234,8 @@ func (s *Store) SetAction(
 	if err != nil {
 		return channels.Message{}, err
 	}
-	if err := channels.CheckRelease(expect, next); err != nil {
-		return channels.Message{}, err
+	if relErr := channels.CheckRelease(expect, next); relErr != nil {
+		return channels.Message{}, relErr
 	}
 	unlock, err := s.lock(ctx)
 	if err != nil {
@@ -498,18 +498,19 @@ func (s *Store) Tombstone(
 	defer unlock()
 	h := channels.NewTombstoneHandle(a, channels.TombstoneStamp(at))
 	rec := channels.AuditRecord{At: channels.NormTime(at), Op: channels.AuditTombstone, Face: face}
+	var f channels.Filing
 
 	if face != "" {
 		ok, existsErr := s.exists(faceDir(a))
 		if existsErr != nil || !ok {
 			return channels.TombstoneHandle{}, existsErr
 		}
-		f, err := s.fileBatch(id, face, file)
+		f, err = s.fileBatch(id, face, file)
 		if err != nil {
 			return channels.TombstoneHandle{}, err
 		}
-		if err := writeFiling(&s.disk, h, f); err != nil {
-			return channels.TombstoneHandle{}, err
+		if fileErr := writeFiling(&s.disk, h, f); fileErr != nil {
+			return channels.TombstoneHandle{}, fileErr
 		}
 		if moveErr := s.move(faceDir(a), detachedKey(h)); moveErr != nil {
 			return channels.TombstoneHandle{}, fmt.Errorf("filechannels: tombstone %s@%s: %w", id, face, moveErr)
@@ -523,12 +524,12 @@ func (s *Store) Tombstone(
 		return channels.TombstoneHandle{}, err
 	}
 	if moved {
-		f, err := s.fileBatch(id, "", file)
+		f, err = s.fileBatch(id, "", file)
 		if err != nil {
 			return channels.TombstoneHandle{}, err
 		}
-		if err := writeFiling(&s.disk, h, f); err != nil {
-			return channels.TombstoneHandle{}, err
+		if fileErr := writeFiling(&s.disk, h, f); fileErr != nil {
+			return channels.TombstoneHandle{}, fileErr
 		}
 		if err = s.move(enc(id), detachedKey(h)); err != nil {
 			return channels.TombstoneHandle{}, fmt.Errorf("filechannels: tombstone %s: %w", id, err)

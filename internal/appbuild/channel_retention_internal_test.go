@@ -297,8 +297,9 @@ func TestRealtimeWorker_RunsAndStops(t *testing.T) {
 
 	past := time.Now().Add(-time.Minute)
 	file := func(id string) {
-		appendTo(t, cs, chanKey(id, "", "room"))
-		_, err := cs.Tombstone(ctx, id, "", past, channels.FileAs(channels.Filing{Policy: channels.PolicyDelete, PurgeAfter: past}))
+		appendCtx(ctx, t, cs, chanKey(id, "", "room"))
+		due := channels.Filing{Policy: channels.PolicyDelete, PurgeAfter: past}
+		_, err := cs.Tombstone(ctx, id, "", past, channels.FileAs(due))
 		require.NoError(t, err)
 	}
 	file("GONE-1")

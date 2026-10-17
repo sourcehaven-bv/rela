@@ -97,8 +97,9 @@ func readFiling(d *disk, h channels.TombstoneHandle) (channels.Filing, bool, err
 // detachedKey writes it: <b32(id)>-<stamp> or <b32(id)>-<b32(face)>-<stamp>.
 // Base32 has no hyphen and a stamp has exactly one.
 func parseDetached(name string) (channels.TombstoneHandle, bool) {
+	const wholeParts, faceParts = 3, 4
 	parts := strings.Split(name, "-")
-	if len(parts) != 3 && len(parts) != 4 {
+	if len(parts) != wholeParts && len(parts) != faceParts {
 		return channels.TombstoneHandle{}, false
 	}
 	id, ok := dec(parts[0])
@@ -106,7 +107,7 @@ func parseDetached(name string) (channels.TombstoneHandle, bool) {
 		return channels.TombstoneHandle{}, false
 	}
 	a := channels.Anchor{ID: id}
-	if len(parts) == 4 {
+	if len(parts) == faceParts {
 		face, ok := dec(parts[1])
 		if !ok || face == "" {
 			return channels.TombstoneHandle{}, false
@@ -257,7 +258,7 @@ func (s *Store) Purge(ctx context.Context, h channels.TombstoneHandle, by channe
 		return fmt.Errorf("%w: tombstone %s", channels.ErrNotFound, h)
 	}
 	if hasDir {
-		if err := s.move(detachedKey(h), trashDir+"/"+channels.NewName()); err != nil {
+		if err = s.move(detachedKey(h), trashDir+"/"+channels.NewName()); err != nil {
 			return fmt.Errorf("filechannels: purge %s: %w", h, err)
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -110,7 +111,9 @@ func PurgeAfter(
 // channelDue is the purge time of one channel; see [PurgeAfter].
 //
 // Nil: ct is accepted and means the type is not declared.
-func channelDue(ct *realtimecfg.ChannelType, policy channels.TombstonePolicy, at time.Time, c channels.Channel) time.Time {
+func channelDue(
+	ct *realtimecfg.ChannelType, policy channels.TombstonePolicy, at time.Time, c channels.Channel,
+) time.Time {
 	if ct == nil {
 		return realtimecfg.DefaultDetachedRetention().AddTo(at)
 	}
@@ -397,9 +400,7 @@ func (s *Sweeper) faces(ctx context.Context, ids []string) (map[string][]entity.
 		if err != nil {
 			return nil, fmt.Errorf("realtime: read anchors: %w", err)
 		}
-		for id, fs := range got {
-			out[id] = fs
-		}
+		maps.Copy(out, got)
 	}
 	return out, nil
 }

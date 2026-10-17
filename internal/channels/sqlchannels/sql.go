@@ -683,8 +683,8 @@ func (s *Store) Tombstone(
 		}
 		filed = moved > 0
 		if filed {
-			if err := insertFiling(ctx, q, h, f); err != nil {
-				return err
+			if fileErr := insertFiling(ctx, q, h, f); fileErr != nil {
+				return fileErr
 			}
 		}
 		var n int
@@ -844,7 +844,7 @@ func (s *Store) channels(ctx context.Context, where string, args ...any) ([]chan
 	return queryChannels(ctx, s.db, where, args...)
 }
 
-// queryChannels is [Store.channels] over q, so a transaction can read the
+// queryChannels lists live channels over q, so a transaction can read the
 // rows it is about to change.
 func queryChannels(ctx context.Context, q Querier, where string, args ...any) ([]channels.Channel, error) {
 	rows, err := collect(ctx, q, `SELECT `+chanCols+` FROM channels WHERE tomb = '' `+where+
