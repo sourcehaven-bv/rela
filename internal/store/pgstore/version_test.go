@@ -127,6 +127,55 @@ func TestRenameLineage(t *testing.T) {
 	require.Equal(t, store.VersionOpUpdate, metas[2].Op)
 }
 
+// TestConversionFaceLineage follows the history through both an ID change and
+// a face-coordinate change. Conversion writes the transition on the new face
+// while naming the old ID and face as its predecessor.
+func TestConversionFaceLineage(t *testing.T) {
+	s, err := pgstore.New(newScopedPool(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	draft := entity.Face("draft")
+	approved := entity.Face("approved")
+
+	before := newVersionInput("NOTE-1", "draft content", map[string]any{"title": "note"})
+	before.Face = draft
+	before.Op = store.VersionOpCreate
+	require.NoError(t, s.VersionStore().WriteVersion(ctx, before))
+
+	converted := newVersionInput("TASK-001", "draft content", map[string]any{"title": "task"})
+	converted.Face = approved
+	converted.Op = store.VersionOpRename
+	converted.PrevID = "NOTE-1"
+	converted.PrevFace = draft
+	converted.HasPrevFace = true
+	require.NoError(t, s.VersionStore().WriteVersion(ctx, converted))
+
+	after := newVersionInput("TASK-001", "approved content", map[string]any{"title": "task"})
+	after.Face = approved
+	after.Op = store.VersionOpUpdate
+	require.NoError(t, s.VersionStore().WriteVersion(ctx, after))
+
+	metas, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "TASK-001", Face: approved})
+	require.NoError(t, err)
+	require.Len(t, metas, 3)
+	require.Equal(t, "NOTE-1", metas[1].PrevID)
+	require.Equal(t, draft, metas[1].PrevFace)
+	require.Equal(t, draft, metas[0].Face)
+	require.Equal(t, approved, metas[1].Face)
+
+	snap, err := s.VersionStore().GetVersion(ctx, entity.Ref{ID: "TASK-001", Face: approved}, 1)
+	require.NoError(t, err)
+	require.Equal(t, "draft content", snap.Content)
+	require.Equal(t, draft, snap.Face)
+
+	// The old ID's current lifecycle ends at conversion. Its prior history is
+	// reachable through the converted ID's lineage, not through a stale ID.
+	old, err := s.VersionStore().ListVersions(ctx, entity.Ref{ID: "NOTE-1", Face: draft})
+	require.NoError(t, err)
+	require.Empty(t, old)
+}
+
 // TestSweepCapturesSettledEntities drives the sweep against settled entities and
 // asserts it snapshots each once, dedups a no-op re-run, and skips entities that
 // haven't settled.

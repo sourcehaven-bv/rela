@@ -276,7 +276,7 @@ var fixedRouteWords = map[string]bool{
 	"p": true, "search": true, "settings": true, "dashboard": true,
 	"_action": true, "_actions": true, "_analyze": true, "_apps": true, "_attachments": true,
 	"_caldav": true, "_commands": true, "_comments": true, "_config": true, "_conflicts": true,
-	"_copies": true, "_custom": true, "_dashboard": true, "_documents": true, "_events": true,
+	"_copies": true, "_conversions": true, "_custom": true, "_dashboard": true, "_documents": true, "_events": true,
 	"_export": true, "_feeds": true, "_gantts": true, "_git": true, "_history": true,
 	"_lifetimes": true, "_mcp": true, "_me": true, "_nav_items": true, "_nav_status": true,
 	"_next_action": true, "_openapi.json": true, "_palette": true, "_piles": true, "_position": true,

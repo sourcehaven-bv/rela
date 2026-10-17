@@ -202,6 +202,13 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 		affordances: func() affordanceService { return app.affordances },
 		visible:     app.visibleReader,
 	})
+	// Conversions are wired as NewApp wires them, on the field-gated handle.
+	var offers func(context.Context, string, string) []entitymanager.ConversionOffer
+	if em := svc.EntityManager(); em != nil {
+		conv, _ := entitymanager.NewConverter(entitymanager.FieldGated(em))
+		app.conversions, _ = newConversionHandler(conv, app.State)
+		offers = conv.Offers
+	}
 	app.copies = copiesHandler
 	app.affordances = affordanceService{
 		acl:          func() acl.ACL { return app.acl },
@@ -218,6 +225,7 @@ func rebindApp(app *App, fs storage.FS, paths *project.Context, svc *appbuild.Se
 			visible: app.visibleReader,
 		}.plan,
 		copies:           copyOffers,
+		conversions:      offers,
 		schema:           app.State,
 		actionConditions: func() ViewConditionFunc { return app.viewConditions },
 	}

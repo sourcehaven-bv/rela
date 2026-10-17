@@ -83,14 +83,15 @@ type Op string
 // Op constants — stable wire contract; surfaces in audit summaries and
 // HTTP 403 bodies.
 const (
-	OpCreate Op = "create"
-	OpUpdate Op = "update"
-	OpDelete Op = "delete"
-	OpRename Op = "rename"
+	OpCreate  Op = "create"
+	OpUpdate  Op = "update"
+	OpDelete  Op = "delete"
+	OpRename  Op = "rename"
+	OpConvert Op = "convert"
 )
 
 // ops is every write Op, in the order [Ops] returns them.
-var ops = [...]Op{OpCreate, OpUpdate, OpDelete, OpRename}
+var ops = [...]Op{OpCreate, OpUpdate, OpDelete, OpRename, OpConvert}
 
 // Ops returns every write Op, as a fresh slice the caller may keep. [Verbs] is
 // built from it, so a new Op is also a new [Verb] for every consumer that

@@ -325,6 +325,26 @@ Global roles count, and so do local roles. A local role is conferred through a
 belongs to the whole entity and may grant a rename of it. A client ceiling
 narrows `rename:` as it narrows `update:`.
 
+**Converting.** A type conversion changes the entity type and id prefix, so it
+uses its own `convert:` grant. Grant it on the source type:
+
+```yaml
+editor:
+  read: [note]
+  convert: [note]
+```
+
+The conversion definition must allow the source and destination pair.
+`convert:` is checked against the source entity type and does not imply
+`rename:` or `update:`. As with rename, the caller must be able to read the
+source entity.
+
+A client ceiling bounds a conversion on both ends. On the source type it must
+permit `update` and `delete`, because the source stops existing as that type.
+On the destination type it must permit `create`, because the conversion creates
+an entity of that type. A ceiling that withholds any of these withholds the
+conversion, so `convert:` cannot be used to get around it.
+
 A caller with the grant who can read no face of the entity gets the same
 not-found response as for an entity that does not exist. Without the grant the
 answer is a `403` that names the type, whatever faces exist.

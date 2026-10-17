@@ -132,6 +132,28 @@ type CreateNotifier interface {
 	EntityCreated(ctx context.Context, id string, face entity.Face) error
 }
 
+// FaceMover is implemented by subscribers whose references are keyed by
+// face, such as comment threads. A conversion that maps a face to another
+// calls FaceMoved for the converted id under its new type. The signature is
+// the comment service's own FaceMoved, so that service needs no adapter.
+type FaceMover interface {
+	FaceMoved(ctx context.Context, entityType, entityID string, from, to entity.Face) error
+}
+
+// notifyAliasesOfFaceMove tells rw that entity id, now of type typ, moved
+// from one face to another. Failures are logged: the conversion happened.
+func notifyAliasesOfFaceMove(ctx context.Context, rw AliasRewriter, typ, id string, from, to entity.Face) {
+	mover, ok := rw.(FaceMover)
+	if !ok || from == to {
+		return
+	}
+	ctx, cancel := aliasHookContext(ctx)
+	defer cancel()
+	if err := mover.FaceMoved(ctx, typ, id, from, to); err != nil {
+		slog.Error("entitymanager: alias face-move notification failed", "id", id, "from", from, "to", to, "error", err)
+	}
+}
+
 // notifyAliasesOfCreate notifies rw of a completed create when it
 // implements [CreateNotifier]. Failures are logged, as for a delete: the
 // create already happened.

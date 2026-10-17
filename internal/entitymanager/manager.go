@@ -1878,7 +1878,7 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	// version lineage (entity_versions keys on face), so capturing one face
 	// left every other face's history without a delete marker.
 	for _, e := range res.DeletedEntities {
-		m.recordEntityVersion(ctx, store.VersionOpDelete, e, "")
+		m.recordDeleteVersion(ctx, e)
 	}
 
 	// Tell id-keyed subscribers the entity is gone. They decide what to do:
@@ -2213,7 +2213,7 @@ func (m *Manager) recordPartialCascade(
 		return
 	}
 	for _, e := range res.DeletedEntities {
-		m.recordEntityVersion(ctx, store.VersionOpDelete, e, "")
+		m.recordDeleteVersion(ctx, e)
 	}
 	m.recordFamilyDeleteAudit(ctx, res.DeletedEntities, len(res.DeletedRelations))
 	if len(res.DeletedRelations) == 0 {
@@ -2374,7 +2374,7 @@ func (m *Manager) DeleteEntityFace(
 
 	// Version capture, audit and relation attribution after commit, exactly
 	// as DeleteEntity orders them and for the same reasons.
-	m.recordEntityVersion(ctx, store.VersionOpDelete, current, "")
+	m.recordDeleteVersion(ctx, current)
 	notifyAliasesOfFaceDelete(ctx, m.deps.AliasRewriter, id, face)
 	if lastFace {
 		// The entity is gone, not just a face of it.
@@ -2637,8 +2637,13 @@ func requireManualID(meta *metamodel.Metamodel, family []*entity.Entity) error {
 // authorized so far, and the incident relations captured before the rename.
 // It keeps the rename's Tx body and its logging off Manager.
 type familyRename struct {
-	m             *Manager
-	oldID, newID  string
+	m            *Manager
+	oldID, newID string
+	// conversionName and conversionFrom are set when a conversion records
+	// the rename: its audit record is a convert-entity naming the old type.
+	conversionName, conversionFrom string
+	// prevFaces maps a converted row's face to the face it came from.
+	prevFaces     map[entity.Face]entity.Face
 	authorized    familyAuthorization
 	preRenameRels []*entity.Relation
 }
@@ -2713,12 +2718,20 @@ func (r *familyRename) record(ctx context.Context, renamed []*entity.Entity) {
 			"error", "renamed faces could not be read")
 	}
 	for _, e := range renamed {
-		m.recordRenameAudit(ctx, oldID, e)
+		if r.conversionFrom != "" {
+			recordConversionAudit(ctx, m, r.conversionName, oldID, r.conversionFrom, e)
+		} else {
+			m.recordRenameAudit(ctx, oldID, e)
+		}
 		// Capture the rename as a version event carrying the old id (prev_id),
 		// so a renamed entity's history is walkable back to its former id. Only
 		// the choke-point knows old->new; a later sweep sees the renamed entity
 		// as an ordinary update and cannot reconstruct this link.
-		m.recordEntityVersion(ctx, store.VersionOpRename, e, oldID)
+		rec := VersionRecord{Op: store.VersionOpRename, PrevID: oldID}
+		if source, ok := r.prevFaces[e.Face]; ok && source != e.Face {
+			rec.PrevFace, rec.HasPrevFace = source, true
+		}
+		recordVersion(ctx, m, rec, e)
 	}
 
 	// Rewrite id-keyed references for the same reason the version above carries

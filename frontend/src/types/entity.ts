@@ -107,6 +107,7 @@ export interface Entity {
   // server computed none (no copy service wired). Both render nothing, but
   // only `[]` means the question was asked.
   _copies?: CopyOffer[]
+  _conversions?: ConversionOffer[]
   // Other content states this entity has. See Face.
   _faces?: Face[]
   inaccessible?: InaccessibleField[]
@@ -309,6 +310,17 @@ export interface CopyOffer {
   // The operator's follow-through (TKT-5SZG2L): the toast (absent means the
   // copy's label) and where to land. Absent means land on the face written.
   onSuccess?: CopyOnSuccess
+}
+
+export interface ConversionOffer {
+  name: string
+  label: string
+  to: string
+  allowed: boolean
+  reason?: string
+  mapped_fields?: string[]
+  content_mapped?: boolean
+  face_choices?: Record<string, string[]>
 }
 
 export interface CopyOnSuccess {

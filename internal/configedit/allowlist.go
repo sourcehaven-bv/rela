@@ -308,7 +308,7 @@ var locked = map[File][]string{
 		"entities.*.properties.*.system", "entities.*.properties.*.sync",
 		"relations.*.properties.*.system", "relations.*.properties.*.sync",
 		// Not in the Configure space yet.
-		"copies.**", "default_world", "worlds.**", "entities.*.faces.**",
+		"copies.**", "conversions.**", "default_world", "worlds.**", "entities.*.faces.**",
 		"entities.*.properties.*.computed", "relations.*.properties.*.computed",
 		"relations.*.scope", "relations.*.owning",
 		"validations.[].faces.**", "automations.[].on.faces.**",

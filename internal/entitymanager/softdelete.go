@@ -541,7 +541,7 @@ func recordPurge(ctx context.Context, m *Manager, id string, res *store.DeleteRe
 	// One delete version per face, as DeleteEntity records.
 	head := res.DeletedEntities[0]
 	for _, e := range res.DeletedEntities {
-		m.recordEntityVersion(ctx, store.VersionOpDelete, e, "")
+		m.recordDeleteVersion(ctx, e)
 	}
 	m.notifyAliasesOfDelete(ctx, id)
 	cascadeTB := "cascade:delete-entity:" + id

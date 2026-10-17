@@ -1865,6 +1865,105 @@ PostgreSQL backend rolls back a failed copy. On the filesystem and in-memory
 backends the transaction is a write lock only, so a failure part-way through
 can leave a partially written target face.
 
+### Declaring entity conversions
+
+`conversions:` declares administrator-approved entity type changes. A user
+invokes only a conversion name; the client cannot submit its own mapping.
+Each destination property is mapped explicitly from the source entity with
+the `{{source.property}}` interpolation syntax. `source` means the entity
+being converted; it is the input to the mapping. For example,
+`{{source.title}}` reads the old note's title and writes it to the task's
+`title`. `{{new.title}}` is also accepted for compatibility with copy
+definitions, but `source` names the conversion input more clearly. Unmapped
+source properties are not carried forward. Every relation type incident to
+the source must be mapped to a destination relation type or explicitly
+dropped. Because `drop` is the keyword for a dropped relation, a schema that
+declares conversions cannot also declare a relation type named `drop`.
+
+```yaml
+conversions:
+  note-to-task:
+    from: note
+    to: task
+    label: Convert to task
+    fields:
+      title: "{{source.title}}"
+      description: "{{source.body}}"
+    relations:
+      related-to: related-to
+      mentions: drop
+```
+
+When both types are faceless, their implicit, unnamed rows map to each other
+and `faces:` can be omitted. This row is stored under the bare entity ID. It is
+not a wildcard or a missing mapping. A type that declares `faces:` has only
+named rows such as `POL-1@draft`; it has no empty-name face. If either type has
+faces, declare a mapping for every source face. Use `""` as the source or
+target name when mapping the implicit face.
+
+Required destination fields not produced by the mapping are entered in the
+conversion form. Before saving, Rela previews required fields and the effects
+of relation mappings. The user confirms any configured relation drops.
+
+A faced conversion names its face coordinates explicitly. For example, the
+operator maps both policy faces to the target type and gives users a choice
+when converting a draft:
+
+```yaml
+entities:
+  policy:
+    label: Policy
+    faces:
+      draft: {label: Draft}
+      published: {label: Published}
+    properties: {title: {type: string}}
+  controlled-document:
+    label: Controlled document
+    faces:
+      working: {label: Working}
+      approved: {label: Approved}
+    properties: {title: {type: string}}
+conversions:
+  policy-to-controlled-document:
+    from: policy
+    to: controlled-document
+    fields:
+      title: "{{source.title}}"
+    faces:
+      draft: [working, approved]
+      published: [approved]
+```
+
+The user chooses `working` or `approved` for a draft source. The published
+face maps directly to `approved`, since it has one configured choice. The
+conversion moves the family rows, face-scoped relations, comments and history
+lineage to the selected target faces; old entity links still resolve through
+the alias.
+
+The ACL role's `convert:` grant is separate from `rename:` and is matched
+against the source type. Conversion rekeys the entity family and reuses rename
+aliases and history lineage, so old entity links continue to resolve. See
+[Converting an entity](data-entry.md#converting-an-entity) for the form and
+preview behavior.
+
+A conversion has these limits and effects:
+
+- **Read access.** The caller must be able to read every face of the entity
+  and every source field the mapping uses. A redacted field or a hidden face
+  refuses the conversion instead of copying a value the caller cannot see.
+- **Dropped relations.** Removing a relation needs the same `delete:` grant on
+  the source type and face that deleting the relation needs. A relation the
+  caller cannot see is still dropped or remapped, but it is never named in the
+  preview or the error. Each removed or created relation gets an audit record.
+- **Validation first.** Field validation, `unique:` properties and relation
+  cardinality are checked before the first write.
+- **No target automations.** Automations on the destination type do not run
+  for a conversion. The conversion writes exactly the mapped values.
+- **Atomicity.** On postgres and SQLite the conversion is one transaction, and
+  a failure rolls everything back. The filesystem and memory stores cannot roll
+  back. If a later step fails after the rename, the rename, its audit record
+  and the aliases are still recorded, so the log matches what was stored.
+
 ### Checking stored states
 
 `rela analyze states` reports state rows the schema does not account for. Three

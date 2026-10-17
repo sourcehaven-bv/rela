@@ -360,7 +360,7 @@ onMounted(load)
               <span class="timeline-ver">v{{ m.version }}</span>
               <span class="timeline-who">{{ principalLabel(m) }}</span>
               <span class="timeline-when">{{ formatWhen(m.created_at) }}</span>
-              <span v-if="m.prev_id" class="timeline-note">renamed from {{ m.prev_id }}</span>
+              <span v-if="m.prev_id" class="timeline-note">renamed from {{ m.prev_id }}{{ m.prev_face ? `@${m.prev_face}` : '' }}</span>
               <span v-if="m.triggered_by" class="timeline-note">{{ m.triggered_by }}</span>
               <!--
                 Provenance sits BESIDE the op badge, never in place of it: a

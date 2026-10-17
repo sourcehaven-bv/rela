@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 // addSystemPaths adds the static system endpoint paths.
 func (g *Generator) addSystemPaths(spec *Spec) {
+	g.addConversionPaths(spec)
 	// GET /api/v1/_openapi.json
 	spec.Paths["/api/v1/_openapi.json"] = PathItem{
 		Get: &Operation{
@@ -34,6 +36,68 @@ func (g *Generator) addSystemPaths(spec *Spec) {
 	// The SSE stream and the git routes are left out: they are browser
 	// surfaces outside the non-browser CSRF exemption, so a generic client
 	// would get 403 origin_missing from every call.
+}
+
+func (g *Generator) addConversionPaths(spec *Spec) {
+	stringList := &Schema{Type: "array", Items: StringSchema()}
+	body := &RequestBody{
+		Required:    true,
+		Description: "Source entity and values for required target fields",
+		Content: jsonContent(&Schema{Type: "object", Required: []string{"source_id"}, Properties: map[string]*Schema{
+			"source_id":      StringSchema(),
+			"source_face":    StringSchema(),
+			"target_id":      StringSchema(),
+			"properties":     {Type: "object", AdditionalProperties: &Schema{}},
+			"content":        StringSchema(),
+			"drop_relations": stringList,
+			"faces":          {Type: "object", AdditionalProperties: StringSchema()},
+		}}),
+	}
+	result := &Schema{Type: "object", Properties: map[string]*Schema{
+		"definition":        StringSchema(),
+		"old_id":            StringSchema(),
+		"entity_id":         StringSchema(),
+		"face":              StringSchema(),
+		"relations_dropped": {Type: "integer"},
+	}}
+	move := &Schema{Type: "object", Properties: map[string]*Schema{
+		"source_face": StringSchema(),
+		"target_face": StringSchema(),
+	}}
+	preview := &Schema{Type: "object", Properties: map[string]*Schema{
+		"target_type":       StringSchema(),
+		"required":          stringList,
+		"required_faces":    stringList,
+		"relations_to_drop": stringList,
+		"invalid_relations": stringList,
+		"target_faces":      stringList,
+		"invalid_faces":     stringList,
+		"moves":             {Type: "array", Items: move},
+	}}
+	refusals := map[string]Response{
+		"403": {Description: "Conversion is not permitted", Content: problemContent()},
+		"404": {Description: "Source entity not found", Content: problemContent()},
+		"409": {Description: "Conversion definition changed, or the target id is taken", Content: problemContent()},
+		"422": {Description: "Mapping or target validation failed", Content: problemContent()},
+	}
+	withOK := func(desc string, s *Schema) map[string]Response {
+		out := map[string]Response{"200": {Description: desc, Content: jsonContent(s)}}
+		maps.Copy(out, refusals)
+		return out
+	}
+	for name := range g.meta.Conversions {
+		path := "/api/v1/_conversions/" + name
+		spec.Paths[path] = PathItem{Post: &Operation{
+			OperationID: "convert" + capitalize(name), Summary: "Convert entity using " + name,
+			Tags: []string{"Entity conversions"}, RequestBody: body,
+			Responses: withOK("Converted entity identity", result),
+		}}
+		spec.Paths[path+"/preflight"] = PathItem{Post: &Operation{
+			OperationID: "preflight" + capitalize(name), Summary: "Preview " + name,
+			Tags: []string{"Entity conversions"}, RequestBody: body,
+			Responses: withOK("Required fields and relationship consequences", preview),
+		}}
+	}
 }
 
 // addEntityPaths adds CRUD paths for an entity type.

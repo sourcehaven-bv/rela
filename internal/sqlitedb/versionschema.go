@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS entity_versions (
 	face               TEXT NOT NULL DEFAULT '',
 	op                 TEXT NOT NULL,
 	prev_id            TEXT,
+	prev_face          TEXT,
 	type               TEXT NOT NULL,
 	content            TEXT NOT NULL DEFAULT '',
 	properties         TEXT NOT NULL DEFAULT '{}',
@@ -121,7 +122,7 @@ CREATE INDEX IF NOT EXISTS entity_versions_latest_idx
 -- rename cannot set another face's fence. Partial index — only rename rows
 -- carry a prev_id, and they are rare.
 CREATE INDEX IF NOT EXISTS entity_versions_prev_id_idx
-	ON entity_versions (prev_id, face) WHERE prev_id IS NOT NULL;
+	ON entity_versions (prev_id, (COALESCE(prev_face, face))) WHERE prev_id IS NOT NULL;
 
 -- relation_versions holds one full snapshot per captured relation version.
 --

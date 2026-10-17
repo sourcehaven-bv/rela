@@ -457,6 +457,13 @@ body:
                       },
                       "description": "Attached files by file property"
                     },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
+                    },
                     "_copies": {
                       "type": "array",
                       "items": {
@@ -697,6 +704,13 @@ body:
                         }
                       },
                       "description": "Attached files by file property"
+                    },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
                     },
                     "_copies": {
                       "type": "array",
@@ -989,6 +1003,13 @@ body:
                         }
                       },
                       "description": "Attached files by file property"
+                    },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
                     },
                     "_copies": {
                       "type": "array",
@@ -1283,6 +1304,13 @@ body:
                         }
                       },
                       "description": "Attached files by file property"
+                    },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
                     },
                     "_copies": {
                       "type": "array",
@@ -2249,6 +2277,13 @@ body:
                       },
                       "description": "Attached files by file property"
                     },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
+                    },
                     "_copies": {
                       "type": "array",
                       "items": {
@@ -2492,6 +2527,13 @@ body:
                         }
                       },
                       "description": "Attached files by file property"
+                    },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
                     },
                     "_copies": {
                       "type": "array",
@@ -2791,6 +2833,13 @@ body:
                       },
                       "description": "Attached files by file property"
                     },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
+                    },
                     "_copies": {
                       "type": "array",
                       "items": {
@@ -3087,6 +3136,13 @@ body:
                         }
                       },
                       "description": "Attached files by file property"
+                    },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
                     },
                     "_copies": {
                       "type": "array",
@@ -3936,6 +3992,13 @@ body:
                       },
                       "description": "Attached files by file property"
                     },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
+                    },
                     "_copies": {
                       "type": "array",
                       "items": {
@@ -4205,6 +4268,13 @@ body:
                         }
                       },
                       "description": "Attached files by file property"
+                    },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
                     },
                     "_copies": {
                       "type": "array",
@@ -4556,6 +4626,13 @@ body:
                       },
                       "description": "Attached files by file property"
                     },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
+                    },
                     "_copies": {
                       "type": "array",
                       "items": {
@@ -4879,6 +4956,13 @@ body:
                       },
                       "description": "Attached files by file property"
                     },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
+                    },
                     "_copies": {
                       "type": "array",
                       "items": {
@@ -5184,6 +5268,13 @@ body:
                         }
                       },
                       "description": "Attached files by file property"
+                    },
+                    "_conversions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "Operator-declared entity type conversions offered from this entity"
                     },
                     "_copies": {
                       "type": "array",

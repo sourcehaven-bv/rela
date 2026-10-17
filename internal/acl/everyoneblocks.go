@@ -178,6 +178,8 @@ func (opened OpenedFieldBlock) Explain() string {
 	case VerbRename:
 		// Not reached: field blocks open only on read, create and update.
 		operation = "on a rename"
+	case VerbConvert:
+		operation = "on a conversion"
 	}
 	return fmt.Sprintf("role %q restricts %s on %q, but role %q holds %s on %q %s and declares no %s block; "+
 		"field verdicts are the union of every role on the row and every principal holds %q, so %s the "+

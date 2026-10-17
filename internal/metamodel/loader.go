@@ -28,6 +28,7 @@ var validTopLevelKeys = map[string]bool{
 	"transforms":  true,
 	"worlds":      true,
 	"copies":      true,
+	"conversions": true,
 	"comments":    true,
 	// default_world names the world a request uses when it names none
 	// (TKT-7IZHP0).
@@ -283,6 +284,7 @@ func validate(m *Metamodel) error {
 	validationErrors = append(validationErrors, validateTransforms(m)...)
 	validationErrors = append(validationErrors, validateAttachments(m)...)
 	validationErrors = append(validationErrors, validateCopies(m)...)
+	validationErrors = append(validationErrors, validateConversions(m)...)
 	validationErrors = append(validationErrors, validateWorlds(m)...)
 	validationErrors = append(validationErrors, validateDefaultWorld(m)...)
 	validationErrors = append(validationErrors, validateDeclOrder(m)...)

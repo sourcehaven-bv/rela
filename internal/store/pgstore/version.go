@@ -56,18 +56,23 @@ func insertVersion(ctx context.Context, q DBTX, in store.VersionInput, contentHa
 	if in.Op == store.VersionOpRename && in.PrevID != "" {
 		prev = &in.PrevID
 	}
+	var prevFace *string
+	if in.Op == store.VersionOpRename && in.PrevID != "" && in.HasPrevFace {
+		value := string(in.PrevFace)
+		prevFace = &value
+	}
 	o := originColumns(in.Origin)
 	const ins = `
 		INSERT INTO entity_versions
-		    (entity_id, face, op, prev_id, type, content, properties, content_hash,
+		    (entity_id, face, op, prev_id, prev_face, type, content, properties, content_hash,
 		     schema_hash, principal_user, principal_tool, triggered_by,
 		     origin_kind, origin_source, origin_source_face, origin_source_type,
 		     origin_definition)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING vseq`
 	var vseq int64
 	err = q.QueryRow(ctx, ins,
-		in.EntityID, string(in.Face), string(in.Op), prev, in.Type, in.Content,
+		in.EntityID, string(in.Face), string(in.Op), prev, prevFace, in.Type, in.Content,
 		props, contentHash,
 		in.SchemaHash, in.PrincipalUser, in.PrincipalTool, in.TriggeredBy,
 		o.kind, o.source, o.sourceFace, o.sourceType, o.definition).Scan(&vseq)
@@ -184,35 +189,26 @@ func contentHashOf(in store.VersionInput) string {
 // itself lives under B). The recursive walk carries that bound down each hop, so
 // a reclaimed id contributes only its in-window rows.
 //
-// lineageCTE is the shared recursive term producing (entity_id, hi) rows where
-// hi is the exclusive vseq upper bound for that id in this lineage (NULL = no
-// upper bound, i.e. the head id). $1 is the queried id, $2 the FACE (face).
-//
-// # The face is a filter, not a hop (TKT-C1XUA8)
-//
-// A rename re-keys the WHOLE state family in one UPDATE (rekeyStateFamily), so
-// every face is renamed together and a face's coordinate is CONSTANT along its
-// lineage. The walk therefore still follows prev_id links only, with the
-// face carried as a filter.
-//
-// The subtle part is that the filter must reach INSIDE the two max(vseq)
-// subselects, not just the outer join. Those compute the rename fence, and
-// left unscoped they would answer from ANY face's rename rows — so face
-// draft's boundary could be set by face published's rename, silently
-// truncating or extending draft's history. Scoping the join alone looks
-// correct and is not.
+// lineageCTE is the shared recursive term producing (entity_id, face, lo, hi)
+// rows. hi is the exclusive vseq upper bound for that id/face in this lineage
+// (NULL = no upper bound, i.e. the head). $1/$2 are the queried ID and face.
+// Ordinary renames keep the face coordinate; conversions can change it and
+// carry that edge explicitly in prev_face. NULL prev_face means a legacy
+// same-face rename. Both lifecycle fences follow the predecessor coordinate,
+// so reused IDs or faces cannot merge unrelated histories.
 const lineageCTE = `
-	WITH RECURSIVE lin(entity_id, lo, hi) AS (
-	    -- Head: the queried id. Its CURRENT lifecycle starts strictly after the
-	    -- most recent rename that renamed this id AWAY (prev_id = the id) — before
+	WITH RECURSIVE lin(entity_id, face, lo, hi) AS (
+	    -- Head: the queried ID/face. Its CURRENT lifecycle starts strictly after
+	    -- the most recent rename that moved this coordinate AWAY — before
 	    -- that, the id belonged to an earlier, unrelated entity that has since
 	    -- been renamed off it. lo is that boundary (0 if the id was never renamed
 	    -- away). Unbounded above (hi = NULL). COLLATE "C" matches
 	    -- entity_versions.entity_id (both recursive terms must agree, else 42P21).
 	    SELECT CAST($1 AS text) COLLATE "C",
+	           CAST($2 AS text) COLLATE "C",
 	           COALESCE((SELECT max(vseq) FROM entity_versions
 	                     WHERE prev_id = $1 AND op = 'rename'
-	                       AND face = CAST($2 AS text) COLLATE "C"), 0),
+	                       AND COALESCE(prev_face, face) = CAST($2 AS text) COLLATE "C"), 0),
 	           CAST(NULL AS bigint)
 	    UNION
 	    -- Each hop: the rename row that renamed some predecessor INTO the current
@@ -221,14 +217,15 @@ const lineageCTE = `
 	    -- lo = the predecessor's most-recent earlier rename-away, so a
 	    -- doubly-reused predecessor id is also fenced. Guard cycles via hi.
 	    SELECT r.prev_id,
+	           COALESCE(r.prev_face, r.face),
 	           COALESCE((SELECT max(vseq) FROM entity_versions
 	                     WHERE prev_id = r.prev_id AND op = 'rename' AND vseq < r.vseq
-	                       AND face = CAST($2 AS text) COLLATE "C"), 0),
+	                       AND COALESCE(prev_face, face) = COALESCE(r.prev_face, r.face)), 0),
 	           r.vseq
 	    FROM lin
 	    JOIN entity_versions r
 	      ON r.entity_id = lin.entity_id
-	     AND r.face = CAST($2 AS text) COLLATE "C"
+	     AND r.face = lin.face
 	     AND r.op = 'rename'
 	     AND r.prev_id IS NOT NULL
 	     AND (lin.hi IS NULL OR r.vseq < lin.hi)
@@ -241,7 +238,7 @@ const lineageCTE = `
 func lineageWhere() string {
 	return `
 		JOIN lin ON lin.entity_id = ev.entity_id
-		         AND ev.face = CAST($2 AS text) COLLATE "C"
+		         AND ev.face = lin.face
 		         AND ev.vseq > lin.lo
 		         AND (lin.hi IS NULL OR ev.vseq < lin.hi)`
 }
@@ -279,7 +276,7 @@ func listLineage(ctx context.Context, q DBTX, ref entity.Ref) ([]storeutil.Linea
 		    FROM entity_versions ev` + lineageWhere() + `
 		    GROUP BY ev.vseq
 		)
-		SELECT ev.vseq, ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
+		SELECT ev.vseq, ev.op, ev.prev_id, ev.prev_face, ev.type, ev.content_hash, ev.schema_hash,
 		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.face,
 		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
 		       ev.origin_source_type, ev.origin_definition,
@@ -343,7 +340,7 @@ func (v *VersionStore) GetVersion(
 		return nil, store.ErrNotFound
 	}
 	sel := lineageCTE + `
-		SELECT ev.op, ev.prev_id, ev.type, ev.content_hash, ev.schema_hash,
+		SELECT ev.op, ev.prev_id, ev.prev_face, ev.type, ev.content_hash, ev.schema_hash,
 		       ev.principal_user, ev.principal_tool, ev.triggered_by, ev.face,
 		       ev.origin_kind, ev.origin_source, ev.origin_source_face,
 		       ev.origin_source_type, ev.origin_definition,
@@ -356,15 +353,16 @@ func (v *VersionStore) GetVersion(
 	row := v.db.QueryRow(ctx, sel, id, string(p), version-1)
 
 	var (
-		snap  store.VersionSnapshot
-		op    string
-		prev  *string
-		face  string
-		props []byte
-		oc    originCols
+		snap     store.VersionSnapshot
+		op       string
+		prev     *string
+		prevFace *string
+		face     string
+		props    []byte
+		oc       originCols
 	)
 	scanArgs := make([]any, 0, 13+originColumnCount)
-	scanArgs = append(scanArgs, &op, &prev, &snap.Type, &snap.ContentHash, &snap.SchemaHash,
+	scanArgs = append(scanArgs, &op, &prev, &prevFace, &snap.Type, &snap.ContentHash, &snap.SchemaHash,
 		&snap.PrincipalUser, &snap.PrincipalTool, &snap.TriggeredBy, &face)
 	scanArgs = append(scanArgs, oc.scanTargets()...)
 	scanArgs = append(scanArgs, &snap.CreatedAt, &snap.Content, &props, &snap.Projection)
@@ -382,6 +380,12 @@ func (v *VersionStore) GetVersion(
 	if prev != nil {
 		snap.PrevID = *prev
 	}
+	if prevFace != nil {
+		snap.PrevFace = entity.Face(*prevFace)
+		snap.HasPrevFace = true
+	} else if prev != nil {
+		snap.PrevFace = snap.Face
+	}
 	if snap.Properties, err = unmarshalProps(props); err != nil {
 		return nil, err
 	}
@@ -392,17 +396,18 @@ func (v *VersionStore) GetVersion(
 // row's entity id and its segment's upper fence (NULL for the head).
 func scanLineageRow(row scanner) (storeutil.LineageRow, error) {
 	var (
-		r       storeutil.LineageRow
-		op      string
-		prev    *string
-		face    string
-		oc      originCols
-		created time.Time
-		hi      *int64
+		r        storeutil.LineageRow
+		op       string
+		prev     *string
+		prevFace *string
+		face     string
+		oc       originCols
+		created  time.Time
+		hi       *int64
 	)
 	m := &r.Meta
 	scanArgs := make([]any, 0, 13+originColumnCount)
-	scanArgs = append(scanArgs, &r.Vseq, &op, &prev, &m.Type, &m.ContentHash, &m.SchemaHash,
+	scanArgs = append(scanArgs, &r.Vseq, &op, &prev, &prevFace, &m.Type, &m.ContentHash, &m.SchemaHash,
 		&m.PrincipalUser, &m.PrincipalTool, &m.TriggeredBy, &face)
 	scanArgs = append(scanArgs, oc.scanTargets()...)
 	scanArgs = append(scanArgs, &created, &r.EntityID, &hi)
@@ -414,6 +419,12 @@ func scanLineageRow(row scanner) (storeutil.LineageRow, error) {
 	m.Origin = scanOrigin(oc)
 	if prev != nil {
 		m.PrevID = *prev
+	}
+	if prevFace != nil {
+		m.PrevFace = entity.Face(*prevFace)
+		m.HasPrevFace = true
+	} else if prev != nil {
+		m.PrevFace = m.Face
 	}
 	m.CreatedAt = created
 	if hi != nil {

@@ -86,8 +86,12 @@ import (
 // +1 exported / +1 method (TKT-Q6AKUN): MentionSources, the optional
 // store.MentionIndex capability. Its helpers are free functions in mentions.go.
 //
-//plimsoll:max-methods=50
-//plimsoll:max-exported-methods=32
+// +1 exported (entity conversion): ReplaceEntityFamily is required by
+// store.FamilyReplacer so a type change can replace all rows of one entity
+// family under the same store transaction.
+//
+//plimsoll:max-methods=51
+//plimsoll:max-exported-methods=33
 type MemStore struct {
 	// txMu serializes an open Tx against ordinary writers: Tx holds it
 	// for the whole callback, every exported write method takes it

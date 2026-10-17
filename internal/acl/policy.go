@@ -467,6 +467,9 @@ type RoleDef struct {
 	Create []string `yaml:"create"`
 	Update []string `yaml:"update"`
 	Delete []string `yaml:"delete"`
+	// Convert is the dedicated type-conversion grant. Entries name source
+	// entity types; destination types remain bounded by schema conversions.
+	Convert []string `yaml:"convert"`
 
 	// Rename lists the types whose WHOLE FAMILY this role may rename. A
 	// rename re-keys every face of an entity, including faces the caller
@@ -519,7 +522,7 @@ type RoleDef struct {
 // Exported so the aclaudit linter shares this definition rather than
 // keeping its own copy; its A2/A3 checks reference the same notion.
 func (r RoleDef) IsPrivileged() bool {
-	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Rename) > 0 ||
+	return len(r.Create) > 0 || len(r.Update) > 0 || len(r.Delete) > 0 || len(r.Rename) > 0 || len(r.Convert) > 0 ||
 		len(r.Permissions) > 0
 }
 
@@ -550,6 +553,8 @@ func grantsVerb(role RoleDef, op Op, target string) bool {
 	switch op {
 	case OpCreate:
 		list = role.Create
+	case OpConvert:
+		list = role.Convert
 	case OpUpdate, OpRename:
 		list = role.Update
 	case OpDelete:
@@ -1391,7 +1396,7 @@ func validateVerbReadCoverage(name string, role RoleDef) error {
 	for _, verb := range []struct {
 		name  string
 		types []string
-	}{{"update", role.Update}, {"delete", role.Delete}, {"rename", role.Rename}} {
+	}{{"update", role.Update}, {"delete", role.Delete}, {"rename", role.Rename}, {"convert", role.Convert}} {
 		for _, t := range verb.types {
 			// Compare on the TYPE half. A state-shaped grant
 			// (`update: ["policy@draft"]`) still requires read coverage of

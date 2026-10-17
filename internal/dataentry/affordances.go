@@ -163,7 +163,8 @@ type affordanceService struct {
 	// when the entity manager does not expose the capability, in which case
 	// `_copies` is omitted rather than sent empty — see computeCopyOffers.
 	// Wired by wireCopies, in production and in the test rebind alike.
-	copies copyOffersFunc
+	copies      copyOffersFunc
+	conversions func(ctx context.Context, entityType, id string) []entitymanager.ConversionOffer
 	// planEdges is edgeReader.plan: the edge writes one relation wrapper
 	// asks for, which this service authorizes one by one.
 	planEdges edgePlanner
@@ -1537,6 +1538,9 @@ func (svc affordanceService) attachEntityAffordances(ctx context.Context, e *ent
 	if offers := svc.computeCopyOffers(ctx, e); offers != nil {
 		result.Copies = &offers
 	}
+	if offers := computeConversionOffers(ctx, svc, e); offers != nil {
+		result.Conversions = &offers
+	}
 	if detail := svc.computeDetailActions(ctx, e); detail != nil {
 		if result.Actions == nil {
 			result.Actions = make(map[string]bool, len(detail))
@@ -1761,6 +1765,27 @@ func (svc affordanceService) computeCopyOffers(
 			Allowed:    o.Allowed,
 			Reason:     o.Reason,
 			OnSuccess:  copyOnSuccessWire(o.OnSuccess),
+		})
+	}
+	return out
+}
+
+func computeConversionOffers(ctx context.Context, svc affordanceService, e *entityPkg.Entity) []v1.ConversionOffer {
+	if svc.conversions == nil || e == nil {
+		return nil
+	}
+	offers := svc.conversions(ctx, e.Type, e.ID)
+	out := make([]v1.ConversionOffer, 0, len(offers))
+	for _, o := range offers {
+		out = append(out, v1.ConversionOffer{
+			Name:          o.Name,
+			Label:         o.Label,
+			To:            o.To,
+			Allowed:       o.Allowed,
+			Reason:        o.Reason,
+			MappedFields:  o.MappedFields,
+			ContentMapped: o.ContentMapped,
+			FaceChoices:   o.FaceChoices,
 		})
 	}
 	return out

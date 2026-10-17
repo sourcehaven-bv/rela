@@ -23,10 +23,11 @@ const VerbRead Verb = "read"
 
 // The write verbs, one per [Op].
 const (
-	VerbCreate = Verb(OpCreate)
-	VerbUpdate = Verb(OpUpdate)
-	VerbDelete = Verb(OpDelete)
-	VerbRename = Verb(OpRename)
+	VerbCreate  = Verb(OpCreate)
+	VerbUpdate  = Verb(OpUpdate)
+	VerbDelete  = Verb(OpDelete)
+	VerbRename  = Verb(OpRename)
+	VerbConvert = Verb(OpConvert)
 )
 
 // Verbs returns [VerbRead] followed by one verb per [Ops] entry, in that
@@ -157,6 +158,8 @@ func grantForRole(role RoleDef, verb Verb, entityType string) EveryoneGrant {
 		switch op {
 		case OpCreate:
 			list = role.Create
+		case OpConvert:
+			list = role.Convert
 		case OpUpdate, OpRename:
 			list = role.Update
 		case OpDelete:

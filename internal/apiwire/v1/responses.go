@@ -23,6 +23,11 @@ type EntityLinks struct {
 }
 
 // Entity is the JSON representation of an entity for API v1.
+//
+// Conversion offers are part of the per-entity affordances the detail page
+// needs, so they remain top-level alongside the other `_` metadata.
+//
+//plimsoll:max-fields=21
 type Entity struct {
 	EntityLinks
 	ID           string              `json:"id"`
@@ -146,6 +151,9 @@ type Entity struct {
 	// copy capability wired at all, so a wiring gap never reads as "this face
 	// declares no copies".
 	Copies *[]CopyOffer `json:"_copies,omitempty"`
+	// Conversions are operator-declared type changes. Allowed is advisory;
+	// the conversion endpoint rechecks the dedicated convert ACL.
+	Conversions *[]ConversionOffer `json:"_conversions,omitempty"`
 	// Faces lists the OTHER content states this entity actually has, so a
 	// draft can link to its published face and vice versa.
 	//
@@ -1761,6 +1769,47 @@ type CopyOffer struct {
 	// in which case the client shows the copy's label and lands on the face
 	// written. Mirrors metamodel.CopyOnSuccess.
 	OnSuccess *CopyOnSuccess `json:"onSuccess,omitempty"`
+}
+
+// ConversionOffer describes an operator-declared conversion from this entity.
+type ConversionOffer struct {
+	Name          string              `json:"name"`
+	Label         string              `json:"label"`
+	To            string              `json:"to"`
+	Allowed       bool                `json:"allowed"`
+	Reason        string              `json:"reason,omitempty"`
+	MappedFields  []string            `json:"mapped_fields,omitempty"`
+	ContentMapped bool                `json:"content_mapped,omitempty"`
+	FaceChoices   map[string][]string `json:"face_choices,omitempty"`
+}
+
+// ConversionResult reports the identity created by a type conversion.
+type ConversionResult struct {
+	Definition       string `json:"definition"`
+	OldID            string `json:"old_id"`
+	EntityID         string `json:"entity_id"`
+	Face             string `json:"face"`
+	RelationsDropped int    `json:"relations_dropped"`
+}
+
+// ConversionPreview reports the mapping consequences before conversion.
+type ConversionPreview struct {
+	TargetType       string   `json:"target_type"`
+	Required         []string `json:"required"`
+	RequiredFaces    []string `json:"required_faces,omitempty"`
+	RelationsToDrop  []string `json:"relations_to_drop"`
+	InvalidRelations []string `json:"invalid_relations"`
+	TargetFaces      []string `json:"target_faces"`
+	InvalidFaces     []string `json:"invalid_faces,omitempty"`
+	// Moves says where each source face's comments and version history go.
+	// Readers of the target face can see them after the conversion.
+	Moves []ConversionMove `json:"moves"`
+}
+
+// ConversionMove is one source face and the target face it becomes.
+type ConversionMove struct {
+	SourceFace string `json:"source_face"`
+	TargetFace string `json:"target_face"`
 }
 
 // CopyOnSuccess is the operator's follow-through for a successful copy.

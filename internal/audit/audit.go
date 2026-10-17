@@ -26,6 +26,7 @@ const (
 	OpUpdateEntity   = "update-entity"
 	OpDeleteEntity   = "delete-entity"
 	OpRenameEntity   = "rename-entity"
+	OpConvertEntity  = "convert-entity"
 	OpCreateRelation = "create-relation"
 	OpUpdateRelation = "update-relation"
 	OpDeleteRelation = "delete-relation"

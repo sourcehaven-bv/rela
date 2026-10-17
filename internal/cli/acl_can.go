@@ -37,7 +37,7 @@ import (
 // the raw principal. See internal/acl/declarative.go.
 type ACLCanCmd struct {
 	Principal string `arg:"" help:"Principal to check (a user entity ID, or the raw identifier — email/UPN — when principal_property is set)."`
-	Verb      string `arg:"" help:"Access verb to check: read|create|update|delete." enum:"read,create,update,delete"`
+	Verb      string `arg:"" help:"Access verb to check: read|create|update|delete|convert." enum:"read,create,update,delete,convert"`
 	Entity    string `arg:"" help:"Entity ID to check access against (e.g. INC-042). The answer is per entity, so a faced entity takes its bare id, not ID@face."`
 }
 

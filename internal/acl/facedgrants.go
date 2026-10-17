@@ -60,6 +60,22 @@ func (p *Policy) validateFacedWriteGrants(meta MetamodelView, refused map[string
 			errs = append(errs, facedWriteGrantErrors(meta, refused, name, verb.name, verb.list)...)
 		}
 		errs = append(errs, renameAliasErrors(meta, name, role.Rename)...)
+		errs = append(errs, convertAliasErrors(meta, name, role.Convert)...)
+	}
+	return errs
+}
+
+func convertAliasErrors(meta MetamodelView, role string, list []string) []error {
+	var errs []error
+	for _, entry := range list {
+		if entry == "*" || isStateGrant(entry) {
+			continue
+		}
+		canonical, faces := meta.FaceNames(entry)
+		if len(faces) == 0 || canonical == entry {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("acl: roles.%s.convert: %q names the type through the alias %q; a convert grant must use the canonical type name: %q", role, entry, entry, canonical))
 	}
 	return errs
 }

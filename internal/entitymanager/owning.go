@@ -279,7 +279,7 @@ func recordOwnedDeletes(ctx context.Context, m *Manager, owner string, owned []o
 			continue
 		}
 		for _, e := range o.res.DeletedEntities {
-			m.recordEntityVersion(ownedCtx, store.VersionOpDelete, e, "")
+			m.recordDeleteVersion(ownedCtx, e)
 		}
 		for _, rel := range append(append([]*entity.Relation{}, o.capture.incoming...), o.capture.outgoing...) {
 			if k := relationKey(rel); !versioned[k] {
