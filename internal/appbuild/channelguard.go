@@ -2,6 +2,7 @@ package appbuild
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
 
@@ -18,11 +20,19 @@ import (
 //
 //   - block refuses the delete with [*entitymanager.AnchorBlockedError]
 //     before anything is written;
-//   - detach tombstones the channels, and a failed delete restores them;
-//   - delete is treated as detach until deleting channels with their entity
-//     lands (T4), and boot warns about it;
+//   - detach and delete both tombstone the channels before the delete's
+//     transaction, and a failed delete restores them. The batch records the
+//     policy and the time retention may erase it (see
+//     [realtime.PurgeAfter]): at once for a delete type, after the type's
+//     detached retention otherwise;
 //   - a channel whose type the config does not declare, or a project without
 //     realtime.yaml, is detached: the config can no longer say otherwise.
+//
+// The batch is filed as pending: retention leaves it alone until the
+// post-commit delete hook confirms it (see [tombstoneConfirmer]), so a
+// delete that fails after the tombstone never loses its channels. A soft
+// delete tombstones nothing; it only runs CheckDelete. Its purge later goes
+// through BeforeDelete like any delete.
 //
 // In degraded mode the holder serves the last good config, so the rules that
 // held when the channels were written still apply. One delete operation reads
@@ -44,6 +54,7 @@ import (
 // puts a file back, gets them back unchanged.
 type channelGuard struct {
 	store  channels.Store
+	tombs  *tombstoneConfirmer
 	config func() *realtimecfg.Compiled
 	now    func() time.Time
 }
@@ -51,28 +62,38 @@ type channelGuard struct {
 var _ entitymanager.AnchorGuard = (*channelGuard)(nil)
 
 // newChannelGuard returns the guard over cs, reading the realtime config from
-// rt. A nil cs guards nothing.
+// rt and handing pending batches to tombs. A nil cs guards nothing.
 //
-// Nil: cs is accepted (no channel store); rt is accepted (realtime off).
-func newChannelGuard(cs channels.Store, rt *RealtimeConfig) entitymanager.AnchorGuard {
+// Nil: cs is accepted (no channel store); rt is accepted (realtime off);
+// tombs is rejected when cs is set, since a pending batch nobody confirms
+// waits for the sweep.
+func newChannelGuard(
+	cs channels.Store, rt *RealtimeConfig, tombs *tombstoneConfirmer,
+) (entitymanager.AnchorGuard, error) {
 	if cs == nil {
-		return entitymanager.NopAnchorGuard{}
+		return entitymanager.NopAnchorGuard{}, nil
+	}
+	if tombs == nil {
+		return nil, errors.New("channels: the guard needs a tombstone confirmer")
 	}
 	return &channelGuard{
 		store:  cs,
+		tombs:  tombs,
 		config: func() *realtimecfg.Compiled { return rt.Load().Config },
 		now:    time.Now,
-	}
+	}, nil
 }
 
 // channelGuardFor checks the realtime config against the channel types the
 // store has recorded (see checkChannelTypeRecords) and returns the guard
 // over cs. A mismatch fails the assembly, so the server does not start.
-func channelGuardFor(base *SharedBase, cs channels.Store) (entitymanager.AnchorGuard, error) {
+func channelGuardFor(
+	base *SharedBase, cs channels.Store, tombs *tombstoneConfirmer,
+) (entitymanager.AnchorGuard, error) {
 	if err := checkChannelTypeRecords(context.Background(), cs, base.realtime.Load().Config); err != nil {
 		return nil, err
 	}
-	return newChannelGuard(cs, base.realtime), nil
+	return newChannelGuard(cs, base.realtime, tombs)
 }
 
 // Active implements [entitymanager.AnchorGuard]: a guard over a channel
@@ -130,14 +151,33 @@ func (s *channelScope) BeforeDelete(
 		return nil, nil //nolint:nilnil // the face has no channels: nothing to undo
 	}
 	g := s.guard
-	h, err := g.tombstone(ctx, d.ID, face)
+	at := g.now()
+	moved := batchOf(list, face)
+	f := realtime.FilingFor(s.cfg, realtime.DeletePolicy(s.cfg, moved), at, moved, true)
+	h, err := g.tombstone(ctx, d.ID, face, at, f)
 	if err != nil {
 		return nil, fmt.Errorf("channels: detach %s before delete: %w", entity.FormatStateRef(d.ID, face), err)
 	}
 	if h.IsZero() {
 		return nil, nil //nolint:nilnil // nothing was tombstoned: nothing to undo
 	}
-	return tombstoneUndo{store: g.store, h: h, now: g.now}, nil
+	g.tombs.add(h)
+	return tombstoneUndo{store: g.store, h: h, now: g.now, tombs: g.tombs}, nil
+}
+
+// batchOf returns the channels in list a tombstone of face moves: every
+// channel for a whole-entity batch, the face's own for a face batch.
+func batchOf(list []channels.Channel, face entity.Face) []channels.Channel {
+	if face == "" {
+		return list
+	}
+	var out []channels.Channel
+	for _, c := range list {
+		if c.Key.Face == face {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // CheckDelete implements [entitymanager.AnchorScope].
@@ -151,8 +191,10 @@ func (s *channelScope) CheckDelete(_ context.Context, d entitymanager.AnchorDele
 // tombstone tombstones id@face. A store can fail after moving part of the
 // batch and still return its handle; that part is put back before the error
 // is returned, so a failed detach leaves nothing detached.
-func (g *channelGuard) tombstone(ctx context.Context, id string, face entity.Face) (channels.TombstoneHandle, error) {
-	h, err := g.store.Tombstone(ctx, id, face, g.now(), channels.Filing{})
+func (g *channelGuard) tombstone(
+	ctx context.Context, id string, face entity.Face, at time.Time, f channels.Filing,
+) (channels.TombstoneHandle, error) {
+	h, err := g.store.Tombstone(ctx, id, face, at, f)
 	if err == nil || h.IsZero() {
 		return h, err
 	}
@@ -182,7 +224,8 @@ func (g *channelGuard) BeforeRename(
 	if freeErr := free(ctx); freeErr != nil {
 		return nil, freeErr
 	}
-	h, err := g.tombstone(ctx, newID, "")
+	at := g.now()
+	h, err := g.tombstone(ctx, newID, "", at, realtime.FilingFor(g.config(), channels.PolicyDetach, at, list, false))
 	if err != nil {
 		return nil, fmt.Errorf("channels: clear %s before rename: %w", newID, err)
 	}
@@ -197,11 +240,20 @@ type tombstoneUndo struct {
 	store channels.Store
 	h     channels.TombstoneHandle
 	now   func() time.Time
+	// tombs forgets the batch once restored. Nil for a batch that was
+	// never pending.
+	tombs *tombstoneConfirmer
 }
 
 // Restore implements [entitymanager.AnchorUndo].
 func (u tombstoneUndo) Restore(ctx context.Context) error {
-	return u.store.Untombstone(ctx, u.h, u.now())
+	if err := u.store.Untombstone(ctx, u.h, u.now()); err != nil {
+		return err
+	}
+	if u.tombs != nil {
+		u.tombs.drop(u.h)
+	}
+	return nil
 }
 
 // String implements [entitymanager.AnchorUndo]: the handle's text form,
@@ -259,19 +311,10 @@ func hasFaceChannel(list []channels.Channel, face entity.Face) bool {
 // recorded types are compared, and nothing is written; the channel service
 // records a type on its first channel write.
 //
-// It also warns about each channel type whose `on_entity_delete: delete` is
-// still treated as detach.
-//
 // Nil: cs is accepted (no channel store); cfg is accepted (realtime off).
 func checkChannelTypeRecords(ctx context.Context, cs typeRecordReader, cfg *realtimecfg.Compiled) error {
 	if cfg == nil || cs == nil {
 		return nil
-	}
-	for _, ct := range cfg.ChannelTypes() {
-		if ct.OnEntityDelete == realtimecfg.OnDeleteDelete {
-			slog.Warn("realtime: on_entity_delete: delete detaches channels for now; "+
-				"deleting them with their entity is not supported yet", "channel_type", ct.Name)
-		}
 	}
 	return checkRecords(ctx, cs, cfg)
 }

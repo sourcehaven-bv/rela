@@ -266,9 +266,10 @@ func (s *server) buildApp(svc *appbuild.Services) (*dataentry.App, error) {
 	return app, nil
 }
 
-// startScheduler starts g's background scheduler and its lease watcher,
-// unless they are running or g is held. Both share one stop and one done, so
-// a pause, a resume and a retirement hand both over together.
+// startScheduler starts g's background scheduler, its lease watcher and its
+// realtime worker, unless they are running or g is held. All share one stop
+// and one done, so a pause, a resume and a retirement hand them over
+// together.
 func (s *server) startScheduler(g *generation) {
 	g.schedMu.Lock()
 	defer g.schedMu.Unlock()
@@ -285,11 +286,13 @@ func (s *server) startScheduler(g *generation) {
 	// *appbuild.Services satisfies scheduler.WorkspaceProvider structurally.
 	sched := scheduler.StartBackground(ctx, g.svc, bind, slog.Default())
 	leases := appbuild.WatchLeases(ctx, g.svc)
+	worker := appbuild.RunRealtimeWorker(ctx, g.svc)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		<-sched
 		<-leases
+		<-worker
 	}()
 	g.schedDone = done
 }

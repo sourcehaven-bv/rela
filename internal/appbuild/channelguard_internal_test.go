@@ -79,8 +79,8 @@ func newGuardFixture(t *testing.T) guardFixture {
 	require.NoError(t, err)
 	cfg, err := realtimecfg.Parse([]byte(guardRealtime), meta, nil)
 	require.NoError(t, err)
-	_, cs, st := newChannelAliases(t)
-	g := &channelGuard{store: cs, config: func() *realtimecfg.Compiled { return cfg }, now: time.Now}
+	a, cs, st := newChannelAliases(t)
+	g := &channelGuard{store: cs, tombs: a.tombs, config: func() *realtimecfg.Compiled { return cfg }, now: time.Now}
 	return guardFixture{meta: meta, cfg: cfg, cs: cs, st: st, guard: g}
 }
 
@@ -88,7 +88,7 @@ func newGuardFixture(t *testing.T) guardFixture {
 // the real channel alias hook, as assemble wires them.
 func (f guardFixture) manager(t *testing.T, g entitymanager.AnchorGuard) *entitymanager.Manager {
 	t.Helper()
-	aliases := channelAliasesFor(f.cs, f.st)
+	aliases := channelAliasesFor(f.cs, f.st, f.guard.tombs, nil)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: f.st, Meta: f.meta, Templater: gcNopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
@@ -243,8 +243,12 @@ func TestChannelGuard_BeforeRename(t *testing.T) {
 	require.NoError(t, undo.Restore(ctx))
 	assert.Equal(t, []string{"INC-2/chat"}, entityKeys(t, f.cs, "INC-2"))
 
-	require.Nil(t, channelAliasesFor(nil, f.st))
-	_, nop := newChannelGuard(nil, nil).(entitymanager.NopAnchorGuard)
+	require.Nil(t, channelAliasesFor(nil, f.st, nil, nil))
+	nopGuard, err := newChannelGuard(nil, nil, nil)
+	require.NoError(t, err)
+	_, nop := nopGuard.(entitymanager.NopAnchorGuard)
+	_, err = newChannelGuard(f.cs, nil, nil)
+	require.Error(t, err, "a guard over a store needs a confirmer")
 	assert.True(t, nop)
 	assert.True(t, f.guard.Active())
 }

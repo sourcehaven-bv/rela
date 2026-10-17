@@ -13,6 +13,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/filelock"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
@@ -77,23 +78,54 @@ func Channels(s *Services) channels.Store { return s.channels }
 // manager calls before the write: it applies the delete policy and clears
 // newID before a rename. These hooks run after the commit and sweep up
 // channels a concurrent first post created while the write ran.
+//
+// Every batch these hooks tombstone is filed confirmed, with the purge time
+// the realtime config gives it (see [realtime.FilingFor]): the write that
+// caused it has committed. The delete hooks also confirm the guard's pending
+// batches and wake the realtime worker.
 type channelAliases struct {
 	store channels.Store
 	// families reads the stored faces of an id, to tell a new entity from a
 	// new face of an existing one.
 	families store.EntityLister
+	tombs    *tombstoneConfirmer
+	rt       *RealtimeConfig
 	now      func() time.Time
 }
 
 // channelAliasesFor returns the alias subscriber for cs.
 //
 // Nil: returns a nil *channelAliases when cs is nil, which newAliasFanout
-// drops.
-func channelAliasesFor(cs channels.Store, st store.EntityLister) *channelAliases {
+// drops. tombs is required with cs; rt is accepted (realtime off).
+func channelAliasesFor(
+	cs channels.Store, st store.EntityLister, tombs *tombstoneConfirmer, rt *RealtimeConfig,
+) *channelAliases {
 	if cs == nil {
 		return nil
 	}
-	return &channelAliases{store: cs, families: st, now: time.Now}
+	return &channelAliases{store: cs, families: st, tombs: tombs, rt: rt, now: time.Now}
+}
+
+// tombstone files the channels of id@face as one confirmed batch for
+// policy, or does nothing when there are none. A delete batch takes its
+// policy from the config, like the guard's.
+func (a *channelAliases) tombstone(
+	ctx context.Context, id string, face entity.Face, at time.Time, policy channels.TombstonePolicy,
+) error {
+	list, err := a.store.ListEntity(ctx, id)
+	if err != nil {
+		return err
+	}
+	moved := batchOf(list, face)
+	if len(moved) == 0 {
+		return nil
+	}
+	cfg := a.rt.Load().Config
+	if policy == channels.PolicyDelete {
+		policy = realtime.DeletePolicy(cfg, moved)
+	}
+	_, err = a.store.Tombstone(ctx, id, face, at, realtime.FilingFor(cfg, policy, at, moved, false))
+	return err
 }
 
 // EntityRenamed moves the channels of oldID to newID. The guard already
@@ -112,53 +144,47 @@ func (a *channelAliases) EntityRenamed(ctx context.Context, oldID, newID string)
 	at := a.now()
 	err := a.store.Rekey(ctx, oldID, newID, at)
 	if errors.Is(err, channels.ErrRekeyConflict) {
-		if _, err = a.store.Tombstone(ctx, newID, "", at, channels.Filing{}); err == nil {
+		if err = a.tombstone(ctx, newID, "", at, channels.PolicyDetach); err == nil {
 			err = a.store.Rekey(ctx, oldID, newID, at)
 		}
 	}
 	if err != nil {
 		return fmt.Errorf("channels: rename %s to %s: %w", oldID, newID, err)
 	}
-	if err := a.sweep(ctx, oldID, at); err != nil {
+	// Channels left under oldID were created while the rename ran, and
+	// cannot be moved: newID now holds the renamed entity's channels, so a
+	// second Rekey would conflict.
+	if err := a.tombstone(ctx, oldID, "", at, channels.PolicyDetach); err != nil {
 		return fmt.Errorf("channels: sweep %s after rename: %w", oldID, err)
 	}
 	return nil
 }
 
-// sweep tombstones the channels left under id. After a rename they were
-// created under oldID while the rename ran, and cannot be moved: newID now
-// holds the renamed entity's channels, so a second Rekey would conflict.
-// After a delete they were created by a first post that landed after the
-// guard ran.
-func (a *channelAliases) sweep(ctx context.Context, id string, at time.Time) error {
-	left, err := a.store.ListEntity(ctx, id)
-	if err != nil || len(left) == 0 {
-		return err
-	}
-	_, err = a.store.Tombstone(ctx, id, "", at, channels.Filing{})
-	return err
-}
-
-// EntityDeleted detaches channels a concurrent first post created after the
-// guard detached the rest. The guard applied the delete policy; whatever is
-// left now belongs to an entity that no longer exists.
+// EntityDeleted confirms the batches the guard filed for id, then detaches
+// channels a concurrent first post created after the guard ran, under the
+// same delete policy.
 func (a *channelAliases) EntityDeleted(ctx context.Context, id string) error {
-	if err := a.sweep(ctx, id, a.now()); err != nil {
-		return fmt.Errorf("channels: sweep %s after delete: %w", id, err)
+	confirmErr := a.tombs.confirm(ctx, id, "", true)
+	if err := a.tombstone(ctx, id, "", a.now(), channels.PolicyDelete); err != nil {
+		return errors.Join(confirmErr, fmt.Errorf("channels: sweep %s after delete: %w", id, err))
 	}
-	return nil
+	a.tombs.ping()
+	return confirmErr
 }
 
-// EntityFaceDeleted detaches the channels anchored to the deleted face.
-// Channels anchored to the whole entity stay.
+// EntityFaceDeleted confirms the batches the guard filed for the face, then
+// detaches the channels still anchored to it. Channels anchored to the
+// whole entity stay.
 func (a *channelAliases) EntityFaceDeleted(ctx context.Context, id string, face entity.Face) error {
 	if face == "" {
 		return nil
 	}
-	if _, err := a.store.Tombstone(ctx, id, face, a.now(), channels.Filing{}); err != nil {
-		return fmt.Errorf("channels: detach %s: %w", entity.FormatStateRef(id, face), err)
+	confirmErr := a.tombs.confirm(ctx, id, face, false)
+	if err := a.tombstone(ctx, id, face, a.now(), channels.PolicyDelete); err != nil {
+		return errors.Join(confirmErr, fmt.Errorf("channels: detach %s: %w", entity.FormatStateRef(id, face), err))
 	}
-	return nil
+	a.tombs.ping()
+	return confirmErr
 }
 
 // EntityCreated detaches channels a new entity would otherwise inherit. When
@@ -178,9 +204,9 @@ func (a *channelAliases) EntityCreated(ctx context.Context, id string, face enti
 	}
 	switch {
 	case len(headers) <= 1:
-		_, err = a.store.Tombstone(ctx, id, "", a.now(), channels.Filing{})
+		err = a.tombstone(ctx, id, "", a.now(), channels.PolicyDetach)
 	case face != "":
-		_, err = a.store.Tombstone(ctx, id, face, a.now(), channels.Filing{})
+		err = a.tombstone(ctx, id, face, a.now(), channels.PolicyDetach)
 	}
 	if err != nil {
 		return fmt.Errorf("channels: clear %s on create: %w", entity.FormatStateRef(id, face), err)

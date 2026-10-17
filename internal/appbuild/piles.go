@@ -35,6 +35,9 @@ type refHolders struct {
 	// process-local state; see buildRealtimeService.
 	channelService *realtime.Service
 	realtimeLocal  *realtime.Local
+	// channelTombs connects the channel guard's pending tombstones to the
+	// post-commit delete hooks and the realtime worker.
+	channelTombs *tombstoneConfirmer
 }
 
 // buildRefHolders builds the services that hold references by entity id:
@@ -67,6 +70,9 @@ func buildRefHolders(
 		return refHolders{}, err
 	}
 	if h.channels, err = buildChannels(base.cfg.FS, base.cfg.Paths, st, overrides.channelStore); err != nil {
+		return refHolders{}, err
+	}
+	if h.channelTombs, err = newTombstoneConfirmer(h.channels); err != nil {
 		return refHolders{}, err
 	}
 	h.channelService, h.realtimeLocal, err = buildRealtimeService(

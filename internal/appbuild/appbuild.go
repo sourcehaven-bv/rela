@@ -212,6 +212,10 @@ type Services struct {
 	// realtimeRecordsStop stops the realtime holder from checking reloads
 	// against this assembly's channel store. Per-assembled.
 	realtimeRecordsStop func()
+	// realtimeWorker is the realtime background worker, built only for a
+	// long-running process (WithBackgroundAutomationJobs). The host starts
+	// it with RunRealtimeWorker; Close stops it. Per-assembled.
+	realtimeWorker *realtimeWorker
 	// comments is the commentary layer (internal/comments). Nil when the
 	// metamodel declares no `comments:` block — the feature then does not
 	// exist, and the data-entry app serves no comment routes.
@@ -2288,10 +2292,10 @@ func buildEntityManager(
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, pileWriter lua.PileWriter, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
-	channelStore channels.Store,
+	channelStore channels.Store, tombs *tombstoneConfirmer,
 ) (*entitymanager.Manager, error) {
 	// Boot refuses a realtime.yaml that would strand stored channels.
-	anchorGuard, err := channelGuardFor(base, channelStore)
+	anchorGuard, err := channelGuardFor(base, channelStore, tombs)
 	if err != nil {
 		return nil, err
 	}
@@ -2622,10 +2626,10 @@ func assemble(
 	// comment fanout wrapping the alias rewriter.
 	attachLocker := base.attachmentLocker(st)
 	fanout := newAliasFanout(aliases, refs.comments, refs.piles, refs.leases, autoJobs,
-		channelAliasesFor(refs.channels, st), refs.realtimeLocal)
+		channelAliasesFor(refs.channels, st, refs.channelTombs, base.realtime), refs.realtimeLocal)
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
-		attachLocker, fieldPol.gate, refs.channels)
+		attachLocker, fieldPol.gate, refs.channels, refs.channelTombs)
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
 	// fail — unreachable with valid inputs (see the scupper in buildStateKV)
@@ -2736,6 +2740,10 @@ func finishAssembly(
 	}
 	s.versionTags = tags
 	if err := autoJobs.bind(servicesJobRunner{s}, engine); err != nil {
+		return nil, err
+	}
+	// Built, not started: the host starts it (see RunRealtimeWorker).
+	if s.realtimeWorker, err = buildRealtimeWorker(s.base, s.store, refs); err != nil {
 		return nil, err
 	}
 	// Last, so a failed assembly never leaves a sweep goroutine running.
@@ -3001,6 +3009,9 @@ func (s *Services) stopBackgroundServices() {
 	if s.realtimeRecordsStop != nil {
 		s.realtimeRecordsStop()
 		s.realtimeRecordsStop = nil
+	}
+	if s.realtimeWorker != nil {
+		s.realtimeWorker.stop()
 	}
 	if s.jobQueue != nil {
 		closeJobQueue(s.jobQueue)
