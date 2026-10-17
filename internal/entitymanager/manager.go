@@ -675,6 +675,11 @@ func (m *Manager) authorizeAndAudit(ctx context.Context, req acl.WriteRequest) e
 		}
 		return nil
 	}
+	if !isAffordanceProbe(ctx) {
+		// A real write decides on the graph as it is, never on a page's
+		// local-role prime (BUG-E2W1LS); a probe is a read and may use it.
+		ctx = acl.WithoutLocalRolePrime(ctx)
+	}
 	decision := m.deps.ACL.AuthorizeWrite(ctx, req)
 	if decision.Allow {
 		return nil

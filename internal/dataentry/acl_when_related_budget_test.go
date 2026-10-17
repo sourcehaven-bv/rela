@@ -142,7 +142,8 @@ func TestQueryBudget_ListFreeTextUnderFieldHiding(t *testing.T) {
 		got = append(got, sample{
 			fixed:       counting.Reads() - calls["GetEntity"] - calls["MatchingFaces"],
 			entityLoads: calls["GetEntity"] - n, // the in-memory searcher's own scan reads each row once
-			traversals:  calls["MatchingFaces"] - 2,
+			// One batched traversal primes the served page; the rest are per hit.
+			traversals: calls["MatchingFaces"] - 1,
 		})
 		detail = counting.String()
 	}

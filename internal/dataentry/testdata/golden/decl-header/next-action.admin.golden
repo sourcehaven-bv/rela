@@ -1,8 +1,8 @@
 request: GET /api/v1/_next_action
 identity: header admin@example.test
 status: 200
-reads: GetRelation=1 GraphQueryHeaders=2 ListRelations=1 MatchingFaces=1
-breadth: ListRelations=0/1 MatchingFaces=1/1
+reads: GraphQueryHeaders=2 ListRelations=2 MatchingFaces=1
+breadth: ListRelations=1/2 MatchingFaces=1/1
 bodies: GraphQuery=1/2
 versions: 
 body:

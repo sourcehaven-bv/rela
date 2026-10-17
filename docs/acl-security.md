@@ -68,6 +68,20 @@ The policy fails to load at all, so this stops the server rather than
 only the linter — which is the point: an un-gated membership relation
 should not boot.
 
+### A conferring relation points from the member
+
+A `role_relations` entry with `confers:` gives a role to the source of the
+edge, on the target. The resolver looks for an edge from the principal, or
+one of its groups, to the entity. An entry whose relation runs the other way,
+for example `toegewezen_aan` from an asset to a person, never matches. It
+still costs a lookup per member for every entity checked. When
+`user_entity_type` is set, rela logs a warning at load for an entry whose
+declared source types include no user or group type:
+
+```text
+level=WARN msg="appbuild: ACL role relation can never confer its role: ..." relation=toegewezen_aan
+```
+
 Per-verb relation permissions do exist — as `relation_grants:`, covered
 in [GUIDE-acl-overview]. They apply only to relation types that do
 **not** confer a role; naming a gated `role_relations:` type there is

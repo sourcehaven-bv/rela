@@ -65,6 +65,10 @@ type routerConfig struct {
 	// for why it never adds a header.
 	accessLog *slog.Logger
 
+	// queryCeiling is the per-request statement count past which a request
+	// is logged as a warning; zero is off. See warnQueryCeiling.
+	queryCeiling int64
+
 	// spaFS, when non-nil, replaces the embedded SPA build. Tests only: the
 	// CI Test job does not build the frontend, so without it `/` answers 404
 	// and a client that reads the discovery Link header only on a 2xx (as
@@ -80,6 +84,12 @@ func withSPAFS(fsys fs.FS) RouterOption {
 // WithAccessLog sends the per-request access log to l; nil turns it off.
 func WithAccessLog(l *slog.Logger) RouterOption {
 	return func(c *routerConfig) { c.accessLog = l }
+}
+
+// WithQueryCeiling logs a warning for every request that runs more than n
+// store statements; zero or less turns the check off.
+func WithQueryCeiling(n int64) RouterOption {
+	return func(c *routerConfig) { c.queryCeiling = n }
 }
 
 // NewRouter returns an http.Handler with all data entry routes registered.
@@ -316,7 +326,7 @@ func (a *App) NewRouter(opts ...RouterOption) http.Handler {
 	// Outermost of all: per-request query accounting must wrap the whole
 	// chain so the principal resolution and ACL compilation above (which
 	// read the store) are counted with the handler, not missed.
-	handler = requestStats(handler, cfg.accessLog, (&routeWordCache{schema: a.State}).words)
+	handler = requestStats(handler, cfg.accessLog, (&routeWordCache{schema: a.State}).words, cfg.queryCeiling)
 	return handler
 }
 

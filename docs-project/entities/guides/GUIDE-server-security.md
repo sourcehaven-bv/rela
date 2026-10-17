@@ -451,6 +451,9 @@ Some requests carry extra fields:
   reports 502.
 - `path_truncated=true`: the route shape was longer than 512 bytes and was cut.
   A method longer than 32 bytes is logged as `OTHER`.
+- `query=...`: the request had a query string. It is logged as its shape, so a
+  slow request can be traced to the list or view that sent it, for example
+  `query="include=*&list_id=all_taken&page=1&per_page=100&world=actueel"`.
 
 The event streams (`/api/events`, `/api/v1/_events`) log one line when the
 stream closes. Their `wall_ms` is how long the tab kept the stream open,
@@ -465,14 +468,42 @@ What it records and what it leaves out:
   `*`, including entity IDs and attachment file names.
   `/api/v1/tickets/TKT-1/_attachments/screenshot/ziekmelding.pdf` is logged
   as `/api/v1/tickets/*/_attachments/screenshot/*`. An ID or file name that
-  is identical to one of those words is kept as is. Query strings are left
-  out because they can carry tokens.
+  is identical to one of those words is kept as is.
+- The query string is logged as a shape with the same rule. Keys are sorted.
+  A key is kept when rela reads it or it is a configured name; any other key
+  becomes `*`. A value is kept only when it is a paging number, `*`, or a list
+  of configured names (a list id, a world, an include path, a sort). Search
+  text (`q`), filter values, cursors, anchors and any other number are always
+  `*`, and so is any value that could be a token.
 - The application log is a separate stream. Its warnings for failed
   attachment writes and blocked requests use a coarser shape that also masks
   type names. Other error lines there can still contain the full path.
 - No user, IP address, or request body.
 - No SQL. `--verbose` is not a substitute: it also logs every SQL
   statement with its bound arguments.
+
+## Query ceiling (`--query-ceiling`)
+
+A GET or HEAD request that runs more database statements than
+`--query-ceiling` (default 500) is logged as a warning in the application log,
+whether or not the access log is on. The record is one line; it is wrapped
+here for reading:
+
+```text
+level=WARN msg="request exceeded query ceiling" method=GET path=/api/v1/taken
+  status=200 wall_ms=3400 queries=7416 db_ms=2900
+  query="include=*&list_id=all_taken&per_page=100&world=actueel" ceiling=500
+  top_statement="SELECT ... FROM relations WHERE from_id = $1 AND type = $2 AND to_id = $3"
+  top_statement_count=1800
+```
+
+`top_statement` is the statement the request ran most often, as
+parameterised SQL. It names the lookup that runs once per row. It holds no
+bound values. Writes are exempt, because an import or a command may run many
+statements once. Event streams are exempt, because their count covers the
+whole time a tab kept the stream open. Only the database backends count
+statements, so the file backend never logs this. `--query-ceiling=0` turns
+the check off. The end-to-end tests fail when the server logs this warning.
 
 The query count is safe here but not in a response. The access log never
 sets the `Server-Timing` header that `--verbose` adds. A per-response

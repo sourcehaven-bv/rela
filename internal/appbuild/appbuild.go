@@ -2149,6 +2149,13 @@ func validateResolvedPolicy(injected acl.ACL, loaded *acl.Policy, meta *metamode
 	if err := ValidateACLPolicy(policy, meta); err != nil {
 		return fmt.Errorf("appbuild: acl.yaml does not match the schema: %w", err)
 	}
+	for _, rel := range acl.RoleRelationsNoMemberHolds(policy, metamodelView{meta}) {
+		slog.Warn("appbuild: ACL role relation can never confer its role: no principal or group "+
+			"can be its source, so it never matches (is it declared against the relation's direction?)",
+			"relation", rel,
+			"fix", fmt.Sprintf("remove role_relations.%s, or point it at a relation whose source is a user or group", rel),
+			"docs", "docs/acl-security.md")
+	}
 	return nil
 }
 

@@ -1,6 +1,7 @@
 import { onBeforeUnmount, watch, type MaybeRefOrGetter, toValue } from 'vue'
 import { putLiveSubscriptions } from '@/api/live'
 import { ApiError } from '@/api/errors'
+import { refetchJitter, runWhenVisible } from './visibleRefetch'
 
 /**
  * Live-view subscriptions (TKT-HJ5Z9Y), shared across the page like the SSE
@@ -71,7 +72,9 @@ async function send() {
     for (const [key, path] of sent) {
       if (previous.get(key) === path) continue
       const e = entries.get(key)
-      if (e?.path === path) e.onChange()
+      // A reconnect re-accepts every key, so this refetches every live
+      // baseline; a hidden tab does that once, when it is shown again.
+      if (e?.path === path) runWhenVisible(`live:${key}`, () => entries.get(key)?.onChange())
     }
   } catch (err) {
     const status = err instanceof ApiError ? err.status : undefined
@@ -82,7 +85,7 @@ async function send() {
     } else if (status === 409) {
       // The stream was opened with other credentials.
       if (!staleTimer) {
-        const delay = Math.min(STALE_BASE_MS * 2 ** staleAttempts++, STALE_MAX_MS)
+        const delay = Math.min(STALE_BASE_MS * 2 ** staleAttempts++, STALE_MAX_MS) + refetchJitter()
         staleTimer = setTimeout(() => {
           staleTimer = null
           reconnect()

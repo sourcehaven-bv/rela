@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -264,6 +265,14 @@ func readsFor(t *testing.T, op budgetOp) (small, large int, detail string) {
 type budgetOp func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context)
 
 // readsForOn is readsFor over a fresh store from newStore per size.
+//
+// It also runs op under [realisticBudgetPolicy] at both sizes and fails the
+// test when the reads differ there. The returned counts are the fixture
+// ACL's, so the pinned budgets are unchanged. The fixture ACL has no role
+// relations and no inheritance, and BUG-E2W1LS was a per-row cost only those
+// produce: every budget test passed while a production list ran 1,800
+// lookups. Running every shape under both ACLs means a new budget test
+// covers the realistic ACL without opting in.
 func readsForOn(t *testing.T, newStore func(*testing.T) store.Store, op budgetOp) (small, large int, detail string) {
 	t.Helper()
 	counts := make([]int, 0, 2)
@@ -273,7 +282,58 @@ func readsForOn(t *testing.T, newStore func(*testing.T) store.Store, op budgetOp
 		counts = append(counts, counting.Reads())
 		detail = counting.String()
 	}
+	realistic := make([]int, 0, 2)
+	var realisticDetail string
+	for _, n := range []int{10, 50} {
+		app, counting, _, ctx := newBudgetAppOn(t, n, newStore(t))
+		d := useRealisticBudgetPolicy(t, app, counting)
+		op(t, app, d, ctx)
+		realistic = append(realistic, counting.Reads())
+		realisticDetail = counting.String()
+	}
+	if realistic[0] != realistic[1] {
+		t.Errorf("under the realistic ACL, store reads grow with page size: %d at 10 rows, %d at 50 rows (%s)",
+			realistic[0], realistic[1], realisticDetail)
+	}
 	return counts[0], counts[1], detail
+}
+
+// realisticBudgetPolicy is the fixture ACL plus what a production acl.yaml
+// has: several roles, local roles conferred by relations, one of them
+// declared against the relation's direction (as Atlas's toegewezen_aan was,
+// so every probe misses), and inheritance through containment.
+func realisticBudgetPolicy() *acl.Policy {
+	return &acl.Policy{
+		Roles: map[string]acl.RoleDef{
+			"editor": {
+				Read: []string{"*"}, Create: []string{"ticket"}, Update: []string{"ticket"}, Delete: []string{"ticket"},
+			},
+			"assignee": {Update: []string{"ticket"}},
+			"lead":     {Update: []string{"ticket", "epic"}, Delete: []string{"ticket"}},
+		},
+		Assignments: map[string]string{"T1": "editor"},
+		RoleRelations: map[string]acl.RoleRelationDef{
+			// ticket → person: the resolver probes member → row, so it never
+			// matches, yet costs a probe per member per row unprimed.
+			"assigned-to": {Confers: "assignee"},
+			"leads":       {Confers: "lead"},
+		},
+		InheritRolesThrough: []string{"in-epic"},
+	}
+}
+
+// useRealisticBudgetPolicy installs [realisticBudgetPolicy] on app, with P1
+// leading the first epic, and resets the counter.
+func useRealisticBudgetPolicy(t *testing.T, app *App, counting *storetest.Counting) *acl.Declarative {
+	t.Helper()
+	if _, err := counting.CreateRelation(context.Background(),
+		entity.RelationKey{From: "P1", Type: "leads", To: "EP1"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	d := mustNewACL(t, realisticBudgetPolicy(), app.store)
+	setTestACL(t, app, d)
+	counting.Reset()
+	return d
 }
 
 func assertBudget(t *testing.T, name string, small, large, pinned int, detail string) {
@@ -670,6 +730,13 @@ const (
 	// list page with a relation context: listPageBudget plus the same two
 	// reads as searchLinkableBudget.
 	listLinkableBudget = 10
+	// list pages with ?include= (TASK-550RD): listPageBudget plus, per
+	// include level, the page's batched edge reads and ONE head resolution.
+	// Before batching: 8 + 4×rows (all), 8 + 3×rows (named) and 8 + 6×rows
+	// (nested), i.e. 208, 158 and 308 at 50 rows.
+	listIncludeAllBudget    = 12
+	listIncludeNamedBudget  = 11
+	listIncludeNestedBudget = 14
 	// recursive view: entry, the fixpoint's relation queries, the collection
 	// load, and the BFS frontier source gate's ONE header scan per level
 	// walked (BUG-9Z20WH). Measured, not derived; the point of the pin is that
@@ -955,4 +1022,50 @@ func TestQueryBudget_MentionsViewIsSizeIndependent(t *testing.T) {
 		detail = counting.String()
 	}
 	assertBudget(t, "mentions view", counts[0], counts[1], mentionsViewBudget, detail)
+}
+
+// A list page with `?include=` — the SPA's relation-column shape, which the
+// Atlas task list polls with `include=*` (TASK-550RD). Each row's include
+// block used to be resolved on its own: edges, head resolution and a gate
+// pass per row, so a few hundred rows cost thousands of reads. The page is
+// now resolved in one batch per include level.
+func TestQueryBudget_ListIncludesAreSizeIndependent(t *testing.T) {
+	cases := []struct {
+		name    string
+		include string
+		pinned  int
+		// wantIncluded is an id the include block must carry, so the budget
+		// cannot pass on an empty block.
+		wantIncluded string
+	}{
+		{name: "all", include: "*", pinned: listIncludeAllBudget, wantIncluded: "F1"},
+		{name: "named", include: "implements,assigned-to", pinned: listIncludeNamedBudget, wantIncluded: "P1"},
+		{name: "nested", include: "assigned-to.member-of", pinned: listIncludeNestedBudget, wantIncluded: "T1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			small, large, detail := readsFor(t, func(t *testing.T, app *App, d *acl.Declarative, ctx context.Context) {
+				t.Helper()
+				_, rec := listEntitiesAs(ctx, t, app, d, "ticket", "tickets",
+					"per_page=100&include="+url.QueryEscape(tc.include))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("list: %d %s", rec.Code, rec.Body)
+				}
+				var body struct {
+					Data     []v1.Entity          `json:"data"`
+					Included map[string]v1.Entity `json:"included"`
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+					t.Fatalf("decode: %v", err)
+				}
+				if len(body.Data) < 10 {
+					t.Fatalf("list returned %d rows", len(body.Data))
+				}
+				if _, ok := body.Included[tc.wantIncluded]; !ok {
+					t.Fatalf("include block lacks %s, so this budget proves nothing: %v", tc.wantIncluded, body.Included)
+				}
+			})
+			assertBudget(t, "list include="+tc.include, small, large, tc.pinned, detail)
+		})
+	}
 }

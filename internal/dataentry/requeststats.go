@@ -1,11 +1,15 @@
 package dataentry
 
 import (
+	"context"
 	"fmt"
 	"iter"
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -58,10 +62,14 @@ import (
 // panic(http.ErrAbortHandler) or runtime.Goexit is also logged as a panic;
 // no handler does either today, and telling them apart would need a
 // recover that rewrites the stack net/http prints.
-func requestStats(next http.Handler, accessLog *slog.Logger, words func() routeWords) http.Handler {
+//
+// ceiling (--query-ceiling) is the number of statements above which a
+// request is logged as a warning; zero turns the check off. See
+// [warnQueryCeiling].
+func requestStats(next http.Handler, accessLog *slog.Logger, words func() routeWords, ceiling int64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		debug := slog.Default().Enabled(r.Context(), slog.LevelDebug)
-		if !debug && accessLog == nil {
+		if !debug && accessLog == nil && ceiling <= 0 {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -74,11 +82,18 @@ func requestStats(next http.Handler, accessLog *slog.Logger, words func() routeW
 		}
 		completed := false
 		defer func() {
+			overCeiling := overQueryCeiling(r, sw, stats, ceiling)
+			if !debug && accessLog == nil && !overCeiling {
+				return
+			}
 			var known routeWords
 			if words != nil {
 				known = words()
 			}
 			attrs := requestAttrs(r, sw, completed, time.Since(start), known)
+			if overCeiling {
+				warnQueryCeiling(ctx, stats, ceiling, attrs)
+			}
 			if debug {
 				slog.LogAttrs(ctx, slog.LevelDebug, "request", attrs...)
 			}
@@ -100,6 +115,53 @@ const (
 	maxLoggedPath   = 512
 	maxLoggedMethod = 32
 )
+
+// DefaultQueryCeiling is the --query-ceiling default. A list page with
+// includes and `_actions` costs about 20 statements on postgres since
+// BUG-E2W1LS; a request past 500 is almost certainly running a lookup per
+// row.
+const DefaultQueryCeiling = 500
+
+// maxLoggedStatement caps the statement text in a ceiling warning.
+const maxLoggedStatement = 300
+
+// overQueryCeiling reports whether r ran more than ceiling statements and
+// is a request the ceiling applies to: a GET or HEAD that is not an event
+// stream. A read is what the SPA polls, and what a per-row lookup makes
+// slow; a write such as an import or a Lua command may legitimately run
+// many statements once. An event stream's count covers the whole time a
+// tab kept it open.
+func overQueryCeiling(r *http.Request, sw *statsResponseWriter, stats *store.QueryStats, ceiling int64) bool {
+	if ceiling <= 0 || stats.Queries() <= ceiling {
+		return false
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	return !isSSEPath(r.URL.Path) && !strings.HasPrefix(sw.Header().Get("Content-Type"), "text/event-stream")
+}
+
+// warnQueryCeiling logs a request over its ceiling with the statement text
+// it repeated most. That pair names the per-row lookup to batch. The text is
+// parameterised SQL from rela's own code, never bound values, so it carries
+// no data.
+//
+// The e2e harness fails a test whose server logged this warning, which is
+// what turns an N+1 regression on a request shape no budget test covers into
+// a CI failure (BUG-E2W1LS).
+func warnQueryCeiling(ctx context.Context, stats *store.QueryStats, ceiling int64, attrs []slog.Attr) {
+	sql, n := stats.MostRepeated()
+	sql, _ = truncateUTF8(strings.Join(strings.Fields(sql), " "), maxLoggedStatement)
+	attrs = append(slices.Clip(attrs),
+		slog.Int64("ceiling", ceiling),
+		slog.String("top_statement", sql),
+		slog.Int64("top_statement_count", n),
+	)
+	slog.LogAttrs(ctx, slog.LevelWarn, queryCeilingMsg, attrs...)
+}
+
+// queryCeilingMsg is the message e2e/tests/fixtures.ts scans server logs for.
+const queryCeilingMsg = "request exceeded query ceiling"
 
 func requestAttrs(
 	r *http.Request, sw *statsResponseWriter, completed bool, wall time.Duration, words routeWords,
@@ -124,6 +186,9 @@ func requestAttrs(
 	)
 	if truncated {
 		attrs = append(attrs, slog.Bool("path_truncated", true))
+	}
+	if r.URL.RawQuery != "" {
+		attrs = append(attrs, slog.String("query", queryShape(r.URL.RawQuery, words, maxLoggedPath)))
 	}
 	if !completed {
 		attrs = append(attrs, slog.Bool("panic", true))
@@ -174,6 +239,9 @@ func buildRouteWords(s *Schema) routeWords {
 			}
 		}
 		for name := range s.Meta.Relations {
+			w[name] = true
+		}
+		for name := range s.Meta.Worlds {
 			w[name] = true
 		}
 	}
@@ -248,6 +316,120 @@ func routeShape(p string, words routeWords, maxLen int) (string, bool) {
 		}
 		p = rest
 	}
+}
+
+// queryKeyWords are the query parameter names rela's own handlers read.
+// Anything else is logged as "*".
+var queryKeyWords = map[string]bool{
+	"page": true, "per_page": true, "cursor": true, "sort": true, "fields": true, "include": true,
+	"include_content": true, "comment_counts": true, "world": true, "list_id": true,
+	"query_scope": true, "scope_page": true, "scope_tab": true, "anchor": true, "relation": true,
+	"direction": true, "q": true, "type": true, "types": true, "limit": true, "offset": true,
+	"view": true, "depth": true, "last_event_id": true, "format": true, "face": true,
+}
+
+// numericQueryKeys are the paging keys whose numeric values are logged. A
+// number under any other key may be a PIN, a phone number or an entity id.
+var numericQueryKeys = map[string]bool{
+	"page": true, "per_page": true, "limit": true, "offset": true, "depth": true, "scope_page": true,
+}
+
+// opaqueQueryKeys carry user data, never a config name: their values are
+// always masked, even one that happens to equal a route word.
+var opaqueQueryKeys = map[string]bool{"q": true, "anchor": true, "cursor": true, "last_event_id": true}
+
+// queryShape reduces a raw query string to its shape for the request log,
+// with the same allowlist rule as [routeShape]: so an operator can tell which
+// list, include and world a slow `/api/v1/taken` was (BUG-E2W1LS) without the
+// log holding search text or filter values, which are data. Keys are sorted.
+//
+// A key survives when rela reads it or it is a route word; `filter[p][op]`
+// keeps p when it is a route word and an operator of plain letters. A value
+// survives when it is "*", a number under a paging key ([numericQueryKeys]),
+// or (outside [opaqueQueryKeys] and filter values) a comma list whose dotted
+// parts are all route words, a leading "-" allowed for sort. Everything else
+// becomes "*".
+func queryShape(raw string, words routeWords, maxLen int) string {
+	parts := strings.Split(raw, "&")
+	shaped := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		k, v, hasValue := strings.Cut(part, "=")
+		key, err := url.QueryUnescape(k)
+		if err != nil {
+			key = "*"
+		}
+		val, err := url.QueryUnescape(v)
+		if err != nil {
+			val = "*"
+		}
+		sk, isFilter := queryKeyShape(key, words)
+		if !hasValue {
+			shaped = append(shaped, sk)
+			continue
+		}
+		sv := "*"
+		if !isFilter && !opaqueQueryKeys[key] {
+			sv = queryValueShape(val, numericQueryKeys[key], words)
+		}
+		shaped = append(shaped, sk+"="+sv)
+	}
+	slices.Sort(shaped)
+	out, _ := truncateUTF8(strings.Join(shaped, "&"), maxLen)
+	return out
+}
+
+func queryKeyShape(key string, words routeWords) (string, bool) {
+	if queryKeyWords[key] || words[key] {
+		return key, false
+	}
+	if !strings.HasPrefix(key, "filter[") {
+		return "*", false
+	}
+	fk, err := parseFilterKey(key)
+	if err != nil {
+		return "filter[*]", true
+	}
+	prop := "*"
+	if words[fk.property] {
+		prop = fk.property
+	}
+	op := "*"
+	if isLowerWord(fk.operator) {
+		op = fk.operator
+	}
+	return "filter[" + prop + "][" + op + "]", true
+}
+
+func queryValueShape(v string, numeric bool, words routeWords) string {
+	if v == "*" || v == "" {
+		return v
+	}
+	if _, err := strconv.Atoi(v); err == nil && numeric {
+		return v
+	}
+	for item := range strings.SplitSeq(v, ",") {
+		for seg := range strings.SplitSeq(strings.TrimPrefix(item, "-"), ".") {
+			if seg != "*" && !words[seg] {
+				return "*"
+			}
+		}
+	}
+	return v
+}
+
+func isLowerWord(s string) bool {
+	if s == "" || len(s) > 16 {
+		return false
+	}
+	for _, c := range s {
+		if (c < 'a' || c > 'z') && c != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // shapedPath is the request's route shape for an application-log warning

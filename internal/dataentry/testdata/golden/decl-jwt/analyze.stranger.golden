@@ -1,8 +1,8 @@
 request: GET /api/v1/_analyze
 identity: signed assertion for stranger@example.test
 status: 200
-reads: GetRelation=39 GraphQueryHeaders=1 ListEntities=3 ListEntityHeaders=8 ListRelations=2 MatchingFaces=5
-breadth: ListEntities=3/3 ListEntityHeaders=6/8 ListRelations=0/2 MatchingFaces=20/5
+reads: GraphQueryHeaders=1 ListEntities=3 ListEntityHeaders=8 ListRelations=9 MatchingFaces=5
+breadth: ListEntities=3/3 ListEntityHeaders=6/8 ListRelations=39/9 MatchingFaces=20/5
 bodies: GraphQuery=0/1 ListEntities=0/3 ListEntityHeaders=0/8
 versions: 
 body:

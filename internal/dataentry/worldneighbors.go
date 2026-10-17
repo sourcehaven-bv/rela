@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 
 	entityPkg "github.com/Sourcehaven-BV/rela/internal/entity"
@@ -501,10 +503,16 @@ func worldNeighborsForPage(
 }
 
 // includeCandidates collects the neighbor entities an `?include=` expression
-// names, resolved through the request's world.
+// names for a whole set of rows, resolved through the request's world.
 //
-// Returns the candidates (UNGATED — the caller gates them) and the nested
-// include expression to recurse with per candidate id.
+// Returns the candidates (UNGATED — the caller gates them) in row order, then
+// edge order, and the nested include expressions to recurse with.
+//
+// The rows are resolved as ONE batch (TASK-550RD): a list page with
+// `include=*` used to call this once per row, which cost an edge read, a head
+// resolution and a gate pass per row — thousands of queries for a few hundred
+// rows. A single entity is a batch of one, so the GET and the list share the
+// rule.
 //
 // Two collection paths, chosen by world, sharing one expression parser:
 //
@@ -520,17 +528,54 @@ func worldNeighborsForPage(
 // filtered one but not the other would break it again from the other side.
 func includeCandidates(
 	ctx context.Context, reader entityReader, wn *worldNeighbors,
-	e *entityPkg.Entity, includes string,
-) (candidates []*entityPkg.Entity, nestedFor map[string]string, err error) {
+	rows []*entityPkg.Entity, includes string,
+) (candidates []*entityPkg.Entity, nested []includeNest, err error) {
 	wanted, all := parseIncludeSpec(includes)
 	if wn == nil {
 		// Unwired deployment only — no content states exist, so the bare-id
 		// reader cannot merge faces. See [servedFaceEdges] for why this is a
-		// wiring-shaped fallback rather than a per-request branch.
-		candidates, nestedFor = defaultWorldCandidates(ctx, reader, e, wanted, all)
-		return candidates, nestedFor, nil
+		// wiring-shaped fallback rather than a per-request branch. It stays
+		// per row: production always wires the world seam.
+		var nests includeNests
+		for _, e := range rows {
+			c, nestedFor := defaultWorldCandidates(ctx, reader, e, wanted, all)
+			candidates = append(candidates, c...)
+			nests.addRow(nestedFor)
+		}
+		return candidates, nests.list, nil
 	}
-	return worldCandidates(ctx, wn, e, wanted, all)
+	return worldCandidates(ctx, wn, rows, wanted, all)
+}
+
+// includeNest is one nested include to resolve: the remaining expression
+// for the candidate with this id ("implements.requires" leaves "requires"
+// against each implements target).
+type includeNest struct {
+	id, expr string
+}
+
+// includeNests collects the distinct (id, expr) pairs of a batch. Within one
+// row the last relation naming a target wins, as the per-row loop did; across
+// rows each row's choice is kept, since each row used to recurse on its own.
+type includeNests struct {
+	list []includeNest
+	seen map[includeNest]struct{}
+}
+
+// addRow adds one row's nested expressions in a stable order.
+func (n *includeNests) addRow(nestedFor map[string]string) {
+	ids := slices.Sorted(maps.Keys(nestedFor))
+	for _, id := range ids {
+		k := includeNest{id: id, expr: nestedFor[id]}
+		if _, dup := n.seen[k]; dup {
+			continue
+		}
+		if n.seen == nil {
+			n.seen = make(map[includeNest]struct{})
+		}
+		n.seen[k] = struct{}{}
+		n.list = append(n.list, k)
+	}
 }
 
 // defaultWorldCandidates collects include peers through the ungated, BARE-ID
@@ -607,45 +652,100 @@ func defaultWorldCandidates(
 // both reach the same verdict from the same resolution, rather than one being
 // filtered and the other not (the RR-HJV8CP invariant, now spanning the world
 // filter as well as the ACL one).
+//
+// The rows share ONE batched edge read ([worldreader.RelationReader.NeighborsForPage])
+// and ONE head resolution over the union of their neighbors, so the cost does
+// not grow with the number of rows. Each row still sees exactly what
+// [worldNeighbors.worldScopedNeighbors] gave it alone: its own edges, its own
+// face for a self-edge, and the world's face for every other head.
 func worldCandidates(
-	ctx context.Context, wn *worldNeighbors, e *entityPkg.Entity,
+	ctx context.Context, wn *worldNeighbors, rows []*entityPkg.Entity,
 	wanted map[string]string, all bool,
-) (candidates []*entityPkg.Entity, nestedFor map[string]string, err error) {
-	nestedFor = make(map[string]string)
-	if wn == nil {
-		return nil, nestedFor, nil
+) (candidates []*entityPkg.Entity, nested []includeNest, err error) {
+	if wn == nil || len(rows) == 0 {
+		return nil, nil, nil
 	}
 	dir := store.DirectionOutgoing
 	if all {
 		dir = store.DirectionBoth
 	}
-	edges, heads, err := wn.worldScopedNeighbors(
-		ctx, resolvedFromStoreFace(ctx, e), dir)
-	if err != nil {
-		return nil, nil, err
+	resolved := make([]worldreader.Resolved, len(rows))
+	for i, e := range rows {
+		resolved[i] = resolvedFromStoreFace(ctx, e)
 	}
+	edgesByRow, err := wn.relations.NeighborsForPage(ctx, resolved, dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("world-scoped include neighbors: %w", err)
+	}
+	var heads map[string]*entityPkg.Entity
+	if headIDs := pageHeadIDs(rows, edgesByRow); len(headIDs) > 0 {
+		if heads, err = wn.resolveHeads(ctx, headIDs); err != nil {
+			return nil, nil, err
+		}
+	}
+	var nests includeNests
+	for i, e := range rows {
+		rowCands, nestedFor := wn.rowCandidates(e, edgesByRow[i], heads, wanted, all)
+		candidates = append(candidates, rowCands...)
+		nests.addRow(nestedFor)
+	}
+	return candidates, nests.list, nil
+}
+
+// pageHeadIDs returns the union of the rows' neighbor ids, in first-seen
+// order.
+func pageHeadIDs(rows []*entityPkg.Entity, edgesByRow [][]*entityPkg.Relation) []string {
+	var headIDs []string
+	seen := make(map[string]struct{})
+	for i, e := range rows {
+		for _, id := range headIDsOf(edgesByRow[i], e.ID) {
+			if _, dup := seen[id]; !dup {
+				seen[id] = struct{}{}
+				headIDs = append(headIDs, id)
+			}
+		}
+	}
+	return headIDs
+}
+
+// rowCandidates is one row's share of [worldCandidates]: its include
+// candidates, and the nested include expression of each candidate id.
+func (wn *worldNeighbors) rowCandidates(
+	e *entityPkg.Entity, edges []*entityPkg.Relation, heads map[string]*entityPkg.Entity,
+	wanted map[string]string, all bool,
+) (candidates []*entityPkg.Entity, nestedFor map[string]string) {
+	// The row's OWN face answers for its own id (a self-edge), as
+	// worldScopedNeighbors seeds it; every other id is the world's head.
+	headOf := func(id string) (*entityPkg.Entity, bool) {
+		if id == e.ID {
+			return e, true
+		}
+		h, ok := heads[id]
+		return h, ok
+	}
+	nestedFor = make(map[string]string)
 	for _, edge := range edges {
-		nested, want := wanted[edge.Type]
+		expr, want := wanted[edge.Type]
 		if !all && !want {
 			continue
 		}
-		head, resolved := heads[peerOf(edge, e.ID)]
-		if !resolved {
+		head, ok := headOf(peerOf(edge, e.ID))
+		if !ok {
 			// No face in this world — not a candidate. Same verdict
 			// worldEdgesForWire reaches for the relations map.
 			continue
 		}
 		// The face that owns a content-scoped edge must be the one served
 		// for its source, as in worldEdgesForWire (BUG-ISJHML).
-		if src, ok := heads[edge.From]; !ok || !wn.relations.Owns(edge, src.Face) {
+		if src, ok := headOf(edge.From); !ok || !wn.relations.Owns(edge, src.Face) {
 			continue
 		}
 		candidates = append(candidates, head)
-		if nested != "" {
-			nestedFor[head.ID] = nested
+		if expr != "" {
+			nestedFor[head.ID] = expr
 		}
 	}
-	return candidates, nestedFor, nil
+	return candidates, nestedFor
 }
 
 // peerOf returns the endpoint of edge that is not selfID, or "" when the edge
