@@ -185,19 +185,40 @@ func TestMetaAheadOfLog(t *testing.T) {
 	require.Equal(t, int64(10), got.Rev, "a reserved rev is never reused")
 }
 
-// A damaged anchor-mode record is an error, never an empty record: an empty
-// one would let a changed anchor through.
-func TestDamagedAnchorModes(t *testing.T) {
+// A damaged type record is an error, never an empty record: an empty one
+// would let a changed anchor or cardinality through.
+func TestDamagedTypeRecords(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	dir := filepath.Join(t.TempDir(), "channels")
 	s := newDiskStore(t, dir)
-	require.NoError(t, s.RecordAnchorModes(ctx, map[string]channels.AnchorMode{"room": channels.AnchorFace}))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, modesFile), []byte("room: [unclosed"), 0o600))
-	_, err := s.AnchorModes(ctx)
+	rec := channels.TypeRecord{Anchor: channels.AnchorFace, Cardinality: channels.CardinalityOne}
+	require.NoError(t, s.RecordTypes(ctx, map[string]channels.TypeRecord{"room": rec}))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, typesFile), []byte("room: [unclosed"), 0o600))
+	_, err := s.TypeRecords(ctx)
 	require.Error(t, err)
-	err = s.RecordAnchorModes(ctx, map[string]channels.AnchorMode{"room": channels.AnchorFamily})
+	rec.Anchor = channels.AnchorFamily
+	err = s.RecordTypes(ctx, map[string]channels.TypeRecord{"room": rec})
 	require.Error(t, err)
+}
+
+// An unchanged record writes nothing, so recording on every first write
+// costs no write.
+func TestRecordTypesSkipsUnchanged(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := filepath.Join(t.TempDir(), "channels")
+	s := newDiskStore(t, dir)
+	rec := map[string]channels.TypeRecord{
+		"room": {Anchor: channels.AnchorFace, Cardinality: channels.CardinalityOne},
+	}
+	require.NoError(t, s.RecordTypes(ctx, rec))
+	path := filepath.Join(dir, typesFile)
+	require.NoError(t, os.WriteFile(path, []byte("room: {anchor: face, cardinality: one}\n# kept\n"), 0o600))
+	require.NoError(t, s.RecordTypes(ctx, rec))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "# kept", "an unchanged record is not rewritten")
 }
 
 func TestDamagedRecordsAreSkipped(t *testing.T) {
@@ -253,7 +274,8 @@ func TestFaceTombstonePrunes(t *testing.T) {
 	faced := channels.Key{Anchor: channels.Anchor{ID: "TKT-1", Face: "draft"}, Type: "room"}
 	_, err := s.Append(ctx, faced, msg("one"))
 	require.NoError(t, err)
-	require.NoError(t, s.Tombstone(ctx, "TKT-1", "draft", time.Now()))
+	_, err = s.Tombstone(ctx, "TKT-1", "draft", time.Now())
+	require.NoError(t, err)
 	require.NoDirExists(t, filepath.Join(dir, enc("TKT-1")))
 }
 

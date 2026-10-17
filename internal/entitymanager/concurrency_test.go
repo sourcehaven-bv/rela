@@ -74,6 +74,9 @@ relations:
 type concBackend struct {
 	name string
 	open func(t *testing.T) store.Store
+	// guarded makes the delete fixtures wire a pass-through anchor guard
+	// (see deleteACLBackends).
+	guarded bool
 }
 
 var concBackends = []concBackend{
@@ -113,6 +116,7 @@ func concurrencyManager(t *testing.T, st store.Store) *entitymanager.Manager {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
 	return mgr
@@ -346,6 +350,7 @@ func TestConcurrency_PostAutomationRewriteKeepsInterleavedWrite(t *testing.T) {
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		Automations: engine,
 		Cascade:     runner,
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
 

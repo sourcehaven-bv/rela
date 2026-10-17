@@ -102,7 +102,9 @@ func (r *rekeyRacer) Rekey(ctx context.Context, oldID, newID string, at time.Tim
 	return nil
 }
 
-func (r *rekeyRacer) Tombstone(ctx context.Context, id string, face entity.Face, at time.Time) error {
+func (r *rekeyRacer) Tombstone(
+	ctx context.Context, id string, face entity.Face, at time.Time,
+) (channels.TombstoneHandle, error) {
 	r.tombs = append(r.tombs, entity.FormatStateRef(id, face))
 	return r.Store.Tombstone(ctx, id, face, at)
 }
@@ -114,7 +116,7 @@ func TestChannelAliases_RenameRaces(t *testing.T) {
 	racer := &rekeyRacer{Store: cs, t: t, conflicts: 1}
 	a.store = racer
 	require.NoError(t, a.EntityRenamed(ctx, "OLD-1", "NEW-1"))
-	require.Equal(t, []string{"NEW-1", "NEW-1"}, racer.tombs, "the target is cleared again before the retry")
+	require.Equal(t, []string{"NEW-1"}, racer.tombs, "the target is cleared before the retry")
 	require.Equal(t, []string{"NEW-1/room"}, entityKeys(t, cs, "NEW-1"))
 
 	// A channel created under the old id during the rename is detached.
@@ -122,7 +124,7 @@ func TestChannelAliases_RenameRaces(t *testing.T) {
 	racer = &rekeyRacer{Store: cs, t: t, straggle: true}
 	a.store = racer
 	require.NoError(t, a.EntityRenamed(ctx, "OLD-2", "NEW-2"))
-	require.Equal(t, []string{"NEW-2", "OLD-2"}, racer.tombs)
+	require.Equal(t, []string{"OLD-2"}, racer.tombs, "only the straggler is swept")
 	require.Empty(t, entityKeys(t, cs, "OLD-2"))
 	require.Equal(t, []string{"NEW-2/room"}, entityKeys(t, cs, "NEW-2"))
 
@@ -134,12 +136,17 @@ func TestChannelAliases_RenameRaces(t *testing.T) {
 
 type failingChannels struct{ channels.Store }
 
-func (failingChannels) Tombstone(context.Context, string, entity.Face, time.Time) error {
-	return errors.New("disk full")
+func (failingChannels) Tombstone(context.Context, string, entity.Face, time.Time) (channels.TombstoneHandle, error) {
+	return channels.TombstoneHandle{}, errDiskFull
 }
 
-// A face delete detaches only that face's channels; a whole-entity delete
-// leaves them for the delete policy.
+func (failingChannels) Rekey(context.Context, string, string, time.Time) error { return errDiskFull }
+
+var errDiskFull = errors.New("disk full")
+
+// A face delete detaches only that face's channels. A whole-entity delete
+// sweeps what the guard left, which is a channel a concurrent first post
+// created after the guard ran.
 func TestChannelAliases_Deletes(t *testing.T) {
 	ctx := context.Background()
 	a, cs, _ := newChannelAliases(t)
@@ -149,7 +156,12 @@ func TestChannelAliases_Deletes(t *testing.T) {
 	require.NoError(t, a.EntityFaceDeleted(ctx, "T-1", ""))
 	require.Equal(t, []string{"T-1/room"}, entityKeys(t, cs, "T-1"))
 	require.NoError(t, a.EntityDeleted(ctx, "T-1"))
-	require.Equal(t, []string{"T-1/room"}, entityKeys(t, cs, "T-1"))
+	require.Empty(t, entityKeys(t, cs, "T-1"))
+	require.NoError(t, a.EntityDeleted(ctx, "T-1"), "nothing left to sweep")
+
+	a.store = failingChannels{Store: cs}
+	appendTo(t, cs, chanKey("T-2", "", "room"))
+	require.Error(t, a.EntityDeleted(ctx, "T-2"))
 }
 
 // A new entity on a reused id starts without channels. A new face of an

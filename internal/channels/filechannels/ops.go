@@ -477,9 +477,84 @@ func (s *Store) Rekey(ctx context.Context, oldID, newID string, at time.Time) er
 	return nil
 }
 
-// Tombstone implements [channels.Store].
-func (s *Store) Tombstone(ctx context.Context, id string, face entity.Face, at time.Time) error {
-	if err := (channels.Anchor{ID: id, Face: face}).Validate(); err != nil {
+// Tombstone implements [channels.Store]. A face batch goes to
+// ~detached/<id>-<face>-<stamp>, a whole-entity batch to
+// ~detached/<id>-<stamp> with its audit trail at _audit/<id>-<stamp>.jsonl.
+func (s *Store) Tombstone(
+	ctx context.Context, id string, face entity.Face, at time.Time,
+) (channels.TombstoneHandle, error) {
+	a := channels.Anchor{ID: id, Face: face}
+	if err := a.Validate(); err != nil {
+		return channels.TombstoneHandle{}, err
+	}
+	unlock, err := s.lock(ctx)
+	if err != nil {
+		return channels.TombstoneHandle{}, err
+	}
+	defer unlock()
+	h := channels.NewTombstoneHandle(a, channels.TombstoneStamp(at))
+	rec := channels.AuditRecord{At: channels.NormTime(at), Op: channels.AuditTombstone, Face: face}
+
+	if face != "" {
+		ok, existsErr := s.exists(faceDir(a))
+		if existsErr != nil || !ok {
+			return channels.TombstoneHandle{}, existsErr
+		}
+		if moveErr := s.move(faceDir(a), detachedKey(h)); moveErr != nil {
+			return channels.TombstoneHandle{}, fmt.Errorf("filechannels: tombstone %s@%s: %w", id, face, moveErr)
+		}
+		s.pruneEmpty(channels.Key{Anchor: a, Type: none})
+		return h, s.appendAudit(id, rec)
+	}
+
+	moved, err := s.exists(enc(id))
+	if err != nil {
+		return channels.TombstoneHandle{}, err
+	}
+	if moved {
+		if err = s.move(enc(id), detachedKey(h)); err != nil {
+			return channels.TombstoneHandle{}, fmt.Errorf("filechannels: tombstone %s: %w", id, err)
+		}
+	}
+	hasAudit, err := s.exists(auditKey(id))
+	if err != nil {
+		return channels.TombstoneHandle{}, err
+	}
+	if !hasAudit {
+		if !moved {
+			return channels.TombstoneHandle{}, nil
+		}
+		return h, nil
+	}
+	if err := s.appendAudit(id, rec); err != nil {
+		return h, err
+	}
+	if err := s.move(auditKey(id), detachedAuditKey(h)); err != nil {
+		return h, fmt.Errorf("filechannels: tombstone audit of %s: %w", id, err)
+	}
+	return h, nil
+}
+
+// detachedKey is where the batch h was filed.
+func detachedKey(h channels.TombstoneHandle) string {
+	a := h.Anchor()
+	if a.Face != "" {
+		return detachedDir + "/" + enc(a.ID) + "-" + faceSeg(a.Face) + "-" + h.Stamp()
+	}
+	return detachedDir + "/" + enc(a.ID) + "-" + h.Stamp()
+}
+
+// detachedAuditKey is where a whole-entity batch filed its audit trail.
+func detachedAuditKey(h channels.TombstoneHandle) string {
+	return auditDir + "/" + enc(h.Anchor().ID) + "-" + h.Stamp() + ".jsonl"
+}
+
+// Untombstone implements [channels.Store].
+func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at time.Time) error {
+	if h.IsZero() {
+		return nil
+	}
+	if err := h.Validate(); err != nil {
 		return err
 	}
 	unlock, err := s.lock(ctx)
@@ -487,43 +562,83 @@ func (s *Store) Tombstone(ctx context.Context, id string, face entity.Face, at t
 		return err
 	}
 	defer unlock()
-	stamp := channels.TombstoneStamp(at)
-	rec := channels.AuditRecord{At: channels.NormTime(at), Op: channels.AuditTombstone, Face: face}
-
-	if face != "" {
-		dir := faceDir(channels.Anchor{ID: id, Face: face})
-		ok, existsErr := s.exists(dir)
-		if existsErr != nil || !ok {
-			return existsErr
-		}
-		if moveErr := s.move(dir, detachedDir+"/"+enc(id)+"-"+faceSeg(face)+"-"+stamp); moveErr != nil {
-			return fmt.Errorf("filechannels: tombstone %s@%s: %w", id, face, moveErr)
-		}
-		s.pruneEmpty(channels.Key{Anchor: channels.Anchor{ID: id, Face: face}, Type: none})
-		return s.appendAudit(id, rec)
+	a := h.Anchor()
+	hasDir, err := s.exists(detachedKey(h))
+	if err != nil {
+		return fmt.Errorf("filechannels: untombstone %s: %w", h, err)
 	}
-
-	ok, err := s.exists(enc(id))
+	var tombAudit []byte
+	if a.Face == "" {
+		if tombAudit, err = s.readFile(detachedAuditKey(h)); err != nil {
+			return fmt.Errorf("filechannels: untombstone %s: %w", h, err)
+		}
+	}
+	if !hasDir && tombAudit == nil {
+		return fmt.Errorf("%w: tombstone %s", channels.ErrNotFound, h)
+	}
+	occupied, err := s.occupied(a)
 	if err != nil {
 		return err
 	}
-	if ok {
-		if err = s.move(enc(id), detachedDir+"/"+enc(id)+"-"+stamp); err != nil {
-			return fmt.Errorf("filechannels: tombstone %s: %w", id, err)
+	if occupied {
+		return &channels.OccupiedError{Anchor: a}
+	}
+	if hasDir {
+		live := enc(a.ID)
+		if a.Face != "" {
+			live = faceDir(a)
+		}
+		// A directory left with no channel in it would make the rename
+		// merge into it on some filesystems; it holds nothing to keep.
+		if err := s.removeAll(live); err != nil {
+			return fmt.Errorf("filechannels: untombstone %s: %w", h, err)
+		}
+		if err := s.move(detachedKey(h), live); err != nil {
+			return fmt.Errorf("filechannels: untombstone %s: %w", h, err)
 		}
 	}
-	hasAudit, err := s.exists(auditKey(id))
-	if err != nil {
-		return err
-	}
-	if !hasAudit {
+	return s.restoreAudit(h, tombAudit, at)
+}
+
+// occupied reports whether a live channel sits on a: any channel of the id
+// for an empty face, any channel of the face otherwise.
+func (s *Store) occupied(a channels.Anchor) (bool, error) {
+	found := false
+	visit := func(channels.Key, *meta) error {
+		found = true
 		return nil
 	}
-	if err := s.appendAudit(id, rec); err != nil {
+	var err error
+	if a.Face == "" {
+		err = s.visitEntity(a.ID, visit)
+	} else {
+		err = s.visitFace(a, "", visit)
+	}
+	return found, err
+}
+
+// restoreAudit puts a whole-entity batch's filed audit trail back in front
+// of whatever the live trail recorded since, and appends the restore.
+func (s *Store) restoreAudit(h channels.TombstoneHandle, tombAudit []byte, at time.Time) error {
+	id := h.Anchor().ID
+	rec := channels.AuditRecord{At: channels.NormTime(at), Op: channels.AuditUntombstone, Face: h.Anchor().Face}
+	if tombAudit == nil {
+		return s.appendAudit(id, rec)
+	}
+	live, err := s.readFile(auditKey(id))
+	if err != nil {
+		return fmt.Errorf("filechannels: untombstone audit of %s: %w", id, err)
+	}
+	b, err := json.Marshal(rec)
+	if err != nil { // coverage-ignore: invariant: plain data
 		return err
 	}
-	if err := s.move(auditKey(id), auditDir+"/"+enc(id)+"-"+stamp+".jsonl"); err != nil {
-		return fmt.Errorf("filechannels: tombstone audit of %s: %w", id, err)
+	merged := append(append(complete(tombAudit), complete(live)...), append(b, '\n')...)
+	if err := s.rfs.WriteFile(auditKey(id), merged, filePerm); err != nil {
+		return fmt.Errorf("filechannels: untombstone audit of %s: %w", id, err)
+	}
+	if err := s.rfs.Remove(detachedAuditKey(h)); err != nil && !notExist(err) {
+		return fmt.Errorf("filechannels: untombstone audit of %s: %w", id, err)
 	}
 	return nil
 }
@@ -810,19 +925,19 @@ func (s *Store) Keys(_ context.Context) ([]channels.Key, error) {
 	return out, err
 }
 
-// AnchorModes implements [channels.Store].
-func (s *Store) AnchorModes(ctx context.Context) (map[string]channels.AnchorMode, error) {
+// TypeRecords implements [channels.Store].
+func (s *Store) TypeRecords(ctx context.Context) (map[string]channels.TypeRecord, error) {
 	unlock, err := s.lock(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	return s.readModes()
+	return s.readTypes()
 }
 
-// RecordAnchorModes implements [channels.Store].
-func (s *Store) RecordAnchorModes(ctx context.Context, modes map[string]channels.AnchorMode) error {
-	if err := channels.PrepareAnchorModes(modes); err != nil {
+// RecordTypes implements [channels.Store].
+func (s *Store) RecordTypes(ctx context.Context, records map[string]channels.TypeRecord) error {
+	if err := channels.PrepareTypeRecords(records); err != nil {
 		return err
 	}
 	unlock, err := s.lock(ctx)
@@ -830,37 +945,41 @@ func (s *Store) RecordAnchorModes(ctx context.Context, modes map[string]channels
 		return err
 	}
 	defer unlock()
-	cur, err := s.readModes()
+	cur, err := s.readTypes()
 	if err != nil {
 		return err
 	}
-	maps.Copy(cur, modes)
-	data, err := yaml.Marshal(cur)
-	if err != nil { // coverage-ignore: a map of strings always encodes
-		return fmt.Errorf("filechannels: encode anchor modes: %w", err)
+	changed := channels.ChangedTypeRecords(cur, records)
+	if len(changed) == 0 {
+		return nil
 	}
-	err = s.rfs.WriteFile(modesFile, data, filePerm)
+	maps.Copy(cur, changed)
+	data, err := yaml.Marshal(cur)
+	if err != nil { // coverage-ignore: a map of plain structs always encodes
+		return fmt.Errorf("filechannels: encode type records: %w", err)
+	}
+	err = s.rfs.WriteFile(typesFile, data, filePerm)
 	if err != nil {
-		return fmt.Errorf("filechannels: write anchor modes: %w", err)
+		return fmt.Errorf("filechannels: write type records: %w", err)
 	}
 	return nil
 }
 
-// readModes reads the recorded anchor modes. A missing file is an empty
-// record; a damaged one is an error, because guessing would let a changed
-// anchor through.
-func (s *Store) readModes() (map[string]channels.AnchorMode, error) {
-	out := map[string]channels.AnchorMode{}
-	data, err := s.readFile(modesFile)
+// readTypes reads the type records. A missing file is an empty record; a
+// damaged one is an error, because guessing would let a changed anchor or
+// cardinality through.
+func (s *Store) readTypes() (map[string]channels.TypeRecord, error) {
+	out := map[string]channels.TypeRecord{}
+	data, err := s.readFile(typesFile)
 	if err != nil {
-		return nil, fmt.Errorf("filechannels: read anchor modes: %w", err)
+		return nil, fmt.Errorf("filechannels: read type records: %w", err)
 	}
 	err = yaml.Unmarshal(data, &out)
 	if err != nil {
-		return nil, fmt.Errorf("filechannels: read anchor modes: %w", err)
+		return nil, fmt.Errorf("filechannels: read type records: %w", err)
 	}
 	if out == nil {
-		out = map[string]channels.AnchorMode{}
+		out = map[string]channels.TypeRecord{}
 	}
 	return out, nil
 }

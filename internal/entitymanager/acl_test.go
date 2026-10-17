@@ -32,6 +32,7 @@ func newManagerWithACL(
 		ACL:         aclImpl,
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -53,6 +54,7 @@ func seedEntity(t *testing.T, store *countingStore, entityType, title string) {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("seedEntity: New: %v", err)
@@ -75,6 +77,7 @@ func seedRelation(t *testing.T, store *countingStore, from, relType, to string) 
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("seedRelation: New: %v", err)
@@ -386,6 +389,7 @@ assignments:
 		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     store, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("seed Manager.New: %v", err)
@@ -439,6 +443,7 @@ assignments:
 		CopyVisibility: allowAllCopyVisibility(t, store),
 		Store:          store, Meta: meta, Templater: nopTemplater{},
 		Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -555,6 +560,7 @@ assignments:
 		FieldGate: entitymanager.AllowAllFieldGate{},
 		Store:     store, Meta: meta, Templater: nopTemplater{},
 		Audit: audit.Nop{}, ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("seed Manager.New: %v", err)
@@ -595,6 +601,7 @@ assignments:
 		CopyVisibility: allowAllCopyVisibility(t, store),
 		Store:          store, Meta: meta, Templater: nopTemplater{},
 		Audit: sink, ACL: declarative, Transitions: statemachine.EmptySet(),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

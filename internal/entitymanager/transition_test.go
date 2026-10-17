@@ -69,6 +69,7 @@ func newTransitionManager(t *testing.T, guard statemachine.Guard) *entitymanager
 		Transitions:     machines,
 		FieldGate:       entitymanager.AllowAllFieldGate{},
 		TransitionGuard: guard,
+		AnchorGuard:     entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -185,6 +186,7 @@ func TestTransition_IllegalEntry_DoesNotPersist(t *testing.T) {
 		Transitions:     machines,
 		FieldGate:       entitymanager.AllowAllFieldGate{},
 		TransitionGuard: allowAllGuard{},
+		AnchorGuard:     entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

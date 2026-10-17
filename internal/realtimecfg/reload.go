@@ -5,14 +5,16 @@ import (
 	"sort"
 )
 
-// CheckReload refuses a reload that would strand stored channels. Today
-// that is one change: the anchor of an existing channel type, because
-// channels are keyed by family or by face and a change would orphan every
-// stored channel of the type. Adding or removing a channel type is allowed.
+// CheckReload refuses a reload that would strand stored channels: a change
+// of the anchor or the cardinality of an existing channel type. Channels
+// are keyed by family or by face, and named or not, so either change would
+// orphan every stored channel of the type. Adding or removing a channel
+// type is allowed.
 //
 // It compares two configurations only. A restart does not get around the
-// rule: the channel store records each channel type's anchor, and
-// [AnchorMismatches] holds a booting config against that record.
+// rule: the channel store records each channel type's anchor and
+// cardinality when its first channel is written, and boot holds the config
+// against that record through [ShapeMismatchError].
 //
 // Nil: prev and next are accepted; a nil value is a project without
 // realtime.yaml.
@@ -20,65 +22,85 @@ func CheckReload(prev, next *Compiled) error {
 	if prev == nil || next == nil {
 		return nil
 	}
-	stored := make(map[string]Anchor, len(prev.channelTypes))
+	stored := make(map[string]TypeShape, len(prev.channelTypes))
 	for name, ct := range prev.channelTypes {
-		stored[name] = ct.Anchor
+		stored[name] = TypeShape{Anchor: ct.Anchor, Cardinality: ct.Cardinality}
 	}
-	return AnchorMismatchError(AnchorMismatches(next, stored))
+	return ShapeMismatchError(ShapeMismatches(next, stored))
 }
 
-// AnchorMismatch is a channel type whose configured anchor differs from the
-// anchor its stored channels were keyed by.
-type AnchorMismatch struct {
+// TypeShape is the part of a channel type that decides how its stored
+// channels are keyed: the anchor and the cardinality.
+type TypeShape struct {
+	Anchor      Anchor
+	Cardinality Cardinality
+}
+
+// ShapeMismatch is a channel type whose configured shape differs from the
+// shape its stored channels were keyed by.
+type ShapeMismatch struct {
 	ChannelType string
-	Stored      Anchor
-	Configured  Anchor
+	Stored      TypeShape
+	Configured  TypeShape
 }
 
-// Problem renders the mismatch as a load problem on the anchor key.
-func (m AnchorMismatch) Problem() Problem {
-	return Problem{
-		Key: "channel_types." + m.ChannelType + ".anchor",
-		Reason: fmt.Sprintf("cannot change from %s to %s: stored channels of this type are keyed by "+
-			"the %s anchor, and migrating them to another anchor is not supported yet",
-			m.Stored, m.Configured, m.Stored),
+// Problems renders the mismatch as one load problem per changed key.
+func (m ShapeMismatch) Problems() []Problem {
+	var out []Problem
+	if m.Stored.Anchor != m.Configured.Anchor {
+		out = append(out, Problem{
+			Key: "channel_types." + m.ChannelType + ".anchor",
+			Reason: fmt.Sprintf("cannot change from %s to %s: stored channels of this type are keyed by "+
+				"the %s anchor, and migrating them to another anchor is not supported yet",
+				m.Stored.Anchor, m.Configured.Anchor, m.Stored.Anchor),
+		})
 	}
+	if m.Stored.Cardinality != m.Configured.Cardinality {
+		out = append(out, Problem{
+			Key: "channel_types." + m.ChannelType + ".cardinality",
+			Reason: fmt.Sprintf("cannot change from %s to %s: stored channels of this type were written "+
+				"with cardinality %s, and migrating them to another cardinality is not supported yet",
+				m.Stored.Cardinality, m.Configured.Cardinality, m.Stored.Cardinality),
+		})
+	}
+	return out
 }
 
-// AnchorMismatches compares c against stored, the anchor each channel type
-// had when its channels were written (channel type name to anchor), and
-// returns every channel type whose anchor changed, sorted by name. A stored
-// type that c no longer declares is not a mismatch; adding it back is
-// checked against the same record.
-//
-// The boot path calls it with the store's record and refuses to start on
-// any mismatch.
+// ShapeMismatches compares c against stored, the shape each channel type
+// had when its channels were written (channel type name to shape), and
+// returns every channel type whose anchor or cardinality changed, sorted by
+// name. A stored type that c no longer declares is not a mismatch; adding
+// it back is checked against the same record.
 //
 // Nil: c and stored are accepted and yield no mismatches.
-func AnchorMismatches(c *Compiled, stored map[string]Anchor) []AnchorMismatch {
+func ShapeMismatches(c *Compiled, stored map[string]TypeShape) []ShapeMismatch {
 	if c == nil {
 		return nil
 	}
-	var out []AnchorMismatch
+	var out []ShapeMismatch
 	for name, old := range stored {
-		cur, ok := c.channelTypes[name]
-		if ok && cur.Anchor != old {
-			out = append(out, AnchorMismatch{ChannelType: name, Stored: old, Configured: cur.Anchor})
+		ct, ok := c.channelTypes[name]
+		if !ok {
+			continue
+		}
+		cur := TypeShape{Anchor: ct.Anchor, Cardinality: ct.Cardinality}
+		if cur != old {
+			out = append(out, ShapeMismatch{ChannelType: name, Stored: old, Configured: cur})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ChannelType < out[j].ChannelType })
 	return out
 }
 
-// AnchorMismatchError returns an [*Error] listing ms, or nil when ms is
-// empty.
-func AnchorMismatchError(ms []AnchorMismatch) error {
-	if len(ms) == 0 {
-		return nil
+// ShapeMismatchError returns an [*Error] listing the problems of ms, or nil
+// when ms is empty.
+func ShapeMismatchError(ms []ShapeMismatch) error {
+	var problems []Problem
+	for _, m := range ms {
+		problems = append(problems, m.Problems()...)
 	}
-	problems := make([]Problem, len(ms))
-	for i, m := range ms {
-		problems[i] = m.Problem()
+	if len(problems) == 0 {
+		return nil
 	}
 	return &Error{Problems: problems}
 }

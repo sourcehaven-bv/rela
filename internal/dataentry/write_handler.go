@@ -1110,6 +1110,25 @@ func (h *writeHandler) handleV1DeleteEntity(w http.ResponseWriter, r *http.Reque
 		if writeForbiddenIfACLDenied(w, err) {
 			return
 		}
+		// A channel type with `on_entity_delete: block` refused it. The type
+		// is config, and the caller may delete the entity, so naming it is
+		// the accepted one-bit signal (docs/acl-security.md).
+		var blocked *entitymanager.AnchorBlockedError
+		if errors.As(err, &blocked) {
+			writeV1Error(w, r, http.StatusConflict, "channel_blocks_delete",
+				"A channel attached to this entity blocks its deletion",
+				"channel type "+blocked.ChannelType+" has on_entity_delete: block")
+			return
+		}
+		// The entity's faces or owned entities changed while the channel
+		// guard ran. Nothing was deleted, and the same request can succeed.
+		// The manager authorizes before it reports this, so a caller who
+		// would be refused never sees it.
+		if errors.Is(err, entitymanager.ErrConcurrentChange) {
+			writeV1Error(w, r, http.StatusConflict, "conflict", "Entity is being modified concurrently",
+				"retry the delete")
+			return
+		}
 		// Another request deleted it between the read above and this write.
 		if errors.Is(err, entitymanager.ErrEntityNotFound) {
 			writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")

@@ -47,7 +47,7 @@ func (f faceEdgeFixture) inboundCovers(t *testing.T) int {
 // a family-delete cascade: a principal who may delete the face but not the
 // inbound edge is refused, and nothing is written.
 func TestDeleteEntityFace_LastFaceAuthorizesInboundEdges(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := lastFaceFixture(t, b)
 
@@ -70,7 +70,7 @@ func TestDeleteEntityFace_LastFaceAuthorizesInboundEdges(t *testing.T) {
 }
 
 func TestDeleteEntityFace_LastFaceRemovesInboundEdges(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := lastFaceFixture(t, b)
 
@@ -100,7 +100,7 @@ func TestDeleteEntityFace_LastFaceRemovesInboundEdges(t *testing.T) {
 // A face that is not the last leaves inbound edges alone: they name the
 // entity, which survives.
 func TestDeleteEntityFace_NotLastKeepsInboundEdges(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
 			if _, err := f.st.CreateRelation(context.Background(), entity.RelationKey{From: "CTL-2", Type: "covers", To: "POL-1"}, nil); err != nil {
@@ -121,7 +121,7 @@ func TestDeleteEntityFace_NotLastKeepsInboundEdges(t *testing.T) {
 // Without cascade, the last face with edges is refused like a family delete,
 // and nothing is written.
 func TestDeleteEntityFace_LastFaceNeedsCascade(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := lastFaceFixture(t, b)
 			_, err := f.mgr.DeleteEntityFace(asUser("admin"), "POL-1", "draft", false)
@@ -140,7 +140,7 @@ func TestDeleteEntityFace_LastFaceNeedsCascade(t *testing.T) {
 
 // A face that is not the last takes its own edges without cascade.
 func TestDeleteEntityFace_NotLastIgnoresCascade(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFaceEdgeFixture(t, b)
 			if _, err := f.mgr.DeleteEntityFace(asUser("drafter"), "POL-1", "draft", false); err != nil {
@@ -158,7 +158,7 @@ func TestDeleteEntityFace_NotLastIgnoresCascade(t *testing.T) {
 // keeps the entity, so the hidden face, its edge and the inbound edge
 // survive.
 func TestDeleteEntityFace_HiddenSiblingIsNoOracle(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		for _, tc := range []struct {
 			name    string
 			user    string

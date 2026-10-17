@@ -57,6 +57,7 @@ func newOwningManager(t *testing.T) (*entitymanager.Manager, store.Store) {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -231,6 +232,15 @@ type ownedDeleteFixture struct {
 // newOwnedDeleteFixture seeds owner --part--> c1, c2 and c1 --links--> far.
 func newOwnedDeleteFixture(t *testing.T, b concBackend, deny ...string) ownedDeleteFixture {
 	t.Helper()
+	return newOwnedDeleteFixtureWith(t, b, anchorGuardOf(b), deny...)
+}
+
+// newOwnedDeleteFixtureWith is newOwnedDeleteFixture with guard as the
+// anchor guard of the manager under test.
+func newOwnedDeleteFixtureWith(
+	t *testing.T, b concBackend, guard entitymanager.AnchorGuard, deny ...string,
+) ownedDeleteFixture {
+	t.Helper()
 	st := b.open(t)
 	meta, err := metamodel.Parse([]byte(ownedDeleteMetamodel))
 	if err != nil {
@@ -240,6 +250,7 @@ func newOwnedDeleteFixture(t *testing.T, b concBackend, deny ...string) ownedDel
 	seed, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -266,6 +277,7 @@ func newOwnedDeleteFixture(t *testing.T, b concBackend, deny ...string) ownedDel
 	f.mgr, err = entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: f.aud,
 		ACL: denyIDsACL{ids: ids}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AnchorGuard: guard,
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -296,7 +308,7 @@ func (f ownedDeleteFixture) hasEdge(t *testing.T, from, relType, to string) bool
 // the owner's delete (TKT-QO14GB).
 func TestDeleteEntity_TakesOwnedEntities(t *testing.T) {
 	t.Parallel()
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			t.Parallel()
 			f := newOwnedDeleteFixture(t, b)
@@ -342,14 +354,19 @@ func TestDeleteEntity_TakesOwnedEntities(t *testing.T) {
 // still refuses an owner, as it refuses any entity with relations.
 func TestDeleteEntity_OwnedWithoutCascade(t *testing.T) {
 	t.Parallel()
-	f := newOwnedDeleteFixture(t, concBackends[0])
-	if _, err := f.mgr.DeleteEntity(aliceCtx(), f.owner, false); !errors.Is(err, entitymanager.ErrHasRelations) {
-		t.Fatalf("err = %v, want ErrHasRelations", err)
-	}
-	for _, id := range []string{f.owner, f.c1, f.c2} {
-		if !f.exists(t, id) {
-			t.Errorf("%s was deleted", id)
-		}
+	for _, b := range []concBackend{concBackends[0], withGuard(concBackends[0])} {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+			f := newOwnedDeleteFixture(t, b)
+			if _, err := f.mgr.DeleteEntity(aliceCtx(), f.owner, false); !errors.Is(err, entitymanager.ErrHasRelations) {
+				t.Fatalf("err = %v, want ErrHasRelations", err)
+			}
+			for _, id := range []string{f.owner, f.c1, f.c2} {
+				if !f.exists(t, id) {
+					t.Errorf("%s was deleted", id)
+				}
+			}
+		})
 	}
 }
 
@@ -358,7 +375,7 @@ func TestDeleteEntity_OwnedWithoutCascade(t *testing.T) {
 // that the refusal does not name that entity.
 func TestDeleteEntity_OwnedDenialDeletesNothing(t *testing.T) {
 	t.Parallel()
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			t.Parallel()
 			f := newOwnedDeleteFixture(t, b, "c2")
@@ -398,7 +415,7 @@ func TestDeleteEntity_OwnedEntityAlone(t *testing.T) {
 // the owner owns and a restore brings all of it back, owning edges included.
 func TestSoftDelete_OwnedEntitiesRoundTrip(t *testing.T) {
 	t.Parallel()
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			t.Parallel()
 			f := newOwnedDeleteFixture(t, b)
@@ -434,18 +451,23 @@ func TestSoftDelete_OwnedEntitiesRoundTrip(t *testing.T) {
 // TestSoftDelete_OwnedDenialMarksNothing mirrors the hard-delete denial.
 func TestSoftDelete_OwnedDenialMarksNothing(t *testing.T) {
 	t.Parallel()
-	f := newOwnedDeleteFixture(t, concBackends[0], "c1")
-	_, err := entitymanager.SoftDeleteEntity(aliceCtx(), f.mgr, f.owner)
-	if !errors.Is(err, acl.ErrForbidden) {
-		t.Fatalf("err = %v, want a forbidden error", err)
-	}
-	if strings.Contains(err.Error(), f.c1) {
-		t.Errorf("refusal names the owned entity: %v", err)
-	}
-	for _, id := range []string{f.owner, f.c1, f.c2} {
-		if !f.exists(t, id) {
-			t.Errorf("%s was hidden despite the refusal", id)
-		}
+	for _, b := range []concBackend{concBackends[0], withGuard(concBackends[0])} {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+			f := newOwnedDeleteFixture(t, b, "c1")
+			_, err := entitymanager.SoftDeleteEntity(aliceCtx(), f.mgr, f.owner)
+			if !errors.Is(err, acl.ErrForbidden) {
+				t.Fatalf("err = %v, want a forbidden error", err)
+			}
+			if strings.Contains(err.Error(), f.c1) {
+				t.Errorf("refusal names the owned entity: %v", err)
+			}
+			for _, id := range []string{f.owner, f.c1, f.c2} {
+				if !f.exists(t, id) {
+					t.Errorf("%s was hidden despite the refusal", id)
+				}
+			}
+		})
 	}
 }
 
@@ -472,6 +494,7 @@ func TestAutomationCreateRelation_OwningRules(t *testing.T) {
 		Store: st, Meta: m, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
 		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
 		Automations: engine, Cascade: runner,
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -576,6 +599,7 @@ func TestCreateRelation_TolerateTypeMismatchKeepsOwningRules(t *testing.T) {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

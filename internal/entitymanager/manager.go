@@ -221,6 +221,14 @@ var _ autocascade.Mutator = (*Manager)(nil)
 // Deps is the constructor input for [New]. Using a struct keeps the
 // constructor signature stable as new collaborators land (audit,
 // principal, policy in subsequent tickets).
+//
+// 20 -> 21 (TKT-ZU7P13): [Deps.AnchorGuard], required so no delete or rename
+// can skip the channel guard. Grouping the optional write hooks
+// (VersionRecorder, AliasRewriter, RelationVersionRecorder) into a sub-struct
+// would bring it back under the line; that touches every wiring site and is
+// a ratchet target under TKT-N0IKN9.
+//
+//plimsoll:max-fields=21
 type Deps struct {
 	// Store is the authoritative persistence layer. Required.
 	Store store.Store
@@ -373,6 +381,12 @@ type Deps struct {
 	// without the lock a copy racing a delete could leave a reference to
 	// deleted bytes.
 	AttachmentLocker AttachmentLocker
+
+	// AnchorGuard applies the realtime channels' `on_entity_delete` rules
+	// before a delete or rename writes (see [AnchorGuard]). Required: pass
+	// [NopAnchorGuard] to opt out explicitly, as a build or test without
+	// channels does.
+	AnchorGuard AnchorGuard
 }
 
 // FieldWriteGate answers whether the ctx principal may write the named
@@ -566,6 +580,10 @@ func New(d Deps) (*Manager, error) {
 	if d.FieldGate == nil {
 		return nil, errors.New(
 			"entitymanager: New: FieldGate is required (use entitymanager.AllowAllFieldGate{} to opt out)")
+	}
+	if d.AnchorGuard == nil {
+		return nil, errors.New(
+			"entitymanager: New: AnchorGuard is required (use entitymanager.NopAnchorGuard{} to opt out)")
 	}
 	if (d.Automations == nil) != (d.Cascade == nil) {
 		return nil, errors.New(
@@ -1660,8 +1678,12 @@ type cascadeCapture struct {
 // all happen in the caller, after the transaction closes — see the Tx comment
 // at the call site for why that separation is load-bearing rather than
 // stylistic.
+//
+// guardedOwned is the set of owned ids the anchor guard checked, or nil when
+// no guard ran.
 func (m *Manager) deleteEntityInTx(
 	ctx context.Context, tx store.Store, id string, cascade bool, authorized familyAuthorization,
+	guardedOwned map[string]bool,
 ) (*store.DeleteResult, *cascadeCapture, error) {
 	// Re-read the family under the transaction and authorize any face that
 	// appeared since the caller's check: the store deletes the family it
@@ -1711,6 +1733,9 @@ func (m *Manager) deleteEntityInTx(
 		owned, oErr := prepareOwnedDeletes(ctx, m, tx, id, outgoing)
 		if oErr != nil {
 			return nil, nil, oErr
+		}
+		if gErr := requireGuardedOwned(guardedOwned, owned); gErr != nil {
+			return nil, nil, gErr
 		}
 		capture.owned = owned
 		if dErr := deleteOwned(ctx, m, tx, id, owned); dErr != nil {
@@ -1777,6 +1802,12 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	if aclErr := m.authorizeFamily(ctx, acl.OpDelete, id, family, authorized); aclErr != nil {
 		return nil, aclErr
 	}
+	// The channel guard runs after every check the Tx makes, so a refusal
+	// detaches nothing, and before the Tx, so a block writes nothing.
+	undo, guardedOwned, gErr := guardFamilyDelete(ctx, m, id, cascade)
+	if gErr != nil {
+		return nil, gErr
+	}
 
 	// Everything from here to the store delete runs inside ONE Tx.
 	//
@@ -1811,10 +1842,11 @@ func (m *Manager) DeleteEntity(ctx context.Context, id string, cascade bool) (*e
 	txErr := m.deps.Store.Tx(ctx, func(tx store.Store) error {
 		txCtx := store.ContextInTx(ctx)
 		var dErr error
-		res, captured, dErr = m.deleteEntityInTx(txCtx, tx, id, cascade, authorized)
+		res, captured, dErr = m.deleteEntityInTx(txCtx, tx, id, cascade, authorized, guardedOwned)
 		return dErr
 	})
 	if txErr != nil {
+		undoFailedDelete(ctx, m, undo, txErr)
 		// A non-transactional backend can fail partway through a cascade with
 		// some relation files already off disk, and it reports those in a
 		// partial result (issue #929). Audit them before propagating: the
@@ -2285,6 +2317,12 @@ func (m *Manager) DeleteEntityFace(
 	if err != nil {
 		return nil, err
 	}
+	// The channel guard, as in DeleteEntity. It acts on the last-face answers
+	// read here; the Tx refuses when its own answers differ.
+	fg, err := guardFaceDelete(ctx, m, id, face, cascade, readableSiblings)
+	if err != nil {
+		return nil, err
+	}
 	var (
 		res                *store.DeleteResult
 		lastFace           bool
@@ -2311,24 +2349,10 @@ func (m *Manager) DeleteEntityFace(
 		}
 		current = inTx
 
-		var (
-			callerLast bool
-			cErr       error
-		)
-		incoming, outgoing, callerLast, lastFace, cErr = faceDeleteEdges(txCtx, tx, id, face, readableSiblings)
+		var cErr error
+		incoming, outgoing, lastFace, cErr = fg.txEdges(txCtx, m, tx, id, face, cascade, readableSiblings)
 		if cErr != nil {
 			return cErr
-		}
-		// The last face removes the entity, so it takes the same opt-in a
-		// family delete does before cutting edges (RR-2466U1). "Last" is the
-		// caller's view, so a hidden sibling cannot change the answer.
-		if callerLast && !cascade && len(incoming)+len(outgoing) > 0 {
-			return ErrHasRelations
-		}
-		if len(incoming)+len(outgoing) > 0 {
-			if aErr := m.authorizeCascadeRelations(txCtx, tx, id, nil, incoming, outgoing); aErr != nil {
-				return aErr
-			}
 		}
 		var dErr error
 		res, dErr = tx.DeleteFace(txCtx, entity.Ref{ID: id, Face: face})
@@ -2341,6 +2365,7 @@ func (m *Manager) DeleteEntityFace(
 		return requireAuthorizedEdges(res.DeletedRelations, incoming, outgoing)
 	})
 	if txErr != nil {
+		undoFailedDelete(ctx, m, fg.undo, txErr)
 		// A non-transactional backend can fail part-way with some relation
 		// files already gone (TKT-A23L87); record those, as DeleteEntity does.
 		m.recordPartialCascade(ctx, "cascade:delete-entity:"+id, res, &cascadeCapture{incoming: incoming, outgoing: outgoing})
@@ -2411,13 +2436,7 @@ func faceDeleteEdges(
 	if err != nil {
 		return nil, nil, false, false, fmt.Errorf("read the faces of %q: %w", id, err)
 	}
-	storedLast = len(siblings) == 1
-	callerLast = true
-	for _, h := range siblings {
-		if h.Face != face && readableSiblings[h.Face] {
-			callerLast = false
-		}
-	}
+	callerLast, storedLast = faceLastness(siblings, face, readableSiblings)
 	var tails []*entity.Face
 	switch {
 	case storedLast:
@@ -2555,6 +2574,14 @@ func (m *Manager) RenameEntity(
 		}
 		return res, nil
 	}
+	// Channels an earlier entity left on newID are detached before the Tx,
+	// once newID is known to be free, and put back when the rename fails.
+	// Moving the renamed entity's own channels is the post-commit alias
+	// hook's job.
+	renameUndo, gErr := guardRename(ctx, m, oldID, newID)
+	if gErr != nil {
+		return nil, gErr
+	}
 
 	// Collect incident relations (with their content) BEFORE the rename,
 	// because the old endpoints are gone afterwards. They feed the per-relation
@@ -2584,6 +2611,7 @@ func (m *Manager) RenameEntity(
 		if res != nil && !familyStillStored(ctx, m.deps.Store, oldID) {
 			r.record(ctx, renamed)
 		}
+		undoFailedRename(ctx, m, renameUndo)
 		return nil, txErr
 	}
 	r.record(ctx, renamed)

@@ -194,6 +194,7 @@ func newManager(t *testing.T, automations []automation.Automation) (*entitymanag
 		ACL:         acl.NopACL{},
 		Transitions: machines,
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	}
 	if automations != nil {
 		engine := automation.NewEngine(automations)
@@ -253,9 +254,10 @@ func createDec(t *testing.T, mgr *entitymanager.Manager, title string) *entity.E
 func TestNew_RejectsNilStore(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
-		FieldGate: entitymanager.AllowAllFieldGate{},
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "Store") {
 		t.Fatalf("expected Store-required error, got %v", err)
@@ -265,9 +267,10 @@ func TestNew_RejectsNilStore(t *testing.T) {
 func TestNew_RejectsNilMeta(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
-		FieldGate: entitymanager.AllowAllFieldGate{},
-		Store:     memstore.New(),
-		Templater: nopTemplater{},
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		Store:       memstore.New(),
+		Templater:   nopTemplater{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "Meta") {
 		t.Fatalf("expected Meta-required error, got %v", err)
@@ -277,9 +280,10 @@ func TestNew_RejectsNilMeta(t *testing.T) {
 func TestNew_RejectsNilTemplater(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
-		FieldGate: entitymanager.AllowAllFieldGate{},
-		Store:     memstore.New(),
-		Meta:      parseMeta(t),
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		Store:       memstore.New(),
+		Meta:        parseMeta(t),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "Templater") {
 		t.Fatalf("expected Templater-required error, got %v", err)
@@ -289,10 +293,11 @@ func TestNew_RejectsNilTemplater(t *testing.T) {
 func TestNew_RejectsNilAudit(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
-		FieldGate: entitymanager.AllowAllFieldGate{},
-		Store:     memstore.New(),
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		Store:       memstore.New(),
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "Audit") {
 		t.Fatalf("expected Audit-required error, got %v", err)
@@ -302,11 +307,12 @@ func TestNew_RejectsNilAudit(t *testing.T) {
 func TestNew_RejectsNilACL(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
-		FieldGate: entitymanager.AllowAllFieldGate{},
-		Store:     memstore.New(),
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		Store:       memstore.New(),
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "ACL") {
 		t.Fatalf("expected ACL-required error, got %v", err)
@@ -316,12 +322,13 @@ func TestNew_RejectsNilACL(t *testing.T) {
 func TestNew_RejectsNilTransitions(t *testing.T) {
 	t.Parallel()
 	_, err := entitymanager.New(entitymanager.Deps{
-		FieldGate: entitymanager.AllowAllFieldGate{},
-		Store:     memstore.New(),
-		Meta:      parseMeta(t),
-		Templater: nopTemplater{},
-		Audit:     audit.Nop{},
-		ACL:       acl.NopACL{},
+		FieldGate:   entitymanager.AllowAllFieldGate{},
+		Store:       memstore.New(),
+		Meta:        parseMeta(t),
+		Templater:   nopTemplater{},
+		Audit:       audit.Nop{},
+		ACL:         acl.NopACL{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "Transitions") {
 		t.Fatalf("expected Transitions-required error, got %v", err)
@@ -340,6 +347,7 @@ func TestNew_RejectsAutomationsWithoutCascade(t *testing.T) {
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		Automations: engine,
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "Automations and Cascade") {
 		t.Fatalf("expected Automations/Cascade pairing error, got %v", err)
@@ -356,6 +364,7 @@ func TestNew_AllowsNoAutomation(t *testing.T) {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -685,6 +694,7 @@ func TestCreate_PassesManagerAsMutator(t *testing.T) {
 		Automations:  engine,
 		Cascade:      runner,
 		ScriptRunner: scripts,
+		AnchorGuard:  entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -1001,6 +1011,7 @@ func TestCreate_PropagatesNonConflictStoreError(t *testing.T) {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1058,6 +1069,7 @@ func TestCreate_SoftValidationProducesWarning(t *testing.T) {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -1119,6 +1131,7 @@ func TestUpdate_SoftValidationProducesWarning(t *testing.T) {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

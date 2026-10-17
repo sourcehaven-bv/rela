@@ -476,20 +476,21 @@ type AuditOp string
 
 // Audit operations. Appends and edits are deliberately not audited.
 const (
-	AuditCreate    AuditOp = "create"
-	AuditLifecycle AuditOp = "lifecycle"
-	AuditRemove    AuditOp = "remove"
-	AuditAction    AuditOp = "action"
-	AuditDelete    AuditOp = "delete"
-	AuditRekey     AuditOp = "rekey"
-	AuditTombstone AuditOp = "tombstone"
+	AuditCreate      AuditOp = "create"
+	AuditLifecycle   AuditOp = "lifecycle"
+	AuditRemove      AuditOp = "remove"
+	AuditAction      AuditOp = "action"
+	AuditDelete      AuditOp = "delete"
+	AuditRekey       AuditOp = "rekey"
+	AuditTombstone   AuditOp = "tombstone"
+	AuditUntombstone AuditOp = "untombstone"
 )
 
 // AuditRecord is one entry in an entity's channel audit trail. It never
 // holds message content: no properties, no removal reason, no title.
 //
 // Type and Name are empty for the records that concern the whole entity
-// (rekey, and a tombstone of every face). From and To carry the old and new
+// (rekey, and a tombstone or untombstone of every face). From and To carry the old and new
 // state of a lifecycle change and the old and new id of a rekey.
 type AuditRecord struct {
 	At       time.Time   `json:"at"`

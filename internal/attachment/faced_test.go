@@ -113,6 +113,7 @@ func newFacedFixture(t *testing.T) facedFixture {
 		FieldGate:        entitymanager.AllowAllFieldGate{},
 		CopyGuard:        allowCopies{},
 		AttachmentLocker: lock.NewMemoryLocker(),
+		AnchorGuard:      entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

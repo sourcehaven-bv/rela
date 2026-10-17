@@ -126,6 +126,7 @@ func newFacedPolicyFixture(
 		CopyReadGate:    entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility:  allowAllCopyVisibility(t, st),
 		VersionRecorder: rec,
+		AnchorGuard:     anchorGuardOf(b),
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -201,7 +202,7 @@ func (f familyDeleteFixture) assertLogMatchesStore(t *testing.T) {
 // single face anyFaceOf returned, which let a draft-only principal delete
 // the published face.
 func TestFamilyDelete_DeniedUnlessEveryFaceIsDeletable(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		for _, user := range []string{"drafter", "publisher"} {
 			t.Run(b.name+"/"+user, func(t *testing.T) {
 				f := newFamilyDeleteFixture(t, b, nil, bothFaces...)
@@ -246,7 +247,7 @@ func TestFamilyDelete_DeniedUnlessEveryFaceIsDeletable(t *testing.T) {
 // With delete on every face, the family delete removes both faces and leaves
 // one version capture and one audit record per removed face.
 func TestFamilyDelete_EveryFaceCapturedAndAudited(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		t.Run(b.name, func(t *testing.T) {
 			f := newFamilyDeleteFixture(t, b, nil, bothFaces...)
 
@@ -346,7 +347,7 @@ func (tx *faceInjectingTx) DeleteFamily(
 // before the family delete may stand. A backend that rolls back leaves
 // nothing to record; one that cannot records exactly what it removed.
 func TestFamilyDelete_FaceAddedDuringDeleteIsAuthorized(t *testing.T) {
-	for _, b := range concBackends {
+	for _, b := range deleteACLBackends() {
 		for _, tc := range []struct {
 			name string
 			at   injectAt
