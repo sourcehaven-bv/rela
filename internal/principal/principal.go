@@ -137,7 +137,9 @@ type Claims struct {
 
 // VerifiedFrom constructs a Principal carrying claims from a verified identity
 // assertion. Callers MUST have validated the assertion's signature before
-// calling this — see the type doc for why that is load-bearing.
+// calling this — see the type doc for why that is load-bearing. The one
+// exception is an identity rela mints itself from no request input, such as
+// [Webhook].
 //
 // Slice claims are defensively copied so a later mutation of the caller's slice
 // cannot retroactively change an authorization decision.
@@ -225,7 +227,30 @@ func (p Principal) Roles() []string {
 // [Principal.Roles] it can only ever REMOVE capability, never add it, so an
 // unrecognized value is not a security event: no baseline matches and the
 // principal keeps exactly its acting user's grants.
-func (p Principal) PrincipalType() string { return p.principalType }
+//
+// A user named `system:webhook:<id>` is always of type [TypeWebhook], whatever
+// the claims say. The name is the identity of a declarative webhook, and every
+// path that acts as it must meet the same ceiling: the delivery itself, a
+// scheduler `run_as`, and the `rela acl` reports that build the principal from
+// its name. Deriving the type here means none of them can forget to stamp it.
+// The override only ever narrows, because a type selects a baseline and a
+// baseline only removes capability.
+func (p Principal) PrincipalType() string {
+	if IsWebhookUser(p.User) {
+		return TypeWebhook
+	}
+	return p.principalType
+}
+
+// IsWebhookUser reports whether user names a declarative webhook delivery,
+// `system:webhook:<id>` with a non-empty id.
+func IsWebhookUser(user string) bool {
+	id, ok := strings.CutPrefix(user, webhookUserPrefix)
+	return ok && id != ""
+}
+
+// webhookUserPrefix is the [Principal.User] prefix of a webhook delivery.
+const webhookUserPrefix = ReservedPrefix + "webhook:"
 
 // Scopes returns the verified `scope` claim, split on whitespace. Empty for
 // every non-assertion entry point.
@@ -413,6 +438,31 @@ const (
 	// declares `run_as`.
 	ToolAutomationJob = "automation-job"
 )
+
+// TypeWebhook is the [Principal.PrincipalType] of a declarative webhook
+// delivery (`POST /hooks/<id>`). An acl.yaml baseline with
+// `applies_to: [webhook]` caps every hook; a policy without one leaves the
+// hooks as they were, because a type no baseline matches is unrestricted.
+//
+// One type for every hook, not one per hook: the hook identity
+// (`system:webhook:<id>`) already lets acl.yaml give each hook its own role,
+// and `applies_to` sets must be disjoint, so per-hook types would need one
+// baseline per hook to say what one baseline says now.
+const TypeWebhook = "webhook"
+
+// Webhook returns the principal a declarative webhook delivery runs as:
+// `system:webhook:<hookID>`, tool [ToolWebhookReceiver], principal type
+// [TypeWebhook].
+//
+// [Principal.PrincipalType] derives the type from the name, so the explicit
+// claim here changes no decision. It is set so that the audit log, which
+// records the claim, shows the type too. [VerifiedFrom] is used although no
+// assertion was verified: rela builds this identity itself and no request
+// input reaches it.
+func Webhook(hookID string) Principal {
+	return VerifiedFrom(webhookUserPrefix+hookID, ToolWebhookReceiver,
+		Claims{PrincipalType: TypeWebhook})
+}
 
 // UserScheduler is the default [Principal.User] for scheduled tasks that
 // declare no `run_as` — a FIXED identity, deliberately not the OS user.

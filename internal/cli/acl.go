@@ -26,7 +26,7 @@ type ACLCmd struct {
 	WhoCan      ACLWhoCanCmd      `cmd:"" name:"who-can" help:"List every principal who can perform a verb on an entity, with the route each grant took."`
 	Can         ACLCanCmd         `cmd:"" help:"Spot-check whether one principal can perform a verb on an entity; exits non-zero on deny."`
 	CanRelation ACLCanRelationCmd `cmd:"" name:"can-relation" help:"Spot-check whether one principal can create/update/delete a relation of a type from an entity; exits non-zero on deny."`
-	Map         ACLMapCmd         `cmd:"" help:"Map effective access across the graph — one principal (--principal) or every principal — by type with per-entity exceptions."`
+	Map         ACLMapCmd         `cmd:"" help:"Map effective access across the graph — one principal (--principal), one webhook (--webhook) or every principal — by type with per-entity exceptions. --expect compares the result with a file for CI."`
 }
 
 // ACLAuditCmd runs the on-demand authorization-misconfiguration linter over the
@@ -77,6 +77,11 @@ func (c *ACLAuditCmd) Run(svc *readServices) error {
 	}
 
 	findings := aclaudit.Audit(policy, &metamodelReader{m: svc.Meta}, perms)
+	hookFindings, err := auditWebhooks(svc, policy, gate)
+	if err != nil {
+		return err
+	}
+	findings = aclaudit.Sort(append(findings, hookFindings...))
 	// The gate sees only the policy findings. Classification findings list
 	// access the operator may well intend, and nothing can suppress one, so
 	// counting them would make --fail-on=any fail every build.
@@ -99,6 +104,23 @@ func (c *ACLAuditCmd) Run(svc *readServices) error {
 		return errors.NewExitError(1)
 	}
 	return nil
+}
+
+// auditWebhooks runs A15 over the hooks data-entry.yaml declares. A missing
+// file declares no hooks. A file that cannot be read or parsed is never a
+// silent pass, because zero hooks would read as "no webhooks to cap": with
+// a --fail-on gate it is an error, so CI fails; without one it is a warning.
+func auditWebhooks(svc *readServices, policy *acl.Policy, gate bool) ([]aclaudit.Finding, error) {
+	loaded, err := loadDataEntryPermissions(svc.Config, svc.Meta)
+	if err != nil {
+		if gate {
+			return nil, fmt.Errorf("read %s for the webhook ceiling check (A15): %w", dataentryconfig.ConfigFile, err)
+		}
+		out.WriteWarning("could not read %s (%v); skipping the webhook ceiling check (A15).",
+			dataentryconfig.ConfigFile, err)
+		return nil, nil
+	}
+	return aclaudit.CheckWebhooks(policy, sortedKeys(loaded.cfg.Webhooks)), nil
 }
 
 // resolveFailOn computes the exit-code gate from --fail-on / --exit-code.
@@ -447,7 +469,15 @@ func (c combinedPermissions) UsedPermissions() []string {
 // around it would make the audit silently skip A7 on any deployment whose
 // config does not live on local disk.
 func loadDataEntryPermissions(cfg config.Loader, meta *metamodel.Metamodel) (*dataEntryPermissions, error) {
-	data, err := cfg.Load(context.Background(), dataentryconfig.ConfigFile)
+	return loadDataEntryPermissionsCtx(context.Background(), cfg, meta)
+}
+
+// loadDataEntryPermissionsCtx is [loadDataEntryPermissions] for a caller that
+// holds a context.
+func loadDataEntryPermissionsCtx(
+	ctx context.Context, cfg config.Loader, meta *metamodel.Metamodel,
+) (*dataEntryPermissions, error) {
+	data, err := cfg.Load(ctx, dataentryconfig.ConfigFile)
 	if err != nil {
 		if stderrors.Is(err, os.ErrNotExist) {
 			return &dataEntryPermissions{cfg: &dataentryconfig.Config{}, meta: meta}, nil

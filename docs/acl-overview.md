@@ -613,6 +613,26 @@ deployment and a proxy that models no principal type all work with no
 special-casing. `rela acl audit` reports a baseline that covers
 nothing, since that is a policy gap rather than a runtime error.
 
+rela sets one `principal_type` itself: a webhook delivery
+(`system:webhook:<id>`) has the type `webhook`. A baseline with
+`applies_to: [webhook]` caps every hook in the project:
+
+```yaml
+client_baselines:
+  hooks:
+    applies_to: [webhook]
+    read: [incident]
+    create: [incident]
+    update: [incident]
+    deny_delete: ["*"]
+    deny_permissions: ["*"]
+```
+
+There is one type for all hooks, not one per hook. The ceiling is the
+upper bound for the class. Each hook already has its own identity, so give
+a hook that needs less access its own role in `assignments:`. See
+[Webhooks](webhooks.md#acl) for what the ceiling covers.
+
 ### Two spellings, per type
 
 Each axis takes either an allowlist or a denylist — never both for the
@@ -670,7 +690,9 @@ must never reach a client class, do not write a scope grant naming it.
 
 - **`principal_type` and `scope` come only from a verified assertion.**
   The same trust boundary as asserted roles, enforced by the type
-  system. See GUIDE-acl-security.
+  system. See GUIDE-acl-security. The one exception is `webhook`, which
+  rela derives from the reserved `system:webhook:` name. No caller can
+  assert that name, and a claim cannot change the type it derives.
 - **stdio MCP is not covered.** It has no authentication at all, so
   there is no verified claim to key on. The remote endpoint
   (`rela-server -mcp`) carries a verified JWT, so a ceiling applies
@@ -692,7 +714,7 @@ To see what a client actually gets, ask:
 ```console
 $ rela acl map --principal alice --as app --scope rela.tickets.write
 Effective access for alice — verbs: read, create, update, delete
-  as client type "app" with scopes rela.tickets.write — the client_baselines ceiling is applied below.
+  as client type "app" with scopes rela.tickets.write — client baseline "apps" is applied below.
       person
           read (all person): role hr [global]
       ticket

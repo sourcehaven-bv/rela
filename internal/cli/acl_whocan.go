@@ -171,17 +171,34 @@ var errNoACLPolicy = stderrors.New("aclmap: no acl.yaml")
 // (via errors.Is) when the project has no policy so the caller can print
 // its own friendly message.
 func buildACLEngine(svc *readServices) (*aclmap.Engine, error) {
+	engine, _, err := buildACLEngineWithPolicy(svc)
+	return engine, err
+}
+
+// buildACLEngineWithPolicy is [buildACLEngine] that also returns the loaded
+// policy, for a report that needs the policy's own vocabulary (the
+// permission names its roles grant).
+func buildACLEngineWithPolicy(svc *readServices) (*aclmap.Engine, *acl.Policy, error) {
 	policyPath := filepath.Join(svc.Paths.Root, "acl.yaml")
 	policy, err := acl.LoadPolicy(policyPath)
 	if err != nil {
 		if stderrors.Is(err, os.ErrNotExist) {
-			return nil, errNoACLPolicy
+			return nil, nil, errNoACLPolicy
 		}
-		return nil, fmt.Errorf("load acl.yaml: %w", err)
+		return nil, nil, fmt.Errorf("load acl.yaml: %w", err)
 	}
 	if vErr := appbuild.ValidateACLPolicy(policy, svc.Meta); vErr != nil {
-		return nil, fmt.Errorf("acl.yaml invalid for this project: %w", vErr)
+		return nil, nil, fmt.Errorf("acl.yaml invalid for this project: %w", vErr)
 	}
+	engine, err := newACLEngine(svc, policy)
+	if err != nil {
+		return nil, nil, err
+	}
+	return engine, policy, nil
+}
+
+// newACLEngine wires an aclmap.Engine over the store for a validated policy.
+func newACLEngine(svc *readServices, policy *acl.Policy) (*aclmap.Engine, error) {
 	decl, err := acl.NewDeclarative(policy, acl.NewStoreGraph(svc.Store), svc.Store,
 		acl.WithPrincipalLookup(acl.NewStorePrincipalLookup(svc.Store)))
 	if err != nil {

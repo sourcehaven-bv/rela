@@ -10,7 +10,11 @@ import (
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/aclmap"
+	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
+	"github.com/Sourcehaven-BV/rela/internal/errors"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/output"
+	"github.com/Sourcehaven-BV/rela/internal/principal"
 )
 
 // ACLMapCmd implements `rela acl map`. With `--principal`, it reports one
@@ -24,6 +28,12 @@ import (
 // enumerated principal's effective access, with the built-in everyone
 // baseline lifted out and reported once. This is the O(P·E) case — see the
 // cost note in internal/aclmap.
+//
+// With `--webhook <id>`, it maps a data-entry.yaml webhook as its deliveries
+// run, with the `webhook` client ceiling applied, and checks that the hook's
+// mapping is possible. `--expect <file>` turns a single-principal map into a
+// CI check: it diffs the access against the file and exits 1 on any
+// difference (TKT-J3RDJ4).
 //
 // Read is decided by the same read path the server enforces, so no
 // reachable entity is dropped. Access via the built-in `everyone` role is
@@ -41,6 +51,8 @@ type ACLMapCmd struct {
 	Type      string `help:"Restrict to one entity type. Omit for all declared types." default:""`
 	As        string `help:"Map as a CLIENT of this principal_type (e.g. app, pat, service), applying the matching client_baselines ceiling. Requires --principal." default:""`
 	Scope     string `help:"Space- or comma-separated scopes the client presents, re-opening capability the baseline closed. Requires --as." default:""`
+	Webhook   string `help:"Map a declarative webhook (a key under webhooks: in data-entry.yaml) as its deliveries run: principal system:webhook:<id> with principal_type webhook. Adds permissions, relation writes and a check of what the hook's mapping needs." default:""`
+	Expect    string `help:"Compare the access with this expectations YAML file (verbs per type, named permissions, relation writes; not rename or fields). Prints the differences and exits 1 when there are any. Requires --principal or --webhook." default:""`
 }
 
 // clientView builds the attenuation view from --as/--scope. Returns an error
@@ -82,41 +94,205 @@ func splitScopes(v string) []string {
 	return fields
 }
 
-// Run executes `rela acl map`. It dispatches to the per-principal view
-// when --principal is set, else the whole-graph inventory.
+// checkModeFlags rejects flag combinations that would report something other
+// than what the operator asked for.
+func (c *ACLMapCmd) checkModeFlags() error {
+	hasPrincipal := strings.TrimSpace(c.Principal) != ""
+	if strings.TrimSpace(c.Webhook) != "" {
+		// The hook's identity and principal type are fixed by the runtime;
+		// letting a flag override either would map a principal no delivery
+		// ever runs as.
+		if hasPrincipal || c.As != "" || c.Scope != "" {
+			return stderrors.New("--webhook fixes the principal and its principal_type; " +
+				"it cannot be combined with --principal, --as or --scope")
+		}
+	}
+	if principal.IsWebhookUser(strings.TrimSpace(c.Principal)) && (c.As != "" || c.Scope != "") {
+		// The runtime derives a hook's principal_type from its name, so a
+		// --as would be ignored while the report echoed it.
+		return stderrors.New("a system:webhook: principal always has principal_type webhook; " +
+			"drop --as and --scope, or use --webhook")
+	}
+	if c.Expect == "" {
+		return nil
+	}
+	if !hasPrincipal && strings.TrimSpace(c.Webhook) == "" {
+		return stderrors.New("--expect compares one principal's access; it requires --principal or --webhook")
+	}
+	if c.Verb != "" || c.Type != "" {
+		return stderrors.New("--expect compares every type and verb; it cannot be combined with --verb or --type, " +
+			"which would report everything outside the filter as missing")
+	}
+	return nil
+}
+
+// Run executes `rela acl map`. It dispatches to the webhook view when
+// --webhook is set, the per-principal view when --principal is set, else
+// the whole-graph inventory. With --expect it exits 1 when the access
+// differs from the file.
 func (c *ACLMapCmd) Run(ctx context.Context, svc *readServices) error {
-	engine, err := buildACLEngine(svc)
+	if err := c.checkModeFlags(); err != nil {
+		return err
+	}
+	view, err := c.clientView()
+	if err != nil {
+		return err
+	}
+	hookID := strings.TrimSpace(c.Webhook)
+	mapping, expectation, err := c.loadInputs(ctx, svc, hookID)
+	if err != nil {
+		return err
+	}
+
+	engine, policy, err := buildACLEngineWithPolicy(svc)
 	if err != nil {
 		if stderrors.Is(err, errNoACLPolicy) {
+			if expectation != nil {
+				return stderrors.New("--expect needs acl.yaml: without a policy every principal " +
+					"has full access, which an expectations file cannot describe")
+			}
 			out.WriteSuccess("No acl.yaml found; every principal has full access (no policy).")
 			return nil
 		}
 		return err
 	}
 
-	view, err := c.clientView()
-	if err != nil {
-		return err
-	}
-
 	entityTypes := svc.Meta.EntityTypes()
-	if strings.TrimSpace(c.Principal) == "" {
+	if hookID == "" && strings.TrimSpace(c.Principal) == "" {
 		return c.runAll(ctx, engine, entityTypes)
 	}
 
-	result, err := engine.MapPrincipalAs(
-		ctx, c.Principal, acl.Verb(c.Verb), c.Type, entityTypes, view)
+	// Permissions and relation writes complete the picture, so they are
+	// computed whenever the answer is a contract (--expect) or a webhook,
+	// whose report exists to be checked.
+	var extras aclmap.Extras
+	if hookID != "" || expectation != nil {
+		extras = mapExtras(svc.Meta, policy)
+	}
+	var result *aclmap.MapPrincipalResult
+	if hookID != "" {
+		result, err = engine.MapWebhook(ctx, hookID, mapping, acl.Verb(c.Verb), c.Type, entityTypes, extras)
+	} else {
+		result, err = engine.MapPrincipalFull(ctx, c.Principal, acl.Verb(c.Verb), c.Type, entityTypes, view, extras)
+	}
 	if err != nil {
 		return err
 	}
 
+	return c.report(result, expectation)
+}
+
+// loadInputs reads the hook's mapping (for --webhook) and the expectations
+// file (for --expect), each nil when its flag is unset.
+func (c *ACLMapCmd) loadInputs(
+	ctx context.Context, svc *readServices, hookID string,
+) (*aclmap.WebhookMapping, *accessExpectation, error) {
+	var mapping *aclmap.WebhookMapping
+	if hookID != "" {
+		m, err := loadWebhookMapping(ctx, svc, hookID)
+		if err != nil {
+			return nil, nil, err
+		}
+		mapping = m
+	}
+	var expectation *accessExpectation
+	if c.Expect != "" {
+		e, err := loadExpectation(c.Expect, svc.Meta)
+		if err != nil {
+			return nil, nil, err
+		}
+		expectation = e
+	}
+	return mapping, expectation, nil
+}
+
+// report writes one principal's map and, with --expect, the comparison. It
+// returns exit code 1 when the mapping check fails or the access differs.
+func (c *ACLMapCmd) report(result *aclmap.MapPrincipalResult, expectation *accessExpectation) error {
+	var compared *expectationResult
+	if expectation != nil {
+		compared = expectation.compare(c.Expect, result)
+	}
 	if out.Format == output.FormatJSON {
 		enc := json.NewEncoder(out.Out)
 		enc.SetIndent("", "  ")
-		return enc.Encode(result)
+		if err := enc.Encode(mapReport{MapPrincipalResult: result, Expectation: compared}); err != nil {
+			return err
+		}
+	} else {
+		writeMapText(result)
+		if compared != nil {
+			writeExpectationText(compared)
+		}
 	}
-	writeMapText(result)
+	// A failed mapping check fails the command with or without --expect: a
+	// hook whose deliveries cannot succeed is a defect on its own.
+	if !result.WebhookCheck.OK() {
+		if out.Format != output.FormatJSON {
+			out.WriteMessage("Webhook %s: mapping check failed.", result.Webhook)
+		}
+		return errors.NewExitError(1)
+	}
+	if compared != nil && !compared.Match {
+		return errors.NewExitError(1)
+	}
 	return nil
+}
+
+// mapReport is the JSON shape of a per-principal map: the map itself, plus
+// the comparison when --expect was given.
+type mapReport struct {
+	*aclmap.MapPrincipalResult
+	Expectation *expectationResult `json:"expectation,omitempty"`
+}
+
+// loadWebhookMapping looks the hook up in data-entry.yaml and returns what
+// its mapping touches. An unknown id is an error: mapping a hook that does
+// not exist would report on a principal no delivery runs as.
+func loadWebhookMapping(ctx context.Context, svc *readServices, hookID string) (*aclmap.WebhookMapping, error) {
+	loaded, err := loadDataEntryPermissionsCtx(ctx, svc.Config, svc.Meta)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", dataentryconfig.ConfigFile, err)
+	}
+	hook, ok := loaded.cfg.Webhooks[hookID]
+	if !ok {
+		known := sortedKeys(loaded.cfg.Webhooks)
+		if len(known) == 0 {
+			return nil, fmt.Errorf("unknown webhook %q: %s declares no webhooks", hookID, dataentryconfig.ConfigFile)
+		}
+		return nil, fmt.Errorf("unknown webhook %q; %s declares: %s",
+			hookID, dataentryconfig.ConfigFile, strings.Join(known, ", "))
+	}
+	m := hook.Mapping()
+	mapping := &aclmap.WebhookMapping{CreateType: m.CreateType(), Updates: len(m.Then) > 0}
+	if m.Find != nil {
+		mapping.FindType = m.Find.Type
+		mapping.FindFace = m.Find.Face
+		mapping.Match = m.Find.Match
+	}
+	return mapping, nil
+}
+
+// mapExtras builds the permission and relation universes the map probes.
+//
+// Permissions are the names the policy's roles grant. A role's "*" matches no
+// named permission, so a permission no role lists is held by nobody and need
+// not be probed. Relations are every relation type the schema declares, with
+// its source types.
+func mapExtras(meta *metamodel.Metamodel, policy *acl.Policy) aclmap.Extras {
+	var perms []string
+	for _, role := range policy.Roles {
+		perms = append(perms, role.Permissions...)
+	}
+	var rels []aclmap.RelationType
+	for _, name := range meta.RelationTypes() {
+		def, ok := meta.GetRelationDef(name)
+		if !ok {
+			continue
+		}
+		rels = append(rels, aclmap.RelationType{Name: name, From: def.From})
+	}
+	return aclmap.Extras{Permissions: perms, Relations: rels}
 }
 
 // runAll executes the whole-graph inventory (no --principal).
@@ -172,6 +348,9 @@ func writeMapText(r *aclmap.MapPrincipalResult) {
 	if r.Raw != "" {
 		who = fmt.Sprintf("%s (%s)", r.Principal, r.Raw)
 	}
+	if r.Webhook != "" {
+		who = fmt.Sprintf("webhook %s (%s)", r.Webhook, r.Principal)
+	}
 	out.WriteMessage("Effective access for %s — verbs: %s", who, joinVerbs(r.Verbs))
 
 	// Name the client this map describes. Without it the artifact is
@@ -183,7 +362,11 @@ func writeMapText(r *aclmap.MapPrincipalResult) {
 		if len(r.Scopes) > 0 {
 			line += " with scopes " + strings.Join(r.Scopes, " ")
 		}
-		out.WriteMessage("%s — the client_baselines ceiling is applied below.", line)
+		if r.Baseline == "" {
+			out.WriteMessage("%s — no client baseline matches, so access is not capped.", line)
+		} else {
+			out.WriteMessage("%s — client baseline %q is applied below.", line, r.Baseline)
+		}
 	}
 
 	if r.EveryoneOnly {
@@ -191,10 +374,56 @@ func writeMapText(r *aclmap.MapPrincipalResult) {
 	}
 	if len(r.Types) == 0 {
 		out.WriteMessage("  (no access to any declared type)")
+	} else {
+		writeTypeAccess(r.Types)
+	}
+	writeExtrasText(r)
+	writeWebhookCheckText(r.WebhookCheck)
+}
+
+// writeExtrasText renders the permissions and relation writes, when the map
+// computed them.
+func writeExtrasText(r *aclmap.MapPrincipalResult) {
+	if r.Webhook == "" && r.Permissions == nil && r.Relations == nil {
 		return
 	}
+	if len(r.Permissions) == 0 {
+		out.WriteMessage("  permissions: none")
+	} else {
+		out.WriteMessage("  permissions: %s", strings.Join(r.Permissions, ", "))
+	}
+	if len(r.Relations) == 0 {
+		out.WriteMessage("  relation writes: none")
+		return
+	}
+	out.WriteMessage("  relation writes:")
+	for _, ra := range r.Relations {
+		parts := make([]string, 0, len(ra.Verbs))
+		for _, verb := range sortedKeys(ra.Verbs) {
+			parts = append(parts, verb+" from "+strings.Join(ra.Verbs[verb], ", "))
+		}
+		out.WriteMessage("      %s: %s", ra.Relation, strings.Join(parts, "; "))
+	}
+}
 
-	writeTypeAccess(r.Types)
+// writeWebhookCheckText renders what a hook's mapping needs and whether the
+// hook holds it.
+func writeWebhookCheckText(c *aclmap.WebhookCheck) {
+	if c == nil {
+		return
+	}
+	out.WriteMessage("  webhook mapping needs:")
+	for _, n := range c.Needs {
+		target := n.Type
+		if n.Face != "" {
+			target += "@" + n.Face
+		}
+		state := "held"
+		if !n.Held {
+			state = "NOT HELD: deliveries that need it fail"
+		}
+		out.WriteMessage("      %s %s: %s", n.Verb, target, state)
+	}
 }
 
 // writeTypeAccess renders a slice of per-type access (baseline verbs +
@@ -205,6 +434,9 @@ func writeTypeAccess(types []aclmap.TypeAccess) {
 		out.WriteMessage("      %s", ta.Type)
 		for _, verb := range sortedKeys(ta.Baseline) {
 			out.WriteMessage("          %s (all %s): %s", verb, ta.Type, joinRoutes(ta.Baseline[verb]))
+		}
+		for _, face := range sortedKeys(ta.Faces) {
+			out.WriteMessage("          %s (face %s only)", joinVerbs(ta.Faces[face]), face)
 		}
 		for _, ex := range ta.Exceptions {
 			out.WriteMessage("          exception %s:", ex.Entity)

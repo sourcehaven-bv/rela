@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/dataentryconfig"
 	"github.com/Sourcehaven-BV/rela/internal/ingest"
 	"github.com/Sourcehaven-BV/rela/internal/principal"
@@ -185,10 +186,18 @@ func (h *webhookRouter) handle(w http.ResponseWriter, r *http.Request, hookID st
 	// came from. Reusing the existing prefix inherits principal.IsReserved's
 	// refusal at every request-path entry point rather than adding a second
 	// boundary that must be remembered.
-	ctx = principal.With(ctx, principal.Principal{
-		User: principal.ReservedPrefix + "webhook:" + hookID,
-		Tool: principal.ToolWebhookReceiver,
-	})
+	//
+	// The principal also carries principal_type `webhook`, so an acl.yaml
+	// baseline with `applies_to: [webhook]` caps every hook below its role and
+	// below `everyone`. Every ACL request in the delivery is built from this
+	// ctx principal, so the find, the write and any foreground automation the
+	// write fires all see the same ceiling.
+	ctx = principal.With(ctx, principal.Webhook(hookID))
+	// Several read-side consumers reuse an acl.Request attached to ctx without
+	// checking whose it is. /hooks is outside attachACLRequest, so none is
+	// attached today; clearing the slot keeps a future middleware's Request,
+	// opened for a different principal, from outliving the swap above.
+	ctx = acl.WithRequest(ctx, nil)
 
 	result, err := h.runPipeline(ctx, hookID, hook, payload)
 	if err != nil {
