@@ -38,6 +38,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"slices"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/store"
@@ -106,43 +107,88 @@ func (s *Service) Search(ctx context.Context, q Query) iter.Seq2[Hit, error] {
 
 	return func(yield func(Hit, error) bool) {
 		emitted := 0
-		for _, f := range faces {
-			if q.Limit > 0 && emitted >= q.Limit {
-				return
-			}
-
-			// Load the FACE that matched, not the entity's default state.
-			// Reading the bare id here would display default-face bytes for a
-			// hit scored against a different face — the mismatch between what
-			// was searched and what is shown that world-scoped search exists
-			// to close.
-			e, err := s.reader.GetEntity(ctx, entity.Ref{ID: f.ID, Face: f.Face})
+		for page := range slices.Chunk(faces, searchLoadPage) {
+			rows, err := s.loadFaces(ctx, page)
 			if err != nil {
-				continue // face may have been deleted since indexing
-			}
-
-			if len(typeSet) > 0 && !typeSet[e.Type] {
-				continue
-			}
-
-			if !MatchFilters(e, q.Filters) {
-				continue
-			}
-
-			hit := Hit{
-				ID:            e.ID,
-				Type:          e.Type,
-				Title:         e.Title(),
-				Face:          f.Face,
-				Via:           f.Via,
-				ChainPosition: f.ChainPosition,
-			}
-			if !yield(hit, nil) {
+				yield(Hit{}, err)
 				return
 			}
-			emitted++
+			for _, f := range page {
+				if q.Limit > 0 && emitted >= q.Limit {
+					return
+				}
+				hit, ok := pageHit(rows, f, typeSet, q.Filters)
+				if !ok {
+					continue
+				}
+				if !yield(hit, nil) {
+					return
+				}
+				emitted++
+			}
 		}
 	}
+}
+
+// pageHit builds the hit for backend face f from the page's loaded rows. It
+// reports false when the face is gone (deleted since indexing) or fails the
+// type or property filters.
+func pageHit(
+	rows map[entity.Ref]*entity.Entity, f Face, typeSet map[string]bool, filters []PropertyFilter,
+) (Hit, bool) {
+	e, ok := rows[entity.Ref{ID: f.ID, Face: f.Face}]
+	if !ok {
+		return Hit{}, false
+	}
+	if len(typeSet) > 0 && !typeSet[e.Type] {
+		return Hit{}, false
+	}
+	if !MatchFilters(e, filters) {
+		return Hit{}, false
+	}
+	return Hit{
+		ID:            e.ID,
+		Type:          e.Type,
+		Title:         e.Title(),
+		Face:          f.Face,
+		Via:           f.Via,
+		ChainPosition: f.ChainPosition,
+	}, true
+}
+
+// searchLoadPage is how many backend hits [Service.Search] reads with one
+// store call.
+const searchLoadPage = 256
+
+// loadFaces reads the headers of the face rows that page names, in one store
+// call, keyed by ref. A hit needs only its type, title and properties, so no
+// body is read (collection-reads rule).
+//
+// It reads the FACE that matched, not the entity's default state: the bare id
+// would show default-face values for a hit scored against a different face,
+// the mismatch between what was searched and what is shown that world-scoped
+// search exists to close. A face deleted since indexing is absent.
+func (s *Service) loadFaces(ctx context.Context, page []Face) (map[entity.Ref]*entity.Entity, error) {
+	ids := make([]string, 0, len(page))
+	want := make(map[entity.Ref]bool, len(page))
+	for _, f := range page {
+		want[entity.Ref{ID: f.ID, Face: f.Face}] = true
+		ids = append(ids, f.ID)
+	}
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	rows := make(map[entity.Ref]*entity.Entity, len(want))
+	q := store.EntityQuery{IDs: ids, Faces: store.AllFaces()}
+	for h, err := range store.ListEntityHeaders(ctx, s.reader, q) {
+		if err != nil {
+			return nil, fmt.Errorf("search: load hits: %w", err)
+		}
+		ref := entity.Ref{ID: h.ID, Face: h.Face}
+		if want[ref] {
+			rows[ref] = &entity.Entity{ID: h.ID, Type: h.Type, Face: h.Face, Properties: h.Properties}
+		}
+	}
+	return rows, nil
 }
 
 // backendSearch runs the text query on the backend, with q.Admit applied
