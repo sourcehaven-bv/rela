@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useModalStack } from '@/composables/modalStack'
 import { useSchemaStore } from '@/stores'
 import type { ConversionOffer, Entity, PropertyDef } from '@/types'
@@ -20,7 +20,16 @@ const busy = ref(false)
 const error = ref('')
 const preview = ref<ConversionPreview | null>(null)
 const acceptDrops = ref(false)
+const reviewed = ref(false)
+const targetLabel = computed(() => target.value?.label || props.offer.to)
+function faceLabel(face: string) {
+  return face || 'default face'
+}
 const faceMapping = reactive<Record<string, string>>({})
+// A changed input invalidates the reviewed preview.
+watch([values, faceMapping, targetID, content], () => {
+  reviewed.value = false
+}, { deep: true })
 const mappedFields = computed(() => new Set(props.offer.mapped_fields ?? []))
 const fields = computed(() => Object.entries(target.value?.properties ?? {}).filter(([name]) => !mappedFields.value.has(name)))
 const sourceFaces = computed(() => {
@@ -65,6 +74,12 @@ async function submit() {
     }
     if (preview.value.relations_to_drop.length && !acceptDrops.value) {
       error.value = 'Confirm that the listed relationships may be removed.'
+      return
+    }
+    // The first passing preview only shows its consequences, including who
+    // can read the comments afterwards; the next click converts.
+    if (!reviewed.value) {
+      reviewed.value = true
       return
     }
     const result = await convertEntity(props.offer.name, {
@@ -126,11 +141,20 @@ async function submit() {
       <strong>Face choices that cannot be converted</strong>
       <ul><li v-for="face in preview.invalid_faces" :key="face">{{ face }}</li></ul>
     </section>
+    <section v-if="reviewed && preview?.moves?.length" class="convert-warning" aria-live="polite">
+      <strong>Comments move to the new {{ targetLabel }}</strong>
+      <ul>
+        <li v-for="move in preview.moves" :key="move.source_face">
+          Comments on the {{ faceLabel(move.source_face) }} move to {{ targetLabel }} ({{ faceLabel(move.target_face) }}).
+        </li>
+      </ul>
+      <p>Everyone who can read the new {{ targetLabel }} can read these comments. Its history starts at this conversion.</p>
+    </section>
     <p v-if="error" role="alert">{{ error }}</p>
     <template #actions>
       <RlButtonGroup>
         <RlButton variant="secondary" :disabled="busy" @click="emit('close')">Cancel</RlButton>
-        <RlButton variant="primary" :disabled="busy" @click="submit">Convert</RlButton>
+        <RlButton variant="primary" :disabled="busy" @click="submit">{{ reviewed ? 'Convert' : 'Review' }}</RlButton>
       </RlButtonGroup>
     </template>
   </RlModal>

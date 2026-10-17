@@ -37,10 +37,13 @@ type VersionRecord struct {
 	EntityID string
 	// Face is the content state (face) this record captures; zero is the
 	// default face (TKT-C1XUA8).
-	Face          entity.Face
-	Op            store.VersionOp
-	PrevID        string      // rename only: the entity's former id
-	PrevFace      entity.Face // conversion only: the entity's former face
+	Face   entity.Face
+	Op     store.VersionOp
+	PrevID string // rename only: the entity's former id
+	// PrevFace is the face a conversion moved this row from. It counts only
+	// when HasPrevFace is set, because the zero face is a real face; the pair
+	// mirrors store.VersionInput.
+	PrevFace      entity.Face
 	HasPrevFace   bool
 	Type          string
 	Content       string
@@ -52,31 +55,22 @@ type VersionRecord struct {
 	TriggeredBy   string
 }
 
-// recordEntityVersion builds a VersionRecord from the entity's current state
-// and dispatches it to the recorder. No-op when no recorder is wired (fs/mem
-// builds). Attribution is read from ctx exactly like audit — never from a
-// caller-supplied field — so a version row cannot carry a forged principal.
-// Failure is logged, never propagated: versioning must not block a write.
-func (m *Manager) recordEntityVersion(ctx context.Context, e *entity.Entity) {
-	prevFace := entity.ImplicitFace
-	if e != nil {
-		prevFace = e.Face
-	}
-	recordEntityVersionWithPrevFace(ctx, m, store.VersionOpDelete, e, "", prevFace, false)
+// recordDeleteVersion captures e's pre-delete state as a delete version.
+func (m *Manager) recordDeleteVersion(ctx context.Context, e *entity.Entity) {
+	recordVersion(ctx, m, VersionRecord{Op: store.VersionOpDelete}, e)
 }
 
-func recordEntityVersionWithPrevFace(
-	ctx context.Context,
-	m *Manager,
-	op store.VersionOp,
-	e *entity.Entity,
-	prevID string,
-	prevFace entity.Face,
-	hasPrevFace bool,
-) {
+// recordVersion fills rec from e's current state and dispatches it to the
+// recorder; the caller sets only the op and the lineage fields (PrevID,
+// PrevFace, HasPrevFace). No-op when no recorder is wired (fs/mem builds).
+// Attribution is read from ctx exactly like audit — never from a
+// caller-supplied field — so a version row cannot carry a forged principal.
+// Failure is logged, never propagated: versioning must not block a write.
+func recordVersion(ctx context.Context, m *Manager, rec VersionRecord, e *entity.Entity) {
 	if m.deps.VersionRecorder == nil {
 		return
 	}
+	op := rec.Op
 	// PER-STATE (TKT-C1XUA8): the Step-1 skip is gone. entity_versions now
 	// keys (entity_id, face, vseq), so a state capture gets its own
 	// lineage instead of interleaving with the family's other faces, and
@@ -91,22 +85,11 @@ func recordEntityVersionWithPrevFace(
 		return
 	} // coverage-ignore-end
 	p := principal.From(ctx)
-	rec := VersionRecord{
-		EntityID:      e.ID,
-		Face:          e.Face,
-		Op:            op,
-		PrevID:        prevID,
-		PrevFace:      prevFace,
-		HasPrevFace:   hasPrevFace,
-		Type:          e.Type,
-		Content:       e.Content,
-		Properties:    e.Properties,
-		SchemaHash:    proj.Hash(),
-		Projection:    projJSON,
-		PrincipalUser: p.User,
-		PrincipalTool: p.Tool,
-		TriggeredBy:   audit.TriggeredByFrom(ctx),
-	}
+	rec.EntityID, rec.Face, rec.Type = e.ID, e.Face, e.Type
+	rec.Content, rec.Properties = e.Content, e.Properties
+	rec.SchemaHash, rec.Projection = proj.Hash(), projJSON
+	rec.PrincipalUser, rec.PrincipalTool = p.User, p.Tool
+	rec.TriggeredBy = audit.TriggeredByFrom(ctx)
 	if err := m.deps.VersionRecorder.RecordVersion(ctx, rec); err != nil {
 		slog.Error("version.record_failed", "op", op, "id", e.ID, "error", err)
 	}

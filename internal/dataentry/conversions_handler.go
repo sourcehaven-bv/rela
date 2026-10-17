@@ -10,28 +10,35 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
+	"github.com/Sourcehaven-BV/rela/internal/affordances"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
-	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
+	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 )
 
+// converter is what the conversion endpoint needs of
+// [entitymanager.Converter]. Every check, including the field gate, runs
+// there; the handler only maps HTTP onto it.
+type converter interface {
+	Definition(name string) (metamodel.ConversionDef, bool)
+	Preview(ctx context.Context, req entitymanager.ConversionRequest) (*entitymanager.ConversionPreview, error)
+	Convert(ctx context.Context, req entitymanager.ConversionRequest) (*entitymanager.ConversionResult, error)
+}
+
 type conversionHandler struct {
-	manager        *entitymanager.Manager
-	validateFields func(context.Context, *entity.Entity, map[string]any) error
-	schema         func() *Schema
+	conv   converter
+	schema func() *Schema
 }
 
-func newConversionHandler(m *entitymanager.Manager) *conversionHandler {
-	return &conversionHandler{manager: m}
-}
-
-func conversionCreateFieldValidator(svc affordanceService) func(context.Context, *entity.Entity, map[string]any) error {
-	return func(ctx context.Context, e *entity.Entity, set map[string]any) (validationErr error) {
-		if denial := svc.validateCreateFieldWrite(ctx, e, set); denial != nil {
-			validationErr = denial
-		}
-		return validationErr
+// newConversionHandler returns the handler of /api/v1/_conversions/.
+//
+// Nil: rejected — a handler without a converter would answer every request
+// with a nil dereference.
+func newConversionHandler(conv converter, schema func() *Schema) (*conversionHandler, error) {
+	if conv == nil || schema == nil {
+		return nil, errors.New("dataentry: newConversionHandler: converter and schema are required")
 	}
+	return &conversionHandler{conv: conv, schema: schema}, nil
 }
 
 type conversionRequest struct {
@@ -42,14 +49,10 @@ type conversionRequest struct {
 	Content       *string           `json:"content,omitempty"`
 	DropRelations []string          `json:"drop_relations,omitempty"`
 	Faces         map[string]string `json:"faces,omitempty"`
-	Preflight     bool              `json:"preflight,omitempty"`
 }
 
 func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.Request) {
-	var snapshot *Schema
-	if h.schema != nil {
-		snapshot = h.schema()
-	}
+	snapshot := h.schema()
 	if r.Method != http.MethodPost {
 		writeV1Error(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed", "")
 		return
@@ -63,17 +66,16 @@ func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.R
 		writeV1Error(w, r, http.StatusNotFound, "not_found", "No such conversion", name)
 		return
 	}
-	if snapshot != nil {
-		declared, exists := snapshot.Meta.Conversions[name]
-		if !exists {
-			writeV1Error(w, r, http.StatusNotFound, "not_found", "No such conversion", name)
-			return
-		}
-		kernelDef, kernelHas := entitymanager.ConversionDefinition(h.manager, name)
-		if !kernelHas || !reflect.DeepEqual(declared, kernelDef) {
-			writeV1Error(w, r, http.StatusConflict, "schema_changed", "Conversion definition changed; reload and try again", "")
-			return
-		}
+	declared, exists := snapshot.Meta.Conversions[name]
+	if !exists {
+		writeV1Error(w, r, http.StatusNotFound, "not_found", "No such conversion", name)
+		return
+	}
+	// The client read the definition from this schema snapshot. If the
+	// converter holds another one, a reload landed in between.
+	if kernelDef, kernelHas := h.conv.Definition(name); !kernelHas || !reflect.DeepEqual(declared, kernelDef) {
+		writeV1Error(w, r, http.StatusConflict, "schema_changed", "Conversion definition changed; reload and try again", "")
+		return
 	}
 	var body conversionRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -94,23 +96,16 @@ func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.R
 		DropRelations: body.DropRelations,
 		FaceMapping:   body.Faces,
 	}
-	preview, err := entitymanager.PreviewConversion(r.Context(), h.manager, req)
-	if err != nil {
-		writeConversionError(w, r, err)
-		return
-	}
-	if h.validateFields != nil && len(body.Properties) > 0 {
-		id := body.TargetID
-		if id == "" {
-			id = "CONVERSION-PREVIEW"
-		}
-		candidate := &entity.Entity{ID: id, Type: preview.TargetType, Properties: body.Properties}
-		if validationErr := h.validateFields(r.Context(), candidate, body.Properties); validationErr != nil {
-			writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", validationErr.Error())
+	if preflight {
+		preview, err := h.conv.Preview(r.Context(), req)
+		if err != nil {
+			writeConversionError(w, r, err)
 			return
 		}
-	}
-	if preflight {
+		moves := make([]v1.ConversionMove, 0, len(preview.Moves))
+		for _, mv := range preview.Moves {
+			moves = append(moves, v1.ConversionMove{SourceFace: mv.SourceFace, TargetFace: mv.TargetFace})
+		}
 		writeV1JSON(w, http.StatusOK, v1.ConversionPreview{
 			TargetType:       preview.TargetType,
 			Required:         preview.Required,
@@ -119,10 +114,11 @@ func (h *conversionHandler) handleV1Conversions(w http.ResponseWriter, r *http.R
 			InvalidRelations: preview.InvalidRelations,
 			InvalidFaces:     preview.InvalidFaces,
 			TargetFaces:      preview.TargetFaces,
+			Moves:            moves,
 		})
 		return
 	}
-	res, err := entitymanager.ConvertEntity(r.Context(), h.manager, req)
+	res, err := h.conv.Convert(r.Context(), req)
 	if err != nil {
 		writeConversionError(w, r, err)
 		return
@@ -142,6 +138,11 @@ func writeConversionError(w http.ResponseWriter, r *http.Request, err error) {
 		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", forbidden.Decision.Reason)
 		return
 	}
+	var fieldDenied *affordances.FieldWriteError
+	if errors.As(err, &fieldDenied) {
+		writeV1Error(w, r, http.StatusForbidden, "forbidden", "Not permitted", fieldDenied.Error())
+		return
+	}
 	if errors.Is(err, entitymanager.ErrEntityNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
@@ -155,8 +156,8 @@ func writeConversionError(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	var verr *entitymanager.ValidationError
-	if errors.As(err, &verr) {
-		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Conversion target fails validation", verr.Error())
+	if errors.As(err, &verr) || entitymanager.IsUniqueViolation(err) {
+		writeV1Error(w, r, http.StatusUnprocessableEntity, "validation_failed", "Conversion target fails validation", err.Error())
 		return
 	}
 	slog.Error("dataentry: conversion failed", "err", err)

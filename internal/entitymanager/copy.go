@@ -229,14 +229,6 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 		return nil, err
 	}
 
-	tx, ok := ce.m.deps.Store.(store.Transactor)
-	if !ok {
-		// Every backend implements Transactor; a store that does not is a
-		// wiring error, and running the copy unsynchronized would be worse
-		// than refusing it.
-		return nil, errors.New("entitymanager: store does not support transactions")
-	}
-
 	// Provenance is attached AFTER planning, so it scopes exactly the writes
 	// this copy performs and nothing the planner read. The store stamps it on
 	// the target row; the version sweep copies it onto the version it later
@@ -252,7 +244,7 @@ func (ce *copyEngine) copyState(ctx context.Context, req CopyRequest) (*CopyResu
 		ctx, plan.name, plan.sourceID, plan.from.Type, string(plan.sourceTail))
 
 	var result CopyResult
-	if err := tx.Tx(writeCtx, func(view store.Store) error {
+	if err := ce.m.deps.Store.Tx(writeCtx, func(view store.Store) error {
 		txCtx := store.ContextInTx(writeCtx)
 		res, cerr := applyCopy(txCtx, ce.m.deps.Meta, view, plan)
 		if cerr != nil {

@@ -50,3 +50,15 @@ func TestConversionDefinitionsAreValidated(t *testing.T) {
 		t.Fatalf("unmapped source relation error=%v", err)
 	}
 }
+
+func TestConversionsReserveTheDropRelationName(t *testing.T) {
+	withDrop := strings.Replace(conversionSchema, "relations: {}",
+		"relations:\n  drop:\n    label: Drop\n    from: [task]\n    to: [task]", 1)
+	if _, err := Parse([]byte(withDrop)); err == nil || !strings.Contains(err.Error(), `"drop" is reserved`) {
+		t.Fatalf("relation named drop error=%v", err)
+	}
+	noConversions, _, _ := strings.Cut(withDrop, "conversions:")
+	if _, err := Parse([]byte(noConversions)); err != nil {
+		t.Fatalf("relation named drop rejected without conversions: %v", err)
+	}
+}

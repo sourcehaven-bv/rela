@@ -4,18 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
-	"regexp"
 	"slices"
 	"sort"
-	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
-	"github.com/Sourcehaven-BV/rela/internal/audit"
-	"github.com/Sourcehaven-BV/rela/internal/automation"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
-	"github.com/Sourcehaven-BV/rela/internal/principal"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 )
 
@@ -25,6 +19,45 @@ var (
 	ErrConversionInvalid        = errors.New("entitymanager: conversion mapping cannot be applied")
 	ErrConversionFaceFamily     = errors.New("entitymanager: conversion face mapping cannot be applied")
 )
+
+// Converter runs the operator-declared type conversions of `conversions:`
+// in schema.yaml. A conversion gives an entity a new id and type: the family
+// is renamed, each face row is replaced by its mapped target row, and every
+// incident relation is kept, remapped or dropped as the definition says.
+//
+// # Atomicity
+//
+// The whole conversion runs in one store Tx, and every check runs in it
+// before the first write: authorization, read access, the target id, target
+// validation, `unique:` values, relation capacity and the authorization of
+// the relations it removes. On postgres and sqlite the Tx rolls back on any
+// later error. On the file and memory stores a Tx only serializes writers,
+// so only an I/O error can still fail after a write, and it leaves a partly
+// converted family. Convert then records what reached the store (rename
+// lineage, audit, alias rewrite, relation records), as RenameEntity does.
+//
+// # What the caller must be able to read
+//
+// A conversion moves content to a new type, and with it to that type's
+// readers. So it refuses unless the caller can read every face of the entity
+// and every source field and the content the mapping copies: copying a value
+// the caller cannot see would hand it to an audience chosen by the caller.
+// Incident relations whose far end the caller cannot see are converted as
+// declared but never named, counted or listed (see [Converter.Preview]).
+//
+// It holds the Manager for the reason copyEngine does: authorization and the
+// read gate are Manager's, shared with every other write path.
+type Converter struct{ m *Manager }
+
+// NewConverter returns the conversion engine that writes through m.
+//
+// Nil: rejected — a converter without a manager has nothing to write through.
+func NewConverter(m *Manager) (*Converter, error) {
+	if m == nil {
+		return nil, errors.New("entitymanager: NewConverter: manager is required")
+	}
+	return &Converter{m: m}, nil
+}
 
 // ConversionOffer is a schema-declared conversion capability and its ACL verdict.
 type ConversionOffer struct {
@@ -36,14 +69,9 @@ type ConversionOffer struct {
 	FaceChoices     map[string][]string
 }
 
-// ConversionDefinition returns the effective operator definition held by m.
-func ConversionDefinition(m *Manager, name string) (metamodel.ConversionDef, bool) {
-	d, ok := m.deps.Meta.Conversions[name]
-	return d, ok
-}
-
 // ConversionRequest invokes a named conversion. The mapping always comes from
 // the metamodel; the caller may provide destination values for form fields.
+// Properties and Content apply to the row of SourceFace only.
 type ConversionRequest struct {
 	Definition, SourceID, TargetID, SourceFace string
 	Properties                                 map[string]any
@@ -52,206 +80,48 @@ type ConversionRequest struct {
 	FaceMapping                                map[string]string
 }
 
+// ConversionResult reports a committed conversion.
 type ConversionResult struct {
-	Definition       string         `json:"definition"`
-	OldID            string         `json:"old_id"`
-	Entity           *entity.Entity `json:"entity"`
-	RelationsDropped int            `json:"relations_dropped"`
+	Definition, OldID string
+	// Entity is the converted row of the requested source face, or the
+	// first converted row. Nil: never returned with a nil error.
+	Entity *entity.Entity
+	// RelationsDropped counts the dropped relations the caller can see.
+	RelationsDropped int
 }
 
-// ConversionPreview is advisory data shown before the user commits a conversion.
+// ConversionPreview is advisory data shown before the user commits a
+// conversion. It names only relations the caller can see; a relation the
+// caller cannot see that blocks the conversion shows as one generic entry.
 type ConversionPreview struct {
-	TargetType       string   `json:"target_type"`
-	Required         []string `json:"required"`
-	RequiredFaces    []string `json:"required_faces,omitempty"`
-	RelationsToDrop  []string `json:"relations_to_drop"`
-	InvalidRelations []string `json:"invalid_relations"`
-	InvalidFaces     []string `json:"invalid_faces,omitempty"`
-	TargetFaces      []string `json:"target_faces"`
+	TargetType       string
+	Required         []string
+	RequiredFaces    []string
+	RelationsToDrop  []string
+	InvalidRelations []string
+	InvalidFaces     []string
+	TargetFaces      []string
+	// Moves says, per source face, to which target face its comments and
+	// version history move. They become visible to whoever may read that
+	// face of the target type, which can be a different audience.
+	Moves []ConversionMove
 }
 
-type ConversionFaceChoice struct {
-	SourceFace  string   `json:"source_face"`
-	TargetFaces []string `json:"target_faces"`
+// ConversionMove is one source face and the target face it becomes.
+type ConversionMove struct {
+	SourceFace, TargetFace string
 }
 
-// PreviewConversion checks the named mapping against the current entity and
-// reports required form values and relationship consequences without writing.
-func PreviewConversion(ctx context.Context, m *Manager, req ConversionRequest) (*ConversionPreview, error) {
-	d, family, sourceErr := conversionSource(ctx, m, req, true)
-	if sourceErr != nil {
-		return nil, sourceErr
-	}
-	if overrideErr := validateConversionOverrides(d, req); overrideErr != nil {
-		return nil, overrideErr
-	}
-	preview := &ConversionPreview{TargetType: d.To}
-	faceMap, requiredFaces, invalidFaces := resolveConversionFaces(d, family, req.FaceMapping)
-	preview.RequiredFaces = requiredFaces
-	preview.InvalidFaces = append(preview.InvalidFaces, invalidFaces...)
-	previewConversionFaceChoices(preview, d, family, req.SourceFace)
-	toDef, _ := m.deps.Meta.GetEntityDef(d.To)
-	preview.Required, sourceErr = conversionRequiredFields(d, family, req.Properties, req.SourceFace, *toDef)
-	if sourceErr != nil {
-		return nil, sourceErr
-	}
-	if relationErr := previewConversionRelations(ctx, m, d, req, faceMap, preview); relationErr != nil {
-		return nil, relationErr
-	}
-	sort.Strings(preview.RelationsToDrop)
-	sort.Strings(preview.InvalidRelations)
-	sort.Strings(preview.InvalidFaces)
-	return preview, nil
+// Definition returns the conversion definition the converter applies.
+func (c *Converter) Definition(name string) (metamodel.ConversionDef, bool) {
+	d, ok := c.m.deps.Meta.Conversions[name]
+	return d, ok
 }
 
-func conversionSource(
-	ctx context.Context,
-	m *Manager,
-	req ConversionRequest,
-	probe bool,
-) (metamodel.ConversionDef, []*entity.Entity, error) {
-	d, definitionFound := m.deps.Meta.Conversions[req.Definition]
-	if !definitionFound {
-		return metamodel.ConversionDef{}, nil, fmt.Errorf("%w: %q", ErrUnknownConversion, req.Definition)
-	}
-	family, familyErr := familyRows(ctx, m.deps.Store, req.SourceID)
-	if familyErr != nil {
-		return d, nil, familyErr
-	}
-	if len(family) == 0 {
-		return d, nil, newEntityNotFound(req.SourceID)
-	}
-	if readableErr := requireReadableRow(ctx, faceGateOf(m), req.SourceID, family); readableErr != nil {
-		return d, nil, readableErr
-	}
-	if len(req.Properties) > 0 || req.Content != nil {
-		if err := requireReadableConversionFace(ctx, m, d.From, req.SourceID, req.SourceFace, family); err != nil {
-			return d, nil, err
-		}
-	}
-	for _, row := range family {
-		if row.Type != d.From {
-			return d, nil, ErrConversionSourceMismatch
-		}
-	}
-	authorizeCtx := ctx
-	if probe {
-		authorizeCtx = withAffordanceProbe(ctx)
-	}
-	request := acl.WriteRequest{Op: acl.OpConvert, Subject: acl.NewFamilySubject(d.From, req.SourceID)}
-	if authorizeErr := m.authorizeAndAudit(authorizeCtx, request); authorizeErr != nil {
-		return d, nil, authorizeErr
-	}
-	return d, family, nil
-}
-
-func previewConversionFaceChoices(
-	preview *ConversionPreview,
-	d metamodel.ConversionDef,
-	family []*entity.Entity,
-	sourceFace string,
-) {
-	if sourceFace != "" && !familyHasFace(family, sourceFace) {
-		preview.InvalidFaces = append(preview.InvalidFaces, sourceFace+" (unknown current face)")
-	}
-	if len(family) > 0 {
-		if options, ok := d.Faces[family[0].Face.String()]; ok {
-			preview.TargetFaces = append([]string(nil), options...)
-		}
-	}
-}
-
-func familyHasFace(family []*entity.Entity, face string) bool {
-	for _, row := range family {
-		if row.Face.String() == face {
-			return true
-		}
-	}
-	return false
-}
-
-func conversionRequiredFields(
-	d metamodel.ConversionDef,
-	family []*entity.Entity,
-	supplied map[string]any,
-	sourceFace string,
-	target metamodel.EntityDef,
-) ([]string, error) {
-	for key := range supplied {
-		if _, known := target.Properties[key]; !known {
-			return nil, fmt.Errorf("%w: unknown target property %q", ErrConversionInvalid, key)
-		}
-	}
-	var required []string
-	for key, property := range target.Properties {
-		if !property.Required || property.Computed != "" {
-			continue
-		}
-		for _, source := range family {
-			values := conversionPropertyValues(d, source, supplied, sourceFace)
-			value, exists := values[key]
-			if !exists || metamodel.IsEmptyValue(value) {
-				required = append(required, key)
-				break
-			}
-		}
-	}
-	return slices.Compact(slices.Sorted(slices.Values(required))), nil
-}
-
-func previewConversionRelations(
-	ctx context.Context,
-	m *Manager,
-	d metamodel.ConversionDef,
-	req ConversionRequest,
-	faceMap map[entity.Face]entity.Face,
-	preview *ConversionPreview,
-) error {
-	rels, err := conversionRelations(ctx, m.deps.Store, req.SourceID)
-	if err != nil {
-		return err
-	}
-	for _, rel := range rels {
-		mapped, ok := d.Relations[rel.Type]
-		if !ok {
-			preview.InvalidRelations = append(preview.InvalidRelations, rel.Type+" (no mapping)")
-			continue
-		}
-		if mapped == "drop" {
-			preview.RelationsToDrop = append(preview.RelationsToDrop, rel.Type)
-			continue
-		}
-		if !conversionRelationTypeAllowed(m, d.To, req.SourceID, rel, mapped) {
-			preview.InvalidRelations = append(preview.InvalidRelations, rel.Type+" → "+mapped)
-		}
-	}
-	if len(preview.RequiredFaces) > 0 || len(preview.InvalidFaces) > 0 {
-		return nil
-	}
-	leaving, pending, invalid := conversionRelationPlan(
-		req.SourceID, req.SourceID, rels, d.Relations, faceMap, m.deps.Meta, d.To,
-	)
-	preview.InvalidRelations = append(preview.InvalidRelations, invalid...)
-	for i, key := range pending {
-		if err := checkRelationCapacity(ctx, m.deps.Store, m.deps.Meta, key, leaving, pending[:i]); err != nil {
-			preview.InvalidRelations = append(preview.InvalidRelations, fmt.Sprintf("%s (%v)", key.Type, err))
-		}
-	}
-	return nil
-}
-
-func conversionRelationTypeAllowed(m *Manager, targetType, sourceID string, rel *entity.Relation, mapped string) bool {
-	relationDef, ok := m.deps.Meta.GetRelationDef(mapped)
-	if !ok {
-		return false
-	}
-	return (rel.From != sourceID || conversionAllowsType(relationDef.From, targetType)) &&
-		(rel.To != sourceID || conversionAllowsType(relationDef.To, targetType))
-}
-
-// ConversionsForSource returns the configured conversions for a source type.
-// Allowed is advisory; ConvertEntity rechecks through the same ACL kernel.
-func ConversionsForSource(ctx context.Context, m *Manager, sourceType, sourceID string) []ConversionOffer {
+// Offers returns the configured conversions for a source type. Allowed is
+// advisory; Convert rechecks through the same ACL kernel.
+func (c *Converter) Offers(ctx context.Context, sourceType, sourceID string) []ConversionOffer {
+	m := c.m
 	names := make([]string, 0, len(m.deps.Meta.Conversions))
 	for name := range m.deps.Meta.Conversions {
 		names = append(names, name)
@@ -277,7 +147,7 @@ func ConversionsForSource(ctx context.Context, m *Manager, sourceType, sourceID 
 		if o.Label == "" {
 			o.Label = name
 		}
-		request := acl.WriteRequest{Op: acl.OpConvert, Subject: acl.NewFamilySubject(sourceType, sourceID)}
+		request := acl.WriteRequest{Op: acl.OpConvert, Subject: acl.NewConversionSubject(sourceType, sourceID, d.To)}
 		if authorizeErr := m.authorizeAndAudit(withAffordanceProbe(ctx), request); authorizeErr != nil {
 			o.Reason = authorizeErr.Error()
 		} else {
@@ -288,85 +158,99 @@ func ConversionsForSource(ctx context.Context, m *Manager, sourceType, sourceID 
 	return out
 }
 
-// ConvertEntity rekeys a family and retypes its default row in one store Tx.
-// Rename lineage hooks preserve old links, comments and version history.
-func ConvertEntity(ctx context.Context, m *Manager, req ConversionRequest) (*ConversionResult, error) {
-	ctx = withStoreAttribution(ctx)
-	d, family, sourceErr := conversionSource(ctx, m, req, false)
-	if sourceErr != nil {
-		return nil, sourceErr
+// Preview checks the named mapping against the current entity and reports
+// required form values and relationship consequences without writing. Its
+// authorization is a probe: a denial is returned but not audited.
+func (c *Converter) Preview(ctx context.Context, req ConversionRequest) (*ConversionPreview, error) {
+	m := c.m
+	p, err := c.plan(withAffordanceProbe(ctx), m.deps.Store, req)
+	if err != nil {
+		return nil, err
 	}
-	if overrideErr := validateConversionOverrides(d, req); overrideErr != nil {
-		return nil, overrideErr
+	if err = c.requireReadableInputs(ctx, p); err != nil {
+		return nil, err
 	}
+	d := p.def
 	toDef, _ := m.deps.Meta.GetEntityDef(d.To)
-	faceMap, required, invalid := resolveConversionFaces(d, family, req.FaceMapping)
-	if len(required) > 0 || len(invalid) > 0 {
-		return nil, fmt.Errorf("%w: face choices required %v; invalid %v", ErrConversionInvalid, required, invalid)
+	preview := &ConversionPreview{
+		TargetType:    d.To,
+		RequiredFaces: p.requiredFaces,
+		InvalidFaces:  p.invalidFaces,
+		TargetFaces:   p.targetFaceOptions(req.SourceFace),
+		Moves:         p.faceMoves(),
 	}
-	newID, err := conversionTargetID(ctx, m, d, *toDef, req)
+	preview.Required, err = conversionRequiredFields(d, p.family, req.Properties, req.SourceFace, *toDef)
 	if err != nil {
 		return nil, err
 	}
-	targets, err := buildConversionTargets(ctx, m, d, req, family, faceMap, newID)
+	for _, mv := range p.moves {
+		if mv.drop && mv.visible {
+			preview.RelationsToDrop = append(preview.RelationsToDrop, mv.rel.Type)
+		}
+	}
+	problems := p.invalid
+	if len(p.requiredFaces) == 0 && len(p.invalidFaces) == 0 {
+		capacity, capErr := p.capacityProblems(ctx, m.deps.Store, m.deps.Meta)
+		if capErr != nil {
+			return nil, capErr
+		}
+		problems = append(problems, capacity...)
+	}
+	preview.InvalidRelations = relationProblemTexts(problems)
+	sort.Strings(preview.RelationsToDrop)
+	return preview, nil
+}
+
+// Convert applies the named conversion. See [Converter] for its atomicity
+// and read-access rules.
+func (c *Converter) Convert(ctx context.Context, req ConversionRequest) (*ConversionResult, error) {
+	m := c.m
+	ctx = withStoreAttribution(ctx)
+	// The plan before the Tx refuses early, and names the relations whose
+	// lineage ids must be read while they are still stored. The Tx plans
+	// again from what it reads, so nothing below writes from this one.
+	pre, err := c.plan(ctx, m.deps.Store, req)
 	if err != nil {
 		return nil, err
 	}
-	rels, err := conversionRelations(ctx, m.deps.Store, req.SourceID)
+	if err = c.requireReadableInputs(ctx, pre); err != nil {
+		return nil, err
+	}
+	if err = pre.requireCommittable(req); err != nil {
+		return nil, err
+	}
+	lineage, err := lineageIDs(ctx, m.deps.RelationVersionRecorder, pre.removedKeys())
 	if err != nil {
 		return nil, err
 	}
-	if err := validateConversionRelationMappings(m, d, req, rels); err != nil {
-		return nil, err
-	}
-	tx, ok := m.deps.Store.(store.Transactor)
-	if !ok {
-		return nil, errors.New("entitymanager: store does not support transactions")
-	}
-	rn := prepareConversionRename(m, req, d, newID, faceMap, rels)
-	converted, dropped, txErr := convertEntityTransaction(ctx, m, tx, d, req, newID, faceMap, targets, rels)
+	run := &conversionRun{c: c, req: req}
+	txErr := m.deps.Store.Tx(ctx, func(view store.Store) error {
+		return run.apply(store.ContextInTx(ctx), view)
+	})
 	if txErr != nil {
-		if converted != nil && !familyStillStored(ctx, m.deps.Store, req.SourceID) {
-			rn.record(ctx, []*entity.Entity{converted})
+		// A transactional backend rolled everything back. fs and memstore
+		// cannot, so a conversion that got as far as the rename is recorded.
+		if run.renamed && !familyStillStored(ctx, m.deps.Store, req.SourceID) {
+			_, _ = run.record(ctx, lineage)
 		}
 		return nil, txErr
 	}
-	convertedRows, _ := familyRows(ctx, m.deps.Store, newID)
-	rn.record(ctx, convertedRows)
-	for src, dst := range faceMap {
-		if src != dst {
-			notifyAliasesOfFaceMove(ctx, m.deps.AliasRewriter, newID, d.From, src, dst)
-		}
+	rows, err := run.record(ctx, lineage)
+	if err != nil {
+		return nil, fmt.Errorf("conversion of %s to %s committed, but reading it back failed: %w",
+			req.SourceID, run.newID, err)
 	}
-	converted = chooseConvertedFace(convertedRows, faceMap, req.SourceFace)
+	converted := chooseConvertedFace(rows, run.plan.faceMap, req.SourceFace)
+	if converted == nil {
+		return nil, fmt.Errorf("conversion of %s to %s committed, but %w", req.SourceID, run.newID,
+			newEntityNotFound(run.newID))
+	}
 	return &ConversionResult{
 		Definition:       req.Definition,
 		OldID:            req.SourceID,
 		Entity:           converted,
-		RelationsDropped: dropped,
+		RelationsDropped: run.visibleDrops,
 	}, nil
-}
-
-func convertEntityTransaction(
-	ctx context.Context,
-	m *Manager,
-	tx store.Transactor,
-	d metamodel.ConversionDef,
-	req ConversionRequest,
-	newID string,
-	faceMap map[entity.Face]entity.Face,
-	targets []*entity.Entity,
-	rels []*entity.Relation,
-) (*entity.Entity, int, error) {
-	var converted *entity.Entity
-	dropped := 0
-	txErr := tx.Tx(ctx, func(view store.Store) error {
-		txCtx := store.ContextInTx(ctx)
-		var err error
-		converted, dropped, err = applyConversionInView(txCtx, m, view, d, req, newID, faceMap, targets, rels)
-		return err
-	})
-	return converted, dropped, txErr
 }
 
 func validateConversionOverrides(d metamodel.ConversionDef, req ConversionRequest) error {
@@ -381,68 +265,61 @@ func validateConversionOverrides(d metamodel.ConversionDef, req ConversionReques
 	return nil
 }
 
-// conversionRelationPlan returns the edge identities a conversion removes
-// (drop or type remap) and the replacement identities it will create. Same-
-// type edges survive RenameFamily and retain their identity.
-func conversionPropertyValues(
+func conversionRequiredFields(
 	d metamodel.ConversionDef,
-	source *entity.Entity,
+	family []*entity.Entity,
 	supplied map[string]any,
 	sourceFace string,
-) map[string]any {
-	props := map[string]any{}
-	for target, tmpl := range d.Fields {
-		if value, ok := copyFieldValue(normalizeConversionSourceRefs(tmpl), source); ok {
-			props[target] = value
+	target metamodel.EntityDef,
+) ([]string, error) {
+	if err := rejectUnknownTargetProperties(supplied, target); err != nil {
+		return nil, err
+	}
+	var required []string
+	for key, property := range target.Properties {
+		if !property.Required || property.Computed != "" {
+			continue
+		}
+		for _, source := range family {
+			values := conversionPropertyValues(d, source, supplied, sourceFace)
+			value, exists := values[key]
+			if !exists || metamodel.IsEmptyValue(value) {
+				required = append(required, key)
+				break
+			}
 		}
 	}
-	if source.Face.String() == sourceFace {
-		maps.Copy(props, supplied)
-	}
-	return props
+	return slices.Compact(slices.Sorted(slices.Values(required))), nil
 }
 
-// requireReadableConversionFace makes the client-authored part of a conversion
-// belong to a face the caller can actually see. Conversion itself is a family
-// operation, but form values and edited content come from the face where the
-// user opened the conversion form; accepting a caller-selected hidden face
-// would let a visible draft overwrite a published row.
-func requireReadableConversionFace(
-	ctx context.Context,
-	m *Manager,
-	typ, id, sourceFace string,
-	family []*entity.Entity,
-) error {
-	var selected *entity.Entity
-	for _, row := range family {
-		if row.Face.String() == sourceFace {
-			selected = row
-			break
+func rejectUnknownTargetProperties(supplied map[string]any, target metamodel.EntityDef) error {
+	for key := range supplied {
+		if _, known := target.Properties[key]; !known {
+			return fmt.Errorf("%w: unknown target property %q", ErrConversionInvalid, key)
 		}
-	}
-	if selected == nil {
-		return fmt.Errorf("%w: conversion source face %q does not exist", ErrConversionInvalid, sourceFace)
-	}
-	gate := faceGateOf(m)
-	if gate == nil {
-		return nil
-	}
-	readable, err := gate.PermitsReadFace(ctx, typ, id, selected.Face)
-	if err != nil {
-		return fmt.Errorf("read gate for %s: %w", entity.FormatStateRef(id, selected.Face), err)
-	}
-	if !readable {
-		return fmt.Errorf("%w: %s", ErrEntityNotFound, id)
 	}
 	return nil
 }
 
+func familyHasFace(family []*entity.Entity, face string) bool {
+	for _, row := range family {
+		if row.Face.String() == face {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveConversionFaces maps every row of family to its target face: the
+// caller's choice, or the only declared option. Two source faces never land
+// on one target face, whatever order the rows come in.
 func resolveConversionFaces(
 	d metamodel.ConversionDef,
 	family []*entity.Entity,
 	chosen map[string]string,
 ) (result map[entity.Face]entity.Face, required, invalid []string) {
 	result = map[entity.Face]entity.Face{}
+	usedTargets := map[entity.Face]bool{}
 	allowedSources := map[string]bool{}
 	for _, row := range family {
 		source := row.Face.String()
@@ -454,6 +331,7 @@ func resolveConversionFaces(
 				continue
 			}
 			result[row.Face] = entity.ImplicitFace
+			usedTargets[entity.ImplicitFace] = true
 			continue
 		}
 		if !ok || len(options) == 0 {
@@ -482,10 +360,11 @@ func resolveConversionFaces(
 				continue
 			}
 		}
-		if _, exists := result[target]; exists {
+		if usedTargets[target] {
 			invalid = append(invalid, pick+" (multiple source faces map here)")
 			continue
 		}
+		usedTargets[target] = true
 		result[row.Face] = target
 	}
 	for source := range chosen {
@@ -498,109 +377,20 @@ func resolveConversionFaces(
 	return result, required, invalid
 }
 
-func conversionRelationPlan(
-	oldID, currentID string,
-	rels []*entity.Relation,
-	mapping map[string]string,
-	faces map[entity.Face]entity.Face,
-	meta *metamodel.Metamodel,
-	targetType string,
-) (leaving map[entity.RelationKey]bool, pending []entity.RelationKey, invalid []string) {
-	leaving = map[entity.RelationKey]bool{}
-	for _, rel := range rels {
-		mapped, ok := mapping[rel.Type]
-		if !ok {
-			invalid = append(invalid, rel.Type+" (no mapping)")
-			continue
-		}
-		if mapped == "drop" {
-			continue
-		}
-		from, to := rel.From, rel.To
-		if from == oldID {
-			from = currentID
-		}
-		if to == oldID {
-			to = currentID
-		}
-		face := rel.FromFace
-		if rel.From == oldID {
-			var found bool
-			face, found = faces[rel.FromFace]
-			if !found {
-				invalid = append(invalid, rel.Type+" (no face mapping)")
-				continue
-			}
-		}
-		key := entity.RelationKey{From: from, FromFace: face, Type: mapped, To: to}
-		rd, exists := meta.GetRelationDef(mapped)
-		if !exists {
-			invalid = append(invalid, rel.Type+" → "+mapped)
-			continue
-		}
-		invalidFrom := rel.From == oldID && !conversionAllowsType(rd.From, targetType)
-		invalidTo := rel.To == oldID && !conversionAllowsType(rd.To, targetType)
-		if invalidFrom || invalidTo {
-			invalid = append(invalid, rel.Type+" → "+mapped)
-			continue
-		}
-		leaving[entity.RelationKey{From: from, FromFace: rel.FromFace, Type: rel.Type, To: to}] = true
-		if mapped != rel.Type || face != rel.FromFace {
-			pending = append(pending, key)
-		}
-	}
-	return leaving, pending, invalid
-}
-
-func recordConversionAudit(ctx context.Context, m *Manager, oldID, oldType string, after *entity.Entity) {
-	if after == nil {
-		return
-	}
-	summary := "converted from " + oldType
-	if !after.Face.IsImplicit() {
-		summary += " face " + after.Face.String()
-	}
-	m.deps.Audit.Record(audit.Record{Time: time.Now().UTC(), Op: audit.OpConvertEntity,
-		Before:    &audit.Subject{Kind: "entity", Type: oldType, ID: oldID},
-		After:     &audit.Subject{Kind: "entity", Type: after.Type, ID: after.ID},
-		Principal: principal.From(ctx), TriggeredBy: audit.TriggeredByFrom(ctx), Summary: summary})
-}
-
 func conversionAllowsType(types []string, target string) bool {
 	return len(types) == 0 || slices.Contains(types, target)
 }
 
-func conversionContentValue(template string, source *entity.Entity) string {
-	template = normalizeConversionSourceRefs(template)
-	if match := singleFieldRef.FindStringSubmatch(template); len(match) > 1 && match[1] == "content" {
-		return source.Content
-	}
-	return automation.Interpolate(template, automation.TemplateVars{}, source, nil)
-}
-
-var conversionSourceRef = regexp.MustCompile(`\{\{\s*source\.([A-Za-z0-9_-]+)\s*\}\}`)
-
-// normalizeConversionSourceRefs gives conversion mappings an unambiguous
-// source.* spelling while retaining compatibility with copy's new.* syntax.
-func normalizeConversionSourceRefs(template string) string {
-	return conversionSourceRef.ReplaceAllString(template, "{{new.$1}}")
-}
-
-func conversionRelations(ctx context.Context, st store.Store, id string) ([]*entity.Relation, error) {
-	seen := make(map[entity.RelationKey]bool)
-	var out []*entity.Relation
-	for _, direction := range []store.Direction{store.DirectionOutgoing, store.DirectionIncoming} {
-		for rel, err := range st.ListRelations(ctx, store.RelationQuery{EntityID: id, Direction: direction}) {
-			if err != nil {
-				return nil, fmt.Errorf("list conversion relations: %w", err)
+func chooseConvertedFace(rows []*entity.Entity, faceMap map[entity.Face]entity.Face, sourceFace string) *entity.Entity {
+	if targetFace, ok := faceMap[entity.Face(sourceFace)]; ok {
+		for _, row := range rows {
+			if row.Face == targetFace {
+				return row
 			}
-			key := rel.Identity()
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, rel)
 		}
 	}
-	return out, nil
+	if len(rows) > 0 {
+		return rows[0]
+	}
+	return nil
 }

@@ -2628,6 +2628,11 @@ history lineage and aliases for old links. It reuses the rename history and
 reference rewriting behavior. See [conversion definitions](metamodel.md#declaring-entity-conversions)
 for the operator mapping syntax and face limitations.
 
+After the preview passes, the form shows where each face's comments go. Comments
+and history move with the entity, so everyone who can read the new type and
+face can read those comments. The history timeline of the new entity lists only
+versions of its new type and face; the conversion version names the old id.
+
 ### How navigation resolves
 
 For each clickable entity reference, the SPA picks the destination URL using
@@ -7843,6 +7848,18 @@ The server applies the operator's mapping, rechecks the `convert:` ACL, and
 returns the new id. Rename aliases keep old id links resolving, and the rename
 history hook records the old id as the predecessor. A relation the mapping
 cannot preserve is reported before the entity changes.
+
+The preflight response also carries `moves`: one `{source_face, target_face}`
+pair per face, saying where its comments and history go.
+
+| Situation | Response |
+| --- | --- |
+| No `convert:` grant on a readable source | `403` |
+| Removing a relation the caller may not delete | `403` |
+| Supplying a value for a field the caller may not write | `403` |
+| Source not found, or no face of it is readable | `404` |
+| Target id already taken | `409` |
+| A face or a mapped field is unreadable, a required value is missing, a `unique:` value is taken, or the plan is otherwise invalid | `422` |
 
 ### Responses and errors
 

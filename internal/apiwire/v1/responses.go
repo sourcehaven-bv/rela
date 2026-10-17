@@ -1801,6 +1801,15 @@ type ConversionPreview struct {
 	InvalidRelations []string `json:"invalid_relations"`
 	TargetFaces      []string `json:"target_faces"`
 	InvalidFaces     []string `json:"invalid_faces,omitempty"`
+	// Moves says where each source face's comments and version history go.
+	// Readers of the target face can see them after the conversion.
+	Moves []ConversionMove `json:"moves"`
+}
+
+// ConversionMove is one source face and the target face it becomes.
+type ConversionMove struct {
+	SourceFace string `json:"source_face"`
+	TargetFace string `json:"target_face"`
 }
 
 // CopyOnSuccess is the operator's follow-through for a successful copy.

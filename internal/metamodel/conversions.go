@@ -11,6 +11,11 @@ import (
 var conversionNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 var conversionSourceRefPattern = regexp.MustCompile(`\{\{\s*(?:source|new)\.([A-Za-z0-9_-]+)\s*\}\}`)
 
+// ConversionDrop is the `relations:` value of a conversion that drops the
+// relation instead of mapping it. No relation type may take this name
+// while conversions are declared, or a mapping to it would read as a drop.
+const ConversionDrop = "drop"
+
 // validateConversions checks operator-declared type conversions at schema
 // load time. An incomplete map must fail closed: silently omitting a field or
 // relation during an identity-preserving conversion can lose user data.
@@ -21,6 +26,9 @@ func validateConversions(m *Metamodel) []string {
 	}
 	sort.Strings(names)
 	errs := make([]string, 0, len(m.Conversions))
+	if _, clash := m.Relations[ConversionDrop]; clash && len(m.Conversions) > 0 {
+		errs = append(errs, fmt.Sprintf("relation type %q is reserved while conversions are declared", ConversionDrop))
+	}
 	for _, name := range names {
 		errs = append(errs, validateConversion(m, name, m.Conversions[name])...)
 	}
@@ -127,7 +135,7 @@ func validateConversionRelations(m *Metamodel, d ConversionDef, fromOK, toOK boo
 			continue
 		}
 		targetRel := d.Relations[sourceRel]
-		if targetRel == "drop" {
+		if targetRel == ConversionDrop {
 			continue
 		}
 		targetDef, exists := m.GetRelationDef(targetRel)

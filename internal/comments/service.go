@@ -257,11 +257,6 @@ func (s *Service) FaceMoved(ctx context.Context, entityType, entityID string, fr
 	return nil
 }
 
-// EntityFaceMoved adapts the conversion hook to the comment service.
-func (s *Service) EntityFaceMoved(ctx context.Context, entityID, entityType string, from, to entity.Face) error {
-	return s.FaceMoved(ctx, entityType, entityID, from, to)
-}
-
 // authorFrom resolves the comment author from ctx.
 //
 // Uses [principal.Stamped] rather than From because the two cases differ here:

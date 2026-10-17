@@ -1864,7 +1864,8 @@ being converted; it is the input to the mapping. For example,
 definitions, but `source` names the conversion input more clearly. Unmapped
 source properties are not carried forward. Every relation type incident to
 the source must be mapped to a destination relation type or explicitly
-dropped.
+dropped. Because `drop` is the keyword for a dropped relation, a schema that
+declares conversions cannot also declare a relation type named `drop`.
 
 ```yaml
 conversions:
@@ -1931,6 +1932,24 @@ against the source type. Conversion rekeys the entity family and reuses rename
 aliases and history lineage, so old entity links continue to resolve. See
 [Converting an entity](data-entry.md#converting-an-entity) for the form and
 preview behavior.
+
+A conversion has these limits and effects:
+
+- **Read access.** The caller must be able to read every face of the entity
+  and every source field the mapping uses. A redacted field or a hidden face
+  refuses the conversion instead of copying a value the caller cannot see.
+- **Dropped relations.** Removing a relation needs the same `delete:` grant on
+  the source type and face that deleting the relation needs. A relation the
+  caller cannot see is still dropped or remapped, but it is never named in the
+  preview or the error. Each removed or created relation gets an audit record.
+- **Validation first.** Field validation, `unique:` properties and relation
+  cardinality are checked before the first write.
+- **No target automations.** Automations on the destination type do not run
+  for a conversion. The conversion writes exactly the mapped values.
+- **Atomicity.** On postgres and SQLite the conversion is one transaction, and
+  a failure rolls everything back. The filesystem and memory stores cannot roll
+  back. If a later step fails after the rename, the rename, its audit record
+  and the aliases are still recorded, so the log matches what was stored.
 
 ### Checking stored states
 

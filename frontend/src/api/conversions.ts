@@ -27,6 +27,14 @@ export interface ConversionPreview {
   invalid_relations: string[]
   target_faces: string[]
   invalid_faces?: string[]
+  // Where each source face's comments go. Readers of the target face can
+  // read them after the conversion.
+  moves: ConversionMove[]
+}
+
+export interface ConversionMove {
+  source_face: string
+  target_face: string
 }
 
 export async function previewConversion(name: string, request: ConvertRequest): Promise<ConversionPreview> {

@@ -69,6 +69,16 @@ Every record is one line of JSON:
 | `purge-version` | An operator hard-delete of version history for compliance redaction. Never contains the purged content |
 | `data-migration`, `data-gc` | Schema-driven data migration and garbage collection |
 
+### Conversion records
+
+A conversion writes one `convert-entity` record per face. Its `before` and
+`after` name the old and new id, type and face. Each relation the conversion
+removes gets a `delete-relation` record, and each relation it creates gets a
+`create-relation` record. Both carry `triggered_by: convert-entity:<old>-><new>`.
+This includes relations the caller cannot see. On the filesystem and memory
+stores, which cannot roll back, these records are still written when a later
+step fails after the rename.
+
 ### `denied-write` records
 
 When an ACL refuses a write (see [security](server-security.md)

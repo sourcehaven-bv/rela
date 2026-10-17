@@ -1287,8 +1287,13 @@ func NewApp(
 		return nil, fmt.Errorf("dataentry.NewApp: %w", cerr)
 	}
 	app.copies = copiesHandler
-	app.conversions = newConversionHandler(em)
-	app.conversions.schema = app.State
+	conv, convErr := entitymanager.NewConverter(entitymanager.FieldGated(em))
+	if convErr == nil {
+		app.conversions, convErr = newConversionHandler(conv, app.State)
+	}
+	if convErr != nil {
+		return nil, fmt.Errorf("dataentry.NewApp: %w", convErr)
+	}
 
 	// affordanceService shares the App's acl/fieldResolver/store and takes the
 	// metamodel per-request via app.State(). The two relation-graph reads are
@@ -1308,14 +1313,11 @@ func NewApp(
 			reader:  app.reader,
 			visible: app.visibleReader,
 		}.plan,
-		copies: copyOffers,
-		conversions: func(ctx context.Context, entityType, id string) []entitymanager.ConversionOffer {
-			return entitymanager.ConversionsForSource(ctx, em, entityType, id)
-		},
+		copies:           copyOffers,
+		conversions:      conv.Offers,
 		schema:           app.State,
 		actionConditions: func() ViewConditionFunc { return app.viewConditions },
 	}
-	app.conversions.validateFields = conversionCreateFieldValidator(app.affordances)
 
 	app.serializer = entitySerializer{affordances: app.affordances}
 

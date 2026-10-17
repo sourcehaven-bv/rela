@@ -123,11 +123,13 @@ func (f *aliasFanout) EntityFaceDeleted(ctx context.Context, entityID string, fa
 	return errors.Join(errs...)
 }
 
-func (f *aliasFanout) EntityFaceMoved(ctx context.Context, entityID, entityType string, from, to entity.Face) error {
+// FaceMoved notifies every subscriber that implements
+// [entitymanager.FaceMover] that a face of an entity moved.
+func (f *aliasFanout) FaceMoved(ctx context.Context, entityType, entityID string, from, to entity.Face) error {
 	var errs []error
 	for _, s := range f.subscribers {
 		if mover, ok := s.(entitymanager.FaceMover); ok {
-			if err := mover.EntityFaceMoved(ctx, entityID, entityType, from, to); err != nil {
+			if err := mover.FaceMoved(ctx, entityType, entityID, from, to); err != nil {
 				errs = append(errs, err)
 			}
 		}

@@ -150,12 +150,17 @@ func historyMethodAllowed(w http.ResponseWriter, r *http.Request, restore bool) 
 
 // serveHistoryTimeline writes the version metadata list (oldest first).
 //
+// The lineage can reach back past a rename or conversion to versions of
+// another type or face. Those are dropped: the row gate ran for this type
+// and face only, so their metadata would be served under the wrong grant,
+// as their snapshots would (serveHistoryVersion refuses them too). The
+// conversion's own version stays, and its prev_id and prev_face say where
+// the lineage came from.
+//
 // deleted marks a face with no live row, whose history was opened on the
 // global history permission. Such a timeline is served only when it is
-// non-empty and every version is of the URL type: an empty one would tell a
-// permission holder "no such lineage" apart from the 404 of a hidden live
-// face, and a mismatched one would open another type's lineage under this
-// type's face grant.
+// non-empty after that filter: an empty one would tell a permission holder
+// "no such lineage" apart from the 404 of a hidden live face.
 func serveHistoryTimeline(
 	w http.ResponseWriter, r *http.Request, reader store.HistoryReader,
 	typeName string, subjectRef entityPkg.Ref, deleted bool,
@@ -168,7 +173,8 @@ func serveHistoryTimeline(
 		writeGateError(w, r, err)
 		return
 	}
-	if deleted && !lineageOfType(metas, typeName) {
+	metas = versionsAt(metas, typeName, face)
+	if deleted && len(metas) == 0 {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
 		return
 	}
@@ -224,18 +230,15 @@ func serveHistoryTimeline(
 	writeV1JSON(w, http.StatusOK, body)
 }
 
-// lineageOfType reports whether metas is non-empty and every version is of
-// typeName.
-func lineageOfType(metas []store.VersionMeta, typeName string) bool {
-	if len(metas) == 0 {
-		return false
-	}
+// versionsAt returns the versions of metas that are of typeName at face.
+func versionsAt(metas []store.VersionMeta, typeName string, face entityPkg.Face) []store.VersionMeta {
+	out := make([]store.VersionMeta, 0, len(metas))
 	for _, m := range metas {
-		if m.Type != typeName {
-			return false
+		if m.Type == typeName && m.Face == face {
+			out = append(out, m)
 		}
 	}
-	return true
+	return out
 }
 
 // serveHistoryVersion writes one version's full snapshot, redacted through the
