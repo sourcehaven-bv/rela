@@ -80,7 +80,7 @@ func newRealtimeService(in realtimeInputs) (*realtime.Service, *realtime.Local, 
 		Store:   in.channels,
 		Config:  in.config,
 		Access:  aclAccessSource{d: in.declarative, writes: in.writes},
-		Anchors: anchorReader{rows: rows},
+		Anchors: anchorReader{rows: rows, meta: in.meta},
 		Refs:    refResolver{rows: rows, meta: in.meta},
 		Local:   local,
 	})
@@ -165,7 +165,14 @@ func (a openAccess) CeilingAdmitsUpdate(string) bool                         { r
 // anchorReader reads a channel anchor through one batch header read: the
 // row gate, the readable faces and field redaction all apply, and a bare id
 // serves the face the world ranks first among the readable ones.
-type anchorReader struct{ rows headerReader }
+//
+// When properties are requested it also binds the record a lifecycle
+// condition reads, from the same redacted properties, so a hidden property
+// reads as absent there too.
+type anchorReader struct {
+	rows headerReader
+	meta *metamodel.Metamodel
+}
 
 func (r anchorReader) Anchor(ctx context.Context, addr entity.Address, props []string) (realtime.AnchorView, error) {
 	ref, named := addr.Named()
@@ -192,6 +199,9 @@ func (r anchorReader) Anchor(ctx context.Context, addr entity.Address, props []s
 			if v, ok := h.Header.Properties[p]; ok {
 				view.Props[p] = v
 			}
+		}
+		if def, ok := r.meta.GetEntityDef(view.Type); ok {
+			view.Record = predicatefns.EntityRecord(r.meta, def, view.ID, view.Type, view.Props)
 		}
 	}
 	return view, nil

@@ -56,10 +56,13 @@ entities:
 `
 
 // serviceFixture assembles a project with realtime.yaml over a memstore
-// holding DOC-1 (owner alice), DOC-2 (owner bob) and MEMO-1 (owner bob).
+// holding DOC-1 (owner alice), DOC-2 (owner bob) and MEMO-1 (owner bob). files may
+// name its own realtime.yaml.
 func serviceFixture(t *testing.T, files map[string]string, opts ...appbuild.Option) *appbuild.Services {
 	t.Helper()
-	files["realtime.yaml"] = serviceRealtimeYAML
+	if _, ok := files["realtime.yaml"]; !ok {
+		files["realtime.yaml"] = serviceRealtimeYAML
+	}
 	files["schema.yaml"] = serviceSchema
 	base, err := realtimeBase(t, realtimeProject(t, files), opts...)
 	require.NoError(t, err)
@@ -138,6 +141,43 @@ assignments:
 	require.Equal(t, &realtime.RefValue{ID: "DOC-2", Type: "doc", Title: "Two"}, got.Message.Props["about"])
 
 	_, err = cs.Post(as("alice"), realtime.RawAddress{EntityType: "doc", Anchor: "DOC-2", Type: "room"}, note("x"))
+	requireStatus(t, err, http.StatusForbidden)
+}
+
+// TestChannelService_LifecycleConditionReadsAnchor pins the wiring of a
+// lifecycle condition: the anchor reader binds the condition's record from
+// the gated read, so the condition decides per entity.
+func TestChannelService_LifecycleConditionReadsAnchor(t *testing.T) {
+	t.Parallel()
+	svc := serviceFixture(t, map[string]string{"realtime.yaml": `version: 1
+channel_types:
+  room:
+    attach_to: [doc]
+    roles:
+      member: { from: attached }
+    message_types:
+      note: { properties: { body: { type: string } }, post: [member] }
+    lifecycle:
+      close: { roles: [member], condition: "entity.title == 'One'", denied: "Only One closes" }
+`}, appbuild.WithACL(acl.NopACL{}))
+	cs := appbuild.ChannelService(svc)
+	doc2Room := realtime.RawAddress{EntityType: "doc", Anchor: "DOC-2", Type: "room"}
+	for _, addr := range []realtime.RawAddress{doc1Room, doc2Room} {
+		_, err := cs.Post(asUser("alice"), addr, note("x"))
+		require.NoError(t, err)
+	}
+
+	head, err := cs.Head(asUser("alice"), doc1Room)
+	require.NoError(t, err)
+	require.Equal(t, []string{"close"}, head.Actions.Lifecycle)
+	got, err := cs.Lifecycle(asUser("alice"), doc1Room, "close")
+	require.NoError(t, err)
+	require.Equal(t, channels.StateClosed, got.State)
+
+	head, err = cs.Head(asUser("alice"), doc2Room)
+	require.NoError(t, err)
+	require.Empty(t, head.Actions.Lifecycle)
+	_, err = cs.Lifecycle(asUser("alice"), doc2Room, "close")
 	requireStatus(t, err, http.StatusForbidden)
 }
 

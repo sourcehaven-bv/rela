@@ -13,6 +13,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/realtimelimits"
 )
 
+// LifecycleDelete names the delete operation, which leaves no channel to
+// answer with.
+const LifecycleDelete = realtimecfg.LifecycleDelete
+
+// IsLifecycleOp reports whether op names a lifecycle operation. A route
+// naming anything else is not a channel route.
+func IsLifecycleOp(op string) bool { return slices.Contains(realtimecfg.LifecycleOpNames(), op) }
+
 // Lifecycle runs the lifecycle operation op (close, reopen, archive or
 // delete) on the channel at addr, and returns the channel as it is after
 // the change. A delete returns the zero ChannelView.
