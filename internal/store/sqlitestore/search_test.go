@@ -207,10 +207,14 @@ func seedOldDatabase(t *testing.T, path, shape string, version int) {
 	createEntity(t, s, "OLD-0", "note", "title", "Doomed row", "")
 	createEntity(t, s, "OLD-1", "note", "title", "Legacy row", "first body")
 	createEntity(t, s, "OLD-2", "note", "title", "Other row", "second body")
+	createEntity(t, s, "OLD-3", "note", "title", "Parked row", "")
 	_, err = s.DeleteFamily(ctx, "OLD-0", true)
 	require.NoError(t, err)
+	_, err = s.SoftDelete().MarkDeleted(ctx, "OLD-3", "tester")
+	require.NoError(t, err)
 	_, err = db.DB().ExecContext(ctx, dropSearchIndex+shape+`;
-UPDATE entities SET search_text = NULL`)
+UPDATE entities SET search_text = NULL;
+UPDATE marked_entities SET search_text = NULL`)
 	require.NoError(t, err)
 	_, err = db.DB().ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, version))
 	require.NoError(t, err)
@@ -271,6 +275,13 @@ func TestSearch_MigrationRebuildsIndex(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, searchIDs(t, b, "second", w))
 			require.Equal(t, []string{"OLD-1"}, searchIDs(t, b, "row", w))
+
+			// A row soft-deleted before the upgrade has no search text; the
+			// restore must index it.
+			require.Empty(t, searchIDs(t, b, "parked", w))
+			_, err = s.SoftDelete().Unmark(ctx, "OLD-3")
+			require.NoError(t, err)
+			require.Equal(t, []string{"OLD-3"}, searchIDs(t, b, "parked", w))
 		})
 	}
 }
