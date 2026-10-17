@@ -18,13 +18,14 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/visibility"
+	"github.com/Sourcehaven-BV/rela/internal/worlds"
 )
 
 // ChannelService returns the channel service of s. A package function
 // because [Services] is at its plimsoll cap.
 //
 // Nil: s is accepted and returns nil, as does a Services built by
-// [NewFromCollaborators], which has no channel store.
+// [NewFromCollaborators] without [Collaborators.Channels].
 func ChannelService(s *Services) *realtime.Service {
 	if s == nil {
 		return nil
@@ -36,27 +37,51 @@ func ChannelService(s *Services) *realtime.Service {
 // The service is per assembly, so its access checks follow the current ACL;
 // local is the process-local state successive assemblies share (see
 // [SharedBase.ForReassembly]), or nil for a first assembly, which makes it.
-//
-// Reads of anchors and refs go through the gated, redacted reader
-// [scriptReads] builds from the same inputs as the entity read paths, so a
-// channel route answers not-found exactly where an entity GET does.
 func buildRealtimeService(
 	base *SharedBase, st store.Store, cs channels.Store, local *realtime.Local,
 	d *acl.Declarative, redactor visibility.FieldRedactor, writes acl.ACL,
 ) (*realtime.Service, *realtime.Local, error) {
+	return newRealtimeService(realtimeInputs{
+		meta: base.meta, worlds: base.worlds, config: realtimeConfigSource{h: base.realtime},
+		store: st, channels: cs, local: local, declarative: d, redactor: redactor, writes: writes,
+	})
+}
+
+// realtimeInputs are what [newRealtimeService] builds a channel service
+// from. Assembly and [NewFromCollaborators] both fill it.
+type realtimeInputs struct {
+	meta        *metamodel.Metamodel
+	worlds      worlds.Compiled
+	config      realtime.ConfigSource
+	store       store.Store
+	channels    channels.Store
+	local       *realtime.Local
+	declarative *acl.Declarative
+	redactor    visibility.FieldRedactor
+	writes      acl.ACL
+}
+
+// newRealtimeService builds the channel service from in, and makes the
+// process-local state when in.local is nil.
+//
+// Reads of anchors and refs go through the gated, redacted reader
+// [scriptReads] builds from the same inputs as the entity read paths, so a
+// channel route answers not-found exactly where an entity GET does.
+func newRealtimeService(in realtimeInputs) (*realtime.Service, *realtime.Local, error) {
+	local := in.local
 	if local == nil {
 		var err error
 		if local, err = realtime.NewLocal(time.Now); err != nil {
 			return nil, nil, err
 		}
 	}
-	rows, _ := scriptReads(st, d, redactor, base.worlds)
+	rows, _ := scriptReads(in.store, in.declarative, in.redactor, in.worlds)
 	svc, err := realtime.New(realtime.Deps{
-		Store:   cs,
-		Config:  realtimeConfigSource{h: base.realtime},
-		Access:  aclAccessSource{d: d, writes: writes},
+		Store:   in.channels,
+		Config:  in.config,
+		Access:  aclAccessSource{d: in.declarative, writes: in.writes},
 		Anchors: anchorReader{rows: rows},
-		Refs:    refResolver{rows: rows, meta: base.meta},
+		Refs:    refResolver{rows: rows, meta: in.meta},
 		Local:   local,
 	})
 	if err != nil {

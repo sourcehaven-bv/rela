@@ -126,6 +126,20 @@ func TestChannelPaths(t *testing.T) {
 	if _, ok := body.OneOf[1].Properties["reply_to"]; ok {
 		t.Error("an ephemeral message type offers reply_to")
 	}
+	// props is required on the body exactly when its type has a required
+	// property.
+	if got := body.OneOf[0].Required; len(got) != 2 || got[0] != "type" || got[1] != "props" {
+		t.Errorf("text body required = %v, want [type props]", got)
+	}
+	if got := body.OneOf[1].Required; len(got) != 1 || got[0] != "type" {
+		t.Errorf("typing body required = %v, want [type]", got)
+	}
+	page := spec.Components.Schemas[messagePageSchema]
+	for _, cursor := range []string{"next_after", "next_before", "next_after_rev"} {
+		if _, ok := page.Properties[cursor]; !ok {
+			t.Errorf("MessagePage has no %s", cursor)
+		}
+	}
 	for _, name := range []string{channelHeadSchema, messageSchema, messagePageSchema, refPropSchema, ephemeralAccSchema} {
 		if _, ok := spec.Components.Schemas[name]; !ok {
 			t.Errorf("spec has no %s schema", name)

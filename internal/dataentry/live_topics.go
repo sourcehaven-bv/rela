@@ -69,13 +69,18 @@ type channelChanges interface {
 // filter selects every subscription (a full round).
 type roundFilter struct {
 	topics map[string]bool
-	// allChannels selects every channel subscription, topic or not: the
-	// channel subscription lost count of what changed.
+	// allChannels selects every channel subscription that has a topic: the
+	// channel subscription lost count of what changed. A subscription
+	// without a topic is not selected: its last replay was refused, so a
+	// channel change cannot move its response, and replaying it, or telling
+	// it to refetch when the round overflows, would frame it at the time of
+	// a message it cannot read.
 	allChannels bool
 }
 
 // newRoundFilter is the filter of a round over the presence faces, the
-// changed channels keys and, when resync is set, every channel subscription.
+// changed channels keys and, when resync is set, every channel subscription
+// that has a topic.
 func newRoundFilter(faces []string, keys []channels.Key, resync bool) *roundFilter {
 	f := &roundFilter{topics: make(map[string]bool, len(faces)+2*len(keys)), allChannels: resync}
 	for _, face := range faces {
@@ -96,7 +101,7 @@ func (f *roundFilter) selects(s *liveSub) bool {
 			return true
 		}
 	}
-	return s.channel && (f.allChannels || s.topic != "" && f.topics[s.topic])
+	return s.channel && s.topic != "" && (f.allChannels || f.topics[s.topic])
 }
 
 // topicProbe is where a replay of a channel route reports the topic it

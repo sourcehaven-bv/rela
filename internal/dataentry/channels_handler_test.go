@@ -10,6 +10,7 @@ import (
 	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -73,10 +74,27 @@ func TestChannels_Routes(t *testing.T) {
 		t.Fatalf("head = %+v", head)
 	}
 
+	// Each page names the cursor that continues it in its own direction.
 	code, b = env.get(t, "alice", roomPath+"/messages?limit=1")
 	page := decodeAs[v1.MessagePage](t, b)
-	if code != http.StatusOK || len(page.Messages) != 1 || !page.HasMore || page.NextAfter != page.Messages[0].Seq {
-		t.Fatalf("page = %d %+v", code, page)
+	if code != http.StatusOK || len(page.Messages) != 1 || page.Messages[0].Seq != 2 || !page.HasMore ||
+		page.NextBefore != 2 || page.NextAfter != 0 || page.NextAfterRev != 0 {
+
+		t.Fatalf("newest page = %d %+v, want seq 2 continuing at next_before 2", code, page)
+	}
+	code, b = env.get(t, "alice", roomPath+"/messages?before=2&limit=1")
+	page = decodeAs[v1.MessagePage](t, b)
+	if code != http.StatusOK || len(page.Messages) != 1 || page.Messages[0].Seq != 1 ||
+		page.NextBefore != 1 || page.NextAfter != 0 {
+
+		t.Fatalf("before page = %d %+v, want seq 1 continuing at next_before 1", code, page)
+	}
+	code, b = env.get(t, "alice", roomPath+"/messages?after=1&limit=1")
+	page = decodeAs[v1.MessagePage](t, b)
+	if code != http.StatusOK || len(page.Messages) != 1 || page.Messages[0].Seq != 2 ||
+		page.NextAfter != 2 || page.NextBefore != 0 {
+
+		t.Fatalf("after page = %d %+v, want seq 2 continuing at next_after 2", code, page)
 	}
 
 	resp, b := env.do(t, "alice", http.MethodPatch, roomPath+"/messages/1", `{"props":{"body":"edited"}}`, nil)
@@ -85,7 +103,9 @@ func TestChannels_Routes(t *testing.T) {
 	}
 	code, b = env.get(t, "alice", roomPath+"/messages?after_rev="+strconv.FormatInt(head.Channel.Rev, 10))
 	page = decodeAs[v1.MessagePage](t, b)
-	if code != http.StatusOK || len(page.Messages) != 1 || page.Messages[0].Seq != 1 || page.NextAfterRev == 0 {
+	if code != http.StatusOK || len(page.Messages) != 1 || page.Messages[0].Seq != 1 || page.NextAfterRev == 0 ||
+		page.NextBefore != 0 {
+
 		t.Fatalf("after_rev page = %d %+v", code, page)
 	}
 
@@ -182,11 +202,13 @@ func TestChannels_HiddenAnchorUniform404(t *testing.T) {
 }
 
 // AC14: with realtime off, or channels not wired, every channel route is
-// the entity GET's 404.
+// the entity GET's 404, before the route, query or body is read: a request
+// that would be a 400, 405 or 413 with realtime on gets the same 404.
 func TestChannels_OffIsUniform404(t *testing.T) {
 	off := newChannelEnv(t)
 	off.ch.cfg.Store(nil)
 	plain := newLiveEnv(t, func(app *App) { seedEntity(app, ticket1("one")) })
+	huge := `{"type":"text","props":{"body":"` + strings.Repeat("x", channelBodyLimit) + `"}}`
 	for _, tc := range []struct {
 		name string
 		env  *liveEnv
@@ -198,6 +220,12 @@ func TestChannels_OffIsUniform404(t *testing.T) {
 			{http.MethodGet, roomPath + "/messages", ""},
 			{http.MethodPost, roomPath + "/messages", `{"type":"text","props":{"body":"x"}}`},
 			{http.MethodPost, "/api/v1/tickets/TKT-1/_channels/threads", ""},
+			{http.MethodPost, roomPath + "/messages", `{"type":`},
+			{http.MethodPost, roomPath + "/messages", huge},
+			{http.MethodGet, roomPath + "/messages?limit=0", ""},
+			{http.MethodGet, "/api/v1/tickets/TKT-1/_channels?state=x", ""},
+			{http.MethodPut, roomPath, ""},
+			{http.MethodGet, roomPath + "/messages/1/more", ""},
 		} {
 			t.Run(tc.name+" "+rq.method+" "+rq.path, func(t *testing.T) {
 				resp, b := tc.env.do(t, "alice", rq.method, rq.path, rq.body, nil)
@@ -332,41 +360,61 @@ channel_types:
 }
 
 // TestChannelErrorStatus_CoversEveryType fails when the service declares a
-// refusal type the status table lacks: errors.go is the list.
+// refusal type the status table lacks. Every Type* string constant in a
+// non-test file of internal/realtime is a refusal type, wherever it is
+// declared.
 func TestChannelErrorStatus_CoversEveryType(t *testing.T) {
-	f, err := parser.ParseFile(token.NewFileSet(), "../realtime/errors.go", nil, 0)
+	files, err := filepath.Glob("../realtime/*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	seen := 0
-	ast.Inspect(f, func(n ast.Node) bool {
-		vs, ok := n.(*ast.ValueSpec)
-		if !ok {
-			return true
+	seen := map[string]string{}
+	fset := token.NewFileSet()
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
 		}
-		for i, name := range vs.Names {
-			if !strings.HasPrefix(name.Name, "Type") || i >= len(vs.Values) {
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
 				continue
 			}
-			lit, ok := vs.Values[i].(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				continue
-			}
-			seen++
-			value, _ := strconv.Unquote(lit.Value)
-			if _, ok := channelErrorStatus[value]; !ok {
-				t.Errorf("realtime.%s (%q) has no status in channelErrorStatus", name.Name, value)
+			for _, spec := range gd.Specs {
+				vs := spec.(*ast.ValueSpec)
+				for i, name := range vs.Names {
+					if !strings.HasPrefix(name.Name, "Type") || i >= len(vs.Values) {
+						continue
+					}
+					lit, ok := vs.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						continue
+					}
+					value, _ := strconv.Unquote(lit.Value)
+					seen[value] = filepath.Base(path)
+					if _, ok := channelErrorStatus[value]; !ok {
+						t.Errorf("realtime.%s (%q, %s) has no status in channelErrorStatus",
+							name.Name, value, filepath.Base(path))
+					}
+				}
 			}
 		}
-		return true
-	})
-	if seen != len(channelErrorStatus) {
-		t.Errorf("errors.go declares %d refusal types, the table maps %d", seen, len(channelErrorStatus))
+	}
+	if len(seen) == 0 {
+		t.Fatal("found no refusal types; the scan is not reading internal/realtime")
+	}
+	if len(seen) != len(channelErrorStatus) {
+		t.Errorf("internal/realtime declares %d refusal types, the table maps %d", len(seen), len(channelErrorStatus))
 	}
 }
 
-// stubChannels answers every operation with err.
+// stubChannels answers every operation with err, with realtime on.
 type stubChannels struct{ err error }
+
+func (stubChannels) Enabled() bool { return true }
 
 func (s stubChannels) ListAnchor(context.Context, string, string, channels.State) (realtime.AnchorChannels, error) {
 	return realtime.AnchorChannels{}, s.err
@@ -416,7 +464,8 @@ func TestChannels_ErrorMapping(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestAppV1(t)
-			app.channels = &channelsHandler{svc: stubChannels{err: tc.err}}
+			stub := stubChannels{err: tc.err}
+			app.channels = &channelsHandler{svc: stub, on: stub}
 			router := app.NewRouter()
 			for _, rq := range []struct{ method, path, body string }{
 				{http.MethodGet, "/api/v1/tickets/TKT-1/_channels", ""},

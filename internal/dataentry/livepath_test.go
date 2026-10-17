@@ -26,6 +26,10 @@ func TestParseLivePath(t *testing.T) {
 		{"channel list by state", "/api/v1/tickets/TKT-1/_channels?state=open&world=main",
 			"/api/v1/tickets/TKT-1/_channels?state=open&world=main"},
 		{"channel head", "/api/v1/tickets/TKT-1/_channels/room", "/api/v1/tickets/TKT-1/_channels/room"},
+		// `messages` is a subresource only after a type; a channel type may
+		// carry the name.
+		{"head of a type named messages", "/api/v1/tickets/TKT-1/_channels/messages",
+			"/api/v1/tickets/TKT-1/_channels/messages"},
 		{"named channel head", "/api/v1/tickets/TKT-1@draft/_channels/threads/0a1b2c3d4e5f6",
 			"/api/v1/tickets/TKT-1@draft/_channels/threads/0a1b2c3d4e5f6"},
 		// Every ListParams key in frontend/src/types/entity.ts except the
@@ -92,6 +96,7 @@ func TestParseLivePath(t *testing.T) {
 		// A frame on the head is the signal to fetch messages?after_rev=;
 		// the messages are not a live shape.
 		{"channel messages", "/api/v1/tickets/TKT-1/_channels/room/messages"},
+		{"messages of a type named messages", "/api/v1/tickets/TKT-1/_channels/messages/messages"},
 		{"named channel messages", "/api/v1/tickets/TKT-1/_channels/threads/0a1b2c3d4e5f6/messages"},
 		{"channel message", "/api/v1/tickets/TKT-1/_channels/room/messages/1"},
 		{"channel too deep", "/api/v1/tickets/TKT-1/_channels/threads/0a1b2c3d4e5f6/x"},

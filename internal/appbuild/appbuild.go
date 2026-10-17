@@ -203,7 +203,8 @@ type Services struct {
 	channels channels.Store
 	// channelService is the channel service over channels (see
 	// [ChannelService]), built per assembly so its access checks follow the
-	// current ACL. Nil only for a NewFromCollaborators build.
+	// current ACL. Nil for a NewFromCollaborators build without
+	// Collaborators.Channels.
 	channelService *realtime.Service
 	// realtimeLocal is the process-local state under channelService, which a
 	// re-assembly shares.
@@ -1088,6 +1089,36 @@ type Collaborators struct {
 	// Nil: accepted — commenting disabled, as in production when the
 	// metamodel declares no comments.
 	Comments *comments.Service
+
+	// Channels makes [ChannelService] return a channel service built the
+	// way assembly builds it, over the channel store and realtime config
+	// it names.
+	// Nil: accepted — no channel service, as without a channel store.
+	Channels *ChannelCollaborators
+}
+
+// ChannelCollaborators are the inputs of the channel service a Services
+// built by [NewFromCollaborators] offers. Both fields are required.
+type ChannelCollaborators struct {
+	Store  channels.Store
+	Config realtime.ConfigSource
+}
+
+// collaboratorVisibleSearcher returns c.VisibleSearcher, or one derived
+// from c.Searcher and c.Store when it is unset.
+func collaboratorVisibleSearcher(c Collaborators) (search.VisibleSearcher, error) {
+	if c.VisibleSearcher != nil {
+		return c.VisibleSearcher, nil
+	}
+	v, err := search.NewVisible(c.Searcher, c.Store)
+	// coverage-ignore-start: defensive: NewVisible only errors on nil Searcher/Store or a Store that isn't an
+	// EntityReader; NewFromCollaborators validates c.Searcher/c.Store non-nil first and every store.Store is an
+	// EntityReader
+	if err != nil {
+		return nil, fmt.Errorf("appbuild.NewFromCollaborators: derive VisibleSearcher: %w", err)
+	}
+	// coverage-ignore-end
+	return v, nil
 }
 
 // NewFromCollaborators assembles a [Services] from pre-built
@@ -1147,17 +1178,9 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 	if c.Declarative != nil {
 		aclPolicy = c.Declarative.Policy()
 	}
-	visible := c.VisibleSearcher
-	if visible == nil {
-		v, err := search.NewVisible(c.Searcher, c.Store)
-		// coverage-ignore-start: defensive: NewVisible only errors on nil Searcher/Store or a Store that isn't an
-		// EntityReader; c.Searcher/c.Store
-		// are validated non-nil above and every store.Store is an EntityReader
-		if err != nil {
-			return nil, fmt.Errorf("appbuild.NewFromCollaborators: derive VisibleSearcher: %w", err)
-		}
-		// coverage-ignore-end
-		visible = v
+	visible, err := collaboratorVisibleSearcher(c)
+	if err != nil {
+		return nil, err
 	}
 	// Compile worlds from the supplied metamodel so this construction path
 	// offers the same world surface as the base-assembly path. A failure
@@ -1206,20 +1229,27 @@ func NewFromCollaborators(c Collaborators) (*Services, error) {
 		leases:         refs.leases,
 		leaseShared:    refs.leaseShared,
 		caldavAliases:  refs.aliases,
+		channels:       refs.channels,
+		channelService: refs.channelService,
+		realtimeLocal:  refs.realtimeLocal,
 	}, nil
 }
 
 // collaboratorRefs are the services [NewFromCollaborators] builds itself.
 type collaboratorRefs struct {
-	piles       *piles.Service
-	aliases     *caldavalias.Service
-	leases      *lease.Service
-	leaseShared leaseShared
+	piles          *piles.Service
+	aliases        *caldavalias.Service
+	leases         *lease.Service
+	leaseShared    leaseShared
+	channels       channels.Store
+	channelService *realtime.Service
+	realtimeLocal  *realtime.Local
 }
 
-// collaboratorRefHolders builds the piles service, the CalDAV alias table and
-// the lease service the way assembly builds them, so a Services assembled
-// from collaborators offers them as a deployment's does.
+// collaboratorRefHolders builds the piles service, the CalDAV alias table,
+// the lease service and, when c.Channels is set, the channel service the way
+// assembly builds them, so a Services assembled from collaborators offers
+// them as a deployment's does.
 func collaboratorRefHolders(
 	c Collaborators, redactor visibility.FieldRedactor, w worlds.Compiled,
 ) (collaboratorRefs, error) {
@@ -1238,6 +1268,19 @@ func collaboratorRefHolders(
 		c.FS, c.Paths, w, c.Store, leaseShared{}, c.Declarative, redactor, c.ACL)
 	if err != nil {
 		return refs, fmt.Errorf("leases: %w", err)
+	}
+	if ch := c.Channels; ch != nil {
+		if ch.Store == nil || ch.Config == nil {
+			return refs, errors.New("channels: Store and Config are required")
+		}
+		refs.channels = ch.Store
+		refs.channelService, refs.realtimeLocal, err = newRealtimeService(realtimeInputs{
+			meta: c.Meta, worlds: w, config: ch.Config, store: c.Store, channels: ch.Store,
+			declarative: c.Declarative, redactor: redactor, writes: c.ACL,
+		})
+		if err != nil {
+			return refs, fmt.Errorf("channels: %w", err)
+		}
 	}
 	return refs, nil
 }

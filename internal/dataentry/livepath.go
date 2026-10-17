@@ -169,7 +169,9 @@ const namedChannelSegs = 5
 // channel head and the channel list are the only live channel shapes: a
 // client that gets a frame for a head fetches messages?after_rev= itself,
 // so a messages path is refused. Parsing is structural, as in the channel
-// routes: a minted name is 13 base36 digits and is never `messages`.
+// routes: a minted name is 13 base36 digits and is never `messages`, so
+// `messages` after a type is the messages path, while a channel type named
+// `messages` is a head like any other.
 func liveChannelShape(segs []string, meta *metamodel.Metamodel) (livePath, map[string]bool, error) {
 	if err := checkLivePlural(segs[0], meta); err != nil {
 		return livePath{}, nil, err
@@ -181,7 +183,7 @@ func liveChannelShape(segs []string, meta *metamodel.Metamodel) (livePath, map[s
 	if len(segs) == 3 {
 		return lp, liveChannelsKeys, nil
 	}
-	if len(segs) > namedChannelSegs || segs[len(segs)-1] == messagesSegment {
+	if len(segs) > namedChannelSegs || len(segs) == namedChannelSegs && segs[4] == messagesSegment {
 		return livePath{}, nil, fmt.Errorf("%w: subscribe to the channel head, not to its messages", errLivePath)
 	}
 	lp.shape, lp.chtype = liveChannel, segs[3]

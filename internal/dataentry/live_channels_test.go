@@ -2,37 +2,100 @@ package dataentry
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/Sourcehaven-BV/rela/internal/acl"
 	"github.com/Sourcehaven-BV/rela/internal/channels"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/realtime"
 )
 
 // Live channel delivery (TKT-ZU7P13). The channel head and the channel
 // list are the live shapes; a frame tells the client to fetch
 // messages?after_rev= itself.
 
+// replayCounter wraps the hub's replay handler and counts the replays of
+// each URL.
+type replayCounter struct {
+	inner http.Handler
+	mu    sync.Mutex
+	n     map[string]int
+}
+
+// countReplaysByURL installs a replayCounter on h, after NewRouter installed the
+// replay handler.
+func countReplaysByURL(t *testing.T, h *liveHub) *replayCounter {
+	t.Helper()
+	inner := h.replay.Load()
+	if inner == nil {
+		t.Fatal("no replay handler installed")
+	}
+	c := &replayCounter{inner: *inner, n: map[string]int{}}
+	var hh http.Handler = c
+	h.replay.Store(&hh)
+	return c
+}
+
+func (c *replayCounter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	c.mu.Lock()
+	c.n[r.URL.RequestURI()]++
+	c.mu.Unlock()
+	c.inner.ServeHTTP(w, r)
+}
+
+// take returns the counts since the last take and clears them.
+func (c *replayCounter) take() map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := c.n
+	c.n = map[string]int{}
+	return out
+}
+
 // AC5: a message frames the head of its channel and the channel list of its
 // anchor, and nothing else: not another channel, not the entity, and not a
-// subscription to a channel the subscriber cannot read.
+// subscription to a channel the subscriber cannot read. The round replays
+// only that head and that list: not another channel of the same anchor,
+// and not a subscription without a topic.
 func TestLive_ChannelFrameIsolation(t *testing.T) {
 	env := newChannelEnv(t)
+	thread, err := env.ch.store.CreateMany(context.Background(), channels.Anchor{ID: "TKT-1"}, channels.NewChannel{
+		Type: "threads", Title: "side", By: channels.Author{User: "alice"}, At: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listPath := "/api/v1/tickets/TKT-1/_channels"
+	threadPath := listPath + "/threads/" + thread.Key.Name
 	c, conn := env.open(t, "alice")
 	env.subscribe(t, "alice", conn,
 		liveSubEntry{"head", roomPath},
-		liveSubEntry{"list", "/api/v1/tickets/TKT-1/_channels"},
+		liveSubEntry{"list", listPath},
+		liveSubEntry{"thread", threadPath},
 		liveSubEntry{"other", "/api/v1/tickets/TKT-2/_channels/room"},
 		liveSubEntry{"entity", "/api/v1/tickets/TKT-1"},
 		liveSubEntry{"hidden", "/api/v1/features/FEAT-1/_channels/room"},
 		liveSubEntry{"secret", "/api/v1/tickets/TKT-1/_channels/secret"},
 	)
+	if got := env.app.live.subTopic(conn, "thread"); got == "" {
+		t.Fatal("the second channel on the anchor has no topic, so the test would not see it replayed")
+	}
 	liveQuiet(t, c)
+	replays := countReplaysByURL(t, env.app.live)
 
 	env.postText(t, "bob", roomPath, "hello")
 	requireChanged(t, c, "head", "list")
 	liveQuiet(t, c)
+	if got, want := replays.take(), map[string]int{roomPath: 1, listPath: 1}; !maps.Equal(got, want) {
+		t.Fatalf("a post to the room replayed %v, want only its head and its anchor's list %v", got, want)
+	}
 
 	// An ephemeral message shows in the head only; the list holds no
 	// ephemeral state.
@@ -116,6 +179,125 @@ func TestLive_RevokedReaderStops(t *testing.T) {
 	liveQuiet(t, bob)
 }
 
+// fakeChanges is a channelChanges a test drives: a wake makes the next
+// Take report resync.
+type fakeChanges struct {
+	wake   chan struct{}
+	resync atomic.Bool
+}
+
+func (f *fakeChanges) Wake() <-chan struct{} { return f.wake }
+func (f *fakeChanges) Take() ([]channels.Key, bool) {
+	return nil, f.resync.Swap(false)
+}
+func (f *fakeChanges) Close() {}
+
+// resync makes the worker's next tick a channel resync round.
+func (f *fakeChanges) fire() {
+	f.resync.Store(true)
+	f.wake <- struct{}{}
+}
+
+// A resync replays every channel subscription that has a topic and none
+// without one. A subscription the round does not collect is not replayed,
+// and is not told to refetch when the round overflows either: the overflow
+// fallback only takes collected pairs.
+func TestLive_ResyncSkipsTopiclessSubscriptions(t *testing.T) {
+	fake := &fakeChanges{wake: make(chan struct{}, 1)}
+	env := newChannelEnvWith(t, channelPolicy, func(app *App) {
+		app.channels.changes = func() channelChanges { return fake }
+	})
+	hiddenPath := "/api/v1/features/FEAT-1/_channels/room"
+	secretPath := "/api/v1/tickets/TKT-1/_channels/secret"
+	c, conn := env.open(t, "alice")
+	env.subscribe(t, "alice", conn,
+		liveSubEntry{"head", roomPath},
+		liveSubEntry{"hidden", hiddenPath},
+		liveSubEntry{"secret", secretPath},
+	)
+	liveQuiet(t, c)
+	replays := countReplaysByURL(t, env.app.live)
+
+	fake.fire()
+	env.waitTicks(t, 2)
+	liveQuiet(t, c)
+	if got, want := replays.take(), map[string]int{roomPath: 1}; !maps.Equal(got, want) {
+		t.Fatalf("a resync replayed %v, want only the subscription with a topic %v", got, want)
+	}
+
+	pairs := env.app.live.collect(true, newRoundFilter(nil, nil, true))
+	for _, p := range pairs {
+		if p.url == hiddenPath || p.url == secretPath {
+			t.Fatalf("a resync round collects %s, which has no topic; an overflow would frame it", p.url)
+		}
+	}
+	if len(pairs) != 1 || pairs[0].url != roomPath {
+		t.Fatalf("a resync round collects %d pairs, want only %s", len(pairs), roomPath)
+	}
+}
+
+// A realtime.yaml reload that removes read access runs a full round: the
+// revoked subscriber gets its one frame at the reload, and none when the
+// channel next gets a message, so that message's time is not revealed.
+func TestLive_RealtimeReloadRevokes(t *testing.T) {
+	// dave holds chat.read, so he still reads the room after the reload.
+	policy := func(t *testing.T, app *App) *acl.Declarative {
+		t.Helper()
+		return mustNewACL(t, &acl.Policy{
+			Roles: map[string]acl.RoleDef{
+				"editor": {Read: []string{"ticket"}, Update: []string{"ticket"}},
+				"admin": {
+					Read: []string{"ticket", "feature"}, Update: []string{"ticket", "feature"},
+					Permissions: []string{"chat.read"},
+				},
+			},
+			Assignments: map[string]string{"editors": "editor", "dave": "admin"},
+		}, app.store)
+	}
+	env := newChannelEnvWith(t, policy, nil)
+	alice, aliceConn := env.open(t, "alice")
+	dave, daveConn := env.open(t, "dave")
+	env.subscribe(t, "alice", aliceConn, liveSubEntry{"head", roomPath})
+	env.subscribe(t, "dave", daveConn, liveSubEntry{"head", roomPath})
+	liveDrain(alice)
+	liveDrain(dave)
+
+	restricted := strings.Replace(channelTestRealtime,
+		"    attach_to: [ticket, feature]\n    read: { from: attached }",
+		"    attach_to: [ticket, feature]\n    read: { permission: chat.read }", 1)
+	if restricted == channelTestRealtime {
+		t.Fatal("the room's read rule was not replaced")
+	}
+	next := env.ch.parse(t, restricted)
+	if err := SetRealtime(env.app, reloaderFunc(func() { env.ch.cfg.Store(next) })); err != nil {
+		t.Fatal(err)
+	}
+	if err := reloadRealtime(env.app); err != nil {
+		t.Fatal(err)
+	}
+	requireChanged(t, alice, "head")
+	liveQuiet(t, dave)
+	code, b := env.get(t, "alice", roomPath)
+	if code != http.StatusForbidden || problemType(t, b) != realtime.TypeReadDenied {
+		t.Fatalf("alice's head after the reload = %d %s, want 403 read_denied", code, b)
+	}
+	if got := env.app.live.subTopic(aliceConn, "head"); got != "" {
+		t.Fatalf("alice's topic after the reload = %q, want none", got)
+	}
+
+	env.postText(t, "dave", roomPath, "after")
+	requireChanged(t, dave, "head")
+	liveQuiet(t, alice)
+}
+
+// reloaderFunc is a realtimeReloader whose Reload runs f and succeeds.
+type reloaderFunc func()
+
+func (f reloaderFunc) Reload(context.Context) error {
+	f()
+	return nil
+}
+
 // A topic round replays a presence subscription on a changed face and a
 // channel subscription on a changed topic, or every channel subscription
 // on a resync, and nothing else.
@@ -146,7 +328,8 @@ func TestRoundFilter_Selects(t *testing.T) {
 		{"watching face", byFace, present, true},
 		{"left face", byFace, left, true},
 		{"channel on a face change", byFace, head, false},
-		{"resync: channel without topic", resync, untopiced, true},
+		{"resync: channel without topic", resync, untopiced, false},
+		{"resync: head", resync, head, true},
 		{"resync: other channel", resync, other, true},
 		{"resync: plain", resync, plain, false},
 	} {

@@ -118,15 +118,18 @@ type Message struct {
 }
 
 // MessagePage is one page of messages, oldest first, or by rev for an
-// after_rev page. HasMore is set when the page is full, so there may be
-// more past its cursor. NextAfter is the seq to pass as `after` for the
-// next page; NextAfterRev is the rev to pass as `after_rev` when the page
-// was read by rev. Both are absent on an empty page.
+// after_rev page. HasMore is set when the page is full: there may be more
+// past its cursor, and only the next request can tell. A page names one
+// cursor, in the direction it was read: NextAfterRev, the rev to pass as
+// `after_rev`, for a page read by rev; NextAfter, the seq to pass as
+// `after`, for an `after` page; NextBefore, the seq to pass as `before`,
+// for the newest page and a `before` page. An empty page names none.
 type MessagePage struct {
 	Channel      Channel   `json:"channel"`
 	Messages     []Message `json:"messages"`
 	HasMore      bool      `json:"has_more"`
 	NextAfter    int64     `json:"next_after,omitempty"`
+	NextBefore   int64     `json:"next_before,omitempty"`
 	NextAfterRev int64     `json:"next_after_rev,omitempty"`
 }
 
