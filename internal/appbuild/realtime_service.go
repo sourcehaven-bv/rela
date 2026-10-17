@@ -57,8 +57,8 @@ func PolicyChannelService(s *Services) (*realtime.Service, error) {
 	if policy == nil {
 		return s.channelService, nil
 	}
-	if err = ValidateACLPolicy(policy, s.base.meta); err != nil {
-		return nil, err
+	if verr := ValidateACLPolicy(policy, s.base.meta); verr != nil {
+		return nil, verr
 	}
 	writes, d, err := buildACL(policy, s.Store())
 	if err != nil {
