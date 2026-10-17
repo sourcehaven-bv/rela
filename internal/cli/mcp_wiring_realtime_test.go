@@ -1,12 +1,17 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -84,8 +89,10 @@ func TestMCPStdio_RealtimeReload(t *testing.T) {
 	assert.Eventually(t, func() bool { return hasChannelType(svc, "notes") },
 		5*time.Second, 50*time.Millisecond, "the realtime.yaml edit never applied")
 
+	// The watcher path is pinned above; the broken edit is reloaded directly,
+	// so the assertion does not race the watcher.
 	writeProjectFile(t, root, "realtime.yaml", "version: 1\nchannel_types: [broken")
-	time.Sleep(500 * time.Millisecond)
+	svc.reloadRealtime()
 	assert.True(t, hasChannelType(svc, "notes"), "a broken edit replaced the previous config")
 
 	require.NoError(t, svc.Close())
@@ -128,4 +135,185 @@ assignments:
 	require.NoError(t, err, "alice reads items")
 	_, err = deps.Channels.Reader.Read(as("mallory"), addr, realtime.ReadRequest{})
 	assert.ErrorIs(t, err, realtime.ErrAnchorNotFound, "mallory reads no item under acl.yaml")
+}
+
+const (
+	stdioACLAlice = `roles:
+  editor:
+    read: [item]
+    create: [item]
+    update: [item]
+assignments:
+  alice: editor
+`
+	stdioACLBob    = stdioACLAlice + "  bob: editor\n"
+	stdioACLBroken = "roles: [broken\n"
+	// stdioACLUnknownType parses, but names a user type the schema lacks.
+	stdioACLUnknownType = "user_entity_type: nosuch\n" + stdioACLAlice
+	aclUnloadable       = "acl.yaml cannot be loaded"
+)
+
+// stdioServer builds the stdio MCP server over svc for user and returns a
+// client session and the server. The session runs over HTTP because the
+// server's in-memory transport is internal to package mcp.
+func stdioServer(t *testing.T, svc *mcpServices, user string) (*mcpgo.ClientSession, *relamcp.Server) {
+	t.Helper()
+	srv, err := relamcp.NewServer(svc.Deps(), "test",
+		relamcp.WithPrincipal(principal.Principal{User: user, Tool: principal.ToolMCP}))
+	require.NoError(t, err)
+	ts := httptest.NewServer(srv.HTTPHandler())
+	t.Cleanup(ts.Close)
+	client := mcpgo.NewClient(&mcpgo.Implementation{Name: "test", Version: "0"}, nil)
+	cs, err := client.Connect(context.Background(), &mcpgo.StreamableClientTransport{
+		Endpoint: ts.URL, DisableStandaloneSSE: true,
+	}, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cs.Close() })
+	return cs, srv
+}
+
+// callText calls tool and returns its text and whether it is an error.
+func callText(t *testing.T, cs *mcpgo.ClientSession, tool string, args map[string]any) (string, bool) {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcpgo.CallToolParams{Name: tool, Arguments: args})
+	require.NoError(t, err)
+	var b strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcpgo.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	return b.String(), res.IsError
+}
+
+// seedItem creates an item through the stdio entity path and returns its id.
+func seedItem(t *testing.T, svc *mcpServices) string {
+	t.Helper()
+	created, err := svc.Deps().EntityManager.CreateEntity(context.Background(),
+		&entity.Entity{Type: "item", Properties: map[string]any{"title": "one"}}, entity.CreateOptions{})
+	require.NoError(t, err)
+	return created.Entity.ID
+}
+
+// TestMCPStdio_BrokenACLAtStartup pins the fail-closed path at startup. An
+// acl.yaml that does not parse stops rela mcp when realtime.yaml exists,
+// because the realtime config needs the policy for its checks. One that
+// parses but does not apply to the schema makes every channel tool answer
+// why, and the entity tools keep working.
+func TestMCPStdio_BrokenACLAtStartup(t *testing.T) {
+	root := seedProject(t)
+	writeProjectFile(t, root, "realtime.yaml", stdioRealtimeYAML)
+	writeProjectFile(t, root, "acl.yaml", stdioACLBroken)
+	_, startErr := mcpServicesForTest(t, root)
+	require.ErrorContains(t, startErr, "acl.yaml", "an unparseable acl.yaml must stop startup")
+
+	writeProjectFile(t, root, "acl.yaml", stdioACLUnknownType)
+	svc, err := mcpServicesForTest(t, root)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	id := seedItem(t, svc)
+
+	cs, _ := stdioServer(t, svc, "alice")
+	text, isErr := callText(t, cs, "read_channel", map[string]any{"id": id, "channel_type": "room"})
+	assert.True(t, isErr, "read_channel succeeded under a broken acl.yaml: %s", text)
+	assert.Contains(t, text, aclUnloadable)
+	text, isErr = callText(t, cs, "post_message", map[string]any{
+		"id": id, "channel_type": "room", "message_type": "text", "props": map[string]any{"body": "hi"},
+	})
+	assert.True(t, isErr, "post_message succeeded under a broken acl.yaml: %s", text)
+	assert.Contains(t, text, aclUnloadable)
+
+	text, isErr = callText(t, cs, "show_entity", map[string]any{"id": id})
+	assert.False(t, isErr, "show_entity failed: %s", text)
+}
+
+// TestMCPStdio_BrokenACLOnReload pins that a schema reload with a broken
+// acl.yaml publishes the new schema, retires nothing that still serves, and
+// leaves the channel tools refusing.
+func TestMCPStdio_BrokenACLOnReload(t *testing.T) {
+	root := seedProject(t)
+	writeProjectFile(t, root, "realtime.yaml", stdioRealtimeYAML)
+	writeProjectFile(t, root, "acl.yaml", stdioACLAlice)
+	svc, err := mcpServicesForTest(t, root)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	id := seedItem(t, svc)
+	cs, srv := stdioServer(t, svc, "alice")
+	_, isErr := callText(t, cs, "read_channel", map[string]any{"id": id, "channel_type": "room"})
+	require.False(t, isErr, "alice reads the channel before the edit")
+
+	writeProjectFile(t, root, "acl.yaml", stdioACLBroken)
+	writeSchema(t, root, schemaWithRisk)
+	require.NoError(t, svc.reload(srv.ReloadDeps), "a broken acl.yaml must not block a schema reload")
+	require.NotSame(t, svc.origin, svc.current(), "the reload did not publish a successor")
+
+	text, isErr := callText(t, cs, "create_entity", map[string]any{
+		"type": "risk", "properties": map[string]any{"title": "outage"},
+	})
+	assert.False(t, isErr, "the server does not serve the new schema: %s", text)
+	text, isErr = callText(t, cs, "read_channel", map[string]any{"id": id, "channel_type": "room"})
+	assert.True(t, isErr, "read_channel succeeded under a broken acl.yaml: %s", text)
+	assert.Contains(t, text, aclUnloadable)
+}
+
+// TestMCPStdio_ACLWatch pins that the channel tools follow an acl.yaml edit
+// without a restart, in both directions.
+func TestMCPStdio_ACLWatch(t *testing.T) {
+	root := seedProject(t)
+	writeProjectFile(t, root, "realtime.yaml", stdioRealtimeYAML)
+	writeProjectFile(t, root, "acl.yaml", stdioACLAlice)
+	svc, err := mcpServicesForTest(t, root)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.Close() })
+	id := seedItem(t, svc)
+	cs, srv := stdioServer(t, svc, "bob")
+	svc.watchSchema(srv)
+	require.NotNil(t, svc.stopACLWatch, "acl.yaml watcher should have started")
+
+	read := map[string]any{"id": id, "channel_type": "room"}
+	_, isErr := callText(t, cs, "read_channel", read)
+	require.True(t, isErr, "bob has no role and must not read the channel")
+
+	writeProjectFile(t, root, "acl.yaml", stdioACLBob)
+	assert.Eventually(t, func() bool {
+		_, isErr := callText(t, cs, "read_channel", read)
+		return !isErr
+	}, 5*time.Second, 50*time.Millisecond, "the acl.yaml edit granting bob never applied")
+
+	writeProjectFile(t, root, "acl.yaml", stdioACLBroken)
+	assert.Eventually(t, func() bool {
+		text, isErr := callText(t, cs, "read_channel", read)
+		return isErr && strings.Contains(text, aclUnloadable)
+	}, 5*time.Second, 50*time.Millisecond, "a broken acl.yaml edit did not close the channel tools")
+}
+
+// TestMCPStdio_WarnsUnassignedUser pins the startup warning for a local user
+// acl.yaml names no role for.
+func TestMCPStdio_WarnsUnassignedUser(t *testing.T) {
+	for _, tc := range []struct {
+		name, acl, user string
+		want            bool
+	}{
+		{"unassigned", stdioACLAlice, "bob", true},
+		{"assigned", stdioACLAlice, "alice", false},
+		{"no acl.yaml", "", "bob", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := seedProject(t)
+			if tc.acl != "" {
+				writeProjectFile(t, root, "acl.yaml", tc.acl)
+			}
+			t.Setenv("USER", tc.user)
+			var logs bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			svc, err := mcpServicesForTest(t, root)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = svc.Close() })
+			assert.Equal(t, tc.want, strings.Contains(logs.String(), "assigns no role to the local user"),
+				"logs: %s", logs.String())
+		})
+	}
 }
