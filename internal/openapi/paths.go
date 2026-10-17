@@ -208,7 +208,12 @@ func (g *Generator) addEntityPaths(spec *Spec, typeName string, def metamodel.En
 			Responses: map[string]Response{
 				"204": {Description: "Entity deleted"},
 				"404": {Description: "Entity not found", Content: problemContent()},
-				"409": {Description: "Cannot delete (has incoming relations)", Content: problemContent()},
+				"409": {
+					Description: "Cannot delete: the entity has incoming relations, a channel whose type sets " +
+						"on_entity_delete: block is attached (code channel_blocks_delete), or the entity changed " +
+						"during the delete (code conflict; retry)",
+					Content: problemContent(),
+				},
 			},
 		},
 	}

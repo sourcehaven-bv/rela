@@ -186,15 +186,17 @@ func (rr *RelationReader) Owns(rel *entity.Relation, sourceFace entity.Face) boo
 func (rr *RelationReader) NeighborsForPage(
 	ctx context.Context, rows []Resolved, dir store.Direction,
 ) ([][]*entity.Relation, error) {
-	pg := page{rows: rows, out: make([][]*entity.Relation, len(rows)), rowIdx: make(map[string]int, len(rows))}
+	pg := page{rows: rows, out: make([][]*entity.Relation, len(rows)), rowIdx: make(map[string][]int, len(rows))}
 	byFace := make(map[entity.Face][]string)
 	for i, res := range rows {
 		if !res.Found || res.Entity == nil {
 			continue
 		}
 		id := res.Entity.ID
-		pg.rowIdx[id] = i
-		pg.ids = append(pg.ids, id)
+		if _, dup := pg.rowIdx[id]; !dup {
+			pg.ids = append(pg.ids, id)
+		}
+		pg.rowIdx[id] = append(pg.rowIdx[id], i)
 		byFace[res.Face] = append(byFace[res.Face], id)
 	}
 	if len(pg.ids) == 0 {
@@ -218,14 +220,16 @@ func (rr *RelationReader) NeighborsForPage(
 
 // page is the working state of one [RelationReader.NeighborsForPage] call.
 type page struct {
-	rows   []Resolved
-	out    [][]*entity.Relation
-	rowIdx map[string]int
+	rows []Resolved
+	out  [][]*entity.Relation
+	// rowIdx maps an id to every row serving it: a page may hold two faces
+	// of one entity, and each row gets its own edges.
+	rowIdx map[string][]int
 	ids    []string
 }
 
 func (pg *page) give(id string, rel *entity.Relation) {
-	if i, ok := pg.rowIdx[id]; ok {
+	for _, i := range pg.rowIdx[id] {
 		pg.out[i] = append(pg.out[i], rel)
 	}
 }
@@ -266,8 +270,13 @@ func (rr *RelationReader) pageOutgoingContent(
 		face := f
 		outQ := store.RelationQuery{Direction: store.DirectionOutgoing, FromFace: &face, EntityIDs: byFace[f]}
 		if err := collect(rr.lister.ListRelations(ctx, outQ), func(rel *entity.Relation) {
-			if i, ok := pg.rowIdx[rel.From]; ok && rr.classes.IsContentScoped(rel.Type) && pg.rows[i].Face == face {
-				pg.out[i] = append(pg.out[i], rel)
+			if !rr.classes.IsContentScoped(rel.Type) {
+				return
+			}
+			for _, i := range pg.rowIdx[rel.From] {
+				if pg.rows[i].Face == face {
+					pg.out[i] = append(pg.out[i], rel)
+				}
 			}
 		}); err != nil {
 			return err
@@ -281,14 +290,15 @@ func (rr *RelationReader) pageOutgoingContent(
 func (rr *RelationReader) pageIncomingContent(ctx context.Context, pg *page, dir store.Direction) error {
 	inQ := store.RelationQuery{Direction: store.DirectionIncoming, FromFace: nil, EntityIDs: pg.ids}
 	return collect(rr.lister.ListRelations(ctx, inQ), func(rel *entity.Relation) {
-		i, ok := pg.rowIdx[rel.To]
-		if !ok || !rr.classes.IsContentScoped(rel.Type) {
+		if !rr.classes.IsContentScoped(rel.Type) {
 			return
 		}
-		if rel.From == rel.To && (dir == store.DirectionBoth || rel.FromFace != pg.rows[i].Face) {
-			return
+		for _, i := range pg.rowIdx[rel.To] {
+			if rel.From == rel.To && (dir == store.DirectionBoth || rel.FromFace != pg.rows[i].Face) {
+				continue
+			}
+			pg.out[i] = append(pg.out[i], rel)
 		}
-		pg.out[i] = append(pg.out[i], rel)
 	})
 }
 

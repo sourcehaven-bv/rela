@@ -94,6 +94,7 @@ func TestRestore_OwnedGrantThroughOwner(t *testing.T) {
 				Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: decl,
 				Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
 				CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: allowAllCopyVisibility(t, st),
+				AnchorGuard: entitymanager.NopAnchorGuard{},
 			})
 			require.NoError(t, err)
 
@@ -183,6 +184,7 @@ func allowAllManager(t *testing.T, st store.Store, meta *metamodel.Metamodel, si
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: sink,
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
 	return mgr
@@ -329,7 +331,8 @@ func TestCopy_OwningEdgeFollowsTheRules(t *testing.T) {
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
 		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
-		CopyGuard: allowGuard{allow: true},
+		CopyGuard:   allowGuard{allow: true},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
 	ctx := aliceCtx()

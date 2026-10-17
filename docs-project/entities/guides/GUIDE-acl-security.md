@@ -74,6 +74,20 @@ The policy fails to load at all, so this stops the server rather than
 only the linter — which is the point: an un-gated membership relation
 should not boot.
 
+### A conferring relation points from the member
+
+A `role_relations` entry with `confers:` gives a role to the source of the
+edge, on the target. The resolver looks for an edge from the principal, or
+one of its groups, to the entity. An entry whose relation runs the other way,
+for example `toegewezen_aan` from an asset to a person, never matches. It
+still costs a lookup per member for every entity checked. When
+`user_entity_type` is set, rela logs a warning at load for an entry whose
+declared source types include no user or group type:
+
+```text
+level=WARN msg="appbuild: ACL role relation can never confer its role: ..." relation=toegewezen_aan
+```
+
 Per-verb relation permissions do exist — as `relation_grants:`, covered
 in [GUIDE-acl-overview]. They apply only to relation types that do
 **not** confer a role; naming a gated `role_relations:` type there is
@@ -1687,6 +1701,22 @@ configuration.
   - deleting an owner that owns an entity the caller may not delete fails
     with a 403, on every write path. The denial names the owned entity's type
     but not its id. Nothing is deleted.
+  - a delete refused because a realtime channel of a type with
+    `on_entity_delete: block` is attached fails with a 409 that names the
+    channel type (TKT-ZU7P13). That shows a channel of that type exists on
+    an entity the caller may delete, and nothing more. The type name is
+    config, which is not a secret. The check runs after every refusal the
+    delete itself would give, so a caller who may not delete never sees the
+    409. A face delete counts the whole-entity channels only when the
+    caller's last readable face goes, so a hidden face never changes the
+    answer. A whole-family delete always counts them. That keeps the
+    hidden-face property only because every surface resolves a bare id
+    through `visibility.Resolver.WriteTarget` before it deletes; the
+    data-entry API refuses a bare id on a faced type as `face_required`. A
+    new delete surface that skipped that step would let a channel on a face
+    the caller cannot read decide the 409. A block on an entity the delete
+    removes through `owning` names the type only, never the owned
+    entity's id.
 - **Markdown body (`content`) is not field-redacted, on any read path.**
   `visible:` is a **property-values** guard: it omits hidden *property* and
   *relation-meta* values from the wire. It makes no claim over the markdown

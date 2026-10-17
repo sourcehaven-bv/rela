@@ -89,6 +89,7 @@ relations:
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: aud,
 		ACL: a, Transitions: statemachine.EmptySet(),
 		FieldGate: entitymanager.AllowAllFieldGate{}, RelationVersionRecorder: rec,
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

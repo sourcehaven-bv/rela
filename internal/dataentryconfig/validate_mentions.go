@@ -19,9 +19,7 @@ var fieldsByTypeDisplays = map[string]bool{"properties": true, "list": true, "ca
 // any other collection it would cost one index read per row. It walks no
 // relation, so every relation-walk key is refused rather than ignored.
 //
-// Its `where:` must parse. The relation steps keep their pre-existing
-// silent widening on a bad expression (BUG-WHEREWIDE); a new step does not
-// inherit it.
+// Its `where:` must parse, as on every traverse step ([validateTraverseWhere]).
 func validateMentionsStep(viewID string, i int, t ViewTraverse, view ViewConfig) []string {
 	var errs []string
 	prefix := fmt.Sprintf("view %q: traverse[%d]", viewID, i)
@@ -53,12 +51,20 @@ func validateMentionsStep(viewID string, i int, t ViewTraverse, view ViewConfig)
 			}
 		}
 	}
-	if t.Where != "" {
-		if _, err := filter.Parse(t.Where); err != nil {
-			errs = append(errs, fmt.Sprintf("%s has an invalid where: %v", prefix, err))
-		}
+	return append(errs, validateTraverseWhere(prefix, t)...)
+}
+
+// validateTraverseWhere refuses a traverse `where:` that does not parse
+// (BUG-WHEREWIDE). The executor used to drop such a clause and keep every
+// traversed entity, so a typo widened a step whose only job is to narrow.
+func validateTraverseWhere(prefix string, t ViewTraverse) []string {
+	if t.Where == "" {
+		return nil
 	}
-	return errs
+	if _, err := filter.Parse(t.Where); err != nil {
+		return []string{fmt.Sprintf("%s has an invalid where: %v", prefix, err)}
+	}
+	return nil
 }
 
 // validateMentionsUsed refuses a backlinks collection no section shows. Such
@@ -271,9 +277,10 @@ func allEntityTypes(meta *metamodel.Metamodel) []string {
 	return types
 }
 
-// validateSidePanelMentions refuses the backlink and per-type keys in a
-// form's side panel. Side panels share the view types but are not validated
-// like views, so these keys would otherwise be accepted and misapplied.
+// validateSidePanelMentions refuses the backlink, per-type and `condition:`
+// keys in a form's side panel, and a `where:` that does not parse. Side panels
+// share the view types but are not validated like views, so these keys would
+// otherwise be accepted and misapplied.
 func validateSidePanelMentions(formID string, panel *SidePanelConfig) []string {
 	if panel == nil {
 		return nil
@@ -284,6 +291,11 @@ func validateSidePanelMentions(formID string, panel *SidePanelConfig) []string {
 			errs = append(errs, fmt.Sprintf("form %q: side_panel traverse[%d] sets mentioned_by, "+
 				"which side panels do not support (use it in a view)", formID, i))
 		}
+		if t.Condition != "" {
+			errs = append(errs, fmt.Sprintf("form %q: side_panel traverse[%d] sets condition, "+
+				"which side panels do not support (use where, or a view)", formID, i))
+		}
+		errs = append(errs, validateTraverseWhere(fmt.Sprintf("form %q: side_panel traverse[%d]", formID, i), t)...)
 	}
 	for i, s := range panel.Sections {
 		if s.FieldsByType != nil || s.ColumnsByType != nil {

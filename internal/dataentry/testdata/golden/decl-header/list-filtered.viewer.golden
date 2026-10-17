@@ -3,8 +3,8 @@ identity: header viewer@example.test
 status: 200
 header X-Total-Count: 2
 header Link: </api/v1/tickets?page=1&per_page=25>; rel="first", </api/v1/tickets?page=1&per_page=25>; rel="last"
-reads: CountMatched=1 GetRelation=6 GraphQueryHeaders=2 ListEntityHeaders=1 ListRelations=4 MatchingFaces=2
-breadth: ListEntityHeaders=5/1 ListRelations=6/4 MatchingFaces=4/2
+reads: CountMatched=1 GraphQueryHeaders=2 ListEntityHeaders=1 ListRelations=5 MatchingFaces=2
+breadth: ListEntityHeaders=5/1 ListRelations=8/5 MatchingFaces=4/2
 bodies: GraphQuery=1/2 ListEntityHeaders=0/1
 versions: 
 body:

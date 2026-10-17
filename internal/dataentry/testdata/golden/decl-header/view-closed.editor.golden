@@ -1,8 +1,8 @@
 request: GET /api/v1/_views/ticket/TKT-2
 identity: header editor@example.test
 status: 200
-reads: GetRelation=11 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=3 ListRelations=9 MatchingFaces=1
-breadth: ListEntities=1/1 ListEntityHeaders=3/3 ListRelations=6/9 MatchingFaces=1/1
+reads: GetRelation=7 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=3 ListRelations=12 MatchingFaces=1
+breadth: ListEntities=1/1 ListEntityHeaders=3/3 ListRelations=9/12 MatchingFaces=1/1
 bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/3
 versions: 
 body:

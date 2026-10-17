@@ -719,7 +719,7 @@ const cardFieldWidgets = computed(() => {
   for (const field of kanbanConfig.value?.card.fields ?? []) {
     if (!field.property || field.relation || byProperty.has(field.property)) continue
     const hint = densePropertyRoutingHint(type.properties[field.property], field.property)
-    byProperty.set(field.property, { component: defaultRegistry.resolveFromHint(hint), hint })
+    byProperty.set(field.property, { component: defaultRegistry.resolveDense(hint), hint })
   }
   return byProperty
 })

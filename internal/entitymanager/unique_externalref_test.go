@@ -52,6 +52,7 @@ func newXrefManager(t *testing.T) *entitymanager.Manager {
 		ACL:         acl.NopACL{},
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -166,6 +167,7 @@ entities:
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: memstore.New(), Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
 		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -344,7 +346,8 @@ copies:
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: acl.NopACL{},
 		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
-		CopyGuard: allowGuard{allow: true},
+		CopyGuard:   allowGuard{allow: true},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -568,6 +568,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         });
       }
       await waitForExit(proc);
+      failOnQueryCeiling(logs());
     }
   },
 
@@ -882,9 +883,28 @@ export const postgresTest = test.extend<
         });
       }
       await waitForExit(proc);
+      failOnQueryCeiling(logs());
     }
   },
 });
+
+/** The message rela-server logs for a request over its --query-ceiling
+ *  (internal/dataentry/requeststats.go, queryCeilingMsg). */
+const QUERY_CEILING_MSG = "request exceeded query ceiling";
+
+/** Fails the test when the server logged a request over its query ceiling.
+ *  That warning means some request shape the test drove runs one statement
+ *  per row; the Go budget tests cover the shapes they know, this catches the
+ *  rest (BUG-E2W1LS). Only database backends count statements, so it bites
+ *  on the postgres specs. */
+function failOnQueryCeiling(logs: string): void {
+  const hits = logs.split("\n").filter((l) => l.includes(QUERY_CEILING_MSG));
+  if (hits.length > 0) {
+    throw new Error(
+      `rela-server logged ${hits.length} request(s) over the query ceiling:\n${hits.join("\n")}`,
+    );
+  }
+}
 
 export { expect } from "@playwright/test";
 

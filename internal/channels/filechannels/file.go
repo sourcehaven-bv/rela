@@ -79,7 +79,7 @@ const SegmentSize = 1000
 const (
 	metaFile    = "meta.yaml"
 	auditDir    = "_audit"
-	modesFile   = "_types/anchor-modes.yaml"
+	typesFile   = "_types/records.yaml"
 	detachedDir = "~detached"
 	trashDir    = "~trash"
 	none        = "_"
@@ -96,6 +96,12 @@ type Locker interface {
 
 // Store is the file backend. It adds locking and the [channels.Store]
 // operations to the file layout that disk reads and writes.
+//
+// 20 -> 21 (TKT-ZU7P13): Untombstone. The exported methods are the mandated
+// [channels.Store] interface, so this is a required-interface exception
+// rather than a ratchet target.
+//
+//plimsoll:max-exported-methods=21
 type Store struct {
 	disk
 	locker Locker

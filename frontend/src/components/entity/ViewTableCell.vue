@@ -23,6 +23,10 @@ const props = defineProps<{
   values?: string[]
   property?: string
   entityType: string
+  // The row's address, face included (utils/entityRef). A file cell builds
+  // its download links from it. Leave it unset for a cell inside a link: the
+  // file cell then renders plain names instead of a nested link.
+  entityId?: string
 }>()
 
 const schemaStore = useSchemaStore()
@@ -70,7 +74,7 @@ function routeFor(propertyDef: PropertyDef | undefined, property: string): Route
 
 function resolveRoute(propertyDef: PropertyDef | undefined, property: string): Route {
   const hint = densePropertyRoutingHint(propertyDef, property)
-  return { widget: defaultRegistry.resolveFromHint(hint), hint }
+  return { widget: defaultRegistry.resolveDense(hint), hint }
 }
 </script>
 
@@ -82,6 +86,7 @@ function resolveRoute(propertyDef: PropertyDef | undefined, property: string): R
     mode="display"
     :property-name="property"
     :entity-type="entityType"
+    :entity-id="entityId"
   />
   <template v-else>{{ (values ?? []).join(', ') }}</template>
 </template>

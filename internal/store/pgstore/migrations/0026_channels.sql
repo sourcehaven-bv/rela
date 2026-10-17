@@ -69,9 +69,11 @@ CREATE TABLE channel_audit (
 
 CREATE INDEX channel_audit_anchor_idx ON channel_audit (anchor_id, tomb, id);
 
--- The anchor mode (family or face) each channel type was used with, so a
--- restart can refuse a realtime.yaml that changed it.
+-- The anchor mode (family or face) and cardinality (one or many) each
+-- channel type was used with, so a restart can refuse a realtime.yaml that
+-- changed either.
 CREATE TABLE channel_types (
     type        TEXT COLLATE "C" PRIMARY KEY,
-    anchor_mode TEXT NOT NULL
+    anchor_mode TEXT NOT NULL,
+    cardinality TEXT NOT NULL
 );

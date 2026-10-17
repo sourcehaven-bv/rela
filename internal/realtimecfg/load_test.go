@@ -508,6 +508,14 @@ func TestCheckReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertProblem(t, CheckReload(prev, next), "channel_types.page-threads.anchor", "cannot change from face to family")
+	// No valid edit of the golden file flips a cardinality alone (create,
+	// creator and triggers all depend on it), so the parsed value is edited.
+	next, err = Parse([]byte(golden(t)), meta, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next.channelTypes["incident-room"].Cardinality = CardinalityMany
+	assertProblem(t, CheckReload(prev, next), "channel_types.incident-room.cardinality", "cannot change from one to many")
 	if _, pErr := ParsePeriod("100000y"); pErr != nil {
 		t.Errorf("largest count refused: %v", pErr)
 	}

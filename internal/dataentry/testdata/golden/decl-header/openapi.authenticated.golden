@@ -1253,7 +1253,7 @@ body:
             }
           },
           "409": {
-            "description": "Cannot delete (has incoming relations)",
+            "description": "Cannot delete: the entity has incoming relations, a channel whose type sets on_entity_delete: block is attached (code channel_blocks_delete), or the entity changed during the delete (code conflict; retry)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3085,7 +3085,7 @@ body:
             }
           },
           "409": {
-            "description": "Cannot delete (has incoming relations)",
+            "description": "Cannot delete: the entity has incoming relations, a channel whose type sets on_entity_delete: block is attached (code channel_blocks_delete), or the entity changed during the delete (code conflict; retry)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4904,7 +4904,7 @@ body:
             }
           },
           "409": {
-            "description": "Cannot delete (has incoming relations)",
+            "description": "Cannot delete: the entity has incoming relations, a channel whose type sets on_entity_delete: block is attached (code channel_blocks_delete), or the entity changed during the delete (code conflict; retry)",
             "content": {
               "application/problem+json": {
                 "schema": {

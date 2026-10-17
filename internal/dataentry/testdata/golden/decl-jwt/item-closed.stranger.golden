@@ -2,8 +2,8 @@ request: GET /api/v1/tickets/TKT-2
 identity: signed assertion for stranger@example.test
 status: 200
 header ETag: "CIpF5cPF9ow="
-reads: GetRelation=6 GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=1 ListRelations=3 MatchingFaces=2
-breadth: ListEntities=1/1 ListEntityHeaders=1/1 ListRelations=0/3 MatchingFaces=2/2
+reads: GraphQueryHeaders=1 ListEntities=1 ListEntityHeaders=1 ListRelations=5 MatchingFaces=2
+breadth: ListEntities=1/1 ListEntityHeaders=1/1 ListRelations=2/5 MatchingFaces=2/2
 bodies: GraphQuery=0/1 ListEntities=1/1 ListEntityHeaders=0/1
 versions: 
 body:

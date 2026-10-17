@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -15,20 +16,76 @@ import (
 // The value is meant to answer "how many round-trips did this request cost,
 // and how long did the database spend on them?", the two numbers that make
 // an N+1 pattern visible before it becomes a latency complaint. It is NOT a
-// tracing facility — no per-statement detail is kept, so the memory cost is
-// two counters regardless of how many statements run.
+// tracing facility. Beyond the two counters it keeps one count per distinct
+// statement text ([QueryStats.RecordStatement]), capped at
+// [maxStatementShapes], so the memory cost does not grow with the number of
+// statements a request runs.
 //
 // Safe for concurrent use: a request that fans out to goroutines sharing its
 // context accumulates into the same counters.
 type QueryStats struct {
 	queries atomic.Int64
 	nanos   atomic.Int64
+
+	mu     sync.Mutex
+	shapes map[string]int64
 }
+
+// maxStatementShapes caps the distinct statement texts one QueryStats
+// counts. A backend issues parameterised SQL from a fixed set of call
+// sites, so a request rarely needs this many; the cap bounds memory for one
+// that renders literals into its SQL. Past it, a new text replaces the
+// least counted one and inherits its count plus one (the Space-Saving
+// algorithm), so a statement repeated hundreds of times is still found
+// even when it starts after the table filled. Counts past the cap may
+// overstate by at most the replaced count.
+const maxStatementShapes = 256
 
 // Record adds one statement of the given duration.
 func (s *QueryStats) Record(d time.Duration) {
 	s.queries.Add(1)
 	s.nanos.Add(int64(d))
+}
+
+// RecordStatement is [QueryStats.Record] for a backend that knows the
+// statement text. sql must be the parameterised text, never one with bound
+// values inlined: [QueryStats.MostRepeated] reports it in a log line.
+func (s *QueryStats) RecordStatement(sql string, d time.Duration) {
+	s.Record(d)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.shapes == nil {
+		s.shapes = map[string]int64{}
+	}
+	if _, ok := s.shapes[sql]; !ok && len(s.shapes) >= maxStatementShapes {
+		var minSQL string
+		minN := int64(-1)
+		for text, c := range s.shapes {
+			if minN < 0 || c < minN {
+				minSQL, minN = text, c
+			}
+		}
+		delete(s.shapes, minSQL)
+		s.shapes[sql] = minN
+	}
+	s.shapes[sql]++
+}
+
+// MostRepeated returns the statement text recorded most often and its count.
+// One text run hundreds of times in one request is the signature of a
+// per-row lookup (N+1). Ties go to the lexically smaller text, so the answer
+// is deterministic. It returns "", 0 when no text was recorded.
+func (s *QueryStats) MostRepeated() (sql string, count int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var top string
+	var n int64
+	for text, c := range s.shapes {
+		if c > n || (c == n && text < top) {
+			top, n = text, c
+		}
+	}
+	return top, n
 }
 
 // Queries returns the number of statements recorded so far.

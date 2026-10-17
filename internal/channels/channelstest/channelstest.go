@@ -76,7 +76,11 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"Keys", testKeys},
 		{"TimesRoundTrip", testTimes},
 		{"SecondInstance", testSecondInstance},
-		{"AnchorModes", testAnchorModes},
+		{"TypeRecords", testTypeRecords},
+		{"UntombstoneRestoresItsBatch", testUntombstoneBatch},
+		{"UntombstoneFace", testUntombstoneFace},
+		{"UntombstoneOccupied", testUntombstoneOccupied},
+		{"TombstoneHandleRoundTrips", testHandleRoundTrip},
 		{"Incarnation", testIncarnation},
 		{"ArchiveFromOpen", testArchiveFromOpen},
 		{"AfterRevPagesInRevOrder", testAfterRevPaging},
@@ -103,6 +107,25 @@ func mustAppend(t *testing.T, s channels.Store, k channels.Key, m channels.NewMe
 	got, err := s.Append(context.Background(), k, m)
 	require.NoError(t, err)
 	return got
+}
+
+// tombstone tombstones id@face and returns the handle.
+func tombstone(t *testing.T, s channels.Store, id string, face entity.Face, at time.Time) channels.TombstoneHandle {
+	t.Helper()
+	h, err := s.Tombstone(context.Background(), id, face, at)
+	require.NoError(t, err)
+	return h
+}
+
+// requireTombstoneErr returns a check that a refused Tombstone returned
+// want and no handle.
+func requireTombstoneErr(t *testing.T, want error) func(channels.TombstoneHandle, error) {
+	t.Helper()
+	return func(h channels.TombstoneHandle, err error) {
+		t.Helper()
+		require.ErrorIs(t, err, want)
+		require.True(t, h.IsZero())
+	}
 }
 
 func seqs(ms []channels.Message) []int64 {
@@ -820,7 +843,7 @@ func testRekeyConflict(t *testing.T, h Harness) {
 	require.Len(t, b, 1)
 
 	// The occupant tombstoned first, the rekey goes through.
-	require.NoError(t, h.Store.Tombstone(ctx, "B-1", "", T0))
+	tombstone(t, h.Store, "B-1", "", T0)
 	require.NoError(t, h.Store.Rekey(ctx, "A-1", "B-1", T0))
 	b, err = h.Store.ListEntity(ctx, "B-1")
 	require.NoError(t, err)
@@ -838,7 +861,7 @@ func testTombstoneEntity(t *testing.T, h Harness) {
 	mustAppend(t, h.Store, face, text("c"))
 	mustAppend(t, h.Store, key("TKT-2", "room"), text("other"))
 
-	require.NoError(t, h.Store.Tombstone(ctx, "TKT-1", "", T0.Add(time.Hour)))
+	tombstone(t, h.Store, "TKT-1", "", T0.Add(time.Hour))
 	got, err := h.Store.ListEntity(ctx, "TKT-1")
 	require.NoError(t, err)
 	require.Empty(t, got)
@@ -853,10 +876,10 @@ func testTombstoneEntity(t *testing.T, h Harness) {
 	require.Equal(t, int64(1), m.Seq, "a new entity on the id gets a fresh channel")
 
 	// Twice in a row, and on an id without channels, is not an error.
-	require.NoError(t, h.Store.Tombstone(ctx, "TKT-1", "", T0.Add(time.Hour)))
-	require.NoError(t, h.Store.Tombstone(ctx, "TKT-1", "", T0.Add(time.Hour)))
-	require.NoError(t, h.Store.Tombstone(ctx, "NONE-1", "", T0))
-	require.ErrorIs(t, h.Store.Tombstone(ctx, "../x", "", T0), channels.ErrInvalidKey)
+	tombstone(t, h.Store, "TKT-1", "", T0.Add(time.Hour))
+	tombstone(t, h.Store, "TKT-1", "", T0.Add(time.Hour))
+	tombstone(t, h.Store, "NONE-1", "", T0)
+	requireTombstoneErr(t, channels.ErrInvalidKey)(h.Store.Tombstone(ctx, "../x", "", T0))
 }
 
 func testTombstoneFace(t *testing.T, h Harness) {
@@ -869,7 +892,7 @@ func testTombstoneFace(t *testing.T, h Harness) {
 	mustAppend(t, h.Store, draft, text("draft"))
 	mustAppend(t, h.Store, live, text("live"))
 
-	require.NoError(t, h.Store.Tombstone(ctx, "TKT-1", "draft", T0.Add(time.Hour)))
+	tombstone(t, h.Store, "TKT-1", "draft", T0.Add(time.Hour))
 	got, err := h.Store.ListEntity(ctx, "TKT-1")
 	require.NoError(t, err)
 	require.Len(t, got, 2)
@@ -883,7 +906,7 @@ func testTombstoneFace(t *testing.T, h Harness) {
 	last := audit[len(audit)-1]
 	require.Equal(t, channels.AuditTombstone, last.Op)
 	require.Equal(t, entity.Face("draft"), last.Face)
-	require.ErrorIs(t, h.Store.Tombstone(ctx, "TKT-1", "Bad Face", T0), channels.ErrInvalidKey)
+	requireTombstoneErr(t, channels.ErrInvalidKey)(h.Store.Tombstone(ctx, "TKT-1", "Bad Face", T0))
 }
 
 func testCaps(t *testing.T, h Harness) {
@@ -1028,51 +1051,56 @@ func testSecondInstance(t *testing.T, h Harness) {
 	require.Equal(t, []int64{1, 2}, seqs(got))
 }
 
-// testAnchorModes checks that the recorded anchor modes persist, that a
-// record replaces only the types it names, that invalid input records
-// nothing, and that channel deletion and tombstones leave the record alone.
-func testAnchorModes(t *testing.T, h Harness) {
+// testTypeRecords checks that the type records persist, that a record
+// replaces only the types it names, that invalid input records nothing, and
+// that channel deletion and tombstones leave the records alone.
+func testTypeRecords(t *testing.T, h Harness) {
 	t.Helper()
 	ctx := context.Background()
-	got, err := h.Store.AnchorModes(ctx)
+	got, err := h.Store.TypeRecords(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Empty(t, got)
 
-	require.NoError(t, h.Store.RecordAnchorModes(ctx, map[string]channels.AnchorMode{
-		"room": channels.AnchorFamily, "review": channels.AnchorFace,
+	famOne := channels.TypeRecord{Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityOne}
+	faceOne := channels.TypeRecord{Anchor: channels.AnchorFace, Cardinality: channels.CardinalityOne}
+	famMany := channels.TypeRecord{Anchor: channels.AnchorFamily, Cardinality: channels.CardinalityMany}
+	require.NoError(t, h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{
+		"room": famOne, "review": faceOne,
 	}))
-	require.NoError(t, h.Store.RecordAnchorModes(ctx, map[string]channels.AnchorMode{
-		"room": channels.AnchorFace, "alerts": channels.AnchorFamily,
+	require.NoError(t, h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{
+		"room": famMany, "alerts": famOne, "review": faceOne,
 	}))
-	want := map[string]channels.AnchorMode{
-		"room": channels.AnchorFace, "review": channels.AnchorFace, "alerts": channels.AnchorFamily,
-	}
-	got, err = h.Store.AnchorModes(ctx)
+	want := map[string]channels.TypeRecord{"room": famMany, "review": faceOne, "alerts": famOne}
+	got, err = h.Store.TypeRecords(ctx)
 	require.NoError(t, err)
 	require.Equal(t, want, got, "a record replaces only the types it names")
 
-	err = h.Store.RecordAnchorModes(ctx, map[string]channels.AnchorMode{"topic": "both"})
-	require.ErrorIs(t, err, channels.ErrInvalidMessage)
-	err = h.Store.RecordAnchorModes(ctx, map[string]channels.AnchorMode{
-		"topic": channels.AnchorFace, "Bad Type": channels.AnchorFace,
+	err = h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{
+		"topic": {Anchor: "both", Cardinality: channels.CardinalityOne},
 	})
+	require.ErrorIs(t, err, channels.ErrInvalidMessage)
+	err = h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{
+		"topic": {Anchor: channels.AnchorFace, Cardinality: "few"},
+	})
+	require.ErrorIs(t, err, channels.ErrInvalidMessage)
+	err = h.Store.RecordTypes(ctx, map[string]channels.TypeRecord{"topic": faceOne, "Bad Type": faceOne})
 	require.ErrorIs(t, err, channels.ErrInvalidKey)
-	require.NoError(t, h.Store.RecordAnchorModes(ctx, nil))
+	require.NoError(t, h.Store.RecordTypes(ctx, nil))
 
 	mustAppend(t, h.Store, key("TKT-1", "room"), text("x"))
-	require.NoError(t, h.Store.Tombstone(ctx, "TKT-1", "", T0))
-	got, err = h.Store.AnchorModes(ctx)
+	tombstone(t, h.Store, "TKT-1", "", T0)
+	got, err = h.Store.TypeRecords(ctx)
 	require.NoError(t, err)
-	require.Equal(t, want, got, "invalid input records nothing; tombstones leave the record")
+	require.Equal(t, want, got, "invalid input records nothing; tombstones leave the records")
 	keys, err := h.Store.Keys(ctx)
 	require.NoError(t, err)
-	require.Empty(t, keys, "the record is not a channel")
+	require.Empty(t, keys, "a record is not a channel")
 
 	if h.Second != nil {
-		got, err = h.Second(t).AnchorModes(ctx)
+		got, err = h.Second(t).TypeRecords(ctx)
 		require.NoError(t, err)
-		require.Equal(t, want, got, "another instance reads the same record")
+		require.Equal(t, want, got, "another instance reads the same records")
 	}
 }
 
@@ -1124,7 +1152,7 @@ func testIncarnation(t *testing.T, h Harness) {
 
 	// A new entity on the id starts a new channel once the leftover is
 	// tombstoned.
-	require.NoError(t, h.Store.Tombstone(ctx, "TKT-2", "", T0))
+	tombstone(t, h.Store, "TKT-2", "", T0)
 	fresh := mustAppend(t, h.Store, key("TKT-2", "room"), life2)
 	require.Equal(t, int64(1), fresh.Seq)
 	head, err = h.Store.Head(ctx, key("TKT-2", "room"))
@@ -1229,10 +1257,156 @@ func testLongestAnchor(t *testing.T, h Harness) {
 	mustAppend(t, h.Store, k, text("x"))
 	_, err := h.Store.Head(ctx, k)
 	require.NoError(t, err)
-	require.NoError(t, h.Store.Tombstone(ctx, id, face, T0))
+	tombstone(t, h.Store, id, face, T0)
 	mustAppend(t, h.Store, k, text("y"))
-	require.NoError(t, h.Store.Tombstone(ctx, id, "", T0))
+	tombstone(t, h.Store, id, "", T0)
 	left, err := h.Store.ListEntity(ctx, id)
 	require.NoError(t, err)
 	require.Empty(t, left)
+}
+
+// testUntombstoneBatch tombstones one id twice, each time over different
+// channels, and checks that each handle restores its own batch: the
+// messages, the audit trail filed with it, and a record of the restore.
+func testUntombstoneBatch(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	first := key("TKT-1", "room")
+	second := key("TKT-1", "notes")
+	_, err := h.Store.CreateMany(ctx, first.Anchor, channels.NewChannel{Type: "topic", By: Alice, At: T0})
+	require.NoError(t, err)
+	mustAppend(t, h.Store, first, text("first life"))
+	h1 := tombstone(t, h.Store, "TKT-1", "", T0.Add(time.Minute))
+	require.False(t, h1.IsZero())
+
+	mustAppend(t, h.Store, second, text("second life"))
+	h2 := tombstone(t, h.Store, "TKT-1", "", T0.Add(2*time.Minute))
+	require.False(t, h2.IsZero())
+	require.NotEqual(t, h1, h2)
+
+	// The first batch comes back alone.
+	require.NoError(t, h.Store.Untombstone(ctx, h1, T0.Add(3*time.Minute)))
+	got, err := h.Store.ListEntity(ctx, "TKT-1")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	for _, c := range got {
+		require.NotEqual(t, "notes", c.Key.Type, "the second batch stays tombstoned")
+	}
+	msgs, err := h.Store.Messages(ctx, first, channels.Page{})
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.Equal(t, "first life", msgs[0].Props["body"])
+
+	trail, err := h.Store.Audit(ctx, "TKT-1")
+	require.NoError(t, err)
+	ops := make([]channels.AuditOp, len(trail))
+	for i, r := range trail {
+		ops[i] = r.Op
+	}
+	require.Equal(t, []channels.AuditOp{
+		channels.AuditCreate, channels.AuditCreate, channels.AuditTombstone, channels.AuditUntombstone,
+	}, ops, "the trail filed with the batch comes back, and the restore is recorded")
+
+	// A batch is restored once.
+	require.ErrorIs(t, h.Store.Untombstone(ctx, h1, T0), channels.ErrNotFound)
+	// The zero handle is a no-op.
+	require.NoError(t, h.Store.Untombstone(ctx, channels.TombstoneHandle{}, T0))
+	empty := tombstone(t, h.Store, "NONE-1", "", T0)
+	require.True(t, empty.IsZero(), "an id without channels files no batch")
+}
+
+// testUntombstoneFace restores a face batch next to the family channel,
+// which never moved.
+func testUntombstoneFace(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	fam := key("TKT-1", "room")
+	draft := channels.Key{Anchor: channels.Anchor{ID: "TKT-1", Face: "draft"}, Type: "room"}
+	mustAppend(t, h.Store, fam, text("family"))
+	mustAppend(t, h.Store, draft, text("draft"))
+	hd := tombstone(t, h.Store, "TKT-1", "draft", T0.Add(time.Minute))
+	require.Equal(t, channels.Anchor{ID: "TKT-1", Face: "draft"}, hd.Anchor())
+	none := tombstone(t, h.Store, "TKT-1", "live", T0)
+	require.True(t, none.IsZero(), "a face without channels files no batch")
+
+	require.NoError(t, h.Store.Untombstone(ctx, hd, T0.Add(2*time.Minute)))
+	got, err := h.Store.ListEntity(ctx, "TKT-1")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, fam, got[0].Key)
+	require.Equal(t, draft, got[1].Key)
+	msgs, err := h.Store.Messages(ctx, draft, channels.Page{})
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	trail, err := h.Store.Audit(ctx, "TKT-1")
+	require.NoError(t, err)
+	last := trail[len(trail)-1]
+	require.Equal(t, channels.AuditUntombstone, last.Op)
+	require.Equal(t, entity.Face("draft"), last.Face)
+}
+
+// testUntombstoneOccupied checks that a restore onto an anchor that holds
+// live channels again is refused and changes nothing, on the whole id and
+// on one face.
+func testUntombstoneOccupied(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	fam := key("TKT-1", "room")
+	draft := channels.Key{Anchor: channels.Anchor{ID: "TKT-1", Face: "draft"}, Type: "room"}
+	mustAppend(t, h.Store, fam, text("old"))
+	hf := tombstone(t, h.Store, "TKT-1", "", T0)
+	mustAppend(t, h.Store, key("TKT-1", "other"), text("new occupant"))
+
+	err := h.Store.Untombstone(ctx, hf, T0)
+	var occ *channels.OccupiedError
+	require.ErrorAs(t, err, &occ)
+	require.Equal(t, channels.Anchor{ID: "TKT-1"}, occ.Anchor)
+	got, err := h.Store.ListEntity(ctx, "TKT-1")
+	require.NoError(t, err)
+	require.Len(t, got, 1, "a refused restore moves nothing")
+	require.Equal(t, "other", got[0].Key.Type)
+
+	mustAppend(t, h.Store, draft, text("draft old"))
+	hd := tombstone(t, h.Store, "TKT-1", "draft", T0)
+	mustAppend(t, h.Store, draft, text("draft new"))
+	err = h.Store.Untombstone(ctx, hd, T0)
+	require.ErrorAs(t, err, &occ)
+	require.Equal(t, entity.Face("draft"), occ.Anchor.Face)
+	msgs, err := h.Store.Messages(ctx, draft, channels.Page{})
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.Equal(t, "draft new", msgs[0].Props["body"], "the live face channel is untouched")
+
+	// Once the occupant is gone, the same handle restores.
+	tombstone(t, h.Store, "TKT-1", "", T0)
+	require.NoError(t, h.Store.Untombstone(ctx, hf, T0))
+	head, err := h.Store.Head(ctx, fam)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), head.LastSeq)
+}
+
+// testHandleRoundTrip restores a batch through the text form of its handle,
+// and refuses text that is not a handle.
+func testHandleRoundTrip(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	face := channels.Key{Anchor: channels.Anchor{ID: "TKT-1", Face: "draft"}, Type: "room"}
+	mustAppend(t, h.Store, face, text("x"))
+	orig := tombstone(t, h.Store, "TKT-1", "draft", T0)
+
+	parsed, err := channels.ParseTombstoneHandle(orig.String())
+	require.NoError(t, err)
+	require.Equal(t, orig, parsed)
+	require.NoError(t, h.Store.Untombstone(ctx, parsed, T0))
+	_, err = h.Store.Head(ctx, face)
+	require.NoError(t, err)
+
+	zero, err := channels.ParseTombstoneHandle("")
+	require.NoError(t, err)
+	require.True(t, zero.IsZero())
+	for _, bad := range []string{"x", "t1:a:b", "t2:" + strings.TrimPrefix(orig.String(), "t1:"),
+		strings.Replace(orig.String(), orig.Stamp(), "../../etc", 1)} {
+		_, err = channels.ParseTombstoneHandle(bad)
+		require.ErrorIs(t, err, channels.ErrInvalidKey, bad)
+	}
 }

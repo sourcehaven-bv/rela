@@ -1,0 +1,9 @@
+---
+id: RR-FRLI9W
+type: review-response
+title: External-create restore may attach old channels to a new entity
+finding: The reconciler ledger lives in one process's memory and is cleared only by that process's manager creates. With rela-server and a CLI or MCP process on one project (or several postgres nodes), a new entity created through another process's manager gets the old entity's channels restored when this process sees the Created event.
+severity: significant
+resolution: Reconciler and its in-memory ledger removed. Channels of an externally deleted entity stay live but unreachable (every channel request reads the anchor first); a Manager create in any process tombstones them through the EntityCreated hook on the shared store. TestChannelAliases_ManagerCreateClearsExternalLeftovers.
+status: addressed
+---

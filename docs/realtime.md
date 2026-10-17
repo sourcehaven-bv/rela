@@ -75,6 +75,14 @@ triggers:
 | `message_ops` | `edit_own`, `delete_own` and `remove`. |
 | `on_entity_delete` | `detach` (default) keeps the channels, `delete` removes them, `block` refuses to delete an entity that has channels. |
 
+`on_entity_delete` applies to deletes made through rela. An entity deleted
+another way, such as a file removed by hand or by git, keeps its channels
+as they were. Nobody can reach them: every channel request reads the entity
+first, and a missing entity gives a 404. When rela creates a new entity
+with the same id, it detaches those channels, so the new entity starts
+without them. When the old entity comes back outside rela, for example
+through a git checkout, it gets its channels back.
+
 Names of channel types, message types, roles, actions and triggers use
 lowercase letters, digits and hyphens, and start with a letter. Property
 names use underscores instead of hyphens.

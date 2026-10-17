@@ -100,3 +100,19 @@ export async function deleteAttachment(href: string): Promise<void> {
     throw toAttachmentError(err)
   }
 }
+
+/** The download URL of one file on a property, for a caller that holds the
+ *  stored value but not the entity's `_attachments` map (a table cell).
+ *  `address` is the row's address, face included (see utils/entityRef), so
+ *  the URL names the same face the server's own `href` does. The shape
+ *  matches the server's `computeAttachments` href, and the server gates the
+ *  download exactly as it gates that one: the entity must be readable, the
+ *  property visible, and the file referenced by this face's value. */
+export function attachmentFileUrl(
+  entityType: string,
+  address: string,
+  property: string,
+  fileName: string
+): string {
+  return `${propertyUrl(entityType, address, property)}/${encodeURIComponent(fileName)}`
+}

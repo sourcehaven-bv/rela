@@ -1,8 +1,8 @@
 request: GET /api/v1/_analyze
 identity: header viewer@example.test
 status: 200
-reads: GetRelation=30 GraphQueryHeaders=1 ListEntities=3 ListEntityHeaders=8 ListRelations=2 MatchingFaces=7
-breadth: ListEntities=3/3 ListEntityHeaders=6/8 ListRelations=0/2 MatchingFaces=33/7
+reads: GraphQueryHeaders=1 ListEntities=3 ListEntityHeaders=8 ListRelations=9 MatchingFaces=7
+breadth: ListEntities=3/3 ListEntityHeaders=6/8 ListRelations=30/9 MatchingFaces=33/7
 bodies: GraphQuery=0/1 ListEntities=0/3 ListEntityHeaders=0/8
 versions: 
 body:

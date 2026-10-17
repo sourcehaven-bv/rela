@@ -349,17 +349,23 @@ func MatchRelation(r *entity.Relation, q store.RelationQuery) bool {
 // into a predicate for a scan. A loop over N relations must use this rather
 // than [MatchRelation], which would rebuild the batch set per row.
 func NewRelationMatcher(q store.RelationQuery) func(*entity.Relation) bool {
-	var set map[string]struct{}
-	if q.EntityIDs != nil {
-		set = make(map[string]struct{}, len(q.EntityIDs))
-		for _, id := range q.EntityIDs {
-			set[id] = struct{}{}
-		}
-	}
-	return func(r *entity.Relation) bool { return matchRelation(r, q, set) }
+	set, peers := idSet(q.EntityIDs), idSet(q.PeerIDs)
+	return func(r *entity.Relation) bool { return matchRelation(r, q, set, peers) }
 }
 
-func matchRelation(r *entity.Relation, q store.RelationQuery, set map[string]struct{}) bool {
+// idSet is ids as a set; nil stays nil, so "unfiltered" survives.
+func idSet(ids []string) map[string]struct{} {
+	if ids == nil {
+		return nil
+	}
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set
+}
+
+func matchRelation(r *entity.Relation, q store.RelationQuery, set, peers map[string]struct{}) bool {
 	if q.Type != "" && r.Type != q.Type {
 		return false
 	}
@@ -380,7 +386,25 @@ func matchRelation(r *entity.Relation, q store.RelationQuery, set map[string]str
 			return false
 		}
 	}
+	if q.PeerIDs != nil {
+		if !endpointMatches(r, peerDirection(q.Direction), func(id string) bool { _, ok := peers[id]; return ok }) {
+			return false
+		}
+	}
 	return true
+}
+
+// peerDirection is the Direction that selects the endpoint
+// [store.RelationQuery.PeerIDs] filters: the opposite one, or both.
+func peerDirection(dir store.Direction) store.Direction {
+	switch dir {
+	case store.DirectionOutgoing:
+		return store.DirectionIncoming
+	case store.DirectionIncoming:
+		return store.DirectionOutgoing
+	default:
+		return dir
+	}
 }
 
 // endpointMatches reports whether the endpoint(s) Direction selects on r

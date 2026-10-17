@@ -112,6 +112,7 @@ func newCopyManager(
 		FieldGate:      entitymanager.AllowAllFieldGate{},
 		CopyVisibility: reader,
 		CopyGuard:      guard,
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -263,6 +264,7 @@ copies:
 			Transitions: statemachine.EmptySet(),
 			FieldGate:   entitymanager.AllowAllFieldGate{},
 			CopyGuard:   g,
+			AnchorGuard: entitymanager.NopAnchorGuard{},
 		})
 		if err != nil {
 			t.Fatalf("entitymanager.New: %v", err)
@@ -361,6 +363,7 @@ func TestCopy_GuardedFaceIsWritableOnlyViaDefinition(t *testing.T) {
 		// below can only come from the mechanism under test (#1437).
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
 	})
 	if merr != nil {
 		t.Fatalf("entitymanager.New: %v", merr)
@@ -415,6 +418,7 @@ func TestCopy_GuardedFaceIsWritableOnlyViaDefinition(t *testing.T) {
 		// denying guard — the point of case (c) (#1437).
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
 	})
 	if derr2 != nil {
 		t.Fatalf("entitymanager.New: %v", derr2)
@@ -471,6 +475,7 @@ func TestCopy_StrangerCannotPromote(t *testing.T) {
 		// than left nil so the refusal under test can only come from
 		// CopyReadGate above (#1437).
 		CopyVisibility: allowAllCopyVisibility(t, st),
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
 	})
 	if merr != nil {
 		t.Fatalf("entitymanager.New: %v", merr)
@@ -555,6 +560,7 @@ copies:
 		Transitions: statemachine.EmptySet(),
 		FieldGate:   entitymanager.AllowAllFieldGate{},
 		CopyGuard:   allowGuard{allow: true},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

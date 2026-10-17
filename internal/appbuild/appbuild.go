@@ -2149,6 +2149,13 @@ func validateResolvedPolicy(injected acl.ACL, loaded *acl.Policy, meta *metamode
 	if err := ValidateACLPolicy(policy, meta); err != nil {
 		return fmt.Errorf("appbuild: acl.yaml does not match the schema: %w", err)
 	}
+	for _, rel := range acl.RoleRelationsNoMemberHolds(policy, metamodelView{meta}) {
+		slog.Warn("appbuild: ACL role relation can never confer its role: no principal or group "+
+			"can be its source, so it never matches (is it declared against the relation's direction?)",
+			"relation", rel,
+			"fix", fmt.Sprintf("remove role_relations.%s, or point it at a relation whose source is a user or group", rel),
+			"docs", "docs/acl-security.md")
+	}
 	return nil
 }
 
@@ -2215,7 +2222,13 @@ func buildEntityManager(
 	autoEngine *automation.Engine, cascadeRunner *autocascade.Runner,
 	readDeps lua.ReadDeps, pileWriter lua.PileWriter, versions store.VersionService, tw TransitionWiring,
 	computedSet *computed.Set, attachLocker lock.Locker, fieldGate entitymanager.FieldWriteGate,
+	channelStore channels.Store,
 ) (*entitymanager.Manager, error) {
+	// Boot refuses a realtime.yaml that would strand stored channels.
+	anchorGuard, err := channelGuardFor(base, channelStore)
+	if err != nil {
+		return nil, err
+	}
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		AliasRewriter: aliases,
 		Store:         st,
@@ -2252,6 +2265,7 @@ func buildEntityManager(
 		// from this manager (entitymanager.AttachmentsOf), so the copy
 		// engine, face deletes and uploads exclude each other.
 		AttachmentLocker: attachLocker,
+		AnchorGuard:      anchorGuard,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build entitymanager: %w", err)
@@ -2545,7 +2559,7 @@ func assemble(
 		channelAliasesFor(refs.channels, st))
 	mgr, err := buildEntityManager(base, st, fanout, templater,
 		resolvedACL, autoEngine, cascadeRunner, readDeps, pileWriterFor(refs.piles), versions, tw, computedSet,
-		attachLocker, fieldPol.gate)
+		attachLocker, fieldPol.gate, refs.channels)
 	// coverage-ignore-start: defensive: buildStateKV only errors when NewRootedFS fails on a non-empty CacheDir, which
 	// requires filepath.Abs to
 	// fail — unreachable with valid inputs (see the scupper in buildStateKV)

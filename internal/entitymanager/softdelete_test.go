@@ -51,6 +51,7 @@ func newSoftDeleteFixture(t *testing.T) softDeleteFixture {
 		Store: st, Meta: parseMeta(t), Templater: nopTemplater{}, Audit: sink,
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(),
 		FieldGate: entitymanager.AllowAllFieldGate{}, VersionRecorder: versions,
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -177,6 +178,7 @@ entities:
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: memstore.New(), Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -247,6 +249,7 @@ role_relations:
 	seed, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{},
 		ACL: acl.NopACL{}, Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -265,6 +268,7 @@ role_relations:
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: declarative,
 		Transitions: statemachine.EmptySet(), FieldGate: entitymanager.AllowAllFieldGate{},
 		CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: allowAllCopyVisibility(t, st),
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	require.NoError(t, err)
 	return mgr, st, tkt.Entity.ID

@@ -360,6 +360,19 @@ func relationWhere(q store.RelationQuery, after *relationKey) (where string, arg
 				len(args), len(args)))
 		}
 	}
+	if q.PeerIDs != nil {
+		// The other endpoint; see store.RelationQuery.PeerIDs.
+		switch q.Direction {
+		case store.DirectionOutgoing:
+			add("to_id = ANY($%d::text[])", q.PeerIDs)
+		case store.DirectionIncoming:
+			add("from_id = ANY($%d::text[])", q.PeerIDs)
+		default: // DirectionBoth
+			args = append(args, q.PeerIDs)
+			conds = append(conds, fmt.Sprintf("(from_id = ANY($%d::text[]) OR to_id = ANY($%d::text[]))",
+				len(args), len(args)))
+		}
+	}
 	if after != nil {
 		args = append(args, after.from, string(after.fromFace), after.relType, after.to)
 		n := len(args)

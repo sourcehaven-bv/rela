@@ -58,6 +58,7 @@ func hiddenWriteManager(t *testing.T, st store.Store) *entitymanager.Manager {
 		FieldGate:      entitymanager.AllowAllFieldGate{},
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)
@@ -285,6 +286,7 @@ func facedHiddenManager(t *testing.T, edges []entity.RelationKey) *entitymanager
 		FieldGate:      entitymanager.AllowAllFieldGate{},
 		CopyReadGate:   entitymanager.AllowAllCopyReadGate{},
 		CopyVisibility: allowAllCopyVisibility(t, st),
+		AnchorGuard:    entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("entitymanager.New: %v", err)

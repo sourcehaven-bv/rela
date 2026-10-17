@@ -8,6 +8,7 @@ import { useWorld } from '@/composables/useWorld'
 import { entityDisplayTitle } from '@/utils/entityDisplay'
 import { entityDetailHref } from '@/utils/entityRoute'
 import type { ListParams, SidebarEntities, SidebarGroup } from '@/types'
+import { cancelWhenVisible, runWhenVisible } from './visibleRefetch'
 
 /** How long a burst of entity changes is left to settle before refetching. */
 const EVENT_DEBOUNCE_MS = 1000
@@ -101,13 +102,17 @@ export function useNavEntities(groups: Ref<SidebarGroup[]>) {
     if (entries.value.length > 0) void query.refetch()
   }
 
+  // A hidden tab refetches once, when it is shown again.
+  const refetchKey = Symbol('nav-entities')
+  const refetchWhenVisible = () => runWhenVisible(refetchKey, refetch)
   let timer: ReturnType<typeof setTimeout> | null = null
   on('entity:changed', () => {
     if (timer) clearTimeout(timer)
-    timer = setTimeout(refetch, EVENT_DEBOUNCE_MS)
+    timer = setTimeout(refetchWhenVisible, EVENT_DEBOUNCE_MS)
   })
-  on('refresh', refetch)
+  on('refresh', refetchWhenVisible)
   onBeforeUnmount(() => {
+    cancelWhenVisible(refetchKey)
     if (timer) clearTimeout(timer)
   })
 

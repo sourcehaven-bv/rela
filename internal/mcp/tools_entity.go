@@ -12,6 +12,7 @@ import (
 	mcpgo "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/entitymanager"
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/natsort"
 	"github.com/Sourcehaven-BV/rela/internal/predicate"
@@ -502,7 +503,7 @@ func (s *Server) handleDeleteEntity(
 		_, delErr = snap.deps.EntityManager.DeleteEntityFace(ctx, ref.ID, ref.Face, cascade)
 	}
 	if delErr != nil {
-		return errorResult(delErr.Error()), nil
+		return writeErrorResult(delErr), nil
 	}
 
 	msg := "Deleted " + id
@@ -550,7 +551,7 @@ func (s *Server) handleRenameEntity(
 	result, renameErr := snap.deps.EntityManager.RenameEntity(
 		ctx, oldID, newID, entity.RenameOptions{DryRun: dryRun})
 	if renameErr != nil {
-		return errorResult(renameErr.Error()), nil
+		return writeErrorResult(renameErr), nil
 	}
 
 	verb := "Renamed"
@@ -559,6 +560,22 @@ func (s *Server) handleRenameEntity(
 	}
 	return textResult(
 		fmt.Sprintf("%s: %s → %s (%d relations updated)", verb, result.OldID, result.NewID, result.RelationsUpdated)), nil
+}
+
+// writeErrorResult is the error result of a refused delete or rename. A
+// channel guard refusal is a conflict, the MCP form of the 409 the HTTP API
+// returns, and says which channel type to resolve; every other error is
+// passed through as text.
+func writeErrorResult(err error) *mcpgo.CallToolResult {
+	if blocked, ok := errors.AsType[*entitymanager.AnchorBlockedError](err); ok {
+		return errorResult(fmt.Sprintf("conflict: a %s channel is attached to this entity, and its type "+
+			"sets on_entity_delete: block; close or remove the channel first", blocked.ChannelType))
+	}
+	if errors.Is(err, entitymanager.ErrConcurrentChange) {
+		return errorResult("conflict: the entity changed while the request ran; nothing was written, retry: " +
+			err.Error())
+	}
+	return errorResult(err.Error())
 }
 
 // visibleRelationCount counts id's relations through st. On the gated store

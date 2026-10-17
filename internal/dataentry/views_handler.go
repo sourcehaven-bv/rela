@@ -72,6 +72,10 @@ type viewsHandler struct {
 	faceEdges func(
 		ctx context.Context, e *entityPkg.Entity,
 	) ([]*entityPkg.Relation, error)
+	// viewConditions returns the compiler behind a traverse step's
+	// `condition:`. A closure because SetViewConditions runs after this
+	// handler is constructed. Nil: a view with a traverse condition fails.
+	viewConditions func() ViewConditionFunc
 	// leases fills the entry's `_lease`. Nil until [SetLeases] installs it,
 	// and nil means leases are not wired.
 	leases *leasesHandler

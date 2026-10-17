@@ -231,21 +231,58 @@ func TestNamesAndOrder(t *testing.T) {
 	require.True(t, Author{}.IsZero())
 }
 
-func TestAnchorModes(t *testing.T) {
+func TestTypeRecords(t *testing.T) {
 	require.True(t, AnchorFamily.Valid())
 	require.True(t, AnchorFace.Valid())
 	require.False(t, AnchorMode("").Valid())
+	require.True(t, CardinalityOne.Valid())
+	require.True(t, CardinalityMany.Valid())
+	require.False(t, Cardinality("").Valid())
 
-	require.NoError(t, PrepareAnchorModes(nil))
-	require.ErrorIs(t, PrepareAnchorModes(map[string]AnchorMode{"CON": AnchorFace}), ErrInvalidKey)
-	require.ErrorIs(t, PrepareAnchorModes(map[string]AnchorMode{"room": "x"}), ErrInvalidMessage)
+	famOne := TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityOne}
+	faceOne := TypeRecord{Anchor: AnchorFace, Cardinality: CardinalityOne}
+	famMany := TypeRecord{Anchor: AnchorFamily, Cardinality: CardinalityMany}
+	require.NoError(t, PrepareTypeRecords(nil))
+	require.ErrorIs(t, PrepareTypeRecords(map[string]TypeRecord{"CON": famOne}), ErrInvalidKey)
+	require.ErrorIs(t, PrepareTypeRecords(map[string]TypeRecord{"room": {Anchor: "x", Cardinality: CardinalityOne}}),
+		ErrInvalidMessage)
+	require.ErrorIs(t, PrepareTypeRecords(map[string]TypeRecord{"room": {Anchor: AnchorFace}}), ErrInvalidMessage)
 
-	recorded := map[string]AnchorMode{"room": AnchorFamily, "review": AnchorFace, "old": AnchorFace}
-	configured := map[string]AnchorMode{"room": AnchorFace, "review": AnchorFace, "new": AnchorFamily, "a": AnchorFace}
-	recorded["a"] = AnchorFamily
-	require.Equal(t, []AnchorModeChange{
-		{Type: "a", Recorded: AnchorFamily, Configured: AnchorFace},
-		{Type: "room", Recorded: AnchorFamily, Configured: AnchorFace},
-	}, AnchorModeChanges(recorded, configured))
-	require.Empty(t, AnchorModeChanges(nil, configured), "a store with no record has no changes")
+	recorded := map[string]TypeRecord{"room": famOne, "review": faceOne, "old": faceOne, "a": famOne, "b": famOne}
+	configured := map[string]TypeRecord{"room": faceOne, "review": faceOne, "new": famOne, "a": famMany, "b": famOne}
+	require.Equal(t, []TypeRecordChange{
+		{Type: "a", Recorded: famOne, Configured: famMany},
+		{Type: "room", Recorded: famOne, Configured: faceOne},
+	}, TypeRecordChanges(recorded, configured))
+	require.Empty(t, TypeRecordChanges(nil, configured), "a store with no record has no changes")
+
+	require.Equal(t, map[string]TypeRecord{"room": faceOne, "new": famOne, "a": famMany},
+		ChangedTypeRecords(recorded, configured))
+	require.Empty(t, ChangedTypeRecords(configured, configured))
+}
+
+func TestTombstoneHandle(t *testing.T) {
+	stamp := TombstoneStamp(time.Date(2026, 1, 2, 3, 4, 5, 6000, time.UTC))
+	h := NewTombstoneHandle(Anchor{ID: "TKT-1", Face: "draft"}, stamp)
+	require.False(t, h.IsZero())
+	require.NoError(t, h.Validate())
+	back, err := ParseTombstoneHandle(h.String())
+	require.NoError(t, err)
+	require.Equal(t, h, back)
+
+	fam := NewTombstoneHandle(Anchor{ID: "TKT_2-x"}, stamp)
+	back, err = ParseTombstoneHandle(fam.String())
+	require.NoError(t, err)
+	require.Equal(t, fam, back, "a whole-entity handle round-trips")
+
+	require.Empty(t, TombstoneHandle{}.String())
+	require.ErrorIs(t, TombstoneHandle{}.Validate(), ErrInvalidKey)
+	require.ErrorIs(t, NewTombstoneHandle(Anchor{ID: "TKT-1"}, "../x").Validate(), ErrInvalidKey)
+	require.ErrorIs(t, NewTombstoneHandle(Anchor{ID: "../x"}, stamp).Validate(), ErrInvalidKey)
+	for _, bad := range []string{"t1:!:x:" + stamp, "t1:QQ:!:" + stamp} {
+		_, err = ParseTombstoneHandle(bad)
+		require.ErrorIs(t, err, ErrInvalidKey, bad)
+	}
+	err = &OccupiedError{Anchor: Anchor{ID: "TKT-1", Face: "draft"}}
+	require.Contains(t, err.Error(), "TKT-1@draft")
 }

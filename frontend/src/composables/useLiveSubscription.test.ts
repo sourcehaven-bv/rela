@@ -17,6 +17,17 @@ import {
   resetLiveSubscriptions,
   MAX_LIVE_SUBSCRIPTIONS,
 } from './useLiveSubscription'
+import type { QueryCache } from '@pinia/colada'
+import {
+  installVisibleRefetch,
+  resetVisibleRefetch,
+  REFETCH_JITTER_MAX_MS,
+} from './visibleRefetch'
+
+/** A query cache with no entries: these tests check only deferred work. */
+function useQueryCacheStub(): QueryCache {
+  return { getEntries: () => [] } as unknown as QueryCache
+}
 
 async function settle() {
   await vi.runAllTimersAsync()
@@ -33,7 +44,9 @@ function sentKeys(): string[] {
 
 describe('live subscription manager', () => {
   beforeEach(() => {
+    vi.restoreAllMocks()
     vi.useFakeTimers()
+    resetVisibleRefetch()
     resetLiveSubscriptions()
     putLiveSubscriptions.mockReset()
     putLiveSubscriptions.mockResolvedValue()
@@ -158,6 +171,8 @@ describe('live subscription manager', () => {
   })
 
   it('backs off between reconnects while the PUT keeps getting 409', async () => {
+    // No jitter, so the exponential steps are exact.
+    vi.spyOn(Math, 'random').mockReturnValue(0)
     const reconnect = vi.fn()
     setLiveReconnect(reconnect)
     putLiveSubscriptions.mockRejectedValue(
@@ -173,6 +188,37 @@ describe('live subscription manager', () => {
     expect(reconnect).toHaveBeenCalledTimes(1) // second wait is 2s
     await vi.advanceTimersByTimeAsync(1)
     expect(reconnect).toHaveBeenCalledTimes(2)
+  })
+
+  it('adds up to the jitter maximum to the 409 backoff', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const reconnect = vi.fn()
+    setLiveReconnect(reconnect)
+    putLiveSubscriptions.mockRejectedValue(
+      new ApiError('stale', { kind: 'http', status: 409, original: null })
+    )
+    registerLive('a', '/api/v1/tickets', () => {})
+    setLiveConnection('c1')
+    await vi.advanceTimersByTimeAsync(50 + 1000 + REFETCH_JITTER_MAX_MS / 2 - 1)
+    expect(reconnect).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(reconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('defers the baseline refetch of a hidden tab until it is shown', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    const onChange = vi.fn()
+    registerLive('a', '/api/v1/tickets', onChange)
+    setLiveConnection('c1')
+    await settle()
+    expect(onChange).not.toHaveBeenCalled()
+    setLiveConnection('c2')
+    await settle()
+    visibility.mockReturnValue('visible')
+    installVisibleRefetch(useQueryCacheStub())
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(REFETCH_JITTER_MAX_MS)
+    expect(onChange).toHaveBeenCalledTimes(1)
   })
 
   it('sends at most the server limit', async () => {

@@ -5,6 +5,7 @@ import { getNavStatus } from '@/api'
 import { useEvents } from '@/composables/useEvents'
 import type { NavItemStatus } from 'rela-components/types'
 import { useSpaceStore } from '@/stores/space'
+import { cancelWhenVisible, runWhenVisible } from '@/composables/visibleRefetch'
 
 /** How long a burst of entity changes is left to settle before recounting. */
 const EVENT_DEBOUNCE_MS = 1000
@@ -33,8 +34,12 @@ export function useNavStatus(enabled: Ref<boolean>) {
     enabled: () => enabled.value,
   })
 
+  // A hidden tab recounts when it is shown again (TASK-550RD).
+  const recountKey = Symbol('nav-status')
   function recount() {
-    if (enabled.value) void query.refetch()
+    runWhenVisible(recountKey, () => {
+      if (enabled.value) void query.refetch()
+    })
   }
 
   watch(() => route.path, recount)
@@ -45,6 +50,7 @@ export function useNavStatus(enabled: Ref<boolean>) {
     timer = setTimeout(recount, EVENT_DEBOUNCE_MS)
   })
   onBeforeUnmount(() => {
+    cancelWhenVisible(recountKey)
     if (timer) clearTimeout(timer)
   })
 

@@ -17,7 +17,8 @@
 //     gone from the row, not only hidden.
 //   - channel_audit: the audit trail, one JSON record per row, with the same
 //     tomb column as channels.
-//   - channel_types: the anchor mode recorded for each channel type.
+//   - channel_types: the anchor mode and cardinality recorded for each
+//     channel type.
 //
 // # Erasure
 //
@@ -99,6 +100,12 @@ type Dialect struct {
 }
 
 // Store is the SQL backend.
+//
+// 20 -> 21 (TKT-ZU7P13): Untombstone. The exported methods are the mandated
+// [channels.Store] interface, so this is a required-interface exception
+// rather than a ratchet target.
+//
+//plimsoll:max-exported-methods=21
 type Store struct {
 	db DB
 	d  Dialect
@@ -221,6 +228,9 @@ func scanChannel(r interface{ Scan(...any) error }) (row, error) {
 func (s *Store) wrap(err error, format string, args ...any) error {
 	if err == nil {
 		return nil
+	}
+	if _, ok := errors.AsType[*channels.OccupiedError](err); ok {
+		return err
 	}
 	for _, sentinel := range []error{
 		channels.ErrNotFound, channels.ErrInvalidKey, channels.ErrInvalidMessage, channels.ErrTooLarge,
@@ -617,38 +627,99 @@ func (s *Store) Rekey(ctx context.Context, oldID, newID string, at time.Time) er
 	return s.wrap(err, "rekey %s to %s", oldID, newID)
 }
 
-// Tombstone implements [channels.Store].
-func (s *Store) Tombstone(ctx context.Context, id string, face entity.Face, at time.Time) error {
-	if err := (channels.Anchor{ID: id, Face: face}).Validate(); err != nil {
-		return err
+// Tombstone implements [channels.Store]. The batch's rows keep their
+// place and get the stamp in their tomb column.
+func (s *Store) Tombstone(
+	ctx context.Context, id string, face entity.Face, at time.Time,
+) (channels.TombstoneHandle, error) {
+	a := channels.Anchor{ID: id, Face: face}
+	if err := a.Validate(); err != nil {
+		return channels.TombstoneHandle{}, err
 	}
-	stamp := channels.TombstoneStamp(at)
+	h := channels.NewTombstoneHandle(a, channels.TombstoneStamp(at))
 	rec := channels.AuditRecord{At: channels.NormTime(at), Op: channels.AuditTombstone, Face: face}
+	filed := false
 	err := s.write(ctx, []string{id}, func(q Querier) error {
 		if face != "" {
 			moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ?
-				WHERE anchor_id = ? AND anchor_face = ? AND tomb = ''`, stamp, id, string(face))
+				WHERE anchor_id = ? AND anchor_face = ? AND tomb = ''`, h.Stamp(), id, string(face))
 			if err != nil || moved == 0 {
 				return err
 			}
+			filed = true
 			return s.audit(ctx, q, id, rec)
 		}
-		if _, err := q.Exec(ctx, `UPDATE channels SET tomb = ? WHERE anchor_id = ? AND tomb = ''`,
-			stamp, id); err != nil {
+		moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ? WHERE anchor_id = ? AND tomb = ''`,
+			h.Stamp(), id)
+		if err != nil {
 			return err
 		}
+		filed = moved > 0
 		var n int
-		if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM channel_audit WHERE anchor_id = ? AND tomb = ''`,
-			id).Scan(&n); err != nil || n == 0 {
-			return err
+		if cErr := q.QueryRow(ctx, `SELECT COUNT(*) FROM channel_audit WHERE anchor_id = ? AND tomb = ''`,
+			id).Scan(&n); cErr != nil || n == 0 {
+			return cErr
 		}
-		if err := s.audit(ctx, q, id, rec); err != nil {
-			return err
+		filed = true
+		if aErr := s.audit(ctx, q, id, rec); aErr != nil {
+			return aErr
 		}
-		_, err := q.Exec(ctx, `UPDATE channel_audit SET tomb = ? WHERE anchor_id = ? AND tomb = ''`, stamp, id)
+		_, err = q.Exec(ctx, `UPDATE channel_audit SET tomb = ? WHERE anchor_id = ? AND tomb = ''`, h.Stamp(), id)
 		return err
 	})
-	return s.wrap(err, "tombstone %s", entity.FormatStateRef(id, face))
+	if err != nil || !filed {
+		return channels.TombstoneHandle{}, s.wrap(err, "tombstone %s", entity.FormatStateRef(id, face))
+	}
+	return h, nil
+}
+
+// Untombstone implements [channels.Store]. A stamp is unique to one
+// Tombstone call, so the rows carrying it are exactly the batch.
+func (s *Store) Untombstone(ctx context.Context, h channels.TombstoneHandle, at time.Time) error {
+	if h.IsZero() {
+		return nil
+	}
+	if err := h.Validate(); err != nil {
+		return err
+	}
+	a := h.Anchor()
+	err := s.write(ctx, []string{a.ID}, func(q Querier) error {
+		var filedChannels, filedAudit, live int
+		if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM channels WHERE anchor_id = ? AND tomb = ?`,
+			a.ID, h.Stamp()).Scan(&filedChannels); err != nil {
+			return err
+		}
+		if err := q.QueryRow(ctx, `SELECT COUNT(*) FROM channel_audit WHERE anchor_id = ? AND tomb = ?`,
+			a.ID, h.Stamp()).Scan(&filedAudit); err != nil {
+			return err
+		}
+		if filedChannels == 0 && filedAudit == 0 {
+			return fmt.Errorf("%w: tombstone %s", channels.ErrNotFound, h)
+		}
+		liveQuery, liveArgs := `SELECT COUNT(*) FROM channels WHERE anchor_id = ? AND tomb = ''`, []any{a.ID}
+		if a.Face != "" {
+			liveQuery += ` AND anchor_face = ?`
+			liveArgs = append(liveArgs, string(a.Face))
+		}
+		if err := q.QueryRow(ctx, liveQuery, liveArgs...).Scan(&live); err != nil {
+			return err
+		}
+		if live > 0 {
+			return &channels.OccupiedError{Anchor: a}
+		}
+		if _, err := q.Exec(ctx, `UPDATE channels SET tomb = '' WHERE anchor_id = ? AND tomb = ?`,
+			a.ID, h.Stamp()); err != nil {
+			return err
+		}
+		if _, err := q.Exec(ctx, `UPDATE channel_audit SET tomb = '' WHERE anchor_id = ? AND tomb = ?`,
+			a.ID, h.Stamp()); err != nil {
+			return err
+		}
+		return s.audit(ctx, q, a.ID, channels.AuditRecord{
+			At: channels.NormTime(at), Op: channels.AuditUntombstone, Face: a.Face,
+		})
+	})
+	return s.wrap(err, "untombstone %s", entity.FormatStateRef(a.ID, a.Face))
 }
 
 // --- reads ---
@@ -847,42 +918,49 @@ func (s *Store) Keys(ctx context.Context) ([]channels.Key, error) {
 	return out, nil
 }
 
-// AnchorModes implements [channels.Store].
-func (s *Store) AnchorModes(ctx context.Context) (map[string]channels.AnchorMode, error) {
-	type pair struct{ typ, mode string }
-	rows, err := collect(ctx, s.db, `SELECT type, anchor_mode FROM channel_types`, nil,
-		func(r interface{ Scan(...any) error }) (pair, error) {
-			var p pair
-			err := r.Scan(&p.typ, &p.mode)
+// TypeRecords implements [channels.Store].
+func (s *Store) TypeRecords(ctx context.Context) (map[string]channels.TypeRecord, error) {
+	type row struct{ typ, mode, card string }
+	rows, err := collect(ctx, s.db, `SELECT type, anchor_mode, cardinality FROM channel_types`, nil,
+		func(r interface{ Scan(...any) error }) (row, error) {
+			var p row
+			err := r.Scan(&p.typ, &p.mode, &p.card)
 			return p, err
 		})
 	if err != nil {
-		return nil, s.wrap(err, "read anchor modes")
+		return nil, s.wrap(err, "read type records")
 	}
-	out := make(map[string]channels.AnchorMode, len(rows))
+	out := make(map[string]channels.TypeRecord, len(rows))
 	for _, p := range rows {
-		out[p.typ] = channels.AnchorMode(p.mode)
+		out[p.typ] = channels.TypeRecord{
+			Anchor: channels.AnchorMode(p.mode), Cardinality: channels.Cardinality(p.card),
+		}
 	}
 	return out, nil
 }
 
-// RecordAnchorModes implements [channels.Store].
-func (s *Store) RecordAnchorModes(ctx context.Context, modes map[string]channels.AnchorMode) error {
-	if err := channels.PrepareAnchorModes(modes); err != nil {
+// RecordTypes implements [channels.Store]. The upsert's WHERE clause skips
+// the update of a row that already holds the record.
+func (s *Store) RecordTypes(ctx context.Context, records map[string]channels.TypeRecord) error {
+	if err := channels.PrepareTypeRecords(records); err != nil {
 		return err
 	}
-	types := slices.Sorted(maps.Keys(modes))
+	types := slices.Sorted(maps.Keys(records))
 	werr := s.db.Transact(ctx, func(q Querier) error {
 		for _, typ := range types {
-			if _, err := q.Exec(ctx, `INSERT INTO channel_types (type, anchor_mode) VALUES (?, ?)
-				ON CONFLICT (type) DO UPDATE SET anchor_mode = excluded.anchor_mode`,
-				typ, string(modes[typ])); err != nil {
+			r := records[typ]
+			if _, err := q.Exec(ctx, `INSERT INTO channel_types (type, anchor_mode, cardinality) VALUES (?, ?, ?)
+				ON CONFLICT (type) DO UPDATE SET anchor_mode = excluded.anchor_mode,
+					cardinality = excluded.cardinality
+				WHERE channel_types.anchor_mode <> excluded.anchor_mode
+					OR channel_types.cardinality <> excluded.cardinality`,
+				typ, string(r.Anchor), string(r.Cardinality)); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
-	return s.wrap(werr, "record anchor modes")
+	return s.wrap(werr, "record type records")
 }
 
 // Raw renders every row of the channel tables as text, for the conformance

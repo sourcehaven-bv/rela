@@ -2,8 +2,8 @@ request: GET /api/v1/_caldav/principal/calendars/tickets/ticket--TKT-4@rela.ics
 identity: signed assertion for stranger@example.test
 status: 200
 header ETag: "2HZ7J5TANYM5PIMP"
-reads: GetRelation=6 GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=1 MatchingFaces=1
-breadth: ListEntityHeaders=0/1 ListRelations=0/1 MatchingFaces=6/1
+reads: GraphQueryHeaders=1 ListEntityHeaders=1 ListRelations=2 MatchingFaces=1
+breadth: ListEntityHeaders=0/1 ListRelations=6/2 MatchingFaces=6/1
 bodies: GraphQuery=0/1 ListEntityHeaders=0/1
 versions: 
 body:
