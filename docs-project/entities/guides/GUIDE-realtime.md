@@ -80,7 +80,7 @@ triggers:
 | `lifecycle` | `close`, `reopen`, `archive` and `delete`. An operation you leave out is not offered. |
 | `message_ops` | `edit_own`, `delete_own` and `remove`. |
 | `on_entity_delete` | `detach` (default) keeps the channels, `delete` removes them, `block` refuses to delete an entity that has channels. |
-| `detached_retention` | How long a detached channel is kept before it is erased. A period; default `30d`. |
+| `detached_retention` | How long a detached channel is kept before it is erased. A period of at least `1h`; default `30d`. |
 
 ### When an entity is deleted
 
@@ -90,10 +90,16 @@ triggers:
 - `detach` moves the channels out of reach of the entity. They are erased
   after `detached_retention`.
 - `delete` moves the channels out of reach in the same way, and erases
-  them at the next retention sweep. The sweep runs every hour, and also
-  right after the delete.
+  them within a minute. The process that made the delete erases them at
+  once. If another process is sweeping at that moment, the next check
+  erases them; it runs every minute.
 
-A delete that fails puts the channels back. A channel is never erased
+When an entity has channels of several types, each type follows its own
+rule: the channels of a `delete` type are erased within a minute, and
+those of a `detach` type are kept for their `detached_retention`.
+
+A delete that fails puts the channels back. A channel of a `block` type
+created while the delete runs still refuses the delete. A channel is never erased
 before its `lifecycle.delete.retention` has passed, counted from when the
 channel was closed. That is why rela refuses a file that combines
 `on_entity_delete: delete` with `lifecycle.delete.retention`: use `detach`
@@ -113,11 +119,19 @@ entity has been missing for an hour, the sweep detaches its channels, and
 `detached_retention` starts. If the entity comes back before they are
 erased, for example through a git checkout, it gets its channels back.
 When rela creates a new entity with the same id, it detaches the old
-channels at once, so the new entity starts without them.
+channels at once, so the new entity starts without them. From then on
+the old channels can no longer come back, not even onto the new entity.
+
+Renaming an entity to an id that an earlier, deleted entity used works
+the same way: the earlier entity's channels are detached, and the renamed
+entity keeps its own.
 
 Only a long-running rela process sweeps: `rela-server` and the desktop
-app. With several server processes against one database, one of them runs
-the sweep at a time.
+app. The sweep checks every minute for channels to close, archive or
+erase, and checks for missing entities every hour. With several server
+processes against one database, each check runs in one process only:
+the first process to take a shared lock runs it, and the others skip
+that check. If that process stops, another one runs the next check.
 
 Names of channel types, message types, roles, actions and triggers use
 lowercase letters, digits and hyphens, and start with a letter. Property
@@ -184,7 +198,9 @@ state it starts from: `open`, `closed` or `archived`. `condition` must hold
 for the entity. An operation with a `condition` is open only to principals
 who can read the entity, because its answer says something about the
 entity. `auto` runs `close` or `archive` without a request, when
-`when` holds or `after` has passed. `retention` applies to `delete` only: a
+`when` holds or `after` has passed. `after` counts from when the channel
+entered its current state; for a reopened channel, from the reopen.
+`retention` applies to `delete` only: a
 channel cannot be deleted before it ends. Retention never blocks removing a
 single message.
 
