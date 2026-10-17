@@ -1046,6 +1046,31 @@ Writes without a read policy are exempt: a project without `acl.yaml`,
 `rela.bypass_acl`, automation cascades, and the writers that go to the
 store directly (data migrations, import, normalize).
 
+### The `rela` CLI gates writes, not reads
+
+The CLI acts as the operating-system user: the principal is `$USER` (or
+`$USERNAME`), used directly as the graph identity. There is no
+`principal_property` lookup, so `USER=PERS-alice` acts as `PERS-alice`.
+
+- **Reads are not gated.** `rela list`, `rela show`, `rela trace` and the
+  other read commands read the store directly. They return every entity
+  and every property value, whatever the principal's roles. A principal
+  with no role at all sees the same output as an admin.
+- **Writes are gated.** `rela create`, `update`, `delete`, `link` and the
+  other write commands go through the entity manager under the
+  principal's roles, so the rules above apply: a row the principal cannot
+  read is reported as not found, and a missing grant is a `forbidden`
+  error. Field write grants (`fields:`, `options:`) are not
+  checked; see "Field write grants on MCP and scheduled scripts".
+- If `$USER` is empty, the principal cannot be resolved. The CLI logs a
+  warning and every gated write is denied; reads still return everything.
+
+This is deliberate. Whoever runs the CLI can read and edit the project's
+data files, or connect to its database, directly, so read gating there
+would not protect anything. Do not rely on `acl.yaml` to keep data from
+someone with shell access to the project. Give such users access through
+`rela-server` instead.
+
 ### Invariants downstream maintainers MUST preserve
 
 - **No `ETag` on deny.** Suppressing it is what closes the
@@ -1697,7 +1722,8 @@ configuration.
   own treatment).
 - **Local stdio MCP (`rela mcp`)** applies no ACL. It has no
   authentication, so there is no principal to gate for; it runs with the
-  operator's own file access, like the CLI. The **remote** MCP endpoint
+  operator's own file access. Unlike the CLI, it does not gate writes
+  either (see "The `rela` CLI gates writes, not reads"). The **remote** MCP endpoint
   (`rela-server -mcp`) is JWT-authenticated and gated (TKT-4QSZ8Y): entity
   and relation reads, `search_entities`, trace and resources all read
   through `GatedReads`. Search drops hits that matched only hidden
