@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
 )
@@ -153,6 +154,15 @@ func (s *Store) renameLocked(
 
 	if _, err := s.write(ctx, `UPDATE entities SET id = ? WHERE id = ?`, newID, oldID); err != nil {
 		return fmt.Errorf("sqlitestore: rename %s: %w", oldID, err)
+	}
+	// The search text starts with the id, so each face gets it anew.
+	for _, st := range family {
+		renamed := st.Clone()
+		renamed.ID = newID
+		if _, err := s.write(ctx, `UPDATE entities SET search_text = ? WHERE id = ? AND face = ?`,
+			search.IndexText(renamed), newID, string(st.Face)); err != nil {
+			return fmt.Errorf("sqlitestore: rename %s: %w", oldID, err)
+		}
 	}
 
 	// Bulk in-place re-key, matching pgstore: one statement per direction

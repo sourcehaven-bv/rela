@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
@@ -136,11 +137,11 @@ func (s *Store) createEntityLocked(ctx context.Context, e *entity.Entity) error 
 	res, err := s.write(ctx, `INSERT INTO entities (id, face, type, properties, content, updated_at,
 		                      last_edited_by_user, last_edited_by_tool,
 		                      origin_kind, origin_source, origin_source_face,
-		                      origin_source_type, origin_definition, mention_targets)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		                      origin_source_type, origin_definition, mention_targets, search_text)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE NOT EXISTS (SELECT 1 FROM marked_entities WHERE lower(id) = lower(?))`,
 		e.ID, string(e.Face), e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content), e.ID)
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content), search.IndexText(e), e.ID)
 	var inserted int64
 	if err == nil {
 		inserted, err = res.RowsAffected()
@@ -198,10 +199,10 @@ func (s *Store) UpdateEntity(ctx context.Context, e *entity.Entity) error {
 	res, err := s.write(ctx, `UPDATE entities SET type = ?, properties = ?, content = ?, updated_at = ?,
 		    last_edited_by_user = ?, last_edited_by_tool = ?,
 		    origin_kind = ?, origin_source = ?, origin_source_face = ?,
-		    origin_source_type = ?, origin_definition = ?, mention_targets = ?
+		    origin_source_type = ?, origin_definition = ?, mention_targets = ?, search_text = ?
 		WHERE id = ? AND face = ?`,
 		e.Type, props, e.Content, sqlitedb.FormatTime(updated), editorUser, editorTool,
-		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content),
+		o.kind, o.source, o.sourceFace, o.sourceType, o.definition, mentionTargetsJSON(e.Content), search.IndexText(e),
 		e.ID, string(e.Face))
 	if err != nil {
 		return fmt.Errorf("sqlitestore: update %s: %w", e.ID, err)
