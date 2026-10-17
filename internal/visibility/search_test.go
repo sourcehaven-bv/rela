@@ -403,6 +403,33 @@ func TestSearchScoped_FieldScopes(t *testing.T) {
 	}
 }
 
+// TestSearchScoped_KeepsCallerFieldScope pins that a field scope the caller
+// set is never widened: kept when the policy hides nothing for the type, and
+// refused when the policy has a scope of its own.
+func TestSearchScoped_KeepsCallerFieldScope(t *testing.T) {
+	q := search.Query{Text: "x", World: store.TrivialScope()}
+	gate := fakeScoper{reads: map[string]acl.ReadQueryResult{"ticket": allowAll}}
+	callerScope := &search.FieldScope{Gated: []string{"code"}}
+	scope := map[string]search.TypeScope{"ticket": {AllowAll: true, Fields: callerScope}}
+
+	var got map[string]search.TypeScope
+	stub := stubSearcher{hits: []search.Hit{{ID: "TKT-1", Type: "ticket"}}, gotScope: &got}
+	if _, err := collect(t, visibility.SearchScoped(context.Background(), stub, gate, hideProps{}, q, scope,
+		[]string{"ticket"})); err != nil {
+		t.Fatalf("SearchScoped: %v", err)
+	}
+	if got["ticket"].Fields != callerScope {
+		t.Errorf("ticket field scope = %+v, want the caller's scope kept", got["ticket"].Fields)
+	}
+
+	got = nil
+	_, err := collect(t, visibility.SearchScoped(context.Background(), stub, gate, hideProps{"secret"}, q, scope,
+		[]string{"ticket"}))
+	if !errors.Is(err, search.ErrScope) || got != nil {
+		t.Errorf("err=%v served=%v, want ErrScope before the backend runs", err, got != nil)
+	}
+}
+
 // TestSearcher_HiddenFieldMatchDroppedEndToEnd runs the policy searcher over
 // the generic backend: the field scope reaches the backend and a match on a
 // hidden property only is dropped, while a title match on the same entity
