@@ -927,7 +927,8 @@ func testDeleteCAS(t *testing.T, h Harness) {
 		channels.ErrInvalidMessage)
 	require.ErrorIs(t, h.Store.Delete(ctx, k, channels.Deletion{Expect: closed.State, Rev: closed.Rev, At: at}),
 		channels.ErrInvalidMessage, "a delete needs an author")
-	require.NoError(t, h.Store.Delete(ctx, k, channels.Deletion{Expect: closed.State, Rev: closed.Rev, By: Bob, At: at}))
+	require.NoError(t, h.Store.Delete(ctx, k,
+		channels.Deletion{Expect: closed.State, Rev: closed.Rev, By: Bob, At: at}))
 }
 
 func testRekey(t *testing.T, h Harness) {

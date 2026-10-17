@@ -316,9 +316,9 @@ func TestChannels_Lifecycle(t *testing.T) {
 		{"archive", http.StatusForbidden, realtime.TypeLifecycleNotOffered},
 		{"delete", http.StatusConflict, realtime.TypeRetentionActive},
 	} {
-		resp, b := env.do(t, "alice", http.MethodPost, roomPath+"/_lifecycle/"+tc.op, "", nil)
-		if resp.StatusCode != tc.code || problemType(t, b) != tc.ptype {
-			t.Errorf("%s = %d %s, want %d %s", tc.op, resp.StatusCode, b, tc.code, tc.ptype)
+		res, body := env.do(t, "alice", http.MethodPost, roomPath+"/_lifecycle/"+tc.op, "", nil)
+		if res.StatusCode != tc.code || problemType(t, body) != tc.ptype {
+			t.Errorf("%s = %d %s, want %d %s", tc.op, res.StatusCode, body, tc.code, tc.ptype)
 		}
 	}
 

@@ -64,7 +64,7 @@ func newLifecycleHarness(t *testing.T) *harness {
 	t.Helper()
 	h := newHarness(t, withYAML(lifecycleRealtime))
 	h.post(t, member(), PostInput{Type: "text", Props: map[string]any{"body": "hi"}})
-	h.anchors.setProp("TKT-1", "status", "done")
+	h.anchors.setStatus("done")
 	return h
 }
 
@@ -165,7 +165,7 @@ func TestLifecycle_Condition_TrueFalseRedactedDegraded(t *testing.T) {
 	h := newLifecycleHarness(t)
 	require.Contains(t, h.anchors.lastReq, "status", "the anchor read asks for the condition's property")
 
-	h.anchors.setProp("TKT-1", "status", "open")
+	h.anchors.setStatus("open")
 	require.NotContains(t, h.offered(t, lead(), room), realtimecfg.LifecycleClose)
 	_, err := h.svc.Lifecycle(as(lead()), room, realtimecfg.LifecycleClose)
 	d := requireDenial(t, err, http.StatusForbidden, TypeLifecycleDenied)
@@ -173,11 +173,11 @@ func TestLifecycle_Condition_TrueFalseRedactedDegraded(t *testing.T) {
 	require.Equal(t, "channel_types.room.lifecycle.close.condition", d.Rule)
 
 	// Redaction drops a hidden property from the view; it reads as absent.
-	h.anchors.setProp("TKT-1", "status", nil)
+	h.anchors.setStatus(nil)
 	_, err = h.svc.Lifecycle(as(lead()), room, realtimecfg.LifecycleClose)
 	requireDenial(t, err, http.StatusForbidden, TypeLifecycleDenied)
 
-	h.anchors.setProp("TKT-1", "status", "done")
+	h.anchors.setStatus("done")
 	cfg := h.cfg.Load()
 	h.cfg.set(Snapshot{Config: cfg.Config, Degraded: true})
 	require.NotContains(t, h.offered(t, lead(), room), realtimecfg.LifecycleClose)
@@ -379,7 +379,7 @@ func TestLifecycle_AffordanceAndGateAgree(t *testing.T) {
 							h.moveRoom(t, channels.StateClosed)
 						}
 						h.moveRoom(t, st)
-						h.anchors.setProp("TKT-1", "status", status)
+						h.anchors.setStatus(status)
 						h.clock.Add(age)
 						return h
 					}

@@ -364,7 +364,7 @@ linters:
       # the derivation through the returned context and flags every store call.
       - linters:
           - contextcheck
-        path: internal/realtime/(service|ops)\.go
+        path: internal/realtime/(service|ops|lifecycle)\.go
       - linters:
           - dupl
           - errcheck

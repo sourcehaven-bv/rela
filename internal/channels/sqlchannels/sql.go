@@ -593,11 +593,11 @@ func (s *Store) Delete(ctx context.Context, k channels.Key, d channels.Deletion)
 	if err := k.Validate(); err != nil {
 		return err
 	}
-	d, err := channels.PrepareDeletion(d)
-	if err != nil {
-		return err
+	d, perr := channels.PrepareDeletion(d)
+	if perr != nil {
+		return perr
 	}
-	err = s.write(ctx, []string{k.ID}, func(q Querier) error {
+	err := s.write(ctx, []string{k.ID}, func(q Querier) error {
 		r, err := s.channelRow(ctx, q, k)
 		if err != nil {
 			return err

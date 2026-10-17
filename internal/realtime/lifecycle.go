@@ -50,11 +50,12 @@ func (s *Service) Lifecycle(ctx context.Context, addr RawAddress, op string) (Ch
 	if err != nil {
 		return ChannelView{}, err
 	}
-	if err := s.local.limiter.take(c.now, bucketIdentity(c.p), c.key, opLifecycle, realtimelimits.OpRate); err != nil {
+	err = s.local.limiter.take(c.now, bucketIdentity(c.p), c.key, opLifecycle, realtimelimits.OpRate)
+	if err != nil {
 		return ChannelView{}, err
 	}
 	if op == realtimecfg.LifecycleDelete {
-		err := s.store.Delete(c.ctx, c.key, channels.Deletion{
+		err = s.store.Delete(c.ctx, c.key, channels.Deletion{
 			Expect: c.head.State, Rev: c.head.Rev, By: authorOf(c.p), At: c.now,
 		})
 		if err != nil {
@@ -144,7 +145,7 @@ func (c *call) lifecycleCondition(op *realtimecfg.LifecycleOp, name, rule string
 	if !c.conditionHolds(op.Conditions[c.anchor.Type]) {
 		title := op.Denied
 		if title == "" {
-			title = fmt.Sprintf("the entity does not meet the condition of %s", name)
+			title = "the entity does not meet the condition of " + name
 		}
 		return forbidden(TypeLifecycleDenied, title, rule)
 	}

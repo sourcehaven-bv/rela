@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -250,15 +251,14 @@ func (f *fakeAnchors) Anchor(_ context.Context, addr entity.Address, props []str
 	return out, nil
 }
 
-// setProp sets a property of the view at addr.
-func (f *fakeAnchors) setProp(addr, prop string, v any) {
+// setStatus sets the status of TKT-1; nil removes it.
+func (f *fakeAnchors) setStatus(v any) {
+	const addr, prop = "TKT-1", "status"
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	view := f.views[addr]
 	props := map[string]any{}
-	for k, old := range view.Props {
-		props[k] = old
-	}
+	maps.Copy(props, view.Props)
 	if v == nil {
 		delete(props, prop)
 	} else {
