@@ -85,13 +85,15 @@ type Store interface {
 	// takes only the channels anchored to that face. An id without channels
 	// is not an error: nothing moves and the handle is zero.
 	//
-	// The batch records f (see [Filing]); a batch that moved nothing
-	// records nothing.
+	// The batch records what file returns for the channels it moves (see
+	// [Filer] and [Filing]). file runs under the same lock or transaction
+	// as the move, and not at all when nothing moves. An invalid filing
+	// moves nothing and is an error.
 	//
 	// No list, Remove or Delete reaches a tombstoned channel. Only the
 	// batch methods do: [Store.Tombstones] lists batches,
 	// [Store.Untombstone] puts one back and [Store.Purge] erases one.
-	Tombstone(ctx context.Context, id string, face entity.Face, at time.Time, f Filing) (TombstoneHandle, error)
+	Tombstone(ctx context.Context, id string, face entity.Face, at time.Time, file Filer) (TombstoneHandle, error)
 
 	// ConfirmTombstone clears the pending mark of the batch h names (see
 	// [Filing]), so [Store.Purge] may erase it. A batch that is not

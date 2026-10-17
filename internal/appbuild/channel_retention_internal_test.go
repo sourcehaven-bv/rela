@@ -90,6 +90,29 @@ func TestChannelGuard_FilesPendingBatch(t *testing.T) {
 	}
 }
 
+// A detach channel created after the guard listed the entity is filed
+// with its own retention, not the delete type's immediate purge.
+func TestChannelGuard_LateChannelKeepsItsRetention(t *testing.T) {
+	ctx := t.Context()
+	f := newGuardFixture(t)
+	appendTo(t, f.cs, chanKey("INC-1", "", "purge-me"))
+	d := entitymanager.AnchorDelete{ID: "INC-1", Block: true, Detach: true}
+	s, err := f.guard.Scope(ctx, []string{d.ID})
+	require.NoError(t, err)
+
+	// Created between the guard's list and its tombstone.
+	appendTo(t, f.cs, chanKey("INC-1", "", "chat"))
+	undo, err := s.BeforeDelete(ctx, d)
+	require.NoError(t, err)
+	require.NotNil(t, undo)
+
+	got := batchesOf(t, f.cs, "INC-1")
+	require.Len(t, got, 1)
+	assert.Len(t, got[0].Channels, 2)
+	assert.Equal(t, got[0].At.Add(realtimelimits.DetachedRetention), got[0].Filing.PurgeAfter,
+		"the late chat channel keeps the batch for the detached retention")
+}
+
 // A delete through the manager confirms the guard's batch after commit and
 // wakes the worker. A failed delete restores the channels and leaves
 // nothing pending.
@@ -133,7 +156,7 @@ func TestChannelGuard_FaceDeleteConfirmsFace(t *testing.T) {
 	mgr := f.manager(t, f.guard)
 	f.seed(t, "inc-a", "draft", "final")
 	appendTo(t, f.cs, chanKey("inc-a", "draft", "chat"))
-	other, err := f.cs.Tombstone(ctx, "inc-a", "final", time.Now(), channels.Filing{Pending: true})
+	other, err := f.cs.Tombstone(ctx, "inc-a", "final", time.Now(), channels.FileAs(channels.Filing{Pending: true}))
 	require.NoError(t, err)
 	require.True(t, other.IsZero(), "no final channels yet")
 
@@ -193,9 +216,9 @@ func TestTombstoneConfirmer(t *testing.T) {
 	require.NoError(t, err)
 	appendTo(t, cs, chanKey("A-1", "draft", "room"))
 	appendTo(t, cs, chanKey("A-1", "final", "room"))
-	draft, err := cs.Tombstone(ctx, "A-1", "draft", time.Now(), channels.Filing{Pending: true})
+	draft, err := cs.Tombstone(ctx, "A-1", "draft", time.Now(), channels.FileAs(channels.Filing{Pending: true}))
 	require.NoError(t, err)
-	final, err := cs.Tombstone(ctx, "A-1", "final", time.Now(), channels.Filing{Pending: true})
+	final, err := cs.Tombstone(ctx, "A-1", "final", time.Now(), channels.FileAs(channels.Filing{Pending: true}))
 	require.NoError(t, err)
 	c.add(draft)
 	c.add(final)
@@ -275,7 +298,7 @@ func TestRealtimeWorker_RunsAndStops(t *testing.T) {
 	past := time.Now().Add(-time.Minute)
 	file := func(id string) {
 		appendTo(t, cs, chanKey(id, "", "room"))
-		_, err := cs.Tombstone(ctx, id, "", past, channels.Filing{Policy: channels.PolicyDelete, PurgeAfter: past})
+		_, err := cs.Tombstone(ctx, id, "", past, channels.FileAs(channels.Filing{Policy: channels.PolicyDelete, PurgeAfter: past}))
 		require.NoError(t, err)
 	}
 	file("GONE-1")

@@ -97,6 +97,7 @@ func RunAll(t *testing.T, newHarness func(t *testing.T) Harness) {
 		{"ManyReplies", testManyReplies},
 		{"LongestAnchor", testLongestAnchor},
 		{"TombstonesList", testTombstonesList},
+		{"FilerSeesMovedChannels", testFilerSeesMovedChannels},
 		{"ConfirmTombstone", testConfirmTombstone},
 		{"Purge", testPurge},
 		{"PurgeFace", testPurgeFace},
@@ -128,7 +129,7 @@ func mustAppend(t *testing.T, s channels.Store, k channels.Key, m channels.NewMe
 // tombstone tombstones id@face and returns the handle.
 func tombstone(t *testing.T, s channels.Store, id string, face entity.Face, at time.Time) channels.TombstoneHandle {
 	t.Helper()
-	h, err := s.Tombstone(context.Background(), id, face, at, channels.Filing{})
+	h, err := s.Tombstone(context.Background(), id, face, at, nil)
 	require.NoError(t, err)
 	return h
 }
@@ -961,7 +962,7 @@ func testTombstoneEntity(t *testing.T, h Harness) {
 	tombstone(t, h.Store, "TKT-1", "", T0.Add(time.Hour))
 	tombstone(t, h.Store, "TKT-1", "", T0.Add(time.Hour))
 	tombstone(t, h.Store, "NONE-1", "", T0)
-	requireTombstoneErr(t, channels.ErrInvalidKey)(h.Store.Tombstone(ctx, "../x", "", T0, channels.Filing{}))
+	requireTombstoneErr(t, channels.ErrInvalidKey)(h.Store.Tombstone(ctx, "../x", "", T0, nil))
 }
 
 func testTombstoneFace(t *testing.T, h Harness) {
@@ -988,7 +989,7 @@ func testTombstoneFace(t *testing.T, h Harness) {
 	last := audit[len(audit)-1]
 	require.Equal(t, channels.AuditTombstone, last.Op)
 	require.Equal(t, entity.Face("draft"), last.Face)
-	requireTombstoneErr(t, channels.ErrInvalidKey)(h.Store.Tombstone(ctx, "TKT-1", "Bad Face", T0, channels.Filing{}))
+	requireTombstoneErr(t, channels.ErrInvalidKey)(h.Store.Tombstone(ctx, "TKT-1", "Bad Face", T0, nil))
 }
 
 func testCaps(t *testing.T, h Harness) {

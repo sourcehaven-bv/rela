@@ -19,7 +19,7 @@ func fileBatch(
 	t *testing.T, s channels.Store, id string, face entity.Face, at time.Time, f channels.Filing,
 ) channels.TombstoneHandle {
 	t.Helper()
-	h, err := s.Tombstone(context.Background(), id, face, at, f)
+	h, err := s.Tombstone(context.Background(), id, face, at, channels.FileAs(f))
 	require.NoError(t, err)
 	require.False(t, h.IsZero())
 	return h
@@ -32,6 +32,75 @@ func batchKeys(b channels.TombstoneBatch) []channels.Key {
 		out[i] = c.Key
 	}
 	return out
+}
+
+// testFilerSeesMovedChannels pins that the filer runs over the channels the
+// batch moves, read inside the Tombstone call: a channel created after a
+// caller listed the entity is counted, a face batch sees only its face, and
+// nothing moved means the filer does not run.
+func testFilerSeesMovedChannels(t *testing.T, h Harness) {
+	t.Helper()
+	ctx := context.Background()
+	room := key("TKT-1", "room")
+	mustAppend(t, h.Store, room, text("one"))
+	listed, err := h.Store.ListEntity(ctx, "TKT-1")
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+
+	// Created after the list, before the tombstone.
+	late := key("TKT-1", "late")
+	draft := channels.Key{Anchor: channels.Anchor{ID: "TKT-1", Face: "draft"}, Type: "room"}
+	mustAppend(t, h.Store, late, text("two"))
+	mustAppend(t, h.Store, draft, text("three"))
+
+	var faceSeen []channels.Key
+	_, err = h.Store.Tombstone(ctx, "TKT-1", "draft", T0, func(moved []channels.Channel) channels.Filing {
+		for _, c := range moved {
+			faceSeen = append(faceSeen, c.Key)
+		}
+		return channels.Filing{Policy: channels.PolicyDetach, PurgeAfter: T0.Add(time.Hour)}
+	})
+	require.NoError(t, err)
+	require.Equal(t, []channels.Key{draft}, faceSeen)
+
+	var seen []channels.Key
+	hw, err := h.Store.Tombstone(ctx, "TKT-1", "", T0.Add(time.Second), func(moved []channels.Channel) channels.Filing {
+		for _, c := range moved {
+			seen = append(seen, c.Key)
+		}
+		return channels.Filing{Policy: channels.PolicyDetach, PurgeAfter: T0.Add(time.Duration(len(moved)) * time.Hour)}
+	})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []channels.Key{room, late}, seen, "the late channel is in the batch the filer saw")
+
+	got, err := h.Store.Tombstones(ctx, T0.Add(time.Hour))
+	require.NoError(t, err)
+	var whole *channels.TombstoneBatch
+	for i := range got {
+		if got[i].Handle == hw {
+			whole = &got[i]
+		}
+	}
+	require.NotNil(t, whole)
+	require.Equal(t, channels.NormTime(T0.Add(2*time.Hour)), whole.Filing.PurgeAfter)
+	require.ElementsMatch(t, []channels.Key{room, late}, batchKeys(*whole))
+
+	called := false
+	empty, err := h.Store.Tombstone(ctx, "TKT-9", "", T0, func([]channels.Channel) channels.Filing {
+		called = true
+		return channels.Filing{}
+	})
+	require.NoError(t, err)
+	require.True(t, empty.IsZero())
+	require.False(t, called, "nothing moved: the filer does not run")
+
+	// An invalid filing moves nothing.
+	mustAppend(t, h.Store, key("TKT-2", "room"), text("four"))
+	_, err = h.Store.Tombstone(ctx, "TKT-2", "", T0, channels.FileAs(channels.Filing{Policy: "bogus"}))
+	require.ErrorIs(t, err, channels.ErrInvalidMessage)
+	left, err := h.Store.ListEntity(ctx, "TKT-2")
+	require.NoError(t, err)
+	require.Len(t, left, 1)
 }
 
 func testTombstonesList(t *testing.T, h Harness) {
@@ -78,9 +147,6 @@ func testTombstonesList(t *testing.T, h Harness) {
 	got, err = h.Store.Tombstones(ctx, T0.Add(2*time.Hour))
 	require.NoError(t, err)
 	require.Len(t, got, 2, "a restored batch is not listed")
-
-	_, err = h.Store.Tombstone(ctx, "TKT-1", "", T0, channels.Filing{Policy: "bogus"})
-	require.ErrorIs(t, err, channels.ErrInvalidMessage)
 }
 
 func testConfirmTombstone(t *testing.T, h Harness) {

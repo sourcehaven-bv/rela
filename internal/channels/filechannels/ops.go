@@ -485,14 +485,10 @@ func (s *Store) Rekey(ctx context.Context, oldID, newID string, at time.Time) er
 // crash between the two leaves a filing without a batch,
 // never a batch without its filing.
 func (s *Store) Tombstone(
-	ctx context.Context, id string, face entity.Face, at time.Time, f channels.Filing,
+	ctx context.Context, id string, face entity.Face, at time.Time, file channels.Filer,
 ) (channels.TombstoneHandle, error) {
 	a := channels.Anchor{ID: id, Face: face}
 	if err := a.Validate(); err != nil {
-		return channels.TombstoneHandle{}, err
-	}
-	f, err := channels.PrepareFiling(f)
-	if err != nil {
 		return channels.TombstoneHandle{}, err
 	}
 	unlock, err := s.lock(ctx)
@@ -507,6 +503,10 @@ func (s *Store) Tombstone(
 		ok, existsErr := s.exists(faceDir(a))
 		if existsErr != nil || !ok {
 			return channels.TombstoneHandle{}, existsErr
+		}
+		f, err := s.fileBatch(id, face, file)
+		if err != nil {
+			return channels.TombstoneHandle{}, err
 		}
 		if err := writeFiling(&s.disk, h, f); err != nil {
 			return channels.TombstoneHandle{}, err
@@ -523,6 +523,10 @@ func (s *Store) Tombstone(
 		return channels.TombstoneHandle{}, err
 	}
 	if moved {
+		f, err := s.fileBatch(id, "", file)
+		if err != nil {
+			return channels.TombstoneHandle{}, err
+		}
 		if err := writeFiling(&s.disk, h, f); err != nil {
 			return channels.TombstoneHandle{}, err
 		}
@@ -547,6 +551,25 @@ func (s *Store) Tombstone(
 		return h, fmt.Errorf("filechannels: tombstone audit of %s: %w", id, err)
 	}
 	return h, nil
+}
+
+// fileBatch reads the channels a tombstone of id@face moves and runs file
+// over them. The caller holds the store lock, so the list is the batch.
+func (s *Store) fileBatch(id string, face entity.Face, file channels.Filer) (channels.Filing, error) {
+	if file == nil {
+		return channels.Filing{}, nil
+	}
+	var moved []channels.Channel
+	err := s.visitEntity(id, "", func(k channels.Key, m *meta) error {
+		if face == "" || k.Face == face {
+			moved = append(moved, m.channel(k))
+		}
+		return nil
+	})
+	if err != nil {
+		return channels.Filing{}, err
+	}
+	return channels.FileBatch(file, moved)
 }
 
 // detachedKey is where the batch h was filed.

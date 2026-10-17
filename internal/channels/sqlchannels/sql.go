@@ -638,20 +638,32 @@ func (s *Store) Rekey(ctx context.Context, oldID, newID string, at time.Time) er
 // place and get the stamp in their tomb column; its filing is a row of
 // channel_tombstones.
 func (s *Store) Tombstone(
-	ctx context.Context, id string, face entity.Face, at time.Time, f channels.Filing,
+	ctx context.Context, id string, face entity.Face, at time.Time, file channels.Filer,
 ) (channels.TombstoneHandle, error) {
 	a := channels.Anchor{ID: id, Face: face}
 	if err := a.Validate(); err != nil {
 		return channels.TombstoneHandle{}, err
 	}
-	f, err := channels.PrepareFiling(f)
-	if err != nil {
-		return channels.TombstoneHandle{}, err
-	}
 	h := channels.NewTombstoneHandle(a, channels.TombstoneStamp(at))
 	rec := channels.AuditRecord{At: channels.NormTime(at), Op: channels.AuditTombstone, Face: face}
 	filed := false
-	err = s.write(ctx, []string{id}, func(q Querier) error {
+	err := s.write(ctx, []string{id}, func(q Querier) error {
+		// The filing is computed from the rows this transaction moves,
+		// read under the same write lock (see channels.Filer).
+		where, args := `AND anchor_id = ?`, []any{id}
+		if face != "" {
+			where, args = where+` AND anchor_face = ?`, append(args, string(face))
+		}
+		batch, err := queryChannels(ctx, q, where, args...)
+		if err != nil {
+			return err
+		}
+		var f channels.Filing
+		if len(batch) > 0 {
+			if f, err = channels.FileBatch(file, batch); err != nil {
+				return err
+			}
+		}
 		if face != "" {
 			moved, err := q.Exec(ctx, `UPDATE channels SET tomb = ?
 				WHERE anchor_id = ? AND anchor_face = ? AND tomb = ''`, h.Stamp(), id, string(face))
@@ -829,7 +841,13 @@ func collect[T any](ctx context.Context, q Querier, query string, args []any,
 }
 
 func (s *Store) channels(ctx context.Context, where string, args ...any) ([]channels.Channel, error) {
-	rows, err := collect(ctx, s.db, `SELECT `+chanCols+` FROM channels WHERE tomb = '' `+where+
+	return queryChannels(ctx, s.db, where, args...)
+}
+
+// queryChannels is [Store.channels] over q, so a transaction can read the
+// rows it is about to change.
+func queryChannels(ctx context.Context, q Querier, where string, args ...any) ([]channels.Channel, error) {
+	rows, err := collect(ctx, q, `SELECT `+chanCols+` FROM channels WHERE tomb = '' `+where+
 		` ORDER BY anchor_id, anchor_face, type, name`, args, scanChannel)
 	if err != nil {
 		return nil, err

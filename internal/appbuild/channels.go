@@ -80,7 +80,7 @@ func Channels(s *Services) channels.Store { return s.channels }
 // channels a concurrent first post created while the write ran.
 //
 // Every batch these hooks tombstone is filed confirmed, with the purge time
-// the realtime config gives it (see [realtime.FilingFor]): the write that
+// the realtime config gives it (see [realtime.Filer]): the write that
 // caused it has committed. The delete hooks also confirm the guard's pending
 // batches and wake the realtime worker.
 type channelAliases struct {
@@ -107,24 +107,11 @@ func channelAliasesFor(
 }
 
 // tombstone files the channels of id@face as one confirmed batch for
-// policy, or does nothing when there are none. A delete batch takes its
-// policy from the config, like the guard's.
+// policy (see [realtime.Filer]), or does nothing when there are none.
 func (a *channelAliases) tombstone(
 	ctx context.Context, id string, face entity.Face, at time.Time, policy channels.TombstonePolicy,
 ) error {
-	list, err := a.store.ListEntity(ctx, id)
-	if err != nil {
-		return err
-	}
-	moved := batchOf(list, face)
-	if len(moved) == 0 {
-		return nil
-	}
-	cfg := a.rt.Load().Config
-	if policy == channels.PolicyDelete {
-		policy = realtime.DeletePolicy(cfg, moved)
-	}
-	_, err = a.store.Tombstone(ctx, id, face, at, realtime.FilingFor(cfg, policy, at, moved, false))
+	_, err := a.store.Tombstone(ctx, id, face, at, realtime.Filer(a.rt.Load().Config, policy, at, false))
 	return err
 }
 

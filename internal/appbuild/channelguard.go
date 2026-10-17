@@ -22,9 +22,9 @@ import (
 //     before anything is written;
 //   - detach and delete both tombstone the channels before the delete's
 //     transaction, and a failed delete restores them. The batch records the
-//     policy and the time retention may erase it (see
-//     [realtime.PurgeAfter]): at once for a delete type, after the type's
-//     detached retention otherwise;
+//     policy and the time retention may erase it: at once for a delete
+//     type, after the type's detached retention otherwise. The store
+//     computes both from the channels it moves (see [realtime.Filer]);
 //   - a channel whose type the config does not declare, or a project without
 //     realtime.yaml, is detached: the config can no longer say otherwise.
 //
@@ -152,9 +152,7 @@ func (s *channelScope) BeforeDelete(
 	}
 	g := s.guard
 	at := g.now()
-	moved := batchOf(list, face)
-	f := realtime.FilingFor(s.cfg, realtime.DeletePolicy(s.cfg, moved), at, moved, true)
-	h, err := g.tombstone(ctx, d.ID, face, at, f)
+	h, err := g.tombstone(ctx, d.ID, face, at, realtime.Filer(s.cfg, channels.PolicyDelete, at, true))
 	if err != nil {
 		return nil, fmt.Errorf("channels: detach %s before delete: %w", entity.FormatStateRef(d.ID, face), err)
 	}
@@ -163,21 +161,6 @@ func (s *channelScope) BeforeDelete(
 	}
 	g.tombs.add(h)
 	return tombstoneUndo{store: g.store, h: h, now: g.now, tombs: g.tombs}, nil
-}
-
-// batchOf returns the channels in list a tombstone of face moves: every
-// channel for a whole-entity batch, the face's own for a face batch.
-func batchOf(list []channels.Channel, face entity.Face) []channels.Channel {
-	if face == "" {
-		return list
-	}
-	var out []channels.Channel
-	for _, c := range list {
-		if c.Key.Face == face {
-			out = append(out, c)
-		}
-	}
-	return out
 }
 
 // CheckDelete implements [entitymanager.AnchorScope].
@@ -192,9 +175,9 @@ func (s *channelScope) CheckDelete(_ context.Context, d entitymanager.AnchorDele
 // batch and still return its handle; that part is put back before the error
 // is returned, so a failed detach leaves nothing detached.
 func (g *channelGuard) tombstone(
-	ctx context.Context, id string, face entity.Face, at time.Time, f channels.Filing,
+	ctx context.Context, id string, face entity.Face, at time.Time, file channels.Filer,
 ) (channels.TombstoneHandle, error) {
-	h, err := g.store.Tombstone(ctx, id, face, at, f)
+	h, err := g.store.Tombstone(ctx, id, face, at, file)
 	if err == nil || h.IsZero() {
 		return h, err
 	}
@@ -225,7 +208,7 @@ func (g *channelGuard) BeforeRename(
 		return nil, freeErr
 	}
 	at := g.now()
-	h, err := g.tombstone(ctx, newID, "", at, realtime.FilingFor(g.config(), channels.PolicyDetach, at, list, false))
+	h, err := g.tombstone(ctx, newID, "", at, realtime.Filer(g.config(), channels.PolicyDetach, at, false))
 	if err != nil {
 		return nil, fmt.Errorf("channels: clear %s before rename: %w", newID, err)
 	}

@@ -55,6 +55,28 @@ type Filing struct {
 // Recorded reports whether f carries a purge time.
 func (f Filing) Recorded() bool { return !f.PurgeAfter.IsZero() }
 
+// Filer computes the filing of a batch from the channels the batch moves.
+// [Store.Tombstone] calls it once, under the same lock or transaction as
+// the move. So a channel created after the caller listed the entity is
+// counted, and cannot be purged sooner than its own type allows.
+//
+// Nil: accepted by [Store.Tombstone], which then files the zero Filing.
+type Filer func(moved []Channel) Filing
+
+// FileAs returns a Filer that files f whatever the batch holds.
+func FileAs(f Filing) Filer { return func([]Channel) Filing { return f } }
+
+// FileBatch runs file over moved and validates the result; see
+// [PrepareFiling]. Backends call it inside the Tombstone critical section.
+//
+// Nil: file is accepted and gives the zero Filing.
+func FileBatch(file Filer, moved []Channel) (Filing, error) {
+	if file == nil {
+		return Filing{}, nil
+	}
+	return PrepareFiling(file(moved))
+}
+
 // PrepareFiling validates f and returns it with its time normalized.
 func PrepareFiling(f Filing) (Filing, error) {
 	if !f.Policy.Valid() {

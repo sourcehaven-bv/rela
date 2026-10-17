@@ -281,7 +281,7 @@ func (failingTxStore) Tx(context.Context, func(store.Store) error) error { retur
 type partialTombstone struct{ channels.Store }
 
 func (p partialTombstone) Tombstone(
-	ctx context.Context, id string, face entity.Face, at time.Time, f channels.Filing,
+	ctx context.Context, id string, face entity.Face, at time.Time, f channels.Filer,
 ) (channels.TombstoneHandle, error) {
 	h, err := p.Store.Tombstone(ctx, id, face, at, f)
 	if err != nil {

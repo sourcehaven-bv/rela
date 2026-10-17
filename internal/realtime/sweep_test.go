@@ -400,7 +400,7 @@ func TestSweep_PurgeHonoursPolicyAndRetention(t *testing.T) {
 			}
 			list, err := h.store.ListEntity(ctx, "DOC-1")
 			require.NoError(t, err)
-			_, err = h.store.Tombstone(ctx, "DOC-1", "", filedAt, tc.filing(cfg, list))
+			_, err = h.store.Tombstone(ctx, "DOC-1", "", filedAt, channels.FileAs(tc.filing(cfg, list)))
 			require.NoError(t, err)
 			for i, s := range tc.steps {
 				h.clock.Add(s.advance)
@@ -421,7 +421,7 @@ func TestSweep_UnrecordedUndeclaredType(t *testing.T) {
 	h := newSweepHarness(t)
 	h.post(t, sweepKey("DOC-1", "gone"), sweepT0)
 	h.anchors.drop("DOC-1")
-	_, err := h.store.Tombstone(ctx, "DOC-1", "", sweepT0, channels.Filing{})
+	_, err := h.store.Tombstone(ctx, "DOC-1", "", sweepT0, nil)
 	require.NoError(t, err)
 	h.clock.Add(10 * realtimelimits.DetachedRetention)
 	rep, err := h.sweeper.RunRetention(ctx)

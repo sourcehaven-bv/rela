@@ -48,6 +48,24 @@ func FilingFor(
 	return channels.Filing{Policy: policy, PurgeAfter: PurgeAfter(cfg, policy, at, chs), Pending: pending}
 }
 
+// Filer returns the [channels.Filer] of a batch tombstoned at `at` for
+// policy. The store runs it over the channels it actually moves, so a
+// channel created after the caller listed the entity still sets the purge
+// time. For [channels.PolicyDelete] the batch's policy is [DeletePolicy]
+// of the moved channels: delete when one of their types says so, detach
+// otherwise.
+//
+// Nil: cfg is accepted (see [PurgeAfter]).
+func Filer(cfg *realtimecfg.Compiled, policy channels.TombstonePolicy, at time.Time, pending bool) channels.Filer {
+	return func(moved []channels.Channel) channels.Filing {
+		p := policy
+		if p == channels.PolicyDelete {
+			p = DeletePolicy(cfg, moved)
+		}
+		return FilingFor(cfg, p, at, moved, pending)
+	}
+}
+
 // PurgeAfter returns the earliest time a batch of chs tombstoned at `at`
 // for policy may be erased: the latest of its channels' times. A channel's
 // time is
@@ -297,21 +315,21 @@ func (s *Sweeper) detachOrphans(ctx context.Context, cfg *realtimecfg.Compiled, 
 	due := s.trackMissing(ids, faces, now)
 	var errs []error
 	for _, id := range due {
-		list, err := s.store.ListEntity(ctx, id)
+		var moved []channels.Channel
+		file := Filer(cfg, channels.PolicyOrphan, now, false)
+		h, err := s.store.Tombstone(ctx, id, "", now, func(chs []channels.Channel) channels.Filing {
+			moved = chs
+			return file(chs)
+		})
 		if err != nil {
-			errs = append(errs, fmt.Errorf("realtime: list orphan %s: %w", id, err))
-			continue
-		}
-		if len(list) == 0 {
-			continue
-		}
-		f := FilingFor(cfg, channels.PolicyOrphan, now, list, false)
-		if _, err := s.store.Tombstone(ctx, id, "", now, f); err != nil {
 			errs = append(errs, fmt.Errorf("realtime: detach orphan %s: %w", id, err))
 			continue
 		}
+		if h.IsZero() || len(moved) == 0 {
+			continue
+		}
 		rep.Detached++
-		s.marker.Mark(batchKeys(list)...)
+		s.marker.Mark(batchKeys(moved)...)
 	}
 	return errors.Join(errs...)
 }
