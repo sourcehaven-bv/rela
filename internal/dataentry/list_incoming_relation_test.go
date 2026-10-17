@@ -14,6 +14,7 @@ import (
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
 	"github.com/Sourcehaven-BV/rela/internal/openapi"
 	"github.com/Sourcehaven-BV/rela/internal/project"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/storage"
 )
 
@@ -311,6 +312,10 @@ func TestListIncludeIncomingPeer_StripsHiddenProperty(t *testing.T) {
 // hide a property on one type and leave the same name visible on another.
 // Relation verdicts are empty.
 type fieldsByTypeResolver map[string]FieldVerdicts
+
+func (fieldsByTypeResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, errNoSearchForm
+}
 
 func (r fieldsByTypeResolver) FieldVerdicts(_ context.Context, e *entity.Entity) FieldVerdicts {
 	return r[e.Type]

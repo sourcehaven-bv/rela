@@ -54,9 +54,9 @@ type queryService struct {
 	// reassign App.visibleSearcher after construction.
 	visibleSearcher func() search.VisibleSearcher
 	// fields supplies each type's search field scope, so a hit that matched
-	// only a `visible:`-hidden property is dropped. It follows the App's
-	// field resolver ([searchFieldScoper]), late-bound for the same reason
-	// as visibleSearcher.
+	// only a `visible:`-hidden property is dropped. It is the App's field
+	// resolver ([FieldVerdictResolver.SearchFieldScope]), late-bound for the
+	// same reason as visibleSearcher.
 	fields func() visibility.FieldScoper
 }
 
@@ -67,12 +67,7 @@ func newQueryService(app *App) *queryService {
 		schema:          app.State,
 		services:        app.Services,
 		visibleSearcher: func() search.VisibleSearcher { return app.visibleSearcher },
-		fields: func() visibility.FieldScoper {
-			if app.fieldScoper != nil {
-				return app.fieldScoper
-			}
-			return searchFieldScoper(app.fieldResolver)
-		},
+		fields:          func() visibility.FieldScoper { return app.fieldResolver },
 	}
 }
 

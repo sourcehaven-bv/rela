@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/statemachine"
 )
 
@@ -21,6 +22,10 @@ type fakeTransitionResolver struct {
 	verdicts map[string][]statemachine.TransitionVerdict
 	entries  map[string]string
 	hidden   map[string]bool // field name → hidden (Visible=false)
+}
+
+func (fakeTransitionResolver) SearchFieldScope(context.Context, string) (*search.FieldScope, error) {
+	return nil, errNoSearchForm
 }
 
 func (f fakeTransitionResolver) FieldVerdicts(context.Context, *entity.Entity) FieldVerdicts {

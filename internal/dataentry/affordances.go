@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/affordances"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 
 	"github.com/Sourcehaven-BV/rela/internal/acl"
 	v1 "github.com/Sourcehaven-BV/rela/internal/apiwire/v1"
@@ -278,6 +279,12 @@ type FieldVerdictResolver interface {
 	// a resolver missing it would otherwise default to "visible" and reopen
 	// the hidden-value oracle (BUG-WJSYQT).
 	FieldVisibleOnEveryRow(ctx context.Context, entityType, property string) bool
+	// SearchFieldScope is the search form of FieldVerdicts: what the
+	// resolver hides on an entity read, compiled for a search over
+	// entityType. Required for the same reason as FieldVisibleOnEveryRow:
+	// a resolver that hides fields must never pair with a search that
+	// hides nothing. A nil scope means nothing is hidden.
+	SearchFieldScope(ctx context.Context, entityType string) (*search.FieldScope, error)
 }
 
 // traversalPrimer is the OPTIONAL capability of a [FieldVerdictResolver]
