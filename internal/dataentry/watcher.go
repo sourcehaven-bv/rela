@@ -202,7 +202,7 @@ func (a *App) startStoreEventBridge() {
 		slog.Warn("sse: change feed not started", "error", err)
 		return
 	}
-	a.live.start(a.feed, a.leases.wakeSource())
+	a.live.start(a.feed, a.leases.wakeSource(), a.channels.wakeSource())
 }
 
 // relationEndTypes is every entity type a relation of state's metamodel can

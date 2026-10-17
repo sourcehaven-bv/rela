@@ -836,7 +836,7 @@ func TestLiveHub_SkippedPresenceReplayIsRescheduled(t *testing.T) {
 
 	// The next presence round is over the cap and skips the pairs past it in
 	// collect's order. Revoke the last of those as it starts.
-	pairs := h.collect(true, map[string]bool{face: true})
+	pairs := h.collect(true, newRoundFilter([]string{face}, nil, false))
 	mu.Lock()
 	revoked = pairs[len(pairs)-1].owner.User
 	clear(replayed)
@@ -855,7 +855,7 @@ func TestLiveHub_SkippedPresenceReplayIsRescheduled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { defer close(done); h.run(ctx, quietFeed{}, nil) }()
+	go func() { defer close(done); h.run(ctx, quietFeed{}, nil, nil) }()
 	t.Cleanup(func() { cancel(); <-done })
 	waitHubTicks := func(k uint64) {
 		t.Helper()

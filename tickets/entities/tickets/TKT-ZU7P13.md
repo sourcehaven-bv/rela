@@ -6,7 +6,8 @@ kind: enhancement
 priority: medium
 effort: xl
 started: "2026-10-12"
-status: backlog
+completed: "2026-10-17"
+status: done
 description: Channel service (post, read, message ops, ephemeral signals, rate limits, role compile to allowlists), v1 HTTP routes under _channels, OpenAPI, and live delivery through topic rounds in the live hub.
 ---
 

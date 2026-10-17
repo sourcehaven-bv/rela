@@ -55,6 +55,13 @@ func Services(app *dataentry.App, svc *appbuild.Services) error {
 			return fmt.Errorf("wire realtime config: %w", err)
 		}
 	}
+	// Without a channel service the channel routes answer the entity 404
+	// and the OpenAPI document has no channel paths.
+	if c := appbuild.ChannelService(svc); c != nil {
+		if err := dataentry.SetChannels(app, c); err != nil {
+			return fmt.Errorf("wire channels: %w", err)
+		}
+	}
 
 	// The worlds themselves are a NewApp argument; this resolves their links.
 	// A surface that can select a world but not resolve its links renders

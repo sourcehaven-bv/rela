@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/Sourcehaven-BV/rela/internal/metamodel"
+	"github.com/Sourcehaven-BV/rela/internal/realtimecfg"
 )
 
 // Config holds configuration for spec generation.
@@ -29,12 +30,18 @@ type Config struct {
 type Generator struct {
 	meta *metamodel.Metamodel
 	cfg  Config
+	// realtime loads the realtime configuration the channel paths describe;
+	// nil, or a nil result, emits no channel paths. See SetRealtime.
+	realtime func() *realtimecfg.Compiled
 
 	// Caching
 	mu         sync.RWMutex
 	cachedSpec *Spec
 	cachedJSON []byte
 	cachedHash string
+	// cachedRT is the realtime configuration the cached spec describes. A
+	// reload publishes a new *Compiled, so a pointer compare invalidates.
+	cachedRT *realtimecfg.Compiled
 	// gen counts changes to meta and cfg. A spec built from an older
 	// generation is returned but not cached, so a SetAuthHeader that lands
 	// mid-build cannot be overwritten by the stale result.
@@ -58,9 +65,10 @@ func New(meta *metamodel.Metamodel, cfg Config) *Generator {
 // Generate returns the OpenAPI spec, using cached version if metamodel unchanged.
 func (g *Generator) Generate() *Spec {
 	hash := g.computeMetamodelHash()
+	rt := g.realtimeConfig()
 
 	g.mu.RLock()
-	if g.cachedSpec != nil && g.cachedHash == hash {
+	if g.cachedSpec != nil && g.cachedHash == hash && g.cachedRT == rt {
 		spec := g.cachedSpec
 		g.mu.RUnlock()
 		return spec
@@ -69,12 +77,13 @@ func (g *Generator) Generate() *Spec {
 	g.mu.RUnlock()
 
 	// Generate new spec
-	spec := g.generate()
+	spec := g.generate(rt)
 
 	g.mu.Lock()
 	if g.gen == startGen {
 		g.cachedSpec = spec
 		g.cachedHash = hash
+		g.cachedRT = rt
 		g.cachedJSON = nil // Invalidate JSON cache
 	}
 	g.mu.Unlock()
@@ -85,9 +94,10 @@ func (g *Generator) Generate() *Spec {
 // GenerateJSON returns the OpenAPI spec as JSON bytes, cached.
 func (g *Generator) GenerateJSON() ([]byte, error) {
 	hash := g.computeMetamodelHash()
+	rt := g.realtimeConfig()
 
 	g.mu.RLock()
-	if g.cachedJSON != nil && g.cachedHash == hash {
+	if g.cachedJSON != nil && g.cachedHash == hash && g.cachedRT == rt {
 		data := g.cachedJSON
 		g.mu.RUnlock()
 		return data, nil
@@ -145,8 +155,39 @@ func (g *Generator) SetAuthHeader(header string) {
 	g.mu.Unlock()
 }
 
-// generate builds a fresh OpenAPI spec from the metamodel.
-func (g *Generator) generate() *Spec {
+// SetRealtime installs the loader of the realtime configuration. With a
+// loader that returns a configuration, the spec describes the channel routes
+// of each entity type a channel type attaches to. Without one it has no
+// channel paths, because the server then answers every channel route 404.
+// The loader is called on each Generate, so a realtime.yaml reload shows in
+// the next spec.
+//
+// Nil: load is accepted and removes the channel paths.
+func (g *Generator) SetRealtime(load func() *realtimecfg.Compiled) {
+	g.mu.Lock()
+	g.realtime = load
+	g.gen++
+	g.cachedSpec = nil
+	g.cachedJSON = nil
+	g.cachedHash = ""
+	g.cachedRT = nil
+	g.mu.Unlock()
+}
+
+// realtimeConfig returns the realtime configuration to describe, or nil.
+func (g *Generator) realtimeConfig() *realtimecfg.Compiled {
+	g.mu.RLock()
+	load := g.realtime
+	g.mu.RUnlock()
+	if load == nil {
+		return nil
+	}
+	return load()
+}
+
+// generate builds a fresh OpenAPI spec from the metamodel and rt, the
+// realtime configuration (nil when realtime is off).
+func (g *Generator) generate(rt *realtimecfg.Compiled) *Spec {
 	g.mu.RLock()
 	cfg := g.cfg
 	g.mu.RUnlock()
@@ -184,6 +225,7 @@ func (g *Generator) generate() *Spec {
 		def := g.meta.Entities[typeName]
 		g.addEntityPaths(spec, typeName, def)
 	}
+	g.addChannelPaths(spec, rt, entityTypes)
 
 	// Add common schemas
 	g.addCommonSchemas(spec)
