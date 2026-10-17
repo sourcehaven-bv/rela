@@ -394,9 +394,17 @@ inside the channel roles the project gives it. Locally this is not a
 security boundary: a local user can edit `acl.yaml`. Without `acl.yaml`,
 access is open.
 
+The channel tools act as `$USER`. When `acl.yaml` exists and its
+`assignments` give that user no role, and no user entity or membership
+gives it one, the channel tools can answer `entity not found` for an entity that
+`show_entity` returns, and `rela mcp` logs a warning at startup. Add the
+user under `assignments`. `rela mcp` reloads `acl.yaml` when it changes.
+An `acl.yaml` that does not apply makes every channel tool answer
+`acl.yaml cannot be loaded: <reason>` until it is fixed.
+
 **Prompt injection.** Message content is written by other people and agents.
-Every channel tool answer starts with a `notice` that says the content is
-untrusted user data, and the content is delivered as JSON values. A model
+Every channel tool answer that carries such content starts with a `notice`
+that says the content is untrusted user data, and the content is delivered as JSON values. A model
 may still follow instructions written in a message. That risk remains. Limit
 what an agent may write: give its identity only the roles it needs, and keep
 it out of roles that post on channels other agents act on.

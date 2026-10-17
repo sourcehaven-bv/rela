@@ -495,8 +495,9 @@ for a read without a cursor and to false for a read with one.
 
 **Untrusted content.** Messages, signal properties, channel titles, removal
 reasons and ref titles are written by other people and agents. Every answer
-is one JSON object whose first key is `notice`, which says so, and every tool
-description repeats it. Treat that content as data. A model may still follow
+that carries such content is one JSON object whose first key is `notice`,
+which says so, and every tool description repeats it. The answer to a signal
+post and an error text carry no such content and no `notice`. Treat that content as data. A model may still follow
 instructions written in a message; give an agent identity only the channel
 roles it needs.
 
@@ -513,17 +514,24 @@ roles it needs.
 4. Call `read_channel` with `after_rev: R`. It returns the changed messages
    and the next `next_after_rev`. Remove duplicates by `seq`.
 
-A watched read is capped at 5 messages, so a busy channel does not inflate
-each replay. A watch does not wake on signals unless the target sets
-`signals: true`. A watch on a channel you cannot read, or on a hidden entity,
-never reports a change.
+A target that follows with `after_rev` or `after` replays at most 5
+messages, so a busy channel does not inflate each replay. Like step 2, a
+watch without a cursor reports such a target at once when its page is not
+empty; for `after` that means a message with a higher `seq`. A target
+on a page (no cursor, or `before`) replays its own `limit`, so an edit to
+any message on that page wakes it. Signals follow the `read_channel`
+default: a target without a cursor includes them and wakes on them, and a
+target with a cursor leaves them out unless it sets `signals: true`. A watch
+on a channel you cannot read, or on a hidden entity, never reports a change.
 
 **Errors.** A hidden or nonexistent entity gets the text `show_entity` gives,
 `entity not found: <id>`. A denial names its type and the rule in
 `realtime.yaml`, such as
 `channel_read_denied: reading room channels needs the … role (rule: channel_types.room.read)`.
 A rate limit adds `; retry in Ns`. Without realtime the answer is
-`channels are not enabled in this project (no realtime.yaml)`.
+`channels are not enabled in this project (no realtime.yaml)`. On stdio, a
+`no_principal` denial adds that a local command takes its identity from
+`$USER`.
 
 **Stdio and remote.** Stdio `rela mcp` is a separate process from
 rela-server, which changes three things:
@@ -536,10 +544,17 @@ rela-server, which changes three things:
   covers other rela-server processes.
 - Its channel tools apply `acl.yaml` when the project has one, as
   `rela lease` does, although its entity tools stay open. Locally this is not
-  a security boundary, because a local user can edit `acl.yaml`.
+  a security boundary, because a local user can edit `acl.yaml`. The caller
+  is `$USER`. When `acl.yaml` assigns that user no role, the channel tools can
+  answer `entity not found` for an entity `show_entity` returns, and
+  `rela mcp` logs a warning at startup. Add the user under `assignments`.
 
-Stdio `rela mcp` reloads `realtime.yaml` when it changes. A file that does
-not load keeps the previous configuration and is logged.
+Stdio `rela mcp` reloads `realtime.yaml` and `acl.yaml` when they change.
+A `realtime.yaml` that does not load keeps the previous configuration and is
+logged. An `acl.yaml` that does not apply to the schema makes every channel
+tool answer `acl.yaml cannot be loaded: <reason>` until it is fixed; the
+other tools keep working. An `acl.yaml` that does not parse stops
+`rela mcp` at startup when the project has `realtime.yaml`.
 
 ## Resources
 
