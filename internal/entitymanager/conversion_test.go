@@ -166,6 +166,7 @@ func newConversionFixture(t *testing.T, opts conversionOptions) conversionFixtur
 		Transitions: transitions, FieldGate: fields,
 		CopyReadGate: entitymanager.AllowAllCopyReadGate{}, CopyVisibility: visibility,
 		AliasRewriter: hooks, VersionRecorder: hooks, RelationVersionRecorder: hooks,
+		AnchorGuard: entitymanager.NopAnchorGuard{},
 	})
 	if err != nil {
 		t.Fatalf("manager: %v", err)
@@ -467,13 +468,15 @@ func TestConvert_UsesTheFamilyReadInsideTheTx(t *testing.T) {
 		visibility: func(st store.Store) entitymanager.CopyReader { return &patchingReader{st: st} },
 	})
 	f.seed(t, "NOTE-1", "note", map[string]any{"title": "Quick note", "body": "stale"})
-	result, err := f.conv.Convert(context.Background(),
+	// A copied value changed after the read access check: the Tx neither
+	// writes the stale value nor copies the unchecked one.
+	_, err := f.conv.Convert(context.Background(),
 		entitymanager.ConversionRequest{Definition: "note-to-task", SourceID: "NOTE-1"})
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, entitymanager.ErrConversionSourceChanged) {
+		t.Fatalf("Convert = %v, want ErrConversionSourceChanged", err)
 	}
-	if got := result.Entity.GetString("description"); got != "patched concurrently" {
-		t.Fatalf("description = %q, want the value stored when the Tx ran", got)
+	if _, err := f.st.GetEntity(context.Background(), entity.Ref{ID: "NOTE-1"}); err != nil {
+		t.Fatalf("source should be untouched: %v", err)
 	}
 }
 

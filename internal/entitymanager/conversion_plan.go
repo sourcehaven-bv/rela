@@ -79,8 +79,8 @@ func (c *Converter) plan(ctx context.Context, st store.Store, req ConversionRequ
 		return nil, newEntityNotFound(req.SourceID)
 	}
 	gate := faceGateOf(m)
-	if err = requireReadableRow(ctx, gate, req.SourceID, family); err != nil {
-		return nil, err
+	if checkErr := requireReadableRow(ctx, gate, req.SourceID, family); checkErr != nil {
+		return nil, checkErr
 	}
 	for _, row := range family {
 		if row.Type != d.From {
@@ -88,8 +88,8 @@ func (c *Converter) plan(ctx context.Context, st store.Store, req ConversionRequ
 		}
 	}
 	request := acl.WriteRequest{Op: acl.OpConvert, Subject: acl.NewConversionSubject(d.From, req.SourceID, d.To)}
-	if err = m.authorizeAndAudit(ctx, request); err != nil {
-		return nil, err
+	if checkErr := m.authorizeAndAudit(ctx, request); checkErr != nil {
+		return nil, checkErr
 	}
 	readable, err := readableRows(ctx, gate, family)
 	if err != nil {
@@ -98,8 +98,8 @@ func (c *Converter) plan(ctx context.Context, st store.Store, req ConversionRequ
 	if len(readable) != len(family) {
 		return nil, errConversionHiddenFace
 	}
-	if err = validateConversionOverrides(d, req); err != nil {
-		return nil, err
+	if checkErr := validateConversionOverrides(d, req); checkErr != nil {
+		return nil, checkErr
 	}
 	supplies := req.SourceFace != "" || len(req.Properties) > 0 || req.Content != nil
 	if supplies && !familyHasFace(family, req.SourceFace) {
@@ -160,6 +160,39 @@ func (c *Converter) requireReadableInputs(ctx context.Context, p *conversionPlan
 		}
 		if usesContent && raw.Content != seen.Content {
 			return fmt.Errorf("%w: you cannot read the content the conversion copies", ErrConversionInvalid)
+		}
+	}
+	return nil
+}
+
+// requireInputsUnchanged refuses the transaction when the family it read
+// differs from the one requireReadableInputs checked, in its faces or in a
+// value the conversion copies. Field visibility can depend on values, so a
+// change in between could make the Tx copy a value nobody checked.
+func (r *conversionRun) requireInputsUnchanged(p *conversionPlan) error {
+	if r.checked == nil {
+		return nil
+	}
+	if len(p.family) != len(r.checked.family) {
+		return ErrConversionSourceChanged
+	}
+	checked := make(map[entity.Face]*entity.Entity, len(r.checked.family))
+	for _, row := range r.checked.family {
+		checked[row.Face] = row
+	}
+	fields, usesContent := conversionInputs(p.def)
+	for _, row := range p.family {
+		before, ok := checked[row.Face]
+		if !ok || before.Type != row.Type {
+			return ErrConversionSourceChanged
+		}
+		for _, field := range fields {
+			if !reflect.DeepEqual(before.Properties[field], row.Properties[field]) {
+				return ErrConversionSourceChanged
+			}
+		}
+		if usesContent && before.Content != row.Content {
+			return ErrConversionSourceChanged
 		}
 	}
 	return nil

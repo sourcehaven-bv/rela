@@ -27,18 +27,31 @@ function faceLabel(face: string) {
 }
 const faceMapping = reactive<Record<string, string>>({})
 // A changed input invalidates the reviewed preview.
-watch([values, faceMapping, targetID, content], () => {
-  reviewed.value = false
-}, { deep: true })
+watch(
+  [values, faceMapping, targetID, content],
+  () => {
+    reviewed.value = false
+  },
+  { deep: true }
+)
 const mappedFields = computed(() => new Set(props.offer.mapped_fields ?? []))
-const fields = computed(() => Object.entries(target.value?.properties ?? {}).filter(([name]) => !mappedFields.value.has(name)))
+const fields = computed(() =>
+  Object.entries(target.value?.properties ?? {}).filter(([name]) => !mappedFields.value.has(name))
+)
 const sourceFaces = computed(() => {
-  const available = new Set([props.source._world?.face ?? '', ...(props.source._faces ?? []).map((face) => face.face)])
+  const available = new Set([
+    props.source._world?.face ?? '',
+    ...(props.source._faces ?? []).map((face) => face.face),
+  ])
   return Object.keys(props.offer.face_choices ?? {}).filter((face) => available.has(face))
 })
 
 function setValue(name: string, def: PropertyDef, input: string) {
-  if (def.list) values[name] = input.split(',').map((item) => item.trim()).filter(Boolean)
+  if (def.list)
+    values[name] = input
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
   else if (def.type === 'integer') values[name] = input === '' ? undefined : Number(input)
   else values[name] = input
 }
@@ -102,7 +115,9 @@ async function submit() {
       {{ face || 'Default face' }} →
       <select v-model="faceMapping[face]" :required="(offer.face_choices?.[face]?.length ?? 0) > 1">
         <option value="">Choose destination face…</option>
-        <option v-for="choice in offer.face_choices?.[face] ?? []" :key="choice" :value="choice">{{ choice || 'Default face' }}</option>
+        <option v-for="choice in offer.face_choices?.[face] ?? []" :key="choice" :value="choice">
+          {{ choice || 'Default face' }}
+        </option>
       </select>
     </label>
     <label v-if="target?.id_type === 'manual'" class="convert-field">
@@ -123,44 +138,86 @@ async function submit() {
           {{ def.labels?.[option] || option }}
         </option>
       </select>
-      <textarea v-else-if="def.list" :value="Array.isArray(values[name]) ? values[name].join(', ') : ''" rows="2" @input="setValue(name, def, ($event.target as HTMLTextAreaElement).value)" />
-      <textarea v-else-if="name === 'description'" :value="String(values[name] ?? '')" rows="3" @input="setValue(name, def, ($event.target as HTMLTextAreaElement).value)" />
-      <input v-else :value="String(values[name] ?? '')" :type="def.type === 'date' ? 'date' : def.type === 'integer' ? 'number' : 'text'" :required="def.required" @input="setValue(name, def, ($event.target as HTMLInputElement).value)" />
+      <textarea
+        v-else-if="def.list"
+        :value="Array.isArray(values[name]) ? values[name].join(', ') : ''"
+        rows="2"
+        @input="setValue(name, def, ($event.target as HTMLTextAreaElement).value)"
+      />
+      <textarea
+        v-else-if="name === 'description'"
+        :value="String(values[name] ?? '')"
+        rows="3"
+        @input="setValue(name, def, ($event.target as HTMLTextAreaElement).value)"
+      />
+      <input
+        v-else
+        :value="String(values[name] ?? '')"
+        :type="def.type === 'date' ? 'date' : def.type === 'integer' ? 'number' : 'text'"
+        :required="def.required"
+        @input="setValue(name, def, ($event.target as HTMLInputElement).value)"
+      />
     </label>
-    <label v-if="!offer.content_mapped" class="convert-field">Content <textarea v-model="content" rows="7" /></label>
+    <label v-if="!offer.content_mapped" class="convert-field"
+      >Content <textarea v-model="content" rows="7" />
+    </label>
     <section v-if="preview?.relations_to_drop.length" class="convert-warning" aria-live="polite">
       <strong>Relationships that will be removed</strong>
-      <ul><li v-for="rel in preview.relations_to_drop" :key="rel">{{ rel }}</li></ul>
-      <label><input v-model="acceptDrops" type="checkbox" /> I understand these relationships will be removed.</label>
+      <ul>
+        <li v-for="rel in preview.relations_to_drop" :key="rel">{{ rel }}</li>
+      </ul>
+      <label
+        ><input v-model="acceptDrops" type="checkbox" /> I understand these relationships will be
+        removed.</label
+      >
     </section>
     <section v-if="preview?.invalid_relations.length" class="convert-warning" role="alert">
       <strong>Relationships that cannot be converted</strong>
-      <ul><li v-for="rel in preview.invalid_relations" :key="rel">{{ rel }}</li></ul>
+      <ul>
+        <li v-for="rel in preview.invalid_relations" :key="rel">{{ rel }}</li>
+      </ul>
     </section>
     <section v-if="preview?.invalid_faces?.length" class="convert-warning" role="alert">
       <strong>Face choices that cannot be converted</strong>
-      <ul><li v-for="face in preview.invalid_faces" :key="face">{{ face }}</li></ul>
+      <ul>
+        <li v-for="face in preview.invalid_faces" :key="face">{{ face }}</li>
+      </ul>
     </section>
     <section v-if="reviewed && preview?.moves?.length" class="convert-warning" aria-live="polite">
       <strong>Comments move to the new {{ targetLabel }}</strong>
       <ul>
         <li v-for="move in preview.moves" :key="move.source_face">
-          Comments on the {{ faceLabel(move.source_face) }} move to {{ targetLabel }} ({{ faceLabel(move.target_face) }}).
+          Comments on the {{ faceLabel(move.source_face) }} move to {{ targetLabel }} ({{
+            faceLabel(move.target_face)
+          }}).
         </li>
       </ul>
-      <p>Everyone who can read the new {{ targetLabel }} can read these comments. Its history starts at this conversion.</p>
+      <p>
+        Everyone who can read the new {{ targetLabel }} can read these comments. Its history starts
+        at this conversion.
+      </p>
     </section>
     <p v-if="error" role="alert">{{ error }}</p>
     <template #actions>
       <RlButtonGroup>
         <RlButton variant="secondary" :disabled="busy" @click="emit('close')">Cancel</RlButton>
-        <RlButton variant="primary" :disabled="busy" @click="submit">{{ reviewed ? 'Convert' : 'Review' }}</RlButton>
+        <RlButton variant="primary" :disabled="busy" @click="submit">{{
+          reviewed ? 'Convert' : 'Review'
+        }}</RlButton>
       </RlButtonGroup>
     </template>
   </RlModal>
 </template>
 
 <style scoped>
-.convert-field { display: grid; gap: .35rem; margin-block: .75rem; }
-.convert-field input, .convert-field select, .convert-field textarea { width: 100%; }
+.convert-field {
+  display: grid;
+  gap: 0.35rem;
+  margin-block: 0.75rem;
+}
+.convert-field input,
+.convert-field select,
+.convert-field textarea {
+  width: 100%;
+}
 </style>

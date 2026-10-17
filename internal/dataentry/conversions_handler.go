@@ -30,6 +30,35 @@ type conversionHandler struct {
 	schema func() *Schema
 }
 
+// typeChanges are the two surfaces that make an entity of another type:
+// copy and conversion. Each has an affordance and a handler.
+type typeChanges struct {
+	copyOffers       copyOffersFunc
+	copies           *copiesHandler
+	conversionOffers func(ctx context.Context, entityType, id string) []entitymanager.ConversionOffer
+	conversions      *conversionHandler
+}
+
+// wireTypeChanges builds the copy surface and the field-gated converter
+// over em, each with the handler that serves it.
+func wireTypeChanges(
+	em *entitymanager.Manager, edges entitymanager.CopyEdgeGate, schema func() *Schema,
+) (typeChanges, error) {
+	copyOffers, copies, err := wireCopies(em, edges)
+	if err != nil {
+		return typeChanges{}, err
+	}
+	conv, err := entitymanager.NewConverter(entitymanager.FieldGated(em))
+	if err != nil {
+		return typeChanges{}, err
+	}
+	h, err := newConversionHandler(conv, schema)
+	if err != nil {
+		return typeChanges{}, err
+	}
+	return typeChanges{copyOffers: copyOffers, copies: copies, conversionOffers: conv.Offers, conversions: h}, nil
+}
+
 // newConversionHandler returns the handler of /api/v1/_conversions/.
 //
 // Nil: rejected — a handler without a converter would answer every request
@@ -145,6 +174,10 @@ func writeConversionError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	if errors.Is(err, entitymanager.ErrEntityNotFound) {
 		writeV1Error(w, r, http.StatusNotFound, "not_found", entityNotFoundTitle, "")
+		return
+	}
+	if errors.Is(err, entitymanager.ErrConversionSourceChanged) {
+		writeV1Error(w, r, http.StatusConflict, "conflict", "Entity changed during conversion; try again", "")
 		return
 	}
 	if errors.Is(err, entitymanager.ErrEntityAlreadyExists) {

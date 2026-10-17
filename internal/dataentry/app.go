@@ -1279,21 +1279,14 @@ func NewApp(
 
 	// The copy surface (RULING 9) is built ONCE, here, for both of its
 	// consumers: the `_copies` affordance below and the invoke handler.
-	copyOffers, copiesHandler, cerr := wireCopies(em, copyEdgeGate{
+	ts, tsErr := wireTypeChanges(em, copyEdgeGate{
 		affordances: func() affordanceService { return app.affordances },
 		visible:     app.visibleReader,
-	})
-	if cerr != nil {
-		return nil, fmt.Errorf("dataentry.NewApp: %w", cerr)
+	}, app.State)
+	if tsErr != nil {
+		return nil, fmt.Errorf("dataentry.NewApp: %w", tsErr)
 	}
-	app.copies = copiesHandler
-	conv, convErr := entitymanager.NewConverter(entitymanager.FieldGated(em))
-	if convErr == nil {
-		app.conversions, convErr = newConversionHandler(conv, app.State)
-	}
-	if convErr != nil {
-		return nil, fmt.Errorf("dataentry.NewApp: %w", convErr)
-	}
+	app.copies, app.conversions = ts.copies, ts.conversions
 
 	// affordanceService shares the App's acl/fieldResolver/store and takes the
 	// metamodel per-request via app.State(). The two relation-graph reads are
@@ -1313,8 +1306,8 @@ func NewApp(
 			reader:  app.reader,
 			visible: app.visibleReader,
 		}.plan,
-		copies:           copyOffers,
-		conversions:      conv.Offers,
+		copies:           ts.copyOffers,
+		conversions:      ts.conversionOffers,
 		schema:           app.State,
 		actionConditions: func() ViewConditionFunc { return app.viewConditions },
 	}

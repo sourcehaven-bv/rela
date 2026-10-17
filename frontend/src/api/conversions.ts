@@ -37,11 +37,17 @@ export interface ConversionMove {
   target_face: string
 }
 
-export async function previewConversion(name: string, request: ConvertRequest): Promise<ConversionPreview> {
+export async function previewConversion(
+  name: string,
+  request: ConvertRequest
+): Promise<ConversionPreview> {
   return api.post<ConversionPreview>(`/_conversions/${encodeURIComponent(name)}/preflight`, request)
 }
 
-export async function convertEntity(name: string, request: ConvertRequest): Promise<ConversionResult> {
+export async function convertEntity(
+  name: string,
+  request: ConvertRequest
+): Promise<ConversionResult> {
   return api.post<ConversionResult>(`/_conversions/${encodeURIComponent(name)}`, request)
 }
 

@@ -18,6 +18,9 @@ var (
 	ErrConversionSourceMismatch = errors.New("entitymanager: conversion source type mismatch")
 	ErrConversionInvalid        = errors.New("entitymanager: conversion mapping cannot be applied")
 	ErrConversionFaceFamily     = errors.New("entitymanager: conversion face mapping cannot be applied")
+	// ErrConversionSourceChanged means the source changed between the read
+	// access check and the transaction. Retrying reads it again.
+	ErrConversionSourceChanged = errors.New("entitymanager: conversion source changed; retry")
 )
 
 // Converter runs the operator-declared type conversions of `conversions:`
@@ -167,8 +170,8 @@ func (c *Converter) Preview(ctx context.Context, req ConversionRequest) (*Conver
 	if err != nil {
 		return nil, err
 	}
-	if err = c.requireReadableInputs(ctx, p); err != nil {
-		return nil, err
+	if checkErr := c.requireReadableInputs(ctx, p); checkErr != nil {
+		return nil, checkErr
 	}
 	d := p.def
 	toDef, _ := m.deps.Meta.GetEntityDef(d.To)
@@ -213,21 +216,31 @@ func (c *Converter) Convert(ctx context.Context, req ConversionRequest) (*Conver
 	if err != nil {
 		return nil, err
 	}
-	if err = c.requireReadableInputs(ctx, pre); err != nil {
-		return nil, err
+	if checkErr := c.requireReadableInputs(ctx, pre); checkErr != nil {
+		return nil, checkErr
 	}
-	if err = pre.requireCommittable(req); err != nil {
-		return nil, err
+	if checkErr := pre.requireCommittable(req); checkErr != nil {
+		return nil, checkErr
 	}
 	lineage, err := lineageIDs(ctx, m.deps.RelationVersionRecorder, pre.removedKeys())
 	if err != nil {
 		return nil, err
 	}
-	run := &conversionRun{c: c, req: req}
+	// A caller-chosen id gets rename's channel guard: channels an earlier
+	// entity left on it are detached, and put back if the conversion fails.
+	// A generated id is minted inside the Tx and has never been used.
+	var renameUndo anchorUndo
+	if req.TargetID != "" {
+		if renameUndo, err = guardRename(ctx, m, req.SourceID, req.TargetID); err != nil {
+			return nil, err
+		}
+	}
+	run := &conversionRun{c: c, req: req, checked: pre}
 	txErr := m.deps.Store.Tx(ctx, func(view store.Store) error {
 		return run.apply(store.ContextInTx(ctx), view)
 	})
 	if txErr != nil {
+		undoFailedRename(ctx, m, renameUndo)
 		// A transactional backend rolled everything back. fs and memstore
 		// cannot, so a conversion that got as far as the rename is recorded.
 		if run.renamed && !familyStillStored(ctx, m.deps.Store, req.SourceID) {

@@ -18,6 +18,8 @@ import (
 type conversionRun struct {
 	c   *Converter
 	req ConversionRequest
+	// checked is the plan whose inputs passed requireReadableInputs.
+	checked *conversionPlan
 
 	plan  *conversionPlan
 	newID string
@@ -37,12 +39,15 @@ func (r *conversionRun) apply(ctx context.Context, view store.Store) error {
 		return err
 	}
 	r.plan = p
-	if err = p.requireCommittable(r.req); err != nil {
-		return err
+	if checkErr := r.requireInputsUnchanged(p); checkErr != nil {
+		return checkErr
+	}
+	if checkErr := p.requireCommittable(r.req); checkErr != nil {
+		return checkErr
 	}
 	toDef, _ := m.deps.Meta.GetEntityDef(p.def.To)
-	if err = rejectUnknownTargetProperties(r.req.Properties, *toDef); err != nil {
-		return err
+	if checkErr := rejectUnknownTargetProperties(r.req.Properties, *toDef); checkErr != nil {
+		return checkErr
 	}
 	newID, err := conversionTargetID(ctx, m, view, p.def.To, *toDef, r.req)
 	if err != nil {
@@ -59,8 +64,8 @@ func (r *conversionRun) apply(ctx context.Context, view store.Store) error {
 	if texts := relationProblemTexts(problems); len(texts) > 0 {
 		return fmt.Errorf("%w: %v", ErrConversionInvalid, texts)
 	}
-	if err = r.authorizeRemovals(ctx, view); err != nil {
-		return err
+	if checkErr := r.authorizeRemovals(ctx, view); checkErr != nil {
+		return checkErr
 	}
 	replacer, ok := view.(store.FamilyReplacer)
 	if !ok {
