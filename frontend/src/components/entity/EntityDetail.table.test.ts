@@ -9,7 +9,8 @@ import { PiniaColada } from '@pinia/colada'
 import EntityDetail from './EntityDetail.vue'
 import { useSchemaStore } from '@/stores/schema'
 import type { Entity, EntityType } from '@/types'
-import type { ViewCell, ViewColumn, ViewResponse } from '@/api'
+import type { ViewCell, ViewColumn, ViewResponse, ViewRow } from '@/api'
+import { _setEntityPluralForTest } from '@/api/entities'
 
 const fetchViewMock = vi.fn()
 
@@ -39,11 +40,15 @@ const taak = {
     notities: { type: 'string', list: true },
     vervaldatum: { type: 'date' },
     klaar: { type: 'boolean' },
+    bijlagen: { type: 'file', max: 5 },
   },
 } as unknown as EntityType
 
 /** A one-row table section: one column and one cell per entry. */
-function view(cols: { column: ViewColumn; cell: ViewCell }[]): ViewResponse {
+function view(
+  cols: { column: ViewColumn; cell: ViewCell }[],
+  row: Partial<ViewRow> = {}
+): ViewResponse {
   const entry: Entity = { id: 'P-1', type: 'project', properties: { titel: 'Project' } }
   return {
     entry,
@@ -56,7 +61,7 @@ function view(cols: { column: ViewColumn; cell: ViewCell }[]): ViewResponse {
         isGrouped: false,
         hasContent: false,
         columns: cols.map((c) => c.column),
-        rows: [{ entityId: 'T-1', entityType: 'taak', cells: cols.map((c) => c.cell) }],
+        rows: [{ entityId: 'T-1', entityType: 'taak', cells: cols.map((c) => c.cell), ...row }],
       },
     ],
   }
@@ -77,10 +82,11 @@ describe('EntityDetail table section cells', () => {
     } as never)
     schema.entityTypes.set('taak', taak)
     schema.loaded = true
+    _setEntityPluralForTest('taak', 'taken')
   })
 
-  async function cells(cols: { column: ViewColumn; cell: ViewCell }[]) {
-    fetchViewMock.mockResolvedValue(view(cols))
+  async function cells(cols: { column: ViewColumn; cell: ViewCell }[], row?: Partial<ViewRow>) {
+    fetchViewMock.mockResolvedValue(view(cols, row))
     const wrapper = mount(EntityDetail, {
       props: { entityType: 'project', entityId: 'P-1' },
       global: {
@@ -179,5 +185,66 @@ describe('EntityDetail table section cells', () => {
     ])
     expect(status.text()).toBe('')
     expect(date.text()).toBe('')
+  })
+
+  // A file column shows the file's name and links to its download, the way
+  // the entity page does, never the storage path.
+  describe('file cells', () => {
+    const path = (name: string) => `attachments/T-1/bijlagen/c54fb91819f593e9/${name}`
+
+    it('shows one file as its name, linked to the download', async () => {
+      const name = 'hersteltest-q2.pdf'
+      const [td] = await cells([
+        { column: { property: 'bijlagen' }, cell: { values: [path(name)], widget: 'file' } },
+      ])
+      const link = td.find('a.file-cell-file')
+      expect(td.text()).toBe(name)
+      expect(td.text()).not.toContain('attachments/')
+      expect(link.attributes('href')).toBe(`/api/v1/taken/T-1/_attachments/bijlagen/${name}`)
+      expect(link.attributes('title')).toBe(name)
+      expect(td.find('img').exists()).toBe(false)
+    })
+
+    it('links to the face the row was served in', async () => {
+      const name = 'a.pdf'
+      const [td] = await cells(
+        [{ column: { property: 'bijlagen' }, cell: { values: [path(name)], widget: 'file' } }],
+        { _self: '/api/v1/taken/T-1%40published' }
+      )
+      expect(td.find('a.file-cell-file').attributes('href')).toBe(
+        `/api/v1/taken/${encodeURIComponent('T-1@published')}/_attachments/bijlagen/${name}`
+      )
+    })
+
+    it('summarizes several files and lists every name', async () => {
+      const names = ['b.pdf', 'a.docx']
+      const [td] = await cells([
+        { column: { property: 'bijlagen' }, cell: { values: names.map(path), widget: 'file' } },
+      ])
+      const summary = td.find('summary')
+      expect(summary.text()).toBe(`${names.length} files`)
+      expect(summary.attributes('title')).toBe([...names].sort().join('\n'))
+      expect(td.findAll('li a').map((a) => a.text())).toEqual([...names].sort())
+    })
+
+    it('shows the name without a nested link in a linked column', async () => {
+      const name = 'a.pdf'
+      const [td] = await cells([
+        {
+          column: { property: 'bijlagen', link: 'detail' },
+          cell: { values: [path(name)], widget: 'file', link: '/entity/taak/T-1' },
+        },
+      ])
+      expect(td.findAll('a')).toHaveLength(1)
+      expect(td.find('a').attributes('href')).toBe('/entity/taak/T-1')
+      expect(td.text()).toBe(name)
+    })
+
+    it('leaves an empty file cell blank', async () => {
+      const [td] = await cells([
+        { column: { property: 'bijlagen' }, cell: { values: [], widget: 'file' } },
+      ])
+      expect(td.text()).toBe('')
+    })
   })
 })

@@ -1,6 +1,6 @@
 import type { ViewSectionField } from '@/api'
 import type { PropertyDef } from '@/types'
-import type { WidgetRoutingHint, WidgetHintKind } from './types'
+import type { DenseHintKind, WidgetRoutingHint } from './types'
 
 // viewFieldRoutingHint maps a wire-level ViewSectionField (cards/list
 // rendering input) to a WidgetRoutingHint, so the view-side rendering
@@ -45,7 +45,9 @@ export function viewFieldRoutingHint(field: ViewSectionField): WidgetRoutingHint
 // shape separately as `hint.kind === 'text'` at the two call sites, which
 // silently mis-shaped every kind that is neither 'text' nor a real formatter
 // (notably 'text-list') and would have mis-shaped each new widget by default.
-export interface DenseRoutingHint extends WidgetRoutingHint {
+export interface DenseRoutingHint {
+  kind: DenseHintKind
+  propertyName: string
   preformatted: boolean
 }
 
@@ -93,12 +95,12 @@ export function densePropertyRoutingHint(
 // A new widget defaults to NOT being here, i.e. it receives the raw value --
 // which is the right default, since the reason to add a widget at all is
 // that it renders something text cannot.
-const PASSTHROUGH_KINDS: ReadonlySet<WidgetHintKind> = new Set<WidgetHintKind>([
+const PASSTHROUGH_KINDS: ReadonlySet<DenseHintKind> = new Set<DenseHintKind>([
   'text',
   'integer',
 ])
 
-function denseHintKind(propertyDef: PropertyDef | undefined): WidgetHintKind {
+function denseHintKind(propertyDef: PropertyDef | undefined): DenseHintKind {
   if (!propertyDef) return 'text'
 
   // Enum-ness wins over the scalar type: an enum's display rendering is a
@@ -124,6 +126,13 @@ function denseHintKind(propertyDef: PropertyDef | undefined): WidgetHintKind {
   //
   // Note this check sits AFTER the enum branch but BEFORE the type switch:
   // list-ness only overrides a scalar type's formatter, never enum badging.
+  //
+  // A file property is the exception: its value is a list of storage paths
+  // whatever `list` says. 'file' resolves to FileCellWidget, NOT FileWidget:
+  // FileWidget's display branch renders <img> previews, one network request
+  // per image per cell, so 200 rows would issue 200 image fetches.
+  // FileCellWidget shows names and links only.
+  if (propertyDef.type === 'file') return 'file'
   if (propertyDef.list === true) return 'text'
 
   switch (propertyDef.type) {
@@ -142,14 +151,6 @@ function denseHintKind(propertyDef: PropertyDef | undefined): WidgetHintKind {
     // disabled checkbox remains the DETAIL-view rendering, where those
     // concerns don't apply.
     case 'boolean':
-      return 'text'
-
-    // file -> text, NOT a file widget. FileWidget's display branch renders
-    // <img> previews, i.e. one network request per image per cell; 200 rows
-    // of a file column would issue 200 image fetches. (WidgetHintKind has no
-    // 'file' member, so the hint path cannot reach FileWidget anyway -- this
-    // case is here to make the intent explicit rather than incidental.)
-    case 'file':
       return 'text'
 
     // external_ref -> text: a cell shows the ref's id, pre-formatted by

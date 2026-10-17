@@ -2860,6 +2860,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                             :values="cell.values"
                             :property="(group.columns ?? section.columns)?.[idx]?.property"
                             :entity-type="row.entityType"
+                            :entity-id="entityRef({ id: row.entityId, _self: row._self })"
                           />
                         </template>
                       </td>
@@ -2931,6 +2932,7 @@ function treeContainsEntity(nodes: ViewTreeNode[] | undefined, id: string): bool
                         :values="cell.values"
                         :property="section.columns?.[idx]?.property"
                         :entity-type="row.entityType"
+                        :entity-id="entityRef({ id: row.entityId, _self: row._self })"
                       />
                     </template>
                   </td>

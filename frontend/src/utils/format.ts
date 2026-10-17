@@ -6,6 +6,7 @@ import { RRule } from 'rrule'
 import { TZDate } from '@date-fns/tz'
 import type { PropertyDef, EntityType } from '@/types'
 import { parseExternalRef } from '@/widgets/externalRef'
+import { fileRefNames } from './fileRefs'
 
 export const DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   year: 'numeric',
@@ -277,6 +278,10 @@ export function formatCellValue(
     }
     if (propDef?.type === 'external_ref') {
       return parseExternalRef(value)?.id ?? ''
+    }
+    // A file value is a storage path; a cell shows the file's name.
+    if (propDef?.type === 'file') {
+      return fileRefNames(value).join(', ')
     }
     const amount = formatDisplayNumber(value, propDef)
     if (amount !== undefined) return amount

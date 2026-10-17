@@ -73,7 +73,7 @@ export function useRelatedCardValues(options: Options) {
         if (byKey.has(key)) continue
         const def = elementDef(schemaStore.getEntityType(type)?.properties[field.property])
         const hint = densePropertyRoutingHint(def, field.property)
-        byKey.set(key, { component: defaultRegistry.resolveFromHint(hint), hint })
+        byKey.set(key, { component: defaultRegistry.resolveDense(hint), hint })
       }
     }
     return byKey

@@ -107,6 +107,14 @@ export type WidgetHintKind =
   | 'integer'
   | 'rrule'
 
+// DenseHintKind adds the kinds only a dense, read-only surface may route to.
+// They resolve to display-only components, so they are kept out of
+// WidgetHintKind, which edit-capable callers (SectionEditForm) also resolve.
+//
+// 'file': a file value as names and download links, never FileWidget's
+// <img> previews (one request per image per cell).
+export type DenseHintKind = WidgetHintKind | 'file'
+
 export interface WidgetRoutingHint {
   kind: WidgetHintKind
   // The field's wire-level property binding -- forwarded to widgets as
@@ -131,4 +139,7 @@ export interface WidgetRegistry {
   // schema entry. Hint is explicit; no schema lookup is involved
   // (RR-UD2B / RR-UD2A).
   resolveFromHint(hint: WidgetRoutingHint): Component
+  // Dense-surface resolution (list/table cells, card fields). Adds the
+  // display-only kinds of DenseHintKind on top of resolveFromHint.
+  resolveDense(hint: { kind: DenseHintKind; propertyName: string }): Component
 }

@@ -1145,7 +1145,7 @@ const columnWidgets = computed(() => {
   for (const column of listConfig.value?.columns ?? []) {
     if (!column.property || byProperty.has(column.property)) continue
     const hint = densePropertyRoutingHint(type.properties[column.property], column.property)
-    byProperty.set(column.property, { component: defaultRegistry.resolveFromHint(hint), hint })
+    byProperty.set(column.property, { component: defaultRegistry.resolveDense(hint), hint })
   }
   return byProperty
 })
@@ -1561,6 +1561,7 @@ watch(searchQuery, () => {
               :mode="'display'"
               :property-name="resolveCell(item as Entity, listColumnOf(column!)!)!.propertyName"
               :entity-type="listConfig.entity"
+              :entity-id="entityRef(item as Entity)"
             />
             <template v-else>{{ listColumnOf(column!) ? getFormattedCellValue(item as Entity, listColumnOf(column!)!) : '' }}</template>
           </span>

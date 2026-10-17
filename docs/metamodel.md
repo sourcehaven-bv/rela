@@ -855,6 +855,13 @@ individually), and uploading a file whose name already exists auto-suffixes
 it (`report.pdf` → `report (1).pdf`). `max` must be `>= 1` and only applies
 to `file` properties.
 
+In a list column and a `display: table` view column, a `file` property shows
+the file name with a paperclip, linked to the download, not the stored path.
+Several files show as "N files", which opens to the list of linked names. A
+long name is cut off with an ellipsis; hover it for the full name. A column
+that links to the row (`link:`) and a card field show the names without
+download links.
+
 ### Attachment security: scanning, allowlist & transforms
 
 Uploaded attachments are inspected before they are stored. A native MIME
