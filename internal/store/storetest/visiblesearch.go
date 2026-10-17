@@ -621,6 +621,33 @@ func RunFieldScopeSearchTests(t *testing.T, vsf VisibleSearchFactory) {
 		requireSameIDSet(t, []string{"TKT-U"}, run(t, vs, q("øresund"), tickets(nil)))
 	})
 
+	t.Run("BackendFoldsLikeGo", func(t *testing.T) {
+		// BUG-YG126C. Each pair holds the needle in the visible title only
+		// under Go's fold, and once more literally in the hidden code of the
+		// first entity. Whether an entity is a hit must not depend on its
+		// hidden field, so both must be found. A backend that folds case
+		// its own way finds only the first: through the hidden field, while
+		// the Go judgement credits the title. "é" is a short needle (LIKE
+		// folds ASCII only); "ԩab" a long one (FTS5's fold skips U+0528).
+		for _, tc := range []struct{ needle, title, code string }{
+			{"é", "CAFÉ", "café"},
+			{"ԩab", "ԨAB", "xԩab"},
+		} {
+			t.Run(tc.needle, func(t *testing.T) {
+				s, _, vs := vsf(t)
+				both := entity.New("TKT-B", "ticket")
+				both.SetString("title", tc.title)
+				both.SetString("code", tc.code)
+				require.NoError(t, s.CreateEntity(ctx(), both))
+				titled := entity.New("TKT-T", "ticket")
+				titled.SetString("title", tc.title)
+				require.NoError(t, s.CreateEntity(ctx(), titled))
+				requireSameIDSet(t, []string{"TKT-B", "TKT-T"}, run(t, vs, q(tc.needle), tickets(codeHidden())))
+				requireSameIDSet(t, []string{"TKT-B", "TKT-T"}, run(t, vs, q(tc.needle), tickets(nil)))
+			})
+		}
+	})
+
 	t.Run("FoldDiffersBetweenGoAndSQL", func(t *testing.T) {
 		s, ungated, vs := vsf(t)
 		// Go folds 'İ' to "i"; PostgreSQL folds it to "i" plus U+0307. The

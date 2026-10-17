@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Sourcehaven-BV/rela/internal/entity"
+	"github.com/Sourcehaven-BV/rela/internal/search"
 	"github.com/Sourcehaven-BV/rela/internal/sqlitedb"
 	"github.com/Sourcehaven-BV/rela/internal/store"
 	"github.com/Sourcehaven-BV/rela/internal/store/storeutil"
@@ -29,7 +30,7 @@ const dropMarkedEdgesSQL = `DELETE FROM marked_relations WHERE from_id = ? OR to
 const (
 	entityRowColumns = "id, face, type, properties, content, updated_at, " +
 		"last_edited_by_user, last_edited_by_tool, origin_kind, origin_source, origin_source_face, " +
-		"origin_source_type, origin_definition, content_hash, mention_targets"
+		"origin_source_type, origin_definition, content_hash, mention_targets, search_text"
 	relationRowColumns = "from_id, from_face, rel_type, to_id, properties, content, updated_at, " +
 		"rel_record_id, last_edited_by_user, last_edited_by_tool, content_hash"
 )
@@ -134,6 +135,14 @@ func (d softDeleter) Unmark(ctx context.Context, id string) (*store.DeleteResult
 		}
 		for _, st := range stmts {
 			if _, err := v.write(ctx, st.q, st.args...); err != nil {
+				return fmt.Errorf("sqlitestore: restore %s: %w", id, err)
+			}
+		}
+		// A row marked before the v20 rung carries no search text, and
+		// reindexSearchText runs only at open, so each face gets it here.
+		for _, e := range family {
+			if _, err := v.write(ctx, `UPDATE entities SET search_text = ? WHERE id = ? AND face = ?`,
+				search.IndexText(e), e.ID, string(e.Face)); err != nil {
 				return fmt.Errorf("sqlitestore: restore %s: %w", id, err)
 			}
 		}

@@ -39,6 +39,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -222,6 +223,9 @@ func New(db *sqlitedb.DB, options ...Option) (*Store, error) {
 	}
 	for _, opt := range options {
 		opt(s)
+	}
+	if err := reindexSearchText(context.Background(), s); err != nil {
+		return nil, fmt.Errorf("sqlitestore: index search text: %w", err)
 	}
 	return s, nil
 }
