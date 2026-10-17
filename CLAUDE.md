@@ -185,7 +185,8 @@ your session id or `"$(hostname)-$$"`:
   check, so `TestNoACLFromContext` forbids it outside `internal/acl`. Do not
   add a fallback that resolves the principal from ctx; bind at the edge
   instead. `TestEvaluatorDoesNotResolveIdentity` fails if a `Declarative` or
-  `Request` method, or a package helper it reaches, walks membership.
+  `Request` method, or a package function or method of another acl type it
+  reaches, walks membership.
 
   Whether a principal is a verified but unmatched assertion is a fact about
   the identity, so it lives on the `Request` (`Request.UnmatchedVerified`),
