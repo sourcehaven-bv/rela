@@ -34,7 +34,7 @@ func buildPolicyApp(t *testing.T, aclYAML string, sink audit.Audit) *App {
 	if err := yaml.Unmarshal([]byte(aclYAML), &policy); err != nil {
 		t.Fatalf("unmarshal acl.yaml: %v", err)
 	}
-	declarative, err := acl.NewDeclarative(&policy, aclstore.NewGraph(app.store), app.store)
+	declarative, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(app.store), app.store)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

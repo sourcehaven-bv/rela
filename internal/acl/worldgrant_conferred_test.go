@@ -40,7 +40,7 @@ func TestPermitsWorld_ConferredRoleOpensTheWorldGlobally(t *testing.T) {
 	if err := p.Validate(); err != nil {
 		t.Fatalf("policy must load: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

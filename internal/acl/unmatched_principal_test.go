@@ -92,8 +92,8 @@ func rejectWorld(t *testing.T, mode string) *acl.Declarative {
 		t.Fatalf("LoadPolicyBytes: %v", err)
 	}
 	st := memstore.New()
-	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st,
-		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(st)))
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(st)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

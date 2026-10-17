@@ -40,7 +40,7 @@ func seed(ctx context.Context, t *testing.T) *memstore.MemStore {
 
 func TestGraph_HasEdge(t *testing.T) {
 	ctx := context.Background()
-	g := aclstore.NewGraph(seed(ctx, t))
+	g := aclstore.MustNewGraph(seed(ctx, t))
 	tests := []struct {
 		name          string
 		from, rel, to string
@@ -62,7 +62,7 @@ func TestGraph_HasEdge(t *testing.T) {
 
 func TestGraph_OutgoingRelations(t *testing.T) {
 	ctx := context.Background()
-	g := aclstore.NewGraph(seed(ctx, t))
+	g := aclstore.MustNewGraph(seed(ctx, t))
 	tests := []struct {
 		name      string
 		from, rel string
@@ -88,7 +88,7 @@ func TestGraph_OutgoingRelations(t *testing.T) {
 
 func TestPrincipalLookup_LookupEntityByProperty(t *testing.T) {
 	ctx := context.Background()
-	l := aclstore.NewPrincipalLookup(seed(ctx, t))
+	l := aclstore.MustNewPrincipalLookup(seed(ctx, t))
 	tests := []struct {
 		name  string
 		value string
@@ -110,5 +110,14 @@ func TestPrincipalLookup_LookupEntityByProperty(t *testing.T) {
 				t.Errorf("LookupEntityByProperty(%q) = %v, want %v", tc.value, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestConstructors_RejectNil(t *testing.T) {
+	if g, err := aclstore.NewGraph(nil); err == nil || g != nil {
+		t.Errorf("NewGraph(nil) = %v, %v; want an error", g, err)
+	}
+	if l, err := aclstore.NewPrincipalLookup(nil); err == nil || l != nil {
+		t.Errorf("NewPrincipalLookup(nil) = %v, %v; want an error", l, err)
 	}
 }

@@ -171,7 +171,7 @@ func newWorld(t *testing.T) *world {
 	if err := yaml.Unmarshal([]byte(policyYAML), &p); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&p, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(&p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

@@ -191,7 +191,7 @@ func newFieldWorld(t *testing.T, policyYAML string) fieldWorld {
 	mustCreateRelation(t, ms, "pia", "owner-of", "P-1")
 	mustCreateRelation(t, ms, "P-2", "belongs-to", "PRJ-1")
 
-	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

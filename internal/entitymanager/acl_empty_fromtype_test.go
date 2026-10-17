@@ -195,7 +195,7 @@ func createRelationAllowed(t *testing.T, createGrants []string, seedSource bool)
 		// what this test is about.
 		Roles:       map[string]acl.RoleDef{"writer": {Read: []string{"*"}, Create: createGrants}},
 		Assignments: map[string]string{"alice": "writer"},
-	}, aclstore.NewGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

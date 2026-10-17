@@ -91,7 +91,7 @@ func newACLWorldOn(t *testing.T, st store.Store) (store.Store, lua.WriteDeps, *a
 	if err := yaml.Unmarshal([]byte(aclWorldPolicy), &policy); err != nil {
 		t.Fatalf("unmarshal policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(&policy, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(&policy, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

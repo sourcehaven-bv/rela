@@ -159,8 +159,8 @@ func TestE2E_ClaimsSurvivePrincipalPropertyReStamp(t *testing.T) {
 			}},
 			AssertedRoles: map[string]acl.RoleList{"admin": {"editor"}},
 		},
-		aclstore.NewGraph(app.store), app.store,
-		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(app.store)),
+		aclstore.MustNewGraph(app.store), app.store,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(app.store)),
 	)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
@@ -233,8 +233,8 @@ func TestE2E_UnmatchedPrincipalStillCarriesClaims(t *testing.T) {
 			Roles:             map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 			AssertedRoles:     map[string]acl.RoleList{"admin": {"viewer"}},
 		},
-		aclstore.NewGraph(app.store), app.store,
-		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(app.store)),
+		aclstore.MustNewGraph(app.store), app.store,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(app.store)),
 	)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)

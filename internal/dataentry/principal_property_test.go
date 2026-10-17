@@ -50,8 +50,8 @@ func buildLookupACL(t *testing.T) *acl.Declarative {
 	if err != nil {
 		t.Fatalf("LoadPolicyBytes: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, aclstore.NewGraph(ms), ms,
-		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(ms)))
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(ms), ms,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(ms)))
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

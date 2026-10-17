@@ -45,7 +45,7 @@ func hiddenWriteManager(t *testing.T, st store.Store) *entitymanager.Manager {
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}
@@ -270,7 +270,7 @@ func facedHiddenManager(t *testing.T, edges []entity.RelationKey) *entitymanager
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
-	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

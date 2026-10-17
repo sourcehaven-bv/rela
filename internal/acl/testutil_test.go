@@ -160,7 +160,7 @@ func (w *World) Build(t *testing.T) *World {
 	}
 	w.store = ms
 
-	d, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+	d, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("World.Build: NewDeclarative: %v", err)
 	}

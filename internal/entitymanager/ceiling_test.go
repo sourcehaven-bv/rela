@@ -54,7 +54,7 @@ func ceilingManager(t *testing.T) (mgr *entitymanager.Manager, seededID string) 
 		t.Fatalf("LoadPolicyBytes: %v", err)
 	}
 	st := memstore.New()
-	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(st), st)
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

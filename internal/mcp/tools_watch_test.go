@@ -697,7 +697,7 @@ func watchPolicyServer(t *testing.T) (*mcpgo.ClientSession, store.Store) {
 	d, err := acl.NewDeclarative(&acl.Policy{
 		Roles:       map[string]acl.RoleDef{"viewer": {Read: []string{"ticket"}}},
 		Assignments: map[string]string{"readers": "viewer"},
-	}, aclstore.NewGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

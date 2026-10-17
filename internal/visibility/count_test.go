@@ -106,7 +106,7 @@ func TestScriptReader_CountEntitiesPushesDown(t *testing.T) {
 			"publishedreaders": {Read: []string{"policy@published"}},
 		},
 		Assignments: map[string]string{"bob": "readers", "carol": "publishedreaders"},
-	}, aclstore.NewGraph(base), base)
+	}, aclstore.MustNewGraph(base), base)
 	if err != nil {
 		t.Fatal(err)
 	}

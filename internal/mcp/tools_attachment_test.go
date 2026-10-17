@@ -97,7 +97,7 @@ func newAttachFixture(t *testing.T, opts attachOpts) attachFixture {
 
 	buildOpts := []appbuildtest.Option{appbuildtest.WithStore(st)}
 	if opts.policy != nil {
-		d, err := acl.NewDeclarative(opts.policy, aclstore.NewGraph(st), st)
+		d, err := acl.NewDeclarative(opts.policy, aclstore.MustNewGraph(st), st)
 		if err != nil {
 			t.Fatalf("acl.NewDeclarative: %v", err)
 		}

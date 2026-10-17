@@ -167,7 +167,11 @@ func readTarget(id, face string) string {
 // api{} instead, which goes over HTTP against a real server that has the
 // genuine redactor wired.
 func readerFor(dr *docRuntime) (*visibility.Resolver, *acl.Declarative, error) {
-	d, err := acl.NewDeclarative(dr.policy, aclstore.NewGraph(dr.store), dr.store)
+	graph, err := aclstore.NewGraph(dr.store)
+	if err != nil {
+		return nil, nil, fmt.Errorf("building the evaluator failed: %w", err)
+	}
+	d, err := acl.NewDeclarative(dr.policy, graph, dr.store)
 	if err != nil {
 		return nil, nil, fmt.Errorf("building the evaluator failed: %w", err)
 	}

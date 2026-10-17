@@ -27,7 +27,7 @@ func gateFixture(t *testing.T, p *Policy) (*Declarative, context.Context) {
 			t.Fatal(err)
 		}
 	}
-	d, err := NewDeclarative(p, aclstore.NewGraph(st), st)
+	d, err := NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

@@ -263,7 +263,7 @@ role_relations:
 	_, err = seed.CreateRelation(ctx, entity.RelationKey{From: "alice", Type: "assigned-to", To: tkt.Entity.ID}, entity.RelationOptions{})
 	require.NoError(t, err)
 
-	declarative, err := acl.NewDeclarative(policy, aclstore.NewGraph(st), st)
+	declarative, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st)
 	require.NoError(t, err)
 	mgr, err := entitymanager.New(entitymanager.Deps{
 		Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: declarative,

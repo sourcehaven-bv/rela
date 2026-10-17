@@ -43,7 +43,7 @@ scope_grants:
 		t.Fatalf("the YAML in docs/acl-overview.md does not parse: %v", err)
 	}
 	st := memstore.New()
-	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ asserted_role_assignments:
 		t.Fatalf("the YAML in docs/acl-overview.md does not parse: %v", err)
 	}
 	st := memstore.New()
-	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}

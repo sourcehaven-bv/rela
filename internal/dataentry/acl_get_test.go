@@ -306,7 +306,7 @@ func aliceCtx() context.Context { return principalCtx("alice") }
 // is explicit.
 func mustNewACL(t *testing.T, p *acl.Policy, st store.Store) *acl.Declarative {
 	t.Helper()
-	d, err := acl.NewDeclarative(p, aclstore.NewGraph(st), st)
+	d, err := acl.NewDeclarative(p, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}

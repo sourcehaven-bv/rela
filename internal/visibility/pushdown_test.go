@@ -281,7 +281,7 @@ func TestListPushdown_AllFacesScopedPrincipalGetsGrantedFaceRowsOnly(t *testing.
 	d, err := acl.NewDeclarative(&acl.Policy{
 		Roles:         map[string]acl.RoleDef{"reviewer": {Read: []string{"policy@published"}}},
 		RoleRelations: map[string]acl.RoleRelationDef{"reviews": {Confers: "reviewer"}},
-	}, aclstore.NewGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func assertCountMatchesList(t *testing.T, st store.Store) {
 		},
 		Assignments:   map[string]string{"bob": "readers", "carol": "publishedreaders"},
 		RoleRelations: map[string]acl.RoleRelationDef{"reviews": {Confers: "reviewer"}},
-	}, aclstore.NewGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -200,8 +200,15 @@ func buildACLEngineWithPolicy(svc *readServices) (*aclmap.Engine, *acl.Policy, e
 
 // newACLEngine wires an aclmap.Engine over the store for a validated policy.
 func newACLEngine(svc *readServices, policy *acl.Policy) (*aclmap.Engine, error) {
-	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(svc.Store), svc.Store,
-		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(svc.Store)))
+	graph, err := aclstore.NewGraph(svc.Store)
+	if err != nil {
+		return nil, fmt.Errorf("build ACL resolver: %w", err)
+	}
+	lookup, err := aclstore.NewPrincipalLookup(svc.Store)
+	if err != nil {
+		return nil, fmt.Errorf("build ACL resolver: %w", err)
+	}
+	decl, err := acl.NewDeclarative(policy, graph, svc.Store, acl.WithPrincipalLookup(lookup))
 	if err != nil {
 		return nil, fmt.Errorf("build ACL resolver: %w", err)
 	}

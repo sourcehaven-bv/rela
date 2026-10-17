@@ -166,7 +166,7 @@ func buildSecretNoteApp(t *testing.T, policyYAML, user string) *App {
 	}
 
 	svc := appbuildtest.New(meta, appbuildtest.WithFS(fs, ctx))
-	d, err := acl.NewDeclarative(policy, aclstore.NewGraph(svc.Store()), svc.Store())
+	d, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(svc.Store()), svc.Store())
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

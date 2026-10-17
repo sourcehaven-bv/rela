@@ -89,7 +89,7 @@ func TestRestore_OwnedGrantThroughOwner(t *testing.T) {
 
 			policy, err := acl.LoadPolicyBytes([]byte(grantViaOwnerPolicy))
 			require.NoError(t, err)
-			decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(st), st)
+			decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(st), st)
 			require.NoError(t, err)
 			mgr, err := entitymanager.New(entitymanager.Deps{
 				Store: st, Meta: meta, Templater: nopTemplater{}, Audit: audit.Nop{}, ACL: decl,

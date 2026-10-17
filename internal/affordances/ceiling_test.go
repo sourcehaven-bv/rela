@@ -59,7 +59,7 @@ func newCeilingWorld(t *testing.T, policyYAML string) ceilingWorld {
 	p.SetString("bsn", "123456789")
 	mustCreate(t, ms, p)
 
-	decl, err := acl.NewDeclarative(policy, aclstore.NewGraph(ms), ms)
+	decl, err := acl.NewDeclarative(policy, aclstore.MustNewGraph(ms), ms)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

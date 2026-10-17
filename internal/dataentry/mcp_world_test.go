@@ -116,7 +116,7 @@ func TestMCPWorldCheck_UsesRequestOnContext(t *testing.T) {
 			"plain":  {Read: []string{"ticket"}},
 		},
 		Assignments: map[string]string{"granted": "drafts", "revoked": "plain"},
-	}, aclstore.NewGraph(st), st)
+	}, aclstore.MustNewGraph(st), st)
 	if err != nil {
 		t.Fatalf("NewDeclarative: %v", err)
 	}

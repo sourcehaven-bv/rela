@@ -1598,11 +1598,18 @@ func buildACL(policy *acl.Policy, st store.Store) (acl.ACL, *acl.Declarative, er
 	// WithPrincipalLookup supplies the store-backed resolver for the
 	// `principal_property` substitution; NewDeclarative requires it iff
 	// the policy enables that lookup (else it is an inert dependency).
-	d, err := acl.NewDeclarative(policy, aclstore.NewGraph(st), st,
-		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(st)))
-	// coverage-ignore-start: defensive: NewDeclarative only errors on nil policy/graph/queryer or a missing principal
-	// lookup; policy is non-nil (guarded above), graph and queryer are non-nil (aclstore.NewGraph(st)/st), and
-	// WithPrincipalLookup is always supplied
+	// coverage-ignore-start: defensive: the adapters only reject a nil store, and NewDeclarative only errors on nil
+	// policy/graph/queryer or a missing principal lookup; policy is non-nil (guarded above), st is the assembled
+	// store, and WithPrincipalLookup is always supplied
+	graph, err := aclstore.NewGraph(st)
+	if err != nil {
+		return nil, nil, fmt.Errorf("appbuild: build acl graph: %w", err)
+	}
+	lookup, err := aclstore.NewPrincipalLookup(st)
+	if err != nil {
+		return nil, nil, fmt.Errorf("appbuild: build principal lookup: %w", err)
+	}
+	d, err := acl.NewDeclarative(policy, graph, st, acl.WithPrincipalLookup(lookup))
 	if err != nil {
 		return nil, nil, fmt.Errorf("appbuild: build acl.Declarative: %w", err)
 	}

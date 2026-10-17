@@ -157,8 +157,8 @@ func newRejectApp(t *testing.T) *App {
 		UserEntityType:     "person",
 		PrincipalProperty:  "email",
 		UnmatchedPrincipal: acl.UnmatchedReject,
-	}, aclstore.NewGraph(app.store), app.store,
-		acl.WithPrincipalLookup(aclstore.NewPrincipalLookup(app.store)))
+	}, aclstore.MustNewGraph(app.store), app.store,
+		acl.WithPrincipalLookup(aclstore.MustNewPrincipalLookup(app.store)))
 	if err != nil {
 		t.Fatalf("acl.NewDeclarative: %v", err)
 	}
