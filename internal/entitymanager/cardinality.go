@@ -285,8 +285,38 @@ func (rp *relationReplace) prepare(ctx context.Context) error {
 		}
 		rp.rels[i] = rel
 	}
+	if err := rp.prepareRemoves(ctx); err != nil {
+		return err
+	}
+	return invalid
+}
+
+// prepareRemoves gates and authorizes the removes. The targets are gated
+// first, in one batch: an edge whose target is missing or hidden from the
+// caller stays and is skipped like one already gone, before the ACL is
+// asked, so it leaves no denied-write record and a hidden target answers
+// exactly as a missing one. A skipped edge is no longer leaving, so it still
+// counts against the bounds.
+func (rp *relationReplace) prepareRemoves(ctx context.Context) error {
+	m := rp.m
+	targets := make([]string, 0, len(rp.removes))
+	for _, r := range rp.removes {
+		targets = append(targets, r.To)
+	}
+	eps, err := newEndpointGate(ctx, m, targets, true)
+	if err != nil {
+		return err
+	}
 	kept := rp.removes[:0]
 	for _, r := range rp.removes {
+		visible, gErr := eps.endpointVisible(ctx, r.To, entity.ImplicitFace)
+		if gErr != nil {
+			return gErr
+		}
+		if !visible || len(eps.family(r.To).faces) == 0 {
+			delete(rp.leaving, r)
+			continue
+		}
 		// As in DeleteRelation: a source that is missing or that the caller
 		// cannot read leaves the family zero, whose empty type matches no
 		// grant, so both are refused alike.
@@ -295,13 +325,7 @@ func (rp *relationReplace) prepare(ctx context.Context) error {
 			RelationDeleteRequest(m.deps.Meta, r.Type, source.typ, r.From, r.FromFace)); aclErr != nil {
 			return aclErr
 		}
-		if srcErr == nil {
-			_, srcErr = requireVisibleTarget(ctx, m, r.To)
-		}
 		if errors.Is(srcErr, store.ErrNotFound) {
-			// An edge whose target the caller cannot read stays, and is
-			// skipped like one that is already gone. It is no longer
-			// leaving, so it still counts against the bounds.
 			delete(rp.leaving, r)
 			continue
 		}
@@ -311,7 +335,7 @@ func (rp *relationReplace) prepare(ctx context.Context) error {
 		kept = append(kept, r)
 	}
 	rp.removes = kept
-	return invalid
+	return nil
 }
 
 // lineageIDs reads the lineage id of every edge in removes through rec, for

@@ -398,40 +398,26 @@ func readableOrderSiblings(
 			ids = append(ids, id)
 		}
 	}
-	gate := faceGateOf(m)
-	var families map[string]entityFamily
-	if gate != nil || pos.Incoming {
-		var err error
-		if families, err = lookupFamilies(ctx, m.deps.Store, ids); err != nil {
-			return nil, err
-		}
+	eps, err := newEndpointGate(ctx, m, ids, pos.Incoming)
+	if err != nil {
+		return nil, err
 	}
-	type endpoint struct {
-		id   string
-		face entity.Face
-	}
-	visible := map[endpoint]bool{}
 	readable := map[entity.RelationKey]bool{key: true}
 	for _, r := range siblings {
-		ep := endpoint{id: siblingEndpoint(r, pos.Incoming)}
+		face := entity.ImplicitFace
 		if pos.Incoming {
-			ep.face = r.FromFace
+			face = r.FromFace
 		}
-		ok, seen := visible[ep]
-		if !seen {
-			// A missing family has no face, so a gate finds it unreadable.
-			var err error
-			if ok, err = visibleEndpoint(ctx, gate, families[ep.id], ep.face); err != nil {
-				return nil, err
-			}
-			visible[ep] = ok
+		ok, err := eps.endpointVisible(ctx, siblingEndpoint(r, pos.Incoming), face)
+		if err != nil {
+			return nil, err
 		}
 		if !ok {
 			continue
 		}
 		if pos.Incoming {
 			// A missing source leaves the type empty, which matches no grant.
-			typ := families[r.From].typ
+			typ := eps.family(r.From).typ
 			if aErr := m.authorizeAndAudit(ctx,
 				RelationUpdateRequest(m.deps.Meta, key.Type, typ, r.From, r.FromFace)); aErr != nil {
 				return nil, aErr

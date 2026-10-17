@@ -2099,6 +2099,55 @@ func visibleEndpoint(ctx context.Context, gate faceReadGate, fam entityFamily, f
 	return false, nil
 }
 
+// endpointGate answers [visibleEndpoint] for the endpoints of many edges: it
+// reads their families in one header query and asks the gate once per
+// distinct endpoint and face.
+type endpointGate struct {
+	gate     faceReadGate
+	families map[string]entityFamily
+	seen     map[endpointFace]bool
+}
+
+type endpointFace struct {
+	id   string
+	face entity.Face
+}
+
+// newEndpointGate reads the families of ids. Without a face gate it reads
+// them only when withFamilies asks, since every endpoint is then visible.
+func newEndpointGate(ctx context.Context, m *Manager, ids []string, withFamilies bool) (*endpointGate, error) {
+	g := &endpointGate{gate: faceGateOf(m), seen: map[endpointFace]bool{}}
+	if g.gate == nil && !withFamilies {
+		return g, nil
+	}
+	families, err := lookupFamilies(ctx, m.deps.Store, ids)
+	if err != nil {
+		return nil, err
+	}
+	g.families = families
+	return g, nil
+}
+
+// family is the family of id read by newEndpointGate; zero when id is
+// missing or the families were not read.
+func (g *endpointGate) family(id string) entityFamily { return g.families[id] }
+
+// endpointVisible reports whether the caller can see id as an edge endpoint
+// whose tail is face. A missing family has no face, so a gate finds it
+// unreadable.
+func (g *endpointGate) endpointVisible(ctx context.Context, id string, face entity.Face) (bool, error) {
+	key := endpointFace{id: id, face: face}
+	if ok, done := g.seen[key]; done {
+		return ok, nil
+	}
+	ok, err := visibleEndpoint(ctx, g.gate, g.families[id], face)
+	if err != nil {
+		return false, err
+	}
+	g.seen[key] = ok
+	return ok, nil
+}
+
 // lookupSource looks up the source family of a relation write. A source the
 // caller cannot see comes back exactly like a missing one: the zero family and
 // store.ErrNotFound. Every check after it, the ACL included, then answers as

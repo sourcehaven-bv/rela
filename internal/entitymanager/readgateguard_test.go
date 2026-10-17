@@ -19,6 +19,7 @@ var readGates = map[string]bool{
 	"requireReadableRow": true,
 	"visibleEndpoint":    true,
 	"lookupSource":       true,
+	"endpointVisible":    true,
 }
 
 // gateFamilyArg is the argument index of each gate's row family. A gate
@@ -103,7 +104,7 @@ func TestAuthorizeAndAuditFollowsReadGate(t *testing.T) {
 	res := scanReadGates(fset, files, callerGates, noReadGateNeeded)
 	for _, b := range res.bad {
 		t.Errorf("%s: no read gate before it; run requireReadableRow (or visibleEndpoint, "+
-			"lookupSource) first, or add the function to callerGates or noReadGateNeeded with a reason", b)
+			"endpointVisible, lookupSource) first, or add the function to callerGates or noReadGateNeeded with a reason", b)
 	}
 	for _, e := range res.emptyGates {
 		t.Errorf("%s: read gate called with an empty family, which gates no row", e)
