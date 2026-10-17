@@ -118,18 +118,6 @@ func (r *Request) readQuery(entityType string) ReadQueryResult {
 	}
 	sort.Strings(conferring)
 
-	// Fail closed on an empty member set. `Endpoints: nil` means "ANY
-	// endpoint" to store.GraphQuery (the absence-query widening), so
-	// handing it an empty set would degrade this gate from "reachable
-	// from ME" to "reachable from ANYONE" — a read bypass, not a
-	// narrowing. Today the membership walk only returns empty for an unstamped
-	// principal, which the IdentityResolver already rejects; this
-	// guard states the invariant HERE so the gate does not depend on a
-	// validation living in another file to stay safe.
-	if len(globals.Members) == 0 {
-		return ReadQueryResult{DenyAll: true}
-	}
-
 	// Faces is deliberately left ZERO here, and that is CORRECT rather
 	// than a gap: the executor stamps a face selection onto a copy of this
 	// template (internal/visibility's listPushdown copies it from the
@@ -147,25 +135,26 @@ func (r *Request) readQuery(entityType string) ReadQueryResult {
 	// every decorator to the raw store, so without it a world-scoped
 	// list silently degrades to the default world for exactly the
 	// ACL-gated principals (RR-GQWRLD).
-	q := &store.GraphQuery{
-		EntityType: entityType,
-		HasInbound: &store.RelationPredicate{
-			// Endpoints is the principal's group-member set, already
-			// expanded by walkMembers over the *configured* membership
-			// relation (Policy.membershipRelation). This is the deliberate
-			// seam: group expansion happens once, upstream, so this read
-			// path inherits the configured relation for free. Do NOT inline
-			// the membership relation here as another RelationPredicate —
-			// that would re-hardcode "member-of" and bypass the single
-			// accessor guard (TKT-Z8A62F).
-			Endpoints: globals.Members,
-			OfTypes:   conferring,
-		},
+	//
+	// The endpoints are the principal's group-member set, already expanded
+	// by walkMembers over the *configured* membership relation
+	// (Policy.membershipRelation). This is the deliberate seam: group
+	// expansion happens once, upstream, so this read path inherits the
+	// configured relation for free. Do NOT add the membership relation
+	// here as another RelationPredicate: that would re-hardcode
+	// "member-of" and bypass the single accessor guard (TKT-Z8A62F).
+	//
+	// Fail closed on an empty member set. conferredEdge refuses one,
+	// because empty Endpoints means "any endpoint" to store.GraphQuery and
+	// would degrade this gate from "reachable from ME" to "reachable from
+	// ANYONE". Today the membership walk only returns empty for an
+	// unstamped principal, which the IdentityResolver already rejects; the
+	// check here keeps the gate safe without that validation.
+	inbound, ok := r.conferredEdge(globals.Members, conferring)
+	if !ok {
+		return ReadQueryResult{DenyAll: true}
 	}
-	if len(r.d.policy.InheritRolesThrough) > 0 {
-		q.HasInbound.EntityInheritThrough = append([]string(nil), r.d.policy.InheritRolesThrough...)
-		q.HasInbound.EntityDepth = depthCap
-	}
+	q := &store.GraphQuery{EntityType: entityType, HasInbound: inbound}
 	if allFaces && sameFacesEverywhere(conferring, facesByRel, allByRel) {
 		// Every conferring role reads every face: the union IS each role's
 		// grant, so the single predicate is exact and no branches are needed.
@@ -177,13 +166,9 @@ func (r *Request) readQuery(entityType string) ReadQueryResult {
 	// that none does), and Faces stays the union for the AllowAll-shaped
 	// consumers that never see a query.
 	for _, relType := range conferring {
-		br := store.GraphBranch{HasInbound: &store.RelationPredicate{
-			Endpoints: globals.Members, OfTypes: []string{relType},
-		}}
-		if len(r.d.policy.InheritRolesThrough) > 0 {
-			br.HasInbound.EntityInheritThrough = append([]string(nil), r.d.policy.InheritRolesThrough...)
-			br.HasInbound.EntityDepth = depthCap
-		}
+		// Members is non-empty here, checked above, so ok always holds.
+		edge, _ := r.conferredEdge(globals.Members, []string{relType})
+		br := store.GraphBranch{HasInbound: edge}
 		if !allByRel[relType] {
 			br.FaceIn = facesByRel[relType]
 		}

@@ -23,10 +23,6 @@ func (r *Request) LocalRolePredicate(role string) (pred store.RelationPredicate,
 	if _, defined := r.roleFor(role); !defined {
 		return store.RelationPredicate{}, false
 	}
-	members := r.Globals().Members
-	if len(members) == 0 {
-		return store.RelationPredicate{}, false
-	}
 	var conferring []string
 	for relType, def := range r.d.policy.RoleRelations {
 		if def.Confers == role {
@@ -37,10 +33,29 @@ func (r *Request) LocalRolePredicate(role string) (pred store.RelationPredicate,
 		return store.RelationPredicate{}, false
 	}
 	sort.Strings(conferring)
-	pred = store.RelationPredicate{Endpoints: members, OfTypes: conferring}
-	if len(r.d.policy.InheritRolesThrough) > 0 {
-		pred.EntityInheritThrough = append([]string(nil), r.d.policy.InheritRolesThrough...)
-		pred.EntityDepth = depthCap
+	p, ok := r.conferredEdge(r.Globals().Members, conferring)
+	if !ok {
+		return store.RelationPredicate{}, false
 	}
-	return pred, true
+	return *p, true
+}
+
+// conferredEdge returns the predicate that matches an entity with an incoming
+// edge of one of relTypes from one of members, on the entity itself or on an
+// ancestor reached through inherit_roles_through. It is the one place the
+// conferred-role edge is spelled, shared by the row gate ([Request.ReadQuery])
+// and [Request.LocalRolePredicate].
+//
+// ok is false for an empty members: empty Endpoints means "any endpoint" to
+// the store, so an empty member set must never become a predicate.
+func (r *Request) conferredEdge(members, relTypes []string) (*store.RelationPredicate, bool) {
+	if len(members) == 0 {
+		return nil, false
+	}
+	p := &store.RelationPredicate{Endpoints: members, OfTypes: relTypes}
+	if len(r.d.policy.InheritRolesThrough) > 0 {
+		p.EntityInheritThrough = append([]string(nil), r.d.policy.InheritRolesThrough...)
+		p.EntityDepth = depthCap
+	}
+	return p, true
 }
